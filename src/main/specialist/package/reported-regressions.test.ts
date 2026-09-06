@@ -98,6 +98,29 @@ const provenance = (digest = 'c'.repeat(64)): MarketplaceInstallProvenance => ({
 })
 
 describe('reported Specialist package regressions', () => {
+  it('exports the edited Skill version shown by the current preview', async () => {
+    const { packages, userSkills } = await fixture()
+    const first = await packages.preview(archive('first-specialist'))
+    expect(await packages.install({ candidateToken: first.candidateToken })).toMatchObject({
+      status: 'installed'
+    })
+    await userSkills.updatePersonal('personal-analysis-tools', {
+      name: 'analysis-tools',
+      description: 'Analyze data',
+      body: 'UPDATED SKILL',
+      metadata: { version: '2.0.0' }
+    })
+    const preview = await packages.previewExport('first-specialist')
+    expect(preview.skills[0].version).toBe('2.0.0')
+    const exported = await packages.export({
+      specialistId: preview.specialistId,
+      expectedRevision: preview.expectedRevision,
+      includedSkillIds: ['personal-analysis-tools']
+    })
+    const imported = validateSpecialistZip(exported.archiveBytes, emptyCatalog)
+    expect(imported.plan?.skills[0].version).toBe('2.0.0')
+  })
+
   it('keeps unrelated package preview and export available when an owned Skill document is missing', async () => {
     const { packages, storageDir, skillPort } = await fixture()
     const first = await packages.preview(archive('first-specialist'))

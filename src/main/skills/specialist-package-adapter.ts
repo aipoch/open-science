@@ -349,10 +349,16 @@ export class UserSkillSpecialistPackageAdapter implements SpecialistPackageSkill
         ) {
           throw new Error('Skill changed during export. Preview again and retry.')
         }
+        const skillDocument = files.find((file) => file.path === 'SKILL.md')
+        const version = skillDocument
+          ? parseSkillDocument(
+              new TextDecoder().decode(skillDocument.bytes)
+            ).metadata.version?.trim()
+          : undefined
         result.push({
           localId,
           name,
-          version: beforeMetadata?.version ?? '0.1.0',
+          version: version ?? beforeMetadata?.version ?? '0.1.0',
           contentHash: afterHash,
           files
         })
