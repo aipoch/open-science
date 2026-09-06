@@ -727,3 +727,26 @@ test('archives a completed session from its mobile sidebar actions', async ({ ap
   await expect(page.getByTestId('archive-undo-snackbar')).toContainText('Archived session')
   await expect(page.getByRole('button', { name: `Open actions for ${USER_MESSAGE}` })).toBeHidden()
 })
+
+test('identifies the Project before deleting a workspace Session', async ({ app }, testInfo) => {
+  await app.completeOnboarding()
+  const page = await app.configureFakeAgent()
+  await createProject(page)
+  await page.getByRole('textbox', { name: 'Ask anything' }).fill(USER_MESSAGE)
+  await page.getByRole('button', { name: 'Send message' }).click()
+  await expect(page.getByText(AGENT_REPLY, { exact: true })).toBeVisible()
+
+  await page.setViewportSize({ width: 375, height: 900 })
+  await page.getByRole('button', { name: 'Open navigation' }).click()
+  await page.getByRole('button', { name: `Open actions for ${USER_MESSAGE}` }).click()
+  await page.getByRole('menuitem', { name: 'Delete', exact: true }).click()
+  const confirmation = page.getByRole('alertdialog', { name: 'Delete Session?' })
+  await expect(confirmation).toContainText(`Project: ${PROJECT_NAME}`)
+  await expect(confirmation).toContainText(USER_MESSAGE)
+  await page.screenshot({
+    path: testInfo.outputPath('workspace-delete-project.png'),
+    animations: 'disabled'
+  })
+  await confirmation.getByRole('button', { name: 'Cancel', exact: true }).click()
+  await expect(confirmation).toBeHidden()
+})
