@@ -485,7 +485,20 @@ describe('MarketplaceService', () => {
             sourceId: 'source',
             packageCandidateToken: 'candidate',
             newSkillIds: ['personal-example-skill'],
-            provenance: {}
+            provenance: {
+              sourceId: 'source',
+              specialistId: 'example-specialist',
+              publisher: 'Example',
+              version: '1.0.0',
+              releasePath: 'releases/example-specialist/1.0.0.json',
+              releaseDigest: 'a'.repeat(64),
+              artifactDigest: 'b'.repeat(64),
+              installedArchiveDigest: 'c'.repeat(64),
+              upstreamCommit: 'd'.repeat(40),
+              selectedSkillIds: ['example-skill'],
+              selectedConnectorIds: [],
+              installedAt: '2026-09-05T00:00:00.000Z'
+            }
           }
         ]
       ])

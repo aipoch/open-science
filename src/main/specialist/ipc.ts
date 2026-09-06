@@ -155,12 +155,19 @@ const isInstallCandidateRequest = (
   )
 }
 
-const isExportPreviewRequest = (request: unknown): request is { specialistId: string } =>
+const isExportPreviewRequest = (
+  request: unknown
+): request is { specialistId: string; includedSkillIds?: readonly string[] } =>
   typeof request === 'object' &&
   request !== null &&
-  Object.keys(request).length === 1 &&
+  Object.keys(request).every((key) => ['specialistId', 'includedSkillIds'].includes(key)) &&
   typeof (request as { specialistId?: unknown }).specialistId === 'string' &&
-  Boolean((request as { specialistId: string }).specialistId)
+  Boolean((request as { specialistId: string }).specialistId) &&
+  ((request as { includedSkillIds?: unknown }).includedSkillIds === undefined ||
+    (Array.isArray((request as { includedSkillIds?: unknown }).includedSkillIds) &&
+      (request as { includedSkillIds: unknown[] }).includedSkillIds.every(
+        (id) => typeof id === 'string'
+      )))
 
 const isExportRequest = (request: unknown): request is SpecialistExportRequest =>
   typeof request === 'object' &&
@@ -311,7 +318,7 @@ export const registerSpecialistIpcHandlers = (
       SPECIALIST_IPC.PREVIEW_EXPORT,
       async (_event, request: unknown): Promise<SpecialistExportPreview> => {
         if (!isExportPreviewRequest(request)) throw new Error('Invalid Specialist export preview.')
-        return packageImport.service.previewExport(request.specialistId)
+        return packageImport.service.previewExport(request.specialistId, request.includedSkillIds)
       }
     )
 

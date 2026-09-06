@@ -191,6 +191,7 @@ const SpecialistMarketplace = ({ view, onNavigate }: Props): React.JSX.Element =
   const snapshot = useMarketplaceStore((state) => state.snapshot)
   const isRefreshing = useMarketplaceStore((state) => state.isRefreshing)
   const lastRefreshFailed = useMarketplaceStore((state) => state.lastRefreshFailed)
+  const integrityFailed = useMarketplaceStore((state) => state.integrityFailed)
   const refreshMarketplace = useMarketplaceStore((state) => state.refresh)
   // No snapshot and no failure verdict yet is a genuine first load, true from the very first render
   // before any effect has fired. Once a snapshot exists the content renders immediately whatever
@@ -651,7 +652,14 @@ const SpecialistMarketplace = ({ view, onNavigate }: Props): React.JSX.Element =
             // Without this arm a failed load reads as "no sources configured".
             <div className="mt-2">
               <MarketplaceError
-                message={t('Marketplace unavailable')}
+                message={
+                  integrityFailed
+                    ? t(
+                        'Marketplace data needs repair. The original {{fileName}} file has been preserved.',
+                        { fileName: 'specialist-marketplace.json' }
+                      )
+                    : t('Marketplace unavailable')
+                }
                 retry={() => void refreshMarketplace()}
               />
             </div>
@@ -1254,7 +1262,14 @@ const SpecialistMarketplace = ({ view, onNavigate }: Props): React.JSX.Element =
       {loading ? <MarketplaceLoading label={t('Loading Marketplace…')} /> : null}
       {!loading && !snapshot && lastRefreshFailed ? (
         <MarketplaceError
-          message={t('Marketplace unavailable')}
+          message={
+            integrityFailed
+              ? t(
+                  'Marketplace data needs repair. The original {{fileName}} file has been preserved.',
+                  { fileName: 'specialist-marketplace.json' }
+                )
+              : t('Marketplace unavailable')
+          }
           retry={() => void refreshMarketplace()}
         />
       ) : null}
@@ -1263,7 +1278,12 @@ const SpecialistMarketplace = ({ view, onNavigate }: Props): React.JSX.Element =
           role="status"
           className="mb-3 rounded-lg border border-warning-100/40 bg-warning-100/10 p-3 text-sm text-foreground"
         >
-          {t('Could not refresh Marketplace. Showing the last available data.')}
+          {integrityFailed
+            ? t(
+                'Marketplace data needs repair. The original {{fileName}} file has been preserved.',
+                { fileName: 'specialist-marketplace.json' }
+              )
+            : t('Could not refresh Marketplace. Showing the last available data.')}
         </div>
       ) : null}
       {!loading

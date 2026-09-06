@@ -113,7 +113,7 @@ export class SpecialistPackageTransaction {
       throw new SpecialistPackageRecoveryError()
     }
 
-    let retryableCommittedDeletion = false
+    let retryableCommitted = false
     try {
       const journal = JSON.parse(raw) as TransactionJournal
       if (
@@ -126,7 +126,7 @@ export class SpecialistPackageTransaction {
         throw new Error('Invalid Specialist package transaction journal.')
       }
       if (journal.phase === 'committed') {
-        retryableCommittedDeletion = journal.deleteSkillIds !== undefined
+        retryableCommitted = true
         const current = await this.repository.getAll()
         const currentDigest = documentDigest(current)
         const committedDeletionStillAbsent =
@@ -167,7 +167,7 @@ export class SpecialistPackageTransaction {
         specialistId: journal.specialistId
       })
     } catch (error) {
-      if (!retryableCommittedDeletion) this.recoveryFailure = error
+      if (!retryableCommitted) this.recoveryFailure = error
       throw new SpecialistPackageRecoveryError()
     }
   }

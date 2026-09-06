@@ -74,7 +74,10 @@ type SpecialistStoreActions = {
     options?: Omit<SpecialistPackageInstallRequest, 'candidateToken'>
   ) => Promise<SpecialistPackageInstallResult>
   cancelPackage: () => Promise<void>
-  previewExport: (specialistId: string) => Promise<SpecialistExportPreview>
+  previewExport: (
+    specialistId: string,
+    includedSkillIds?: readonly string[]
+  ) => Promise<SpecialistExportPreview>
   exportSpecialist: (
     preview: SpecialistExportPreview,
     includedSkillIds: readonly string[]
@@ -253,9 +256,12 @@ const useSpecialistStore = create<SpecialistStore>((set) => ({
     set({ packagePreview: undefined })
   },
 
-  previewExport: async (specialistId: string) => {
+  previewExport: async (specialistId: string, includedSkillIds?: readonly string[]) => {
     const requestId = ++latestExportPreviewRequest
-    const preview = await window.api.specialist.previewExport({ specialistId })
+    const preview = await window.api.specialist.previewExport({
+      specialistId,
+      ...(includedSkillIds === undefined ? {} : { includedSkillIds })
+    })
     if (requestId === latestExportPreviewRequest) set({ exportPreview: preview })
     return preview
   },

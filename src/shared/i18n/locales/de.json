@@ -105,6 +105,7 @@
     "Discard unavailable Plan": "Nicht verfügbaren Plan verwerfen",
     "Discard unavailable Plan?": "Nicht verfügbaren Plan verwerfen?",
     "This removes the active Plan and its approval and progress from this conversation. Messages and Artifacts are kept. This cannot be undone.": "Dadurch werden der aktive Plan sowie seine Freigabe und sein Fortschritt aus dieser Konversation entfernt. Nachrichten und Artefakte bleiben erhalten. Dies kann nicht rückgängig gemacht werden.",
+    "Marketplace data needs repair. The original {{fileName}} file has been preserved.": "Die Marktplatzdaten müssen repariert werden. Die ursprüngliche Datei {{fileName}} wurde beibehalten.",
     "Receiving code. Cancelling discards the unfinished code.": "Code wird empfangen. Beim Abbrechen wird der unvollständige Code verworfen.",
     "Cancel code reception": "Codeempfang abbrechen",
     "Checking version…": "Version wird geprüft…",

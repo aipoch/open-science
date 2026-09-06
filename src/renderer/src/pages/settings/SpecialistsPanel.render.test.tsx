@@ -533,6 +533,105 @@ describe('SpecialistsPanel', () => {
     expect(document.body.querySelector('[role="status"]')).toBeNull()
   })
 
+  it('K04 allows export after unchecking the missing owned Skill that blocked the initial preview', async () => {
+    const preview = exportPreviewFixture({
+      canExport: false,
+      diagnostics: [
+        {
+          severity: 'error',
+          code: 'specialist.export-validation-failed',
+          message: 'The current Specialist or selected Skills contain blocking validation errors.'
+        }
+      ]
+    })
+    preview.skills = [
+      { id: 'analysis-tools', version: '1.0.0', kind: 'owned', selected: true, selectable: true }
+    ]
+    const exportSpecialist = vi.fn().mockResolvedValue({ saved: false })
+    useSpecialistStore.setState({
+      exportPreview: preview,
+      previewExport: vi.fn().mockImplementation(async (_id, includedSkillIds) => {
+        const current =
+          includedSkillIds?.length === 0
+            ? {
+                ...preview,
+                canExport: true,
+                diagnostics: [],
+                skills: preview.skills.map((skill) => ({ ...skill, selected: false }))
+              }
+            : preview
+        useSpecialistStore.setState({ exportPreview: current })
+        return current
+      }),
+      exportSpecialist
+    })
+    await act(async () => {
+      root.render(
+        <SpecialistsPanel view={{ kind: 'export', id: 'rna-reviewer' }} onNavigate={vi.fn()} />
+      )
+    })
+    const checkbox = Array.from(document.body.querySelectorAll('label'))
+      .find((node) => node.textContent?.includes('analysis-tools'))
+      ?.querySelector('input')
+    expect(checkbox).toBeDefined()
+    expect(checkbox!.checked).toBe(true)
+    await act(async () => fireEvent.click(checkbox!))
+    expect(checkbox!.checked).toBe(false)
+    const button = Array.from(document.body.querySelectorAll('button')).find(
+      (node) => node.textContent === 'Export ZIP'
+    )
+    expect(button).toBeDefined()
+    expect.soft(button!.disabled).toBe(false)
+    await act(async () => button!.click())
+    expect
+      .soft(exportSpecialist)
+      .toHaveBeenCalledWith(expect.objectContaining({ canExport: true }), [])
+  })
+
+  it('keeps export blocked when an older successful selection check finishes last', async () => {
+    const preview = exportPreviewFixture({ canExport: false })
+    preview.skills = [
+      { id: 'analysis-tools', version: '1.0.0', kind: 'owned', selected: true, selectable: true }
+    ]
+    let resolveOlder!: (preview: SpecialistExportPreview) => void
+    const older = new Promise<SpecialistExportPreview>((resolve) => {
+      resolveOlder = resolve
+    })
+    window.api.specialist.previewExport = vi
+      .fn()
+      .mockResolvedValueOnce(preview)
+      .mockReturnValueOnce(older)
+      .mockResolvedValueOnce(preview)
+    useSpecialistStore.setState({ previewExport: initialStore.previewExport })
+    await act(async () => {
+      root.render(
+        <SpecialistsPanel view={{ kind: 'export', id: 'rna-reviewer' }} onNavigate={vi.fn()} />
+      )
+    })
+    const checkbox = document.body.querySelector<HTMLInputElement>('input[type="checkbox"]')!
+    const button = Array.from(document.body.querySelectorAll('button')).find(
+      (node) => node.textContent === 'Export ZIP'
+    )!
+    await act(async () => fireEvent.click(checkbox))
+    expect(button.disabled).toBe(true)
+    expect(document.body.textContent).toContain('Checking…')
+    await act(async () => fireEvent.click(checkbox))
+    await act(async () =>
+      resolveOlder({
+        ...preview,
+        canExport: true,
+        skills: preview.skills.map((skill) => ({ ...skill, selected: false }))
+      })
+    )
+    expect(checkbox.checked).toBe(true)
+    expect(button.disabled).toBe(true)
+    expect(useSpecialistStore.getState().exportPreview?.canExport).toBe(false)
+    expect(window.api.specialist.previewExport).toHaveBeenNthCalledWith(2, {
+      specialistId: 'rna-reviewer',
+      includedSkillIds: []
+    })
+  })
+
   it('matches approved export defaults, portability warning, and native-cancel state', async () => {
     const preview = {
       specialistId: 'rna-reviewer',
