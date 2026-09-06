@@ -1758,10 +1758,7 @@ const WorkspaceMessageItemImpl = ({
                     focusRequest={editFocusRequest}
                   />
                   {editError ? (
-                    <div
-                      role="alert"
-                      className="[&>section]:max-w-none [&>section]:gap-2 [&_h1]:text-xs"
-                    >
+                    <div role="alert">
                       <ErrorNotice tone="red" title={editError} />
                     </div>
                   ) : null}

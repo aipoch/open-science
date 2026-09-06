@@ -6,13 +6,15 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { ErrorNotice } from './error-notice'
 
-describe.each([false, true])('ErrorNotice (compact: %s)', (compact) => {
+describe.each([false, true])('ErrorNotice (fullPage: %s)', (fullPage) => {
   afterEach(cleanup)
 
   it('renders only the sections whose props are provided', () => {
-    render(<ErrorNotice compact={compact} title="Something broke" />)
+    render(<ErrorNotice fullPage={fullPage} title="Something broke" />)
 
-    expect(screen.getByText('Something broke')).toBeTruthy()
+    expect(
+      screen.getByRole('heading', { name: 'Something broke', level: fullPage ? 1 : 2 })
+    ).toBeTruthy()
     expect(screen.queryByRole('button')).toBeNull()
   })
 
@@ -23,7 +25,7 @@ describe.each([false, true])('ErrorNotice (compact: %s)', (compact) => {
 
     render(
       <ErrorNotice
-        compact={compact}
+        fullPage={fullPage}
         icon={ShieldX}
         tone="red"
         title="Broken"
@@ -64,7 +66,7 @@ describe.each([false, true])('ErrorNotice (compact: %s)', (compact) => {
   it('renders either button on its own', () => {
     render(
       <ErrorNotice
-        compact={compact}
+        fullPage={fullPage}
         title="t"
         primaryButton={{ label: 'Retry', onClick: () => undefined }}
       />
@@ -78,7 +80,7 @@ describe.each([false, true])('ErrorNotice (compact: %s)', (compact) => {
     const onRetry = vi.fn()
     const { container } = render(
       <ErrorNotice
-        compact={compact}
+        fullPage={fullPage}
         title="t"
         primaryButton={{ label: 'Retrying…', onClick: onRetry, loading: true }}
       />

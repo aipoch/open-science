@@ -39,10 +39,7 @@ const UnavailablePlanNotice = ({ session }: { session: ChatSession }): React.JSX
     }
   }
   return (
-    <div
-      role="alert"
-      className="mb-2 [&>section]:max-w-none [&>section]:items-start [&>section]:gap-2 [&>section>svg]:hidden [&_h1]:text-xs"
-    >
+    <div role="alert" className="mb-2">
       <ErrorNotice
         icon={AlertTriangle}
         tone="amber"

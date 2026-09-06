@@ -142,7 +142,7 @@ describe('TagsPanel', () => {
     }
   )
 
-  it.each(['catalog.skill', 'catalog.connector', 'catalog.specialist'] as const)(
+  it.each(['catalog.skill', 'catalog.connector', 'catalog.specialist', 'literature.item'] as const)(
     'shows pending and failed %s independently of loaded resources',
     async (type) => {
       let reject!: (error: Error) => void
@@ -157,6 +157,11 @@ describe('TagsPanel', () => {
       if (type === 'catalog.connector')
         useSettingsStore.setState({ connectorsLoaded: false, loadConnectors: load })
       if (type === 'catalog.specialist') useSpecialistStore.setState({ isLoaded: false, load })
+      if (type === 'literature.item')
+        Object.defineProperty(window, 'api', {
+          configurable: true,
+          value: { literature: { get: load } }
+        })
       useTagStore.setState((state) => ({
         assignments: [
           ...state.assignments,
@@ -185,6 +190,15 @@ describe('TagsPanel', () => {
         'Analysis'
       )
       expect(container.textContent).not.toContain('No resources match this Tag.')
+      if (type === 'literature.item') {
+        load.mockResolvedValueOnce(undefined)
+        const retry = Array.from(container.querySelectorAll('button')).find(
+          (b) => b.textContent === 'Retry'
+        )!
+        await act(async () => retry.click())
+        expect(load).toHaveBeenCalledTimes(2)
+        expect(container.querySelector('[role="alert"]')).toBeNull()
+      }
     }
   )
 

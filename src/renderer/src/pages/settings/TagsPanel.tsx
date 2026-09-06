@@ -6,7 +6,6 @@ import { TooltipProvider } from '@/components/ui/tooltip'
  */
 import { AlertDialog } from 'radix-ui'
 import {
-  CircleAlert,
   ChevronDown,
   BookOpenText,
   GripVertical,
@@ -195,8 +194,6 @@ const TagForm = ({
       {conflicted ? (
         <div role="alert">
           <ErrorNotice
-            compact
-            icon={CircleAlert}
             title={t('This Tag changed while you were editing.')}
             description={t(
               'Your draft is preserved. Reload the latest values, or keep your draft and save again to replace them.'
@@ -364,15 +361,6 @@ const TagsList = ({
     (force: boolean) => loadSpecialists({ force }),
     [loadSpecialists]
   )
-  const catalogLoads = {
-    'catalog.skill': useResourceCatalogLoad(loadSkills, skillsLoaded),
-    'catalog.connector': useResourceCatalogLoad(loadConnectors, connectorsLoaded),
-    'catalog.specialist': useResourceCatalogLoad(
-      refreshSpecialists,
-      specialistsLoaded,
-      specialistLoadError
-    )
-  }
   const selectedId = useTagStore((state) => state.browserSelectedId)
   const setSelectedId = useTagStore((state) => state.setBrowserSelectedId)
   const typeFilter = useTagStore((state) => state.browserTypeFilter)
@@ -395,9 +383,12 @@ const TagsList = ({
   const [tagDropTarget, setTagDropTarget] = useState<TagDropTarget>()
   const [selectedLiteratureReference, setSelectedLiteratureReference] =
     useState<ArtifactLiteratureReference>()
+  const [literatureLoadAttempt, setLiteratureLoadAttempt] = useState(0)
   const [literatureResourceCache, setLiteratureResourceCache] = useState<{
     key: string
     rows: TagResourceRow[]
+    failed?: boolean
+    attempt?: number
   }>({ key: '', rows: [] })
   const tagPointerDragRef = useRef<TagPointerDrag | undefined>(undefined)
   const currentSelectedId = tags.some((tag) => tag.id === selectedId) ? selectedId : tags[0]?.id
@@ -417,40 +408,72 @@ const TagsList = ({
     [literatureResourceCache, literatureResourceIdsKey]
   )
 
+  const catalogLoads = {
+    'catalog.skill': useResourceCatalogLoad(loadSkills, skillsLoaded),
+    'catalog.connector': useResourceCatalogLoad(loadConnectors, connectorsLoaded),
+    'catalog.specialist': useResourceCatalogLoad(
+      refreshSpecialists,
+      specialistsLoaded,
+      specialistLoadError
+    ),
+    'literature.item': {
+      status: !literatureResourceIdsKey
+        ? 'ready'
+        : literatureResourceCache.key !== literatureResourceIdsKey ||
+            literatureResourceCache.attempt !== literatureLoadAttempt
+          ? 'loading'
+          : literatureResourceCache.failed
+            ? 'error'
+            : 'ready',
+      retry: () => setLiteratureLoadAttempt((attempt) => attempt + 1)
+    }
+  }
+
   useEffect(() => {
     if (status === 'idle') void loadTags()
   }, [loadTags, status])
 
   useEffect(() => {
     let active = true
-    if (!literatureResourceIdsKey || !window.api?.literature) {
+    if (!literatureResourceIdsKey) {
       return () => {
         active = false
       }
     }
-    void Promise.all(
-      literatureResourceIdsKey
-        .split('\n')
-        .map((resourceId) => window.api.literature.get(resourceId))
-    ).then(
-      (items) => {
-        if (!active) return
-        setLiteratureResourceCache({
-          key: literatureResourceIdsKey,
-          rows: items.flatMap((item): TagResourceRow[] => {
-            if (!item) return []
-            return [literatureResourceRow(item)]
+    void Promise.resolve()
+      .then(() =>
+        Promise.all(
+          literatureResourceIdsKey
+            .split('\n')
+            .map((resourceId) => window.api.literature.get(resourceId))
+        )
+      )
+      .then(
+        (items) => {
+          if (!active) return
+          setLiteratureResourceCache({
+            key: literatureResourceIdsKey,
+            attempt: literatureLoadAttempt,
+            rows: items.flatMap((item): TagResourceRow[] => {
+              if (!item) return []
+              return [literatureResourceRow(item)]
+            })
           })
-        })
-      },
-      () => {
-        if (active) setLiteratureResourceCache({ key: literatureResourceIdsKey, rows: [] })
-      }
-    )
+        },
+        () => {
+          if (active)
+            setLiteratureResourceCache({
+              key: literatureResourceIdsKey,
+              attempt: literatureLoadAttempt,
+              rows: [],
+              failed: true
+            })
+        }
+      )
     return () => {
       active = false
     }
-  }, [literatureResourceIdsKey])
+  }, [literatureResourceIdsKey, literatureLoadAttempt])
 
   useLayoutEffect(() => {
     if (resourceListRef.current) resourceListRef.current.scrollTop = scrollTop
@@ -894,8 +917,6 @@ const TagsList = ({
                 return catalog.status === 'error' ? (
                   <div key={type} role="alert" className="mb-4">
                     <ErrorNotice
-                      compact
-                      icon={CircleAlert}
                       title={t('Could not load {{type}}.', { type: resourceTypeLabel(t, type) })}
                       primaryButton={{ label: t('Retry'), onClick: catalog.retry }}
                     />

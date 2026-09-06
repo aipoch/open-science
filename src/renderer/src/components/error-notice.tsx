@@ -1,4 +1,4 @@
-import { CircleQuestionMark, LoaderCircle, type LucideIcon } from 'lucide-react'
+import { CircleAlert, CircleQuestionMark, LoaderCircle, type LucideIcon } from 'lucide-react'
 
 import { cn } from '@/lib/utils'
 
@@ -6,8 +6,8 @@ import { FlaskLogo } from '@/components/flask-logo'
 import { Button } from '@/components/ui/button'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 
-// Error summaries use a branded column by default; compact notices fit within an existing form
-// or resource list. All copy arrives as final display strings — callers translate.
+// Inline notices share one compact presentation. Only startup-blocking surfaces opt into
+// the full-page branded layout. All copy arrives as final display strings — callers translate.
 
 type ErrorNoticeTone = 'teal' | 'amber' | 'red'
 
@@ -20,8 +20,7 @@ type ErrorNoticeButton = {
 }
 
 type ErrorNoticeProps = {
-  compact?: boolean
-  showBrand?: boolean
+  fullPage?: boolean
   icon?: LucideIcon
   tone?: ErrorNoticeTone
   title?: string
@@ -68,9 +67,8 @@ const NoticeButton = ({
 )
 
 const ErrorNotice = ({
-  compact = false,
-  showBrand = true,
-  icon: Icon,
+  fullPage = false,
+  icon: Icon = fullPage ? undefined : CircleAlert,
   tone,
   title,
   description,
@@ -80,6 +78,7 @@ const ErrorNotice = ({
   secondaryButton,
   primaryButton
 }: ErrorNoticeProps): React.JSX.Element => {
+  const compact = !fullPage
   const Heading = compact ? 'h2' : 'h1'
   return (
     <section
@@ -90,9 +89,7 @@ const ErrorNotice = ({
           : 'max-w-md gap-4'
       )}
     >
-      {!compact && showBrand ? (
-        <FlaskLogo className="mb-4 size-18 self-center text-text-300" />
-      ) : null}
+      {fullPage ? <FlaskLogo className="mb-4 size-18 self-center text-text-300" /> : null}
 
       {title !== undefined || description !== undefined ? (
         <div className="flex min-w-0 items-start gap-3">

@@ -32,10 +32,6 @@ vi.mock('@/components/ui/resizable', () => ({
   ResizablePanel: ({ children }: PropsWithChildren): React.JSX.Element => <div>{children}</div>
 }))
 
-vi.mock('@/lib/utils', () => ({
-  cn: (...values: Array<string | false | undefined>) => values.filter(Boolean).join(' ')
-}))
-
 // Radix DropdownMenu calls pointer-capture APIs that jsdom does not implement.
 // Replace with a flat render so items are always visible in the DOM.
 vi.mock('@/components/ui/dropdown-menu', () => ({

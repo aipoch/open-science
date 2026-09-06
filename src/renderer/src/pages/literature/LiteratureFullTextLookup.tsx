@@ -325,7 +325,6 @@ export const LiteratureFullTextLookup = ({
           ) : failed ? (
             <div role="alert" className="mb-3 rounded-lg border border-border bg-bg-000 p-4">
               <ErrorNotice
-                showBrand={false}
                 icon={AlertCircle}
                 tone={error === 'runtime' ? 'teal' : 'amber'}
                 title={
