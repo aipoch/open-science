@@ -334,10 +334,8 @@ import {
   FileCompletionHandoffRepository
 } from './agents/completion-handoff-lifecycle'
 import { registerCompletionHandoffIpcHandlers } from './agents/completion-handoff-ipc'
-import {
-  registerClaudeCodeCompletionGateRuntime,
-  selectPersistedUserTaskContext
-} from './agents/claude-code-handoff'
+import { createPersistedClaudeReplayPreparer } from './session-persistence/claude-replay'
+import { registerClaudeCodeCompletionGateRuntime } from './agents/claude-code-handoff'
 import { installCompletionGateDiagnostics } from './agents/completion-gate-diagnostics'
 import { PendingSessionSpecialistBindings } from './agents/pending-session-specialist-bindings'
 import { createCodexCompletionGateRuntime } from './acp/codex-completion-handoff'
@@ -3202,15 +3200,11 @@ const createApplicationModules = async (
         }
       }
     },
-    prepareReplayContext: async (input) => {
-      const persisted = (await sessionRepository.loadAll()).sessions.find(
-        (session) => session.id === input.sessionId
-      )
-      runtime.prepareClaudeCodeHandoffReplay({
-        ...input,
-        supportedTaskContext: selectPersistedUserTaskContext(persisted?.messages ?? [])
-      })
-    },
+    prepareReplayContext: createPersistedClaudeReplayPreparer({
+      repository: sessionRepository,
+      coordinator: sessionPersistenceCoordinator,
+      prepareReplay: (input) => runtime.prepareClaudeCodeHandoffReplay(input)
+    }),
     discardReplayContext: async (sessionId) => runtime.discardClaudeCodeHandoffReplay(sessionId),
     switchSpecialist: (sessionId, specialistId) =>
       sessionSpecialistReconfiguration.applyPersisted(sessionId, specialistId),
