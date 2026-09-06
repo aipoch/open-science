@@ -5,7 +5,11 @@ import { join } from 'node:path'
 import { PrismaClient } from '@prisma/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { LiteratureFullTextIndex, literatureIndexPath } from './full-text-index'
+import {
+  LiteratureFullTextIndex,
+  literatureIndexPath,
+  type LiteratureIndexChunk
+} from './full-text-index'
 import { migrationSqlExecutor } from '../database/migration-sql-executor'
 
 const HASH_A = 'a'.repeat(64)
@@ -49,6 +53,38 @@ describe('LiteratureFullTextIndex', () => {
     await client.$disconnect()
     return Number(rows[0]?.value ?? 0)
   }
+
+  it('retains selected matches when unrelated documents enter or leave the shared index', async () => {
+    const chunks = (contents: string[]): LiteratureIndexChunk[] =>
+      contents.map((content, index) => ({
+        pageStart: index + 1,
+        pageEnd: index + 1,
+        textStart: index * 100,
+        textEnd: index * 100 + content.length,
+        content
+      }))
+    await index.replace({
+      extractionId: 'selected',
+      documentChecksum: HASH_A,
+      extractorFingerprint: HASH_B,
+      chunks: chunks(['alpha', 'beta'])
+    })
+    const query = { extractionIds: ['selected'], query: 'alpha beta' }
+    const before = await index.search(query)
+    expect(before.map(({ content }) => content).sort()).toEqual(['alpha', 'beta'])
+    await index.replace({
+      extractionId: 'unselected',
+      documentChecksum: HASH_B,
+      extractorFingerprint: HASH_B,
+      chunks: chunks(Array.from({ length: 30 }, () => 'alpha'))
+    })
+    const during = await index.search(query)
+    expect(during.every(({ extractionId }) => extractionId === 'selected')).toBe(true)
+    expect.soft(during.map(({ content }) => content).sort()).toEqual(['alpha', 'beta'])
+    await index.deleteExtraction('unselected')
+    const after = await index.search(query)
+    expect(after.map(({ content }) => content).sort()).toEqual(['alpha', 'beta'])
+  })
 
   it('replaces PDF chunks and retrieves matching passages with page locators', async () => {
     await index.replace({
@@ -304,7 +340,7 @@ describe('LiteratureFullTextIndex', () => {
     expect(flush).toHaveBeenCalledTimes(5)
   })
 
-  it('filters weak matches relative to the best BM25 candidate', async () => {
+  it('ranks weaker matches after stronger evidence without excluding them', async () => {
     await index.replace({
       extractionId: 'extraction-1',
       documentChecksum: HASH_A,
@@ -343,7 +379,8 @@ describe('LiteratureFullTextIndex', () => {
       expect.objectContaining({
         pageStart: 1,
         relativeScore: 1
-      })
+      }),
+      expect.objectContaining({ pageStart: 2 })
     ])
   })
 

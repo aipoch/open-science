@@ -74,13 +74,34 @@ const createLiteratureMcpServer = (handler: LiteratureMcpHandler): ModelContextP
     {
       title: 'Read linked literature',
       description:
-        'Read one to three multi-page PDFs explicitly linked to the current Open Science message. Omit query and provide documentId to read one document in bounded sequential batches, following nextCursor until null. Provide query to retrieve relevant passages across documentIds, or all linked documents when documentIds is omitted. Use this instead of Notebook, shell, filesystem, or Python for linked-PDF reading.',
-      inputSchema: {
-        documentId: z.string().trim().min(1).max(512).optional(),
-        documentIds: z.array(z.string().trim().min(1).max(512)).min(1).max(3).optional(),
-        query: z.string().trim().min(1).max(2_000).optional(),
-        cursor: z.string().trim().min(1).max(128).optional()
-      }
+        'Read one to three multi-page PDFs explicitly linked to the current Open Science message. Omit query and provide documentId to read one document in bounded sequential batches, following nextCursor until null. Provide query to retrieve relevant passages across documentIds, or all linked documents when documentIds is omitted. Search requests must not include documentId or cursor; sequential requests must not include documentIds. Use this instead of Notebook, shell, filesystem, or Python for linked-PDF reading.',
+      inputSchema: z
+        .object({
+          documentId: z.string().trim().min(1).max(512).optional(),
+          documentIds: z.array(z.string().trim().min(1).max(512)).min(1).max(3).optional(),
+          query: z.string().trim().min(1).max(2_000).optional(),
+          cursor: z.string().trim().min(1).max(128).optional()
+        })
+        .superRefine((request, context) => {
+          if (request.query !== undefined) {
+            for (const field of ['documentId', 'cursor'] as const) {
+              if (request[field] !== undefined)
+                context.addIssue({
+                  code: 'custom',
+                  path: [field],
+                  message:
+                    'Search requests accept query and documentIds only; omit documentId and cursor.'
+                })
+            }
+          } else if (request.documentIds !== undefined) {
+            context.addIssue({
+              code: 'custom',
+              path: ['documentIds'],
+              message:
+                'Sequential requests accept documentId and cursor only; omit documentIds or provide query.'
+            })
+          }
+        })
     },
     async (request) => {
       try {

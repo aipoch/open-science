@@ -148,32 +148,22 @@ describe('workspace tool activity details', () => {
     expect(JSON.stringify(details)).not.toContain('binding-secret-id')
   })
 
-  it('keeps a CJK retrieval query out of the Literature presentation', () => {
-    const activity = createActivity({
-      providerToolName: 'mcp__open-science-literature__read_document',
-      rawInput: {
-        documentId: 'binding-secret-id',
-        query: '梳理这篇论文的核心贡献'
-      }
-    })
-
-    const details = buildToolActivityDetails(activity)
-
-    expect(details).toMatchObject({
-      displayName: 'Reading',
-      subtitle: undefined,
-      sections: [
-        {
-          kind: 'literature',
-          summary: {
-            action: 'search',
-            documentCount: 1
-          }
-        }
-      ]
-    })
-    expect(JSON.stringify(details)).not.toContain('梳理这篇论文的核心贡献')
-  })
+  it.each(['DNA repair', '修复机制', '修復機制', 'DNA 修复机制', 'DNA修復の仕組み'])(
+    'preserves the original Literature query "%s" in the tool card summary',
+    (query) => {
+      const details = buildToolActivityDetails(
+        createActivity({
+          providerToolName: 'mcp__open-science-literature__read_document',
+          rawInput: { documentIds: ['binding-secret-id'], query }
+        })
+      )
+      expect(details).toMatchObject({
+        displayName: 'Reading',
+        sections: [{ kind: 'literature', summary: { action: 'search', query, documentCount: 1 } }]
+      })
+      expect(JSON.stringify(details)).not.toContain('binding-secret-id')
+    }
+  )
 
   it('uses the shared Literature presentation block when OpenCode truncates the full result', () => {
     const activity = createActivity({

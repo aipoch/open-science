@@ -40,6 +40,59 @@ describe('Literature MCP server', () => {
     }
   })
 
+  it.each([
+    { query: 'needle', documentId: 'binding-1' },
+    { query: 'needle', cursor: 'cursor' },
+    { query: 'needle', documentIds: ['binding-1'], documentId: 'binding-1' },
+    { query: 'needle', documentIds: ['binding-1'], documentId: 'binding-2' },
+    { documentIds: ['binding-1'] },
+    { documentId: 'binding-1', documentIds: ['binding-2'], cursor: 'cursor' }
+  ])('rejects mode-incompatible fields before dispatch: %j', async (input) => {
+    const readDocument = vi.fn().mockResolvedValue({ scope: 'unused' })
+    const server = createLiteratureMcpServer({ readDocument })
+    const client = new Client({ name: 'literature-mode-test', version: '1.0.0' })
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair()
+    await Promise.all([server.connect(serverTransport), client.connect(clientTransport)])
+    try {
+      const result = await client.callTool({
+        name: LITERATURE_READ_DOCUMENT_TOOL_NAME,
+        arguments: input
+      })
+      expect(result).toMatchObject({ isError: true })
+      expect(readDocument).not.toHaveBeenCalled()
+      expect(JSON.stringify(result.content)).toContain(input.query ? 'Search' : 'Sequential')
+    } finally {
+      await client.close()
+      await server.close()
+    }
+  })
+
+  it.each([
+    {},
+    { documentId: 'binding-1' },
+    { cursor: 'cursor' },
+    { documentId: 'binding-1', cursor: 'cursor' },
+    { query: 'needle' },
+    { query: 'needle', documentIds: ['binding-1', 'binding-2'] }
+  ])('preserves valid reading and search inputs: %j', async (input) => {
+    const readDocument = vi.fn().mockResolvedValue({ scope: 'valid' })
+    const server = createLiteratureMcpServer({ readDocument })
+    const client = new Client({ name: 'literature-valid-mode-test', version: '1.0.0' })
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair()
+    await Promise.all([server.connect(serverTransport), client.connect(clientTransport)])
+    try {
+      const result = await client.callTool({
+        name: LITERATURE_READ_DOCUMENT_TOOL_NAME,
+        arguments: input
+      })
+      expect(result.isError).not.toBe(true)
+      expect(readDocument).toHaveBeenCalledExactlyOnceWith(input)
+    } finally {
+      await client.close()
+      await server.close()
+    }
+  })
+
   it('emits bounded presentation metadata before a large passage result', async () => {
     const readDocument = vi.fn().mockResolvedValue({
       scope: 'relevant-passages',

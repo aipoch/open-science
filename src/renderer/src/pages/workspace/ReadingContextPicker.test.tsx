@@ -1,15 +1,85 @@
 // @vitest-environment jsdom
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+
+import type { ProjectFileItem } from '../../../../shared/project-files'
 
 import { ReadingContextPicker } from './ReadingContextPicker'
 
 afterEach(() => {
+  cleanup()
   vi.unstubAllGlobals()
   document.body.replaceChildren()
 })
 
 describe('ReadingContextPicker', () => {
+  it('hides stale project PDFs and prevents selection while the next project loads', async () => {
+    const file = (projectId: string): ProjectFileItem => ({
+      id: projectId,
+      source: 'upload',
+      sourceFileId: `upload-${projectId}`,
+      sourceVersionId: `version-${projectId}`,
+      projectId,
+      sessionId: 'source-session',
+      name: `${projectId}-only.pdf`,
+      path: `${projectId}.pdf`,
+      mimeType: 'application/pdf',
+      size: 20,
+      sortAtMs: 1
+    })
+    const first = { items: [file('A')], totalCount: 1 }
+    const second = { items: [file('B')], totalCount: 1 }
+    let resolveSecond!: (value: typeof second) => void
+    const loadingSecond = new Promise<typeof second>((resolve) => {
+      resolveSecond = resolve
+    })
+    const listFiles = vi.fn().mockResolvedValueOnce(first).mockReturnValueOnce(loadingSecond)
+    vi.stubGlobal('api', {
+      projectFiles: { listFiles },
+      sessions: { filterPdfContextCandidates: vi.fn(async ({ sources }) => ({ sources })) }
+    })
+    const selectFirst = vi.fn().mockResolvedValue(undefined)
+    const selectSecond = vi.fn().mockRejectedValue(new Error('keep picker open'))
+    const picker = (projectId: string, onSelect: typeof selectFirst): React.JSX.Element => (
+      <ReadingContextPicker
+        projectId={projectId}
+        linkedSources={[]}
+        atLimit={false}
+        onSelect={onSelect}
+      >
+        <button type="button">Reading</button>
+      </ReadingContextPicker>
+    )
+    const view = render(picker('A', selectFirst))
+    fireEvent.click(screen.getByRole('button', { name: 'Reading' }))
+    await screen.findByRole('option', { name: 'A-only.pdf' })
+
+    view.rerender(picker('B', selectSecond))
+    await waitFor(() => expect(listFiles).toHaveBeenCalledTimes(2))
+    const stale = screen.queryByRole('option', { name: 'A-only.pdf' })
+    expect.soft(stale).toBeNull()
+    expect.soft(screen.queryByText('Checking PDFs…')).not.toBeNull()
+    if (stale)
+      await act(async () => {
+        fireEvent.click(stale)
+      })
+    expect.soft(selectSecond).not.toHaveBeenCalled()
+    expect(selectFirst).not.toHaveBeenCalled()
+
+    selectSecond.mockClear().mockResolvedValue(undefined)
+    await act(async () => {
+      resolveSecond(second)
+    })
+    fireEvent.click(await screen.findByRole('option', { name: 'B-only.pdf' }))
+    await waitFor(() =>
+      expect(selectSecond).toHaveBeenCalledWith({
+        sourceKind: 'upload-version',
+        sourceFileId: 'upload-B',
+        sourceVersionId: 'version-B'
+      })
+    )
+  })
+
   it('retries project PDF discovery after a transient load failure', async () => {
     const listFiles = vi
       .fn()
