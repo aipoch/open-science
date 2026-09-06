@@ -478,7 +478,7 @@ class ConnectorSettingsModule {
       transport: server.transport,
       ...(server.description ? { description: server.description } : {}),
       ...(server.command ? { command: server.command } : {}),
-      ...(server.args?.length ? { args: server.args } : {}),
+      ...(server.transport === 'stdio' ? { args: server.args ?? [] } : {}),
       ...(server.url ? { url: server.url } : {}),
       ...(server.envRefs || server.env
         ? { environmentNames: Object.keys(server.envRefs ?? server.env ?? {}) }

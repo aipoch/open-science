@@ -1038,7 +1038,7 @@ const mcpClientJson = (definition: ConnectorTemplateDefinition): string =>
           definition.transport === 'stdio'
             ? {
                 command: definition.command,
-                ...(definition.args?.length ? { args: definition.args } : {}),
+                ...(definition.args !== undefined ? { args: definition.args } : {}),
                 ...(definition.requiredSecrets?.environment?.length
                   ? { env: secretPlaceholders(definition.requiredSecrets.environment) }
                   : {})
@@ -1083,7 +1083,7 @@ export const buildConnectorTemplateExport = (
     transport: source.transport,
     ...(source.description ? { description: source.description } : {}),
     ...(source.command ? { command: source.command } : {}),
-    ...(source.args?.length ? { args: [...source.args] } : {}),
+    ...(source.args !== undefined ? { args: [...source.args] } : {}),
     ...(source.url ? { url: source.url } : {}),
     ...(source.environmentNames?.length || source.headerNames?.length || source.hasOAuthClientSecret
       ? {

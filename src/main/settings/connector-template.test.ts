@@ -38,6 +38,7 @@ describe('Connector configuration templates', () => {
   })
 
   it.each([
+    ['no arguments', []],
     ['spaces', ['  two words  ']],
     ['empty values', ['', '']],
     ['repeated flags', ['--label', 'first', '--label', 'second']],

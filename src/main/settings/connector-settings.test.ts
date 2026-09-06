@@ -1817,6 +1817,33 @@ describe('ConnectorSettingsModule', () => {
     )
   })
 
+  it('exports an imported empty argv after saving and reopening the repository', async () => {
+    const imported = await service.previewCustomServerTemplateImport(
+      JSON.stringify({
+        schema_version: 1,
+        kind: 'open-science.connector',
+        name: 'empty-argv',
+        display_name: 'Empty argv',
+        transport: 'stdio',
+        command: 'node',
+        args: []
+      })
+    )
+    expect(imported.ready).toBe(true)
+    const definition = imported.definition!
+    const saved = await addCustomServer({
+      name: definition.name,
+      displayName: definition.displayName,
+      transport: definition.transport,
+      command: definition.command,
+      args: definition.args
+    })
+    const fresh = new ConnectorSettingsModule(new SettingsRepository(dir))
+    const exported = await fresh.buildCustomServerTemplateExport(saved.customServers[0].id)
+    expect(exported.preview.ready).toBe(true)
+    expect(JSON.parse(exported.contents!).args).toEqual([])
+  })
+
   it('exports only credential names and validates imports against installed connectors', async () => {
     const snapshot = await addHistoricalCustomServer({
       id: 'internal-export-id',
