@@ -4537,6 +4537,7 @@
     "Loading app icons…": "앱 아이콘 불러오는 중…",
     "Could not load app icons.": "앱 아이콘을 불러오지 못했습니다.",
     "No app icons are available.": "사용 가능한 앱 아이콘이 없습니다.",
-    "Current icon: {{icon}}. Its preview is unavailable.": "현재 아이콘: {{icon}}. 미리보기를 사용할 수 없습니다."
+    "Current icon: {{icon}}. Its preview is unavailable.": "현재 아이콘: {{icon}}. 미리보기를 사용할 수 없습니다.",
+    "This provider isn't compatible with {{framework}}. Pick a provider whose API format {{framework}} supports, or change the agent framework.": "이 모델 제공업체는 {{framework}}에서 사용할 수 없습니다. {{framework}}에서 지원하는 API 형식의 모델 제공업체를 선택하거나 에이전트 프레임워크를 변경하세요."
   }
 }

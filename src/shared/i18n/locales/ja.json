@@ -4539,6 +4539,7 @@
     "Loading app icons…": "アプリアイコンを読み込み中…",
     "Could not load app icons.": "アプリアイコンを読み込めませんでした。",
     "No app icons are available.": "利用可能なアプリアイコンはありません。",
-    "Current icon: {{icon}}. Its preview is unavailable.": "現在のアイコン：{{icon}}。プレビューは利用できません。"
+    "Current icon: {{icon}}. Its preview is unavailable.": "現在のアイコン：{{icon}}。プレビューは利用できません。",
+    "This provider isn't compatible with {{framework}}. Pick a provider whose API format {{framework}} supports, or change the agent framework.": "このプロバイダーは {{framework}} と互換性がありません。{{framework}} が対応する API 形式のプロバイダーを選択するか、エージェントフレームワークを変更してください。"
   }
 }

@@ -4693,6 +4693,7 @@
     "Loading app icons…": "App-Symbole werden geladen…",
     "Could not load app icons.": "Die App-Symbole konnten nicht geladen werden.",
     "No app icons are available.": "Es sind keine App-Symbole verfügbar.",
-    "Current icon: {{icon}}. Its preview is unavailable.": "Aktuelles Symbol: {{icon}}. Die Vorschau ist nicht verfügbar."
+    "Current icon: {{icon}}. Its preview is unavailable.": "Aktuelles Symbol: {{icon}}. Die Vorschau ist nicht verfügbar.",
+    "This provider isn't compatible with {{framework}}. Pick a provider whose API format {{framework}} supports, or change the agent framework.": "Dieser Anbieter ist nicht mit {{framework}} kompatibel. Wählen Sie einen Anbieter mit einem von {{framework}} unterstützten API-Format oder wechseln Sie das Agenten-Framework."
   }
 }

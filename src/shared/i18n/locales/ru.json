@@ -4988,6 +4988,7 @@
     "Loading app icons…": "Загрузка значков приложения…",
     "Could not load app icons.": "Не удалось загрузить значки приложения.",
     "No app icons are available.": "Нет доступных значков приложения.",
-    "Current icon: {{icon}}. Its preview is unavailable.": "Текущий значок: {{icon}}. Предпросмотр недоступен."
+    "Current icon: {{icon}}. Its preview is unavailable.": "Текущий значок: {{icon}}. Предпросмотр недоступен.",
+    "This provider isn't compatible with {{framework}}. Pick a provider whose API format {{framework}} supports, or change the agent framework.": "Этот поставщик несовместим с {{framework}}. Выберите поставщика с форматом API, который поддерживает {{framework}}, или смените фреймворк агента."
   }
 }
