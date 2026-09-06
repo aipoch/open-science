@@ -134,12 +134,21 @@ const SessionHoverPreviewTitle = ({
   const [editing, setEditing] = useState(false)
   const editingRef = useRef(false)
   const inputRef = useRef<HTMLInputElement>(null)
+  const titleButtonRef = useRef<HTMLButtonElement>(null)
+  const restoreTitleFocusRef = useRef(false)
   // The input intentionally keeps its draft when live Session props change mid-edit. Keep the
   // matching optimistic-concurrency baseline stable for the same interval.
   const expectedTitleRef = useRef(title)
   const savingRef = useRef(false)
   const [isSaving, setIsSaving] = useState(false)
   const [renameError, setRenameError] = useState<string | null>(null)
+
+  useEffect(() => {
+    if (editing || !restoreTitleFocusRef.current) return
+    restoreTitleFocusRef.current = false
+    // Unmounting the editor drops focus to body. Do not steal focus from an explicit navigation.
+    if (document.activeElement === document.body) titleButtonRef.current?.focus()
+  }, [editing])
 
   const updateEditing = useCallback(
     (next: boolean): void => {
@@ -205,15 +214,20 @@ const SessionHoverPreviewTitle = ({
           onKeyDown={(event) => {
             if (event.key === 'Enter') {
               event.preventDefault()
+              restoreTitleFocusRef.current = true
               commit()
               return
             }
             if (event.key === 'Escape' && !savingRef.current) {
               event.stopPropagation()
+              restoreTitleFocusRef.current = true
               updateEditing(false)
             }
           }}
-          onBlur={commit}
+          onBlur={() => {
+            if (!savingRef.current) restoreTitleFocusRef.current = false
+            commit()
+          }}
         />
         {renameError ? (
           <p role="alert" className="text-xs leading-4 text-danger-000">
@@ -226,6 +240,7 @@ const SessionHoverPreviewTitle = ({
 
   return (
     <button
+      ref={titleButtonRef}
       type="button"
       data-slot="session-hover-preview-title-button"
       aria-label={t('Rename session title')}
@@ -322,6 +337,7 @@ const SessionHoverPreview = ({
   const editingRef = useRef(false)
   const closeTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
   const restoreFocusRef = useRef(false)
+  const focusOnOpenRef = useRef(false)
   const suppressFocusRef = useRef(false)
   const cancelClose = useCallback((): void => clearTimeout(closeTimerRef.current), [])
 
@@ -369,6 +385,11 @@ const SessionHoverPreview = ({
     cancelClose()
     closeTimerRef.current = setTimeout(() => {
       if (editingRef.current || contentRef.current?.contains(document.activeElement)) return
+      if (
+        triggerRef.current?.contains(document.activeElement) &&
+        document.activeElement?.matches(':focus-visible')
+      )
+        return
       closeNow(session.id)
     }, SESSION_HOVER_PREVIEW_SKIP_DELAY_MS)
   }, [cancelClose, cancelOpen, closeNow, session.id])
@@ -413,11 +434,16 @@ const SessionHoverPreview = ({
           if (!previewSuppressed) requestOpen(session.id, true)
         }}
         onKeyDown={(event) => {
-          if (event.key === 'Tab' && !event.shiftKey && open) {
+          const trigger = triggerRef.current
+          const rowButton = trigger?.matches('button') ? trigger : trigger?.querySelector('button')
+          if (event.key === 'ArrowRight' && event.target === rowButton && !previewSuppressed) {
+            event.preventDefault()
             const control = contentRef.current?.querySelector<HTMLElement>('button, input')
             if (control) {
-              event.preventDefault()
               control.focus()
+            } else {
+              focusOnOpenRef.current = true
+              requestOpen(session.id, true)
             }
           }
         }}
@@ -456,7 +482,10 @@ const SessionHoverPreview = ({
           if (!editingRef.current) setProtected(session.id, false)
           requestClose()
         }}
-        onOpenAutoFocus={(event) => event.preventDefault()}
+        onOpenAutoFocus={(event) => {
+          if (!focusOnOpenRef.current) event.preventDefault()
+          focusOnOpenRef.current = false
+        }}
         onCloseAutoFocus={(event) => {
           event.preventDefault()
           if (!restoreFocusRef.current) return

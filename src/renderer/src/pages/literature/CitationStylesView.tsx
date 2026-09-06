@@ -254,12 +254,6 @@ const CitationStylesView = ({
                 pinnedRef.current = true
                 previewContentRef.current?.focus()
               }}
-              onKeyDown={(event) => {
-                if (event.key === 'Tab' && !event.shiftKey && activePreviewId === style.id) {
-                  event.preventDefault()
-                  previewContentRef.current?.focus()
-                }
-              }}
               aria-label={`${t('Preview')}: ${style.title}`}
               className="-m-1 flex min-w-0 flex-1 items-center gap-3 rounded-lg p-1 text-left hover:bg-muted focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
             >

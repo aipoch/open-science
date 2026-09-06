@@ -909,9 +909,14 @@ const WorkspaceSidebarView = ({
                           className="flex min-w-0 flex-1 cursor-pointer items-center gap-1.5 text-left"
                           aria-current={isActive ? 'page' : undefined}
                           aria-keyshortcuts={
-                            shortcutNumber
-                              ? `${isMac ? 'Meta' : 'Control'}+${shortcutNumber}`
-                              : undefined
+                            [
+                              shortcutNumber
+                                ? `${isMac ? 'Meta' : 'Control'}+${shortcutNumber}`
+                                : undefined,
+                              !mobileMode ? 'ArrowRight' : undefined
+                            ]
+                              .filter(Boolean)
+                              .join(' ') || undefined
                           }
                           onClick={() => onOpenSession(session.id)}
                         >

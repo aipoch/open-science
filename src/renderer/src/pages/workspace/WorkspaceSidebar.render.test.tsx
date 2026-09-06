@@ -2670,11 +2670,13 @@ describe('WorkspaceSidebar accessible render', () => {
         })
 
         const shortcutButtons = container.querySelectorAll<HTMLButtonElement>(
-          'button[aria-keyshortcuts]'
+          'button[aria-keyshortcuts*="+"]'
         )
         expect(shortcutButtons).toHaveLength(9)
         expect(shortcutButtons[0]?.textContent).toContain('Pinned target')
-        expect(shortcutButtons[0]?.getAttribute('aria-keyshortcuts')).toBe(ariaShortcut)
+        expect(shortcutButtons[0]?.getAttribute('aria-keyshortcuts')?.split(' ')).toContain(
+          ariaShortcut
+        )
 
         await act(async () => {
           window.dispatchEvent(

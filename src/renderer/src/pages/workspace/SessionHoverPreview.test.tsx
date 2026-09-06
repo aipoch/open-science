@@ -68,8 +68,43 @@ it.each(['resolve', 'reject'] as const)(
       fireEvent.keyDown(input, { key: 'Escape' })
     }
     expect(screen.queryByRole('textbox')).toBeNull()
+    expect(document.activeElement).toBe(
+      screen.getByRole('button', { name: 'Rename session title' })
+    )
   }
 )
+
+it('preserves natural Tab navigation and allows explicit keyboard entry while the row stays focused', async () => {
+  vi.useFakeTimers()
+  render(
+    <SessionHoverPreviewProvider>
+      <SessionHoverPreview session={{ id: 'a', title: 'Session' }} canRename>
+        <div>
+          <button>Row</button>
+          <button>Actions</button>
+        </div>
+      </SessionHoverPreview>
+    </SessionHoverPreviewProvider>
+  )
+  const row = screen.getByText('Row')
+  vi.spyOn(row, 'matches').mockImplementation((selector) => selector === ':focus-visible')
+  act(() => row.focus())
+  expect(screen.queryByRole('dialog')).not.toBeNull()
+  fireEvent.pointerEnter(row, { pointerType: 'mouse' })
+  fireEvent.pointerLeave(row, { pointerType: 'mouse' })
+  await act(() => vi.advanceTimersByTimeAsync(400))
+  expect(screen.queryByRole('dialog')).not.toBeNull()
+  // Tab is left to the browser; jsdom does not implement its native focus traversal.
+  expect(fireEvent.keyDown(row, { key: 'Tab', cancelable: true })).toBe(true)
+  fireEvent.keyDown(row, { key: 'ArrowRight' })
+  const rename = screen.getByRole('button', { name: 'Rename session title' })
+  expect(document.activeElement).toBe(rename)
+  fireEvent.keyDown(rename, { key: 'Escape' })
+  await act(() => vi.advanceTimersByTimeAsync(0))
+  expect(screen.queryByRole('dialog')).toBeNull()
+  expect(document.activeElement).toBe(row)
+  expect(fireEvent.keyDown(row, { key: 'Tab', cancelable: true })).toBe(true)
+})
 
 it('cancels brief hover reads and resets the delay after leaving the group', async () => {
   vi.useFakeTimers()
