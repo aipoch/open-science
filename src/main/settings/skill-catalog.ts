@@ -537,7 +537,7 @@ class SkillCatalogModule {
       const { fields, body } = await readSkillFile(lockedSkill.sourceDir)
       return {
         ...this.toSkillView(lockedSkill, disabled),
-        compatibility: lockedSkill.compatibility,
+        etag: JSON.stringify(lockedSkill.compatibility),
         body,
         metadata: Object.fromEntries(
           Object.entries(fields).filter(([key]) => key !== 'name' && key !== 'description')
@@ -589,8 +589,8 @@ class SkillCatalogModule {
 
   async updateSkill(request: UpdateSkillRequest): Promise<SkillView[]> {
     if ('name' in request) throw new Error('Skill name is immutable.')
-    if (typeof request.expectedCompatibility !== 'string' || !request.expectedCompatibility) {
-      throw new Error('Reload this Skill before saving to obtain its current version.')
+    if (request.etag !== undefined && (typeof request.etag !== 'string' || !request.etag)) {
+      throw new Error('Invalid Skill etag.')
     }
     const skill = (await this.managedCatalog()).find((entry) => entry.id === request.id)
     if (!skill || skill.source !== 'personal') {
@@ -605,7 +605,7 @@ class SkillCatalogModule {
         metadata: request.metadata,
         references: request.references
       },
-      request.expectedCompatibility
+      request.etag
     )
     await this.refreshRegisteredHelpers()
     return this.listSkills()

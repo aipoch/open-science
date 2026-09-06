@@ -4032,7 +4032,7 @@ describe('SettingsService: skills', () => {
 
     skills = await service.updateSkill({
       id: 'personal-my-skill',
-      expectedCompatibility: detail.compatibility!,
+      etag: detail.etag!,
       description: 'Edited.',
       body: '# Edited',
       metadata: detail.metadata
@@ -4140,7 +4140,7 @@ describe('SettingsService: skills', () => {
     // Editing keeps one file, drops one, and adds one.
     await service.updateSkill({
       id: 'personal-ref-skill-id',
-      expectedCompatibility: detail.compatibility!,
+      etag: detail.etag!,
       description: 'd',
       body: '# body',
       references: [{ path: 'keep.py' }, { path: 'new.py', dataBase64: b64('new') }]

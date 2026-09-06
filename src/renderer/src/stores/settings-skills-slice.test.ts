@@ -249,7 +249,7 @@ describe('settings Skills slice', () => {
     [
       'updateSkill',
       'updateSkill',
-      { id: 'target', name: 'Updated', expectedCompatibility: 'version', description: '', body: '' }
+      { id: 'target', name: 'Updated', etag: 'version', description: '', body: '' }
     ],
     ['deleteSkill', 'deleteSkill', 'target']
   ] as const)('reconciles the catalog after %s', async (_label, actionName, input) => {

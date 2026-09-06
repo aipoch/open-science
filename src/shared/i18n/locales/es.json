@@ -4409,6 +4409,14 @@
     "One argument per line. Spaces and blank lines are preserved. Clear the field to remove all arguments.": "Un argumento por línea. Se conservan los espacios y las líneas vacías. Vacíe el campo para eliminar todos los argumentos.",
     "The saved arguments contain embedded line breaks. Editing this field replaces the list using one argument per line.": "Los argumentos guardados contienen saltos de línea internos. Al editar este campo, se sustituye la lista con un argumento por línea.",
     "Use a safe filename without path separators or reserved characters.": "Utilice un nombre de archivo seguro sin separadores de ruta ni caracteres reservados.",
-    "This Skill changed. Your draft is preserved. Reopen the editor to load the latest version before saving.": "Esta Habilidad ha cambiado. Su borrador se conserva. Vuelva a abrir el editor para cargar la versión más reciente antes de guardar."
+    "Review Skill changes": "Revisar los cambios de la habilidad",
+    "This Skill changed while you were editing. Your draft is preserved.": "Esta habilidad cambió durante la edición. Su borrador se conserva.",
+    "Your draft": "Su borrador",
+    "Latest version": "Última versión",
+    "No reference files": "Sin archivos de referencia",
+    "Loading the latest version discards your draft. Overwriting replaces the editable content and removes reference files absent from your draft.": "Cargar la última versión descarta su borrador. Sobrescribir reemplaza el contenido editable y elimina los archivos de referencia que no estén en su borrador.",
+    "Keep editing": "Continuar editando",
+    "Load latest version": "Cargar la última versión",
+    "Overwrite with my draft": "Sobrescribir con mi borrador"
   }
 }

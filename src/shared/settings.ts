@@ -1124,8 +1124,8 @@ export type SkillView = {
 // A skill view plus its SKILL.md body (frontmatter stripped) and the names of any files under its
 // `references/` directory, for the detail/edit view.
 export type SkillDetailView = SkillView & {
-  // Read-time precondition for personal editor saves; not a stored revision counter.
-  compatibility?: string
+  // Opaque read-time validator for conditional saves; not a stored revision counter.
+  etag?: string
   body: string
   metadata?: Record<string, string>
   references: SkillReferenceInfo[]
@@ -1193,7 +1193,8 @@ export type CreateSkillRequest = {
 // Update an existing personal skill through a staged package replacement.
 export type UpdateSkillRequest = {
   id: string
-  expectedCompatibility: string
+  // Omit for an unconditional update; supplied etags are checked before any write.
+  etag?: string
   description: string
   body: string
   metadata?: Record<string, string>

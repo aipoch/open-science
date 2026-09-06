@@ -1248,7 +1248,7 @@ describe('settings store: refreshProviderModels', () => {
 
     await useSettingsStore.getState().updateSkill({
       id: created.id,
-      expectedCompatibility: 'version',
+      etag: 'version',
       description: '',
       body: '# Demo'
     })

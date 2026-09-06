@@ -4097,6 +4097,14 @@
     "One argument per line. Spaces and blank lines are preserved. Clear the field to remove all arguments.": "한 줄에 인수 하나를 입력합니다. 공백과 빈 줄은 유지됩니다. 입력란을 비우면 모든 인수가 제거됩니다.",
     "The saved arguments contain embedded line breaks. Editing this field replaces the list using one argument per line.": "저장된 인수 내부에 줄 바꿈이 포함되어 있습니다. 이 입력란을 편집하면 한 줄에 인수 하나씩 전체 목록이 교체됩니다.",
     "Use a safe filename without path separators or reserved characters.": "경로 구분자나 예약 문자가 없는 안전한 파일 이름을 사용하세요.",
-    "This Skill changed. Your draft is preserved. Reopen the editor to load the latest version before saving.": "이 스킬이 변경되었습니다. 초안은 유지됩니다. 저장하기 전에 편집기를 다시 열어 최신 버전을 불러오세요."
+    "Review Skill changes": "스킬 변경 사항 검토",
+    "This Skill changed while you were editing. Your draft is preserved.": "편집하는 동안 이 스킬이 변경되었습니다. 초안은 유지됩니다.",
+    "Your draft": "내 초안",
+    "Latest version": "최신 버전",
+    "No reference files": "참조 파일 없음",
+    "Loading the latest version discards your draft. Overwriting replaces the editable content and removes reference files absent from your draft.": "최신 버전을 불러오면 초안이 삭제됩니다. 덮어쓰면 편집 가능한 내용이 교체되고 초안에 없는 참조 파일이 삭제됩니다.",
+    "Keep editing": "계속 편집",
+    "Load latest version": "최신 버전 불러오기",
+    "Overwrite with my draft": "내 초안으로 덮어쓰기"
   }
 }

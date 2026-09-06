@@ -313,11 +313,7 @@ export class UserSkillStore {
     }, ['personal'])
   }
 
-  async updatePersonal(
-    id: string,
-    input: WriteSkillInput,
-    expectedCompatibility?: string
-  ): Promise<void> {
+  async updatePersonal(id: string, input: WriteSkillInput, expectedEtag?: string): Promise<void> {
     const parsed = parseUserSkillId(id)
     if (!parsed || parsed.source !== 'personal') throw new Error(`Not a personal skill id: ${id}`)
     const name = parsed.directoryName
@@ -325,9 +321,9 @@ export class UserSkillStore {
 
     await this.transactions.runMutationRecovered(async () => {
       const live = this.skillDirectory('personal', name)
-      if (expectedCompatibility !== undefined) {
+      if (expectedEtag !== undefined) {
         const current = (await this.listSkillsLocked()).find((skill) => skill.id === id)
-        if (!current || current.compatibility !== expectedCompatibility) {
+        if (!current || JSON.stringify(current.compatibility) !== expectedEtag) {
           throw new Error('This Skill changed. Reload it before saving.')
         }
       }

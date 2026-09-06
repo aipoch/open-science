@@ -4099,6 +4099,14 @@
     "One argument per line. Spaces and blank lines are preserved. Clear the field to remove all arguments.": "1 行に 1 つの引数を入力します。空白と空行は保持されます。欄を空にすると、すべての引数が削除されます。",
     "The saved arguments contain embedded line breaks. Editing this field replaces the list using one argument per line.": "保存済みの引数には引数内の改行が含まれています。この欄を編集すると、1 行に 1 つの引数としてリスト全体が置き換えられます。",
     "Use a safe filename without path separators or reserved characters.": "パス区切り文字や予約文字を含まない安全なファイル名を使用してください。",
-    "This Skill changed. Your draft is preserved. Reopen the editor to load the latest version before saving.": "このスキルは変更されました。下書きは保持されています。保存する前にエディターを開き直して最新バージョンを読み込んでください。"
+    "Review Skill changes": "スキルの変更を確認",
+    "This Skill changed while you were editing. Your draft is preserved.": "編集中にこのスキルが変更されました。下書きは保持されています。",
+    "Your draft": "下書き",
+    "Latest version": "最新バージョン",
+    "No reference files": "参照ファイルはありません",
+    "Loading the latest version discards your draft. Overwriting replaces the editable content and removes reference files absent from your draft.": "最新バージョンを読み込むと下書きは破棄されます。上書きすると編集可能な内容が置き換わり、下書きにない参照ファイルは削除されます。",
+    "Keep editing": "編集を続ける",
+    "Load latest version": "最新バージョンを読み込む",
+    "Overwrite with my draft": "下書きで上書き"
   }
 }

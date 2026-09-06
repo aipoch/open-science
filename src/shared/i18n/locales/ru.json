@@ -4539,6 +4539,14 @@
     "One argument per line. Spaces and blank lines are preserved. Clear the field to remove all arguments.": "Один аргумент на строку. Пробелы и пустые строки сохраняются. Очистите поле, чтобы удалить все аргументы.",
     "The saved arguments contain embedded line breaks. Editing this field replaces the list using one argument per line.": "Сохранённые аргументы содержат внутренние переводы строк. При редактировании этого поля список заменяется: каждая строка становится отдельным аргументом.",
     "Use a safe filename without path separators or reserved characters.": "Используйте безопасное имя файла без разделителей пути и зарезервированных символов.",
-    "This Skill changed. Your draft is preserved. Reopen the editor to load the latest version before saving.": "Этот Навык изменён. Ваш черновик сохранён. Перед сохранением снова откройте редактор, чтобы загрузить последнюю версию."
+    "Review Skill changes": "Проверить изменения навыка",
+    "This Skill changed while you were editing. Your draft is preserved.": "Этот навык был изменён во время редактирования. Ваш черновик сохранён.",
+    "Your draft": "Ваш черновик",
+    "Latest version": "Последняя версия",
+    "No reference files": "Нет справочных файлов",
+    "Loading the latest version discards your draft. Overwriting replaces the editable content and removes reference files absent from your draft.": "Загрузка последней версии удалит ваш черновик. Перезапись заменит редактируемое содержимое и удалит справочные файлы, которых нет в вашем черновике.",
+    "Keep editing": "Продолжить редактирование",
+    "Load latest version": "Загрузить последнюю версию",
+    "Overwrite with my draft": "Перезаписать моим черновиком"
   }
 }

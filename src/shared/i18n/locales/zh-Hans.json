@@ -4099,6 +4099,14 @@
     "One argument per line. Spaces and blank lines are preserved. Clear the field to remove all arguments.": "每行一个参数。空格和空行会保留。清空输入框可移除所有参数。",
     "The saved arguments contain embedded line breaks. Editing this field replaces the list using one argument per line.": "已保存的参数内部含有换行。编辑此输入框将按每行一个参数替换整个列表。",
     "Use a safe filename without path separators or reserved characters.": "请使用不含路径分隔符或保留字符的安全文件名。",
-    "This Skill changed. Your draft is preserved. Reopen the editor to load the latest version before saving.": "此技能已更改，您的草稿已保留。请重新打开编辑器，加载最新版本后再保存。"
+    "Review Skill changes": "查看技能更改",
+    "This Skill changed while you were editing. Your draft is preserved.": "此技能在您编辑时发生了更改。您的草稿已保留。",
+    "Your draft": "您的草稿",
+    "Latest version": "最新版本",
+    "No reference files": "没有参考文件",
+    "Loading the latest version discards your draft. Overwriting replaces the editable content and removes reference files absent from your draft.": "加载最新版本将丢弃您的草稿。覆盖将替换可编辑内容，并删除草稿中没有的参考文件。",
+    "Keep editing": "继续编辑",
+    "Load latest version": "加载最新版本",
+    "Overwrite with my draft": "用我的草稿覆盖"
   }
 }

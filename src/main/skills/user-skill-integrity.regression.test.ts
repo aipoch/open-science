@@ -57,7 +57,7 @@ const githubFetch =
       const name = url.split('/').pop()!
       if (!(name in files)) throw new Error(`Unexpected GitHub file: ${url}`)
       content = files[name]
-    } else if (/^https:\/\/api.github.com\/repos\/[^/]+\/[^/]+$/.test(url))
+    } else if (/^https:\/\/api\.github\.com\/repos\/[^/]+\/[^/]+$/.test(url))
       payload = { default_branch: 'main' }
     else throw new Error(`Unexpected GitHub request: ${url}`)
     return {

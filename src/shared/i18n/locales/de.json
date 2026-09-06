@@ -4254,6 +4254,14 @@
     "One argument per line. Spaces and blank lines are preserved. Clear the field to remove all arguments.": "Ein Argument pro Zeile. Leerzeichen und Leerzeilen bleiben erhalten. Leeren Sie das Feld, um alle Argumente zu entfernen.",
     "The saved arguments contain embedded line breaks. Editing this field replaces the list using one argument per line.": "Die gespeicherten Argumente enthalten interne Zeilenumbrüche. Beim Bearbeiten dieses Felds wird die Liste mit einem Argument pro Zeile ersetzt.",
     "Use a safe filename without path separators or reserved characters.": "Verwenden Sie einen sicheren Dateinamen ohne Pfadtrennzeichen oder reservierte Zeichen.",
-    "This Skill changed. Your draft is preserved. Reopen the editor to load the latest version before saving.": "Diese Fähigkeit wurde geändert. Ihr Entwurf bleibt erhalten. Öffnen Sie den Editor erneut, um vor dem Speichern die neueste Version zu laden."
+    "Review Skill changes": "Änderungen an der Fähigkeit prüfen",
+    "This Skill changed while you were editing. Your draft is preserved.": "Diese Fähigkeit wurde während Ihrer Bearbeitung geändert. Ihr Entwurf bleibt erhalten.",
+    "Your draft": "Ihr Entwurf",
+    "Latest version": "Neueste Version",
+    "No reference files": "Keine Referenzdateien",
+    "Loading the latest version discards your draft. Overwriting replaces the editable content and removes reference files absent from your draft.": "Beim Laden der neuesten Version wird Ihr Entwurf verworfen. Beim Überschreiben werden die bearbeitbaren Inhalte ersetzt und Referenzdateien gelöscht, die in Ihrem Entwurf fehlen.",
+    "Keep editing": "Weiter bearbeiten",
+    "Load latest version": "Neueste Version laden",
+    "Overwrite with my draft": "Mit meinem Entwurf überschreiben"
   }
 }

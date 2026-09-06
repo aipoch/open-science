@@ -814,7 +814,7 @@ describe('SkillCatalogModule', () => {
       (
         await catalog.updateSkill({
           id: 'personal-my-skill',
-          expectedCompatibility: (await catalog.getSkillDetail('personal-my-skill')).compatibility!,
+          etag: (await catalog.getSkillDetail('personal-my-skill')).etag!,
           description: 'Edited.',
           body: '# Edited'
         })
@@ -1191,11 +1191,9 @@ describe('reported Skill integrity regressions through Settings APIs', () => {
       references: [{ path: 'old.csv', dataBase64: Buffer.from('old').toString('base64') }]
     })
     const old = await catalog.getSkillDetail('personal-draft')
-    const oldCompatibility = (await catalog.listUserSkills()).find(
-      (skill) => skill.id === old.id
-    )!.compatibility!
+    const oldEtag = old.etag!
     await catalog.updateSkill({
-      ...{ expectedCompatibility: oldCompatibility },
+      ...{ etag: oldEtag },
       id: old.id,
       description: 'Newer description',
       body: 'Newer body',
@@ -1206,7 +1204,7 @@ describe('reported Skill integrity regressions through Settings APIs', () => {
     })
     const result = await catalog
       .updateSkill({
-        ...{ expectedCompatibility: oldCompatibility },
+        ...{ etag: oldEtag },
         id: old.id,
         description: old.description,
         body: 'Old editor body edit',
@@ -1234,10 +1232,10 @@ describe('optimistic editor boundary', () => {
   it('accepts one of two saves with the same precondition, then accepts a freshly read edit', async () => {
     const catalog = await createCatalog()
     await catalog.createSkill({ name: 'concurrent', description: 'Initial', body: 'Initial' })
-    const expectedCompatibility = (await catalog.listUserSkills())[0].compatibility!
+    const etag = (await catalog.getSkillDetail('personal-concurrent')).etag!
     const request = {
       id: 'personal-concurrent',
-      expectedCompatibility,
+      etag,
       description: 'First',
       body: 'First'
     }
@@ -1249,14 +1247,14 @@ describe('optimistic editor boundary', () => {
     const current = await catalog.getSkillDetail(request.id)
     const next = {
       ...request,
-      expectedCompatibility: (await catalog.listUserSkills())[0].compatibility!,
+      etag: (await catalog.getSkillDetail(request.id)).etag!,
       body: 'Fresh edit'
     }
     await catalog.updateSkill(next)
     expect((await catalog.getSkillDetail(current.id)).body).toBe('Fresh edit')
   })
 
-  it('rejects a missing precondition without mutating the package', async () => {
+  it('preserves unconditional updates for clients that omit the etag', async () => {
     const catalog = await createCatalog()
     await catalog.createSkill({ name: 'missing-token', description: 'Original', body: 'Original' })
     await expect(
@@ -1265,8 +1263,8 @@ describe('optimistic editor boundary', () => {
         description: 'Changed',
         body: 'Changed'
       } as never)
-    ).rejects.toThrow(/reload|version/i)
-    expect((await catalog.getSkillDetail('personal-missing-token')).body).toBe('Original')
+    ).resolves.toBeDefined()
+    expect((await catalog.getSkillDetail('personal-missing-token')).body).toBe('Changed')
   })
 
   it('detects attachment-only changes even when SKILL.md is unchanged', async () => {
@@ -1277,7 +1275,7 @@ describe('optimistic editor boundary', () => {
       body: 'Original',
       references: [{ path: 'data.csv', dataBase64: Buffer.from('before').toString('base64') }]
     })
-    const expectedCompatibility = (await catalog.listUserSkills())[0].compatibility!
+    const etag = (await catalog.getSkillDetail('personal-attachment')).etag!
     const file = join(
       userSkillSourceDir(catalog, 'personal'),
       'attachment',
@@ -1287,7 +1285,7 @@ describe('optimistic editor boundary', () => {
     await writeFile(file, 'after')
     const request = {
       id: 'personal-attachment',
-      expectedCompatibility,
+      etag,
       description: 'Changed',
       body: 'Changed'
     }
@@ -1295,4 +1293,36 @@ describe('optimistic editor boundary', () => {
     expect(await readFile(file, 'utf8')).toBe('after')
     expect((await catalog.getSkillDetail(request.id)).body).toBe('Original')
   })
+})
+
+it.each(['', null, 17])('rejects an invalid supplied etag %s without writing', async (etag) => {
+  const catalog = await createCatalog()
+  await catalog.createSkill({ name: 'invalid-etag', description: 'Original', body: 'Original' })
+  await expect(
+    catalog.updateSkill({
+      id: 'personal-invalid-etag',
+      description: 'Changed',
+      body: 'Changed',
+      etag
+    } as never)
+  ).rejects.toThrow(/etag/i)
+  expect((await catalog.getSkillDetail('personal-invalid-etag')).body).toBe('Original')
+})
+
+it('returns an opaque etag with the detail and changes it after an unconditional save', async () => {
+  const catalog = await createCatalog()
+  await catalog.createSkill({ name: 'etag', description: 'Original', body: 'Original' })
+  const before = await catalog.getSkillDetail('personal-etag')
+  expect(before).toHaveProperty('etag', expect.stringMatching(/^".+"$/))
+  expect(before).not.toHaveProperty('compatibility')
+  await catalog.updateSkill({ id: before.id, description: 'New', body: 'New' } as never)
+  const after = await catalog.getSkillDetail(before.id)
+  expect(after.etag).not.toBe(before.etag)
+  await catalog.updateSkill({
+    id: before.id,
+    description: 'Fresh',
+    body: 'Fresh',
+    etag: after.etag
+  } as never)
+  expect((await catalog.getSkillDetail(before.id)).body).toBe('Fresh')
 })

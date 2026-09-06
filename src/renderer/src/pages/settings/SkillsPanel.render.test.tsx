@@ -899,7 +899,7 @@ describe('SkillsPanel (sub-views)', () => {
       settings: {
         getSkillDetail: vi.fn().mockResolvedValue({
           id: 'personal-mine',
-          compatibility: 'version',
+          etag: 'version',
           name: 'Mine',
           description: 'Custom',
           source: 'personal',
@@ -933,7 +933,7 @@ describe('SkillsPanel (sub-views)', () => {
 
     expect(useSettingsStore.getState().updateSkill).toHaveBeenCalledWith({
       id: 'personal-mine',
-      expectedCompatibility: 'version',
+      etag: 'version',
       description: 'Custom',
       body: '# Body',
       metadata: { author: 'Ada', license: 'MIT', category: 'research' },
@@ -946,7 +946,7 @@ describe('SkillsPanel (sub-views)', () => {
       settings: {
         getSkillDetail: vi.fn().mockResolvedValue({
           id: 'personal-mine',
-          compatibility: 'version',
+          etag: 'version',
           name: 'Mine',
           description: 'Custom',
           source: 'personal',
@@ -989,7 +989,7 @@ describe('SkillsPanel (sub-views)', () => {
 
     expect(useSettingsStore.getState().updateSkill).toHaveBeenCalledWith({
       id: 'personal-mine',
-      expectedCompatibility: 'version',
+      etag: 'version',
       description: 'Custom',
       body: '# New body',
       metadata: { author: 'Grace', tags: 'analysis, writing' },
@@ -1002,7 +1002,7 @@ describe('SkillsPanel (sub-views)', () => {
       settings: {
         getSkillDetail: vi.fn().mockResolvedValue({
           id: 'personal-mine',
-          compatibility: 'version',
+          etag: 'version',
           name: 'Mine',
           description: 'Custom',
           source: 'personal',
@@ -1032,7 +1032,7 @@ describe('SkillsPanel (sub-views)', () => {
 
     expect(useSettingsStore.getState().updateSkill).toHaveBeenCalledWith({
       id: 'personal-mine',
-      expectedCompatibility: 'version',
+      etag: 'version',
       description: 'Custom',
       body: '# New body',
       metadata: { author: 'Ada', license: 'MIT' },
@@ -1045,7 +1045,7 @@ describe('SkillsPanel (sub-views)', () => {
       settings: {
         getSkillDetail: vi.fn().mockResolvedValue({
           id: 'personal-mine',
-          compatibility: 'version',
+          etag: 'version',
           name: 'Mine',
           description: 'Custom',
           source: 'personal',
@@ -1082,7 +1082,7 @@ describe('SkillsPanel (sub-views)', () => {
 
     expect(useSettingsStore.getState().updateSkill).toHaveBeenCalledWith({
       id: 'personal-mine',
-      expectedCompatibility: 'version',
+      etag: 'version',
       description: 'Custom',
       body: '# Plain replacement',
       metadata: { author: 'Old author', license: 'MIT' },
@@ -1095,7 +1095,7 @@ describe('SkillsPanel (sub-views)', () => {
       settings: {
         getSkillDetail: vi.fn().mockResolvedValue({
           id: 'personal-mine',
-          compatibility: 'version',
+          etag: 'version',
           name: 'Mine',
           description: 'Custom',
           source: 'personal',
@@ -1385,7 +1385,7 @@ describe('SkillsPanel (sub-views)', () => {
       settings: {
         getSkillDetail: vi.fn().mockResolvedValue({
           id: 'personal-mine',
-          compatibility: 'version',
+          etag: 'version',
           name: 'Mine',
           description: 'Custom',
           source: 'personal',
@@ -1428,6 +1428,7 @@ describe('SkillsPanel (sub-views)', () => {
       settings: {
         getSkillDetail: vi.fn().mockResolvedValue({
           id: 'personal-budgeted',
+          etag: 'version',
           name: 'budgeted',
           description: 'Custom',
           source: 'personal',

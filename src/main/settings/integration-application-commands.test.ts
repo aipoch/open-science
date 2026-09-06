@@ -291,7 +291,7 @@ describe('Settings integration application commands', () => {
         {
           id: 'personal-skill',
           name: 'Skill',
-          expectedCompatibility: 'version',
+          etag: 'version',
           description: 'Updated',
           body: 'Body'
         }
@@ -330,7 +330,7 @@ describe('Settings integration application commands', () => {
     })
     expect(skillMethod('updateSkill')).toHaveBeenCalledWith({
       id: 'personal-skill',
-      expectedCompatibility: 'version',
+      etag: 'version',
       name: 'Skill',
       description: 'Updated',
       body: 'Body'
