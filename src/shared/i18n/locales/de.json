@@ -4263,6 +4263,12 @@
     "OAuth · Sign-in required": "OAuth · Anmeldung erforderlich",
     "Temporarily unavailable": "Vorübergehend nicht verfügbar",
     "Replacement required": "Ersatz erforderlich",
+    "Replacement client secret": "Neues Client-Geheimnis",
+    "Replace the client secret before signing in. Your Connector bindings will be kept.": "Ersetzen Sie vor der Anmeldung das Client-Geheimnis. Die Zuordnungen Ihrer Konnektoren bleiben erhalten.",
+    "The saved sign-in state could not be read. Sign in again to restore it.": "Der gespeicherte Anmeldestatus konnte nicht gelesen werden. Melden Sie sich erneut an, um ihn wiederherzustellen.",
+    "Credential saved. The list could not refresh.": "Zugangsdaten gespeichert. Die Liste konnte nicht aktualisiert werden.",
+    "Could not load credentials.": "Zugangsdaten konnten nicht geladen werden.",
+    "The credential list is unavailable. Try loading it again.": "Die Liste der Zugangsdaten ist nicht verfügbar. Versuchen Sie, sie erneut zu laden.",
     "{{count}} Connectors_one": "{{count}} Konnektor",
     "{{count}} Connectors_other": "{{count}} Konnektoren",
     "Remove this credential from its Connectors first.": "Entfernen Sie diese Anmeldeinformation zuerst aus den zugehörigen Konnektoren.",
@@ -4694,11 +4700,11 @@
     "No app icons are available.": "Es sind keine App-Symbole verfügbar.",
     "Current icon: {{icon}}. Its preview is unavailable.": "Aktuelles Symbol: {{icon}}. Die Vorschau ist nicht verfügbar.",
     "This provider isn't compatible with {{framework}}. Pick a provider whose API format {{framework}} supports, or change the agent framework.": "Dieser Anbieter ist nicht mit {{framework}} kompatibel. Wählen Sie einen Anbieter mit einem von {{framework}} unterstützten API-Format oder wechseln Sie das Agenten-Framework.",
-    "Replacement client secret": "Neues Client-Geheimnis",
-    "Replace the client secret before signing in. Your Connector bindings will be kept.": "Ersetzen Sie vor der Anmeldung das Client-Geheimnis. Die Zuordnungen Ihrer Konnektoren bleiben erhalten.",
-    "The saved sign-in state could not be read. Sign in again to restore it.": "Der gespeicherte Anmeldestatus konnte nicht gelesen werden. Melden Sie sich erneut an, um ihn wiederherzustellen.",
-    "Credential saved. The list could not refresh.": "Zugangsdaten gespeichert. Die Liste konnte nicht aktualisiert werden.",
-    "Could not load credentials.": "Zugangsdaten konnten nicht geladen werden.",
-    "The credential list is unavailable. Try loading it again.": "Die Liste der Zugangsdaten ist nicht verfügbar. Versuchen Sie, sie erneut zu laden."
+    "External status unconfirmed": "Externer Status unbestätigt",
+    "Remote access is off on this computer, but turning it off did not finish. The Off setting may not have been saved, and access may turn on again after restarting.": "Der Fernzugriff auf diesem Computer ist ausgeschaltet, aber das Ausschalten wurde nicht abgeschlossen. Die Einstellung wurde möglicherweise nicht gespeichert und der Zugriff kann nach einem Neustart wieder aktiviert werden.",
+    "Retry turning off": "Ausschalten erneut versuchen",
+    "Local remote access remains enabled, but the latest external status check failed.": "Der lokale Fernzugriff bleibt aktiviert, aber die letzte Prüfung des externen Status ist fehlgeschlagen.",
+    "The latest external status check failed.": "Die letzte Prüfung des externen Status ist fehlgeschlagen.",
+    "Saved browser link": "Gespeicherter Browser-Link"
   }
 }
