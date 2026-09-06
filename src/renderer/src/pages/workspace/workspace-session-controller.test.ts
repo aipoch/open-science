@@ -200,6 +200,7 @@ const renderController = (overrides: Partial<Options> = {}): ControllerHook => {
 
 const mounted: Array<ReturnType<typeof renderController>> = []
 const originalApi = window.api
+const originalSessionArchive = useSessionStore.getState().updateSessionArchive
 
 beforeEach(() => {
   window.api = {} as Window['api']
@@ -729,6 +730,58 @@ describe('workspace session controller', () => {
 
     expect(hook.result.current.lifecycle.canStartSend()).toBe(false)
     expect(hook.result.current.lifecycle.canStartSend(inactive.id)).toBe(false)
+  })
+
+  it('keeps a stale archive rejected until a new user action uses refreshed authority', async () => {
+    const active = session({ revision: 3 })
+    const refreshed = { ...active, revision: 4 }
+    const archived = { ...refreshed, revision: 5, archivedAt: 2 }
+    const updateArchive = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('Session revision conflict: expected 3, actual 4.'))
+      .mockResolvedValueOnce(archived)
+    window.api = {
+      sessions: { updateArchive, loadOne: vi.fn().mockResolvedValue(refreshed) }
+    } as unknown as Window['api']
+    const enqueueSession = vi.fn()
+    const clearSelection = vi.fn()
+    useArchiveUndoStore.setState({ enqueueSession })
+    useSessionStore.setState({
+      sessions: [active],
+      selectedSessionId: active.id,
+      updateSessionArchive: originalSessionArchive,
+      clearSelection
+    })
+    const hook = renderController({ activeSession: active })
+    mounted.push(hook)
+    await act(async () => hook.result.current.actions.archive(active))
+    expect(updateArchive).toHaveBeenCalledOnce()
+    expect(updateArchive).toHaveBeenLastCalledWith({
+      projectId: active.projectId,
+      sessionId: active.id,
+      archived: true,
+      expectedRevision: 3
+    })
+    expect(hook.result.current.view.exportError).toContain('Session revision conflict:')
+    expect(enqueueSession).not.toHaveBeenCalled()
+    expect(clearSelection).not.toHaveBeenCalled()
+    const current = useSessionStore.getState().sessions[0]
+    expect(current.revision).toBe(4)
+    expect(current.archivedAt).toBeUndefined()
+    hook.rerender(current)
+    await act(async () => hook.result.current.actions.archive(current))
+    expect(updateArchive).toHaveBeenCalledTimes(2)
+    expect(updateArchive).toHaveBeenLastCalledWith({
+      projectId: active.projectId,
+      sessionId: active.id,
+      archived: true,
+      expectedRevision: 4
+    })
+    expect(enqueueSession).toHaveBeenCalledWith(
+      expect.objectContaining({ revision: 5, archivedAt: 2 })
+    )
+    expect(clearSelection).toHaveBeenCalledOnce()
+    expect(hook.result.current.view.exportError).toBeNull()
   })
 
   it('archives durably before enqueueing undo and clearing the active selection', async () => {

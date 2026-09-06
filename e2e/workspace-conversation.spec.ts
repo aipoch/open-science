@@ -713,6 +713,17 @@ test('archives a completed session from its mobile sidebar actions', async ({ ap
   await expect(archive).toBeEnabled()
   await archive.click()
 
+  const undo = page.getByTestId('archive-undo-snackbar')
+  const conflict = page.getByText(/Session revision conflict:/)
+  await expect(undo.or(conflict)).toBeVisible()
+  if (await conflict.isVisible()) {
+    // Terminal persistence can advance the whole-Session revision after the click. The stale
+    // command must remain rejected; only a new user action may use the refreshed authority.
+    await expect(undo).toBeHidden()
+    await page.getByRole('button', { name: 'Open navigation' }).click()
+    await page.getByRole('button', { name: `Open actions for ${USER_MESSAGE}` }).click()
+    await page.getByRole('menuitem', { name: 'Archive' }).click()
+  }
   await expect(page.getByTestId('archive-undo-snackbar')).toContainText('Archived session')
   await expect(page.getByRole('button', { name: `Open actions for ${USER_MESSAGE}` })).toBeHidden()
 })
