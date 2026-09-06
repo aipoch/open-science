@@ -561,7 +561,7 @@ describe('PR Gate workflow', () => {
   })
 
   it('budgets the combined macOS builds and all four E2E groups', () => {
-    expect(workflow.jobs.macos_e2e['timeout-minutes']).toBe(30)
+    expect(workflow.jobs.macos_e2e['timeout-minutes']).toBe(20)
   })
 
   it('shards every selected Windows journey without cancelling siblings or colliding artifacts', () => {
