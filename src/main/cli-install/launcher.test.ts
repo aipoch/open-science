@@ -7,6 +7,7 @@ import {
   open,
   readFile,
   readdir,
+  rename,
   rm,
   stat,
   symlink,
@@ -172,6 +173,61 @@ describe('planCliLauncher', () => {
 })
 
 pdescribe('installCliLauncher / status / uninstall (POSIX)', () => {
+  it.each(['first write', 'partial write', 'chmod'] as const)(
+    'C02 recovers a failed initial %s so installation can be retried',
+    async (failure) => {
+      const env = posixEnv()
+      const plan = planCliLauncher(env)
+      const probe = await open(join(home, 'file-handle-probe'), 'w')
+      const prototype = Object.getPrototypeOf(probe) as FileHandle
+      await probe.close()
+      const error = Object.assign(new Error('injected install failure'), { code: 'ENOSPC' })
+      if (failure === 'chmod') {
+        vi.spyOn(prototype, 'chmod').mockRejectedValueOnce(error)
+      } else {
+        const originalWrite = prototype.write
+        const write = vi.spyOn(prototype, 'write')
+        if (failure === 'partial write') {
+          write.mockImplementationOnce(async function (this: FileHandle) {
+            const prefix = Buffer.from(plan.shim).subarray(0, 8)
+            return originalWrite.call(this, prefix, 0, prefix.length, 0)
+          })
+        }
+        write.mockRejectedValueOnce(error)
+      }
+
+      await expect(installCliLauncher(env)).rejects.toBe(error)
+      if (failure !== 'chmod') {
+        expect.soft((await getCliLauncherStatus(env)).installed).toBe(false)
+        await expect.soft(lstat(plan.target)).rejects.toMatchObject({ code: 'ENOENT' })
+      }
+      vi.restoreAllMocks()
+
+      await expect(installCliLauncher(env)).resolves.toMatchObject({ installed: true })
+      await expect(readFile(plan.target, 'utf8')).resolves.toBe(plan.shim)
+    }
+  )
+
+  it('C02 preserves a concurrent user replacement when initial writing fails', async () => {
+    const env = posixEnv()
+    const plan = planCliLauncher(env)
+    const probe = await open(join(home, 'file-handle-probe'), 'w')
+    const prototype = Object.getPrototypeOf(probe) as FileHandle
+    await probe.close()
+    const error = Object.assign(new Error('disk full'), { code: 'ENOSPC' })
+    const userContent = '#!/bin/sh\necho user-owned\n'
+    vi.spyOn(prototype, 'write').mockImplementationOnce(async () => {
+      const replacement = join(home, 'user-replacement')
+      await writeFile(replacement, userContent)
+      await rename(replacement, plan.target)
+      throw error
+    })
+
+    await expect(installCliLauncher(env)).rejects.toBe(error)
+    await expect(readFile(plan.target, 'utf8')).resolves.toBe(userContent)
+    await expect(installCliLauncher(env)).rejects.toThrow(/not managed by Open Science/)
+  })
+
   it('writes an executable shim and reports a PATH hint when not on PATH', async () => {
     const status = await installCliLauncher(posixEnv())
     expect(status.installed).toBe(true)
@@ -263,6 +319,71 @@ pdescribe('installCliLauncher / status / uninstall (POSIX)', () => {
     expect(events.slice(flushedAt + 1)).toContainEqual({ operation: 'stat', fd: validatedFd })
     await expect(readFile(originalPlan.target, 'utf8')).resolves.toBe(planCliLauncher(nextEnv).shim)
   })
+})
+
+describe.skipIf(process.platform !== 'win32')('C04 native cmd caller environment', () => {
+  it.each([
+    [true, undefined, 0],
+    [true, undefined, 7],
+    [true, 'caller-original', 0],
+    [true, 'caller-original', 7],
+    [false, undefined, 0],
+    [false, undefined, 7],
+    [false, 'caller-original', 0],
+    [false, 'caller-original', 7]
+  ] as const)(
+    'restores variables for packaged=%s, original=%s, exit=%s',
+    async (packaged, original, exitCode) => {
+      const entry = join(home, 'cli-fixture.cjs')
+      const probe = join(home, 'environment-probe.cjs')
+      const snapshot =
+        'console.log(JSON.stringify({ electron: process.env.ELECTRON_RUN_AS_NODE ?? null, app: process.env.OPEN_SCIENCE_APP_PATH ?? null }))'
+      await writeFile(entry, `${snapshot}; process.exit(Number(process.argv[2]));`)
+      await writeFile(probe, snapshot)
+      const plan = planCliLauncher(
+        winEnv({ appExecPath: process.execPath, cliEntryPath: entry, packaged })
+      )
+      await mkdir(plan.binDir, { recursive: true })
+      await writeFile(plan.target, plan.shim)
+      const caller = join(home, 'caller.cmd')
+      await writeFile(
+        caller,
+        [
+          '@echo off',
+          `call "${plan.target}" ${exitCode}`,
+          'set "CLI_TEST_EXIT=%errorlevel%"',
+          `"${process.execPath}" "${probe}"`,
+          'exit /b %CLI_TEST_EXIT%',
+          ''
+        ].join('\r\n')
+      )
+      const env = { ...process.env }
+      delete env.ELECTRON_RUN_AS_NODE
+      delete env.OPEN_SCIENCE_APP_PATH
+      if (original !== undefined) {
+        env.ELECTRON_RUN_AS_NODE = original
+        env.OPEN_SCIENCE_APP_PATH = original
+      }
+      const result = spawnSync('cmd.exe', ['/d', '/c', 'caller.cmd'], {
+        cwd: home,
+        env,
+        encoding: 'utf8',
+        timeout: 10_000
+      })
+      expect(result.error).toBeUndefined()
+      expect(result.stderr).toBe('')
+      expect(result.status).toBe(exitCode)
+      const [child, parent] = result.stdout
+        .trim()
+        .split(/\r?\n/)
+        .map((line) => JSON.parse(line))
+      expect(child).toEqual({
+        electron: '1',
+        app: packaged ? process.execPath : (original ?? null)
+      })
+      expect(parent).toEqual({ electron: original ?? null, app: original ?? null })
+    }
+  )
 })
 
 describe.each([
