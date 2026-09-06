@@ -4401,10 +4401,8 @@
     "File content omitted": "Contenu du fichier omis",
     "Switch notebook runtime": "Changer l’environnement Notebook",
     "Clears memory in the selected language kernel. Other kernels are unaffected.": "Efface la mémoire du noyau du langage sélectionné. Les autres noyaux ne sont pas affectés.",
-    "Remove argument {{index}}": "Supprimer l’argument {{index}}",
-    "Each field is one argument. Spaces and empty values are preserved.": "Chaque champ correspond à un argument. Les espaces et les valeurs vides sont conservés.",
-    "Argument {{index}}": "Argument {{index}}",
     "Credential changes were saved, but Connectors could not refresh. Retry from Settings > Connectors.": "Les modifications des identifiants ont été enregistrées, mais les Connecteurs n’ont pas pu être actualisés. Réessayez depuis Paramètres > Connecteurs.",
-    "Add argument": "Ajouter un argument"
+    "One argument per line. Spaces and blank lines are preserved. Clear the field to remove all arguments.": "Un argument par ligne. Les espaces et les lignes vides sont conservés. Videz le champ pour supprimer tous les arguments.",
+    "The saved arguments contain embedded line breaks. Editing this field replaces the list using one argument per line.": "Les arguments enregistrés contiennent des sauts de ligne internes. Modifier ce champ remplace la liste avec un argument par ligne."
   }
 }

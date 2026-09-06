@@ -4531,10 +4531,8 @@
     "File content omitted": "Содержимое файла опущено",
     "Switch notebook runtime": "Переключить среду выполнения Notebook",
     "Clears memory in the selected language kernel. Other kernels are unaffected.": "Очищает память ядра выбранного языка. Другие ядра не затрагиваются.",
-    "Remove argument {{index}}": "Удалить аргумент {{index}}",
-    "Each field is one argument. Spaces and empty values are preserved.": "Каждое поле соответствует одному аргументу. Пробелы и пустые значения сохраняются.",
-    "Argument {{index}}": "Аргумент {{index}}",
     "Credential changes were saved, but Connectors could not refresh. Retry from Settings > Connectors.": "Изменения учётных данных сохранены, но обновить Коннекторы не удалось. Повторите попытку в разделе Настройки > Коннекторы.",
-    "Add argument": "Добавить аргумент"
+    "One argument per line. Spaces and blank lines are preserved. Clear the field to remove all arguments.": "Один аргумент на строку. Пробелы и пустые строки сохраняются. Очистите поле, чтобы удалить все аргументы.",
+    "The saved arguments contain embedded line breaks. Editing this field replaces the list using one argument per line.": "Сохранённые аргументы содержат внутренние переводы строк. При редактировании этого поля список заменяется: каждая строка становится отдельным аргументом."
   }
 }

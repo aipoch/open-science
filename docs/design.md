@@ -947,7 +947,7 @@ colors communicate a successful or failed probe/migration result.
 
 #### Connectors panel
 
-- Local MCP arguments use one field per argv element, with explicit add/remove actions. Preserve spaces, line breaks, and empty strings literally during creation, template import, and subsequent editing; the command preview quotes each element to show its boundary.
+- Local MCP arguments use one multiline text field. Editing replaces the argument list with one element per line, preserving spaces and blank lines; an empty field clears the list. Until the field is edited, preserve the original array, including empty values and embedded line breaks. Explain the replacement semantics when saved arguments contain embedded line breaks. Omitted arguments retain the stored array while the transport stays on stdio, including redacted historical values; credential availability restrictions remain in force. Template import/export preserves literal arrays, and the command preview quotes each element to show its boundary.
 - Tool permission controls in a bundled Connector detail remain disabled until the current tool permission save settles. Failed saves restore interactivity and retain the existing inline error feedback.
 - A saved shared-credential change whose runtime refresh fails reports the completed save explicitly. Connector retries finish the affected in-memory security generation only after client reset and current-configuration validation; this adds no durable recovery state.
 

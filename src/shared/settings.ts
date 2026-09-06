@@ -1684,6 +1684,7 @@ export type UpdateCustomServerRequest = {
   description?: string
   transport: CustomServerTransport
   command?: string
+  // Omitted keeps saved args while staying on stdio; [] explicitly clears them.
   args?: string[]
   env?: Record<string, string>
   envCredentialIds?: Record<string, string>

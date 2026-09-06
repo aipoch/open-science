@@ -1,4 +1,4 @@
-import { ChevronDown, Copy, X } from 'lucide-react'
+import { ChevronDown, Copy } from 'lucide-react'
 import { RadioGroup } from 'radix-ui'
 import { useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -227,7 +227,13 @@ export function ConnectorAddForm({
     initialCommand && !initialCommandIsPreset ? initialCommand : ''
   )
   const command = commandChoice === 'other' ? customCommand : commandChoice
-  const [args, setArgs] = useState<string[]>(editServer?.args ?? initialTemplate?.args ?? [])
+  const [initialArgs] = useState(editServer?.args ?? initialTemplate?.args)
+  const [argsDraft, setArgsDraft] = useState({ text: initialArgs?.join('\n') ?? '', edited: false })
+  const args = argsDraft.edited
+    ? argsDraft.text === ''
+      ? []
+      : argsDraft.text.split(/\r?\n/)
+    : initialArgs
   const [envText, setEnvText] = useState(
     (initialTemplate?.requiredSecrets?.environment ?? []).map((key) => `${key}=`).join('\n')
   )
@@ -371,7 +377,9 @@ export function ConnectorAddForm({
     }
   })
   const selectedOAuthCredential = oauthCredentials.find(({ id }) => id === oauthCredentialId)
-  const commandPreview = [command.trim(), ...args.map((arg) => JSON.stringify(arg))].join(' ')
+  const commandPreview = [command.trim(), ...(args ?? []).map((arg) => JSON.stringify(arg))].join(
+    ' '
+  )
   const requiredEnvironment = initialTemplate?.requiredSecrets?.environment ?? []
   const requiredHeaders = initialTemplate?.requiredSecrets?.headers ?? []
   const authorizationServerError =
@@ -537,7 +545,7 @@ export function ConnectorAddForm({
         ...(mode === 'local'
           ? {
               command: command.trim(),
-              args
+              ...(args !== undefined ? { args } : {})
             }
           : {
               url: url.trim()
@@ -906,54 +914,32 @@ export function ConnectorAddForm({
               {mode === 'local' ? (
                 <>
                   <div data-slot="settings-editor-field" className={fieldClassName}>
-                    <div role="group" aria-label={t('Arguments')} className="grid gap-2">
-                      <p className={fieldLabelClassName}>
-                        {t('Arguments')}{' '}
-                        <span className="font-normal text-muted-foreground">{t('(optional)')}</span>
-                      </p>
-                      {args.map((arg, index) => (
-                        <div key={index} className="flex items-start gap-2">
-                          <Textarea
-                            aria-label={t('Argument {{index}}', { index: index + 1 })}
-                            value={arg}
-                            rows={1}
-                            className="min-h-9 resize-y font-mono text-[13px]"
-                            onChange={(event) =>
-                              setArgs((current) =>
-                                current.map((value, position) =>
-                                  position === index ? event.target.value : value
-                                )
-                              )
-                            }
-                          />
-                          <Button
-                            type="button"
-                            variant="ghost"
-                            size="icon"
-                            aria-label={t('Remove argument {{index}}', { index: index + 1 })}
-                            onClick={() =>
-                              setArgs((current) =>
-                                current.filter((_, position) => position !== index)
-                              )
-                            }
-                          >
-                            <X className="size-4" aria-hidden />
-                          </Button>
-                        </div>
-                      ))}
-                      <Button
-                        type="button"
-                        variant="outline"
-                        size="sm"
-                        className="justify-self-start"
-                        onClick={() => setArgs((current) => [...current, ''])}
-                      >
-                        {t('Add argument')}
-                      </Button>
-                      <p className={helperClassName}>
-                        {t('Each field is one argument. Spaces and empty values are preserved.')}
-                      </p>
-                    </div>
+                    <label className={fieldLabelClassName} htmlFor="connector-args">
+                      {t('Arguments')}{' '}
+                      <span className="font-normal text-muted-foreground">{t('(optional)')}</span>
+                    </label>
+                    <Textarea
+                      id="connector-args"
+                      aria-label={t('Arguments')}
+                      aria-describedby="connector-args-help"
+                      value={argsDraft.text}
+                      rows={4}
+                      className="resize-y font-mono text-[13px]"
+                      onChange={(event) => setArgsDraft({ text: event.target.value, edited: true })}
+                    />
+                    <p id="connector-args-help" className={helperClassName}>
+                      {t(
+                        'One argument per line. Spaces and blank lines are preserved. Clear the field to remove all arguments.'
+                      )}
+                      {initialArgs?.some((arg) => /[\r\n]/.test(arg)) && (
+                        <>
+                          {' '}
+                          {t(
+                            'The saved arguments contain embedded line breaks. Editing this field replaces the list using one argument per line.'
+                          )}
+                        </>
+                      )}
+                    </p>
                   </div>
 
                   <div data-slot="settings-editor-field" className={fieldClassName}>

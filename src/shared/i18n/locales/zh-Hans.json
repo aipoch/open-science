@@ -4091,10 +4091,8 @@
     "File content omitted": "文件内容已省略",
     "Switch notebook runtime": "切换 Notebook 运行环境",
     "Clears memory in the selected language kernel. Other kernels are unaffected.": "清空所选语言内核的内存，不影响其他内核。",
-    "Remove argument {{index}}": "移除参数 {{index}}",
-    "Each field is one argument. Spaces and empty values are preserved.": "每个输入框对应一个参数。空格和空值会原样保留。",
-    "Argument {{index}}": "参数 {{index}}",
-    "Add argument": "添加参数",
-    "Credential changes were saved, but Connectors could not refresh. Retry from Settings > Connectors.": "凭据变更已保存，但连接器刷新失败。请前往设置 > 连接器重试。"
+    "Credential changes were saved, but Connectors could not refresh. Retry from Settings > Connectors.": "凭据变更已保存，但连接器刷新失败。请前往设置 > 连接器重试。",
+    "One argument per line. Spaces and blank lines are preserved. Clear the field to remove all arguments.": "每行一个参数。空格和空行会保留。清空输入框可移除所有参数。",
+    "The saved arguments contain embedded line breaks. Editing this field replaces the list using one argument per line.": "已保存的参数内部含有换行。编辑此输入框将按每行一个参数替换整个列表。"
   }
 }

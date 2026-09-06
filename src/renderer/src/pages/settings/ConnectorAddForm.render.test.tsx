@@ -266,20 +266,14 @@ describe('ConnectorAddForm (local command)', () => {
     expect(onDone).toHaveBeenCalled()
   })
 
-  it('submits each argument field without whitespace splitting', async () => {
+  it('submits multiline arguments without splitting spaces', async () => {
     act(() => {
       root.render(<ConnectorAddForm initialTransport="local" onDone={vi.fn()} onCancel={vi.fn()} />)
     })
 
     setValue('Display name', 'Header Server')
     openAdvancedSettings()
-    const addArgument = Array.from(
-      document.body.querySelectorAll<HTMLButtonElement>('button')
-    ).find((button) => button.textContent?.trim() === 'Add argument')!
-    act(() => addArgument.click())
-    setValue('Argument 1', '--header')
-    act(() => addArgument.click())
-    setValue('Argument 2', 'Authorization: Bearer plaintext-secret')
+    setValue('Arguments', '--header\nAuthorization: Bearer plaintext-secret')
     checkTrust()
 
     await act(async () => addButton()?.click())
@@ -1135,10 +1129,10 @@ describe('ConnectorAddForm (edit)', () => {
     expect(updateCustomServer).toHaveBeenCalledWith(expect.objectContaining({ args }))
   })
 
-  it('C04 edits individual arguments literally and can remove the entire saved argv', async () => {
+  it('C04 edits arguments in one multiline field and can clear the saved argv', async () => {
     const updateCustomServer = vi.fn().mockResolvedValue(undefined)
     useSettingsStore.setState({ updateCustomServer })
-    await act(async () => {
+    await act(async () =>
       root.render(
         <ConnectorAddForm
           editServer={{ ...editServer, args: ['original', ''] }}
@@ -1146,27 +1140,67 @@ describe('ConnectorAddForm (edit)', () => {
           onCancel={vi.fn()}
         />
       )
-    })
-    setValue('Argument 1', '  /path/My Project/server.js  ')
+    )
+    const field = document.body.querySelector<HTMLTextAreaElement>(
+      'textarea[aria-label="Arguments"]'
+    )
+    expect(field).not.toBeNull()
+    expect(field!.value).toBe('original\n')
+    expect(document.body.textContent).not.toContain('Add argument')
+    setValue('Arguments', '  /path/My Project/server.js  \n\n--label\nhello world\n')
     const save = Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).find(
       (button) => button.textContent?.trim() === 'Save changes'
     )!
-    await act(async () => {
-      save.click()
-    })
+    await act(async () => save.click())
     expect(updateCustomServer).toHaveBeenLastCalledWith(
-      expect.objectContaining({ args: ['  /path/My Project/server.js  ', ''] })
+      expect.objectContaining({
+        args: ['  /path/My Project/server.js  ', '', '--label', 'hello world', '']
+      })
     )
-    await act(async () => {
-      document.body.querySelector<HTMLButtonElement>('[aria-label="Remove argument 2"]')!.click()
-    })
-    await act(async () => {
-      document.body.querySelector<HTMLButtonElement>('[aria-label="Remove argument 1"]')!.click()
-    })
-    await act(async () => {
-      save.click()
-    })
+    setValue('Arguments', '')
+    await act(async () => save.click())
     expect(updateCustomServer).toHaveBeenLastCalledWith(expect.objectContaining({ args: [] }))
+  })
+
+  it('preserves original arguments with embedded line breaks unless the text is edited', async () => {
+    const args = ['first\nsecond', '', ' repeated ']
+    const updateCustomServer = vi.fn().mockResolvedValue(undefined)
+    useSettingsStore.setState({ updateCustomServer })
+    await act(async () =>
+      root.render(
+        <ConnectorAddForm
+          editServer={{ ...editServer, args }}
+          onDone={vi.fn()}
+          onCancel={vi.fn()}
+        />
+      )
+    )
+    setValue('Display name', 'Renamed')
+    const save = Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).find(
+      (button) => button.textContent?.trim() === 'Save changes'
+    )!
+    await act(async () => save.click())
+    expect(updateCustomServer).toHaveBeenCalledWith(expect.objectContaining({ args }))
+  })
+
+  it('omits unavailable argv when it has not been edited', async () => {
+    const updateCustomServer = vi.fn().mockResolvedValue(undefined)
+    useSettingsStore.setState({ updateCustomServer })
+    await act(async () =>
+      root.render(
+        <ConnectorAddForm
+          editServer={{ ...editServer, args: undefined }}
+          onDone={vi.fn()}
+          onCancel={vi.fn()}
+        />
+      )
+    )
+    setValue('Display name', 'Renamed')
+    const save = Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).find(
+      (button) => button.textContent?.trim() === 'Save changes'
+    )!
+    await act(async () => save.click())
+    expect(updateCustomServer.mock.calls[0][0].args).toBeUndefined()
   })
 
   it('pre-fills fields, locks the name, and updates on save', async () => {

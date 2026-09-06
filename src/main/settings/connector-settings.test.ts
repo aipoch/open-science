@@ -2451,6 +2451,37 @@ describe('ConnectorSettingsModule', () => {
     expect(storedJson).toContain('legacy-plaintext-secret')
   })
 
+  it('preserves unedited redacted historical argv without enabling its credentials', async () => {
+    const args = ['--token=historical-secret']
+    await repository.addCustomServer({
+      id: 'redacted-argv',
+      name: 'redacted-argv',
+      displayName: 'Redacted',
+      transport: 'stdio',
+      command: 'node',
+      args,
+      enabled: true
+    })
+    const view = (await service.listConnectors()).customServers[0]
+    expect(view.args).toBeUndefined()
+    await service.updateCustomServer({
+      id: view.id,
+      displayName: 'Renamed',
+      transport: 'stdio',
+      command: view.command
+    })
+    const fresh = new ConnectorSettingsModule(new SettingsRepository(dir))
+    expect((await fresh.getConnectors())?.customMcpServers?.[0].args).toEqual(args)
+    expect((await fresh.listConnectors()).customServers[0]).toMatchObject({
+      displayName: 'Renamed',
+      args: undefined,
+      availability: 'credential_unavailable'
+    })
+    await service.updateCustomServer({ id: view.id, transport: 'stdio', command: 'node', args: [] })
+    const cleared = new ConnectorSettingsModule(new SettingsRepository(dir))
+    expect((await cleared.getConnectors())?.customMcpServers?.[0].args ?? []).toEqual([])
+  })
+
   it('redacts credential-bearing OAuth URLs from historical custom-server views', async () => {
     await repository.addCustomServer({
       id: 'legacy-oauth-url-secret',
@@ -2626,6 +2657,22 @@ describe('ConnectorSettingsModule', () => {
     const server = (await fresh.getConnectors())?.customMcpServers?.find((item) => item.id === id)
     expect(server).toBeDefined()
     expect(server?.args ?? []).toEqual([])
+  })
+
+  it('does not retain omitted stdio arguments when switching to a remote transport', async () => {
+    const added = await addCustomServer({
+      name: 'switch-args',
+      transport: 'stdio',
+      command: 'node',
+      args: ['server.js']
+    })
+    await service.updateCustomServer({
+      id: added.customServers[0].id,
+      transport: 'streamable_http',
+      url: 'https://mcp.example.test'
+    })
+    const fresh = new ConnectorSettingsModule(new SettingsRepository(dir))
+    expect((await fresh.getConnectors())?.customMcpServers?.[0].args).toBeUndefined()
   })
 
   it('invalidates remembered authority before persisting a security-sensitive server edit', async () => {
