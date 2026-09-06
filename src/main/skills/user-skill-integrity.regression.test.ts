@@ -70,7 +70,7 @@ const githubFetch =
 
 describe('reported Skill integrity regressions through UserSkillRepository', () => {
   it.each(['数据.csv', 'my data.csv'])(
-    'SK01 saves a new reference named %s without losing it',
+    'saves a new reference named %s without losing it',
     async (name) => {
       const { root, repo } = await fixture()
       expect(await repo.createPersonal({ ...baseInput, references: [reference(name)] })).toBe(
@@ -83,7 +83,7 @@ describe('reported Skill integrity regressions through UserSkillRepository', () 
   )
 
   it.each(['数据.csv', 'my data.csv'])(
-    'SK01 preserves an existing name-only reference %s on body save',
+    'preserves an existing name-only reference %s on body save',
     async (name) => {
       const { root, repo } = await fixture()
       const id = await repo.createPersonal(baseInput)
@@ -104,7 +104,7 @@ describe('reported Skill integrity regressions through UserSkillRepository', () 
     }
   )
 
-  it('SK01 control: explicitly removing a reference still removes only that file', async () => {
+  it('explicitly removing a reference still removes only that file', async () => {
     const { root, repo } = await fixture()
     const id = await repo.createPersonal({
       ...baseInput,
@@ -115,7 +115,7 @@ describe('reported Skill integrity regressions through UserSkillRepository', () 
   })
 
   it.each(['agent-home', 'zip', 'github'] as const)(
-    'SK02 repairs a missing installed file when reimporting %s',
+    'repairs a missing installed file when reimporting %s',
     async (source) => {
       const { root, repo } = await fixture()
       const home = join(root, 'external', 'demo')
@@ -152,7 +152,7 @@ describe('reported Skill integrity regressions through UserSkillRepository', () 
   )
 
   it.each(['foreign-id', 'personal-victim'])(
-    'SK03 ordinary wrapped ZIP cannot adopt external installation ID %s',
+    'ordinary wrapped ZIP cannot adopt external installation ID %s',
     async (externalId) => {
       const { repo } = await fixture()
       const victim = await repo.createPersonal({ ...baseInput, name: 'victim' })
@@ -185,7 +185,7 @@ describe('reported Skill integrity regressions through UserSkillRepository', () 
     }
   )
 
-  it('SK03 control: archive-root metadata is already filtered', async () => {
+  it('archive-root metadata is already filtered', async () => {
     const { repo } = await fixture()
     const result = await repo.importFromZip(
       zip({
@@ -203,7 +203,7 @@ describe('reported Skill integrity regressions through UserSkillRepository', () 
     await expect(repo.delete(result.id)).resolves.toBeUndefined()
   })
 
-  it('SK07 preserves local identity when the same GitHub source advances to another pinned commit', async () => {
+  it('preserves local identity when the same GitHub source advances to another pinned commit', async () => {
     const { repo } = await fixture()
     const firstFetch = githubFetch('a'.repeat(40), 'revision A')
     const [firstCandidate] = await repo.scanRepo('acme/skills', firstFetch)
@@ -219,7 +219,7 @@ describe('reported Skill integrity regressions through UserSkillRepository', () 
     expect(await repo.body(first.id)).toContain('revision B')
   })
 
-  it('SK07 does not label a same-named skill from another GitHub repository as already imported', async () => {
+  it('does not label a same-named skill from another GitHub repository as already imported', async () => {
     const { repo } = await fixture()
     const fetch = githubFetch('a'.repeat(40), 'revision A')
     const [candidate] = await repo.scanRepo('acme/skills', fetch)
@@ -231,7 +231,7 @@ describe('reported Skill integrity regressions through UserSkillRepository', () 
 
 describe('Skill integrity boundary controls', () => {
   it.each(['../evil.csv', 'C:\\evil.csv', '.', '..', 'CON.csv', 'bad:name.csv', 'trailing.'])(
-    'SK01 rejects unsafe reference %s without changing the live package',
+    'rejects unsafe reference %s without changing the live package',
     async (path) => {
       const { root, repo } = await fixture()
       const id = await repo.createPersonal({ ...baseInput, references: [reference('keep.csv')] })
@@ -247,7 +247,7 @@ describe('Skill integrity boundary controls', () => {
   )
 
   it.each(['agent-home', 'publish', 'github'] as const)(
-    'SK03 rejects reserved metadata via %s before replacing existing data',
+    'rejects reserved metadata via %s before replacing existing data',
     async (source) => {
       const { root, repo } = await fixture()
       await repo.createPersonal(baseInput)
@@ -278,7 +278,7 @@ describe('Skill integrity boundary controls', () => {
   )
 
   it.each(['zip', 'github'] as const)(
-    'SK02 repairs a renamed %s installation and recognizes its normalized healthy copy',
+    'repairs a renamed %s installation and recognizes its normalized healthy copy',
     async (source) => {
       const { root, repo } = await fixture()
       await repo.createPersonal(baseInput)
@@ -303,7 +303,7 @@ describe('Skill integrity boundary controls', () => {
     }
   )
 
-  it('SK07 refuses to choose between historical copies of the same GitHub source', async () => {
+  it('refuses to choose between historical copies of the same GitHub source', async () => {
     const { root, repo } = await fixture()
     for (const [name, sha] of [
       ['demo', 'a'],

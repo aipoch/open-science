@@ -2359,7 +2359,7 @@ describe('SkillsPanel (sub-views)', () => {
   })
 })
 
-it('SK07 distinguishes a selected update from an already installed revision', async () => {
+it('distinguishes a selected update from an already installed revision', async () => {
   useSettingsStore.setState({
     scanRepoSkills: vi.fn().mockResolvedValue({
       skills: [

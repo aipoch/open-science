@@ -1143,7 +1143,7 @@ describe('SkillCatalogModule', () => {
 })
 
 describe('reported Skill integrity regressions through Settings APIs', () => {
-  it('SK03 importing wrapped metadata cannot make an existing personal skill unavailable', async () => {
+  it('importing wrapped metadata cannot make an existing personal skill unavailable', async () => {
     const catalog = await createCatalog()
     await catalog.createSkill({ name: 'victim', description: 'Victim', body: 'Original victim' })
     const file = join(userSkillSourceDir(catalog, 'personal'), 'victim', 'SKILL.md')
@@ -1182,7 +1182,7 @@ describe('reported Skill integrity regressions through Settings APIs', () => {
     })
   })
 
-  it('SK06 an old detail snapshot cannot overwrite a later save and delete its new attachment', async () => {
+  it('an old detail snapshot cannot overwrite a later save and delete its new attachment', async () => {
     const catalog = await createCatalog()
     await catalog.createSkill({
       name: 'draft',
@@ -1230,7 +1230,7 @@ describe('reported Skill integrity regressions through Settings APIs', () => {
   })
 })
 
-describe('SK06 optimistic editor boundary', () => {
+describe('optimistic editor boundary', () => {
   it('accepts one of two saves with the same precondition, then accepts a freshly read edit', async () => {
     const catalog = await createCatalog()
     await catalog.createSkill({ name: 'concurrent', description: 'Initial', body: 'Initial' })

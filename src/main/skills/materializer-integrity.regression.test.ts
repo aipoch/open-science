@@ -50,7 +50,7 @@ const fixture = async (): Promise<{
 }
 
 describe('reported runtime Skill integrity regressions', () => {
-  it('SK04 reports failed withdrawal, retains tracking and allows a later successful retry', async () => {
+  it('reports failed withdrawal, retains tracking and allows a later successful retry', async () => {
     const { repo, configDir, materializer } = await fixture()
     await materializer.sync(configDir, await repo.list(), { directoryLayout: 'app-owned' })
     const target = join(configDir, 'skills', 'os-personal-demo')
@@ -78,7 +78,7 @@ describe('reported runtime Skill integrity regressions', () => {
   })
 
   it.skipIf(process.platform === 'win32')(
-    'SK05 propagates a chmod-only executable change into the existing runtime copy',
+    'propagates a chmod-only executable change into the existing runtime copy',
     async () => {
       const { root, repo, configDir, materializer } = await fixture()
       const scripts = join(root, 'skills', 'personal', 'demo', 'scripts')

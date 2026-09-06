@@ -409,7 +409,7 @@ describe('SkillUploadView (batch upload)', () => {
   })
 })
 
-describe('SK08 same-named upload selection regressions', () => {
+describe('same-named upload selection regressions', () => {
   it.each(['zip', 'md'])(
     'submits exactly one selected %s file when names collide',
     async (extension) => {

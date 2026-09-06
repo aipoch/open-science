@@ -100,7 +100,7 @@ describe('SkillEditLoader', () => {
   })
 })
 
-it('SK06 submits the loaded compatibility and retains the draft on a stale-save rejection', async () => {
+it('submits the loaded compatibility and retains the draft on a stale-save rejection', async () => {
   const onDone = vi.fn()
   const updateSkill = vi
     .fn()
