@@ -4275,6 +4275,9 @@
     "Loading the latest version discards your draft. Overwriting replaces the editable content and removes reference files absent from your draft.": "Beim Laden der neuesten Version wird Ihr Entwurf verworfen. Beim Überschreiben werden die bearbeitbaren Inhalte ersetzt und Referenzdateien gelöscht, die in Ihrem Entwurf fehlen.",
     "Keep editing": "Weiter bearbeiten",
     "Load latest version": "Neueste Version laden",
-    "Overwrite with my draft": "Mit meinem Entwurf überschreiben"
+    "Overwrite with my draft": "Mit meinem Entwurf überschreiben",
+    "Could not refresh environment readiness. Saved settings are unchanged.": "Der Bereitschaftsstatus der Umgebung konnte nicht aktualisiert werden. Gespeicherte Einstellungen bleiben unverändert.",
+    "Retry preflight": "Vorprüfung wiederholen",
+    "The provider changed while loading models. Try again.": "Der Anbieter wurde während des Ladens der Modelle geändert. Versuchen Sie es erneut."
   }
 }

@@ -27,20 +27,25 @@ type PendingLogin = {
 
 export type XaiOAuthCredentialStore = {
   load: () => Promise<{ keyRef?: string; refreshToken?: string; accountEmail?: string }>
+  // Return the committed keyRef; evaluate isCurrent inside the serialized storage mutation.
   save: (
     expectedKeyRef: string | undefined,
     refreshToken: string,
     accountEmail?: string,
-    clearValidation?: boolean
-  ) => Promise<boolean>
+    clearValidation?: boolean,
+    isCurrent?: () => boolean
+  ) => Promise<string | false>
   clear: () => Promise<void>
 }
+
+export type XaiAccessCredential = { token: string; keyRef?: string }
 
 export type XaiOAuthControllerPort = {
   beginLogin: () => Promise<XaiOAuthDeviceAuthorization>
   waitForLogin: () => Promise<{ accountEmail?: string }>
   cancelLogin: () => void
   getAccessToken: (forceRefresh?: boolean) => Promise<string>
+  getAccessCredential: (forceRefresh?: boolean) => Promise<XaiAccessCredential>
   logout: () => Promise<void>
 }
 
@@ -96,8 +101,8 @@ export class XaiOAuthController implements XaiOAuthControllerPort {
   private discovery?: Discovery
   private beginAbort?: AbortController
   private pending?: PendingLogin
-  private access?: { token: string; expiresAt: number }
-  private refreshPromise?: Promise<string>
+  private access?: XaiAccessCredential & { expiresAt: number }
+  private refreshPromise?: Promise<XaiAccessCredential>
   private refreshGeneration = 0
 
   constructor(private readonly options: XaiOAuthControllerOptions) {
@@ -189,15 +194,25 @@ export class XaiOAuthController implements XaiOAuthControllerPort {
         }
         const tokens = this.parseTokens(body)
         if (!tokens.refresh_token) throw new Error('xAI did not return a refresh token.')
-        const accountEmail = await this.loadAccountEmail(discovery, tokens.access_token)
+        const isCurrent = (): boolean => this.pending === pending && !pending.abort.signal.aborted
+        const accountEmail = await this.loadAccountEmail(
+          discovery,
+          tokens.access_token,
+          pending.abort.signal
+        )
+        if (!isCurrent()) throw new Error('xAI sign-in was cancelled.')
         const saved = await this.options.store.save(
           pending.expectedKeyRef,
           tokens.refresh_token,
           accountEmail,
-          true
+          true,
+          isCurrent
         )
+        if (!isCurrent()) throw new Error('xAI sign-in was cancelled.')
         if (!saved) throw new Error('The xAI provider changed while sign-in was pending.')
-        this.cache(tokens)
+        this.refreshGeneration += 1
+        this.refreshPromise = undefined
+        this.cache(tokens, saved)
         return accountEmail ? { accountEmail } : {}
       }
       throw new Error('The xAI device code expired. Start sign-in again.')
@@ -214,8 +229,12 @@ export class XaiOAuthController implements XaiOAuthControllerPort {
   }
 
   async getAccessToken(forceRefresh = false): Promise<string> {
+    return (await this.getAccessCredential(forceRefresh)).token
+  }
+
+  async getAccessCredential(forceRefresh = false): Promise<XaiAccessCredential> {
     if (!forceRefresh && this.access && this.access.expiresAt - this.now() > 60_000) {
-      return this.access.token
+      return this.access
     }
     if (this.refreshPromise) return this.refreshPromise
     const generation = this.refreshGeneration
@@ -236,7 +255,7 @@ export class XaiOAuthController implements XaiOAuthControllerPort {
     await this.options.store.clear()
   }
 
-  private async refreshAccessToken(generation: number): Promise<string> {
+  private async refreshAccessToken(generation: number): Promise<XaiAccessCredential> {
     const stored = await this.options.store.load()
     this.assertCurrentRefresh(generation)
     if (!stored.refreshToken) throw new Error('Sign in to xAI (Grok) OAuth to continue.')
@@ -255,14 +274,21 @@ export class XaiOAuthController implements XaiOAuthControllerPort {
     this.assertCurrentRefresh(generation)
     if (!response.ok) throw new Error('Your xAI sign-in expired. Sign in again.')
     const tokens = this.parseTokens(body)
+    let keyRef = stored.keyRef
     if (tokens.refresh_token && tokens.refresh_token !== stored.refreshToken) {
       this.assertCurrentRefresh(generation)
-      const saved = await this.options.store.save(stored.keyRef, tokens.refresh_token)
+      const saved = await this.options.store.save(
+        stored.keyRef,
+        tokens.refresh_token,
+        undefined,
+        false,
+        () => generation === this.refreshGeneration
+      )
       if (!saved) throw new Error('The xAI provider changed while refreshing sign-in.')
+      keyRef = saved
     }
     this.assertCurrentRefresh(generation)
-    this.cache(tokens)
-    return tokens.access_token
+    return this.cache(tokens, keyRef)
   }
 
   private assertCurrentRefresh(generation: number): void {
@@ -303,21 +329,25 @@ export class XaiOAuthController implements XaiOAuthControllerPort {
     }
   }
 
-  private cache(tokens: TokenPayload): void {
+  private cache(tokens: TokenPayload, keyRef: string | undefined): XaiAccessCredential {
     this.access = {
       token: tokens.access_token,
+      keyRef,
       expiresAt: this.now() + (tokens.expires_in ?? 3600) * 1000
     }
+    return this.access
   }
 
   private async loadAccountEmail(
     discovery: Discovery,
-    accessToken: string
+    accessToken: string,
+    signal: AbortSignal
   ): Promise<string | undefined> {
     if (!discovery.userinfo_endpoint) return undefined
     try {
       const response = await this.fetch(discovery.userinfo_endpoint, {
-        headers: { authorization: `Bearer ${accessToken}` }
+        headers: { authorization: `Bearer ${accessToken}` },
+        signal: AbortSignal.any([signal, AbortSignal.timeout(5_000)])
       })
       if (!response.ok) return undefined
       const body = (await response.json()) as Record<string, unknown>

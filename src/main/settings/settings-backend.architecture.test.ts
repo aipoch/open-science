@@ -403,6 +403,8 @@ describe('Settings backend ownership architecture', () => {
       'updateCustomServer',
       'updateCustomServerOAuthState',
       'updateProviderModelCatalogIfTargetMatches',
+      'updateProviderValidationIfTargetMatches',
+      'updateXaiCredentialsIfKeyMatches',
       'upsertClaudeIsolatedProvider',
       'upsertProvider'
     ])

@@ -372,6 +372,8 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
   const consumePendingSettingsIntent = useSettingsStore(
     (state) => state.consumePendingSettingsIntent
   )
+  const preflightFailed = useSettingsStore((state) => state.preflightFailed)
+  const refreshPreflight = useSettingsStore((state) => state.refreshPreflight)
   const settingsWriteError = useSettingsStore((state) => state.settingsWriteError)
   const clearSettingsWriteError = useSettingsStore((state) => state.clearSettingsWriteError)
   const canImportInstalledSkills =
@@ -1351,6 +1353,24 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
                   </Tooltip>
                 </div>
               </div>
+
+              {preflightFailed ? (
+                <div
+                  role="alert"
+                  className="mx-5 mt-3 flex items-center gap-3 text-sm text-destructive"
+                >
+                  <p>
+                    {t('Could not refresh environment readiness. Saved settings are unchanged.')}
+                  </p>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => void refreshPreflight().catch(() => undefined)}
+                  >
+                    {t('Retry preflight')}
+                  </Button>
+                </div>
+              ) : null}
 
               {settingsWriteError ? (
                 <div

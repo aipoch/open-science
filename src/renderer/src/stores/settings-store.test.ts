@@ -371,7 +371,96 @@ describe('settings store: saveAndActivateProvider', () => {
   })
 })
 
+describe('settings store: concurrent preflight results', () => {
+  it.each([
+    ['refresh', 'success'],
+    ['refresh', 'failure'],
+    ['environment', 'success'],
+    ['environment', 'failure'],
+    ['startup', 'success'],
+    ['startup', 'failure']
+  ] as const)('keeps newer readiness after an older %s %s', async (source, outcome) => {
+    const stalePreflight = { ...useSettingsStore.getState().preflight, activeProviderReady: false }
+    const currentPreflight = { ...stalePreflight, activeProviderReady: true }
+    let resolveOlder!: (value: typeof stalePreflight) => void
+    let rejectOlder!: (error: Error) => void
+    api.getPreflight.mockReturnValueOnce(
+      new Promise((resolve, reject) => {
+        resolveOlder = resolve
+        rejectOlder = reject
+      })
+    )
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    const older = (
+      source === 'refresh'
+        ? useSettingsStore.getState().refreshPreflight()
+        : source === 'environment'
+          ? useSettingsStore.getState().checkEnvironment()
+          : useSettingsStore.getState().load()
+    ).catch(() => undefined)
+    await vi.waitFor(() => expect(api.getPreflight).toHaveBeenCalledOnce())
+
+    api.getPreflight.mockResolvedValueOnce(currentPreflight)
+    await useSettingsStore.getState().refreshPreflight()
+    if (outcome === 'success') resolveOlder(stalePreflight)
+    else rejectOlder(new Error('older preflight failed'))
+    await older
+
+    expect(useSettingsStore.getState()).toMatchObject({
+      preflight: currentPreflight,
+      preflightFailed: false
+    })
+  })
+})
+
+describe('settings store: latest preflight failure', () => {
+  it.each(['refresh', 'environment', 'startup'] as const)(
+    'does not hide a newer failure with an older %s success',
+    async (source) => {
+      const cached = useSettingsStore.getState().preflight
+      let resolveOlder!: (value: typeof cached) => void
+      api.getPreflight.mockReturnValueOnce(
+        new Promise((resolve) => {
+          resolveOlder = resolve
+        })
+      )
+      const older =
+        source === 'refresh'
+          ? useSettingsStore.getState().refreshPreflight()
+          : source === 'environment'
+            ? useSettingsStore.getState().checkEnvironment()
+            : useSettingsStore.getState().load()
+      await vi.waitFor(() => expect(api.getPreflight).toHaveBeenCalledOnce())
+
+      const failure = new Error('current preflight failed')
+      api.getPreflight.mockRejectedValueOnce(failure)
+      await expect(useSettingsStore.getState().refreshPreflight()).rejects.toBe(failure)
+      resolveOlder({ ...cached, activeProviderReady: true })
+      await older
+
+      expect(useSettingsStore.getState()).toMatchObject({
+        preflight: cached,
+        preflightFailed: true
+      })
+    }
+  )
+})
+
 describe('settings store: persistProvider', () => {
+  it('M04: keeps the committed identity and retries only a failed preflight', async () => {
+    api.upsertProvider.mockResolvedValue(snapshot([providerView('p_new')]))
+    api.getPreflight.mockRejectedValueOnce(new Error('preflight unavailable'))
+    const result = await useSettingsStore
+      .getState()
+      .persistProvider({ type: 'custom', name: 'Gateway' })
+    expect(result).toBe('p_new')
+    await vi.waitFor(() => expect(useSettingsStore.getState().preflightFailed).toBe(true))
+    await useSettingsStore.getState().refreshPreflight()
+    expect(useSettingsStore.getState().preflightFailed).toBe(false)
+    expect(api.upsertProvider).toHaveBeenCalledOnce()
+    expect(useSettingsStore.getState().providers.map(({ id }) => id)).toEqual(['p_new'])
+  })
+
   it('persists a new provider and returns its id without testing it', async () => {
     api.upsertProvider.mockResolvedValue(snapshot([providerView('p_new')]))
 
@@ -853,6 +942,30 @@ describe('settings store: onboarding completion', () => {
 })
 
 describe('settings store: startup loading', () => {
+  it('clears the preflight failure after a successful forced load', async () => {
+    useSettingsStore.setState({ preflightFailed: true })
+
+    await expect(useSettingsStore.getState().load({ force: true })).resolves.toBe(true)
+
+    expect(useSettingsStore.getState().preflightFailed).toBe(false)
+  })
+
+  it('records a failed preflight during an environment check', async () => {
+    api.getPreflight.mockRejectedValueOnce(new Error('preflight unavailable'))
+
+    await expect(useSettingsStore.getState().checkEnvironment()).resolves.toBeUndefined()
+
+    expect(useSettingsStore.getState().preflightFailed).toBe(true)
+  })
+
+  it('clears the preflight failure after a successful environment check', async () => {
+    useSettingsStore.setState({ preflightFailed: true })
+
+    await useSettingsStore.getState().checkEnvironment()
+
+    expect(useSettingsStore.getState().preflightFailed).toBe(false)
+  })
+
   it('defaults secure storage to unavailable until the capability probe succeeds', () => {
     expect(useSettingsStore.getState().encryptionAvailable).toBe(false)
   })
@@ -963,7 +1076,8 @@ describe('settings store: startup loading', () => {
       isLoaded: true,
       isLoading: false,
       loadError: undefined,
-      encryptionAvailable: false
+      encryptionAvailable: false,
+      preflightFailed: true
     })
     expect(warn).toHaveBeenCalledWith('Settings loading failed', rawError)
   })
@@ -1197,13 +1311,17 @@ describe('settings store: refreshProviderModels', () => {
     expect(useSettingsStore.getState().providers.map((p) => p.id)).toEqual(['p1'])
   })
 
-  it('leaves the cache untouched when the fetch fails', async () => {
+  it('reconciles the authoritative cache while preserving a failed fetch result', async () => {
     api.refreshProviderModels.mockResolvedValue({ ok: false, category: 'auth', message: 'nope' })
+    api.getSettings.mockResolvedValue(snapshot([providerView('current')]))
 
     const result = await useSettingsStore.getState().refreshProviderModels('p1')
 
-    expect(result.ok).toBe(false)
-    expect(api.getSettings).not.toHaveBeenCalled()
+    expect(result).toEqual({ ok: false, category: 'auth', message: 'nope' })
+    expect(api.getSettings).toHaveBeenCalledOnce()
+    expect(useSettingsStore.getState().providers.map((provider) => provider.id)).toEqual([
+      'current'
+    ])
   })
 
   it('loads skills and toggles optimistically', async () => {

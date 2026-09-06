@@ -100,6 +100,7 @@ describe('ProviderAccountsModule', () => {
       waitForLogin: vi.fn(async () => ({ accountEmail: 'researcher@example.com' })),
       cancelLogin: vi.fn(),
       getAccessToken: vi.fn(async () => 'access-token'),
+      getAccessCredential: vi.fn(async () => ({ token: 'access-token' })),
       logout: vi.fn(async () => undefined)
     }
     runClaudeSubscriptionProbe = vi.fn(async (): Promise<ValidateProviderResult> => ({
@@ -767,11 +768,11 @@ describe('ProviderAccountsModule', () => {
 
   it('does not apply an in-flight xAI validation after logout', async () => {
     await module.upsertProvider({ type: 'xai-subscription' })
-    const pendingToken = deferred<string>()
-    vi.mocked(xaiOAuth.getAccessToken).mockImplementationOnce(() => pendingToken.promise)
+    const pendingToken = deferred<{ token: string; keyRef?: string }>()
+    vi.mocked(xaiOAuth.getAccessCredential).mockImplementationOnce(() => pendingToken.promise)
 
     const pending = module.validateProvider({ providerId: 'builtin-xai-subscription' })
-    await vi.waitFor(() => expect(xaiOAuth.getAccessToken).toHaveBeenCalledOnce())
+    await vi.waitFor(() => expect(xaiOAuth.getAccessCredential).toHaveBeenCalledOnce())
     await module.logoutXaiOAuth()
     pendingToken.reject(new Error('Sign in to xAI (Grok) OAuth to continue.'))
 
@@ -899,7 +900,7 @@ describe('ProviderAccountsModule', () => {
     const edited = (await repository.getSettings()).providers[0]
     response.resolve(Response.json({ data: [{ id: 'deepseek-v5' }] }))
 
-    await expect(refresh).resolves.toMatchObject({ ok: true, models: ['deepseek-v5'] })
+    await expect(refresh).resolves.toMatchObject({ ok: false })
     await expect(repository.getSettings()).resolves.toMatchObject({
       providers: [
         expect.objectContaining({
@@ -1017,7 +1018,7 @@ describe('ProviderAccountsModule', () => {
     await module.deleteProvider(providerId)
     response.resolve(Response.json({ data: [{ id: 'deepseek-v5' }] }))
 
-    await expect(refresh).resolves.toMatchObject({ ok: true, models: ['deepseek-v5'] })
+    await expect(refresh).resolves.toMatchObject({ ok: false })
     await expect(repository.getSettings()).resolves.toMatchObject({ providers: [] })
   })
 

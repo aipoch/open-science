@@ -7,6 +7,8 @@ import type {
   ProjectFilesFilterPreference,
   ProviderDeletionScenarioModelHandling,
   ReasoningEffort,
+  ValidateProviderResult,
+  ProviderValidationTarget,
   SetAgentRoutingRequest
 } from '../../shared/settings'
 import {
@@ -41,6 +43,7 @@ import {
   type StoredProvider,
   type StoredSettings
 } from './types'
+import { buildProviderValidationPatch } from './provider-validation-state'
 import { sanitizePackageMirror } from './record-codec'
 import { sanitizeSettings } from './document-codec'
 import { SettingsDocumentStore } from './document-store'
@@ -145,6 +148,55 @@ class SettingsRepository {
       return { ...settings, providers }
     })
 
+    return applied
+  }
+
+  // Check the live target and generation in the same serialized mutation as the field-only patch.
+  async updateProviderValidationIfTargetMatches(
+    id: string,
+    matches: (provider: StoredProvider, settings: StoredSettings) => boolean,
+    result: ValidateProviderResult,
+    target: ProviderValidationTarget | undefined
+  ): Promise<boolean> {
+    let applied = false
+    await this.mutate((settings) => {
+      const index = settings.providers.findIndex((provider) => provider.id === id)
+      const current = settings.providers[index]
+      if (!current || !matches(current, settings)) return settings
+      const providers = [...settings.providers]
+      providers[index] = { ...current, ...buildProviderValidationPatch(current, result, target) }
+      applied = true
+      return { ...settings, providers }
+    })
+    return applied
+  }
+
+  async updateXaiCredentialsIfKeyMatches(
+    expectedKeyRef: string | undefined,
+    patch: Pick<StoredProvider, 'keyRef' | 'accountEmail'>,
+    clearValidation: boolean,
+    isCurrent: () => boolean
+  ): Promise<boolean> {
+    let applied = false
+    await this.mutate((settings) => {
+      const index = settings.providers.findIndex((provider) => provider.type === 'xai-subscription')
+      const current = settings.providers[index]
+      if (!current || current.keyRef !== expectedKeyRef || !isCurrent()) return settings
+      const updated = {
+        ...current,
+        ...patch,
+        accountEmail: patch.accountEmail ?? current.accountEmail
+      }
+      if (clearValidation) {
+        delete updated.lastValidatedAt
+        delete updated.lastValidatedTarget
+        delete updated.lastValidationFailure
+      }
+      const providers = [...settings.providers]
+      providers[index] = updated
+      applied = true
+      return { ...settings, providers }
+    })
     return applied
   }
 

@@ -64,6 +64,7 @@ import {
   type SaveProviderResult
 } from './settings-provider-auth-slice'
 import {
+  beginPreflightRequest,
   createInitialRuntimeSetupState,
   createRuntimeSetupLoadPatch,
   createRuntimeSetupSlice,
@@ -435,6 +436,9 @@ const createSettingsStoreState = (
       const encryptionAvailability = Promise.allSettled([
         window.api.settings.isEncryptionAvailable()
       ])
+      const isCurrentPreflight = shouldInitializeRuntime
+        ? beginPreflightRequest(set, get)
+        : () => false
       const runtimeInitialization = shouldInitializeRuntime
         ? Promise.allSettled([
             window.api.settings.getPreflight(),
@@ -476,8 +480,13 @@ const createSettingsStoreState = (
           }
 
           set({
+            preflightFailed: isCurrentPreflight()
+              ? preflightResult.status === 'rejected'
+              : get().preflightFailed,
             ...createRuntimeSetupLoadPatch(
-              preflightResult.status === 'fulfilled' ? preflightResult.value : get().preflight,
+              isCurrentPreflight() && preflightResult.status === 'fulfilled'
+                ? preflightResult.value
+                : get().preflight,
               npmAvailableResult.status === 'fulfilled'
                 ? npmAvailableResult.value
                 : get().npmAvailable
