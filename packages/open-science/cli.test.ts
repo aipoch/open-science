@@ -34,6 +34,92 @@ describe('task CLI', () => {
     expect(() => parseCliArgs(['start', '--port', '0'])).toThrow('Invalid port: 0')
   })
 
+  it.each([
+    { argv: ['start', 'unexpected'], message: 'start accepts no arguments.' },
+    { argv: ['stop', 'unexpected'], message: 'stop accepts no arguments.' },
+    { argv: ['status', 'unexpected'], message: 'status accepts no arguments.' },
+    { argv: ['url', 'unexpected'], message: 'url accepts no arguments.' },
+    { argv: ['update', 'unexpected'], message: 'update accepts no arguments.' },
+    {
+      argv: ['codex', 'login', 'unexpected'],
+      message: 'codex login accepts no arguments.'
+    },
+    {
+      argv: ['rollback-to-0.7.3', 'unexpected'],
+      message: 'rollback-to-0.7.3 accepts no arguments.'
+    },
+    { argv: ['project', 'list', 'unexpected'], message: 'project list accepts no arguments.' },
+    {
+      argv: ['run', 'unexpected', '--project', 'project-1', '--prompt', 'Research this.'],
+      message: 'run accepts no arguments.'
+    },
+    { argv: ['run', 'status', 'run-1', 'run-2'], message: 'run status accepts one argument.' },
+    { argv: ['run', 'cancel', 'run-1', 'run-2'], message: 'run cancel accepts one argument.' },
+    {
+      argv: ['session', 'status', 'session-1', 'session-2'],
+      message: 'session status accepts one argument.'
+    },
+    {
+      argv: ['session', 'config', 'show', 'session-1', 'session-2'],
+      message: 'session config accepts two arguments.'
+    },
+    {
+      argv: ['session', 'config', 'update', 'session-1', 'session-2'],
+      message: 'session config accepts two arguments.'
+    },
+    {
+      argv: ['settings', 'agent-routing', 'show', 'unexpected'],
+      message: 'settings agent-routing accepts one argument.'
+    },
+    {
+      argv: ['settings', 'agent-routing', 'update', 'unexpected'],
+      message: 'settings agent-routing accepts one argument.'
+    },
+    {
+      argv: ['plan', 'show', 'session-1', 'session-2'],
+      message: 'plan show accepts one argument.'
+    },
+    {
+      argv: ['plan', 'approve', 'session-1', 'session-2'],
+      message: 'plan approve accepts one argument.'
+    },
+    {
+      argv: ['plan', 'reject', 'session-1', 'session-2'],
+      message: 'plan reject accepts one argument.'
+    },
+    {
+      argv: ['plan', 'revise', 'session-1', 'session-2'],
+      message: 'plan revise accepts one argument.'
+    },
+    {
+      argv: ['artifacts', 'list', 'session-1', 'session-2'],
+      message: 'artifacts list accepts one argument.'
+    },
+    {
+      argv: ['artifacts', 'download', 'artifact-1', 'artifact-2'],
+      message: 'artifacts download accepts one argument.'
+    }
+  ])('rejects unused positional arguments before dispatch', ({ argv, message }) => {
+    expect(() => parseCliArgs(argv)).toThrow(message)
+  })
+
+  it.each([
+    ['create', ['project', 'create', 'Systematic', 'review'], ['Systematic', 'review']],
+    ['update', ['project', 'update', 'Systematic', 'review'], ['Systematic', 'review']],
+    [
+      'session-defaults show',
+      ['project', 'session-defaults', 'show', 'Systematic', 'review'],
+      ['show', 'Systematic', 'review']
+    ],
+    [
+      'session-defaults update',
+      ['project', 'session-defaults', 'update', 'Systematic', 'review'],
+      ['update', 'Systematic', 'review']
+    ]
+  ])('preserves a multi-word Project name for project %s', (_label, argv, positionals) => {
+    expect(parseCliArgs(argv).positionals).toEqual(positionals)
+  })
+
   it('parses the first milestone run interface', () => {
     expect(
       parseCliArgs(['project', 'create', 'Research', '--agent-context', 'Always cite sources.'])

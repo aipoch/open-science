@@ -140,6 +140,30 @@ const VALUE_OPTIONS = {
 
 const TASK_COMMANDS = new Set(['project', 'run', 'session', 'settings', 'plan', 'artifacts'])
 const GROUP_COMMANDS = new Set(['codex', 'project', 'session', 'settings', 'plan', 'artifacts'])
+// Project create, update, and session-defaults intentionally remain unbounded because their
+// positional Project names may contain multiple unquoted words.
+const POSITIONAL_LIMITS = new Map([
+  ['start', 0],
+  ['stop', 0],
+  ['status', 0],
+  ['url', 0],
+  ['update', 0],
+  ['rollback-to-0.7.3', 0],
+  ['codex login', 0],
+  ['project list', 0],
+  ['run', 0],
+  ['run status', 1],
+  ['run cancel', 1],
+  ['session status', 1],
+  ['session config', 2],
+  ['settings agent-routing', 1],
+  ['plan show', 1],
+  ['plan approve', 1],
+  ['plan reject', 1],
+  ['plan revise', 1],
+  ['artifacts list', 1],
+  ['artifacts download', 1]
+])
 
 export class CliUsageError extends Error {
   constructor(message) {
@@ -157,6 +181,16 @@ const parsePortOption = (value) => {
     throw new CliUsageError(`Invalid port: ${value}`)
   }
   return port
+}
+
+const assertPositionalLimit = (command, subcommand, positionals) => {
+  const commandPath = [command, subcommand].filter(Boolean).join(' ')
+  const limit = POSITIONAL_LIMITS.get(commandPath)
+  if (limit === undefined || positionals.length <= limit) return
+  if (limit === 0) throw new CliUsageError(`${commandPath} accepts no arguments.`)
+  throw new CliUsageError(
+    `${commandPath} accepts ${limit === 1 ? 'one argument' : 'two arguments'}.`
+  )
 }
 
 export const parseCliArgs = (argv) => {
@@ -335,9 +369,6 @@ export const parseCliArgs = (argv) => {
   if (options.force && (command !== 'codex' || subcommand !== 'login')) {
     throw new CliUsageError('--force requires codex login.')
   }
-  if (command === 'update' && positionals.length > 0) {
-    throw new CliUsageError('update accepts no arguments.')
-  }
   const isProjectCreate = command === 'project' && subcommand === 'create'
   const isProjectUpdate = command === 'project' && subcommand === 'update'
   const agentContextSources = [
@@ -375,7 +406,6 @@ export const parseCliArgs = (argv) => {
     if (options.json || options.jsonl) {
       throw new CliUsageError('codex login does not support machine-readable output.')
     }
-    if (positionals.length > 0) throw new CliUsageError('codex login accepts no arguments.')
   }
   const sessionConfigAction = command === 'session' && subcommand === 'config' && positionals[0]
   const projectDefaultsAction =
@@ -459,6 +489,7 @@ export const parseCliArgs = (argv) => {
   ) {
     throw new CliUsageError('Plan response options require a plan command.')
   }
+  assertPositionalLimit(command, subcommand, positionals)
   return {
     command,
     ...(subcommand ? { subcommand } : {}),
