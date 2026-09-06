@@ -12,7 +12,16 @@ import type { ChatMessage } from '@/stores/session-store'
 import type { SendEditedMessage } from './workspace-edited-message'
 import type { EditAnnotationTarget } from './WorkspaceMessageItem'
 import type { Annotation, TextAnnotation } from '../../../../shared/annotations'
-import { WorkspaceMessageItem } from './WorkspaceMessageItem'
+import { TooltipProvider } from '@/components/ui/tooltip'
+import { WorkspaceMessageItem as MessageItem } from './WorkspaceMessageItem'
+
+const WorkspaceMessageItem = (
+  props: React.ComponentProps<typeof MessageItem>
+): React.JSX.Element => (
+  <TooltipProvider delayDuration={200}>
+    <MessageItem {...props} />
+  </TooltipProvider>
+)
 
 const { requestPdfReadingReveal } = vi.hoisted(() => ({ requestPdfReadingReveal: vi.fn() }))
 vi.mock('./pdf-reading-reveal', () => ({ requestPdfReadingReveal }))

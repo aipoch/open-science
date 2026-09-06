@@ -32,7 +32,16 @@ import { createCachedImageFetchResponse } from './previews/cached-preview-image.
 import { ArtifactRunRegistry } from '../../../../main/artifacts/run-registry'
 import { ManagedFileVersionService } from '../../../../main/managed-file-versions/service'
 import { ManagedPreviewResources } from '../../../../main/managed-preview-resources'
-import { WorkspaceMessageItem } from './WorkspaceMessageItem'
+import { TooltipProvider } from '@/components/ui/tooltip'
+import { WorkspaceMessageItem as MessageItem } from './WorkspaceMessageItem'
+
+const WorkspaceMessageItem = (
+  props: React.ComponentProps<typeof MessageItem>
+): React.JSX.Element => (
+  <TooltipProvider delayDuration={200}>
+    <MessageItem {...props} />
+  </TooltipProvider>
+)
 
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
