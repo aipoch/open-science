@@ -1,5 +1,4 @@
 import { create } from 'zustand'
-import { createOptimisticBooleanCoordinator } from './settings-optimistic-boolean'
 
 import type {
   CreateTagRequest,
@@ -48,8 +47,38 @@ export const createInitialTagState = (): TagSnapshot & {
   browserScrollTop: 0
 })
 let loadSequence = 0
-let assignmentRevision = -1
-let assignmentWrites = createOptimisticBooleanCoordinator()
+// Keep the last authoritative assignments separate from in-flight local intent.
+// Every accepted snapshot is projected through the pending writes in request order.
+let confirmedAssignments: TagSnapshot['assignments'] = []
+let nextAssignmentWrite = 0
+const pendingAssignments = new Map<
+  number,
+  { request: SetTagAssignmentRequest; createdAt: number }
+>()
+const settledAssignments = new Map<string, number>()
+const assignmentKey = (
+  value: Pick<SetTagAssignmentRequest, 'tagId' | 'resourceType' | 'resourceId'>
+): string => JSON.stringify([value.tagId, value.resourceType, value.resourceId])
+
+const projectAssignments = (tags: TagSnapshot['tags']): TagSnapshot['assignments'] => {
+  const assignments = new Map(
+    confirmedAssignments.map((assignment) => [assignmentKey(assignment), assignment])
+  )
+  const tagIds = new Set(tags.map((tag) => tag.id))
+  for (const [sequence, { request, createdAt }] of pendingAssignments) {
+    const key = assignmentKey(request)
+    if (sequence <= (settledAssignments.get(key) ?? 0) || !tagIds.has(request.tagId)) continue
+    if (!request.assigned) assignments.delete(key)
+    else if (!assignments.has(key))
+      assignments.set(key, {
+        tagId: request.tagId,
+        resourceType: request.resourceType,
+        resourceId: request.resourceId,
+        createdAt
+      })
+  }
+  return [...assignments.values()]
+}
 
 // A later optimistic backup may contain an earlier failed write. Follow those backups only
 // when the failing write still owns the projection; authority snapshots always take precedence.
@@ -61,12 +90,10 @@ const rollbackProjection = <T>(failed: WeakMap<T[], T[]>, optimistic: T[], befor
   return restored
 }
 
-const stateFromSnapshot = (
-  snapshot: TagSnapshot
-): Pick<TagStore, keyof TagSnapshot | 'status'> => ({
-  ...snapshot,
-  status: 'ready'
-})
+const stateFromSnapshot = (snapshot: TagSnapshot): Pick<TagStore, keyof TagSnapshot | 'status'> => {
+  confirmedAssignments = snapshot.assignments
+  return { ...snapshot, assignments: projectAssignments(snapshot.tags), status: 'ready' }
+}
 
 const stateFromMutationSnapshot = (
   snapshot: TagSnapshot,
@@ -158,63 +185,31 @@ export const useTagStore = create<TagStore>((set, get) => ({
     }
   },
   setAssignment: async (request) => {
-    const revision = get().revision
-    if (assignmentRevision !== revision) {
-      assignmentRevision = revision
-      assignmentWrites = createOptimisticBooleanCoordinator()
+    if (pendingAssignments.size === 0) {
+      confirmedAssignments = get().assignments
+      settledAssignments.clear()
     }
-    const writes = assignmentWrites
-    const before = get().assignments
-    const matches = (assignment: TagSnapshot['assignments'][number]): boolean =>
-      assignment.tagId === request.tagId &&
-      assignment.resourceType === request.resourceType &&
-      assignment.resourceId === request.resourceId
-    const token = writes.begin(
-      JSON.stringify([request.tagId, request.resourceType, request.resourceId]),
-      before.some(matches),
-      request.assigned
-    )
-    set({
-      assignments: request.assigned
-        ? before.some(matches)
-          ? before
-          : [
-              ...before,
-              {
-                tagId: request.tagId,
-                resourceType: request.resourceType,
-                resourceId: request.resourceId,
-                createdAt: Date.now()
-              }
-            ]
-        : before.filter((assignment) => !matches(assignment))
-    })
+    const sequence = ++nextAssignmentWrite
+    const key = assignmentKey(request)
+    pendingAssignments.set(sequence, { request, createdAt: Date.now() })
+    set({ assignments: projectAssignments(get().tags) })
     try {
       const snapshot = await window.api.tags.setAssignment(request)
-      writes.succeed(token, snapshot.assignments.some(matches))
+      pendingAssignments.delete(sequence)
+      settledAssignments.set(key, Math.max(sequence, settledAssignments.get(key) ?? 0))
       loadSequence += 1
-      set((state) => ({ ...stateFromMutationSnapshot(snapshot, state.revision), error: undefined }))
+      set((state) => ({
+        assignments: projectAssignments(state.tags),
+        ...stateFromMutationSnapshot(snapshot, state.revision),
+        error: undefined
+      }))
     } catch (error) {
-      const assigned = writes.fail(token)
-      if (get().revision === revision) {
-        set((state) => ({
-          assignments: assigned
-            ? state.assignments.some(matches)
-              ? state.assignments
-              : [
-                  ...state.assignments,
-                  before.find(matches) ?? {
-                    tagId: request.tagId,
-                    resourceType: request.resourceType,
-                    resourceId: request.resourceId,
-                    createdAt: Date.now()
-                  }
-                ]
-            : state.assignments.filter((assignment) => !matches(assignment))
-        }))
-      }
+      pendingAssignments.delete(sequence)
+      set({ assignments: projectAssignments(get().tags) })
       await get().load()
       throw error
+    } finally {
+      if (pendingAssignments.size === 0) settledAssignments.clear()
     }
   },
   listen: () => {
