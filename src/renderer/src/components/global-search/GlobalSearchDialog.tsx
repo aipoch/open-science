@@ -194,7 +194,8 @@ export const GlobalSearchDialog = ({
   const [failedArtifactCursor, setFailedArtifactCursor] = useState<string | undefined>()
   const [literature, setLiterature] = useState<LiteratureState>(emptyLiteratureState)
   const [actionError, setActionError] = useState<string | undefined>()
-  const [activeIndex, setActiveIndex] = useState(0)
+  // A command selection must survive asynchronous result insertion before the command row.
+  const [activeIndex, setActiveIndex] = useState<number | 'command'>(0)
 
   useLayoutEffect(() => {
     if (!open) mentionVersionRef.current += 1
@@ -538,9 +539,13 @@ export const GlobalSearchDialog = ({
   ])
 
   const activeRowIndex =
-    selectableRows.length === 0 || (isSearchPending && activeIndex < 0)
+    selectableRows.length === 0
       ? -1
-      : Math.max(0, Math.min(activeIndex, selectableRows.length - 1))
+      : activeIndex === 'command'
+        ? selectableRows.length - 1
+        : isSearchPending && activeIndex < 0
+          ? -1
+          : Math.max(0, Math.min(activeIndex, selectableRows.length - 1))
   const activeRowId = `global-search-option-${activeRowIndex}`
 
   useEffect(() => {
@@ -743,7 +748,7 @@ export const GlobalSearchDialog = ({
               ? selectableRows.length - 1
               : (normalized - 1 + selectableRows.length) % selectableRows.length
         keyboardNavigationRef.current = nextIndex !== current
-        return nextIndex
+        return nextIndex === selectableRows.length - 1 ? 'command' : nextIndex
       })
       return
     }
@@ -751,7 +756,7 @@ export const GlobalSearchDialog = ({
       event.preventDefault()
       setActiveIndex((current) => {
         keyboardNavigationRef.current = current !== 0
-        return 0
+        return selectableRows.length === 1 ? 'command' : 0
       })
       return
     }
@@ -760,7 +765,7 @@ export const GlobalSearchDialog = ({
       setActiveIndex((current) => {
         const nextIndex = Math.max(0, selectableRows.length - 1)
         keyboardNavigationRef.current = nextIndex !== current
-        return nextIndex
+        return nextIndex === selectableRows.length - 1 ? 'command' : nextIndex
       })
       return
     }
@@ -1204,7 +1209,7 @@ export const GlobalSearchDialog = ({
                       activeRowIndex === rowIndex - 1 && 'bg-bg-200 before:opacity-100',
                       isProjectScope && !isSessionPersistenceReady && 'opacity-50'
                     )}
-                    onMouseEnter={() => setActiveIndex(selectableRows.length - 1)}
+                    onMouseEnter={() => setActiveIndex('command')}
                     onClick={() =>
                       activate({ kind: isProjectScope ? 'new-session' : 'new-project' })
                     }

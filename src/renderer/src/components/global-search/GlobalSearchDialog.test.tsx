@@ -1366,6 +1366,30 @@ describe('Global Search result accessibility', () => {
     }
   )
 
+  it.each(['workspace', 'home'] as const)(
+    'preserves an explicitly selected command in %s after search results arrive',
+    async (view) => {
+      useNavigationStore.setState({
+        view,
+        activeProjectId: view === 'workspace' ? 'project-a' : undefined
+      })
+      const onOpenChange = vi.fn()
+      const input = await mount(onOpenChange)
+      act(() => fireEvent.change(input, { target: { value: 'sin' } }))
+      const command = optionWithText(view === 'workspace' ? 'New session' : 'New project')
+      act(() => fireEvent.mouseOver(command))
+      await act(async () => vi.advanceTimersByTimeAsync(150))
+      expect.soft(command.getAttribute('aria-selected')).toBe('true')
+      expect.soft(input.getAttribute('aria-activedescendant')).toBe(command.id)
+      enter(input)
+      expect.soft(usePreviewWorkbenchStore.getState().fileDialogItem).toBeUndefined()
+      if (view === 'workspace')
+        expect.soft(useSessionStore.getState().selectedSessionId).toBeUndefined()
+      else expect.soft(useNavigationStore.getState().pendingProjectCreation).toBe(true)
+      expect(onOpenChange).toHaveBeenCalledWith(false)
+    }
+  )
+
   it('keeps Enter inert when only Literature is still loading', async () => {
     const onOpenChange = vi.fn()
     const input = await mount(onOpenChange)
