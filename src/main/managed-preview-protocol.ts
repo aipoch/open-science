@@ -107,42 +107,52 @@ const createStrictFileResponse = async (
     }
 
     let position = range.start
+    let canceled = false
+    let reading: Promise<void> | undefined
     const body = new ReadableStream<Uint8Array>({
-      pull: async (controller) => {
-        try {
-          if (request.signal.aborted) {
-            throw request.signal.reason ?? new DOMException('Preview read aborted', 'AbortError')
-          }
-          const length = Math.min(64 * 1024, range.end - position + 1)
-          const buffer = new Uint8Array(length)
-          let chunkOffset = 0
-          while (chunkOffset < length) {
-            const { bytesRead } = await resource.fileHandle.read(
-              buffer,
-              chunkOffset,
-              length - chunkOffset,
-              position + chunkOffset
-            )
-            if (bytesRead === 0) {
-              throw new Error('Managed preview file changed during streaming.')
+      pull: (controller) => {
+        reading = (async () => {
+          try {
+            if (request.signal.aborted) {
+              throw request.signal.reason ?? new DOMException('Preview read aborted', 'AbortError')
             }
-            chunkOffset += bytesRead
-          }
+            const length = Math.min(64 * 1024, range.end - position + 1)
+            const buffer = new Uint8Array(length)
+            let chunkOffset = 0
+            while (chunkOffset < length) {
+              const { bytesRead } = await resource.fileHandle.read(
+                buffer,
+                chunkOffset,
+                length - chunkOffset,
+                position + chunkOffset
+              )
+              if (canceled) return
+              if (bytesRead === 0) {
+                throw new Error('Managed preview file changed during streaming.')
+              }
+              chunkOffset += bytesRead
+            }
 
-          position += chunkOffset
-          const complete = position > range.end
-          if (complete) await resource.verifyUnchanged()
-          controller.enqueue(buffer)
-          if (complete) {
-            await closeHandle()
-            controller.close()
+            position += chunkOffset
+            const complete = position > range.end
+            if (complete) await resource.verifyUnchanged()
+            if (canceled) return
+            controller.enqueue(buffer)
+            if (complete) {
+              await closeHandle()
+              controller.close()
+            }
+          } catch (error) {
+            await closeHandle().catch(() => undefined)
+            if (!canceled) controller.error(error)
           }
-        } catch (error) {
-          await closeHandle().catch(() => undefined)
-          controller.error(error)
-        }
+        })()
+        return reading
       },
       cancel: async () => {
+        canceled = true
+        // Cancellation can arrive while an asynchronous read still owns the handle.
+        await reading
         await closeHandle()
       }
     })
