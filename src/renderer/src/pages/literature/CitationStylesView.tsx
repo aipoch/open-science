@@ -1,11 +1,11 @@
 /* Hallmark · pre-emit critique: P5 H5 E5 S5 R5 V5 */
 /* Hallmark · component: citation style manager · genre: modern-minimal · theme: existing Open Science tokens · enrichment: none */
 import { ArrowLeft, BookOpenText, FileText, LoaderCircle, Trash2, Upload } from 'lucide-react'
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { Button } from '@/components/ui/button'
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
+import { Popover, PopoverAnchor, PopoverContent } from '@/components/ui/popover'
 import { ExternalTextLink } from '@/components/ExternalTextLink'
 import { cn } from '@/lib/utils'
 import {
@@ -37,6 +37,72 @@ const CitationStylesView = ({
   const [previewStates, setPreviewStates] = useState<Record<string, CitationStylePreviewState>>({})
   const [error, setError] = useState<string>()
   const previewRequestsRef = useRef(new Set<string>())
+  const [activePreviewId, setActivePreviewId] = useState<string | null>(null)
+  const activePreviewRef = useRef<string | null>(null)
+  const pinnedRef = useRef(false)
+  const previewTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
+  const warmRef = useRef(false)
+  const warmTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
+  const previewContentRef = useRef<HTMLDivElement>(null)
+  const previewTriggerRef = useRef<HTMLButtonElement | null>(null)
+  const restoreFocusRef = useRef(false)
+  const suppressFocusRef = useRef(false)
+
+  const cancelPreviewTimer = (): void => clearTimeout(previewTimerRef.current)
+  const closePreview = useCallback((): void => {
+    clearTimeout(previewTimerRef.current)
+    if (activePreviewRef.current) {
+      warmRef.current = true
+      clearTimeout(warmTimerRef.current)
+      warmTimerRef.current = setTimeout(() => {
+        warmRef.current = false
+      }, 300)
+    }
+    activePreviewRef.current = null
+    pinnedRef.current = false
+    setActivePreviewId(null)
+  }, [])
+  const scheduleClosePreview = (): void => {
+    cancelPreviewTimer()
+    if (pinnedRef.current) return
+    previewTimerRef.current = setTimeout(() => {
+      if (
+        previewContentRef.current?.contains(document.activeElement) ||
+        previewTriggerRef.current === document.activeElement
+      )
+        return
+      closePreview()
+    }, 150)
+  }
+
+  useEffect(
+    () => () => {
+      clearTimeout(previewTimerRef.current)
+      clearTimeout(warmTimerRef.current)
+    },
+    []
+  )
+
+  useEffect(() => {
+    if (!activePreviewId) return
+    const onScroll = (event: Event): void => {
+      if (event.target instanceof Node && previewContentRef.current?.contains(event.target)) return
+      closePreview()
+    }
+    document.addEventListener('scroll', onScroll, true)
+    return () => document.removeEventListener('scroll', onScroll, true)
+  }, [activePreviewId, closePreview])
+
+  useEffect(() => {
+    if (!activePreviewId || styles?.some((style) => style.id === activePreviewId)) return
+    let current = true
+    queueMicrotask(() => {
+      if (current) closePreview()
+    })
+    return () => {
+      current = false
+    }
+  }, [activePreviewId, styles, closePreview])
 
   useEffect(() => {
     if (styles !== undefined) return
@@ -58,33 +124,52 @@ const CitationStylesView = ({
     }
   }, [onStylesChange, styles])
 
-  const loadPreview = (style: LiteratureCitationStyleView): void => {
-    if (
-      style.preview ||
-      previewRequestsRef.current.has(style.id) ||
-      previewStates[style.id]?.status === 'ready'
-    )
-      return
-    previewRequestsRef.current.add(style.id)
-    setPreviewStates((current) => ({ ...current, [style.id]: { status: 'loading' } }))
-    void window.api.literature.citationStyles({ kind: 'preview', styleId: style.id }).then(
-      (result) => {
-        const preview = result.preview
-        if (preview?.styleId !== style.id) previewRequestsRef.current.delete(style.id)
-        setPreviewStates((current) => ({
-          ...current,
-          [style.id]:
-            preview?.styleId === style.id
-              ? { status: 'ready', value: preview }
-              : { status: 'error' }
-        }))
-      },
-      () => {
-        previewRequestsRef.current.delete(style.id)
-        setPreviewStates((current) => ({ ...current, [style.id]: { status: 'error' } }))
+  const loadPreview = useCallback(
+    (style: LiteratureCitationStyleView): void => {
+      if (
+        style.preview ||
+        previewRequestsRef.current.has(style.id) ||
+        previewStates[style.id]?.status === 'ready'
+      )
+        return
+      previewRequestsRef.current.add(style.id)
+      setPreviewStates((current) => ({ ...current, [style.id]: { status: 'loading' } }))
+      void window.api.literature.citationStyles({ kind: 'preview', styleId: style.id }).then(
+        (result) => {
+          const preview = result.preview
+          if (preview?.styleId !== style.id) previewRequestsRef.current.delete(style.id)
+          setPreviewStates((current) => ({
+            ...current,
+            [style.id]:
+              preview?.styleId === style.id
+                ? { status: 'ready', value: preview }
+                : { status: 'error' }
+          }))
+        },
+        () => {
+          previewRequestsRef.current.delete(style.id)
+          setPreviewStates((current) => ({ ...current, [style.id]: { status: 'error' } }))
+        }
+      )
+    },
+    [previewStates]
+  )
+
+  const showPreview = useCallback(
+    (style: LiteratureCitationStyleView, trigger: HTMLButtonElement, immediate = false): void => {
+      cancelPreviewTimer()
+      if (pinnedRef.current && activePreviewRef.current !== style.id) return
+      const show = (): void => {
+        previewTriggerRef.current = trigger
+        activePreviewRef.current = style.id
+        setActivePreviewId(style.id)
+        loadPreview(style)
       }
-    )
-  }
+      if (immediate || activePreviewRef.current || warmRef.current) show()
+      else previewTimerRef.current = setTimeout(show, 200)
+    },
+    [loadPreview]
+  )
 
   const importStyle = async (file: File): Promise<void> => {
     setError(undefined)
@@ -132,12 +217,45 @@ const CitationStylesView = ({
       style.preview ?? (previewState?.status === 'ready' ? previewState.value : undefined)
     return (
       <li key={style.id} className="flex min-h-16 items-center gap-3 px-4 py-3 sm:px-5">
-        <Tooltip onOpenChange={(open) => open && loadPreview(style)}>
-          <TooltipTrigger asChild>
-            <div
-              tabIndex={0}
+        <Popover
+          open={activePreviewId === style.id}
+          onOpenChange={(open) => {
+            if (!open) closePreview()
+          }}
+        >
+          <PopoverAnchor asChild>
+            <button
+              type="button"
+              aria-haspopup="dialog"
+              aria-expanded={activePreviewId === style.id}
+              onPointerEnter={(event) => {
+                if (event.pointerType !== 'touch') showPreview(style, event.currentTarget)
+              }}
+              onPointerLeave={scheduleClosePreview}
+              onFocus={(event) => {
+                if (suppressFocusRef.current) {
+                  suppressFocusRef.current = false
+                  return
+                }
+                if (event.currentTarget.matches(':focus-visible'))
+                  showPreview(style, event.currentTarget, true)
+              }}
+              onBlur={(event) => {
+                if (
+                  event.relatedTarget instanceof Node &&
+                  previewContentRef.current?.contains(event.relatedTarget)
+                )
+                  return
+                scheduleClosePreview()
+              }}
+              onClick={(event) => {
+                pinnedRef.current = false
+                showPreview(style, event.currentTarget, true)
+                pinnedRef.current = true
+                previewContentRef.current?.focus()
+              }}
               aria-label={`${t('Preview')}: ${style.title}`}
-              className="-m-1 flex min-w-0 flex-1 items-center gap-3 rounded-lg p-1 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+              className="-m-1 flex min-w-0 flex-1 items-center gap-3 rounded-lg p-1 text-left hover:bg-muted focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
             >
               <span
                 className={cn(
@@ -154,9 +272,7 @@ const CitationStylesView = ({
                 )}
               </span>
               <div className="min-w-0 flex-1">
-                <p className="truncate text-sm font-medium" title={style.title}>
-                  {style.title}
-                </p>
+                <p className="truncate text-sm font-medium">{style.title}</p>
                 <p className="mt-0.5 truncate text-xs text-muted-foreground">
                   {style.source === 'built-in'
                     ? t('Included with Open Science')
@@ -164,9 +280,48 @@ const CitationStylesView = ({
                   {style.rights ? ` · ${style.rights}` : ''}
                 </p>
               </div>
-            </div>
-          </TooltipTrigger>
-          <TooltipContent side="top" align="end" className="min-h-32 w-80 space-y-2.5 p-3">
+            </button>
+          </PopoverAnchor>
+          <PopoverContent
+            ref={previewContentRef}
+            aria-label={`${t('Preview')}: ${style.title}`}
+            tabIndex={-1}
+            side="top"
+            align="end"
+            collisionPadding={8}
+            className="max-h-[min(24rem,var(--radix-popover-content-available-height))] min-h-0 w-80 max-w-[calc(100vw-1rem)] space-y-2.5 overflow-y-auto overscroll-contain break-words p-3 select-text"
+            onPointerEnter={cancelPreviewTimer}
+            onPointerLeave={scheduleClosePreview}
+            onFocusCapture={() => {
+              cancelPreviewTimer()
+              pinnedRef.current = true
+            }}
+            onBlurCapture={(event) => {
+              if (
+                event.relatedTarget instanceof Node &&
+                previewContentRef.current?.contains(event.relatedTarget)
+              )
+                return
+              pinnedRef.current = false
+              scheduleClosePreview()
+            }}
+            onOpenAutoFocus={(event) => {
+              event.preventDefault()
+              if (pinnedRef.current) previewContentRef.current?.focus()
+            }}
+            onCloseAutoFocus={(event) => {
+              event.preventDefault()
+              if (!restoreFocusRef.current) return
+              restoreFocusRef.current = false
+              suppressFocusRef.current = true
+              previewTriggerRef.current?.focus()
+            }}
+            onEscapeKeyDown={() => {
+              restoreFocusRef.current =
+                previewContentRef.current?.contains(document.activeElement) ?? false
+            }}
+          >
+            <p className="font-semibold">{style.title}</p>
             {example ? (
               <>
                 <div>
@@ -191,8 +346,18 @@ const CitationStylesView = ({
                   : t('Preview unavailable')}
               </p>
             )}
-          </TooltipContent>
-        </Tooltip>
+            {previewState?.status === 'error' ? (
+              <Button
+                type="button"
+                variant="secondary"
+                size="sm"
+                onClick={() => loadPreview(style)}
+              >
+                {t('Retry')}
+              </Button>
+            ) : null}
+          </PopoverContent>
+        </Popover>
         {style.source === 'custom' ? (
           <Button
             type="button"
@@ -218,7 +383,7 @@ const CitationStylesView = ({
   }
 
   return (
-    <TooltipProvider delayDuration={200} skipDelayDuration={0}>
+    <>
       <div className="mx-auto flex h-full w-full max-w-4xl flex-col overflow-y-auto px-4 py-6 [scrollbar-width:none] lg:px-6 lg:py-8 [&::-webkit-scrollbar]:hidden">
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div className="min-w-0">
@@ -320,7 +485,7 @@ const CitationStylesView = ({
           </div>
         )}
       </div>
-    </TooltipProvider>
+    </>
   )
 }
 

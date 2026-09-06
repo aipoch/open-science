@@ -339,10 +339,10 @@ const LocalListing = ({
                   )}
                   <span className="truncate">{entry.name}</span>
                 </span>
-                <span className="text-right text-xs text-muted-foreground">
+                <span className="text-right text-xs tabular-nums text-muted-foreground">
                   {entry.isDirectory ? '—' : formatSize(entry.size)}
                 </span>
-                <span className="text-right text-xs text-muted-foreground">
+                <span className="text-right text-xs tabular-nums text-muted-foreground">
                   {relativeTime(entry.mtimeMs)}
                 </span>
               </button>

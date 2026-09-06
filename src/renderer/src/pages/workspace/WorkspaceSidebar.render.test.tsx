@@ -317,6 +317,13 @@ beforeEach(() => {
   })
 })
 
+const waitForPreviewDwell = async (): Promise<void> => {
+  await act(async () => {
+    if (vi.isFakeTimers()) await vi.advanceTimersByTimeAsync(310)
+    else await new Promise((resolve) => setTimeout(resolve, 310))
+  })
+}
+
 describe('WorkspaceSidebar accessible render', () => {
   it('keeps the sidebar card inset even on both sides', async () => {
     const html = await renderSidebar([createSession({ id: 'session-a' })])
@@ -355,15 +362,17 @@ describe('WorkspaceSidebar accessible render', () => {
     const desktopSessionButton = desktopContainer.querySelector('[data-slot="session-open-button"]')
     const mobileSessionButton = mobileContainer.querySelector('[data-slot="session-open-button"]')
 
-    expect(SESSION_HOVER_PREVIEW_DELAY_MS).toBe(0)
+    expect(SESSION_HOVER_PREVIEW_DELAY_MS).toBe(300)
     expect(SESSION_HOVER_PREVIEW_SKIP_DELAY_MS).toBe(300)
-    expect(desktopSessionButton?.closest('div.group')?.getAttribute('data-state')).toBe('closed')
+    expect(desktopSessionButton?.closest('div.group')?.getAttribute('data-session-preview')).toBe(
+      'closed'
+    )
     expect(desktopSessionButton?.closest('[title="Analysis session"]')).toBeNull()
     expect(mobileSessionButton?.closest('div.group')?.getAttribute('data-state')).toBeNull()
     expect(mobileSessionButton?.closest('[title="Analysis session"]')).not.toBeNull()
   })
 
-  it('opens pointer previews immediately and switches directly to the next Session', async () => {
+  it('delays the first pointer preview and switches directly to the next Session', async () => {
     vi.useFakeTimers()
     const {
       SESSION_HOVER_PREVIEW_ALIGN_OFFSET_PX,
@@ -404,11 +413,13 @@ describe('WorkspaceSidebar accessible render', () => {
       if (!first || !second) throw new Error('Session preview triggers did not render')
 
       await act(async () => pointerOver(first))
+      expect(firstPreviewRequest).not.toHaveBeenCalled()
+      await waitForPreviewDwell()
       expect(document.body.querySelector('[data-slot="session-hover-preview"]')?.textContent).toBe(
         'First SessionFirst Description'
       )
       const hoverRegion = document.body.querySelector<HTMLElement>(
-        '[data-slot="hovercard-content"]'
+        '[data-slot="session-preview-content"]'
       )
       expect(SESSION_HOVER_PREVIEW_ALIGN_OFFSET_PX).toBe(0)
       expect(hoverRegion?.classList).toContain('border-0')
@@ -430,7 +441,7 @@ describe('WorkspaceSidebar accessible render', () => {
     }
   })
 
-  it('closes a Session preview immediately after the pointer leaves its hover region', async () => {
+  it('closes a Session preview after a crossing grace when the pointer leaves its hover region', async () => {
     const { SessionHoverPreview, SessionHoverPreviewProvider } =
       await import('./SessionHoverPreview')
     const container = document.createElement('div')
@@ -453,10 +464,11 @@ describe('WorkspaceSidebar accessible render', () => {
       Object.defineProperty(pointerOver, 'pointerType', { value: 'mouse' })
 
       await act(async () => trigger.dispatchEvent(pointerOver))
+      await waitForPreviewDwell()
       expect(document.body.querySelector('[data-slot="session-hover-preview"]')).not.toBeNull()
 
       const hoverRegion = document.body.querySelector<HTMLElement>(
-        '[data-slot="hovercard-content"]'
+        '[data-slot="session-preview-content"]'
       )
       if (!hoverRegion) throw new Error('Session preview hover region did not render')
       const leaveTrigger = new MouseEvent('pointerout', {
@@ -474,6 +486,7 @@ describe('WorkspaceSidebar accessible render', () => {
       })
       Object.defineProperty(leaveHoverRegion, 'pointerType', { value: 'mouse' })
       await act(async () => hoverRegion.dispatchEvent(leaveHoverRegion))
+      await waitForPreviewDwell()
 
       expect(document.body.querySelector('[data-slot="session-hover-preview"]')).toBeNull()
     } finally {
@@ -528,6 +541,7 @@ describe('WorkspaceSidebar accessible render', () => {
       Object.defineProperty(pointerOver, 'pointerType', { value: 'mouse' })
 
       await act(async () => actionsTrigger.dispatchEvent(pointerOver))
+      await waitForPreviewDwell()
       expect(document.body.querySelector('[data-slot="session-hover-preview"]')).not.toBeNull()
 
       await act(async () =>
@@ -613,6 +627,7 @@ describe('WorkspaceSidebar accessible render', () => {
       const pointerOver = new MouseEvent('pointerover', { bubbles: true })
       Object.defineProperty(pointerOver, 'pointerType', { value: 'mouse' })
       await act(async () => targetRow.dispatchEvent(pointerOver))
+      await waitForPreviewDwell()
       expect(document.body.querySelector('[data-slot="session-hover-preview"]')).not.toBeNull()
 
       await act(async () => {
@@ -776,6 +791,7 @@ describe('WorkspaceSidebar accessible render', () => {
       Object.defineProperty(pointerOver, 'pointerType', { value: 'mouse' })
 
       await act(async () => trigger.dispatchEvent(pointerOver))
+      await waitForPreviewDwell()
       expect(document.body.querySelector('[data-slot="session-hover-preview"]')).not.toBeNull()
 
       await act(async () =>
@@ -858,6 +874,7 @@ describe('WorkspaceSidebar accessible render', () => {
       const pointerOver = new MouseEvent('pointerover', { bubbles: true })
       Object.defineProperty(pointerOver, 'pointerType', { value: 'mouse' })
       await act(async () => trigger.dispatchEvent(pointerOver))
+      await waitForPreviewDwell()
 
       const titleButton = document.body.querySelector<HTMLElement>(
         '[data-slot="session-hover-preview-title-button"]'
@@ -866,7 +883,7 @@ describe('WorkspaceSidebar accessible render', () => {
       await act(async () => titleButton.dispatchEvent(new MouseEvent('click', { bubbles: true })))
 
       const input = document.body.querySelector<HTMLInputElement>(
-        '[data-slot="hovercard-content"] [data-slot="input"]'
+        '[data-slot="session-preview-content"] [data-slot="input"]'
       )
       if (!input) throw new Error('Session preview title editor did not render')
       expect(input.value).toBe('Old title')
@@ -880,7 +897,7 @@ describe('WorkspaceSidebar accessible render', () => {
       expect(onRenameTitle).toHaveBeenCalledWith('Renamed title', 'Old title')
       expect(onRenameTitle).toHaveBeenCalledOnce()
       expect(
-        document.body.querySelector('[data-slot="hovercard-content"] [data-slot="input"]')
+        document.body.querySelector('[data-slot="session-preview-content"] [data-slot="input"]')
       ).toBeNull()
     } finally {
       act(() => root.unmount())
@@ -918,12 +935,13 @@ describe('WorkspaceSidebar accessible render', () => {
       const pointerOver = new MouseEvent('pointerover', { bubbles: true })
       Object.defineProperty(pointerOver, 'pointerType', { value: 'mouse' })
       await act(async () => trigger.dispatchEvent(pointerOver))
+      await waitForPreviewDwell()
       const titleButton = document.body.querySelector<HTMLElement>(
         '[data-slot="session-hover-preview-title-button"]'
       )
       await act(async () => titleButton?.dispatchEvent(new MouseEvent('click', { bubbles: true })))
       const input = document.body.querySelector<HTMLInputElement>(
-        '[data-slot="hovercard-content"] [data-slot="input"]'
+        '[data-slot="session-preview-content"] [data-slot="input"]'
       )
       if (!input) throw new Error('Session preview title editor did not render')
       input.value = 'My stale draft'
@@ -969,12 +987,13 @@ describe('WorkspaceSidebar accessible render', () => {
       const pointerOver = new MouseEvent('pointerover', { bubbles: true })
       Object.defineProperty(pointerOver, 'pointerType', { value: 'mouse' })
       await act(async () => trigger.dispatchEvent(pointerOver))
+      await waitForPreviewDwell()
       const titleButton = document.body.querySelector<HTMLElement>(
         '[data-slot="session-hover-preview-title-button"]'
       )
       await act(async () => titleButton?.dispatchEvent(new MouseEvent('click', { bubbles: true })))
       const input = document.body.querySelector<HTMLInputElement>(
-        '[data-slot="hovercard-content"] [data-slot="input"]'
+        '[data-slot="session-preview-content"] [data-slot="input"]'
       )
       if (!input) throw new Error('Session preview title editor did not render')
       input.value = 'Unsaved title'
@@ -988,7 +1007,7 @@ describe('WorkspaceSidebar accessible render', () => {
       })
 
       expect(
-        document.body.querySelector('[data-slot="hovercard-content"] [data-slot="input"]')
+        document.body.querySelector('[data-slot="session-preview-content"] [data-slot="input"]')
       ).toBeInstanceOf(HTMLInputElement)
       expect(document.body.querySelector('[role="alert"]')?.textContent).toBe(
         'Could not save session details.'
@@ -1026,12 +1045,13 @@ describe('WorkspaceSidebar accessible render', () => {
       const pointerOver = new MouseEvent('pointerover', { bubbles: true })
       Object.defineProperty(pointerOver, 'pointerType', { value: 'mouse' })
       await act(async () => trigger.dispatchEvent(pointerOver))
+      await waitForPreviewDwell()
       const titleButton = document.body.querySelector<HTMLElement>(
         '[data-slot="session-hover-preview-title-button"]'
       )
       await act(async () => titleButton?.dispatchEvent(new MouseEvent('click', { bubbles: true })))
       const input = document.body.querySelector<HTMLInputElement>(
-        '[data-slot="hovercard-content"] [data-slot="input"]'
+        '[data-slot="session-preview-content"] [data-slot="input"]'
       )
       if (!input) throw new Error('Session preview title editor did not render')
       input.value = 'Unsaved title'
@@ -1040,7 +1060,7 @@ describe('WorkspaceSidebar accessible render', () => {
       )
 
       expect(
-        document.body.querySelector('[data-slot="hovercard-content"] [data-slot="input"]')
+        document.body.querySelector('[data-slot="session-preview-content"] [data-slot="input"]')
       ).toBeInstanceOf(HTMLInputElement)
       expect(document.body.querySelector('[role="alert"]')).toBeNull()
     } finally {
@@ -1076,6 +1096,7 @@ describe('WorkspaceSidebar accessible render', () => {
       const pointerOver = new MouseEvent('pointerover', { bubbles: true })
       Object.defineProperty(pointerOver, 'pointerType', { value: 'mouse' })
       await act(async () => trigger.dispatchEvent(pointerOver))
+      await waitForPreviewDwell()
       const titleButton = document.body.querySelector<HTMLElement>(
         '[data-slot="session-hover-preview-title-button"]'
       )
@@ -1083,7 +1104,7 @@ describe('WorkspaceSidebar accessible render', () => {
       await act(async () => titleButton.dispatchEvent(new MouseEvent('click', { bubbles: true })))
 
       const input = document.body.querySelector<HTMLInputElement>(
-        '[data-slot="hovercard-content"] [data-slot="input"]'
+        '[data-slot="session-preview-content"] [data-slot="input"]'
       )
       if (!input) throw new Error('Session preview title editor did not render')
       input.value = 'Discarded title'
@@ -1093,7 +1114,7 @@ describe('WorkspaceSidebar accessible render', () => {
 
       expect(onRenameTitle).not.toHaveBeenCalled()
       expect(
-        document.body.querySelector('[data-slot="hovercard-content"] [data-slot="input"]')
+        document.body.querySelector('[data-slot="session-preview-content"] [data-slot="input"]')
       ).toBeNull()
     } finally {
       act(() => root.unmount())
@@ -1115,7 +1136,7 @@ describe('WorkspaceSidebar accessible render', () => {
       if (!titleButton) throw new Error('Session preview title button did not render')
       await act(async () => titleButton.dispatchEvent(new MouseEvent('click', { bubbles: true })))
       const input = document.body.querySelector<HTMLInputElement>(
-        '[data-slot="hovercard-content"] [data-slot="input"]'
+        '[data-slot="session-preview-content"] [data-slot="input"]'
       )
       if (!input) throw new Error('Session preview title editor did not render')
       return input
@@ -1141,12 +1162,14 @@ describe('WorkspaceSidebar accessible render', () => {
       Object.defineProperty(pointerOver, 'pointerType', { value: 'mouse' })
 
       await act(async () => trigger.dispatchEvent(pointerOver))
+      await waitForPreviewDwell()
       const blankInput = await openEditor()
       blankInput.value = '   '
       await act(async () => blankInput.blur())
       expect(onRenameTitle).not.toHaveBeenCalled()
 
       await act(async () => trigger.dispatchEvent(pointerOver))
+      await waitForPreviewDwell()
       const committedInput = await openEditor()
       committedInput.value = 'Blurred rename'
       await act(async () => committedInput.blur())
@@ -1167,7 +1190,9 @@ describe('WorkspaceSidebar accessible render', () => {
       <SessionHoverPreviewCard session={{ title: 'Editable title' }} canRename />
     )
 
-    expect(readOnly).toContain('<p class="truncate text-sm font-semibold leading-5">')
+    expect(readOnly).toContain(
+      '<p class="whitespace-pre-wrap break-words text-sm font-semibold leading-5">'
+    )
     expect(readOnly).not.toContain('session-hover-preview-title-button')
     expect(editable).toContain('data-slot="session-hover-preview-title-button"')
     expect(editable).toContain('aria-label="Rename session title"')
@@ -1238,7 +1263,7 @@ describe('WorkspaceSidebar accessible render', () => {
     }
   })
 
-  it('truncates long Session titles to one line and Descriptions to three lines', async () => {
+  it('wraps full Session titles and clamps Descriptions to three lines', async () => {
     const { SessionHoverPreviewCard } = await import('./SessionHoverPreview')
     const html = renderToStaticMarkup(
       <SessionHoverPreviewCard
@@ -1255,7 +1280,9 @@ describe('WorkspaceSidebar accessible render', () => {
     expect(html).toContain('data-slot="session-hover-preview"')
     expect(html).toContain('Complete analysis title')
     expect(html).toContain('Compare both cohorts.')
-    expect(html).toContain('class="truncate text-sm font-semibold leading-5"')
+    expect(html).toContain(
+      'class="whitespace-pre-wrap break-words text-sm font-semibold leading-5"'
+    )
     expect(html).toContain('text-xs leading-4')
     expect(html).not.toContain('text-[15px]')
     expect(html.match(/line-clamp-3/g)).toHaveLength(1)
@@ -1263,102 +1290,6 @@ describe('WorkspaceSidebar accessible render', () => {
     expect(withoutDescription).not.toContain('<p class="mt-2')
     expect(loading).toContain('aria-busy="true"')
     expect(loading).toContain('data-slot="session-hover-preview-description-loading"')
-  })
-
-  it('scrolls only an overflowing Session title and resets it on pointer leave', async () => {
-    const { SessionTitleMarquee } = await import('./SessionHoverPreview')
-    const container = document.createElement('div')
-    const root = createRoot(container)
-    const originalMatchMedia = window.matchMedia
-    window.matchMedia = vi.fn().mockReturnValue({ matches: false })
-
-    try {
-      await act(async () => {
-        root.render(
-          <button type="button">
-            <SessionTitleMarquee title="A title wider than the Session row" />
-          </button>
-        )
-      })
-      const viewport = container.querySelector<HTMLElement>('[data-slot="session-title-marquee"]')
-      const content = viewport?.firstElementChild as HTMLElement | null
-      const trigger = viewport?.closest('button')
-      const cancel = vi.fn()
-      const animate = vi.fn().mockReturnValue({ cancel } as unknown as Animation)
-      expect(viewport).not.toBeNull()
-      expect(content).not.toBeNull()
-      if (!viewport || !content) throw new Error('Session title marquee did not render')
-      Object.defineProperty(viewport, 'clientWidth', { configurable: true, value: 100 })
-      Object.defineProperty(content, 'scrollWidth', { configurable: true, value: 180 })
-      Object.defineProperty(content, 'animate', { configurable: true, value: animate })
-
-      await act(async () => {
-        trigger?.dispatchEvent(new MouseEvent('pointerenter'))
-      })
-      expect(animate).toHaveBeenCalledWith(
-        [{ transform: 'translateX(0)' }, { transform: 'translateX(-80px)' }],
-        expect.objectContaining({ delay: 300, duration: 2_800, fill: 'forwards' })
-      )
-
-      await act(async () => {
-        trigger?.dispatchEvent(new MouseEvent('pointerleave'))
-      })
-      expect(cancel).toHaveBeenCalledTimes(1)
-
-      animate.mockClear()
-      Object.defineProperty(content, 'scrollWidth', { configurable: true, value: 260 })
-      await act(async () => {
-        trigger?.dispatchEvent(new MouseEvent('pointerenter'))
-      })
-      expect(animate).toHaveBeenCalledWith(
-        [{ transform: 'translateX(0)' }, { transform: 'translateX(-160px)' }],
-        expect.objectContaining({ delay: 300, duration: 5_600, fill: 'forwards' })
-      )
-
-      animate.mockClear()
-      Object.defineProperty(content, 'scrollWidth', { configurable: true, value: 90 })
-      await act(async () => {
-        trigger?.dispatchEvent(new MouseEvent('pointerenter'))
-      })
-      expect(animate).not.toHaveBeenCalled()
-    } finally {
-      act(() => root.unmount())
-      window.matchMedia = originalMatchMedia
-    }
-  })
-
-  it('keeps overflowing Session titles still when reduced motion is requested', async () => {
-    const { SessionTitleMarquee } = await import('./SessionHoverPreview')
-    const container = document.createElement('div')
-    const root = createRoot(container)
-    const originalMatchMedia = window.matchMedia
-    window.matchMedia = vi.fn().mockReturnValue({ matches: true })
-
-    try {
-      await act(async () => {
-        root.render(
-          <button type="button">
-            <SessionTitleMarquee title="A title wider than the Session row" />
-          </button>
-        )
-      })
-      const viewport = container.querySelector<HTMLElement>('[data-slot="session-title-marquee"]')
-      const content = viewport?.firstElementChild as HTMLElement | null
-      const trigger = viewport?.closest('button')
-      const animate = vi.fn()
-      if (!viewport || !content) throw new Error('Session title marquee did not render')
-      Object.defineProperty(viewport, 'clientWidth', { configurable: true, value: 100 })
-      Object.defineProperty(content, 'scrollWidth', { configurable: true, value: 180 })
-      Object.defineProperty(content, 'animate', { configurable: true, value: animate })
-
-      await act(async () => {
-        trigger?.dispatchEvent(new MouseEvent('pointerenter'))
-      })
-      expect(animate).not.toHaveBeenCalled()
-    } finally {
-      act(() => root.unmount())
-      window.matchMedia = originalMatchMedia
-    }
   })
 
   it('docks the update action on the row above Settings', async () => {
@@ -2300,9 +2231,7 @@ describe('WorkspaceSidebar accessible render', () => {
       const completed = titleSpans.find((element) => element.textContent === completedTitle)
       const fade = container.querySelector<HTMLElement>('.bg-gradient-to-r')
 
-      expect(running?.classList).toContain('overflow-hidden')
-      expect(running?.classList).toContain('whitespace-nowrap')
-      expect(running?.classList).not.toContain('truncate')
+      expect(running?.classList).toContain('truncate')
       expect(running?.classList).toContain('font-semibold')
       expect(completed?.classList).not.toContain('font-semibold')
       expect(fade?.classList).toContain('w-12')
@@ -2741,11 +2670,13 @@ describe('WorkspaceSidebar accessible render', () => {
         })
 
         const shortcutButtons = container.querySelectorAll<HTMLButtonElement>(
-          'button[aria-keyshortcuts]'
+          'button[aria-keyshortcuts*="+"]'
         )
         expect(shortcutButtons).toHaveLength(9)
         expect(shortcutButtons[0]?.textContent).toContain('Pinned target')
-        expect(shortcutButtons[0]?.getAttribute('aria-keyshortcuts')).toBe(ariaShortcut)
+        expect(shortcutButtons[0]?.getAttribute('aria-keyshortcuts')?.split(' ')).toContain(
+          ariaShortcut
+        )
 
         await act(async () => {
           window.dispatchEvent(

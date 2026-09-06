@@ -1626,324 +1626,334 @@ const WorkspaceMessageItemImpl = ({
   )
 
   return (
-    <MessageScrollerItem
-      key={message.id}
-      messageId={message.id}
-      disableContainment={skipContentVisibilityNow || skipContentVisibility}
-      scrollAnchor={message.role === 'user'}
-      className="min-w-0"
-    >
-      <div className={cn('px-4 pb-1 pt-5 md:px-6', contentPaddingClassName)}>
-        {/* User prompts stay compact; assistant responses remain a readable transcript surface. */}
-        {isComputeJobCompletion ? (
-          <div
-            data-testid="compute-job-completion-event"
-            className="flex max-w-[56rem] items-start gap-2 rounded-lg bg-bg-200 px-3 py-2 text-xs text-text-300"
-            role="status"
-          >
-            <Bot className="mt-0.5 size-3.5 shrink-0 text-text-300" aria-hidden="true" />
-            <div className="flex min-w-0 flex-col gap-0.5 sm:flex-row sm:items-baseline sm:gap-2">
-              <span className="font-medium text-text-200">{t('Remote job completed')}</span>
-              <span className="text-text-300">{t('Analysis started automatically')}</span>
-            </div>
-          </div>
-        ) : isReviewerCorrection ? (
-          <div
-            data-testid="reviewer-correction-message"
-            data-active={reviewerCorrectionActive || undefined}
-            className="flex max-w-[56rem] items-start gap-2 rounded-lg bg-bg-200 px-3 py-2 text-xs text-text-300"
-            role="status"
-            aria-live={reviewerCorrectionActive ? 'polite' : undefined}
-          >
-            {reviewerCorrectionActive ? (
-              <CircleGauge
-                data-testid="reviewer-correction-active-icon"
-                className="mt-0.5 size-3.5 shrink-0 animate-spin text-text-300 motion-reduce:animate-none"
-                aria-hidden="true"
-              />
-            ) : reviewerCorrectionState === 'completed' ? (
-              <Check
-                data-testid="reviewer-correction-settled-icon"
-                className="mt-0.5 size-3.5 shrink-0 text-text-300"
-                aria-hidden="true"
-              />
-            ) : (
-              <CircleAlert
-                data-testid="reviewer-correction-failed-icon"
-                className="mt-0.5 size-3.5 shrink-0 text-status-warning-foreground dark:text-status-warning-dark-foreground"
-                aria-hidden="true"
-              />
-            )}
-            <div className="flex min-w-0 flex-col gap-0.5 sm:flex-row sm:items-baseline sm:gap-2">
-              <span className="font-medium text-text-200">
-                {reviewerCorrectionState === 'waiting'
-                  ? t('Reviewer requested corrections')
-                  : t('Corrections requested')}
-              </span>
-              {reviewerCorrectionState === 'waiting' && (
-                <span className="text-text-300">{t('Agent is addressing the feedback')}</span>
-              )}
-              {reviewerCorrectionState === 'responding' && (
-                <span className="text-text-300">
-                  {t('Handed off to the Agent · response started')}
-                </span>
-              )}
-              {reviewerCorrectionState === 'completed' && (
-                <span className="text-text-300">{t('Response completed.')}</span>
-              )}
-              {reviewerCorrectionState === 'failed' && (
-                <span className="text-text-300">{t('Response failed.')}</span>
-              )}
-            </div>
-          </div>
-        ) : isSideChatAdvisory ? (
-          <div
-            data-testid="side-chat-advisory"
-            className="flex min-w-0 items-center gap-2 rounded-xl bg-bg-200 px-3 py-2 text-[13px] text-text-100"
-          >
-            <MessageCircleMore className="size-4 shrink-0 text-text-300" aria-hidden="true" />
-            <span className="shrink-0 font-medium">{t('Side chat')}</span>
-            <span className="min-w-0 truncate">{message.content}</span>
-          </div>
-        ) : isUserMessage ? (
-          isEditing ? (
-            <div className="flex justify-end">
-              {/* Inline editing swaps the bubble for a multi-line editor; confirm resends the prompt. */}
-              <div className={editCardClassName} aria-busy={isResendingEdit}>
-                <MessageUploadAttachmentList
-                  attachments={uploads}
-                  onPreviewUploadAttachment={onPreviewUploadAttachment}
-                />
-                {uploads.length > 0 ? (
-                  <hr
-                    role="separator"
-                    className="-mt-1.5 w-full border-0 border-t border-border-200"
-                  />
-                ) : null}
-                <AnnotationDraftCards
-                  annotations={editAnnotations}
-                  disabled={!canEditMessage || isResendingEdit}
-                  onReveal={requestAnnotationReveal}
-                  onUpdateNote={(id, note) => {
-                    const next = editAnnotations.map((annotation) =>
-                      annotation.id === id
-                        ? annotation.kind === 'text'
-                          ? { ...annotation, note: note.trim() || undefined }
-                          : { ...annotation, note: note.trim() }
-                        : annotation
-                    )
-                    return updateEditAnnotations(next)
-                  }}
-                  onRemove={(id) => {
-                    updateEditAnnotations(
-                      editAnnotationsRef.current.filter((annotation) => annotation.id !== id)
-                    )
-                  }}
-                />
-                <ComposerEditor
-                  doc={editDoc}
-                  onDocChange={(next) => {
-                    editDocRef.current = next
-                    setEditDoc(next)
-                    const validation = validateAnnotations(editAnnotations, docToText(next))
-                    setEditError(
-                      validation ? annotationValidationMessage(validation, t) : undefined
-                    )
-                  }}
-                  onSubmit={handleConfirmEdit}
-                  onPaste={ignoreEditPaste}
-                  placeholder={t('Edit your message')}
-                  ariaLabel={t('Edit message')}
-                  focusRequest={editFocusRequest}
-                />
-                {editError ? (
-                  <div
-                    role="alert"
-                    className="[&>section]:max-w-none [&>section]:gap-2 [&_h1]:text-xs"
-                  >
-                    <ErrorNotice tone="red" title={editError} />
-                  </div>
-                ) : null}
-                <div className="flex items-center justify-end gap-1">
-                  <button
-                    type="button"
-                    className={editCancelButtonClassName}
-                    disabled={isResendingEdit}
-                    onClick={handleCancelEdit}
-                  >
-                    {t('Cancel')}
-                  </button>
-                  <button
-                    type="button"
-                    className={editSendButtonClassName}
-                    disabled={
-                      !canEditMessage ||
-                      isResendingEdit ||
-                      (docIsEmpty(editDoc) && editAnnotations.length === 0)
-                    }
-                    onClick={handleConfirmEdit}
-                  >
-                    {isResendingEdit ? (
-                      <Loader2 className="size-3 animate-spin" aria-hidden="true" />
-                    ) : null}
-                    {t('Send')}
-                  </button>
-                </div>
+    <TooltipProvider delayDuration={200}>
+      <MessageScrollerItem
+        key={message.id}
+        messageId={message.id}
+        disableContainment={skipContentVisibilityNow || skipContentVisibility}
+        scrollAnchor={message.role === 'user'}
+        className="min-w-0"
+      >
+        <div className={cn('px-4 pb-1 pt-5 md:px-6', contentPaddingClassName)}>
+          {/* User prompts stay compact; assistant responses remain a readable transcript surface. */}
+          {isComputeJobCompletion ? (
+            <div
+              data-testid="compute-job-completion-event"
+              className="flex max-w-[56rem] items-start gap-2 rounded-lg bg-bg-200 px-3 py-2 text-xs text-text-300"
+              role="status"
+            >
+              <Bot className="mt-0.5 size-3.5 shrink-0 text-text-300" aria-hidden="true" />
+              <div className="flex min-w-0 flex-col gap-0.5 sm:flex-row sm:items-baseline sm:gap-2">
+                <span className="font-medium text-text-200">{t('Remote job completed')}</span>
+                <span className="text-text-300">{t('Analysis started automatically')}</span>
               </div>
             </div>
-          ) : (
-            <div className="group flex flex-col items-end">
-              <div
-                data-slot="user-bubble-row"
-                className="flex w-full max-w-full items-center justify-end gap-1"
-              >
-                {/* Copy/edit controls stay left of the bubble; Branch navigation lives below it. */}
-                {showUserActions && isHumanUser ? (
-                  <TooltipProvider delayDuration={200}>
-                    <div data-slot="user-message-actions" className={userMessageActionsClassName}>
-                      <UserMessageActionTooltip label={copied ? t('Copied') : t('Copy message')}>
-                        <button
-                          type="button"
-                          className={userMessageActionButtonClassName}
-                          aria-label={copied ? t('Copied') : t('Copy message')}
-                          onClick={handleCopyMessage}
-                        >
-                          {copied ? (
-                            <Check className="size-3.5" strokeWidth={2} aria-hidden="true" />
-                          ) : (
-                            <Copy className="size-3.5" strokeWidth={2} aria-hidden="true" />
-                          )}
-                        </button>
-                      </UserMessageActionTooltip>
-                      <UserMessageActionTooltip label={t('Edit message')}>
-                        <button
-                          ref={editButtonRef}
-                          type="button"
-                          className={userMessageActionButtonClassName}
-                          aria-label={t('Edit message')}
-                          disabled={!canEditMessage}
-                          onClick={handleStartEdit}
-                        >
-                          <Pencil className="size-3.5" strokeWidth={2} aria-hidden="true" />
-                        </button>
-                      </UserMessageActionTooltip>
-                    </div>
-                  </TooltipProvider>
-                ) : null}
-                <div data-slot="user-message-bubble" className={userMessageBubbleClassName}>
-                  <MessagePdfReadingContext message={message} projectId={projectId} />
-                  <AnnotationMessageCards
-                    annotations={message.annotations ?? []}
-                    onReveal={requestAnnotationReveal}
-                  />
+          ) : isReviewerCorrection ? (
+            <div
+              data-testid="reviewer-correction-message"
+              data-active={reviewerCorrectionActive || undefined}
+              className="flex max-w-[56rem] items-start gap-2 rounded-lg bg-bg-200 px-3 py-2 text-xs text-text-300"
+              role="status"
+              aria-live={reviewerCorrectionActive ? 'polite' : undefined}
+            >
+              {reviewerCorrectionActive ? (
+                <CircleGauge
+                  data-testid="reviewer-correction-active-icon"
+                  className="mt-0.5 size-3.5 shrink-0 animate-spin text-text-300 motion-reduce:animate-none"
+                  aria-hidden="true"
+                />
+              ) : reviewerCorrectionState === 'completed' ? (
+                <Check
+                  data-testid="reviewer-correction-settled-icon"
+                  className="mt-0.5 size-3.5 shrink-0 text-text-300"
+                  aria-hidden="true"
+                />
+              ) : (
+                <CircleAlert
+                  data-testid="reviewer-correction-failed-icon"
+                  className="mt-0.5 size-3.5 shrink-0 text-status-warning-foreground dark:text-status-warning-dark-foreground"
+                  aria-hidden="true"
+                />
+              )}
+              <div className="flex min-w-0 flex-col gap-0.5 sm:flex-row sm:items-baseline sm:gap-2">
+                <span className="font-medium text-text-200">
+                  {reviewerCorrectionState === 'waiting'
+                    ? t('Reviewer requested corrections')
+                    : t('Corrections requested')}
+                </span>
+                {reviewerCorrectionState === 'waiting' && (
+                  <span className="text-text-300">{t('Agent is addressing the feedback')}</span>
+                )}
+                {reviewerCorrectionState === 'responding' && (
+                  <span className="text-text-300">
+                    {t('Handed off to the Agent · response started')}
+                  </span>
+                )}
+                {reviewerCorrectionState === 'completed' && (
+                  <span className="text-text-300">{t('Response completed.')}</span>
+                )}
+                {reviewerCorrectionState === 'failed' && (
+                  <span className="text-text-300">{t('Response failed.')}</span>
+                )}
+              </div>
+            </div>
+          ) : isSideChatAdvisory ? (
+            <div
+              data-testid="side-chat-advisory"
+              className="flex min-w-0 items-center gap-2 rounded-xl bg-bg-200 px-3 py-2 text-[13px] text-text-100"
+            >
+              <MessageCircleMore className="size-4 shrink-0 text-text-300" aria-hidden="true" />
+              <span className="shrink-0 font-medium">{t('Side chat')}</span>
+              <span className="min-w-0 truncate">{message.content}</span>
+            </div>
+          ) : isUserMessage ? (
+            isEditing ? (
+              <div className="flex justify-end">
+                {/* Inline editing swaps the bubble for a multi-line editor; confirm resends the prompt. */}
+                <div className={editCardClassName} aria-busy={isResendingEdit}>
                   <MessageUploadAttachmentList
                     attachments={uploads}
                     onPreviewUploadAttachment={onPreviewUploadAttachment}
                   />
-                  {/* Structured parts drive styled pills; plain content is the backward-compatible fallback. */}
-                  {isHumanUser && userMessageContent ? (
-                    <CollapsibleUserMessageContent
-                      hasInteractiveContent={hasInteractiveUserMessageContent}
-                      message={message}
-                      staticParts={staticParts}
+                  {uploads.length > 0 ? (
+                    <hr
+                      role="separator"
+                      className="-mt-1.5 w-full border-0 border-t border-border-200"
+                    />
+                  ) : null}
+                  <AnnotationDraftCards
+                    annotations={editAnnotations}
+                    disabled={!canEditMessage || isResendingEdit}
+                    onReveal={requestAnnotationReveal}
+                    onUpdateNote={(id, note) => {
+                      const next = editAnnotations.map((annotation) =>
+                        annotation.id === id
+                          ? annotation.kind === 'text'
+                            ? { ...annotation, note: note.trim() || undefined }
+                            : { ...annotation, note: note.trim() }
+                          : annotation
+                      )
+                      return updateEditAnnotations(next)
+                    }}
+                    onRemove={(id) => {
+                      updateEditAnnotations(
+                        editAnnotationsRef.current.filter((annotation) => annotation.id !== id)
+                      )
+                    }}
+                  />
+                  <ComposerEditor
+                    doc={editDoc}
+                    onDocChange={(next) => {
+                      editDocRef.current = next
+                      setEditDoc(next)
+                      const validation = validateAnnotations(editAnnotations, docToText(next))
+                      setEditError(
+                        validation ? annotationValidationMessage(validation, t) : undefined
+                      )
+                    }}
+                    onSubmit={handleConfirmEdit}
+                    onPaste={ignoreEditPaste}
+                    placeholder={t('Edit your message')}
+                    ariaLabel={t('Edit message')}
+                    focusRequest={editFocusRequest}
+                  />
+                  {editError ? (
+                    <div
+                      role="alert"
+                      className="[&>section]:max-w-none [&>section]:gap-2 [&_h1]:text-xs"
                     >
-                      {userMessageContent}
-                    </CollapsibleUserMessageContent>
-                  ) : (
-                    userMessageContent
-                  )}
+                      <ErrorNotice tone="red" title={editError} />
+                    </div>
+                  ) : null}
+                  <div className="flex items-center justify-end gap-1">
+                    <button
+                      type="button"
+                      className={editCancelButtonClassName}
+                      disabled={isResendingEdit}
+                      onClick={handleCancelEdit}
+                    >
+                      {t('Cancel')}
+                    </button>
+                    <button
+                      type="button"
+                      className={editSendButtonClassName}
+                      disabled={
+                        !canEditMessage ||
+                        isResendingEdit ||
+                        (docIsEmpty(editDoc) && editAnnotations.length === 0)
+                      }
+                      onClick={handleConfirmEdit}
+                    >
+                      {isResendingEdit ? (
+                        <Loader2 className="size-3 animate-spin" aria-hidden="true" />
+                      ) : null}
+                      {t('Send')}
+                    </button>
+                  </div>
                 </div>
               </div>
-              {sending || sentDate || message.interrupted || showRevisionNavigation ? (
+            ) : (
+              <div className="group flex flex-col items-end">
                 <div
-                  data-slot="user-message-footer"
-                  className="mt-1 flex min-h-6 w-full flex-wrap items-center justify-end gap-x-2 text-[11px] leading-4 text-text-000/70 tabular-nums"
+                  data-slot="user-bubble-row"
+                  className="flex w-full max-w-full items-center justify-end gap-1"
                 >
-                  {sending ? (
-                    <span className="flex items-center gap-1" role="status" aria-live="polite">
-                      <Loader2
-                        className="size-3 animate-spin motion-reduce:animate-none"
-                        aria-hidden="true"
-                      />
-                      {t('Sending…')}
-                    </span>
-                  ) : null}
-                  {message.interrupted ? (
-                    <span
-                      data-slot="user-message-interrupted"
-                      className="italic text-amber-600 dark:text-amber-400"
-                    >
-                      {t('This turn was interrupted.')}
-                    </span>
-                  ) : null}
-                  {sentDate ? <MessageTimestamp label={t('Sent')} date={sentDate} /> : null}
-                  {showRevisionNavigation ? (
-                    <TooltipProvider delayDuration={200}>
-                      <div
-                        data-slot="user-message-revision-navigation"
-                        className="flex items-center gap-0.5 text-[13px] text-text-100"
-                      >
-                        <UserMessageActionTooltip label={t('Previous message revision')}>
+                  {/* Copy/edit controls stay left of the bubble; Branch navigation lives below it. */}
+                  {showUserActions && isHumanUser ? (
+                    <>
+                      <div data-slot="user-message-actions" className={userMessageActionsClassName}>
+                        <UserMessageActionTooltip label={copied ? t('Copied') : t('Copy message')}>
                           <button
                             type="button"
                             className={userMessageActionButtonClassName}
-                            aria-label={t('Previous message revision')}
-                            disabled={!revisionNavigation.onPrevious || !canEditMessage}
-                            onClick={revisionNavigation.onPrevious}
+                            aria-label={copied ? t('Copied') : t('Copy message')}
+                            onClick={handleCopyMessage}
                           >
-                            <ChevronLeft className="size-3.5" aria-hidden="true" />
+                            {copied ? (
+                              <Check className="size-3.5" strokeWidth={2} aria-hidden="true" />
+                            ) : (
+                              <Copy className="size-3.5" strokeWidth={2} aria-hidden="true" />
+                            )}
                           </button>
                         </UserMessageActionTooltip>
-                        <GitBranch
-                          data-slot="user-message-revision-icon"
-                          className="size-3.5 text-text-300"
-                          aria-hidden="true"
-                        />
-                        <span aria-label={t('Message revision')} className="min-w-7 text-center">
-                          {revisionNavigation.index + 1}/{revisionNavigation.total}
-                        </span>
-                        <UserMessageActionTooltip label={t('Next message revision')}>
+                        <UserMessageActionTooltip label={t('Edit message')}>
                           <button
+                            ref={editButtonRef}
                             type="button"
                             className={userMessageActionButtonClassName}
-                            aria-label={t('Next message revision')}
-                            disabled={!revisionNavigation.onNext || !canEditMessage}
-                            onClick={revisionNavigation.onNext}
+                            aria-label={t('Edit message')}
+                            disabled={!canEditMessage}
+                            onClick={handleStartEdit}
                           >
-                            <ChevronRight className="size-3.5" aria-hidden="true" />
+                            <Pencil className="size-3.5" strokeWidth={2} aria-hidden="true" />
                           </button>
                         </UserMessageActionTooltip>
                       </div>
-                    </TooltipProvider>
+                    </>
                   ) : null}
+                  <div data-slot="user-message-bubble" className={userMessageBubbleClassName}>
+                    <MessagePdfReadingContext message={message} projectId={projectId} />
+                    <AnnotationMessageCards
+                      annotations={message.annotations ?? []}
+                      onReveal={requestAnnotationReveal}
+                    />
+                    <MessageUploadAttachmentList
+                      attachments={uploads}
+                      onPreviewUploadAttachment={onPreviewUploadAttachment}
+                    />
+                    {/* Structured parts drive styled pills; plain content is the backward-compatible fallback. */}
+                    {isHumanUser && userMessageContent ? (
+                      <CollapsibleUserMessageContent
+                        hasInteractiveContent={hasInteractiveUserMessageContent}
+                        message={message}
+                        staticParts={staticParts}
+                      >
+                        {userMessageContent}
+                      </CollapsibleUserMessageContent>
+                    ) : (
+                      userMessageContent
+                    )}
+                  </div>
                 </div>
-              ) : null}
-            </div>
-          )
-        ) : (
-          <div
-            className={cn(
-              assistantMessageSurfaceClassName,
-              'select-text overflow-visible',
-              // Reserve the tallest loading-row geometry only when this reply replaces that row.
-              // If Thinking or a live tool remains below, the buffered message stays at line height.
-              isAssistantPresenting && (reserveLoadingRowHeight ? 'min-h-14' : 'min-h-5')
-            )}
-          >
-            {liveMessageContent ? (
-              annotationPort ? (
-                <TextAnnotationSurface
-                  source={{
-                    kind: 'agent-message',
-                    sessionId: annotationPort.sessionId,
-                    messageId: message.id
-                  }}
-                  activeAnnotations={annotationPort.activeAnnotations}
-                  onAdd={annotationPort.onAdd}
-                  onUpdateNote={annotationPort.onUpdateNote}
-                  onError={annotationPort.onError}
-                  isAnimating={isAssistantPresenting}
-                >
+                {sending || sentDate || message.interrupted || showRevisionNavigation ? (
+                  <div
+                    data-slot="user-message-footer"
+                    className="mt-1 flex min-h-6 w-full flex-wrap items-center justify-end gap-x-2 text-[11px] leading-4 text-text-000/70 tabular-nums"
+                  >
+                    {sending ? (
+                      <span className="flex items-center gap-1" role="status" aria-live="polite">
+                        <Loader2
+                          className="size-3 animate-spin motion-reduce:animate-none"
+                          aria-hidden="true"
+                        />
+                        {t('Sending…')}
+                      </span>
+                    ) : null}
+                    {message.interrupted ? (
+                      <span
+                        data-slot="user-message-interrupted"
+                        className="italic text-amber-600 dark:text-amber-400"
+                      >
+                        {t('This turn was interrupted.')}
+                      </span>
+                    ) : null}
+                    {sentDate ? <MessageTimestamp label={t('Sent')} date={sentDate} /> : null}
+                    {showRevisionNavigation ? (
+                      <>
+                        <div
+                          data-slot="user-message-revision-navigation"
+                          className="flex items-center gap-0.5 text-[13px] text-text-100"
+                        >
+                          <UserMessageActionTooltip label={t('Previous message revision')}>
+                            <button
+                              type="button"
+                              className={userMessageActionButtonClassName}
+                              aria-label={t('Previous message revision')}
+                              disabled={!revisionNavigation.onPrevious || !canEditMessage}
+                              onClick={revisionNavigation.onPrevious}
+                            >
+                              <ChevronLeft className="size-3.5" aria-hidden="true" />
+                            </button>
+                          </UserMessageActionTooltip>
+                          <GitBranch
+                            data-slot="user-message-revision-icon"
+                            className="size-3.5 text-text-300"
+                            aria-hidden="true"
+                          />
+                          <span aria-label={t('Message revision')} className="min-w-7 text-center">
+                            {revisionNavigation.index + 1}/{revisionNavigation.total}
+                          </span>
+                          <UserMessageActionTooltip label={t('Next message revision')}>
+                            <button
+                              type="button"
+                              className={userMessageActionButtonClassName}
+                              aria-label={t('Next message revision')}
+                              disabled={!revisionNavigation.onNext || !canEditMessage}
+                              onClick={revisionNavigation.onNext}
+                            >
+                              <ChevronRight className="size-3.5" aria-hidden="true" />
+                            </button>
+                          </UserMessageActionTooltip>
+                        </div>
+                      </>
+                    ) : null}
+                  </div>
+                ) : null}
+              </div>
+            )
+          ) : (
+            <div
+              className={cn(
+                assistantMessageSurfaceClassName,
+                'select-text overflow-visible',
+                // Reserve the tallest loading-row geometry only when this reply replaces that row.
+                // If Thinking or a live tool remains below, the buffered message stays at line height.
+                isAssistantPresenting && (reserveLoadingRowHeight ? 'min-h-14' : 'min-h-5')
+              )}
+            >
+              {liveMessageContent ? (
+                annotationPort ? (
+                  <TextAnnotationSurface
+                    source={{
+                      kind: 'agent-message',
+                      sessionId: annotationPort.sessionId,
+                      messageId: message.id
+                    }}
+                    activeAnnotations={annotationPort.activeAnnotations}
+                    onAdd={annotationPort.onAdd}
+                    onUpdateNote={annotationPort.onUpdateNote}
+                    onError={annotationPort.onError}
+                    isAnimating={isAssistantPresenting}
+                  >
+                    <SessionMessageMarkdown
+                      content={assistantPresentation.content}
+                      isAnimating={isAssistantPresenting}
+                      artifacts={artifacts}
+                      onPreviewArtifact={onPreviewArtifact}
+                      onPreviewArtifactModal={onPreviewArtifactModal}
+                    />
+                  </TextAnnotationSurface>
+                ) : (
                   <SessionMessageMarkdown
                     content={assistantPresentation.content}
                     isAnimating={isAssistantPresenting}
@@ -1951,46 +1961,38 @@ const WorkspaceMessageItemImpl = ({
                     onPreviewArtifact={onPreviewArtifact}
                     onPreviewArtifactModal={onPreviewArtifactModal}
                   />
-                </TextAnnotationSurface>
-              ) : (
-                <SessionMessageMarkdown
-                  content={assistantPresentation.content}
-                  isAnimating={isAssistantPresenting}
-                  artifacts={artifacts}
-                  onPreviewArtifact={onPreviewArtifact}
-                  onPreviewArtifactModal={onPreviewArtifactModal}
+                )
+              ) : null}
+              <MessageImageList images={message.images ?? []} />
+              <MessageArtifactList onPreviewArtifact={onPreviewArtifact} artifacts={artifacts} />
+              {showAssistantFooter && !isAssistantPresenting ? (
+                <WorkspaceAssistantTurnCompletion
+                  message={message}
+                  turnStartedAt={turnStartedAt}
+                  runtimeIdentity={runtimeIdentity}
+                  canBranchInNewSession={canBranchInNewSession}
+                  onBranchInNewSession={onBranchInNewSession}
                 />
-              )
-            ) : null}
-            <MessageImageList images={message.images ?? []} />
-            <MessageArtifactList onPreviewArtifact={onPreviewArtifact} artifacts={artifacts} />
-            {showAssistantFooter && !isAssistantPresenting ? (
-              <WorkspaceAssistantTurnCompletion
-                message={message}
-                turnStartedAt={turnStartedAt}
-                runtimeIdentity={runtimeIdentity}
-                canBranchInNewSession={canBranchInNewSession}
-                onBranchInNewSession={onBranchInNewSession}
-              />
-            ) : null}
-          </div>
-        )}
-      </div>
-      <EditMessageConfirmDialog
-        open={isConfirmingEdit}
-        subsequentTurns={subsequentTurns}
-        onCancel={() => setIsConfirmingEdit(false)}
-        onConfirm={confirmEditedResend}
-      />
-      {selectedLiteratureReference ? (
-        <ArtifactLiteratureDetailDialog
-          reference={selectedLiteratureReference}
-          onOpenChange={(open) => {
-            if (!open) setSelectedLiteratureReference(undefined)
-          }}
+              ) : null}
+            </div>
+          )}
+        </div>
+        <EditMessageConfirmDialog
+          open={isConfirmingEdit}
+          subsequentTurns={subsequentTurns}
+          onCancel={() => setIsConfirmingEdit(false)}
+          onConfirm={confirmEditedResend}
         />
-      ) : null}
-    </MessageScrollerItem>
+        {selectedLiteratureReference ? (
+          <ArtifactLiteratureDetailDialog
+            reference={selectedLiteratureReference}
+            onOpenChange={(open) => {
+              if (!open) setSelectedLiteratureReference(undefined)
+            }}
+          />
+        ) : null}
+      </MessageScrollerItem>
+    </TooltipProvider>
   )
 }
 

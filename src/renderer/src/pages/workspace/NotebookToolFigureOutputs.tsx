@@ -40,7 +40,7 @@ const NotebookToolFigureCard = ({
   const [setCardElement, isNearViewport] = useNearViewport<HTMLButtonElement>()
 
   return (
-    <div className="rounded-[10px] bg-bg-000 p-2 shadow-sm">
+    <div className="rounded-2xl bg-bg-000 p-2 shadow-sm">
       <button
         ref={setCardElement}
         type="button"

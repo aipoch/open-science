@@ -433,6 +433,7 @@
   body,
   #root {
     min-height: 100vh;
+    @apply bg-bg-10;
   }
 
   body {

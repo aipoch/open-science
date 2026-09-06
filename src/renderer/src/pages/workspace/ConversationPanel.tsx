@@ -1531,955 +1531,868 @@ const ConversationPanel = ({
 
                   {/* The ordinary composer keeps this lane's geometry while a blocking interaction
                       overlays it, so panel entry/resize/exit never resizes the transcript viewport. */}
-                  <form
-                    aria-hidden={ordinaryComposerBlocked || undefined}
-                    data-testid="ordinary-composer-form"
-                    inert={ordinaryComposerBlocked || undefined}
-                    className={cn(
-                      'relative z-10 flex flex-col gap-2 rounded-2xl border border-border-200 bg-bg-000 px-3 py-2',
-                      ordinaryComposerBlocked && 'invisible pointer-events-none'
-                    )}
-                    data-specialist-color={specialistComposerColor}
-                    onSubmit={(event) => event.preventDefault()}
-                    {...dropZoneProps}
-                  >
-                    {specialistComposerColor && selectedSpecialist ? (
-                      <span
-                        key={selectedSpecialist.id}
-                        className="composer-specialist-color-in"
-                        style={{ borderColor: specialistComposerColor }}
-                        aria-hidden="true"
-                      />
-                    ) : null}
-                    {/* File-drag overlay is scoped to the composer input card only. */}
-                    {isDragging ? (
-                      <FileDropOverlay label={t('Drop files to attach')} className="rounded-2xl" />
-                    ) : null}
-                    {pdfContext.bindings.length > 0 ? (
-                      <div
-                        data-testid="pdf-context-bar"
-                        className="-mx-3 -mt-2 flex min-h-9 items-center gap-1 rounded-t-2xl border-b border-border-200 bg-bg-10 px-2 py-1"
-                      >
-                        {activeSession ? (
-                          <ReadingContextPicker
-                            projectId={activeSession.projectId}
-                            linkedSources={pdfContext.bindings.flatMap((binding) =>
-                              'sourceKind' in binding
-                                ? [
-                                    {
-                                      sourceKind: binding.sourceKind,
-                                      sourceFileId: binding.sourceFileId,
-                                      sourceVersionId: binding.sourceVersionId
-                                    }
-                                  ]
-                                : []
-                            )}
-                            atLimit={pdfContext.bindings.length >= MAX_SESSION_PDF_CONTEXTS}
-                            onSelect={linkReadingContext}
-                          >
-                            <button
-                              type="button"
-                              disabled={pdfContext.isPending}
-                              aria-label={t('Choose PDFs for Reading')}
-                              className={cn(
-                                'flex h-7 shrink-0 items-center gap-1 rounded-lg px-1.5 text-[12px] font-medium leading-4 text-text-000 hover:bg-bg-200 active:translate-y-px focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50 motion-reduce:active:translate-y-0',
-                                composerInteractiveTransitionClassName
+                  <TooltipProvider delayDuration={200}>
+                    <form
+                      aria-hidden={ordinaryComposerBlocked || undefined}
+                      data-testid="ordinary-composer-form"
+                      inert={ordinaryComposerBlocked || undefined}
+                      className={cn(
+                        'relative z-10 flex flex-col gap-2 rounded-2xl border border-border-200 bg-bg-000 px-3 py-2',
+                        ordinaryComposerBlocked && 'invisible pointer-events-none'
+                      )}
+                      data-specialist-color={specialistComposerColor}
+                      onSubmit={(event) => event.preventDefault()}
+                      {...dropZoneProps}
+                    >
+                      {specialistComposerColor && selectedSpecialist ? (
+                        <span
+                          key={selectedSpecialist.id}
+                          className="composer-specialist-color-in"
+                          style={{ borderColor: specialistComposerColor }}
+                          aria-hidden="true"
+                        />
+                      ) : null}
+                      {/* File-drag overlay is scoped to the composer input card only. */}
+                      {isDragging ? (
+                        <FileDropOverlay
+                          label={t('Drop files to attach')}
+                          className="rounded-2xl"
+                        />
+                      ) : null}
+                      {pdfContext.bindings.length > 0 ? (
+                        <div
+                          data-testid="pdf-context-bar"
+                          className="-mx-3 -mt-2 flex min-h-9 items-center gap-1 rounded-t-2xl border-b border-border-200 bg-bg-10 px-2 py-1"
+                        >
+                          {activeSession ? (
+                            <ReadingContextPicker
+                              projectId={activeSession.projectId}
+                              linkedSources={pdfContext.bindings.flatMap((binding) =>
+                                'sourceKind' in binding
+                                  ? [
+                                      {
+                                        sourceKind: binding.sourceKind,
+                                        sourceFileId: binding.sourceFileId,
+                                        sourceVersionId: binding.sourceVersionId
+                                      }
+                                    ]
+                                  : []
                               )}
+                              atLimit={pdfContext.bindings.length >= MAX_SESSION_PDF_CONTEXTS}
+                              onSelect={linkReadingContext}
                             >
+                              <button
+                                type="button"
+                                disabled={pdfContext.isPending}
+                                aria-label={t('Choose PDFs for Reading')}
+                                className={cn(
+                                  'flex h-7 shrink-0 items-center gap-1 rounded-lg px-1.5 text-[12px] font-medium leading-4 text-text-000 hover:bg-bg-200 active:translate-y-px focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50 motion-reduce:active:translate-y-0',
+                                  composerInteractiveTransitionClassName
+                                )}
+                              >
+                                <Link2
+                                  className="size-4 shrink-0 text-primary"
+                                  strokeWidth={2}
+                                  aria-hidden="true"
+                                />
+                                {t('Reading')}
+                                <ChevronDown
+                                  className="size-3 shrink-0 text-text-300"
+                                  strokeWidth={2}
+                                  aria-hidden="true"
+                                />
+                              </button>
+                            </ReadingContextPicker>
+                          ) : (
+                            <>
                               <Link2
                                 className="size-4 shrink-0 text-primary"
                                 strokeWidth={2}
                                 aria-hidden="true"
                               />
-                              {t('Reading')}
-                              <ChevronDown
-                                className="size-3 shrink-0 text-text-300"
-                                strokeWidth={2}
-                                aria-hidden="true"
-                              />
-                            </button>
-                          </ReadingContextPicker>
-                        ) : (
-                          <>
-                            <Link2
-                              className="size-4 shrink-0 text-primary"
-                              strokeWidth={2}
-                              aria-hidden="true"
-                            />
-                            <span className="shrink-0 text-[12px] font-medium leading-4 text-text-000">
-                              {t('Reading')}
-                            </span>
-                          </>
-                        )}
-                        <div className="flex min-w-0 flex-1 gap-1 overflow-x-auto">
-                          <TooltipProvider delayDuration={300}>
-                            {pdfContext.bindings.map((binding) => {
-                              const pending = pdfContext.pendingBindingId === binding.bindingId
-                              return (
-                                <span
-                                  key={binding.bindingId}
-                                  className="flex min-w-0 max-w-56 shrink items-center rounded-lg bg-bg-200 text-text-100"
-                                >
-                                  <Tooltip>
-                                    <TooltipTrigger asChild>
-                                      <button
-                                        type="button"
-                                        className={cn(
-                                          'min-w-0 flex-1 rounded-l-lg px-2 py-1 text-left hover:bg-bg-300 hover:text-text-000 active:translate-y-px focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50 motion-reduce:active:translate-y-0',
-                                          composerInteractiveTransitionClassName
-                                        )}
-                                        aria-label={t('Open PDF context {{name}}', {
-                                          name: binding.name
-                                        })}
-                                        onClick={() => openReadingContext(binding.bindingId)}
-                                      >
-                                        <ExtensionPreservingFileName
-                                          name={binding.name}
-                                          className="min-w-0 text-[12px] font-medium leading-4"
-                                        />
-                                      </button>
-                                    </TooltipTrigger>
-                                    <TooltipContent side="top">
-                                      {t(
-                                        'Linked to this conversation. The Agent reads only the pages needed for your question.'
-                                      )}
-                                    </TooltipContent>
-                                  </Tooltip>
-                                  <Tooltip>
-                                    <TooltipTrigger asChild>
-                                      <button
-                                        type="button"
-                                        className={attachmentRemoveButtonClassName}
-                                        disabled={pending || pdfContext.isPending}
-                                        aria-label={t('Remove PDF context {{name}}', {
-                                          name: binding.name
-                                        })}
-                                        onClick={() => unlinkReadingContext(binding.bindingId)}
-                                      >
-                                        {pending ? (
-                                          <Loader2
-                                            className="size-3.5 animate-spin"
-                                            strokeWidth={2}
-                                            aria-hidden="true"
-                                          />
-                                        ) : (
-                                          <X
-                                            className="size-3.5"
-                                            strokeWidth={2.2}
-                                            aria-hidden="true"
-                                          />
-                                        )}
-                                      </button>
-                                    </TooltipTrigger>
-                                    <TooltipContent side="top">
-                                      {t('Remove PDF context {{name}}', { name: binding.name })}
-                                    </TooltipContent>
-                                  </Tooltip>
-                                </span>
-                              )
-                            })}
-                          </TooltipProvider>
-                        </div>
-                      </div>
-                    ) : null}
-                    {pdfContext.automaticAttachmentCount > 0 ? (
-                      <div
-                        data-testid="automatic-reading-suggestion"
-                        className={cn(
-                          '-mx-3 flex min-h-9 items-center gap-2 border-b border-border-200 bg-primary/[0.05] px-2 py-1',
-                          pdfContext.bindings.length === 0 && '-mt-2 rounded-t-2xl'
-                        )}
-                      >
-                        <Link2
-                          className="size-4 shrink-0 text-primary"
-                          strokeWidth={2}
-                          aria-hidden="true"
-                        />
-                        <span className="shrink-0 text-[12px] font-medium leading-4 text-text-000">
-                          {t('Reading')}
-                        </span>
-                        <span className="min-w-0 flex-1 truncate text-[12px] leading-4 text-text-300">
-                          {t('{{count}} PDFs will be linked when sent', {
-                            count: pdfContext.automaticAttachmentCount,
-                            defaultValue_one: '{{count}} PDF will be linked when sent'
-                          })}
-                        </span>
-                        <TooltipProvider delayDuration={800}>
-                          <Tooltip>
-                            <TooltipTrigger asChild>
-                              <button
-                                type="button"
-                                aria-label={t('Keep as attachments')}
-                                onClick={dismissAutomaticReading}
-                                className={cn(
-                                  'relative flex size-7 shrink-0 items-center justify-center rounded-lg text-text-300 before:absolute before:-inset-2 hover:bg-bg-200 hover:text-text-000 active:translate-y-px focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50 motion-reduce:active:translate-y-0',
-                                  composerInteractiveTransitionClassName
-                                )}
-                              >
-                                <X className="size-3.5" strokeWidth={2.2} aria-hidden="true" />
-                              </button>
-                            </TooltipTrigger>
-                            <TooltipContent side="top">{t('Keep as attachments')}</TooltipContent>
-                          </Tooltip>
-                        </TooltipProvider>
-                      </div>
-                    ) : null}
-                    <ComposerMessageQueueContent
-                      {...messageQueue}
-                      expanded={messageQueueExpanded}
-                    />
-                    {composer.view.queuedEdit ? (
-                      <div className="flex items-center justify-between gap-2 text-xs text-text-300">
-                        <span>
-                          {composer.view.queuedEdit.revisionMessageId
-                            ? t('Editing a historical revision')
-                            : t('Editing a queued message')}
-                        </span>
-                        <button
-                          type="button"
-                          onClick={composer.actions.cancelQueuedEdit}
-                          className="rounded px-2 py-1 hover:bg-bg-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                          disabled={!canEditDraft}
-                        >
-                          {t('Exit queued editing')}
-                        </button>
-                      </div>
-                    ) : null}
-                    <AnnotationDraftCards
-                      annotations={annotations}
-                      disabled={!canEditDraft}
-                      onReveal={requestAnnotationReveal}
-                      onUpdateNote={(id, note) => {
-                        const error = onUpdateAnnotationNote(id, note)
-                        if (error) onSetComposerError(annotationValidationMessage(error, t))
-                        else onSetComposerError(null)
-                        return error
-                      }}
-                      onRemove={(id) => {
-                        onRemoveAnnotation(id)
-                        const validation = validateAnnotations(
-                          annotations.filter((annotation) => annotation.id !== id),
-                          docToText(draftDoc)
-                        )
-                        onSetComposerError(
-                          validation ? annotationValidationMessage(validation, t) : null
-                        )
-                      }}
-                    />
-                    <div className="flex flex-col gap-2">
-                      {attachments.length > 0 || attachmentTransfers.length > 0 ? (
-                        <div className="flex max-h-[92px] flex-wrap gap-2 overflow-y-auto border-b border-border-200 pb-2">
-                          {/* Composer attachments remain removable until the prompt is submitted. */}
-                          {attachments.map((attachment) => {
-                            const AttachmentIcon = attachment.mimeType?.startsWith('image/')
-                              ? ImageIcon
-                              : FileText
-                            const attachmentName = attachment.originalName || attachment.name
-                            const pastedText = pastedTextByAttachmentId.get(attachment.id)
-
-                            return (
-                              <div
-                                key={attachment.id}
-                                id={
-                                  pastedText ? pastedTextAttachmentDomId(pastedText.id) : undefined
-                                }
-                                data-pasted-text-attachment={pastedText ? 'true' : undefined}
-                                data-state={pastedText ? 'success' : undefined}
-                                className={attachmentChipClassName}
-                              >
-                                <AttachmentIcon
-                                  className="size-4 shrink-0 text-text-300"
-                                  strokeWidth={2}
-                                  aria-hidden="true"
-                                />
-                                {pastedText ? (
-                                  <button
-                                    type="button"
-                                    className={pastedTextRestoreButtonClassName}
-                                    disabled={!canEditDraft}
-                                    onClick={() => onRestorePastedText(pastedText.id)}
+                              <span className="shrink-0 text-[12px] font-medium leading-4 text-text-000">
+                                {t('Reading')}
+                              </span>
+                            </>
+                          )}
+                          <div className="flex min-w-0 flex-1 gap-1 overflow-x-auto">
+                            <TooltipProvider delayDuration={300}>
+                              {pdfContext.bindings.map((binding) => {
+                                const pending = pdfContext.pendingBindingId === binding.bindingId
+                                return (
+                                  <span
+                                    key={binding.bindingId}
+                                    className="flex min-w-0 max-w-56 shrink items-center rounded-lg bg-bg-200 text-text-100"
                                   >
-                                    <span className="w-full truncate whitespace-nowrap text-[12px] leading-4">
-                                      {pastedTextPreviewName(pastedText.text)}
-                                    </span>
-                                    <span className="flex items-center gap-0.5 whitespace-nowrap text-[11px] leading-3 text-text-300">
-                                      {t('Show in text field')}
-                                      <ChevronRight
-                                        className="size-3 shrink-0"
-                                        strokeWidth={2}
-                                        aria-hidden="true"
-                                      />
-                                    </span>
-                                  </button>
-                                ) : (
-                                  <div className="min-w-0 flex-1">
-                                    <ExtensionPreservingFileName
-                                      name={attachmentName}
-                                      className="text-[12px] leading-4"
-                                    />
-                                    <div className="truncate text-[11px] leading-3 text-text-300">
-                                      {formatAttachmentSize(attachment.size)}
-                                    </div>
-                                  </div>
-                                )}
-                                <button
-                                  type="button"
-                                  className={attachmentRemoveButtonClassName}
-                                  disabled={!canEditDraft}
-                                  aria-label={t('Remove attachment {{name}}', {
-                                    name: attachmentName
-                                  })}
-                                  onClick={() => handleRemoveAttachment(attachment)}
-                                >
-                                  <X className="size-3.5" strokeWidth={2.2} aria-hidden="true" />
-                                </button>
-                              </div>
-                            )
-                          })}
-                          {attachmentTransfers.map((transfer) => {
-                            const AttachmentIcon = transfer.mimeType?.startsWith('image/')
-                              ? ImageIcon
-                              : FileText
-                            const percent =
-                              transfer.totalBytes === 0
-                                ? 100
-                                : Math.min(
-                                    100,
-                                    Math.round((transfer.receivedBytes / transfer.totalBytes) * 100)
-                                  )
-                            const statusLabel =
-                              transfer.status === 'queued'
-                                ? t('Queued')
-                                : transfer.status === 'cancelling'
-                                  ? t('Cancelling…')
-                                  : transfer.status === 'error'
-                                    ? transfer.error || t('Upload failed')
-                                    : t('{{percent}}% of {{size}}', {
-                                        percent,
-                                        size: formatAttachmentSize(transfer.totalBytes)
-                                      })
-                            const pastedText = transfer.pastedTextId
-                              ? pastedTextById.get(transfer.pastedTextId)
-                              : undefined
-
-                            return (
-                              <div
-                                key={transfer.transferId}
-                                id={
-                                  pastedText ? pastedTextAttachmentDomId(pastedText.id) : undefined
-                                }
-                                data-pasted-text-attachment={pastedText ? 'true' : undefined}
-                                data-state={pastedText ? transfer.status : undefined}
-                                className={attachmentChipClassName}
-                              >
-                                <AttachmentIcon
-                                  className="size-4 shrink-0 text-text-300"
-                                  strokeWidth={2}
-                                  aria-hidden="true"
-                                />
-                                <div className="min-w-0 flex-1">
-                                  {pastedText ? (
-                                    <div className="truncate text-[12px] leading-4">
-                                      {pastedTextPreviewName(pastedText.text)}
-                                    </div>
-                                  ) : (
-                                    <ExtensionPreservingFileName
-                                      name={transfer.name}
-                                      className="text-[12px] leading-4"
-                                    />
-                                  )}
-                                  <div
-                                    className={`truncate text-[11px] leading-3 ${
-                                      transfer.status === 'error' ? 'text-red-600' : 'text-text-300'
-                                    }`}
-                                    title={statusLabel}
-                                  >
-                                    {statusLabel}
-                                  </div>
-                                  {transfer.status === 'uploading' ? (
-                                    <div
-                                      className="mt-1 h-0.5 overflow-hidden rounded-full bg-bg-300"
-                                      role="progressbar"
-                                      aria-label={t('Uploading {{name}}', {
-                                        name: transfer.name
-                                      })}
-                                      aria-valuemin={0}
-                                      aria-valuemax={100}
-                                      aria-valuenow={percent}
-                                    >
-                                      <div
-                                        className="h-full rounded-full bg-primary transition-[width]"
-                                        style={{ width: `${percent}%` }}
-                                      />
-                                    </div>
-                                  ) : null}
-                                </div>
-                                <button
-                                  type="button"
-                                  className={attachmentRemoveButtonClassName}
-                                  disabled={!canEditDraft || transfer.status === 'cancelling'}
-                                  aria-label={t(
-                                    transfer.status === 'error'
-                                      ? 'Remove failed attachment {{name}}'
-                                      : 'Cancel attachment {{name}}',
-                                    { name: transfer.name }
-                                  )}
-                                  onClick={() => handleCancelAttachmentTransfer(transfer)}
-                                >
-                                  <X className="size-3.5" strokeWidth={2.2} aria-hidden="true" />
-                                </button>
-                              </div>
-                            )
-                          })}
+                                    <Tooltip>
+                                      <TooltipTrigger asChild>
+                                        <button
+                                          type="button"
+                                          className={cn(
+                                            'min-w-0 flex-1 rounded-l-lg px-2 py-1 text-left hover:bg-bg-300 hover:text-text-000 active:translate-y-px focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50 motion-reduce:active:translate-y-0',
+                                            composerInteractiveTransitionClassName
+                                          )}
+                                          aria-label={t('Open PDF context {{name}}', {
+                                            name: binding.name
+                                          })}
+                                          onClick={() => openReadingContext(binding.bindingId)}
+                                        >
+                                          <ExtensionPreservingFileName
+                                            name={binding.name}
+                                            className="min-w-0 text-[12px] font-medium leading-4"
+                                          />
+                                        </button>
+                                      </TooltipTrigger>
+                                      <TooltipContent side="top">
+                                        {t(
+                                          'Linked to this conversation. The Agent reads only the pages needed for your question.'
+                                        )}
+                                      </TooltipContent>
+                                    </Tooltip>
+                                    <Tooltip>
+                                      <TooltipTrigger asChild>
+                                        <button
+                                          type="button"
+                                          className={attachmentRemoveButtonClassName}
+                                          disabled={pending || pdfContext.isPending}
+                                          aria-label={t('Remove PDF context {{name}}', {
+                                            name: binding.name
+                                          })}
+                                          onClick={() => unlinkReadingContext(binding.bindingId)}
+                                        >
+                                          {pending ? (
+                                            <Loader2
+                                              className="size-3.5 animate-spin"
+                                              strokeWidth={2}
+                                              aria-hidden="true"
+                                            />
+                                          ) : (
+                                            <X
+                                              className="size-3.5"
+                                              strokeWidth={2.2}
+                                              aria-hidden="true"
+                                            />
+                                          )}
+                                        </button>
+                                      </TooltipTrigger>
+                                      <TooltipContent side="top">
+                                        {t('Remove PDF context {{name}}', { name: binding.name })}
+                                      </TooltipContent>
+                                    </Tooltip>
+                                  </span>
+                                )
+                              })}
+                            </TooltipProvider>
+                          </div>
                         </div>
                       ) : null}
-
-                      <div className="relative min-w-0 flex-1">
-                        {/* Draft editing waits for persistence hydration to avoid targeting the wrong session. */}
-                        <ComposerEditor
-                          doc={draftDoc}
-                          onDocChange={onValidatedDraftDocChange}
-                          onSubmit={handleSubmit}
-                          onPaste={handleMessageDraftPaste}
-                          onLongTextPaste={onStagePastedText}
-                          onLocatePastedText={handleLocatePastedText}
-                          onUndo={onUndo}
-                          onRedo={onRedo}
-                          disabled={!canEditDraft}
-                          placeholder={t(
-                            'Ask anything — / skills · @ files · # sessions · {{shortcut}} search · ↑↓ history',
-                            {
-                              shortcut: globalSearchShortcut
-                            }
+                      {pdfContext.automaticAttachmentCount > 0 ? (
+                        <div
+                          data-testid="automatic-reading-suggestion"
+                          className={cn(
+                            '-mx-3 flex min-h-9 items-center gap-2 border-b border-border-200 bg-primary/[0.05] px-2 py-1',
+                            pdfContext.bindings.length === 0 && '-mt-2 rounded-t-2xl'
                           )}
-                          ariaLabel={t('Ask anything')}
-                          allowedSkillIds={allowedSkillIds}
-                          isHistoryBrowsing={isHistoryBrowsing}
-                          historyStatus={historyStatus}
-                          onNavigateHistory={onNavigateHistory}
-                          mentionPreviewContext={
-                            activeSession
-                              ? { sessionId: activeSession.id, projectId: activeSession.projectId }
-                              : undefined
-                          }
-                          focusRequest={ordinaryComposerBlocked ? undefined : composerFocusKey}
-                          restoreFocusRequest={
-                            ordinaryComposerBlocked ? undefined : composerRestoreFocusRequest
-                          }
-                          caretRequest={ordinaryComposerBlocked ? undefined : caretRequest}
-                        />
-                      </div>
-
-                      <div className="@container/composer flex items-center gap-1">
-                        {/* The + button opens a dropdown for attachments and session actions. */}
-                        <DropdownMenu>
-                          <TooltipProvider delayDuration={200}>
+                        >
+                          <Link2
+                            className="size-4 shrink-0 text-primary"
+                            strokeWidth={2}
+                            aria-hidden="true"
+                          />
+                          <span className="shrink-0 text-[12px] font-medium leading-4 text-text-000">
+                            {t('Reading')}
+                          </span>
+                          <span className="min-w-0 flex-1 truncate text-[12px] leading-4 text-text-300">
+                            {t('{{count}} PDFs will be linked when sent', {
+                              count: pdfContext.automaticAttachmentCount,
+                              defaultValue_one: '{{count}} PDF will be linked when sent'
+                            })}
+                          </span>
+                          <TooltipProvider delayDuration={800}>
                             <Tooltip>
-                              {/* Radix opens tooltips on focus as well as hover, and a dropdown
+                              <TooltipTrigger asChild>
+                                <button
+                                  type="button"
+                                  aria-label={t('Keep as attachments')}
+                                  onClick={dismissAutomaticReading}
+                                  className={cn(
+                                    'relative flex size-7 shrink-0 items-center justify-center rounded-lg text-text-300 before:absolute before:-inset-2 hover:bg-bg-200 hover:text-text-000 active:translate-y-px focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50 motion-reduce:active:translate-y-0',
+                                    composerInteractiveTransitionClassName
+                                  )}
+                                >
+                                  <X className="size-3.5" strokeWidth={2.2} aria-hidden="true" />
+                                </button>
+                              </TooltipTrigger>
+                              <TooltipContent side="top">{t('Keep as attachments')}</TooltipContent>
+                            </Tooltip>
+                          </TooltipProvider>
+                        </div>
+                      ) : null}
+                      <ComposerMessageQueueContent
+                        {...messageQueue}
+                        expanded={messageQueueExpanded}
+                      />
+                      {composer.view.queuedEdit ? (
+                        <div className="flex items-center justify-between gap-2 text-xs text-text-300">
+                          <span>
+                            {composer.view.queuedEdit.revisionMessageId
+                              ? t('Editing a historical revision')
+                              : t('Editing a queued message')}
+                          </span>
+                          <button
+                            type="button"
+                            onClick={composer.actions.cancelQueuedEdit}
+                            className="rounded px-2 py-1 hover:bg-bg-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                            disabled={!canEditDraft}
+                          >
+                            {t('Exit queued editing')}
+                          </button>
+                        </div>
+                      ) : null}
+                      <AnnotationDraftCards
+                        annotations={annotations}
+                        disabled={!canEditDraft}
+                        onReveal={requestAnnotationReveal}
+                        onUpdateNote={(id, note) => {
+                          const error = onUpdateAnnotationNote(id, note)
+                          if (error) onSetComposerError(annotationValidationMessage(error, t))
+                          else onSetComposerError(null)
+                          return error
+                        }}
+                        onRemove={(id) => {
+                          onRemoveAnnotation(id)
+                          const validation = validateAnnotations(
+                            annotations.filter((annotation) => annotation.id !== id),
+                            docToText(draftDoc)
+                          )
+                          onSetComposerError(
+                            validation ? annotationValidationMessage(validation, t) : null
+                          )
+                        }}
+                      />
+                      <div className="flex flex-col gap-2">
+                        {attachments.length > 0 || attachmentTransfers.length > 0 ? (
+                          <div className="flex max-h-[92px] flex-wrap gap-2 overflow-y-auto border-b border-border-200 pb-2">
+                            {/* Composer attachments remain removable until the prompt is submitted. */}
+                            {attachments.map((attachment) => {
+                              const AttachmentIcon = attachment.mimeType?.startsWith('image/')
+                                ? ImageIcon
+                                : FileText
+                              const attachmentName = attachment.originalName || attachment.name
+                              const pastedText = pastedTextByAttachmentId.get(attachment.id)
+
+                              return (
+                                <div
+                                  key={attachment.id}
+                                  id={
+                                    pastedText
+                                      ? pastedTextAttachmentDomId(pastedText.id)
+                                      : undefined
+                                  }
+                                  data-pasted-text-attachment={pastedText ? 'true' : undefined}
+                                  data-state={pastedText ? 'success' : undefined}
+                                  className={attachmentChipClassName}
+                                >
+                                  <AttachmentIcon
+                                    className="size-4 shrink-0 text-text-300"
+                                    strokeWidth={2}
+                                    aria-hidden="true"
+                                  />
+                                  {pastedText ? (
+                                    <button
+                                      type="button"
+                                      className={pastedTextRestoreButtonClassName}
+                                      disabled={!canEditDraft}
+                                      onClick={() => onRestorePastedText(pastedText.id)}
+                                    >
+                                      <span className="w-full truncate whitespace-nowrap text-[12px] leading-4">
+                                        {pastedTextPreviewName(pastedText.text)}
+                                      </span>
+                                      <span className="flex items-center gap-0.5 whitespace-nowrap text-[11px] leading-3 text-text-300">
+                                        {t('Show in text field')}
+                                        <ChevronRight
+                                          className="size-3 shrink-0"
+                                          strokeWidth={2}
+                                          aria-hidden="true"
+                                        />
+                                      </span>
+                                    </button>
+                                  ) : (
+                                    <div className="min-w-0 flex-1">
+                                      <ExtensionPreservingFileName
+                                        name={attachmentName}
+                                        className="text-[12px] leading-4"
+                                      />
+                                      <div className="truncate text-[11px] leading-3 text-text-300">
+                                        {formatAttachmentSize(attachment.size)}
+                                      </div>
+                                    </div>
+                                  )}
+                                  <button
+                                    type="button"
+                                    className={attachmentRemoveButtonClassName}
+                                    disabled={!canEditDraft}
+                                    aria-label={t('Remove attachment {{name}}', {
+                                      name: attachmentName
+                                    })}
+                                    onClick={() => handleRemoveAttachment(attachment)}
+                                  >
+                                    <X className="size-3.5" strokeWidth={2.2} aria-hidden="true" />
+                                  </button>
+                                </div>
+                              )
+                            })}
+                            {attachmentTransfers.map((transfer) => {
+                              const AttachmentIcon = transfer.mimeType?.startsWith('image/')
+                                ? ImageIcon
+                                : FileText
+                              const percent =
+                                transfer.totalBytes === 0
+                                  ? 100
+                                  : Math.min(
+                                      100,
+                                      Math.round(
+                                        (transfer.receivedBytes / transfer.totalBytes) * 100
+                                      )
+                                    )
+                              const statusLabel =
+                                transfer.status === 'queued'
+                                  ? t('Queued')
+                                  : transfer.status === 'cancelling'
+                                    ? t('Cancelling…')
+                                    : transfer.status === 'error'
+                                      ? transfer.error || t('Upload failed')
+                                      : t('{{percent}}% of {{size}}', {
+                                          percent,
+                                          size: formatAttachmentSize(transfer.totalBytes)
+                                        })
+                              const pastedText = transfer.pastedTextId
+                                ? pastedTextById.get(transfer.pastedTextId)
+                                : undefined
+
+                              return (
+                                <div
+                                  key={transfer.transferId}
+                                  id={
+                                    pastedText
+                                      ? pastedTextAttachmentDomId(pastedText.id)
+                                      : undefined
+                                  }
+                                  data-pasted-text-attachment={pastedText ? 'true' : undefined}
+                                  data-state={pastedText ? transfer.status : undefined}
+                                  className={attachmentChipClassName}
+                                >
+                                  <AttachmentIcon
+                                    className="size-4 shrink-0 text-text-300"
+                                    strokeWidth={2}
+                                    aria-hidden="true"
+                                  />
+                                  <div className="min-w-0 flex-1">
+                                    {pastedText ? (
+                                      <div className="truncate text-[12px] leading-4">
+                                        {pastedTextPreviewName(pastedText.text)}
+                                      </div>
+                                    ) : (
+                                      <ExtensionPreservingFileName
+                                        name={transfer.name}
+                                        className="text-[12px] leading-4"
+                                      />
+                                    )}
+                                    <div
+                                      className={`truncate text-[11px] leading-3 ${
+                                        transfer.status === 'error'
+                                          ? 'text-red-600'
+                                          : 'text-text-300'
+                                      }`}
+                                      title={statusLabel}
+                                    >
+                                      {statusLabel}
+                                    </div>
+                                    {transfer.status === 'uploading' ? (
+                                      <div
+                                        className="mt-1 h-0.5 overflow-hidden rounded-full bg-bg-300"
+                                        role="progressbar"
+                                        aria-label={t('Uploading {{name}}', {
+                                          name: transfer.name
+                                        })}
+                                        aria-valuemin={0}
+                                        aria-valuemax={100}
+                                        aria-valuenow={percent}
+                                      >
+                                        <div
+                                          className="h-full rounded-full bg-primary transition-[width]"
+                                          style={{ width: `${percent}%` }}
+                                        />
+                                      </div>
+                                    ) : null}
+                                  </div>
+                                  <button
+                                    type="button"
+                                    className={attachmentRemoveButtonClassName}
+                                    disabled={!canEditDraft || transfer.status === 'cancelling'}
+                                    aria-label={t(
+                                      transfer.status === 'error'
+                                        ? 'Remove failed attachment {{name}}'
+                                        : 'Cancel attachment {{name}}',
+                                      { name: transfer.name }
+                                    )}
+                                    onClick={() => handleCancelAttachmentTransfer(transfer)}
+                                  >
+                                    <X className="size-3.5" strokeWidth={2.2} aria-hidden="true" />
+                                  </button>
+                                </div>
+                              )
+                            })}
+                          </div>
+                        ) : null}
+
+                        <div className="relative min-w-0 flex-1">
+                          {/* Draft editing waits for persistence hydration to avoid targeting the wrong session. */}
+                          <ComposerEditor
+                            doc={draftDoc}
+                            onDocChange={onValidatedDraftDocChange}
+                            onSubmit={handleSubmit}
+                            onPaste={handleMessageDraftPaste}
+                            onLongTextPaste={onStagePastedText}
+                            onLocatePastedText={handleLocatePastedText}
+                            onUndo={onUndo}
+                            onRedo={onRedo}
+                            disabled={!canEditDraft}
+                            placeholder={t(
+                              'Ask anything — / skills · @ files · # sessions · {{shortcut}} search · ↑↓ history',
+                              {
+                                shortcut: globalSearchShortcut
+                              }
+                            )}
+                            ariaLabel={t('Ask anything')}
+                            allowedSkillIds={allowedSkillIds}
+                            isHistoryBrowsing={isHistoryBrowsing}
+                            historyStatus={historyStatus}
+                            onNavigateHistory={onNavigateHistory}
+                            mentionPreviewContext={
+                              activeSession
+                                ? {
+                                    sessionId: activeSession.id,
+                                    projectId: activeSession.projectId
+                                  }
+                                : undefined
+                            }
+                            focusRequest={ordinaryComposerBlocked ? undefined : composerFocusKey}
+                            restoreFocusRequest={
+                              ordinaryComposerBlocked ? undefined : composerRestoreFocusRequest
+                            }
+                            caretRequest={ordinaryComposerBlocked ? undefined : caretRequest}
+                          />
+                        </div>
+
+                        <div className="@container/composer flex items-center gap-1">
+                          {/* The + button opens a dropdown for attachments and session actions. */}
+                          <DropdownMenu>
+                            <>
+                              <Tooltip>
+                                {/* Radix opens tooltips on focus as well as hover, and a dropdown
                                   close returns programmatic focus to the trigger — which would
                                   re-open the tooltip with the pointer elsewhere. Only real keyboard
                                   focus (":focus-visible") may open it (radix-ui/primitives#2248). */}
-                              <TooltipTrigger
-                                asChild
-                                onFocus={(event) => {
-                                  if (!event.currentTarget.matches(':focus-visible')) {
-                                    event.preventDefault()
-                                  }
-                                }}
-                              >
-                                <DropdownMenuTrigger asChild>
-                                  <button
-                                    type="button"
-                                    disabled={
-                                      isUploadingAttachments ||
-                                      (!canEditDraft && !activeBranchPlan && !activeSession)
+                                <TooltipTrigger
+                                  asChild
+                                  onFocus={(event) => {
+                                    if (!event.currentTarget.matches(':focus-visible')) {
+                                      event.preventDefault()
                                     }
-                                    className={composerIconButtonClassName}
-                                    aria-label={
-                                      activeBranchPlan
-                                        ? t(
-                                            'Add attachment, save as skill, view context window, view plan, or request review'
-                                          )
-                                        : t(
-                                            'Add attachment, save as skill, view context window, or request review'
-                                          )
-                                    }
-                                    data-testid="composer-plus-trigger"
-                                  >
-                                    <Plus className="size-4" strokeWidth={2} aria-hidden="true" />
-                                  </button>
-                                </DropdownMenuTrigger>
-                              </TooltipTrigger>
-                              <TooltipContent side="top">
-                                {activeBranchPlan
-                                  ? t(
-                                      'Add attachment, save as skill, view context window, view plan, or request review'
-                                    )
-                                  : t(
-                                      'Add attachment, save as skill, view context window, or request review'
-                                    )}
-                              </TooltipContent>
-                            </Tooltip>
-                          </TooltipProvider>
-                          <DropdownMenuContent side="top" align="start" className="w-56">
-                            <TooltipProvider delayDuration={200}>
-                              <Tooltip>
-                                <TooltipTrigger asChild>
-                                  <DropdownMenuItem
-                                    data-testid="menu-attach-files"
-                                    disabled={!canEditDraft || isUploadingAttachments}
-                                    onSelect={() => fileInputRef.current?.click()}
-                                  >
-                                    <FileText
-                                      className="mr-2 size-4 text-text-300"
-                                      aria-hidden="true"
-                                    />
-                                    <span className="flex-1">{t('Attach files')}</span>
-                                    <CircleHelp
-                                      className="size-3.5 text-text-300"
-                                      aria-hidden="true"
-                                    />
-                                  </DropdownMenuItem>
-                                </TooltipTrigger>
-                                <TooltipContent
-                                  side="right"
-                                  className="max-w-[280px] px-3 py-2 leading-5 whitespace-normal"
-                                  data-testid="attachment-limits"
-                                >
-                                  {attachmentLimitsText(t)}
-                                </TooltipContent>
-                              </Tooltip>
-                            </TooltipProvider>
-                            <div
-                              className={cn(
-                                'px-2 py-1.5 text-[11px] leading-4 text-text-300',
-                                canEditDraft && !isUploadingAttachments
-                                  ? 'hidden [@media(pointer:coarse)]:block'
-                                  : 'block'
-                              )}
-                              data-testid="attachment-limits-touch"
-                            >
-                              {attachmentLimitsText(t)}
-                            </div>
-                            <ComposerYourFilesMenu
-                              onInsertFileReference={handleInsertFileReference}
-                            />
-                            <DropdownMenuSeparator />
-                            {activeSession && activeBranchPlan ? (
-                              <>
-                                <DropdownMenuItem
-                                  data-testid="menu-view-plan"
-                                  onSelect={() => {
-                                    usePreviewWorkbenchStore
-                                      .getState()
-                                      .upsertAndActivateItem(
-                                        createSessionPlanPreviewItem(
-                                          activeSession.id,
-                                          activeSession.projectId,
-                                          activeBranchPlan.artifactVersionId
-                                        )
-                                      )
                                   }}
                                 >
-                                  <BookOpen
-                                    className="mr-2 size-4 text-text-300"
-                                    aria-hidden="true"
-                                  />
-                                  <span className="flex-1">{t('View plan')}</span>
-                                  <span className="text-[11px] text-text-300">
-                                    {activeBranchPlan.counts.completed}/
-                                    {activeBranchPlan.counts.steps}
-                                  </span>
-                                </DropdownMenuItem>
-                                <DropdownMenuSeparator />
-                              </>
-                            ) : null}
-                            <DropdownMenuItem
-                              data-testid="menu-request-review"
-                              disabled={!canEditDraft || isRequestReviewDisabled || isReviewing}
-                              aria-busy={isReviewing || undefined}
-                              onSelect={() => {
-                                if (canEditDraft && !isRequestReviewDisabled && !isReviewing) {
-                                  onRequestReview()
-                                }
-                              }}
-                              className="items-center gap-2"
-                            >
-                              {isReviewing ? (
-                                <Loader2
-                                  className="size-4 shrink-0 animate-spin text-text-200 motion-reduce:animate-none"
-                                  strokeWidth={2}
-                                  aria-hidden="true"
-                                />
-                              ) : (
-                                <ScanEye
-                                  className="size-4 shrink-0 text-text-200"
-                                  strokeWidth={2}
-                                  aria-hidden="true"
-                                />
-                              )}
-                              <span className="text-[13px] font-medium leading-5">
-                                {isReviewing ? t('Reviewing…') : t('Request review')}
-                              </span>
-                            </DropdownMenuItem>
-                            <DropdownMenuSeparator />
-                            <TooltipProvider delayDuration={200}>
-                              <Tooltip>
-                                <TooltipTrigger asChild>
-                                  <DropdownMenuItem
-                                    data-testid="menu-save-as-skill"
-                                    aria-disabled={isSaveAsSkillDisabled}
-                                    aria-busy={isSavingAsSkill}
-                                    onSelect={(event) => {
-                                      if (isSaveAsSkillDisabled) {
-                                        event.preventDefault()
-                                        return
+                                  <DropdownMenuTrigger asChild>
+                                    <button
+                                      type="button"
+                                      disabled={
+                                        isUploadingAttachments ||
+                                        (!canEditDraft && !activeBranchPlan && !activeSession)
                                       }
-                                      onSaveAsSkill()
-                                    }}
-                                    className={cn(
-                                      'items-center gap-2',
-                                      isSaveAsSkillDisabled && 'cursor-not-allowed opacity-50'
-                                    )}
-                                  >
-                                    {isSavingAsSkill ? (
-                                      <Loader2
-                                        className="size-4 shrink-0 animate-spin text-text-200 motion-reduce:animate-none"
-                                        strokeWidth={2}
-                                        aria-hidden="true"
-                                      />
-                                    ) : (
-                                      <BookMarked
-                                        className="size-4 shrink-0 text-text-200"
-                                        strokeWidth={2}
-                                        aria-hidden="true"
-                                      />
-                                    )}
-                                    <span className="text-[13px] font-medium leading-5">
-                                      {isSavingAsSkill ? t('Saving as skill…') : t('Save as skill')}
-                                    </span>
-                                  </DropdownMenuItem>
+                                      className={composerIconButtonClassName}
+                                      aria-label={
+                                        activeBranchPlan
+                                          ? t(
+                                              'Add attachment, save as skill, view context window, view plan, or request review'
+                                            )
+                                          : t(
+                                              'Add attachment, save as skill, view context window, or request review'
+                                            )
+                                      }
+                                      data-testid="composer-plus-trigger"
+                                    >
+                                      <Plus className="size-4" strokeWidth={2} aria-hidden="true" />
+                                    </button>
+                                  </DropdownMenuTrigger>
                                 </TooltipTrigger>
-                                {saveAsSkillDisabledReason ? (
+                                <TooltipContent side="top">
+                                  {activeBranchPlan
+                                    ? t(
+                                        'Add attachment, save as skill, view context window, view plan, or request review'
+                                      )
+                                    : t(
+                                        'Add attachment, save as skill, view context window, or request review'
+                                      )}
+                                </TooltipContent>
+                              </Tooltip>
+                            </>
+                            <DropdownMenuContent side="top" align="start" className="w-56">
+                              <>
+                                <Tooltip>
+                                  <TooltipTrigger asChild>
+                                    <DropdownMenuItem
+                                      data-testid="menu-attach-files"
+                                      disabled={!canEditDraft || isUploadingAttachments}
+                                      onSelect={() => fileInputRef.current?.click()}
+                                    >
+                                      <FileText
+                                        className="mr-2 size-4 text-text-300"
+                                        aria-hidden="true"
+                                      />
+                                      <span className="flex-1">{t('Attach files')}</span>
+                                      <CircleHelp
+                                        className="size-3.5 text-text-300"
+                                        aria-hidden="true"
+                                      />
+                                    </DropdownMenuItem>
+                                  </TooltipTrigger>
                                   <TooltipContent
                                     side="right"
                                     className="max-w-[280px] px-3 py-2 leading-5 whitespace-normal"
+                                    data-testid="attachment-limits"
                                   >
-                                    {saveAsSkillDisabledReason}
+                                    {attachmentLimitsText(t)}
                                   </TooltipContent>
-                                ) : null}
-                              </Tooltip>
-                            </TooltipProvider>
-                            <DropdownMenuSeparator />
-                            <DropdownMenuItem
-                              data-testid="menu-context-window"
-                              disabled={!activeSession}
-                              onSelect={() => {
-                                if (activeSession) setIsContextWindowOpen(true)
-                              }}
-                            >
-                              <ChartNoAxesCombined
-                                className="mr-2 size-4 text-text-300"
-                                aria-hidden="true"
+                                </Tooltip>
+                              </>
+                              <div
+                                className={cn(
+                                  'px-2 py-1.5 text-[11px] leading-4 text-text-300',
+                                  canEditDraft && !isUploadingAttachments
+                                    ? 'hidden [@media(pointer:coarse)]:block'
+                                    : 'block'
+                                )}
+                                data-testid="attachment-limits-touch"
+                              >
+                                {attachmentLimitsText(t)}
+                              </div>
+                              <ComposerYourFilesMenu
+                                onInsertFileReference={handleInsertFileReference}
                               />
-                              {t('Context window')}
-                            </DropdownMenuItem>
-                          </DropdownMenuContent>
-                        </DropdownMenu>
-                        {/* The native picker is hidden because the composer button carries the UI. */}
-                        <input
-                          ref={fileInputRef}
-                          type="file"
-                          multiple
-                          className="hidden"
-                          tabIndex={-1}
-                          onChange={handleAttachmentInputChange}
-                        />
-
-                        <ComposerAgentControlsMenu
-                          profile={permissionProfile}
-                          profileState={permissionProfileState}
-                          grants={permissionGrants}
-                          autoReviewEnabled={autoReviewEnabled}
-                          memoryEnabled={memoryEnabled}
-                          delegationEnabled={delegationEnabled}
-                          delegationPending={delegationPending}
-                          delegationHasLiveAttempts={delegationHasLiveAttempts}
-                          delegationDisabledReason={delegationDisabledReason}
-                          memoryDisabledReason={memoryDisabledReason}
-                          readOnly={!canChangeAgentControls}
-                          autoReviewReadOnly={!canChangeAutoReview}
-                          memoryReadOnly={!canChangeMemory}
-                          delegationReadOnly={!canChangeDelegation}
-                          permissionProfileReadOnly={!canChangePermissionProfile}
-                          grantActionsReadOnly={false}
-                          autoReviewDisabled={!canEditDraft}
-                          enabledComputeHosts={enabledComputeHosts}
-                          selectedComputeHosts={selectedComputeHosts}
-                          onComputeHostEnabledChange={onComputeHostEnabledChange}
-                          onComputeHostSelectedChange={onComputeHostSelectedChange}
-                          onProfileChange={onPermissionProfileChange}
-                          onAutoReviewChange={onAutoReviewToggle}
-                          onMemoryChange={onMemoryToggle}
-                          onDelegationChange={onDelegationToggle}
-                          onRevokeGrant={onRevokePermissionGrant}
-                          onClearGrants={onClearPermissionGrants}
-                          showSpecialist={
-                            // Show for new conversations when a change handler is provided,
-                            // or for any existing session (so the user can always switch).
-                            (!activeSession && onSpecialistChange !== undefined) ||
-                            activeSession !== undefined
-                          }
-                          specialistId={specialistId}
-                          specialistUnavailable={specialistUnavailable}
-                          specialistReadOnly={!canChangeSpecialist}
-                          onSpecialistChange={onSpecialistChange}
-                          openRequest={agentControlsOpenRequest}
-                          computeOpenRequest={computeControlsOpenRequest}
-                        />
-
-                        <ComposerSpecialistPicker
-                          selectedId={specialistId}
-                          readOnly={!canChangeSpecialist}
-                          onChange={onSpecialistChange}
-                        />
-
-                        <ComposerComputeTargetIndicator
-                          targetProviderIds={selectedComputeHosts}
-                          onOpenTarget={() =>
-                            setComputeControlsOpenRequest((request) => request + 1)
-                          }
-                          onOpenSettings={openSettingsToComputeHost}
-                        />
-
-                        {/* Compatibility indicator for an explicit user selection while a turn is
-                            running. Approved SDK switches are represented by the durable lifecycle
-                            row and never wait for another user message. */}
-                        {specialistHasPendingSwitch ? (
-                          <span
-                            className="flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full border border-blue-500/25 bg-blue-500/10 px-2 py-0.5 text-[11px] italic text-blue-400"
-                            data-testid="specialist-pending-switch-chip"
-                            aria-label={t('Specialist switch pending')}
-                          >
-                            {t('Switching in this turn')}
-                          </span>
-                        ) : null}
-
-                        <div className="flex-1" />
-
-                        {/* Context-window usage for the active session (renders nothing when the
-                            framework doesn't report usage). Sits with the model it pertains to. */}
-                        <ComposerContextUsage
-                          contextUsage={contextUsage}
-                          canCompact={canCompactContext}
-                          compacting={activeSession?.compacting === true}
-                          compactDisabledReason={compactContextDisabledReason}
-                          onCompact={onCompactContext}
-                        />
-
-                        {/* Model/provider switcher; hides itself unless more than one is configured.
-                            Grouped on the right with Send, mirroring the reference composer layout. */}
-                        <ComposerModelPicker
-                          configuration={modelConfiguration}
-                          unavailable={modelUnavailable}
-                          includeAllClaudeSubscriptions={activeSession !== undefined}
-                          onChange={changeModelConfiguration}
-                        />
-
-                        {rootTurnBusy ? (
-                          // Running sessions expose cancel instead of send to prevent overlapping turns.
-                          // Detached children can outlive a wait=false Main turn, so their durable
-                          // running aggregate keeps the same root cascade reachable after Main settles.
-                          // During a fix loop the main agent may be idle (the reviewer-review sub-phase runs
-                          // in a separate ACP session), so fixLoopActive keeps the cancel affordance
-                          // reachable across the whole loop, not just the agent-fix running turn.
-                          <div
-                            data-testid="composer-running-control-slot"
-                            className="flex w-24 shrink-0 justify-end [@media(pointer:coarse)]:mx-3"
-                          >
-                            <button
-                              type="button"
-                              onClick={handleSubmit}
-                              disabled={!effectiveCanSend || submitMode !== 'queue'}
-                              className={composerIconButtonClassName}
-                              aria-label={t('Add message to queue')}
-                              data-testid="composer-queue-submit"
-                            >
-                              <ArrowUp className="size-4" strokeWidth={2.2} aria-hidden="true" />
-                            </button>
-                            <button
-                              type="button"
-                              onClick={handleStop}
-                              disabled={isStopping}
-                              className={composerCancelButtonClassName}
-                              aria-label={
-                                isStopping ? t('Stopping run and subagents') : t('Cancel run')
-                              }
-                            >
-                              {isStopping ? (
-                                <Loader2
-                                  className="size-3.5 animate-spin"
-                                  strokeWidth={2.2}
-                                  aria-hidden="true"
-                                />
-                              ) : (
-                                <Square className="size-3.5" strokeWidth={2.2} aria-hidden="true" />
-                              )}
-                            </button>
-                            {stopError ? (
-                              <span className="sr-only" role="alert">
-                                {stopError}
-                              </span>
-                            ) : null}
-                            <DropdownMenu>
-                              <TooltipProvider delayDuration={200}>
-                                <Tooltip>
-                                  <TooltipTrigger
-                                    asChild
-                                    onFocus={(event) => {
-                                      if (
-                                        !(event.target instanceof Element) ||
-                                        !event.target.matches(':focus-visible')
-                                      ) {
-                                        event.preventDefault()
-                                      }
-                                    }}
-                                  >
-                                    <span className="inline-flex">
-                                      <DropdownMenuTrigger asChild>
-                                        <button
-                                          type="button"
-                                          className={composerIconButtonClassName}
-                                          disabled={!canStartSideChat && !canRetrySideChatHydration}
-                                          aria-label={t('More send options')}
-                                          data-testid="running-side-chat-menu-trigger"
-                                        >
-                                          <ChevronDown className="size-3.5" aria-hidden="true" />
-                                        </button>
-                                      </DropdownMenuTrigger>
-                                    </span>
-                                  </TooltipTrigger>
-                                  <TooltipContent side="top">
-                                    {sideChatDisabledReason ?? t('More send options')}
-                                  </TooltipContent>
-                                </Tooltip>
-                              </TooltipProvider>
-                              <DropdownMenuContent side="top" align="end" className="w-64">
-                                <DropdownMenuItem
-                                  data-testid="menu-side-chat"
-                                  disabled={!canStartSideChat && !canRetrySideChatHydration}
-                                  onSelect={handleSideChat}
-                                  title={sideChatDisabledReason}
-                                >
-                                  <MessageCircleMore
-                                    className="mr-2 size-4 text-text-300"
-                                    aria-hidden="true"
-                                  />
-                                  <span>
-                                    {canRetrySideChatHydration
-                                      ? t('Retry Side chat restore')
-                                      : t('Side chat')}
-                                    {sideChatDisabledReason ? (
-                                      <span className="block text-[11px] text-text-300">
-                                        {sideChatDisabledReason}
-                                      </span>
-                                    ) : null}
-                                  </span>
-                                </DropdownMenuItem>
-                              </DropdownMenuContent>
-                            </DropdownMenu>
-                          </div>
-                        ) : (
-                          <TooltipProvider delayDuration={200}>
-                            <div
-                              role="group"
-                              aria-label={t('Send message options')}
-                              className={cn(
-                                'flex rounded-md bg-primary text-primary-foreground [@media(pointer:coarse)]:mx-3',
-                                !effectiveCanSend && 'opacity-50'
-                              )}
-                            >
-                              <Tooltip>
-                                <TooltipTrigger asChild>
-                                  <Button
-                                    type="button"
-                                    variant="ghost"
-                                    size="icon"
-                                    onClick={handleSubmit}
-                                    disabled={!effectiveCanSend}
-                                    className={composerSplitSendPrimaryButtonClassName}
-                                    aria-label={t('Send message')}
-                                  >
-                                    <ArrowUp
-                                      className="size-4"
-                                      strokeWidth={2.2}
-                                      aria-hidden="true"
-                                    />
-                                  </Button>
-                                </TooltipTrigger>
-                                <TooltipContent side="top">{t('Send message')}</TooltipContent>
-                              </Tooltip>
-                              <DropdownMenu>
-                                <Tooltip>
-                                  {/* Same focus guard as the + trigger: a dropdown close returns
-                                      programmatic focus, which must not re-open the tooltip. */}
-                                  <TooltipTrigger
-                                    asChild
-                                    onFocus={(event) => {
-                                      if (!event.currentTarget.matches(':focus-visible')) {
-                                        event.preventDefault()
-                                      }
-                                    }}
-                                  >
-                                    <DropdownMenuTrigger asChild>
-                                      <Button
-                                        type="button"
-                                        variant="ghost"
-                                        size="icon"
-                                        disabled={
-                                          !canPlanFirst &&
-                                          !canStartSideChat &&
-                                          !canRetrySideChatHydration &&
-                                          (!effectiveCanSend ||
-                                            !onBranchInNewSession ||
-                                            !canBranchInNewSession)
-                                        }
-                                        className={composerSplitSendMenuButtonClassName}
-                                        aria-label={t('More send options')}
-                                        aria-haspopup="menu"
-                                        data-testid="branch-send-menu-trigger"
-                                      >
-                                        <ChevronDown
-                                          className="size-3.5"
-                                          strokeWidth={2.2}
-                                          aria-hidden="true"
-                                        />
-                                      </Button>
-                                    </DropdownMenuTrigger>
-                                  </TooltipTrigger>
-                                  <TooltipContent side="top">
-                                    {t('More send options')}
-                                  </TooltipContent>
-                                </Tooltip>
-                                <DropdownMenuContent side="top" align="end" className="w-56">
+                              <DropdownMenuSeparator />
+                              {activeSession && activeBranchPlan ? (
+                                <>
                                   <DropdownMenuItem
-                                    data-testid="menu-plan-first"
-                                    disabled={!canPlanFirst}
-                                    onSelect={handlePlanFirst}
-                                    className="whitespace-nowrap [@media(pointer:coarse)]:min-h-11"
+                                    data-testid="menu-view-plan"
+                                    onSelect={() => {
+                                      usePreviewWorkbenchStore
+                                        .getState()
+                                        .upsertAndActivateItem(
+                                          createSessionPlanPreviewItem(
+                                            activeSession.id,
+                                            activeSession.projectId,
+                                            activeBranchPlan.artifactVersionId
+                                          )
+                                        )
+                                    }}
                                   >
-                                    <ListChecks
+                                    <BookOpen
                                       className="mr-2 size-4 text-text-300"
                                       aria-hidden="true"
                                     />
-                                    {t('Plan first')}
+                                    <span className="flex-1">{t('View plan')}</span>
+                                    <span className="text-[11px] text-text-300">
+                                      {activeBranchPlan.counts.completed}/
+                                      {activeBranchPlan.counts.steps}
+                                    </span>
                                   </DropdownMenuItem>
+                                  <DropdownMenuSeparator />
+                                </>
+                              ) : null}
+                              <DropdownMenuItem
+                                data-testid="menu-request-review"
+                                disabled={!canEditDraft || isRequestReviewDisabled || isReviewing}
+                                aria-busy={isReviewing || undefined}
+                                onSelect={() => {
+                                  if (canEditDraft && !isRequestReviewDisabled && !isReviewing) {
+                                    onRequestReview()
+                                  }
+                                }}
+                                className="items-center gap-2"
+                              >
+                                {isReviewing ? (
+                                  <Loader2
+                                    className="size-4 shrink-0 animate-spin text-text-200 motion-reduce:animate-none"
+                                    strokeWidth={2}
+                                    aria-hidden="true"
+                                  />
+                                ) : (
+                                  <ScanEye
+                                    className="size-4 shrink-0 text-text-200"
+                                    strokeWidth={2}
+                                    aria-hidden="true"
+                                  />
+                                )}
+                                <span className="text-[13px] font-medium leading-5">
+                                  {isReviewing ? t('Reviewing…') : t('Request review')}
+                                </span>
+                              </DropdownMenuItem>
+                              <DropdownMenuSeparator />
+                              <>
+                                <Tooltip>
+                                  <TooltipTrigger asChild>
+                                    <DropdownMenuItem
+                                      data-testid="menu-save-as-skill"
+                                      aria-disabled={isSaveAsSkillDisabled}
+                                      aria-busy={isSavingAsSkill}
+                                      onSelect={(event) => {
+                                        if (isSaveAsSkillDisabled) {
+                                          event.preventDefault()
+                                          return
+                                        }
+                                        onSaveAsSkill()
+                                      }}
+                                      className={cn(
+                                        'items-center gap-2',
+                                        isSaveAsSkillDisabled && 'cursor-not-allowed opacity-50'
+                                      )}
+                                    >
+                                      {isSavingAsSkill ? (
+                                        <Loader2
+                                          className="size-4 shrink-0 animate-spin text-text-200 motion-reduce:animate-none"
+                                          strokeWidth={2}
+                                          aria-hidden="true"
+                                        />
+                                      ) : (
+                                        <BookMarked
+                                          className="size-4 shrink-0 text-text-200"
+                                          strokeWidth={2}
+                                          aria-hidden="true"
+                                        />
+                                      )}
+                                      <span className="text-[13px] font-medium leading-5">
+                                        {isSavingAsSkill
+                                          ? t('Saving as skill…')
+                                          : t('Save as skill')}
+                                      </span>
+                                    </DropdownMenuItem>
+                                  </TooltipTrigger>
+                                  {saveAsSkillDisabledReason ? (
+                                    <TooltipContent
+                                      side="right"
+                                      className="max-w-[280px] px-3 py-2 leading-5 whitespace-normal"
+                                    >
+                                      {saveAsSkillDisabledReason}
+                                    </TooltipContent>
+                                  ) : null}
+                                </Tooltip>
+                              </>
+                              <DropdownMenuSeparator />
+                              <DropdownMenuItem
+                                data-testid="menu-context-window"
+                                disabled={!activeSession}
+                                onSelect={() => {
+                                  if (activeSession) setIsContextWindowOpen(true)
+                                }}
+                              >
+                                <ChartNoAxesCombined
+                                  className="mr-2 size-4 text-text-300"
+                                  aria-hidden="true"
+                                />
+                                {t('Context window')}
+                              </DropdownMenuItem>
+                            </DropdownMenuContent>
+                          </DropdownMenu>
+                          {/* The native picker is hidden because the composer button carries the UI. */}
+                          <input
+                            ref={fileInputRef}
+                            type="file"
+                            multiple
+                            className="hidden"
+                            tabIndex={-1}
+                            onChange={handleAttachmentInputChange}
+                          />
+
+                          <ComposerAgentControlsMenu
+                            profile={permissionProfile}
+                            profileState={permissionProfileState}
+                            grants={permissionGrants}
+                            autoReviewEnabled={autoReviewEnabled}
+                            memoryEnabled={memoryEnabled}
+                            delegationEnabled={delegationEnabled}
+                            delegationPending={delegationPending}
+                            delegationHasLiveAttempts={delegationHasLiveAttempts}
+                            delegationDisabledReason={delegationDisabledReason}
+                            memoryDisabledReason={memoryDisabledReason}
+                            readOnly={!canChangeAgentControls}
+                            autoReviewReadOnly={!canChangeAutoReview}
+                            memoryReadOnly={!canChangeMemory}
+                            delegationReadOnly={!canChangeDelegation}
+                            permissionProfileReadOnly={!canChangePermissionProfile}
+                            grantActionsReadOnly={false}
+                            autoReviewDisabled={!canEditDraft}
+                            enabledComputeHosts={enabledComputeHosts}
+                            selectedComputeHosts={selectedComputeHosts}
+                            onComputeHostEnabledChange={onComputeHostEnabledChange}
+                            onComputeHostSelectedChange={onComputeHostSelectedChange}
+                            onProfileChange={onPermissionProfileChange}
+                            onAutoReviewChange={onAutoReviewToggle}
+                            onMemoryChange={onMemoryToggle}
+                            onDelegationChange={onDelegationToggle}
+                            onRevokeGrant={onRevokePermissionGrant}
+                            onClearGrants={onClearPermissionGrants}
+                            showSpecialist={
+                              // Show for new conversations when a change handler is provided,
+                              // or for any existing session (so the user can always switch).
+                              (!activeSession && onSpecialistChange !== undefined) ||
+                              activeSession !== undefined
+                            }
+                            specialistId={specialistId}
+                            specialistUnavailable={specialistUnavailable}
+                            specialistReadOnly={!canChangeSpecialist}
+                            onSpecialistChange={onSpecialistChange}
+                            openRequest={agentControlsOpenRequest}
+                            computeOpenRequest={computeControlsOpenRequest}
+                          />
+
+                          <ComposerSpecialistPicker
+                            selectedId={specialistId}
+                            readOnly={!canChangeSpecialist}
+                            onChange={onSpecialistChange}
+                          />
+
+                          <ComposerComputeTargetIndicator
+                            targetProviderIds={selectedComputeHosts}
+                            onOpenTarget={() =>
+                              setComputeControlsOpenRequest((request) => request + 1)
+                            }
+                            onOpenSettings={openSettingsToComputeHost}
+                          />
+
+                          {/* Compatibility indicator for an explicit user selection while a turn is
+                            running. Approved SDK switches are represented by the durable lifecycle
+                            row and never wait for another user message. */}
+                          {specialistHasPendingSwitch ? (
+                            <span
+                              className="flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full border border-blue-500/25 bg-blue-500/10 px-2 py-0.5 text-[11px] italic text-blue-400"
+                              data-testid="specialist-pending-switch-chip"
+                              aria-label={t('Specialist switch pending')}
+                            >
+                              {t('Switching in this turn')}
+                            </span>
+                          ) : null}
+
+                          <div className="flex-1" />
+
+                          {/* Context-window usage for the active session (renders nothing when the
+                            framework doesn't report usage). Sits with the model it pertains to. */}
+                          <ComposerContextUsage
+                            contextUsage={contextUsage}
+                            canCompact={canCompactContext}
+                            compacting={activeSession?.compacting === true}
+                            compactDisabledReason={compactContextDisabledReason}
+                            onCompact={onCompactContext}
+                          />
+
+                          {/* Model/provider switcher; hides itself unless more than one is configured.
+                            Grouped on the right with Send, mirroring the reference composer layout. */}
+                          <ComposerModelPicker
+                            configuration={modelConfiguration}
+                            unavailable={modelUnavailable}
+                            includeAllClaudeSubscriptions={activeSession !== undefined}
+                            onChange={changeModelConfiguration}
+                          />
+
+                          {rootTurnBusy ? (
+                            // Running sessions expose cancel instead of send to prevent overlapping turns.
+                            // Detached children can outlive a wait=false Main turn, so their durable
+                            // running aggregate keeps the same root cascade reachable after Main settles.
+                            // During a fix loop the main agent may be idle (the reviewer-review sub-phase runs
+                            // in a separate ACP session), so fixLoopActive keeps the cancel affordance
+                            // reachable across the whole loop, not just the agent-fix running turn.
+                            <div
+                              data-testid="composer-running-control-slot"
+                              className="flex w-24 shrink-0 justify-end [@media(pointer:coarse)]:mx-3"
+                            >
+                              <button
+                                type="button"
+                                onClick={handleSubmit}
+                                disabled={!effectiveCanSend || submitMode !== 'queue'}
+                                className={composerIconButtonClassName}
+                                aria-label={t('Add message to queue')}
+                                data-testid="composer-queue-submit"
+                              >
+                                <ArrowUp className="size-4" strokeWidth={2.2} aria-hidden="true" />
+                              </button>
+                              <button
+                                type="button"
+                                onClick={handleStop}
+                                disabled={isStopping}
+                                className={composerCancelButtonClassName}
+                                aria-label={
+                                  isStopping ? t('Stopping run and subagents') : t('Cancel run')
+                                }
+                              >
+                                {isStopping ? (
+                                  <Loader2
+                                    className="size-3.5 animate-spin"
+                                    strokeWidth={2.2}
+                                    aria-hidden="true"
+                                  />
+                                ) : (
+                                  <Square
+                                    className="size-3.5"
+                                    strokeWidth={2.2}
+                                    aria-hidden="true"
+                                  />
+                                )}
+                              </button>
+                              {stopError ? (
+                                <span className="sr-only" role="alert">
+                                  {stopError}
+                                </span>
+                              ) : null}
+                              <DropdownMenu>
+                                <>
+                                  <Tooltip>
+                                    <TooltipTrigger
+                                      asChild
+                                      onFocus={(event) => {
+                                        if (
+                                          !(event.target instanceof Element) ||
+                                          !event.target.matches(':focus-visible')
+                                        ) {
+                                          event.preventDefault()
+                                        }
+                                      }}
+                                    >
+                                      <span className="inline-flex">
+                                        <DropdownMenuTrigger asChild>
+                                          <button
+                                            type="button"
+                                            className={composerIconButtonClassName}
+                                            disabled={
+                                              !canStartSideChat && !canRetrySideChatHydration
+                                            }
+                                            aria-label={t('More send options')}
+                                            data-testid="running-side-chat-menu-trigger"
+                                          >
+                                            <ChevronDown className="size-3.5" aria-hidden="true" />
+                                          </button>
+                                        </DropdownMenuTrigger>
+                                      </span>
+                                    </TooltipTrigger>
+                                    <TooltipContent side="top">
+                                      {sideChatDisabledReason ?? t('More send options')}
+                                    </TooltipContent>
+                                  </Tooltip>
+                                </>
+                                <DropdownMenuContent side="top" align="end" className="w-64">
                                   <DropdownMenuItem
                                     data-testid="menu-side-chat"
                                     disabled={!canStartSideChat && !canRetrySideChatHydration}
                                     onSelect={handleSideChat}
                                     title={sideChatDisabledReason}
-                                    className="whitespace-nowrap [@media(pointer:coarse)]:min-h-11"
                                   >
                                     <MessageCircleMore
                                       className="mr-2 size-4 text-text-300"
@@ -2496,69 +2409,183 @@ const ConversationPanel = ({
                                       ) : null}
                                     </span>
                                   </DropdownMenuItem>
-                                  <DropdownMenuItem
-                                    data-testid="menu-branch-in-new-session"
-                                    disabled={
-                                      !effectiveCanSend ||
-                                      !onBranchInNewSession ||
-                                      !canBranchInNewSession
-                                    }
-                                    onSelect={handleBranchInNewSession}
-                                    className="whitespace-nowrap [@media(pointer:coarse)]:min-h-11"
-                                  >
-                                    <GitBranch
-                                      className="mr-2 size-4 text-text-300"
-                                      aria-hidden="true"
-                                    />
-                                    {t('Branch in new session')}
-                                  </DropdownMenuItem>
                                 </DropdownMenuContent>
                               </DropdownMenu>
                             </div>
-                          </TooltipProvider>
-                        )}
-                        {hasRunningSubagents && !rootTurnBusy ? (
-                          <TooltipProvider delayDuration={200}>
-                            <Tooltip>
-                              <TooltipTrigger asChild>
-                                <button
-                                  type="button"
-                                  onClick={handleStopSubagents}
-                                  disabled={isStopping}
-                                  className={composerCancelButtonClassName}
-                                  aria-label={
-                                    isStopping ? t('Stopping subagents') : t('Stop subagents')
-                                  }
-                                >
-                                  {isStopping ? (
-                                    <Loader2 className="size-3.5 animate-spin" aria-hidden="true" />
-                                  ) : (
-                                    <Square
-                                      className="size-3.5"
-                                      strokeWidth={2.2}
-                                      aria-hidden="true"
-                                    />
-                                  )}
-                                </button>
-                              </TooltipTrigger>
-                              <TooltipContent>
-                                {isStopping ? t('Stopping subagents') : t('Stop subagents')}
-                              </TooltipContent>
-                            </Tooltip>
-                          </TooltipProvider>
-                        ) : null}
-                        {stopError ? (
-                          <span
-                            className="max-w-48 truncate text-[11px] text-danger-000"
-                            role="alert"
-                            title={stopError}
-                          >
-                            {stopError}
-                          </span>
-                        ) : null}
+                          ) : (
+                            <>
+                              <div
+                                role="group"
+                                aria-label={t('Send message options')}
+                                className={cn(
+                                  'flex rounded-md bg-primary text-primary-foreground [@media(pointer:coarse)]:mx-3',
+                                  !effectiveCanSend && 'opacity-50'
+                                )}
+                              >
+                                <Tooltip>
+                                  <TooltipTrigger asChild>
+                                    <Button
+                                      type="button"
+                                      variant="ghost"
+                                      size="icon"
+                                      onClick={handleSubmit}
+                                      disabled={!effectiveCanSend}
+                                      className={composerSplitSendPrimaryButtonClassName}
+                                      aria-label={t('Send message')}
+                                    >
+                                      <ArrowUp
+                                        className="size-4"
+                                        strokeWidth={2.2}
+                                        aria-hidden="true"
+                                      />
+                                    </Button>
+                                  </TooltipTrigger>
+                                  <TooltipContent side="top">{t('Send message')}</TooltipContent>
+                                </Tooltip>
+                                <DropdownMenu>
+                                  <Tooltip>
+                                    {/* Same focus guard as the + trigger: a dropdown close returns
+                                      programmatic focus, which must not re-open the tooltip. */}
+                                    <TooltipTrigger
+                                      asChild
+                                      onFocus={(event) => {
+                                        if (!event.currentTarget.matches(':focus-visible')) {
+                                          event.preventDefault()
+                                        }
+                                      }}
+                                    >
+                                      <DropdownMenuTrigger asChild>
+                                        <Button
+                                          type="button"
+                                          variant="ghost"
+                                          size="icon"
+                                          disabled={
+                                            !canPlanFirst &&
+                                            !canStartSideChat &&
+                                            !canRetrySideChatHydration &&
+                                            (!effectiveCanSend ||
+                                              !onBranchInNewSession ||
+                                              !canBranchInNewSession)
+                                          }
+                                          className={composerSplitSendMenuButtonClassName}
+                                          aria-label={t('More send options')}
+                                          aria-haspopup="menu"
+                                          data-testid="branch-send-menu-trigger"
+                                        >
+                                          <ChevronDown
+                                            className="size-3.5"
+                                            strokeWidth={2.2}
+                                            aria-hidden="true"
+                                          />
+                                        </Button>
+                                      </DropdownMenuTrigger>
+                                    </TooltipTrigger>
+                                    <TooltipContent side="top">
+                                      {t('More send options')}
+                                    </TooltipContent>
+                                  </Tooltip>
+                                  <DropdownMenuContent side="top" align="end" className="w-56">
+                                    <DropdownMenuItem
+                                      data-testid="menu-plan-first"
+                                      disabled={!canPlanFirst}
+                                      onSelect={handlePlanFirst}
+                                      className="whitespace-nowrap [@media(pointer:coarse)]:min-h-11"
+                                    >
+                                      <ListChecks
+                                        className="mr-2 size-4 text-text-300"
+                                        aria-hidden="true"
+                                      />
+                                      {t('Plan first')}
+                                    </DropdownMenuItem>
+                                    <DropdownMenuItem
+                                      data-testid="menu-side-chat"
+                                      disabled={!canStartSideChat && !canRetrySideChatHydration}
+                                      onSelect={handleSideChat}
+                                      title={sideChatDisabledReason}
+                                      className="whitespace-nowrap [@media(pointer:coarse)]:min-h-11"
+                                    >
+                                      <MessageCircleMore
+                                        className="mr-2 size-4 text-text-300"
+                                        aria-hidden="true"
+                                      />
+                                      <span>
+                                        {canRetrySideChatHydration
+                                          ? t('Retry Side chat restore')
+                                          : t('Side chat')}
+                                        {sideChatDisabledReason ? (
+                                          <span className="block text-[11px] text-text-300">
+                                            {sideChatDisabledReason}
+                                          </span>
+                                        ) : null}
+                                      </span>
+                                    </DropdownMenuItem>
+                                    <DropdownMenuItem
+                                      data-testid="menu-branch-in-new-session"
+                                      disabled={
+                                        !effectiveCanSend ||
+                                        !onBranchInNewSession ||
+                                        !canBranchInNewSession
+                                      }
+                                      onSelect={handleBranchInNewSession}
+                                      className="whitespace-nowrap [@media(pointer:coarse)]:min-h-11"
+                                    >
+                                      <GitBranch
+                                        className="mr-2 size-4 text-text-300"
+                                        aria-hidden="true"
+                                      />
+                                      {t('Branch in new session')}
+                                    </DropdownMenuItem>
+                                  </DropdownMenuContent>
+                                </DropdownMenu>
+                              </div>
+                            </>
+                          )}
+                          {hasRunningSubagents && !rootTurnBusy ? (
+                            <>
+                              <Tooltip>
+                                <TooltipTrigger asChild>
+                                  <button
+                                    type="button"
+                                    onClick={handleStopSubagents}
+                                    disabled={isStopping}
+                                    className={composerCancelButtonClassName}
+                                    aria-label={
+                                      isStopping ? t('Stopping subagents') : t('Stop subagents')
+                                    }
+                                  >
+                                    {isStopping ? (
+                                      <Loader2
+                                        className="size-3.5 animate-spin"
+                                        aria-hidden="true"
+                                      />
+                                    ) : (
+                                      <Square
+                                        className="size-3.5"
+                                        strokeWidth={2.2}
+                                        aria-hidden="true"
+                                      />
+                                    )}
+                                  </button>
+                                </TooltipTrigger>
+                                <TooltipContent>
+                                  {isStopping ? t('Stopping subagents') : t('Stop subagents')}
+                                </TooltipContent>
+                              </Tooltip>
+                            </>
+                          ) : null}
+                          {stopError ? (
+                            <span
+                              className="max-w-48 truncate text-[11px] text-danger-000"
+                              role="alert"
+                              title={stopError}
+                            >
+                              {stopError}
+                            </span>
+                          ) : null}
+                        </div>
                       </div>
-                    </div>
-                  </form>
+                    </form>
+                  </TooltipProvider>
                 </div>
               </div>
             </div>

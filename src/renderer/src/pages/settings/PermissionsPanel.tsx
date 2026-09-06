@@ -1,3 +1,4 @@
+import { TooltipProvider } from '@/components/ui/tooltip'
 import { AlertTriangle, Shield, ShieldAlert, ShieldCheck, X } from 'lucide-react'
 import { AlertDialog } from 'radix-ui'
 import { useEffect, useMemo, useState } from 'react'
@@ -233,281 +234,287 @@ const PermissionsPanel = ({
   }
 
   return (
-    <div className="px-5 pb-5">
-      <SettingsSection
-        title={t('New conversations')}
-        description={t(
-          'Choose how much the agent can do without asking when a conversation starts.'
-        )}
-        aria-label={t('New conversation permissions')}
-        className="pt-5"
-      >
-        <SettingsRow
-          label={t('Default permission mode')}
+    <TooltipProvider delayDuration={200}>
+      <div className="px-5 pb-5">
+        <SettingsSection
+          title={t('New conversations')}
           description={t(
-            'Applied only to new conversations. You can change it in Agent controls before sending the first message.'
+            'Choose how much the agent can do without asking when a conversation starts.'
           )}
-          className="pt-0"
+          aria-label={t('New conversation permissions')}
+          className="pt-5"
         >
-          <Select
-            value={defaultPermissionProfile}
-            onValueChange={(value) => selectDefaultProfile(value as PermissionProfileId)}
+          <SettingsRow
+            label={t('Default permission mode')}
+            description={t(
+              'Applied only to new conversations. You can change it in Agent controls before sending the first message.'
+            )}
+            className="pt-0"
           >
-            <SelectTrigger aria-label={t('Default permission mode')}>
-              <span>{t(permissionProfileLabel(defaultPermissionProfile))}</span>
-            </SelectTrigger>
-            <SelectContent className="w-[min(24rem,calc(100vw-2rem))]">
-              {PERMISSION_PROFILES.map((profile) => {
-                const Icon = profile.icon
-                const isFull = profile.id === 'full'
+            <Select
+              value={defaultPermissionProfile}
+              onValueChange={(value) => selectDefaultProfile(value as PermissionProfileId)}
+            >
+              <SelectTrigger aria-label={t('Default permission mode')}>
+                <span>{t(permissionProfileLabel(defaultPermissionProfile))}</span>
+              </SelectTrigger>
+              <SelectContent className="w-[min(24rem,calc(100vw-2rem))]">
+                {PERMISSION_PROFILES.map((profile) => {
+                  const Icon = profile.icon
+                  const isFull = profile.id === 'full'
 
-                return (
-                  <SelectItem
-                    key={profile.id}
-                    value={profile.id}
-                    icon={
-                      <Icon
-                        className={cn('size-4', isFull && 'text-amber-600 dark:text-amber-400')}
-                        aria-hidden="true"
-                      />
-                    }
-                    className="items-start py-2"
-                  >
-                    <span className="block min-w-0 pr-1">
-                      <span
-                        className={cn(
-                          'block font-medium leading-5',
-                          isFull && 'text-amber-600 dark:text-amber-400'
-                        )}
-                      >
-                        {t(profile.label)}
+                  return (
+                    <SelectItem
+                      key={profile.id}
+                      value={profile.id}
+                      icon={
+                        <Icon
+                          className={cn('size-4', isFull && 'text-amber-600 dark:text-amber-400')}
+                          aria-hidden="true"
+                        />
+                      }
+                      className="items-start py-2"
+                    >
+                      <span className="block min-w-0 pr-1">
+                        <span
+                          className={cn(
+                            'block font-medium leading-5',
+                            isFull && 'text-amber-600 dark:text-amber-400'
+                          )}
+                        >
+                          {t(profile.label)}
+                        </span>
+                        <span
+                          className={cn(
+                            'block text-xs leading-4 text-muted-foreground whitespace-normal',
+                            isFull && 'text-amber-600/75 dark:text-amber-400/75'
+                          )}
+                        >
+                          {t(profile.description)}
+                        </span>
                       </span>
-                      <span
-                        className={cn(
-                          'block text-xs leading-4 text-muted-foreground whitespace-normal',
-                          isFull && 'text-amber-600/75 dark:text-amber-400/75'
-                        )}
-                      >
-                        {t(profile.description)}
-                      </span>
-                    </span>
-                  </SelectItem>
-                )
-              })}
+                    </SelectItem>
+                  )
+                })}
+              </SelectContent>
+            </Select>
+          </SettingsRow>
+
+          {defaultPermissionProfile === 'full' ? (
+            <div
+              role="status"
+              className="mt-1 flex items-start gap-2 rounded-lg border border-amber-500/25 bg-amber-500/10 px-3 py-2 text-xs leading-5 text-amber-700 dark:text-amber-300"
+            >
+              <AlertTriangle className="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
+              {t(
+                'New conversations can run commands, change files, and access the network without asking first. Existing conversations keep their current permission mode.'
+              )}
+            </div>
+          ) : null}
+        </SettingsSection>
+
+        <div className="sticky top-0 z-10 -mx-5 mt-5 mb-2 bg-card px-5 py-5">
+          <div className="mb-3 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+            <div className="min-w-0">
+              <h3 className="text-base font-semibold text-foreground">
+                {t('Remembered permissions')}
+              </h3>
+              <p className="mt-0.5 max-w-2xl text-[13px] leading-5 text-muted-foreground">
+                {t('Review or revoke approvals saved for tools, projects, and conversations.')}
+              </p>
+              <p className="mt-1 max-w-2xl text-xs leading-5 text-muted-foreground">
+                {t(
+                  'Restore missing default Global permissions without changing other remembered permissions.'
+                )}
+              </p>
+            </div>
+            <RestoreDefaultPermissionsButton
+              state={defaultsComplete ? 'success' : restoreDefaultsState}
+              disabled={defaultsComplete || status === 'loading'}
+              onRestore={() => void restoreDefaults()}
+            />
+          </div>
+          <Select value={filter} onValueChange={(value) => setFilter(value as ScopeFilter)}>
+            <SelectTrigger
+              aria-label={t('Filter permissions by scope')}
+              className="w-full max-w-72 whitespace-nowrap [font-variant-numeric:tabular-nums]"
+            >
+              {t(FILTER_LABELS[filter])} ({counts[filter]})
+            </SelectTrigger>
+            <SelectContent>
+              {(Object.keys(FILTER_LABELS) as ScopeFilter[]).map((scope) => (
+                <SelectItem key={scope} value={scope}>
+                  {t(FILTER_LABELS[scope])} ({counts[scope]})
+                </SelectItem>
+              ))}
             </SelectContent>
           </Select>
-        </SettingsRow>
+        </div>
 
-        {defaultPermissionProfile === 'full' ? (
-          <div
-            role="status"
-            className="mt-1 flex items-start gap-2 rounded-lg border border-amber-500/25 bg-amber-500/10 px-3 py-2 text-xs leading-5 text-amber-700 dark:text-amber-300"
-          >
-            <AlertTriangle className="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
-            {t(
-              'New conversations can run commands, change files, and access the network without asking first. Existing conversations keep their current permission mode.'
-            )}
-          </div>
-        ) : null}
-      </SettingsSection>
-
-      <div className="sticky top-0 z-10 -mx-5 mt-5 mb-2 bg-card px-5 py-5">
-        <div className="mb-3 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-          <div className="min-w-0">
-            <h3 className="text-base font-semibold text-foreground">
-              {t('Remembered permissions')}
-            </h3>
-            <p className="mt-0.5 max-w-2xl text-[13px] leading-5 text-muted-foreground">
-              {t('Review or revoke approvals saved for tools, projects, and conversations.')}
+        {incompleteStores.length > 0 ? (
+          <div role="status" className="mb-4 rounded-lg border border-border bg-muted/35 px-3 py-2">
+            <p className="text-sm text-foreground">
+              {t('Some permission details are unavailable')}
             </p>
-            <p className="mt-1 max-w-2xl text-xs leading-5 text-muted-foreground">
+            <p className="mt-0.5 text-xs text-muted-foreground">
+              {t('The following permission details could not be loaded: {{stores}}', {
+                stores: incompleteStores
+                  .map((store) => t(INCOMPLETE_STORE_LABELS[store]))
+                  .join(', ')
+              })}{' '}
               {t(
-                'Restore missing default Global permissions without changing other remembered permissions.'
+                'Individual grants remain revocable; Revoke all is disabled until the complete set is known.'
               )}
             </p>
           </div>
-          <RestoreDefaultPermissionsButton
-            state={defaultsComplete ? 'success' : restoreDefaultsState}
-            disabled={defaultsComplete || status === 'loading'}
-            onRestore={() => void restoreDefaults()}
-          />
-        </div>
-        <Select value={filter} onValueChange={(value) => setFilter(value as ScopeFilter)}>
-          <SelectTrigger
-            aria-label={t('Filter permissions by scope')}
-            className="w-full max-w-72 whitespace-nowrap [font-variant-numeric:tabular-nums]"
+        ) : null}
+
+        {error ? (
+          <div
+            role="alert"
+            className="mb-4 rounded-lg border border-danger-000/30 bg-danger-000/10 px-3 py-2 text-xs text-danger-000"
           >
-            {t(FILTER_LABELS[filter])} ({counts[filter]})
-          </SelectTrigger>
-          <SelectContent>
-            {(Object.keys(FILTER_LABELS) as ScopeFilter[]).map((scope) => (
-              <SelectItem key={scope} value={scope}>
-                {t(FILTER_LABELS[scope])} ({counts[scope]})
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-      </div>
-
-      {incompleteStores.length > 0 ? (
-        <div role="status" className="mb-4 rounded-lg border border-border bg-muted/35 px-3 py-2">
-          <p className="text-sm text-foreground">{t('Some permission details are unavailable')}</p>
-          <p className="mt-0.5 text-xs text-muted-foreground">
-            {t('The following permission details could not be loaded: {{stores}}', {
-              stores: incompleteStores.map((store) => t(INCOMPLETE_STORE_LABELS[store])).join(', ')
-            })}{' '}
-            {t(
-              'Individual grants remain revocable; Revoke all is disabled until the complete set is known.'
-            )}
-          </p>
-        </div>
-      ) : null}
-
-      {error ? (
-        <div
-          role="alert"
-          className="mb-4 rounded-lg border border-danger-000/30 bg-danger-000/10 px-3 py-2 text-xs text-danger-000"
-        >
-          <div className="flex items-start gap-2">
-            <AlertTriangle className="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
-            <p>{t(error)}</p>
+            <div className="flex items-start gap-2">
+              <AlertTriangle className="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
+              <p>{t(error)}</p>
+            </div>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="mt-3"
+              onClick={() => void load({ force: true })}
+            >
+              {t('Try again')}
+            </Button>
           </div>
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            className="mt-3"
-            onClick={() => void load({ force: true })}
-          >
-            {t('Try again')}
-          </Button>
+        ) : null}
+
+        <div className="scroll-pb-24">
+          {status === 'loading' && grants.length === 0 ? (
+            <div className="space-y-3" aria-label={t('Loading permissions')}>
+              {[0, 1, 2].map((row) => (
+                <div
+                  key={row}
+                  className="h-11 animate-pulse rounded-lg bg-muted motion-reduce:animate-none"
+                />
+              ))}
+            </div>
+          ) : visible.length === 0 ? (
+            <p className="sr-only" role="status">
+              {t('No remembered permissions for this scope.')}
+            </p>
+          ) : (
+            <div className="space-y-5">
+              {FAMILY_DETAILS.map(({ id, title, description }) => {
+                const familyGrants = visible.filter((grant) => grant.family === id)
+                if (familyGrants.length === 0) return null
+
+                const familyLabel = t(title)
+                const scopeLabel = filter === 'all' ? '' : `${t(FILTER_LABELS[filter])} `
+
+                return (
+                  <SettingsSection
+                    key={id}
+                    title={familyLabel}
+                    titleId={`permission-family-${id}`}
+                    description={t(description)}
+                    action={
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        aria-label={t('Revoke all {{scope}}{{family}} permissions', {
+                          scope: scopeLabel,
+                          family: familyLabel
+                        })}
+                        disabled={incompleteStores.length > 0}
+                        className="whitespace-nowrap"
+                        onClick={() => void revoke(familyGrants)}
+                      >
+                        {t('Revoke all')}
+                      </Button>
+                    }
+                    aria-labelledby={`permission-family-${id}`}
+                    headerClassName="flex-col gap-3 sm:flex-row sm:items-start"
+                    actionClassName="self-start"
+                    contentClassName="mt-1"
+                  >
+                    <div>
+                      {familyGrants.map((grant) => (
+                        <PermissionRow
+                          key={grant.id}
+                          grant={grant}
+                          onRevoke={(item) => void revoke([item])}
+                          onOpenConnector={onOpenConnector}
+                          onOpenSession={onOpenSession}
+                        />
+                      ))}
+                    </div>
+                  </SettingsSection>
+                )
+              })}
+            </div>
+          )}
         </div>
-      ) : null}
 
-      <div className="scroll-pb-24">
-        {status === 'loading' && grants.length === 0 ? (
-          <div className="space-y-3" aria-label={t('Loading permissions')}>
-            {[0, 1, 2].map((row) => (
-              <div
-                key={row}
-                className="h-11 animate-pulse rounded-lg bg-muted motion-reduce:animate-none"
-              />
-            ))}
-          </div>
-        ) : visible.length === 0 ? (
-          <p className="sr-only" role="status">
-            {t('No remembered permissions for this scope.')}
-          </p>
-        ) : (
-          <div className="space-y-5">
-            {FAMILY_DETAILS.map(({ id, title, description }) => {
-              const familyGrants = visible.filter((grant) => grant.family === id)
-              if (familyGrants.length === 0) return null
-
-              const familyLabel = t(title)
-              const scopeLabel = filter === 'all' ? '' : `${t(FILTER_LABELS[filter])} `
-
-              return (
-                <SettingsSection
-                  key={id}
-                  title={familyLabel}
-                  titleId={`permission-family-${id}`}
-                  description={t(description)}
-                  action={
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      aria-label={t('Revoke all {{scope}}{{family}} permissions', {
-                        scope: scopeLabel,
-                        family: familyLabel
-                      })}
-                      disabled={incompleteStores.length > 0}
-                      className="whitespace-nowrap"
-                      onClick={() => void revoke(familyGrants)}
-                    >
-                      {t('Revoke all')}
-                    </Button>
-                  }
-                  aria-labelledby={`permission-family-${id}`}
-                  headerClassName="flex-col gap-3 sm:flex-row sm:items-start"
-                  actionClassName="self-start"
-                  contentClassName="mt-1"
-                >
-                  <div>
-                    {familyGrants.map((grant) => (
-                      <PermissionRow
-                        key={grant.id}
-                        grant={grant}
-                        onRevoke={(item) => void revoke([item])}
-                        onOpenConnector={onOpenConnector}
-                        onOpenSession={onOpenSession}
-                      />
-                    ))}
+        <AlertDialog.Root open={confirmFullAccess} onOpenChange={setConfirmFullAccess}>
+          <AlertDialog.Portal>
+            <AlertDialog.Overlay className={cn(dialogOverlayClassName, 'z-[60]')} />
+            <AlertDialog.Content
+              className={dialogPanelClassName(
+                'z-[60] w-[min(440px,calc(100vw-2rem))] overscroll-contain p-0'
+              )}
+            >
+              <div className={dialogHeaderClassName}>
+                <div className="flex min-w-0 items-start gap-3">
+                  <span className="flex size-9 shrink-0 items-center justify-center rounded-full bg-amber-100 text-amber-700 dark:bg-amber-950/40 dark:text-amber-300">
+                    <AlertTriangle className="size-5" strokeWidth={2} aria-hidden="true" />
+                  </span>
+                  <div className="min-w-0">
+                    <AlertDialog.Title className={dialogTitleClassName}>
+                      {t('Use Full access by default?')}
+                    </AlertDialog.Title>
+                    <AlertDialog.Description className={dialogDescriptionClassName}>
+                      {t(
+                        'New conversations can run commands, change files, execute notebook code, and access the network without asking first. Existing conversations are unchanged.'
+                      )}
+                    </AlertDialog.Description>
                   </div>
-                </SettingsSection>
-              )
-            })}
-          </div>
-        )}
-      </div>
-
-      <AlertDialog.Root open={confirmFullAccess} onOpenChange={setConfirmFullAccess}>
-        <AlertDialog.Portal>
-          <AlertDialog.Overlay className={cn(dialogOverlayClassName, 'z-[60]')} />
-          <AlertDialog.Content
-            className={dialogPanelClassName(
-              'z-[60] w-[min(440px,calc(100vw-2rem))] overscroll-contain p-0'
-            )}
-          >
-            <div className={dialogHeaderClassName}>
-              <div className="flex min-w-0 items-start gap-3">
-                <span className="flex size-9 shrink-0 items-center justify-center rounded-full bg-amber-100 text-amber-700 dark:bg-amber-950/40 dark:text-amber-300">
-                  <AlertTriangle className="size-5" strokeWidth={2} aria-hidden="true" />
-                </span>
-                <div className="min-w-0">
-                  <AlertDialog.Title className={dialogTitleClassName}>
-                    {t('Use Full access by default?')}
-                  </AlertDialog.Title>
-                  <AlertDialog.Description className={dialogDescriptionClassName}>
-                    {t(
-                      'New conversations can run commands, change files, execute notebook code, and access the network without asking first. Existing conversations are unchanged.'
-                    )}
-                  </AlertDialog.Description>
                 </div>
+                <AlertDialog.Cancel asChild>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon-sm"
+                    aria-label={t('Close')}
+                    className={dialogCloseButtonClassName}
+                  >
+                    <X className="size-4" aria-hidden="true" />
+                  </Button>
+                </AlertDialog.Cancel>
               </div>
-              <AlertDialog.Cancel asChild>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon-sm"
-                  aria-label={t('Close')}
-                  className={dialogCloseButtonClassName}
-                >
-                  <X className="size-4" aria-hidden="true" />
-                </Button>
-              </AlertDialog.Cancel>
-            </div>
-            <div className={dialogFooterClassName}>
-              <AlertDialog.Cancel asChild>
-                <Button type="button" variant="ghost" className={dialogCancelButtonClassName}>
-                  {t('Cancel')}
-                </Button>
-              </AlertDialog.Cancel>
-              <AlertDialog.Action asChild>
-                <Button
-                  type="button"
-                  className="bg-amber-600 text-white hover:bg-amber-700"
-                  onClick={() => void setDefaultPermissionProfile('full')}
-                >
-                  {t('Use Full access')}
-                </Button>
-              </AlertDialog.Action>
-            </div>
-          </AlertDialog.Content>
-        </AlertDialog.Portal>
-      </AlertDialog.Root>
-    </div>
+              <div className={dialogFooterClassName}>
+                <AlertDialog.Cancel asChild>
+                  <Button type="button" variant="ghost" className={dialogCancelButtonClassName}>
+                    {t('Cancel')}
+                  </Button>
+                </AlertDialog.Cancel>
+                <AlertDialog.Action asChild>
+                  <Button
+                    type="button"
+                    className="bg-amber-600 text-white hover:bg-amber-700"
+                    onClick={() => void setDefaultPermissionProfile('full')}
+                  >
+                    {t('Use Full access')}
+                  </Button>
+                </AlertDialog.Action>
+              </div>
+            </AlertDialog.Content>
+          </AlertDialog.Portal>
+        </AlertDialog.Root>
+      </div>
+    </TooltipProvider>
   )
 }
 
