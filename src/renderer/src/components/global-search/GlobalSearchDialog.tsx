@@ -194,7 +194,8 @@ export const GlobalSearchDialog = ({
   const [failedArtifactCursor, setFailedArtifactCursor] = useState<string | undefined>()
   const [literature, setLiterature] = useState<LiteratureState>(emptyLiteratureState)
   const [actionError, setActionError] = useState<string | undefined>()
-  const [activeIndex, setActiveIndex] = useState(0)
+  // A command selection must survive asynchronous result insertion before the command row.
+  const [activeIndex, setActiveIndex] = useState<number | 'command'>(0)
 
   useLayoutEffect(() => {
     if (!open) mentionVersionRef.current += 1
@@ -342,13 +343,19 @@ export const GlobalSearchDialog = ({
       setFailedArtifactCursor(undefined)
       try {
         const result = await window.api.projectFiles.searchArtifacts({
-          primaryProjectId: primaryProject.id,
-          otherProjectIds,
+          primaryProjectIds:
+            !isProjectScope && isSearchMode
+              ? [primaryProject.id, ...otherProjectIds]
+              : [primaryProject.id],
+          otherProjectIds: !isProjectScope && isSearchMode ? [] : otherProjectIds,
           ...(trimmedQuery ? { filenameContains: trimmedQuery } : {}),
           ...(archivedSessionIds.length > 0 ? { excludedSessionIds: archivedSessionIds } : {}),
           primaryLimit: GLOBAL_SEARCH_PAGE_SIZE,
           ...(cursor ? { primaryCursor: cursor } : {}),
-          otherLimit: !cursor && (!isProjectScope || isSearchMode) ? OTHER_PROJECT_RESULT_LIMIT : 0
+          otherLimit:
+            !cursor && (isProjectScope ? isSearchMode : !isSearchMode)
+              ? OTHER_PROJECT_RESULT_LIMIT
+              : 0
         })
         if (version !== requestVersionRef.current) return
         setArtifacts((current) =>
@@ -443,7 +450,7 @@ export const GlobalSearchDialog = ({
     setFailedArtifactCursor(undefined)
     setLiterature({ items: [], status: nextQuery.trim() ? 'loading' : 'idle' })
     setActionError(undefined)
-    setActiveIndex(0)
+    setActiveIndex(nextQuery.trim() ? -1 : 0)
     keyboardNavigationRef.current = false
   }
 
@@ -474,6 +481,7 @@ export const GlobalSearchDialog = ({
     isSearchMode && artifactStatus === 'loading' && displayedArtifacts.length === 0
   const isSearchPending =
     isSearchMode &&
+    artifactError === undefined &&
     displayedArtifacts.length === 0 &&
     literature.items.length === 0 &&
     (artifactSearchPending || literature.status === 'loading')
@@ -500,6 +508,7 @@ export const GlobalSearchDialog = ({
     if (!isSearchMode) {
       return [
         ...displayedArtifacts.map((artifact) => ({ kind: 'artifact' as const, artifact })),
+        ...(artifactError ? [{ kind: 'retry-artifacts' as const }] : []),
         ...recentSessions.map((session) => ({ kind: 'session' as const, session })),
         command
       ]
@@ -530,7 +539,13 @@ export const GlobalSearchDialog = ({
   ])
 
   const activeRowIndex =
-    selectableRows.length === 0 ? -1 : Math.max(0, Math.min(activeIndex, selectableRows.length - 1))
+    selectableRows.length === 0
+      ? -1
+      : activeIndex === 'command'
+        ? selectableRows.length - 1
+        : isSearchPending && activeIndex < 0
+          ? -1
+          : Math.max(0, Math.min(activeIndex, selectableRows.length - 1))
   const activeRowId = `global-search-option-${activeRowIndex}`
 
   useEffect(() => {
@@ -679,6 +694,7 @@ export const GlobalSearchDialog = ({
         return
       }
       if (row.kind === 'more-artifacts' && artifacts.nextCursor) {
+        if (artifactStatus === 'loading') return
         void reloadArtifacts(artifacts.nextCursor)
         return
       }
@@ -700,6 +716,7 @@ export const GlobalSearchDialog = ({
     },
     [
       artifacts.nextCursor,
+      artifactStatus,
       canMentionArtifact,
       close,
       failedArtifactCursor,
@@ -723,13 +740,15 @@ export const GlobalSearchDialog = ({
       event.preventDefault()
       if (selectableRows.length === 0) return
       setActiveIndex((current) => {
-        const normalized = Math.max(0, Math.min(current, selectableRows.length - 1))
+        const normalized = activeRowIndex
         const nextIndex =
           event.key === 'ArrowDown'
             ? (normalized + 1) % selectableRows.length
-            : (normalized - 1 + selectableRows.length) % selectableRows.length
+            : normalized < 0
+              ? selectableRows.length - 1
+              : (normalized - 1 + selectableRows.length) % selectableRows.length
         keyboardNavigationRef.current = nextIndex !== current
-        return nextIndex
+        return nextIndex === selectableRows.length - 1 ? 'command' : nextIndex
       })
       return
     }
@@ -737,7 +756,7 @@ export const GlobalSearchDialog = ({
       event.preventDefault()
       setActiveIndex((current) => {
         keyboardNavigationRef.current = current !== 0
-        return 0
+        return selectableRows.length === 1 ? 'command' : 0
       })
       return
     }
@@ -746,7 +765,7 @@ export const GlobalSearchDialog = ({
       setActiveIndex((current) => {
         const nextIndex = Math.max(0, selectableRows.length - 1)
         keyboardNavigationRef.current = nextIndex !== current
-        return nextIndex
+        return nextIndex === selectableRows.length - 1 ? 'command' : nextIndex
       })
       return
     }
@@ -766,7 +785,8 @@ export const GlobalSearchDialog = ({
     : isSearchMode
       ? (sessionGroups?.primaryTotalCount ?? 0) +
         literature.items.length +
-        (isProjectScope ? artifacts.totalCount + otherRows.length : displayedArtifacts.length)
+        artifacts.totalCount +
+        otherRows.length
       : displayedArtifacts.length + recentSessions.length
   const renderSessionRow = (session: SessionSearchResult, rowIndex: number): React.JSX.Element => {
     const active = rowIndex === activeRowIndex
@@ -970,6 +990,53 @@ export const GlobalSearchDialog = ({
     )
   }
 
+  const renderArtifactRetry = (index: number): React.JSX.Element => (
+    <Button
+      id={`global-search-option-${index}`}
+      type="button"
+      role="option"
+      aria-selected={activeRowIndex === index}
+      variant="ghost"
+      className={cn(
+        'h-11 w-full cursor-pointer justify-start px-4 text-sm font-medium text-primary',
+        activeRowIndex === index && 'bg-bg-200'
+      )}
+      onMouseEnter={() => setActiveIndex(index)}
+      onClick={() => activate({ kind: 'retry-artifacts' })}
+    >
+      {failedArtifactCursor
+        ? t('Could not load more — retry')
+        : t('Could not load artifacts — retry')}
+    </Button>
+  )
+  const renderMoreRow = (
+    kind: 'more-artifacts' | 'more-sessions',
+    index: number
+  ): React.JSX.Element => (
+    <Button
+      id={`global-search-option-${index}`}
+      type="button"
+      role="option"
+      aria-selected={activeRowIndex === index}
+      variant="ghost"
+      disabled={kind === 'more-artifacts' && artifactStatus === 'loading'}
+      className={cn(
+        'flex h-11 w-full cursor-pointer select-none items-center justify-start px-4 text-left text-sm font-medium text-primary outline-none disabled:cursor-not-allowed disabled:opacity-50',
+        activeRowIndex === index && 'bg-bg-200'
+      )}
+      onMouseEnter={() => setActiveIndex(index)}
+      onClick={
+        kind === 'more-artifacts'
+          ? () => activate({ kind: 'more-artifacts' })
+          : () => activate({ kind: 'more-sessions' })
+      }
+    >
+      {t('+{{count}} more matches — show more', {
+        count: kind === 'more-artifacts' ? artifactMoreCount : sessionMoreCount
+      })}
+    </Button>
+  )
+
   let rowIndex = 0
   const nextIndex = (): number => rowIndex++
 
@@ -995,7 +1062,7 @@ export const GlobalSearchDialog = ({
               role="combobox"
               aria-autocomplete="list"
               aria-controls={listboxId}
-              aria-activedescendant={selectableRows.length > 0 ? activeRowId : undefined}
+              aria-activedescendant={activeRowIndex >= 0 ? activeRowId : undefined}
               placeholder={
                 isProjectScope ? t('Search this project…') : t('Search sessions and artifacts…')
               }
@@ -1027,12 +1094,13 @@ export const GlobalSearchDialog = ({
                 </p>
               ) : !isSearchMode ? (
                 <>
-                  {displayedArtifacts.length > 0 ? (
+                  {displayedArtifacts.length > 0 || artifactError ? (
                     <section role="group" aria-label={t('Recent artifacts')}>
                       <h2 className={sectionTitleClassName}>{t('Recent artifacts')}</h2>
                       {displayedArtifacts.map((artifact) =>
                         renderArtifactRow(artifact, nextIndex())
                       )}
+                      {artifactError ? renderArtifactRetry(nextIndex()) : null}
                     </section>
                   ) : null}
                   {recentSessions.length > 0 ? (
@@ -1062,40 +1130,8 @@ export const GlobalSearchDialog = ({
                           {t('Searching…')}
                         </p>
                       ) : null}
-                      {artifactError ? (
-                        <Button
-                          id={`global-search-option-${nextIndex()}`}
-                          type="button"
-                          role="option"
-                          aria-selected={activeRowIndex === rowIndex - 1}
-                          variant="ghost"
-                          className="h-11 cursor-pointer justify-start px-4 text-sm font-medium text-primary"
-                          onMouseEnter={() => setActiveIndex(rowIndex - 1)}
-                          onClick={() => void reloadArtifacts(failedArtifactCursor)}
-                        >
-                          {failedArtifactCursor
-                            ? t('Could not load more — retry')
-                            : t('Could not load artifacts — retry')}
-                        </Button>
-                      ) : null}
-                      {canLoadMoreArtifacts ? (
-                        <Button
-                          id={`global-search-option-${nextIndex()}`}
-                          type="button"
-                          role="option"
-                          aria-selected={activeRowIndex === rowIndex - 1}
-                          variant="ghost"
-                          disabled={artifactStatus === 'loading'}
-                          className={cn(
-                            'flex h-11 w-full cursor-pointer select-none items-center justify-start px-4 text-left text-sm font-medium text-primary outline-none disabled:cursor-not-allowed disabled:opacity-50',
-                            activeRowIndex === rowIndex - 1 && 'bg-bg-200'
-                          )}
-                          onMouseEnter={() => setActiveIndex(rowIndex - 1)}
-                          onClick={() => activate({ kind: 'more-artifacts' })}
-                        >
-                          {t('+{{count}} more matches — show more', { count: artifactMoreCount })}
-                        </Button>
-                      ) : null}
+                      {artifactError ? renderArtifactRetry(nextIndex()) : null}
+                      {canLoadMoreArtifacts ? renderMoreRow('more-artifacts', nextIndex()) : null}
                     </section>
                   ) : null}
                   {literature.items.length > 0 ||
@@ -1129,23 +1165,7 @@ export const GlobalSearchDialog = ({
                       {sessionGroups.primary.map((session) =>
                         renderSessionRow(session, nextIndex())
                       )}
-                      {sessionMoreCount > 0 ? (
-                        <Button
-                          id={`global-search-option-${nextIndex()}`}
-                          type="button"
-                          role="option"
-                          aria-selected={activeRowIndex === rowIndex - 1}
-                          variant="ghost"
-                          className={cn(
-                            'flex h-11 w-full cursor-pointer select-none items-center justify-start px-4 text-left text-sm font-medium text-primary outline-none',
-                            activeRowIndex === rowIndex - 1 && 'bg-bg-200'
-                          )}
-                          onMouseEnter={() => setActiveIndex(rowIndex - 1)}
-                          onClick={() => activate({ kind: 'more-sessions' })}
-                        >
-                          {t('+{{count}} more matches — show more', { count: sessionMoreCount })}
-                        </Button>
-                      ) : null}
+                      {sessionMoreCount > 0 ? renderMoreRow('more-sessions', nextIndex()) : null}
                     </section>
                   ) : null}
                   {!isSearchPending && otherRows.length > 0 ? (
@@ -1189,7 +1209,7 @@ export const GlobalSearchDialog = ({
                       activeRowIndex === rowIndex - 1 && 'bg-bg-200 before:opacity-100',
                       isProjectScope && !isSessionPersistenceReady && 'opacity-50'
                     )}
-                    onMouseEnter={() => setActiveIndex(rowIndex - 1)}
+                    onMouseEnter={() => setActiveIndex('command')}
                     onClick={() =>
                       activate({ kind: isProjectScope ? 'new-session' : 'new-project' })
                     }
