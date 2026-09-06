@@ -1,5 +1,5 @@
 import { QRCodeSVG } from '@rc-component/qrcode'
-import { Dialog } from 'radix-ui'
+import * as Dialog from '@/components/ui/dialog'
 import {
   AlertTriangle,
   CheckCircle2,

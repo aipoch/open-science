@@ -173,6 +173,10 @@ test('edits and navigates message revisions that persist after relaunch', async 
   await expect(conversation.getByText(USER_MESSAGE, { exact: true })).toBeVisible()
   await expect(revision).toHaveText(['1/2'])
 
+  // Branch content renders before the asynchronous history switch and persistence drain finish.
+  // Wait for the same idle control used above before asking Electron to quit for the restart.
+  await expect(conversation.getByRole('button', { name: 'Branch in new session' })).toBeEnabled()
+  await expect.poll(() => page.evaluate(() => window.api.storage.detectActive())).toEqual([])
   page = await app.restart()
   await page
     .getByRole('region', { name: 'Recent sessions' })

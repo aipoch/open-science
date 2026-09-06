@@ -9,7 +9,7 @@ const mocks = vi.hoisted(() => {
   const sideChatRelayBox: { current: ((event: unknown) => void) | undefined } = {
     current: undefined
   }
-  type NavigationState = { view: 'home' | 'workspace'; userNavigationRevision: number }
+  type NavigationState = { view: 'home' | 'library' | 'workspace'; userNavigationRevision: number }
   const navigationListeners = new Set<
     (state: NavigationState, previousState: NavigationState) => void
   >()
@@ -48,7 +48,10 @@ const mocks = vi.hoisted(() => {
       messageId: input.messageId ?? 'analysis-message'
     })),
     runtimeCancelRun: vi.fn(async () => undefined),
-    navigation: { view: 'home' as 'home' | 'workspace', userNavigationRevision: 0 },
+    navigation: {
+      view: 'home' as 'home' | 'library' | 'workspace',
+      userNavigationRevision: 0
+    },
     sessions: [] as Array<{ id: string } & Record<string, unknown>>,
     appendRoutedUserMessage: vi.fn(),
     sideChatRelayBox,
@@ -131,6 +134,7 @@ const mocks = vi.hoisted(() => {
     syncWindowFindAppearance: vi.fn(),
     syncUnreadTaskView: vi.fn(),
     globalSearch: { props: undefined as { open: boolean } | undefined },
+    literaturePage: { renderCount: 0 },
     homePage: { props: undefined as { onOpenGlobalSearch: () => void } | undefined },
     closeActiveModal: {
       handler: undefined as (() => 'handled' | 'close-preview' | 'close-base') | undefined
@@ -155,7 +159,10 @@ const mocks = vi.hoisted(() => {
 })
 
 vi.mock('@/lib/session-persistence/session-persistence', () => ({
-  useSessionPersistence: () => mocks.sessionPersistence
+  useSessionPersistence: () => mocks.sessionPersistence,
+  loadPersistedSession: vi.fn(async () => undefined),
+  hydratePersistedSessionIfPresent: vi.fn(() => undefined),
+  flushSessionPersistence: vi.fn(async () => undefined)
 }))
 vi.mock('@/lib/deep-link', () => ({
   useDeepLinkNavigation: mocks.deepLinkNavigation
@@ -320,6 +327,12 @@ vi.mock('@/pages/home/HomePage', () => ({
         data-has-complete-session-catalog={String(hasCompleteSessionCatalog)}
       />
     )
+  }
+}))
+vi.mock('@/pages/literature/LiteratureLibraryPage', () => ({
+  LiteratureLibraryPage: (): React.JSX.Element => {
+    mocks.literaturePage.renderCount += 1
+    return <div data-testid="literature-library-page" />
   }
 }))
 vi.mock('@/pages/onboarding/OnboardingWizard', () => ({
@@ -553,6 +566,7 @@ describe('App startup routing', () => {
     mocks.sideChatRelayBox.current = undefined
     mocks.appendRoutedUserMessage.mockClear()
     mocks.globalSearch.props = undefined
+    mocks.literaturePage.renderCount = 0
     mocks.homePage.props = undefined
     mocks.closeActiveModal.handler = undefined
     mocks.sideChatParentSessionIds.clear()
@@ -710,6 +724,22 @@ describe('App startup routing', () => {
       )
     })
     expect(document.querySelector('[data-testid="global-search"]')).toBeNull()
+  })
+
+  it('opens global search without rerendering the active Literature library page', async () => {
+    mocks.settings.isLoaded = true
+    mocks.navigation.view = 'library'
+    await render()
+
+    expect(mocks.literaturePage.renderCount).toBe(1)
+    await act(async () => {
+      window.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'k', metaKey: true, cancelable: true })
+      )
+    })
+
+    expect(mocks.globalSearch.props?.open).toBe(true)
+    expect(mocks.literaturePage.renderCount).toBe(1)
   })
 
   it('opens the same global search from the Home header action', async () => {

@@ -116,6 +116,7 @@ beforeEach(() => {
           isIndexComplete: true
         })
       },
+      literature: { search: vi.fn().mockResolvedValue({ entries: [] }) },
       previewResources: {
         acquire: vi.fn().mockResolvedValue({
           id: 'preview-resource-1',
@@ -239,26 +240,28 @@ describe('GlobalSearchDialog i18n', () => {
             other: [],
             isIndexComplete: true
           })
-        }
+        },
+        literature: { search: vi.fn().mockResolvedValue({ entries: [] }) }
       }
     })
     await openPalette()
     await search('cosine')
 
-    expect(bodyText()).toContain('No sessions or artifacts match “cosine”.')
+    expect(bodyText()).toContain('No results match “cosine”.')
 
     switchTo('zh-Hans')
-    expect(bodyText()).toContain('没有会话或产物匹配“cosine”。')
+    expect(bodyText()).toContain('没有结果匹配“cosine”。')
 
     switchTo('zh-Hant')
-    expect(bodyText()).toContain('沒有會話或產物符合「cosine」。')
+    expect(bodyText()).toContain('沒有結果符合「cosine」。')
   })
 
   it('translates the artifact load failure into a retry row', async () => {
     Object.defineProperty(window, 'api', {
       configurable: true,
       value: {
-        projectFiles: { searchArtifacts: vi.fn().mockRejectedValue('not an Error') }
+        projectFiles: { searchArtifacts: vi.fn().mockRejectedValue('not an Error') },
+        literature: { search: vi.fn().mockResolvedValue({ entries: [] }) }
       }
     })
     await openPalette()

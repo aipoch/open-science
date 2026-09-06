@@ -66,6 +66,10 @@ describe('buildAnalysisPrompt', () => {
     expect(prompt).toContain('attachJob')
     expect(prompt).not.toContain('attach_job')
     expect(prompt).toContain('result()')
+    expect(prompt).toContain('result.local_output_root')
+    expect(prompt).toContain('producerRunId: result.producer_run_id')
+    expect(prompt).toContain('absolute local path')
+    expect(prompt).toContain('exposed `write_artifact_file` tool')
   })
 
   it('includes all job_ids when multiple jobs are batched', () => {

@@ -1,3 +1,17 @@
+import { mkdtemp, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { DeviceCredentialStore } from '../../../main/settings/device-credentials'
+import { PersistentOAuthClientProvider } from '../../../main/connectors/oauth-client'
+
+vi.mock('electron', () => ({
+  safeStorage: {
+    isEncryptionAvailable: () => true,
+    encryptString: (text: string) => Buffer.from(`cipher:${text}`),
+    decryptString: (buffer: Buffer) => buffer.toString().slice('cipher:'.length)
+  }
+}))
+
 import { createStore, type StoreApi } from 'zustand/vanilla'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -124,6 +138,78 @@ describe('settings Connectors slice', () => {
 
   beforeEach(() => {
     ;({ store, commands } = createHarness(createCommands()))
+  })
+
+  it('C06 refreshes the saved-token snapshot after reauthentication clears tokens and browser opening fails', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'oauth-slice-recovery-'))
+    try {
+      const credentials = new DeviceCredentialStore(dir)
+      const credential = await credentials.create({
+        displayName: 'OAuth',
+        kind: 'oauth',
+        resourceUri: 'https://mcp.example.test/',
+        transport: 'streamable_http',
+        oauth: {}
+      })
+      await credentials.saveOAuthState(credential.id, {
+        tokens: { access_token: 'old-token', token_type: 'Bearer' }
+      })
+      const list = async (): Promise<{ credentials: DeviceCredentialView[] }> => ({
+        credentials: (await credentials.list()).map((entry) => credentials.view(entry, []))
+      })
+      vi.mocked(commands.listDeviceCredentials).mockImplementation(list)
+      const browserError = new Error('browser opener failed')
+      vi.mocked(commands.authenticateDeviceCredential).mockImplementation(async () => {
+        const resolved = await credentials.resolveOAuth(credential.id)
+        const provider = new PersistentOAuthClientProvider({
+          serverId: credential.id,
+          redirectUrl: 'http://127.0.0.1:8080/callback',
+          config: resolved!.oauth,
+          state: resolved!.state,
+          saveState: (state) => credentials.saveOAuthState(credential.id, state),
+          openExternal: () => {
+            throw browserError
+          }
+        })
+        await provider.redirectToAuthorization(new URL('https://auth.example.test/authorize'))
+        return list()
+      })
+      await store.getState().loadDeviceCredentials()
+      expect(store.getState().deviceCredentials[0]?.status).toBe('connected')
+      await expect(
+        store.getState().authenticateDeviceCredential({ id: credential.id })
+      ).rejects.toBe(browserError)
+      expect((await list()).credentials[0]?.status).toBe('disconnected')
+      expect(
+        (await new DeviceCredentialStore(dir).resolveOAuth(credential.id))?.state?.tokens
+      ).toBeUndefined()
+      expect.soft(store.getState().deviceCredentials[0]?.status).toBe('disconnected')
+      await store.getState().loadDeviceCredentials()
+      expect(store.getState().deviceCredentials[0]?.status).toBe('disconnected')
+    } finally {
+      await rm(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('C06 preserves the authentication error and permits reload if the failure refresh also fails', async () => {
+    const initial = {
+      ...deviceCredential('oauth'),
+      kind: 'oauth' as const,
+      status: 'connected' as const
+    }
+    vi.mocked(commands.listDeviceCredentials)
+      .mockResolvedValueOnce({ credentials: [initial] })
+      .mockRejectedValueOnce(new Error('refresh failed'))
+      .mockResolvedValueOnce({ credentials: [{ ...initial, status: 'disconnected' }] })
+    const error = new Error('authentication failed')
+    vi.mocked(commands.authenticateDeviceCredential).mockRejectedValue(error)
+    await store.getState().loadDeviceCredentials()
+    await expect(store.getState().authenticateDeviceCredential({ id: initial.id })).rejects.toBe(
+      error
+    )
+    expect(store.getState().deviceCredentialsLoaded).toBe(false)
+    await store.getState().loadDeviceCredentials()
+    expect(store.getState().deviceCredentials[0]?.status).toBe('disconnected')
   })
 
   it('loads and replaces the device credential projection after mutations', async () => {

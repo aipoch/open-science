@@ -422,6 +422,7 @@ describe('computeCall RPC', () => {
           provider_id: 'ssh:enabled',
           display_name: 'Enabled',
           shape: 'direct_ssh',
+          execution_mode: 'direct_ssh',
           status: 'not_probed',
           role: 'selected'
         }
@@ -1400,8 +1401,10 @@ describe('computeCall RPC', () => {
   it('routes computeCall op=job_result to getJobResult', async () => {
     const fakeResult = {
       job_id: 'job-42',
+      producer_run_id: 'notebook-run-42',
       status: 'success',
       exit_code: 0,
+      local_output_root: '/storage/notebooks/project-1/s-42',
       featured_files: ['hpc/job-42/featured/out.result'],
       hidden_files: [],
       output_files: ['hpc/job-42/featured/out.result'],
@@ -1441,6 +1444,8 @@ describe('computeCall RPC', () => {
     expect(res.status).toBe(200)
     const body = (await res.json()) as { result: typeof fakeResult }
     expect(body.result.job_id).toBe('job-42')
+    expect(body.result.producer_run_id).toBe('notebook-run-42')
+    expect(body.result.local_output_root).toBe('/storage/notebooks/project-1/s-42')
     expect(body.result.featured_files).toContain('hpc/job-42/featured/out.result')
     expect(body.result.output_files).toContain('hpc/job-42/featured/out.result')
   })

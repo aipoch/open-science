@@ -476,6 +476,7 @@ const installWebApi = async (): Promise<EventCursor> => {
               }
               break
             case 'notebook-input':
+            case 'literature':
             case 'local':
               previewRequest = { source: request.source, path: request.path }
               break

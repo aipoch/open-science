@@ -1,4 +1,4 @@
-import type { RemoteHandle } from './job-dispatcher'
+import type { ComputeRemoteHandle, RemoteHandle } from './remote-job-contract'
 
 export const parseRemoteJobWorkdir = (
   jobId: string,
@@ -24,10 +24,29 @@ export const parseRemoteJobWorkdir = (
 export const parseRemoteJobHandle = (
   raw: string | undefined,
   expectedWorkdir: string | undefined
-): RemoteHandle | null => {
+): ComputeRemoteHandle | null => {
   if (!raw) return null
   try {
     const handle = JSON.parse(raw) as Partial<RemoteHandle> | null
+    if (
+      handle &&
+      typeof handle === 'object' &&
+      (handle as Record<string, unknown>).driver === 'slurm'
+    ) {
+      const slurm = handle as Record<string, unknown>
+      if (
+        slurm.version !== 1 ||
+        typeof slurm.scheduler_job_id !== 'string' ||
+        !/^\d+(?:_[0-9]+)?$/.test(slurm.scheduler_job_id) ||
+        typeof expectedWorkdir !== 'string' ||
+        slurm.workdir !== expectedWorkdir ||
+        slurm.stdout_path !== `${expectedWorkdir}/stdout` ||
+        slurm.stderr_path !== `${expectedWorkdir}/stderr`
+      ) {
+        return null
+      }
+      return handle as ComputeRemoteHandle
+    }
     if (
       !handle ||
       typeof handle !== 'object' ||
@@ -46,4 +65,12 @@ export const parseRemoteJobHandle = (
   } catch {
     return null
   }
+}
+
+export const parseSlurmSchedulerJobId = (
+  raw: string | undefined,
+  expectedWorkdir: string | undefined
+): string | undefined => {
+  const handle = parseRemoteJobHandle(raw, expectedWorkdir)
+  return handle?.driver === 'slurm' ? handle.scheduler_job_id : undefined
 }

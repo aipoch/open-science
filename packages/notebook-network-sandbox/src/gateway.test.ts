@@ -10,7 +10,7 @@ import { join } from 'node:path'
 import { promisify } from 'node:util'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import { CommandGateway } from '../runtime/src/gateway/command-gateway.js'
+import { CommandGateway, tunnelThroughProxy } from '../runtime/src/gateway/command-gateway.js'
 
 const closeTasks: Array<() => Promise<void>> = []
 const credentials = { username: 'command-a', password: 'secret-a' }
@@ -152,6 +152,26 @@ const readHttpHeader = (socket: Socket): Promise<string> =>
   })
 
 describe('Notebook command gateway', () => {
+  it.each(['http', 'socks4', 'socks5'])('aborts a stalled %s proxy handshake', async (protocol) => {
+    const controller = new AbortController()
+    let disconnected!: Promise<void>
+    const proxy = await listen((socket) => {
+      disconnected = new Promise<void>((resolve) => socket.once('close', () => resolve()))
+      socket.once('data', () => controller.abort())
+      socket.resume()
+    })
+    await expect(
+      tunnelThroughProxy(
+        new URL(`${protocol}://127.0.0.1:${proxy.port}`),
+        '8.8.8.8',
+        443,
+        undefined,
+        controller.signal
+      )
+    ).rejects.toMatchObject({ name: 'AbortError' })
+    await disconnected
+  })
+
   it.each([
     ['client before routing', 'before-routing'],
     ['client after routing', 'client'],

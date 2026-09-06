@@ -184,6 +184,12 @@ export const inputToMessages = (
 
   const droppedItemTypes = new Set<string>()
   let pendingToolCalls: JsonObject[] = []
+  let pendingToolImages: JsonObject[] = []
+  const flushToolImages = (): void => {
+    if (pendingToolImages.length === 0) return
+    messages.push({ role: 'user', content: pendingToolImages })
+    pendingToolImages = []
+  }
   let pendingReasoning: string | undefined
   const flushToolCalls = (): void => {
     if (pendingToolCalls.length === 0) return
@@ -199,6 +205,7 @@ export const inputToMessages = (
   for (const item of input) {
     if (!item || typeof item !== 'object') throw new Error('Responses input items must be objects')
     if (item.type === 'function_call') {
+      flushToolImages()
       const callId = item.call_id ?? item.id
       const reasoning = reasoningByCallId?.get(String(callId))
       if (reasoning && !pendingReasoning) pendingReasoning = reasoning
@@ -209,6 +216,7 @@ export const inputToMessages = (
       })
     } else if (item.type === 'message') {
       flushToolCalls()
+      flushToolImages()
       const role = item.role === 'developer' ? 'system' : (item.role ?? 'user')
       if (!['system', 'user', 'assistant'].includes(role)) {
         throw new Error(`Unsupported Responses message role: ${String(item.role)}`)
@@ -216,11 +224,29 @@ export const inputToMessages = (
       messages.push({ role, content: textFromContent(item.content) })
     } else if (item.type === 'function_call_output') {
       flushToolCalls()
+      const content = Array.isArray(item.output) ? textFromContent(item.output) : item.output
       messages.push({
         role: 'tool',
         tool_call_id: item.call_id,
-        content: typeof item.output === 'string' ? item.output : JSON.stringify(item.output)
+        content: Array.isArray(content)
+          ? content
+              .filter((part) => part.type === 'text')
+              .map((part) => part.text)
+              .join('')
+          : typeof content === 'string'
+            ? content
+            : JSON.stringify(content)
       })
+      if (Array.isArray(content)) {
+        const images = content.filter((part) => part.type === 'image_url')
+        if (images.length > 0) {
+          // Keep all parallel tool results adjacent before attaching their associated media.
+          pendingToolImages.push(
+            { type: 'text', text: `Images from tool call ${String(item.call_id)}:` },
+            ...images
+          )
+        }
+      }
     } else if (KNOWN_SKIPPABLE_ITEM_TYPES.has(String(item.type))) {
       droppedItemTypes.add(String(item.type))
     } else {
@@ -228,6 +254,7 @@ export const inputToMessages = (
     }
   }
   flushToolCalls()
+  flushToolImages()
 
   if (droppedItemTypes.size > 0) {
     log.info('bridge dropped non-representable input items', {

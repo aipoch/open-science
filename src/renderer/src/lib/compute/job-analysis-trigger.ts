@@ -27,7 +27,7 @@ export const buildAnalysisPrompt = (jobs: JobSummary[]): string => {
     lines.push(`Status: ${job.status}`)
 
     if (job.featured_files && job.featured_files.length > 0) {
-      lines.push(`Featured output files (workspace-relative paths):`)
+      lines.push(`Featured output files (paths relative to result.local_output_root):`)
       for (const f of job.featured_files) {
         lines.push(`  - ${f}`)
       }
@@ -44,7 +44,9 @@ export const buildAnalysisPrompt = (jobs: JobSummary[]): string => {
     lines.push('')
     lines.push(
       `Please use \`attachJob("${job.job_id}").result()\` to retrieve the full result dictionary, ` +
-        `examine the output files, and call \`write_artifact_file\` to publish any results worth preserving.`
+        `examine the output files, join \`result.local_output_root\` with each relative file path, ` +
+        `and pass that absolute local path plus \`producerRunId: result.producer_run_id\` to the exposed ` +
+        `\`write_artifact_file\` tool to publish any results worth preserving.`
     )
 
     if (job.status === 'failed' || job.status === 'timeout') {

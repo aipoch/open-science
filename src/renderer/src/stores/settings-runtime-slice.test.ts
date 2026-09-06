@@ -443,6 +443,40 @@ describe('runtime setup slice: discovery lifecycle', () => {
     expect(store.getState().preflight).toBe(ready)
   })
 
+  it.each([
+    { environmentFails: false, retryCompletesFirst: false },
+    { environmentFails: false, retryCompletesFirst: true },
+    { environmentFails: true, retryCompletesFirst: false },
+    { environmentFails: true, retryCompletesFirst: true }
+  ])(
+    'preserves a retry started during an older environment probe ($environmentFails, $retryCompletesFirst)',
+    async ({ environmentFails, retryCompletesFirst }) => {
+      const probe = deferred<EnvironmentCheckResult>()
+      const retry = deferred<Preflight>()
+      const ready = { ...preflight(), claudeReady: true, agentReady: true }
+      commands.checkEnvironment.mockReturnValueOnce(probe.promise)
+      commands.getPreflight.mockReturnValueOnce(retry.promise)
+      if (environmentFails) {
+        commands.getPreflight.mockRejectedValueOnce(new Error('older preflight failed'))
+      } else {
+        commands.getPreflight.mockResolvedValueOnce(preflight())
+      }
+
+      const olderEnvironment = store.getState().checkEnvironment()
+      const newerRetry = store.getState().refreshPreflight()
+      if (retryCompletesFirst) {
+        retry.resolve(ready)
+        await newerRetry
+      }
+      probe.resolve(environment())
+      await olderEnvironment
+      retry.resolve(ready)
+      await newerRetry
+
+      expect(store.getState()).toMatchObject({ preflight: ready, preflightFailed: false })
+    }
+  )
+
   it('returns the cached environment value instead of reusing an in-flight Promise', async () => {
     const cached = environment('opencode', 10)
     const probe = deferred<EnvironmentCheckResult>()

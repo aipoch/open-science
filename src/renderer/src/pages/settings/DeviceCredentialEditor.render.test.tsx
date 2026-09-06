@@ -88,6 +88,40 @@ describe('DeviceCredentialEditor', () => {
     expect(onDone).toHaveBeenCalledOnce()
   })
 
+  it('C03 explains that a credential was saved when its runtime refresh fails', async () => {
+    const credential = {
+      id: 'token',
+      displayName: 'Lab token',
+      kind: 'token' as const,
+      status: 'stored' as const,
+      needsSecret: false,
+      consumerCount: 1,
+      consumerNames: ['Lab'],
+      createdAt: 1,
+      updatedAt: 1
+    }
+    const message =
+      'Credential changes were saved, but Connectors could not refresh. Retry from Settings > Connectors.'
+    useSettingsStore.setState({
+      deviceCredentials: [credential],
+      updateDeviceCredential: vi.fn().mockRejectedValue(new Error(message))
+    })
+    const onDone = vi.fn()
+    act(() =>
+      root.render(
+        <DeviceCredentialEditor credential={credential} onDone={onDone} onCancel={vi.fn()} />
+      )
+    )
+    const save = Array.from(container.querySelectorAll<HTMLButtonElement>('button')).find(
+      (button) => button.textContent === 'Save'
+    )!
+    await act(async () => {
+      save.click()
+    })
+    expect(container.textContent).toContain(message)
+    expect(onDone).not.toHaveBeenCalled()
+  })
+
   it('reconnects an existing OAuth credential through the device lifecycle action', async () => {
     const credential = {
       id: 'credential-oauth',

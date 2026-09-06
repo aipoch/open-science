@@ -14,6 +14,7 @@ const createHost = (overrides: Partial<ComputeHost> = {}): ComputeHost => ({
   providerId: 'ssh:biowulf',
   displayName: 'biowulf',
   shape: 'direct_ssh',
+  executionMode: 'direct_ssh',
   sshAlias: 'biowulf',
   sshOverrides: undefined,
   scratchRoot: undefined,
@@ -657,7 +658,44 @@ describe('compute store — concurrency limit', () => {
   })
 })
 
+describe('compute store — execution mode', () => {
+  it('setExecutionMode calls executionModeSet and re-fetches the host', async () => {
+    const updatedHost = createHost({ executionMode: 'slurm' })
+    const executionModeSet = vi.fn().mockResolvedValue(undefined)
+    const get = vi.fn().mockResolvedValue(updatedHost)
+    setComputeApi({ executionModeSet, get })
+    useComputeStore.setState({ hosts: [createHost()] })
+
+    await useComputeStore.getState().setExecutionMode('ssh:biowulf', 'slurm')
+
+    expect(executionModeSet).toHaveBeenCalledWith('ssh:biowulf', 'slurm')
+    expect(useComputeStore.getState().hosts[0].executionMode).toBe('slurm')
+  })
+})
+
 describe('compute store - approval replay', () => {
+  it('projects the approved job execution snapshot', () => {
+    useComputeStore.getState().enqueueApproval({
+      id: 'approval-job',
+      operation: 'submit_job',
+      provider_id: 'ssh:lab',
+      provider_name: 'Lab',
+      shape: 'scheduler_cluster',
+      intent: 'Run analysis',
+      command_preview: 'python analysis.py',
+      command_full: 'python analysis.py',
+      execution_mode: 'slurm',
+      environment: 'protein-gpu',
+      timeout_seconds: 600,
+      remote_workdir: '/scratch/job-1'
+    })
+
+    expect(useComputeStore.getState().pendingApprovals[0]).toMatchObject({
+      executionMode: 'slurm',
+      environment: 'protein-gpu'
+    })
+  })
+
   it('deduplicates a replayed approval request by its stable id', () => {
     const request: ComputeApprovalRequest = {
       id: 'approval-1',

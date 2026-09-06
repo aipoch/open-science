@@ -34,6 +34,8 @@ const appendCappedInstallLogs = (existing: string[], chunks: readonly string[]):
 
 export type RuntimeSetupState = {
   preflight: Preflight
+  preflightFailed: boolean
+  preflightGeneration: number
   npmAvailable: boolean
   environmentCheck: EnvironmentCheckResult | undefined
   environmentCheckError: string | undefined
@@ -132,6 +134,8 @@ const createInitialPreflight = (): Preflight => ({
 
 export const createInitialRuntimeSetupState = (): RuntimeSetupState => ({
   preflight: createInitialPreflight(),
+  preflightFailed: false,
+  preflightGeneration: 0,
   npmAvailable: true,
   environmentCheck: undefined,
   environmentCheckError: undefined,
@@ -149,6 +153,17 @@ export const createInitialRuntimeSetupState = (): RuntimeSetupState => ({
     codebuddy: createInitialRuntimeInstallState()
   }
 })
+
+// Shared by startup hydration, environment checks and background provider refreshes.
+// This request identity belongs to the renderer store and is never persisted.
+export const beginPreflightRequest = <Store extends RuntimeSetupState>(
+  set: StoreApi<Store>['setState'],
+  get: StoreApi<Store>['getState']
+): (() => boolean) => {
+  const generation = get().preflightGeneration + 1
+  set({ preflightGeneration: generation } as Partial<Store>)
+  return () => get().preflightGeneration === generation
+}
 
 export const createRuntimeSetupLoadPatch = (
   preflight: Preflight,
@@ -312,9 +327,15 @@ export const createRuntimeSetupSlice = <Store extends RuntimeSetupHost>({
   ...createInitialRuntimeSetupState(),
 
   refreshPreflight: async () => {
-    const preflight = await getCommands().getPreflight()
-    patchRuntimeSetupState(set, { preflight })
-    return preflight
+    const isCurrent = beginPreflightRequest(set, get)
+    try {
+      const preflight = await getCommands().getPreflight()
+      if (isCurrent()) patchRuntimeSetupState(set, { preflight, preflightFailed: false })
+      return preflight
+    } catch (error) {
+      if (isCurrent()) patchRuntimeSetupState(set, { preflightFailed: true })
+      throw error
+    }
   },
 
   checkEnvironment: async (options) => {
@@ -333,15 +354,34 @@ export const createRuntimeSetupSlice = <Store extends RuntimeSetupHost>({
       isDetectingClaude: true,
       environmentCheckError: undefined
     })
+    // Reserve ownership before probing so a retry started during the probe remains newer.
+    const isCurrentPreflight = beginPreflightRequest(set, get)
 
     try {
       const commands = getCommands()
       const environmentCheck = await commands.checkEnvironment()
+      const isCurrentEnvironment = (): boolean =>
+        get().envCheckGeneration === generation &&
+        environmentCheck.agentFrameworkId === get().agentFrameworkId
+      const recordPreflightOutcome = (preflightFailed: boolean): void => {
+        if (isCurrentEnvironment() && isCurrentPreflight()) {
+          patchRuntimeSetupState(set, { preflightFailed })
+        }
+      }
       // Preserve the existing ordering: even a pass that became stale while probing performs these
       // reads before generation/framework fencing decides whether it may update visible state.
       const [snapshot, preflight, npmAvailable] = await Promise.all([
         commands.getSettings(),
-        commands.getPreflight(),
+        commands.getPreflight().then(
+          (preflight) => {
+            recordPreflightOutcome(false)
+            return preflight
+          },
+          (error) => {
+            recordPreflightOutcome(true)
+            throw error
+          }
+        ),
         commands.isNpmAvailable()
       ])
 
@@ -352,7 +392,11 @@ export const createRuntimeSetupSlice = <Store extends RuntimeSetupHost>({
         return environmentCheck
       }
 
-      reconcileSnapshot(snapshot, { environmentCheck, preflight, npmAvailable })
+      reconcileSnapshot(snapshot, {
+        environmentCheck,
+        npmAvailable,
+        ...(isCurrentPreflight() ? { preflight } : {})
+      })
       return environmentCheck
     } catch (error) {
       if (get().envCheckGeneration === generation) {

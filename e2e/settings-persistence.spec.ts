@@ -678,3 +678,94 @@ for (const localized of localizedSettingsCases) {
     })
   }
 }
+
+test('preserves Memory drafts and shows externally saved values on conflict', async ({
+  app
+}, testInfo) => {
+  const page = await app.completeOnboarding()
+  await page.evaluate(async () => {
+    await window.api.locale.setPreference({ preference: 'en' })
+    await window.api.memory.createEntry({
+      categoryId: 'memory-category-about-you',
+      content: 'Original note'
+    })
+    await window.api.memory.createCategory({
+      name: 'Experiments',
+      guidance: 'Save reusable findings.',
+      autoRecall: true
+    })
+  })
+  await page.reload({ waitUntil: 'domcontentloaded' })
+  await page.getByRole('button', { name: 'Model settings' }).click()
+  const settings = page.getByRole('dialog', { name: 'Settings' })
+  await settings
+    .getByRole('navigation', { name: 'Settings' })
+    .getByRole('button', { name: 'Memory', exact: true })
+    .click()
+  await settings.getByText('Original note', { exact: true }).hover()
+  await settings.getByRole('button', { name: 'Edit note' }).click()
+  await settings
+    .getByRole('textbox', { name: 'Memory note' })
+    .fill('My draft: repeat the buffer experiment at pH 7.4.')
+  await page.evaluate(async () => {
+    const snapshot = await window.api.memory.snapshot()
+    const entry = snapshot.categories[0]!.entries[0]!
+    await window.api.memory.updateEntry({
+      id: entry.id,
+      expectedRevision: entry.revision,
+      content: 'Another window saved: use pH 6.8 for this buffer.'
+    })
+  })
+  await expect(settings.getByRole('region', { name: 'Latest saved version' })).toContainText(
+    'Another window saved: use pH 6.8'
+  )
+  await settings.getByRole('button', { name: 'Save', exact: true }).click()
+  await expect(settings.getByRole('alert')).toContainText(
+    'Memory note changed or no longer exists.'
+  )
+  await expect(settings.getByRole('textbox', { name: 'Memory note' })).toHaveValue(
+    'My draft: repeat the buffer experiment at pH 7.4.'
+  )
+  await page.screenshot({ path: testInfo.outputPath('memory-note-conflict.png') })
+  await settings.getByRole('button', { name: 'Cancel', exact: true }).click()
+  await settings.getByRole('button', { name: 'Experiments', exact: false }).click()
+  await settings.getByRole('button', { name: 'Category actions' }).click()
+  await page.getByRole('menuitem', { name: 'Edit', exact: true }).click()
+  await settings.getByRole('textbox', { name: 'Name', exact: true }).fill('My draft experiments')
+  await page.evaluate(async () => {
+    const snapshot = await window.api.memory.snapshot()
+    const category = snapshot.categories.find(
+      (item) => 'name' in item && item.name === 'Experiments'
+    )!
+    await window.api.memory.updateCategory({
+      id: category.id,
+      expectedRevision: category.revision,
+      name: 'Reviewed experiments',
+      guidance: 'Save only validated findings after peer review.',
+      autoRecall: false
+    })
+  })
+  await expect(settings.getByRole('region', { name: 'Latest saved version' })).toContainText(
+    'Reviewed experiments'
+  )
+  await settings.getByRole('button', { name: 'Save', exact: true }).click()
+  await expect(settings.getByRole('alert')).toContainText('Memory category changed.')
+  await expect(settings.getByRole('textbox', { name: 'Name', exact: true })).toHaveValue(
+    'My draft experiments'
+  )
+  await expect(settings.getByRole('switch', { name: 'Auto-recall' })).toBeChecked()
+  await expect(settings.getByRole('region', { name: 'Latest saved version' })).toContainText(
+    'Disabled'
+  )
+  await page.screenshot({ path: testInfo.outputPath('memory-category-conflict.png') })
+  const saved = await page.evaluate(() => window.api.memory.snapshot())
+  expect(saved.categories[0]!.entries[0]!.content).toBe(
+    'Another window saved: use pH 6.8 for this buffer.'
+  )
+  expect(
+    saved.categories.find((item) => 'name' in item && item.name === 'Reviewed experiments')
+  ).toMatchObject({
+    autoRecall: false,
+    guidance: 'Save only validated findings after peer review.'
+  })
+})

@@ -1,5 +1,8 @@
 import { create } from 'zustand'
-import type { MarketplaceSnapshot } from '../../../shared/specialist-marketplace'
+import {
+  MARKETPLACE_DOCUMENT_INTEGRITY_CODE,
+  type MarketplaceSnapshot
+} from '../../../shared/specialist-marketplace'
 
 // Marketplace snapshot outlives the settings view that loaded it: re-entering the Marketplace tab
 // renders the last snapshot immediately and refreshes in the background, instead of showing a
@@ -12,6 +15,7 @@ type MarketplaceStoreData = {
   // A flag, not a translated string: the view renders the message with i18next so it follows the
   // interface language at render time instead of freezing the locale that was active on failure.
   lastRefreshFailed: boolean
+  integrityFailed: boolean
 }
 
 type MarketplaceStoreActions = {
@@ -26,12 +30,13 @@ export const useMarketplaceStore = create<MarketplaceStore>((set) => ({
   snapshot: undefined,
   isRefreshing: false,
   lastRefreshFailed: false,
+  integrityFailed: false,
 
   refresh: async (options) => {
     // Guard: specialist.listMarketplace is Electron-only and unavailable in the web gateway.
     if (typeof window.api?.specialist?.listMarketplace !== 'function') {
       latestRefreshRequest += 1
-      set({ isRefreshing: false, lastRefreshFailed: true })
+      set({ isRefreshing: false, lastRefreshFailed: true, integrityFailed: false })
       return
     }
     const requestId = ++latestRefreshRequest
@@ -41,12 +46,17 @@ export const useMarketplaceStore = create<MarketplaceStore>((set) => ({
         options?.forceRefresh ? { forceRefresh: true } : undefined
       )
       if (requestId !== latestRefreshRequest) return
-      set({ snapshot, isRefreshing: false, lastRefreshFailed: false })
-    } catch {
+      set({ snapshot, isRefreshing: false, lastRefreshFailed: false, integrityFailed: false })
+    } catch (error) {
       if (requestId !== latestRefreshRequest) return
       // Keep any existing snapshot: stale content stays on screen and the view shows a
       // could-not-refresh notice instead of dropping the user back to an empty loader.
-      set({ isRefreshing: false, lastRefreshFailed: true })
+      set({
+        isRefreshing: false,
+        lastRefreshFailed: true,
+        integrityFailed:
+          error instanceof Error && error.message.includes(MARKETPLACE_DOCUMENT_INTEGRITY_CODE)
+      })
     }
   }
 }))
@@ -57,6 +67,7 @@ export const resetMarketplaceStoreForTests = (): void => {
   useMarketplaceStore.setState({
     snapshot: undefined,
     isRefreshing: false,
-    lastRefreshFailed: false
+    lastRefreshFailed: false,
+    integrityFailed: false
   })
 }

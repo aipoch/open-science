@@ -537,6 +537,7 @@ class SkillCatalogModule {
       const { fields, body } = await readSkillFile(lockedSkill.sourceDir)
       return {
         ...this.toSkillView(lockedSkill, disabled),
+        etag: JSON.stringify(lockedSkill.compatibility),
         body,
         metadata: Object.fromEntries(
           Object.entries(fields).filter(([key]) => key !== 'name' && key !== 'description')
@@ -588,17 +589,24 @@ class SkillCatalogModule {
 
   async updateSkill(request: UpdateSkillRequest): Promise<SkillView[]> {
     if ('name' in request) throw new Error('Skill name is immutable.')
+    if (request.etag !== undefined && (typeof request.etag !== 'string' || !request.etag)) {
+      throw new Error('Invalid Skill etag.')
+    }
     const skill = (await this.managedCatalog()).find((entry) => entry.id === request.id)
     if (!skill || skill.source !== 'personal') {
       throw new Error(`Not a personal skill id: ${request.id}`)
     }
-    await this.userSkills.updatePersonal(request.id, {
-      name: skill.name,
-      description: request.description,
-      body: request.body,
-      metadata: request.metadata,
-      references: request.references
-    })
+    await this.userSkills.updatePersonal(
+      request.id,
+      {
+        name: skill.name,
+        description: request.description,
+        body: request.body,
+        metadata: request.metadata,
+        references: request.references
+      },
+      request.etag
+    )
     await this.refreshRegisteredHelpers()
     return this.listSkills()
   }

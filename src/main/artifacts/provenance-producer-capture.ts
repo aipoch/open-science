@@ -151,8 +151,16 @@ type ArtifactProvenanceProducerCaptureOptions = {
     findByProducer(
       projectId: string,
       sessionId: string,
-      producerRunId: string
+      producerRunId: string,
+      priorityJobIds?: readonly string[]
     ): Promise<ArtifactComputeExecutionEvidence[]>
+    findOutputOwners(
+      projectId: string,
+      sessionId: string,
+      producerRunId: string,
+      observation: SourceFileObservation,
+      artifactChecksum: string
+    ): Promise<string[]>
   }
 }
 type PrepareVersionPersistenceInput = {
@@ -310,7 +318,9 @@ class ArtifactProvenanceProducerCapture {
     const producerRunId = request.producerRunId ?? inferredProducerRunId
     if (!producerRunId) {
       if (sourceFileAssessment?.notebookSessionOwned) {
-        throw new Error('Notebook source must have exactly one eligible Run owner.')
+        throw new Error(
+          'Notebook source must have exactly one eligible Run owner. For a harvested Compute output, pass producerRunId from attachJob(jobId).result().producer_run_id.'
+        )
       }
       return {
         state: 'unavailable',
@@ -336,19 +346,31 @@ class ArtifactProvenanceProducerCapture {
         `Notebook producer run does not belong to the active Artifact ${scopeMismatch}: ${producerRunId}`
       )
     }
+    let computeOutputOwners: string[] = []
     if (request.producerRunId && sourceFileObservation) {
       const observedOwners = await this.findObservedWorkingFileRunIds(
         document,
         sourceFileObservation,
         scope
       )
+      computeOutputOwners =
+        (await this.options.computeJobReader?.findOutputOwners(
+          request.projectId,
+          request.notebookSessionId,
+          request.producerRunId,
+          sourceFileObservation,
+          artifactChecksum
+        )) ?? []
       if (observedOwners.length > 0 && !observedOwners.includes(request.producerRunId)) {
         throw new Error(
           `Declared producer source belongs to another Notebook run: ${observedOwners.join(', ')}`
         )
       }
-      if (observedOwners.length !== 1) {
-        throw new Error(`Producer source must have exactly one Run owner: ${request.producerRunId}`)
+      if (observedOwners.length + computeOutputOwners.length !== 1) {
+        throw new Error(
+          `Producer source must have exactly one Run owner: ${request.producerRunId}. ` +
+            'For a harvested Compute output, pass producerRunId from attachJob(jobId).result().producer_run_id.'
+        )
       }
     }
 
@@ -377,7 +399,8 @@ class ArtifactProvenanceProducerCapture {
       (await this.options.computeJobReader?.findByProducer(
         request.projectId,
         request.notebookSessionId,
-        producerRunId
+        producerRunId,
+        computeOutputOwners
       )) ?? []
 
     return {

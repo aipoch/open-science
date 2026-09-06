@@ -193,7 +193,8 @@ describe('TagRepository', () => {
       repository.pruneStaleAssignments({
         'catalog.skill': new Set(),
         'catalog.connector': new Set(),
-        'catalog.specialist': new Set()
+        'catalog.specialist': new Set(),
+        'literature.item': new Set()
       })
     ).resolves.toBe(1)
     expect((await repository.snapshot(1)).assignments).toEqual([])

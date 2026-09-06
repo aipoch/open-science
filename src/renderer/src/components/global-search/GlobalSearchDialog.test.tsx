@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { i18next } from '@/i18n'
 import type { ChatSession } from '@/stores/session-store'
+import type { LiteratureItemView } from '../../../../shared/literature'
 import {
   createInitialPreviewWorkbenchState,
   usePreviewWorkbenchStore
@@ -34,6 +35,60 @@ const artifact = {
   size: 12,
   sortAtMs: Date.now() - 3 * 24 * 60 * 60 * 1_000,
   originSession: { state: 'active' as const }
+}
+
+const literatureItem: LiteratureItemView = {
+  id: 'literature-item-1',
+  item: {
+    itemType: 'journalArticle',
+    title: 'Corrective Retrieval Augmented Generation',
+    abstract: '',
+    issuedText: '2024',
+    issuedYear: 2024,
+    containerTitle: 'arXiv',
+    shortTitle: 'CRAG',
+    language: 'en',
+    rights: '',
+    url: '',
+    extra: '',
+    typeFields: {},
+    creators: [
+      {
+        nameMode: 'person',
+        givenName: 'Shi-Qi',
+        familyName: 'Yan',
+        creatorType: 'author'
+      }
+    ],
+    identifiers: []
+  },
+  attachments: [
+    {
+      id: 'literature-attachment-1',
+      kind: 'fullText',
+      title: '',
+      sortOrder: 0,
+      versions: [
+        {
+          id: 'literature-version-1',
+          versionNumber: 1,
+          filename: 'crag.pdf',
+          contentType: 'application/pdf',
+          sizeBytes: 629,
+          checksum: 'a'.repeat(64),
+          pageCount: 14,
+          createdAt: 2
+        }
+      ],
+      createdAt: 2,
+      updatedAt: 2
+    }
+  ],
+  projectIds: [],
+  collectionIds: [],
+  metadataRevision: 1,
+  createdAt: 1,
+  updatedAt: 2
 }
 
 beforeEach(() => {
@@ -159,6 +214,9 @@ beforeEach(() => {
           mimeType: 'image/png'
         }),
         release: vi.fn().mockResolvedValue(undefined)
+      },
+      literature: {
+        search: vi.fn().mockResolvedValue({ entries: [] })
       }
     }
   })
@@ -174,6 +232,98 @@ afterEach(() => {
 })
 
 describe('GlobalSearchDialog', () => {
+  it('opens a Literature PDF from Workspace search in the Preview panel only', async () => {
+    vi.mocked(window.api.literature.search).mockResolvedValue({ entries: [literatureItem] })
+    const onOpenChange = vi.fn()
+    await act(async () => {
+      root.render(<GlobalSearchDialog open onOpenChange={onOpenChange} isSessionPersistenceReady />)
+    })
+
+    const input = document.body.querySelector<HTMLInputElement>('input[role="combobox"]')
+    await act(async () => {
+      input?.focus()
+      input?.setRangeText('Corrective')
+      input?.dispatchEvent(new Event('input', { bubbles: true }))
+      await new Promise((resolve) => window.setTimeout(resolve, 180))
+    })
+    expect(window.api.literature.search).toHaveBeenCalledWith(
+      expect.objectContaining({ projectId: 'project-a' })
+    )
+
+    const literatureRow = [...document.body.querySelectorAll<HTMLElement>('[role="option"]')].find(
+      (option) => option.textContent?.includes('Corrective Retrieval Augmented Generation')
+    )
+    expect(literatureRow?.textContent).toContain('Shi-Qi Yan · 2024 · arXiv')
+    act(() => literatureRow?.click())
+
+    expect(useNavigationStore.getState().view).toBe('workspace')
+    expect(usePreviewWorkbenchStore.getState().activeItemId).toBe('literature:literature-version-1')
+    expect(usePreviewWorkbenchStore.getState().items[0]).toMatchObject({
+      source: 'literature',
+      path: 'literature-attachment-version:literature-version-1',
+      format: 'pdf'
+    })
+    expect(onOpenChange).toHaveBeenCalledWith(false)
+  })
+
+  it('opens a Literature result from Home in its Library detail', async () => {
+    useNavigationStore.setState({ view: 'home', activeProjectId: undefined })
+    vi.mocked(window.api.literature.search).mockResolvedValue({ entries: [literatureItem] })
+    await act(async () => {
+      root.render(<GlobalSearchDialog open onOpenChange={vi.fn()} isSessionPersistenceReady />)
+    })
+
+    const input = document.body.querySelector<HTMLInputElement>('input[role="combobox"]')
+    await act(async () => {
+      input?.focus()
+      input?.setRangeText('Corrective')
+      input?.dispatchEvent(new Event('input', { bubbles: true }))
+      await new Promise((resolve) => window.setTimeout(resolve, 180))
+    })
+    const literatureRow = [...document.body.querySelectorAll<HTMLElement>('[role="option"]')].find(
+      (option) => option.textContent?.includes('Corrective Retrieval Augmented Generation')
+    )
+    act(() => literatureRow?.click())
+
+    expect(useNavigationStore.getState()).toMatchObject({
+      view: 'library',
+      pendingLiteratureItemId: 'literature-item-1'
+    })
+  })
+
+  it('opens a metadata-only Literature result linked to the current Project in Library detail', async () => {
+    vi.mocked(window.api.literature.search).mockResolvedValue({
+      entries: [{ ...literatureItem, attachments: [], projectIds: ['project-a'] }]
+    })
+    await act(async () => {
+      root.render(<GlobalSearchDialog open onOpenChange={vi.fn()} isSessionPersistenceReady />)
+    })
+
+    const input = document.body.querySelector<HTMLInputElement>('input[role="combobox"]')
+    await act(async () => {
+      input?.focus()
+      input?.setRangeText('Corrective')
+      input?.dispatchEvent(new Event('input', { bubbles: true }))
+      await new Promise((resolve) => window.setTimeout(resolve, 180))
+    })
+    expect(window.api.literature.search).toHaveBeenCalledWith({
+      scope: 'library',
+      query: 'Corrective',
+      limit: 8,
+      projectId: 'project-a'
+    })
+    const literatureRow = [...document.body.querySelectorAll<HTMLElement>('[role="option"]')].find(
+      (option) => option.textContent?.includes('Corrective Retrieval Augmented Generation')
+    )
+    act(() => literatureRow?.click())
+
+    expect(useNavigationStore.getState()).toMatchObject({
+      view: 'library',
+      activeProjectId: 'project-a',
+      pendingLiteratureItemId: 'literature-item-1'
+    })
+  })
+
   it('shows recent groups and sends a current-Project artifact to the composer mention handoff', async () => {
     await act(async () => {
       root.render(<GlobalSearchDialog open onOpenChange={vi.fn()} isSessionPersistenceReady />)

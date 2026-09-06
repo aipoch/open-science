@@ -12,7 +12,7 @@ const repository = (
       unreadCount: 0,
       latestSequence: 0
     })),
-    expireTransientPendingAuthorizations: vi.fn(async () => ({
+    expireTransientPendingActions: vi.fn(async () => ({
       changed: false,
       unreadCount: 0,
       latestSequence: 0
@@ -90,7 +90,7 @@ describe('createNotificationInboxController', () => {
     await inbox.restore()
 
     expect(db.migrateLegacyUnread).toHaveBeenCalledWith(expect.any(Function), 1500)
-    expect(db.expireTransientPendingAuthorizations).toHaveBeenCalledWith(1500)
+    expect(db.expireTransientPendingActions).toHaveBeenCalledWith(1500)
     expect(db.snapshot).toHaveBeenCalledWith(1)
   })
 

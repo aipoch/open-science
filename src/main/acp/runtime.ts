@@ -60,6 +60,7 @@ import {
 } from '../agent-framework'
 import { createLogger, diagnosticErrorFields, errorLogFields } from '../logger'
 import type { AcpRuntimeSnapshotOwner } from './runtime-snapshot-owner'
+import { buildLiteratureReferencePrompt } from './literature-reference-prompt'
 import { buildSessionReferencePrompt } from './session-reference-prompt'
 import { ConversationPermissionGrantStore, type AppPermissionRequest } from './permission-broker'
 import { HUMAN_PERMISSION_ACTION_ORIGIN } from './permission-context'
@@ -82,8 +83,20 @@ import {
   LITERATURE_MCP_SERVER_NAME,
   type LiteratureReadDocumentRequest
 } from '../literature/mcp-server'
+import type {
+  LiteratureLibraryDiscovery,
+  LiteratureLibraryFormatDocumentResult,
+  LiteratureLibraryFormatReferencesResult,
+  LiteratureLibraryPrepareLatexResult,
+  LiteratureLibraryReadAbstractResult,
+  LiteratureLibraryReadPdfResult,
+  LiteratureLibrarySaveResult,
+  LiteratureLibraryScope,
+  LiteratureLibrarySearchResult
+} from '../literature/library-mcp-server'
 import type { UploadedAttachment } from '../../shared/uploads'
 import type { ArtifactFile, FileReference } from '../../shared/artifacts'
+import type { ArtifactLiteratureRequest } from '../../shared/artifact-literature'
 import type {
   AppGeneratedArtifactProducer,
   ArtifactRpcCapabilityBinding
@@ -146,7 +159,11 @@ import {
 import type { PlanResponseResult, PlanServiceDependencies } from '../session-plan/plan-service'
 import { matchPlanDelivery } from '../session-plan/plan-delivery'
 import { SessionPlanDeliveryOwner } from './session-plan-delivery-owner'
-import type { ActivePlanProjection, PlanResponseCommand } from '../../shared/session-plan/contract'
+import type {
+  ActivePlanProjection,
+  PlanResponseCommand,
+  PlanResponseIdentity
+} from '../../shared/session-plan/contract'
 import type {
   SessionCatalog,
   SessionMutation,
@@ -240,12 +257,95 @@ type AcpRuntimeOptions = {
   }>
   literature?: Readonly<{
     isEnabled: (appSessionId: string, projectId: string) => Promise<boolean>
+    resolveAttachmentVersion?: (versionId: string) => Promise<
+      | Readonly<{
+          path: string
+          filename: string
+          contentType: string
+        }>
+      | undefined
+    >
     readDocument: (request: {
       projectId: string
       sessionId: string
       promptMessageId: string
       input: LiteratureReadDocumentRequest
     }) => Promise<unknown>
+  }>
+  literatureLibrary?: Readonly<{
+    acquirePdf?: (request: {
+      candidate: LiteratureLibraryDiscovery
+      pdfUrl?: string
+      projectId: string
+      sessionId: string
+    }) => Promise<import('../literature/agent-pdf-acquisition').AgentPdfAcquisitionResult>
+    resolveSaveReferences?: (
+      references: readonly string[]
+    ) => Promise<readonly LiteratureLibraryDiscovery[]>
+    searchLibrary: (request: {
+      projectId: string
+      query?: string
+      scope?: LiteratureLibraryScope
+      collectionId?: string
+      itemIds?: readonly string[]
+      offset?: number
+      limit?: number
+    }) => Promise<LiteratureLibrarySearchResult>
+    readAbstract: (request: {
+      projectId: string
+      itemId: string
+      scope?: LiteratureLibraryScope
+      collectionId?: string
+    }) => Promise<LiteratureLibraryReadAbstractResult | undefined>
+    readPdf: (request: {
+      projectId: string
+      itemId: string
+      attachmentId?: string
+      query: string
+      scope?: LiteratureLibraryScope
+      collectionId?: string
+    }) => Promise<LiteratureLibraryReadPdfResult | undefined>
+    readCandidateFile?: (request: {
+      projectId: string
+      sessionId: string
+      workspaceCwd: string
+      filename: string
+    }) => Promise<string>
+    formatReferences?: (request: {
+      projectId: string
+      itemIds: readonly string[]
+      styleId: import('../../shared/literature').LiteratureCitationStyle
+      locale: import('../../shared/literature').LiteratureCitationLocale
+    }) => Promise<LiteratureLibraryFormatReferencesResult>
+    formatCitationDocument?: (request: {
+      projectId: string
+      sessionId: string
+      workspaceCwd: string
+      filename: string
+      styleId: import('../../shared/literature').LiteratureCitationStyle
+      locale: import('../../shared/literature').LiteratureCitationLocale
+    }) => Promise<
+      LiteratureLibraryFormatDocumentResult & {
+        contentBase64: string
+        literature: ArtifactLiteratureRequest
+      }
+    >
+    prepareLatexBundle?: (request: {
+      projectId: string
+      sessionId: string
+      workspaceCwd: string
+      filename: string
+    }) => Promise<
+      LiteratureLibraryPrepareLatexResult & {
+        contentBase64: string
+        literature: ArtifactLiteratureRequest
+      }
+    >
+    saveToInbox: (request: {
+      projectId: string
+      sessionId: string
+      candidates: readonly LiteratureLibraryDiscovery[]
+    }) => Promise<LiteratureLibrarySaveResult>
   }>
   sideChatRelays?: Readonly<{
     claim: (parentSessionId: string) =>
@@ -318,7 +418,13 @@ type AcpRuntimeArtifactOptions = {
   provenance?: Pick<
     import('../artifacts/provenance-repository').ArtifactProvenanceRepository,
     'listRunVersions' | 'writeAppGeneratedVersion'
-  >
+  > &
+    Partial<
+      Pick<
+        import('../artifacts/provenance-repository').ArtifactProvenanceRepository,
+        'recordLiteraturePdfRead' | 'recordLiteratureSearch'
+      >
+    >
   managedFileVersions?: Pick<
     import('../managed-file-versions/service').ManagedFileVersionService,
     'openLatest' | 'openVersion' | 'openUnpublishedVersion'
@@ -786,6 +892,10 @@ class AcpRuntime {
     return this.sessionPlanWorkflow.projection(projectId, sessionId)
   }
 
+  discardUnavailableSessionPlan(input: PlanResponseIdentity): Promise<{ revision: number }> {
+    return this.sessionPlanWorkflow.discardUnavailable(input)
+  }
+
   async respondSessionPlan(input: PlanResponseCommand): Promise<PlanResponseResult> {
     const result = await this.sessionPlanWorkflow.respond(input)
     if (result.deliveryCommandId) this.scheduleQueuedPlanDelivery(input.projectId, input.sessionId)
@@ -818,6 +928,10 @@ class AcpRuntime {
       this.activeSessionFor(sessionId) !== undefined &&
       this.sessionRegistry.lookup(sessionId)?.aggregate.snapshot().projectId === projectId
     )
+  }
+
+  sessionMemorySignal(sessionId: string): AbortSignal | undefined {
+    return this.sessionRegistry.lookup(sessionId)?.aggregate.memorySignal()
   }
 
   isSessionMemoryEnabled(sessionId: string): boolean {
@@ -1406,7 +1520,11 @@ class AcpRuntime {
       appSessionId: request.sessionId,
       projectId: this.liveSessionProjectId(request.sessionId) ?? '',
       connectionGeneration: this.connectionGeneration,
-      text: [buildSessionReferencePrompt(referencedSessions), followUpPromptText(presented)]
+      text: [
+        buildSessionReferencePrompt(referencedSessions),
+        buildLiteratureReferencePrompt(request.parts),
+        followUpPromptText(presented)
+      ]
         .filter((segment): segment is string => Boolean(segment))
         .join('\n\n'),
       historyImages: [],
@@ -1801,6 +1919,7 @@ class AcpRuntime {
         ...(continuation.referencedSessions?.length
           ? { referencedSessions: continuation.referencedSessions }
           : {}),
+        ...(continuation.parts?.length ? { parts: continuation.parts } : {}),
         ...(continuation.historyReplay?.historyPreamble
           ? { historyPreamble: continuation.historyReplay.historyPreamble }
           : {}),
@@ -2219,14 +2338,16 @@ class AcpRuntime {
       return
     }
     if (command.state === 'delivering') {
-      if (await owner.rearmUnaccepted(projectId, sessionId, command.commandId)) {
-        this.clearPlanDeliveryClaimRetry(sessionId, command.commandId)
-        setTimeout(() => {
-          this.scheduleQueuedPlanDelivery(projectId, sessionId, command.commandId)
-        }, 0)
-      } else {
-        this.retryPlanDeliveryClaim(projectId, sessionId, command.commandId)
-      }
+      this.clearPlanDeliveryClaimRetry(sessionId, command.commandId)
+      // Persisted delivering alone cannot prove that the provider never received this command.
+      this.pushEvent({
+        kind: 'error',
+        level: 'error',
+        sessionId,
+        title: 'Plan delivery outcome is uncertain',
+        text: 'This Plan delivery may already have been accepted by the Agent. It was not sent again. Check the conversation before sending another execution request.'
+      })
+      this.emitState()
       return
     }
     if (command.state !== 'queued') {
@@ -2285,6 +2406,7 @@ class AcpRuntime {
       ...(continuation.referencedSessions?.length
         ? { referencedSessions: continuation.referencedSessions }
         : {}),
+      ...(continuation.parts?.length ? { parts: continuation.parts } : {}),
       ...(continuation.historyReplay?.historyPreamble
         ? { historyPreamble: continuation.historyReplay.historyPreamble }
         : {}),

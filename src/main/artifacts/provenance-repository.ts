@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto'
-import { rm, stat } from 'node:fs/promises'
-import { dirname, join } from 'node:path'
+import { readFile, realpath, rm, stat } from 'node:fs/promises'
+import { dirname, isAbsolute, join, relative, sep } from 'node:path'
 import { pathToFileURL } from 'node:url'
 
 import type { PrismaClient } from '@prisma/client'
@@ -23,9 +23,13 @@ import type {
 } from '../../shared/artifact-provenance'
 import {
   MAX_ARTIFACT_VERSION_DESCRIPTOR_IDS,
+  type ArtifactWriteEncoding,
   type ResolveArtifactVersionDescriptorsRequest
 } from '../../shared/artifacts'
-import { parseOwnedExecutionFileEvidenceSummary } from '../../shared/execution-file-evidence'
+import {
+  hasImmutableExecutionFileEvidenceReference,
+  parseOwnedExecutionFileEvidenceSummary
+} from '../../shared/execution-file-evidence'
 import { ArtifactRepository } from './repository'
 import { ImmutableInputAuthority } from '../immutable-input-authority'
 import { defaultArtifactDurability, type ArtifactDurability } from './durability'
@@ -34,8 +38,9 @@ import {
   normalizeArtifactFilename as normalizeFilename,
   type PersistedVersionFileRecord
 } from './provenance-version-writer'
-import { NotebookRunRepository } from '../notebook/repository'
+import { getNotebookSessionRoot, NotebookRunRepository } from '../notebook/repository'
 import { canonicalJson, sha256 } from './provenance-canonical'
+import { computeEvidenceOwnsSource } from './compute-output-evidence'
 import { ArtifactProvenanceProducerCapture } from './provenance-producer-capture'
 import {
   ArtifactFinalizationProofError,
@@ -69,6 +74,12 @@ import {
 } from '../managed-file-versions/version-file-operator'
 import { bindArtifactReconstructionEvidence } from './provenance-reconstruction-evidence'
 import { ReviewerTurnFileEvidenceReader } from './reviewer-turn-file-evidence-reader'
+import { ContentRepository, type OpenedContent } from '../storage/content-repository'
+import {
+  ArtifactLiteratureManifestOwner,
+  type RecordArtifactLiteraturePdfReadRequest,
+  type RecordArtifactLiteratureSearchRequest
+} from './literature-manifest'
 
 const SAFE_SEGMENT_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]*$/
 
@@ -114,6 +125,7 @@ export type WriteAppGeneratedArtifactVersionRequest = Omit<
 > & {
   filename: string
   content: string
+  encoding?: ArtifactWriteEncoding
   contentType?: string
   kind?: 'plan'
   producer?: AppGeneratedArtifactProducer
@@ -207,11 +219,13 @@ const journalRecoveryPlan = (
 
 class ArtifactProvenanceRepository {
   private readonly compatibilityRepository: ArtifactRepository
+  private readonly contentRepository: ContentRepository
   private readonly createId: () => string
   private readonly now: () => Date
   private readonly durability: ArtifactDurability
   private readonly dependencyReader: ArtifactProvenanceDependencyReader
   private readonly finalizationRecovery: ArtifactProvenanceFinalizationRecovery
+  private readonly literatureManifestOwner: ArtifactLiteratureManifestOwner
   private readonly messageFinalizer: ArtifactProvenanceMessageFinalizer
   private readonly notebookRepository: Pick<NotebookRunRepository, 'readSessionDocuments'>
   private readonly producerCapture: ArtifactProvenanceProducerCapture
@@ -224,6 +238,10 @@ class ArtifactProvenanceRepository {
   private readonly versionFileOperator: VersionFileOperator & VersionFileRecovery
 
   constructor(private readonly options: ArtifactProvenanceRepositoryOptions) {
+    this.contentRepository = new ContentRepository({
+      storageRoot: options.storageRoot,
+      getClient: options.getClient
+    })
     this.compatibilityRepository =
       options.compatibilityRepository ?? new ArtifactRepository(options.storageRoot)
     this.notebookRepository =
@@ -241,6 +259,7 @@ class ArtifactProvenanceRepository {
       resourceBudgets: options.resourceBudgets,
       now: () => this.now().getTime()
     })
+    this.literatureManifestOwner = new ArtifactLiteratureManifestOwner(options.getClient)
     const inputAuthority =
       options.inputAuthority ??
       new ImmutableInputAuthority({
@@ -297,7 +316,8 @@ class ArtifactProvenanceRepository {
           }
         : undefined,
       resolveVersionDerivedPath: (request, filename) =>
-        this.resolveVersionDerivedPath(request, filename)
+        this.resolveVersionDerivedPath(request, filename),
+      inspectVersionContent: (version) => this.inspectVersionContent(version)
     })
     bindArtifactReconstructionEvidence(this, (request) =>
       this.readModel.getVersionProvenance(
@@ -312,22 +332,41 @@ class ArtifactProvenanceRepository {
       storageRoot: options.storageRoot,
       createId: this.createId,
       computeJobReader: {
-        findByProducer: async (projectId, sessionId, producerRunId) => {
+        findByProducer: async (projectId, sessionId, producerRunId, priorityJobIds = []) => {
           const client = await options.getClient()
+          const select = {
+            id: true,
+            providerId: true,
+            shape: true,
+            status: true,
+            fileEvidence: true,
+            createdAt: true
+          } as const
+          const prioritized = [...new Set(priorityJobIds)].slice(0, 100)
+          const priorityJobs =
+            prioritized.length > 0
+              ? await client.computeJob.findMany({
+                  where: {
+                    projectId,
+                    sessionId,
+                    producerRunId,
+                    id: { in: prioritized }
+                  },
+                  select
+                })
+              : []
           const jobs = await client.computeJob.findMany({
-            where: { projectId, sessionId, producerRunId },
-            select: {
-              id: true,
-              providerId: true,
-              shape: true,
-              status: true,
-              fileEvidence: true,
-              createdAt: true
+            where: {
+              projectId,
+              sessionId,
+              producerRunId,
+              ...(prioritized.length > 0 ? { id: { notIn: prioritized } } : {})
             },
+            select,
             orderBy: { createdAt: 'asc' },
-            take: 100
+            take: 100 - priorityJobs.length
           })
-          return jobs.map((job) => {
+          return [...priorityJobs, ...jobs].map((job) => {
             let fileEvidence
             try {
               fileEvidence = job.fileEvidence
@@ -358,6 +397,71 @@ class ArtifactProvenanceRepository {
               }
             }
           })
+        },
+        findOutputOwners: async (
+          projectId,
+          sessionId,
+          producerRunId,
+          observation,
+          artifactChecksum
+        ) => {
+          const sessionRoot = await realpath(
+            getNotebookSessionRoot(options.storageRoot, projectId, sessionId)
+          ).catch(() => getNotebookSessionRoot(options.storageRoot, projectId, sessionId))
+          const sourcePath = await realpath(observation.path).catch(() => undefined)
+          if (!sourcePath) return []
+          const nested = relative(sessionRoot, sourcePath)
+          if (!nested || nested === '..' || nested.startsWith(`..${sep}`) || isAbsolute(nested)) {
+            return []
+          }
+          const relativePath = nested.split(sep).join('/')
+          const client = await options.getClient()
+          const owners: string[] = []
+          let cursor: string | undefined
+          do {
+            const jobs = await client.computeJob.findMany({
+              where: { projectId, sessionId, producerRunId },
+              select: { id: true, fileEvidence: true },
+              orderBy: { id: 'asc' },
+              take: 100,
+              ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {})
+            })
+            for (const job of jobs) {
+              try {
+                const storageKey = `execution-file-evidence/${projectId}/${sessionId}/activity-${job.id}/evidence.json`
+                const summary = job.fileEvidence
+                  ? parseOwnedExecutionFileEvidenceSummary(JSON.parse(job.fileEvidence), {
+                      activityId: job.id,
+                      activityKind: 'compute-job',
+                      parentActivityId: producerRunId,
+                      storageKey
+                    })
+                  : undefined
+                if (!hasImmutableExecutionFileEvidenceReference(summary)) continue
+                const evidenceBytes = await readFile(
+                  join(options.storageRoot, ...summary.storageKey.split('/'))
+                )
+                if (sha256(evidenceBytes) !== summary.checksum) continue
+                const evidence = JSON.parse(evidenceBytes.toString('utf8')) as unknown
+                if (
+                  computeEvidenceOwnsSource(evidence, {
+                    activityId: job.id,
+                    producerRunId,
+                    evidenceId: summary.evidenceId,
+                    relativePath,
+                    checksum: artifactChecksum,
+                    sizeBytes: observation.sizeBytes
+                  })
+                ) {
+                  owners.push(job.id)
+                }
+              } catch {
+                // Missing, malformed, or modified evidence cannot establish source ownership.
+              }
+            }
+            cursor = jobs.length === 100 ? jobs.at(-1)?.id : undefined
+          } while (cursor)
+          return owners
         }
       }
     })
@@ -401,6 +505,8 @@ class ArtifactProvenanceRepository {
       captureProducer: (request, createdAt, checksum, appGeneratedProducer) =>
         this.producerCapture.captureProducer(request, createdAt, checksum, appGeneratedProducer),
       prepareVersionPersistence: (input) => this.producerCapture.prepareVersionPersistence(input),
+      prepareLiteratureManifest: (request, context) =>
+        this.literatureManifestOwner.prepare(request, context),
       recoverStagingVersion: (version, projectId, appSessionId, filename, publish) =>
         this.stagingRecovery.recoverVersion(version, projectId, appSessionId, filename, publish),
       projectVersionFile: (version, projectId, appSessionId) =>
@@ -414,7 +520,7 @@ class ArtifactProvenanceRepository {
   async writeAppGeneratedVersion(
     request: WriteAppGeneratedArtifactVersionRequest
   ): Promise<ArtifactVersionFile> {
-    const { content, kind, producer, ...versionRequest } = request
+    const { content, encoding = 'utf8', kind, producer, ...versionRequest } = request
     const writeOperationId = `artifact-app-write-${this.createId()}`
     const reservationScope = {
       projectId: request.projectId,
@@ -432,7 +538,7 @@ class ArtifactProvenanceRepository {
           filename: request.filename,
           mimeType: request.contentType,
           kind,
-          source: { kind: 'inline', content, encoding: 'utf8' }
+          source: { kind: 'inline', content, encoding }
         },
         {
           reserveFile: (fileBytes) =>
@@ -458,7 +564,9 @@ class ArtifactProvenanceRepository {
             canonicalJson({
               contentChecksum,
               contentType: request.contentType ?? null,
+              encoding,
               filename: request.filename,
+              literature: request.literature ?? null,
               producerRunId: null,
               sourceKind: 'inline',
               sourceFileObservation: null
@@ -493,6 +601,14 @@ class ArtifactProvenanceRepository {
         }
       )
     )
+  }
+
+  recordLiteratureSearch(request: RecordArtifactLiteratureSearchRequest): void {
+    this.literatureManifestOwner.recordSearch(request)
+  }
+
+  recordLiteraturePdfRead(request: RecordArtifactLiteraturePdfReadRequest): void {
+    this.literatureManifestOwner.recordPdfRead(request)
   }
 
   async createVersion(
@@ -794,6 +910,12 @@ class ArtifactProvenanceRepository {
     )
   }
 
+  async getVersionLiterature(
+    request: GetArtifactVersionProvenanceRequest
+  ): ReturnType<ArtifactProvenanceReadModel['getVersionLiterature']> {
+    return this.readModel.getVersionLiterature(request)
+  }
+
   async getVersionCore(
     request: GetArtifactVersionProvenanceRequest
   ): Promise<ArtifactVersionProvenance> {
@@ -870,13 +992,86 @@ class ArtifactProvenanceRepository {
         state: { in: ['pending', 'finalized'] },
         artifact: { is: { projectId, sessionId: appSessionId } }
       },
-      select: { contentStorageKey: true }
+      select: {
+        id: true,
+        filename: true,
+        contentStorageKey: true,
+        contentType: true,
+        sizeBytes: true,
+        checksum: true,
+        contentBlobId: true
+      }
     })
     if (!version) throw new Error(`Artifact Version not found: ${versionId}`)
-    return join(
-      dirname(resolveStorageKey(this.options.storageRoot, version.contentStorageKey)),
-      filename
-    )
+    const content = await this.openVersionContent(version)
+    return join(dirname(content.path), filename)
+  }
+
+  private async inspectVersionContent(version: {
+    id: string
+    contentBlobId: string | null
+    contentStorageKey: string
+    sizeBytes: bigint
+    checksum: string
+  }): Promise<ArtifactVersionProvenance['contentStatus']> {
+    if (version.contentBlobId) {
+      const verification = await this.contentRepository.verify(version.contentBlobId)
+      if (verification.state === 'available') return { state: 'available' }
+      return {
+        state: 'unavailable',
+        reason:
+          verification.reason === 'checksum-mismatch' ||
+          verification.reason === 'size-mismatch' ||
+          verification.reason === 'changed-during-verification'
+            ? 'checksum-mismatch'
+            : 'missing'
+      }
+    }
+
+    try {
+      const content = await readFile(
+        resolveStorageKey(this.options.storageRoot, version.contentStorageKey)
+      )
+      return BigInt(content.byteLength) === version.sizeBytes &&
+        sha256(content) === version.checksum
+        ? { state: 'available' }
+        : { state: 'unavailable', reason: 'checksum-mismatch' }
+    } catch (error) {
+      if (
+        typeof error === 'object' &&
+        error !== null &&
+        'code' in error &&
+        error.code === 'ENOENT'
+      ) {
+        return { state: 'unavailable', reason: 'missing' }
+      }
+      throw error
+    }
+  }
+
+  private async openVersionContent(version: {
+    id: string
+    contentBlobId: string | null
+    contentStorageKey: string
+    contentType: string | null
+    sizeBytes: bigint
+    checksum: string
+  }): Promise<OpenedContent> {
+    if (version.contentBlobId) return this.contentRepository.open(version.contentBlobId)
+
+    const path = resolveStorageKey(this.options.storageRoot, version.contentStorageKey)
+    const content = await readFile(path)
+    if (BigInt(content.byteLength) !== version.sizeBytes || sha256(content) !== version.checksum) {
+      throw new Error(`Artifact Version content is corrupt: ${version.id}`)
+    }
+    return {
+      id: `artifact-version:${version.id}`,
+      path,
+      storageKey: version.contentStorageKey,
+      checksum: version.checksum,
+      sizeBytes: version.sizeBytes,
+      ...(version.contentType ? { contentType: version.contentType } : {})
+    }
   }
 
   // Project deletion is the terminal provenance boundary. Session deletion intentionally keeps this
@@ -1065,6 +1260,26 @@ class ArtifactProvenanceRepository {
       await tx.artifactMessageSnapshot.deleteMany({ where: { projectId } })
       await tx.fileOriginSession.deleteMany({ where: { projectId } })
     })
+
+    // The registered storage keys remain retry authority after Version rows have been removed.
+    // Scope the sweep to this Project's roots; shared content is retained by the reference checks.
+    const projectRoots = ['artifacts', 'uploads'].map((kind) => `${storageKey(kind, projectId)}/`)
+    const projectBlobs = await client.contentBlob.findMany({
+      where: {
+        OR: projectRoots.map((root) => ({ storageKey: { startsWith: root } }))
+      },
+      select: { id: true, storageKey: true }
+    })
+    const sweep = await this.contentRepository.sweep({
+      createdBefore: new Date(Date.now() + 1),
+      // SQLite LIKE treats case and underscores differently from exact filesystem segments.
+      contentIds: projectBlobs
+        .filter((blob) => projectRoots.some((root) => blob.storageKey.startsWith(root)))
+        .map(({ id }) => id)
+    })
+    if (sweep.failedIds.length > 0) {
+      throw new Error(`Project content cleanup failed for ${sweep.failedIds.length} blob(s).`)
+    }
   }
 
   private async toArtifactVersionFile(
@@ -1072,6 +1287,8 @@ class ArtifactProvenanceRepository {
     projectId: string,
     appSessionId: string
   ): Promise<ArtifactVersionFile> {
+    // Descriptors remain readable when immutable bytes are missing so Provenance can report the
+    // unavailable content state instead of hiding the surviving evidence and metadata.
     const filePath = resolveStorageKey(this.options.storageRoot, version.contentStorageKey)
     const fileMtimeMs = await stat(filePath)
       .then((fileStat) => fileStat.mtimeMs)

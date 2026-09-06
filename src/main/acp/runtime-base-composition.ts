@@ -1,8 +1,10 @@
+import { randomUUID } from 'node:crypto'
 import { resolve } from 'node:path'
 
 import { claudeCodeFramework } from '../agent-framework'
 import { ArtifactRepository } from '../artifacts/repository'
 import { ArtifactRunRegistry } from '../artifacts/run-registry'
+import { readCurrentRunContext } from '../artifacts/mcp-server'
 import { createLogger, errorLogFields } from '../logger'
 import { getNotebookInputRoot } from '../notebook/input-staging'
 import { createProductionPlanService } from '../session-plan/production-plan-service'
@@ -32,6 +34,7 @@ import { createNotebookArtifactSourceScopeProvider } from '../notebook/artifact-
 import { ArtifactTurnOwner } from './artifact-turn-owner'
 import { AcpTurnSkillOwner } from './turn-skill-owner'
 import { TurnResourceSnapshotStore } from './turn-resource-snapshot-store'
+import type { ArtifactLiteratureRequest } from '../../shared/artifact-literature'
 
 const log = createLogger('acp')
 
@@ -73,6 +76,111 @@ const composeAcpRuntimeBaseOwners = (options: AcpRuntimeOptions) => {
     setTimer,
     clearTimer
   })
+  const artifactRepository = options.artifacts
+    ? (options.artifacts.repository ?? new ArtifactRepository(options.artifacts.dataRoot))
+    : undefined
+  const artifactRunRegistry = options.artifacts
+    ? (options.artifacts.runRegistry ?? new ArtifactRunRegistry())
+    : undefined
+  const artifactTurns =
+    options.artifacts &&
+    !options.artifacts.currentRunFile &&
+    artifactRepository &&
+    artifactRunRegistry
+      ? new ArtifactTurnOwner({
+          dataRoot: options.artifacts.dataRoot,
+          repository: artifactRepository,
+          runRegistry: artifactRunRegistry,
+          issueRpcCapability: options.artifacts.issueRpcCapability,
+          revokeRpcCapability: options.artifacts.revokeRpcCapability,
+          provenance: options.artifacts.provenance,
+          ...(options.notebook
+            ? {
+                notebookArtifactSourceScope: createNotebookArtifactSourceScopeProvider(
+                  options.artifacts.dataRoot
+                ),
+                notebook: {
+                  setArtifactTurnBinding: options.notebook.setArtifactTurnBinding,
+                  clearArtifactTurnBinding: options.notebook.clearArtifactTurnBinding
+                }
+              }
+            : {})
+        })
+      : undefined
+  const publishPreparedLiteratureArtifact = async (
+    appSessionId: string,
+    projectId: string,
+    input: {
+      filename: string
+      contentBase64: string
+      mimeType: string
+      literature: ArtifactLiteratureRequest
+      toolId: 'format_citation_document' | 'prepare_latex_bundle'
+      normalizedArguments: Record<string, string>
+    }
+  ): Promise<void> => {
+    const interaction = sessionInteractions.current(appSessionId)
+    if (interaction?.kind !== 'prompt') {
+      throw new Error('No active assistant turn to attach the prepared Literature file to.')
+    }
+    const producer = {
+      kind: 'connector' as const,
+      connectorId: 'open-science-library',
+      toolId: input.toolId,
+      invocationId: randomUUID(),
+      implementationVersion: '1',
+      normalizedArguments: input.normalizedArguments
+    }
+    if (artifactTurns) {
+      await artifactTurns.write(artifactTurns.handleForExecution(interaction.turnToken), {
+        filename: input.filename,
+        content: input.contentBase64,
+        encoding: 'base64',
+        mimeType: input.mimeType,
+        literature: input.literature,
+        producer
+      })
+      return
+    }
+
+    const currentRunFile = options.artifacts?.currentRunFile
+    const provenance = options.artifacts?.provenance
+    if (!currentRunFile || !provenance) {
+      throw new Error('No active assistant turn to attach the prepared Literature file to.')
+    }
+    const context = await readCurrentRunContext(currentRunFile)
+    if (
+      context.appSessionId !== appSessionId ||
+      !context.artifactStorageSessionId ||
+      !context.rootFrameId ||
+      !context.agentFrameId ||
+      !context.messageBranchId ||
+      !context.runtimeSegmentId ||
+      !context.promptMessageId
+    ) {
+      throw new Error('The active Artifact turn does not match this Literature session.')
+    }
+    await provenance.writeAppGeneratedVersion({
+      projectId,
+      appSessionId,
+      artifactStorageSessionId: context.artifactStorageSessionId,
+      artifactRunId: context.artifactRunId,
+      rootFrameId: context.rootFrameId,
+      agentFrameId: context.agentFrameId,
+      messageBranchId: context.messageBranchId,
+      messageBranchAncestry: context.messageBranchAncestry ?? [],
+      messageAncestry: context.messageAncestry ?? [],
+      runtimeSegmentId: context.runtimeSegmentId,
+      promptMessageId: context.promptMessageId,
+      agentName: context.agentName,
+      filename: input.filename,
+      content: input.contentBase64,
+      encoding: 'base64',
+      contentType: input.mimeType,
+      literature: input.literature,
+      producer
+    })
+  }
   const sessionCapabilities = new AcpSessionCapabilityOwner({
     artifacts: options.artifacts,
     notebook: options.notebook,
@@ -99,6 +207,149 @@ const composeAcpRuntimeBaseOwners = (options: AcpRuntimeOptions) => {
                 input
               })
             }
+          })
+        }
+      : undefined,
+    library: options.literatureLibrary
+      ? {
+          handlerFor: (appSessionId, projectId, workspaceCwd) => ({
+            searchLibrary: async (request) => {
+              const result = await options.literatureLibrary!.searchLibrary({
+                ...request,
+                projectId
+              })
+              const interaction = sessionInteractions.current(appSessionId)
+              if (interaction?.kind === 'prompt' && interaction.promptMessageId) {
+                options.artifacts?.provenance?.recordLiteratureSearch?.({
+                  projectId,
+                  appSessionId,
+                  promptMessageId: interaction.promptMessageId,
+                  scope: request.scope ?? 'project',
+                  ...(request.query ? { query: request.query } : {}),
+                  ...(request.collectionId ? { collectionId: request.collectionId } : {}),
+                  ...(request.itemIds ? { itemIds: [...request.itemIds] } : {}),
+                  ...(request.offset === undefined ? {} : { offset: request.offset }),
+                  ...(request.limit === undefined ? {} : { limit: request.limit }),
+                  result
+                })
+              }
+              return result
+            },
+            readAbstract: (request) =>
+              options.literatureLibrary!.readAbstract({
+                ...request,
+                projectId
+              }),
+            readPdf: async (request) => {
+              const result = await options.literatureLibrary!.readPdf({
+                ...request,
+                projectId
+              })
+              const interaction = sessionInteractions.current(appSessionId)
+              if (result && interaction?.kind === 'prompt' && interaction.promptMessageId) {
+                options.artifacts?.provenance?.recordLiteraturePdfRead?.({
+                  projectId,
+                  appSessionId,
+                  promptMessageId: interaction.promptMessageId,
+                  itemId: request.itemId
+                })
+              }
+              return result
+            },
+            ...(options.literatureLibrary!.resolveSaveReferences
+              ? {
+                  resolveSaveReferences: (references: readonly string[]) =>
+                    options.literatureLibrary!.resolveSaveReferences!(references)
+                }
+              : {}),
+            ...(options.literatureLibrary!.readCandidateFile
+              ? {
+                  readCandidateFile: (filename: string) =>
+                    options.literatureLibrary!.readCandidateFile!({
+                      projectId,
+                      sessionId: appSessionId,
+                      workspaceCwd,
+                      filename
+                    })
+                }
+              : {}),
+            ...(options.literatureLibrary!.formatReferences
+              ? {
+                  formatReferences: (request) =>
+                    options.literatureLibrary!.formatReferences!({ ...request, projectId })
+                }
+              : {}),
+            ...(options.literatureLibrary!.formatCitationDocument
+              ? {
+                  formatCitationDocument: async (request) => {
+                    const prepared = await options.literatureLibrary!.formatCitationDocument!({
+                      ...request,
+                      projectId,
+                      sessionId: appSessionId,
+                      workspaceCwd
+                    })
+                    await publishPreparedLiteratureArtifact(appSessionId, projectId, {
+                      filename: prepared.filename,
+                      contentBase64: prepared.contentBase64,
+                      mimeType:
+                        'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+                      literature: prepared.literature,
+                      toolId: 'format_citation_document',
+                      normalizedArguments: {
+                        filename: request.filename,
+                        styleId: request.styleId,
+                        locale: request.locale
+                      }
+                    })
+                    return {
+                      filename: prepared.filename,
+                      citationCount: prepared.citationCount,
+                      referenceCount: prepared.referenceCount
+                    }
+                  }
+                }
+              : {}),
+            ...(options.literatureLibrary!.prepareLatexBundle
+              ? {
+                  prepareLatexBundle: async (request) => {
+                    const prepared = await options.literatureLibrary!.prepareLatexBundle!({
+                      ...request,
+                      projectId,
+                      sessionId: appSessionId,
+                      workspaceCwd
+                    })
+                    await publishPreparedLiteratureArtifact(appSessionId, projectId, {
+                      filename: prepared.filename,
+                      contentBase64: prepared.contentBase64,
+                      mimeType: 'application/zip',
+                      literature: prepared.literature,
+                      toolId: 'prepare_latex_bundle',
+                      normalizedArguments: { filename: request.filename }
+                    })
+                    return {
+                      filename: prepared.filename,
+                      citationCount: prepared.citationCount,
+                      referenceCount: prepared.referenceCount
+                    }
+                  }
+                }
+              : {}),
+            saveToInbox: (request) =>
+              options.literatureLibrary!.saveToInbox({
+                ...request,
+                projectId,
+                sessionId: appSessionId
+              }),
+            ...(options.literatureLibrary!.acquirePdf
+              ? {
+                  acquirePdf: (request) =>
+                    options.literatureLibrary!.acquirePdf!({
+                      ...request,
+                      projectId,
+                      sessionId: appSessionId
+                    })
+                }
+              : {})
           })
         }
       : undefined,
@@ -153,37 +404,6 @@ const composeAcpRuntimeBaseOwners = (options: AcpRuntimeOptions) => {
       status: snapshotOwner.status
     })
   })
-  const artifactRepository = options.artifacts
-    ? (options.artifacts.repository ?? new ArtifactRepository(options.artifacts.dataRoot))
-    : undefined
-  const artifactRunRegistry = options.artifacts
-    ? (options.artifacts.runRegistry ?? new ArtifactRunRegistry())
-    : undefined
-  const artifactTurns =
-    options.artifacts &&
-    !options.artifacts.currentRunFile &&
-    artifactRepository &&
-    artifactRunRegistry
-      ? new ArtifactTurnOwner({
-          dataRoot: options.artifacts.dataRoot,
-          repository: artifactRepository,
-          runRegistry: artifactRunRegistry,
-          issueRpcCapability: options.artifacts.issueRpcCapability,
-          revokeRpcCapability: options.artifacts.revokeRpcCapability,
-          provenance: options.artifacts.provenance,
-          ...(options.notebook
-            ? {
-                notebookArtifactSourceScope: createNotebookArtifactSourceScopeProvider(
-                  options.artifacts.dataRoot
-                ),
-                notebook: {
-                  setArtifactTurnBinding: options.notebook.setArtifactTurnBinding,
-                  clearArtifactTurnBinding: options.notebook.clearArtifactTurnBinding
-                }
-              }
-            : {})
-        })
-      : undefined
   const planInteractions = new SessionPlanInteractionOwner()
   const planService =
     options.plan && artifactTurns && options.artifacts?.managedFileVersions
@@ -200,6 +420,9 @@ const composeAcpRuntimeBaseOwners = (options: AcpRuntimeOptions) => {
   const fileReferenceResolver = createManagedFileReferenceResolver({
     uploads: uploadRepository,
     artifacts: artifactRepository,
+    literature: options.literature?.resolveAttachmentVersion
+      ? { resolveVersion: options.literature.resolveAttachmentVersion }
+      : undefined,
     grantedRoots: options.grantedRoots,
     managedFileVersions: options.artifacts?.managedFileVersions
   })

@@ -2,6 +2,10 @@ import type { TFunction } from 'i18next'
 
 export const localizeConnectorError = (message: string, t: TFunction): string => {
   switch (message) {
+    case 'Credential changes were saved, but Connectors could not refresh. Retry from Settings > Connectors.':
+      return t(
+        'Credential changes were saved, but Connectors could not refresh. Retry from Settings > Connectors.'
+      )
     case 'MCP server configuration must be an object.':
       return t('MCP server configuration must be an object.')
     case 'MCP server environment variables must be an object.':

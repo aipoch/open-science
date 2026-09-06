@@ -6,6 +6,7 @@ import {
   type AcpMessageImage
 } from './acp'
 import { parseArtifactVersionLocator } from './artifact-provenance'
+import { parseLiteratureAttachmentVersionReference } from './literature'
 import { parseUploadVersionReference } from './uploads'
 
 export const ANNOTATION_LIMITS = Object.freeze({
@@ -182,9 +183,9 @@ export type PdfAnnotation = Readonly<{
   target: 'agent'
   note?: string
   source: Readonly<{
-    kind: 'artifact-version' | 'upload-version'
+    kind: 'artifact-version' | 'upload-version' | 'literature-attachment-version'
     projectId: string
-    sessionId: string
+    sessionId?: string
     versionId: string
     name: string
     path: string
@@ -308,11 +309,15 @@ const sanitizePdfAnnotation = (
   const source = value.source
   const selector = value.selector
   const sourceKind = source.kind
+  const sourceSessionId = trimmed(source.sessionId)
+  const sourceSessionIdRequired =
+    sourceKind === 'artifact-version' || sourceKind === 'upload-version'
   const pageNumber = selector.pageNumber
   if (
-    (sourceKind !== 'artifact-version' && sourceKind !== 'upload-version') ||
+    (!sourceSessionIdRequired && sourceKind !== 'literature-attachment-version') ||
     !trimmed(source.projectId) ||
-    !trimmed(source.sessionId) ||
+    (sourceSessionIdRequired && !sourceSessionId) ||
+    (!sourceSessionIdRequired && sourceSessionId !== undefined) ||
     !trimmed(source.versionId) ||
     !trimmed(source.name) ||
     !trimmed(source.path) ||
@@ -327,7 +332,7 @@ const sanitizePdfAnnotation = (
   const sanitizedSource: PdfAnnotation['source'] = {
     kind: sourceKind,
     projectId: trimmed(source.projectId)!,
-    sessionId: trimmed(source.sessionId)!,
+    ...(sourceSessionId ? { sessionId: sourceSessionId } : {}),
     versionId: trimmed(source.versionId)!,
     name: trimmed(source.name)!,
     path: trimmed(source.path)!,
@@ -540,6 +545,9 @@ export const pdfAnnotationSourceIsFixed = (source: PdfAnnotation['source']): boo
       identity.appSessionId === source.sessionId &&
       identity.versionId === source.versionId
     )
+  }
+  if (source.kind === 'literature-attachment-version') {
+    return parseLiteratureAttachmentVersionReference(source.path) === source.versionId
   }
   const identity = parseUploadVersionReference(source.path)
   return (

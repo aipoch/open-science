@@ -1528,7 +1528,9 @@ const WorkspaceMessageScrollerImpl = ({
                         className="min-w-0"
                         disableContainment
                       >
-                        <div className="px-4 pb-1 md:px-6">
+                        {/* Match the loading row's 60px minimum so completion cannot pull
+                            bottom-follow back after the final text has appeared. */}
+                        <div className="min-h-[60px] px-4 pb-1 md:px-6">
                           <div className="mx-auto w-full max-w-[56rem]">
                             <WorkspaceAssistantTurnCompletion
                               message={item.message}

@@ -181,6 +181,7 @@ class NotebookPackageMutationOwner {
                   removeOperationChildSync(runtimeRoot, operationId)
                 },
                 onCondaArchiveAuthorizations: (authorizations, workingRoot, evidenceComplete) => {
+                  if (!archiveCacheTransaction) return
                   if (evidenceComplete === false) archiveEvidenceIncomplete = true
                   if (authorizations.length === 0) return
                   const previous = archivePublications.get(workingRoot)

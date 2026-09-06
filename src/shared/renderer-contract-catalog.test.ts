@@ -253,7 +253,7 @@ describe('renderer contract catalog', () => {
     const compute = RENDERER_CONTRACT_CATALOG.filter(({ publicPath }) =>
       publicPath.startsWith('compute.')
     )
-    expect(compute).toHaveLength(37)
+    expect(compute).toHaveLength(38)
     expect(
       compute
         .filter(({ surfaceInstallation }) => surfaceInstallation.remoteWeb === 'rejecting-stub')
@@ -421,9 +421,21 @@ describe('renderer contract catalog', () => {
 
   it('marks the runtime-validated command slice', () => {
     expect(paths(({ applicationCommand }) => applicationCommand === 'runtime-validated')).toEqual([
+      'acp.discardUnavailablePlan',
       'acp.respondPlan',
       'acp.respondToElicitation',
       'acp.respondToPermission',
+      'literature.citationStyles',
+      'literature.completeMetadata',
+      'literature.formatDocument',
+      'literature.formatReferences',
+      'literature.fullText',
+      'literature.get',
+      'literature.importPdf',
+      'literature.importRecords',
+      'literature.jobs',
+      'literature.search',
+      'literature.transact',
       'memory.clearAll',
       'memory.createCategory',
       'memory.createEntry',
@@ -457,9 +469,21 @@ describe('renderer contract catalog', () => {
       'uploads.finalizeSession'
     ])
     expect(ELECTRON_APPLICATION_COMMAND_CHANNELS).toEqual([
+      'acp:discard-unavailable-plan',
       'acp:respond-elicitation',
       'acp:respond-permission',
       'acp:respond-plan',
+      'literature:citation-styles',
+      'literature:complete-metadata',
+      'literature:format-document',
+      'literature:format-references',
+      'literature:full-text',
+      'literature:get',
+      'literature:import-pdf',
+      'literature:import-records',
+      'literature:jobs',
+      'literature:search',
+      'literature:transact',
       'memory:clear-all',
       'memory:create-category',
       'memory:create-entry',

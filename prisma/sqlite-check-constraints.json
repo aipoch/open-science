@@ -699,6 +699,91 @@
       "tableName": "ManagedFileVersionWriteOperation",
       "name": "ManagedFileVersionWriteOperation_numeric_bounds_check",
       "expression": "\"sizeBytes\" >= 0"
+    },
+    {
+      "tableName": "ContentBlob",
+      "name": "ContentBlob_state_check",
+      "expression": "\"state\" IN ('staging', 'available', 'quarantined')"
+    },
+    {
+      "tableName": "ContentBlob",
+      "name": "ContentBlob_sizeBytes_check",
+      "expression": "\"sizeBytes\" >= 0"
+    },
+    {
+      "tableName": "LiteratureItem",
+      "name": "LiteratureItem_identity_check",
+      "expression": "length(trim(\"itemType\")) > 0 AND length(trim(\"title\")) > 0 AND \"metadataRevision\" >= 1 AND \"rating\" BETWEEN 0 AND 5 AND (\"issuedYear\" IS NULL OR \"issuedYear\" BETWEEN 0 AND 9999)"
+    },
+    {
+      "tableName": "LiteratureItem",
+      "name": "LiteratureItem_merge_check",
+      "expression": "\"mergedIntoItemId\" IS NULL OR (\"mergedIntoItemId\" <> \"id\" AND \"deletedAt\" IS NOT NULL)"
+    },
+    {
+      "tableName": "LiteratureItem",
+      "name": "LiteratureItem_typeFieldsJson_check",
+      "expression": "json_valid(\"typeFieldsJson\") AND json_type(\"typeFieldsJson\") = 'object'"
+    },
+    {
+      "tableName": "LiteratureAttachment",
+      "name": "LiteratureAttachment_shape_check",
+      "expression": "length(trim(\"kind\")) > 0 AND \"sortOrder\" >= 0"
+    },
+    {
+      "tableName": "LiteratureAttachmentVersion",
+      "name": "LiteratureAttachmentVersion_shape_check",
+      "expression": "\"versionNumber\" >= 1 AND length(trim(\"filename\")) > 0 AND length(trim(\"contentType\")) > 0 AND \"sizeBytes\" >= 0 AND length(\"checksum\") = 64 AND \"checksum\" NOT GLOB '*[^0-9a-f]*' AND (\"pageCount\" IS NULL OR \"pageCount\" >= 1)"
+    },
+    {
+      "tableName": "LiteratureCreator",
+      "name": "LiteratureCreator_shape_check",
+      "expression": "length(trim(\"normalizedName\")) > 0 AND ((\"nameMode\" = 'person' AND length(trim(\"literalName\")) = 0 AND (length(trim(\"givenName\")) > 0 OR length(trim(\"familyName\")) > 0)) OR (\"nameMode\" = 'organization' AND length(trim(\"literalName\")) > 0 AND length(trim(\"givenName\")) = 0 AND length(trim(\"familyName\")) = 0))"
+    },
+    {
+      "tableName": "LiteratureItemCreator",
+      "name": "LiteratureItemCreator_shape_check",
+      "expression": "length(trim(\"creatorType\")) > 0 AND \"ordinal\" >= 0"
+    },
+    {
+      "tableName": "LiteratureIdentifier",
+      "name": "LiteratureIdentifier_shape_check",
+      "expression": "length(trim(\"scheme\")) > 0 AND length(trim(\"rawValue\")) > 0 AND length(trim(\"normalizedValue\")) > 0"
+    },
+    {
+      "tableName": "LiteratureInboxCandidate",
+      "name": "LiteratureInboxCandidate_shape_check",
+      "expression": "length(trim(\"dedupeKey\")) > 0 AND length(trim(\"itemType\")) > 0 AND length(trim(\"title\")) > 0 AND length(trim(\"metadataChecksum\")) > 0 AND length(trim(\"origin\")) > 0 AND (\"issuedYear\" IS NULL OR \"issuedYear\" BETWEEN 0 AND 9999) AND json_valid(\"candidateJson\") AND json_type(\"candidateJson\") = 'object'"
+    },
+    {
+      "tableName": "LiteratureInboxCandidate",
+      "name": "LiteratureInboxCandidate_lifecycle_check",
+      "expression": "(\"state\" = 'pending' AND \"acceptedItemId\" IS NULL AND \"settledAt\" IS NULL) OR (\"state\" = 'accepted' AND \"acceptedItemId\" IS NOT NULL AND \"settledAt\" IS NOT NULL) OR (\"state\" = 'dismissed' AND \"acceptedItemId\" IS NULL AND \"settledAt\" IS NOT NULL)"
+    },
+    {
+      "tableName": "LiteratureSourceRecord",
+      "name": "LiteratureSourceRecord_shape_check",
+      "expression": "((\"itemId\" IS NOT NULL AND \"inboxCandidateId\" IS NULL) OR (\"itemId\" IS NULL AND \"inboxCandidateId\" IS NOT NULL)) AND length(trim(\"provider\")) > 0 AND (\"externalId\" IS NULL OR length(trim(\"externalId\")) > 0) AND (\"sourceUrl\" IS NULL OR length(trim(\"sourceUrl\")) > 0) AND length(trim(\"metadataChecksum\")) > 0 AND json_valid(\"rawMetadataJson\") AND json_type(\"rawMetadataJson\") = 'object'"
+    },
+    {
+      "tableName": "LiteratureCollection",
+      "name": "LiteratureCollection_shape_check",
+      "expression": "length(trim(\"name\")) > 0 AND length(trim(\"nameKey\")) > 0 AND (\"parentId\" IS NULL OR \"parentId\" <> \"id\") AND \"sortOrder\" >= 0"
+    },
+    {
+      "tableName": "LiteratureCollectionItem",
+      "name": "LiteratureCollectionItem_sortOrder_check",
+      "expression": "\"sortOrder\" >= 0"
+    },
+    {
+      "tableName": "ProjectLiterature",
+      "name": "ProjectLiterature_source_check",
+      "expression": "length(trim(\"source\")) > 0"
+    },
+    {
+      "tableName": "ArtifactLiteratureManifest",
+      "name": "ArtifactLiteratureManifest_shape_check",
+      "expression": "\"schemaVersion\" = 1 AND length(trim(\"styleId\")) > 0 AND length(trim(\"locale\")) > 0 AND json_valid(\"manifestJson\") AND json_type(\"manifestJson\") = 'object' AND length(\"checksum\") = 64 AND \"checksum\" NOT GLOB '*[^0-9a-f]*'"
     }
   ],
   "indexes": [
@@ -706,6 +791,11 @@
       "tableName": "MemoryEntry",
       "name": "MemoryEntry_global_contentKey_key",
       "sql": "CREATE UNIQUE INDEX \"MemoryEntry_global_contentKey_key\" ON \"MemoryEntry\"(\"contentKey\") WHERE \"projectId\" IS NULL"
+    },
+    {
+      "tableName": "LiteratureCollection",
+      "name": "LiteratureCollection_root_nameKey_key",
+      "sql": "CREATE UNIQUE INDEX \"LiteratureCollection_root_nameKey_key\" ON \"LiteratureCollection\"(\"nameKey\") WHERE \"parentId\" IS NULL"
     }
   ]
 }

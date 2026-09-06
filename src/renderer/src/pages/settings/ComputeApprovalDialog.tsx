@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { AlertTriangle, ShieldAlert, ChevronDown, ChevronUp } from 'lucide-react'
-import { Dialog } from 'radix-ui'
+import * as Dialog from '@/components/ui/dialog'
 import { useTranslation } from 'react-i18next'
 
 import type { ComputeApprovalDecision } from '../../../../shared/compute'
@@ -187,6 +187,22 @@ export function ComputeApprovalDialog({
                   <span className="w-20 shrink-0 text-muted-foreground">{t('Inputs')}</span>
                   <span className="min-w-0 break-words text-foreground">
                     {dialogRequest.inputsSummary}
+                  </span>
+                </div>
+              )}
+              {dialogRequest.operation === 'submit_job' && dialogRequest.executionMode && (
+                <div className="flex gap-2">
+                  <span className="w-20 shrink-0 text-muted-foreground">{t('Execution mode')}</span>
+                  <span className="min-w-0 text-foreground">
+                    {dialogRequest.executionMode === 'slurm' ? t('Slurm') : t('Direct SSH')}
+                  </span>
+                </div>
+              )}
+              {dialogRequest.operation === 'submit_job' && dialogRequest.environment && (
+                <div className="flex gap-2">
+                  <span className="w-20 shrink-0 text-muted-foreground">{t('Environment')}</span>
+                  <span className="min-w-0 break-all font-mono text-muted-foreground">
+                    {dialogRequest.environment}
                   </span>
                 </div>
               )}

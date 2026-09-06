@@ -2,8 +2,8 @@ import { CURATED_MIRRORS, type PackageMirror } from '../../shared/mirror'
 
 export { CURATED_MIRRORS, MIRROR_HELP_URL } from '../../shared/mirror'
 
-// Cheap locale heuristic: a Chinese locale gets the CN mirror default; everyone else uses public
-// hosts (empty overrides). A more precise speed-based pick is future work (spec §9, §16).
+// Cheap synchronous locale fallback for call sites that cannot use the asynchronous speed probe: a
+// Chinese locale gets the CN mirror default; everyone else uses public hosts (empty overrides).
 const isCnLocale = (locale: string): boolean => /^zh\b/i.test(locale) || /-CN$/i.test(locale)
 
 export function resolveMirror(locale: string): PackageMirror {

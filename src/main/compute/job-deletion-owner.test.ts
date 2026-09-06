@@ -25,6 +25,7 @@ const job = (overrides: Partial<ComputeJob> = {}): ComputeJob => ({
   project_id: 'project-1',
   session_id: 'session-1',
   shape: 'direct_ssh',
+  execution_mode: 'direct_ssh',
   status: 'running',
   intent: 'analysis',
   command: 'sleep 600',
@@ -53,6 +54,28 @@ const job = (overrides: Partial<ComputeJob> = {}): ComputeJob => ({
   finished_at: undefined,
   harvested_at: undefined,
   ...overrides
+})
+
+const slurmJob = (overrides: Partial<ComputeJob> = {}): ComputeJob =>
+  job({
+    execution_mode: 'slurm',
+    remote_handle: JSON.stringify({
+      driver: 'slurm',
+      version: 1,
+      scheduler_job_id: '456',
+      workdir: '~/.openscience/jobs/job-1',
+      stdout_path: '~/.openscience/jobs/job-1/stdout',
+      stderr_path: '~/.openscience/jobs/job-1/stderr'
+    }),
+    ...overrides
+  })
+
+const sshSuccess = (stdout = ''): Awaited<ReturnType<SshRunner['run']>> => ({
+  exitCode: 0,
+  stdout,
+  stderr: '',
+  truncated: false,
+  timedOut: false
 })
 
 // Preserve the inferred Vitest mock types so individual tests can configure failures without casts.
@@ -356,6 +379,104 @@ describe('ComputeJobDeletionOwner', () => {
       expect(cleanup).toContain('rm -rf -- "$workdir"')
     }
   )
+
+  it('confirms Slurm cancellation before deleting an active owner Job workdir and rows', async () => {
+    const harness = createHarness([slurmJob()])
+    harness.runner.run.mockImplementation(async (_host, command) => {
+      if (command.startsWith('scancel ')) {
+        harness.order.push('slurm-cancel')
+        return sshSuccess()
+      }
+      if (command.startsWith('squeue ')) {
+        harness.order.push('slurm-terminal-confirmed')
+        return sshSuccess('CANCELLED\n')
+      }
+      harness.order.push('remote-cleanup')
+      return sshSuccess()
+    })
+
+    await harness.owner.prepareSessionJobDeletion('project-1', 'session-1')
+    harness.order.push('owner-authority')
+    await harness.owner.commitSessionJobDeletion('project-1', 'session-1')
+
+    expect(harness.order).toEqual([
+      'begin',
+      'queue-paused',
+      'poller-paused',
+      'dispatch-drained',
+      'poller-resumed',
+      'owner-authority',
+      'slurm-cancel',
+      'slurm-terminal-confirmed',
+      'remote-cleanup',
+      'delete-rows',
+      'queue-resumed'
+    ])
+    const cleanup = String(harness.runner.run.mock.calls[2]?.[1])
+    expect(cleanup).toContain('rm -rf -- "$workdir"')
+    expect(cleanup).not.toContain('job.pid')
+    expect(cleanup).not.toContain('cleanup_job_pid 123')
+  })
+
+  it('recovers a missing active Slurm handle before cancellation and owner deletion', async () => {
+    const harness = createHarness([slurmJob({ remote_handle: undefined })])
+    harness.runner.run.mockImplementation(async (_host, command) => {
+      if (command.includes('scheduler_job_id') && command.includes('sacct --parsable2')) {
+        harness.order.push('slurm-recovered')
+        return sshSuccess(
+          'receipt|456\n' +
+            'expected|/home/researcher/.openscience/jobs/job-1\n' +
+            'active|456|openscience-job-1|/home/researcher/.openscience/jobs/job-1\n'
+        )
+      }
+      if (command.startsWith('scancel ')) {
+        harness.order.push('slurm-cancel')
+        return sshSuccess()
+      }
+      if (command.startsWith('squeue ')) {
+        harness.order.push('slurm-terminal-confirmed')
+        return sshSuccess('CANCELLED\n')
+      }
+      harness.order.push('remote-cleanup')
+      return sshSuccess()
+    })
+
+    await harness.owner.prepareSessionJobDeletion('project-1', 'session-1')
+    await harness.owner.commitSessionJobDeletion('project-1', 'session-1')
+
+    expect(harness.order).toEqual([
+      'begin',
+      'queue-paused',
+      'poller-paused',
+      'dispatch-drained',
+      'poller-resumed',
+      'slurm-recovered',
+      'slurm-cancel',
+      'slurm-terminal-confirmed',
+      'remote-cleanup',
+      'delete-rows',
+      'queue-resumed'
+    ])
+  })
+
+  it('retains owner rows and the deletion barrier until Slurm cancellation is terminal', async () => {
+    const harness = createHarness([slurmJob()])
+    harness.runner.run.mockImplementation(async (_host, command) => {
+      if (command.startsWith('scancel ')) return sshSuccess()
+      if (command.startsWith('squeue ')) return sshSuccess('RUNNING\n')
+      return sshSuccess()
+    })
+
+    await harness.owner.prepareSessionJobDeletion('project-1', 'session-1')
+    await expect(harness.owner.commitSessionJobDeletion('project-1', 'session-1')).rejects.toThrow(
+      'Slurm cancellation is not yet confirmed'
+    )
+
+    expect(harness.runner.run).toHaveBeenCalledTimes(2)
+    expect(harness.lifecycle.deleteOwnerRows).not.toHaveBeenCalled()
+    expect(harness.lifecycle.abortOwnerDeletion).not.toHaveBeenCalled()
+    expect(harness.queueManager.resumeOwner).not.toHaveBeenCalled()
+  })
 
   it('deletes queued jobs without contacting the remote host', async () => {
     const harness = createHarness([job({ status: 'queued', remote_handle: undefined })])

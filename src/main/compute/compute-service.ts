@@ -1,5 +1,6 @@
 import type {
   ComputeHost,
+  ComputeExecutionMode,
   ComputeHostDetails,
   ComputeJob,
   DetailsAuthor,
@@ -156,6 +157,10 @@ export class ComputeService {
 
   async clearScratchRoot(providerId: string): Promise<void> {
     return this.hostProfiles.clearScratchRoot(providerId)
+  }
+
+  async setExecutionMode(providerId: string, executionMode: ComputeExecutionMode): Promise<void> {
+    return this.repository.updateExecutionMode(providerId, executionMode)
   }
 
   async setConcurrencyLimit(providerId: string, limit: number): Promise<void> {

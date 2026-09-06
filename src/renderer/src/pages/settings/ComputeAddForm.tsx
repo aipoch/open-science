@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
-import type { ComputeAuthenticationMode } from '../../../../shared/compute'
+import type { ComputeAuthenticationMode, ComputeExecutionMode } from '../../../../shared/compute'
 import { DETAILS_DOC_MAX_LENGTH } from '../../../../shared/compute'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -25,6 +25,7 @@ import {
   getComputeAuthenticationStrategy,
   type ComputeAuthenticationValues
 } from './compute-authentication-form'
+import { ComputeExecutionModeField } from './ComputeExecutionModeField'
 
 type ComputeAddFormProps = {
   // Called with the new host's provider id after a successful create (SettingsPage navigates to the
@@ -50,6 +51,7 @@ export function ComputeAddForm({ onCreated, onCancel }: ComputeAddFormProps): Re
   const [identityFile, setIdentityFile] = useState('')
   const [authenticationMode, setAuthenticationMode] =
     useState<ComputeAuthenticationMode>('ssh_config')
+  const [executionMode, setExecutionMode] = useState<ComputeExecutionMode>('direct_ssh')
   const [password, setPassword] = useState('')
   const [operationId] = useState(() => crypto.randomUUID())
   const [passwordCapability, setPasswordCapability] = useState<
@@ -95,7 +97,8 @@ export function ComputeAddForm({ onCreated, onCancel }: ComputeAddFormProps): Re
         {
           sshAlias: alias.trim(),
           detailsDoc: detailsDoc.trim() ? detailsDoc : undefined,
-          operationId
+          operationId,
+          executionMode
         },
         { createSshConfigHost: createHost, createPasswordHost }
       )
@@ -181,6 +184,12 @@ export function ComputeAddForm({ onCreated, onCancel }: ComputeAddFormProps): Re
             aria-invalid={detailsTooLong || undefined}
           />
         </div>
+
+        <ComputeExecutionModeField
+          value={executionMode}
+          onChange={setExecutionMode}
+          name="compute-execution-mode"
+        />
 
         <ComputeAuthenticationSection
           mode={authenticationMode}

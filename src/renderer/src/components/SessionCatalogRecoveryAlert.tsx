@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Dialog } from 'radix-ui'
+import * as Dialog from '@/components/ui/dialog'
 
 import type { SessionCatalogRecovery } from '@/lib/session-persistence/session-persistence'
 import { Button } from '@/components/ui/button'

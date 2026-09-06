@@ -987,6 +987,9 @@ describe('notebook runtime service', () => {
       projectId: 'default-project',
       repository: new NotebookRunRepository(root),
       environmentStateTracker: verifiedPackageMutationTracker(),
+      getPackageMirror: () => ({
+        condaChannel: 'https://mirror.invalid/conda-forge/'
+      }),
       installPackagesImpl
     })
 
@@ -2441,7 +2444,8 @@ describe('notebook runtime service', () => {
       code: 'return 1',
       mcpRpcEndpoint: 'http://127.0.0.1:1/x',
       mcpRpcSocketPath: '\\\\.\\pipe\\open-science-notebook',
-      mcpRpcToken: 'tok'
+      mcpRpcToken: 'tok',
+      workspaceCwd: root
     })
 
     // Mapped outputs are still returned inline for the agent (recording is a side effect; the
@@ -3457,12 +3461,14 @@ describe('notebook runtime service', () => {
     it('cancels a queued shell call without starting its process', async () => {
       const root = await createStorageRoot()
       const entered: string[] = []
+      const firstStarted = createDeferred<void>()
       const releases = new Map<string, () => void>()
       const execute = vi.fn<NotebookShellProcess['execute']>(
         ({ command }) =>
           new Promise((resolve) => {
             entered.push(command)
             releases.set(command, () => resolve({ stdout: command, stderr: '', exitCode: 0 }))
+            if (command === 'first') firstStarted.resolve(undefined)
           })
       )
       const service = new NotebookRuntimeService({
@@ -3487,32 +3493,42 @@ describe('notebook runtime service', () => {
         cancellation.signal
       )
 
-      await vi.waitFor(async () => {
-        const state = await service.state({ sessionId: 'session-1', workspaceCwd: root })
-        expect(state.runs).toHaveLength(2)
-      })
-      const state = await service.state({ sessionId: 'session-1', workspaceCwd: root })
-      const queuedRun = state.runs.at(-1)
-      if (queuedRun?.status !== 'queued') {
-        await vi.waitFor(() => expect(entered).toHaveLength(2))
+      try {
+        // Wait for the process boundary; filesystem setup can exceed waitFor's default 1s in CI.
+        await firstStarted.promise
+        await vi.waitFor(
+          async () => {
+            const state = await service.state({ sessionId: 'session-1', workspaceCwd: root })
+            expect(state.runs).toHaveLength(2)
+            expect(state.runs.at(-1)).toMatchObject({
+              script: 'cancelled-before-start',
+              status: 'queued'
+            })
+          },
+          { timeout: 10_000 }
+        )
+        expect(entered).toEqual(['first'])
+        cancellation.abort()
+        await expect(queued).resolves.toEqual({
+          stdout: '',
+          stderr: 'Shell command was cancelled.',
+          exitCode: null
+        })
+        expect(entered).toEqual(['first'])
+
+        releases.get('first')?.()
+        await expect(first).resolves.toEqual({ stdout: 'first', stderr: '', exitCode: 0 })
+        const finalState = await service.state({ sessionId: 'session-1', workspaceCwd: root })
+        expect(finalState.runs.at(-1)).toMatchObject({ status: 'cancelled' })
+      } finally {
+        execute.mockImplementation(async ({ command }) => ({
+          stdout: command,
+          stderr: '',
+          exitCode: 0
+        }))
         for (const release of releases.values()) release()
         await Promise.allSettled([first, queued])
       }
-      expect(queuedRun).toMatchObject({ script: 'cancelled-before-start', status: 'queued' })
-
-      await vi.waitFor(() => expect(entered).toEqual(['first']))
-      cancellation.abort()
-      await expect(queued).resolves.toEqual({
-        stdout: '',
-        stderr: 'Shell command was cancelled.',
-        exitCode: null
-      })
-      expect(entered).toEqual(['first'])
-
-      releases.get('first')?.()
-      await expect(first).resolves.toEqual({ stdout: 'first', stderr: '', exitCode: 0 })
-      const finalState = await service.state({ sessionId: 'session-1', workspaceCwd: root })
-      expect(finalState.runs.at(-1)).toMatchObject({ status: 'cancelled' })
     })
 
     it('cancels and drains queued shell work before Session shutdown completes', async () => {
@@ -7692,7 +7708,7 @@ describe('notebook runtime service', () => {
       expect(result.target).toEqual({ language: 'python', selection: 'unresolved' })
     })
 
-    it('falls back to the region default mirror when nothing is configured', async () => {
+    it('falls back to public indexes when no configured or probed mirror is reachable', async () => {
       const root = await createStorageRoot()
       const calls: Array<Partial<InstallDepsForTest> | undefined> = []
       const service = new NotebookRuntimeService({
@@ -7709,9 +7725,8 @@ describe('notebook runtime service', () => {
         }),
         getPackageMirror: () => undefined,
         locale: 'zh-CN',
-        // Force the latency probe to find nothing reachable so the resolver takes the deterministic
-        // locale fallback (zh-CN -> CN mirror) instead of racing real network from the CI runner,
-        // where the public mirror wins and leaves condaChannel unset.
+        // Force the latency probe to find nothing reachable. The resolver must use public indexes
+        // rather than reviving an unverified locale mirror that the probe just rejected.
         mirrorProbe: {
           probe: async () => {
             throw new Error('probe unreachable (test)')
@@ -7727,8 +7742,9 @@ describe('notebook runtime service', () => {
       resetAutoMirrorCache()
       await service.managePackages({ language: 'r', packages: ['ggplot2'] })
 
-      expect(calls[0]?.condaChannel).toMatch(/tuna|ustc|aliyun/i)
-      expect(calls[0]?.cranMirror).toMatch(/tuna|ustc/i)
+      expect(calls[0]?.condaChannel).toBeUndefined()
+      expect(calls[0]?.pypiIndex).toBeUndefined()
+      expect(calls[0]?.cranMirror).toBeUndefined()
     })
 
     it('never spawns real installs when installPackagesImpl is injected (no getPackageMirror wired)', async () => {
@@ -8043,6 +8059,7 @@ describe('notebook runtime service', () => {
       const root = await createStorageRoot()
       const events: string[] = []
       let releaseInstall: (() => void) | undefined
+      const installStarted = Promise.withResolvers<void>()
       // v4: a session runs ONE env per language, so "different envs" now means different SESSIONS —
       // an installer session bound to a named env vs a runner session on the app-managed default.
       const namedPy = pythonBin(envPrefix(getRuntimeRoot(root), 'my-analysis'))
@@ -8086,6 +8103,7 @@ describe('notebook runtime service', () => {
           events.push('install:my-analysis:start')
           await new Promise<void>((resolve) => {
             releaseInstall = resolve
+            installStarted.resolve()
           })
           return { ok: true, needsRestart: false, log: '' }
         }
@@ -8103,7 +8121,7 @@ describe('notebook runtime service', () => {
         language: 'python',
         packages: ['numpy']
       })
-      await vi.waitFor(() => expect(releaseInstall).toBeDefined())
+      await installStarted.promise
 
       // A run in a DIFFERENT session on the DEFAULT python env proceeds while the my-analysis install
       // holds only its own env lock — the lock is keyed by resolved env name, not language.

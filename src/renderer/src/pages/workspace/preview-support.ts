@@ -54,12 +54,15 @@ const PREVIEW_SUPPORTED_EXTENSIONS: Record<string, PreviewFileFormat> = {
 
 export const PREVIEW_CODE_LANGUAGES: Record<string, string> = {
   bash: 'bash',
+  bib: 'bibtex',
+  bibtex: 'bibtex',
   css: 'css',
   js: 'javascript',
   jsx: 'jsx',
   py: 'python',
   r: 'r',
   sh: 'bash',
+  tex: 'latex',
   ts: 'typescript',
   tsx: 'tsx'
 }

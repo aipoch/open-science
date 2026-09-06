@@ -37,7 +37,9 @@ const APP_MCP_SERVERS: readonly AppMcpServerDefinition[] = [
       'notebook_shutdown',
       'inspect_packages',
       'manage_packages',
-      'manage_environments'
+      'manage_environments',
+      'list_memory_categories',
+      'search_memories'
     ]
   },
   {
@@ -54,6 +56,20 @@ const APP_MCP_SERVERS: readonly AppMcpServerDefinition[] = [
     canonicalName: 'open-science-literature',
     openCodeName: 'open_science_literature',
     tools: ['read_document']
+  },
+  {
+    canonicalName: 'open-science-library',
+    openCodeName: 'open_science_library',
+    tools: [
+      'search_library',
+      'read_library_abstract',
+      'read_library_pdf',
+      'format_references',
+      'format_citation_document',
+      'prepare_latex_bundle',
+      'save_to_inbox',
+      'acquire_pdf'
+    ]
   },
   {
     canonicalName: 'open-science-host-message',

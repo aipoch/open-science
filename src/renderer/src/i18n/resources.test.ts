@@ -3291,7 +3291,6 @@ describe('Russian catalog quality', () => {
 describe('Japanese safety copy', () => {
   it.each([
     ['Allow globally', 'すべてのプロジェクトで許可'],
-    ['-y @modelcontextprotocol/server-memory', '-y @modelcontextprotocol/server-memory'],
     ['*.internal.example, 10.0.0.0/8', '*.internal.example, 10.0.0.0/8'],
     ['Approval applies to this call only.', '承認はこのツール呼び出しにのみ適用されます。'],
     ['This call only', 'このツール呼び出しのみ'],
@@ -3312,7 +3311,6 @@ describe('Korean safety copy', () => {
     ['Clear all session grants', '모든 세션 권한 지우기'],
     ['Grant folder…', '폴더 권한 부여…'],
     ['Grant this folder', '이 폴더에 권한 부여'],
-    ['-y @modelcontextprotocol/server-memory', '-y @modelcontextprotocol/server-memory'],
     ['*.internal.example, 10.0.0.0/8', '*.internal.example, 10.0.0.0/8'],
     ['Approval applies to this call only.', '승인은 이 호출에만 적용됩니다.'],
     ['This call only', '이 호출만'],
@@ -3640,8 +3638,11 @@ describe('Korean binding terminology', () => {
       const offenders = Object.entries(catalog('ko'))
         .filter(([key]) => {
           const sourceText = englishOf(key)
-            .replace(/<code>.*?<\/code>/g, '')
-            .replace(/\{\{\w+\}\}|<\/?\w+>|https?:\/\/\S+|\b[A-Za-z]:\\[\w.\\-]*(?<!\.)/g, '')
+            // Extract prose for glossary matching; this text is never rendered as HTML.
+            .split(
+              /<code>.*?<\/code>|\{\{\w+\}\}|<\/?\w+>|https?:\/\/\S+|\b[A-Za-z]:\\[\w.\\-]*(?<!\.)/g
+            )
+            .join(' ')
           return source.test(stripSource ? sourceText.replace(stripSource, '') : sourceText)
         })
         .filter(([, value]) => !value.includes(expected))
@@ -3815,7 +3816,6 @@ describe('Russian safety copy', () => {
 describe('French safety copy', () => {
   it.each([
     ['Allow globally', 'Autoriser pour tous les projets'],
-    ['-y @modelcontextprotocol/server-memory', '-y @modelcontextprotocol/server-memory'],
     ['*.internal.example, 10.0.0.0/8', '*.internal.example, 10.0.0.0/8'],
     ['Approval applies to this call only.', "L'autorisation s'applique uniquement à cet appel."],
     ['This call only', 'Pour cet appel uniquement'],
@@ -4901,13 +4901,16 @@ const isProse = (text: string): boolean => {
 
 type BareCopy = { text: string; line: number }
 
-const decodeJsxEntities = (text: string): string =>
-  text
-    .replaceAll('&apos;', "'")
-    .replaceAll('&quot;', '"')
-    .replaceAll('&amp;', '&')
-    .replaceAll('&lt;', '<')
-    .replaceAll('&gt;', '>')
+const decodeJsxEntities = (text: string): string => {
+  const entities: Record<string, string> = {
+    '&apos;': "'",
+    '&quot;': '"',
+    '&amp;': '&',
+    '&lt;': '<',
+    '&gt;': '>'
+  }
+  return text.replace(/&(?:apos|quot|amp|lt|gt);/g, (entity) => entities[entity])
+}
 
 const bareJsxAstText = (source: string): BareCopy[] => {
   const sourceFile = ts.createSourceFile(
@@ -5106,6 +5109,10 @@ const NOT_TRANSLATABLE = new Set([
   'Remote.It',
   'Discord',
   'GitHub',
+  'PubMed',
+  'Crossref',
+  // A literal DOI example; translating its suffix would change the identifier.
+  '10.1000/example',
   'SKILL.md',
   'claude setup-token',
   'argocd',
@@ -5120,7 +5127,6 @@ const NOT_TRANSLATABLE = new Set([
   'Enter / Tab',
   // A placeholder showing literal CLI arguments. Translating it would suggest the user should type
   // words instead of flags.
-  '-y @modelcontextprotocol/server-memory',
   'KEY=value ANOTHER_KEY=value',
   'Authorization: Bearer <token> X-Api-Key: <key>',
   '# Instructions Step-by-step guidance for the agent…'

@@ -1,6 +1,7 @@
 import type {
   ChangeComputeHostAuthenticationRequest,
   ComputeAuthenticationMode,
+  ComputeExecutionMode,
   ComputeHost,
   CreatePasswordComputeHostRequest,
   ResetPasswordComputeHostRequest
@@ -21,6 +22,7 @@ type CreatePasswordHostPersistence = Readonly<{
   sshAlias: string
   displayName?: string
   detailsDoc?: string
+  executionMode?: ComputeExecutionMode
   username: string
   port: number
   ciphertext: Buffer
@@ -201,6 +203,7 @@ class ComputeAuthOwner {
       alias,
       profile.displayName,
       request.detailsDoc ?? '',
+      request.executionMode ?? 'direct_ssh',
       username,
       profile.port,
       request.password
@@ -233,6 +236,7 @@ class ComputeAuthOwner {
       sshAlias: alias,
       displayName: profile.displayName,
       detailsDoc: request.detailsDoc,
+      executionMode: request.executionMode,
       username,
       port: profile.port!,
       ciphertext,

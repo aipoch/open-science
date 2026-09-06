@@ -355,7 +355,7 @@ describe('MarketplaceRepository', () => {
     )
   })
 
-  it('reconstructs persisted records from known, validated fields', async () => {
+  it('protects unreadable authoritative records while sanitizing disposable caches after repair', async () => {
     const root = await mkdtemp(join(tmpdir(), 'marketplace-sanitize-'))
     await writeFile(
       join(root, 'specialist-marketplace.json'),
@@ -476,7 +476,28 @@ describe('MarketplaceRepository', () => {
       'utf8'
     )
 
-    const document = await new MarketplaceRepository(root).getAll()
+    const file = join(root, 'specialist-marketplace.json')
+    const original = await readFile(file, 'utf8')
+    const repository = new MarketplaceRepository(root)
+    await expect(repository.getAll()).rejects.toThrow(/Repair specialist-marketplace.json/)
+    await expect(
+      repository.cacheRoot(
+        'other',
+        new Uint8Array([1]),
+        new Uint8Array([2]),
+        '2026-08-18T00:00:00.000Z'
+      )
+    ).rejects.toThrow(/Repair specialist-marketplace.json/)
+    expect(await readFile(file, 'utf8')).toBe(original)
+    // Explicitly repair authoritative records, leaving the original disposable cache fixture.
+    const repaired = JSON.parse(original)
+    repaired.sources = [repaired.sources[0]]
+    repaired.installations = [repaired.installations[0]]
+    delete repaired.sources[0].injected
+    delete repaired.installations[0].injected
+    repaired.pendingInstallations = []
+    await writeFile(file, JSON.stringify(repaired))
+    const document = await repository.getAll()
 
     expect(document.sources).toEqual([
       {

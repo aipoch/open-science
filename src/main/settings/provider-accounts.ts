@@ -110,7 +110,7 @@ class ProviderAccountsModule {
     this.modelCatalog = new ProviderModelCatalogOwner(
       this.repository,
       (provider) => this.resolveProvider(provider),
-      () => this.xai.getAccessToken()
+      () => this.xai.getAccessCredential()
     )
   }
 
@@ -406,13 +406,16 @@ class ProviderAccountsModule {
         ? undefined
         : this.frameworkIncompatibilityResult(resolved.provider, framework)
 
+    let expectedKeyRef = storedValidationTarget?.keyRef
     let xaiAuthResult: ValidateProviderResult | undefined
     let validationProvider = resolved.provider
     if (storedValidationTarget && isXaiSubscriptionProvider(storedValidationTarget.type)) {
       try {
+        const credential = await this.xai.getAccessCredential()
+        expectedKeyRef = credential.keyRef
         validationProvider = {
           ...resolved.provider,
-          key: await this.xai.getAccessToken(),
+          key: credential.token,
           apiEndpoints: ['responses']
         }
       } catch (error) {
@@ -490,8 +493,25 @@ class ProviderAccountsModule {
       return { ...result, applied }
     }
 
-    await this.repository.upsertProvider({ ...stored, ...validationPatch })
-    return { ...result, applied: true }
+    const applied = await this.repository.updateProviderValidationIfTargetMatches(
+      stored.id,
+      (current, currentSettings) => {
+        const currentModel =
+          request.model ??
+          (currentSettings.activeProviderId === current.id
+            ? currentSettings.activeModel
+            : undefined)
+        return (
+          this.providerValidationGenerations.get(current.id) === validationGeneration &&
+          currentSettings.agentFrameworkId === settings.agentFrameworkId &&
+          current.keyRef === expectedKeyRef &&
+          this.sameValidationTarget(resolved.provider, this.resolveProvider(current, currentModel))
+        )
+      },
+      result,
+      validationTarget
+    )
+    return { ...result, applied }
   }
 
   async refreshProviderModels(

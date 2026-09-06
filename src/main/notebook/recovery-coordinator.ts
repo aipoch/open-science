@@ -18,6 +18,7 @@ import {
   type WorkingCacheFinalizationTarget
 } from './windows-micromamba-working-cache'
 import { defaultOperationChildLiveness, reconcileInterruptedOperations } from './operation-recovery'
+import { buildManagedRuntimeProcessEnvironment } from './process-environment'
 import { verifyExecutable } from './provisioner-runtime'
 import { addRepairRequired, DEFAULT_PY_ENV, DEFAULT_R_ENV, pythonBin, rBin } from './runtime-paths'
 import { NotebookRuntimeRepairPolicy } from './runtime-repair-policy'
@@ -277,7 +278,15 @@ export class NotebookRecoveryCoordinator {
             rejectUnsafe('Interrupted environment executable escapes the managed runtime root.')
           }
           try {
-            await verifyExecutable(canonicalBin, { prefix: canonicalPrefix })
+            const executableLanguage = language ?? (bin === pythonBin(targetPath) ? 'python' : 'r')
+            await verifyExecutable(canonicalBin, {
+              prefix: canonicalPrefix,
+              env: buildManagedRuntimeProcessEnvironment(this.runtimeRoot, {
+                language: executableLanguage,
+                prefix: canonicalPrefix
+              }),
+              completeEnv: true
+            })
             return
           } catch {
             // An interrupted mutation can leave an interpreter file before the prefix is runnable.

@@ -356,6 +356,12 @@ class AcpRuntimeCoordinator {
     return this.runtimeForSession(sessionId).getSessionPlanProjection(projectId, sessionId)
   }
 
+  discardUnavailableSessionPlan(
+    input: Parameters<AcpRuntime['discardUnavailableSessionPlan']>[0]
+  ): Promise<{ revision: number }> {
+    return this.runtimeForSession(input.sessionId).discardUnavailableSessionPlan(input)
+  }
+
   respondSessionPlan(
     input: Parameters<AcpRuntime['respondSessionPlan']>[0]
   ): ReturnType<AcpRuntime['respondSessionPlan']> {
@@ -373,6 +379,10 @@ class AcpRuntimeCoordinator {
   hasLiveSession(projectId: string, sessionId: string): boolean {
     const runtime = this.sessionRuntimes.get(sessionId)
     return runtime?.hasLiveSession(projectId, sessionId) ?? false
+  }
+
+  sessionMemorySignal(sessionId: string): AbortSignal | undefined {
+    return this.findRuntimeForSession(sessionId)?.sessionMemorySignal(sessionId)
   }
 
   isSessionMemoryEnabled(sessionId: string): boolean {

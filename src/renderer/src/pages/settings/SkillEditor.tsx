@@ -1,11 +1,15 @@
 /* Hallmark · pre-emit critique: P5 H5 E4 S5 R5 V4 */
 import type { TFunction } from 'i18next'
 import { AlertTriangle, ChevronDown, FileUp, Upload, X } from 'lucide-react'
-import { RadioGroup } from 'radix-ui'
+import { Dialog, RadioGroup } from 'radix-ui'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Trans, useTranslation } from 'react-i18next'
 
-import type { SkillPackageFileInfo, SkillReference } from '../../../../shared/settings'
+import type {
+  SkillDetailView,
+  SkillPackageFileInfo,
+  SkillReference
+} from '../../../../shared/settings'
 import { serializePersonalSkillDocument } from '../../../../shared/personal-skill-document'
 import {
   isSkillPackageBudgetedPath,
@@ -15,7 +19,17 @@ import { parseSkillDocument } from '../../../../shared/skill-frontmatter'
 import { ErrorNotice } from '@/components/error-notice'
 import { FileDropOverlay } from '@/components/FileDropOverlay'
 import { Button } from '@/components/ui/button'
+import { isSafeSkillReferenceName } from '../../../../shared/skill-reference-name'
 import { Input } from '@/components/ui/input'
+import {
+  dialogBodyClassName,
+  dialogDescriptionClassName,
+  dialogFooterClassName,
+  dialogHeaderClassName,
+  dialogOverlayClassName,
+  dialogPanelClassName,
+  dialogTitleClassName
+} from '@/components/ui/dialog-chrome'
 import { Textarea } from '@/components/ui/textarea'
 import { useFileDropZone } from '@/hooks/useFileDropZone'
 import { useSettingsStore } from '@/stores/settings-store'
@@ -24,6 +38,7 @@ import { SettingsIconAction, SettingsLoadNotice } from './SettingsLayout'
 type SkillEditorReference = SkillReference & { sizeBytes?: number }
 
 export type SkillDraft = {
+  etag?: string
   id?: string
   name: string
   description: string
@@ -349,6 +364,10 @@ const SkillEditor = ({ initial, onCancel, onSave }: SkillEditorProps): React.JSX
     if (addingReferences || files.length === 0) return
 
     setReferenceError(null)
+    if (files.some((file) => !isSafeSkillReferenceName(file.name))) {
+      setReferenceError(t('Use a safe filename without path separators or reserved characters.'))
+      return
+    }
     const selected = new Map<string, File>()
     for (const file of files) selected.set(file.name, file)
     const retained = references.filter((reference) => !selected.has(reference.path))
@@ -413,6 +432,7 @@ const SkillEditor = ({ initial, onCancel, onSave }: SkillEditorProps): React.JSX
     try {
       await onSave({
         id: initial.id,
+        etag: initial.etag,
         name: currentName,
         description: description.trim(),
         body: persistedBody,
@@ -712,11 +732,28 @@ type SkillEditLoaderProps = {
   onDone: () => void
 }
 
+const toSkillDraft = (detail: SkillDetailView): SkillDraft => ({
+  id: detail.id,
+  etag: detail.etag,
+  name: detail.name,
+  description: detail.description,
+  body: detail.body,
+  metadata: detail.metadata,
+  references: detail.references.map((reference) => ({
+    path: reference.path,
+    sizeBytes: reference.sizeBytes
+  })),
+  packageFiles: detail.packageFiles
+})
+
 // Loads an existing personal skill's content, then renders the editor pre-filled.
 const SkillEditLoader = ({ skillId, onDone }: SkillEditLoaderProps): React.JSX.Element => {
   const { t } = useTranslation()
   const updateSkill = useSettingsStore((state) => state.updateSkill)
   const [draft, setDraft] = useState<SkillDraft | null>(null)
+  const [conflict, setConflict] = useState<{ draft: SkillDraft; latest: SkillDraft } | null>(null)
+  const [resolving, setResolving] = useState(false)
+  const [conflictError, setConflictError] = useState<string | null>(null)
   const [loadState, setLoadState] = useState<'loading' | 'ready' | 'error' | 'not-found'>('loading')
   const loadRequestRef = useRef(0)
 
@@ -725,18 +762,11 @@ const SkillEditLoader = ({ skillId, onDone }: SkillEditLoaderProps): React.JSX.E
       void window.api.settings.getSkillDetail(skillId).then(
         (detail) => {
           if (loadRequestRef.current !== requestId) return
-          setDraft({
-            id: detail.id,
-            name: detail.name,
-            description: detail.description,
-            body: detail.body,
-            metadata: detail.metadata,
-            references: detail.references.map((ref) => ({
-              path: ref.path,
-              sizeBytes: ref.sizeBytes
-            })),
-            packageFiles: detail.packageFiles
-          })
+          if (!detail.etag) {
+            setLoadState('error')
+            return
+          }
+          setDraft(toSkillDraft(detail))
           setLoadState('ready')
         },
         (error) => {
@@ -788,21 +818,134 @@ const SkillEditLoader = ({ skillId, onDone }: SkillEditLoaderProps): React.JSX.E
     )
   }
 
+  const saveDraft = async (next: SkillDraft): Promise<void> => {
+    // Optional API preconditions preserve old clients; the editor never performs a blind write.
+    if (!next.etag) throw new Error(t('Open Science could not load this Skill.'))
+    try {
+      await updateSkill({
+        id: next.id ?? skillId,
+        etag: next.etag,
+        description: next.description,
+        body: next.body,
+        metadata: next.metadata,
+        references: next.references
+      })
+    } catch (error) {
+      if (!(error instanceof Error) || !error.message.includes('This Skill changed.')) throw error
+      const detail = await window.api.settings.getSkillDetail(skillId)
+      if (!detail.etag) throw new Error(t('Open Science could not load this Skill.'))
+      setConflict({ draft: next, latest: toSkillDraft(detail) })
+      setConflictError(null)
+      return
+    }
+    setConflict(null)
+    onDone()
+  }
+
+  const overwrite = async (): Promise<void> => {
+    if (!conflict || resolving) return
+    setResolving(true)
+    setConflictError(null)
+    try {
+      // Recheck the version that was reviewed; a later change needs another explicit decision.
+      await saveDraft({ ...conflict.draft, etag: conflict.latest.etag })
+    } catch (error) {
+      setConflictError(error instanceof Error ? error.message : t('Unable to save this skill.'))
+    } finally {
+      setResolving(false)
+    }
+  }
+
   return (
-    <SkillEditor
-      initial={draft}
-      onCancel={onDone}
-      onSave={async (next) => {
-        await updateSkill({
-          id: next.id ?? skillId,
-          description: next.description,
-          body: next.body,
-          metadata: next.metadata,
-          references: next.references
-        })
-        onDone()
-      }}
-    />
+    <>
+      <SkillEditor key={draft.etag} initial={draft} onCancel={onDone} onSave={saveDraft} />
+      <Dialog.Root
+        open={conflict !== null}
+        onOpenChange={(open) => {
+          if (!open && !resolving) setConflict(null)
+        }}
+      >
+        <Dialog.Portal>
+          <Dialog.Overlay className={dialogOverlayClassName} />
+          <Dialog.Content
+            className={dialogPanelClassName(
+              'flex max-h-[85vh] w-[min(900px,calc(100vw-2rem))] flex-col p-0'
+            )}
+            onEscapeKeyDown={(event) => {
+              if (resolving) event.preventDefault()
+            }}
+            onInteractOutside={(event) => event.preventDefault()}
+          >
+            <div className={dialogHeaderClassName}>
+              <div>
+                <Dialog.Title className={dialogTitleClassName}>
+                  {t('Review Skill changes')}
+                </Dialog.Title>
+                <Dialog.Description className={dialogDescriptionClassName}>
+                  {t('This Skill changed while you were editing. Your draft is preserved.')}
+                </Dialog.Description>
+              </div>
+            </div>
+            {conflict ? (
+              <div className={`${dialogBodyClassName} min-h-0 overflow-y-auto`}>
+                <div className="grid gap-4 md:grid-cols-2">
+                  {[
+                    { label: t('Your draft'), value: conflict.draft },
+                    { label: t('Latest version'), value: conflict.latest }
+                  ].map(({ label, value }) => (
+                    <section
+                      key={label}
+                      aria-label={label}
+                      className="min-w-0 rounded-lg border border-border p-3"
+                    >
+                      <h3 className="mb-3 text-sm font-medium">{label}</h3>
+                      <pre className="max-h-64 overflow-auto whitespace-pre-wrap break-words text-xs">
+                        {serializePersonalSkillDocument(value)}
+                      </pre>
+                      <h4 className="mb-1 mt-4 text-sm font-medium">{t('References')}</h4>
+                      {value.references?.length ? (
+                        <ul className="space-y-1 break-all font-mono text-xs">
+                          {value.references.map((reference) => (
+                            <li key={reference.path}>{reference.path}</li>
+                          ))}
+                        </ul>
+                      ) : (
+                        <p className="text-xs text-muted-foreground">{t('No reference files')}</p>
+                      )}
+                    </section>
+                  ))}
+                </div>
+                <p className="mt-4 text-sm text-muted-foreground">
+                  {t(
+                    'Loading the latest version discards your draft. Overwriting replaces the editable content and removes reference files absent from your draft.'
+                  )}
+                </p>
+                {conflictError ? <SkillEditorAlert message={conflictError} /> : null}
+              </div>
+            ) : null}
+            <div className={`${dialogFooterClassName} flex-wrap`}>
+              <Button variant="ghost" disabled={resolving} onClick={() => setConflict(null)}>
+                {t('Keep editing')}
+              </Button>
+              <Button
+                variant="outline"
+                disabled={resolving}
+                onClick={() => {
+                  if (!conflict) return
+                  setDraft(conflict.latest)
+                  setConflict(null)
+                }}
+              >
+                {t('Load latest version')}
+              </Button>
+              <Button disabled={resolving} onClick={() => void overwrite()}>
+                {resolving ? t('Saving…') : t('Overwrite with my draft')}
+              </Button>
+            </div>
+          </Dialog.Content>
+        </Dialog.Portal>
+      </Dialog.Root>
+    </>
   )
 }
 

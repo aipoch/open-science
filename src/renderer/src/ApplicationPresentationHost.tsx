@@ -1,4 +1,4 @@
-import { useCallback, useRef } from 'react'
+import { memo, useCallback, useRef } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { CloseConfirmModal } from '@/components/CloseConfirmModal'
@@ -22,6 +22,7 @@ import { useApplicationStartup } from '@/hooks/useApplicationStartup'
 import { WorkspaceAgentRuntimeProvider } from '@/lib/acp/useWorkspaceAgentRuntime'
 import { WorkspaceComputeRecoveryBridge } from '@/lib/compute/WorkspaceComputeRecoveryBridge'
 import { HomePage } from '@/pages/home/HomePage'
+import { LiteratureLibraryPage } from '@/pages/literature/LiteratureLibraryPage'
 import { OnboardingWizard } from '@/pages/onboarding/OnboardingWizard'
 import { ComputeApprovalDialog } from '@/pages/settings/ComputeApprovalDialog'
 import { ConnectorApprovalDialog } from '@/pages/settings/ConnectorApprovalDialog'
@@ -34,6 +35,8 @@ import {
   WorkspaceMessageQueueProvider,
   WorkspaceMessageQueueRuntimeBridge
 } from '@/pages/workspace/workspace-message-queue-controller'
+
+const StableLiteratureLibraryPage = memo(LiteratureLibraryPage)
 
 const ApplicationPresentationHost = (): React.JSX.Element => {
   const { t } = useTranslation()
@@ -232,6 +235,8 @@ const ApplicationPresentationHost = (): React.JSX.Element => {
                 catalogRecovery={sessions.catalogRecovery}
                 onOpenGlobalSearch={events.globalSearch.open}
               />
+            ) : events.navigation.view === 'library' ? (
+              <StableLiteratureLibraryPage />
             ) : (
               <WorkspacePage
                 isSessionPersistenceHydrated={sessions.isHydrated}

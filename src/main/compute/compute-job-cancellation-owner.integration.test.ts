@@ -57,7 +57,8 @@ type CancellationTestSetup = Readonly<{
   operations: ComputeJobOperationRepository
   createJob(
     status: 'queued' | 'submitted' | 'running' | 'success',
-    handle?: typeof remoteHandle
+    handle?: typeof remoteHandle,
+    executionMode?: 'direct_ssh' | 'slurm'
   ): Promise<void>
 }>
 
@@ -72,7 +73,8 @@ describe('Compute Job cancellation owner (SQLite + fake SSH)', () => {
     const operations = database.repositories.operations
     const createJob = async (
       status: 'queued' | 'submitted' | 'running' | 'success',
-      handle = status === 'running' ? remoteHandle : undefined
+      handle = status === 'running' ? remoteHandle : undefined,
+      executionMode: 'direct_ssh' | 'slurm' = 'direct_ssh'
     ): Promise<void> => {
       await jobs.create({
         id: 'job-1',
@@ -83,6 +85,7 @@ describe('Compute Job cancellation owner (SQLite + fake SSH)', () => {
         intent: 'long calculation',
         command: 'sleep 100',
         commandHash: 'hash',
+        executionMode,
         remoteWorkdir: '~/.openscience/jobs/job-1',
         initialStatus: status,
         allowUnencryptedPersistence: !encrypted
@@ -239,6 +242,33 @@ describe('Compute Job cancellation owner (SQLite + fake SSH)', () => {
       attemptCount: 1,
       eligibleAt: expect.any(Date),
       claimToken: null
+    })
+  })
+
+  it('does not cancel a name-matching Slurm candidate with mismatched ownership evidence', async () => {
+    const { jobs, operations, createJob } = await setup()
+    await createJob('running', undefined, 'slurm')
+    const run = vi
+      .fn<ComputeConnectionLease['run']>()
+      .mockResolvedValue(
+        success(
+          'expected|/home/researcher/.openscience/jobs/job-1\n' +
+            'active|456|openscience-job-1|/shared/other/.openscience/jobs/job-1\n'
+        )
+      )
+    const owner = new ComputeJobCancellationOwner(operations, jobs)
+    const reaper = new ComputeJobCancellationReaper(operations, jobs, {
+      acquire: vi.fn(async () => ({ run }) as unknown as ComputeConnectionLease)
+    })
+
+    await owner.request('job-1', scope)
+    await reaper.runOnce()
+
+    expect(run).toHaveBeenCalledTimes(1)
+    expect(run.mock.calls.some(([command]) => command.startsWith('scancel '))).toBe(false)
+    await expect(owner.status('job-1', scope)).resolves.toMatchObject({
+      status: 'running',
+      cancellation_status: 'cancelling'
     })
   })
 

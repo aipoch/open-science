@@ -8,6 +8,7 @@ import { netFetchStandard } from '../skills/net-fetch'
 import { listProviderModels } from './list-models'
 import type { ResolvedProvider } from './provider-env'
 import type { SettingsRepository } from './repository'
+import type { XaiAccessCredential } from './xai-oauth'
 import type { StoredProvider } from './types'
 import { classifyStatus } from './validate'
 
@@ -15,7 +16,7 @@ export class ProviderModelCatalogOwner {
   constructor(
     private readonly repository: SettingsRepository,
     private readonly resolveProvider: (provider: StoredProvider) => ResolvedProvider,
-    private readonly getXaiAccessToken: () => Promise<string>
+    private readonly getXaiAccessCredential: () => Promise<XaiAccessCredential>
   ) {}
 
   async refresh(request: RefreshProviderModelsRequest): Promise<RefreshProviderModelsResult> {
@@ -36,10 +37,14 @@ export class ProviderModelCatalogOwner {
         message: 'This provider has no model-list endpoint.'
       }
     }
+    let expectedProvider = stored
     let key = this.resolveProvider(stored).key
     if (isXaiSubscriptionProvider(stored.type)) {
       try {
-        key = await this.getXaiAccessToken()
+        const credential = await this.getXaiAccessCredential()
+        key = credential.token
+        // This reference comes from the token's own save, never an unrelated later read.
+        expectedProvider = { ...stored, keyRef: credential.keyRef }
       } catch (error) {
         return {
           ok: false,
@@ -66,7 +71,17 @@ export class ProviderModelCatalogOwner {
     const models = isXaiSubscriptionProvider(stored.type)
       ? result.models.filter((model) => model.startsWith('grok-'))
       : result.models
-    await this.repository.updateProviderModelCatalogIfTargetMatches(stored, models)
+    const applied = await this.repository.updateProviderModelCatalogIfTargetMatches(
+      expectedProvider,
+      models
+    )
+    if (!applied) {
+      return {
+        ok: false,
+        category: 'unknown',
+        message: 'The provider changed while loading models. Try again.'
+      }
+    }
     return { ok: true, category: 'ok', models }
   }
 }

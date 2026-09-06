@@ -1827,7 +1827,7 @@ export const PdfPreviewRenderer = (props: PreviewFileRendererProps): React.JSX.E
       ? {
           kind: binding.sourceKind,
           projectId: props.item.projectId,
-          sessionId: binding.sourceSessionId,
+          ...(binding.sourceSessionId ? { sessionId: binding.sourceSessionId } : {}),
           versionId: binding.sourceVersionId,
           name: binding.name,
           path: props.item.path,

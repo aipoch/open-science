@@ -50,6 +50,13 @@ export class ComputeJobLifecycle {
     })
   }
 
+  async dispatchSubmitted(
+    jobId: string,
+    remoteHandle: string
+  ): Promise<ComputeJobTransitionResult> {
+    return this.apply(jobId, ['submitted'], { remoteHandle, lastPollError: null })
+  }
+
   async recoverRemoteHandle(
     jobId: string,
     observedStatus: ActiveJobStatus,

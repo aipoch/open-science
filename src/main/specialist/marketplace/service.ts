@@ -680,11 +680,16 @@ export class MarketplaceService {
         origin: 'marketplace'
       })
     } catch (error) {
-      await this.rollbackPendingInstallation(candidate.provenance, newlyDisabled)
+      // A rejected call does not prove rollback. Recovery must settle the package first.
+      this.packageRecovery = undefined
+      await this.recoverUnlocked().catch(() => undefined)
       throw error
     }
     if (result.status !== 'installed') {
-      await this.rollbackPendingInstallation(candidate.provenance, newlyDisabled)
+      if (result.code === 'recovery-failed' || result.code === 'rollback-failed') {
+        this.packageRecovery = undefined
+        await this.recoverUnlocked().catch(() => undefined)
+      } else await this.rollbackPendingInstallation(candidate.provenance, newlyDisabled)
       return result
     }
     this.installCandidates.delete(request.candidateToken)

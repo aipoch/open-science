@@ -72,6 +72,7 @@ const computePaths = [
   'compute.download',
   'compute.enabledHostsGet',
   'compute.enabledHostsSet',
+  'compute.executionModeSet',
   'compute.get',
   'compute.hostEnabledSet',
   'compute.hostSelectedSet',

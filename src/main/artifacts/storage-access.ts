@@ -454,6 +454,7 @@ export {
   getArtifactCurrentRunFilePath,
   getProjectArtifactDir,
   isMissingFileError,
-  isPathInsideRoot
+  isPathInsideRoot,
+  resolveAllowedImportFilePath
 }
 export type { ArtifactStorageAccessDurability }

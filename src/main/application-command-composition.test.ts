@@ -62,6 +62,7 @@ const dependencies = (): ApplicationCommandCompositionDependencies =>
     compute: EMPTY_OWNER,
     permissionGrants: EMPTY_OWNER,
     tags: EMPTY_OWNER,
+    literature: EMPTY_OWNER,
     dataContent: EMPTY_OWNER,
     host: EMPTY_OWNER
   }) as ApplicationCommandCompositionDependencies
@@ -191,9 +192,21 @@ describe('application command composition', () => {
     const composition = createApplicationCommandComposition(dependencies())
 
     expect(composition.electron.commandNames()).toEqual([
+      'acp:discard-unavailable-plan',
       'acp:respond-elicitation',
       'acp:respond-permission',
       'acp:respond-plan',
+      'literature:citation-styles',
+      'literature:complete-metadata',
+      'literature:format-document',
+      'literature:format-references',
+      'literature:full-text',
+      'literature:get',
+      'literature:import-pdf',
+      'literature:import-records',
+      'literature:jobs',
+      'literature:search',
+      'literature:transact',
       'memory:clear-all',
       'memory:create-category',
       'memory:create-entry',

@@ -11,6 +11,7 @@ import {
   type UploadedAttachment
 } from '../../shared/uploads'
 import type { ManagedUploadResolver } from './managed-upload-resolver'
+import { contentBlobIdForVersion, registerContentBlob } from '../storage/content-blob-registry'
 import {
   UPLOADS_DIR,
   assertPathInsideRoot,
@@ -42,6 +43,7 @@ type UploadVersionRecord = {
   contentType: string | null
   sizeBytes: bigint
   checksum: string
+  contentBlobId: string | null
   createdAt: Date | null
 }
 
@@ -347,6 +349,15 @@ class StagedPublicationOwner {
           originalFilename: attachment.originalName
         }
       })
+      const contentBlobId = contentBlobIdForVersion('upload-version', versionId)
+      await registerContentBlob(tx, {
+        id: contentBlobId,
+        storageKey: contentStorageKey,
+        checksum,
+        sizeBytes: BigInt(fileInfo.size),
+        contentType: attachment.mimeType,
+        createdAt
+      })
       return tx.uploadVersion.create({
         data: {
           id: versionId,
@@ -360,6 +371,7 @@ class StagedPublicationOwner {
           contentType: attachment.mimeType,
           sizeBytes: BigInt(fileInfo.size),
           checksum,
+          contentBlobId,
           createdAt
         }
       })

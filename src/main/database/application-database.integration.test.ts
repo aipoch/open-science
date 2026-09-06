@@ -57,9 +57,6 @@ const removeComputePasswordAuthSchema = async (client: PrismaClient): Promise<vo
 }
 
 const removeComputeAnalysisSchema = async (client: PrismaClient): Promise<void> => {
-  await client.$executeRawUnsafe('DROP TABLE "ComputeJobOperation"')
-  await client.$executeRawUnsafe('ALTER TABLE "ComputeJob" DROP COLUMN "fileEvidence"')
-  await client.$executeRawUnsafe('ALTER TABLE "ComputeJob" DROP COLUMN "producerRunId"')
   const [{ sql }] = await client.$queryRawUnsafe<Array<{ sql: string }>>(
     `SELECT "sql" FROM "sqlite_schema" WHERE "type" = 'table' AND "name" = 'ComputeJob'`
   )
@@ -215,7 +212,9 @@ describe('application database (integration)', () => {
         '0025_managed_file_version_foundation',
         '0026_compute_job_remote_cleanup',
         '0027_project_session_defaults',
-        '0028_database_numeric_and_null_constraints'
+        '0028_database_numeric_and_null_constraints',
+        '0029_compute_host_execution_mode',
+        '0030_literature_foundation'
       ]
     })
 
@@ -691,11 +690,15 @@ describe('application database (integration)', () => {
     await client.$executeRawUnsafe('DROP TABLE "Tag"')
     await removeAgentMemoryTriggers(client)
     // Simulate a current pre-ledger schema with the targeted legacy table shape.
+    await client.$executeRawUnsafe('DROP TABLE "ManagedFileVersionWriteOperation"')
     await client.$executeRawUnsafe('DROP TABLE "_open_science_migrations"')
     await client.$executeRawUnsafe('ALTER TABLE "Project" DROP COLUMN "agentContext"')
     await removeComputePasswordAuthSchema(client)
     await removeComputeAnalysisSchema(client)
+    await client.$executeRawUnsafe('ALTER TABLE "ComputeJob" DROP COLUMN "fileEvidence"')
+    await client.$executeRawUnsafe('ALTER TABLE "ComputeJob" DROP COLUMN "producerRunId"')
     await client.$executeRawUnsafe('ALTER TABLE "ComputeJob" DROP COLUMN "sensitiveDataEncrypted"')
+    await client.$executeRawUnsafe('ALTER TABLE "ComputeJob" DROP COLUMN "executionMode"')
 
     await migrateApplicationDatabase(client)
     await client.$executeRawUnsafe('PRAGMA foreign_keys = OFF')
@@ -776,11 +779,15 @@ describe('application database (integration)', () => {
     await client.$executeRawUnsafe('DROP TABLE "Tag"')
     await removeAgentMemoryTriggers(client)
     // Simulate a current pre-ledger schema with the targeted legacy table shape.
+    await client.$executeRawUnsafe('DROP TABLE "ManagedFileVersionWriteOperation"')
     await client.$executeRawUnsafe('DROP TABLE "_open_science_migrations"')
     await client.$executeRawUnsafe('ALTER TABLE "Project" DROP COLUMN "agentContext"')
     await removeComputePasswordAuthSchema(client)
     await removeComputeAnalysisSchema(client)
+    await client.$executeRawUnsafe('ALTER TABLE "ComputeJob" DROP COLUMN "fileEvidence"')
+    await client.$executeRawUnsafe('ALTER TABLE "ComputeJob" DROP COLUMN "producerRunId"')
     await client.$executeRawUnsafe('ALTER TABLE "ComputeJob" DROP COLUMN "sensitiveDataEncrypted"')
+    await client.$executeRawUnsafe('ALTER TABLE "ComputeJob" DROP COLUMN "executionMode"')
 
     await migrateApplicationDatabase(client)
 
@@ -1264,7 +1271,9 @@ describe('application database (integration)', () => {
         '0025_managed_file_version_foundation',
         '0026_compute_job_remote_cleanup',
         '0027_project_session_defaults',
-        '0028_database_numeric_and_null_constraints'
+        '0028_database_numeric_and_null_constraints',
+        '0029_compute_host_execution_mode',
+        '0030_literature_foundation'
       ]
     })
 

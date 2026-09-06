@@ -56,6 +56,13 @@ type JobAnalysisRecoveryStatus = Readonly<{
   retry: () => void
 }>
 
+const DURABLE_SESSION_READINESS_RETRY_MS = 250
+
+const durableSessionAcceptsAnalysis = (
+  session: Pick<ChatSession, 'status' | 'activeRun'>
+): boolean =>
+  (session.status === 'idle' || session.status === 'error') && session.activeRun === undefined
+
 // Subscribes to all done-state compute:job-updated broadcasts and runs the analysis turn trigger.
 // Also scans every Session for pending notifications on startup (restart recovery path).
 export const useJobAnalysisEffect = ({
@@ -87,24 +94,44 @@ export const useJobAnalysisEffect = ({
     let pendingScanRetry: ReturnType<typeof setTimeout> | undefined
     const turnEndUnsubscribes = new Set<() => void>()
 
-    const loadAnalysisSession = async (sessionId: string): Promise<ChatSession | undefined> => {
+    const loadAnalysisSession = async (
+      sessionId: string,
+      waitForDurableReadiness = false
+    ): Promise<ChatSession | undefined> => {
       let session = useSessionStore
         .getState()
         .sessions.find((candidate) => candidate.id === sessionId)
-      if (!session || session.contentLoaded !== false) return session
-      const persisted = await loadPersistedSession({
-        projectId: session.projectId,
-        sessionId
-      })
-      if (!isActive || !persisted) return undefined
-      session = hydratePersistedSessionIfPresent(persisted)
-      return session
+      if (!session) return undefined
+      if (session.contentLoaded !== false && !waitForDurableReadiness) return session
+
+      while (isActive) {
+        const persisted = await loadPersistedSession({
+          projectId: session.projectId,
+          sessionId
+        })
+        if (!isActive) return undefined
+        // Older persistence adapters may not provide lazy single-Session reads. Preserve their
+        // existing in-memory behavior rather than preventing completion delivery.
+        if (!persisted) return session
+        if (waitForDurableReadiness && !durableSessionAcceptsAnalysis(persisted)) {
+          await new Promise((resolve) => setTimeout(resolve, DURABLE_SESSION_READINESS_RETRY_MS))
+          session =
+            useSessionStore.getState().sessions.find((candidate) => candidate.id === sessionId) ??
+            session
+          continue
+        }
+        return hydratePersistedSessionIfPresent(persisted)
+      }
+      return undefined
     }
 
     const trigger = createJobAnalysisTrigger({
       sendPrompt: async (sessionId, text, messageId, jobIds) => {
         if (!isActive) return undefined
-        const session = await loadAnalysisSession(sessionId)
+        // CLI Tasks commit their terminal Session snapshot after the ACP stop event. The renderer
+        // can observe that stop first, so use the durable idle snapshot as the admission boundary;
+        // otherwise an application prompt can append from stale state and race the Task commit.
+        const session = await loadAnalysisSession(sessionId, true)
         if (!isActive || !session) return undefined
         return admitLatestMessage({
           session,

@@ -4,6 +4,7 @@ import {
   ANNOTATION_LIMITS,
   annotationPayloadText,
   imageAnnotationSourceIsFixed,
+  pdfAnnotationSourceIsFixed,
   parseSideChatAnnotationText,
   prepareAnnotationsForAgent,
   sanitizeAnnotations,
@@ -289,6 +290,22 @@ describe('annotations', () => {
         }
       ])
     ).toEqual([])
+  })
+
+  it('keeps a Literature PDF anchor without inventing a source Session', () => {
+    const annotation = pdfAnnotation({
+      source: {
+        kind: 'literature-attachment-version',
+        projectId: 'project-1',
+        versionId: 'attachment-version-1',
+        name: 'library-paper.pdf',
+        path: 'literature-attachment-version:attachment-version-1',
+        checksum: 'b'.repeat(64)
+      }
+    })
+
+    expect(sanitizeAnnotations([annotation])).toEqual([annotation])
+    expect(pdfAnnotationSourceIsFixed(annotation.source)).toBe(true)
   })
 
   it('keeps a bounded PDF region image out of prompt text and returns it as visual input', () => {

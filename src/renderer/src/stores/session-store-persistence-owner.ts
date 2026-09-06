@@ -100,7 +100,6 @@ export type ChatSession = Omit<
   agentPromptInFlight?: boolean
   // Transient provenance owner for responses emitted while an interrupted turn is resumed.
   activeRunRuntimeSegmentId?: string
-  branchContextResetRequired?: boolean
   specialistSwitchResetRequired?: boolean
   // Transient: a restored durable choice resumed into a fresh Agent context. Keep the request id
   // until its hidden continuation is accepted so a renderer/IPC retry replays the same history.
@@ -189,10 +188,15 @@ export const createInitialSessionState = (): SessionStoreData => ({
 
 // Activity timestamps include unsaved local edits. Only the durable revision orders archive state;
 // equal versioned snapshots are echoes. Legacy unversioned snapshots retain arrival-order behavior.
-const projectSessionArchiveAuthority = (
-  current: ChatSession,
+const projectSessionMetadataAuthority = (
+  source: ChatSession,
   incoming: PersistedChatSession
 ): ChatSession => {
+  // A pending context reset survives metadata projections until this renderer performs it.
+  const current =
+    incoming.branchContextResetRequired && !source.branchContextResetRequired
+      ? { ...source, branchContextResetRequired: true }
+      : source
   const currentRevision = sessionRevision(current)
   const incomingRevision = sessionRevision(incoming)
   if (
@@ -299,7 +303,6 @@ export const toPersistedSession = (
     awaitingFirstAgentOutput,
     agentPromptInFlight,
     activeRunRuntimeSegmentId,
-    branchContextResetRequired,
     specialistSwitchResetRequired,
     elicitationHistoryReplayRequestId,
     branchSwitchBlocked,
@@ -328,7 +331,6 @@ export const toPersistedSession = (
   void awaitingFirstAgentOutput
   void agentPromptInFlight
   void activeRunRuntimeSegmentId
-  void branchContextResetRequired
   void specialistSwitchResetRequired
   void elicitationHistoryReplayRequestId
   void branchSwitchBlocked
@@ -512,7 +514,8 @@ const withTransientSessionState = (
     awaitingFirstAgentOutput: source.awaitingFirstAgentOutput,
     agentPromptInFlight: source.agentPromptInFlight,
     activeRunRuntimeSegmentId: source.activeRunRuntimeSegmentId,
-    branchContextResetRequired: source.branchContextResetRequired,
+    branchContextResetRequired:
+      source.branchContextResetRequired || hydrated.branchContextResetRequired,
     specialistSwitchResetRequired: source.specialistSwitchResetRequired,
     elicitationHistoryReplayRequestId: source.elicitationHistoryReplayRequestId,
     branchSwitchBlocked: source.branchSwitchBlocked,
@@ -564,10 +567,13 @@ const projectDelegationPolicyAuthority = (
   current: ChatSession,
   authority: PersistedChatSession
 ): ChatSession | undefined => {
-  if (sessionRevision(authority) < sessionRevision(current)) return undefined
+  const metadata = projectSessionMetadataAuthority(current, authority)
+  if (sessionRevision(authority) < sessionRevision(current)) {
+    return metadata === current ? undefined : metadata
+  }
 
   return {
-    ...projectSessionArchiveAuthority(current, authority),
+    ...metadata,
     revision: sessionRevision(authority),
     delegationPolicy: normalizeDelegationPolicy(authority.delegationPolicy),
     delegationPolicyAuthorityPending: undefined,
@@ -641,7 +647,7 @@ export const createSessionPersistenceOwner = <State extends SessionStoreData>(
       const existing = state.sessions.find((candidate) => candidate.id === session.id)
       if (existing?.contentLoaded === false) {
         const loaded = hydrateSession(session)
-        const archive = projectSessionArchiveAuthority(existing, session)
+        const archive = projectSessionMetadataAuthority(existing, session)
         const incomingIsNewer = sessionRevision(session) > sessionRevision(existing)
         const hydrated: ChatSession = {
           ...loaded,
@@ -683,8 +689,10 @@ export const createSessionPersistenceOwner = <State extends SessionStoreData>(
         const filesAdvanced = (session.filesRevision ?? 0) > (existing.filesRevision ?? 0)
         const fileIdentityMerge =
           sameTimestamp && (session.filesRevision ?? 0) === (existing.filesRevision ?? 0)
-        const archive = projectSessionArchiveAuthority(existing, session)
-        const archiveChanged = existing.archivedAt !== archive.archivedAt
+        const archive = projectSessionMetadataAuthority(existing, session)
+        const metadataChanged =
+          existing.archivedAt !== archive.archivedAt ||
+          existing.branchContextResetRequired !== archive.branchContextResetRequired
         const flat = sameTimestamp
           ? mergeDurableUploadProjection(existing.messages, existing.messages, session.messages)
           : { messages: existing.messages, changed: false }
@@ -693,7 +701,7 @@ export const createSessionPersistenceOwner = <State extends SessionStoreData>(
           !runtimeIdentityMerge &&
           !filesAdvanced &&
           !fileIdentityMerge &&
-          !archiveChanged &&
+          !metadataChanged &&
           !flat.changed
         ) {
           return state
@@ -761,7 +769,7 @@ export const createSessionPersistenceOwner = <State extends SessionStoreData>(
       const hydratedWithTransientState = {
         ...hydratedSession,
         archivedAt: existing
-          ? projectSessionArchiveAuthority(existing, session).archivedAt
+          ? projectSessionMetadataAuthority(existing, session).archivedAt
           : session.archivedAt,
         ...retainedPlanHistory,
         ...currentPlanProjection,
@@ -788,7 +796,31 @@ export const createSessionPersistenceOwner = <State extends SessionStoreData>(
     set((state) => {
       const current = state.sessions.find((candidate) => candidate.id === session.id)
       if (!current) return state
-      const archive = projectSessionArchiveAuthority(current, session)
+      let archive = projectSessionMetadataAuthority(current, session)
+      if (
+        (mode === 'merge-upload-identities' || mode === 'replace-persisted-if-current') &&
+        source.branchContextResetRequired &&
+        !current.branchContextResetRequired &&
+        archive.branchContextResetRequired
+      ) {
+        // This save predates the completed reset; its acknowledgement cannot undo that clear.
+        archive = { ...archive, branchContextResetRequired: undefined }
+      }
+
+      if (
+        (mode === 'permission-authority' || mode === 'runtime-context-authority') &&
+        current.runtimeContext?.revision !== undefined &&
+        session.runtimeContext?.revision !== undefined &&
+        session.runtimeContext.revision < current.runtimeContext.revision
+      ) {
+        if (archive === current) return state
+        markExternallyHydratedSession(archive, session)
+        return {
+          sessions: state.sessions.map((candidate) =>
+            candidate.id === session.id ? archive : candidate
+          )
+        } as Partial<State>
+      }
 
       if (mode === 'archive-authority') {
         const projected = archive
@@ -828,15 +860,6 @@ export const createSessionPersistenceOwner = <State extends SessionStoreData>(
       }
 
       if (mode === 'permission-authority') {
-        const currentRevision = current.runtimeContext?.revision
-        const incomingRevision = session.runtimeContext?.revision
-        if (
-          currentRevision !== undefined &&
-          incomingRevision !== undefined &&
-          incomingRevision < currentRevision
-        )
-          return state
-
         const permissionPending = session.runtimeContext?.permission?.state === 'pending'
         const interactionState = {
           ...inferSessionInteractionState(current),
@@ -864,15 +887,7 @@ export const createSessionPersistenceOwner = <State extends SessionStoreData>(
       }
 
       if (mode === 'runtime-context-authority') {
-        const currentRevision = current.runtimeContext?.revision
         const incomingRevision = session.runtimeContext?.revision
-        if (
-          currentRevision !== undefined &&
-          incomingRevision !== undefined &&
-          incomingRevision < currentRevision
-        ) {
-          return state
-        }
 
         const activePlanProjection = matchesPersistedPlanProjection(
           current.activePlanProjection,
@@ -952,6 +967,7 @@ export const createSessionPersistenceOwner = <State extends SessionStoreData>(
           !flat.changed &&
           !graph?.changed &&
           authorityProjected === current &&
+          archive === current &&
           sessionRevision(session) <= sessionRevision(current)
         )
           return state
@@ -991,7 +1007,7 @@ export const createSessionPersistenceOwner = <State extends SessionStoreData>(
           projected === merged &&
           sessionRevision(session) <= sessionRevision(current)
         ) {
-          const acknowledged = sessionDetails.withAcknowledgedUnsavedTitle(current, session)
+          const acknowledged = sessionDetails.withAcknowledgedUnsavedTitle(archive, session)
           if (acknowledged === current) return state
           markExternallyHydratedSession(acknowledged, session)
           return {
@@ -1018,6 +1034,7 @@ export const createSessionPersistenceOwner = <State extends SessionStoreData>(
         {
           ...projected,
           archivedAt: archive.archivedAt,
+          branchContextResetRequired: archive.branchContextResetRequired,
           // Whole-Session saves and continuation acknowledgements do not own Delegation policy.
           // Keep the last dedicated mutation result even when a later ordinary projection carries
           // a newer Session revision from unrelated running activity.

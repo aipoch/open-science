@@ -230,11 +230,36 @@ test('reports accessibility violations in permission and file preview states', a
   await expect(page.locator('[data-testid="files-view"]')).toBeVisible()
   await waitForFiniteAnimations(page)
   await scanAccessibility(page, 'Project files (narrow)')
-  await page.getByRole('button', { name: 'Preview uploaded file accessible-preview.md' }).click()
+  // Hold the real preview read so fast disks cannot skip the loading-state contrast check.
+  await page.evaluate(() => {
+    const originalFetch = window.fetch
+    const resume = new Promise<void>((resolve) => {
+      window.addEventListener('resume-preview-read', () => resolve(), { once: true })
+    })
+    window.addEventListener(
+      'resume-preview-read',
+      () => {
+        window.fetch = originalFetch
+      },
+      { once: true }
+    )
+    window.fetch = async (...args) => {
+      const input = args[0]
+      const url = input instanceof Request ? input.url : String(input)
+      if (url.startsWith('open-science-preview:')) await resume
+      return originalFetch(...args)
+    }
+  })
   const preview = page.getByRole('dialog', { name: 'Preview accessible-preview.md' })
-  await expect(preview).toBeVisible()
-  await waitForFiniteAnimations(page)
-  await scanAccessibility(page, 'File preview dialog')
+  try {
+    await page.getByRole('button', { name: 'Preview uploaded file accessible-preview.md' }).click()
+    await expect(preview.locator('[data-preview-status="loading"]')).toBeVisible()
+    await waitForFiniteAnimations(page)
+    await scanAccessibility(page, 'File preview dialog')
+  } finally {
+    await page.evaluate(() => window.dispatchEvent(new Event('resume-preview-read')))
+  }
+  await expect(preview.getByText('Rendered in the file dialog.', { exact: true })).toBeVisible()
 })
 
 test('reports accessibility violations across representative state combinations', async ({

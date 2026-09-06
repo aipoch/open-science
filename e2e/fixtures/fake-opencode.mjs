@@ -172,7 +172,12 @@ const parseMcpResponse = (body) => {
 }
 
 const submitReviewerPass = async (mcpServers) => {
-  const server = mcpServers.find((candidate) => candidate.type === 'http')
+  const server = mcpServers.find(
+    (candidate) =>
+      candidate.type === 'http' &&
+      (candidate.name === 'open-science-reviewer' ||
+        candidate.name === frameworkServerName('open-science-reviewer'))
+  )
   if (!server?.url) return false
   const token =
     server.headers
@@ -1117,6 +1122,21 @@ if (process.argv.includes('--version')) {
             }
           })
           await delay(2_000)
+          const layoutGate = prompt.match(/^Layout completion gate: (.+)$/m)
+          if (layoutGate) {
+            const gatePath = JSON.parse(layoutGate[1])
+            const deadline = Date.now() + 30_000
+            while (true) {
+              try {
+                await readFile(gatePath)
+                break
+              } catch (error) {
+                if (error.code !== 'ENOENT') throw error
+                if (Date.now() >= deadline) throw new Error('Layout sampling gate timed out.')
+                await delay(25)
+              }
+            }
+          }
           await context.client.notify(acp.methods.client.session.update, {
             sessionId: context.params.sessionId,
             update: {
@@ -1135,6 +1155,8 @@ if (process.argv.includes('--version')) {
               content: { type: 'text', text: 'The slow tool has finished running.' }
             }
           })
+          // Paint the final fragment before the prompt-completion response reaches the renderer.
+          await delay(150)
           reply = ''
         } else if (prompt.includes(RUNTIME_RESOURCE_STRESS_PROMPT)) {
           const stressMessageId = `e2e-message-${nextMessageId++}`

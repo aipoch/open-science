@@ -1,4 +1,5 @@
 import {
+  BookOpen,
   ChevronDown,
   ChevronLeft,
   Download,
@@ -73,6 +74,7 @@ type WorkspaceSidebarProps = {
   onNewConversation: () => void
   isFilesOpen: boolean
   onOpenFiles: () => void
+  onOpenLiterature?: () => void
   onOpenSession: (sessionId: string) => void
   onPreviewSession?: SessionPreviewRequest
   onRenameSession: (session: ChatSession) => void
@@ -378,6 +380,7 @@ const WorkspaceSidebarView = ({
   onNewConversation,
   isFilesOpen,
   onOpenFiles,
+  onOpenLiterature,
   onOpenSession,
   onPreviewSession,
   onRenameSession,
@@ -821,6 +824,25 @@ const WorkspaceSidebarView = ({
                 <Files className="size-3.5" strokeWidth={2} />
               </span>
               <span>{t('Files')}</span>
+            </button>
+          </div>
+          <div className="flex h-9 items-center gap-1 px-2">
+            <button
+              type="button"
+              className={cn(
+                'flex min-w-0 flex-1 cursor-pointer items-center gap-1.5 rounded-md px-2 py-1 text-left text-sm text-text-000 hover:bg-bg-300 disabled:cursor-not-allowed disabled:opacity-50',
+                sidebarInteractiveTransitionClassName
+              )}
+              disabled={!onOpenLiterature}
+              onClick={onOpenLiterature}
+            >
+              <span
+                className="flex size-3.5 shrink-0 items-center justify-center"
+                aria-hidden="true"
+              >
+                <BookOpen className="size-3.5" strokeWidth={2} />
+              </span>
+              <span>{t('Library')}</span>
             </button>
           </div>
 

@@ -140,6 +140,10 @@ export type SessionRunProjectionActions = {
     answers: ElicitationAnswer[]
   ) => void
   setActivePlanProjection: (sessionId: string, projection: ActivePlanProjection) => void
+  invalidateActivePlanProjection: (
+    sessionId: string,
+    expected: Pick<ActivePlanProjection, 'artifactVersionId' | 'revision'>
+  ) => void
   beginActivityGroup: (
     sessionId: string,
     groupId: string,
@@ -345,6 +349,26 @@ export const createSessionRunProjectionOwner = <
           projectActivePlan(session, projection)
         )
       }))
+    },
+
+    invalidateActivePlanProjection: (sessionId, expected) => {
+      setSessionState((state) => {
+        const session = state.sessions.find((candidate) => candidate.id === sessionId)
+        const projection = session?.activePlanProjection
+        if (
+          !projection ||
+          projection.artifactVersionId !== expected.artifactVersionId ||
+          projection.revision !== expected.revision
+        ) {
+          return state
+        }
+        return {
+          sessions: projectSession(state.sessions, sessionId, (current) => ({
+            ...current,
+            activePlanProjection: undefined
+          }))
+        }
+      })
     },
 
     upsertToolActivity: (input) => {

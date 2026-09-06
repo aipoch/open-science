@@ -200,6 +200,7 @@ const CategoryForm = ({
   const { t } = useTranslation()
   const createCategory = useMemoryStore((state) => state.createCategory)
   const updateCategory = useMemoryStore((state) => state.updateCategory)
+  const [baseline] = useState(category)
   const [name, setName] = useState(category?.name ?? '')
   const [guidance, setGuidance] = useState(category?.guidance ?? '')
   const [autoRecall, setAutoRecall] = useState(category?.autoRecall ?? true)
@@ -212,10 +213,10 @@ const CategoryForm = ({
     setSaving(true)
     setError(undefined)
     try {
-      if (category) {
+      if (baseline) {
         await updateCategory({
-          id: category.id,
-          expectedRevision: category.revision,
+          id: baseline.id,
+          expectedRevision: baseline.revision,
           name,
           guidance,
           autoRecall
@@ -285,6 +286,19 @@ const CategoryForm = ({
           aria-label={t('Auto-recall')}
         />
       </div>
+      {category && baseline && category.revision !== baseline.revision ? (
+        <section
+          aria-label={t('Latest saved version')}
+          className="space-y-2 rounded-lg bg-muted p-3 text-sm"
+        >
+          <p className="font-medium">{t('Latest saved version')}</p>
+          <p className="whitespace-pre-wrap break-words">{category.name}</p>
+          <p className="whitespace-pre-wrap break-words">{category.guidance}</p>
+          <p>
+            {t('Auto-recall')}: {category.autoRecall ? t('Enabled') : t('Disabled')}
+          </p>
+        </section>
+      ) : null}
       {error ? <MemoryErrorBanner message={error} /> : null}
       <div className="mt-auto flex items-center justify-between gap-3 pt-2">
         <p className="text-sm text-muted-foreground">
@@ -308,11 +322,13 @@ const CategoryForm = ({
 
 const NoteEditor = ({
   initialValue = '',
+  latestValue,
   placeholder,
   onCancel,
   onSave
 }: {
   initialValue?: string
+  latestValue?: string
   placeholder: string
   onCancel(): void
   onSave(value: string): Promise<void>
@@ -350,6 +366,15 @@ const NoteEditor = ({
           if (event.key === 'Escape') onCancel()
         }}
       />
+      {latestValue !== undefined ? (
+        <section
+          aria-label={t('Latest saved version')}
+          className="mt-3 space-y-2 rounded-lg bg-muted p-3 text-sm"
+        >
+          <p className="font-medium">{t('Latest saved version')}</p>
+          <p className="whitespace-pre-wrap break-words">{latestValue}</p>
+        </section>
+      ) : null}
       <div className="mt-2 flex justify-end gap-1.5">
         <Button type="button" variant="ghost" size="sm" onClick={onCancel}>
           {t('Cancel')}
@@ -379,7 +404,7 @@ const EntryRow = ({
 }): React.JSX.Element => {
   const { t } = useTranslation()
   const updateEntry = useMemoryStore((state) => state.updateEntry)
-  const [editing, setEditing] = useState(false)
+  const [editing, setEditing] = useState<MemoryEntryView>()
   const [copied, setCopied] = useState(false)
   const entryCategoryName =
     entry.categoryId === ABOUT_YOU_MEMORY_CATEGORY_ID ? t('About you') : entry.categoryName
@@ -402,11 +427,12 @@ const EntryRow = ({
   if (editing) {
     return (
       <NoteEditor
-        initialValue={entry.content}
+        initialValue={editing.content}
+        latestValue={entry.revision !== editing.revision ? entry.content : undefined}
         placeholder={t('Add a note…')}
-        onCancel={() => setEditing(false)}
+        onCancel={() => setEditing(undefined)}
         onSave={(content) =>
-          updateEntry({ id: entry.id, expectedRevision: entry.revision, content })
+          updateEntry({ id: editing.id, expectedRevision: editing.revision, content })
         }
       />
     )
@@ -442,7 +468,7 @@ const EntryRow = ({
                 size="icon-xs"
                 className="text-muted-foreground hover:text-foreground"
                 aria-label={t('Edit note')}
-                onClick={() => setEditing(true)}
+                onClick={() => setEditing(entry)}
               >
                 <Pencil aria-hidden="true" />
               </Button>
@@ -866,6 +892,7 @@ const MemoryPanel = ({ view, onNavigate, onOpenProject }: MemoryPanelProps): Rea
   if (view.kind !== 'list') {
     return (
       <CategoryForm
+        key={editing?.id ?? 'create'}
         category={editing}
         customCount={customCategories.length}
         onCancel={() => onNavigate({ kind: 'list' })}
