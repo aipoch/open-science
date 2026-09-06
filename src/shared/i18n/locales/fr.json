@@ -101,6 +101,7 @@
     "Import Connector configuration": "Importer la configuration du connecteur"
   },
   "renderer": {
+    "An installer is not available for this platform. Download manually to check other installation options.": "Aucun programme d’installation n’est disponible pour cette plateforme. Consultez le téléchargement manuel pour découvrir d’autres options d’installation.",
     "Latest saved version": "Dernière version enregistrée",
     "Unable to discard the Plan.": "Impossible d’abandonner le plan.",
     "Discard unavailable Plan": "Abandonner le plan indisponible",

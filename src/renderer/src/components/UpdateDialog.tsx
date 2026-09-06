@@ -48,6 +48,10 @@ const UpdateDialog = ({ active = true }: { active?: boolean }): React.JSX.Elemen
   const isDownloading = dialogStatus?.state === 'downloading'
   const isReady = dialogStatus?.state === 'ready'
   const isApplying = dialogStatus?.state === 'applying'
+  const isInstallerUnavailable =
+    dialogStatus?.state === 'available' &&
+    dialogStatus.applyKind === 'installer' &&
+    !dialogStatus.download
   const isBackgroundProcessError =
     dialogStatus?.error === UPDATE_BACKGROUND_PROCESS_ERROR ||
     dialogStatus?.error === UPDATE_BACKGROUND_PROCESS_DEGRADED_ERROR
@@ -185,6 +189,13 @@ const UpdateDialog = ({ active = true }: { active?: boolean }): React.JSX.Elemen
                   </ExternalTextLink>
                 </div>
               ) : null}
+              {isInstallerUnavailable ? (
+                <p className="mt-3 text-xs text-muted-foreground">
+                  {t(
+                    'An installer is not available for this platform. Download manually to check other installation options.'
+                  )}
+                </p>
+              ) : null}
             </div>
 
             <div className={dialogFooterClassName}>
@@ -226,6 +237,10 @@ const UpdateDialog = ({ active = true }: { active?: boolean }): React.JSX.Elemen
                     </>
                   )}
                 </button>
+              ) : isInstallerUnavailable ? (
+                <ExternalTextLink href={APP.update.downloadPage}>
+                  {t('Download manually')}
+                </ExternalTextLink>
               ) : (
                 <button
                   type="button"

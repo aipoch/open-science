@@ -99,6 +99,7 @@
     "Import Connector configuration": "匯入連接器設定"
   },
   "renderer": {
+    "An installer is not available for this platform. Download manually to check other installation options.": "此平台暫無可用的安裝套件。請前往手動下載頁面查看其他安裝選項。",
     "Latest saved version": "最新儲存的版本",
     "Unable to discard the Plan.": "無法捨棄計畫。",
     "Discard unavailable Plan": "捨棄無法使用的計畫",

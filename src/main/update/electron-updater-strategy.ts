@@ -441,7 +441,17 @@ export class ElectronUpdaterStrategy implements UpdateStrategy {
     // The startup scheduler and notes hydration keep check() in flight after `update-available` has
     // already marked the status `available`. Returning that snapshot dropped RPC/UI download requests,
     // including the Windows upgrade-smoke harness talking to 0.18.0+. Wait for the check, then start.
-    if (this.checkLifecycle) await this.checkLifecycle
+    if (this.checkLifecycle) {
+      // A waiting download is cancellable before the provider check releases its status.
+      const waitingToken = this.createCancellationToken()
+      this.downloadToken = waitingToken
+      try {
+        await this.checkLifecycle
+        if (waitingToken.cancelled) return this.status
+      } finally {
+        if (this.downloadToken === waitingToken) this.downloadToken = undefined
+      }
+    }
     if (this.applying || this.downloadToken) return this.status
     if (!canStartUpdateDownload(this.status)) return this.status
 

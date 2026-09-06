@@ -239,7 +239,17 @@ export class UpdateService implements UpdateStrategy {
     if (this.downloadAbort) return this.status
     // The startup scheduler owns check() at launch. Returning the in-flight snapshot dropped download
     // requests that arrived after the UI/RPC already observed `available`. Wait, then start.
-    if (this.checkLifecycle) await this.checkLifecycle
+    if (this.checkLifecycle) {
+      // Own the waiting intent too: cancel must prevent even target selection after the check.
+      const waitingAbort = new AbortController()
+      this.downloadAbort = waitingAbort
+      try {
+        await this.checkLifecycle
+        if (waitingAbort.signal.aborted) return this.status
+      } finally {
+        if (this.downloadAbort === waitingAbort) this.downloadAbort = undefined
+      }
+    }
     if (this.downloadAbort) return this.status
     if (!canStartUpdateDownload(this.status)) return this.status
 

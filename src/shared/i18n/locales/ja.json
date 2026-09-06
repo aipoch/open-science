@@ -99,6 +99,7 @@
     "Import Connector configuration": "コネクタ構成のインポート"
   },
   "renderer": {
+    "An installer is not available for this platform. Download manually to check other installation options.": "このプラットフォーム用のインストーラーはありません。手動ダウンロードのページで他のインストール方法を確認してください。",
     "Latest saved version": "最後に保存されたバージョン",
     "Unable to discard the Plan.": "プランを破棄できません。",
     "Discard unavailable Plan": "利用できないプランを破棄",

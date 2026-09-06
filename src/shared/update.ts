@@ -69,8 +69,15 @@ export const compareVersions = (a: string, b: string): -1 | 0 | 1 => {
   return 0
 }
 
-export const isNewer = (latest: string, current: string): boolean =>
-  compareVersions(latest, current) > 0
+// Release eligibility is distinct from the numeric comparison used for runtime compatibility.
+// A stable release supersedes its matching Nightly base; SHA identifiers cannot order Nightlies.
+export const isNewer = (latest: string, current: string): boolean => {
+  const latestVersion = latest.split('+', 1)[0]
+  const currentVersion = current.split('+', 1)[0]
+  const compared = compareVersions(latestVersion.split('-', 1)[0], currentVersion.split('-', 1)[0])
+  if (compared !== 0) return compared > 0
+  return !latestVersion.includes('-') && currentVersion.includes('-')
+}
 
 // Maps the host to its manifest download key. Linux prefers the deb; selectDownload falls back to
 // the AppImage when the deb is absent.

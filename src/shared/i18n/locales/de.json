@@ -100,6 +100,7 @@
     "Could not open the update installer: {{error}}": "Das Update-Installationsprogramm konnte nicht geöffnet werden: {{error}}"
   },
   "renderer": {
+    "An installer is not available for this platform. Download manually to check other installation options.": "Für diese Plattform ist kein Installationsprogramm verfügbar. Laden Sie es manuell herunter, um andere Installationsmöglichkeiten zu prüfen.",
     "Latest saved version": "Zuletzt gespeicherte Version",
     "Unable to discard the Plan.": "Der Plan kann nicht verworfen werden.",
     "Discard unavailable Plan": "Nicht verfügbaren Plan verwerfen",

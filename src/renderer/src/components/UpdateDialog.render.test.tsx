@@ -30,6 +30,48 @@ afterEach(() => {
 })
 
 describe('UpdateDialog', () => {
+  it('U04: offers manual download instead of an inert button when the installer artifact is missing', () => {
+    useUpdateStore.setState({
+      isDialogOpen: true,
+      status: {
+        state: 'available',
+        current: '0.2.0',
+        latest: '0.3.0',
+        applyKind: 'installer'
+      }
+    })
+    act(() => root.render(<UpdateDialog />))
+
+    const downloadButton = Array.from(document.body.querySelectorAll('button')).find((button) =>
+      button.textContent?.includes('Download update')
+    )
+    expect.soft(downloadButton).toBeUndefined()
+    const manualLink = Array.from(document.body.querySelectorAll('a')).find((link) =>
+      link.textContent?.includes('Download manually')
+    )
+    expect.soft(manualLink?.getAttribute('href')).toBe(APP.update.downloadPage)
+    expect(document.body.textContent).toContain('An installer is not available for this platform.')
+  })
+
+  it('U04: keeps in-place downloads actionable without a manifest download field', () => {
+    useUpdateStore.setState({
+      isDialogOpen: true,
+      status: {
+        state: 'available',
+        current: '0.2.0',
+        latest: '0.3.0',
+        applyKind: 'restart'
+      }
+    })
+    act(() => root.render(<UpdateDialog />))
+
+    const downloadButton = Array.from(document.body.querySelectorAll('button')).find((button) =>
+      button.textContent?.includes('Download update')
+    )
+    expect(downloadButton).toBeDefined()
+    expect(downloadButton?.disabled).toBe(false)
+  })
+
   it('preserves a covered update request while suppressing its presentation', () => {
     useUpdateStore.setState({
       isDialogOpen: true,
