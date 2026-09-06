@@ -67,6 +67,7 @@ describe('token usage analytics', () => {
         projectCreatedAt: [yesterday, now],
         sessionCreatedAt: [],
         artifactCreatedAt: [],
+        runCoverage: [],
         runsAt: [],
         usageEvents: [],
         totalArtifacts: 0

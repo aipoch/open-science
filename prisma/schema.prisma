@@ -170,6 +170,7 @@ model SessionAuxiliaryTurnUsage {
 
 // One user-authored root-frame run, excluding hidden control and delegated caller messages.
 model SessionRun {
+  reportedAtMs BigInt?
   sessionId   String
   messageId   String
   createdAtMs BigInt

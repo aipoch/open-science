@@ -366,8 +366,13 @@ describe('D02/D04 persisted database boundaries', () => {
       const before = await Promise.all(tables.map(readRows))
       const ledger = await readRows('_open_science_migrations')
       await expect(migrateApplicationDatabase(client)).resolves.toMatchObject({
-        applied: [migrationId, '0029_compute_host_execution_mode', '0030_literature_foundation'],
-        to: '0030_literature_foundation'
+        applied: [
+          migrationId,
+          '0029_compute_host_execution_mode',
+          '0030_literature_foundation',
+          '0031_session_run_coverage'
+        ],
+        to: '0031_session_run_coverage'
       })
       // Literature adds contentBlobId to version rows while preserving their original fields.
       expect(await Promise.all(tables.map(readRows))).toMatchObject(before)

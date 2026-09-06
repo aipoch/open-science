@@ -1,14 +1,13 @@
 import type { Prisma, PrismaClient } from '@prisma/client'
 
+import { sessionUsageMessages, sessionUsageRuns } from '../../shared/session-usage'
+
 import {
   earliestCurrentDelegatedAttemptStartedAt,
   hasAnswerableDelegatedQuestion,
   hasCurrentRunningDelegatedAttempt
 } from '../../shared/delegated-work-projection'
 import {
-  isHiddenControlMessage,
-  isHumanUserMessage,
-  type PersistedChatMessage,
   type PersistedChatSession,
   type PersistedSessionStatus,
   type SessionSummary,
@@ -16,7 +15,7 @@ import {
 } from '../../shared/session-persistence'
 
 const PROJECTION_STATE_ID = 'session-projection'
-const PROJECTION_VERSION = 3
+const PROJECTION_VERSION = 4
 const SESSION_NUMBER_SEQUENCE_ID = 'global'
 const MAX_SAFE_INTEGER_BIGINT = BigInt(Number.MAX_SAFE_INTEGER)
 const MAX_SQLITE_INT = 2_147_483_647
@@ -78,7 +77,7 @@ type SessionProjection = Readonly<{
     outputTokens: bigint
     modelCallCount: number | null
   }>
-  runs: Array<{ messageId: string; createdAtMs: bigint }>
+  runs: Array<{ messageId: string; createdAtMs: bigint; reportedAtMs: bigint | null }>
   artifactRefs: Array<{ artifactId: string; artifactCreatedAtMs: bigint | null }>
 }>
 
@@ -212,6 +211,7 @@ const assertProjectionStorageShape = (projection: SessionProjection): void => {
   for (const run of projection.runs) {
     assertNonEmptyText(run.messageId, 'run.messageId')
     assertBigInt(run.createdAtMs, 'run.createdAtMs')
+    assertNullableBigInt(run.reportedAtMs, 'run.reportedAtMs')
   }
   assertUnique(
     projection.runs.map(({ messageId }) => messageId),
@@ -263,22 +263,7 @@ const presentedStatus = (session: PersistedChatSession): PersistedSessionStatus 
   return session.status.startsWith('waiting-') ? 'idle' : session.status
 }
 
-const projectionMessages = (
-  session: PersistedChatSession
-): ReadonlyArray<{
-  message: PersistedChatMessage
-  isRootFrame: boolean
-  runtimeSegmentId?: string
-}> => {
-  const graph = session.conversationGraph
-  return graph
-    ? graph.messages.map((message) => ({
-        message,
-        isRootFrame: message.agentFrameId === graph.rootFrameId,
-        ...(message.runtimeSegmentId ? { runtimeSegmentId: message.runtimeSegmentId } : {})
-      }))
-    : session.messages.map((message) => ({ message, isRootFrame: true }))
-}
+const projectionMessages = sessionUsageMessages
 
 const hasPendingArtifact = (session: PersistedChatSession): boolean => {
   const pendingArtifactIds = new Set(
@@ -298,7 +283,12 @@ export const buildSessionProjection = (session: PersistedChatSession): SessionPr
   const turnUsage: SessionProjection['turnUsage'][number][] = []
   const modelCalls: SessionProjection['modelCalls'][number][] = []
   const sessionDetailsUsage: SessionProjection['sessionDetailsUsage'][number][] = []
-  const runs: SessionProjection['runs'][number][] = []
+  const messages = projectionMessages(session)
+  const runs = sessionUsageRuns(session, messages).map((run) => ({
+    messageId: run.messageId,
+    createdAtMs: toBigInt(run.createdAt),
+    reportedAtMs: toOptionalBigInt(run.reportedAt)
+  }))
   const associatedArtifactCreatedAt = new Map<string, number>()
   const runtimeSegments = new Map(
     (session.conversationGraph?.runtimeSegments ?? []).map((segment) => [segment.id, segment])
@@ -331,7 +321,7 @@ export const buildSessionProjection = (session: PersistedChatSession): SessionPr
     })
   }
 
-  for (const { message, isRootFrame, runtimeSegmentId } of projectionMessages(session)) {
+  for (const { message, isRootFrame, runtimeSegmentId, inherited } of messages) {
     const associationTimestamp = message.completedAt ?? message.createdAt
     for (const artifactId of message.artifactIds ?? []) {
       const current = associatedArtifactCreatedAt.get(artifactId)
@@ -344,17 +334,7 @@ export const buildSessionProjection = (session: PersistedChatSession): SessionPr
       }
     }
 
-    if (
-      isRootFrame &&
-      isHumanUserMessage(message) &&
-      !isHiddenControlMessage(message) &&
-      !message.delegatedCallerSource
-    ) {
-      runs.push({
-        messageId: message.id,
-        createdAtMs: toBigInt(message.createdAt || session.createdAt)
-      })
-    }
+    if (inherited) continue
 
     if (message.role !== 'agent' || !message.turnUsage) continue
     const runtimeSegment = runtimeSegmentId ? runtimeSegments.get(runtimeSegmentId) : undefined
@@ -493,9 +473,6 @@ const replaceChildren = async (
   projection: SessionProjection
 ): Promise<void> => {
   await tx.sessionTurnUsage.deleteMany({ where: { sessionId } })
-  await tx.sessionAuxiliaryTurnUsage.deleteMany({
-    where: { sessionId, source: 'session-details' }
-  })
   await tx.sessionRun.deleteMany({ where: { sessionId } })
   await tx.sessionArtifactRef.deleteMany({ where: { sessionId } })
   if (projection.turnUsage.length > 0) {
@@ -508,9 +485,12 @@ const replaceChildren = async (
       data: projection.modelCalls.map((usage) => ({ sessionId, ...usage }))
     })
   }
-  if (projection.sessionDetailsUsage.length > 0) {
-    await tx.sessionAuxiliaryTurnUsage.createMany({
-      data: projection.sessionDetailsUsage.map((usage) => ({ sessionId, ...usage }))
+  // Completed auxiliary consumption is a durable fact, independent of the active title task.
+  for (const usage of projection.sessionDetailsUsage) {
+    await tx.sessionAuxiliaryTurnUsage.upsert({
+      where: { sessionId_eventId: { sessionId, eventId: usage.eventId } },
+      create: { sessionId, ...usage },
+      update: {}
     })
   }
   if (projection.runs.length > 0) {
@@ -817,14 +797,7 @@ export class SessionProjectionRepository {
             ...(liveSessionIds.length > 0 ? [{ id: { in: liveSessionIds } }] : [])
           ]
         }
-      }),
-      ...(liveSessionIds.length > 0
-        ? [
-            client.sessionAuxiliaryTurnUsage.deleteMany({
-              where: { sessionId: { in: liveSessionIds }, source: 'session-details' }
-            })
-          ]
-        : [])
+      })
     ]
     for (const chunk of chunksOf(projected, 40)) {
       writes.push(
@@ -839,8 +812,14 @@ export class SessionProjectionRepository {
     for (const chunk of chunksOf(modelCalls, 100)) {
       writes.push(client.sessionModelCallUsage.createMany({ data: chunk }))
     }
-    for (const chunk of chunksOf(sessionDetailsUsage, 100)) {
-      writes.push(client.sessionAuxiliaryTurnUsage.createMany({ data: chunk }))
+    for (const usage of sessionDetailsUsage) {
+      writes.push(
+        client.sessionAuxiliaryTurnUsage.upsert({
+          where: { sessionId_eventId: { sessionId: usage.sessionId, eventId: usage.eventId } },
+          create: usage,
+          update: {}
+        })
+      )
     }
     for (const chunk of chunksOf(runs, 200)) {
       writes.push(client.sessionRun.createMany({ data: chunk }))
@@ -890,7 +869,7 @@ export class SessionProjectionRepository {
       client.sessionAuxiliaryTurnUsage.findMany(),
       client.sessionRun.findMany({
         where: { session: { deletedAtMs: null } },
-        select: { createdAtMs: true }
+        select: { sessionId: true, messageId: true, createdAtMs: true, reportedAtMs: true }
       }),
       client.sessionArtifactRef.findMany({
         where: { session: { deletedAtMs: null } },
@@ -914,6 +893,12 @@ export class SessionProjectionRepository {
         (timestamp): timestamp is number => timestamp !== undefined
       ),
       runsAt: runs.map(({ createdAtMs }) => Number(createdAtMs)),
+      runCoverage: runs.map(({ sessionId, messageId, createdAtMs, reportedAtMs }) => ({
+        sessionId,
+        messageId,
+        createdAt: Number(createdAtMs),
+        ...(reportedAtMs === null ? {} : { reportedAt: Number(reportedAtMs) })
+      })),
       usageEvents: [
         ...usage.map((event) => ({
           timestamp: Number(event.completedAtMs),

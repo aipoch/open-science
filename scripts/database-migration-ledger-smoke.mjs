@@ -124,6 +124,10 @@ const EXPECTED_MIGRATION_LEDGER = [
   {
     id: '0030_literature_foundation',
     checksum: '0f432ea09aec2d7edbd9834a4f2c38dd6bc4870cd4ff01d4ea4899b3e66dc5e2'
+  },
+  {
+    id: '0031_session_run_coverage',
+    checksum: '931e1b42ee32d9cfe715ac627b9f404cbfcd2d573f07ca24b6ae232ccbff1a8d'
   }
 ]
 const LEGACY_PROJECT_ID = 'package-smoke-legacy-project'

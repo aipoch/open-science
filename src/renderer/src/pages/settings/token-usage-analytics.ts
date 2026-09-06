@@ -1,6 +1,5 @@
+import { sessionUsageMessages, sessionUsageRuns } from '../../../../shared/session-usage'
 import {
-  isHiddenControlMessage,
-  isHumanUserMessage,
   type PersistedChatMessage,
   type PersistedChatSession,
   type SessionUsageProjection
@@ -47,6 +46,7 @@ export type TokenUsageAnalytics = {
   projectCreatedAt: readonly number[]
   artifactCreatedAt: readonly number[]
   runsAt: readonly number[]
+  runCoverage: SessionUsageProjection['runCoverage']
   usageEvents: readonly TokenUsageEvent[]
   totalArtifacts: number
 }
@@ -131,6 +131,7 @@ const buildAnalyticsFromProjection = (
     projectCreatedAt: projection.projectCreatedAt,
     artifactCreatedAt: projection.artifactCreatedAt,
     runsAt: projection.runsAt,
+    runCoverage: projection.runCoverage,
     usageEvents: projection.usageEvents,
     totalArtifacts: projection.totalArtifacts
   }
@@ -170,6 +171,7 @@ export const buildTokenUsageAnalytics = (
   const sessionCreatedAt: number[] = []
   const projectCreatedAt = projects.map((project) => project.createdAt)
   const runsAt: number[] = []
+  const runCoverage: SessionUsageProjection['runCoverage'] = []
   const usageEvents: TokenUsageEvent[] = []
   const artifactIds = new Set<string>()
   const persistedArtifactCreatedAt = new Map<string, number>()
@@ -185,18 +187,12 @@ export const buildTokenUsageAnalytics = (
       }
     }
 
-    const graph = session.conversationGraph
-    const messages: ReadonlyArray<{
-      message: PersistedChatMessage
-      isRootMessage: boolean
-    }> = graph
-      ? graph.messages.map((message) => ({
-          message,
-          isRootMessage: message.agentFrameId === graph.rootFrameId
-        }))
-      : session.messages.map((message) => ({ message, isRootMessage: true }))
+    const messages = sessionUsageMessages(session)
+    const runs = sessionUsageRuns(session, messages)
+    runsAt.push(...runs.map((run) => run.createdAt))
+    runCoverage.push(...runs.map((run) => ({ sessionId: session.id, ...run })))
 
-    for (const { message, isRootMessage } of messages) {
+    for (const { message, isRootFrame, inherited } of messages) {
       const associationTimestamp = message.completedAt ?? message.createdAt
       for (const artifactId of message.artifactIds ?? []) {
         const existingTimestamp = associatedArtifactCreatedAt.get(artifactId)
@@ -209,14 +205,7 @@ export const buildTokenUsageAnalytics = (
         }
       }
 
-      if (
-        isRootMessage &&
-        isHumanUserMessage(message) &&
-        !isHiddenControlMessage(message) &&
-        !message.delegatedCallerSource
-      ) {
-        runsAt.push(message.createdAt || session.createdAt)
-      }
+      if (inherited) continue
 
       if (message.role !== 'agent' || !message.turnUsage) continue
 
@@ -228,7 +217,7 @@ export const buildTokenUsageAnalytics = (
         inputTokens,
         cacheTokens,
         outputTokens,
-        rootRunUsage: isRootMessage
+        rootRunUsage: isRootFrame
       })
     }
   }
@@ -245,6 +234,7 @@ export const buildTokenUsageAnalytics = (
       projectCreatedAt,
       artifactCreatedAt,
       runsAt,
+      runCoverage,
       usageEvents,
       totalArtifacts: artifactIds.size
     },
@@ -300,7 +290,12 @@ export const selectTokenUsageSummary = (
     totalRuns: analytics.runsAt.filter((timestamp) => timestamp <= analytics.now).length,
     newRuns: analytics.runsAt.filter((timestamp) => isInPeriod(timestamp, start, analytics.now))
       .length,
-    reportedRuns: usageEvents.filter((event) => event.rootRunUsage).length
+    reportedRuns: analytics.runCoverage.filter(
+      (run) =>
+        isInPeriod(run.createdAt, start, analytics.now) &&
+        run.reportedAt !== undefined &&
+        run.reportedAt <= analytics.now
+    ).length
   }
 }
 

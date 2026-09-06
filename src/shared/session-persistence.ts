@@ -564,6 +564,8 @@ export type PersistedChatMessage = {
   // A side-chat relay is durable context, but remains advisory rather than a direct user turn.
   relayedFrom?: { kind: 'side-chat'; direction: 'to-main' }
   // Whole-turn totals reported with the completed Agent response; absent for older sessions/providers.
+  // Copied history remains visible, but its execution belongs to the original Session.
+  usageOrigin?: Readonly<{ sessionId: string; messageId: string }>
   turnUsage?: AcpTurnTokenUsage
   // Exact per-inference usage; absent for older sessions/providers and whenever coverage is partial.
   modelCallUsage?: AcpModelCallUsage[]
@@ -933,6 +935,14 @@ export type SessionUsageProjection = Readonly<{
   projectCreatedAt: number[]
   artifactCreatedAt: number[]
   runsAt: number[]
+  runCoverage: Array<
+    Readonly<{
+      sessionId: string
+      messageId: string
+      createdAt: number
+      reportedAt?: number
+    }>
+  >
   usageEvents: Array<
     Readonly<{
       timestamp: number
@@ -3835,6 +3845,11 @@ const sanitizeMessage = (
     sanitized.relayedFrom = { kind: 'side-chat', direction: 'to-main' }
   }
   if (images) sanitized.images = images
+  if (isRecord(message.usageOrigin)) {
+    const sessionId = asString(message.usageOrigin.sessionId)
+    const messageId = asString(message.usageOrigin.messageId)
+    if (sessionId && messageId) sanitized.usageOrigin = { sessionId, messageId }
+  }
   if (turnUsage) sanitized.turnUsage = turnUsage
   if (hasMatchingModelCallTotals) sanitized.modelCallUsage = modelCallUsage
   if (contextWindowSamples.length > 0) sanitized.contextWindowSamples = contextWindowSamples

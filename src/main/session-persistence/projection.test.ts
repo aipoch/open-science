@@ -150,7 +150,9 @@ describe('Session projection', () => {
       artifactCount: 1,
       presentedStatus: 'idle'
     })
-    expect(projected.runs).toEqual([{ messageId: 'session-1-run', createdAtMs: 101n }])
+    expect(projected.runs).toEqual([
+      { messageId: 'session-1-run', createdAtMs: 101n, reportedAtMs: 104n }
+    ])
     expect(projected.turnUsage).toEqual([
       {
         messageId: 'session-1-usage',

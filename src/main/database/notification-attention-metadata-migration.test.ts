@@ -89,10 +89,11 @@ describe('notification attention metadata migration', () => {
         '0027_project_session_defaults',
         '0028_database_numeric_and_null_constraints',
         '0029_compute_host_execution_mode',
-        '0030_literature_foundation'
+        '0030_literature_foundation',
+        '0031_session_run_coverage'
       ],
       from: '0006_database_domain_constraints',
-      to: '0030_literature_foundation'
+      to: '0031_session_run_coverage'
     })
     await expect(
       access(`${databasePath}.before-0007_notification_attention_metadata.backup`)
