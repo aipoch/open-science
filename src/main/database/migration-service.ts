@@ -1,4 +1,3 @@
-import { sessionRunCoverageMigration } from './migrations/0031-session-run-coverage'
 import { createHash } from 'node:crypto'
 import { access, rename, rm } from 'node:fs/promises'
 
@@ -371,12 +370,6 @@ const NUMERIC_AND_NULL_CONSTRAINTS_CHECKSUM = checksumMigrationPayload(
   numericAndNullConstraintsMigration.verifiers,
   numericAndNullConstraintsMigration.operations
 )
-const SESSION_RUN_COVERAGE_CHECKSUM = checksumMigrationPayload(
-  sessionRunCoverageMigration.id,
-  sessionRunCoverageMigration.statements,
-  sessionRunCoverageMigration.verifiers,
-  sessionRunCoverageMigration.operations
-)
 const COMPUTE_HOST_EXECUTION_MODE_CHECKSUM = checksumMigrationPayload(
   computeHostExecutionModeMigration.id,
   computeHostExecutionModeMigration.statements,
@@ -681,12 +674,6 @@ const MIGRATION_MANIFEST = [
   {
     ...literatureFoundationMigration,
     checksum: LITERATURE_FOUNDATION_CHECKSUM,
-    backupOnApply: 'required',
-    backupRetention: 'retain'
-  },
-  {
-    ...sessionRunCoverageMigration,
-    checksum: SESSION_RUN_COVERAGE_CHECKSUM,
     backupOnApply: 'required',
     backupRetention: 'retain'
   }

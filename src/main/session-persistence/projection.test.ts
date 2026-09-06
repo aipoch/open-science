@@ -150,9 +150,7 @@ describe('Session projection', () => {
       artifactCount: 1,
       presentedStatus: 'idle'
     })
-    expect(projected.runs).toEqual([
-      { messageId: 'session-1-run', createdAtMs: 101n, reportedAtMs: 104n }
-    ])
+    expect(projected.runs).toEqual([{ messageId: 'session-1-run', createdAtMs: 101n }])
     expect(projected.turnUsage).toEqual([
       {
         messageId: 'session-1-usage',
@@ -357,7 +355,7 @@ describe('Session projection', () => {
       runsAt: expect.arrayContaining([101, 201]),
       totalArtifacts: 2,
       usageEvents: expect.arrayContaining([
-        expect.objectContaining({ timestamp: 104, inputTokens: 10, rootRunUsage: true })
+        expect.objectContaining({ timestamp: 104, inputTokens: 10 })
       ])
     })
     await expect(
@@ -446,8 +444,7 @@ describe('Session projection', () => {
           timestamp: 120,
           inputTokens: 5,
           cacheTokens: 2,
-          outputTokens: 4,
-          rootRunUsage: false
+          outputTokens: 4
         })
       ])
     })

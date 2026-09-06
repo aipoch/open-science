@@ -3542,7 +3542,7 @@
     "Total artifacts": "合計アーティファクト数",
     "{{date}}: {{value}} {{metric}}": "{{date}}：{{value}} {{metric}}",
     "{{date}}: {{input}} input, {{cache}} cache, {{output}} output": "{{date}}：{{input}} 入力、{{cache}} キャッシュ、{{output}} 出力",
-    "Token totals are available for {{reported}} of {{count}} runs in this period._other": "トークンの合計は、この期間内の {{count}} 回中 {{reported}} 回の実行で利用できます。",
+    "Only reported token usage is included.": "報告されたトークン使用量のみが含まれます。",
     "Older conversations or some providers may not report usage.": "古い会話や一部のプロバイダーでは使用状況が報告されない場合があります。",
     "Daily activity": "毎日のアクティビティ",
     "Compare each day over the last 30 days. Darker cells indicate higher usage.": "過去 30 日間の各日を比較します。色が濃いセルほど使用量が多いことを示します。",

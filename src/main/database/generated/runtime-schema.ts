@@ -120,7 +120,6 @@ const RUNTIME_SCHEMA_TABLE_DDLS = [
     CONSTRAINT "SessionAuxiliaryTurnUsage_nonnegative_check" CHECK ("completedAtMs" >= 0 AND "inputTokens" >= 0 AND "cacheTokens" >= 0 AND "outputTokens" >= 0 AND (("cachedReadTokens" IS NULL AND "cachedWriteTokens" IS NULL) OR ("cachedReadTokens" IS NOT NULL AND "cachedWriteTokens" IS NOT NULL AND "cachedReadTokens" >= 0 AND "cachedWriteTokens" >= 0)) AND ("modelCallCount" IS NULL OR "modelCallCount" > 0))
 );`,
   `CREATE TABLE IF NOT EXISTS "SessionRun" (
-    "reportedAtMs" BIGINT,
     "sessionId" TEXT NOT NULL,
     "messageId" TEXT NOT NULL,
     "createdAtMs" BIGINT NOT NULL,

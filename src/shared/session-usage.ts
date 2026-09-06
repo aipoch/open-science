@@ -45,14 +45,13 @@ export const sessionUsageMessages = (session: PersistedChatSession): SessionUsag
   return messages
 }
 
-export type SessionUsageRun = { messageId: string; createdAt: number; reportedAt?: number }
+export type SessionUsageRun = { messageId: string; createdAt: number }
 
 export const sessionUsageRuns = (
   session: PersistedChatSession,
   messages: readonly SessionUsageMessage[] = sessionUsageMessages(session)
 ): SessionUsageRun[] => {
-  const runs = new Map<string, SessionUsageRun>()
-  const byId = new Map(messages.map((entry) => [entry.message.id, entry]))
+  const runs: SessionUsageRun[] = []
   for (const { message, isRootFrame, inherited } of messages) {
     if (
       isRootFrame &&
@@ -61,35 +60,11 @@ export const sessionUsageRuns = (
       !isHiddenControlMessage(message) &&
       !message.delegatedCallerSource
     ) {
-      runs.set(message.id, {
+      runs.push({
         messageId: message.id,
         createdAt: message.createdAt || session.createdAt
       })
     }
   }
-  for (const { message, isRootFrame, inherited, parentMessageId } of messages) {
-    if (!isRootFrame || inherited || message.role !== 'agent' || !message.turnUsage) continue
-    let promptId = message.responseToMessageId
-    if (!promptId) {
-      // Legacy messages have no response identity. Follow their own branch ancestry and stop at
-      // the first user message, including application/control prompts; never borrow another run.
-      const visited = new Set<string>()
-      let parentId = parentMessageId
-      while (parentId && !visited.has(parentId)) {
-        visited.add(parentId)
-        const parent = byId.get(parentId)
-        if (!parent || !parent.isRootFrame) break
-        if (parent.message.role === 'user') {
-          promptId = parentId
-          break
-        }
-        parentId = parent.parentMessageId
-      }
-    }
-    const run = promptId ? runs.get(promptId) : undefined
-    if (!run) continue
-    const timestamp = message.completedAt ?? message.updatedAt ?? message.createdAt
-    run.reportedAt = Math.min(run.reportedAt ?? timestamp, timestamp)
-  }
-  return [...runs.values()]
+  return runs
 }

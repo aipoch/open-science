@@ -36,7 +36,6 @@ type TokenUsageEvent = {
   inputTokens: number
   cacheTokens: number
   outputTokens: number
-  rootRunUsage: boolean
 }
 
 export type TokenUsageAnalytics = {
@@ -46,7 +45,6 @@ export type TokenUsageAnalytics = {
   projectCreatedAt: readonly number[]
   artifactCreatedAt: readonly number[]
   runsAt: readonly number[]
-  runCoverage: SessionUsageProjection['runCoverage']
   usageEvents: readonly TokenUsageEvent[]
   totalArtifacts: number
 }
@@ -65,7 +63,6 @@ export type TokenUsageSummary = {
   newArtifacts: number
   totalRuns: number
   newRuns: number
-  reportedRuns: number
 }
 
 const finiteNonNegative = (value: number): number =>
@@ -131,7 +128,6 @@ const buildAnalyticsFromProjection = (
     projectCreatedAt: projection.projectCreatedAt,
     artifactCreatedAt: projection.artifactCreatedAt,
     runsAt: projection.runsAt,
-    runCoverage: projection.runCoverage,
     usageEvents: projection.usageEvents,
     totalArtifacts: projection.totalArtifacts
   }
@@ -171,7 +167,6 @@ export const buildTokenUsageAnalytics = (
   const sessionCreatedAt: number[] = []
   const projectCreatedAt = projects.map((project) => project.createdAt)
   const runsAt: number[] = []
-  const runCoverage: SessionUsageProjection['runCoverage'] = []
   const usageEvents: TokenUsageEvent[] = []
   const artifactIds = new Set<string>()
   const persistedArtifactCreatedAt = new Map<string, number>()
@@ -190,9 +185,8 @@ export const buildTokenUsageAnalytics = (
     const messages = sessionUsageMessages(session)
     const runs = sessionUsageRuns(session, messages)
     runsAt.push(...runs.map((run) => run.createdAt))
-    runCoverage.push(...runs.map((run) => ({ sessionId: session.id, ...run })))
 
-    for (const { message, isRootFrame, inherited } of messages) {
+    for (const { message, inherited } of messages) {
       const associationTimestamp = message.completedAt ?? message.createdAt
       for (const artifactId of message.artifactIds ?? []) {
         const existingTimestamp = associatedArtifactCreatedAt.get(artifactId)
@@ -216,8 +210,7 @@ export const buildTokenUsageAnalytics = (
         timestamp: usageTimestamp(message),
         inputTokens,
         cacheTokens,
-        outputTokens,
-        rootRunUsage: isRootFrame
+        outputTokens
       })
     }
   }
@@ -234,7 +227,6 @@ export const buildTokenUsageAnalytics = (
       projectCreatedAt,
       artifactCreatedAt,
       runsAt,
-      runCoverage,
       usageEvents,
       totalArtifacts: artifactIds.size
     },
@@ -289,13 +281,7 @@ export const selectTokenUsageSummary = (
           ).length,
     totalRuns: analytics.runsAt.filter((timestamp) => timestamp <= analytics.now).length,
     newRuns: analytics.runsAt.filter((timestamp) => isInPeriod(timestamp, start, analytics.now))
-      .length,
-    reportedRuns: analytics.runCoverage.filter(
-      (run) =>
-        isInPeriod(run.createdAt, start, analytics.now) &&
-        run.reportedAt !== undefined &&
-        run.reportedAt <= analytics.now
-    ).length
+      .length
   }
 }
 

@@ -77,7 +77,7 @@ type SessionProjection = Readonly<{
     outputTokens: bigint
     modelCallCount: number | null
   }>
-  runs: Array<{ messageId: string; createdAtMs: bigint; reportedAtMs: bigint | null }>
+  runs: Array<{ messageId: string; createdAtMs: bigint }>
   artifactRefs: Array<{ artifactId: string; artifactCreatedAtMs: bigint | null }>
 }>
 
@@ -211,7 +211,6 @@ const assertProjectionStorageShape = (projection: SessionProjection): void => {
   for (const run of projection.runs) {
     assertNonEmptyText(run.messageId, 'run.messageId')
     assertBigInt(run.createdAtMs, 'run.createdAtMs')
-    assertNullableBigInt(run.reportedAtMs, 'run.reportedAtMs')
   }
   assertUnique(
     projection.runs.map(({ messageId }) => messageId),
@@ -286,8 +285,7 @@ export const buildSessionProjection = (session: PersistedChatSession): SessionPr
   const messages = projectionMessages(session)
   const runs = sessionUsageRuns(session, messages).map((run) => ({
     messageId: run.messageId,
-    createdAtMs: toBigInt(run.createdAt),
-    reportedAtMs: toOptionalBigInt(run.reportedAt)
+    createdAtMs: toBigInt(run.createdAt)
   }))
   const associatedArtifactCreatedAt = new Map<string, number>()
   const runtimeSegments = new Map(
@@ -869,7 +867,7 @@ export class SessionProjectionRepository {
       client.sessionAuxiliaryTurnUsage.findMany(),
       client.sessionRun.findMany({
         where: { session: { deletedAtMs: null } },
-        select: { sessionId: true, messageId: true, createdAtMs: true, reportedAtMs: true }
+        select: { createdAtMs: true }
       }),
       client.sessionArtifactRef.findMany({
         where: { session: { deletedAtMs: null } },
@@ -893,19 +891,12 @@ export class SessionProjectionRepository {
         (timestamp): timestamp is number => timestamp !== undefined
       ),
       runsAt: runs.map(({ createdAtMs }) => Number(createdAtMs)),
-      runCoverage: runs.map(({ sessionId, messageId, createdAtMs, reportedAtMs }) => ({
-        sessionId,
-        messageId,
-        createdAt: Number(createdAtMs),
-        ...(reportedAtMs === null ? {} : { reportedAt: Number(reportedAtMs) })
-      })),
       usageEvents: [
         ...usage.map((event) => ({
           timestamp: Number(event.completedAtMs),
           inputTokens: Number(event.inputTokens),
           cacheTokens: Number(event.cacheTokens),
-          outputTokens: Number(event.outputTokens),
-          rootRunUsage: event.isRootFrame
+          outputTokens: Number(event.outputTokens)
         })),
         ...auxiliaryUsage.flatMap((event) =>
           liveSessionIds.has(event.sessionId)
@@ -914,8 +905,7 @@ export class SessionProjectionRepository {
                   timestamp: Number(event.completedAtMs),
                   inputTokens: Number(event.inputTokens),
                   cacheTokens: Number(event.cacheTokens),
-                  outputTokens: Number(event.outputTokens),
-                  rootRunUsage: false
+                  outputTokens: Number(event.outputTokens)
                 }
               ]
             : []

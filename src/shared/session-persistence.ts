@@ -935,21 +935,12 @@ export type SessionUsageProjection = Readonly<{
   projectCreatedAt: number[]
   artifactCreatedAt: number[]
   runsAt: number[]
-  runCoverage: Array<
-    Readonly<{
-      sessionId: string
-      messageId: string
-      createdAt: number
-      reportedAt?: number
-    }>
-  >
   usageEvents: Array<
     Readonly<{
       timestamp: number
       inputTokens: number
       cacheTokens: number
       outputTokens: number
-      rootRunUsage: boolean
     }>
   >
   totalArtifacts: number

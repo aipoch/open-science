@@ -177,15 +177,15 @@ describe('usage through real store, Session codec, and SQLite', () => {
     expect(await summary()).toMatchObject({ totalSessions: 4, totalRuns: 3, totalTokens: 45 })
   })
 
-  it('U02 excludes application corrections from human run coverage without excluding their tokens', async () => {
+  it('counts application correction tokens without adding human runs', async () => {
     run('coverage')
     run('coverage', false)
     run('coverage', true, true)
     await save('coverage')
-    expect(await summary()).toMatchObject({ newRuns: 2, reportedRuns: 1, totalTokens: 30 })
+    expect(await summary()).toMatchObject({ newRuns: 2, totalTokens: 30 })
   })
 
-  it('U02 matches coverage to the run start even when the response completes the next day', async () => {
+  it('counts runs on their start date and tokens on their completion date', async () => {
     now = new Date(2026, 8, 5, 23, 59).getTime()
     const prompt = useSessionStore.getState().appendUserMessage({
       sessionId: 'midnight',
@@ -206,8 +206,8 @@ describe('usage through real store, Session codec, and SQLite', () => {
     now = today
     run('midnight', false)
     await save('midnight')
-    expect(await summary('today')).toMatchObject({ newRuns: 1, reportedRuns: 0, totalTokens: 15 })
-    expect(await summary()).toMatchObject({ newRuns: 2, reportedRuns: 1 })
+    expect(await summary('today')).toMatchObject({ newRuns: 1, totalTokens: 15 })
+    expect(await summary()).toMatchObject({ newRuns: 2 })
   })
 
   it('U03 retains completed title usage across editing the first prompt and projection rebuilds', async () => {

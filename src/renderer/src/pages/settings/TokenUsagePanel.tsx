@@ -553,27 +553,16 @@ function TokenUsagePanel({
             </div>
           </div>
 
-          {summary.newRuns > summary.reportedRuns ? (
-            <div
-              role="status"
-              data-slot="token-usage-coverage"
-              className="flex items-start gap-2 text-xs leading-5 text-muted-foreground"
-            >
-              <Info className="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
-              <p>
-                {t(
-                  'Token totals are available for {{reported}} of {{count}} runs in this period.',
-                  {
-                    reported: summary.reportedRuns,
-                    count: summary.newRuns,
-                    defaultValue_one:
-                      'Token totals are available for {{reported}} of {{count}} run in this period.'
-                  }
-                )}{' '}
-                {t('Older conversations or some providers may not report usage.')}
-              </p>
-            </div>
-          ) : null}
+          <div
+            data-slot="token-usage-coverage"
+            className="flex items-start gap-2 text-xs leading-5 text-muted-foreground"
+          >
+            <Info className="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
+            <p>
+              {t('Only reported token usage is included.')}{' '}
+              {t('Older conversations or some providers may not report usage.')}
+            </p>
+          </div>
         </section>
 
         <section aria-labelledby="token-activity-title" className="px-4 py-6 sm:px-5">

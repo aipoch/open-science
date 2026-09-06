@@ -3629,7 +3629,7 @@
     "Total artifacts": "Artifact 總數",
     "{{date}}: {{value}} {{metric}}": "{{date}}：{{value}} {{metric}}",
     "{{date}}: {{input}} input, {{cache}} cache, {{output}} output": "{{date}}：輸入 {{input}}，快取 {{cache}}，輸出 {{output}}",
-    "Token totals are available for {{reported}} of {{count}} runs in this period._other": "此時間範圍內 {{count}} 個 Run 中有 {{reported}} 個包含詞元總量。",
+    "Only reported token usage is included.": "僅統計已回報的詞元用量。",
     "Older conversations or some providers may not report usage.": "較早的對話或部分供應商可能不會回報用量。",
     "Daily activity": "每日活躍度",
     "Compare each day over the last 30 days. Darker cells indicate higher usage.": "比較最近 30 天內每天的情況，顏色越深表示用量越高。",

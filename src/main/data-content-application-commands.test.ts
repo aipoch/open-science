@@ -1557,7 +1557,6 @@ describe('Data and content application commands', () => {
       sessionCreatedAt: [],
       projectCreatedAt: [],
       artifactCreatedAt: [],
-      runCoverage: [],
       runsAt: [],
       usageEvents: [],
       totalArtifacts: 0
