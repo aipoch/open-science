@@ -225,7 +225,7 @@ describe('Session Plan renderer surfaces', () => {
     await waitFor(() =>
       expect(onSubmitResponse).toHaveBeenCalledWith('Split the analysis by cohort.')
     )
-    expect(view.container.querySelector('article')).toBeNull()
+    await waitFor(() => expect(view.container.querySelector('article')).toBeNull())
     expect(onRespond).not.toHaveBeenCalled()
     expect(screen.queryByRole('button', { name: /request changes/i })).toBeNull()
   })
