@@ -99,6 +99,7 @@
     "Import Connector configuration": "커넥터 구성 가져오기"
   },
   "renderer": {
+    "An installer is not available for this platform. Download manually to check other installation options.": "이 플랫폼에서 사용할 수 있는 설치 프로그램이 없습니다. 수동 다운로드 페이지에서 다른 설치 방법을 확인하세요.",
     "Latest saved version": "최근 저장된 버전",
     "Unable to discard the Plan.": "계획을 삭제할 수 없습니다.",
     "Discard unavailable Plan": "사용할 수 없는 계획 삭제",
