@@ -269,26 +269,27 @@ Settings views use named aliases for categorical data and host status. The alias
 resolve to the established Tailwind palette values, so semantic cleanup does not change the rendered
 colors.
 
-| Semantic role        | Tailwind classes                                                                                                                                                              | Usage                                          |
-| -------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------- |
-| Storage categories   | `bg-storage-artifacts`, `bg-storage-delegation`, `bg-storage-runtime`, `bg-storage-uploads`, `bg-storage-notebooks`, `bg-storage-execution-evidence`, `bg-storage-workspaces` | Disk-usage bar segments and legend swatches    |
-| Success surface      | `bg-status-success-surface`, `text-status-success-foreground`                                                                                                                 | Reachable Compute host icon and badge          |
-| Success accent       | `bg-status-success-accent/10`, `text-status-success-accent-foreground`                                                                                                        | Completed storage migration icon               |
-| Failure surface      | `bg-status-failure-surface`, `text-status-failure-foreground`                                                                                                                 | Failed Compute host icon and badge             |
-| Failure detail       | `border-status-failure-border`, `bg-status-failure-subtle/50`, `text-status-failure-accent`, `text-status-failure-strong`                                                     | Compute probe failure panel                    |
-| Info surface         | `bg-status-info-surface`, `text-status-info-foreground`                                                                                                                       | Informational notices (e.g. "update the app")  |
-| Warning surface      | `bg-status-warning-surface`, `text-status-warning-foreground`                                                                                                                 | Transient / retryable error notices            |
-| Dark status variants | `dark:*-status-success-dark-*`, `dark:*-status-failure-dark-*`, `dark:*-status-info-dark-*`, `dark:*-status-warning-dark-*`                                                   | Preserve the existing dark-mode status palette |
+| Semantic role        | Tailwind classes                                                                                                                                                                                    | Usage                                          |
+| -------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------- |
+| Storage categories   | `bg-storage-artifacts`, `bg-storage-compute`, `bg-storage-delegation`, `bg-storage-runtime`, `bg-storage-uploads`, `bg-storage-notebooks`, `bg-storage-execution-evidence`, `bg-storage-workspaces` | Disk-usage bar segments and legend swatches    |
+| Success surface      | `bg-status-success-surface`, `text-status-success-foreground`                                                                                                                                       | Reachable Compute host icon and badge          |
+| Success accent       | `bg-status-success-accent/10`, `text-status-success-accent-foreground`                                                                                                                              | Completed storage migration icon               |
+| Failure surface      | `bg-status-failure-surface`, `text-status-failure-foreground`                                                                                                                                       | Failed Compute host icon and badge             |
+| Failure detail       | `border-status-failure-border`, `bg-status-failure-subtle/50`, `text-status-failure-accent`, `text-status-failure-strong`                                                                           | Compute probe failure panel                    |
+| Info surface         | `bg-status-info-surface`, `text-status-info-foreground`                                                                                                                                             | Informational notices (e.g. "update the app")  |
+| Warning surface      | `bg-status-warning-surface`, `text-status-warning-foreground`                                                                                                                                       | Transient / retryable error notices            |
+| Dark status variants | `dark:*-status-success-dark-*`, `dark:*-status-failure-dark-*`, `dark:*-status-info-dark-*`, `dark:*-status-warning-dark-*`                                                                         | Preserve the existing dark-mode status palette |
 
 Do not use these tokens as general brand accents. Storage colors distinguish categories; status
 colors communicate a successful or failed probe/migration result.
 
 ### Named Layer Tokens
 
-| Token                     | Tailwind class    | Value | Usage                                                              |
-| ------------------------- | ----------------- | ----- | ------------------------------------------------------------------ |
-| `--z-index-markdown-menu` | `z-markdown-menu` | `200` | Streamdown Mermaid and table format menus above fullscreen content |
-| -----                     | --------------    | ----- | -----                                                              |
+| Token                     | Tailwind class    | Value | Usage                                                                |
+| ------------------------- | ----------------- | ----- | -------------------------------------------------------------------- |
+| `--z-index-modal`         | `z-modal`         | `50`  | Standard portaled modal layer (e.g. the notification center popover) |
+| `--z-index-toast`         | `z-toast`         | `70`  | Toasts and undo snackbars above the modal layer                      |
+| `--z-index-markdown-menu` | `z-markdown-menu` | `200` | Streamdown Mermaid and table format menus above fullscreen content   |
 
 ### Border Opacity
 
