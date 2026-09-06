@@ -4529,6 +4529,14 @@
     "The log folder could not be created.": "로그 폴더를 만들지 못했습니다.",
     "The log file could not be checked.": "로그 파일을 확인하지 못했습니다.",
     "The log backups could not be rotated.": "로그 백업을 순환하지 못했습니다.",
-    "The log record could not be appended.": "로그 항목을 추가하지 못했습니다."
+    "The log record could not be appended.": "로그 항목을 추가하지 못했습니다.",
+    "Could not save the language.": "언어를 저장하지 못했습니다.",
+    "The saved language has been restored. Select a language to try again.": "저장된 언어로 복원했습니다. 언어를 선택하여 다시 시도하세요.",
+    "The light Open Science logo.": "라이트 Open Science 로고입니다.",
+    "The dark Open Science logo.": "다크 Open Science 로고입니다.",
+    "Loading app icons…": "앱 아이콘 불러오는 중…",
+    "Could not load app icons.": "앱 아이콘을 불러오지 못했습니다.",
+    "No app icons are available.": "사용 가능한 앱 아이콘이 없습니다.",
+    "Current icon: {{icon}}. Its preview is unavailable.": "현재 아이콘: {{icon}}. 미리보기를 사용할 수 없습니다."
   }
 }

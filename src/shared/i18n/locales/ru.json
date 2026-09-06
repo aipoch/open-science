@@ -4980,6 +4980,14 @@
     "The log folder could not be created.": "Не удалось создать папку журнала.",
     "The log file could not be checked.": "Не удалось проверить файл журнала.",
     "The log backups could not be rotated.": "Не удалось выполнить ротацию резервных копий журнала.",
-    "The log record could not be appended.": "Не удалось добавить запись в журнал."
+    "The log record could not be appended.": "Не удалось добавить запись в журнал.",
+    "Could not save the language.": "Не удалось сохранить язык.",
+    "The saved language has been restored. Select a language to try again.": "Восстановлен сохранённый язык. Выберите язык, чтобы повторить попытку.",
+    "The light Open Science logo.": "Светлый логотип Open Science.",
+    "The dark Open Science logo.": "Тёмный логотип Open Science.",
+    "Loading app icons…": "Загрузка значков приложения…",
+    "Could not load app icons.": "Не удалось загрузить значки приложения.",
+    "No app icons are available.": "Нет доступных значков приложения.",
+    "Current icon: {{icon}}. Its preview is unavailable.": "Текущий значок: {{icon}}. Предпросмотр недоступен."
   }
 }

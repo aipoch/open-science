@@ -4847,6 +4847,14 @@
     "The log folder could not be created.": "Le dossier des journaux n’a pas pu être créé.",
     "The log file could not be checked.": "Le fichier journal n’a pas pu être vérifié.",
     "The log backups could not be rotated.": "La rotation des sauvegardes du journal a échoué.",
-    "The log record could not be appended.": "L’entrée n’a pas pu être ajoutée au journal."
+    "The log record could not be appended.": "L’entrée n’a pas pu être ajoutée au journal.",
+    "Could not save the language.": "Impossible d’enregistrer la langue.",
+    "The saved language has been restored. Select a language to try again.": "La langue enregistrée a été rétablie. Sélectionnez une langue pour réessayer.",
+    "The light Open Science logo.": "Le logo clair d’Open Science.",
+    "The dark Open Science logo.": "Le logo sombre d’Open Science.",
+    "Loading app icons…": "Chargement des icônes de l’application…",
+    "Could not load app icons.": "Impossible de charger les icônes de l’application.",
+    "No app icons are available.": "Aucune icône d’application n’est disponible.",
+    "Current icon: {{icon}}. Its preview is unavailable.": "Icône actuelle : {{icon}}. Son aperçu n’est pas disponible."
   }
 }
