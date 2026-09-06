@@ -109,6 +109,115 @@ afterEach(() => {
 })
 
 describe('NotificationLiveToast', () => {
+  it('N03: shows a sessionless connector approval on the foreground Home page', async () => {
+    await act(async () => root.render(<NotificationLiveToast />))
+    const approval = item(2, {
+      kind: 'authorization.required',
+      source: 'connector',
+      attentionReason: 'waiting-permission',
+      actionState: 'pending',
+      sessionId: undefined,
+      title: 'Approval needed'
+    })
+    await act(async () => {
+      useNotificationInboxStore.setState({ latestSequence: 2, items: [approval, item(1)] })
+    })
+    await flushToastPosition()
+
+    const toast = container.querySelector<HTMLElement>('[data-testid="notification-live-toast"]')
+    expect(toast).not.toBeNull()
+    expect(toast?.textContent).toContain('Approval needed')
+    expect(toast?.classList.contains('invisible')).toBe(false)
+  })
+
+  it('N04: removes the shown toast when its target is invalidated without a new sequence', async () => {
+    const openSessionById = vi.fn(() => true)
+    const originalOpen = useNavigationStore.getState().openSessionById
+    useNavigationStore.setState({ openSessionById })
+    try {
+      await act(async () => root.render(<NotificationLiveToast />))
+      await act(async () => {
+        useNotificationInboxStore.setState({ latestSequence: 2, items: [item(2), item(1)] })
+      })
+      await flushToastPosition()
+      expect(container.querySelector('[data-testid="notification-live-toast"]')).not.toBeNull()
+
+      await act(async () => {
+        useNotificationInboxStore.setState({
+          revision: 3,
+          latestSequence: 2,
+          items: [item(2, { readAt: 3000, targetInvalidatedAt: 3000 }), item(1)]
+        })
+      })
+      const openButton = [...container.querySelectorAll<HTMLButtonElement>('button')].find(
+        (button) => button.textContent === 'Open'
+      )
+      await act(async () => openButton?.click())
+      expect(openSessionById).not.toHaveBeenCalled()
+      expect(container.querySelector('[data-testid="notification-live-toast"]')).toBeNull()
+    } finally {
+      useNavigationStore.setState({ openSessionById: originalOpen })
+    }
+  })
+
+  it('still suppresses an active-session notification without replaying it on Home', async () => {
+    useNavigationStore.setState({ view: 'workspace' })
+    useSessionStore.setState({ selectedSessionId: 'session-1' })
+    await act(async () => root.render(<NotificationLiveToast />))
+    await act(async () => {
+      useNotificationInboxStore.setState({ latestSequence: 2, items: [item(2), item(1)] })
+    })
+    expect(container.querySelector('[data-testid="notification-live-toast"]')).toBeNull()
+    await act(async () => useNavigationStore.setState({ view: 'home' }))
+    expect(container.querySelector('[data-testid="notification-live-toast"]')).toBeNull()
+  })
+
+  it('withdraws a removed lead and does not carry its count into the next arrival', async () => {
+    await act(async () => root.render(<NotificationLiveToast />))
+    await act(async () => {
+      useNotificationInboxStore.setState({ latestSequence: 2, items: [item(2), item(1)] })
+    })
+    expect(container.querySelector('[data-testid="notification-live-toast"]')).not.toBeNull()
+    await act(async () => {
+      useNotificationInboxStore.setState({ items: [item(1)] })
+    })
+    expect(container.querySelector('[data-testid="notification-live-toast"]')).toBeNull()
+    // A refresh that restores the row must not replay an already-withdrawn arrival.
+    await act(async () => {
+      useNotificationInboxStore.setState({ items: [item(2), item(1)] })
+    })
+    expect(container.querySelector('[data-testid="notification-live-toast"]')).toBeNull()
+    await act(async () => {
+      useNotificationInboxStore.setState({ latestSequence: 3, items: [item(3), item(1)] })
+    })
+    expect(container.querySelector('[data-testid="notification-live-toast"]')).not.toBeNull()
+    expect(container.textContent).not.toContain('more message')
+  })
+
+  it('refreshes a settled lead without restarting its dismissal timer', async () => {
+    vi.useFakeTimers()
+    await act(async () => root.render(<NotificationLiveToast />))
+    const approval = item(2, {
+      kind: 'authorization.required',
+      source: 'connector',
+      actionState: 'pending'
+    })
+    await act(async () => {
+      useNotificationInboxStore.setState({ latestSequence: 2, items: [approval, item(1)] })
+    })
+    act(() => vi.advanceTimersByTime(3000))
+    await act(async () => {
+      useNotificationInboxStore.setState({
+        items: [{ ...approval, actionState: 'expired', title: 'Approval needed' }, item(1)]
+      })
+    })
+    const toast = container.querySelector('[data-testid="notification-live-toast"]')
+    expect(toast?.textContent).toContain('Approval needed')
+    expect(toast?.querySelector('.bg-bg-300')).not.toBeNull()
+    act(() => vi.advanceTimersByTime(3000))
+    expect(container.querySelector('[data-testid="notification-live-toast"]')).toBeNull()
+  })
+
   it('does not replay existing messages and anchors a newly arrived message above the bell', async () => {
     await act(async () => root.render(<NotificationLiveToast />))
     expect(container.querySelector('[data-testid="notification-live-toast"]')).toBeNull()
