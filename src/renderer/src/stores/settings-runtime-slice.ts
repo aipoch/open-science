@@ -344,11 +344,28 @@ export const createRuntimeSetupSlice = <Store extends RuntimeSetupHost>({
     try {
       const commands = getCommands()
       const environmentCheck = await commands.checkEnvironment()
+      const recordPreflightOutcome = (preflightFailed: boolean): void => {
+        if (
+          get().envCheckGeneration === generation &&
+          environmentCheck.agentFrameworkId === get().agentFrameworkId
+        ) {
+          patchRuntimeSetupState(set, { preflightFailed })
+        }
+      }
       // Preserve the existing ordering: even a pass that became stale while probing performs these
       // reads before generation/framework fencing decides whether it may update visible state.
       const [snapshot, preflight, npmAvailable] = await Promise.all([
         commands.getSettings(),
-        commands.getPreflight(),
+        commands.getPreflight().then(
+          (preflight) => {
+            recordPreflightOutcome(false)
+            return preflight
+          },
+          (error) => {
+            recordPreflightOutcome(true)
+            throw error
+          }
+        ),
         commands.isNpmAvailable()
       ])
 

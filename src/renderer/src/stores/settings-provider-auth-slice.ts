@@ -256,7 +256,12 @@ export const createProviderAuthSlice = <Store extends ProviderAuthHost>({
   refreshProviderModels: async (providerId) => {
     const commands = getCommands()
     const result = await commands.refreshProviderModels({ providerId })
-    if (result.ok) reconcileSnapshot(await commands.getSettings())
+    try {
+      reconcileSnapshot(await commands.getSettings())
+    } catch (error) {
+      // Keep the original refresh failure if best-effort reconciliation also fails.
+      if (result.ok) throw error
+    }
     return result
   },
 

@@ -321,7 +321,31 @@ describe('provider auth slice: authentication and catalogs', () => {
     expect(refreshPreflight).not.toHaveBeenCalled()
   })
 
-  it('refreshes model catalogs only after a successful vendor fetch', async () => {
+  it.each(['edited', 'deleted'] as const)(
+    'reconciles the %s provider state when a model refresh is discarded',
+    async (change) => {
+      const pending = deferred<{ ok: boolean; category: 'unknown'; message: string }>()
+      const stale = { ...provider('saved'), name: 'Old name', models: ['old-model'] }
+      const current = { ...provider('saved'), name: 'New name', models: ['new-model'] }
+      store.setState({ providers: [stale] })
+      commands.refreshProviderModels.mockReturnValueOnce(pending.promise)
+
+      const refreshing = store.getState().refreshProviderModels('saved')
+      const authoritative = snapshot(change === 'deleted' ? [] : [current])
+      commands.getSettings.mockResolvedValueOnce(authoritative)
+      const discarded = {
+        ok: false,
+        category: 'unknown' as const,
+        message: 'The provider changed while loading models. Try again.'
+      }
+      pending.resolve(discarded)
+
+      await expect(refreshing).resolves.toEqual(discarded)
+      expect(store.getState().providers).toEqual(authoritative.providers)
+    }
+  )
+
+  it('reconciles model catalog results after successful and failed vendor fetches', async () => {
     await store.getState().refreshProviderModels('saved')
     expect(commands.getSettings).toHaveBeenCalledOnce()
     expect(reconcileSnapshot).toHaveBeenCalledOnce()
@@ -332,8 +356,21 @@ describe('provider auth slice: authentication and catalogs', () => {
       message: 'nope'
     })
     await store.getState().refreshProviderModels('saved')
-    expect(commands.getSettings).toHaveBeenCalledOnce()
-    expect(reconcileSnapshot).toHaveBeenCalledOnce()
+    expect(commands.getSettings).toHaveBeenCalledTimes(2)
+    expect(reconcileSnapshot).toHaveBeenCalledTimes(2)
+  })
+
+  it('preserves a discarded model refresh error when snapshot reconciliation fails', async () => {
+    const discarded = {
+      ok: false,
+      category: 'unknown' as const,
+      message: 'The provider changed while loading models. Try again.'
+    }
+    commands.refreshProviderModels.mockResolvedValueOnce(discarded)
+    commands.getSettings.mockRejectedValueOnce(new Error('settings unavailable'))
+
+    await expect(store.getState().refreshProviderModels('saved')).resolves.toEqual(discarded)
+    expect(reconcileSnapshot).not.toHaveBeenCalled()
   })
 
   it('deletes through the authoritative snapshot and then refreshes readiness', async () => {

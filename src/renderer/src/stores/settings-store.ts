@@ -476,6 +476,7 @@ const createSettingsStoreState = (
           }
 
           set({
+            preflightFailed: preflightResult.status === 'rejected',
             ...createRuntimeSetupLoadPatch(
               preflightResult.status === 'fulfilled' ? preflightResult.value : get().preflight,
               npmAvailableResult.status === 'fulfilled'

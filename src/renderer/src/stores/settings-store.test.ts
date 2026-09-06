@@ -867,6 +867,30 @@ describe('settings store: onboarding completion', () => {
 })
 
 describe('settings store: startup loading', () => {
+  it('clears the preflight failure after a successful forced load', async () => {
+    useSettingsStore.setState({ preflightFailed: true })
+
+    await expect(useSettingsStore.getState().load({ force: true })).resolves.toBe(true)
+
+    expect(useSettingsStore.getState().preflightFailed).toBe(false)
+  })
+
+  it('records a failed preflight during an environment check', async () => {
+    api.getPreflight.mockRejectedValueOnce(new Error('preflight unavailable'))
+
+    await expect(useSettingsStore.getState().checkEnvironment()).resolves.toBeUndefined()
+
+    expect(useSettingsStore.getState().preflightFailed).toBe(true)
+  })
+
+  it('clears the preflight failure after a successful environment check', async () => {
+    useSettingsStore.setState({ preflightFailed: true })
+
+    await useSettingsStore.getState().checkEnvironment()
+
+    expect(useSettingsStore.getState().preflightFailed).toBe(false)
+  })
+
   it('defaults secure storage to unavailable until the capability probe succeeds', () => {
     expect(useSettingsStore.getState().encryptionAvailable).toBe(false)
   })
@@ -977,7 +1001,8 @@ describe('settings store: startup loading', () => {
       isLoaded: true,
       isLoading: false,
       loadError: undefined,
-      encryptionAvailable: false
+      encryptionAvailable: false,
+      preflightFailed: true
     })
     expect(warn).toHaveBeenCalledWith('Settings loading failed', rawError)
   })
@@ -1211,13 +1236,17 @@ describe('settings store: refreshProviderModels', () => {
     expect(useSettingsStore.getState().providers.map((p) => p.id)).toEqual(['p1'])
   })
 
-  it('leaves the cache untouched when the fetch fails', async () => {
+  it('reconciles the authoritative cache while preserving a failed fetch result', async () => {
     api.refreshProviderModels.mockResolvedValue({ ok: false, category: 'auth', message: 'nope' })
+    api.getSettings.mockResolvedValue(snapshot([providerView('current')]))
 
     const result = await useSettingsStore.getState().refreshProviderModels('p1')
 
-    expect(result.ok).toBe(false)
-    expect(api.getSettings).not.toHaveBeenCalled()
+    expect(result).toEqual({ ok: false, category: 'auth', message: 'nope' })
+    expect(api.getSettings).toHaveBeenCalledOnce()
+    expect(useSettingsStore.getState().providers.map((provider) => provider.id)).toEqual([
+      'current'
+    ])
   })
 
   it('loads skills and toggles optimistically', async () => {
