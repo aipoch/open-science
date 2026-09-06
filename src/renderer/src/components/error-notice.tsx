@@ -1,12 +1,13 @@
 import { CircleQuestionMark, LoaderCircle, type LucideIcon } from 'lucide-react'
 
+import { cn } from '@/lib/utils'
+
 import { FlaskLogo } from '@/components/flask-logo'
 import { Button } from '@/components/ui/button'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 
-// Generic error notice column: the brand mark is optional, everything else is data-driven. Each
-// section renders only when its prop is present, so callers compose anything from a bare title to
-// a full troubleshooting card. All copy arrives as final display strings — callers translate.
+// Error summaries use a branded column by default; compact notices fit within an existing form
+// or resource list. All copy arrives as final display strings — callers translate.
 
 type ErrorNoticeTone = 'teal' | 'amber' | 'red'
 
@@ -19,6 +20,7 @@ type ErrorNoticeButton = {
 }
 
 type ErrorNoticeProps = {
+  compact?: boolean
   showBrand?: boolean
   icon?: LucideIcon
   tone?: ErrorNoticeTone
@@ -42,15 +44,18 @@ const TONE_CLASSES: Record<ErrorNoticeTone, string> = {
 
 const NoticeButton = ({
   button,
-  variant
+  variant,
+  compact
 }: {
   button: ErrorNoticeButton
   variant?: 'secondary'
+  compact?: boolean
 }): React.JSX.Element => (
   <Button
     type="button"
     className="focus-visible:transition-none"
-    variant={variant}
+    variant={compact && variant === 'secondary' ? 'outline' : variant}
+    size={compact ? 'sm' : 'default'}
     onClick={button.onClick}
     disabled={button.disabled || button.loading}
     aria-busy={button.loading || undefined}
@@ -63,6 +68,7 @@ const NoticeButton = ({
 )
 
 const ErrorNotice = ({
+  compact = false,
   showBrand = true,
   icon: Icon,
   tone,
@@ -74,27 +80,50 @@ const ErrorNotice = ({
   secondaryButton,
   primaryButton
 }: ErrorNoticeProps): React.JSX.Element => {
+  const Heading = compact ? 'h2' : 'h1'
   return (
-    <section className="flex w-full min-w-0 max-w-md flex-col gap-4 text-left">
-      {showBrand ? <FlaskLogo className="mb-4 size-18 self-center text-text-300" /> : null}
+    <section
+      className={cn(
+        'flex w-full min-w-0 flex-col text-left',
+        compact
+          ? ['gap-3 rounded-lg border border-current/15 p-4', TONE_CLASSES[tone ?? 'amber']]
+          : 'max-w-md gap-4'
+      )}
+    >
+      {!compact && showBrand ? (
+        <FlaskLogo className="mb-4 size-18 self-center text-text-300" />
+      ) : null}
 
       {title !== undefined || description !== undefined ? (
         <div className="flex min-w-0 items-start gap-3">
           {Icon ? (
             <div
-              className={`flex size-9 shrink-0 items-center justify-center rounded-full ${TONE_CLASSES[tone ?? 'amber']}`}
+              className={cn(
+                'flex shrink-0 items-center justify-center',
+                compact ? 'h-5 w-4' : ['size-9 rounded-full', TONE_CLASSES[tone ?? 'amber']]
+              )}
             >
               <Icon className="size-4" strokeWidth={1.8} aria-hidden="true" />
             </div>
           ) : null}
           <div className="flex min-w-0 flex-1 flex-col gap-1">
             {title !== undefined ? (
-              <h1 className="text-base leading-6 font-semibold text-foreground [overflow-wrap:anywhere]">
+              <Heading
+                className={cn(
+                  'font-semibold text-foreground [overflow-wrap:anywhere]',
+                  compact ? 'text-sm leading-5' : 'text-base leading-6'
+                )}
+              >
                 {title}
-              </h1>
+              </Heading>
             ) : null}
             {description !== undefined ? (
-              <p className="text-sm leading-6 text-muted-foreground [overflow-wrap:anywhere]">
+              <p
+                className={cn(
+                  'text-sm text-muted-foreground [overflow-wrap:anywhere]',
+                  compact ? 'leading-5' : 'leading-6'
+                )}
+              >
                 {description}
               </p>
             ) : null}
@@ -122,9 +151,16 @@ const ErrorNotice = ({
       ) : null}
 
       {secondaryButton !== undefined || primaryButton !== undefined ? (
-        <div className="flex w-full flex-wrap items-center justify-end gap-2">
-          {secondaryButton ? <NoticeButton button={secondaryButton} variant="secondary" /> : null}
-          {primaryButton ? <NoticeButton button={primaryButton} /> : null}
+        <div
+          className={cn(
+            'flex w-full flex-wrap items-center gap-2',
+            compact ? Icon && 'pl-7' : 'justify-end'
+          )}
+        >
+          {secondaryButton ? (
+            <NoticeButton button={secondaryButton} variant="secondary" compact={compact} />
+          ) : null}
+          {primaryButton ? <NoticeButton button={primaryButton} compact={compact} /> : null}
         </div>
       ) : null}
 

@@ -994,13 +994,18 @@ Preference-save and app-icon-preview failures use one line of small red text wit
 action for dismiss or retry. Do not add a border, background, brand mark, or status icon. Keep the
 language rollback explanation available to screen readers.
 
-Use the shared `ErrorNotice` for error summaries. Center the decorative flask mark (`size-18`) above
+Use the shared `ErrorNotice` for error summaries. In its default page-level layout, center the decorative flask mark (`size-18`) above
 the summary with a 32px gap to distinguish it from the smaller status icon. Use one bounded column
 (`max-w-md`, `min-w-0`), and left-align headings, descriptions, codes, and help.
 Pair the status icon with the first text line. Long error text and identifiers must wrap inside the
 column. Group primary and secondary actions at the trailing edge with `flex-wrap` and a consistent
 small gap; wrap whole controls instead of splitting their labels. Preserve semantic status tones,
 disabled/loading behavior, and immediately visible keyboard focus.
+
+Inside an existing form or resource list, use `compact` ErrorNotice: omit the decorative flask,
+use a small status icon and semantic tinted surface, and align smaller actions beneath the text.
+Keep the notice at the content width with 16px padding and 14px text; retain the same action,
+loading, and focus behavior. Tag draft conflicts and catalog retries use this inline presentation.
 
 Provenance diagnostics share the summary's width below a divider. A disclosure button exposes its
 expanded state and controls the diagnostic region; the copy action belongs in that region's header

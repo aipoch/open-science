@@ -6,11 +6,11 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { ErrorNotice } from './error-notice'
 
-describe('ErrorNotice', () => {
+describe.each([false, true])('ErrorNotice (compact: %s)', (compact) => {
   afterEach(cleanup)
 
   it('renders only the sections whose props are provided', () => {
-    render(<ErrorNotice title="Something broke" />)
+    render(<ErrorNotice compact={compact} title="Something broke" />)
 
     expect(screen.getByText('Something broke')).toBeTruthy()
     expect(screen.queryByRole('button')).toBeNull()
@@ -23,6 +23,7 @@ describe('ErrorNotice', () => {
 
     render(
       <ErrorNotice
+        compact={compact}
         icon={ShieldX}
         tone="red"
         title="Broken"
@@ -61,7 +62,13 @@ describe('ErrorNotice', () => {
   })
 
   it('renders either button on its own', () => {
-    render(<ErrorNotice title="t" primaryButton={{ label: 'Retry', onClick: () => undefined }} />)
+    render(
+      <ErrorNotice
+        compact={compact}
+        title="t"
+        primaryButton={{ label: 'Retry', onClick: () => undefined }}
+      />
+    )
 
     expect(screen.getByRole('button', { name: 'Retry' })).toBeTruthy()
     expect(screen.queryByRole('button', { name: 'Quit' })).toBeNull()
@@ -71,6 +78,7 @@ describe('ErrorNotice', () => {
     const onRetry = vi.fn()
     const { container } = render(
       <ErrorNotice
+        compact={compact}
         title="t"
         primaryButton={{ label: 'Retrying…', onClick: onRetry, loading: true }}
       />

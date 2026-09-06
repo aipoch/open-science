@@ -6,6 +6,7 @@ import { TooltipProvider } from '@/components/ui/tooltip'
  */
 import { AlertDialog } from 'radix-ui'
 import {
+  CircleAlert,
   ChevronDown,
   BookOpenText,
   GripVertical,
@@ -194,6 +195,8 @@ const TagForm = ({
       {conflicted ? (
         <div role="alert">
           <ErrorNotice
+            compact
+            icon={CircleAlert}
             title={t('This Tag changed while you were editing.')}
             description={t(
               'Your draft is preserved. Reload the latest values, or keep your draft and save again to replace them.'
@@ -891,6 +894,8 @@ const TagsList = ({
                 return catalog.status === 'error' ? (
                   <div key={type} role="alert" className="mb-4">
                     <ErrorNotice
+                      compact
+                      icon={CircleAlert}
                       title={t('Could not load {{type}}.', { type: resourceTypeLabel(t, type) })}
                       primaryButton={{ label: t('Retry'), onClick: catalog.retry }}
                     />
