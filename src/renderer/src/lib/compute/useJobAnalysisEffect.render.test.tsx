@@ -309,6 +309,81 @@ describe('useJobAnalysisEffect persistence readiness', () => {
     expect(sendMessage).toHaveBeenCalledOnce()
   })
 
+  it('waits for a CLI-owned durable turn to settle without replacing newer local content', async () => {
+    vi.useFakeTimers()
+    const durableBase: PersistedChatSession = {
+      id: 'session-1',
+      projectId: 'project-a',
+      title: 'CLI Session',
+      cwd: '/workspace/project-a',
+      status: 'running',
+      activeRun: { promptMessageId: 'cli-prompt', startedAt: 2 },
+      messages: [
+        {
+          id: 'cli-prompt',
+          role: 'user',
+          content: 'Run the remote workload',
+          status: 'complete',
+          eventIds: [],
+          createdAt: 2,
+          updatedAt: 2
+        }
+      ],
+      createdAt: 1,
+      updatedAt: 2
+    }
+    loadOne.mockResolvedValueOnce(durableBase).mockResolvedValueOnce({
+      ...durableBase,
+      status: 'idle',
+      activeRun: undefined,
+      taskRunCommitId: 'task-run-1',
+      revision: 3,
+      updatedAt: 3
+    })
+    useSessionStore.setState({
+      sessions: [
+        {
+          id: 'session-1',
+          projectId: 'project-a',
+          title: 'CLI Session',
+          cwd: '/workspace/project-a',
+          status: 'idle',
+          messages: [
+            {
+              id: 'local-message',
+              role: 'user',
+              content: 'A newer local edit',
+              status: 'complete',
+              eventIds: [],
+              createdAt: 4,
+              updatedAt: 4
+            }
+          ],
+          createdAt: 1,
+          updatedAt: 4
+        }
+      ],
+      selectedSessionId: 'session-1'
+    })
+
+    await act(async () => root.render(<Probe enabled />))
+    await act(async () => Promise.resolve())
+
+    expect(sendMessage).not.toHaveBeenCalled()
+    expect(useSessionStore.getState().sessions[0]?.messages).toEqual([
+      expect.objectContaining({ id: 'local-message', content: 'A newer local edit' })
+    ])
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(250)
+    })
+
+    expect(sendMessage).toHaveBeenCalledOnce()
+    expect(useSessionStore.getState().sessions[0]?.messages).toEqual([
+      expect.objectContaining({ id: 'local-message', content: 'A newer local edit' })
+    ])
+  })
+
   it('recovers pending analysis across all Sessions from the App-level owner', async () => {
     const persistedBackground: PersistedChatSession = {
       id: 'session-1',

@@ -55,11 +55,15 @@ const createMessage = (overrides: Partial<ChatMessage> = {}): ChatMessage => ({
 
 const noop = (): void => {}
 
-const renderItem = async (message: ChatMessage): Promise<void> => {
+const renderItem = async (
+  message: ChatMessage,
+  presentationAnimateOnMount?: boolean
+): Promise<void> => {
   await act(async () => {
     root.render(
       <WorkspaceMessageItem
         message={message}
+        presentationAnimateOnMount={presentationAnimateOnMount}
         projectId="project-1"
         onPreviewArtifact={noop}
         onPreviewUploadAttachment={noop}
@@ -92,6 +96,23 @@ describe('WorkspaceMessageItem content-visibility containment', () => {
     expect(containmentDisabled()).toBe(true)
 
     await renderItem(createMessage({ status: 'complete' }))
+    expect(containmentDisabled()).toBe(true)
+  })
+
+  it('keeps a newly revealed completed reply out of intrinsic-size containment', async () => {
+    await renderItem(createMessage(), true)
+    expect(containmentDisabled()).toBe(true)
+
+    await renderItem(createMessage(), false)
+    expect(containmentDisabled()).toBe(true)
+  })
+
+  it('updates containment when the same message becomes explicitly newly presented', async () => {
+    const message = createMessage()
+    await renderItem(message)
+    expect(containmentDisabled()).toBe(false)
+
+    await renderItem(message, true)
     expect(containmentDisabled()).toBe(true)
   })
 

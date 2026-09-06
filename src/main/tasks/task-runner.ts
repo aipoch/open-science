@@ -127,7 +127,9 @@ type TaskSettingsPort = {
 type TaskPreviewResourcePort = {
   acquire(request: {
     source: 'artifact'
-    path: string
+    projectId: string
+    fileId: string
+    versionId?: string
     mimeType?: string
   }): Promise<{ id: string; url: string; size: number; mimeType?: string }>
   release(resourceId: string): Promise<void>
@@ -1190,15 +1192,21 @@ class TaskRunner {
 
   async acquireArtifact(artifactId: string): Promise<AcquiredTaskArtifact> {
     const sessions = await this.dependencies.sessions.list()
-    const artifact = sessions
-      .flatMap((session) => session.artifacts ?? [])
-      .find((candidate) => candidate.id === artifactId)
-    if (!artifact) {
+    const owner = sessions
+      .map((session) => ({
+        session,
+        artifact: (session.artifacts ?? []).find((candidate) => candidate.id === artifactId)
+      }))
+      .find((candidate) => candidate.artifact)
+    if (!owner?.artifact) {
       throw new TaskRunnerError('artifact_not_found', `Artifact not found: ${artifactId}`)
     }
+    const { artifact, session } = owner
     const resource = await this.dependencies.previewResources.acquire({
       source: 'artifact',
-      path: artifact.path,
+      projectId: session.projectId,
+      fileId: artifact.artifactId ?? artifact.id,
+      ...(artifact.versionId ? { versionId: artifact.versionId } : {}),
       mimeType: artifact.mimeType
     })
     return {
@@ -2318,6 +2326,14 @@ class TaskRunner {
       ...(clearPendingHistoryReplay ? { clearPendingHistoryReplay: true } : {}),
       updatedAt: now
     })
+    const stagedMessageId = hasAssistantMessage
+      ? (stagedSession.messages.findLast(
+          (message) =>
+            message.role === 'agent' &&
+            message.status === 'complete' &&
+            message.responseToMessageId === session.activeRun?.promptMessageId
+        )?.id ?? assistantMessageId)
+      : undefined
     const finalizedArtifacts: ArtifactFile[] = []
     const buildCompletion = (): CompletedTaskSession => {
       const uniqueArtifacts = [
@@ -2330,7 +2346,7 @@ class TaskRunner {
         output,
         artifacts: uniqueArtifacts,
         persistedArtifacts,
-        messageId: hasAssistantMessage ? assistantMessageId : undefined,
+        messageId: stagedMessageId,
         session: stagedSession
       }
     }
@@ -2338,7 +2354,7 @@ class TaskRunner {
       try {
         const request = {
           claimId: artifactClaimId,
-          messageId: assistantMessageId
+          messageId: stagedMessageId ?? assistantMessageId
         }
         const result = await this.dependencies.artifacts.finalizeRun(request)
         if (!result.ok) {

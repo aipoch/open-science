@@ -138,6 +138,8 @@ describe('ComputeApprovalDialog', () => {
           intent: 'Run the analysis',
           commandPreview: 'python analysis.py',
           commandFull: 'python analysis.py',
+          executionMode: 'slurm',
+          environment: 'protein-gpu',
           inputsSummary: '2 input files',
           resources: '{"cpus":4,"memory":"16 GiB"}',
           timeoutSeconds: 1,
@@ -158,6 +160,10 @@ describe('ComputeApprovalDialog', () => {
     expect(dialogText).not.toContain('1 seconds')
     expect(dialogText).toContain('Remote workdir')
     expect(dialogText).toContain('/scratch/project/job-1')
+    expect(dialogText).toContain('Execution mode')
+    expect(dialogText).toContain('Slurm')
+    expect(dialogText).toContain('Environment')
+    expect(dialogText).toContain('protein-gpu')
   })
 
   it('warns without blocking approval when job data will be stored unencrypted', () => {

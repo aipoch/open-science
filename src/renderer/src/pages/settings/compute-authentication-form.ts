@@ -2,6 +2,7 @@ import type { TFunction } from 'i18next'
 
 import type {
   ComputeAuthenticationMode,
+  ComputeExecutionMode,
   ComputeHost,
   ComputePasswordCapability,
   CreateComputeHostRequest,
@@ -34,6 +35,7 @@ type ComputeHostCreationCommon = Readonly<{
   sshAlias: string
   detailsDoc?: string
   operationId: string
+  executionMode: ComputeExecutionMode
 }>
 
 type ComputeAuthenticationFieldSet = 'ssh_config' | 'password'
@@ -70,6 +72,7 @@ const createSshConfigHost = (
   return actions.createSshConfigHost({
     sshAlias: common.sshAlias,
     detailsDoc: common.detailsDoc,
+    executionMode: common.executionMode,
     sshOverrides: Object.keys(sshOverrides).length > 0 ? sshOverrides : undefined
   })
 }

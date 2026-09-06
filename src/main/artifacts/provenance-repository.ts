@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto'
-import { rm, stat } from 'node:fs/promises'
-import { dirname, join } from 'node:path'
+import { readFile, realpath, rm, stat } from 'node:fs/promises'
+import { dirname, isAbsolute, join, relative, sep } from 'node:path'
 import { pathToFileURL } from 'node:url'
 
 import type { PrismaClient } from '@prisma/client'
@@ -25,7 +25,10 @@ import {
   MAX_ARTIFACT_VERSION_DESCRIPTOR_IDS,
   type ResolveArtifactVersionDescriptorsRequest
 } from '../../shared/artifacts'
-import { parseOwnedExecutionFileEvidenceSummary } from '../../shared/execution-file-evidence'
+import {
+  hasImmutableExecutionFileEvidenceReference,
+  parseOwnedExecutionFileEvidenceSummary
+} from '../../shared/execution-file-evidence'
 import { ArtifactRepository } from './repository'
 import { ImmutableInputAuthority } from '../immutable-input-authority'
 import { defaultArtifactDurability, type ArtifactDurability } from './durability'
@@ -34,8 +37,9 @@ import {
   normalizeArtifactFilename as normalizeFilename,
   type PersistedVersionFileRecord
 } from './provenance-version-writer'
-import { NotebookRunRepository } from '../notebook/repository'
+import { getNotebookSessionRoot, NotebookRunRepository } from '../notebook/repository'
 import { canonicalJson, sha256 } from './provenance-canonical'
+import { computeEvidenceOwnsSource } from './compute-output-evidence'
 import { ArtifactProvenanceProducerCapture } from './provenance-producer-capture'
 import {
   ArtifactFinalizationProofError,
@@ -312,22 +316,41 @@ class ArtifactProvenanceRepository {
       storageRoot: options.storageRoot,
       createId: this.createId,
       computeJobReader: {
-        findByProducer: async (projectId, sessionId, producerRunId) => {
+        findByProducer: async (projectId, sessionId, producerRunId, priorityJobIds = []) => {
           const client = await options.getClient()
+          const select = {
+            id: true,
+            providerId: true,
+            shape: true,
+            status: true,
+            fileEvidence: true,
+            createdAt: true
+          } as const
+          const prioritized = [...new Set(priorityJobIds)].slice(0, 100)
+          const priorityJobs =
+            prioritized.length > 0
+              ? await client.computeJob.findMany({
+                  where: {
+                    projectId,
+                    sessionId,
+                    producerRunId,
+                    id: { in: prioritized }
+                  },
+                  select
+                })
+              : []
           const jobs = await client.computeJob.findMany({
-            where: { projectId, sessionId, producerRunId },
-            select: {
-              id: true,
-              providerId: true,
-              shape: true,
-              status: true,
-              fileEvidence: true,
-              createdAt: true
+            where: {
+              projectId,
+              sessionId,
+              producerRunId,
+              ...(prioritized.length > 0 ? { id: { notIn: prioritized } } : {})
             },
+            select,
             orderBy: { createdAt: 'asc' },
-            take: 100
+            take: 100 - priorityJobs.length
           })
-          return jobs.map((job) => {
+          return [...priorityJobs, ...jobs].map((job) => {
             let fileEvidence
             try {
               fileEvidence = job.fileEvidence
@@ -358,6 +381,71 @@ class ArtifactProvenanceRepository {
               }
             }
           })
+        },
+        findOutputOwners: async (
+          projectId,
+          sessionId,
+          producerRunId,
+          observation,
+          artifactChecksum
+        ) => {
+          const sessionRoot = await realpath(
+            getNotebookSessionRoot(options.storageRoot, projectId, sessionId)
+          ).catch(() => getNotebookSessionRoot(options.storageRoot, projectId, sessionId))
+          const sourcePath = await realpath(observation.path).catch(() => undefined)
+          if (!sourcePath) return []
+          const nested = relative(sessionRoot, sourcePath)
+          if (!nested || nested === '..' || nested.startsWith(`..${sep}`) || isAbsolute(nested)) {
+            return []
+          }
+          const relativePath = nested.split(sep).join('/')
+          const client = await options.getClient()
+          const owners: string[] = []
+          let cursor: string | undefined
+          do {
+            const jobs = await client.computeJob.findMany({
+              where: { projectId, sessionId, producerRunId },
+              select: { id: true, fileEvidence: true },
+              orderBy: { id: 'asc' },
+              take: 100,
+              ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {})
+            })
+            for (const job of jobs) {
+              try {
+                const storageKey = `execution-file-evidence/${projectId}/${sessionId}/activity-${job.id}/evidence.json`
+                const summary = job.fileEvidence
+                  ? parseOwnedExecutionFileEvidenceSummary(JSON.parse(job.fileEvidence), {
+                      activityId: job.id,
+                      activityKind: 'compute-job',
+                      parentActivityId: producerRunId,
+                      storageKey
+                    })
+                  : undefined
+                if (!hasImmutableExecutionFileEvidenceReference(summary)) continue
+                const evidenceBytes = await readFile(
+                  join(options.storageRoot, ...summary.storageKey.split('/'))
+                )
+                if (sha256(evidenceBytes) !== summary.checksum) continue
+                const evidence = JSON.parse(evidenceBytes.toString('utf8')) as unknown
+                if (
+                  computeEvidenceOwnsSource(evidence, {
+                    activityId: job.id,
+                    producerRunId,
+                    evidenceId: summary.evidenceId,
+                    relativePath,
+                    checksum: artifactChecksum,
+                    sizeBytes: observation.sizeBytes
+                  })
+                ) {
+                  owners.push(job.id)
+                }
+              } catch {
+                // Missing, malformed, or modified evidence cannot establish source ownership.
+              }
+            }
+            cursor = jobs.length === 100 ? jobs.at(-1)?.id : undefined
+          } while (cursor)
+          return owners
         }
       }
     })

@@ -69,6 +69,9 @@ export type NotebookSessionExecutionRequest = {
   mcpRpcToken?: string
   sessionId?: string
   projectId?: string
+  // Trusted Agent Session workspace used by host.compute to resolve relative job inputs. Optional
+  // keeps injected executors and older callers source-compatible; the REPL falls back to its cwd.
+  workspaceCwd?: string
   inputRunLeaseId?: string
   // Opaque per-control invocation identity forwarded through the REPL request frame. It binds a
   // host.agents.switch approval to this exact outer repl_execute completion.

@@ -190,6 +190,22 @@ export function ComputeApprovalDialog({
                   </span>
                 </div>
               )}
+              {dialogRequest.operation === 'submit_job' && dialogRequest.executionMode && (
+                <div className="flex gap-2">
+                  <span className="w-20 shrink-0 text-muted-foreground">{t('Execution mode')}</span>
+                  <span className="min-w-0 text-foreground">
+                    {dialogRequest.executionMode === 'slurm' ? t('Slurm') : t('Direct SSH')}
+                  </span>
+                </div>
+              )}
+              {dialogRequest.operation === 'submit_job' && dialogRequest.environment && (
+                <div className="flex gap-2">
+                  <span className="w-20 shrink-0 text-muted-foreground">{t('Environment')}</span>
+                  <span className="min-w-0 break-all font-mono text-muted-foreground">
+                    {dialogRequest.environment}
+                  </span>
+                </div>
+              )}
               {dialogRequest.operation === 'submit_job' && dialogRequest.resources && (
                 <div className="flex gap-2">
                   <span className="w-20 shrink-0 text-muted-foreground">{t('Resources')}</span>

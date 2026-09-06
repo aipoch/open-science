@@ -22,6 +22,16 @@ import {
   publishComputeJobFileEvidence,
   settleComputeJobFileEvidence
 } from '../notebook/working-file-observer'
+import { applyComputeEnvironment } from './compute-environment'
+import { dispatchSlurmJob, SlurmDriverError } from './slurm-driver'
+import { toBase64, type RemoteHandle } from './remote-job-contract'
+
+export {
+  toBase64,
+  type ComputeRemoteHandle,
+  type RemoteHandle,
+  type SlurmRemoteHandle
+} from './remote-job-contract'
 
 // Maximum number of bytes for the per-job dispatch SSH command (enough for base64 of large scripts).
 const DISPATCH_MAX_OUTPUT_BYTES = 4 * 1024
@@ -30,15 +40,6 @@ const DISPATCH_MAX_OUTPUT_BYTES = 4 * 1024
 // slow cluster file systems; the job itself runs detached so the connection can close after.
 const DISPATCH_TIMEOUT_MS = 120_000
 const log = createLogger('compute')
-
-// Remote handle stored in the DB once the job is launched.
-export type RemoteHandle = {
-  pid: number
-  exit_code_path: string
-  stdout_path: string
-  stderr_path: string
-  workdir: string
-}
 
 export const REMOTE_PROCESS_OWNERSHIP_FUNCTION = [
   'process_owned_by_workdir() {',
@@ -68,9 +69,6 @@ export const buildLauncherScript = (timeoutSeconds: number): string => {
     'echo $? > exit_code.tmp && mv exit_code.tmp exit_code\n'
   )
 }
-
-// Encodes a string to base64 for safe transfer via a single SSH command (avoids heredoc/quoting).
-export const toBase64 = (content: string): string => Buffer.from(content).toString('base64')
 
 // Computes the SHA-256 hash of a command string for auditing and deduplication.
 export const hashCommand = (command: string): string =>
@@ -163,6 +161,15 @@ export async function dispatchJob(jobId: string, deps: DispatcherDeps): Promise<
       // Unknown failures may occur after the remote launcher has started but before its handle is
       // durable. Leave that row submitted so deterministic restart recovery can adopt it; only a
       // transport failure already proven to be pre-launch is safe to terminalize here.
+      if (error instanceof SlurmDriverError) {
+        const lifecycle = new ComputeJobLifecycle(deps.jobRepository, deps.onJobUpdated)
+        if (error.code === 'host_unreachable') {
+          await lifecycle.recordPollError(jobId, 'submitted', error.message, false)
+          return
+        }
+        await lifecycle.dispatchError(jobId, { errorCode: error.code, stderrTail: error.message })
+        return
+      }
       if (!(error instanceof ComputeConnectionError)) return
       const lifecycle = new ComputeJobLifecycle(deps.jobRepository, deps.onJobUpdated)
       await lifecycle.dispatchError(jobId, { errorCode: error.code, stderrTail: error.message })
@@ -312,8 +319,15 @@ async function dispatchJobInner(jobId: string, deps: DispatcherDeps): Promise<vo
     }
   }
 
+  const commandScript = applyComputeEnvironment(job.command, job.environment)
+
+  if (job.execution_mode === 'slurm') {
+    const handle = await dispatchSlurmJob(job, connection, workdir)
+    await lifecycle.dispatchSubmitted(jobId, JSON.stringify(handle))
+    return
+  }
+
   // Build scripts.
-  const commandScript = job.command // raw command content written to command.sh
   const launcherScript = buildLauncherScript(timeoutSecs)
 
   // Encode to base64 to avoid all shell quoting/injection issues.

@@ -1,4 +1,6 @@
 import { expect, type Page } from '@playwright/test'
+import { writeFile } from 'node:fs/promises'
+import { join } from 'node:path'
 
 import { test } from './fixtures/electron-app'
 
@@ -194,84 +196,117 @@ test('keeps a running tool stationary while one line of buffered Markdown finish
   ).toBeLessThanOrEqual(2)
 })
 
-test('keeps bottom-follow from overshooting when a paced tool turn completes', async ({ app }) => {
-  await app.completeOnboarding()
-  const page = await app.configureFakeAgent()
+for (const reducedMotion of ['reduce', 'no-preference'] as const) {
+  test(`keeps bottom-follow from overshooting when a paced tool turn completes (${reducedMotion})`, async ({
+    app
+  }, testInfo) => {
+    await app.completeOnboarding()
+    const page = await app.configureFakeAgent()
 
-  await page.getByRole('button', { name: 'New project' }).click()
-  const dialog = page.getByRole('dialog', { name: 'New project' })
-  await dialog.getByLabel('Name').fill(PROJECT_NAME)
-  await dialog.getByRole('button', { name: 'Create project' }).click()
-  await expect(page.getByRole('heading', { name: 'New conversation' })).toBeVisible()
+    await page.getByRole('button', { name: 'New project' }).click()
+    const dialog = page.getByRole('dialog', { name: 'New project' })
+    await dialog.getByLabel('Name').fill(PROJECT_NAME)
+    await dialog.getByRole('button', { name: 'Create project' }).click()
+    await expect(page.getByRole('heading', { name: 'New conversation' })).toBeVisible()
 
-  const conversation = page.getByRole('region', { name: 'Conversation' })
-  const textbox = page.getByRole('textbox', { name: 'Ask anything' })
+    const conversation = page.getByRole('region', { name: 'Conversation' })
+    const textbox = page.getByRole('textbox', { name: 'Ask anything' })
 
-  await textbox.fill(USER_MESSAGE)
-  await page.getByRole('button', { name: 'Send message' }).click()
-  await expect(conversation.getByText(AGENT_REPLY, { exact: true })).toBeVisible()
-  await expect(page.getByTestId('session-persistence-alert')).toHaveCount(0)
-  await revealWindowForLayoutSampling(app, page)
+    await textbox.fill(USER_MESSAGE)
+    await page.getByRole('button', { name: 'Send message' }).click()
+    await expect(conversation.getByText(AGENT_REPLY, { exact: true })).toBeVisible()
+    await expect(page.getByTestId('session-persistence-alert')).toHaveCount(0)
+    await revealWindowForLayoutSampling(app, page)
+    await page.emulateMedia({ reducedMotion })
 
-  await textbox.fill(TOOL_ORDER_PROMPT)
-  await page.getByRole('button', { name: 'Send message' }).click()
-
-  const toolGroup = conversation.locator('[data-message-id="activity-group-e2e-order-tool"]')
-  await expect(toolGroup).toBeVisible()
-  await expect(conversation.getByText('Interacting with tools', { exact: true })).toBeVisible()
-  const scrollToEndButton = page.getByRole('button', { name: 'Scroll to end' })
-  await expect(scrollToEndButton).toBeVisible()
-  await scrollToEndButton.click()
-  await expect.poll(() => conversation.evaluate((element) => element.scrollTop)).toBeGreaterThan(0)
-  await expect
-    .poll(() =>
-      conversation.evaluate(
-        (element) => element.scrollHeight - element.clientHeight - element.scrollTop
-      )
+    const completionGate = join(await app.createTestDirectory('layout-sampling'), 'complete')
+    await textbox.fill(
+      `${TOOL_ORDER_PROMPT}\nLayout completion gate: ${JSON.stringify(completionGate)}`
     )
-    .toBeLessThanOrEqual(2)
+    await page.getByRole('button', { name: 'Send message' }).click()
 
-  const tops = await toolGroup.evaluate(
-    (element) =>
-      new Promise<number[]>((resolve) => {
-        const observations: number[] = []
-        const startedAt = performance.now()
-        let completedAt: number | undefined
+    const toolGroup = conversation.locator('[data-message-id="activity-group-e2e-order-tool"]')
+    await expect(toolGroup).toBeVisible()
+    await expect(conversation.getByText('Interacting with tools', { exact: true })).toBeVisible()
+    const scrollToEndButton = page.getByRole('button', { name: 'Scroll to end' })
+    await expect(scrollToEndButton).toBeVisible()
+    await scrollToEndButton.click()
+    await expect
+      .poll(() => conversation.evaluate((element) => element.scrollTop))
+      .toBeGreaterThan(0)
+    await expect
+      .poll(() =>
+        conversation.evaluate(
+          (element) => element.scrollHeight - element.clientHeight - element.scrollTop
+        )
+      )
+      .toBeLessThanOrEqual(2)
 
-        const sample = (): void => {
-          observations.push(element.getBoundingClientRect().top)
+    const sampling = toolGroup.evaluate(
+      (element) =>
+        new Promise<number[]>((resolve, reject) => {
+          const observations: number[] = []
+          const startedAt = performance.now()
+          let completedAt: number | undefined
+          const viewport = element.closest('[role="region"]')!
 
-          const now = performance.now()
-          if (!element.querySelector('[data-testid="tool-chip"][role="status"]')) {
-            completedAt ??= now
+          const sample = (): void => {
+            observations.push(element.getBoundingClientRect().top)
+            element.setAttribute('data-layout-sampling', 'true')
+
+            const now = performance.now()
+            const finalReply = Array.from(viewport.querySelectorAll('.agent-markdown-root')).find(
+              (reply) => reply.textContent === 'The slow tool has finished running.'
+            )
+            const finalMessageId = finalReply
+              ?.closest('[data-message-id]')
+              ?.getAttribute('data-message-id')
+            if (
+              !element.querySelector('[data-testid="tool-chip"][role="status"]') &&
+              finalMessageId &&
+              viewport.querySelector(
+                `[data-message-id="turn-completion-${CSS.escape(finalMessageId)}"]`
+              )
+            ) {
+              completedAt ??= now
+            }
+            if (completedAt !== undefined && now - completedAt >= 1_000) {
+              resolve(observations)
+              return
+            }
+            if (now - startedAt >= 20_000) {
+              reject(new Error('The final reply did not finish presenting during layout sampling.'))
+              return
+            }
+            requestAnimationFrame(sample)
           }
-          if (
-            (completedAt !== undefined && now - completedAt >= 1_000) ||
-            now - startedAt >= 5_000
-          ) {
-            resolve(observations)
-            return
-          }
+
           requestAnimationFrame(sample)
-        }
+        })
+    )
+    // Release the fake tool only after the first frame is recorded, even on a slow CI runner.
+    await expect(toolGroup).toHaveAttribute('data-layout-sampling', 'true')
+    await writeFile(completionGate, '')
+    const tops = await sampling
 
-        requestAnimationFrame(sample)
+    await expect(
+      conversation.getByText('The slow tool has finished running.', { exact: true })
+    ).toBeVisible()
+
+    const minimumTop = Math.min(...tops)
+    const endpointTop = Math.min(tops[0], tops.at(-1) ?? tops[0])
+    const upwardOvershoot = endpointTop - minimumTop
+    expect(
+      upwardOvershoot,
+      JSON.stringify({
+        firstTop: tops[0],
+        minimumTop,
+        finalTop: tops.at(-1)
       })
-  )
-
-  await expect(
-    conversation.getByText('The slow tool has finished running.', { exact: true })
-  ).toBeVisible()
-
-  const minimumTop = Math.min(...tops)
-  const endpointTop = Math.min(tops[0], tops.at(-1) ?? tops[0])
-  const upwardOvershoot = endpointTop - minimumTop
-  expect(
-    upwardOvershoot,
-    JSON.stringify({
-      firstTop: tops[0],
-      minimumTop,
-      finalTop: tops.at(-1)
+    ).toBeLessThanOrEqual(2)
+    await testInfo.attach('completed-transcript', {
+      body: await page.screenshot(),
+      contentType: 'image/png'
     })
-  ).toBeLessThanOrEqual(2)
-})
+  })
+}

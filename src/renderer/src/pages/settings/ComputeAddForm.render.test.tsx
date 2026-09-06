@@ -10,6 +10,12 @@ import { ComputeAddForm } from './ComputeAddForm'
 let container: HTMLDivElement
 let root: Root
 
+if (!Element.prototype.hasPointerCapture) {
+  Element.prototype.hasPointerCapture = (): boolean => false
+  Element.prototype.setPointerCapture = (): void => undefined
+  Element.prototype.releasePointerCapture = (): void => undefined
+}
+
 const createdHost = {
   id: 'host-1',
   providerId: 'ssh:cluster',
@@ -119,6 +125,7 @@ describe('ComputeAddForm password authentication', () => {
     expect(useComputeStore.getState().createPasswordHost).toHaveBeenCalledWith({
       sshAlias: 'cluster',
       detailsDoc: undefined,
+      executionMode: 'direct_ssh',
       authenticationMode: 'password',
       username: 'researcher',
       port: 2222,
@@ -152,6 +159,7 @@ describe('ComputeAddForm password authentication', () => {
     expect(useComputeStore.getState().createHost).toHaveBeenCalledWith({
       sshAlias: 'cluster',
       detailsDoc: undefined,
+      executionMode: 'direct_ssh',
       sshOverrides: {
         user: 'researcher',
         port: 2222,
@@ -159,6 +167,32 @@ describe('ComputeAddForm password authentication', () => {
       }
     })
     expect(useComputeStore.getState().createPasswordHost).not.toHaveBeenCalled()
+  })
+
+  it('creates a Slurm host when that execution mode is selected', async () => {
+    await act(async () => root.render(<ComputeAddForm onCreated={vi.fn()} onCancel={vi.fn()} />))
+    act(() => {
+      enter('compute-alias', 'cluster')
+      const trigger = container.querySelector<HTMLButtonElement>('[aria-label="Execution mode"]')
+      trigger?.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true, button: 0 }))
+      trigger?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    })
+    act(() => {
+      const option = Array.from(
+        document.body.querySelectorAll<HTMLElement>('[role="option"]')
+      ).find((candidate) => candidate.textContent?.trim() === 'Slurm')
+      option?.dispatchEvent(new MouseEvent('pointerup', { bubbles: true, button: 0 }))
+      option?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    })
+
+    const add = Array.from(container.querySelectorAll('button')).find(
+      (button) => button.textContent?.trim() === 'Add'
+    )
+    await act(async () => add?.click())
+
+    expect(useComputeStore.getState().createHost).toHaveBeenCalledWith(
+      expect.objectContaining({ executionMode: 'slurm' })
+    )
   })
 
   it('rejects a partially parsed SSH configuration port', async () => {

@@ -19,6 +19,7 @@ import {
   probeRemoteJobProcessOwnership,
   terminateRemoteJobProcessIfOwned
 } from './remote-job-process'
+import { cancelSlurmJob, recoverSlurmJob } from './slurm-driver'
 
 type ReaperOptions = Readonly<{
   now?: () => Date
@@ -88,7 +89,8 @@ class ComputeJobCancellationReaper {
 
   constructor(
     private readonly operations: ComputeJobOperationRepository,
-    private readonly jobs: Pick<ComputeJobRepository, 'get'>,
+    private readonly jobs: Pick<ComputeJobRepository, 'get'> &
+      Partial<Pick<ComputeJobRepository, 'update'>>,
     private readonly connectionBroker: ComputeConnectionBrokerAcquirer,
     options: ReaperOptions = {}
   ) {
@@ -158,16 +160,28 @@ class ComputeJobCancellationReaper {
     // repository so encrypted handles/workdirs are revealed by the single persistence owner.
     const job = await this.jobs.get(claim.jobId)
     if (!job) return
-    const handle = parseRemoteJobHandle(job.remote_handle, job.remote_workdir)
-    if (!handle) {
-      await this.scheduleRetry(claim)
-      return
-    }
+    let handle = parseRemoteJobHandle(job.remote_handle, job.remote_workdir)
 
     try {
       const connection = await this.connectionBroker.acquire(job.provider_id, {
         intent: 'job_cleanup'
       })
+      if (!handle && job.execution_mode === 'slurm') {
+        handle = (await recoverSlurmJob(job, connection)) ?? null
+        if (handle) await this.jobs.update?.(job.job_id, { remoteHandle: JSON.stringify(handle) })
+      }
+      if (!handle) {
+        await this.scheduleRetry(claim)
+        return
+      }
+      if (handle.driver === 'slurm') {
+        if (await cancelSlurmJob(handle, connection)) {
+          await this.confirm(claim)
+          return
+        }
+        await this.scheduleRetry(claim)
+        return
+      }
       const ownership = await probeRemoteJobProcessOwnership(handle.pid, handle.workdir, connection)
       if (ownership === 'mismatch' || ownership === 'absent') {
         await this.confirm(claim)

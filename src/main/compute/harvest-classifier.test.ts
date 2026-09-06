@@ -70,6 +70,12 @@ describe('classifyFiles — control file exclusion', () => {
       file('launcher.sh', 200),
       file('exit_code', 10),
       file('job.pid', 5),
+      file('job.sbatch', 200),
+      file('scheduler_job_id', 8),
+      file('scheduler_job_id.tmp', 8),
+      file('scheduler_submit_error', 80),
+      file('scheduler_submit_error.tmp', 80),
+      file('scheduler_submit_error.stderr.tmp', 80),
       file('model.result', mb(1))
     ]
     const outputs: OutputDeclaration[] = ['*.result']
@@ -79,6 +85,12 @@ describe('classifyFiles — control file exclusion', () => {
     expect(result.excluded).toContain('launcher.sh')
     expect(result.excluded).toContain('exit_code')
     expect(result.excluded).toContain('job.pid')
+    expect(result.excluded).toContain('job.sbatch')
+    expect(result.excluded).toContain('scheduler_job_id')
+    expect(result.excluded).toContain('scheduler_job_id.tmp')
+    expect(result.excluded).toContain('scheduler_submit_error')
+    expect(result.excluded).toContain('scheduler_submit_error.tmp')
+    expect(result.excluded).toContain('scheduler_submit_error.stderr.tmp')
     expect(result.featured).toEqual(['model.result'])
   })
 })

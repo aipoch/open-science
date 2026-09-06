@@ -1,6 +1,11 @@
 import type { ComputeJob, SetComputeJobRemoteCleanupRequest } from '../../shared/compute'
 import { sharedDispatchTracker, type DispatchTracker } from './dispatch-tracker'
-import { computeRemoteWorkdir, quoteRemotePath, type RemoteHandle } from './job-dispatcher'
+import {
+  computeRemoteWorkdir,
+  quoteRemotePath,
+  type ComputeRemoteHandle,
+  type SlurmRemoteHandle
+} from './job-dispatcher'
 import { ComputeJobLifecycle } from './compute-job-lifecycle'
 import type {
   ComputeJobOwner,
@@ -14,6 +19,7 @@ import {
 } from './connection-broker'
 import { remoteJobPidTerminationFunctionLines } from './remote-job-process'
 import { parseRemoteJobHandle, parseRemoteJobWorkdir } from './remote-job-handle'
+import { cancelSlurmJob, recoverSlurmJob } from './slurm-driver'
 
 type ComputeJobDeletionRepository = Pick<
   ComputeJobRepository,
@@ -40,6 +46,10 @@ type PreparedRemoteCleanup = {
   jobId: string
   providerId: string
   command: string
+  slurm?: {
+    job: ComputeJob
+    handle?: SlurmRemoteHandle
+  }
 }
 
 type PreparedDeletionOutcome = { status: 'released' } | { status: 'retained'; error: unknown }
@@ -69,9 +79,10 @@ const HARVESTABLE_TERMINAL_STATUSES = new Set<ComputeJob['status']>([
   'timeout'
 ])
 
-const activeRemoteHandle = (job: ComputeJob, workdir: string): RemoteHandle | undefined => {
+const activeRemoteHandle = (job: ComputeJob, workdir: string): ComputeRemoteHandle | undefined => {
   if (!ACTIVE_STATUSES.has(job.status)) return undefined
   if (!job.remote_handle) {
+    if (job.execution_mode === 'slurm') return undefined
     if (job.status === 'submitted') return undefined
     throw new Error(`Invalid remote handle for active Compute Job ${job.job_id}.`)
   }
@@ -79,13 +90,17 @@ const activeRemoteHandle = (job: ComputeJob, workdir: string): RemoteHandle | un
   if (!handle) {
     throw new Error(`Invalid remote handle for active Compute Job ${job.job_id}.`)
   }
+  if ((job.execution_mode === 'slurm') !== (handle.driver === 'slurm')) {
+    throw new Error(`Invalid remote handle for active Compute Job ${job.job_id}.`)
+  }
   return handle
 }
 
 const cleanupCommand = (
   workdir: string,
-  handle: RemoteHandle | undefined,
-  requirePidWitness = false
+  handle: ComputeRemoteHandle | undefined,
+  requirePidWitness = false,
+  allowPidCleanup = true
 ): string => {
   const marker = '/.openscience/jobs/'
   const markerIndex = workdir.lastIndexOf(marker)
@@ -124,12 +139,16 @@ const cleanupCommand = (
     '  case $ownership in 0|1|3) return 0 ;; *) return 2 ;; esac',
     '}'
   ]
-  if (handle) lines.push(`cleanup_job_pid ${handle.pid} || exit 1`)
+  if (handle && handle.driver !== 'slurm') lines.push(`cleanup_job_pid ${handle.pid} || exit 1`)
   if (requirePidWitness) {
     lines.push(`[ -z "$workdir" ] || [ -f ${quotedPidFile} ] || exit 1`)
   }
+  if (allowPidCleanup) {
+    lines.push(
+      `if [ -f ${quotedPidFile} ]; then cleanup_job_pid "$(cat ${quotedPidFile} 2>/dev/null || true)" || exit 1; fi`
+    )
+  }
   lines.push(
-    `if [ -f ${quotedPidFile} ]; then cleanup_job_pid "$(cat ${quotedPidFile} 2>/dev/null || true)" || exit 1; fi`,
     'if [ -n "$workdir" ]; then rm -rf -- "$workdir"; fi',
     `test ! -e ${quotedWorkdir} && test ! -L ${quotedWorkdir}`
   )
@@ -512,10 +531,24 @@ class ComputeJobDeletionOwner {
       throw new Error(`Unsafe remote work directory for Compute Job ${job.job_id}.`)
     }
     const handle = activeRemoteHandle(job, workdir)
+    const isActiveSlurm = ACTIVE_STATUSES.has(job.status) && job.execution_mode === 'slurm'
     return {
       jobId: job.job_id,
       providerId: job.provider_id,
-      command: cleanupCommand(workdir, handle, job.status === 'submitted' && !handle)
+      command: cleanupCommand(
+        workdir,
+        handle,
+        job.execution_mode !== 'slurm' && job.status === 'submitted' && !handle,
+        job.execution_mode !== 'slurm'
+      ),
+      ...(isActiveSlurm
+        ? {
+            slurm: {
+              job,
+              handle: handle?.driver === 'slurm' ? handle : undefined
+            }
+          }
+        : {})
     }
   }
 
@@ -523,6 +556,19 @@ class ComputeJobDeletionOwner {
     const connection = await this.deps.connectionBroker.acquire(cleanup.providerId, {
       intent: 'job_cleanup'
     })
+    if (cleanup.slurm) {
+      const handle = cleanup.slurm.handle ?? (await recoverSlurmJob(cleanup.slurm.job, connection))
+      if (!handle) {
+        throw new Error(
+          `Slurm job for Compute Job ${cleanup.jobId} could not be recovered; remote cleanup was not attempted.`
+        )
+      }
+      if (!(await cancelSlurmJob(handle, connection))) {
+        throw new Error(
+          `Slurm cancellation is not yet confirmed for Compute Job ${cleanup.jobId}; remote cleanup was not attempted.`
+        )
+      }
+    }
     const result = await connection.run(cleanup.command, {
       timeoutMs: 30_000,
       loginShell: false,

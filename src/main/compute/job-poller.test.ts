@@ -280,6 +280,63 @@ describe('JobPoller', () => {
     expect(onJobUpdated).toHaveBeenCalled()
   })
 
+  it('exposes the Slurm terminal state when scheduler failure logs are empty', async () => {
+    const job = makeJob({
+      execution_mode: 'slurm',
+      remote_handle: JSON.stringify({
+        driver: 'slurm',
+        version: 1,
+        scheduler_job_id: '321',
+        workdir: '~/.openscience/jobs/job-1',
+        stdout_path: '~/.openscience/jobs/job-1/stdout',
+        stderr_path: '~/.openscience/jobs/job-1/stderr'
+      })
+    })
+    const update = vi.fn((_id: string, updates: unknown) =>
+      Promise.resolve({ ...job, ...(updates as object) })
+    )
+    const runner: SshRunner = {
+      run: vi.fn((_target, command) =>
+        Promise.resolve(
+          command.startsWith('sacct ')
+            ? {
+                exitCode: 0,
+                stdout: '321|OUT_OF_MEMORY|0:9\n',
+                stderr: '',
+                truncated: false,
+                timedOut: false
+              }
+            : {
+                exitCode: 0,
+                stdout: '',
+                stderr: '',
+                truncated: false,
+                timedOut: false
+              }
+        )
+      )
+    }
+    const jobRepo = {
+      findNonTerminal: vi.fn(async () => [job]),
+      updateIfStatus: guardStatusUpdate(update)
+    } as unknown as ComputeJobRepository
+
+    await new JobPoller({
+      connectionBroker: brokerFromRunner(runner),
+      hostRepository: {} as ComputeHostRepository,
+      jobRepository: jobRepo
+    }).tick()
+
+    expect(update).toHaveBeenCalledWith(
+      'job-1',
+      expect.objectContaining({
+        status: 'failed',
+        errorCode: 'job_failed',
+        stderrTail: 'Slurm scheduler state: OUT_OF_MEMORY.'
+      })
+    )
+  })
+
   it('keeps lifecycle unchanged and records an automatic retry for truncated output', async () => {
     const job = makeJob()
     const update = vi.fn((_id: string, updates: unknown) =>

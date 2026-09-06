@@ -2444,7 +2444,8 @@ describe('notebook runtime service', () => {
       code: 'return 1',
       mcpRpcEndpoint: 'http://127.0.0.1:1/x',
       mcpRpcSocketPath: '\\\\.\\pipe\\open-science-notebook',
-      mcpRpcToken: 'tok'
+      mcpRpcToken: 'tok',
+      workspaceCwd: root
     })
 
     // Mapped outputs are still returned inline for the agent (recording is a side effect; the

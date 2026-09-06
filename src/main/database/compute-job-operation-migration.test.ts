@@ -23,8 +23,10 @@ describe('Compute Job operation migration', () => {
     disconnect = () => client.$disconnect()
     await migrateApplicationDatabase(client)
     await client.$executeRawUnsafe(`DROP TABLE "ComputeJobOperation"`)
+    await client.$executeRawUnsafe('ALTER TABLE "ComputeJob" DROP COLUMN "executionMode"')
+    await client.$executeRawUnsafe('ALTER TABLE "ComputeHost" DROP COLUMN "executionMode"')
     await client.$executeRawUnsafe(
-      `DELETE FROM "_open_science_migrations" WHERE "id" IN ('0023_compute_job_operation', '0024_compute_job_file_evidence', '0025_managed_file_version_foundation', '0026_compute_job_remote_cleanup', '0027_project_session_defaults', '0028_database_numeric_and_null_constraints')`
+      `DELETE FROM "_open_science_migrations" WHERE "id" IN ('0023_compute_job_operation', '0024_compute_job_file_evidence', '0025_managed_file_version_foundation', '0026_compute_job_remote_cleanup', '0027_project_session_defaults', '0028_database_numeric_and_null_constraints', '0029_compute_host_execution_mode')`
     )
     const [{ sql: computeJobSqlBefore }] = await client.$queryRawUnsafe<Array<{ sql: string }>>(
       `SELECT "sql" FROM "sqlite_schema" WHERE "type" = 'table' AND "name" = 'ComputeJob'`
@@ -35,12 +37,15 @@ describe('Compute Job operation migration', () => {
     const [{ sql: computeJobSqlAfter }] = await client.$queryRawUnsafe<Array<{ sql: string }>>(
       `SELECT "sql" FROM "sqlite_schema" WHERE "type" = 'table' AND "name" = 'ComputeJob'`
     )
-    expect(computeJobSqlAfter).toBe(computeJobSqlBefore)
+    expect(
+      computeJobSqlAfter.replace(/,\s*"executionMode" TEXT NOT NULL DEFAULT 'direct_ssh'/u, '')
+    ).toBe(computeJobSqlBefore)
+    expect(computeJobSqlAfter).toContain('"executionMode" TEXT NOT NULL DEFAULT')
     await expect(
       client.$queryRawUnsafe<Array<{ id: string }>>(
         `SELECT "id" FROM "_open_science_migrations" ORDER BY "id" DESC LIMIT 1`
       )
-    ).resolves.toEqual([{ id: '0028_database_numeric_and_null_constraints' }])
+    ).resolves.toEqual([{ id: '0029_compute_host_execution_mode' }])
   })
 
   it('adds a constrained operation sidecar without rebuilding historical ComputeJob rows', async () => {

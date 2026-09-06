@@ -18,6 +18,7 @@ const KNOWN_ERROR_CODES = new Set([
   'job_failed',
   'timeout',
   'process_vanished',
+  'invalid_resources',
   'credential_required',
   'credential_unavailable',
   'secure_storage_unavailable',

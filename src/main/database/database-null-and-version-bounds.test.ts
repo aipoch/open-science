@@ -366,11 +366,11 @@ describe('D02/D04 persisted database boundaries', () => {
       const before = await Promise.all(tables.map(readRows))
       const ledger = await readRows('_open_science_migrations')
       await expect(migrateApplicationDatabase(client)).resolves.toMatchObject({
-        applied: [migrationId],
-        to: migrationId
+        applied: [migrationId, '0029_compute_host_execution_mode'],
+        to: '0029_compute_host_execution_mode'
       })
       expect(await Promise.all(tables.map(readRows))).toEqual(before)
-      expect((await readRows('_open_science_migrations')).slice(0, -1)).toEqual(ledger)
+      expect((await readRows('_open_science_migrations')).slice(0, -2)).toEqual(ledger)
       await expect(client.$queryRawUnsafe('PRAGMA foreign_key_check')).resolves.toEqual([])
       await expect(
         client.$executeRawUnsafe(

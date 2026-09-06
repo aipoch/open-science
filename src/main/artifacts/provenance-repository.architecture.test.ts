@@ -29,6 +29,7 @@ import { describe, expect, it } from 'vitest'
 const productionFiles = [
   'provenance-canonical.ts',
   'provenance-content-status.ts',
+  'compute-output-evidence.ts',
   'provenance-core-evidence.ts',
   'provenance-dependency-reader.ts',
   'provenance-execution-evidence.ts',

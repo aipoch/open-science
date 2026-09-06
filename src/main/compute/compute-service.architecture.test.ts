@@ -235,6 +235,7 @@ describe('Compute service architecture', () => {
         'deleteOwnerRows',
         'dispatchError',
         'dispatchRunning',
+        'dispatchSubmitted',
         'failRemoteHandleRecovery',
         'finishPolled',
         'observeRunning',
@@ -449,6 +450,7 @@ describe('Compute service architecture', () => {
         'probe',
         'replaceDetails',
         'setConcurrencyLimit',
+        'setExecutionMode',
         'setScratchRoot',
         'setSessionConcurrencyLimit',
         'startQueueReconciliation',
@@ -513,7 +515,7 @@ describe('Compute service architecture', () => {
     const computeContracts = RENDERER_CONTRACT_CATALOG.filter(
       ({ channel }) => channel?.startsWith('compute:') === true
     )
-    expect(computeContracts).toHaveLength(37)
+    expect(computeContracts).toHaveLength(38)
     const remoteRestricted = computeContracts.filter(
       ({ surfaceInstallation }) => surfaceInstallation.remoteWeb === 'rejecting-stub'
     )

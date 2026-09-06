@@ -21,6 +21,8 @@ import type { ComputeApprovalBroker } from './compute-approval-broker'
 import type { ComputeConnectionBrokerAcquirer } from './connection-broker'
 import { projectJobStatus } from './compute-job-status'
 import type { ConcurrencyManager, SessionStatus } from './concurrency-manager'
+import { validateComputeEnvironmentName } from './compute-environment'
+import { parseSlurmSchedulerJobId } from './remote-job-handle'
 import { sharedDispatchTracker } from './dispatch-tracker'
 import { computeRemoteWorkdir, dispatchJob, hashCommand } from './job-dispatcher'
 import type { StagedInputEntry } from './job-dispatcher'
@@ -29,6 +31,7 @@ import {
   UnencryptedComputeJobPersistenceApprovalRequiredError
 } from './job-repository'
 import { validateHarvestConfig } from './harvest-classifier'
+import { hasLeadingSlurmDirective, SlurmDriverError, validateSlurmCommand } from './slurm-driver'
 import type { ComputeHostRepository } from './repository'
 import { GLOB_CHARS, SHELL_UNSAFE_CHARS } from './remote-path-security'
 import { getJobHarvestDir, workspaceRelativePath } from './workspace-path'
@@ -211,6 +214,10 @@ export class ComputeJobWorkflowOwner {
       throw new Error('ComputeJobRepository is required to call submitJob.')
     }
 
+    if (options.environment !== undefined) {
+      validateComputeEnvironmentName(options.environment)
+    }
+
     if (options.harvestConfig !== undefined) {
       let harvestConfig: unknown
       try {
@@ -224,6 +231,30 @@ export class ComputeJobWorkflowOwner {
     const host = await this.hostRepository.get(providerId)
     if (!host) {
       throw new Error(`No compute host found with provider id "${providerId}".`)
+    }
+    if (host.executionMode === 'slurm') {
+      try {
+        validateSlurmCommand(command)
+      } catch (error) {
+        if (!(error instanceof SlurmDriverError)) throw error
+        const exposed = error as SlurmDriverError & { computeCallError: ComputeCallError }
+        exposed.computeCallError = {
+          error_code: 'invalid_resources',
+          message: error.message,
+          retry_after_user_action: true
+        }
+        throw exposed
+      }
+    } else if (hasLeadingSlurmDirective(command)) {
+      const message =
+        'This host uses Direct SSH. Choose Slurm in Compute settings to submit scheduler directives, or remove #SBATCH for intended direct execution.'
+      const error = new Error(message) as Error & { computeCallError: ComputeCallError }
+      error.computeCallError = {
+        error_code: 'invalid_resources',
+        message,
+        retry_after_user_action: true
+      }
+      throw error
     }
 
     const rawTimeout = options.timeoutSeconds
@@ -304,6 +335,8 @@ export class ComputeJobWorkflowOwner {
       intent,
       command_preview: commandPreview,
       command_full: command,
+      execution_mode: host.executionMode ?? 'direct_ssh',
+      environment: options.environment,
       inputs_summary: inputsSummary || undefined,
       resources: options.resourceRequest,
       timeout_seconds: timeoutSeconds,
@@ -393,6 +426,8 @@ export class ComputeJobWorkflowOwner {
         id: jobId,
         providerId: host.providerId,
         shape: host.shape,
+        // Snapshot execution semantics so later Host edits cannot move an active Job between drivers.
+        executionMode: host.executionMode ?? 'direct_ssh',
         sessionId: context.sessionId,
         projectId: context.projectId,
         intent,
@@ -527,6 +562,9 @@ export class ComputeJobWorkflowOwner {
 
   async getJobResult(jobId: string, scope?: ComputeJobReadScope): Promise<JobResult> {
     const job = await this.getJob(jobId, scope)
+    const localOutputRoot = this.storageRoot
+      ? getNotebookSessionRoot(this.storageRoot, job.project_id, job.session_id)
+      : undefined
 
     let leftOnRemote: Array<{ uri: string; size_mb: number; reason: string }> = []
     if (job.left_on_remote) {
@@ -538,13 +576,13 @@ export class ComputeJobWorkflowOwner {
     }
 
     if (!TERMINAL_JOB_STATUSES.has(job.status) || !job.harvested_at) {
-      return jobResultWithFiles(job, [], [], [])
+      return jobResultWithFiles(job, localOutputRoot, [], [], [])
     }
     if (!this.storageRoot) {
-      return jobResultWithFiles(job, [], [], leftOnRemote)
+      return jobResultWithFiles(job, localOutputRoot, [], [], leftOnRemote)
     }
     if (job.harvest_error) {
-      return jobResultWithFiles(job, [], [], leftOnRemote)
+      return jobResultWithFiles(job, localOutputRoot, [], [], leftOnRemote)
     }
 
     const harvestDir = getJobHarvestDir(
@@ -556,7 +594,7 @@ export class ComputeJobWorkflowOwner {
     const workspaceCwd = getNotebookSessionRoot(this.storageRoot, job.project_id, job.session_id)
     const featuredFiles = await scanDirRelative(join(harvestDir, 'featured'), workspaceCwd)
     const hiddenFiles = await scanDirRelative(join(harvestDir, 'hidden'), workspaceCwd)
-    return jobResultWithFiles(job, featuredFiles, hiddenFiles, leftOnRemote)
+    return jobResultWithFiles(job, localOutputRoot, featuredFiles, hiddenFiles, leftOnRemote)
   }
 
   async setSessionConcurrencyLimit(sessionId: string, limit: number): Promise<void> {
@@ -592,14 +630,22 @@ export class ComputeJobWorkflowOwner {
 
 const jobResultWithFiles = (
   job: ComputeJob,
+  localOutputRoot: string | undefined,
   featuredFiles: string[],
   hiddenFiles: string[],
   leftOnRemote: Array<{ uri: string; size_mb: number; reason: string }>
 ): JobResult => ({
   job_id: job.job_id,
+  ...(job.producer_run_id ? { producer_run_id: job.producer_run_id } : {}),
+  ...(parseSlurmSchedulerJobId(job.remote_handle, job.remote_workdir)
+    ? { scheduler_job_id: parseSlurmSchedulerJobId(job.remote_handle, job.remote_workdir) }
+    : {}),
   status: job.status,
+  ...(job.error_code ? { error_code: job.error_code } : {}),
+  ...(job.last_poll_error ? { last_poll_error: job.last_poll_error } : {}),
   cancellation_status: job.cancellation_status,
   exit_code: job.exit_code,
+  ...(localOutputRoot ? { local_output_root: localOutputRoot } : {}),
   featured_files: featuredFiles,
   hidden_files: hiddenFiles,
   output_files: [...featuredFiles, ...hiddenFiles],

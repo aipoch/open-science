@@ -76,6 +76,7 @@ export type CreateJobRequest = {
   id: string
   providerId: string
   shape: string
+  executionMode?: import('../../shared/compute').ComputeExecutionMode
   sessionId: string
   projectId: string
   intent: string
@@ -230,6 +231,7 @@ export class ComputeJobRepository {
         id: request.id,
         providerId: request.providerId,
         shape: request.shape,
+        executionMode: request.executionMode ?? 'direct_ssh',
         sessionId: request.sessionId,
         projectId: request.projectId,
         status: initialStatus,
@@ -727,6 +729,10 @@ export class ComputeJobRepository {
       job_id: row.id,
       provider_id: row.providerId,
       shape: row.shape,
+      execution_mode:
+        row.executionMode === 'slurm' || row.executionMode === 'direct_ssh'
+          ? row.executionMode
+          : 'direct_ssh',
       session_id: row.sessionId,
       project_id: row.projectId,
       status: asStatus(row.status),

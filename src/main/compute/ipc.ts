@@ -12,6 +12,7 @@ import type {
   ComputeHost,
   ComputeApprovalRequest,
   ComputePasswordCapability,
+  ComputeExecutionMode,
   ComputeHostDeletionStatus,
   ComputeJob,
   ComputeJobsListFilter,
@@ -186,6 +187,7 @@ type ComputeHandlers = {
   scratchClear: (providerId: string) => Promise<void>
   // Enforced concurrent job limit: set 1..500.
   concurrencySet: (providerId: string, limit: number) => Promise<void>
+  executionModeSet: (providerId: string, executionMode: ComputeExecutionMode) => Promise<void>
   // Session-level concurrency control (Phase 3c, issue 04).
   setSessionConcurrencyLimit: (sessionId: string, limit: number) => Promise<void>
   getSessionConcurrencyStatus: (sessionId: string) => Promise<{
@@ -512,6 +514,8 @@ const createComputeHandlers = (
     scratchSet: (providerId, path) => service.setScratchRoot(providerId, path),
     scratchClear: (providerId) => service.clearScratchRoot(providerId),
     concurrencySet: (providerId, limit) => service.setConcurrencyLimit(providerId, limit),
+    executionModeSet: (providerId, executionMode) =>
+      service.setExecutionMode(providerId, executionMode),
     setSessionConcurrencyLimit: (sessionId, limit) =>
       service.setSessionConcurrencyLimit(sessionId, limit),
     getSessionConcurrencyStatus: (sessionId) => service.getSessionConcurrencyStatus(sessionId),

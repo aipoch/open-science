@@ -690,6 +690,7 @@ class NotebookExecutionOwner {
                   mcpRpcToken: mcpRpc?.token,
                   sessionId: session.sessionId,
                   projectId: session.projectId,
+                  workspaceCwd: request.workspaceCwd,
                   inputRunLeaseId: request.inputRunLeaseId,
                   controlInvocationId: runId
                 })

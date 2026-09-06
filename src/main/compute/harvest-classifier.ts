@@ -65,7 +65,18 @@ export type ClassifyResult = {
 // ---------------------------------------------------------------------------
 
 /** Control files always excluded — never downloaded regardless of outputs declarations. */
-const CONTROL_FILES = new Set(['command.sh', 'launcher.sh', 'exit_code', 'job.pid'])
+const CONTROL_FILES = new Set([
+  'command.sh',
+  'launcher.sh',
+  'exit_code',
+  'job.pid',
+  'job.sbatch',
+  'scheduler_job_id',
+  'scheduler_job_id.tmp',
+  'scheduler_submit_error',
+  'scheduler_submit_error.tmp',
+  'scheduler_submit_error.stderr.tmp'
+])
 
 /** stdout and stderr share the download budget but are scheduled after declared outputs. */
 const LOG_FILES = new Set(['stdout', 'stderr'])
