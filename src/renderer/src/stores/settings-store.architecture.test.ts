@@ -330,6 +330,7 @@ const allowedFacadeVariableCounts = new Map<string, number>([
   ['shouldInitializeRuntime', 1],
   ['settingsPromise', 1],
   ['encryptionAvailability', 1],
+  ['isCurrentPreflight', 1],
   ['runtimeInitialization', 1],
   ['snapshot', 1],
   ['[[encryptionResult], runtimeResults]', 1],

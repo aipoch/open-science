@@ -35,6 +35,7 @@ const appendCappedInstallLogs = (existing: string[], chunks: readonly string[]):
 export type RuntimeSetupState = {
   preflight: Preflight
   preflightFailed: boolean
+  preflightGeneration: number
   npmAvailable: boolean
   environmentCheck: EnvironmentCheckResult | undefined
   environmentCheckError: string | undefined
@@ -134,6 +135,7 @@ const createInitialPreflight = (): Preflight => ({
 export const createInitialRuntimeSetupState = (): RuntimeSetupState => ({
   preflight: createInitialPreflight(),
   preflightFailed: false,
+  preflightGeneration: 0,
   npmAvailable: true,
   environmentCheck: undefined,
   environmentCheckError: undefined,
@@ -151,6 +153,17 @@ export const createInitialRuntimeSetupState = (): RuntimeSetupState => ({
     codebuddy: createInitialRuntimeInstallState()
   }
 })
+
+// Shared by startup hydration, environment checks and background provider refreshes.
+// This request identity belongs to the renderer store and is never persisted.
+export const beginPreflightRequest = <Store extends RuntimeSetupState>(
+  set: StoreApi<Store>['setState'],
+  get: StoreApi<Store>['getState']
+): (() => boolean) => {
+  const generation = get().preflightGeneration + 1
+  set({ preflightGeneration: generation } as Partial<Store>)
+  return () => get().preflightGeneration === generation
+}
 
 export const createRuntimeSetupLoadPatch = (
   preflight: Preflight,
@@ -314,12 +327,13 @@ export const createRuntimeSetupSlice = <Store extends RuntimeSetupHost>({
   ...createInitialRuntimeSetupState(),
 
   refreshPreflight: async () => {
+    const isCurrent = beginPreflightRequest(set, get)
     try {
       const preflight = await getCommands().getPreflight()
-      patchRuntimeSetupState(set, { preflight, preflightFailed: false })
+      if (isCurrent()) patchRuntimeSetupState(set, { preflight, preflightFailed: false })
       return preflight
     } catch (error) {
-      patchRuntimeSetupState(set, { preflightFailed: true })
+      if (isCurrent()) patchRuntimeSetupState(set, { preflightFailed: true })
       throw error
     }
   },
@@ -344,11 +358,15 @@ export const createRuntimeSetupSlice = <Store extends RuntimeSetupHost>({
     try {
       const commands = getCommands()
       const environmentCheck = await commands.checkEnvironment()
+      const isCurrentEnvironment = (): boolean =>
+        get().envCheckGeneration === generation &&
+        environmentCheck.agentFrameworkId === get().agentFrameworkId
+      // An already superseded environment check must not invalidate a newer preflight request.
+      const isCurrentPreflight = isCurrentEnvironment()
+        ? beginPreflightRequest(set, get)
+        : () => false
       const recordPreflightOutcome = (preflightFailed: boolean): void => {
-        if (
-          get().envCheckGeneration === generation &&
-          environmentCheck.agentFrameworkId === get().agentFrameworkId
-        ) {
+        if (isCurrentEnvironment() && isCurrentPreflight()) {
           patchRuntimeSetupState(set, { preflightFailed })
         }
       }
@@ -376,7 +394,11 @@ export const createRuntimeSetupSlice = <Store extends RuntimeSetupHost>({
         return environmentCheck
       }
 
-      reconcileSnapshot(snapshot, { environmentCheck, preflight, npmAvailable })
+      reconcileSnapshot(snapshot, {
+        environmentCheck,
+        npmAvailable,
+        ...(isCurrentPreflight() ? { preflight } : {})
+      })
       return environmentCheck
     } catch (error) {
       if (get().envCheckGeneration === generation) {

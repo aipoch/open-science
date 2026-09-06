@@ -371,6 +371,81 @@ describe('settings store: saveAndActivateProvider', () => {
   })
 })
 
+describe('settings store: concurrent preflight results', () => {
+  it.each([
+    ['refresh', 'success'],
+    ['refresh', 'failure'],
+    ['environment', 'success'],
+    ['environment', 'failure'],
+    ['startup', 'success'],
+    ['startup', 'failure']
+  ] as const)('keeps newer readiness after an older %s %s', async (source, outcome) => {
+    const stalePreflight = { ...useSettingsStore.getState().preflight, activeProviderReady: false }
+    const currentPreflight = { ...stalePreflight, activeProviderReady: true }
+    let resolveOlder!: (value: typeof stalePreflight) => void
+    let rejectOlder!: (error: Error) => void
+    api.getPreflight.mockReturnValueOnce(
+      new Promise((resolve, reject) => {
+        resolveOlder = resolve
+        rejectOlder = reject
+      })
+    )
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    const older = (
+      source === 'refresh'
+        ? useSettingsStore.getState().refreshPreflight()
+        : source === 'environment'
+          ? useSettingsStore.getState().checkEnvironment()
+          : useSettingsStore.getState().load()
+    ).catch(() => undefined)
+    await vi.waitFor(() => expect(api.getPreflight).toHaveBeenCalledOnce())
+
+    api.getPreflight.mockResolvedValueOnce(currentPreflight)
+    await useSettingsStore.getState().refreshPreflight()
+    if (outcome === 'success') resolveOlder(stalePreflight)
+    else rejectOlder(new Error('older preflight failed'))
+    await older
+
+    expect(useSettingsStore.getState()).toMatchObject({
+      preflight: currentPreflight,
+      preflightFailed: false
+    })
+  })
+})
+
+describe('settings store: latest preflight failure', () => {
+  it.each(['refresh', 'environment', 'startup'] as const)(
+    'does not hide a newer failure with an older %s success',
+    async (source) => {
+      const cached = useSettingsStore.getState().preflight
+      let resolveOlder!: (value: typeof cached) => void
+      api.getPreflight.mockReturnValueOnce(
+        new Promise((resolve) => {
+          resolveOlder = resolve
+        })
+      )
+      const older =
+        source === 'refresh'
+          ? useSettingsStore.getState().refreshPreflight()
+          : source === 'environment'
+            ? useSettingsStore.getState().checkEnvironment()
+            : useSettingsStore.getState().load()
+      await vi.waitFor(() => expect(api.getPreflight).toHaveBeenCalledOnce())
+
+      const failure = new Error('current preflight failed')
+      api.getPreflight.mockRejectedValueOnce(failure)
+      await expect(useSettingsStore.getState().refreshPreflight()).rejects.toBe(failure)
+      resolveOlder({ ...cached, activeProviderReady: true })
+      await older
+
+      expect(useSettingsStore.getState()).toMatchObject({
+        preflight: cached,
+        preflightFailed: true
+      })
+    }
+  )
+})
+
 describe('settings store: persistProvider', () => {
   it('M04: keeps the committed identity and retries only a failed preflight', async () => {
     api.upsertProvider.mockResolvedValue(snapshot([providerView('p_new')]))
