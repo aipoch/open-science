@@ -1,7 +1,6 @@
 import { CircleQuestionMark, LoaderCircle, type LucideIcon } from 'lucide-react'
 
 import { FlaskLogo } from '@/components/flask-logo'
-import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 
@@ -20,7 +19,6 @@ type ErrorNoticeButton = {
 }
 
 type ErrorNoticeProps = {
-  className?: string
   showBrand?: boolean
   icon?: LucideIcon
   tone?: ErrorNoticeTone
@@ -65,7 +63,6 @@ const NoticeButton = ({
 )
 
 const ErrorNotice = ({
-  className,
   showBrand = true,
   icon: Icon,
   tone,
@@ -78,7 +75,7 @@ const ErrorNotice = ({
   primaryButton
 }: ErrorNoticeProps): React.JSX.Element => {
   return (
-    <section className={cn('flex w-full min-w-0 max-w-md flex-col gap-4 text-left', className)}>
+    <section className="flex w-full min-w-0 max-w-md flex-col gap-4 text-left">
       {showBrand ? <FlaskLogo className="mb-4 size-18 self-center text-text-300" /> : null}
 
       {title !== undefined || description !== undefined ? (

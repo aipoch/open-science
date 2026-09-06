@@ -3,7 +3,6 @@ import { RadioGroup } from 'radix-ui'
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
-import { ErrorNotice } from '@/components/error-notice'
 import { cn } from '@/lib/utils'
 import { useSettingsStore } from '@/stores/settings-store'
 import type { AppIconPreview, AppIconVariant } from '../../../../shared/settings'
@@ -67,20 +66,19 @@ const AppIconSection = (): React.JSX.Element | null => {
         </p>
       ) : null}
       {loadState === 'error' ? (
-        <div role="alert" className="rounded-lg border border-danger-000/30 bg-danger-000/5 p-3">
-          <ErrorNotice
-            showBrand={false}
-            className="grid max-w-none grid-cols-[minmax(0,1fr)_auto] items-center"
-            title={t('Could not load app icons.')}
-            secondaryButton={{
-              label: t('Retry'),
-              onClick: () => {
-                setLoadState('loading')
-                setAttempt((value) => value + 1)
-              }
+        <p role="alert" className="flex items-baseline gap-2 text-xs text-danger-000">
+          <span>{t('Could not load app icons.')}</span>
+          <button
+            type="button"
+            className="shrink-0 underline underline-offset-2 focus-visible:outline-auto"
+            onClick={() => {
+              setLoadState('loading')
+              setAttempt((value) => value + 1)
             }}
-          />
-        </div>
+          >
+            {t('Retry')}
+          </button>
+        </p>
       ) : null}
       {loadState === 'ready' && previews.length === 0 ? (
         <p role="status" className="text-sm text-muted-foreground">

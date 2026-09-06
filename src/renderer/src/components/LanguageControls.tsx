@@ -8,7 +8,6 @@ import {
   DropdownMenuLabel,
   DropdownMenuTrigger
 } from '@/components/ui/dropdown-menu'
-import { ErrorNotice } from '@/components/error-notice'
 import { Select, SelectContent, SelectItem, SelectTrigger } from '@/components/ui/select'
 import { cn } from '@/lib/utils'
 import { useLocaleStore } from '@/stores/locale-store'
@@ -41,20 +40,22 @@ const LanguageSaveError = ({ className }: { className?: string }): React.JSX.Ele
   if (!saveFailed) return null
 
   return (
-    <div
-      role="alert"
-      className={cn('rounded-lg border border-danger-000/30 bg-danger-000/5 p-3', className)}
-    >
-      <ErrorNotice
-        showBrand={false}
-        title={t('Could not save the language.')}
-        description={t('The saved language has been restored. Select a language to try again.')}
-        secondaryButton={{
-          label: t('Dismiss'),
-          onClick: () => useLocaleStore.setState({ saveFailed: false })
-        }}
-      />
-    </div>
+    <p role="alert" className={cn('flex items-baseline gap-2 text-xs text-danger-000', className)}>
+      <span>
+        {t('Could not save the language.')}
+        <span className="sr-only">
+          {' '}
+          {t('The saved language has been restored. Select a language to try again.')}
+        </span>
+      </span>
+      <button
+        type="button"
+        className="shrink-0 underline underline-offset-2 focus-visible:outline-auto"
+        onClick={() => useLocaleStore.setState({ saveFailed: false })}
+      >
+        {t('Dismiss')}
+      </button>
+    </p>
   )
 }
 
@@ -84,7 +85,7 @@ export const LanguageSelect = (): React.JSX.Element => {
           ))}
         </SelectContent>
       </Select>
-      <LanguageSaveError className="mt-3" />
+      <LanguageSaveError className="mt-2" />
     </div>
   )
 }
@@ -143,7 +144,7 @@ export const LanguagePreferenceMenu = ({
         </DropdownMenuContent>
       </DropdownMenu>
       {saveFailed && !isSettingsOpen ? (
-        <div className="absolute right-0 top-full z-40 mt-2 w-80 max-w-[calc(100vw-2rem)] rounded-lg bg-popover shadow-md">
+        <div className="absolute right-0 top-full z-40 mt-2 w-max max-w-[calc(100vw-2rem)]">
           <LanguageSaveError />
         </div>
       ) : null}
