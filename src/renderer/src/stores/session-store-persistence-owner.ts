@@ -796,7 +796,16 @@ export const createSessionPersistenceOwner = <State extends SessionStoreData>(
     set((state) => {
       const current = state.sessions.find((candidate) => candidate.id === session.id)
       if (!current) return state
-      const archive = projectSessionMetadataAuthority(current, session)
+      let archive = projectSessionMetadataAuthority(current, session)
+      if (
+        (mode === 'merge-upload-identities' || mode === 'replace-persisted-if-current') &&
+        source.branchContextResetRequired &&
+        !current.branchContextResetRequired &&
+        archive.branchContextResetRequired
+      ) {
+        // This save predates the completed reset; its acknowledgement cannot undo that clear.
+        archive = { ...archive, branchContextResetRequired: undefined }
+      }
 
       if (
         (mode === 'permission-authority' || mode === 'runtime-context-authority') &&

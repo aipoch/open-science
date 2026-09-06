@@ -1547,7 +1547,8 @@ const createStoreSaver = (
       const hasUnsavedLocalTitle =
         session.unsavedTitle === true && Boolean(authority && session.title !== authority.title)
       const hasUnsavedContextReset =
-        session.branchContextResetRequired === true && !authority?.branchContextResetRequired
+        Boolean(session.branchContextResetRequired) !==
+        Boolean(authority?.branchContextResetRequired)
       if (
         (previousById.get(session.id) !== session ||
           isForced ||

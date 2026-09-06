@@ -7510,6 +7510,64 @@ describe('truncateSessionFromMessage', () => {
   })
 
   it.each([false, true])(
+    'handles a reset save acknowledged after local clear: %s',
+    async (clearReset) => {
+      vi.useRealTimers()
+      seedSession()
+      useSessionStore.getState().truncateSessionFromMessage('session-1', 'user-2')
+      useSessionStore.getState().appendUserMessage({
+        sessionId: 'session-1',
+        content: 'edited user-2'
+      })
+      useSessionStore.getState().finishRun('session-1')
+      useSessionStore.getState().clearBranchContextReset('session-1')
+      let durable = toPersistedSession(useSessionStore.getState().sessions[0])
+      let acknowledge!: () => void
+      let started!: () => void
+      const saveStarted = new Promise<void>((resolve) => {
+        started = resolve
+      })
+      const saveAcknowledged = new Promise<void>((resolve) => {
+        acknowledge = resolve
+      })
+      const saveSession = vi.fn(async (submitted: PersistedChatSession) => {
+        started()
+        await saveAcknowledged
+        durable = { ...submitted, revision: (submitted.revision ?? 0) + 1 }
+        return durable
+      })
+      const save = createStoreSaver({
+        loadAll: vi.fn(async () => ({
+          sessions: [durable],
+          manifest: { version: SESSION_MANIFEST_VERSION } as const
+        })),
+        loadOne: vi.fn(async () => durable),
+        saveSession,
+        deleteSession: vi.fn(),
+        saveManifest: vi.fn()
+      })
+      useSessionStore
+        .getState()
+        .activateMessageBranch('session-1', durable.conversationGraph!.branches[0].id)
+      const pendingSave = save(useSessionStore.getState())
+      await saveStarted
+      if (clearReset) useSessionStore.getState().clearBranchContextReset('session-1')
+      acknowledge()
+      await pendingSave
+
+      expect(useSessionStore.getState().sessions[0].branchContextResetRequired).toBe(
+        clearReset ? undefined : true
+      )
+      await save(useSessionStore.getState())
+      useSessionStore.setState(createInitialSessionState())
+      useSessionStore.getState().hydrateSessions([durable])
+      expect(useSessionStore.getState().sessions[0].branchContextResetRequired).toBe(
+        clearReset ? undefined : true
+      )
+    }
+  )
+
+  it.each([false, true])(
     'persists a retained reset unless already durable: %s',
     async (alreadyDurable) => {
       seedSession()
