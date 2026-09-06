@@ -27,10 +27,7 @@ import {
   notificationEventToneClasses,
   resolveNotificationEventVisual
 } from './notification-event-visual'
-import {
-  presentNotificationInbox,
-  type PresentedNotificationInboxItem
-} from './notification-inbox-presentation'
+import { presentNotificationInbox } from './notification-inbox-presentation'
 import { runNotificationTask } from './notification-safety'
 
 const AUTO_DISMISS_MS = 6000
@@ -39,7 +36,7 @@ const VIEWPORT_MARGIN = 8
 const TOAST_MAX_WIDTH = 320
 
 type LiveNotice = Readonly<{
-  lead: PresentedNotificationInboxItem
+  leadId: string
   count: number
 }>
 
@@ -92,6 +89,15 @@ const NotificationLiveToastContent = (): React.JSX.Element | null => {
   const [position, setPosition] = useState<ToastPosition>()
   const baselineSequenceRef = useRef<number | undefined>(undefined)
   const toastRef = useRef<HTMLDivElement>(null)
+  const leadNotification = items.find(
+    (item) => item.id === notice?.leadId && item.targetInvalidatedAt === undefined
+  )
+
+  // Mutations do not allocate a new sequence. Withdraw stale content before it can be clicked.
+  if (notice && !leadNotification) {
+    setNotice(undefined)
+    setPaused(false)
+  }
 
   useEffect(() => {
     if (status !== 'ready') return
@@ -116,17 +122,20 @@ const NotificationLiveToastContent = (): React.JSX.Element | null => {
         item.sequence > previousSequence &&
         item.readAt === undefined &&
         item.targetInvalidatedAt === undefined &&
-        item.sessionId !== activeSessionId
+        (!activeSessionId || item.sessionId !== activeSessionId)
     )
     if (added.length === 0) return
 
     setNotice((current) => {
-      const candidates = current ? [current.lead.notification, ...added] : added
+      const currentLead = items.find(
+        (item) => item.id === current?.leadId && item.targetInvalidatedAt === undefined
+      )
+      const candidates = currentLead ? [currentLead, ...added] : added
       const lead = presentNotificationInbox(candidates, sessions, projects)[0]?.items[0]
       if (!lead) return current
       return {
-        lead,
-        count: (current?.count ?? 0) + added.length
+        leadId: lead.notification.id,
+        count: (currentLead ? (current?.count ?? 0) : 0) + added.length
       }
     })
   }, [items, latestSequence, projects, selectedSessionId, sessions, status, view])
@@ -189,9 +198,13 @@ const NotificationLiveToastContent = (): React.JSX.Element | null => {
     }
   }, [notice, updatePosition])
 
-  if (!notice) return null
+  if (!notice || !leadNotification) return null
 
-  const { notification, projectName, sessionTitle, detailPreview } = notice.lead
+  const { notification, projectName, sessionTitle, detailPreview } = presentNotificationInbox(
+    [leadNotification],
+    sessions,
+    projects
+  )[0].items[0]
   const openLead = async (): Promise<void> => {
     let completed = false
     const completeOpen = (): void => {
@@ -200,9 +213,7 @@ const NotificationLiveToastContent = (): React.JSX.Element | null => {
       if (notification.readAt === undefined) {
         runNotificationTask(() => markRead([notification.id]))
       }
-      setNotice((current) =>
-        current?.lead.notification.id === notification.id ? undefined : current
-      )
+      setNotice((current) => (current?.leadId === notification.id ? undefined : current))
     }
     let opened = true
     try {

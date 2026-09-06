@@ -6,6 +6,8 @@ import type { PrismaClient } from '@prisma/client'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { createProjectDbClient, migrateApplicationDatabase } from '../projects/prisma-client'
+import { CredentialRequestBroker } from '../connectors/credential-request-broker'
+import { createNotificationInboxController } from './notification-inbox-controller'
 import {
   MAX_NOTIFICATION_INBOX_ITEMS,
   NotificationInboxDbRepository,
@@ -44,6 +46,106 @@ afterEach(async () => {
 })
 
 describe('NotificationInboxDbRepository', () => {
+  it('N01: exposes an unread failure behind 50 read outcomes through the default controller snapshot', async () => {
+    const repository = await createRepository()
+    const inbox = createNotificationInboxController({
+      headless: false,
+      repository,
+      onChanged: vi.fn()
+    })
+    inbox.configureDesktop({
+      isAppFocused: () => true,
+      confirmSessionVisible: async (sessionId) => sessionId === 'visible-session',
+      badge: { setCount: vi.fn() }
+    })
+    await inbox.record({
+      dedupeKey: 'task:old-failure',
+      kind: 'task.failed',
+      sessionId: 'background-session',
+      originId: 'old-failure',
+      title: 'Task failed',
+      summary: 'The background task failed.'
+    })
+    for (let index = 0; index < 50; index += 1) {
+      await inbox.record({
+        dedupeKey: `task:new-${index}`,
+        kind: 'task.completed',
+        sessionId: 'visible-session',
+        originId: `new-${index}`,
+        title: 'Task completed',
+        summary: 'The visible task finished.'
+      })
+    }
+
+    const stored = await client!.notificationInboxItem.findUnique({
+      where: { dedupeKey: 'task:old-failure' }
+    })
+    expect(stored).toMatchObject({ kind: 'task.failed', readAt: null })
+    const snapshot = await inbox.getSnapshot()
+    expect(snapshot.unreadCount).toBe(1)
+    expect(snapshot.items.filter((item) => item.readAt !== undefined)).toHaveLength(50)
+    expect(snapshot.items.filter((item) => item.readAt === undefined)).toEqual([
+      expect.objectContaining({ originId: 'old-failure', kind: 'task.failed' })
+    ])
+  })
+
+  it('N02: expires an orphaned credential request after reopening SQLite while retaining a plan approval', async () => {
+    const repository = await createRepository()
+    await repository.record({
+      id: 'credential-1',
+      dedupeKey: 'input:connector-credential:credential-1',
+      kind: 'task.needs-attention',
+      source: 'connector',
+      attentionReason: 'waiting-for-user',
+      sessionId: 'existing-session',
+      originId: 'credential-1',
+      title: 'Response needed',
+      summary: 'A task needs your response.',
+      actionState: 'pending'
+    })
+    for (const source of ['connector', 'session-plan'] as const) {
+      await repository.record({
+        id: `approval-${source}`,
+        dedupeKey: `authorization:${source}:approval-${source}`,
+        kind: 'authorization.required',
+        source,
+        sessionId: 'existing-session',
+        originId: `approval-${source}`,
+        title: 'Approval needed',
+        summary: 'A request needs approval.',
+        actionState: 'pending'
+      })
+    }
+
+    // Model an unclean exit: persisted rows survive, but no broker settlement runs.
+    await client!.$disconnect()
+    client = createProjectDbClient(storageRoot!)
+    const restored = createNotificationInboxController({
+      headless: true,
+      repository: new NotificationInboxDbRepository(() => Promise.resolve(client!)),
+      onChanged: vi.fn(),
+      now: () => 3000
+    })
+    const broker = new CredentialRequestBroker({ broadcast: vi.fn(), generateId: () => 'new-id' })
+    await restored.restore()
+    await restored.reconcileSessionCatalog(['existing-session'])
+
+    expect(broker.getPending('credential-1')).toBeNull()
+    const snapshot = await restored.getSnapshot()
+    expect(snapshot.items.find((item) => item.id === 'approval-connector')).toMatchObject({
+      actionState: 'expired',
+      settledAt: 3000
+    })
+    expect(snapshot.items.find((item) => item.id === 'approval-session-plan')).toMatchObject({
+      actionState: 'pending'
+    })
+    const credential = snapshot.items.find((item) => item.id === 'credential-1')
+    expect(credential).not.toHaveProperty('targetInvalidatedAt')
+    expect(credential).not.toHaveProperty('readAt')
+    expect(credential?.actionState).toBe('expired')
+    expect(credential?.settledAt).toBe(3000)
+  })
+
   it('records each dedupe key once and returns newest-first snapshots', async () => {
     const repository = await createRepository()
 
@@ -88,6 +190,83 @@ describe('NotificationInboxDbRepository', () => {
     expect(snapshot.items.find((item) => item.originId === 'oldest')).toMatchObject({
       actionState: 'pending'
     })
+  })
+
+  it('includes every unread outcome and read pending action without duplicate rows', async () => {
+    const repository = await createRepository()
+    for (const kind of ['task.failed', 'task.completed', 'task.needs-attention'] as const) {
+      await repository.record({
+        id: kind,
+        dedupeKey: kind,
+        kind,
+        originId: kind,
+        title: 'Task update',
+        summary: 'A task needs attention.'
+      })
+    }
+    await repository.record({
+      id: 'read-pending',
+      dedupeKey: 'authorization:connector:pending',
+      kind: 'authorization.required',
+      source: 'connector',
+      originId: 'pending',
+      title: 'Approval needed',
+      summary: 'Approval needed',
+      actionState: 'pending',
+      readAt: 1000
+    })
+    for (let index = 0; index < 50; index += 1) {
+      await record(repository, `recent-${index}`)
+    }
+    const snapshot = await repository.snapshot()
+    expect(snapshot.items).toHaveLength(54)
+    expect(new Set(snapshot.items.map((item) => item.id)).size).toBe(54)
+    expect(snapshot.unreadCount).toBe(53)
+    for (const kind of ['task.failed', 'task.completed', 'task.needs-attention']) {
+      expect(snapshot.items.find((item) => item.id === kind)).toMatchObject({ kind })
+    }
+    expect(snapshot.items.find((item) => item.id === 'read-pending')).toMatchObject({
+      actionState: 'pending',
+      readAt: 1000
+    })
+  })
+
+  it('leaves unrelated input requests and settled credentials unchanged during restore', async () => {
+    const repository = await createRepository()
+    for (const [id, source, dedupeKey, actionState] of [
+      ['other-connector', 'connector', 'input:other:1', 'pending'],
+      ['agent-question', 'agent-question', 'input:agent-question:1', 'pending'],
+      ['settled-credential', 'connector', 'input:connector-credential:1', 'resolved']
+    ] as const) {
+      await repository.record({
+        id,
+        source,
+        dedupeKey,
+        actionState: 'pending',
+        kind: 'task.needs-attention',
+        attentionReason: 'waiting-for-user',
+        originId: id,
+        title: 'Response needed',
+        summary: 'A task needs your response.'
+      })
+      if (actionState !== 'pending') await repository.settle(dedupeKey, actionState, 1000)
+    }
+    const result = await repository.expireTransientPendingActions(3000)
+    expect(result.changed).toBe(false)
+    const snapshot = await repository.snapshot()
+    expect(snapshot.items.find((item) => item.id === 'other-connector')?.actionState).toBe(
+      'pending'
+    )
+    expect(snapshot.items.find((item) => item.id === 'agent-question')?.actionState).toBe('pending')
+    expect(snapshot.items.find((item) => item.id === 'settled-credential')?.actionState).toBe(
+      'resolved'
+    )
+    expect(snapshot.items.find((item) => item.id === 'settled-credential')?.settledAt).toBe(1000)
+    expect(
+      snapshot.items
+        .filter((item) => item.actionState === 'pending')
+        .every((item) => item.settledAt === undefined)
+    ).toBe(true)
   })
 
   it('marks all only through the caller snapshot boundary', async () => {
@@ -157,7 +336,7 @@ describe('NotificationInboxDbRepository', () => {
     })
     await record(repository, 'task')
 
-    await repository.expireTransientPendingAuthorizations(2250)
+    await repository.expireTransientPendingActions(2250)
 
     const snapshot = await repository.snapshot()
     expect(snapshot.unreadCount).toBe(4)
@@ -264,9 +443,14 @@ describe('NotificationInboxDbRepository', () => {
 
     const snapshot = await repository.snapshot(MAX_NOTIFICATION_INBOX_ITEMS)
     await expect(client!.notificationInboxItem.count()).resolves.toBe(MAX_NOTIFICATION_INBOX_ITEMS)
-    expect(snapshot.items).toHaveLength(200)
-    expect(snapshot.items.at(-1)?.originId).toBe('801')
+    expect(snapshot.items).toHaveLength(MAX_NOTIFICATION_INBOX_ITEMS)
+    expect(snapshot.items.at(-1)?.originId).toBe('1')
     expect(snapshot.items[0]?.originId).toBe(String(MAX_NOTIFICATION_INBOX_ITEMS))
+
+    await repository.markAllRead(snapshot.latestSequence, 3000)
+    const readHistory = await repository.snapshot(MAX_NOTIFICATION_INBOX_ITEMS)
+    expect(readHistory.items).toHaveLength(200)
+    expect(readHistory.items.at(-1)?.originId).toBe('801')
   })
 
   it('allows active pending actions to exceed the retained history limit', async () => {
