@@ -4539,6 +4539,7 @@
     "Loading app icons…": "正在加载应用图标…",
     "Could not load app icons.": "无法加载应用图标。",
     "No app icons are available.": "没有可用的应用图标。",
-    "Current icon: {{icon}}. Its preview is unavailable.": "当前图标：{{icon}}。其预览不可用。"
+    "Current icon: {{icon}}. Its preview is unavailable.": "当前图标：{{icon}}。其预览不可用。",
+    "This provider isn't compatible with {{framework}}. Pick a provider whose API format {{framework}} supports, or change the agent framework.": "此提供商与 {{framework}} 不兼容。请选择 API 格式受 {{framework}} 支持的提供商，或更换智能体框架。"
   }
 }
