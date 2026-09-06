@@ -80,7 +80,7 @@ describe('ArchivedPanel', () => {
       projectId: project.id,
       sessionId: session.id,
       archived: false,
-      expectedArchivedAt: 2
+      expectedRevision: 0
     })
     expect(useSessionStore.getState().sessions[0]?.archivedAt).toBeUndefined()
   })
@@ -262,6 +262,112 @@ describe('ArchivedPanel', () => {
     })
     expect(document.body.querySelector('[role="alertdialog"]')).toBeNull()
   })
+
+  it.each(['before commit', 'after commit with a lost response'])(
+    'shows an uncertain deletion inside the modal and retries after RPC rejection %s',
+    async (failurePoint) => {
+      let committed = false
+      deleteSession
+        .mockImplementationOnce(async () => {
+          committed = failurePoint !== 'before commit'
+          throw new Error('Connection lost')
+        })
+        .mockImplementationOnce(async () => {
+          // The authoritative delete command accepts a retry even if the first call committed.
+          committed = true
+          return { status: 'deleted', runtimeDetached: true }
+        })
+      await act(async () =>
+        root.render(<ArchivedPanel view={{ kind: 'list' }} onNavigate={vi.fn()} />)
+      )
+      const openDelete = Array.from(container.querySelectorAll<HTMLButtonElement>('button')).find(
+        (button) => button.textContent === 'Delete'
+      )!
+      expect(openDelete).toBeDefined()
+      await act(async () => openDelete.click())
+      let dialog = document.body.querySelector<HTMLElement>('[role="alertdialog"]')!
+      const confirm = Array.from(dialog.querySelectorAll<HTMLButtonElement>('button')).find(
+        (button) => button.textContent === 'Delete'
+      )!
+      await act(async () => confirm.click())
+
+      expect(deleteSession).toHaveBeenCalledOnce()
+      expect(committed).toBe(failurePoint !== 'before commit')
+      dialog = document.body.querySelector<HTMLElement>('[role="alertdialog"]')!
+      expect(dialog).not.toBeNull()
+      const alert = dialog.querySelector<HTMLElement>('[role="alert"]')
+      expect(alert).not.toBeNull()
+      expect(alert?.closest('[aria-hidden="true"]')).toBeNull()
+      expect(alert?.textContent).toMatch(/confirm.*delet/i)
+      expect(alert?.textContent).not.toMatch(/was not deleted|were kept|was deleted/i)
+      const retry = Array.from(dialog.querySelectorAll<HTMLButtonElement>('button')).find(
+        (button) => button.textContent === 'Retry'
+      )!
+      expect(retry).toBeDefined()
+      await act(async () => retry.click())
+      expect(deleteSession).toHaveBeenNthCalledWith(2, {
+        projectId: project.id,
+        sessionId: session.id
+      })
+      expect(committed).toBe(true)
+      expect(document.body.querySelector('[role="alertdialog"]')).toBeNull()
+    }
+  )
+
+  it('identifies the Project on each individually archived Session row', async () => {
+    const projects = [
+      { ...project, name: 'Alpha biology' },
+      { ...project, id: 'project-2', name: 'Beta physics' }
+    ]
+    useProjectStore.setState({ projects })
+    useSessionStore.setState({
+      sessions: projects.map((owner, index) => ({
+        ...session,
+        id: `session-${index + 1}`,
+        projectId: owner.id
+      }))
+    })
+    await act(async () =>
+      root.render(<ArchivedPanel view={{ kind: 'list' }} onNavigate={vi.fn()} />)
+    )
+    const buttons = Array.from(container.querySelectorAll<HTMLButtonElement>('button')).filter(
+      (button) => button.textContent === 'Delete'
+    )
+    expect(buttons).toHaveLength(2)
+    buttons.forEach((button, index) => {
+      expect(button.parentElement?.textContent).toContain(projects[index].name)
+    })
+  })
+
+  it.each([0, 1])(
+    'identifies the selected Project inside deletion confirmation for row %s',
+    async (index) => {
+      const projects = [
+        { ...project, name: 'Alpha biology' },
+        { ...project, id: 'project-2', name: 'Beta physics' }
+      ]
+      useProjectStore.setState({ projects })
+      useSessionStore.setState({
+        sessions: projects.map((owner, index) => ({
+          ...session,
+          id: `session-${index + 1}`,
+          projectId: owner.id
+        }))
+      })
+      await act(async () =>
+        root.render(<ArchivedPanel view={{ kind: 'list' }} onNavigate={vi.fn()} />)
+      )
+      const buttons = Array.from(container.querySelectorAll<HTMLButtonElement>('button')).filter(
+        (button) => button.textContent === 'Delete'
+      )
+      expect(buttons).toHaveLength(2)
+      await act(async () => buttons[index].click())
+      const dialog = document.body.querySelector<HTMLElement>('[role="alertdialog"]')!
+      expect(dialog).not.toBeNull()
+      expect(dialog.textContent).toContain(projects[index].name)
+      expect(dialog.textContent).not.toContain(projects[1 - index].name)
+    }
+  )
 
   it('clears a failed Project deletion error before opening the next confirmation', async () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)

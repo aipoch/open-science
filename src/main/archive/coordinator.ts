@@ -13,18 +13,18 @@ type ProjectArchiveRepository = {
 type SessionArchivePersistence = {
   assertProjectArchivable(
     projectId: string,
-    isRuntimeBusy: (sessionId: string) => boolean
+    isRuntimeBusy: (sessionId: string) => boolean | Promise<boolean>
   ): Promise<string[]>
   assertSessionAvailable(projectId: string, sessionId: string): Promise<void>
   sessionProjectId(sessionId: string): Promise<string | undefined>
   updateArchive(
     request: UpdateSessionArchiveRequest,
-    isRuntimeBusy: () => boolean
+    isRuntimeBusy: () => boolean | Promise<boolean>
   ): Promise<PersistedChatSession>
 }
 
 type SessionRuntimeActivity = {
-  isSessionBusy(projectId: string, sessionId: string): boolean
+  isSessionBusy(projectId: string, sessionId: string): boolean | Promise<boolean>
   isProjectBusy(projectId: string): boolean | Promise<boolean>
   liveSessionProjectId(sessionId: string): string | undefined
 }
@@ -76,7 +76,7 @@ class ArchiveCoordinator {
       const project = await this.projects.get(request.id)
       if (!project) throw new Error('Project not found.')
       const currentArchivedAt = project.archivedAt ?? null
-      if (currentArchivedAt !== request.expectedArchivedAt) {
+      if ((project.archiveRevision ?? 0) !== request.expectedArchiveRevision) {
         throw new Error('Project archive state changed elsewhere.')
       }
       if (request.archived === (currentArchivedAt !== null)) return project

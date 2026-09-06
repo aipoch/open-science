@@ -196,7 +196,7 @@ describe('useLifecycleSync', () => {
       projectId: project.id,
       sessionId: session.id,
       archived: true,
-      expectedArchivedAt: null
+      expectedRevision: 0
     })
     await act(async () => {
       listeners.sessionUpdated?.({

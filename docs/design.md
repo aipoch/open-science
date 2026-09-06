@@ -396,6 +396,14 @@ colors communicate a successful or failed probe/migration result.
   recovery, legacy data move, update, compute approval, Connector approval, Skill import approval,
   global search, Settings, preview, then base content. A covered presentation stays requested and
   resumes when higher-priority work clears.
+- Archived Session rows and permanent-delete confirmations show the owning Project name so
+  identically named Sessions remain distinguishable. If the delete RPC rejects, the current modal
+  announces that the result could not be confirmed and offers Retry; it does not claim the Session
+  was kept or deleted until an authoritative result arrives.
+- Archive and restore compare a persisted generation, independently of the displayed archive date.
+  Project archive revisions advance on both transitions; Session commands use the existing Session
+  revision. A stale command refreshes the authoritative projection for an explicit retry and does
+  not replay itself. Archive operations preserve the research activity timestamp.
 - A successful Project or Session archive adds an eight-second app-root Undo receipt. The latest
   unexpired archive owns the visible shortcut hint and responds to `Cmd+Z` on macOS or `Ctrl+Z` on
   Windows/Linux; older receipts remain clickable. Text inputs, textareas, selects, ARIA textboxes,

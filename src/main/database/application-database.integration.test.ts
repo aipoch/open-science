@@ -214,7 +214,8 @@ describe('application database (integration)', () => {
         '0027_project_session_defaults',
         '0028_database_numeric_and_null_constraints',
         '0029_compute_host_execution_mode',
-        '0030_literature_foundation'
+        '0030_literature_foundation',
+        '0031_project_archive_revision'
       ]
     })
 
@@ -1057,14 +1058,14 @@ describe('application database (integration)', () => {
 
     const archivedAt = renamed.updatedAt + 1000
     const archived = await repository.updateArchive(
-      { id: created.id, archived: true, expectedArchivedAt: null },
+      { id: created.id, archived: true, expectedArchiveRevision: 0 },
       archivedAt
     )
     expect(archived.archivedAt).toBe(archivedAt)
     expect(archived.updatedAt).toBe(renamed.updatedAt)
 
     const restored = await repository.updateArchive(
-      { id: created.id, archived: false, expectedArchivedAt: archivedAt },
+      { id: created.id, archived: false, expectedArchiveRevision: archived.archiveRevision! },
       archivedAt + 1
     )
     expect(restored.archivedAt).toBeUndefined()
@@ -1150,7 +1151,7 @@ describe('application database (integration)', () => {
 
     await expect(
       repository.updateArchive(
-        { id: created.id, archived: true, expectedArchivedAt: null },
+        { id: created.id, archived: true, expectedArchiveRevision: 0 },
         archivedAt
       )
     ).resolves.toMatchObject({
@@ -1273,7 +1274,8 @@ describe('application database (integration)', () => {
         '0027_project_session_defaults',
         '0028_database_numeric_and_null_constraints',
         '0029_compute_host_execution_mode',
-        '0030_literature_foundation'
+        '0030_literature_foundation',
+        '0031_project_archive_revision'
       ]
     })
 

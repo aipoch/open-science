@@ -2840,7 +2840,7 @@ describe('SessionPersistenceCoordinator', () => {
         projectId: 'project-1',
         sessionId: 'session-1',
         archived: true,
-        expectedArchivedAt: null
+        expectedRevision: 0
       })
     ).rejects.toThrow('Finish or stop this session before archiving.')
   })
@@ -2883,7 +2883,7 @@ describe('SessionPersistenceCoordinator', () => {
         projectId: delegated.projectId,
         sessionId: delegated.id,
         archived: true,
-        expectedArchivedAt: null
+        expectedRevision: 0
       })
     ).rejects.toThrow('Finish or stop this session before archiving.')
 
@@ -2899,7 +2899,7 @@ describe('SessionPersistenceCoordinator', () => {
         projectId: inactiveRoute.projectId,
         sessionId: inactiveRoute.id,
         archived: true,
-        expectedArchivedAt: null
+        expectedRevision: 0
       })
     ).rejects.toThrow('Finish or stop this session before archiving.')
 
@@ -2915,7 +2915,7 @@ describe('SessionPersistenceCoordinator', () => {
         projectId: terminal.projectId,
         sessionId: terminal.id,
         archived: true,
-        expectedArchivedAt: null
+        expectedRevision: 0
       })
     ).resolves.toMatchObject({ archivedAt: expect.any(Number) })
   })
@@ -2938,7 +2938,7 @@ describe('SessionPersistenceCoordinator', () => {
           projectId: delegated.projectId,
           sessionId: delegated.id,
           archived: true,
-          expectedArchivedAt: null
+          expectedRevision: persisted?.revision ?? 0
         })
       ])
 

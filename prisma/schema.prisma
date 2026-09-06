@@ -28,6 +28,7 @@ model Project {
   isExample        Boolean              @default(false)
   pinned           Boolean              @default(false)
   archivedAt       DateTime?
+  archiveRevision  Int                  @default(0)
   deletedAt        DateTime?
   createdAt        DateTime             @default(now())
   updatedAt        DateTime             @updatedAt

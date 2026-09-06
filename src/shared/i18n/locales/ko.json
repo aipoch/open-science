@@ -99,6 +99,7 @@
     "Import Connector configuration": "커넥터 구성 가져오기"
   },
   "renderer": {
+    "Project: {{name}}": "프로젝트: {{name}}",
     "An installer is not available for this platform. Download manually to check other installation options.": "이 플랫폼에서 사용할 수 있는 설치 프로그램이 없습니다. 수동 다운로드 페이지에서 다른 설치 방법을 확인하세요.",
     "Latest saved version": "최근 저장된 버전",
     "Unable to discard the Plan.": "계획을 삭제할 수 없습니다.",
@@ -959,7 +960,7 @@
     "Could not check whether package registries are reachable.": "패키지 레지스트리에 연결할 수 있는지 확인할 수 없습니다.",
     "Could not choose the data location. Try again.": "데이터 위치를 선택할 수 없습니다. 다시 시도해 보세요.",
     "Could not delete project.": "프로젝트를 삭제할 수 없습니다.",
-    "Could not delete session.": "세션을 삭제할 수 없습니다.",
+    "Could not confirm the deletion result. Please try again.": "삭제 결과를 확인할 수 없습니다. 다시 시도해 주세요.",
     "Could not delete the project. Please try again.": "프로젝트를 삭제할 수 없습니다. 다시 시도해 주세요.",
     "Project cleanup": "프로젝트 정리",
     "Deleted project": "삭제된 프로젝트",

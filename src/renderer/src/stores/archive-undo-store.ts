@@ -1,7 +1,7 @@
 import { create } from 'zustand'
 
 import type { Project } from '../../../shared/projects'
-import type { PersistedChatSession } from '../../../shared/session-persistence'
+import { sessionRevision, type PersistedChatSession } from '../../../shared/session-persistence'
 import { useProjectStore } from './project-store'
 import { useSessionStore } from './session-store'
 
@@ -21,6 +21,7 @@ type ArchiveUndo = ArchiveUndoText &
         key: string
         kind: 'project'
         projectId: string
+        revision: number
         archivedAt: number
         expiresAt: number
         retry?: boolean
@@ -30,6 +31,7 @@ type ArchiveUndo = ArchiveUndoText &
         kind: 'session'
         projectId: string
         sessionId: string
+        revision: number
         archivedAt: number
         expiresAt: number
         retry?: boolean
@@ -49,8 +51,8 @@ type ArchiveUndoStore = {
   undo: (key: string) => Promise<void>
 }
 
-const archiveKey = (kind: ArchiveUndo['kind'], id: string, archivedAt: number): string =>
-  `${kind}:${id}:${archivedAt}`
+const archiveKey = (kind: ArchiveUndo['kind'], id: string, revision: number): string =>
+  `${kind}:${id}:${revision}`
 
 const prune = (notices: ArchiveUndo[]): ArchiveUndo[] =>
   notices.filter((notice) => notice.expiresAt > Date.now())
@@ -64,12 +66,13 @@ export const useArchiveUndoStore = create<ArchiveUndoStore>((set, get) => ({
 
   enqueueProject: (project) => {
     if (project.archivedAt === undefined) return
-    const key = archiveKey('project', project.id, project.archivedAt)
+    const key = archiveKey('project', project.id, project.archiveRevision ?? 0)
     const notice: ArchiveUndo = {
       key,
       kind: 'project',
       projectId: project.id,
       archivedAt: project.archivedAt,
+      revision: project.archiveRevision ?? 0,
       messageKey: 'Archived project “{{name}}”.',
       messageParams: { name: project.name },
       expiresAt: Date.now() + ARCHIVE_UNDO_DURATION_MS
@@ -81,13 +84,14 @@ export const useArchiveUndoStore = create<ArchiveUndoStore>((set, get) => ({
 
   enqueueSession: (session) => {
     if (session.archivedAt === undefined) return
-    const key = archiveKey('session', session.id, session.archivedAt)
+    const key = archiveKey('session', session.id, sessionRevision(session))
     const notice: ArchiveUndo = {
       key,
       kind: 'session',
       projectId: session.projectId,
       sessionId: session.id,
       archivedAt: session.archivedAt,
+      revision: sessionRevision(session),
       messageKey: 'Archived session “{{title}}”.',
       messageParams: { title: session.title },
       expiresAt: Date.now() + ARCHIVE_UNDO_DURATION_MS
@@ -137,7 +141,9 @@ export const useArchiveUndoStore = create<ArchiveUndoStore>((set, get) => ({
         // previously archived child session remains independently restorable.
         return project.archivedAt === undefined
           ? notice.kind === 'session'
-          : notice.kind === 'project' && project.archivedAt === notice.archivedAt
+          : notice.kind === 'project' &&
+              project.archivedAt === notice.archivedAt &&
+              (project.archiveRevision ?? 0) === notice.revision
       })
     })),
 
@@ -147,7 +153,7 @@ export const useArchiveUndoStore = create<ArchiveUndoStore>((set, get) => ({
         (notice) =>
           notice.kind !== 'session' ||
           notice.sessionId !== session.id ||
-          session.archivedAt === notice.archivedAt
+          (session.archivedAt === notice.archivedAt && sessionRevision(session) === notice.revision)
       )
     })),
 
@@ -160,14 +166,14 @@ export const useArchiveUndoStore = create<ArchiveUndoStore>((set, get) => ({
         await useProjectStore.getState().updateProjectArchive({
           id: notice.projectId,
           archived: false,
-          expectedArchivedAt: notice.archivedAt
+          expectedArchiveRevision: notice.revision
         })
       } else {
         await useSessionStore.getState().updateSessionArchive({
           projectId: notice.projectId,
           sessionId: notice.sessionId,
           archived: false,
-          expectedArchivedAt: notice.archivedAt
+          expectedRevision: notice.revision
         })
       }
       set((state) => ({

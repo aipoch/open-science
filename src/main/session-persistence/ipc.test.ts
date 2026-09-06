@@ -252,7 +252,7 @@ describe('session persistence IPC handlers', () => {
       projectId: session.projectId,
       sessionId: session.id,
       archived: true,
-      expectedArchivedAt: null
+      expectedRevision: 0
     })
     await repository.deleteSession(session.projectId, session.id)
     await repository.saveManifest({ lastSessionId: session.id })

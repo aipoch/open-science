@@ -67,10 +67,11 @@ describe('Project Session defaults migration', () => {
         '0027_project_session_defaults',
         '0028_database_numeric_and_null_constraints',
         '0029_compute_host_execution_mode',
-        '0030_literature_foundation'
+        '0030_literature_foundation',
+        '0031_project_archive_revision'
       ],
       from: '0026_compute_job_remote_cleanup',
-      to: '0030_literature_foundation'
+      to: '0031_project_archive_revision'
     })
     await expect(
       client.$queryRawUnsafe<Array<{ sessionDefaults: string }>>(

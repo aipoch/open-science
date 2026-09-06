@@ -12,7 +12,7 @@ import type {
   DeleteSessionRequest,
   SessionDeletionResult
 } from '../../../../shared/session-persistence'
-import { isSessionSizeLimitError } from '../../../../shared/session-persistence'
+import { isSessionSizeLimitError, sessionRevision } from '../../../../shared/session-persistence'
 import type {
   CompletionHandoffLifecycleEvent,
   SpecialistListItem
@@ -260,7 +260,7 @@ const useWorkspaceSessionController = ({
       projectId: session.projectId,
       sessionId: session.id,
       archived: true,
-      expectedArchivedAt: null
+      expectedRevision: sessionRevision(session)
     })
       .then((archived) => {
         if (clearIdleRetry(session.id)) clearPending(session.id)

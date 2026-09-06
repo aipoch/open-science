@@ -131,6 +131,32 @@ describe('session archive authority ordering', () => {
     expect(store.getState().sessions[0].contentLoaded).not.toBe(false)
   })
 
+  it('refreshes archive authority after conflict while preserving local content and the original failure', async () => {
+    const store = createSessionStore()
+    store.getState().hydrateSessions([{ ...session, revision: 1 }])
+    const updateArchive = vi.fn().mockRejectedValue(new Error('Session revision conflict'))
+    const loadOne = vi
+      .fn()
+      .mockResolvedValue({ ...session, revision: 3, archivedAt: undefined, messages: [] })
+    vi.stubGlobal('window', { api: { sessions: { updateArchive, loadOne } } })
+    await expect(
+      store.getState().updateSessionArchive({
+        projectId: session.projectId,
+        sessionId: session.id,
+        archived: true,
+        expectedRevision: 1
+      })
+    ).rejects.toThrow('revision conflict')
+    expect(updateArchive).toHaveBeenCalledOnce()
+    expect(loadOne).toHaveBeenCalledWith({ projectId: session.projectId, sessionId: session.id })
+    expect(store.getState().sessions[0]).toMatchObject({
+      revision: 3,
+      updatedAt: session.updatedAt
+    })
+    expect(store.getState().sessions[0].archivedAt).toBeUndefined()
+    expect(store.getState().sessions[0].messages[0]?.content).toBe('Keep local content')
+  })
+
   it('advances archive RPC revision without replacing local content or activity time', async () => {
     const store = createSessionStore()
     store.getState().hydrateSessions([session])
@@ -153,7 +179,7 @@ describe('session archive authority ordering', () => {
       projectId: session.projectId,
       sessionId: session.id,
       archived: false,
-      expectedArchivedAt: 20
+      expectedRevision: 0
     })
     expect(store.getState().sessions[0]).toMatchObject({
       revision: 4,

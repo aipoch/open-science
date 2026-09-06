@@ -4936,7 +4936,7 @@ export const updateSessionArchiveRequestSchema = z
     projectId: z.string().min(1),
     sessionId: z.string().min(1),
     archived: z.boolean(),
-    expectedArchivedAt: z.number().int().positive().nullable()
+    expectedRevision: z.number().int().nonnegative()
   })
   .strict()
 

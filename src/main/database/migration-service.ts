@@ -1,3 +1,4 @@
+import { projectArchiveRevisionMigration } from './migrations/0031-project-archive-revision'
 import { createHash } from 'node:crypto'
 import { access, rename, rm } from 'node:fs/promises'
 
@@ -674,6 +675,17 @@ const MIGRATION_MANIFEST = [
   {
     ...literatureFoundationMigration,
     checksum: LITERATURE_FOUNDATION_CHECKSUM,
+    backupOnApply: 'required',
+    backupRetention: 'retain'
+  },
+  {
+    ...projectArchiveRevisionMigration,
+    checksum: checksumMigrationPayload(
+      projectArchiveRevisionMigration.id,
+      projectArchiveRevisionMigration.statements,
+      projectArchiveRevisionMigration.verifiers,
+      projectArchiveRevisionMigration.operations
+    ),
     backupOnApply: 'required',
     backupRetention: 'retain'
   }
