@@ -28,6 +28,7 @@ export const createInitialGrantedFoldersState = (): GrantedFoldersStoreData => (
 export const useGrantedFoldersStore = create<GrantedFoldersStore>((set, get) => {
   let mutationRevision = 0
   let refreshSequence = 0
+  let mutationQueue: Promise<void> = Promise.resolve()
 
   const apply = (roots: GrantedLocalRoot[]): GrantedLocalRoot[] => {
     set({ roots, loaded: true })
@@ -37,6 +38,16 @@ export const useGrantedFoldersStore = create<GrantedFoldersStore>((set, get) => 
   const applyMutation = (roots: GrantedLocalRoot[]): GrantedLocalRoot[] => {
     mutationRevision += 1
     return apply(roots)
+  }
+
+  // Full-list responses must publish in submission order within this renderer.
+  const mutate = (operation: () => Promise<GrantedLocalRoot[]>): Promise<GrantedLocalRoot[]> => {
+    const result = mutationQueue.then(operation).then(applyMutation)
+    mutationQueue = result.then(
+      () => undefined,
+      () => undefined
+    )
+    return result
   }
 
   return {
@@ -53,12 +64,11 @@ export const useGrantedFoldersStore = create<GrantedFoldersStore>((set, get) => 
 
     // Rejections carry a user-presentable message from main; callers surface them and the store
     // keeps the previous list.
-    grant: async (path, access) =>
-      applyMutation(await window.api.localFs.grantRoot({ path, access })),
+    grant: (path, access) => mutate(() => window.api.localFs.grantRoot({ path, access })),
 
-    setAccess: async (id, access) =>
-      applyMutation(await window.api.localFs.setGrantedRootAccess({ id, access })),
+    setAccess: (id, access) =>
+      mutate(() => window.api.localFs.setGrantedRootAccess({ id, access })),
 
-    remove: async (id) => applyMutation(await window.api.localFs.removeGrantedRoot({ id }))
+    remove: (id) => mutate(() => window.api.localFs.removeGrantedRoot({ id }))
   }
 })
