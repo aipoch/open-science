@@ -2419,9 +2419,10 @@ const createApplicationModules = async (
       connectorService,
       computeService: agentComputeService,
       memoryService,
-      isMemoryEnabledForSession: async (sessionId) =>
-        (runtimeRef.current?.isSessionMemoryEnabled(sessionId) ?? false) &&
-        (await memoryService.isEnabled()),
+      // The Memory service checks the global gate inside its own queue.
+      isMemoryEnabledForSession: (sessionId) =>
+        runtimeRef.current?.isSessionMemoryEnabled(sessionId) ?? false,
+      sessionMemorySignal: (sessionId) => runtimeRef.current?.sessionMemorySignal(sessionId),
       skillImporter: conversationSkillImporter,
       planService: {
         call: (input) => {

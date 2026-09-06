@@ -102,6 +102,7 @@
     "Import Connector configuration": "Импорт конфигурации коннектора"
   },
   "renderer": {
+    "Latest saved version": "Последняя сохранённая версия",
     "Unable to discard the Plan.": "Не удалось удалить план.",
     "Discard unavailable Plan": "Удалить недоступный план",
     "Discard unavailable Plan?": "Удалить недоступный план?",

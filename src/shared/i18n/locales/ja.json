@@ -99,6 +99,7 @@
     "Import Connector configuration": "コネクタ構成のインポート"
   },
   "renderer": {
+    "Latest saved version": "最後に保存されたバージョン",
     "Unable to discard the Plan.": "プランを破棄できません。",
     "Discard unavailable Plan": "利用できないプランを破棄",
     "Discard unavailable Plan?": "利用できないプランを破棄しますか？",

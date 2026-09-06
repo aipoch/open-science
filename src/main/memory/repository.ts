@@ -304,7 +304,8 @@ class MemoryRepository {
   async rememberEntry(
     categoryId: string | undefined,
     contentInput: string,
-    context: MemoryAgentContext
+    context: MemoryAgentContext,
+    checkAccess?: () => Promise<void>
   ): Promise<MemoryRememberRepositoryResult> {
     const { content, contentKey } = validateMemoryContent(contentInput)
     const client = await this.getClient()
@@ -344,6 +345,7 @@ class MemoryRepository {
         },
         include
       })
+      await checkAccess?.()
       if (existing) return { status: 'existing', candidate: existing }
       const candidate = await transaction.memoryEntry.create({
         data: {
@@ -361,6 +363,9 @@ class MemoryRepository {
         where: { id: MEMORY_SETTINGS_ID },
         data: { revision: { increment: 1 } }
       })
+      // The final authorization check is the commit decision. Throwing rolls back the insert
+      // and revision together; cancellation after this decision cannot undo an accepted commit.
+      await checkAccess?.()
       return { status: 'created', candidate }
     })
   }

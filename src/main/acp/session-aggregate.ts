@@ -57,6 +57,7 @@ class AcpSessionAggregate {
   private backendId: string | undefined
   private permissionProfile: SessionPermissionProfileState | undefined
   private memoryEnabled = true
+  private memoryController = new AbortController()
   private specialistId: string | undefined
   private specialistPrefix: string | undefined
   private specialistBindingRevisionValue = 0
@@ -107,7 +108,7 @@ class AcpSessionAggregate {
     this.frameworkId = input.frameworkId
     if (input.backendId !== undefined) this.backendId = input.backendId
     this.permissionProfile = structuredClone(input.permissionProfile)
-    this.memoryEnabled = input.memoryEnabled !== false
+    this.setMemoryEnabled(input.memoryEnabled !== false)
     this.appliedModel = input.appliedModel
     this.configOptions = cloneConfigOptions(input.configOptions)
     this.refreshSnapshot()
@@ -125,7 +126,13 @@ class AcpSessionAggregate {
     this.refreshSnapshot()
   }
 
+  memorySignal(): AbortSignal {
+    return this.memoryController.signal
+  }
+
   setMemoryEnabled(enabled: boolean): void {
+    if (!enabled) this.memoryController.abort()
+    else if (this.memoryController.signal.aborted) this.memoryController = new AbortController()
     this.memoryEnabled = enabled
     this.refreshSnapshot()
   }
@@ -179,6 +186,7 @@ class AcpSessionAggregate {
   }
 
   detachConnection(): void {
+    this.memoryController.abort()
     this.session = undefined
     this.appliedModel = undefined
     this.configOptions = undefined

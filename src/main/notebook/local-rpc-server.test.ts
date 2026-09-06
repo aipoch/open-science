@@ -11,6 +11,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { ABOUT_YOU_MEMORY_CATEGORY_ID } from '../../shared/memory'
 import type { NotebookRunInputFile, NotebookRunProvenanceContext } from '../../shared/notebook'
 import { PlanCommandError } from '../../shared/session-plan/contract'
+import { AcpSessionAggregate } from '../acp/session-aggregate'
 import { ArtifactTurnOwner } from '../acp/artifact-turn-owner'
 import { ArtifactRepository } from '../artifacts/repository'
 import { ArtifactRunRegistry } from '../artifacts/run-registry'
@@ -350,7 +351,8 @@ describe('notebook local RPC server', () => {
           projectId: 'project-1',
           sessionId: 'trusted-session',
           agentId: 'specialist-1'
-        }
+        },
+        expect.any(Function)
       )
     } finally {
       control.release()
@@ -464,6 +466,181 @@ describe('notebook local RPC server', () => {
     } finally {
       control.release()
       await server.close()
+    }
+  })
+
+  it.each(['disable', 'revoke', 'disable-enable', 'disconnect', 'provider-replace'] as const)(
+    'settles a queued Memory write after Session %s',
+    async (action) => {
+      const root = await createStorageRoot()
+      const client = createProjectDbClient(root)
+      const repository = new MemoryRepository(async () => client)
+      const service = new MemoryService(repository, { publish: vi.fn() })
+      const session = new AcpSessionAggregate('session-a')
+      const attachProvider = (sessionId: string): void => {
+        session.attach({
+          session: { sessionId } as never,
+          cwd: root,
+          projectId: 'project-a',
+          frameworkId: 'opencode',
+          permissionProfile: {
+            selectedProfile: 'ask',
+            effectiveProfile: 'ask',
+            currentModeId: 'default',
+            availableModeIds: ['default'],
+            fullAccessAvailable: false
+          },
+          memoryEnabled: true
+        })
+      }
+      attachProvider('provider-a')
+      const server = new NotebookLocalRpcServer({} as never, {
+        transport: 'tcp',
+        memoryService: service,
+        isMemoryEnabledForSession: () => session.snapshot().memoryEnabled,
+        sessionMemorySignal: () => session.memorySignal()
+      })
+      const controller = new AbortController()
+      const releaseQueue = createDeferred()
+      const snapshotStarted = createDeferred()
+      let control: Awaited<ReturnType<NotebookLocalRpcServer['issueControlConnection']>> | undefined
+      let pending: Promise<Response> | undefined
+      try {
+        await migrateApplicationDatabase(client)
+        await client.project.create({ data: { id: 'project-a', name: 'Project A' } })
+        await service.setEnabled({ enabled: true })
+        control = await server.issueControlConnection(
+          'session-a',
+          'project-a',
+          'root-frame-session-a'
+        )
+        const snapshot = repository.snapshot.bind(repository)
+        vi.spyOn(repository, 'snapshot').mockImplementationOnce(async () => {
+          snapshotStarted.resolve()
+          await releaseQueue.promise
+          return snapshot()
+        })
+        const blockedSnapshot = service.snapshot()
+        await snapshotStarted.promise
+        const queued = createDeferred()
+        let checkAccess!: () => Promise<void>
+        let queuedWrite!: ReturnType<MemoryService['rememberForAgent']>
+        const remember = service.rememberForAgent.bind(service)
+        vi.spyOn(service, 'rememberForAgent').mockImplementation((...args) => {
+          const result = remember(...args)
+          checkAccess = args[2]!
+          queuedWrite = result
+          void result.catch(() => undefined)
+          queued.resolve()
+          return result
+        })
+        const call = (signal?: AbortSignal): Promise<Response> =>
+          fetch(control!.endpoint, {
+            signal,
+            method: 'POST',
+            headers: {
+              authorization: `Bearer ${control!.token}`,
+              'content-type': 'application/json'
+            },
+            body: JSON.stringify({
+              method: 'memoryRemember',
+              params: {
+                content: 'Durable fact queued before authorization changed.',
+                analysis: {
+                  scope: 'project',
+                  durability: 'cross-session',
+                  evidence: 'project-observed',
+                  subject: 'Project fact',
+                  reason: 'Future sessions need this durable project fact.'
+                }
+              }
+            })
+          })
+        pending = call(controller.signal)
+        await queued.promise
+        if (action === 'disconnect') {
+          controller.abort()
+          await expect(pending).rejects.toThrow()
+          // Observe the real HTTP disconnect before unblocking SQLite, without guessing timing.
+          await vi.waitFor(async () => {
+            await expect(checkAccess()).rejects.toThrow()
+          })
+          const rejected = expect(queuedWrite).rejects.toThrow()
+          releaseQueue.resolve()
+          await blockedSnapshot
+          await rejected
+          expect(await client.memoryEntry.count()).toBe(0)
+          return
+        }
+        if (action === 'provider-replace') {
+          // ACP cleanup intentionally preserves the Notebook RuntimeSession's control capability.
+          session.detachProvider()
+          server.releaseSessionCapabilities('session-a')
+          attachProvider('provider-b')
+          releaseQueue.resolve()
+          await blockedSnapshot
+          const response = await pending
+          expect(response.status).toBe(200)
+          expect(await response.json()).toMatchObject({ result: { status: 'created' } })
+          const subsequent = await call()
+          expect(subsequent.status).toBe(200)
+          expect(await subsequent.json()).toMatchObject({ result: { status: 'existing' } })
+          expect(await client.memoryEntry.count()).toBe(1)
+          return
+        }
+        if (action === 'revoke') control.release()
+        else session.setMemoryEnabled(false)
+        const expectedStatus = action === 'revoke' ? 401 : 403
+        const subsequent = await call()
+        expect(subsequent.status).toBe(expectedStatus)
+        await subsequent.json()
+        expect(await client.memoryEntry.count()).toBe(0)
+        if (action === 'disable-enable') session.setMemoryEnabled(true)
+        releaseQueue.resolve()
+        await blockedSnapshot
+        const response = await pending
+        await response.json()
+        expect.soft(response.status).toBe(expectedStatus)
+        expect(await client.memoryEntry.count()).toBe(0)
+      } finally {
+        releaseQueue.resolve()
+        await pending?.catch(() => undefined)
+        control?.release()
+        await server.close()
+        await client.$disconnect()
+      }
+    }
+  )
+
+  it('returns forbidden for globally disabled Memory with a live Session', async () => {
+    const root = await createStorageRoot()
+    const client = createProjectDbClient(root)
+    await migrateApplicationDatabase(client)
+    const service = new MemoryService(new MemoryRepository(async () => client), {
+      publish: vi.fn()
+    })
+    const server = new NotebookLocalRpcServer({} as never, {
+      transport: 'tcp',
+      memoryService: service,
+      isMemoryEnabledForSession: () => true
+    })
+    const control = await server.issueControlConnection(
+      'session-a',
+      'project-a',
+      'root-frame-session-a'
+    )
+    try {
+      const response = await fetch(control.endpoint, {
+        method: 'POST',
+        headers: { authorization: `Bearer ${control.token}`, 'content-type': 'application/json' },
+        body: JSON.stringify({ method: 'memorySearch', params: { query: 'pH' } })
+      })
+      expect(response.status).toBe(403)
+      expect(await response.json()).toMatchObject({ error: 'Memory is turned off.' })
+    } finally {
+      control.release()
+      await server.close()
+      await client.$disconnect()
     }
   })
 

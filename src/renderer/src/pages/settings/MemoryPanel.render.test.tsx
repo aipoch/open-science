@@ -122,6 +122,93 @@ describe('MemoryPanel', () => {
     expect(create?.disabled).toBe(false)
   })
 
+  it('keeps a note draft bound to its original revision after an external snapshot', async () => {
+    const updateEntry = vi
+      .fn()
+      .mockRejectedValue(new Error('Memory note changed or no longer exists.'))
+    useMemoryStore.setState({
+      categories: [aboutYouCategory({ entries: [memoryEntry()] })],
+      updateEntry
+    })
+    await renderMemoryPanel()
+    fireEvent.click(container.querySelector('button[aria-label="Edit note"]')!)
+    fireEvent.change(container.querySelector('textarea')!, { target: { value: 'My stale draft' } })
+    await act(async () =>
+      useMemoryStore.setState({
+        categories: [
+          aboutYouCategory({
+            entries: [memoryEntry({ revision: 2, content: 'Another window saved' })]
+          })
+        ]
+      })
+    )
+    expect(container.querySelector('textarea')?.value).toBe('My stale draft')
+    expect(container.querySelector('[aria-label="Latest saved version"]')?.textContent).toContain(
+      'Another window saved'
+    )
+    await act(async () =>
+      fireEvent.click(
+        Array.from(container.querySelectorAll('button')).find(
+          (button) => button.textContent?.trim() === 'Save'
+        )!
+      )
+    )
+    expect(updateEntry).toHaveBeenCalledWith({
+      id: 'entry-a',
+      expectedRevision: 1,
+      content: 'My stale draft'
+    })
+    expect(container.querySelector('textarea')?.value).toBe('My stale draft')
+  })
+
+  it('keeps a category draft bound to its original revision after an external snapshot', async () => {
+    const updateCategory = vi
+      .fn()
+      .mockRejectedValue(new Error('Memory category changed. Refresh and try again.'))
+    const onNavigate = vi.fn()
+    useMemoryStore.setState({
+      categories: [customCategory({ guidance: 'Original guidance' })],
+      updateCategory
+    })
+    await renderMemoryPanel({ kind: 'edit', categoryId: 'category-a' }, onNavigate)
+    fireEvent.change(container.querySelector('input')!, { target: { value: 'My stale category' } })
+    await act(async () =>
+      useMemoryStore.setState({
+        categories: [
+          customCategory({ revision: 2, guidance: 'Another window guidance', autoRecall: false })
+        ]
+      })
+    )
+    await act(async () => fireEvent.submit(container.querySelector('form')!))
+    expect(updateCategory).toHaveBeenCalledWith({
+      id: 'category-a',
+      expectedRevision: 1,
+      name: 'My stale category',
+      guidance: 'Original guidance',
+      autoRecall: true
+    })
+    expect(container.querySelector('input')?.value).toBe('My stale category')
+    expect(container.querySelector('textarea')?.value).toBe('Original guidance')
+    expect(container.querySelector('[role="alert"]')?.textContent).toContain(
+      'Memory category changed.'
+    )
+    expect(onNavigate).not.toHaveBeenCalled()
+  })
+
+  it('starts a fresh category draft when navigating directly between edit targets', async () => {
+    useMemoryStore.setState({
+      categories: [
+        customCategory({ guidance: 'Guidance A' }),
+        customCategory({ id: 'category-b', name: 'Category B', guidance: 'Guidance B' })
+      ]
+    })
+    await renderMemoryPanel({ kind: 'edit', categoryId: 'category-a' })
+    fireEvent.change(container.querySelector('input')!, { target: { value: 'Draft A' } })
+    await renderMemoryPanel({ kind: 'edit', categoryId: 'category-b' })
+    expect(container.querySelector('input')?.value).toBe('Category B')
+    expect(container.querySelector('textarea')?.value).toBe('Guidance B')
+  })
+
   it('opens an inline note editor from Add', async () => {
     await renderMemoryPanel()
 
