@@ -170,6 +170,7 @@ Update Project metadata or replace its Agent Context later using an ID or exact 
 
 ```bash
 open-science project update "Systematic review" \
+  --name "Evidence synthesis" \
   --description "Updated evidence review workspace" \
   --agent-context-file ./revised-agent-context.md \
   --json
@@ -177,7 +178,8 @@ open-science project update "Systematic review" \
 open-science project update <project-id> --clear-agent-context --json
 ```
 
-`--clear-agent-context` is explicit so an omitted option keeps the existing value. An update affects
+`--name` renames the Project and requires a non-empty value. `--clear-agent-context` is explicit so
+an omitted option keeps the existing value. An update affects
 newly created Sessions and provider Sessions that are set up again after the update. It does not
 rebuild an already attached Session. Project list, create, and update output reports only the boolean
 `hasAgentContext`; Agent Context contents are not returned through the public Task API or CLI output.
@@ -287,7 +289,7 @@ The default approval profile is `ask`. Unattended workflows must explicitly use
 
 ### Execution controls
 
-The run command exposes four provider-neutral controls:
+The run command exposes five provider-neutral controls:
 
 ```bash
 open-science run \
@@ -295,6 +297,7 @@ open-science run \
   --prompt-file ./task.md \
   --plan-first \
   --auto-review \
+  --memory \
   --specialist literature-reviewer \
   --delegation deny \
   --wait \
@@ -307,6 +310,8 @@ open-science run \
 - `--auto-review` and `--no-auto-review` update the Session automatic-review setting. When enabled, a
   successful turn starts the existing reviewer workflow before the Run becomes terminal; the Run
   `review` property reports whether it started and its final lifecycle/outcome.
+- `--memory` and `--no-memory` update the Session Memory setting. When enabled, the Session uses the
+  agent's persistent project-scoped memory; the two flags are mutually exclusive.
 - `--specialist` accepts a Specialist UUID or stable Profile name. It binds only a new Session. An
   existing Session cannot be rebound, and a presentation `displayName` is not an identifier.
 - `--delegation allow|deny` updates whether the Session may create new delegated children. `deny`
