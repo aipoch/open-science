@@ -19,6 +19,11 @@ import { join } from 'node:path'
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+vi.mock('node:fs/promises', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:fs/promises')>()
+  return { ...actual, rm: vi.fn(actual.rm) }
+})
+
 const pdescribe = describe.skipIf(process.platform === 'win32')
 const symlinkDescribe = describe.skipIf(process.platform === 'win32')
 
@@ -86,6 +91,7 @@ beforeEach(async () => {
 
 afterEach(async () => {
   vi.restoreAllMocks()
+  vi.mocked(rm).mockReset()
   await rm(home, { recursive: true, force: true })
 })
 
@@ -173,6 +179,29 @@ describe('planCliLauncher', () => {
 })
 
 describe('initial CLI installation failure recovery', () => {
+  it('preserves a user replacement made immediately before failure cleanup unlinks a path', async () => {
+    const env = posixEnv()
+    const plan = planCliLauncher(env)
+    const replacement = join(home, 'late-user-replacement')
+    const userContent = '#!/bin/sh\necho user-owned\n'
+    await writeFile(replacement, userContent)
+    const probe = await open(join(home, 'file-handle-probe'), 'w')
+    const prototype = Object.getPrototypeOf(probe) as FileHandle
+    await probe.close()
+    const error = Object.assign(new Error('disk full'), { code: 'ENOSPC' })
+    vi.spyOn(prototype, 'write').mockRejectedValueOnce(error)
+    const originalRm = vi.mocked(rm).getMockImplementation()!
+    vi.mocked(rm).mockImplementationOnce(async (...args) => {
+      // Replace after any ownership check, immediately before the actual unlink. Cleanup must only
+      // unlink staging, never the final pathname which another process can now own.
+      await rename(replacement, plan.target)
+      return originalRm(...args)
+    })
+
+    await expect(installCliLauncher(env)).rejects.toBe(error)
+    await expect(readFile(plan.target, 'utf8')).resolves.toBe(userContent)
+  })
+
   it.each(['first write', 'partial write', 'chmod'] as const)(
     'C02 recovers a failed initial %s so installation can be retried',
     async (failure) => {

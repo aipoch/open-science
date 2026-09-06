@@ -244,6 +244,31 @@ describe('C01 automatic service discovery', () => {
     }
   )
 
+  it('cleans the enumerated dead root even when its record names another root', async () => {
+    await withCandidates('dead', async ({ deps, devRoot, prodRoot }) => {
+      const path = join(devRoot, STATE_FILE)
+      const state = JSON.parse(await readFile(path, 'utf8'))
+      await writeFile(path, JSON.stringify({ ...state, configRoot: prodRoot }))
+      await statusCommand({ json: true }, deps)
+      expect
+        .soft(JSON.parse(deps.log.mock.calls[0][0]))
+        .toMatchObject({ running: true, configRoot: prodRoot })
+      await expect.soft(readFile(join(prodRoot, STATE_FILE), 'utf8')).resolves.toContain('4242')
+      expect(deps.removeState).toHaveBeenCalledWith(devRoot)
+    })
+  })
+
+  it('reads tokens only from the explicit root even when its record names another root', async () => {
+    await withCandidates('unhealthy', async ({ deps, devRoot, prodRoot }) => {
+      const path = join(devRoot, STATE_FILE)
+      const state = JSON.parse(await readFile(path, 'utf8'))
+      await writeFile(path, JSON.stringify({ ...state, configRoot: prodRoot }))
+      await statusCommand({ configRoot: devRoot, json: true }, deps)
+      expect(deps.readWebToken.mock.calls.every(([root]) => root === devRoot)).toBe(true)
+      expect(deps.removeState).not.toHaveBeenCalled()
+    })
+  })
+
   it('fails a bounded stop without deleting or signalling a live unhealthy candidate', async () => {
     await withCandidates('unhealthy', async ({ deps, devRoot }) => {
       await expect(stopCommand({ configRoot: devRoot }, deps)).rejects.toThrow(
@@ -309,14 +334,17 @@ describe('C05 stop --json output', () => {
   )
 
   it('keeps rejected shutdown machine-readable and unsuccessful', async () => {
-    const deps = makeDeps({ fetch: vi.fn().mockResolvedValue({ ok: false, status: 401 }) })
     const errorOutput = vi.fn()
+    const deps = makeDeps({
+      fetch: vi.fn().mockResolvedValue({ ok: false, status: 401 }),
+      warn: errorOutput
+    })
     const setExitCode = vi.fn()
     await stopCommand({ json: true }, deps).catch((error) => {
       reportCliError(error, ['stop', '--json'], { error: errorOutput, setExitCode })
     })
     expect(deps.log).not.toHaveBeenCalled()
-    expect(JSON.parse(errorOutput.mock.calls[0][0])).toMatchObject({
+    expect(JSON.parse(errorOutput.mock.calls.map(([line]) => line).join('\n'))).toMatchObject({
       error: { code: 'command_failed' },
       exitCode: 1
     })

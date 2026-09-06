@@ -753,7 +753,7 @@ export const stopCommand = async (options, deps = DEFAULT_DEPS) => {
     shutdownAccepted = true
     await response.arrayBuffer()
   } catch (error) {
-    deps.warn(`Graceful shutdown failed: ${error.message}`)
+    if (!options.json) deps.warn(`Graceful shutdown failed: ${error.message}`)
   }
 
   if (!shutdownAccepted) {

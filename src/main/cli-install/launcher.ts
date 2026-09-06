@@ -1,7 +1,7 @@
 import { spawnSync } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import { constants, type Stats } from 'node:fs'
-import { lstat, mkdir, open, rename, rm, type FileHandle } from 'node:fs/promises'
+import { link, lstat, mkdir, open, rename, rm, type FileHandle } from 'node:fs/promises'
 import { basename, join, posix } from 'node:path'
 
 import type { CliLauncherStatus } from '../../shared/cli'
@@ -563,45 +563,43 @@ const replaceCliLauncher = async (
 }
 
 const tryCreateCliLauncher = async (plan: CliLauncherPlan): Promise<boolean> => {
-  let handle: FileHandle
-  let created: Stats | undefined
-  let closed = false
+  if ((await statCliLauncher(plan.target)) !== undefined) return false
+  const temporaryPath = join(
+    plan.binDir,
+    `.${basename(plan.target)}.${process.pid}-${randomUUID()}.tmp`
+  )
+  let handle: FileHandle | undefined
+  let temporaryCreated = false
+  let created: Stats
   try {
     handle = await open(
-      plan.target,
+      temporaryPath,
       constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | (constants.O_NOFOLLOW ?? 0),
       plan.mode ?? 0o666
     )
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'EEXIST') return false
-    throw error
-  }
-
-  try {
-    created = await handle.stat()
+    temporaryCreated = true
     await writeCliLauncher(handle, plan)
-    if (!(await isOpenCliLauncherCurrent(plan.target, created))) {
-      refuseUnmanagedCliLauncher(plan.target)
+    await handle.sync()
+    created = await handle.stat()
+    await handle.close()
+    handle = undefined
+    // link publishes complete bytes only if target is absent; unlike rename, it cannot overwrite a
+    // concurrent user's file. Failure cleanup never unlinks the final pathname.
+    try {
+      await link(temporaryPath, plan.target)
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'EEXIST') return false
+      throw error
     }
-    return true
-  } catch (error) {
-    // O_EXCL proves this attempt created the file; the identity check prevents cleanup from adopting
-    // a same-name user replacement. Retain the original error if inspection or cleanup also fails.
-    if (created) {
-      try {
-        if (process.platform === 'win32') {
-          await handle.close()
-          closed = true
-        }
-        if (await isOpenCliLauncherCurrent(plan.target, created)) await rm(plan.target)
-      } catch {
-        // Fail closed when ownership cannot be checked, without masking the installation failure.
-      }
-    }
-    throw error
   } finally {
-    if (!closed) await handle.close()
+    await handle?.close().catch(() => undefined)
+    if (temporaryCreated) await rm(temporaryPath, { force: true }).catch(() => undefined)
   }
+  if (!(await isOpenCliLauncherCurrent(plan.target, created))) {
+    refuseUnmanagedCliLauncher(plan.target)
+  }
+  await defaultFileDurability.syncDirectory(plan.binDir)
+  return true
 }
 
 // Writes the launcher shim and, on Windows, ensures its dir is on the user PATH. Returns the resulting

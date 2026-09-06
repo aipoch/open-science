@@ -44,7 +44,9 @@ export const readStateFromRoot = async (configRoot) => {
     ) {
       return undefined
     }
-    return { ...state, configRoot: state.configRoot || configRoot }
+    // The containing directory owns both the state and token. A stale or edited payload must not
+    // redirect credential reads or cleanup outside the enumerated candidate.
+    return { ...state, configRoot }
   } catch {
     return undefined
   }
