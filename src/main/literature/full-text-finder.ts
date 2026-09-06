@@ -10,7 +10,10 @@ import type {
   LiteratureFullTextResult,
   LiteratureItemView
 } from '../../shared/literature'
-import { normalizeLiteratureIdentifierValue } from '../../shared/literature'
+import {
+  createLiteratureIdentifierUrl,
+  normalizeLiteratureIdentifierValue
+} from '../../shared/literature'
 import type { LiteratureCatalog } from './catalog'
 import type { ContentRepository } from '../storage/content-repository'
 import { findPmcPdfs, findUnpaywallPdfs, readFullTextProvider } from './full-text-sources'
@@ -116,7 +119,8 @@ class LiteratureFullTextFinder {
     const doi = identifiers.get('doi')?.toLowerCase()
     const pmid = identifiers.get('pmid')
     const pmcid = identifiers.get('pmcid')
-    if (!doi && !pmid && !pmcid)
+    const arxivPage = createLiteratureIdentifierUrl('arxiv', identifiers.get('arxiv') ?? '')
+    if (!doi && !pmid && !pmcid && !arxivPage)
       return { mode: 'search', candidates: [], notices: ['missing-identifiers'] }
     const found: Candidate[] = []
     const notices: SearchResult['notices'] = []
@@ -137,7 +141,7 @@ class LiteratureFullTextFinder {
     })()
     const pmc = findPmcPdfs({ doi, pmid, pmcid }, this.options.fetch)
       .then((result) => {
-        if (result.noRecord) notices.push('pmc-no-record')
+        if (result.noRecord && (doi || pmid || pmcid)) notices.push('pmc-no-record')
         return result.candidates
       })
       .catch(() => {
@@ -166,7 +170,9 @@ class LiteratureFullTextFinder {
           : doi
             ? `DOI:"${doi.replace(/["\\]/gu, '')}"`
             : undefined
-    if (query) {
+    const europe = (async (): Promise<Candidate[]> => {
+      const candidates: Candidate[] = []
+      if (!query) return candidates
       try {
         const url = new URL('https://www.ebi.ac.uk/europepmc/webservices/rest/search')
         url.search = new URLSearchParams({
@@ -210,7 +216,7 @@ class LiteratureFullTextFinder {
                 /^https:\/\/(?:www\.)?europepmc\.org\/articles\/(PMC\d+)(?:[/?#]|$)/iu.exec(
                   link.url
                 )
-              add({
+              candidates.push({
                 provider: 'europe-pmc',
                 url: link.url,
                 sourceUrl:
@@ -226,54 +232,65 @@ class LiteratureFullTextFinder {
       } catch {
         notices.push('europe-pmc-unavailable')
       }
-    }
-    if (doi) {
-      const key = await this.options.openAlexKey()
-      if (!key) notices.push('openalex-not-configured')
-      else {
-        try {
-          const url = new URL('https://api.openalex.org/works')
-          url.search = new URLSearchParams({
-            filter: `doi:https://doi.org/${doi}`,
-            per_page: '5',
-            select: 'doi,best_oa_location,locations',
-            api_key: key
-          }).toString()
-          const result = z
-            .object({ results: z.array(openAlexWork) })
-            .parse(await this.json(url.href))
-          for (const work of result.results) {
-            if (
-              !work.doi ||
-              normalizeLiteratureIdentifierValue('doi', work.doi).toLowerCase() !== doi
-            )
-              continue
-            for (const entry of [work.best_oa_location, ...(work.locations ?? [])]) {
-              if (!entry?.is_oa || !entry.pdf_url) continue
-              const version =
-                entry.version === 'publishedVersion'
-                  ? 'published'
-                  : entry.version === 'acceptedVersion'
-                    ? 'accepted'
-                    : entry.version === 'submittedVersion'
-                      ? 'submitted'
-                      : undefined
-              add({
-                provider: 'openalex',
-                url: entry.pdf_url,
-                sourceUrl: entry.landing_page_url || `https://doi.org/${doi}`,
-                source: entry.source?.display_name || 'OpenAlex',
-                ...(version ? { version } : {}),
-                ...(entry.license ? { license: entry.license } : {})
-              })
-            }
-          }
-        } catch {
-          notices.push('openalex-unavailable')
+      return candidates
+    })()
+    const openAlex = (async (): Promise<Candidate[]> => {
+      const candidates: Candidate[] = []
+      if (!doi) return candidates
+      try {
+        const key = await this.options.openAlexKey()
+        if (!key) {
+          notices.push('openalex-not-configured')
+          return candidates
         }
+        const url = new URL('https://api.openalex.org/works')
+        url.search = new URLSearchParams({
+          filter: `doi:https://doi.org/${doi}`,
+          per_page: '5',
+          select: 'doi,best_oa_location,locations',
+          api_key: key
+        }).toString()
+        const result = z.object({ results: z.array(openAlexWork) }).parse(await this.json(url.href))
+        for (const work of result.results) {
+          if (
+            !work.doi ||
+            normalizeLiteratureIdentifierValue('doi', work.doi).toLowerCase() !== doi
+          )
+            continue
+          for (const entry of [work.best_oa_location, ...(work.locations ?? [])]) {
+            if (!entry?.is_oa || !entry.pdf_url) continue
+            const version =
+              entry.version === 'publishedVersion'
+                ? 'published'
+                : entry.version === 'acceptedVersion'
+                  ? 'accepted'
+                  : entry.version === 'submittedVersion'
+                    ? 'submitted'
+                    : undefined
+            candidates.push({
+              provider: 'openalex',
+              url: entry.pdf_url,
+              sourceUrl: entry.landing_page_url || `https://doi.org/${doi}`,
+              source: entry.source?.display_name || 'OpenAlex',
+              ...(version ? { version } : {}),
+              ...(entry.license ? { license: entry.license } : {})
+            })
+          }
+        }
+      } catch {
+        notices.push('openalex-unavailable')
       }
-    }
-    for (const candidates of await Promise.all([unpaywall, pmc])) candidates.forEach(add)
+      return candidates
+    })()
+    for (const candidates of await Promise.all([europe, openAlex, unpaywall, pmc]))
+      candidates.forEach(add)
+    if (arxivPage)
+      add({
+        provider: 'arxiv',
+        source: 'arXiv',
+        sourceUrl: arxivPage,
+        url: arxivPage.replace('/abs/', '/pdf/')
+      })
     const now = Date.now()
     for (const [id, value] of this.candidates) if (value.expires < now) this.candidates.delete(id)
     const candidates = found.slice(0, 10).map((candidate) => {

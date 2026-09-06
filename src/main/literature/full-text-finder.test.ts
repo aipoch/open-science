@@ -445,3 +445,144 @@ describe('Literature full-text discovery and attachment', () => {
     expect(await finder.run({ mode: 'search', itemId: item.id })).toMatchObject({ candidates: [] })
   })
 })
+
+it.each([
+  ['2401.12345', '2401.12345'],
+  ['arXiv:0706.0001v2', '0706.0001'],
+  ['https://arxiv.org/pdf/hep-th/9901001v3.pdf', 'hep-th/9901001'],
+  ['math.GT/0309136', 'math.GT/0309136']
+])(
+  'discovers and attaches the latest arXiv PDF for %s without provider credentials',
+  async (value, id) => {
+    const { finder, options, item } = setup()
+    item.item.identifiers = [{ scheme: 'arxiv', value, isPrimary: true }]
+    const result = await finder.run({ mode: 'search', itemId: item.id })
+    if (result.mode !== 'search') throw new Error('Expected search')
+    expect(result.notices).toEqual([])
+    expect(result.candidates).toEqual([
+      {
+        id: expect.any(String),
+        provider: 'arxiv',
+        source: 'arXiv',
+        url: `https://arxiv.org/pdf/${id}`,
+        sourceUrl: `https://arxiv.org/abs/${id}`
+      }
+    ])
+    expect(options.fetch).not.toHaveBeenCalled()
+    expect(options.openAlexKey).not.toHaveBeenCalled()
+    expect(options.download).not.toHaveBeenCalled()
+    await finder.run({ mode: 'attach', itemId: item.id, candidateId: result.candidates[0].id })
+    expect(options.download).toHaveBeenCalledWith(
+      `https://arxiv.org/pdf/${id}`,
+      expect.any(Number),
+      expect.any(Function)
+    )
+    expect(options.catalog.attachContent).toHaveBeenCalledTimes(1)
+  }
+)
+
+it.each([
+  '',
+  'not-an-id',
+  '../../private',
+  'https://evil.example/abs/2401.12345',
+  '2401.12345/extra'
+])('rejects invalid arXiv identifier %s without requests', async (value) => {
+  const { finder, options, item } = setup()
+  item.item.identifiers = [{ scheme: 'arxiv', value, isPrimary: true }]
+  await expect(finder.discover(item.item)).resolves.toEqual({
+    mode: 'search',
+    candidates: [],
+    notices: ['missing-identifiers']
+  })
+  expect(options.fetch).not.toHaveBeenCalled()
+})
+
+it('starts every metadata source before any responds and preserves precedence despite completion order', async () => {
+  const { finder, options, item } = setup()
+  item.item.identifiers.push({ scheme: 'arxiv', value: '2401.12345', isPrimary: false })
+  options.openAlexKey = async () => 'test-key'
+  options.contactEmail = async () => 'research@lab.org'
+  const pending = new Map<string, (response: Response) => void>()
+  options.fetch = vi.fn(
+    async (input) =>
+      new Promise<Response>((resolve) => pending.set(new URL(String(input)).hostname, resolve))
+  )
+  const searching = finder.run({ mode: 'search', itemId: item.id })
+  await vi.waitFor(() =>
+    expect([...pending.keys()].sort()).toEqual([
+      'api.openalex.org',
+      'api.unpaywall.org',
+      'pmc.ncbi.nlm.nih.gov',
+      'www.ebi.ac.uk'
+    ])
+  )
+  pending.get('api.unpaywall.org')!(
+    Response.json({
+      doi: '10.1000/example',
+      oa_locations: [
+        { url_for_pdf: 'https://journal.example/shared.pdf' },
+        { url_for_pdf: 'https://journal.example/unpaywall.pdf' }
+      ]
+    })
+  )
+  pending.get('api.openalex.org')!(
+    Response.json({
+      results: [
+        {
+          doi: '10.1000/example',
+          locations: [
+            { is_oa: true, pdf_url: 'https://journal.example/shared.pdf' },
+            { is_oa: true, pdf_url: 'https://journal.example/openalex.pdf' }
+          ]
+        }
+      ]
+    })
+  )
+  pending.get('pmc.ncbi.nlm.nih.gov')!(Response.json({ records: [] }))
+  pending.get('www.ebi.ac.uk')!(
+    Response.json({
+      resultList: {
+        result: [
+          {
+            doi: '10.1000/example',
+            fullTextUrlList: {
+              fullTextUrl: [
+                {
+                  availabilityCode: 'OA',
+                  documentStyle: 'pdf',
+                  url: 'https://journal.example/shared.pdf'
+                }
+              ]
+            }
+          }
+        ]
+      }
+    })
+  )
+  const result = await searching
+  if (result.mode !== 'search') throw new Error('Expected search')
+  expect(result.candidates.map(({ provider }) => provider)).toEqual([
+    'europe-pmc',
+    'openalex',
+    'unpaywall',
+    'arxiv'
+  ])
+  expect(result.candidates.map(({ url }) => url)).toEqual([
+    'https://journal.example/shared.pdf',
+    'https://journal.example/openalex.pdf',
+    'https://journal.example/unpaywall.pdf',
+    'https://arxiv.org/pdf/2401.12345'
+  ])
+})
+
+it('retains arXiv and other results when OpenAlex credential lookup fails', async () => {
+  const { finder, options, item } = setup()
+  item.item.identifiers.push({ scheme: 'arxiv', value: '2401.12345', isPrimary: false })
+  options.openAlexKey = async () => {
+    throw new Error('Credential store unavailable')
+  }
+  const result = await finder.discover(item.item)
+  expect(result.notices).toContain('openalex-unavailable')
+  expect(result.candidates.map(({ provider }) => provider)).toEqual(['europe-pmc', 'arxiv'])
+})

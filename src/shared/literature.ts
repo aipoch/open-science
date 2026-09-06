@@ -803,7 +803,7 @@ const literatureMetadataCompletionResultSchema = z
 const literatureFullTextCandidateSchema = z
   .object({
     id: nonEmptyTextSchema,
-    provider: z.enum(['europe-pmc', 'openalex', 'unpaywall', 'pmc']),
+    provider: z.enum(['europe-pmc', 'openalex', 'unpaywall', 'pmc', 'arxiv']),
     url: z.string().url(),
     sourceUrl: z.string().url().optional(),
     source: nonEmptyTextSchema,

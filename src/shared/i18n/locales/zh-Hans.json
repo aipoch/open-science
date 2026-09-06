@@ -224,7 +224,6 @@
     "Find full-text PDF": "查找全文 PDF",
     "Full-text search failed. Try again.": "全文检索失败，请重试。",
     "PDF could not be added. The link may have expired, require sign-in, or exceed 50 MB. Search again or upload a PDF.": "无法添加 PDF。链接可能已失效、需要登录，或文件超过 50 MB。请重新检索或上传 PDF。",
-    "Add a DOI, PMID or PMCID to find a matching full-text PDF.": "请添加 DOI、PMID 或 PMCID，以查找匹配的全文 PDF。",
     "Europe PMC is unavailable. Results may be incomplete.": "Europe PMC 暂不可用，结果可能不完整。",
     "OpenAlex is unavailable. Results may be incomplete.": "OpenAlex 暂不可用，结果可能不完整。",
     "Published version": "正式发表版本",
@@ -4546,6 +4545,11 @@
     "Retry turning off": "重试关闭",
     "Local remote access remains enabled, but the latest external status check failed.": "本地远程访问仍已启用，但最近一次外部状态检测失败。",
     "The latest external status check failed.": "最近一次外部状态检测失败。",
-    "Saved browser link": "已保存的浏览器链接"
+    "Saved browser link": "已保存的浏览器链接",
+    "arXiv": "arXiv",
+    "Direct PDF link": "PDF 直链",
+    "arXiv identifier required": "需要 arXiv 标识符",
+    "Latest PDF via arXiv identifier. No API key required. The file is checked when downloaded.": "通过 arXiv 标识符获取最新 PDF。无需 API 密钥，下载时会校验文件。",
+    "Add a DOI, PMID, PMCID or arXiv identifier to find a matching full-text PDF.": "添加 DOI、PMID、PMCID 或 arXiv 标识符以查找匹配的全文 PDF。"
   }
 }

@@ -18,6 +18,7 @@ import type {
   LiteratureFullTextResult,
   LiteratureItemView
 } from '../../../../shared/literature'
+import { createLiteratureIdentifierUrl } from '../../../../shared/literature'
 import { formatBytes } from '../../../../shared/update'
 import { LiteratureOpenAlexCredential } from './LiteratureOpenAlexCredential'
 import { UnpaywallCredentialForm } from '../settings/UnpaywallCredentialForm'
@@ -139,11 +140,14 @@ export const LiteratureFullTextLookup = ({
     }
   }
 
+  const hasArxiv = item.item.identifiers.some(
+    ({ scheme, value }) => scheme === 'arxiv' && createLiteratureIdentifierUrl('arxiv', value)
+  )
+  const hasBiomedicalIdentifier = item.item.identifiers.some(
+    ({ scheme, value }) => ['doi', 'pmid', 'pmcid'].includes(scheme) && value.trim()
+  )
   const missingIdentifiers =
-    result?.notices.includes('missing-identifiers') ??
-    !item.item.identifiers.some(
-      ({ scheme, value }) => ['doi', 'pmid', 'pmcid'].includes(scheme) && value.trim()
-    )
+    result?.notices.includes('missing-identifiers') ?? !(hasArxiv || hasBiomedicalIdentifier)
   const hasDoi = item.item.identifiers.some(({ scheme, value }) => scheme === 'doi' && value.trim())
   const europeUnavailable = result?.notices.includes('europe-pmc-unavailable')
   const openAlexUnavailable = result?.notices.includes('openalex-unavailable')
@@ -155,7 +159,9 @@ export const LiteratureFullTextLookup = ({
     (europeUnavailable || openAlexUnavailable || unpaywallUnavailable || pmcUnavailable)
   const failed = error || incomplete
   const sourceStatus = (provider: LiteratureFullTextCandidate['provider']): string => {
-    if (missingIdentifiers) return t('Needs identifiers')
+    if (provider === 'arxiv')
+      return hasArxiv ? t('Direct PDF link') : t('arXiv identifier required')
+    if (missingIdentifiers || !hasBiomedicalIdentifier) return t('Needs identifiers')
     if ((provider === 'openalex' || provider === 'unpaywall') && !hasDoi) return t('DOI required')
     if (searching) return t('Searching…')
     if (!result) return t('Not checked')
@@ -171,7 +177,8 @@ export const LiteratureFullTextLookup = ({
     'europe-pmc': t('Europe PMC'),
     openalex: t('OpenAlex'),
     unpaywall: t('Unpaywall'),
-    pmc: t('PubMed Central')
+    pmc: t('PubMed Central'),
+    arxiv: t('arXiv')
   }
   const versions = {
     published: t('Published version'),
@@ -288,6 +295,17 @@ export const LiteratureFullTextLookup = ({
                   </p>
                 ) : null}
               </div>
+              <div className="py-3">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <h4 className="font-medium">{t('arXiv')}</h4>
+                  <span className="text-xs text-muted-foreground">{sourceStatus('arxiv')}</span>
+                </div>
+                <p className="mt-1 text-xs leading-5 text-muted-foreground">
+                  {t(
+                    'Latest PDF via arXiv identifier. No API key required. The file is checked when downloaded.'
+                  )}
+                </p>
+              </div>
             </div>
           </details>
         </section>
@@ -341,7 +359,9 @@ export const LiteratureFullTextLookup = ({
             </div>
           ) : missingIdentifiers ? (
             <div className="space-y-3 py-2">
-              <p>{t('Add a DOI, PMID or PMCID to find a matching full-text PDF.')}</p>
+              <p>
+                {t('Add a DOI, PMID, PMCID or arXiv identifier to find a matching full-text PDF.')}
+              </p>
               <Button variant="outline" onClick={onCompleteMetadata}>
                 {t('Complete metadata')}
               </Button>

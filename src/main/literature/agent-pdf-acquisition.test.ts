@@ -101,3 +101,39 @@ it('rejects local links and reports unavailable sources without staging metadata
   })
   expect(stageAcquiredPdf).not.toHaveBeenCalled()
 })
+
+it('preserves the arXiv download and article provenance in Inbox', async () => {
+  const { service, discover, stageAcquiredPdf } = setup()
+  discover.mockResolvedValueOnce({
+    mode: 'search',
+    candidates: [
+      {
+        id: 'arxiv-pdf',
+        provider: 'arxiv',
+        source: 'arXiv',
+        url: 'https://arxiv.org/pdf/2401.12345',
+        sourceUrl: 'https://arxiv.org/abs/2401.12345'
+      }
+    ],
+    notices: []
+  })
+  await expect(service.acquire({ candidate, origin: candidate.origin })).resolves.toMatchObject({
+    status: 'pending-review',
+    sourceUrl: 'https://arxiv.org/abs/2401.12345'
+  })
+  expect(stageAcquiredPdf).toHaveBeenCalledWith(
+    expect.objectContaining({
+      source: expect.objectContaining({
+        rawMetadata: {
+          metadata: {},
+          fullText: {
+            provider: 'arxiv',
+            sourceUrl: 'https://arxiv.org/abs/2401.12345',
+            downloadUrl: 'https://arxiv.org/pdf/2401.12345'
+          }
+        }
+      })
+    }),
+    expect.objectContaining({ sourceUrl: 'https://arxiv.org/abs/2401.12345' })
+  )
+})

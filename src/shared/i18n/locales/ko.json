@@ -224,7 +224,6 @@
     "Find full-text PDF": "전문 PDF 찾기",
     "Full-text search failed. Try again.": "전문 검색에 실패했습니다. 다시 시도하세요.",
     "PDF could not be added. The link may have expired, require sign-in, or exceed 50 MB. Search again or upload a PDF.": "PDF를 추가할 수 없습니다. 링크가 만료되었거나 로그인이 필요하거나 파일이 50 MB를 초과할 수 있습니다. 다시 검색하거나 PDF를 업로드하세요.",
-    "Add a DOI, PMID or PMCID to find a matching full-text PDF.": "일치하는 전문 PDF를 찾으려면 DOI, PMID 또는 PMCID를 추가하세요.",
     "Europe PMC is unavailable. Results may be incomplete.": "Europe PMC를 사용할 수 없습니다. 결과가 불완전할 수 있습니다.",
     "OpenAlex is unavailable. Results may be incomplete.": "OpenAlex를 사용할 수 없습니다. 결과가 불완전할 수 있습니다.",
     "Published version": "출판본",
@@ -4544,6 +4543,11 @@
     "Retry turning off": "끄기 다시 시도",
     "Local remote access remains enabled, but the latest external status check failed.": "로컬 원격 액세스는 계속 활성화되어 있지만 최근 외부 상태 확인에 실패했습니다.",
     "The latest external status check failed.": "최근 외부 상태 확인에 실패했습니다.",
-    "Saved browser link": "저장된 브라우저 링크"
+    "Saved browser link": "저장된 브라우저 링크",
+    "arXiv": "arXiv",
+    "Direct PDF link": "PDF 직접 링크",
+    "arXiv identifier required": "arXiv 식별자 필요",
+    "Latest PDF via arXiv identifier. No API key required. The file is checked when downloaded.": "arXiv 식별자로 최신 PDF를 가져옵니다. API 키가 필요하지 않습니다. 다운로드할 때 파일을 검증합니다.",
+    "Add a DOI, PMID, PMCID or arXiv identifier to find a matching full-text PDF.": "DOI, PMID, PMCID 또는 arXiv 식별자를 추가하여 일치하는 전문 PDF를 찾으세요."
   }
 }
