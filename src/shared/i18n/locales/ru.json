@@ -1637,7 +1637,6 @@
     "On this machine": "На этом устройстве",
     "Once": "Один раз",
     "Once installed, run <code>open-science start</code> to launch the backend and open the authenticated URL, then <code>open-science stop</code> to shut it down. <code>status</code> and <code>url</code> are also available.": "После установки выполните <code>open-science start</code>, чтобы запустить серверную часть и открыть URL с аутентификацией, а для остановки выполните <code>open-science stop</code>. Также доступны команды <code>status</code> и <code>url</code>.",
-    "One argument per line.": "Один аргумент на строку.",
     "One moment.": "Один момент.",
     "One or more agent runtimes could not be detected.": "Не удалось обнаружить одну или несколько сред выполнения агента.",
     "One sentence — what does this skill teach the agent, and when does it apply?": "Одно предложение: чему этот навык учит агента и когда применяется?",
@@ -2260,7 +2259,6 @@
     "Sending this edited prompt starts a new branch from here. The {{count}} turns that currently follow remain available from the message revision controls._many": "Отправка изменённого запроса создаст отсюда новую ветку. Следующие {{count}} ходов останутся доступны через элементы управления версиями сообщения.",
     "Sending this edited prompt starts a new branch from here. The {{count}} turns that currently follow remain available from the message revision controls._other": "Отправка изменённого запроса создаст отсюда новую ветку. Следующие {{count}} хода останутся доступны через элементы управления версиями сообщения.",
     "Sent": "Отправлено",
-    "Separated by spaces or newlines.": "Разделено пробелами или переносами строки.",
     "Server URL": "URL сервера",
     "Servers, clusters or job submission nodes from your SSH host lists": "Сервера, кластеры или узлы подачи заданий из вашего списка хостов SSH",
     "Session": "Сессия",
@@ -3222,7 +3220,6 @@
     "First message": "Первое сообщение",
     "Response completed.": "Ответ завершен.",
     "Response failed.": "Ответ не удался.",
-    "-y @modelcontextprotocol/server-memory": "-y @modelcontextprotocol/server-memory",
     "https://mirrors.example.com/conda-forge/": "https://mirrors.example.com/conda-forge/",
     "https://mirrors.example.com/pypi/simple": "https://mirrors.example.com/pypi/simple",
     "/path/to/corp-ca-bundle.pem": "/path/to/corp-ca-bundle.pem",
@@ -4511,6 +4508,11 @@
     "Exit queued editing": "Завершить редактирование очереди",
     "The queued message no longer matches this Session. Exit queued editing to send it as a new message.": "Сообщение в очереди больше не соответствует этому сеансу. Завершите редактирование очереди, чтобы отправить его как новое сообщение.",
     "Remove attachments before submitting a historical revision.": "Удалите вложения перед отправкой исправления предыдущего сообщения.",
-    "Exit queued editing before choosing another send mode.": "Завершите редактирование очереди, прежде чем выбрать другой режим отправки."
+    "Exit queued editing before choosing another send mode.": "Завершите редактирование очереди, прежде чем выбрать другой режим отправки.",
+    "Argument {{index}}": "Аргумент {{index}}",
+    "Remove argument {{index}}": "Удалить аргумент {{index}}",
+    "Add argument": "Добавить аргумент",
+    "Each field is one argument. Spaces and empty values are preserved.": "Каждое поле соответствует одному аргументу. Пробелы и пустые значения сохраняются.",
+    "Credential changes were saved, but Connectors could not refresh. Retry from Settings > Connectors.": "Изменения учётных данных сохранены, но обновить Коннекторы не удалось. Повторите попытку в разделе Настройки > Коннекторы."
   }
 }

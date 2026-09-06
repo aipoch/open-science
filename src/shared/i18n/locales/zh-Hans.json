@@ -1656,7 +1656,6 @@
     "On this machine": "在这台机器上",
     "Once": "仅此一次",
     "Once installed, run <code>open-science start</code> to launch the backend and open the authenticated URL, then <code>open-science stop</code> to shut it down. <code>status</code> and <code>url</code> are also available.": "安装完成后，运行 <code>open-science start</code> 启动后端并打开带鉴权的地址，再用 <code>open-science stop</code> 关闭。此外还提供 <code>status</code> 和 <code>url</code> 两个命令。",
-    "One argument per line.": "每行一个参数。",
     "One moment.": "请稍候。",
     "One or more agent runtimes could not be detected.": "有一个或多个智能体运行时无法检测到。",
     "One sentence — what does this skill teach the agent, and when does it apply?": "一句话 —— 这个技能教给智能体什么，什么时候适用？",
@@ -2236,7 +2235,6 @@
     "Send message options": "发送消息选项",
     "Sending this edited prompt starts a new branch from here. The {{count}} turns that currently follow remain available from the message revision controls._other": "发送此编辑后的提示会从这里开始一个新分支。当前紧随其后的 {{count}} 个轮次仍可通过消息版本控件访问。",
     "Sent": "已发送",
-    "Separated by spaces or newlines.": "用空格或换行分隔。",
     "Server URL": "服务器 URL",
     "Servers, clusters or job submission nodes from your SSH host lists": "来自你 SSH 主机列表的服务器、集群或作业提交节点",
     "Session": "会话",
@@ -2977,7 +2975,6 @@
     "First message": "首条消息",
     "Response completed.": "响应已完成。",
     "Response failed.": "响应失败。",
-    "-y @modelcontextprotocol/server-memory": "-y @modelcontextprotocol/server-memory",
     "https://mirrors.example.com/conda-forge/": "https://mirrors.example.com/conda-forge/",
     "https://mirrors.example.com/pypi/simple": "https://mirrors.example.com/pypi/simple",
     "/path/to/corp-ca-bundle.pem": "/path/to/corp-ca-bundle.pem",
@@ -4071,6 +4068,11 @@
     "Exit queued editing": "退出队列编辑",
     "The queued message no longer matches this Session. Exit queued editing to send it as a new message.": "排队消息已不再与此会话匹配。请退出队列编辑，将其作为新消息发送。",
     "Remove attachments before submitting a historical revision.": "提交历史消息修订前，请移除附件。",
-    "Exit queued editing before choosing another send mode.": "选择其他发送模式前，请退出队列编辑。"
+    "Exit queued editing before choosing another send mode.": "选择其他发送模式前，请退出队列编辑。",
+    "Argument {{index}}": "参数 {{index}}",
+    "Remove argument {{index}}": "移除参数 {{index}}",
+    "Add argument": "添加参数",
+    "Each field is one argument. Spaces and empty values are preserved.": "每个输入框对应一个参数。空格和空值会原样保留。",
+    "Credential changes were saved, but Connectors could not refresh. Retry from Settings > Connectors.": "凭据变更已保存，但连接器刷新失败。请前往设置 > 连接器重试。"
   }
 }

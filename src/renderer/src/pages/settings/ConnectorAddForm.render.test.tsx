@@ -262,21 +262,27 @@ describe('ConnectorAddForm (local command)', () => {
     expect(onDone).toHaveBeenCalled()
   })
 
-  it('submits whitespace-separated header input as separate arguments', async () => {
+  it('submits each argument field without whitespace splitting', async () => {
     act(() => {
       root.render(<ConnectorAddForm initialTransport="local" onDone={vi.fn()} onCancel={vi.fn()} />)
     })
 
     setValue('Display name', 'Header Server')
     openAdvancedSettings()
-    setValue('Arguments', '--header Authorization: Bearer plaintext-secret')
+    const addArgument = Array.from(
+      document.body.querySelectorAll<HTMLButtonElement>('button')
+    ).find((button) => button.textContent?.trim() === 'Add argument')!
+    act(() => addArgument.click())
+    setValue('Argument 1', '--header')
+    act(() => addArgument.click())
+    setValue('Argument 2', 'Authorization: Bearer plaintext-secret')
     checkTrust()
 
     await act(async () => addButton()?.click())
 
     expect(useSettingsStore.getState().addCustomServer).toHaveBeenCalledWith(
       expect.objectContaining({
-        args: ['--header', 'Authorization:', 'Bearer', 'plaintext-secret']
+        args: ['--header', 'Authorization: Bearer plaintext-secret']
       })
     )
   })
@@ -470,7 +476,7 @@ describe('ConnectorAddForm (local command)', () => {
             displayName: 'Example Research',
             transport: 'stdio',
             command: 'npx',
-            args: ['-y', '@example/research-mcp', '--label', 'two words'],
+            args: ['-y', '@example/research-mcp', '--label', 'two words', ''],
             requiredSecrets: { environment: ['API_TOKEN'] }
           }}
           onDone={vi.fn()}
@@ -504,7 +510,7 @@ describe('ConnectorAddForm (local command)', () => {
         name: 'example-research',
         displayName: 'Example Research',
         command: 'npx',
-        args: ['-y', '@example/research-mcp', '--label', 'two words'],
+        args: ['-y', '@example/research-mcp', '--label', 'two words', ''],
         envCredentialIds: { API_TOKEN: 'credential-static' }
       })
     )
@@ -1069,6 +1075,64 @@ describe('ConnectorAddForm (edit)', () => {
     command: 'npx',
     args: ['-y', 'old-pkg']
   }
+
+  it('C04 preserves argv boundaries when saving an unchanged existing connector', async () => {
+    const args = ['/path/My Project/server.js', '--label', 'hello world', '']
+    const updateCustomServer = vi.fn().mockResolvedValue(undefined)
+    useSettingsStore.setState({ updateCustomServer })
+    await act(async () => {
+      root.render(
+        <ConnectorAddForm
+          editServer={{ ...editServer, args }}
+          onDone={vi.fn()}
+          onCancel={vi.fn()}
+        />
+      )
+    })
+    const save = Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).find(
+      (button) => button.textContent?.trim() === 'Save changes'
+    )
+    expect(save?.disabled).toBe(false)
+    await act(async () => {
+      save!.click()
+    })
+    expect(updateCustomServer).toHaveBeenCalledOnce()
+    expect(updateCustomServer).toHaveBeenCalledWith(expect.objectContaining({ args }))
+  })
+
+  it('C04 edits individual arguments literally and can remove the entire saved argv', async () => {
+    const updateCustomServer = vi.fn().mockResolvedValue(undefined)
+    useSettingsStore.setState({ updateCustomServer })
+    await act(async () => {
+      root.render(
+        <ConnectorAddForm
+          editServer={{ ...editServer, args: ['original', ''] }}
+          onDone={vi.fn()}
+          onCancel={vi.fn()}
+        />
+      )
+    })
+    setValue('Argument 1', '  /path/My Project/server.js  ')
+    const save = Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).find(
+      (button) => button.textContent?.trim() === 'Save changes'
+    )!
+    await act(async () => {
+      save.click()
+    })
+    expect(updateCustomServer).toHaveBeenLastCalledWith(
+      expect.objectContaining({ args: ['  /path/My Project/server.js  ', ''] })
+    )
+    await act(async () => {
+      document.body.querySelector<HTMLButtonElement>('[aria-label="Remove argument 2"]')!.click()
+    })
+    await act(async () => {
+      document.body.querySelector<HTMLButtonElement>('[aria-label="Remove argument 1"]')!.click()
+    })
+    await act(async () => {
+      save.click()
+    })
+    expect(updateCustomServer).toHaveBeenLastCalledWith(expect.objectContaining({ args: [] }))
+  })
 
   it('pre-fills fields, locks the name, and updates on save', async () => {
     useSettingsStore.setState({

@@ -1534,7 +1534,6 @@
     "On this machine": "Auf dieser Maschine",
     "Once": "Einmal",
     "Once installed, run <code>open-science start</code> to launch the backend and open the authenticated URL, then <code>open-science stop</code> to shut it down. <code>status</code> and <code>url</code> are also available.": "Führen Sie nach der Installation <code>open-science start</code> aus, um das Backend zu starten und die authentifizierte URL zu öffnen. Mit <code>open-science stop</code> beenden Sie es wieder. Die Befehle <code>status</code> und <code>url</code> sind ebenfalls verfügbar.",
-    "One argument per line.": "Ein Argument pro Zeile.",
     "One moment.": "Einen Moment.",
     "One or more agent runtimes could not be detected.": "Eine oder mehrere Agentenlaufzeiten konnten nicht erkannt werden.",
     "One sentence — what does this skill teach the agent, and when does it apply?": "Ein Satz: Was lehrt diese Fähigkeit den Agenten und wann kommt sie zur Anwendung?",
@@ -2050,7 +2049,6 @@
     "Sending this edited prompt starts a new branch from here. The {{count}} turns that currently follow remain available from the message revision controls._one": "Durch das Senden dieses bearbeiteten Prompts wird ab hier ein neuer Branch erstellt. Die folgende {{count}} Interaktion bleibt über die Versionssteuerung der Nachricht verfügbar.",
     "Sending this edited prompt starts a new branch from here. The {{count}} turns that currently follow remain available from the message revision controls._other": "Durch das Senden dieses bearbeiteten Prompts wird ab hier ein neuer Branch erstellt. Die folgenden {{count}} Interaktionen bleiben über die Versionssteuerung der Nachricht verfügbar.",
     "Sent": "Gesendet",
-    "Separated by spaces or newlines.": "Durch Leerzeichen oder Zeilenumbrüche getrennt.",
     "Server URL": "Server-URL",
     "Servers, clusters or job submission nodes from your SSH host lists": "Server, Cluster oder Jobübermittlungsknoten aus Ihren SSH-Hostlisten",
     "Session": "Sitzung",
@@ -2845,7 +2843,6 @@
     "First message": "Erste Nachricht",
     "Response completed.": "Antwort abgeschlossen.",
     "Response failed.": "Antwort fehlgeschlagen.",
-    "-y @modelcontextprotocol/server-memory": "-y @modelcontextprotocol/server-memory",
     "https://mirrors.example.com/conda-forge/": "https://mirrors.example.com/conda-forge/",
     "https://mirrors.example.com/pypi/simple": "https://mirrors.example.com/pypi/simple",
     "/path/to/corp-ca-bundle.pem": "/path/to/corp-ca-bundle.pem",
@@ -4226,6 +4223,11 @@
     "Exit queued editing": "Warteschlangenbearbeitung beenden",
     "The queued message no longer matches this Session. Exit queued editing to send it as a new message.": "Die Nachricht in der Warteschlange passt nicht mehr zu dieser Sitzung. Beenden Sie die Warteschlangenbearbeitung, um sie als neue Nachricht zu senden.",
     "Remove attachments before submitting a historical revision.": "Entfernen Sie die Anhänge, bevor Sie die Überarbeitung einer früheren Nachricht senden.",
-    "Exit queued editing before choosing another send mode.": "Beenden Sie die Warteschlangenbearbeitung, bevor Sie einen anderen Sendemodus wählen."
+    "Exit queued editing before choosing another send mode.": "Beenden Sie die Warteschlangenbearbeitung, bevor Sie einen anderen Sendemodus wählen.",
+    "Argument {{index}}": "Argument {{index}}",
+    "Remove argument {{index}}": "Argument {{index}} entfernen",
+    "Add argument": "Argument hinzufügen",
+    "Each field is one argument. Spaces and empty values are preserved.": "Jedes Feld entspricht einem Argument. Leerzeichen und leere Werte bleiben erhalten.",
+    "Credential changes were saved, but Connectors could not refresh. Retry from Settings > Connectors.": "Die Änderungen an den Zugangsdaten wurden gespeichert, aber die Konnektoren konnten nicht aktualisiert werden. Versuchen Sie es unter Einstellungen > Konnektoren erneut."
   }
 }
