@@ -640,6 +640,30 @@ describe('MemoryService', () => {
     }
   )
 
+  it('withholds committed write results when access expires during snapshot publication', async () => {
+    const repository = new MemoryRepository(async () => client)
+    const service = new MemoryService(repository, { publish: vi.fn() })
+    await service.setEnabled({ enabled: true })
+    let allowed = true
+    const snapshot = repository.snapshot.bind(repository)
+    vi.spyOn(repository, 'snapshot').mockImplementationOnce(async () => {
+      const result = await snapshot()
+      allowed = false
+      return result
+    })
+    await expect(
+      service.rememberForAgent(
+        rememberRequest('A committed durable fact.'),
+        agentContext,
+        async () => {
+          if (!allowed) throw new Error('access revoked')
+        }
+      )
+    ).rejects.toThrow('access revoked')
+    // Revocation after the commit decision prevents disclosure, not the already accepted commit.
+    expect(await client.memoryEntry.count()).toBe(1)
+  })
+
   it('rolls back a Memory insert and revision when access expires inside the transaction', async () => {
     const service = createService()
     await service.setEnabled({ enabled: true })

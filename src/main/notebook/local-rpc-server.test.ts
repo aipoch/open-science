@@ -469,7 +469,7 @@ describe('notebook local RPC server', () => {
     }
   })
 
-  it.each(['disable', 'revoke', 'disable-enable'] as const)(
+  it.each(['disable', 'revoke', 'disable-enable', 'disconnect'] as const)(
     'rejects a queued Memory write after Session %s',
     async (action) => {
       const root = await createStorageRoot()
@@ -483,6 +483,7 @@ describe('notebook local RPC server', () => {
         isMemoryEnabledForSession: () => session.snapshot().memoryEnabled,
         sessionMemorySignal: () => session.memorySignal()
       })
+      const controller = new AbortController()
       const releaseQueue = createDeferred()
       const snapshotStarted = createDeferred()
       let control: Awaited<ReturnType<NotebookLocalRpcServer['issueControlConnection']>> | undefined
@@ -505,14 +506,20 @@ describe('notebook local RPC server', () => {
         const blockedSnapshot = service.snapshot()
         await snapshotStarted.promise
         const queued = createDeferred()
+        let checkAccess!: () => Promise<void>
+        let queuedWrite!: ReturnType<MemoryService['rememberForAgent']>
         const remember = service.rememberForAgent.bind(service)
         vi.spyOn(service, 'rememberForAgent').mockImplementation((...args) => {
           const result = remember(...args)
+          checkAccess = args[2]!
+          queuedWrite = result
+          void result.catch(() => undefined)
           queued.resolve()
           return result
         })
-        const call = (): Promise<Response> =>
+        const call = (signal?: AbortSignal): Promise<Response> =>
           fetch(control!.endpoint, {
+            signal,
             method: 'POST',
             headers: {
               authorization: `Bearer ${control!.token}`,
@@ -532,8 +539,22 @@ describe('notebook local RPC server', () => {
               }
             })
           })
-        pending = call()
+        pending = call(controller.signal)
         await queued.promise
+        if (action === 'disconnect') {
+          controller.abort()
+          await expect(pending).rejects.toThrow()
+          // Observe the real HTTP disconnect before unblocking SQLite, without guessing timing.
+          await vi.waitFor(async () => {
+            await expect(checkAccess()).rejects.toThrow()
+          })
+          const rejected = expect(queuedWrite).rejects.toThrow()
+          releaseQueue.resolve()
+          await blockedSnapshot
+          await rejected
+          expect(await client.memoryEntry.count()).toBe(0)
+          return
+        }
         if (action === 'revoke') control.release()
         else session.setMemoryEnabled(false)
         const expectedStatus = action === 'revoke' ? 401 : 403

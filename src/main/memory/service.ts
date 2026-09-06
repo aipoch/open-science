@@ -302,7 +302,7 @@ class MemoryService {
     context: MemoryAgentContext,
     checkAccess?: () => Promise<void>
   ): Promise<MemoryAgentRememberResult> {
-    return this.enqueue(async () => {
+    const result = await this.enqueue(async () => {
       await checkAccess?.()
       await this.requireEnabled()
       await checkAccess?.()
@@ -334,6 +334,8 @@ class MemoryService {
       }
       return { status: saved.status, memory: toAgentResult(saved.candidate) }
     })
+    await checkAccess?.()
+    return result
   }
 
   async recallForPrompt(
