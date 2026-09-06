@@ -4734,37 +4734,31 @@ describe('ACP runtime session management', () => {
     await vi.waitFor(() => expect(fixture.runtimeContext().plan?.delivery).toBeUndefined())
   })
 
-  it('recovers a claimed Plan delivery without durable provider acceptance', async () => {
-    const fixture = createDurablePlanDeliveryResumeHarness('delivering')
-
-    await fixture.runtime.resumeSession({
-      sessionId: 'restored-plan-session',
-      providerSessionId: 'restored-plan-session',
-      cwd: '/workspace',
-      projectId: 'project-1',
-      previousFrameworkId: opencodeFramework.id
-    })
-    await vi.waitFor(() => expect(fixture.fakeAgent.prompts).toHaveLength(1))
-    await vi.waitFor(() => expect(fixture.runtimeContext().plan?.delivery).toBeUndefined())
-    expect(fixture.promptAttempts).toEqual(['plan-delivery-resume-1'])
-  })
-
-  it('recovers claimed review feedback without durable provider acceptance', async () => {
-    const fixture = createDurablePlanDeliveryResumeHarness('delivering', {
-      kind: 'review-feedback'
-    })
-
-    await fixture.runtime.resumeSession({
-      sessionId: 'restored-plan-session',
-      providerSessionId: 'restored-plan-session',
-      cwd: '/workspace',
-      projectId: 'project-1',
-      previousFrameworkId: opencodeFramework.id
-    })
-
-    await vi.waitFor(() => expect(fixture.fakeAgent.prompts).toHaveLength(1))
-    await vi.waitFor(() => expect(fixture.runtimeContext().plan?.delivery).toBeUndefined())
-  })
+  it.each(['approved-plan', 'rejected-plan', 'review-feedback'] as const)(
+    'P03 preserves an uncertain %s receipt after restart without automatically replaying it',
+    async (kind) => {
+      const fixture = createDurablePlanDeliveryResumeHarness('delivering', { kind })
+      await fixture.runtime.resumeSession({
+        sessionId: 'restored-plan-session',
+        providerSessionId: 'restored-plan-session',
+        cwd: '/workspace',
+        projectId: 'project-1',
+        previousFrameworkId: opencodeFramework.id
+      })
+      // Wait for the public resume scheduler to finish inspecting the persisted receipt.
+      await vi.waitFor(() => expect(fixture.readSessionRuntimeContext).toHaveBeenCalled())
+      await new Promise<void>((resolve) => setTimeout(resolve, 0))
+      expect(fixture.fakeAgent.prompts).toHaveLength(0)
+      expect(fixture.patchSessionRuntimeContext).not.toHaveBeenCalled()
+      expect(fixture.runtimeContext().plan?.delivery?.state).toBe('delivering')
+      expect(fixture.events).toContainEqual(
+        expect.objectContaining({
+          kind: 'error',
+          text: expect.stringMatching(/may already have been accepted/i)
+        })
+      )
+    }
+  )
 
   it('clears an accepted Plan delivery after restart without replaying it', async () => {
     const fixture = createDurablePlanDeliveryResumeHarness('accepted')

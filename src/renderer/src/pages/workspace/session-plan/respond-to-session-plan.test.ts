@@ -85,6 +85,51 @@ beforeEach(() => {
 })
 
 describe('respondToSessionPlan', () => {
+  it.each([false, true])(
+    'P04 preserves submit failure when refresh failure is %s',
+    async (refreshFails) => {
+      const failure = new Error('feedback commit failed')
+      respondPlan.mockRejectedValue(failure)
+      if (refreshFails) getPlanProjection.mockRejectedValue(new Error('refresh connection lost'))
+      await expect(
+        respondToSessionPlan(
+          { projectId: 'project-1', sessionId: 'session-1', projection },
+          { feedback: feedbackMessage.content }
+        )
+      ).rejects.toBe(failure)
+      expect(useSessionStore.getState().sessions[0].messages).toEqual([])
+      expect(getPlanProjection).toHaveBeenCalledOnce()
+    }
+  )
+
+  it.each(['approved', 'rejected', 'feedback'] as const)(
+    'P04 keeps committed %s successful when projection refresh fails',
+    async (kind) => {
+      respondPlan.mockResolvedValue(
+        kind === 'feedback'
+          ? { kind: 'feedback', message: feedbackMessage }
+          : { changed: true, projection: { ...approvedProjection, approval: kind } }
+      )
+      getPlanProjection.mockRejectedValue(new Error('refresh connection lost'))
+      const outcome = await respondToSessionPlan(
+        { projectId: 'project-1', sessionId: 'session-1', projection },
+        kind === 'feedback' ? { feedback: feedbackMessage.content } : kind
+      ).then(
+        () => ({ committed: true }),
+        (error: unknown) => ({ error })
+      )
+
+      expect(respondPlan).toHaveBeenCalledOnce()
+      expect(getPlanProjection).toHaveBeenCalledOnce()
+      if (kind === 'feedback') {
+        expect(useSessionStore.getState().sessions[0].messages).toEqual([
+          expect.objectContaining({ id: feedbackMessage.id, content: feedbackMessage.content })
+        ])
+      }
+      expect(outcome).toEqual({ committed: true })
+    }
+  )
+
   it('shares the version-bound response and projection refresh across renderer surfaces', async () => {
     await respondToSessionPlan(
       { projectId: 'project-1', sessionId: 'session-1', projection },
@@ -163,6 +208,31 @@ describe('respondToSessionPlan', () => {
     )
     expect(getPlanProjection).toHaveBeenCalledWith('project-1', 'session-1')
   })
+
+  it.each(['revision', 'version'] as const)(
+    'preserves a newer %s projection received while feedback hydration fails',
+    async (replacement) => {
+      const newer = {
+        ...projection,
+        ...(replacement === 'revision'
+          ? { revision: projection.revision + 1 }
+          : { artifactVersionId: 'version-2' })
+      }
+      respondPlan.mockResolvedValue({ kind: 'feedback', message: feedbackMessage })
+      getPlanProjection.mockImplementation(async () => {
+        useSessionStore.getState().setActivePlanProjection('session-1', newer)
+        throw new Error('refresh connection lost')
+      })
+      await respondToSessionPlan(
+        { projectId: 'project-1', sessionId: 'session-1', projection },
+        { feedback: feedbackMessage.content }
+      )
+      expect(useSessionStore.getState().sessions[0].activePlanProjection).toBe(newer)
+      expect(useSessionStore.getState().sessions[0].messages).toEqual([
+        expect.objectContaining({ id: feedbackMessage.id })
+      ])
+    }
+  )
 
   it('projects feedback optimistically when the adapter omits its Message payload', async () => {
     respondPlan.mockResolvedValue(undefined)

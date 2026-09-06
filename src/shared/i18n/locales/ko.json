@@ -99,6 +99,10 @@
     "Import Connector configuration": "커넥터 구성 가져오기"
   },
   "renderer": {
+    "Unable to discard the Plan.": "계획을 삭제할 수 없습니다.",
+    "Discard unavailable Plan": "사용할 수 없는 계획 삭제",
+    "Discard unavailable Plan?": "사용할 수 없는 계획을 삭제하시겠습니까?",
+    "This removes the active Plan and its approval and progress from this conversation. Messages and Artifacts are kept. This cannot be undone.": "이 대화에서 현재 계획과 해당 승인 및 진행 상황을 제거합니다. 메시지와 아티팩트는 유지됩니다. 이 작업은 되돌릴 수 없습니다.",
     "Receiving code. Cancelling discards the unfinished code.": "코드를 수신 중입니다. 취소하면 미완성 코드가 삭제됩니다.",
     "Cancel code reception": "코드 수신 취소",
     "Checking version…": "버전 확인 중…",

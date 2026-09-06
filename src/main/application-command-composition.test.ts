@@ -191,6 +191,7 @@ describe('application command composition', () => {
     const composition = createApplicationCommandComposition(dependencies())
 
     expect(composition.electron.commandNames()).toEqual([
+      'acp:discard-unavailable-plan',
       'acp:respond-elicitation',
       'acp:respond-permission',
       'acp:respond-plan',

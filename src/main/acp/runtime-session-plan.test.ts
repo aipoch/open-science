@@ -402,7 +402,11 @@ describe('AcpRuntime Session Plan seam', () => {
     await cancellation
 
     expect(interactions.approvalInteractionIdFor('session-1')).toBe('interaction-2')
-    interactions.resolveApproval('session-1', { decision: 'approved' })
+    interactions.resolveApproval(
+      'session-1',
+      { decision: 'approved' },
+      interactions.approvalTokenFor('session-1')
+    )
     await expect(successorApproval).resolves.toEqual({ decision: 'approved' })
   })
 

@@ -102,6 +102,10 @@
     "Import Connector configuration": "Импорт конфигурации коннектора"
   },
   "renderer": {
+    "Unable to discard the Plan.": "Не удалось удалить план.",
+    "Discard unavailable Plan": "Удалить недоступный план",
+    "Discard unavailable Plan?": "Удалить недоступный план?",
+    "This removes the active Plan and its approval and progress from this conversation. Messages and Artifacts are kept. This cannot be undone.": "Активный план, его утверждение и прогресс будут удалены из этого диалога. Сообщения и артефакты сохранятся. Это действие нельзя отменить.",
     "Receiving code. Cancelling discards the unfinished code.": "Получение кода. При отмене незавершённый код будет удалён.",
     "Cancel code reception": "Отменить получение кода",
     "Checking version…": "Проверка версии…",

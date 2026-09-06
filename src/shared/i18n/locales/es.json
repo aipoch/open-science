@@ -101,6 +101,10 @@
     "Import Connector configuration": "Importar configuración del conector"
   },
   "renderer": {
+    "Unable to discard the Plan.": "No se puede descartar el plan.",
+    "Discard unavailable Plan": "Descartar el plan no disponible",
+    "Discard unavailable Plan?": "¿Descartar el plan no disponible?",
+    "This removes the active Plan and its approval and progress from this conversation. Messages and Artifacts are kept. This cannot be undone.": "Se eliminarán de esta conversación el plan activo, su aprobación y su progreso. Se conservarán los mensajes y los artefactos. Esta acción no se puede deshacer.",
     "Receiving code. Cancelling discards the unfinished code.": "Se está recibiendo código. Al cancelar, se descarta el código incompleto.",
     "Cancel code reception": "Cancelar recepción de código",
     "Checking version…": "Comprobando la versión…",

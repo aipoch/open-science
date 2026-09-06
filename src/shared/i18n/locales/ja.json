@@ -99,6 +99,10 @@
     "Import Connector configuration": "コネクタ構成のインポート"
   },
   "renderer": {
+    "Unable to discard the Plan.": "プランを破棄できません。",
+    "Discard unavailable Plan": "利用できないプランを破棄",
+    "Discard unavailable Plan?": "利用できないプランを破棄しますか？",
+    "This removes the active Plan and its approval and progress from this conversation. Messages and Artifacts are kept. This cannot be undone.": "この会話から現在のプランとその承認および進捗を削除します。メッセージと成果物は保持されます。この操作は取り消せません。",
     "Receiving code. Cancelling discards the unfinished code.": "コードを受信しています。キャンセルすると未完成のコードは破棄されます。",
     "Cancel code reception": "コードの受信をキャンセル",
     "Checking version…": "バージョンを確認中…",

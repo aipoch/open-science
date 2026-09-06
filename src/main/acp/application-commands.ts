@@ -110,6 +110,21 @@ const acpResponseCommandContracts = Object.freeze({
     ),
     acpStateCommandResponseCodec
   ),
+  discardUnavailablePlan: defineApplicationCommandContract(
+    validationCodec(
+      z.tuple([
+        z
+          .object({
+            projectId: z.string().min(1),
+            sessionId: z.string().min(1),
+            artifactVersionId: z.string().min(1),
+            expectedRevision: z.number().int().nonnegative()
+          })
+          .strict()
+      ])
+    ),
+    validationCodec(z.object({ revision: z.number().int().nonnegative() }).strict())
+  ),
   plan: defineApplicationCommandContract(
     validationCodec(
       z.tuple([
@@ -224,6 +239,11 @@ const acpCommands = Object.freeze({
     readonly [projectId: string, sessionId: string],
     ActivePlanProjection | null
   >('acp:get-plan-projection'),
+  discardUnavailablePlan: defineApplicationCommand<
+    'acp:discard-unavailable-plan',
+    readonly [request: Parameters<AcpRuntimeCoordinator['discardUnavailableSessionPlan']>[0]],
+    { revision: number }
+  >('acp:discard-unavailable-plan', acpResponseCommandContracts.discardUnavailablePlan),
   respondPlan: defineApplicationCommand<
     'acp:respond-plan',
     readonly [request: Parameters<AcpRuntimeCoordinator['respondSessionPlan']>[0]],
@@ -250,7 +270,8 @@ const acpApplicationCommands = defineApplicationCommandGroup('acp', [
   acpCommands.setPermissionProfile,
   acpCommands.revokePermissionGrant,
   acpCommands.getPlanProjection,
-  acpCommands.respondPlan
+  acpCommands.respondPlan,
+  acpCommands.discardUnavailablePlan
 ] as const)
 
 type AcpApplicationCommandRuntime = Pick<
@@ -270,6 +291,7 @@ type AcpApplicationCommandRuntime = Pick<
   | 'revokePermissionGrant'
   | 'getSessionPlanProjection'
   | 'respondSessionPlan'
+  | 'discardUnavailableSessionPlan'
 >
 
 type AcpApplicationCommandDependencies = Readonly<{
@@ -432,6 +454,20 @@ const registerAcpCommands = (
           )
         }
         return dependencies.runtime.getSessionPlanProjection(invocation.args[0], invocation.args[1])
+      },
+      'acp:discard-unavailable-plan': (invocation) => {
+        if (!canSatisfyHumanApproval(invocation.callerContext)) {
+          throw new Error('Only a current human caller can discard an unavailable Session Plan.')
+        }
+        return preserveSessionSizeLimitCode(() =>
+          dependencies.archiveAvailability
+            ? dependencies.archiveAvailability.withSessionAvailable(
+                invocation.args[0].projectId,
+                invocation.args[0].sessionId,
+                () => dependencies.runtime.discardUnavailableSessionPlan(invocation.args[0])
+              )
+            : dependencies.runtime.discardUnavailableSessionPlan(invocation.args[0])
+        )
       },
       'acp:respond-plan': (invocation) => {
         if (!canAccessSessionPlan(invocation.callerContext)) {

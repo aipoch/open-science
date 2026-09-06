@@ -756,11 +756,7 @@ const WorkspacePage = ({
     activeSession.runtimeContext?.permission?.state === 'pending'
       ? (activeSession.error ?? actionError)
       : null
-  const planProjectionRecoveryError = conversation.planProjectionRecoveryError
-    ? t('Unable to restore plan state. Retrying…')
-    : null
   const visibleActionError =
-    planProjectionRecoveryError ??
     activeManualReviewRequest?.error ??
     attachmentError ??
     sessionController.view.exportError ??

@@ -356,6 +356,12 @@ class AcpRuntimeCoordinator {
     return this.runtimeForSession(sessionId).getSessionPlanProjection(projectId, sessionId)
   }
 
+  discardUnavailableSessionPlan(
+    input: Parameters<AcpRuntime['discardUnavailableSessionPlan']>[0]
+  ): Promise<{ revision: number }> {
+    return this.runtimeForSession(input.sessionId).discardUnavailableSessionPlan(input)
+  }
+
   respondSessionPlan(
     input: Parameters<AcpRuntime['respondSessionPlan']>[0]
   ): ReturnType<AcpRuntime['respondSessionPlan']> {
