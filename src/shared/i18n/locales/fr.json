@@ -3822,9 +3822,7 @@
     "Total artifacts": "Total des artefacts",
     "{{date}}: {{value}} {{metric}}": "{{date}} : {{value}} {{metric}}",
     "{{date}}: {{input}} input, {{cache}} cache, {{output}} output": "{{date}} : entrée {{input}}, cache {{cache}}, sortie {{output}}",
-    "Token totals are available for {{reported}} of {{count}} runs in this period._one": "Disponibilité des totaux de jetons pour cette période : {{reported}}/{{count}}.",
-    "Token totals are available for {{reported}} of {{count}} runs in this period._other": "Disponibilité des totaux de jetons pour cette période : {{reported}}/{{count}}.",
-    "Token totals are available for {{reported}} of {{count}} runs in this period._many": "Disponibilité des totaux de jetons pour cette période : {{reported}}/{{count}}.",
+    "Only reported token usage is included.": "Seule l’utilisation de jetons signalée est incluse.",
     "Older conversations or some providers may not report usage.": "Les conversations plus anciennes ou certains fournisseurs peuvent ne pas signaler leur utilisation.",
     "Daily activity": "Activité quotidienne",
     "Compare each day over the last 30 days. Darker cells indicate higher usage.": "Comparez chaque jour au cours des 30 derniers jours. Les cellules plus sombres indiquent une utilisation plus élevée.",
@@ -4542,6 +4540,12 @@
     "OAuth · Sign-in required": "OAuth · Connexion requise",
     "Temporarily unavailable": "Temporairement indisponible",
     "Replacement required": "Remplacement requis",
+    "Replacement client secret": "Nouveau secret client",
+    "Replace the client secret before signing in. Your Connector bindings will be kept.": "Remplacez le secret client avant de vous connecter. Les associations de vos Connecteurs seront conservées.",
+    "The saved sign-in state could not be read. Sign in again to restore it.": "L’état de connexion enregistré n’a pas pu être lu. Reconnectez-vous pour le restaurer.",
+    "Credential saved. The list could not refresh.": "Identifiants enregistrés. La liste n’a pas pu être actualisée.",
+    "Could not load credentials.": "Impossible de charger les identifiants.",
+    "The credential list is unavailable. Try loading it again.": "La liste des identifiants est indisponible. Essayez de la charger à nouveau.",
     "{{count}} Connectors_one": "{{count}} Connecteur",
     "{{count}} Connectors_many": "{{count}} Connecteurs",
     "{{count}} Connectors_other": "{{count}} Connecteurs",
@@ -4856,6 +4860,12 @@
     "Could not load app icons.": "Impossible de charger les icônes de l’application.",
     "No app icons are available.": "Aucune icône d’application n’est disponible.",
     "Current icon: {{icon}}. Its preview is unavailable.": "Icône actuelle : {{icon}}. Son aperçu n’est pas disponible.",
-    "This provider isn't compatible with {{framework}}. Pick a provider whose API format {{framework}} supports, or change the agent framework.": "Ce fournisseur n'est pas compatible avec {{framework}}. Choisissez un fournisseur dont le format d'API est pris en charge par {{framework}}, ou changez de framework d'agents."
+    "This provider isn't compatible with {{framework}}. Pick a provider whose API format {{framework}} supports, or change the agent framework.": "Ce fournisseur n'est pas compatible avec {{framework}}. Choisissez un fournisseur dont le format d'API est pris en charge par {{framework}}, ou changez de framework d'agents.",
+    "External status unconfirmed": "État externe non confirmé",
+    "Remote access is off on this computer, but turning it off did not finish. The Off setting may not have been saved, and access may turn on again after restarting.": "L’accès à distance est désactivé sur cet ordinateur, mais la désactivation n’est pas terminée. Ce réglage n’a peut-être pas été enregistré et l’accès pourrait être réactivé après un redémarrage.",
+    "Retry turning off": "Réessayer de désactiver",
+    "Local remote access remains enabled, but the latest external status check failed.": "L’accès à distance local reste activé, mais la dernière vérification de l’état externe a échoué.",
+    "The latest external status check failed.": "La dernière vérification de l’état externe a échoué.",
+    "Saved browser link": "Lien de navigateur enregistré"
   }
 }

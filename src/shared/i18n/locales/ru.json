@@ -3930,10 +3930,7 @@
     "Total artifacts": "Общее количество артефактов",
     "{{date}}: {{value}} {{metric}}": "{{date}}: {{value}} {{metric}}",
     "{{date}}: {{input}} input, {{cache}} cache, {{output}} output": "{{date}}: {{input}} вход, {{cache}} кэш, {{output}} выход",
-    "Token totals are available for {{reported}} of {{count}} runs in this period._one": "Данные о токенах доступны для {{reported}} из {{count}} запуска за этот период.",
-    "Token totals are available for {{reported}} of {{count}} runs in this period._few": "Данные о токенах доступны для {{reported}} из {{count}} запусков за этот период.",
-    "Token totals are available for {{reported}} of {{count}} runs in this period._many": "Данные о токенах доступны для {{reported}} из {{count}} запусков за этот период.",
-    "Token totals are available for {{reported}} of {{count}} runs in this period._other": "Данные о токенах доступны для {{reported}} из {{count}} запуска за этот период.",
+    "Only reported token usage is included.": "Учитываются только полученные данные об использовании токенов.",
     "Older conversations or some providers may not report usage.": "Старые диалоги или некоторые поставщики могут не отображать использование.",
     "Daily activity": "Ежедневная активность",
     "Compare each day over the last 30 days. Darker cells indicate higher usage.": "Сравните каждый день за последние 30 дней. Тёмные ячейки указывают на более высокое использование.",
@@ -4674,6 +4671,12 @@
     "OAuth · Sign-in required": "OAuth · Требуется вход",
     "Temporarily unavailable": "Временно недоступно",
     "Replacement required": "Требуется замена",
+    "Replacement client secret": "Новый секрет клиента",
+    "Replace the client secret before signing in. Your Connector bindings will be kept.": "Замените секрет клиента перед входом. Привязки Коннекторов сохранятся.",
+    "The saved sign-in state could not be read. Sign in again to restore it.": "Не удалось прочитать сохранённое состояние входа. Войдите снова, чтобы восстановить его.",
+    "Credential saved. The list could not refresh.": "Учётные данные сохранены. Не удалось обновить список.",
+    "Could not load credentials.": "Не удалось загрузить учётные данные.",
+    "The credential list is unavailable. Try loading it again.": "Список учётных данных недоступен. Попробуйте загрузить его снова.",
     "{{count}} Connectors_one": "{{count}} Коннектор",
     "{{count}} Connectors_few": "{{count}} Коннектора",
     "{{count}} Connectors_many": "{{count}} Коннекторов",
@@ -4989,6 +4992,12 @@
     "Could not load app icons.": "Не удалось загрузить значки приложения.",
     "No app icons are available.": "Нет доступных значков приложения.",
     "Current icon: {{icon}}. Its preview is unavailable.": "Текущий значок: {{icon}}. Предпросмотр недоступен.",
-    "This provider isn't compatible with {{framework}}. Pick a provider whose API format {{framework}} supports, or change the agent framework.": "Этот поставщик несовместим с {{framework}}. Выберите поставщика с форматом API, который поддерживает {{framework}}, или смените фреймворк агента."
+    "This provider isn't compatible with {{framework}}. Pick a provider whose API format {{framework}} supports, or change the agent framework.": "Этот поставщик несовместим с {{framework}}. Выберите поставщика с форматом API, который поддерживает {{framework}}, или смените фреймворк агента.",
+    "External status unconfirmed": "Внешнее состояние не подтверждено",
+    "Remote access is off on this computer, but turning it off did not finish. The Off setting may not have been saved, and access may turn on again after restarting.": "Удалённый доступ на этом компьютере выключен, но операция выключения не завершена. Настройка могла не сохраниться, и после перезапуска доступ может включиться снова.",
+    "Retry turning off": "Повторить выключение",
+    "Local remote access remains enabled, but the latest external status check failed.": "Локальный удалённый доступ остаётся включённым, но последняя проверка внешнего состояния завершилась ошибкой.",
+    "The latest external status check failed.": "Последняя проверка внешнего состояния завершилась ошибкой.",
+    "Saved browser link": "Сохранённая ссылка для браузера"
   }
 }

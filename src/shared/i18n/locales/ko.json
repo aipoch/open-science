@@ -3553,7 +3553,7 @@
     "Total artifacts": "총 아티팩트",
     "{{date}}: {{value}} {{metric}}": "{{date}}: {{value}} {{metric}}",
     "{{date}}: {{input}} input, {{cache}} cache, {{output}} output": "{{date}}: {{input}} 입력, {{cache}} 캐시, {{output}} 출력",
-    "Token totals are available for {{reported}} of {{count}} runs in this period._other": "이 기간의 실행 {{count}}회 중 {{reported}}회에 대한 토큰 합계를 확인할 수 있습니다.",
+    "Only reported token usage is included.": "보고된 토큰 사용량만 포함됩니다.",
     "Older conversations or some providers may not report usage.": "이전 대화 또는 일부 모델 제공업체는 사용량을 보고하지 않을 수 있습니다.",
     "Daily activity": "일일 활동",
     "Compare each day over the last 30 days. Darker cells indicate higher usage.": "지난 30일 동안 매일 비교해보세요. 셀이 어두울수록 사용량이 많다는 의미입니다.",
@@ -4226,6 +4226,12 @@
     "OAuth · Sign-in required": "OAuth · 로그인 필요",
     "Temporarily unavailable": "일시적으로 사용할 수 없음",
     "Replacement required": "교체 필요",
+    "Replacement client secret": "새 클라이언트 시크릿",
+    "Replace the client secret before signing in. Your Connector bindings will be kept.": "로그인하기 전에 클라이언트 시크릿을 교체하세요. 커넥터 연결 관계는 유지됩니다.",
+    "The saved sign-in state could not be read. Sign in again to restore it.": "저장된 로그인 상태를 읽을 수 없습니다. 다시 로그인하여 복원하세요.",
+    "Credential saved. The list could not refresh.": "자격 증명이 저장되었습니다. 목록을 새로 고치지 못했습니다.",
+    "Could not load credentials.": "자격 증명을 불러오지 못했습니다.",
+    "The credential list is unavailable. Try loading it again.": "자격 증명 목록을 사용할 수 없습니다. 다시 불러오세요.",
     "{{count}} Connectors_other": "커넥터 {{count}}개",
     "Remove this credential from its Connectors first.": "먼저 이 자격 증명을 사용하는 커넥터에서 제거하세요.",
     "Remove this credential from this device?": "이 기기에서 자격 증명을 제거하시겠습니까?",
@@ -4538,6 +4544,12 @@
     "Could not load app icons.": "앱 아이콘을 불러오지 못했습니다.",
     "No app icons are available.": "사용 가능한 앱 아이콘이 없습니다.",
     "Current icon: {{icon}}. Its preview is unavailable.": "현재 아이콘: {{icon}}. 미리보기를 사용할 수 없습니다.",
-    "This provider isn't compatible with {{framework}}. Pick a provider whose API format {{framework}} supports, or change the agent framework.": "이 모델 제공업체는 {{framework}}에서 사용할 수 없습니다. {{framework}}에서 지원하는 API 형식의 모델 제공업체를 선택하거나 에이전트 프레임워크를 변경하세요."
+    "This provider isn't compatible with {{framework}}. Pick a provider whose API format {{framework}} supports, or change the agent framework.": "이 모델 제공업체는 {{framework}}에서 사용할 수 없습니다. {{framework}}에서 지원하는 API 형식의 모델 제공업체를 선택하거나 에이전트 프레임워크를 변경하세요.",
+    "External status unconfirmed": "외부 상태 확인 안 됨",
+    "Remote access is off on this computer, but turning it off did not finish. The Off setting may not have been saved, and access may turn on again after restarting.": "이 컴퓨터의 원격 액세스는 꺼졌지만 끄기 작업이 완료되지 않았습니다. 끄기 설정이 저장되지 않았을 수 있으며 다시 시작하면 액세스가 다시 켜질 수 있습니다.",
+    "Retry turning off": "끄기 다시 시도",
+    "Local remote access remains enabled, but the latest external status check failed.": "로컬 원격 액세스는 계속 활성화되어 있지만 최근 외부 상태 확인에 실패했습니다.",
+    "The latest external status check failed.": "최근 외부 상태 확인에 실패했습니다.",
+    "Saved browser link": "저장된 브라우저 링크"
   }
 }

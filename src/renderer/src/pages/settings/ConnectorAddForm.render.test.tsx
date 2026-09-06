@@ -26,6 +26,9 @@ beforeEach(() => {
   useSettingsStore.setState({
     ...createInitialSettingsState(),
     encryptionAvailable: true,
+    // This component fixture starts from a successfully loaded credential catalog.
+    deviceCredentialsLoaded: true,
+    loadDeviceCredentials: vi.fn().mockResolvedValue(undefined),
     addCustomServer: vi.fn().mockResolvedValue(undefined)
   })
   container = document.createElement('div')

@@ -386,9 +386,11 @@ export const buildUserMessage = (
 
 export const copySnapshotMessage = (
   message: PersistedChatMessage,
-  sortIndex: number
+  sortIndex: number,
+  sourceSessionId: string
 ): ChatMessage => ({
   ...message,
+  usageOrigin: message.usageOrigin ?? { sessionId: sourceSessionId, messageId: message.id },
   streamId: undefined,
   eventIds: [],
   artifactIds: message.artifactIds ? [...message.artifactIds] : undefined,

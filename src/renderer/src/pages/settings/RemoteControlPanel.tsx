@@ -145,6 +145,7 @@ const getAccessModes = (
 ]
 
 const providerStatus = (snapshot: RemoteAccessSnapshot, t: TFunction): string => {
+  if (snapshot.remoteIt.error) return t('External status unconfirmed')
   if (!snapshot.remoteIt.installed) return t('Not installed')
   if (!snapshot.remoteIt.registered) return t('Device setup required')
   if (!snapshot.remoteIt.loggedIn) return t('Sign-in required')
@@ -217,6 +218,7 @@ export const RemoteControlPanel: RemoteControlPanelComponent = () => {
   const [copyStatus, setCopyStatus] = useState<CopyStatus>('idle')
 
   const operationTriggerRef = useRef<HTMLElement | null>(null)
+  const offModeRef = useRef<HTMLInputElement | null>(null)
   const initialLoadRetryRef = useRef(false)
   const mountedRef = useRef(false)
   const copyResetTimerRef = useRef<number | undefined>(undefined)
@@ -386,6 +388,9 @@ export const RemoteControlPanel: RemoteControlPanelComponent = () => {
   }
 
   const modeError = actionError ?? snapshot.error
+  const providerError = snapshot.remoteIt.error
+  const incompleteShutdown =
+    snapshot.mode === 'off' && !snapshot.enabled && snapshot.lifecycle === 'error'
   const changingMode = busy?.startsWith('mode:') === true
   const detectingAndRepairing = busy === 'detect'
   const blockingRemoteOperation = changingMode || detectingAndRepairing
@@ -397,7 +402,7 @@ export const RemoteControlPanel: RemoteControlPanelComponent = () => {
     snapshot.canManagePairing && (accessUsesPairing || snapshot.trustedBrowsers.length > 0)
   const statusLabel = providerStatus(snapshot, t)
   const statusClassName =
-    snapshot.enabled && snapshot.lifecycle === 'running'
+    !providerError && snapshot.enabled && snapshot.lifecycle === 'running'
       ? 'border-0 bg-primary/10 text-primary'
       : undefined
 
@@ -408,17 +413,22 @@ export const RemoteControlPanel: RemoteControlPanelComponent = () => {
       size="sm"
       disabled={busy !== null}
       onClick={(event) => {
-        operationTriggerRef.current = event.currentTarget
-        setBusy('detect')
-        void refresh(true)
+        operationTriggerRef.current =
+          snapshot.mode === 'off' ? offModeRef.current : event.currentTarget
+        if (providerError) {
+          void run('probe', () => window.api.remoteAccess.probe())
+        } else {
+          setBusy('detect')
+          void refresh(true)
+        }
       }}
       className="shrink-0"
     >
       <RefreshCw
-        className={`size-3.5 ${busy === 'detect' ? 'animate-spin' : ''}`}
+        className={`size-3.5 ${busy === 'detect' || busy === 'probe' ? 'animate-spin' : ''}`}
         aria-hidden="true"
       />
-      {t('Detect again')}
+      {providerError ? t('Check again') : t('Detect again')}
     </Button>
   ) : null
 
@@ -524,6 +534,7 @@ export const RemoteControlPanel: RemoteControlPanelComponent = () => {
                 >
                   <input
                     type="radio"
+                    ref={option.mode === 'off' ? offModeRef : undefined}
                     name="remote-access-mode"
                     aria-label={option.title}
                     checked={selected}
@@ -558,6 +569,52 @@ export const RemoteControlPanel: RemoteControlPanelComponent = () => {
           {modeError ? (
             <div className="rounded-lg border border-destructive/35 bg-destructive/5 px-3 py-2 text-sm text-destructive">
               {t(modeError)}
+            </div>
+          ) : null}
+
+          {incompleteShutdown ? (
+            <div
+              role="alert"
+              className="rounded-lg border border-status-warning-foreground/30 bg-status-warning-surface dark:bg-status-warning-dark-surface px-3 py-2 text-sm"
+            >
+              <p>
+                {t(
+                  'Remote access is off on this computer, but turning it off did not finish. The Off setting may not have been saved, and access may turn on again after restarting.'
+                )}
+              </p>
+              {snapshot.canManage ? (
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="mt-3"
+                  disabled={busy !== null}
+                  onClick={() => {
+                    operationTriggerRef.current = offModeRef.current
+                    void run('mode:off', () => window.api.remoteAccess.setMode({ mode: 'off' }))
+                  }}
+                >
+                  <RefreshCw className="size-3.5" aria-hidden="true" />
+                  {t('Retry turning off')}
+                </Button>
+              ) : null}
+            </div>
+          ) : null}
+
+          {providerError ? (
+            <div
+              role="alert"
+              className="rounded-lg border border-status-warning-foreground/30 bg-status-warning-surface dark:bg-status-warning-dark-surface px-3 py-2 text-sm"
+            >
+              <p>
+                {snapshot.enabled
+                  ? t(
+                      'Local remote access remains enabled, but the latest external status check failed.'
+                    )
+                  : t('The latest external status check failed.')}
+              </p>
+              <p className="mt-1 break-words text-xs text-muted-foreground">{t(providerError)}</p>
+              {snapshot.mode === 'off' ? <div className="mt-3">{detectButton}</div> : null}
             </div>
           ) : null}
 
@@ -655,14 +712,21 @@ export const RemoteControlPanel: RemoteControlPanelComponent = () => {
                 <div className="grid gap-4 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-start">
                   <div className="min-w-0 flex-1">
                     <div className="flex items-start gap-3">
-                      <CheckCircle2
-                        className="mt-0.5 size-5 shrink-0 text-blue-600"
-                        aria-hidden="true"
-                      />
+                      {providerError ? (
+                        <AlertTriangle
+                          className="mt-0.5 size-5 shrink-0 text-status-warning-foreground dark:text-status-warning-dark-foreground"
+                          aria-hidden="true"
+                        />
+                      ) : (
+                        <CheckCircle2
+                          className="mt-0.5 size-5 shrink-0 text-blue-600"
+                          aria-hidden="true"
+                        />
+                      )}
                       <div className="min-w-0 flex-1">
                         <div className="flex flex-wrap items-center justify-between gap-2">
                           <div className="text-sm font-medium text-foreground">
-                            {t('Browser link is ready')}
+                            {providerError ? t('Saved browser link') : t('Browser link is ready')}
                           </div>
                           <div className="flex shrink-0 items-center gap-2">
                             <Button

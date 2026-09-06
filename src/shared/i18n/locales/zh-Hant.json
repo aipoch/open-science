@@ -3629,7 +3629,7 @@
     "Total artifacts": "Artifact 總數",
     "{{date}}: {{value}} {{metric}}": "{{date}}：{{value}} {{metric}}",
     "{{date}}: {{input}} input, {{cache}} cache, {{output}} output": "{{date}}：輸入 {{input}}，快取 {{cache}}，輸出 {{output}}",
-    "Token totals are available for {{reported}} of {{count}} runs in this period._other": "此時間範圍內 {{count}} 個 Run 中有 {{reported}} 個包含詞元總量。",
+    "Only reported token usage is included.": "僅統計已回報的詞元用量。",
     "Older conversations or some providers may not report usage.": "較早的對話或部分供應商可能不會回報用量。",
     "Daily activity": "每日活躍度",
     "Compare each day over the last 30 days. Darker cells indicate higher usage.": "比較最近 30 天內每天的情況，顏色越深表示用量越高。",
@@ -4229,6 +4229,12 @@
     "OAuth · Sign-in required": "OAuth · 需要登入",
     "Temporarily unavailable": "暫時無法使用",
     "Replacement required": "需要更換",
+    "Replacement client secret": "替換用戶端秘密",
+    "Replace the client secret before signing in. Your Connector bindings will be kept.": "請先替換用戶端秘密，再登入。連接器繫結將保留。",
+    "The saved sign-in state could not be read. Sign in again to restore it.": "無法讀取已儲存的登入狀態。請重新登入以還原。",
+    "Credential saved. The list could not refresh.": "憑證已儲存，但清單重新整理失敗。",
+    "Could not load credentials.": "無法載入憑證。",
+    "The credential list is unavailable. Try loading it again.": "憑證清單暫時無法使用。請嘗試重新載入。",
     "{{count}} Connectors_other": "{{count}} 個連接器",
     "Remove this credential from its Connectors first.": "請先從使用此憑證的連接器中移除它。",
     "Remove this credential from this device?": "從此裝置移除此憑證？",
@@ -4540,6 +4546,12 @@
     "Could not load app icons.": "無法載入應用程式圖示。",
     "No app icons are available.": "沒有可用的應用程式圖示。",
     "Current icon: {{icon}}. Its preview is unavailable.": "目前圖示：{{icon}}。其預覽無法使用。",
-    "This provider isn't compatible with {{framework}}. Pick a provider whose API format {{framework}} supports, or change the agent framework.": "此提供商與 {{framework}} 不相容。請選擇 API 格式受 {{framework}} 支援的提供商，或更換智能體框架。"
+    "This provider isn't compatible with {{framework}}. Pick a provider whose API format {{framework}} supports, or change the agent framework.": "此提供商與 {{framework}} 不相容。請選擇 API 格式受 {{framework}} 支援的提供商，或更換智能體框架。",
+    "External status unconfirmed": "外部狀態未確認",
+    "Remote access is off on this computer, but turning it off did not finish. The Off setting may not have been saved, and access may turn on again after restarting.": "此電腦上的遠端存取已關閉，但關閉操作尚未完成。關閉設定可能未儲存，重新啟動後存取可能再次開啟。",
+    "Retry turning off": "重試關閉",
+    "Local remote access remains enabled, but the latest external status check failed.": "本機遠端存取仍已啟用，但最近一次外部狀態檢查失敗。",
+    "The latest external status check failed.": "最近一次外部狀態檢查失敗。",
+    "Saved browser link": "已儲存的瀏覽器連結"
   }
 }

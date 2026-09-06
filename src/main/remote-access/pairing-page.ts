@@ -53,6 +53,8 @@ export const renderPairingPage = (params: {
       .dot { width: 8px; height: 8px; border-radius: 50%; background: #d69e2e; box-shadow: 0 0 0 5px rgba(214, 158, 46, .13); }
       .status.approved .dot { background: #0d9a75; box-shadow: 0 0 0 5px rgba(13, 154, 117, .13); }
       .status.rejected .dot { background: #d14545; box-shadow: 0 0 0 5px rgba(209, 69, 69, .13); }
+      .restart { display: inline-block; margin-top: 20px; padding: 10px 16px; border: 1px solid currentColor; border-radius: 8px; color: inherit; font-size: 14px; text-decoration: none; }
+      .restart[hidden] { display: none; }
       @media (prefers-color-scheme: dark) {
         body { background: #101412; color: #edf2ef; }
         .card { background: #171c19; border-color: #303834; box-shadow: 0 24px 70px rgba(0, 0, 0, .35); }
@@ -74,44 +76,73 @@ export const renderPairingPage = (params: {
       <div class="code" aria-label="Pairing code">${code}</div>
       <p>Choose “Allow for up to 12 hours” or “Trust this browser for 180 days”. Do not share this pairing code with anyone.</p>
       <div class="device">${browser} · ${platform}</div>
-      <div id="status" class="status"><span class="dot"></span><span>Waiting for approval…</span></div>
+      <div id="status" class="status" role="status" aria-live="polite"><span class="dot"></span><span>Waiting for approval…</span></div>
+      <a id="restart" class="restart" href="/" hidden>Start again</a>
     </main>
     <script nonce="${nonce}">
       const statusNode = document.getElementById('status');
       const expiry = ${params.expiresAt};
       let stopped = false;
+      let expiryTimer;
+      let pollTimer;
+      let requestTimer;
+      let controller;
       const setStatus = (kind, message) => {
         statusNode.className = 'status ' + kind;
         statusNode.querySelector('span:last-child').textContent = message;
       };
+      const stop = () => {
+        stopped = true;
+        window.clearTimeout(expiryTimer);
+        window.clearTimeout(pollTimer);
+        window.clearTimeout(requestTimer);
+        controller?.abort();
+      };
+      const finish = (kind, message) => {
+        stop();
+        setStatus(kind, message);
+        document.getElementById('restart').hidden = kind === 'approved';
+      };
+      const expire = () => finish('rejected', 'This pairing code has expired. Refresh the page to try again.');
       const poll = async () => {
         if (stopped) return;
         if (Date.now() >= expiry) {
-          setStatus('rejected', 'This pairing code has expired. Refresh the page to try again.');
+          expire();
           return;
         }
+        controller = new AbortController();
+        const signal = controller.signal;
+        requestTimer = window.setTimeout(() => controller.abort(), 10000);
         try {
-          const response = await fetch('${REMOTE_PAIR_STATUS_PATH}', { cache: 'no-store', credentials: 'same-origin' });
+          const response = await fetch('${REMOTE_PAIR_STATUS_PATH}', { cache: 'no-store', credentials: 'same-origin', signal });
           const result = await response.json();
+          if (stopped) return;
+          if (Date.now() >= expiry) { expire(); return; }
+          if (signal.aborted) return;
           if (result.status === 'approved') {
-            stopped = true;
-            setStatus('approved', 'Approved. Opening Open Science…');
-            window.setTimeout(() => window.location.replace('/'), 300);
+            finish('approved', 'Approved. Opening Open Science…');
+            pollTimer = window.setTimeout(() => window.location.replace('/'), 300);
             return;
           }
           if (result.status === 'rejected') {
-            stopped = true;
-            setStatus('rejected', 'This request was rejected.');
+            finish('rejected', 'This request was rejected.');
             return;
           }
           if (result.status === 'expired') {
-            stopped = true;
-            setStatus('rejected', 'This pairing code has expired. Refresh the page to try again.');
+            expire();
             return;
           }
         } catch { /* retry while the home computer reconnects */ }
-        window.setTimeout(poll, 2000);
+        finally {
+          window.clearTimeout(requestTimer);
+          if (!stopped) pollTimer = window.setTimeout(poll, 2000);
+        }
       };
+      expiryTimer = window.setTimeout(expire, Math.max(0, expiry - Date.now()));
+      window.addEventListener('pagehide', stop, { once: true });
+      window.addEventListener('pageshow', (event) => {
+        if (event.persisted) window.location.reload();
+      });
       poll();
     </script>
   </body>

@@ -129,6 +129,77 @@ const createReadyDeps = (): {
 }
 
 describe('RemoteAccessService', () => {
+  it('keeps access locally off after a failed preference save and supports retry before restart', async () => {
+    const repository = await createRepository()
+    const deps = createReadyDeps()
+    const service = await RemoteAccessService.create({ repository, ...deps, broadcast: vi.fn() })
+    const controller = webController()
+    service.attachWebController(controller)
+    await service.setMode('remoteit-public')
+    vi.spyOn(repository, 'save').mockRejectedValueOnce(new Error('disk full'))
+
+    await expect(service.disable()).resolves.toMatchObject({
+      mode: 'off',
+      enabled: false,
+      lifecycle: 'error',
+      error: 'disk full'
+    })
+    expect((await repository.load()).mode).toBe('remoteit-public')
+    expect(controller.closeExternalConnections).toHaveBeenCalledOnce()
+
+    const restarted = await RemoteAccessService.create({
+      repository,
+      ...createReadyDeps(),
+      broadcast: vi.fn()
+    })
+    restarted.attachWebController(webController())
+    await restarted.restore()
+    expect(restarted.snapshot(true)).toMatchObject({
+      mode: 'remoteit-public',
+      enabled: true,
+      lifecycle: 'running'
+    })
+    await restarted.shutdown()
+
+    await expect(service.disable()).resolves.toMatchObject({
+      mode: 'off',
+      enabled: false,
+      lifecycle: 'disabled',
+      error: undefined
+    })
+    expect((await repository.load()).mode).toBe('off')
+    expect(deps.enableRemoteIt).toHaveBeenCalledOnce()
+    await service.shutdown()
+  })
+
+  it('exposes a failed read-only probe without closing access and clears it on a successful probe', async () => {
+    const repository = await createRepository()
+    const deps = createReadyDeps()
+    const service = await RemoteAccessService.create({ repository, ...deps, broadcast: vi.fn() })
+    const controller = webController()
+    service.attachWebController(controller)
+    await service.setMode('remoteit-public')
+    const running = service.snapshot(true)
+    const save = vi.spyOn(repository, 'save')
+    deps.detectRemoteIt.mockRejectedValueOnce(new Error('provider status unavailable'))
+
+    await expect(service.probe()).resolves.toMatchObject({
+      mode: 'remoteit-public',
+      enabled: true,
+      lifecycle: 'running',
+      error: undefined,
+      accessUrl: running.accessUrl,
+      remoteIt: { error: 'provider status unavailable' }
+    })
+    const recovered = await service.probe()
+    expect(recovered).toMatchObject({ enabled: true, lifecycle: 'running' })
+    expect(recovered.remoteIt.error).toBeUndefined()
+    expect(save).not.toHaveBeenCalled()
+    expect(controller.closeExternalConnections).not.toHaveBeenCalled()
+    expect(deps.enableRemoteIt).toHaveBeenCalledOnce()
+    await service.shutdown()
+  })
+
   it('keeps the app available and blocks mutations when persisted configuration cannot load', async () => {
     const root = await mkdtemp(join(tmpdir(), 'open-science-remote-service-invalid-config-'))
     roots.push(root)

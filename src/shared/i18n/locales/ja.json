@@ -3542,7 +3542,7 @@
     "Total artifacts": "合計アーティファクト数",
     "{{date}}: {{value}} {{metric}}": "{{date}}：{{value}} {{metric}}",
     "{{date}}: {{input}} input, {{cache}} cache, {{output}} output": "{{date}}：{{input}} 入力、{{cache}} キャッシュ、{{output}} 出力",
-    "Token totals are available for {{reported}} of {{count}} runs in this period._other": "トークンの合計は、この期間内の {{count}} 回中 {{reported}} 回の実行で利用できます。",
+    "Only reported token usage is included.": "報告されたトークン使用量のみが含まれます。",
     "Older conversations or some providers may not report usage.": "古い会話や一部のプロバイダーでは使用状況が報告されない場合があります。",
     "Daily activity": "毎日のアクティビティ",
     "Compare each day over the last 30 days. Darker cells indicate higher usage.": "過去 30 日間の各日を比較します。色が濃いセルほど使用量が多いことを示します。",
@@ -4228,6 +4228,12 @@
     "OAuth · Sign-in required": "OAuth · サインインが必要",
     "Temporarily unavailable": "一時的に利用できません",
     "Replacement required": "再設定が必要",
+    "Replacement client secret": "置き換えるクライアントシークレット",
+    "Replace the client secret before signing in. Your Connector bindings will be kept.": "サインインする前にクライアントシークレットを置き換えてください。コネクタとの関連付けは保持されます。",
+    "The saved sign-in state could not be read. Sign in again to restore it.": "保存されたサインイン状態を読み取れませんでした。再度サインインして復元してください。",
+    "Credential saved. The list could not refresh.": "認証情報を保存しました。リストを更新できませんでした。",
+    "Could not load credentials.": "認証情報を読み込めませんでした。",
+    "The credential list is unavailable. Try loading it again.": "認証情報のリストを利用できません。もう一度読み込んでください。",
     "{{count}} Connectors_other": "{{count}} 個のコネクタ",
     "Remove this credential from its Connectors first.": "先に、この資格情報を使用しているコネクタから削除してください。",
     "Remove this credential from this device?": "このデバイスから資格情報を削除しますか？",
@@ -4540,6 +4546,12 @@
     "Could not load app icons.": "アプリアイコンを読み込めませんでした。",
     "No app icons are available.": "利用可能なアプリアイコンはありません。",
     "Current icon: {{icon}}. Its preview is unavailable.": "現在のアイコン：{{icon}}。プレビューは利用できません。",
-    "This provider isn't compatible with {{framework}}. Pick a provider whose API format {{framework}} supports, or change the agent framework.": "このプロバイダーは {{framework}} と互換性がありません。{{framework}} が対応する API 形式のプロバイダーを選択するか、エージェントフレームワークを変更してください。"
+    "This provider isn't compatible with {{framework}}. Pick a provider whose API format {{framework}} supports, or change the agent framework.": "このプロバイダーは {{framework}} と互換性がありません。{{framework}} が対応する API 形式のプロバイダーを選択するか、エージェントフレームワークを変更してください。",
+    "External status unconfirmed": "外部の状態を確認できません",
+    "Remote access is off on this computer, but turning it off did not finish. The Off setting may not have been saved, and access may turn on again after restarting.": "このコンピューターのリモートアクセスはオフですが、オフにする操作が完了していません。オフの設定が保存されておらず、再起動後にアクセスが再びオンになる可能性があります。",
+    "Retry turning off": "オフにする操作を再試行",
+    "Local remote access remains enabled, but the latest external status check failed.": "ローカルのリモートアクセスは有効のままですが、直近の外部状態の確認に失敗しました。",
+    "The latest external status check failed.": "直近の外部状態の確認に失敗しました。",
+    "Saved browser link": "保存済みのブラウザーリンク"
   }
 }

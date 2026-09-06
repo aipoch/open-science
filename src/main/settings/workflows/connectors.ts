@@ -94,7 +94,10 @@ class ConnectorSettingsWorkflows {
       request.secret === undefined
         ? await this.settings.updateDeviceCredential(request)
         : await this.settings.updateDeviceCredential(request, (consumers, mutation) =>
-            this.withDeviceCredentialConsumersBlocked(consumers, mutation)
+            this.withDeviceCredentialConsumersBlocked(consumers, async () => {
+              await this.settings.cancelDeviceCredentialAuthentication({ id: request.id })
+              return mutation()
+            })
           )
     return snapshot
   }
