@@ -4856,6 +4856,12 @@
     "Could not load app icons.": "No se pudieron cargar los iconos de la aplicación.",
     "No app icons are available.": "No hay iconos de la aplicación disponibles.",
     "Current icon: {{icon}}. Its preview is unavailable.": "Icono actual: {{icon}}. Su vista previa no está disponible.",
-    "This provider isn't compatible with {{framework}}. Pick a provider whose API format {{framework}} supports, or change the agent framework.": "Este proveedor no es compatible con {{framework}}. Seleccione un proveedor cuyo formato de API sea compatible con {{framework}} o cambie el framework del agente."
+    "This provider isn't compatible with {{framework}}. Pick a provider whose API format {{framework}} supports, or change the agent framework.": "Este proveedor no es compatible con {{framework}}. Seleccione un proveedor cuyo formato de API sea compatible con {{framework}} o cambie el framework del agente.",
+    "External status unconfirmed": "Estado externo sin confirmar",
+    "Remote access is off on this computer, but turning it off did not finish. The Off setting may not have been saved, and access may turn on again after restarting.": "El acceso remoto está desactivado en este equipo, pero la desactivación no se completó. Es posible que el ajuste no se haya guardado y que el acceso vuelva a activarse tras reiniciar.",
+    "Retry turning off": "Reintentar la desactivación",
+    "Local remote access remains enabled, but the latest external status check failed.": "El acceso remoto local sigue activado, pero la última comprobación del estado externo falló.",
+    "The latest external status check failed.": "La última comprobación del estado externo falló.",
+    "Saved browser link": "Enlace del navegador guardado"
   }
 }
