@@ -74,6 +74,7 @@
     "@radix-ui/react-focus-scope": "^1.1.11",
     "@rc-component/qrcode": "^2.0.0",
     "ajv": "^8.20.0",
+    "citeme-engine-wasm": "0.3.8",
     "diff": "9.0.0",
     "electron-updater": "^6.3.9",
     "fflate": "0.8.3",

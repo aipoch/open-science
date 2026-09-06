@@ -33,6 +33,12 @@ import type {
   RemoveVerifiedLegacyCopyInput,
   VerifiedLegacyCleanupOwner
 } from './verified-legacy-cleanup-owner'
+import {
+  contentBlobIdForVersion,
+  deleteStagingContentBlob,
+  markContentBlobAvailable,
+  registerContentBlob
+} from '../storage/content-blob-registry'
 
 const LIVE_COPY_TEMP_SUFFIX = '.live-copy.tmp'
 
@@ -445,6 +451,10 @@ class LegacyRecoveryOwner {
         const client = await this.options.getClient!()
         await runUploadTransaction(client, async (tx) => {
           await tx.uploadVersion.deleteMany({ where: { id: version.id, state: 'staging' } })
+          await deleteStagingContentBlob(
+            tx,
+            version.contentBlobId ?? contentBlobIdForVersion('upload-version', version.id)
+          )
           await tx.uploadFile.deleteMany({
             where: { id: version.uploadFileId, versions: { none: {} } }
           })
@@ -494,10 +504,31 @@ class LegacyRecoveryOwner {
           throw new Error('Upload publication is blocked by the Project or origin lifecycle.')
         }
       }
+      const contentBlobId =
+        current.contentBlobId ?? contentBlobIdForVersion('upload-version', current.id)
+      await registerContentBlob(tx, {
+        id: contentBlobId,
+        storageKey: current.contentStorageKey,
+        checksum: current.checksum,
+        sizeBytes: current.sizeBytes,
+        contentType: current.contentType,
+        state: current.state === 'ready' ? 'available' : 'staging',
+        createdAt: current.createdAt ?? undefined,
+        verifiedAt: current.state === 'ready' ? new Date() : undefined
+      })
+      await markContentBlobAvailable(tx, {
+        id: contentBlobId,
+        storageKey: current.contentStorageKey,
+        checksum: current.checksum,
+        sizeBytes: current.sizeBytes
+      })
       const updated =
-        current.state === 'ready'
+        current.state === 'ready' && current.contentBlobId === contentBlobId
           ? current
-          : await tx.uploadVersion.update({ where: { id: version.id }, data: { state: 'ready' } })
+          : await tx.uploadVersion.update({
+              where: { id: current.id },
+              data: { state: 'ready', contentBlobId }
+            })
       if (!lifecycle.writable) return updated
       const shouldAdvanceHead =
         !file.currentVersion || file.currentVersion.versionNumber < updated.versionNumber

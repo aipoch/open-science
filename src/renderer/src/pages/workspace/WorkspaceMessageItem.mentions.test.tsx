@@ -229,6 +229,108 @@ describe('WorkspaceMessageItem mention pills', () => {
     expect(openSessionById).toHaveBeenCalledWith('session-2', 'user')
   })
 
+  it('opens a Literature mention in a readable modal without leaving the Workspace', async () => {
+    const openLiteratureItem = vi.spyOn(useNavigationStore.getState(), 'openLiteratureItem')
+    const getLiteratureItem = vi.fn().mockResolvedValue(undefined)
+    ;(window as unknown as { api: unknown }).api = {
+      literature: { get: getLiteratureItem }
+    }
+    const title = 'Corrective Retrieval Augmented Generation'
+    const message = createMessage({
+      content: `Review @${title}`,
+      parts: [
+        { type: 'text', text: 'Review ' },
+        {
+          type: 'literature',
+          itemId: 'literature-item-1',
+          metadataRevision: 2,
+          item: {
+            itemType: 'journalArticle',
+            title,
+            abstract: '',
+            issuedText: '2024',
+            containerTitle: 'arXiv',
+            shortTitle: 'CRAG',
+            language: 'en',
+            rights: '',
+            url: '',
+            extra: '',
+            typeFields: {},
+            creators: [],
+            identifiers: []
+          }
+        }
+      ]
+    })
+
+    act(() => {
+      root.render(
+        <WorkspaceMessageItem
+          message={message}
+          onPreviewArtifact={noop}
+          onPreviewUploadAttachment={noop}
+          onOpenSkillMention={noop}
+          onPreviewMentionArtifact={noop}
+        />
+      )
+    })
+
+    const chip = container.querySelector(`[title="${title}"]`)
+    const label = chip?.querySelector(':scope > span')
+    expect(label?.className).toContain('min-w-0')
+    expect(label?.className).toContain('truncate')
+    expect(label?.textContent).toBe(`@${title}`)
+    clickButton(`Open ${title}`)
+    expect(document.body.querySelector('[role="dialog"]')?.textContent).toContain(title)
+    await vi.waitFor(() => expect(getLiteratureItem).toHaveBeenCalledWith('literature-item-1'))
+    expect(openLiteratureItem).not.toHaveBeenCalled()
+    expect(useNavigationStore.getState().view).toBe('home')
+  })
+
+  it('opens Project and Collection Library scopes', () => {
+    const openProjectLiterature = vi
+      .spyOn(useNavigationStore.getState(), 'openProjectLiterature')
+      .mockReturnValue(true)
+    const openCollectionLiterature = vi
+      .spyOn(useNavigationStore.getState(), 'openCollectionLiterature')
+      .mockReturnValue(true)
+    const message = createMessage({
+      content: '@Library @TP53 evidence',
+      parts: [
+        { type: 'literature-scope', scope: 'project' },
+        { type: 'text', text: ' ' },
+        {
+          type: 'literature-scope',
+          scope: 'collection',
+          collectionId: 'collection-1',
+          name: 'TP53 evidence'
+        }
+      ]
+    })
+
+    act(() => {
+      root.render(
+        <WorkspaceMessageItem
+          message={message}
+          projectId="project-1"
+          onPreviewArtifact={noop}
+          onPreviewUploadAttachment={noop}
+          onOpenSkillMention={noop}
+          onPreviewMentionArtifact={noop}
+        />
+      )
+    })
+
+    expect(container.textContent).toContain('@Library')
+    expect(container.textContent).toContain('@TP53 evidence')
+    clickButton("Open this project's Library")
+    expect(openProjectLiterature).toHaveBeenCalledWith('project-1', 'user')
+    clickButton('Open TP53 evidence')
+    expect(openCollectionLiterature).toHaveBeenCalledWith('collection-1', 'user')
+    expect(container.querySelector('[title="TP53 evidence"]')?.tagName).toBe('BUTTON')
+    expect(container.querySelector('button[aria-label^="Preview"]')).toBeNull()
+  })
+
   it('renders a linked-folder mention as a dark-gray @ pill over the relative path', () => {
     const onPreviewMentionArtifact = vi.fn()
     const linkedMessage = createMessage({

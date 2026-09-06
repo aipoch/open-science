@@ -2,7 +2,7 @@
 import { Maximize2, X } from 'lucide-react'
 import { useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Dialog } from 'radix-ui'
+import * as Dialog from '@/components/ui/dialog'
 
 import { dialogOverlayClassName, dialogPanelClassName } from '@/components/ui/dialog-chrome'
 import { useRetainedDialogValue } from '@/components/ui/use-retained-dialog-value'

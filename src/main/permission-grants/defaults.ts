@@ -3,8 +3,10 @@ import type { PrismaClient } from '@prisma/client'
 import type { PermissionCapability, PermissionGrantRecord } from '../../shared/permission-grants'
 import type { PermissionGrantRegistry } from './registry'
 
-// Keep the original marker so extending this list affects new installations only.
+// Keep the original marker and capability set stable so upgrades do not restore
+// legacy defaults that a user previously revoked.
 const DEFAULT_PERMISSION_GRANT_SEED_ID = 'global-customize-v1'
+const DEFAULT_LITERATURE_READ_PERMISSION_GRANT_SEED_ID = 'global-literature-read-v2'
 
 const DEFAULT_GLOBAL_CUSTOMIZE_PERMISSION_KEYS = [
   'customize:agent_create',
@@ -17,7 +19,7 @@ const DEFAULT_GLOBAL_CUSTOMIZE_PERMISSION_KEYS = [
   'customize:agent_detach_connector'
 ] as const
 
-const DEFAULT_GLOBAL_PERMISSION_CAPABILITIES: readonly PermissionCapability[] = [
+const LEGACY_DEFAULT_GLOBAL_PERMISSION_CAPABILITIES: readonly PermissionCapability[] = [
   ...DEFAULT_GLOBAL_CUSTOMIZE_PERMISSION_KEYS.map((key) => ({
     kind: 'customize_mutation' as const,
     key
@@ -30,6 +32,18 @@ const DEFAULT_GLOBAL_PERMISSION_CAPABILITIES: readonly PermissionCapability[] = 
   { kind: 'mcp_tool', key: 'mcp:open-science-notebook/search_memories' },
   { kind: 'mcp_tool', key: 'mcp:open-science-notebook/inspect_packages' },
   { kind: 'mcp_tool', key: 'mcp:open-science-plan/update_step_status' }
+]
+
+const DEFAULT_LITERATURE_READ_PERMISSION_CAPABILITIES: readonly PermissionCapability[] = [
+  { kind: 'mcp_tool', key: 'mcp:open-science-library/search_library' },
+  { kind: 'mcp_tool', key: 'mcp:open-science-library/read_library_abstract' },
+  { kind: 'mcp_tool', key: 'mcp:open-science-library/read_library_pdf' },
+  { kind: 'mcp_tool', key: 'mcp:open-science-library/format_references' }
+]
+
+const DEFAULT_GLOBAL_PERMISSION_CAPABILITIES: readonly PermissionCapability[] = [
+  ...LEGACY_DEFAULT_GLOBAL_PERMISSION_CAPABILITIES,
+  ...DEFAULT_LITERATURE_READ_PERMISSION_CAPABILITIES
 ]
 
 const missingDefaultGlobalPermissionCapabilities = (
@@ -62,26 +76,38 @@ const seedDefaultPermissionGrants = async (
   registry: PermissionGrantRegistry,
   client: PrismaClient
 ): Promise<void> => {
-  const applied = await client.permissionGrantSeed.findUnique({
-    where: { id: DEFAULT_PERMISSION_GRANT_SEED_ID },
-    select: { id: true }
-  })
-  if (applied) return
+  const applySeed = async (
+    id: string,
+    capabilities: readonly PermissionCapability[]
+  ): Promise<void> => {
+    const applied = await client.permissionGrantSeed.findUnique({
+      where: { id },
+      select: { id: true }
+    })
+    if (applied) return
 
-  for (const capability of DEFAULT_GLOBAL_PERMISSION_CAPABILITIES) {
-    await registry.remember({ capability, scope: { kind: 'global' } })
+    for (const capability of capabilities) {
+      await registry.remember({ capability, scope: { kind: 'global' } })
+    }
+
+    await client.permissionGrantSeed.upsert({
+      where: { id },
+      update: {},
+      create: { id, appliedAt: new Date() }
+    })
   }
 
-  await client.permissionGrantSeed.upsert({
-    where: { id: DEFAULT_PERMISSION_GRANT_SEED_ID },
-    update: {},
-    create: { id: DEFAULT_PERMISSION_GRANT_SEED_ID, appliedAt: new Date() }
-  })
+  await applySeed(DEFAULT_PERMISSION_GRANT_SEED_ID, LEGACY_DEFAULT_GLOBAL_PERMISSION_CAPABILITIES)
+  await applySeed(
+    DEFAULT_LITERATURE_READ_PERMISSION_GRANT_SEED_ID,
+    DEFAULT_LITERATURE_READ_PERMISSION_CAPABILITIES
+  )
 }
 
 export {
   DEFAULT_GLOBAL_CUSTOMIZE_PERMISSION_KEYS,
   DEFAULT_GLOBAL_PERMISSION_CAPABILITIES,
+  DEFAULT_LITERATURE_READ_PERMISSION_CAPABILITIES,
   missingDefaultGlobalPermissionCapabilities,
   restoreDefaultPermissionGrants,
   seedDefaultPermissionGrants

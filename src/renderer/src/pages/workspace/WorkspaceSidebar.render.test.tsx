@@ -2389,9 +2389,10 @@ describe('WorkspaceSidebar accessible render', () => {
     expect(onDeleteSession).toHaveBeenCalledWith(sessions[0])
   })
 
-  it('renders Customize between New and Files and wires both entries', async () => {
+  it('renders Customize, Files, and Literature after New and wires their entries', async () => {
     const { WorkspaceSidebarView } = await import('./WorkspaceSidebar')
     const onOpenFiles = vi.fn()
+    const onOpenLiterature = vi.fn()
     const onOpenSettings = vi.fn()
     const tree = WorkspaceSidebarView({
       now: Date.now(),
@@ -2405,6 +2406,7 @@ describe('WorkspaceSidebar accessible render', () => {
       onNewConversation: vi.fn(),
       isFilesOpen: true,
       onOpenFiles,
+      onOpenLiterature,
       onOpenSession: vi.fn(),
       onRenameSession: vi.fn(),
       canDownloadArtifacts: true,
@@ -2423,10 +2425,12 @@ describe('WorkspaceSidebar accessible render', () => {
     const newButtonIndex = buttons.findIndex((button) => getTextContent(button).trim() === 'New')
     const customizeButton = buttons.find((button) => getTextContent(button).trim() === 'Customize')
     const filesButton = buttons.find((button) => getTextContent(button).trim() === 'Files')
+    const literatureButton = buttons.find((button) => getTextContent(button).trim() === 'Library')
 
     expect(newButtonIndex).toBeGreaterThanOrEqual(0)
     expect(buttons[newButtonIndex + 1]).toBe(customizeButton)
     expect(buttons[newButtonIndex + 2]).toBe(filesButton)
+    expect(buttons[newButtonIndex + 3]).toBe(literatureButton)
     expect(collectElements(customizeButton).some((element) => element.type === Toolbox)).toBe(true)
     expect(filesButton?.props['aria-controls']).toBe('right-panel')
     expect(filesButton?.props['aria-pressed']).toBe(true)
@@ -2438,6 +2442,10 @@ describe('WorkspaceSidebar accessible render', () => {
     expect(filesButton?.props.onClick).toBeTypeOf('function')
     ;(filesButton?.props.onClick as () => void)()
     expect(onOpenFiles).toHaveBeenCalledTimes(1)
+
+    expect(literatureButton?.props.onClick).toBeTypeOf('function')
+    ;(literatureButton?.props.onClick as () => void)()
+    expect(onOpenLiterature).toHaveBeenCalledTimes(1)
   })
 
   it('wires the View notebook menu item to the matching session', async () => {

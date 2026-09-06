@@ -210,4 +210,114 @@ describe('ReadingContextPicker', () => {
       })
     )
   })
+
+  it('links an eligible PDF selected from the user Literature library', async () => {
+    const search = vi.fn().mockResolvedValue({
+      entries: [
+        {
+          id: 'literature-item-1',
+          item: {
+            itemType: 'journalArticle',
+            title: 'Corrective Retrieval Augmented Generation',
+            abstract: '',
+            issuedText: '2024',
+            issuedYear: 2024,
+            containerTitle: 'arXiv',
+            shortTitle: 'CRAG',
+            language: 'en',
+            rights: '',
+            url: '',
+            extra: '',
+            typeFields: {},
+            creators: [
+              {
+                nameMode: 'person',
+                givenName: 'Shi-Qi',
+                familyName: 'Yan',
+                creatorType: 'author'
+              }
+            ],
+            identifiers: []
+          },
+          attachments: [
+            {
+              id: 'attachment-1',
+              kind: 'fullText',
+              title: '',
+              sortOrder: 0,
+              versions: [
+                {
+                  id: 'literature-version-1',
+                  versionNumber: 1,
+                  filename: 'crag.pdf',
+                  contentType: 'application/pdf',
+                  sizeBytes: 629,
+                  checksum: 'a'.repeat(64),
+                  pageCount: 14,
+                  createdAt: 2
+                }
+              ],
+              createdAt: 2,
+              updatedAt: 2
+            }
+          ],
+          projectIds: ['project-1'],
+          collectionIds: [],
+          metadataRevision: 1,
+          createdAt: 1,
+          updatedAt: 2
+        }
+      ]
+    })
+    const literatureSource = {
+      sourceKind: 'literature-attachment-version' as const,
+      sourceVersionId: 'literature-version-1'
+    }
+    const filterPdfContextCandidates = vi.fn().mockResolvedValue({
+      sources: [literatureSource],
+      pendingAttachmentIds: []
+    })
+    const onSelect = vi.fn().mockResolvedValue(undefined)
+    vi.stubGlobal('api', {
+      projectFiles: { listFiles: vi.fn().mockResolvedValue({ items: [], totalCount: 0 }) },
+      literature: { search },
+      sessions: { filterPdfContextCandidates }
+    })
+
+    render(
+      <ReadingContextPicker
+        projectId="project-1"
+        linkedSources={[]}
+        atLimit={false}
+        onSelect={onSelect}
+      >
+        <button type="button">Reading</button>
+      </ReadingContextPicker>
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: 'Reading' }))
+
+    expect(
+      await screen.findByRole('option', { name: /Corrective Retrieval Augmented Generation/u })
+    ).not.toBeNull()
+    expect(search).toHaveBeenCalledWith({
+      scope: 'library',
+      projectId: 'project-1',
+      limit: 100
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Library' }))
+
+    const option = await screen.findByRole('option', {
+      name: /Corrective Retrieval Augmented Generation/u
+    })
+    expect(option.textContent).toContain('Yan, Shi-Qi · 2024')
+    expect(search).toHaveBeenCalledWith({ scope: 'library', limit: 100 })
+    expect(filterPdfContextCandidates).toHaveBeenCalledWith({
+      projectId: 'project-1',
+      sources: [literatureSource]
+    })
+
+    fireEvent.click(option)
+    await waitFor(() => expect(onSelect).toHaveBeenCalledWith(literatureSource))
+  })
 })

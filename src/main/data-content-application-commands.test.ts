@@ -99,6 +99,7 @@ const createDependencies = () => {
     readPreview: vi.fn(async () => ({ content: '', encoding: 'utf8', size: 0, truncated: false })),
     getLineage: vi.fn(async () => undefined),
     getVersionProvenance: vi.fn(),
+    getVersionLiterature: vi.fn(),
     getVersionExecution: vi.fn(),
     getVersionMessages: vi.fn(),
     getVersionReview: vi.fn(),
@@ -293,7 +294,7 @@ const dispatchCommand = (
 }
 
 describe('Data and content application commands', () => {
-  it('owns exactly the 58 current data and content invoke channels', () => {
+  it('owns exactly the current data and content invoke channels', () => {
     expect(registeredCommands()).toEqual(
       [
         'artifacts:finalize-run',
@@ -301,6 +302,7 @@ describe('Data and content application commands', () => {
         'artifacts:get-code-reconstruction',
         'artifacts:get-lineage',
         'artifacts:get-version-execution',
+        'artifacts:get-version-literature',
         'artifacts:get-version-messages',
         'artifacts:get-version-provenance',
         'artifacts:get-version-review',
@@ -418,6 +420,11 @@ describe('Data and content application commands', () => {
         key: 'artifactGetVersionProvenance',
         args: [request('version-provenance')],
         owner: deps.artifacts.getVersionProvenance
+      },
+      {
+        key: 'artifactGetVersionLiterature',
+        args: [request('version-literature')],
+        owner: deps.artifacts.getVersionLiterature
       },
       {
         key: 'artifactGetVersionReview',

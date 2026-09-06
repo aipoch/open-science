@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Archive, Download, LoaderCircle, X } from 'lucide-react'
-import { Dialog } from 'radix-ui'
+import * as Dialog from '@/components/ui/dialog'
 
 import { Button } from '@/components/ui/button'
 import {

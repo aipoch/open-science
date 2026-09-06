@@ -30,8 +30,9 @@ import { MaskedPasswordField } from './MaskedPasswordField'
 import { DeviceCredentialEditor } from './DeviceCredentialEditor'
 import { localizeCredentialError } from './credential-error-message'
 import { SettingsSection } from './SettingsLayout'
+import { UnpaywallCredentialForm } from './UnpaywallCredentialForm'
 
-export type CredentialsServiceId = 'github' | 'literature' | 'openalex'
+export type CredentialsServiceId = 'github' | 'literature' | 'openalex' | 'unpaywall'
 export type CredentialsView =
   | { kind: 'list' }
   | { kind: 'service'; serviceId: CredentialsServiceId }
@@ -245,6 +246,21 @@ export function CredentialsPanel({
   }
 
   if (view.kind === 'service') {
+    if (view.serviceId === 'unpaywall')
+      return (
+        <div className="space-y-5 p-5">
+          <div>
+            <h2 className="text-base font-semibold">{t('Unpaywall')}</h2>
+            <p className="mt-1 text-sm text-muted-foreground">
+              {t('Open-access PDFs via DOI. Requires a contact email; no API key needed.')}
+            </p>
+          </div>
+          <UnpaywallCredentialForm
+            onSaved={() => onNavigate({ kind: 'list' })}
+            onCancel={() => onNavigate({ kind: 'list' })}
+          />
+        </div>
+      )
     const isDesktopOnlyService = view.serviceId === 'github' || view.serviceId === 'openalex'
     if (isDesktopOnlyService && desktopCredentialAvailability === 'checking') {
       return <p className="p-5 text-sm text-muted-foreground">{t('Checking…')}</p>
@@ -414,6 +430,14 @@ export function CredentialsPanel({
       description: t('API key required by OpenAlex tools in the Literature Connector.'),
       configured: openAlex.hasApiKey,
       desktopOnly: true,
+      Icon: BookOpen
+    },
+    {
+      id: 'unpaywall' as const,
+      label: t('Unpaywall'),
+      description: t('Contact email for Unpaywall full-text searches.'),
+      configured: Boolean(ncbi.contactEmail),
+      desktopOnly: false,
       Icon: BookOpen
     }
   ]

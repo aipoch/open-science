@@ -5,7 +5,7 @@ import type { ProjectFileOriginSession } from '../../../shared/project-files'
 import type { FindingLocator } from '../../../shared/reviewer'
 import type { UploadedAttachment } from '../../../shared/uploads'
 import { getUploadedAttachmentPath } from '../../../shared/uploads'
-import type { PdfReadingPosition } from '../../../shared/session-persistence'
+import type { PdfReadingPosition, SessionPdfSourceKind } from '../../../shared/session-persistence'
 
 import { resolvePlanFileProjection } from '../pages/workspace/session-plan/plan-file-projection'
 import {
@@ -39,7 +39,7 @@ export type PreviewFileFormat =
 // Distinguishes generated artifacts from user uploads, notebook inputs, and local ("This computer")
 // files when preview readers and header actions differ. 'local' files live outside app storage:
 // their path is an absolute filesystem path read via window.api.localFs.
-export type PreviewFileSource = 'artifact' | 'upload' | 'notebook-input' | 'local'
+export type PreviewFileSource = 'artifact' | 'upload' | 'notebook-input' | 'literature' | 'local'
 export const PROJECT_FILES_PREVIEW_ID = 'tool:project:files'
 
 type PreviewItemBase = {
@@ -91,8 +91,8 @@ export type PendingPdfContextSelection =
   | { kind: 'staged-upload'; attachmentId: string; previewItemId: string }
   | {
       kind: 'version'
-      sourceKind: 'artifact-version' | 'upload-version'
-      sourceFileId: string
+      sourceKind: SessionPdfSourceKind
+      sourceFileId?: string
       sourceVersionId: string
       previewItemId: string
     }
@@ -101,6 +101,26 @@ export const pendingPdfContextBindingId = (selection: PendingPdfContextSelection
   selection.kind === 'staged-upload'
     ? `staged:${selection.attachmentId}`
     : `version:${selection.sourceKind}:${selection.sourceVersionId}`
+
+export type PendingPdfContext =
+  | PendingPdfContextSelection
+  | { kind: 'multiple'; selections: readonly PendingPdfContextSelection[] }
+
+export const pendingPdfContextSelections = (
+  context: PendingPdfContext | undefined
+): readonly PendingPdfContextSelection[] =>
+  !context ? [] : context.kind === 'multiple' ? context.selections : [context]
+
+export const createPendingPdfContext = (
+  selections: readonly PendingPdfContextSelection[]
+): PendingPdfContext | undefined => {
+  const unique = [
+    ...new Map(
+      selections.map((selection) => [pendingPdfContextBindingId(selection), selection])
+    ).values()
+  ]
+  return unique.length > 1 ? { kind: 'multiple', selections: unique } : unique[0]
+}
 
 type StoredPreviewItem = PreviewItem & {
   createdAt: number
@@ -128,7 +148,7 @@ type PreviewWorkbenchStoreData = PreviewSlice & {
   byProject: Record<string, PreviewSlice>
   // A not-yet-created Session has no durable runtime context. Keep only the staged Upload identity
   // here until first-send finalization turns it into an immutable Session PDF binding.
-  pendingPdfContextByProject: Record<string, PendingPdfContextSelection>
+  pendingPdfContextByProject: Record<string, PendingPdfContext>
   // Upload ids currently attached to the active new-conversation draft, mirrored from the composer
   // controller. A staged-upload pending selection can only finalize through one of these, so
   // link affordances for any other staged upload (e.g. a preview tab whose attachment was removed
@@ -150,10 +170,7 @@ type PreviewWorkbenchStore = PreviewWorkbenchStoreData & {
     skipGuard?: boolean
   ) => boolean
   reconcileFinalizedUploads: (uploads: UploadedAttachment[]) => void
-  setPendingPdfContext: (
-    projectId: string,
-    selection: PendingPdfContextSelection | undefined
-  ) => void
+  setPendingPdfContext: (projectId: string, selection: PendingPdfContext | undefined) => void
   clearPendingPdfContext: (projectId: string, selection: PendingPdfContextSelection) => void
   setDraftStagedUploadIds: (ids: string[]) => void
   setPdfReadingPosition: (bindingId: string, position: PdfReadingPosition) => void
@@ -280,13 +297,21 @@ const isDurablePreviewItem = (item: PreviewItem): boolean =>
 const mergeRestoredPreviewSlice = (
   current: PreviewSlice,
   restored: RestoredPreviewSlice,
-  projectId: string
+  projectId: string,
+  pendingReading: PendingPdfContext | undefined
 ): PreviewSlice => {
   const authoritative = restoredToSlice(restored, projectId)
   const authoritativeIds = new Set(authoritative.items.map((item) => item.id))
-  const runtimeItems = current.items.filter(
-    (item) => !isDurablePreviewItem(item) && !authoritativeIds.has(item.id)
+  // Reading can start before Workspace mounts its persistence hook. Those live draft PDFs
+  // must survive an older snapshot, just like runtime-owned tool tabs.
+  const pendingIds = new Set(
+    pendingPdfContextSelections(pendingReading).map((item) => item.previewItemId)
   )
+  const runtimeItems = current.items.filter(
+    (item) =>
+      pendingIds.has(item.id) || (!isDurablePreviewItem(item) && !authoritativeIds.has(item.id))
+  )
+  const runtimeIds = new Set(runtimeItems.map((item) => item.id))
   const activeRuntimeItem = runtimeItems.some((item) => item.id === current.activeItemId)
   const activeItemId = activeRuntimeItem
     ? current.activeItemId
@@ -294,7 +319,7 @@ const mergeRestoredPreviewSlice = (
 
   return {
     ...authoritative,
-    items: [...authoritative.items, ...runtimeItems],
+    items: [...authoritative.items.filter((item) => !runtimeIds.has(item.id)), ...runtimeItems],
     activeItemId,
     panelState:
       activeRuntimeItem || (!authoritative.activeItemId && runtimeItems.length > 0)
@@ -431,7 +456,12 @@ export const usePreviewWorkbenchStore = create<PreviewWorkbenchStore>((set, get)
         if (state.activeProjectId === projectId) {
           if (!restored) return state
 
-          const targetSlice = mergeRestoredPreviewSlice(state, restored, projectId)
+          const targetSlice = mergeRestoredPreviewSlice(
+            state,
+            restored,
+            projectId,
+            state.pendingPdfContextByProject[projectId]
+          )
           const expandedToolItemId = targetSlice.items.some(
             (item) => item.id === state.expandedToolItemId && !isDurablePreviewItem(item)
           )
@@ -458,7 +488,12 @@ export const usePreviewWorkbenchStore = create<PreviewWorkbenchStore>((set, get)
 
         const cachedSlice = byProject[projectId]
         const targetSlice = restored
-          ? mergeRestoredPreviewSlice(cachedSlice ?? createEmptyPreviewSlice(), restored, projectId)
+          ? mergeRestoredPreviewSlice(
+              cachedSlice ?? createEmptyPreviewSlice(),
+              restored,
+              projectId,
+              state.pendingPdfContextByProject[projectId]
+            )
           : (cachedSlice ?? createEmptyPreviewSlice())
 
         // The active slice lives at top level, never duplicated in the stash.
@@ -553,10 +588,15 @@ export const usePreviewWorkbenchStore = create<PreviewWorkbenchStore>((set, get)
 
   clearPendingPdfContext: (projectId, selection) => {
     set((state) => {
-      const current = state.pendingPdfContextByProject[projectId]
-      if (JSON.stringify(current) !== JSON.stringify(selection)) return state
+      const current = pendingPdfContextSelections(state.pendingPdfContextByProject[projectId])
+      const remaining = current.filter(
+        (entry) => JSON.stringify(entry) !== JSON.stringify(selection)
+      )
+      if (remaining.length === current.length) return state
       const pendingPdfContextByProject = { ...state.pendingPdfContextByProject }
-      delete pendingPdfContextByProject[projectId]
+      const context = createPendingPdfContext(remaining)
+      if (context) pendingPdfContextByProject[projectId] = context
+      else delete pendingPdfContextByProject[projectId]
       return { pendingPdfContextByProject }
     })
   },

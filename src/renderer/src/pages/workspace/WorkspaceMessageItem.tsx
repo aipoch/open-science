@@ -46,7 +46,7 @@ import type { ArtifactPreviewResult } from '../../../../shared/artifacts'
 import type { ProvenanceMessagePart } from '../../../../shared/artifact-provenance'
 import type { AcpTurnTokenUsage } from '../../../../shared/acp'
 import type { PersistedRuntimeSegment } from '../../../../shared/conversation-graph'
-import type { MessagePart } from '../../../../shared/session-persistence'
+import type { LiteratureReference, MessagePart } from '../../../../shared/session-persistence'
 import {
   isComputeJobCompletionAttribution,
   isComputeJobCompletionPresentation,
@@ -98,6 +98,7 @@ import {
 } from '../../../../shared/annotations'
 import { annotationValidationMessage } from './annotations/annotation-validation-message'
 import type { SendEditedMessage } from './workspace-edited-message'
+import { ArtifactLiteratureDetailDialog } from './ArtifactLiteratureDetailDialog'
 
 type EditAnnotationTarget = {
   messageId: string
@@ -111,6 +112,7 @@ type MessageArtifact = NonNullable<ChatSession['artifacts']>[number] & {
 type MessageUploadAttachment = NonNullable<ChatMessage['uploads']>[number]
 type MessageImage = NonNullable<ChatMessage['images']>[number]
 type ArtifactMentionPart = Extract<MessagePart, { type: 'artifact' }>
+type LiteratureMentionPart = Extract<MessagePart, { type: 'literature' }>
 type MessageRuntimeIdentity = Partial<
   Pick<PersistedRuntimeSegment, 'frameworkId' | 'backendId' | 'model'>
 >
@@ -649,61 +651,89 @@ const MessagePartsMeasurement = ({
 }: {
   parts: Array<MessagePart | ProvenanceMessagePart>
   isStatic: boolean
-}): React.JSX.Element => (
-  <p className="whitespace-pre-wrap break-words [overflow-wrap:anywhere]">
-    {parts.map((part, index) => {
-      if (part.type === 'skill') {
+}): React.JSX.Element => {
+  const { t } = useTranslation()
+  return (
+    <p className="whitespace-pre-wrap break-words [overflow-wrap:anywhere]">
+      {parts.map((part, index) => {
+        if (part.type === 'skill') {
+          return (
+            <span
+              key={index}
+              data-slot="user-message-measurement-part"
+              data-part-type="skill"
+              data-content={`/${part.name}`}
+              className={cn(mentionPillClassName, measurementContentClassName)}
+            />
+          )
+        }
+
+        if (part.type === 'artifact') {
+          const isLinkedFolder = !isStatic && 'source' in part && part.source === 'linked-folder'
+          return (
+            <span
+              key={index}
+              data-slot="user-message-measurement-part"
+              data-part-type="artifact"
+              data-content={`@${isLinkedFolder ? part.relativePath : part.name}`}
+              className={cn(
+                isStatic ? mentionPillClassName : artifactMentionPillClassName,
+                measurementContentClassName
+              )}
+            />
+          )
+        }
+
+        if (part.type === 'session') {
+          return (
+            <span
+              key={index}
+              data-slot="user-message-measurement-part"
+              data-part-type="session"
+              data-content={`#${part.title}`}
+              className={cn(mentionPillClassName, measurementContentClassName)}
+            />
+          )
+        }
+
+        if (part.type === 'literature') {
+          return (
+            <span
+              key={index}
+              data-slot="user-message-measurement-part"
+              data-part-type="literature"
+              data-content={`@${part.item.title}`}
+              className={cn(mentionPillClassName, measurementContentClassName)}
+            />
+          )
+        }
+
+        if (part.type === 'literature-scope') {
+          const name = part.scope === 'collection' ? part.name : t('Library')
+          return (
+            <span
+              key={index}
+              data-slot="user-message-measurement-part"
+              data-part-type="literature-scope"
+              data-content={`@${name}`}
+              className={cn(mentionPillClassName, measurementContentClassName)}
+            />
+          )
+        }
+
         return (
           <span
             key={index}
             data-slot="user-message-measurement-part"
-            data-part-type="skill"
-            data-content={`/${part.name}`}
-            className={cn(mentionPillClassName, measurementContentClassName)}
+            data-part-type="text"
+            data-content={part.text}
+            className={cn('whitespace-pre-wrap', measurementContentClassName)}
           />
         )
-      }
-
-      if (part.type === 'artifact') {
-        const isLinkedFolder = !isStatic && 'source' in part && part.source === 'linked-folder'
-        return (
-          <span
-            key={index}
-            data-slot="user-message-measurement-part"
-            data-part-type="artifact"
-            data-content={`@${isLinkedFolder ? part.relativePath : part.name}`}
-            className={cn(
-              isStatic ? mentionPillClassName : artifactMentionPillClassName,
-              measurementContentClassName
-            )}
-          />
-        )
-      }
-
-      if (part.type === 'session') {
-        return (
-          <span
-            key={index}
-            data-slot="user-message-measurement-part"
-            data-part-type="session"
-            data-content={`#${part.title}`}
-            className={cn(mentionPillClassName, measurementContentClassName)}
-          />
-        )
-      }
-
-      return (
-        <span
-          key={index}
-          data-slot="user-message-measurement-part"
-          data-part-type="text"
-          data-content={part.text}
-          className={cn('whitespace-pre-wrap', measurementContentClassName)}
-        />
-      )
-    })}
-  </p>
-)
+      })}
+    </p>
+  )
+}
 
 type CollapsibleUserMessageContentProps = {
   children: ReactNode
@@ -1154,12 +1184,16 @@ const MessagePdfReadingContext = ({
 const MessagePartsContent = ({
   parts,
   isStatic = false,
+  projectId,
   onOpenSkillMention,
+  onOpenLiteratureMention,
   onPreviewMentionArtifact
 }: {
   parts: Array<MessagePart | ProvenanceMessagePart>
   isStatic?: boolean
+  projectId?: string
   onOpenSkillMention: (skillId: string, name: string) => void
+  onOpenLiteratureMention: (part: LiteratureMentionPart) => void
   onPreviewMentionArtifact: (part: ArtifactMentionPart) => void
 }): React.JSX.Element => {
   const { t } = useTranslation()
@@ -1259,6 +1293,78 @@ const MessagePartsContent = ({
             >
               #{part.title}
             </button>
+          )
+        }
+
+        if (part.type === 'literature') {
+          return (
+            <button
+              key={index}
+              type="button"
+              className={cn(
+                artifactMentionPillClassName,
+                mentionButtonClassName,
+                'bg-mention-chip text-mention-chip-foreground'
+              )}
+              onClick={() => onOpenLiteratureMention(part)}
+              aria-label={t('Open {{name}}', { name: part.item.title })}
+              title={part.item.title}
+            >
+              <span className="min-w-0 truncate">@{part.item.title}</span>
+            </button>
+          )
+        }
+
+        if (part.type === 'literature-scope') {
+          const name = part.scope === 'collection' ? part.name : t('Library')
+          if (!isStatic && part.scope === 'project' && projectId) {
+            return (
+              <button
+                key={index}
+                type="button"
+                className={cn(
+                  mentionPillClassName,
+                  mentionButtonClassName,
+                  'bg-accent text-accent-foreground'
+                )}
+                onClick={() =>
+                  useNavigationStore.getState().openProjectLiterature(projectId, 'user')
+                }
+                aria-label={t("Open this project's Library")}
+                title={name}
+              >
+                @{name}
+              </button>
+            )
+          }
+          if (!isStatic && part.scope === 'collection') {
+            return (
+              <button
+                key={index}
+                type="button"
+                className={cn(
+                  mentionPillClassName,
+                  mentionButtonClassName,
+                  'bg-accent text-accent-foreground'
+                )}
+                onClick={() =>
+                  useNavigationStore.getState().openCollectionLiterature(part.collectionId, 'user')
+                }
+                aria-label={t('Open {{name}}', { name })}
+                title={name}
+              >
+                @{name}
+              </button>
+            )
+          }
+          return (
+            <span
+              key={index}
+              className={cn(mentionPillClassName, 'bg-accent text-accent-foreground')}
+              title={name}
+            >
+              @{name}
+            </span>
           )
         }
 
@@ -1370,6 +1476,8 @@ const WorkspaceMessageItemImpl = ({
   const editAnnotationsRef = useRef(editAnnotations)
   const restoreEditButtonFocusRef = useRef(false)
   const [editFocusRequest, setEditFocusRequest] = useState(0)
+  const [selectedLiteratureReference, setSelectedLiteratureReference] =
+    useState<LiteratureReference>()
 
   const updateEditAnnotations = (next: Annotation[]): AnnotationValidationError | undefined => {
     const validation = validateAnnotations(next, docToText(editDocRef.current))
@@ -1489,13 +1597,17 @@ const WorkspaceMessageItemImpl = ({
       <MessagePartsContent
         parts={staticParts}
         isStatic
+        projectId={projectId}
         onOpenSkillMention={onOpenSkillMention}
+        onOpenLiteratureMention={setSelectedLiteratureReference}
         onPreviewMentionArtifact={onPreviewMentionArtifact}
       />
     ) : message.parts && message.parts.length > 0 ? (
       <MessagePartsContent
         parts={message.parts}
+        projectId={projectId}
         onOpenSkillMention={onOpenSkillMention}
+        onOpenLiteratureMention={setSelectedLiteratureReference}
         onPreviewMentionArtifact={onPreviewMentionArtifact}
       />
     ) : message.content ? (
@@ -1504,7 +1616,12 @@ const WorkspaceMessageItemImpl = ({
   const hasInteractiveUserMessageContent = Boolean(
     !staticParts &&
     message.parts?.some(
-      (part) => part.type === 'skill' || part.type === 'artifact' || part.type === 'session'
+      (part) =>
+        part.type === 'skill' ||
+        part.type === 'artifact' ||
+        part.type === 'literature' ||
+        part.type === 'session' ||
+        (part.type === 'literature-scope' && part.scope === 'project' && Boolean(projectId))
     )
   )
 
@@ -1865,6 +1982,14 @@ const WorkspaceMessageItemImpl = ({
         onCancel={() => setIsConfirmingEdit(false)}
         onConfirm={confirmEditedResend}
       />
+      {selectedLiteratureReference ? (
+        <ArtifactLiteratureDetailDialog
+          reference={selectedLiteratureReference}
+          onOpenChange={(open) => {
+            if (!open) setSelectedLiteratureReference(undefined)
+          }}
+        />
+      ) : null}
     </MessageScrollerItem>
   )
 }

@@ -2121,6 +2121,42 @@ describe('workspace durable elicitation', () => {
 })
 
 describe('workspace agent message sending', () => {
+  it('clears only committed PDFs from a multiple Reading draft', () => {
+    usePreviewWorkbenchStore.setState(createInitialPreviewWorkbenchState())
+    const selections = ['1', '2', '3'].map((id) => ({
+      kind: 'version' as const,
+      sourceKind: 'literature-attachment-version' as const,
+      sourceVersionId: `version-${id}`,
+      previewItemId: `literature:version-${id}`
+    }))
+    const pending = { kind: 'multiple' as const, selections }
+    usePreviewWorkbenchStore.getState().setPendingPdfContext('project-1', pending)
+    usePreviewWorkbenchStore.getState().setPendingPdfContext('project-2', pending)
+
+    clearLinkedPendingPdfContext('project-1', pending, {
+      version: 1,
+      bindings: ['1', '3'].map((id) => ({
+        version: 1,
+        bindingId: `binding-${id}`,
+        sourceKind: 'literature-attachment-version',
+        sourceFileId: `attachment-${id}`,
+        sourceVersionId: `version-${id}`,
+        name: `paper-${id}.pdf`,
+        mimeType: 'application/pdf',
+        sizeBytes: 42,
+        checksum: 'a'.repeat(64),
+        linkedAt: 1
+      }))
+    })
+
+    expect(usePreviewWorkbenchStore.getState().pendingPdfContextByProject['project-1']).toEqual(
+      selections[1]
+    )
+    expect(usePreviewWorkbenchStore.getState().pendingPdfContextByProject['project-2']).toEqual(
+      pending
+    )
+  })
+
   it('clears only the pending PDF selection proven by the linked context', () => {
     usePreviewWorkbenchStore.setState(createInitialPreviewWorkbenchState())
     const sentSelection = {

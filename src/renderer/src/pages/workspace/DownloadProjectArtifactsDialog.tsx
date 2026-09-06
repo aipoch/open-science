@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Archive, Download, LoaderCircle, X } from 'lucide-react'
-import { Dialog } from 'radix-ui'
+import * as Dialog from '@/components/ui/dialog'
 import { useTranslation } from 'react-i18next'
 import type { TFunction } from 'i18next'
 

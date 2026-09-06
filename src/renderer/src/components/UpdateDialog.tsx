@@ -1,5 +1,5 @@
 import { Download, ExternalLink, RefreshCw, X } from 'lucide-react'
-import { Dialog } from 'radix-ui'
+import * as Dialog from '@/components/ui/dialog'
 import { Trans, useTranslation } from 'react-i18next'
 
 import { DownloadProgressLine } from '@/components/DownloadProgressLine'

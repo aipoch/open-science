@@ -8,6 +8,12 @@ import type { ArtifactDurability } from './durability'
 import { sha256 } from './provenance-canonical'
 import { readOptionalFile, resolveStorageKey, storageKey } from './provenance-storage'
 import { ArtifactCompatibilityScanIncompleteError, type ArtifactRepository } from './repository'
+import {
+  contentBlobIdForVersion,
+  deleteStagingContentBlob,
+  markContentBlobAvailable,
+  registerContentBlob
+} from '../storage/content-blob-registry'
 import type {
   CompatibilityRoutingPublicationOptions,
   PersistedVersionFileRecord,
@@ -174,13 +180,29 @@ export class ArtifactProvenanceStagingRecovery {
 
     const client = await this.options.getClient()
     const recovered = await client.$transaction(async (transaction) => {
+      const contentBlobId =
+        version.contentBlobId ?? contentBlobIdForVersion('artifact-version', version.id)
+      await registerContentBlob(transaction, {
+        id: contentBlobId,
+        storageKey: version.contentStorageKey,
+        checksum: version.checksum,
+        sizeBytes: version.sizeBytes,
+        contentType: version.contentType,
+        createdAt: version.createdAt
+      })
+      await markContentBlobAvailable(transaction, {
+        id: contentBlobId,
+        storageKey: version.contentStorageKey,
+        checksum: version.checksum,
+        sizeBytes: version.sizeBytes
+      })
       await transaction.artifactLineage.update({
         where: { id: version.artifactId },
         data: { filename: requestedFilename }
       })
       return transaction.artifactVersion.update({
         where: { id: version.id },
-        data: { state: 'pending' }
+        data: { state: 'pending', contentBlobId }
       })
     })
     return this.options.projectVersionFile(
@@ -249,8 +271,17 @@ export class ArtifactProvenanceStagingRecovery {
         )
         await moveDirectoryIfPresent(stagingDirectory, join(quarantineDirectory, 'staging'))
         await moveDirectoryIfPresent(finalDirectory, join(quarantineDirectory, 'published'))
-        const deleted = await client.artifactVersion.deleteMany({
-          where: { id: version.id, state: 'staging' }
+        const deleted = await client.$transaction(async (transaction) => {
+          const deletion = await transaction.artifactVersion.deleteMany({
+            where: { id: version.id, state: 'staging' }
+          })
+          if (deletion.count === 1) {
+            await deleteStagingContentBlob(
+              transaction,
+              version.contentBlobId ?? contentBlobIdForVersion('artifact-version', version.id)
+            )
+          }
+          return deletion
         })
         if (deleted.count === 1) result.quarantinedVersionIds.push(version.id)
       }

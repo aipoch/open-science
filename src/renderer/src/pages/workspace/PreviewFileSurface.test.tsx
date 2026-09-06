@@ -5,6 +5,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import {
   createInitialPreviewWorkbenchState,
+  createPendingPdfContext,
+  pendingPdfContextSelections,
   type PreviewFileItem,
   usePreviewWorkbenchStore
 } from '@/stores/preview-workbench-store'
@@ -29,6 +31,7 @@ vi.mock('./ArtifactProvenancePanel', () => ({
     item: PreviewFileItem
     onClose: () => void
     onVersionChange?: (item: PreviewFileItem) => boolean
+    initialTab?: 'sources'
   }) => {
     provenancePanelSpy(props)
     return (
@@ -2672,7 +2675,11 @@ describe('PreviewFileSurface Provenance entry', () => {
     await click(container.querySelector('[aria-label="Open Provenance for sin.png"]'))
 
     expect(container.querySelector('[data-testid="provenance-panel"]')).not.toBeNull()
-    expect(container.querySelector('[data-testid="preview-content"]')).toBeNull()
+    expect(
+      container
+        .querySelector('[data-testid="preview-file-content-surface"]')
+        ?.classList.contains('hidden')
+    ).toBe(true)
     expect(provenancePanelSpy).toHaveBeenCalledWith(
       expect.objectContaining({
         item: expect.objectContaining({
@@ -2692,6 +2699,119 @@ describe('PreviewFileSurface Provenance entry', () => {
 
     expect(container.querySelector('[data-testid="provenance-panel"]')).toBeNull()
     expect(container.querySelector('[data-testid="preview-content"]')).not.toBeNull()
+  })
+
+  it('opens Literature directly from an Artifact Version that cites references', async () => {
+    vi.mocked(window.api.artifacts.getLineage).mockResolvedValue({
+      artifactId: 'artifact-1',
+      filename: 'sin.png',
+      originSession: { sessionId: 'session-1', state: 'active', title: 'Sine' },
+      versions: [{ ...descriptor, hasLiterature: true }, secondDescriptor]
+    })
+
+    await act(async () => {
+      root.render(<PreviewFileSurface item={item} onClose={vi.fn()} />)
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    const entry = container.querySelector<HTMLButtonElement>(
+      '[data-testid="artifact-literature-entry"]'
+    )
+    expect(entry).not.toBeNull()
+    await click(entry)
+
+    expect(container.querySelector('[data-testid="provenance-panel"]')).not.toBeNull()
+    expect(provenancePanelSpy).toHaveBeenLastCalledWith(
+      expect.objectContaining({ initialTab: 'sources' })
+    )
+  })
+
+  it('docks Provenance by preview width, preserves the document, and respects dismissal', async () => {
+    let resizePreview: (width: number) => void = () => undefined
+    const OriginalResizeObserver = globalThis.ResizeObserver
+    vi.stubGlobal(
+      'ResizeObserver',
+      class {
+        constructor(private callback: ResizeObserverCallback) {}
+        observe(target: Element): void {
+          if (target.getAttribute('data-testid') === 'preview-file-root') {
+            resizePreview = (width) =>
+              this.callback(
+                [{ target, contentRect: { width } } as ResizeObserverEntry],
+                this as unknown as ResizeObserver
+              )
+          }
+        }
+        unobserve(): void {
+          /* no-op measurement stub */
+        }
+        disconnect(): void {
+          /* no-op measurement stub */
+        }
+      }
+    )
+    try {
+      await act(async () =>
+        root.render(<PreviewFileSurface item={item} onClose={vi.fn()} provenanceEntry="leading" />)
+      )
+      const content = container.querySelector('[data-testid="preview-content"]')
+      expect(container.querySelector('[data-testid="provenance-panel"]')).toBeNull()
+      await act(async () => resizePreview(900))
+      expect(container.querySelector('[data-testid="provenance-panel"]')).not.toBeNull()
+      expect(container.querySelector('[data-testid="preview-content"]')).toBe(content)
+      expect(
+        container.querySelector('[data-testid="preview-provenance-pane"]')?.className
+      ).toContain('basis-[40%]')
+      await act(async () => resizePreview(600))
+      expect(container.querySelector('[data-testid="provenance-panel"]')).toBeNull()
+      expect(container.querySelector('[data-testid="preview-content"]')).toBe(content)
+      await act(async () => resizePreview(900))
+      await click(container.querySelector('[data-testid="provenance-panel"] button'))
+      await act(async () => {
+        resizePreview(600)
+      })
+      await act(async () => {
+        resizePreview(900)
+      })
+      expect(container.querySelector('[data-testid="provenance-panel"]')).toBeNull()
+      await click(container.querySelector('[aria-label="Open Provenance for sin.png"]'))
+      expect(container.querySelector('[data-testid="provenance-panel"]')).not.toBeNull()
+    } finally {
+      vi.stubGlobal('ResizeObserver', OriginalResizeObserver)
+    }
+  })
+
+  it('shows Literature for a managed projection of an Artifact Version', async () => {
+    vi.mocked(window.api.artifacts.getLineage).mockResolvedValue({
+      artifactId: 'artifact-1',
+      filename: 'sin.png',
+      originSession: { sessionId: 'session-1', state: 'active', title: 'Sine' },
+      versions: [{ ...descriptor, hasLiterature: true }]
+    })
+
+    await act(async () => {
+      root.render(
+        <PreviewFileSurface
+          item={{ ...item, managedFileId: 'artifact-1', selectedVersionId: undefined }}
+          onClose={vi.fn()}
+        />
+      )
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    expect(container.querySelector('[data-testid="artifact-literature-entry"]')).not.toBeNull()
+  })
+
+  it('does not show the Literature entry when the selected Version has no manifest', async () => {
+    await act(async () => {
+      root.render(<PreviewFileSurface item={item} onClose={vi.fn()} />)
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    expect(container.querySelector('[data-testid="artifact-literature-entry"]')).toBeNull()
   })
 
   it('does not offer Provenance for uploaded inputs', async () => {
@@ -2725,7 +2845,11 @@ describe('PreviewFileSurface Provenance entry', () => {
     })
 
     expect(container.querySelector('[data-testid="provenance-panel"]')).not.toBeNull()
-    expect(container.querySelector('[data-testid="preview-content"]')).toBeNull()
+    expect(
+      container
+        .querySelector('[data-testid="preview-file-content-surface"]')
+        ?.classList.contains('hidden')
+    ).toBe(true)
   })
 
   it('hides managed text actions and version navigation for a non-editable image', async () => {
@@ -3083,6 +3207,81 @@ describe('PreviewFileSurface PDF context action matrix', () => {
     window.removeEventListener(FOCUS_COMPOSER_EVENT, focusListener)
   })
 
+  it('adds an immutable Literature PDF Version to the active Session context', async () => {
+    selectPdfContextSession()
+    const { linkPdfContext } = installPdfContextApi()
+    const literaturePdf: PreviewFileItem = {
+      ...pdfItem,
+      id: 'literature-version:attachment-version-1',
+      sessionId: '__literature__',
+      path: 'literature-attachment-version:attachment-version-1',
+      source: 'literature',
+      artifactId: undefined,
+      selectedVersionId: undefined
+    }
+
+    await act(async () => {
+      root.render(<PreviewFileSurface item={literaturePdf} onClose={vi.fn()} />)
+      await Promise.resolve()
+    })
+    await clickHeaderAction('Read with agent')
+
+    expect(linkPdfContext).toHaveBeenCalledWith({
+      projectId: 'project-1',
+      sessionId: 'active-session',
+      expectedRevision: 3,
+      sources: [
+        {
+          sourceKind: 'literature-attachment-version',
+          sourceVersionId: 'attachment-version-1'
+        }
+      ]
+    })
+  })
+
+  it('hides Reading context controls when the preview owner disables them', async () => {
+    selectPdfContextSession()
+    installPdfContextApi()
+
+    await act(async () => {
+      root.render(
+        <PreviewFileSurface item={pdfItem} allowReadingContext={false} onClose={vi.fn()} />
+      )
+      await Promise.resolve()
+    })
+
+    expect(container.querySelector('[data-testid="pdf-context-action"]')).toBeNull()
+    act(() => {
+      container
+        .querySelector('[data-testid="preview-file-content-surface"]')
+        ?.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, clientX: 80, clientY: 120 }))
+    })
+    await act(async () => Promise.resolve())
+    expect(document.body.querySelector('[data-testid="pdf-preview-context-menu"]')).toBeNull()
+  })
+
+  it('lets a Library preview supply its own Read with agent action without linking a Session', async () => {
+    selectPdfContextSession()
+    const direct = installPdfContextApi()
+    const onReadWithAgent = vi.fn()
+
+    await act(async () => {
+      root.render(
+        <PreviewFileSurface
+          item={pdfItem}
+          allowReadingContext={false}
+          onReadWithAgent={onReadWithAgent}
+          onClose={vi.fn()}
+        />
+      )
+      await Promise.resolve()
+    })
+    await clickHeaderAction('Read with agent')
+
+    expect(onReadWithAgent).toHaveBeenCalledWith(expect.objectContaining({ id: pdfItem.id }))
+    expect(direct.linkPdfContext).not.toHaveBeenCalled()
+  })
+
   it('routes active-Session link and unlink actions through the Composer Reading history port', async () => {
     selectPdfContextSession()
     const direct = installPdfContextApi()
@@ -3325,6 +3524,54 @@ describe('PreviewFileSurface PDF context action matrix', () => {
       sourceVersionId: 'version-1',
       previewItemId: 'artifact-1'
     })
+  })
+
+  it('preserves other draft PDFs when removing one and enforces the three PDF limit', async () => {
+    installPdfContextApi()
+    const selections = ['1', '2', '3'].map((id) => ({
+      kind: 'version' as const,
+      sourceKind: 'artifact-version' as const,
+      sourceFileId: `artifact-${id}`,
+      sourceVersionId: `version-${id}`,
+      previewItemId: `artifact-${id}`
+    }))
+    usePreviewWorkbenchStore
+      .getState()
+      .setPendingPdfContext('project-1', createPendingPdfContext(selections))
+    await act(async () => {
+      root.render(<PreviewFileSurface item={pdfItem} onClose={vi.fn()} />)
+    })
+    await openMenu(container.querySelector('[data-testid="pdf-context-status"]'))
+    await clickMenuItem('Remove PDF from context')
+    expect(
+      pendingPdfContextSelections(
+        usePreviewWorkbenchStore.getState().pendingPdfContextByProject['project-1']
+      )
+    ).toEqual(selections.slice(1))
+
+    await clickHeaderAction('Read with agent')
+    expect(
+      pendingPdfContextSelections(
+        usePreviewWorkbenchStore.getState().pendingPdfContextByProject['project-1']
+      )
+    ).toHaveLength(3)
+    await act(async () => {
+      root.render(
+        <PreviewFileSurface
+          item={{
+            ...pdfItem,
+            id: 'artifact-4',
+            managedFileId: 'artifact-4',
+            selectedVersionId: 'version-4',
+            path: 'artifact-version:project-1/session-1/artifact-4/version-4'
+          }}
+          onClose={vi.fn()}
+        />
+      )
+    })
+    expect(
+      container.querySelector<HTMLButtonElement>('[data-testid="pdf-context-action"]')?.disabled
+    ).toBe(true)
   })
 
   it('links from the modal to the visible project instead of a stale selected Session', async () => {

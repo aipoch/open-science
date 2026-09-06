@@ -26,7 +26,7 @@ import { publishUserFile } from './user-file-publisher'
 
 type RegisterFileSaveHandlersOptions = {
   resolveManagedFilePath?: (
-    source: 'local',
+    source: 'literature' | 'local',
     request: {
       path: string
       projectId?: string
@@ -99,6 +99,7 @@ const assertSaveManagedFileRequest: (
     (source !== 'artifact' &&
       source !== 'upload' &&
       source !== 'notebook-input' &&
+      source !== 'literature' &&
       source !== 'local') ||
     typeof candidate.suggestedName !== 'string'
   ) {
@@ -549,7 +550,10 @@ const registerFileSaveHandlers = (options: RegisterFileSaveHandlersOptions = {})
       const versionedRequest =
         request.source === 'artifact' || request.source === 'upload' ? request : undefined
       const notebookInputRequest = request.source === 'notebook-input' ? request : undefined
-      const localRequest = request.source === 'local' ? request : undefined
+      const pathRequest =
+        request.source === 'local' || request.source === 'literature'
+          ? { source: request.source, path: request.path }
+          : undefined
       if (versionedRequest) {
         if (
           versionedRequest.versionId
@@ -566,10 +570,12 @@ const registerFileSaveHandlers = (options: RegisterFileSaveHandlersOptions = {})
 
       const pathManagedFile = notebookInputRequest
         ? await options.openNotebookInput!({ path: notebookInputRequest.path })
-        : localRequest
+        : pathRequest
           ? await (options.openManagedFile ?? openManagedFile)(
               getManagedFilePath(
-                await options.resolveManagedFilePath!('local', { path: localRequest.path })
+                await options.resolveManagedFilePath!(pathRequest.source, {
+                  path: pathRequest.path
+                })
               )
             )
           : undefined
@@ -579,7 +585,7 @@ const registerFileSaveHandlers = (options: RegisterFileSaveHandlersOptions = {})
           ? requestedBaseName
           : versionedRequest
             ? versionedRequest.fileId
-            : basename((notebookInputRequest ?? localRequest)!.path)
+            : basename((notebookInputRequest ?? pathRequest)!.path)
       const dialogOptions = {
         defaultPath: join(app.getPath('downloads'), safeName),
         title: (options.translate ?? englishNativeTranslator)('Save file')

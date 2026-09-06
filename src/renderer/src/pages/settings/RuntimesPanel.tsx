@@ -3,7 +3,8 @@
  * theme: existing Open Science Settings tokens · enrichment: none · motion: existing controls only
  */
 import { CheckCircle2, FolderInput, Package, RefreshCw, Search, X } from 'lucide-react'
-import { AlertDialog, Dialog } from 'radix-ui'
+import { AlertDialog } from 'radix-ui'
+import * as Dialog from '@/components/ui/dialog'
 import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 

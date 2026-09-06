@@ -24,7 +24,11 @@ import {
 
 import { LocalFileFallbackAction } from '../../LocalFileHeaderActions'
 import { ManagedFileDownloadButton } from '../../ManagedFileDownloadButton'
-import { PreviewFallbackCard, PreviewLoadingContent } from '../PreviewFallback'
+import {
+  PreviewFallbackCard,
+  PreviewLoadingContent,
+  PreviewUnsupportedContent
+} from '../PreviewFallback'
 import { usePreviewRuntime } from '../preview-runtime-context'
 import type { PreviewFileRendererProps } from '../preview-types'
 import { officePreviewHostLeaseCoordinator } from './office-preview-lease'
@@ -453,6 +457,9 @@ export const OfficePreviewContent = ({
         action={<LocalFileFallbackAction path={item.path} className="mt-3" />}
       />
     )
+  }
+  if (source === 'literature') {
+    return <PreviewUnsupportedContent path={item.path} name={item.name} source={source} />
   }
   if (!window.api.officePreview) {
     return (

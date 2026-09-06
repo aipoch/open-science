@@ -1074,6 +1074,47 @@ describe('preview workbench store', () => {
     })
   })
 
+  it('preserves a cached Reading draft once per tab until its pending selection is cleared', () => {
+    const store = usePreviewWorkbenchStore.getState()
+    const pdf: PreviewItemInput = {
+      id: 'reading-pdf',
+      sessionId: 'literature-library',
+      type: 'file',
+      source: 'literature',
+      title: 'Selected paper.pdf',
+      name: 'Selected paper.pdf',
+      path: 'literature-attachment-version:version-1',
+      format: 'pdf'
+    }
+    store.activateProject('project-a')
+    store.upsertAndActivateItem(pdf)
+    store.setPendingPdfContext('project-a', {
+      kind: 'version',
+      sourceKind: 'literature-attachment-version',
+      sourceVersionId: 'version-1',
+      previewItemId: pdf.id
+    })
+    store.activateProject('project-b')
+    store.activateProject('project-a', {
+      items: [{ ...pdf, title: 'Older title.pdf' }],
+      panelState: 'collapsed'
+    })
+    expect(usePreviewWorkbenchStore.getState()).toMatchObject({
+      activeItemId: pdf.id,
+      panelState: 'open',
+      items: [{ id: pdf.id, title: pdf.title }]
+    })
+
+    store.clearPendingPdfContext('project-a', {
+      kind: 'version',
+      sourceKind: 'literature-attachment-version',
+      sourceVersionId: 'version-1',
+      previewItemId: pdf.id
+    })
+    store.activateProject('project-a', { items: [], panelState: 'collapsed' })
+    expect(usePreviewWorkbenchStore.getState().items).toEqual([])
+  })
+
   it('repairs a dangling restored active item to the first surviving tab', () => {
     usePreviewWorkbenchStore.getState().activateProject('project-a', {
       panelState: 'open',

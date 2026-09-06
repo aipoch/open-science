@@ -1071,6 +1071,24 @@ describe('ACP permission broker with durable grants', () => {
         }
       )
     ).resolves.toEqual({ outcome: { outcome: 'selected', optionId: 'provider-allow-once' } })
+
+    for (const toolName of [
+      'search_library',
+      'read_library_abstract',
+      'read_library_pdf',
+      'format_references'
+    ]) {
+      await expect(
+        broker.requestPermission(
+          mcpRequest(`session-library-${toolName}`, `mcp__open_science_library__${toolName}`),
+          {
+            profile: 'ask',
+            projectId: 'project-1',
+            mcpServerNames: ['open-science-library']
+          }
+        )
+      ).resolves.toEqual({ outcome: { outcome: 'selected', optionId: 'provider-allow-once' } })
+    }
     expect(emitted).toEqual([])
   })
 

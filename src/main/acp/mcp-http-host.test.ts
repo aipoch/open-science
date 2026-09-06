@@ -313,6 +313,37 @@ describe('AgentMcpHttpHost', () => {
     await client.close()
   })
 
+  it('serves the user Literature Library over its bound route', async () => {
+    host = new AgentMcpHttpHost()
+    const { token } = await host.ensureStarted()
+    const searchLibrary = vi.fn(async () => ({ items: [], totalCount: 0, hasMore: false }))
+    const readAbstract = vi.fn(async () => undefined)
+    const readPdf = vi.fn(async () => undefined)
+    const saveToInbox = vi.fn(async () => ({ results: [] }))
+    host.registerLiteratureLibrary('library-session-1', {
+      searchLibrary,
+      readAbstract,
+      readPdf,
+      saveToInbox
+    })
+    const client = new Client({ name: 'library-http-test', version: '1.0.0' })
+    await client.connect(
+      new StreamableHTTPClientTransport(new URL(host.urlFor('library', 'library-session-1')), {
+        requestInit: { headers: { authorization: `Bearer ${token}` } }
+      })
+    )
+
+    expect((await client.listTools()).tools.map((tool) => tool.name)).toEqual([
+      'search_library',
+      'read_library_abstract',
+      'read_library_pdf',
+      'save_to_inbox'
+    ])
+    await client.callTool({ name: 'search_library', arguments: { query: 'retrieval' } })
+    expect(searchLibrary).toHaveBeenCalledWith({ query: 'retrieval', scope: 'project', limit: 20 })
+    await client.close()
+  })
+
   it('rejects requests without the bearer token', async () => {
     host = new AgentMcpHttpHost()
     const { endpoint } = await host.ensureStarted()

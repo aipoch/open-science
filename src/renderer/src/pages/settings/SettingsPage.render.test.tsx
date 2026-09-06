@@ -2,7 +2,7 @@
 import { act, createRef, Profiler, StrictMode } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { fireEvent, waitFor } from '@testing-library/react'
-import { Dialog } from 'radix-ui'
+import * as Dialog from '@/components/ui/dialog'
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { LinkSafetyModal } from '@/components/streamdown/LinkSafetyModal'
@@ -309,6 +309,9 @@ const installApi = (): void => {
         assignments: []
       }),
       onChanged: vi.fn(() => vi.fn())
+    },
+    literature: {
+      get: vi.fn().mockResolvedValue(undefined)
     }
   }
 }
@@ -683,6 +686,62 @@ describe('SettingsPage layout', () => {
     )
     expect(document.body.querySelector('[data-slot="tags-panel"]')).not.toBeNull()
     expect(document.body.querySelector('[data-slot="tag-form"]')).toBeNull()
+  })
+
+  it('opens tagged Literature in a modal without leaving Settings', async () => {
+    const onClose = vi.fn()
+    vi.mocked(window.api.tags.snapshot).mockResolvedValue({
+      revision: 2,
+      tags: [{ id: 'tag-favorite', systemKey: 'favorite', createdAt: 1, updatedAt: 1 }],
+      assignments: [
+        {
+          tagId: 'tag-favorite',
+          resourceType: 'literature.item',
+          resourceId: 'literature-1',
+          createdAt: 1
+        }
+      ]
+    })
+    vi.mocked(window.api.literature.get).mockResolvedValue({
+      id: 'literature-1',
+      item: {
+        itemType: 'journalArticle',
+        title: 'Corrective Retrieval Augmented Generation',
+        abstract: 'A retrieval augmented generation study.',
+        issuedText: '2024',
+        issuedYear: 2024,
+        containerTitle: 'arXiv',
+        shortTitle: '',
+        language: 'en',
+        rights: '',
+        url: '',
+        extra: '',
+        typeFields: {},
+        creators: [],
+        identifiers: []
+      },
+      attachments: [],
+      projectIds: [],
+      collectionIds: [],
+      metadataRevision: 1,
+      createdAt: 1,
+      updatedAt: 1
+    })
+
+    await act(async () => root.render(<SettingsPage open onClose={onClose} />))
+    await act(async () => navButton('Tags')?.click())
+    await waitFor(() =>
+      expect(document.body.textContent).toContain('Corrective Retrieval Augmented Generation')
+    )
+
+    await act(async () =>
+      document.body.querySelector<HTMLButtonElement>('[data-slot="tag-resource-row"]')?.click()
+    )
+
+    expect(document.body.querySelectorAll('[role="dialog"]')).toHaveLength(2)
+    expect(document.body.textContent).toContain('Publication metadata')
+    expect(onClose).not.toHaveBeenCalled()
+    expect(useNavigationStore.getState().view).toBe('home')
   })
 
   it('restores the Tag selected by a Settings history entry', async () => {

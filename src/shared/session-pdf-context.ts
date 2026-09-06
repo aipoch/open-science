@@ -1,5 +1,6 @@
 import type { FileReference } from './artifacts'
 import { createArtifactVersionLocator } from './artifact-provenance'
+import { createLiteratureAttachmentVersionReference } from './literature'
 import type {
   MessagePdfContextSnapshot,
   PdfReadingPosition,
@@ -13,42 +14,50 @@ export const sessionPdfBindingToFileReference = (
   readingPosition?: PdfReadingPosition,
   documentCount = 1,
   active = false
-): FileReference =>
-  context.sourceKind === 'artifact-version'
-    ? {
-        id: context.sourceFileId,
-        sourceFileId: context.sourceFileId,
-        name: context.name,
-        source: 'artifact',
-        path: createArtifactVersionLocator({
-          projectId,
-          appSessionId: context.sourceSessionId,
-          artifactId: context.sourceFileId,
-          versionId: context.sourceVersionId
-        }),
-        versionId: context.sourceVersionId,
-        mimeType: context.mimeType,
-        pdfContextDocumentId: context.bindingId,
-        pdfContextDocumentCount: documentCount,
-        pdfContextActive: active,
-        ...(readingPosition ? { pdfReadingPosition: readingPosition } : {})
-      }
-    : {
-        id: context.sourceFileId,
-        sourceFileId: context.sourceFileId,
-        name: context.name,
-        source: 'upload',
-        path: createUploadVersionReference(context.sourceVersionId, {
-          projectId,
-          sessionId: context.sourceSessionId
-        }),
-        versionId: context.sourceVersionId,
-        mimeType: context.mimeType,
-        pdfContextDocumentId: context.bindingId,
-        pdfContextDocumentCount: documentCount,
-        pdfContextActive: active,
-        ...(readingPosition ? { pdfReadingPosition: readingPosition } : {})
-      }
+): FileReference => {
+  const contextFields = {
+    sourceFileId: context.sourceFileId,
+    versionId: context.sourceVersionId,
+    mimeType: context.mimeType,
+    pdfContextDocumentId: context.bindingId,
+    pdfContextDocumentCount: documentCount,
+    pdfContextActive: active,
+    ...(readingPosition ? { pdfReadingPosition: readingPosition } : {})
+  }
+  if (context.sourceKind === 'artifact-version') {
+    return {
+      id: context.sourceFileId,
+      name: context.name,
+      source: 'artifact',
+      path: createArtifactVersionLocator({
+        projectId,
+        appSessionId: context.sourceSessionId,
+        artifactId: context.sourceFileId,
+        versionId: context.sourceVersionId
+      }),
+      ...contextFields
+    }
+  }
+  if (context.sourceKind === 'upload-version') {
+    return {
+      id: context.sourceFileId,
+      name: context.name,
+      source: 'upload',
+      path: createUploadVersionReference(context.sourceVersionId, {
+        projectId,
+        sessionId: context.sourceSessionId
+      }),
+      ...contextFields
+    }
+  }
+  return {
+    id: context.sourceFileId,
+    name: context.name,
+    source: 'literature',
+    path: createLiteratureAttachmentVersionReference(context.sourceVersionId),
+    ...contextFields
+  }
+}
 
 export const sessionPdfContextToFileReferences = (
   projectId: string,
@@ -72,7 +81,12 @@ export const withPdfContext = (
   if (!projectId || !context) return references
   let result = references ?? []
   for (const binding of context.bindings) {
-    const source = binding.sourceKind === 'artifact-version' ? 'artifact' : 'upload'
+    const source =
+      binding.sourceKind === 'artifact-version'
+        ? 'artifact'
+        : binding.sourceKind === 'upload-version'
+          ? 'upload'
+          : 'literature'
     const duplicate = result.findIndex(
       (reference) =>
         reference.source !== 'linked-folder' &&

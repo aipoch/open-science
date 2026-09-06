@@ -25,7 +25,7 @@ const positiveInteger = (value: unknown): number | undefined =>
 
 // Keeps the UI summary in its own small content block. Passage bodies can exceed the shared
 // transcript limit and be truncated mid-JSON; this block remains valid across every ACP adapter.
-const createPresentationBlock = (result: unknown): UnknownRecord | undefined => {
+const literatureReadPresentation = (result: unknown): UnknownRecord | undefined => {
   if (!isRecord(result)) return undefined
   const documents = Array.isArray(result.documents)
     ? result.documents.filter(isRecord)
@@ -59,9 +59,12 @@ const createPresentationBlock = (result: unknown): UnknownRecord | undefined => 
     ...('nextCursor' in result ? { hasMore: result.nextCursor !== null } : {})
   }
 
-  return Object.keys(presentation).length > 0
-    ? { openScienceLiteraturePresentation: presentation }
-    : undefined
+  return Object.keys(presentation).length > 0 ? presentation : undefined
+}
+
+const createPresentationBlock = (result: unknown): UnknownRecord | undefined => {
+  const presentation = literatureReadPresentation(result)
+  return presentation ? { openScienceLiteraturePresentation: presentation } : undefined
 }
 
 const createLiteratureMcpServer = (handler: LiteratureMcpHandler): ModelContextProtocolServer => {
@@ -132,5 +135,10 @@ const createLiteratureMcpServer = (handler: LiteratureMcpHandler): ModelContextP
   return server
 }
 
-export { LITERATURE_MCP_SERVER_NAME, LITERATURE_READ_DOCUMENT_TOOL_NAME, createLiteratureMcpServer }
+export {
+  LITERATURE_MCP_SERVER_NAME,
+  LITERATURE_READ_DOCUMENT_TOOL_NAME,
+  createLiteratureMcpServer,
+  literatureReadPresentation
+}
 export type { LiteratureMcpHandler, LiteratureReadDocumentRequest }

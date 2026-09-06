@@ -77,6 +77,11 @@ import {
   registerMemoryApplicationCommands,
   type MemoryCommandOwner
 } from './memory/application-commands'
+import {
+  literatureApplicationCommandGroup,
+  registerLiteratureApplicationCommands,
+  type LiteratureCommandOwner
+} from './literature/application-commands'
 
 type AnyApplicationCommand = ApplicationCommand<string, readonly unknown[], unknown>
 type AnyApplicationCommandGroup = ApplicationCommandGroup<string, readonly AnyApplicationCommand[]>
@@ -114,6 +119,7 @@ type ApplicationCommandCompositionDependencies = Readonly<{
   permissionGrants: PermissionGrantDependencies
   tags: TagCommandOwner
   memory: MemoryCommandOwner
+  literature: LiteratureCommandOwner
   dataContent: DataContentApplicationCommandDependencies
   host: Omit<HostApplicationCommandDependencies, 'remoteAccess'>
 }>
@@ -233,6 +239,9 @@ const createApplicationCommandModules = (
     ),
     defineApplicationCommandModule([memoryApplicationCommandGroup], (registrar) =>
       registerMemoryApplicationCommands(registrar, dependencies.memory)
+    ),
+    defineApplicationCommandModule([literatureApplicationCommandGroup], (registrar) =>
+      registerLiteratureApplicationCommands(registrar, dependencies.literature)
     ),
     defineApplicationCommandModule(dataContentApplicationCommandGroups, (registrar) =>
       registerDataContentApplicationCommands(registrar, dependencies.dataContent)

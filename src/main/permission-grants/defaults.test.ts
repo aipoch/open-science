@@ -9,6 +9,7 @@ import { createProjectDbClient, migrateApplicationDatabase } from '../projects/p
 import {
   DEFAULT_GLOBAL_CUSTOMIZE_PERMISSION_KEYS,
   DEFAULT_GLOBAL_PERMISSION_CAPABILITIES,
+  DEFAULT_LITERATURE_READ_PERMISSION_CAPABILITIES,
   missingDefaultGlobalPermissionCapabilities,
   restoreDefaultPermissionGrants,
   seedDefaultPermissionGrants
@@ -55,7 +56,11 @@ describe('default permission grants', () => {
       { kind: 'mcp_tool', key: 'mcp:open-science-notebook/list_memory_categories' },
       { kind: 'mcp_tool', key: 'mcp:open-science-notebook/search_memories' },
       { kind: 'mcp_tool', key: 'mcp:open-science-notebook/inspect_packages' },
-      { kind: 'mcp_tool', key: 'mcp:open-science-plan/update_step_status' }
+      { kind: 'mcp_tool', key: 'mcp:open-science-plan/update_step_status' },
+      { kind: 'mcp_tool', key: 'mcp:open-science-library/search_library' },
+      { kind: 'mcp_tool', key: 'mcp:open-science-library/read_library_abstract' },
+      { kind: 'mcp_tool', key: 'mcp:open-science-library/read_library_pdf' },
+      { kind: 'mcp_tool', key: 'mcp:open-science-library/format_references' }
     ])
     expect(PRE_REGISTERED_PERMISSION_IDENTITIES.skill_operation).toContain('skill:invoke')
     expect(PRE_REGISTERED_PERMISSION_IDENTITIES.mcp_tool).toContain(
@@ -74,14 +79,14 @@ describe('default permission grants', () => {
       )
     )
     await expect(
-      fixture.client.permissionGrantSeed.findUnique({
-        where: { id: 'global-customize-v1' },
+      fixture.client.permissionGrantSeed.findMany({
+        orderBy: { id: 'asc' },
         select: { id: true }
       })
-    ).resolves.toEqual({ id: 'global-customize-v1' })
+    ).resolves.toEqual([{ id: 'global-customize-v1' }, { id: 'global-literature-read-v2' }])
   })
 
-  it('does not backfill new defaults after the v1 seed was applied', async () => {
+  it('adds only the new read-only literature defaults after the v1 seed was applied', async () => {
     const fixture = await setup()
     await fixture.client.permissionGrantSeed.create({
       data: { id: 'global-customize-v1', appliedAt: new Date() }
@@ -89,15 +94,32 @@ describe('default permission grants', () => {
 
     await seedDefaultPermissionGrants(fixture.registry, fixture.client)
 
-    await expect(fixture.registry.list()).resolves.toEqual([])
+    const grants = await fixture.registry.list()
+    expect(grants).toHaveLength(DEFAULT_LITERATURE_READ_PERMISSION_CAPABILITIES.length)
+    expect(grants).toEqual(
+      expect.arrayContaining(
+        DEFAULT_LITERATURE_READ_PERMISSION_CAPABILITIES.map((capability) =>
+          expect.objectContaining({ capability, scope: { kind: 'global' } })
+        )
+      )
+    )
+    await expect(
+      fixture.client.permissionGrantSeed.findUnique({
+        where: { id: 'global-literature-read-v2' },
+        select: { id: true }
+      })
+    ).resolves.toEqual({ id: 'global-literature-read-v2' })
     await expect(restoreDefaultPermissionGrants(fixture.registry)).resolves.toBe(16)
     await expect(restoreDefaultPermissionGrants(fixture.registry)).resolves.toBe(0)
   })
 
-  it('does not recreate a revoked default on a later startup', async () => {
+  it('does not recreate a revoked literature default on a later startup', async () => {
     const fixture = await setup()
     await seedDefaultPermissionGrants(fixture.registry, fixture.client)
-    const [revoked] = await fixture.registry.list()
+    const revoked = (await fixture.registry.list()).find(
+      (grant) => grant.capability.key === 'mcp:open-science-library/search_library'
+    )
+    expect(revoked).toBeDefined()
     await fixture.registry.revoke({ grants: [{ id: revoked!.id, revision: revoked!.revision }] })
 
     const reopenedRegistry = await createPermissionGrantRegistry({
@@ -107,6 +129,16 @@ describe('default permission grants', () => {
 
     await expect(reopenedRegistry.list()).resolves.toHaveLength(
       DEFAULT_GLOBAL_PERMISSION_CAPABILITIES.length - 1
+    )
+  })
+
+  it('keeps Literature tools that publish or mutate data permission-gated', () => {
+    expect(DEFAULT_GLOBAL_PERMISSION_CAPABILITIES.map(({ key }) => key)).not.toEqual(
+      expect.arrayContaining([
+        'mcp:open-science-library/format_citation_document',
+        'mcp:open-science-library/prepare_latex_bundle',
+        'mcp:open-science-library/save_to_inbox'
+      ])
     )
   })
 

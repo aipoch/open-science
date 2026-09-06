@@ -13,6 +13,7 @@ import type { ArtifactVersionProvenance } from '../../../../shared/artifact-prov
 const reviewerCardSpy = vi.hoisted(() => vi.fn())
 const workspaceMessageItemSpy = vi.hoisted(() => vi.fn())
 const workspaceActivityGroupSpy = vi.hoisted(() => vi.fn())
+const originalScrollIntoView = Object.getOwnPropertyDescriptor(Element.prototype, 'scrollIntoView')
 
 vi.mock('@/components/ReviewerCard', () => ({
   ReviewerCard: (props: {
@@ -377,6 +378,7 @@ const provenance = (): ArtifactVersionProvenance => ({
 let container: HTMLDivElement
 let root: Root
 let getVersionProvenance: ReturnType<typeof vi.fn>
+let getVersionLiterature: ReturnType<typeof vi.fn>
 let getVersionExecution: ReturnType<typeof vi.fn>
 let getVersionMessages: ReturnType<typeof vi.fn>
 let getVersionReview: ReturnType<typeof vi.fn>
@@ -399,6 +401,7 @@ const clickTab = async (label: string): Promise<void> => {
 }
 
 beforeEach(async () => {
+  Element.prototype.scrollIntoView = vi.fn()
   reviewerCardSpy.mockClear()
   workspaceMessageItemSpy.mockClear()
   workspaceActivityGroupSpy.mockClear()
@@ -434,9 +437,15 @@ beforeEach(async () => {
     }
   })
   saveBlobFile = vi.fn().mockResolvedValue({ saved: true, filePath: '/tmp/session.ipynb' })
+  getVersionLiterature = vi.fn().mockResolvedValue(undefined)
   Object.defineProperty(window, 'api', {
     configurable: true,
     value: {
+      literature: {
+        citationStyles: vi
+          .fn()
+          .mockResolvedValue({ styles: [{ id: 'apa', title: 'APA', source: 'built-in' }] })
+      },
       artifacts: {
         getLineage: vi.fn().mockResolvedValue({
           artifactId: 'artifact-1',
@@ -445,6 +454,7 @@ beforeEach(async () => {
           versions: [descriptor, secondDescriptor]
         }),
         getVersionProvenance,
+        getVersionLiterature,
         getVersionExecution,
         getVersionMessages,
         getVersionReview,
@@ -465,6 +475,11 @@ beforeEach(async () => {
 })
 
 afterEach(() => {
+  if (originalScrollIntoView) {
+    Object.defineProperty(Element.prototype, 'scrollIntoView', originalScrollIntoView)
+  } else {
+    Reflect.deleteProperty(Element.prototype, 'scrollIntoView')
+  }
   act(() => root.unmount())
   container.remove()
 })
@@ -693,6 +708,134 @@ describe('ArtifactProvenancePanel', () => {
     }
   )
 
+  it('shows a formatted user-edit version’s own Literature and supports formatting it again', async () => {
+    act(() => root.unmount())
+    container.replaceChildren()
+    root = createRoot(container)
+    const literature = {
+      schemaVersion: 1,
+      styleId: 'vancouver',
+      locale: 'en-US',
+      references: [
+        {
+          itemId: 'paper-1',
+          metadataRevision: 1,
+          item: {
+            itemType: 'journalArticle',
+            title: 'Frozen edited reference',
+            abstract: '',
+            issuedText: '2024',
+            containerTitle: 'Journal',
+            shortTitle: '',
+            language: 'en',
+            rights: '',
+            url: '',
+            extra: '',
+            typeFields: {},
+            creators: [],
+            identifiers: []
+          }
+        }
+      ],
+      citations: [{ citationId: 'citation-1', itemId: 'paper-1', metadataRevision: 1 }]
+    }
+    getVersionLiterature.mockResolvedValue(literature)
+    vi.mocked(window.api.artifacts.getLineage).mockResolvedValue({
+      artifactId: 'artifact-1',
+      filename: 'report.docx',
+      originSession: { sessionId: 'session-1', state: 'active' },
+      headVersion: {
+        ...secondDescriptor,
+        id: 'version-102',
+        versionId: 'version-102',
+        versionNumber: 102
+      },
+      versions: [
+        descriptor,
+        {
+          ...secondDescriptor,
+          originKind: 'user_edit',
+          basedOnVersionId: 'version-1',
+          hasLiterature: true
+        }
+      ]
+    })
+    const formatDocument = vi
+      .fn()
+      .mockImplementation(async (request: { mode: string }) =>
+        request.mode === 'preview'
+          ? { mode: 'preview', references: [] }
+          : { mode: 'save', versionId: 'version-103', versionNumber: 103 }
+      )
+    Object.assign(window.api, {
+      literature: {
+        citationStyles: vi.fn().mockResolvedValue({
+          styles: [
+            { id: 'vancouver', title: 'Vancouver', source: 'built-in' },
+            { id: 'apa', title: 'APA', source: 'built-in' }
+          ]
+        }),
+        formatDocument
+      }
+    })
+    getVersionProvenance.mockClear()
+    await act(async () =>
+      root.render(
+        <ArtifactProvenancePanel
+          item={{ ...item, name: 'report.docx', selectedVersionId: 'version-2' }}
+          projectId="project-1"
+          onClose={vi.fn()}
+          initialTab="sources"
+        />
+      )
+    )
+    await flush()
+
+    expect(container.textContent).toContain('Edited in Open Science')
+    expect(container.textContent).toContain('Frozen edited reference')
+    expect(container.querySelectorAll('[role="tab"]')).toHaveLength(1)
+    expect(getVersionProvenance).not.toHaveBeenCalled()
+    expect(getVersionLiterature).toHaveBeenCalledWith({
+      projectId: 'project-1',
+      appSessionId: 'session-1',
+      artifactId: 'artifact-1',
+      versionId: 'version-2'
+    })
+    await clickTab('Format citations')
+    await flush()
+    expect(formatDocument).toHaveBeenCalledWith({
+      mode: 'preview',
+      projectId: 'project-1',
+      sessionId: 'session-1',
+      artifactId: 'artifact-1',
+      versionId: 'version-2',
+      styleId: 'vancouver',
+      locale: 'en-US'
+    })
+    await act(async () => container.querySelector<HTMLButtonElement>('[role="combobox"]')!.click())
+    await flush()
+    const apa = [...document.querySelectorAll<HTMLElement>('[role="option"]')].find(
+      (option) => option.textContent === 'APA'
+    )
+    expect(apa).toBeDefined()
+    await act(async () => apa!.click())
+    await flush()
+    await clickTab('Save as new version')
+    await flush()
+    expect(formatDocument).toHaveBeenLastCalledWith({
+      mode: 'save',
+      operationId: expect.any(String),
+      projectId: 'project-1',
+      sessionId: 'session-1',
+      artifactId: 'artifact-1',
+      versionId: 'version-2',
+      expectedHeadVersionId: 'version-102',
+      styleId: 'apa',
+      locale: 'en-US'
+    })
+    expect(container.textContent).toContain('Saved as version 103.')
+  })
+
   it('shows user-edit lineage without requesting Agent provenance', async () => {
     act(() => root.unmount())
     container.replaceChildren()
@@ -722,7 +865,8 @@ describe('ArtifactProvenancePanel', () => {
     await flush()
 
     expect(container.textContent).toContain('Edited in Open Science')
-    expect(container.textContent).toContain('Based on v1')
+    expect(container.textContent).toContain('View source provenance · v1')
+    expect(container.textContent).toContain('This edited version has no new agent execution.')
     expect(container.querySelector('[role="tablist"]')).toBeNull()
     expect(getVersionProvenance).not.toHaveBeenCalled()
     expect(getCodeReconstruction).not.toHaveBeenCalledWith(
@@ -809,7 +953,7 @@ describe('ArtifactProvenancePanel', () => {
       expect.objectContaining({ selectedVersionId: 'version-1', versionNumber: 1 })
     )
     expect(container.textContent).toContain('Edited in Open Science')
-    expect(container.textContent).toContain('Based on v1')
+    expect(container.textContent).toContain('View source provenance · v1')
   })
 
   it('shows a legacy Version without requesting Agent provenance', async () => {
@@ -935,6 +1079,135 @@ describe('ArtifactProvenancePanel', () => {
     expect(getVersionMessages).toHaveBeenCalledOnce()
     expect(getVersionExecution).not.toHaveBeenCalled()
     expect(getVersionReview).not.toHaveBeenCalled()
+  })
+
+  it('shows Literature only for Versions with an immutable Literature manifest', async () => {
+    expect(container.textContent).not.toContain('Literature')
+    const completeProvenance = provenance()
+    getVersionProvenance.mockResolvedValue({
+      ...completeProvenance,
+      literature: {
+        schemaVersion: 1,
+        styleId: 'apa',
+        locale: 'en-US',
+        references: [
+          {
+            itemId: 'literature-item-1',
+            metadataRevision: 1,
+            item: {
+              itemType: 'journalArticle',
+              title: 'Corrective Retrieval Augmented Generation',
+              abstract: '',
+              issuedText: '2024',
+              issuedYear: 2024,
+              containerTitle: 'arXiv',
+              shortTitle: 'CRAG',
+              language: 'en',
+              rights: '',
+              url: '',
+              extra: '',
+              typeFields: {},
+              creators: [],
+              identifiers: []
+            }
+          }
+        ],
+        citations: [
+          {
+            citationId: 'citation-1',
+            itemId: 'literature-item-1',
+            metadataRevision: 1
+          }
+        ]
+      },
+      execution: undefined,
+      messages: { state: 'unavailable', reason: 'not-loaded' },
+      review: { state: 'unavailable', reason: 'not-loaded' }
+    })
+
+    await act(async () =>
+      root.render(
+        <ArtifactProvenancePanel
+          item={{ ...item, selectedVersionId: 'version-2', versionNumber: 2 }}
+          projectId="project-1"
+          onClose={vi.fn()}
+        />
+      )
+    )
+    await flush()
+
+    expect(container.querySelector('[role="tab"][aria-selected="true"]')?.textContent).toBe(
+      'Literature'
+    )
+    expect(container.textContent).toContain('Corrective Retrieval Augmented Generation')
+    await clickTab('Code')
+    await flush()
+    expect(container.querySelector('[role="tab"][aria-selected="true"]')?.textContent).toBe('Code')
+  })
+
+  it('can open directly on Literature for an Artifact preview entry', async () => {
+    act(() => root.unmount())
+    container.replaceChildren()
+    root = createRoot(container)
+    const completeProvenance = provenance()
+    getVersionProvenance.mockResolvedValue({
+      ...completeProvenance,
+      literature: {
+        schemaVersion: 1,
+        styleId: 'apa',
+        locale: 'en-US',
+        references: [
+          {
+            itemId: 'literature-item-1',
+            metadataRevision: 1,
+            item: {
+              itemType: 'journalArticle',
+              title: 'Corrective Retrieval Augmented Generation',
+              abstract: '',
+              issuedText: '2024',
+              issuedYear: 2024,
+              containerTitle: 'arXiv',
+              shortTitle: 'CRAG',
+              language: 'en',
+              rights: '',
+              url: '',
+              extra: '',
+              typeFields: {},
+              creators: [],
+              identifiers: []
+            }
+          }
+        ],
+        citations: [
+          {
+            citationId: 'citation-1',
+            itemId: 'literature-item-1',
+            metadataRevision: 1
+          }
+        ]
+      },
+      execution: undefined,
+      messages: { state: 'unavailable', reason: 'not-loaded' },
+      review: { state: 'unavailable', reason: 'not-loaded' }
+    })
+
+    await act(async () =>
+      root.render(
+        <ArtifactProvenancePanel
+          item={item}
+          projectId="project-1"
+          onClose={vi.fn()}
+          initialTab="sources"
+        />
+      )
+    )
+    await flush()
+    await flush()
+
+    expect(container.querySelector('[role="tab"][aria-selected="true"]')?.textContent).toBe(
+      'Literature'
+    )
+    expect(container.textContent).toContain('Corrective Retrieval Augmented Generation')
   })
 
   it('checks the reconstruction cache on Code open without calling the model', async () => {

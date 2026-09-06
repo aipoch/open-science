@@ -51,6 +51,7 @@ const TRANSLATABLE_TOOL_DETAIL_COPY = new Set([
   'File',
   'Input',
   'Log',
+  'Literature library',
   'Manage packages',
   'Memory categories',
   'Notebook run',

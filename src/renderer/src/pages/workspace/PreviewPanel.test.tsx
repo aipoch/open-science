@@ -697,7 +697,7 @@ describe('PreviewPanel', () => {
     })
     await act(async () => {
       dialog
-        ?.querySelector('[data-testid="preview-file-content-region"]')
+        ?.querySelector('[data-testid="preview-file-content-surface"]')
         ?.dispatchEvent(contextMenuEvent)
       await Promise.resolve()
     })

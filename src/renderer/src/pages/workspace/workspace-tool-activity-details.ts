@@ -24,7 +24,9 @@ import {
   isSkillLoadActivity
 } from './workspace-skill-load'
 import {
+  buildLiteratureLibraryToolSummary,
   buildLiteratureToolSummary,
+  getLiteratureLibraryToolAction,
   isLiteratureReadDocumentTool,
   type LiteratureToolSummary
 } from './literature-tool-presentation'
@@ -410,16 +412,18 @@ const buildGenericDetails = (activity: ToolActivity): ToolActivityDetails | unde
 }
 
 const buildLiteratureDetails = (activity: ToolActivity): ToolActivityDetails | undefined => {
-  if (!isLiteratureReadDocumentTool(activity.providerToolName, activity.title)) return undefined
+  const libraryAction = getLiteratureLibraryToolAction(activity.providerToolName, activity.title)
+  const isReading = isLiteratureReadDocumentTool(activity.providerToolName, activity.title)
+  if (!libraryAction && !isReading) return undefined
 
   const contentTexts = collectToolTexts(activity)
-  const summary = buildLiteratureToolSummary(
-    activity.rawInput,
-    contentTexts.length > 0 ? contentTexts : activity.rawOutput
-  )
+  const output = [...contentTexts, activity.rawOutput]
+  const summary = libraryAction
+    ? buildLiteratureLibraryToolSummary(libraryAction, activity.rawInput, output)
+    : buildLiteratureToolSummary(activity.rawInput, output)
   return {
-    displayName: 'Reading',
-    subtitle: summary.query ?? summary.documentNames[0],
+    displayName: libraryAction ? 'Literature library' : 'Reading',
+    subtitle: summary.query ?? summary.itemTitles?.[0] ?? summary.documentNames[0],
     sections: [{ kind: 'literature', summary }]
   }
 }

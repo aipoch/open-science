@@ -268,6 +268,8 @@ export const uploadApplicationCommandContracts = Object.freeze({
   )
 })
 
+export { uploadedAttachmentSchema }
+
 // Chooses the user-facing name while tolerating older records that only have the safe filename.
 export const getUploadedAttachmentName = (
   attachment: Pick<UploadedAttachment, 'originalName' | 'name'>

@@ -40,6 +40,7 @@ import {
   MAIN_SESSION_DETAILS_LIFECYCLE_CLIENT_ID,
   MAIN_RUNTIME_CONTEXT_LIFECYCLE_CLIENT_ID
 } from '../shared/lifecycle-events'
+import { parseLiteratureAttachmentVersionReference } from '../shared/literature'
 
 import { createAcpRuntime } from './acp/runtime-composition'
 import { SideChatRelayOwner } from './acp/side-chat-relay-owner'
@@ -78,6 +79,19 @@ import { createSessionCatalogHydration } from './compute/session-catalog-hydrati
 import { SessionEnabledComputeHostsOwner } from './compute/session-enabled-hosts-owner'
 import { createComputeJobRuntime } from './compute/job-runtime'
 import { LiteratureFullTextIndex } from './literature/full-text-index'
+import { LiteratureCatalog } from './literature/catalog'
+import { LiteratureAttachmentAuthority } from './literature/attachment-authority'
+import { LiteraturePdfImporter } from './literature/pdf-importer'
+import { LiteratureCitationFormatter } from './literature/citation-formatter'
+import { LiteratureCitationDocument } from './literature/citation-document'
+import { LiteratureCitationStyleLibrary } from './literature/citation-style-library'
+import { LiteratureMetadataEnricher } from './literature/metadata-enricher'
+import { LiteratureFullTextFinder } from './literature/full-text-finder'
+import { LiteratureBatchJobs } from './literature/batch-jobs'
+import { AgentPdfAcquisition } from './literature/agent-pdf-acquisition'
+import { downloadFullText } from './literature/full-text-download'
+import { parseSystemProxyRules } from './settings/system-proxy'
+import { SessionPdfSourceResolver } from './literature/session-pdf-source-resolver'
 import { waitForInitialConnectorRefresh } from './connector-reload'
 import { createConnectorApplicationModule } from './connectors/application'
 import { isCustomMcpServerRouteSafe } from './connectors/custom-mcp-bootstrap'
@@ -394,6 +408,7 @@ import type { UpdateBlocker } from '../shared/update'
 import { startUpdateScheduler } from './update/scheduler'
 import { createDefaultUploadRepository, registerUploadIpcHandlers } from './uploads/ipc'
 import { createUploadCommandOwner } from './uploads/command-owner'
+import { ContentRepository } from './storage/content-repository'
 import { broadcastToRenderers, installRendererBroadcastEventHub } from './renderer-broadcast'
 import {
   installElectronRuntimeAdapters,
@@ -842,6 +857,18 @@ const createApplicationModules = async (
     compatibilityRepository: artifactRepository,
     loadSession: (projectId, appSessionId) => sessionRepository.loadSession(projectId, appSessionId)
   })
+  const contentRepository = new ContentRepository({
+    storageRoot: resolveDataRoot(),
+    getClient: () => getProjectDbClient(resolveConfigRoot())
+  })
+  const literatureAttachmentAuthority = new LiteratureAttachmentAuthority({
+    getClient: () => getProjectDbClient(resolveConfigRoot()),
+    content: contentRepository
+  })
+  const sessionPdfSourceResolver = new SessionPdfSourceResolver({
+    inputs: immutableInputAuthority,
+    literature: literatureAttachmentAuthority
+  })
   const provenanceMessageSnapshots = new ProvenanceMessageSnapshotRepository({
     storageRoot: resolveDataRoot(),
     getClient: () => getProjectDbClient(resolveConfigRoot())
@@ -864,7 +891,7 @@ const createApplicationModules = async (
   )
   // One source-neutral resolver keeps previews and user-requested exports on identical trust checks.
   const resolveManagedFilePath = (
-    _source: Extract<ManagedPreviewSource, 'local'>,
+    source: Extract<ManagedPreviewSource, 'literature' | 'local'>,
     request: {
       path: string
       projectId?: string
@@ -873,6 +900,14 @@ const createApplicationModules = async (
       versionId?: string
     }
   ): Promise<string> => {
+    if (source === 'literature') {
+      const versionId = parseLiteratureAttachmentVersionReference(request.path)
+      if (!versionId) return Promise.reject(new Error('Invalid Literature attachment reference.'))
+      return literatureAttachmentAuthority.resolveVersion(versionId).then((version) => {
+        if (!version) throw new Error('Literature attachment Version is unavailable.')
+        return version.path
+      })
+    }
     return localFsService.resolveFilePath(request)
   }
   // One registry owns short-lived capability URLs for both managed artifact repositories.
@@ -1076,7 +1111,7 @@ const createApplicationModules = async (
     }
   )
   const sessionPdfContextOwner = new SessionPdfContextOwner({
-    inputs: immutableInputAuthority,
+    sources: sessionPdfSourceResolver,
     pendingUploads: {
       resolveContent: ({ projectId, path }) =>
         uploadRepository.resolveManagedUploadPath(
@@ -1103,7 +1138,7 @@ const createApplicationModules = async (
   }))
   const literatureDocumentReader = new LiteratureDocumentReader({
     storageRoot: resolveDataRoot(),
-    inputs: immutableInputAuthority,
+    sources: sessionPdfSourceResolver,
     sessions: sessionPersistenceCoordinator
   })
   const sideChatRelay = new SideChatRelayOwner({
@@ -1485,7 +1520,13 @@ const createApplicationModules = async (
       listSkills: () => settingsService.listSkills(),
       listConnectors: () => settingsService.listConnectors(),
       listSpecialists: async () =>
-        (await specialistService.listForSettings()).filter(({ kind }) => kind !== 'reviewer')
+        (await specialistService.listForSettings()).filter(({ kind }) => kind !== 'reviewer'),
+      listLiteratureItems: async () => {
+        const database = await getProjectDbClient(configRoot)
+        return database.literatureItem.findMany({
+          select: { id: true }
+        })
+      }
     }),
     applicationEvents
   )
@@ -1493,6 +1534,56 @@ const createApplicationModules = async (
     new MemoryRepository(() => getProjectDbClient(configRoot)),
     applicationEvents
   )
+  const literatureCatalog = new LiteratureCatalog(() => getProjectDbClient(configRoot))
+  const literatureCitationStyles = new LiteratureCitationStyleLibrary(
+    join(resolveDataRoot(), 'literature', 'citation-styles')
+  )
+  const literatureCitationFormatter = new LiteratureCitationFormatter(literatureCitationStyles)
+  const literatureCitationDocument = new LiteratureCitationDocument(
+    literatureCatalog,
+    literatureCitationFormatter
+  )
+  const literatureMetadataEnricher = new LiteratureMetadataEnricher(
+    literatureCatalog,
+    netFetchStandard
+  )
+  const downloadLiteraturePdf: typeof downloadFullText = (url, maxBytes, onProgress) =>
+    downloadFullText(url, maxBytes, onProgress, async (target) => {
+      const environment = parseSystemProxyRules(await session.defaultSession.resolveProxy(target))
+      return environment.HTTPS_PROXY ?? environment.ALL_PROXY
+    })
+  const literatureFullTextFinder = new LiteratureFullTextFinder({
+    catalog: literatureCatalog,
+    content: contentRepository,
+    download: downloadLiteraturePdf,
+    openAlexKey: async () =>
+      tryDecryptKey((await settingsService.getConnectors())?.openAlexApiKeyRef),
+    contactEmail: async () => (await settingsService.getConnectors())?.contactEmail
+  })
+  const literaturePdfImporter = new LiteraturePdfImporter({
+    uploads: uploadRepository,
+    content: contentRepository,
+    catalog: literatureCatalog
+  })
+  const literaturePdfAcquisition = new AgentPdfAcquisition({
+    catalog: literatureCatalog,
+    fullText: literatureFullTextFinder,
+    content: contentRepository,
+    download: downloadLiteraturePdf
+  })
+  const literatureBatchJobs = new LiteratureBatchJobs({
+    path: join(resolveDataRoot(), 'literature', 'batch-jobs.json'),
+    catalog: literatureCatalog,
+    metadata: literatureMetadataEnricher,
+    fullText: literatureFullTextFinder,
+    onError: (error) =>
+      literatureContextLog.error('Literature batch task failed', errorLogFields(error))
+  })
+  await modules.add(undefined, () => ({
+    name: 'literature-batch-jobs',
+    capability: undefined,
+    dispose: () => literatureBatchJobs.close()
+  }))
   const tagCleanupLog = createLogger('tags:cleanup')
   const removeResourceTagsOrThrow = async (
     resources: Parameters<TagService['removeResources']>[0]
@@ -2715,6 +2806,9 @@ const createApplicationModules = async (
       specialistService,
       sessionPersistenceCoordinator,
       literatureReader: literatureDocumentReader,
+      literatureAttachments: literatureAttachmentAuthority,
+      literatureCatalog,
+      literaturePdfAcquisition,
       delegatedWork: delegatedWork.root,
       sideChatRelays: mainPromptSideChatRelay,
       imageInputCompatibility,
@@ -4070,6 +4164,164 @@ const createApplicationModules = async (
     },
     permissionGrants: permissionGrantProjection,
     tags: tagService,
+    literature: {
+      jobs: (request) => literatureBatchJobs.run(request),
+      citationStyles: async (request) => {
+        if (request.kind === 'preview') {
+          const [styles, preview] = await Promise.all([
+            literatureCitationStyles.list(),
+            literatureCitationFormatter.formatStyleExample(request.styleId)
+          ])
+          return { styles, preview: { styleId: request.styleId, ...preview } }
+        }
+        let changedStyleId: string | undefined
+        if (request.kind === 'import') {
+          changedStyleId = await literatureCitationStyles.import(request.content)
+          literatureCitationFormatter.invalidateStyles()
+        } else if (request.kind === 'delete') {
+          await literatureCitationStyles.delete(request.styleId)
+          changedStyleId = request.styleId
+          literatureCitationFormatter.invalidateStyles()
+        }
+        return {
+          styles: await literatureCitationStyles.list(),
+          ...(changedStyleId ? { changedStyleId } : {})
+        }
+      },
+      completeMetadata: (request) => literatureMetadataEnricher.complete(request),
+      fullText: (request) => literatureFullTextFinder.run(request),
+      formatDocument: async (request) => {
+        const literature = await artifactProvenanceRepository.getVersionLiterature({
+          projectId: request.projectId,
+          appSessionId: request.sessionId,
+          artifactId: request.artifactId,
+          versionId: request.versionId
+        })
+        if (!literature) {
+          throw new Error('This Artifact Version has no Literature manifest.')
+        }
+        if (request.mode === 'preview') {
+          const references = await literatureCitationFormatter.formatReferences(
+            literature.references.map((reference) => ({
+              id: reference.itemId,
+              item: reference.item
+            })),
+            request.styleId,
+            request.locale
+          )
+          return { mode: 'preview' as const, references }
+        }
+
+        const lease = await managedFileVersionService.openVersion(
+          { source: 'artifact', projectId: request.projectId, fileId: request.artifactId },
+          request.versionId
+        )
+        let content: Uint8Array
+        try {
+          content = lease.size === 0 ? new Uint8Array() : await lease.readRange(0, lease.size)
+        } finally {
+          await lease.close()
+        }
+        const formatted = await literatureCitationDocument.reformat({
+          content,
+          literature,
+          styleId: request.styleId,
+          locale: request.locale
+        })
+        const saved = await withDataRootWrite(() =>
+          managedFileVersionService.saveDerivedArtifactEdit({
+            source: 'artifact',
+            projectId: request.projectId,
+            fileId: request.artifactId,
+            basedOnVersionId: request.versionId,
+            expectedHeadVersionId: request.expectedHeadVersionId,
+            operationId: request.operationId,
+            content: formatted.content,
+            literature: formatted.literature
+          })
+        )
+        if (saved.kind !== 'created') {
+          throw new Error(
+            saved.kind === 'conflict'
+              ? 'This file has a newer version.'
+              : 'Citation formatting did not create a new version.'
+          )
+        }
+        if (!saved.replayed) {
+          broadcastToRenderers('project-files:changed', {
+            projectId: request.projectId,
+            sources: ['artifact'],
+            kind: 'upsert'
+          })
+        }
+        return {
+          mode: 'save' as const,
+          versionId: saved.version.id,
+          versionNumber: saved.version.versionNumber
+        }
+      },
+      formatReferences: async (request) => {
+        const items = await literatureCatalog.getMany(request.itemIds)
+        const itemsById = new Map(items.map((item) => [item.id, item]))
+        const references = request.itemIds.map((itemId) => {
+          const item = itemsById.get(itemId)
+          if (!item) throw new Error(`Literature Item is unavailable: ${itemId}`)
+          return { id: itemId, item: item.item }
+        })
+        const [formatted, bibtex, ris] = await Promise.all([
+          literatureCitationFormatter.formatReferences(references, request.styleId, request.locale),
+          literatureCitationFormatter.exportReferences(references, 'bibtex'),
+          literatureCitationFormatter.exportReferences(references, 'ris')
+        ])
+        return {
+          references: formatted,
+          exports: { bibtex, ris }
+        }
+      },
+      get: (itemId) => literatureCatalog.get(itemId),
+      importPdf: (request) => literaturePdfImporter.import(request),
+      importRecords: async (request) => {
+        const parsed = await literatureCitationFormatter.parseReferences(request.content)
+        const entries = await literatureCatalog.inspectImportItems(parsed.items, parsed.errors)
+        if (request.mode === 'preview') return { ...parsed, entries }
+        if (parsed.items.length === 0) throw new Error('No valid references were found.')
+        return {
+          ...parsed,
+          entries,
+          imported: await literatureCatalog.importItems(
+            parsed.items,
+            request.collectionId,
+            request.duplicatePolicy
+          )
+        }
+      },
+      search: (request) => literatureCatalog.search(request),
+      transact: async (command) => {
+        if (command.kind !== 'delete-items-permanently') {
+          return literatureCatalog.transact(command)
+        }
+        const contentBlobIds = await literatureCatalog.contentBlobIdsForItems(command.itemIds)
+        const receipt = await literatureCatalog.transact(command)
+        try {
+          const sweep = await contentRepository.sweep({
+            createdBefore: new Date(Date.now() + 1),
+            contentIds: contentBlobIds
+          })
+          if (sweep.failedIds.length > 0) {
+            literatureContextLog.warn(
+              'Permanent Literature deletion left content for later cleanup',
+              { failedContentCount: sweep.failedIds.length }
+            )
+          }
+        } catch (error) {
+          literatureContextLog.warn(
+            'Permanent Literature deletion could not start content cleanup',
+            errorLogFields(error)
+          )
+        }
+        return receipt
+      }
+    },
     memory: {
       snapshot: () => memoryService.snapshot(),
       setEnabled: async (request) => {
