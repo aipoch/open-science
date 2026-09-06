@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto'
 import { cp, lstat, mkdir, readFile, readdir, rename, rm, stat, writeFile } from 'node:fs/promises'
 import { basename, dirname, join, resolve, sep } from 'node:path'
 
+import { validateSpecialistPackageVersion } from '../../shared/specialist'
 import type { SpecialistPackageSkillPlan } from '../../shared/specialist-package'
 import type { SpecialistPackageSkillPort } from '../specialist/package/skill-port'
 import { writeDurableJsonFile } from '../storage/durable-json-file'
@@ -359,6 +360,11 @@ export class UserSkillSpecialistPackageAdapter implements SpecialistPackageSkill
               new TextDecoder().decode(skillDocument.bytes)
             ).metadata.version?.trim()
           : undefined
+        if (version !== undefined && validateSpecialistPackageVersion(version)) {
+          throw new Error(
+            `Skill ${localId} has an invalid version. Correct SKILL.md before exporting.`
+          )
+        }
         result.push({
           localId,
           name,

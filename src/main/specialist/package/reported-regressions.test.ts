@@ -152,6 +152,49 @@ describe('reported Specialist package regressions', () => {
     expect(imported.plan?.skills[0].version).toBe('2.0.0')
   })
 
+  it.each(['2', '', 'next'])(
+    'blocks exporting an explicitly invalid Skill version %j until the Skill is excluded',
+    async (version) => {
+      const { packages, userSkills } = await fixture()
+      const first = await packages.preview(archive('first-specialist'))
+      expect(await packages.install({ candidateToken: first.candidateToken })).toMatchObject({
+        status: 'installed'
+      })
+      await userSkills.updatePersonal('personal-analysis-tools', {
+        name: 'analysis-tools',
+        description: 'Analyze data',
+        body: 'LOCAL SKILL CONTENT',
+        metadata: { version }
+      })
+
+      const preview = await packages.previewExport('first-specialist')
+      expect.soft(preview.canExport).toBe(false)
+      expect.soft(preview.diagnostics).toContainEqual(
+        expect.objectContaining({
+          severity: 'error',
+          code: 'specialist.export-validation-failed'
+        })
+      )
+      await expect
+        .soft(
+          packages.export({
+            specialistId: preview.specialistId,
+            expectedRevision: preview.expectedRevision,
+            includedSkillIds: ['personal-analysis-tools']
+          })
+        )
+        .rejects.toThrow(/invalid version/i)
+
+      expect((await packages.previewExport('first-specialist', [])).canExport).toBe(true)
+      const exported = await packages.export({
+        specialistId: preview.specialistId,
+        expectedRevision: preview.expectedRevision,
+        includedSkillIds: []
+      })
+      expect(validateSpecialistZip(exported.archiveBytes, emptyCatalog).plan?.skills).toEqual([])
+    }
+  )
+
   it('keeps unrelated package preview and export available when an owned Skill document is missing', async () => {
     const { packages, storageDir, skillPort } = await fixture()
     const first = await packages.preview(archive('first-specialist'))

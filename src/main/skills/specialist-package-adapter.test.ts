@@ -293,7 +293,17 @@ describe('UserSkillSpecialistPackageAdapter', () => {
       'analysis-tools'
     ])
 
-    expect(snapshot).toMatchObject({ localId: 'analysis-tools', name: 'analysis-tools' })
+    expect(snapshot).toMatchObject({
+      localId: 'analysis-tools',
+      name: 'analysis-tools',
+      version: '1.2.3'
+    })
+
+    await rm(join(directory, SPECIALIST_PACKAGE_SKILL_METADATA))
+    const [withoutMetadata] = await new UserSkillSpecialistPackageAdapter(root).exportSnapshot([
+      'personal-analysis-tools'
+    ])
+    expect(withoutMetadata.version).toBe('0.1.0')
   })
 
   it('does not reinterpret a legacy directory whose name starts with personal-', async () => {
