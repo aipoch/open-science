@@ -61,13 +61,13 @@ const TiffPageControls = ({
   const { t } = useTranslation()
   const actions = [
     {
-      label: 'Previous TIFF page',
+      label: t('Previous page'),
       icon: ChevronLeft,
       disabled: pageIndex === 0,
       onClick: () => onPageChange(pageIndex - 1)
     },
     {
-      label: 'Next TIFF page',
+      label: t('Next page'),
       icon: ChevronRight,
       disabled: pageIndex === pageCount - 1,
       onClick: () => onPageChange(pageIndex + 1)
