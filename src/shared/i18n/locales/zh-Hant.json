@@ -4540,6 +4540,12 @@
     "Could not load app icons.": "無法載入應用程式圖示。",
     "No app icons are available.": "沒有可用的應用程式圖示。",
     "Current icon: {{icon}}. Its preview is unavailable.": "目前圖示：{{icon}}。其預覽無法使用。",
-    "This provider isn't compatible with {{framework}}. Pick a provider whose API format {{framework}} supports, or change the agent framework.": "此提供商與 {{framework}} 不相容。請選擇 API 格式受 {{framework}} 支援的提供商，或更換智能體框架。"
+    "This provider isn't compatible with {{framework}}. Pick a provider whose API format {{framework}} supports, or change the agent framework.": "此提供商與 {{framework}} 不相容。請選擇 API 格式受 {{framework}} 支援的提供商，或更換智能體框架。",
+    "External status unconfirmed": "外部狀態未確認",
+    "Remote access is off on this computer, but turning it off did not finish. The Off setting may not have been saved, and access may turn on again after restarting.": "此電腦上的遠端存取已關閉，但關閉操作尚未完成。關閉設定可能未儲存，重新啟動後存取可能再次開啟。",
+    "Retry turning off": "重試關閉",
+    "Local remote access remains enabled, but the latest external status check failed.": "本機遠端存取仍已啟用，但最近一次外部狀態檢查失敗。",
+    "The latest external status check failed.": "最近一次外部狀態檢查失敗。",
+    "Saved browser link": "已儲存的瀏覽器連結"
   }
 }

@@ -4986,6 +4986,12 @@
     "Could not load app icons.": "Не удалось загрузить значки приложения.",
     "No app icons are available.": "Нет доступных значков приложения.",
     "Current icon: {{icon}}. Its preview is unavailable.": "Текущий значок: {{icon}}. Предпросмотр недоступен.",
-    "This provider isn't compatible with {{framework}}. Pick a provider whose API format {{framework}} supports, or change the agent framework.": "Этот поставщик несовместим с {{framework}}. Выберите поставщика с форматом API, который поддерживает {{framework}}, или смените фреймворк агента."
+    "This provider isn't compatible with {{framework}}. Pick a provider whose API format {{framework}} supports, or change the agent framework.": "Этот поставщик несовместим с {{framework}}. Выберите поставщика с форматом API, который поддерживает {{framework}}, или смените фреймворк агента.",
+    "External status unconfirmed": "Внешнее состояние не подтверждено",
+    "Remote access is off on this computer, but turning it off did not finish. The Off setting may not have been saved, and access may turn on again after restarting.": "Удалённый доступ на этом компьютере выключен, но операция выключения не завершена. Настройка могла не сохраниться, и после перезапуска доступ может включиться снова.",
+    "Retry turning off": "Повторить выключение",
+    "Local remote access remains enabled, but the latest external status check failed.": "Локальный удалённый доступ остаётся включённым, но последняя проверка внешнего состояния завершилась ошибкой.",
+    "The latest external status check failed.": "Последняя проверка внешнего состояния завершилась ошибкой.",
+    "Saved browser link": "Сохранённая ссылка для браузера"
   }
 }

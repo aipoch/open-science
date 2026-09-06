@@ -4540,6 +4540,12 @@
     "Could not load app icons.": "无法加载应用图标。",
     "No app icons are available.": "没有可用的应用图标。",
     "Current icon: {{icon}}. Its preview is unavailable.": "当前图标：{{icon}}。其预览不可用。",
-    "This provider isn't compatible with {{framework}}. Pick a provider whose API format {{framework}} supports, or change the agent framework.": "此提供商与 {{framework}} 不兼容。请选择 API 格式受 {{framework}} 支持的提供商，或更换智能体框架。"
+    "This provider isn't compatible with {{framework}}. Pick a provider whose API format {{framework}} supports, or change the agent framework.": "此提供商与 {{framework}} 不兼容。请选择 API 格式受 {{framework}} 支持的提供商，或更换智能体框架。",
+    "External status unconfirmed": "外部状态未确认",
+    "Remote access is off on this computer, but turning it off did not finish. The Off setting may not have been saved, and access may turn on again after restarting.": "此计算机上的远程访问已关闭，但关闭操作尚未完成。关闭设置可能未保存，重启后访问可能重新开启。",
+    "Retry turning off": "重试关闭",
+    "Local remote access remains enabled, but the latest external status check failed.": "本地远程访问仍已启用，但最近一次外部状态检测失败。",
+    "The latest external status check failed.": "最近一次外部状态检测失败。",
+    "Saved browser link": "已保存的浏览器链接"
   }
 }
