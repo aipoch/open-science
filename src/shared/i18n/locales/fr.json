@@ -4842,6 +4842,11 @@
     "Processing failed. Refresh and try again.": "Échec du traitement. Actualisez et réessayez.",
     "References changed after review. Reopen the merge dialog to compare the latest metadata.": "Les références ont changé depuis la vérification. Rouvrez la fenêtre de fusion pour comparer les dernières métadonnées.",
     "A collection with this name already exists at this level. Choose another name.": "Une collection portant ce nom existe déjà à ce niveau. Choisissez un autre nom.",
-    "A child collection would duplicate a top-level name. Rename it before deleting this collection.": "Une collection enfant porterait le même nom qu’une collection de premier niveau. Renommez-la avant de supprimer cette collection."
+    "A child collection would duplicate a top-level name. Rename it before deleting this collection.": "Une collection enfant porterait le même nom qu’une collection de premier niveau. Renommez-la avant de supprimer cette collection.",
+    "Could not check the log file.": "Impossible de vérifier le fichier journal.",
+    "The log folder could not be created.": "Le dossier des journaux n’a pas pu être créé.",
+    "The log file could not be checked.": "Le fichier journal n’a pas pu être vérifié.",
+    "The log backups could not be rotated.": "La rotation des sauvegardes du journal a échoué.",
+    "The log record could not be appended.": "L’entrée n’a pas pu être ajoutée au journal."
   }
 }

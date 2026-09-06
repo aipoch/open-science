@@ -4680,6 +4680,11 @@
     "Processing failed. Refresh and try again.": "Verarbeitung fehlgeschlagen. Aktualisieren Sie die Ansicht und versuchen Sie es erneut.",
     "References changed after review. Reopen the merge dialog to compare the latest metadata.": "Referenzen wurden nach der Prüfung geändert. Öffnen Sie den Zusammenführungsdialog erneut, um die aktuellen Metadaten zu vergleichen.",
     "A collection with this name already exists at this level. Choose another name.": "Auf dieser Ebene gibt es bereits eine Sammlung mit diesem Namen. Wählen Sie einen anderen Namen.",
-    "A child collection would duplicate a top-level name. Rename it before deleting this collection.": "Eine untergeordnete Sammlung hätte denselben Namen wie eine Sammlung auf oberster Ebene. Benennen Sie sie um, bevor Sie diese Sammlung löschen."
+    "A child collection would duplicate a top-level name. Rename it before deleting this collection.": "Eine untergeordnete Sammlung hätte denselben Namen wie eine Sammlung auf oberster Ebene. Benennen Sie sie um, bevor Sie diese Sammlung löschen.",
+    "Could not check the log file.": "Die Protokolldatei konnte nicht überprüft werden.",
+    "The log folder could not be created.": "Der Protokollordner konnte nicht erstellt werden.",
+    "The log file could not be checked.": "Die Protokolldatei konnte nicht überprüft werden.",
+    "The log backups could not be rotated.": "Die Protokollsicherungen konnten nicht rotiert werden.",
+    "The log record could not be appended.": "Der Protokolleintrag konnte nicht angehängt werden."
   }
 }

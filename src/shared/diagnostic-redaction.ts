@@ -129,11 +129,46 @@ const redactEmbeddedUrlCredentials = (rawUrl: string): string => {
   return hasEscapedSeparators ? redacted.replace('://', ':\\/\\/') : redacted
 }
 
+// Inspect assignment prefixes independently: a non-sensitive prefix such as "Error:" must not
+// consume and hide a later sensitive assignment in its value.
+const redactSensitiveAssignments = (value: string): string => {
+  let output = ''
+  let cursor = 0
+  for (const match of value.matchAll(/\b([a-z][a-z0-9_-]*)(\s*["']?\s*[:=]\s*)/gi)) {
+    if (match.index < cursor || !isSensitiveDiagnosticKey(match[1])) continue
+    const start = match.index + match[0].length
+    const rest = value.slice(start)
+    const quoted = /^(["'])(?:\\.|(?!\1)[^\\\r\n])*\1/.exec(rest)
+    const unquoted = quoted
+      ? null
+      : /^(?:(?:Bearer|Basic|Digest|Negotiate)\s+)?[^"'&;}\r\n]+/i.exec(rest)
+    const content = quoted ?? unquoted
+    if (!content) continue
+    const quote = quoted?.[1] ?? ''
+    output += `${value.slice(cursor, start)}${quote}${REDACTED_MARKER}${quote}`
+    cursor = start + content[0].length
+  }
+  return output + value.slice(cursor)
+}
+
 // Shared credential-text policy for diagnostic sinks and persisted tool payloads. Keep this
 // helper unbounded: each caller owns its own output budget, while the credential patterns stay
 // identical at every boundary.
 const redactSensitiveText = (value: string): string =>
-  value
+  redactSensitiveAssignments(value)
+    // Match complete quoted values before header rules can stop at an escaped quote.
+    .replace(
+      /("(?:\\.|[^"\\])*")(\s*:\s*)("(?:\\.|[^"\\])*")/g,
+      (match, key: string, separator: string) => {
+        try {
+          return isSensitiveDiagnosticKey(JSON.parse(key) as string)
+            ? `${key}${separator}"${REDACTED_MARKER}"`
+            : match
+        } catch {
+          return match
+        }
+      }
+    )
     .replace(/\b[a-z][a-z0-9+.-]*:(?:\\?\/){2}[^\s"'<>]+/gi, redactEmbeddedUrlCredentials)
     .replace(
       /\b(authorization|proxy-authorization|x-api-key|api-key|x-auth-token|x-amz-security-token|cookie|set-cookie)\b(\s*["']?\s*:\s*["']?)[^"'\r\n}]*/gi,
@@ -146,18 +181,6 @@ const redactSensitiveText = (value: string): string =>
     .replace(
       /\b(api[_-]?key|access[_-]?key|access[_-]?token|auth[_-]?token|authorization|bearer[_-]?token|client[_-]?secret|cookie|credential|password|passphrase|passwd|private[_-]?key|refresh[_-]?token|secret|secret[_-]?access[_-]?key|security[_-]?token|session[_-]?token|token)\b(\s*["']?\s*[:=]\s*["']?)(?:(?:Bearer|Basic|Digest|Negotiate)\s+)?[^"'&;}\r\n]+/gi,
       `$1$2${REDACTED_MARKER}`
-    )
-    .replace(
-      /\b([a-z][a-z0-9_-]*)(\s*=\s*)(["'])(?:\\.|(?!\3)[^\\\r\n])*\3/gi,
-      (match, key: string, separator: string, quote: string) =>
-        isSensitiveDiagnosticKey(key)
-          ? `${key}${separator}${quote}${REDACTED_MARKER}${quote}`
-          : match
-    )
-    .replace(
-      /\b([a-z][a-z0-9_-]*)(\s*=\s*)(?:(?:Bearer|Basic|Digest|Negotiate)\s+)?[^"'&;}\r\n]+/gi,
-      (match, key: string, separator: string) =>
-        isSensitiveDiagnosticKey(key) ? `${key}${separator}${REDACTED_MARKER}` : match
     )
     .replace(
       /(--?(?:access[-_]?key|access[-_]?token|api[-_]?key|auth[-_]?token|authorization|bearer[-_]?token|client[-_]?secret|cookie|credentials?|passphrase|passwd|password|pat|private[-_]?key|secret|token))(\s+|=)(["'])(?:\\.|(?!\3)[^\\\r\n])*\3/gi,

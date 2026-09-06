@@ -4526,6 +4526,11 @@
     "Processing failed. Refresh and try again.": "處理失敗，請重新整理後再試。",
     "References changed after review. Reopen the merge dialog to compare the latest metadata.": "題錄在審閱後發生變更，請重新開啟合併對話框以比較最新中繼資料。",
     "A collection with this name already exists at this level. Choose another name.": "此層級已存在同名合集，請使用其他名稱。",
-    "A child collection would duplicate a top-level name. Rename it before deleting this collection.": "子合集的名稱與頂層合集重名。請先重新命名子合集，再刪除此合集。"
+    "A child collection would duplicate a top-level name. Rename it before deleting this collection.": "子合集的名稱與頂層合集重名。請先重新命名子合集，再刪除此合集。",
+    "Could not check the log file.": "無法檢查日誌檔案。",
+    "The log folder could not be created.": "無法建立日誌資料夾。",
+    "The log file could not be checked.": "無法檢查日誌檔案。",
+    "The log backups could not be rotated.": "無法輪替日誌備份。",
+    "The log record could not be appended.": "無法附加日誌記錄。"
   }
 }

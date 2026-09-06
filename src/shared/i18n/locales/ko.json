@@ -4524,6 +4524,11 @@
     "Processing failed. Refresh and try again.": "처리하지 못했습니다. 새로고침 후 다시 시도하세요.",
     "References changed after review. Reopen the merge dialog to compare the latest metadata.": "검토 후 문헌이 변경되었습니다. 병합 대화상자를 다시 열어 최신 메타데이터를 비교하세요.",
     "A collection with this name already exists at this level. Choose another name.": "이 수준에 같은 이름의 컬렉션이 이미 있습니다. 다른 이름을 선택하세요.",
-    "A child collection would duplicate a top-level name. Rename it before deleting this collection.": "하위 컬렉션의 이름이 최상위 컬렉션과 중복됩니다. 이 컬렉션을 삭제하기 전에 하위 컬렉션의 이름을 변경하세요."
+    "A child collection would duplicate a top-level name. Rename it before deleting this collection.": "하위 컬렉션의 이름이 최상위 컬렉션과 중복됩니다. 이 컬렉션을 삭제하기 전에 하위 컬렉션의 이름을 변경하세요.",
+    "Could not check the log file.": "로그 파일을 확인하지 못했습니다.",
+    "The log folder could not be created.": "로그 폴더를 만들지 못했습니다.",
+    "The log file could not be checked.": "로그 파일을 확인하지 못했습니다.",
+    "The log backups could not be rotated.": "로그 백업을 순환하지 못했습니다.",
+    "The log record could not be appended.": "로그 항목을 추가하지 못했습니다."
   }
 }

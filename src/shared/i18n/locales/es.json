@@ -4842,6 +4842,11 @@
     "Processing failed. Refresh and try again.": "El procesamiento falló. Actualice e inténtelo de nuevo.",
     "References changed after review. Reopen the merge dialog to compare the latest metadata.": "Las referencias cambiaron después de la revisión. Vuelva a abrir el diálogo de fusión para comparar los metadatos más recientes.",
     "A collection with this name already exists at this level. Choose another name.": "Ya existe una colección con este nombre en este nivel. Elija otro nombre.",
-    "A child collection would duplicate a top-level name. Rename it before deleting this collection.": "Una colección secundaria tendría el mismo nombre que una de nivel superior. Cámbiele el nombre antes de eliminar esta colección."
+    "A child collection would duplicate a top-level name. Rename it before deleting this collection.": "Una colección secundaria tendría el mismo nombre que una de nivel superior. Cámbiele el nombre antes de eliminar esta colección.",
+    "Could not check the log file.": "No se pudo comprobar el archivo de registro.",
+    "The log folder could not be created.": "No se pudo crear la carpeta de registros.",
+    "The log file could not be checked.": "No se pudo comprobar el archivo de registro.",
+    "The log backups could not be rotated.": "No se pudieron rotar las copias de seguridad del registro.",
+    "The log record could not be appended.": "No se pudo añadir la entrada al registro."
   }
 }

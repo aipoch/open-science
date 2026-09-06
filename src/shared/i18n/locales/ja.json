@@ -4526,6 +4526,11 @@
     "Processing failed. Refresh and try again.": "処理に失敗しました。更新して再試行してください。",
     "References changed after review. Reopen the merge dialog to compare the latest metadata.": "確認後に文献が変更されました。統合ダイアログを開き直して最新のメタデータを比較してください。",
     "A collection with this name already exists at this level. Choose another name.": "この階層には同じ名前のコレクションが既に存在します。別の名前を指定してください。",
-    "A child collection would duplicate a top-level name. Rename it before deleting this collection.": "子コレクションの名前が最上位のコレクションと重複します。このコレクションを削除する前に、子コレクションの名前を変更してください。"
+    "A child collection would duplicate a top-level name. Rename it before deleting this collection.": "子コレクションの名前が最上位のコレクションと重複します。このコレクションを削除する前に、子コレクションの名前を変更してください。",
+    "Could not check the log file.": "ログファイルを確認できませんでした。",
+    "The log folder could not be created.": "ログフォルダーを作成できませんでした。",
+    "The log file could not be checked.": "ログファイルを確認できませんでした。",
+    "The log backups could not be rotated.": "ログのバックアップをローテーションできませんでした。",
+    "The log record could not be appended.": "ログレコードを追記できませんでした。"
   }
 }
