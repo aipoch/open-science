@@ -4407,6 +4407,8 @@
     "Clears memory in the selected language kernel. Other kernels are unaffected.": "Efface la mémoire du noyau du langage sélectionné. Les autres noyaux ne sont pas affectés.",
     "Credential changes were saved, but Connectors could not refresh. Retry from Settings > Connectors.": "Les modifications des identifiants ont été enregistrées, mais les Connecteurs n’ont pas pu être actualisés. Réessayez depuis Paramètres > Connecteurs.",
     "One argument per line. Spaces and blank lines are preserved. Clear the field to remove all arguments.": "Un argument par ligne. Les espaces et les lignes vides sont conservés. Videz le champ pour supprimer tous les arguments.",
-    "The saved arguments contain embedded line breaks. Editing this field replaces the list using one argument per line.": "Les arguments enregistrés contiennent des sauts de ligne internes. Modifier ce champ remplace la liste avec un argument par ligne."
+    "The saved arguments contain embedded line breaks. Editing this field replaces the list using one argument per line.": "Les arguments enregistrés contiennent des sauts de ligne internes. Modifier ce champ remplace la liste avec un argument par ligne.",
+    "Use a safe filename without path separators or reserved characters.": "Utilisez un nom de fichier sûr, sans séparateurs de chemin ni caractères réservés.",
+    "This Skill changed. Your draft is preserved. Reopen the editor to load the latest version before saving.": "Cette Compétence a été modifiée. Votre brouillon est conservé. Rouvrez l’éditeur pour charger la dernière version avant d’enregistrer."
   }
 }

@@ -15,6 +15,7 @@ import { parseSkillDocument } from '../../../../shared/skill-frontmatter'
 import { ErrorNotice } from '@/components/error-notice'
 import { FileDropOverlay } from '@/components/FileDropOverlay'
 import { Button } from '@/components/ui/button'
+import { isSafeSkillReferenceName } from '../../../../shared/skill-reference-name'
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
 import { useFileDropZone } from '@/hooks/useFileDropZone'
@@ -24,6 +25,7 @@ import { SettingsIconAction, SettingsLoadNotice } from './SettingsLayout'
 type SkillEditorReference = SkillReference & { sizeBytes?: number }
 
 export type SkillDraft = {
+  compatibility?: string
   id?: string
   name: string
   description: string
@@ -349,6 +351,10 @@ const SkillEditor = ({ initial, onCancel, onSave }: SkillEditorProps): React.JSX
     if (addingReferences || files.length === 0) return
 
     setReferenceError(null)
+    if (files.some((file) => !isSafeSkillReferenceName(file.name))) {
+      setReferenceError(t('Use a safe filename without path separators or reserved characters.'))
+      return
+    }
     const selected = new Map<string, File>()
     for (const file of files) selected.set(file.name, file)
     const retained = references.filter((reference) => !selected.has(reference.path))
@@ -413,6 +419,7 @@ const SkillEditor = ({ initial, onCancel, onSave }: SkillEditorProps): React.JSX
     try {
       await onSave({
         id: initial.id,
+        compatibility: initial.compatibility,
         name: currentName,
         description: description.trim(),
         body: persistedBody,
@@ -421,7 +428,13 @@ const SkillEditor = ({ initial, onCancel, onSave }: SkillEditorProps): React.JSX
       })
     } catch (error) {
       setSaveError(
-        error instanceof Error && error.message ? error.message : t('Unable to save this skill.')
+        error instanceof Error && error.message.includes('This Skill changed.')
+          ? t(
+              'This Skill changed. Your draft is preserved. Reopen the editor to load the latest version before saving.'
+            )
+          : error instanceof Error && error.message
+            ? error.message
+            : t('Unable to save this skill.')
       )
     } finally {
       setSaving(false)
@@ -727,6 +740,7 @@ const SkillEditLoader = ({ skillId, onDone }: SkillEditLoaderProps): React.JSX.E
           if (loadRequestRef.current !== requestId) return
           setDraft({
             id: detail.id,
+            compatibility: detail.compatibility,
             name: detail.name,
             description: detail.description,
             body: detail.body,
@@ -795,6 +809,7 @@ const SkillEditLoader = ({ skillId, onDone }: SkillEditLoaderProps): React.JSX.E
       onSave={async (next) => {
         await updateSkill({
           id: next.id ?? skillId,
+          expectedCompatibility: next.compatibility ?? '',
           description: next.description,
           body: next.body,
           metadata: next.metadata,

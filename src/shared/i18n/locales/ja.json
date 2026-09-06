@@ -4097,6 +4097,8 @@
     "Clears memory in the selected language kernel. Other kernels are unaffected.": "選択した言語のカーネルのメモリを消去します。他のカーネルには影響しません。",
     "Credential changes were saved, but Connectors could not refresh. Retry from Settings > Connectors.": "認証情報の変更は保存されましたが、コネクタを更新できませんでした。設定 > コネクタから再試行してください。",
     "One argument per line. Spaces and blank lines are preserved. Clear the field to remove all arguments.": "1 行に 1 つの引数を入力します。空白と空行は保持されます。欄を空にすると、すべての引数が削除されます。",
-    "The saved arguments contain embedded line breaks. Editing this field replaces the list using one argument per line.": "保存済みの引数には引数内の改行が含まれています。この欄を編集すると、1 行に 1 つの引数としてリスト全体が置き換えられます。"
+    "The saved arguments contain embedded line breaks. Editing this field replaces the list using one argument per line.": "保存済みの引数には引数内の改行が含まれています。この欄を編集すると、1 行に 1 つの引数としてリスト全体が置き換えられます。",
+    "Use a safe filename without path separators or reserved characters.": "パス区切り文字や予約文字を含まない安全なファイル名を使用してください。",
+    "This Skill changed. Your draft is preserved. Reopen the editor to load the latest version before saving.": "このスキルは変更されました。下書きは保持されています。保存する前にエディターを開き直して最新バージョンを読み込んでください。"
   }
 }

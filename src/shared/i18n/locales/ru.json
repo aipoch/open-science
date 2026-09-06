@@ -4537,6 +4537,8 @@
     "Clears memory in the selected language kernel. Other kernels are unaffected.": "Очищает память ядра выбранного языка. Другие ядра не затрагиваются.",
     "Credential changes were saved, but Connectors could not refresh. Retry from Settings > Connectors.": "Изменения учётных данных сохранены, но обновить Коннекторы не удалось. Повторите попытку в разделе Настройки > Коннекторы.",
     "One argument per line. Spaces and blank lines are preserved. Clear the field to remove all arguments.": "Один аргумент на строку. Пробелы и пустые строки сохраняются. Очистите поле, чтобы удалить все аргументы.",
-    "The saved arguments contain embedded line breaks. Editing this field replaces the list using one argument per line.": "Сохранённые аргументы содержат внутренние переводы строк. При редактировании этого поля список заменяется: каждая строка становится отдельным аргументом."
+    "The saved arguments contain embedded line breaks. Editing this field replaces the list using one argument per line.": "Сохранённые аргументы содержат внутренние переводы строк. При редактировании этого поля список заменяется: каждая строка становится отдельным аргументом.",
+    "Use a safe filename without path separators or reserved characters.": "Используйте безопасное имя файла без разделителей пути и зарезервированных символов.",
+    "This Skill changed. Your draft is preserved. Reopen the editor to load the latest version before saving.": "Этот Навык изменён. Ваш черновик сохранён. Перед сохранением снова откройте редактор, чтобы загрузить последнюю версию."
   }
 }

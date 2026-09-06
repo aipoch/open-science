@@ -4095,6 +4095,8 @@
     "Clears memory in the selected language kernel. Other kernels are unaffected.": "선택한 언어 커널의 메모리를 지웁니다. 다른 커널에는 영향을 주지 않습니다.",
     "Credential changes were saved, but Connectors could not refresh. Retry from Settings > Connectors.": "자격 증명 변경 사항은 저장되었지만 커넥터를 새로 고치지 못했습니다. 설정 > 커넥터에서 다시 시도하세요.",
     "One argument per line. Spaces and blank lines are preserved. Clear the field to remove all arguments.": "한 줄에 인수 하나를 입력합니다. 공백과 빈 줄은 유지됩니다. 입력란을 비우면 모든 인수가 제거됩니다.",
-    "The saved arguments contain embedded line breaks. Editing this field replaces the list using one argument per line.": "저장된 인수 내부에 줄 바꿈이 포함되어 있습니다. 이 입력란을 편집하면 한 줄에 인수 하나씩 전체 목록이 교체됩니다."
+    "The saved arguments contain embedded line breaks. Editing this field replaces the list using one argument per line.": "저장된 인수 내부에 줄 바꿈이 포함되어 있습니다. 이 입력란을 편집하면 한 줄에 인수 하나씩 전체 목록이 교체됩니다.",
+    "Use a safe filename without path separators or reserved characters.": "경로 구분자나 예약 문자가 없는 안전한 파일 이름을 사용하세요.",
+    "This Skill changed. Your draft is preserved. Reopen the editor to load the latest version before saving.": "이 스킬이 변경되었습니다. 초안은 유지됩니다. 저장하기 전에 편집기를 다시 열어 최신 버전을 불러오세요."
   }
 }

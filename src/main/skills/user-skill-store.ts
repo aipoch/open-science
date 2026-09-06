@@ -1,6 +1,8 @@
 import { cp, lstat, mkdir, readdir, rm, stat, writeFile } from 'node:fs/promises'
-import { dirname, join, resolve } from 'node:path'
+import { dirname, join, relative } from 'node:path'
 
+import { isSafeSkillReferenceName } from '../../shared/skill-reference-name'
+import { isAppOwnedSkillRootFile } from '../../shared/skill-import-limits'
 import type { SkillReference, SkillSource } from '../../shared/settings'
 import {
   frontmatterBlock,
@@ -15,11 +17,11 @@ import {
   SKILL_IMPORT_LIMITS
 } from './import-limits'
 import { inspectSkillPackage } from './skill-package-inspection'
+import type { SkillPackageTransactionOwner } from './skill-package-transaction-owner'
 import {
-  SOURCE_MANIFEST,
-  type SkillPackageTransactionOwner
-} from './skill-package-transaction-owner'
-import { readSpecialistPackageSkillMetadata } from './specialist-package-adapter'
+  readSpecialistPackageSkillMetadata,
+  SPECIALIST_PACKAGE_SKILL_METADATA
+} from './specialist-package-adapter'
 import type { UserSkillCompatibilityIndex } from './user-skill-compatibility-index'
 import { SAFE_SKILL_NAME, SKILL_NAME_MAX_LENGTH, assertUsableSkillName } from './skill-name'
 import { readSkillHelperDescriptors } from './registered-helper-catalog'
@@ -83,8 +85,10 @@ const prepareSkillWrite = (input: WriteSkillInput): PreparedSkillWrite => {
 
   const references = new Map<string, SkillReference>()
   for (const reference of input.references) {
-    const name = reference.path.split(/[\\/]/).pop() ?? ''
-    if (!name || !/^[A-Za-z0-9._-]+$/.test(name)) continue
+    const name = reference.path
+    if (!isSafeSkillReferenceName(name)) {
+      throw new Error(`Unsafe Skill reference filename: ${name}`)
+    }
     references.set(name, reference)
   }
 
@@ -284,6 +288,7 @@ export class UserSkillStore {
         throw new Error(`A skill named "${normalizedName}" already exists.`)
       }
 
+      await this.assertOrdinaryReplacement('personal', normalizedName)
       const staged = await this.transactions.stage('personal', normalizedName, async (staging) => {
         await cp(sourcePath, staging, {
           recursive: true,
@@ -293,8 +298,10 @@ export class UserSkillStore {
             if ((await lstat(entry)).isSymbolicLink()) {
               throw new Error('Refusing to publish a Skill containing a symbolic link.')
             }
-            if (resolve(entry) === resolve(sourcePath, SOURCE_MANIFEST)) {
-              throw new Error(`Skill publish may not include the reserved file ${SOURCE_MANIFEST}.`)
+            if (isAppOwnedSkillRootFile(relative(sourcePath, entry))) {
+              throw new Error(
+                `Skill publish may not include the reserved file ${relative(sourcePath, entry)}.`
+              )
             }
             return true
           }
@@ -306,7 +313,11 @@ export class UserSkillStore {
     }, ['personal'])
   }
 
-  async updatePersonal(id: string, input: WriteSkillInput): Promise<void> {
+  async updatePersonal(
+    id: string,
+    input: WriteSkillInput,
+    expectedCompatibility?: string
+  ): Promise<void> {
     const parsed = parseUserSkillId(id)
     if (!parsed || parsed.source !== 'personal') throw new Error(`Not a personal skill id: ${id}`)
     const name = parsed.directoryName
@@ -314,6 +325,12 @@ export class UserSkillStore {
 
     await this.transactions.runMutationRecovered(async () => {
       const live = this.skillDirectory('personal', name)
+      if (expectedCompatibility !== undefined) {
+        const current = (await this.listSkillsLocked()).find((skill) => skill.id === id)
+        if (!current || current.compatibility !== expectedCompatibility) {
+          throw new Error('This Skill changed. Reload it before saving.')
+        }
+      }
       const staged = await this.transactions.stage('personal', name, async (staging) => {
         await cp(live, staging, {
           recursive: true,
@@ -348,6 +365,23 @@ export class UserSkillStore {
         force: true
       })
     })
+  }
+
+  // Ordinary repair/import must not erase historical installation identity or Specialist ownership.
+  // The Specialist package transaction remains the only owner of that metadata, even if malformed.
+  async assertOrdinaryReplacement(source: UserSkillSource, directoryName: string): Promise<void> {
+    let entries: string[]
+    try {
+      entries = await readdir(this.skillDirectory(source, directoryName))
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return
+      throw error
+    }
+    if (entries.some((name) => name.toLowerCase() === SPECIALIST_PACKAGE_SKILL_METADATA)) {
+      throw new Error(
+        'Use the Specialist package workflow to update a Skill with installation metadata.'
+      )
+    }
   }
 
   async uniqueImportedName(

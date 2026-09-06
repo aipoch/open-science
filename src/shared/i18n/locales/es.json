@@ -4407,6 +4407,8 @@
     "Clears memory in the selected language kernel. Other kernels are unaffected.": "Borra la memoria del kernel del lenguaje seleccionado. Los demás kernels no se ven afectados.",
     "Credential changes were saved, but Connectors could not refresh. Retry from Settings > Connectors.": "Se guardaron los cambios de credenciales, pero no se pudieron actualizar los Conectores. Vuelva a intentarlo desde Configuración > Conectores.",
     "One argument per line. Spaces and blank lines are preserved. Clear the field to remove all arguments.": "Un argumento por línea. Se conservan los espacios y las líneas vacías. Vacíe el campo para eliminar todos los argumentos.",
-    "The saved arguments contain embedded line breaks. Editing this field replaces the list using one argument per line.": "Los argumentos guardados contienen saltos de línea internos. Al editar este campo, se sustituye la lista con un argumento por línea."
+    "The saved arguments contain embedded line breaks. Editing this field replaces the list using one argument per line.": "Los argumentos guardados contienen saltos de línea internos. Al editar este campo, se sustituye la lista con un argumento por línea.",
+    "Use a safe filename without path separators or reserved characters.": "Utilice un nombre de archivo seguro sin separadores de ruta ni caracteres reservados.",
+    "This Skill changed. Your draft is preserved. Reopen the editor to load the latest version before saving.": "Esta Habilidad ha cambiado. Su borrador se conserva. Vuelva a abrir el editor para cargar la versión más reciente antes de guardar."
   }
 }

@@ -814,6 +814,7 @@ describe('SkillCatalogModule', () => {
       (
         await catalog.updateSkill({
           id: 'personal-my-skill',
+          expectedCompatibility: (await catalog.getSkillDetail('personal-my-skill')).compatibility!,
           description: 'Edited.',
           body: '# Edited'
         })

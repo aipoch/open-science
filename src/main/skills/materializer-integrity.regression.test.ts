@@ -97,6 +97,12 @@ describe('reported runtime Skill integrity regressions', () => {
       expect.soft(catalogFingerprint(after)).not.toBe(catalogFingerprint(before))
       await materializer.sync(configDir, after)
       expect((await fs.stat(target)).mode & 0o111).toBe(0o111)
+      // A restarted reader and the reverse chmod transition must invalidate the same projection.
+      const restarted = new UserSkillRepository(root)
+      expect((await restarted.list())[0].compatibility).toBe(after[0].compatibility)
+      await fs.chmod(source, 0o644)
+      await materializer.sync(configDir, await restarted.list())
+      expect((await fs.stat(target)).mode & 0o111).toBe(0)
     }
   )
 })

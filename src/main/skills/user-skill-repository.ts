@@ -116,8 +116,12 @@ class UserSkillRepository {
   }
 
   // Replaces an existing personal skill through the shared staged package transaction.
-  async updatePersonal(id: string, input: WriteSkillInput): Promise<void> {
-    return this.store.updatePersonal(id, input)
+  async updatePersonal(
+    id: string,
+    input: WriteSkillInput,
+    expectedCompatibility?: string
+  ): Promise<void> {
+    return this.store.updatePersonal(id, input, expectedCompatibility)
   }
 
   // Deletes a personal or imported skill directory.
@@ -165,7 +169,7 @@ class UserSkillRepository {
     repoInput: string,
     fetchImpl?: FetchLike,
     options: GitHubFetchOptions = {}
-  ): Promise<(ScannedSkill & { alreadyImported: boolean })[]> {
+  ): Promise<(ScannedSkill & { alreadyImported: boolean; installedId?: string })[]> {
     return this.bundleImports.scanRepo(repoInput, fetchImpl, options)
   }
 

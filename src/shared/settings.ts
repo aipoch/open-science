@@ -1124,6 +1124,8 @@ export type SkillView = {
 // A skill view plus its SKILL.md body (frontmatter stripped) and the names of any files under its
 // `references/` directory, for the detail/edit view.
 export type SkillDetailView = SkillView & {
+  // Read-time precondition for personal editor saves; not a stored revision counter.
+  compatibility?: string
   body: string
   metadata?: Record<string, string>
   references: SkillReferenceInfo[]
@@ -1191,6 +1193,7 @@ export type CreateSkillRequest = {
 // Update an existing personal skill through a staged package replacement.
 export type UpdateSkillRequest = {
   id: string
+  expectedCompatibility: string
   description: string
   body: string
   metadata?: Record<string, string>
@@ -1391,6 +1394,7 @@ export type ImportAgentHomeSkillsResult = {
 
 // One skill directory found by a repo scan, with an importable URL and whether it's already imported.
 export type ScannedSkillView = {
+  installedId?: string
   name: string
   path: string
   url: string

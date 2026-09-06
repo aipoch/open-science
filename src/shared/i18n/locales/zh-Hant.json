@@ -4097,6 +4097,8 @@
     "Clears memory in the selected language kernel. Other kernels are unaffected.": "清空所選語言核心的記憶體，不影響其他核心。",
     "Credential changes were saved, but Connectors could not refresh. Retry from Settings > Connectors.": "憑證變更已儲存，但連接器重新整理失敗。請前往設定 > 連接器重試。",
     "One argument per line. Spaces and blank lines are preserved. Clear the field to remove all arguments.": "每行一個參數。空格和空行會保留。清空輸入框可移除所有參數。",
-    "The saved arguments contain embedded line breaks. Editing this field replaces the list using one argument per line.": "已儲存的參數內部含有換行。編輯此輸入框將按每行一個參數取代整個清單。"
+    "The saved arguments contain embedded line breaks. Editing this field replaces the list using one argument per line.": "已儲存的參數內部含有換行。編輯此輸入框將按每行一個參數取代整個清單。",
+    "Use a safe filename without path separators or reserved characters.": "請使用不含路徑分隔符號或保留字元的安全檔案名稱。",
+    "This Skill changed. Your draft is preserved. Reopen the editor to load the latest version before saving.": "此技能已變更，您的草稿已保留。請重新開啟編輯器，載入最新版本後再儲存。"
   }
 }

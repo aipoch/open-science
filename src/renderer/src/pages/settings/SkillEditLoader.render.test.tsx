@@ -135,7 +135,9 @@ it('SK06 submits the loaded compatibility and retains the draft on a stale-save 
       expect.objectContaining({ expectedCompatibility: 'loaded-version', body: 'My unsaved draft' })
     )
   expect(body.value).toBe('My unsaved draft')
-  expect(container.textContent).toContain('This Skill changed. Reload it before saving.')
+  expect(container.textContent).toContain(
+    'This Skill changed. Your draft is preserved. Reopen the editor to load the latest version before saving.'
+  )
   expect(onDone).not.toHaveBeenCalled()
   expect(save.disabled).toBe(false)
 })

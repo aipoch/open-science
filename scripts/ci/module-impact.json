@@ -422,7 +422,9 @@
           "src/main/skills/user-skill-compatibility-index.test.ts",
           "src/main/skills/user-skill-repository.architecture.test.ts",
           "src/main/skills/user-skill-repository.atomic.test.ts",
-          "src/main/skills/user-skill-repository.test.ts"
+          "src/main/skills/user-skill-repository.test.ts",
+          "src/main/skills/user-skill-integrity.regression.test.ts",
+          "src/main/skills/materializer-integrity.regression.test.ts"
         ],
         "contract": [
           "src/main/skills/host-skills-service.test.ts",
@@ -440,7 +442,9 @@
           "src/main/specialist/package/service.test.ts",
           "src/preload/index.test.ts",
           "src/renderer/src/pages/settings/SkillsPanel.render.test.tsx",
-          "src/renderer/src/stores/settings-skills-slice.test.ts"
+          "src/renderer/src/stores/settings-skills-slice.test.ts",
+          "src/renderer/src/pages/settings/SkillUploadView.render.test.tsx",
+          "src/renderer/src/pages/settings/SkillEditLoader.render.test.tsx"
         ]
       },
       "capabilityOverlays": ["windows_sensitive"],

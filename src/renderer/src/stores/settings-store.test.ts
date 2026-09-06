@@ -1246,9 +1246,12 @@ describe('settings store: refreshProviderModels', () => {
     await useSettingsStore.getState().createSkill({ name: 'Demo', description: '', body: '# Demo' })
     expect(useSettingsStore.getState().skills).toEqual([created])
 
-    await useSettingsStore
-      .getState()
-      .updateSkill({ id: created.id, description: '', body: '# Demo' })
+    await useSettingsStore.getState().updateSkill({
+      id: created.id,
+      expectedCompatibility: 'version',
+      description: '',
+      body: '# Demo'
+    })
     expect(useSettingsStore.getState().skills).toEqual([updated])
 
     await useSettingsStore.getState().deleteSkill(created.id)

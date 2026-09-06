@@ -333,3 +333,38 @@ describe('Skill integrity boundary controls', () => {
     expect(await repo.body('imported-demo')).toContain('historical a')
   })
 })
+
+it.each(['agent-home', 'zip', 'github'] as const)(
+  'preserves historical Specialist metadata when %s reimport would repair the package',
+  async (source) => {
+    const { root, repo } = await fixture()
+    const home = join(root, 'external')
+    await mkdir(home)
+    await writeFile(join(home, 'SKILL.md'), document())
+    await writeFile(join(home, 'data.csv'), 'original data')
+    const bytes = zip({ 'wrapped/SKILL.md': document(), 'wrapped/data.csv': 'original data' })
+    const importSkill = (): Promise<ImportOutcome> =>
+      source === 'agent-home'
+        ? repo.importAgentHomeSkill(home, { source: 'agents', slug: 'demo' })
+        : source === 'zip'
+          ? repo.importFromZip(bytes)
+          : repo.importFromGitHub(
+              'https://github.com/acme/skills/tree/main/demo',
+              githubFetch('a'.repeat(40), 'original')
+            )
+    await importSkill()
+    const dir = join(root, 'skills/imported/demo')
+    const metadata = JSON.stringify({
+      id: 'imported-demo',
+      version: '1',
+      contentHash: 'owned',
+      standalone: true,
+      ownerIds: ['legitimate-owner']
+    })
+    await writeFile(join(dir, '.specialist-package.json'), metadata)
+    await writeFile(join(dir, 'data.csv'), 'changed locally')
+    await expect(importSkill()).rejects.toThrow(/Specialist/)
+    expect(await readFile(join(dir, '.specialist-package.json'), 'utf8')).toBe(metadata)
+    expect(await readFile(join(dir, 'data.csv'), 'utf8')).toBe('changed locally')
+  }
+)
