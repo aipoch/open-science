@@ -259,17 +259,17 @@ export class UserSkillSpecialistPackageAdapter implements SpecialistPackageSkill
         if (!SAFE_DIRECTORY_NAME.test(entry)) continue
         const directory = join(root, entry)
         const metadata = await readMetadata(directory)
-        if (metadata) {
-          const document = parseSkillDocument(await readFile(join(directory, 'SKILL.md'), 'utf8'))
-          result.push({
-            id: metadata.id,
-            version: document.metadata.version?.trim() ?? metadata.version,
-            contentHash: await directoryHash(directory),
-            standalone: metadata.standalone,
-            ownerIds: metadata.ownerIds
-          })
-        } else {
-          try {
+        try {
+          if (metadata) {
+            const document = parseSkillDocument(await readFile(join(directory, 'SKILL.md'), 'utf8'))
+            result.push({
+              id: metadata.id,
+              version: document.metadata.version?.trim() ?? metadata.version,
+              contentHash: await directoryHash(directory),
+              standalone: metadata.standalone,
+              ownerIds: metadata.ownerIds
+            })
+          } else {
             result.push({
               id: `${source}-${entry}`,
               version: '0.1.0',
@@ -277,9 +277,9 @@ export class UserSkillSpecialistPackageAdapter implements SpecialistPackageSkill
               standalone: true,
               ownerIds: []
             })
-          } catch {
-            // Invalid existing Skills remain visible through the ordinary catalog but cannot be reused.
           }
+        } catch {
+          // An unreadable Skill cannot be reused, but must not block unrelated packages.
         }
       }
     }

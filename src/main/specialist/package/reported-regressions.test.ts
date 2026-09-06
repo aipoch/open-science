@@ -98,6 +98,27 @@ const provenance = (digest = 'c'.repeat(64)): MarketplaceInstallProvenance => ({
 })
 
 describe('reported Specialist package regressions', () => {
+  it('keeps unrelated package preview and export available when an owned Skill document is missing', async () => {
+    const { packages, storageDir, skillPort } = await fixture()
+    const first = await packages.preview(archive('first-specialist'))
+    expect(await packages.install({ candidateToken: first.candidateToken })).toMatchObject({
+      status: 'installed'
+    })
+    const directory = join(storageDir, 'skills', 'personal', 'analysis-tools')
+    const sidecar = join(directory, '.specialist-package.json')
+    const metadata = await readFile(sidecar, 'utf8')
+    await rm(join(directory, 'SKILL.md'))
+
+    await expect
+      .soft(packages.preview(archive('unrelated-specialist', false)))
+      .resolves.toMatchObject({ installable: true })
+    await expect
+      .soft(packages.previewExport('first-specialist', []))
+      .resolves.toMatchObject({ canExport: true })
+    await expect.soft(skillPort.snapshot()).resolves.toEqual([])
+    expect(await readFile(sidecar, 'utf8')).toBe(metadata)
+  })
+
   it.each([
     ['journal', true],
     ['staging-created', true],
