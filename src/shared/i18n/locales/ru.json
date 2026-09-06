@@ -4975,6 +4975,11 @@
     "Processing failed. Refresh and try again.": "Ошибка обработки. Обновите список и повторите попытку.",
     "References changed after review. Reopen the merge dialog to compare the latest metadata.": "Записи изменились после проверки. Откройте диалог объединения заново, чтобы сравнить актуальные метаданные.",
     "A collection with this name already exists at this level. Choose another name.": "На этом уровне уже есть коллекция с таким названием. Выберите другое название.",
-    "A child collection would duplicate a top-level name. Rename it before deleting this collection.": "Название дочерней коллекции совпадёт с названием коллекции верхнего уровня. Переименуйте её перед удалением этой коллекции."
+    "A child collection would duplicate a top-level name. Rename it before deleting this collection.": "Название дочерней коллекции совпадёт с названием коллекции верхнего уровня. Переименуйте её перед удалением этой коллекции.",
+    "Could not check the log file.": "Не удалось проверить файл журнала.",
+    "The log folder could not be created.": "Не удалось создать папку журнала.",
+    "The log file could not be checked.": "Не удалось проверить файл журнала.",
+    "The log backups could not be rotated.": "Не удалось выполнить ротацию резервных копий журнала.",
+    "The log record could not be appended.": "Не удалось добавить запись в журнал."
   }
 }
