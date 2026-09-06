@@ -4430,6 +4430,9 @@
     "Loading the latest version discards your draft. Overwriting replaces the editable content and removes reference files absent from your draft.": "Charger la dernière version supprime votre brouillon. Écraser remplace le contenu modifiable et supprime les fichiers de référence absents de votre brouillon.",
     "Keep editing": "Continuer la modification",
     "Load latest version": "Charger la dernière version",
-    "Overwrite with my draft": "Écraser avec mon brouillon"
+    "Overwrite with my draft": "Écraser avec mon brouillon",
+    "Could not refresh environment readiness. Saved settings are unchanged.": "Impossible d’actualiser l’état de préparation de l’environnement. Les paramètres enregistrés restent inchangés.",
+    "Retry preflight": "Réessayer la vérification préalable",
+    "The provider changed while loading models. Try again.": "Le fournisseur a été modifié pendant le chargement des modèles. Réessayez."
   }
 }

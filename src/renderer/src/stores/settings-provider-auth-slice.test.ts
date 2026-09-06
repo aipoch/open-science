@@ -195,6 +195,16 @@ describe('provider auth slice: persistence and validation', () => {
     }
   )
 
+  it('M04: returns the saved identity even when the derived preflight fails', async () => {
+    commands.upsertProvider.mockResolvedValue(snapshot([provider('created')]))
+    refreshPreflight.mockRejectedValue(new Error('preflight unavailable'))
+
+    const saved = store.getState().persistProvider({ type: 'custom', name: 'new' })
+    await expect(saved).resolves.toBe('created')
+    expect(store.getState().providers.map(({ id }) => id)).toEqual(['created'])
+    expect(commands.upsertProvider).toHaveBeenCalledOnce()
+  })
+
   it('keeps failed validation, refreshes the authoritative provider, and does not roll back', async () => {
     const failed = { ok: false, category: 'auth' } satisfies ValidateProviderResult
     commands.upsertProvider.mockResolvedValue(snapshot([provider('new')]))

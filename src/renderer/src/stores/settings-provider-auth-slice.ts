@@ -126,7 +126,8 @@ export const createProviderAuthSlice = <Store extends ProviderAuthHost>({
     const snapshot = await commands.upsertProvider(request)
 
     reconcileSnapshot(snapshot)
-    await refreshPreflight()
+    // The runtime slice exposes preflight failures separately; persistence has already committed.
+    void refreshPreflight().catch(() => undefined)
     return resolveUpsertedProviderId(request, before, snapshot.providers) ?? ''
   },
 
@@ -164,7 +165,7 @@ export const createProviderAuthSlice = <Store extends ProviderAuthHost>({
     const result = await commands.validateProvider(request)
     if (request.providerId) {
       reconcileSnapshot(await commands.getSettings())
-      await refreshPreflight()
+      void refreshPreflight().catch(() => undefined)
     }
     return result
   },

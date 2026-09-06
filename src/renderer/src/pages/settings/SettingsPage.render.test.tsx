@@ -1896,6 +1896,32 @@ describe('SettingsPage layout', () => {
     )
   })
 
+  it('M04: shows preflight failure separately and retries without saving a provider again', async () => {
+    installCustomProviderSnapshot()
+    await act(async () => root.render(<SettingsPage open onClose={vi.fn()} />))
+    const persistProvider = vi.fn()
+    useSettingsStore.setState({ persistProvider })
+    vi.mocked(window.api.settings.getPreflight).mockRejectedValueOnce(
+      new Error('preflight unavailable')
+    )
+    await act(async () => {
+      await useSettingsStore
+        .getState()
+        .refreshPreflight()
+        .catch(() => undefined)
+    })
+    expect(document.body.textContent).toContain(
+      'Could not refresh environment readiness. Saved settings are unchanged.'
+    )
+    const retry = Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).find(
+      (button) => button.textContent?.trim() === 'Retry preflight'
+    )
+    expect(retry).toBeDefined()
+    await act(async () => retry!.click())
+    expect(document.body.textContent).not.toContain('Retry preflight')
+    expect(persistProvider).not.toHaveBeenCalled()
+  })
+
   it('reports when post-save Provider validation does not complete', async () => {
     installCustomProviderSnapshot()
     const validateProvider = vi.fn().mockRejectedValue(new Error('settings IPC unavailable'))

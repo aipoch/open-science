@@ -4560,6 +4560,9 @@
     "Loading the latest version discards your draft. Overwriting replaces the editable content and removes reference files absent from your draft.": "Загрузка последней версии удалит ваш черновик. Перезапись заменит редактируемое содержимое и удалит справочные файлы, которых нет в вашем черновике.",
     "Keep editing": "Продолжить редактирование",
     "Load latest version": "Загрузить последнюю версию",
-    "Overwrite with my draft": "Перезаписать моим черновиком"
+    "Overwrite with my draft": "Перезаписать моим черновиком",
+    "Could not refresh environment readiness. Saved settings are unchanged.": "Не удалось обновить состояние готовности окружения. Сохранённые настройки не изменены.",
+    "Retry preflight": "Повторить предварительную проверку",
+    "The provider changed while loading models. Try again.": "Поставщик изменился во время загрузки моделей. Попробуйте ещё раз."
   }
 }

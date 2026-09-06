@@ -372,6 +372,20 @@ describe('settings store: saveAndActivateProvider', () => {
 })
 
 describe('settings store: persistProvider', () => {
+  it('M04: keeps the committed identity and retries only a failed preflight', async () => {
+    api.upsertProvider.mockResolvedValue(snapshot([providerView('p_new')]))
+    api.getPreflight.mockRejectedValueOnce(new Error('preflight unavailable'))
+    const result = await useSettingsStore
+      .getState()
+      .persistProvider({ type: 'custom', name: 'Gateway' })
+    expect(result).toBe('p_new')
+    await vi.waitFor(() => expect(useSettingsStore.getState().preflightFailed).toBe(true))
+    await useSettingsStore.getState().refreshPreflight()
+    expect(useSettingsStore.getState().preflightFailed).toBe(false)
+    expect(api.upsertProvider).toHaveBeenCalledOnce()
+    expect(useSettingsStore.getState().providers.map(({ id }) => id)).toEqual(['p_new'])
+  })
+
   it('persists a new provider and returns its id without testing it', async () => {
     api.upsertProvider.mockResolvedValue(snapshot([providerView('p_new')]))
 

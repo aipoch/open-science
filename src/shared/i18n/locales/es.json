@@ -4430,6 +4430,9 @@
     "Loading the latest version discards your draft. Overwriting replaces the editable content and removes reference files absent from your draft.": "Cargar la última versión descarta su borrador. Sobrescribir reemplaza el contenido editable y elimina los archivos de referencia que no estén en su borrador.",
     "Keep editing": "Continuar editando",
     "Load latest version": "Cargar la última versión",
-    "Overwrite with my draft": "Sobrescribir con mi borrador"
+    "Overwrite with my draft": "Sobrescribir con mi borrador",
+    "Could not refresh environment readiness. Saved settings are unchanged.": "No se pudo actualizar el estado de preparación del entorno. La configuración guardada permanece sin cambios.",
+    "Retry preflight": "Reintentar comprobación previa",
+    "The provider changed while loading models. Try again.": "El proveedor cambió durante la carga de modelos. Inténtelo de nuevo."
   }
 }

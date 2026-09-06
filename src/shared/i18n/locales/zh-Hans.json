@@ -4120,6 +4120,9 @@
     "Loading the latest version discards your draft. Overwriting replaces the editable content and removes reference files absent from your draft.": "加载最新版本将丢弃您的草稿。覆盖将替换可编辑内容，并删除草稿中没有的参考文件。",
     "Keep editing": "继续编辑",
     "Load latest version": "加载最新版本",
-    "Overwrite with my draft": "用我的草稿覆盖"
+    "Overwrite with my draft": "用我的草稿覆盖",
+    "Could not refresh environment readiness. Saved settings are unchanged.": "无法刷新环境就绪状态。已保存的设置不受影响。",
+    "Retry preflight": "重试预检查",
+    "The provider changed while loading models. Try again.": "加载模型期间提供商已更改。请重试。"
   }
 }

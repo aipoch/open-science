@@ -4120,6 +4120,9 @@
     "Loading the latest version discards your draft. Overwriting replaces the editable content and removes reference files absent from your draft.": "最新バージョンを読み込むと下書きは破棄されます。上書きすると編集可能な内容が置き換わり、下書きにない参照ファイルは削除されます。",
     "Keep editing": "編集を続ける",
     "Load latest version": "最新バージョンを読み込む",
-    "Overwrite with my draft": "下書きで上書き"
+    "Overwrite with my draft": "下書きで上書き",
+    "Could not refresh environment readiness. Saved settings are unchanged.": "環境の準備状態を更新できませんでした。保存済みの設定に変更はありません。",
+    "Retry preflight": "事前チェックを再試行",
+    "The provider changed while loading models. Try again.": "モデルの読み込み中にプロバイダーが変更されました。もう一度お試しください。"
   }
 }

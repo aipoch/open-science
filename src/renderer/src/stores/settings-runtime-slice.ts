@@ -34,6 +34,7 @@ const appendCappedInstallLogs = (existing: string[], chunks: readonly string[]):
 
 export type RuntimeSetupState = {
   preflight: Preflight
+  preflightFailed: boolean
   npmAvailable: boolean
   environmentCheck: EnvironmentCheckResult | undefined
   environmentCheckError: string | undefined
@@ -132,6 +133,7 @@ const createInitialPreflight = (): Preflight => ({
 
 export const createInitialRuntimeSetupState = (): RuntimeSetupState => ({
   preflight: createInitialPreflight(),
+  preflightFailed: false,
   npmAvailable: true,
   environmentCheck: undefined,
   environmentCheckError: undefined,
@@ -312,9 +314,14 @@ export const createRuntimeSetupSlice = <Store extends RuntimeSetupHost>({
   ...createInitialRuntimeSetupState(),
 
   refreshPreflight: async () => {
-    const preflight = await getCommands().getPreflight()
-    patchRuntimeSetupState(set, { preflight })
-    return preflight
+    try {
+      const preflight = await getCommands().getPreflight()
+      patchRuntimeSetupState(set, { preflight, preflightFailed: false })
+      return preflight
+    } catch (error) {
+      patchRuntimeSetupState(set, { preflightFailed: true })
+      throw error
+    }
   },
 
   checkEnvironment: async (options) => {
