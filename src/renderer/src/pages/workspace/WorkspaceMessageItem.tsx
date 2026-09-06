@@ -1299,7 +1299,7 @@ const WorkspaceMessageItemImpl = ({
   staticParts,
   onPresentationChange,
   presentationSourceOpen,
-  presentationAnimateOnMount = true,
+  presentationAnimateOnMount,
   reserveLoadingRowHeight = true,
   reviewerCorrectionState = 'failed'
 }: WorkspaceMessageItemProps): React.JSX.Element => {
@@ -1326,7 +1326,7 @@ const WorkspaceMessageItemImpl = ({
   const assistantPresentation = useSmoothStreamingContent(
     presentsAssistantMessage ? liveMessageContent : '',
     assistantSourceOpen,
-    shouldAnimateAssistant && assistantSourceOpen && presentationAnimateOnMount
+    shouldAnimateAssistant && assistantSourceOpen && (presentationAnimateOnMount ?? true)
   )
   const isAssistantPresenting = presentsAssistantMessage && assistantPresentation.isPresenting
 
@@ -1356,7 +1356,12 @@ const WorkspaceMessageItemImpl = ({
   // one-line streamed reply is ~44px; turning containment on at completion inflates it to 160px
   // and pushes a live tool below it. Keep this row out of that path for the rest of the mount.
   const skipContentVisibilityNow =
-    message.status === 'streaming' || isAssistantPresenting || isEditing
+    message.status === 'streaming' ||
+    isAssistantPresenting ||
+    // A reply held behind another message's presentation barrier may already be complete
+    // when it first mounts. It still needs measured geometry for live bottom-follow.
+    (presentsAssistantMessage && presentationAnimateOnMount === true) ||
+    isEditing
   const [skipContentVisibility, setSkipContentVisibility] = useState(skipContentVisibilityNow)
   if (skipContentVisibilityNow && !skipContentVisibility) setSkipContentVisibility(true)
   const copyResetTimeoutRef = useRef<number | null>(null)
@@ -1963,7 +1968,7 @@ const areWorkspaceMessageItemPropsEqual = (
   areRevisionNavigationsEqual(previous.revisionNavigation, next.revisionNavigation) &&
   previous.onPresentationChange === next.onPresentationChange &&
   (previous.presentationSourceOpen ?? true) === (next.presentationSourceOpen ?? true) &&
-  (previous.presentationAnimateOnMount ?? true) === (next.presentationAnimateOnMount ?? true) &&
+  previous.presentationAnimateOnMount === next.presentationAnimateOnMount &&
   (previous.reserveLoadingRowHeight ?? true) === (next.reserveLoadingRowHeight ?? true)
 
 const WorkspaceMessageItem = memo(WorkspaceMessageItemImpl, areWorkspaceMessageItemPropsEqual)
