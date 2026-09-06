@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
@@ -105,6 +105,114 @@ const base = {
 }
 
 describe('defaultSpawn (fail-closed spawn hooks)', () => {
+  it('does not spawn when the caller aborts while recording the spawn intent', async () => {
+    const controller = new AbortController()
+    let childSpawned = false
+    const pending = defaultSpawn(
+      process.execPath,
+      ['-e', 'setTimeout(() => {}, 15000)'],
+      undefined,
+      () => {
+        childSpawned = true
+      },
+      () => controller.abort(new DOMException('Request cancelled.', 'AbortError')),
+      undefined,
+      undefined,
+      { signal: controller.signal }
+    )
+
+    await expect(pending).rejects.toMatchObject({ name: 'AbortError' })
+    expect(childSpawned).toBe(false)
+  })
+
+  it('aborts a running installer only after its process tree is confirmed stopped', async () => {
+    const directory = mkdtempSync(join(tmpdir(), 'open-science-installer-abort-'))
+    const descendantPidPath = join(directory, 'descendant.pid')
+    const controller = new AbortController()
+    let rootPid: number | undefined
+    try {
+      const pending = defaultSpawn(
+        process.execPath,
+        [
+          '-e',
+          [
+            `const { spawn } = require('node:child_process');`,
+            `const { writeFileSync } = require('node:fs');`,
+            `const descendant = spawn(process.execPath, ['-e', 'setTimeout(() => {}, 15000)']);`,
+            `writeFileSync(process.env.DESCENDANT_PID_PATH, String(descendant.pid));`,
+            `setTimeout(() => {}, 15000);`
+          ].join('')
+        ],
+        { ...process.env, DESCENDANT_PID_PATH: descendantPidPath },
+        (pid) => {
+          rootPid = pid
+        },
+        undefined,
+        undefined,
+        undefined,
+        { signal: controller.signal }
+      )
+
+      await vi.waitFor(() => expect(existsSync(descendantPidPath)).toBe(true))
+      const descendantPid = Number(readFileSync(descendantPidPath, 'utf8'))
+      controller.abort(new DOMException('Request cancelled.', 'AbortError'))
+
+      await expect(pending).rejects.toMatchObject({ name: 'AbortError' })
+      expect(rootPid).toBeGreaterThan(0)
+      expect(() => process.kill(rootPid as number, 0)).toThrow()
+      expect(() => process.kill(descendantPid, 0)).toThrow()
+    } finally {
+      rmSync(directory, { recursive: true, force: true })
+    }
+  })
+
+  it('handles cancellation from the child-recording callback without losing the race', async () => {
+    const controller = new AbortController()
+    let childPid: number | undefined
+    const pending = defaultSpawn(
+      process.execPath,
+      ['-e', 'setTimeout(() => {}, 15000)'],
+      undefined,
+      (pid) => {
+        childPid = pid
+        controller.abort(new DOMException('Request cancelled.', 'AbortError'))
+      },
+      undefined,
+      undefined,
+      undefined,
+      { signal: controller.signal }
+    )
+
+    await expect(pending).rejects.toMatchObject({ name: 'AbortError' })
+    expect(childPid).toBeGreaterThan(0)
+    expect(() => process.kill(childPid as number, 0)).toThrow()
+  })
+
+  it('times out a running installer only after its process is confirmed stopped', async () => {
+    let childPid: number | undefined
+    const startedAt = Date.now()
+    const pending = defaultSpawn(
+      process.execPath,
+      ['-e', 'setTimeout(() => {}, 15000)'],
+      undefined,
+      (pid) => {
+        childPid = pid
+      },
+      undefined,
+      undefined,
+      undefined,
+      { timeoutMs: 50 }
+    )
+
+    await expect(pending).rejects.toMatchObject({
+      code: 'PACKAGE_OPERATION_TIMEOUT',
+      message: expect.stringContaining('timed out after 50ms')
+    })
+    expect(Date.now() - startedAt).toBeLessThan(10_000)
+    expect(childPid).toBeGreaterThan(0)
+    expect(() => process.kill(childPid as number, 0)).toThrow()
+  })
+
   it('calls onBeforeSpawn before spawning, and fails closed (no spawn) when it throws', async () => {
     const order: string[] = []
     await defaultSpawn(
@@ -293,6 +401,31 @@ describe('installPackages', () => {
       { spawn, ...base, onChild: (pid) => seenPids.push(pid) }
     )
     expect(seenPids).toContain(4321)
+  })
+
+  it('forwards the caller signal and subprocess deadline to installer spawns', async () => {
+    const controller = new AbortController()
+    const seenOptions: unknown[] = []
+    const spawn: InstallSpawn = async (
+      _command,
+      _args,
+      _env,
+      _onChild,
+      _onBeforeSpawn,
+      _captureCondaJson,
+      _cwd,
+      options
+    ) => {
+      seenOptions.push(options)
+      return ok
+    }
+
+    await installPackages(
+      { language: 'python', packages: ['numpy'], usePip: true },
+      { spawn, ...base, signal: controller.signal, timeoutMs: 1234 }
+    )
+
+    expect(seenOptions).toContainEqual({ signal: controller.signal, timeoutMs: 1234 })
   })
 
   it('routes python conda installs to micromamba with the resolved channel and default-python prefix', async () => {

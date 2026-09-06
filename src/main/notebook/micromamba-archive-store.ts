@@ -157,9 +157,6 @@ const archiveFiles = async (
   validateRoot?: () => boolean
 ): Promise<ArchiveCandidate[]> => {
   const files: ArchiveCandidate[] = []
-  if (validateRoot && !validateRoot()) {
-    throw new Error('Micromamba working cache changed before archive traversal.')
-  }
   const physicalRoot = await realpath(root)
   const visit = async (dir: string): Promise<void> => {
     const before = await lstat(dir)
@@ -177,9 +174,6 @@ const archiveFiles = async (
       if ((error as NodeJS.ErrnoException).code === 'ENOENT') return
       throw error
     }
-    if (validateRoot && !validateRoot()) {
-      throw new Error('Micromamba working cache changed during archive traversal.')
-    }
     if ((await realpath(dir)) !== physicalDir) {
       throw new Error('Micromamba working cache directory identity changed during traversal.')
     }
@@ -190,6 +184,12 @@ const archiveFiles = async (
         // Extracted Conda packages legitimately contain executable/library links.
         // Never follow them or consider them archive sources, even if their names
         // match an authorization; missing authorized archives still fail publication.
+        const target = await stat(path).catch(() => undefined)
+        if (target?.isDirectory()) {
+          throw new Error(
+            'authorized package archive is unavailable: Micromamba working cache contains an untrusted directory link.'
+          )
+        }
         continue
       }
       const physical = await realpath(path)
@@ -203,6 +203,12 @@ const archiveFiles = async (
     }
   }
   await visit(root)
+  // The caller checks ownership before traversal. Check again before returning any sources;
+  // on Windows this launches ACL probes and must not scale with extracted-package directories.
+  // Per-entry identity/link checks above and authorized content digests remain independent guards.
+  if (validateRoot && !validateRoot()) {
+    throw new Error('Micromamba working cache changed during archive traversal.')
+  }
   return files
 }
 
@@ -269,8 +275,7 @@ export const publishMicromambaArchives = async (
               identity.ino !== candidate.ino ||
               current.dev !== identity.dev ||
               current.ino !== identity.ino ||
-              (await realpath(candidate.path)) !== candidate.physical ||
-              (validateWorkingRoot && !validateWorkingRoot())
+              (await realpath(candidate.path)) !== candidate.physical
             ) {
               throw new Error('Micromamba archive identity changed before publication.')
             }

@@ -56,6 +56,8 @@ export const AUTOMATIC_PACKAGE_MIRROR_CANDIDATES: readonly AutomaticPackageMirro
     },
     probeUrl: condaRepodata('https://mirrors.ustc.edu.cn/'),
     biocondaProbeUrl: biocondaRepodata('https://mirrors.ustc.edu.cn/'),
+    // USTC documents cache-miss redirects for conda-forge/bioconda archives:
+    // https://mirrors.ustc.edu.cn/help/anaconda.html
     trustedDomains: ['mirrors.ustc.edu.cn', 'mirrors.nju.edu.cn']
   },
   {

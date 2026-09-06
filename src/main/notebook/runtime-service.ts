@@ -1276,8 +1276,8 @@ class NotebookRuntimeService {
   // the exclusive writer of the target ENV's lock, so it drains and blocks every in-flight run on that
   // env — a pip/conda/CRAN install can never overlap a cell mid-import (§5, G2/D5). Installs into
   // DIFFERENT envs proceed concurrently (the lock is keyed by resolved env name, not language).
-  async managePackages(request: InstallRequest): Promise<InstallResult> {
-    const manage = (): Promise<InstallResult> => this.packageOperations.manage(request)
+  async managePackages(request: InstallRequest, signal?: AbortSignal): Promise<InstallResult> {
+    const manage = (): Promise<InstallResult> => this.packageOperations.manage(request, signal)
     if (request.projectId === undefined && request.sessionId === undefined) return manage()
 
     // Project admission is keyed only by project identity. InstallRequest intentionally keeps the
@@ -1290,8 +1290,11 @@ class NotebookRuntimeService {
   // executor process bound to that env name (locked decision — the on-disk env can't be rm-rf'd out
   // from under a running kernel). Mutations return bounded operation receipts, and create returns on
   // completion (progress streaming is out of scope).
-  async manageEnvironments(request: ManageEnvironmentsRequest): Promise<ManageEnvironmentsResult> {
-    return this.environmentManagement.manage(request)
+  async manageEnvironments(
+    request: ManageEnvironmentsRequest,
+    signal?: AbortSignal
+  ): Promise<ManageEnvironmentsResult> {
+    return this.environmentManagement.manage(request, signal)
   }
 
   // Shuts down one session executor and removes its in-memory routing state.

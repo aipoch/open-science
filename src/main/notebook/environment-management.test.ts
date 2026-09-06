@@ -118,6 +118,33 @@ describe('NotebookEnvironmentManagementOwner', () => {
     }
   )
 
+  it('does not enter policy or recovery for an already cancelled request', async () => {
+    const { owner, options } = harness()
+    const cancellation = new AbortController()
+    cancellation.abort(new Error('MCP request cancelled.'))
+
+    await expect(
+      owner.manage({ action: 'create', name: 'analysis', language: 'python' }, cancellation.signal)
+    ).rejects.toThrow('MCP request cancelled.')
+    expect(options.isAgentEnvironmentCreationEnabled).not.toHaveBeenCalled()
+    expect(options.ensureRecovered).not.toHaveBeenCalled()
+  })
+
+  it('does not begin recovery when cancellation arrives during the policy check', async () => {
+    const cancellation = new AbortController()
+    const { owner, options } = harness({
+      isAgentEnvironmentCreationEnabled: async () => {
+        cancellation.abort(new Error('MCP request cancelled.'))
+        return true
+      }
+    })
+
+    await expect(
+      owner.manage({ action: 'create', name: 'analysis', language: 'python' }, cancellation.signal)
+    ).rejects.toThrow('MCP request cancelled.')
+    expect(options.ensureRecovered).not.toHaveBeenCalled()
+  })
+
   it('keeps manager configuration inside the owner', async () => {
     const configuredHarness = harness()
     const owner = new NotebookEnvironmentManagementOwner({
@@ -142,6 +169,7 @@ describe('NotebookEnvironmentManagementOwner', () => {
 
   it('validates and creates under recovery and the environment mutation slot', async () => {
     const order: string[] = []
+    const cancellation = new AbortController()
     const configured = manager()
     vi.mocked(configured.createNamedEnvironment).mockImplementation(
       async (name, language, packages) => {
@@ -170,15 +198,18 @@ describe('NotebookEnvironmentManagementOwner', () => {
     })
 
     await expect(
-      owner.manage({
-        action: 'create',
-        name: 'analysis',
-        language: 'python',
-        packages: ['numpy'],
-        projectId: 'project-1',
-        sessionId: 'session-1',
-        workspaceCwd: '/workspace'
-      })
+      owner.manage(
+        {
+          action: 'create',
+          name: 'analysis',
+          language: 'python',
+          packages: ['numpy'],
+          projectId: 'project-1',
+          sessionId: 'session-1',
+          workspaceCwd: '/workspace'
+        },
+        cancellation.signal
+      )
     ).resolves.toEqual({
       created: {
         name: 'analysis',
@@ -203,7 +234,8 @@ describe('NotebookEnvironmentManagementOwner', () => {
         projectId: 'project-1',
         sessionId: 'session-1',
         workspaceCwd: '/workspace'
-      })
+      }),
+      cancellation.signal
     )
     expect(options.assertPrefixRecoverable).toHaveBeenCalledWith(envPrefix('/runtime', 'analysis'))
   })

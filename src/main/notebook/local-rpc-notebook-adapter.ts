@@ -215,8 +215,11 @@ type NotebookLocalRpcCapability = {
   restart(request: NotebookRestartRequest): Promise<unknown>
   shutdown(request: NotebookSessionRequest): Promise<unknown>
   inspectPackages(request: InspectPackagesRequest): Promise<unknown>
-  managePackages(request: InstallRequest): Promise<InstallResult>
-  manageEnvironments(request: ManageEnvironmentsRequest): Promise<ManageEnvironmentsResult>
+  managePackages(request: InstallRequest, signal?: AbortSignal): Promise<InstallResult>
+  manageEnvironments(
+    request: ManageEnvironmentsRequest,
+    signal?: AbortSignal
+  ): Promise<ManageEnvironmentsResult>
   listRuntimes(request: NotebookSessionRequest): Promise<unknown>
   bindRuntime(request: NotebookRuntimeBindingRequest): Promise<unknown>
   switchRuntime(request: NotebookRuntimeBindingRequest): Promise<unknown>
@@ -334,11 +337,14 @@ const resolveNotebookLocalRpcHandler = (
       return (request) =>
         capability.inspectPackages(parseNotebookLocalRpcRequest('inspectPackages', request))
     case 'managePackages':
-      return (request) =>
-        capability.managePackages(parseNotebookLocalRpcRequest('managePackages', request))
+      return (request, signal) =>
+        capability.managePackages(parseNotebookLocalRpcRequest('managePackages', request), signal)
     case 'manageEnvironments':
-      return (request) =>
-        capability.manageEnvironments(parseNotebookLocalRpcRequest('manageEnvironments', request))
+      return (request, signal) =>
+        capability.manageEnvironments(
+          parseNotebookLocalRpcRequest('manageEnvironments', request),
+          signal
+        )
     case 'listRuntimes':
       return (request) =>
         capability.listRuntimes(parseNotebookLocalRpcRequest('listRuntimes', request))

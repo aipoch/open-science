@@ -246,6 +246,20 @@ describe('notebook local RPC adapter', () => {
     expect(capability.executeShell).toHaveBeenCalledWith(methodRequest, cancellation.signal)
   })
 
+  it.each(['managePackages', 'manageEnvironments'] as const)(
+    'forwards request cancellation to %s',
+    async (method) => {
+      const capability = createCapability()
+      const methodRequest = requestByMethod[method]
+      const handler = resolveNotebookLocalRpcHandler(capability, method, methodRequest)
+      const cancellation = new AbortController()
+
+      await handler(methodRequest, cancellation.signal)
+
+      expect(capability[method]).toHaveBeenCalledWith(methodRequest, cancellation.signal)
+    }
+  )
+
   it('validates common notebook routing fields before resolving a handler', () => {
     const capability = createCapability()
 
