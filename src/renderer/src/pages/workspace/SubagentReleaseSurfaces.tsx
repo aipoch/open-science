@@ -360,8 +360,14 @@ const SubagentPreview = ({
     if (isRetrying) return
     setIsRetrying(true)
     try {
-      const result = await window.api.sessions.loadAll()
-      const durable = result.sessions.find((candidate) => candidate.id === item.sessionId)
+      const projectId = session?.projectId ?? item.projectId
+      if (!item.sessionId) return
+      // Restored legacy tabs may not carry a Project until their Session is hydrated.
+      const durable = projectId
+        ? await window.api.sessions.loadOne({ projectId, sessionId: item.sessionId })
+        : (await window.api.sessions.loadAll()).sessions.find(
+            (candidate) => candidate.id === item.sessionId
+          )
       if (durable) useSessionStore.getState().upsertPersistedSession(durable)
     } catch {
       // The alert remains visible and the action remains retryable.
