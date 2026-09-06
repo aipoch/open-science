@@ -122,20 +122,24 @@ describe('granted-folders-store', () => {
     expect(useGrantedFoldersStore.getState().roots).toEqual([])
     expect(returned).toEqual([])
   })
-  it('preserves the accepted cache when the newest refresh fails and an older read succeeds', async () => {
-    const older = Promise.withResolvers<GrantedLocalRoot[]>()
-    const accepted = [createRoot({ id: 'accepted' })]
-    useGrantedFoldersStore.setState({ roots: accepted, loaded: true })
-    setLocalFsApi({
-      listGrantedRoots: vi
-        .fn()
-        .mockReturnValueOnce(older.promise)
-        .mockRejectedValueOnce(new Error('offline'))
-    })
-    const first = useGrantedFoldersStore.getState().refresh()
-    await expect(useGrantedFoldersStore.getState().refresh()).rejects.toThrow('offline')
-    older.resolve([createRoot()])
-    expect(await first).toBe(accepted)
-    expect(useGrantedFoldersStore.getState().roots).toBe(accepted)
-  })
+  it.each([false, true])(
+    'preserves the accepted cache when the newest refresh fails and an older read succeeds (loaded=%s)',
+    async (loaded) => {
+      const older = Promise.withResolvers<GrantedLocalRoot[]>()
+      const accepted = loaded ? [createRoot({ id: 'accepted' })] : []
+      useGrantedFoldersStore.setState({ roots: accepted, loaded })
+      setLocalFsApi({
+        listGrantedRoots: vi
+          .fn()
+          .mockReturnValueOnce(older.promise)
+          .mockRejectedValueOnce(new Error('offline'))
+      })
+      const first = useGrantedFoldersStore.getState().refresh()
+      await expect(useGrantedFoldersStore.getState().refresh()).rejects.toThrow('offline')
+      older.resolve([createRoot()])
+      expect(await first).toBe(accepted)
+      expect(useGrantedFoldersStore.getState().roots).toBe(accepted)
+      expect(useGrantedFoldersStore.getState().loaded).toBe(loaded)
+    }
+  )
 })
