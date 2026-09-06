@@ -97,7 +97,11 @@ failure rolls back both the entry and Memory revision. A transaction that alread
 decision may complete its commit. Disabling then re-enabling a Session never revives its old queued
 operations. The global Memory switch retains its existing service-queue ordering. Session guards
 must not enter that same queue recursively. Cancellation state stays in memory and is not part of
-Session snapshots, Memory provenance, or the persisted schema.
+Session snapshots, Memory provenance, or the persisted schema. Provider-only detach/reattach does
+not revoke the Notebook RuntimeSession's persistent control capability or the app Session's Memory
+authorization. Its queued Memory calls remain valid while the Session preference stays enabled;
+connection release, Session disable, or full connection detach invalidates them. ACP-owned tokens
+are still revoked by `releaseSessionCapabilities`, independently of the retained control token.
 
 ### Durable external component ownership
 

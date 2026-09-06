@@ -469,14 +469,31 @@ describe('notebook local RPC server', () => {
     }
   })
 
-  it.each(['disable', 'revoke', 'disable-enable', 'disconnect'] as const)(
-    'rejects a queued Memory write after Session %s',
+  it.each(['disable', 'revoke', 'disable-enable', 'disconnect', 'provider-replace'] as const)(
+    'settles a queued Memory write after Session %s',
     async (action) => {
       const root = await createStorageRoot()
       const client = createProjectDbClient(root)
       const repository = new MemoryRepository(async () => client)
       const service = new MemoryService(repository, { publish: vi.fn() })
       const session = new AcpSessionAggregate('session-a')
+      const attachProvider = (sessionId: string): void => {
+        session.attach({
+          session: { sessionId } as never,
+          cwd: root,
+          projectId: 'project-a',
+          frameworkId: 'opencode',
+          permissionProfile: {
+            selectedProfile: 'ask',
+            effectiveProfile: 'ask',
+            currentModeId: 'default',
+            availableModeIds: ['default'],
+            fullAccessAvailable: false
+          },
+          memoryEnabled: true
+        })
+      }
+      attachProvider('provider-a')
       const server = new NotebookLocalRpcServer({} as never, {
         transport: 'tcp',
         memoryService: service,
@@ -553,6 +570,22 @@ describe('notebook local RPC server', () => {
           await blockedSnapshot
           await rejected
           expect(await client.memoryEntry.count()).toBe(0)
+          return
+        }
+        if (action === 'provider-replace') {
+          // ACP cleanup intentionally preserves the Notebook RuntimeSession's control capability.
+          session.detachProvider()
+          server.releaseSessionCapabilities('session-a')
+          attachProvider('provider-b')
+          releaseQueue.resolve()
+          await blockedSnapshot
+          const response = await pending
+          expect(response.status).toBe(200)
+          expect(await response.json()).toMatchObject({ result: { status: 'created' } })
+          const subsequent = await call()
+          expect(subsequent.status).toBe(200)
+          expect(await subsequent.json()).toMatchObject({ result: { status: 'existing' } })
+          expect(await client.memoryEntry.count()).toBe(1)
           return
         }
         if (action === 'revoke') control.release()
