@@ -3461,12 +3461,14 @@ describe('notebook runtime service', () => {
     it('cancels a queued shell call without starting its process', async () => {
       const root = await createStorageRoot()
       const entered: string[] = []
+      const firstStarted = createDeferred<void>()
       const releases = new Map<string, () => void>()
       const execute = vi.fn<NotebookShellProcess['execute']>(
         ({ command }) =>
           new Promise((resolve) => {
             entered.push(command)
             releases.set(command, () => resolve({ stdout: command, stderr: '', exitCode: 0 }))
+            if (command === 'first') firstStarted.resolve(undefined)
           })
       )
       const service = new NotebookRuntimeService({
@@ -3491,32 +3493,42 @@ describe('notebook runtime service', () => {
         cancellation.signal
       )
 
-      await vi.waitFor(async () => {
-        const state = await service.state({ sessionId: 'session-1', workspaceCwd: root })
-        expect(state.runs).toHaveLength(2)
-      })
-      const state = await service.state({ sessionId: 'session-1', workspaceCwd: root })
-      const queuedRun = state.runs.at(-1)
-      if (queuedRun?.status !== 'queued') {
-        await vi.waitFor(() => expect(entered).toHaveLength(2))
+      try {
+        // Wait for the process boundary; filesystem setup can exceed waitFor's default 1s in CI.
+        await firstStarted.promise
+        await vi.waitFor(
+          async () => {
+            const state = await service.state({ sessionId: 'session-1', workspaceCwd: root })
+            expect(state.runs).toHaveLength(2)
+            expect(state.runs.at(-1)).toMatchObject({
+              script: 'cancelled-before-start',
+              status: 'queued'
+            })
+          },
+          { timeout: 10_000 }
+        )
+        expect(entered).toEqual(['first'])
+        cancellation.abort()
+        await expect(queued).resolves.toEqual({
+          stdout: '',
+          stderr: 'Shell command was cancelled.',
+          exitCode: null
+        })
+        expect(entered).toEqual(['first'])
+
+        releases.get('first')?.()
+        await expect(first).resolves.toEqual({ stdout: 'first', stderr: '', exitCode: 0 })
+        const finalState = await service.state({ sessionId: 'session-1', workspaceCwd: root })
+        expect(finalState.runs.at(-1)).toMatchObject({ status: 'cancelled' })
+      } finally {
+        execute.mockImplementation(async ({ command }) => ({
+          stdout: command,
+          stderr: '',
+          exitCode: 0
+        }))
         for (const release of releases.values()) release()
         await Promise.allSettled([first, queued])
       }
-      expect(queuedRun).toMatchObject({ script: 'cancelled-before-start', status: 'queued' })
-
-      await vi.waitFor(() => expect(entered).toEqual(['first']))
-      cancellation.abort()
-      await expect(queued).resolves.toEqual({
-        stdout: '',
-        stderr: 'Shell command was cancelled.',
-        exitCode: null
-      })
-      expect(entered).toEqual(['first'])
-
-      releases.get('first')?.()
-      await expect(first).resolves.toEqual({ stdout: 'first', stderr: '', exitCode: 0 })
-      const finalState = await service.state({ sessionId: 'session-1', workspaceCwd: root })
-      expect(finalState.runs.at(-1)).toMatchObject({ status: 'cancelled' })
     })
 
     it('cancels and drains queued shell work before Session shutdown completes', async () => {
