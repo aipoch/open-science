@@ -553,27 +553,16 @@ function TokenUsagePanel({
             </div>
           </div>
 
-          {summary.newRuns > summary.reportedRuns ? (
-            <div
-              role="status"
-              data-slot="token-usage-coverage"
-              className="flex items-start gap-2 text-xs leading-5 text-muted-foreground"
-            >
-              <Info className="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
-              <p>
-                {t(
-                  'Token totals are available for {{reported}} of {{count}} runs in this period.',
-                  {
-                    reported: summary.reportedRuns,
-                    count: summary.newRuns,
-                    defaultValue_one:
-                      'Token totals are available for {{reported}} of {{count}} run in this period.'
-                  }
-                )}{' '}
-                {t('Older conversations or some providers may not report usage.')}
-              </p>
-            </div>
-          ) : null}
+          <div
+            data-slot="token-usage-coverage"
+            className="flex items-start gap-2 text-xs leading-5 text-muted-foreground"
+          >
+            <Info className="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
+            <p>
+              {t('Only reported token usage is included.')}{' '}
+              {t('Older conversations or some providers may not report usage.')}
+            </p>
+          </div>
         </section>
 
         <section aria-labelledby="token-activity-title" className="px-4 py-6 sm:px-5">
@@ -674,7 +663,7 @@ function TokenUsagePanel({
             <div className="mt-5 flex items-center gap-2 border-y border-dashed border-border py-4 text-sm text-muted-foreground">
               <ChartNoAxesCombined className="size-4 shrink-0" aria-hidden="true" />
               <p>
-                {sessions.length === 0
+                {summary.totalSessions === 0
                   ? t('Start a conversation to see token usage here.')
                   : t('No token usage has been reported in the last 30 days.')}
               </p>

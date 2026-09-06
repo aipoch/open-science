@@ -1357,6 +1357,7 @@ const createApplicationModules = async (
     },
     loadUsage: async () => {
       await ensureSessionProjection()
+      await auxiliaryUsageRecorder.flush()
       return sessionRepository.loadSessionUsageProjection()
     },
     loadOne: async ({ projectId, sessionId }) => {
