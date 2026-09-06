@@ -402,6 +402,93 @@ describe('managed preview protocol', () => {
     }
   )
 
+  it.each([false, true])(
+    'releases an unconsumed response on request abort (buffered: %s)',
+    async (buffered) => {
+      let finishRead!: () => void
+      let beginRead!: () => void
+      const started = new Promise<void>((resolve) => {
+        beginRead = resolve
+      })
+      const pending = new Promise<void>((resolve) => {
+        finishRead = resolve
+      })
+      const close = vi.fn()
+      const resources = new (await import('./managed-preview-resources')).ManagedPreviewResources({
+        resolvePath: vi.fn(),
+        openLatestManagedFile: vi.fn().mockResolvedValue({
+          path: '/managed/large.txt',
+          size: 128 * 1024,
+          versionToken: 1,
+          snapshot: { dev: 1n, ino: 2n, size: 131072n, mtimeNs: 1n },
+          read: async (_buffer: Uint8Array, _offset: number, length: number) => {
+            beginRead()
+            await pending
+            return { bytesRead: length }
+          },
+          verifyUnchanged: vi.fn(),
+          close
+        })
+      })
+      const resource = await resources.acquire(17, {
+        source: 'upload',
+        projectId: 'project-1',
+        fileId: 'file-1'
+      })
+      const abort = new AbortController()
+      const response = await createManagedPreviewProtocolHandler(resources)(
+        new Request(resource.url, { signal: abort.signal })
+      )
+      await started
+      if (buffered) {
+        finishRead()
+        await new Promise<void>((resolve) => setImmediate(resolve))
+      }
+      resources.releaseOwner(17)
+      abort.abort(new Error('preview abandoned'))
+      expect(close).not.toHaveBeenCalled()
+      finishRead()
+      // No response reader/cancel callback is involved in releasing the lease.
+      await vi.waitFor(() => expect(close).toHaveBeenCalledOnce())
+      await expect(response.text()).rejects.toThrow('preview abandoned')
+    }
+  )
+
+  it('cancels an opened stream when response header construction fails', async () => {
+    let finishRead!: () => void
+    let beginRead!: () => void
+    const started = new Promise<void>((resolve) => {
+      beginRead = resolve
+    })
+    const pending = new Promise<void>((resolve) => {
+      finishRead = resolve
+    })
+    const close = vi.fn()
+    const resources = {
+      resolveProtocolResource: vi.fn().mockResolvedValue({
+        fileHandle: {
+          read: async (_buffer: Uint8Array, _offset: number, length: number) => {
+            beginRead()
+            await pending
+            return { bytesRead: length }
+          },
+          close
+        },
+        size: 128 * 1024,
+        mimeType: 'text/plain\ninvalid-header',
+        verifyUnchanged: vi.fn()
+      })
+    } as unknown as ManagedPreviewResources
+    const response = createManagedPreviewProtocolHandler(resources)(
+      new Request('open-science-preview://resource-1/report.txt')
+    )
+    await started
+    expect(close).not.toHaveBeenCalled()
+    finishRead()
+    expect((await response).status).toBe(404)
+    expect(close).toHaveBeenCalledOnce()
+  })
+
   it('returns the load-error page when an invalid Range header rejects the strict response setup', async () => {
     const source = Buffer.from('strict-range-error-path')
     const fileHandle = {

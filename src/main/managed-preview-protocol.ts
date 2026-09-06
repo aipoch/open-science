@@ -82,10 +82,23 @@ const createStrictFileResponse = async (
   request: Request
 ): Promise<Response> => {
   let closed = false
+  let onAbort: (() => void) | undefined
   const closeHandle = async (): Promise<void> => {
     if (closed) return
     closed = true
+    if (onAbort) request.signal.removeEventListener('abort', onAbort)
     await resource.fileHandle.close()
+  }
+  let canceled = false
+  let reading: Promise<void> | undefined
+  const cancelReading = async (): Promise<void> => {
+    canceled = true
+    // Cancellation can arrive while an asynchronous read still owns the handle.
+    try {
+      await reading
+    } finally {
+      await closeHandle()
+    }
   }
 
   try {
@@ -107,9 +120,18 @@ const createStrictFileResponse = async (
     }
 
     let position = range.start
-    let canceled = false
-    let reading: Promise<void> | undefined
     const body = new ReadableStream<Uint8Array>({
+      start: (controller) => {
+        // An abandoned response may never be consumed or receive a stream cancel callback.
+        onAbort = () => {
+          controller.error(
+            request.signal.reason ?? new DOMException('Preview read aborted', 'AbortError')
+          )
+          void cancelReading().catch(() => undefined)
+        }
+        request.signal.addEventListener('abort', onAbort, { once: true })
+        if (request.signal.aborted) onAbort()
+      },
       pull: (controller) => {
         reading = (async () => {
           try {
@@ -149,16 +171,11 @@ const createStrictFileResponse = async (
         })()
         return reading
       },
-      cancel: async () => {
-        canceled = true
-        // Cancellation can arrive while an asynchronous read still owns the handle.
-        await reading
-        await closeHandle()
-      }
+      cancel: cancelReading
     })
     return new Response(body, { status: isPartial ? 206 : 200, headers })
   } catch (error) {
-    await closeHandle()
+    await cancelReading().catch(() => undefined)
     throw error
   }
 }
@@ -170,13 +187,14 @@ const createManagedPreviewProtocolHandler = (
   options: ManagedPreviewProtocolOptions = {}
 ): ((request: Request) => Promise<Response>) => {
   return async (request) => {
+    let fileResponse: Response | undefined
     try {
       const url = new URL(request.url)
       if (options.isResourceAllowed && !options.isResourceAllowed(url.hostname)) {
         throw new Error('Managed preview resource is not assigned to this session.')
       }
       const resource = await resources.resolveProtocolResource(url.hostname)
-      const fileResponse =
+      fileResponse =
         'fileHandle' in resource
           ? await createStrictFileResponse(resource, request)
           : await fetchFile(resource.filePath, request)
@@ -197,6 +215,8 @@ const createManagedPreviewProtocolHandler = (
         headers
       })
     } catch {
+      // Header/response construction can fail after the resource stream has been opened.
+      await fileResponse?.body?.cancel().catch(() => undefined)
       return createLoadErrorResponse()
     }
   }
