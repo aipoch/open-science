@@ -1644,7 +1644,6 @@
     "On this machine": "En esta máquina",
     "Once": "Una vez",
     "Once installed, run <code>open-science start</code> to launch the backend and open the authenticated URL, then <code>open-science stop</code> to shut it down. <code>status</code> and <code>url</code> are also available.": "Una vez instalado, ejecute <code>open-science start</code> para iniciar el backend y abrir la URL autenticada, luego <code>open-science stop</code> para apagarlo. <code>status</code> y <code>url</code> también están disponibles.",
-    "One argument per line.": "Un argumento por línea.",
     "One moment.": "Un momento.",
     "One or more agent runtimes could not be detected.": "No se pudieron detectar uno o más entornos de ejecución del agente.",
     "One sentence — what does this skill teach the agent, and when does it apply?": "Una frase: ¿qué le enseña esta habilidad al agente y cuándo se aplica?",
@@ -2247,7 +2246,6 @@
     "Sending this edited prompt starts a new branch from here. The {{count}} turns that currently follow remain available from the message revision controls._other": "Al enviar este prompt editado se inicia una nueva rama desde aquí. Los {{count}} turnos que le siguen permanecen disponibles en los controles de revisión del mensaje.",
     "Sending this edited prompt starts a new branch from here. The {{count}} turns that currently follow remain available from the message revision controls._many": "Al enviar este prompt editado se inicia una nueva rama desde aquí. Los {{count}} turnos que le siguen permanecen disponibles en los controles de revisión del mensaje.",
     "Sent": "Enviado",
-    "Separated by spaces or newlines.": "Separados por espacios o saltos de línea.",
     "Server URL": "URL del servidor",
     "Servers, clusters or job submission nodes from your SSH host lists": "Servidores, clústeres o nodos de envío de trabajos de sus listas de hosts SSH",
     "Session": "Sesión",
@@ -3137,7 +3135,6 @@
     "First message": "Primer mensaje",
     "Response completed.": "Respuesta completada.",
     "Response failed.": "La respuesta falló.",
-    "-y @modelcontextprotocol/server-memory": "-y @modelcontextprotocol/server-memory",
     "https://mirrors.example.com/conda-forge/": "https://mirrors.example.com/conda-forge/",
     "https://mirrors.example.com/pypi/simple": "https://mirrors.example.com/pypi/simple",
     "/path/to/corp-ca-bundle.pem": "/path/to/corp-ca-bundle.pem",
@@ -4407,6 +4404,9 @@
     "Runtime source": "Origen del entorno",
     "File content omitted": "Contenido del archivo omitido",
     "Switch notebook runtime": "Cambiar entorno de ejecución de Notebook",
-    "Clears memory in the selected language kernel. Other kernels are unaffected.": "Borra la memoria del kernel del lenguaje seleccionado. Los demás kernels no se ven afectados."
+    "Clears memory in the selected language kernel. Other kernels are unaffected.": "Borra la memoria del kernel del lenguaje seleccionado. Los demás kernels no se ven afectados.",
+    "Credential changes were saved, but Connectors could not refresh. Retry from Settings > Connectors.": "Se guardaron los cambios de credenciales, pero no se pudieron actualizar los Conectores. Vuelva a intentarlo desde Configuración > Conectores.",
+    "One argument per line. Spaces and blank lines are preserved. Clear the field to remove all arguments.": "Un argumento por línea. Se conservan los espacios y las líneas vacías. Vacíe el campo para eliminar todos los argumentos.",
+    "The saved arguments contain embedded line breaks. Editing this field replaces the list using one argument per line.": "Los argumentos guardados contienen saltos de línea internos. Al editar este campo, se sustituye la lista con un argumento por línea."
   }
 }

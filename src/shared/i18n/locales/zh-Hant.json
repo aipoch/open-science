@@ -1658,7 +1658,6 @@
     "On this machine": "在這台機器上",
     "Once": "僅此一次",
     "Once installed, run <code>open-science start</code> to launch the backend and open the authenticated URL, then <code>open-science stop</code> to shut it down. <code>status</code> and <code>url</code> are also available.": "安裝完成後，執行 <code>open-science start</code> 啟動後端並開啟帶驗證的網址，再用 <code>open-science stop</code> 關閉。此外還提供 <code>status</code> 和 <code>url</code> 兩個命令。",
-    "One argument per line.": "每行一個參數。",
     "One moment.": "請稍候。",
     "One or more agent runtimes could not be detected.": "有一個或多個智能體執行環境無法偵測到。",
     "One sentence — what does this skill teach the agent, and when does it apply?": "一句話 —— 這個技能教給智能體什麼，什麼時候適用？",
@@ -2237,7 +2236,6 @@
     "Send message options": "傳送訊息選項",
     "Sending this edited prompt starts a new branch from here. The {{count}} turns that currently follow remain available from the message revision controls._other": "傳送此編輯後的提示會從這裡開始一個新分支。目前緊接其後的 {{count}} 個輪次仍可透過訊息版本控制項存取。",
     "Sent": "已傳送",
-    "Separated by spaces or newlines.": "以空格或換行分隔。",
     "Server URL": "伺服器 URL",
     "Servers, clusters or job submission nodes from your SSH host lists": "來自你 SSH 主機清單的伺服器、叢集或工作提交節點",
     "Session": "會話",
@@ -2981,7 +2979,6 @@
     "First message": "首則訊息",
     "Response completed.": "回應已完成。",
     "Response failed.": "回應失敗。",
-    "-y @modelcontextprotocol/server-memory": "-y @modelcontextprotocol/server-memory",
     "https://mirrors.example.com/conda-forge/": "https://mirrors.example.com/conda-forge/",
     "https://mirrors.example.com/pypi/simple": "https://mirrors.example.com/pypi/simple",
     "/path/to/corp-ca-bundle.pem": "/path/to/corp-ca-bundle.pem",
@@ -4097,6 +4094,9 @@
     "Runtime source": "執行環境來源",
     "File content omitted": "已省略檔案內容",
     "Switch notebook runtime": "切換 Notebook 執行環境",
-    "Clears memory in the selected language kernel. Other kernels are unaffected.": "清空所選語言核心的記憶體，不影響其他核心。"
+    "Clears memory in the selected language kernel. Other kernels are unaffected.": "清空所選語言核心的記憶體，不影響其他核心。",
+    "Credential changes were saved, but Connectors could not refresh. Retry from Settings > Connectors.": "憑證變更已儲存，但連接器重新整理失敗。請前往設定 > 連接器重試。",
+    "One argument per line. Spaces and blank lines are preserved. Clear the field to remove all arguments.": "每行一個參數。空格和空行會保留。清空輸入框可移除所有參數。",
+    "The saved arguments contain embedded line breaks. Editing this field replaces the list using one argument per line.": "已儲存的參數內部含有換行。編輯此輸入框將按每行一個參數取代整個清單。"
   }
 }

@@ -1574,7 +1574,6 @@
     "On this machine": "このマシンでは",
     "Once": "一度",
     "Once installed, run <code>open-science start</code> to launch the backend and open the authenticated URL, then <code>open-science stop</code> to shut it down. <code>status</code> and <code>url</code> are also available.": "インストールしたら、<code>open-science start</code> を実行してバックエンドを起動し、認証された URL を開きます。次に、<code>open-science stop</code> を実行してバックエンドをシャットダウンします。<code>status</code> と <code>url</code> も利用できます。",
-    "One argument per line.": "1 行に 1 つの引数を指定します。",
     "One moment.": "少々お待ちください。",
     "One or more agent runtimes could not be detected.": "1 つ以上のエージェントランタイムが検出できませんでした。",
     "One sentence — what does this skill teach the agent, and when does it apply?": "一文 — このスキルはエージェントに何を教えますか？いつ適用されますか？",
@@ -2154,7 +2153,6 @@
     "Send message options": "メッセージの送信オプション",
     "Sending this edited prompt starts a new branch from here. The {{count}} turns that currently follow remain available from the message revision controls._other": "この編集したプロンプトを送信すると、ここから新しいブランチが開始されます。現在後に続く {{count}} ターンは、引き続きメッセージリビジョンコントロールから利用できます。",
     "Sent": "送信済み",
-    "Separated by spaces or newlines.": "スペースまたは改行で区切ります。",
     "Server URL": "サーバーURL",
     "Servers, clusters or job submission nodes from your SSH host lists": "SSH ホストリスト内のサーバー、クラスター、ジョブ送信ノード",
     "Session": "セッション",
@@ -2895,7 +2893,6 @@
     "First message": "最初のメッセージ",
     "Response completed.": "応答が完了しました。",
     "Response failed.": "応答に失敗しました。",
-    "-y @modelcontextprotocol/server-memory": "-y @modelcontextprotocol/server-memory",
     "https://mirrors.example.com/conda-forge/": "https://mirrors.example.com/conda-forge/",
     "https://mirrors.example.com/pypi/simple": "https://mirrors.example.com/pypi/simple",
     "/path/to/corp-ca-bundle.pem": "/path/to/corp-ca-bundle.pem",
@@ -4097,6 +4094,9 @@
     "Runtime source": "ランタイムの提供元",
     "File content omitted": "ファイル内容は省略されています",
     "Switch notebook runtime": "Notebook ランタイムを切り替え",
-    "Clears memory in the selected language kernel. Other kernels are unaffected.": "選択した言語のカーネルのメモリを消去します。他のカーネルには影響しません。"
+    "Clears memory in the selected language kernel. Other kernels are unaffected.": "選択した言語のカーネルのメモリを消去します。他のカーネルには影響しません。",
+    "Credential changes were saved, but Connectors could not refresh. Retry from Settings > Connectors.": "認証情報の変更は保存されましたが、コネクタを更新できませんでした。設定 > コネクタから再試行してください。",
+    "One argument per line. Spaces and blank lines are preserved. Clear the field to remove all arguments.": "1 行に 1 つの引数を入力します。空白と空行は保持されます。欄を空にすると、すべての引数が削除されます。",
+    "The saved arguments contain embedded line breaks. Editing this field replaces the list using one argument per line.": "保存済みの引数には引数内の改行が含まれています。この欄を編集すると、1 行に 1 つの引数としてリスト全体が置き換えられます。"
   }
 }

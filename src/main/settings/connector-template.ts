@@ -158,7 +158,7 @@ const splitUserValueContainsCredential = (argument: string): boolean => {
 }
 
 const argumentsContainCredential = (args: readonly string[]): boolean =>
-  args.some(argumentContainsCredential) ||
+  args.some((argument) => argumentContainsCredential(argument.trim())) ||
   args.some(
     (argument, index) =>
       /^-[uU]$/.test(argument.trim()) && splitUserValueContainsCredential(args[index + 1] ?? '')
@@ -308,6 +308,46 @@ const readStringList = (
     if (!result.includes(parsed)) result.push(parsed)
   }
   return result.length > 0 ? result : undefined
+}
+
+// argv is ordered data: unlike names and scopes, values must not be trimmed or deduplicated.
+const readArgs = (
+  value: unknown,
+  diagnostics: ConnectorTemplateDiagnostic[]
+): string[] | undefined => {
+  if (value === undefined) return undefined
+  if (!Array.isArray(value)) {
+    diagnostic(diagnostics, 'error', 'connector-template.type', 'args must be an array.', 'args')
+    return undefined
+  }
+  if (value.length > CONNECTOR_RESOURCE_LIMITS.arguments) {
+    diagnostic(
+      diagnostics,
+      'error',
+      'connector-template.too-many',
+      `args exceeds ${CONNECTOR_RESOURCE_LIMITS.arguments} entries.`,
+      'args'
+    )
+    return undefined
+  }
+  const result: string[] = []
+  for (const [index, item] of value.entries()) {
+    const path = `args[${index}]`
+    if (typeof item !== 'string') {
+      diagnostic(diagnostics, 'error', 'connector-template.type', `${path} must be a string.`, path)
+    } else if (item.length > CONNECTOR_RESOURCE_LIMITS.argumentCharacters) {
+      diagnostic(
+        diagnostics,
+        'error',
+        'connector-template.too-long',
+        `${path} exceeds ${CONNECTOR_RESOURCE_LIMITS.argumentCharacters} characters.`,
+        path
+      )
+    } else {
+      result.push(item)
+    }
+  }
+  return result
 }
 
 const readHttpUrl = (
@@ -494,16 +534,7 @@ const validateArgs = (
         `args[${index}]`
       )
     }
-    if (/[\r\n]/.test(arg)) {
-      diagnostic(
-        diagnostics,
-        'error',
-        'connector-template.argument-line-break',
-        `args[${index}] cannot contain a line break.`,
-        `args[${index}]`
-      )
-    }
-    if (argumentContainsCredential(arg)) {
+    if (argumentContainsCredential(arg.trim())) {
       credentialReported = true
       diagnostic(
         diagnostics,
@@ -803,10 +834,7 @@ export const parseConnectorTemplate = (
   const command = readString(parsed.command, diagnostics, 'command', {
     max: CONNECTOR_RESOURCE_LIMITS.commandCharacters
   })
-  const args = readStringList(parsed.args, diagnostics, 'args', {
-    maxItems: CONNECTOR_RESOURCE_LIMITS.arguments,
-    maxLength: CONNECTOR_RESOURCE_LIMITS.argumentCharacters
-  })
+  const args = readArgs(parsed.args, diagnostics)
   const url = parsed.url === undefined ? undefined : readHttpUrl(parsed.url, diagnostics, 'url')
   const requiredSecrets = readRequiredSecrets(parsed.required_secrets, diagnostics)
   const oauth = readOAuth(parsed.oauth, diagnostics)
@@ -1010,7 +1038,7 @@ const mcpClientJson = (definition: ConnectorTemplateDefinition): string =>
           definition.transport === 'stdio'
             ? {
                 command: definition.command,
-                ...(definition.args?.length ? { args: definition.args } : {}),
+                ...(definition.args !== undefined ? { args: definition.args } : {}),
                 ...(definition.requiredSecrets?.environment?.length
                   ? { env: secretPlaceholders(definition.requiredSecrets.environment) }
                   : {})
@@ -1055,7 +1083,7 @@ export const buildConnectorTemplateExport = (
     transport: source.transport,
     ...(source.description ? { description: source.description } : {}),
     ...(source.command ? { command: source.command } : {}),
-    ...(source.args?.length ? { args: [...source.args] } : {}),
+    ...(source.args !== undefined ? { args: [...source.args] } : {}),
     ...(source.url ? { url: source.url } : {}),
     ...(source.environmentNames?.length || source.headerNames?.length || source.hasOAuthClientSecret
       ? {

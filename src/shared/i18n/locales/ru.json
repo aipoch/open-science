@@ -1641,7 +1641,6 @@
     "On this machine": "На этом устройстве",
     "Once": "Один раз",
     "Once installed, run <code>open-science start</code> to launch the backend and open the authenticated URL, then <code>open-science stop</code> to shut it down. <code>status</code> and <code>url</code> are also available.": "После установки выполните <code>open-science start</code>, чтобы запустить серверную часть и открыть URL с аутентификацией, а для остановки выполните <code>open-science stop</code>. Также доступны команды <code>status</code> и <code>url</code>.",
-    "One argument per line.": "Один аргумент на строку.",
     "One moment.": "Один момент.",
     "One or more agent runtimes could not be detected.": "Не удалось обнаружить одну или несколько сред выполнения агента.",
     "One sentence — what does this skill teach the agent, and when does it apply?": "Одно предложение: чему этот навык учит агента и когда применяется?",
@@ -2264,7 +2263,6 @@
     "Sending this edited prompt starts a new branch from here. The {{count}} turns that currently follow remain available from the message revision controls._many": "Отправка изменённого запроса создаст отсюда новую ветку. Следующие {{count}} ходов останутся доступны через элементы управления версиями сообщения.",
     "Sending this edited prompt starts a new branch from here. The {{count}} turns that currently follow remain available from the message revision controls._other": "Отправка изменённого запроса создаст отсюда новую ветку. Следующие {{count}} хода останутся доступны через элементы управления версиями сообщения.",
     "Sent": "Отправлено",
-    "Separated by spaces or newlines.": "Разделено пробелами или переносами строки.",
     "Server URL": "URL сервера",
     "Servers, clusters or job submission nodes from your SSH host lists": "Сервера, кластеры или узлы подачи заданий из вашего списка хостов SSH",
     "Session": "Сессия",
@@ -3226,7 +3224,6 @@
     "First message": "Первое сообщение",
     "Response completed.": "Ответ завершен.",
     "Response failed.": "Ответ не удался.",
-    "-y @modelcontextprotocol/server-memory": "-y @modelcontextprotocol/server-memory",
     "https://mirrors.example.com/conda-forge/": "https://mirrors.example.com/conda-forge/",
     "https://mirrors.example.com/pypi/simple": "https://mirrors.example.com/pypi/simple",
     "/path/to/corp-ca-bundle.pem": "/path/to/corp-ca-bundle.pem",
@@ -4537,6 +4534,9 @@
     "Runtime source": "Источник среды выполнения",
     "File content omitted": "Содержимое файла опущено",
     "Switch notebook runtime": "Переключить среду выполнения Notebook",
-    "Clears memory in the selected language kernel. Other kernels are unaffected.": "Очищает память ядра выбранного языка. Другие ядра не затрагиваются."
+    "Clears memory in the selected language kernel. Other kernels are unaffected.": "Очищает память ядра выбранного языка. Другие ядра не затрагиваются.",
+    "Credential changes were saved, but Connectors could not refresh. Retry from Settings > Connectors.": "Изменения учётных данных сохранены, но обновить Коннекторы не удалось. Повторите попытку в разделе Настройки > Коннекторы.",
+    "One argument per line. Spaces and blank lines are preserved. Clear the field to remove all arguments.": "Один аргумент на строку. Пробелы и пустые строки сохраняются. Очистите поле, чтобы удалить все аргументы.",
+    "The saved arguments contain embedded line breaks. Editing this field replaces the list using one argument per line.": "Сохранённые аргументы содержат внутренние переводы строк. При редактировании этого поля список заменяется: каждая строка становится отдельным аргументом."
   }
 }

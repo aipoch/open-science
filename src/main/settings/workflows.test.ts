@@ -717,7 +717,7 @@ describe('SettingsWorkflows catalog and appearance effects', () => {
 
     await expect(
       workflows.updateDeviceCredential({ id: 'shared-static', secret: 'rotated' })
-    ).rejects.toThrow('refresh failed')
+    ).rejects.toThrow('Credential changes were saved, but Connectors could not refresh.')
 
     expect(store.updateDeviceCredential).toHaveBeenCalledOnce()
     expect(release).not.toHaveBeenCalled()

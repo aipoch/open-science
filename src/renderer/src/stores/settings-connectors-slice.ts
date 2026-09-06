@@ -280,22 +280,37 @@ export const createSettingsConnectorsSlice = ({
       return result.createdCredential
     },
     updateDeviceCredential: async (request) => {
-      const snapshot = await getCommands().updateDeviceCredential(request)
-      setState({ deviceCredentials: snapshot.credentials, deviceCredentialsLoaded: true })
+      try {
+        const snapshot = await getCommands().updateDeviceCredential(request)
+        setState({ deviceCredentials: snapshot.credentials, deviceCredentialsLoaded: true })
+      } catch (error) {
+        await refreshDeviceCredentialsIfLoaded()
+        throw error
+      }
     },
     removeDeviceCredential: async (request) => {
       const snapshot = await getCommands().removeDeviceCredential(request)
       setState({ deviceCredentials: snapshot.credentials, deviceCredentialsLoaded: true })
     },
     authenticateDeviceCredential: async (request) => {
-      const snapshot = await getCommands().authenticateDeviceCredential(request)
-      setState({ deviceCredentials: snapshot.credentials, deviceCredentialsLoaded: true })
+      try {
+        const snapshot = await getCommands().authenticateDeviceCredential(request)
+        setState({ deviceCredentials: snapshot.credentials, deviceCredentialsLoaded: true })
+      } catch (error) {
+        await refreshDeviceCredentialsIfLoaded()
+        throw error
+      }
     },
     cancelDeviceCredentialAuthentication: (request) =>
       getCommands().cancelDeviceCredentialAuthentication(request),
     disconnectDeviceCredential: async (request) => {
-      const snapshot = await getCommands().disconnectDeviceCredential(request)
-      setState({ deviceCredentials: snapshot.credentials, deviceCredentialsLoaded: true })
+      try {
+        const snapshot = await getCommands().disconnectDeviceCredential(request)
+        setState({ deviceCredentials: snapshot.credentials, deviceCredentialsLoaded: true })
+      } catch (error) {
+        await refreshDeviceCredentialsIfLoaded()
+        throw error
+      }
     },
     loadConnectors: async () => {
       // Keep subscription and command lookup inside this async action so a missing Settings

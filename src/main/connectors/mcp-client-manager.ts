@@ -456,10 +456,23 @@ export class McpClientManager {
     const client = await this.connect(config, signal)
     try {
       signal?.throwIfAborted()
-      const { tools } = signal
-        ? await client.listTools(undefined, { signal })
-        : await client.listTools()
-      return tools
+      const tools: McpClientManagerTool[] = []
+      const seenCursors = new Set<string>()
+      let cursor: string | undefined
+      // Bound malformed servers without changing the protocol's opaque cursor semantics.
+      for (let page = 0; page < 1000; page += 1) {
+        signal?.throwIfAborted()
+        const params = cursor === undefined ? undefined : { cursor }
+        const result = signal
+          ? await client.listTools(params, { signal })
+          : await client.listTools(params)
+        tools.push(...result.tools)
+        cursor = result.nextCursor
+        if (cursor === undefined) return tools
+        if (seenCursors.has(cursor)) throw new Error('MCP tool discovery repeated a cursor')
+        seenCursors.add(cursor)
+      }
+      throw new Error('MCP tool discovery exceeded the page limit')
     } catch (error) {
       if (!signal?.aborted) await this.discardClient(config.id, client)
       throw error
@@ -801,7 +814,13 @@ function unwrapToolResult(result: unknown): unknown {
   if (isError) {
     throw new McpToolCallError(typeof text === 'string' ? text : 'MCP tool call failed')
   }
-  if (typeof text === 'string') {
+  if (
+    typeof text === 'string' &&
+    Array.isArray(content) &&
+    content.length === 1 &&
+    Object.keys(result).every((key) => key === 'content' || key === 'isError') &&
+    Object.keys(first).every((key) => key === 'type' || key === 'text')
+  ) {
     try {
       return JSON.parse(text)
     } catch {
