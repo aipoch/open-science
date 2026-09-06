@@ -197,7 +197,11 @@ export class UserSkillSpecialistPackageAdapter implements SpecialistPackageSkill
         const localId = skill.localId ?? skill.id
         const current = live.find((candidate) => candidate.id === localId)
         if (skill.disposition === 'install') {
-          if (current || (await exists(join(this.personalRoot, skill.id)))) {
+          if (
+            current ||
+            (await this.findSkillDirectory(localId)) ||
+            (await exists(join(this.personalRoot, skill.id)))
+          ) {
             throw new Error(`Skill ${skill.id} changed after preview.`)
           }
           continue

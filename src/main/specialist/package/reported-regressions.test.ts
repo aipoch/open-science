@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto'
 import { spawnSync } from 'node:child_process'
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdtemp, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { buildSync } from 'esbuild'
@@ -98,6 +98,37 @@ const provenance = (digest = 'c'.repeat(64)): MarketplaceInstallProvenance => ({
 })
 
 describe('reported Specialist package regressions', () => {
+  it.each(['analysis-tools', 'relocated-tools'])(
+    'preserves an unreadable owned Skill in %s when another package requests its identity',
+    async (directoryName) => {
+      const { packages, storageDir, skillPort } = await fixture()
+      const first = await packages.preview(archive('first-specialist'))
+      expect(await packages.install({ candidateToken: first.candidateToken })).toMatchObject({
+        status: 'installed'
+      })
+      const original = join(storageDir, 'skills', 'personal', 'analysis-tools')
+      const directory = join(storageDir, 'skills', 'personal', directoryName)
+      if (directory !== original) await rename(original, directory)
+      await rm(join(directory, 'SKILL.md'))
+      await writeFile(join(directory, 'local-notes.txt'), 'KEEP LOCAL EVIDENCE')
+      const sidecar = join(directory, '.specialist-package.json')
+      const metadata = await readFile(sidecar, 'utf8')
+      expect(await skillPort.snapshot()).toEqual([])
+
+      const preview = await packages.preview(archive('second-specialist'))
+      expect(preview.summary?.skills[0].disposition).toBe('install')
+      const result = await packages.install({ candidateToken: preview.candidateToken })
+      expect.soft(result.status).toBe('failed')
+      await expect
+        .soft(readFile(join(directory, 'local-notes.txt'), 'utf8'))
+        .resolves.toBe('KEEP LOCAL EVIDENCE')
+      await expect.soft(readFile(sidecar, 'utf8')).resolves.toBe(metadata)
+      await expect
+        .soft(readFile(join(directory, 'SKILL.md'), 'utf8'))
+        .rejects.toMatchObject({ code: 'ENOENT' })
+    }
+  )
+
   it('exports the edited Skill version shown by the current preview', async () => {
     const { packages, userSkills } = await fixture()
     const first = await packages.preview(archive('first-specialist'))
