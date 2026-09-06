@@ -5929,8 +5929,10 @@ describe('ACP runtime session management', () => {
     })
     const session = await runtime.createSession({ cwd: '/workspace', memoryEnabled: true })
 
+    const memorySignal = runtime.sessionMemorySignal(session.sessionId)
     runtime.setMemoryEnabled(session.sessionId, false)
 
+    expect(memorySignal?.aborted).toBe(true)
     expect(runtime.isSessionMemoryEnabled(session.sessionId)).toBe(false)
     expect(fakeAgent.newSessions).toHaveLength(1)
     expect(fakeAgent.resumedSessions).toEqual([])

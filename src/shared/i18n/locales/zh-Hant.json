@@ -99,6 +99,7 @@
     "Import Connector configuration": "匯入連接器設定"
   },
   "renderer": {
+    "Latest saved version": "最新儲存的版本",
     "Unable to discard the Plan.": "無法捨棄計畫。",
     "Discard unavailable Plan": "捨棄無法使用的計畫",
     "Discard unavailable Plan?": "要捨棄無法使用的計畫嗎？",

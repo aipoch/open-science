@@ -101,6 +101,7 @@
     "Import Connector configuration": "Importer la configuration du connecteur"
   },
   "renderer": {
+    "Latest saved version": "Dernière version enregistrée",
     "Unable to discard the Plan.": "Impossible d’abandonner le plan.",
     "Discard unavailable Plan": "Abandonner le plan indisponible",
     "Discard unavailable Plan?": "Abandonner le plan indisponible ?",

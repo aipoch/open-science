@@ -828,6 +828,10 @@ class AcpRuntime {
     )
   }
 
+  sessionMemorySignal(sessionId: string): AbortSignal | undefined {
+    return this.sessionRegistry.lookup(sessionId)?.aggregate.memorySignal()
+  }
+
   isSessionMemoryEnabled(sessionId: string): boolean {
     return this.sessionRegistry.lookup(sessionId)?.aggregate.snapshot().memoryEnabled ?? false
   }

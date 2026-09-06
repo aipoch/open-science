@@ -87,6 +87,18 @@ do not become alternate state stores.
 | Notebook runtime                | Own runtime discovery, Session binding decisions, execution, environment operations, and durable run history. It consumes enablement snapshots through the named Settings capability rather than owning or reading raw Settings state.                                                                                                                                                            |
 | Persistence and artifact owners | Own project/session files, uploads, artifact versions, provenance, and deletion/finalization coordination. Application commands receive narrow handler capabilities instead of repositories.                                                                                                                                                                                                      |
 
+### Agent Memory authorization
+
+Memory RPC binds request identity and an execution guard in the host. The guard checks the live
+Session preference, the captured Session cancellation signal, the current connection capability,
+and HTTP disconnection when queued work starts and before results leave the service. Agent writes
+also check inside the existing SQLite transaction, before insertion and at the final commit decision;
+failure rolls back both the entry and Memory revision. A transaction that already passed that final
+decision may complete its commit. Disabling then re-enabling a Session never revives its old queued
+operations. The global Memory switch retains its existing service-queue ordering. Session guards
+must not enter that same queue recursively. Cancellation state stays in memory and is not part of
+Session snapshots, Memory provenance, or the persisted schema.
+
 ### Durable external component ownership
 
 A durable external component is a resource created by Open Science that survives its creating

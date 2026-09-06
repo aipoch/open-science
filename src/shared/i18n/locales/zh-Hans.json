@@ -99,6 +99,7 @@
     "Import Connector configuration": "导入连接器配置"
   },
   "renderer": {
+    "Latest saved version": "最新保存的版本",
     "Unable to discard the Plan.": "无法丢弃计划。",
     "Discard unavailable Plan": "丢弃不可用计划",
     "Discard unavailable Plan?": "要丢弃不可用计划吗？",

@@ -381,6 +381,10 @@ class AcpRuntimeCoordinator {
     return runtime?.hasLiveSession(projectId, sessionId) ?? false
   }
 
+  sessionMemorySignal(sessionId: string): AbortSignal | undefined {
+    return this.findRuntimeForSession(sessionId)?.sessionMemorySignal(sessionId)
+  }
+
   isSessionMemoryEnabled(sessionId: string): boolean {
     return this.findRuntimeForSession(sessionId)?.isSessionMemoryEnabled(sessionId) ?? false
   }

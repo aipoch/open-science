@@ -101,6 +101,7 @@
     "Import Connector configuration": "Importar configuración del conector"
   },
   "renderer": {
+    "Latest saved version": "Última versión guardada",
     "Unable to discard the Plan.": "No se puede descartar el plan.",
     "Discard unavailable Plan": "Descartar el plan no disponible",
     "Discard unavailable Plan?": "¿Descartar el plan no disponible?",

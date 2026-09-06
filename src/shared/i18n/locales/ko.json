@@ -99,6 +99,7 @@
     "Import Connector configuration": "커넥터 구성 가져오기"
   },
   "renderer": {
+    "Latest saved version": "최근 저장된 버전",
     "Unable to discard the Plan.": "계획을 삭제할 수 없습니다.",
     "Discard unavailable Plan": "사용할 수 없는 계획 삭제",
     "Discard unavailable Plan?": "사용할 수 없는 계획을 삭제하시겠습니까?",
