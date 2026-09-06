@@ -1925,7 +1925,7 @@ describe('Responses-compatible bridge conversion', () => {
       const output = await response.text()
       // [DONE] is present but the answer was cut off by length: incomplete wins over a clean complete.
       expect(output).toContain('response.incomplete')
-      expect(output).toContain('length')
+      expect(output).toContain('"incomplete_details":{"reason":"max_output_tokens"}')
       expect(output).not.toContain('response.completed')
     } finally {
       await bridge.close()

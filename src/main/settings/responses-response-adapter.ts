@@ -172,11 +172,33 @@ const chatUsageToResponsesUsage = (usage: unknown): JsonObject | undefined => {
   }
 }
 
+const chatTerminalDetails = (
+  finishReason: unknown
+): { status: 'completed' | 'incomplete'; incomplete_details: { reason: string } | null } => {
+  if (finishReason == null || finishReason === 'stop' || finishReason === 'tool_calls') {
+    return { status: 'completed', incomplete_details: null }
+  }
+  if (finishReason === 'length' || finishReason === 'content_filter') {
+    return {
+      status: 'incomplete',
+      incomplete_details: {
+        reason: finishReason === 'length' ? 'max_output_tokens' : 'content_filter'
+      }
+    }
+  }
+  throw new ResponsesProtocolError(
+    'Unsupported upstream finish reason',
+    502,
+    'unsupported_upstream_output'
+  )
+}
+
 export const completionToResponse = (
   completion: JsonObject,
   namespacedTools: readonly ResponsesBridgeNamespacedTool[] = []
 ): JsonObject => {
   const message = completion.choices?.[0]?.message ?? {}
+  const terminal = chatTerminalDetails(completion.choices?.[0]?.finish_reason)
   const output: JsonObject[] = []
   if (hasUpstreamImageField(message)) throw unsupportedUpstreamImageOutput()
   const contentText = upstreamTextFromContent(message.content)
@@ -190,7 +212,7 @@ export const completionToResponse = (
     output.push({
       id: `msg_${completion.id}`,
       type: 'message',
-      status: 'completed',
+      status: terminal.status,
       role: 'assistant',
       content: [{ type: 'output_text', text, annotations: [] }]
     })
@@ -200,18 +222,22 @@ export const completionToResponse = (
     output.push({
       id: `fc_${tool.id}`,
       type: 'function_call',
-      status: 'completed',
+      status: terminal.status,
       call_id: tool.id,
       ...identity,
       arguments: tool.function?.arguments ?? '{}'
     })
   }
-  return responseEnvelope(
-    completion.id ?? `resp_${randomBytes(6).toString('hex')}`,
-    completion.model,
-    output,
-    chatUsageToResponsesUsage(completion.usage)
-  )
+  return {
+    ...responseEnvelope(
+      completion.id ?? `resp_${randomBytes(6).toString('hex')}`,
+      completion.model,
+      output,
+      chatUsageToResponsesUsage(completion.usage),
+      terminal.status
+    ),
+    ...terminal
+  }
 }
 
 const writeEvent = (
@@ -356,6 +382,7 @@ export const streamChatToResponses = async (
   }
 
   let streamError: unknown
+  let terminal = chatTerminalDetails(undefined)
   try {
     await consumeBoundedResponseBody(
       upstream,
@@ -370,6 +397,7 @@ export const streamChatToResponses = async (
     )
     buffered += decoder.decode()
     if (buffered.trim()) handleRecord(buffered)
+    terminal = chatTerminalDetails(terminalFinishReason)
   } catch (error) {
     streamError = error
   }
@@ -377,7 +405,8 @@ export const streamChatToResponses = async (
   for (const index of toolItems.keys()) ensureToolItem(index)
 
   for (const item of output) {
-    item.status = 'completed'
+    item.status =
+      streamError || (!terminalFinishReason && !sawDone) ? 'incomplete' : terminal.status
     const outputIndex = output.indexOf(item)
     if (item.type === 'message') {
       const text = item.content.map((part: JsonObject) => part.text).join('')
@@ -425,7 +454,7 @@ export const streamChatToResponses = async (
         message: 'Upstream stream ended before completion'
       })
     })
-  } else if (terminalFinishReason === 'stop' || terminalFinishReason === 'tool_calls') {
+  } else if (terminal.status === 'completed' && terminalFinishReason) {
     writeEvent(response, 'response.completed', sequence++, {
       response: responseEnvelope(responseId, model, output, usage)
     })
@@ -434,7 +463,7 @@ export const streamChatToResponses = async (
     writeEvent(response, 'response.incomplete', sequence++, {
       response: {
         ...responseEnvelope(responseId, model, output, usage, 'incomplete'),
-        incomplete_details: { reason: terminalFinishReason }
+        incomplete_details: terminal.incomplete_details
       }
     })
   } else if (sawDone) {
