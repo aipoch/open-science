@@ -260,6 +260,7 @@ import {
   type ComputeJobDeletionParticipant,
   type SessionDeletion
 } from './session-persistence/coordinator'
+import { createSessionRuntimeLookup } from './session-persistence/runtime-lookup'
 import { withSessionCacheDeletion } from './compute/session-cache-owner'
 import { createMainPromptSideChatRelay } from './side-chat/main-prompt-relay'
 import { registerSideChatIpcHandlers } from './side-chat/ipc'
@@ -1735,12 +1736,14 @@ const createApplicationModules = async (
   // (validate + record) and the runtime switch so a hot-switch lands on the same source of truth.
   const sessionBindingService = new SessionBindingService(specialistService)
   const specialistPersistLog = createLogger('specialist:persist')
+  const findRuntimeSessions = createSessionRuntimeLookup({
+    repository: sessionRepository,
+    coordinator: sessionPersistenceCoordinator
+  })
   const loadSessionSpecialistBinding = async (
     sessionId: string
   ): Promise<PersistedSessionSpecialistBinding | undefined> => {
-    const session = (await sessionRepository.loadAll()).sessions.find(
-      (candidate) => candidate.id === sessionId
-    )
+    const session = (await findRuntimeSessions(sessionId))[0]
     return session
       ? {
           specialistId: session.specialistId,
@@ -1753,8 +1756,7 @@ const createApplicationModules = async (
     specialistId: string | undefined,
     pending: boolean
   ): Promise<void> => {
-    const allSessions = await sessionRepository.loadAll()
-    const session = allSessions.sessions.find((candidate) => candidate.id === sessionId)
+    const session = (await findRuntimeSessions(sessionId))[0]
     if (!session) {
       // Fresh unsent drafts are not durable yet. Carry both the desired ID and pending marker into
       // their first save; the marker can also be cleared here when runtime applies before that save.
@@ -2225,8 +2227,7 @@ const createApplicationModules = async (
       commands: sessionPersistenceCoordinator,
       readSession: ({ projectId, sessionId }) =>
         sessionRepository.loadSession(projectId, sessionId),
-      findSessions: async (sessionId) =>
-        (await sessionRepository.loadAll()).sessions.filter((session) => session.id === sessionId)
+      findSessions: findRuntimeSessions
     },
     async resolveInput(identity, session) {
       const artifact = parseArtifactVersionLocator(identity)
