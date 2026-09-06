@@ -1337,6 +1337,45 @@ describe('workspace session controller', () => {
     )
   })
 
+  it.each(['before commit', 'after commit'])(
+    'keeps a rejected deletion result uncertain %s and retries the same Session',
+    async (failurePoint) => {
+      const active = session()
+      let serverHasSession = true
+      const deleteSession = vi
+        .fn()
+        .mockImplementationOnce(async () => {
+          if (failurePoint === 'after commit') serverHasSession = false
+          throw new Error('Connection lost')
+        })
+        .mockImplementationOnce(async () => {
+          serverHasSession = false
+          return { status: 'deleted', runtimeDetached: true }
+        })
+      const settleSessionDeletion = vi.fn()
+      const hook = renderController({ activeSession: active, deleteSession, settleSessionDeletion })
+      mounted.push(hook)
+      act(() => hook.result.current.actions.openDelete(active))
+      await act(async () => hook.result.current.actions.confirmDelete())
+
+      expect(serverHasSession).toBe(failurePoint === 'before commit')
+      expect(hook.result.current.view.dialogs.delete).toMatchObject({
+        session: { id: active.id },
+        isDeleting: false,
+        error: 'unknown'
+      })
+      expect(hook.result.current.view.deletingIds.has(active.id)).toBe(false)
+      await act(async () => hook.result.current.actions.confirmDelete())
+      expect(deleteSession).toHaveBeenNthCalledWith(2, {
+        projectId: active.projectId,
+        sessionId: active.id
+      })
+      expect(serverHasSession).toBe(false)
+      expect(settleSessionDeletion).toHaveBeenLastCalledWith(active.id, true)
+      expect(hook.result.current.view.dialogs.delete).toBeNull()
+    }
+  )
+
   it('keeps a background Session dialog open with a retryable persistence error', async () => {
     const active = session({ id: 'session-active' })
     const background = session({ id: 'session-background' })

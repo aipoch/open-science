@@ -64,7 +64,7 @@ type SessionDeletionFailureReason = Extract<SessionDeletionResult, { status: 'fa
 type SessionDeleteDialogState = {
   session: ChatSession
   isDeleting: boolean
-  error: SessionDeletionFailureReason | null
+  error: SessionDeletionFailureReason | 'unknown' | null
 }
 type SpecialistSendIntent = {
   draftSpecialistId: string | null | undefined
@@ -325,7 +325,7 @@ const useWorkspaceSessionController = ({
         settleSessionDeletion(sessionId, false)
         setDeleteDialog((current) =>
           current?.session.id === sessionId
-            ? { ...current, isDeleting: false, error: 'runtime' }
+            ? { ...current, isDeleting: false, error: 'unknown' }
             : current
         )
       })
