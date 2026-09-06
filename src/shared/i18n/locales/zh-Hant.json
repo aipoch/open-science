@@ -225,7 +225,6 @@
     "Find full-text PDF": "尋找全文 PDF",
     "Full-text search failed. Try again.": "全文檢索失敗，請重試。",
     "PDF could not be added. The link may have expired, require sign-in, or exceed 50 MB. Search again or upload a PDF.": "無法新增 PDF。連結可能已失效、需要登入，或檔案超過 50 MB。請重新檢索或上傳 PDF。",
-    "Add a DOI, PMID or PMCID to find a matching full-text PDF.": "請新增 DOI、PMID 或 PMCID，以尋找相符的全文 PDF。",
     "Europe PMC is unavailable. Results may be incomplete.": "Europe PMC 暫時無法使用，結果可能不完整。",
     "OpenAlex is unavailable. Results may be incomplete.": "OpenAlex 暫時無法使用，結果可能不完整。",
     "Published version": "正式發表版本",
@@ -4554,6 +4553,11 @@
     "Retry turning off": "重試關閉",
     "Local remote access remains enabled, but the latest external status check failed.": "本機遠端存取仍已啟用，但最近一次外部狀態檢查失敗。",
     "The latest external status check failed.": "最近一次外部狀態檢查失敗。",
-    "Saved browser link": "已儲存的瀏覽器連結"
+    "Saved browser link": "已儲存的瀏覽器連結",
+    "arXiv": "arXiv",
+    "Direct PDF link": "PDF 直接連結",
+    "arXiv identifier required": "需要 arXiv 識別碼",
+    "Latest PDF via arXiv identifier. No API key required. The file is checked when downloaded.": "透過 arXiv 識別碼取得最新 PDF。無需 API 金鑰，下載時會驗證檔案。",
+    "Add a DOI, PMID, PMCID or arXiv identifier to find a matching full-text PDF.": "新增 DOI、PMID、PMCID 或 arXiv 識別碼以尋找相符的全文 PDF。"
   }
 }

@@ -228,7 +228,6 @@
     "Find full-text PDF": "Volltext-PDF suchen",
     "Full-text search failed. Try again.": "Volltextsuche fehlgeschlagen. Bitte erneut versuchen.",
     "PDF could not be added. The link may have expired, require sign-in, or exceed 50 MB. Search again or upload a PDF.": "Das PDF konnte nicht hinzugefügt werden. Der Link ist möglicherweise abgelaufen, erfordert eine Anmeldung oder die Datei überschreitet 50 MB. Suchen Sie erneut oder laden Sie ein PDF hoch.",
-    "Add a DOI, PMID or PMCID to find a matching full-text PDF.": "Fügen Sie eine DOI, PMID oder PMCID hinzu, um ein passendes Volltext-PDF zu finden.",
     "Europe PMC is unavailable. Results may be incomplete.": "Europe PMC ist nicht verfügbar. Ergebnisse sind möglicherweise unvollständig.",
     "OpenAlex is unavailable. Results may be incomplete.": "OpenAlex ist nicht verfügbar. Ergebnisse sind möglicherweise unvollständig.",
     "Published version": "Veröffentlichte Version",
@@ -4707,6 +4706,11 @@
     "Retry turning off": "Ausschalten erneut versuchen",
     "Local remote access remains enabled, but the latest external status check failed.": "Der lokale Fernzugriff bleibt aktiviert, aber die letzte Prüfung des externen Status ist fehlgeschlagen.",
     "The latest external status check failed.": "Die letzte Prüfung des externen Status ist fehlgeschlagen.",
-    "Saved browser link": "Gespeicherter Browser-Link"
+    "Saved browser link": "Gespeicherter Browser-Link",
+    "arXiv": "arXiv",
+    "Direct PDF link": "Direkter PDF-Link",
+    "arXiv identifier required": "arXiv-Kennung erforderlich",
+    "Latest PDF via arXiv identifier. No API key required. The file is checked when downloaded.": "Neueste PDF über die arXiv-Kennung. Kein API-Schlüssel erforderlich. Die Datei wird beim Herunterladen geprüft.",
+    "Add a DOI, PMID, PMCID or arXiv identifier to find a matching full-text PDF.": "Fügen Sie eine DOI, PMID, PMCID oder arXiv-Kennung hinzu, um eine passende Volltext-PDF zu finden."
   }
 }

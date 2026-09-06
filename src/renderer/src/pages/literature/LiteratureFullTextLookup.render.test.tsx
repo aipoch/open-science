@@ -239,4 +239,43 @@ describe('LiteratureFullTextLookup', () => {
     ).not.toBeNull()
     expect(fullText).toHaveBeenCalledTimes(2)
   })
+  it('offers an arXiv-only PDF with accurate source applicability and attaches only after selection', async () => {
+    const arxivItem = {
+      ...item,
+      item: {
+        ...item.item,
+        identifiers: [{ scheme: 'arxiv' as const, value: '2401.12345', isPrimary: true }]
+      }
+    }
+    fullText.mockImplementation(async (request) =>
+      request.mode === 'attach'
+        ? { mode: 'attach', item: arxivItem }
+        : {
+            mode: 'search',
+            notices: [],
+            candidates: [
+              {
+                id: 'arxiv-pdf',
+                provider: 'arxiv',
+                source: 'arXiv',
+                url: 'https://arxiv.org/pdf/2401.12345',
+                sourceUrl: 'https://arxiv.org/abs/2401.12345'
+              }
+            ]
+          }
+    )
+    const onAdded = vi.fn()
+    render(<LiteratureFullTextLookup {...props} item={arxivItem} onAdded={onAdded} />)
+    const add = await screen.findByRole('button', { name: 'Add attachment' })
+    expect(fullText.mock.calls.every(([request]) => request.mode === 'search')).toBe(true)
+    expect(screen.getByRole('link', { name: 'Open source' }).getAttribute('href')).toBe(
+      'https://arxiv.org/abs/2401.12345'
+    )
+    fireEvent.click(screen.getByText('Search sources'))
+    const sources = within(screen.getByRole('region', { name: 'Search sources' }))
+    expect(sources.getByText('Direct PDF link')).not.toBeNull()
+    expect(sources.queryByText('Search completed')).toBeNull()
+    fireEvent.click(add)
+    await vi.waitFor(() => expect(onAdded).toHaveBeenCalledWith(arxivItem))
+  })
 })

@@ -365,3 +365,46 @@ it('preserves completed apply counts when resuming older checkpoints without pha
     phaseTotal: 2
   })
 })
+
+it.each(['pmc', 'arxiv'] as const)(
+  'restores reviewed %s candidates and revalidates them before attachment',
+  async (provider) => {
+    const { jobs, options, fullText } = await setup()
+    const candidate = {
+      ...source,
+      provider,
+      ...(provider === 'arxiv'
+        ? {
+            source: 'arXiv',
+            url: 'https://arxiv.org/pdf/2401.12345',
+            sourceUrl: 'https://arxiv.org/abs/2401.12345'
+          }
+        : {})
+    }
+    fullText.mockResolvedValue({ mode: 'search', candidates: [candidate], notices: [] })
+    const jobId = randomUUID()
+    await jobs.run({ action: 'create', mode: 'full-text', itemIds: ['a'], requestId: jobId })
+    await vi.waitFor(async () => expect((await state(jobs, jobId)).state).toBe('review'))
+    await jobs.close()
+    const reopened = new LiteratureBatchJobs(options)
+    cleanup.push(() => reopened.close())
+    expect((await state(reopened, jobId)).rows[0].candidates).toEqual([candidate])
+    fullText.mockImplementation(async (request) =>
+      request.mode === 'search'
+        ? { mode: 'search', candidates: [{ ...candidate, id: 'fresh-token' }], notices: [] }
+        : { mode: 'attach', item: item('a') }
+    )
+    await reopened.run({
+      action: 'apply',
+      jobId,
+      selections: [{ itemId: 'a', candidateId: candidate.id }]
+    })
+    await vi.waitFor(async () => expect((await state(reopened, jobId)).state).toBe('completed'))
+    expect(fullText).toHaveBeenLastCalledWith({
+      mode: 'attach',
+      itemId: 'a',
+      candidateId: 'fresh-token'
+    })
+    expect((await state(reopened, jobId)).rows[0].status).toBe('done')
+  }
+)
