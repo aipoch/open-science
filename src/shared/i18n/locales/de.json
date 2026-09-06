@@ -4685,6 +4685,14 @@
     "The log folder could not be created.": "Der Protokollordner konnte nicht erstellt werden.",
     "The log file could not be checked.": "Die Protokolldatei konnte nicht überprüft werden.",
     "The log backups could not be rotated.": "Die Protokollsicherungen konnten nicht rotiert werden.",
-    "The log record could not be appended.": "Der Protokolleintrag konnte nicht angehängt werden."
+    "The log record could not be appended.": "Der Protokolleintrag konnte nicht angehängt werden.",
+    "Could not save the language.": "Die Sprache konnte nicht gespeichert werden.",
+    "The saved language has been restored. Select a language to try again.": "Die gespeicherte Sprache wurde wiederhergestellt. Wählen Sie eine Sprache, um es erneut zu versuchen.",
+    "The light Open Science logo.": "Das helle Open Science-Logo.",
+    "The dark Open Science logo.": "Das dunkle Open Science-Logo.",
+    "Loading app icons…": "App-Symbole werden geladen…",
+    "Could not load app icons.": "Die App-Symbole konnten nicht geladen werden.",
+    "No app icons are available.": "Es sind keine App-Symbole verfügbar.",
+    "Current icon: {{icon}}. Its preview is unavailable.": "Aktuelles Symbol: {{icon}}. Die Vorschau ist nicht verfügbar."
   }
 }

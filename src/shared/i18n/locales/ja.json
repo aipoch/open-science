@@ -4531,6 +4531,14 @@
     "The log folder could not be created.": "ログフォルダーを作成できませんでした。",
     "The log file could not be checked.": "ログファイルを確認できませんでした。",
     "The log backups could not be rotated.": "ログのバックアップをローテーションできませんでした。",
-    "The log record could not be appended.": "ログレコードを追記できませんでした。"
+    "The log record could not be appended.": "ログレコードを追記できませんでした。",
+    "Could not save the language.": "言語を保存できませんでした。",
+    "The saved language has been restored. Select a language to try again.": "保存済みの言語に戻しました。言語を選択して再試行してください。",
+    "The light Open Science logo.": "ライトの Open Science ロゴ。",
+    "The dark Open Science logo.": "ダークの Open Science ロゴ。",
+    "Loading app icons…": "アプリアイコンを読み込み中…",
+    "Could not load app icons.": "アプリアイコンを読み込めませんでした。",
+    "No app icons are available.": "利用可能なアプリアイコンはありません。",
+    "Current icon: {{icon}}. Its preview is unavailable.": "現在のアイコン：{{icon}}。プレビューは利用できません。"
   }
 }

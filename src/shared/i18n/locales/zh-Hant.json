@@ -4531,6 +4531,14 @@
     "The log folder could not be created.": "無法建立日誌資料夾。",
     "The log file could not be checked.": "無法檢查日誌檔案。",
     "The log backups could not be rotated.": "無法輪替日誌備份。",
-    "The log record could not be appended.": "無法附加日誌記錄。"
+    "The log record could not be appended.": "無法附加日誌記錄。",
+    "Could not save the language.": "無法儲存語言。",
+    "The saved language has been restored. Select a language to try again.": "已還原儲存的語言。請選擇語言以重試。",
+    "The light Open Science logo.": "淺色 Open Science 標誌。",
+    "The dark Open Science logo.": "深色 Open Science 標誌。",
+    "Loading app icons…": "正在載入應用程式圖示…",
+    "Could not load app icons.": "無法載入應用程式圖示。",
+    "No app icons are available.": "沒有可用的應用程式圖示。",
+    "Current icon: {{icon}}. Its preview is unavailable.": "目前圖示：{{icon}}。其預覽無法使用。"
   }
 }

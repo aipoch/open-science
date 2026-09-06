@@ -1,4 +1,4 @@
-import { Check, Languages } from 'lucide-react'
+import { AlertTriangle, Check, Languages } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 
 import {
@@ -8,9 +8,11 @@ import {
   DropdownMenuLabel,
   DropdownMenuTrigger
 } from '@/components/ui/dropdown-menu'
+import { ErrorNotice } from '@/components/error-notice'
 import { Select, SelectContent, SelectItem, SelectTrigger } from '@/components/ui/select'
 import { cn } from '@/lib/utils'
 import { useLocaleStore } from '@/stores/locale-store'
+import { useSettingsStore } from '@/stores/settings-store'
 import {
   LANGUAGE_PREFERENCES,
   LOCALE_SELF_NAMES,
@@ -33,6 +35,27 @@ const useOptions = (): { value: LanguagePreference; label: string; description?:
   )
 }
 
+const LanguageSaveError = (): React.JSX.Element | null => {
+  const { t } = useTranslation()
+  const saveFailed = useLocaleStore((state) => state.saveFailed)
+  if (!saveFailed) return null
+
+  return (
+    <div role="alert" className="mt-3">
+      <ErrorNotice
+        icon={AlertTriangle}
+        tone="amber"
+        title={t('Could not save the language.')}
+        description={t('The saved language has been restored. Select a language to try again.')}
+        secondaryButton={{
+          label: t('Dismiss'),
+          onClick: () => useLocaleStore.setState({ saveFailed: false })
+        }}
+      />
+    </div>
+  )
+}
+
 // Language picker for Settings > Appearance. A Select rather than a segmented control: nine options
 // with localized labels overflow the row width the theme control fits into.
 export const LanguageSelect = (): React.JSX.Element => {
@@ -43,21 +66,24 @@ export const LanguageSelect = (): React.JSX.Element => {
   const active = options.find((option) => option.value === preference) ?? options[0]
 
   return (
-    <Select
-      value={preference}
-      onValueChange={(value) => setPreference(value as LanguagePreference)}
-    >
-      <SelectTrigger aria-label={t('Interface language')}>
-        <span>{active.label}</span>
-      </SelectTrigger>
-      <SelectContent>
-        {options.map(({ value, label }) => (
-          <SelectItem key={value} value={value}>
-            {label}
-          </SelectItem>
-        ))}
-      </SelectContent>
-    </Select>
+    <div className="min-w-0">
+      <Select
+        value={preference}
+        onValueChange={(value) => setPreference(value as LanguagePreference)}
+      >
+        <SelectTrigger aria-label={t('Interface language')}>
+          <span>{active.label}</span>
+        </SelectTrigger>
+        <SelectContent>
+          {options.map(({ value, label }) => (
+            <SelectItem key={value} value={value}>
+              {label}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+      <LanguageSaveError />
+    </div>
   )
 }
 
@@ -77,39 +103,48 @@ export const LanguagePreferenceMenu = ({
   const options = useOptions()
   const active = options.find((option) => option.value === preference) ?? options[0]
 
+  const saveFailed = useLocaleStore((state) => state.saveFailed)
+  const isSettingsOpen = useSettingsStore((state) => state.isSettingsOpen)
   return (
-    <DropdownMenu>
-      <DropdownMenuTrigger asChild>
-        <button
-          type="button"
-          aria-label={`${t('Language')}: ${active.label}`}
-          title={`${t('Language')}: ${active.label}`}
-          className={cn(
-            'inline-flex size-9 items-center justify-center rounded-lg text-text-300 transition-colors duration-150 ease-out hover:bg-bg-300 hover:text-text-000',
-            className
-          )}
-        >
-          <Languages className="size-4" strokeWidth={2} aria-hidden="true" />
-        </button>
-      </DropdownMenuTrigger>
-      <DropdownMenuContent align="end" className="w-44">
-        <DropdownMenuLabel>{t('Language')}</DropdownMenuLabel>
-        {options.map(({ value, label, description }) => (
-          <DropdownMenuItem key={value} onSelect={() => setPreference(value)} className="gap-2">
-            <span className="flex-1">
-              <span className="block leading-tight">{label}</span>
-              {description ? (
-                <span className="block text-xs leading-tight text-muted-foreground">
-                  {description}
-                </span>
+    <div className="relative">
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <button
+            type="button"
+            aria-label={`${t('Language')}: ${active.label}`}
+            title={`${t('Language')}: ${active.label}`}
+            className={cn(
+              'inline-flex size-9 items-center justify-center rounded-lg text-text-300 transition-colors duration-150 ease-out hover:bg-bg-300 hover:text-text-000',
+              className
+            )}
+          >
+            <Languages className="size-4" strokeWidth={2} aria-hidden="true" />
+          </button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end" className="w-44">
+          <DropdownMenuLabel>{t('Language')}</DropdownMenuLabel>
+          {options.map(({ value, label, description }) => (
+            <DropdownMenuItem key={value} onSelect={() => setPreference(value)} className="gap-2">
+              <span className="flex-1">
+                <span className="block leading-tight">{label}</span>
+                {description ? (
+                  <span className="block text-xs leading-tight text-muted-foreground">
+                    {description}
+                  </span>
+                ) : null}
+              </span>
+              {preference === value ? (
+                <Check className="size-4 text-foreground" strokeWidth={2.5} aria-hidden="true" />
               ) : null}
-            </span>
-            {preference === value ? (
-              <Check className="size-4 text-foreground" strokeWidth={2.5} aria-hidden="true" />
-            ) : null}
-          </DropdownMenuItem>
-        ))}
-      </DropdownMenuContent>
-    </DropdownMenu>
+            </DropdownMenuItem>
+          ))}
+        </DropdownMenuContent>
+      </DropdownMenu>
+      {saveFailed && !isSettingsOpen ? (
+        <div className="absolute right-0 top-full z-40 mt-2 w-80 max-w-[calc(100vw-2rem)] rounded-xl border bg-popover p-4 shadow-md">
+          <LanguageSaveError />
+        </div>
+      ) : null}
+    </div>
   )
 }

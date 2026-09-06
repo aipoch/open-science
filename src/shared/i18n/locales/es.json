@@ -4847,6 +4847,14 @@
     "The log folder could not be created.": "No se pudo crear la carpeta de registros.",
     "The log file could not be checked.": "No se pudo comprobar el archivo de registro.",
     "The log backups could not be rotated.": "No se pudieron rotar las copias de seguridad del registro.",
-    "The log record could not be appended.": "No se pudo añadir la entrada al registro."
+    "The log record could not be appended.": "No se pudo añadir la entrada al registro.",
+    "Could not save the language.": "No se pudo guardar el idioma.",
+    "The saved language has been restored. Select a language to try again.": "Se ha restaurado el idioma guardado. Seleccione un idioma para volver a intentarlo.",
+    "The light Open Science logo.": "El logotipo claro de Open Science.",
+    "The dark Open Science logo.": "El logotipo oscuro de Open Science.",
+    "Loading app icons…": "Cargando iconos de la aplicación…",
+    "Could not load app icons.": "No se pudieron cargar los iconos de la aplicación.",
+    "No app icons are available.": "No hay iconos de la aplicación disponibles.",
+    "Current icon: {{icon}}. Its preview is unavailable.": "Icono actual: {{icon}}. Su vista previa no está disponible."
   }
 }

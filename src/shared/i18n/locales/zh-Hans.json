@@ -4531,6 +4531,14 @@
     "The log folder could not be created.": "无法创建日志文件夹。",
     "The log file could not be checked.": "无法检查日志文件。",
     "The log backups could not be rotated.": "无法轮转日志备份。",
-    "The log record could not be appended.": "无法追加日志记录。"
+    "The log record could not be appended.": "无法追加日志记录。",
+    "Could not save the language.": "无法保存语言。",
+    "The saved language has been restored. Select a language to try again.": "已恢复保存的语言。请选择语言以重试。",
+    "The light Open Science logo.": "浅色 Open Science 标志。",
+    "The dark Open Science logo.": "深色 Open Science 标志。",
+    "Loading app icons…": "正在加载应用图标…",
+    "Could not load app icons.": "无法加载应用图标。",
+    "No app icons are available.": "没有可用的应用图标。",
+    "Current icon: {{icon}}. Its preview is unavailable.": "当前图标：{{icon}}。其预览不可用。"
   }
 }

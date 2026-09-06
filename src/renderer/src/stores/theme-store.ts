@@ -6,6 +6,7 @@ import {
   resolvePreference,
   resolveTheme,
   subscribeSystemTheme,
+  THEME_STORAGE_KEY,
   type Theme,
   type ThemePreference
 } from '@/lib/theme'
@@ -42,15 +43,34 @@ export const useThemeStore = create<ThemeStore>((set) => {
   const initialPreference = resolvePreference()
   syncSystemListener(initialPreference)
 
+  const applyPreference = (preference: ThemePreference): void => {
+    const resolvedTheme = resolveTheme(preference)
+    applyTheme(resolvedTheme)
+    syncSystemListener(preference)
+    set({ preference, resolvedTheme })
+  }
+  const onStorage = (event: StorageEvent): void => {
+    if (
+      event.storageArea !== localStorage ||
+      (event.key !== null && event.key !== THEME_STORAGE_KEY)
+    )
+      return
+    applyPreference(resolvePreference())
+  }
+  if (typeof window !== 'undefined') window.addEventListener('storage', onStorage)
+  if (import.meta.hot) {
+    import.meta.hot.dispose(() => {
+      window.removeEventListener('storage', onStorage)
+      unsubscribeSystem?.()
+    })
+  }
+
   return {
     preference: initialPreference,
     resolvedTheme: resolveTheme(initialPreference),
     setPreference: (preference) => {
-      const resolvedTheme = resolveTheme(preference)
-      applyTheme(resolvedTheme)
+      applyPreference(preference)
       persistPreference(preference)
-      syncSystemListener(preference)
-      set({ preference, resolvedTheme })
     }
   }
 })
