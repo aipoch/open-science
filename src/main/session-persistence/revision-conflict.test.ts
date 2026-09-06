@@ -1,7 +1,10 @@
 import { describe, expect, it } from 'vitest'
 
-import { rebaseSafeSessionFields } from './revision-conflict'
-import type { PersistedChatSession } from '../../shared/session-persistence'
+import { rebaseSafeSessionFields, resolveRevisionedSessionSave } from './revision-conflict'
+import {
+  materializeSessionConversationGraph,
+  type PersistedChatSession
+} from '../../shared/session-persistence'
 
 const session = (overrides: Partial<PersistedChatSession> = {}): PersistedChatSession => ({
   id: 'session-1',
@@ -16,6 +19,42 @@ const session = (overrides: Partial<PersistedChatSession> = {}): PersistedChatSe
 })
 
 describe('rebaseSafeSessionFields', () => {
+  it.each([
+    [undefined, true],
+    [true, undefined]
+  ])(
+    'preserves a pending reset across a preference conflict (authority=%s, submitted=%s)',
+    (authoritativeReset, submittedReset) => {
+      const base = materializeSessionConversationGraph(session({ revision: 1 }))
+      const authoritative = {
+        ...base,
+        revision: 2,
+        memoryEnabled: true,
+        branchContextResetRequired: authoritativeReset
+      }
+      const submitted = {
+        ...base,
+        memoryEnabled: false,
+        branchContextResetRequired: submittedReset
+      }
+
+      const rebased = resolveRevisionedSessionSave(authoritative, submitted, ['memoryEnabled'])
+
+      expect(rebased.expectedRevision).toBe(2)
+      expect(rebased.session.memoryEnabled).toBe(false)
+      expect(rebased.session.branchContextResetRequired).toBe(true)
+    }
+  )
+
+  it('allows a current save to acknowledge that the pending reset completed', () => {
+    const authoritative = session({ revision: 2, branchContextResetRequired: true })
+    const submitted = { ...authoritative, branchContextResetRequired: undefined }
+
+    expect(
+      resolveRevisionedSessionSave(authoritative, submitted).session.branchContextResetRequired
+    ).toBeUndefined()
+  })
+
   it('replays a renderer Session agent configuration onto a newer durable snapshot', () => {
     const configuration = {
       providerId: 'provider-session',

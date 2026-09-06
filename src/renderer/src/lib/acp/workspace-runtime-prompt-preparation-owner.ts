@@ -295,14 +295,13 @@ const prepareExistingWorkspacePrompt = async (
         if (request.isCurrent?.() === false) return undefined
         useSessionStore.getState().markResumed(
           sessionId,
-          reset
-            ? {
-                agentFrameworkId: reset.frameworkId,
-                agentBackendId: reset.backendId,
-                providerSessionId: reset.providerSessionId,
-                providerContinuityToken: reset.providerContinuityToken
-              }
-            : undefined,
+          {
+            agentFrameworkId: reset?.frameworkId,
+            agentBackendId: reset?.backendId,
+            providerSessionId: reset?.providerSessionId,
+            providerContinuityToken: reset?.providerContinuityToken,
+            pendingHistoryReplay: currentSession?.pendingHistoryReplay ?? { kind: 'all' }
+          },
           { preserveCompaction: Boolean(request.isCurrent && currentSession?.compacting) }
         )
         agentContextResetPerformed = true
@@ -351,7 +350,13 @@ const prepareExistingWorkspacePrompt = async (
               agentFrameworkId: resumeResult.frameworkId,
               agentBackendId: resumeResult.backendId,
               providerSessionId: resumeResult.providerSessionId,
-              providerContinuityToken: resumeResult.providerContinuityToken
+              providerContinuityToken: resumeResult.providerContinuityToken,
+              ...(contextResetFromResume
+                ? {
+                    pendingHistoryReplay:
+                      currentSession?.pendingHistoryReplay ?? ({ kind: 'all' } as const)
+                  }
+                : {})
             }
           : undefined,
         { preserveCompaction: Boolean(request.isCurrent && currentSession?.compacting) }
@@ -368,14 +373,13 @@ const prepareExistingWorkspacePrompt = async (
         if (request.isCurrent?.() === false) return undefined
         useSessionStore.getState().markResumed(
           sessionId,
-          reset
-            ? {
-                agentFrameworkId: reset.frameworkId,
-                agentBackendId: reset.backendId,
-                providerSessionId: reset.providerSessionId,
-                providerContinuityToken: reset.providerContinuityToken
-              }
-            : undefined,
+          {
+            agentFrameworkId: reset?.frameworkId,
+            agentBackendId: reset?.backendId,
+            providerSessionId: reset?.providerSessionId,
+            providerContinuityToken: reset?.providerContinuityToken,
+            pendingHistoryReplay: currentSession?.pendingHistoryReplay ?? { kind: 'all' }
+          },
           { preserveCompaction: Boolean(request.isCurrent && currentSession?.compacting) }
         )
         contextResetFromResume = true

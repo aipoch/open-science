@@ -38,6 +38,7 @@ import {
   type ToolActivity
 } from './session-store'
 import { mergePersistedRuntimeIdentityProjection } from './session-store-persistence-merge'
+import { createStoreSaver } from '../lib/session-persistence/session-persistence'
 
 const createArtifactFile = (overrides: Partial<ArtifactFile> = {}): ArtifactFile => ({
   id: 'artifact-session-1:run-1:result.txt',
@@ -135,6 +136,91 @@ describe('session store', () => {
     vi.useFakeTimers()
     vi.setSystemTime(new Date('2026-07-04T08:00:00.000Z'))
     useSessionStore.setState(createInitialSessionState())
+  })
+
+  it.each([
+    'runtime-context-authority',
+    'permission-authority',
+    'delegated-authority',
+    'session-details-authority',
+    'compute-host-access-authority',
+    'archive-authority',
+    'merge-upload-identities',
+    'replace-persisted-if-current'
+  ] as const)('preserves an incoming reset obligation through %s', (mode) => {
+    useSessionStore.getState().appendUserMessage({
+      sessionId: 'session-1',
+      content: 'Remember the selected branch',
+      projectId: 'project-1',
+      cwd: '/workspace'
+    })
+    useSessionStore.getState().finishRun('session-1')
+    const source = useSessionStore.getState().sessions[0]
+    const incoming = {
+      ...toPersistedSession(source),
+      revision: (source.revision ?? 0) + 1,
+      branchContextResetRequired: true
+    }
+
+    useSessionStore.getState().applyDurableSessionProjection({ source, session: incoming, mode })
+
+    const projected = useSessionStore.getState().sessions[0]
+    expect(projected.branchContextResetRequired).toBe(true)
+    expect(toPersistedSession(projected).branchContextResetRequired).toBe(true)
+  })
+
+  it.each([
+    'upsert',
+    'permission-authority',
+    'runtime-context-authority',
+    'merge-upload-identities',
+    'changed-source-upload',
+    'delegation-policy'
+  ] as const)('preserves a reset-only stale projection through %s', (mode) => {
+    useSessionStore.getState().appendUserMessage({
+      sessionId: 'session-1',
+      content: 'Keep the current conversation',
+      projectId: 'project-1',
+      cwd: '/workspace'
+    })
+    useSessionStore.getState().finishRun('session-1')
+    const base = toPersistedSession(useSessionStore.getState().sessions[0])
+    useSessionStore.getState().hydrateSessions([
+      {
+        ...base,
+        revision: 2,
+        runtimeContext: { version: 1, revision: 2 },
+        updatedAt: base.updatedAt + 2
+      }
+    ])
+    const source = useSessionStore.getState().sessions[0]
+    const incoming = {
+      ...base,
+      revision: 1,
+      runtimeContext: { version: 1 as const, revision: 1 },
+      updatedAt: base.updatedAt + 1,
+      branchContextResetRequired: true
+    }
+    if (mode === 'upsert') {
+      useSessionStore.getState().upsertPersistedSession(incoming)
+    } else if (mode === 'delegation-policy') {
+      useSessionStore.getState().applyDelegationPolicyAuthority(incoming)
+    } else {
+      if (mode === 'changed-source-upload') {
+        vi.setSystemTime(base.updatedAt + 3)
+        useSessionStore.getState().renameSession('session-1', 'Unsaved local title')
+      }
+      useSessionStore.getState().applyDurableSessionProjection({
+        source,
+        session: incoming,
+        mode: mode === 'changed-source-upload' ? 'merge-upload-identities' : mode
+      })
+    }
+    const projected = useSessionStore.getState().sessions[0]
+    expect(projected.branchContextResetRequired).toBe(true)
+    expect(projected.revision).toBe(2)
+    expect(projected.runtimeContext?.revision).toBe(2)
+    expect(projected.messages).toEqual(source.messages)
   })
 
   it('keeps a newer runtime revision authoritative when Reading context was removed', () => {
@@ -6451,7 +6537,6 @@ describe('session store public contract', () => {
       'agentStatus',
       'awaitingFirstAgentOutput',
       'agentPromptInFlight',
-      'branchContextResetRequired',
       'specialistSwitchResetRequired',
       'elicitationHistoryReplayRequestId',
       'branchSwitchBlocked',
@@ -7422,6 +7507,187 @@ describe('truncateSessionFromMessage', () => {
     useSessionStore.getState().activateMessageBranch('session-1', editedBranchId ?? '')
     expect(useSessionStore.getState().sessions[0].messages.at(-1)?.id).toBe(edited?.messageId)
     expect(useSessionStore.getState().sessions[0].branchContextResetRequired).toBe(true)
+  })
+
+  it.each([false, true])(
+    'handles a reset save acknowledged after local clear: %s',
+    async (clearReset) => {
+      vi.useRealTimers()
+      seedSession()
+      useSessionStore.getState().truncateSessionFromMessage('session-1', 'user-2')
+      useSessionStore.getState().appendUserMessage({
+        sessionId: 'session-1',
+        content: 'edited user-2'
+      })
+      useSessionStore.getState().finishRun('session-1')
+      useSessionStore.getState().clearBranchContextReset('session-1')
+      let durable = toPersistedSession(useSessionStore.getState().sessions[0])
+      let acknowledge!: () => void
+      let started!: () => void
+      const saveStarted = new Promise<void>((resolve) => {
+        started = resolve
+      })
+      const saveAcknowledged = new Promise<void>((resolve) => {
+        acknowledge = resolve
+      })
+      const saveSession = vi.fn(async (submitted: PersistedChatSession) => {
+        started()
+        await saveAcknowledged
+        durable = { ...submitted, revision: (submitted.revision ?? 0) + 1 }
+        return durable
+      })
+      const save = createStoreSaver({
+        loadAll: vi.fn(async () => ({
+          sessions: [durable],
+          manifest: { version: SESSION_MANIFEST_VERSION } as const
+        })),
+        loadOne: vi.fn(async () => durable),
+        saveSession,
+        deleteSession: vi.fn(),
+        saveManifest: vi.fn()
+      })
+      useSessionStore
+        .getState()
+        .activateMessageBranch('session-1', durable.conversationGraph!.branches[0].id)
+      const pendingSave = save(useSessionStore.getState())
+      await saveStarted
+      if (clearReset) useSessionStore.getState().clearBranchContextReset('session-1')
+      acknowledge()
+      await pendingSave
+
+      expect(useSessionStore.getState().sessions[0].branchContextResetRequired).toBe(
+        clearReset ? undefined : true
+      )
+      await save(useSessionStore.getState())
+      useSessionStore.setState(createInitialSessionState())
+      useSessionStore.getState().hydrateSessions([durable])
+      expect(useSessionStore.getState().sessions[0].branchContextResetRequired).toBe(
+        clearReset ? undefined : true
+      )
+    }
+  )
+
+  it.each([false, true])(
+    'persists a retained reset unless already durable: %s',
+    async (alreadyDurable) => {
+      seedSession()
+      useSessionStore.getState().truncateSessionFromMessage('session-1', 'user-2')
+      useSessionStore.getState().appendUserMessage({
+        sessionId: 'session-1',
+        content: 'edited user-2'
+      })
+      useSessionStore.getState().finishRun('session-1')
+      useSessionStore.getState().clearBranchContextReset('session-1')
+      const base = toPersistedSession(useSessionStore.getState().sessions[0])
+      let durable: PersistedChatSession = {
+        ...base,
+        revision: (base.revision ?? 0) + 1,
+        updatedAt: base.updatedAt + 1,
+        branchContextResetRequired: alreadyDurable || undefined
+      }
+      const saveSession = vi.fn(async (submitted: PersistedChatSession) => {
+        expect(submitted.revision).toBe(durable.revision)
+        durable = { ...submitted, revision: (submitted.revision ?? 0) + 1 }
+        return durable
+      })
+      const save = createStoreSaver({
+        loadAll: vi.fn(async () => ({
+          sessions: [durable],
+          manifest: { version: SESSION_MANIFEST_VERSION } as const
+        })),
+        loadOne: vi.fn(async () => durable),
+        saveSession,
+        deleteSession: vi.fn(),
+        saveManifest: vi.fn()
+      })
+      useSessionStore
+        .getState()
+        .activateMessageBranch('session-1', base.conversationGraph!.branches[0].id)
+      const selectedMessages = useSessionStore.getState().sessions[0].messages
+      useSessionStore.getState().upsertPersistedSession(durable)
+      expect(useSessionStore.getState().sessions[0].branchContextResetRequired).toBe(true)
+
+      await save(useSessionStore.getState())
+      useSessionStore.setState(createInitialSessionState())
+      useSessionStore.getState().hydrateSessions([durable])
+      expect(useSessionStore.getState().sessions[0].branchContextResetRequired).toBe(true)
+      expect(saveSession).toHaveBeenCalledTimes(alreadyDurable ? 0 : 1)
+      if (!alreadyDurable) {
+        expect(useSessionStore.getState().sessions[0].messages.map(({ id }) => id)).toEqual(
+          selectedMessages.map(({ id }) => id)
+        )
+      }
+    }
+  )
+
+  it('retains an external branch-reset obligation in the next persisted snapshot', () => {
+    seedSession({
+      activities: [
+        {
+          ...createActivity('original-tool', baseTime + 250),
+          activityGroupId: 'original-group',
+          promptMessageId: 'user-2'
+        }
+      ],
+      activityGroups: [
+        {
+          id: 'original-group',
+          title: 'Original tools',
+          sortIndex: 1,
+          activityIds: ['original-tool'],
+          promptMessageId: 'user-2',
+          createdAt: baseTime + 250,
+          updatedAt: baseTime + 250,
+          completedAt: baseTime + 250
+        }
+      ]
+    })
+    useSessionStore.getState().truncateSessionFromMessage('session-1', 'user-2')
+    useSessionStore.getState().appendUserMessage({
+      sessionId: 'session-1',
+      content: 'edited user-2'
+    })
+    useSessionStore.getState().upsertToolActivity({
+      sessionId: 'session-1',
+      toolCallId: 'edited-tool',
+      eventId: 'edited-tool-event',
+      title: 'Edited tools',
+      status: 'completed'
+    })
+    useSessionStore.getState().finishRun('session-1')
+    useSessionStore.getState().clearBranchContextReset('session-1')
+    const stale = toPersistedSession(useSessionStore.getState().sessions[0])
+    useSessionStore
+      .getState()
+      .activateMessageBranch('session-1', stale.conversationGraph!.branches[0].id)
+    const incoming = {
+      ...toPersistedSession(useSessionStore.getState().sessions[0]),
+      revision: (stale.revision ?? 0) + 1
+    }
+    expect(incoming.branchContextResetRequired).toBe(true)
+    expect(stale.branchContextResetRequired).toBeUndefined()
+
+    useSessionStore.getState().hydrateSessions([stale])
+    useSessionStore.getState().upsertPersistedSession(incoming)
+
+    const synchronized = useSessionStore.getState().sessions[0]
+    expect(synchronized.messages.map(({ id }) => id)).toEqual(stale.messages.map(({ id }) => id))
+    expect(synchronized.activities?.map(({ id }) => id)).toEqual(['edited-tool'])
+    expect(synchronized.activityGroups).toEqual(stale.activityGroups ?? [])
+    expect(synchronized.branchContextResetRequired).toBe(true)
+    expect(toPersistedSession(synchronized).branchContextResetRequired).toBe(true)
+
+    // Another renderer cannot discharge this renderer's pending reset obligation.
+    useSessionStore.getState().upsertPersistedSession({
+      ...incoming,
+      revision: incoming.revision + 1,
+      branchContextResetRequired: undefined
+    })
+    expect(useSessionStore.getState().sessions[0].branchContextResetRequired).toBe(true)
+    useSessionStore.getState().clearBranchContextReset('session-1')
+    expect(
+      toPersistedSession(useSessionStore.getState().sessions[0]).branchContextResetRequired
+    ).toBeUndefined()
   })
 
   it('does not activate another Message Branch while a Plan awaits approval', () => {
