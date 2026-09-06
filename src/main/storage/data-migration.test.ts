@@ -121,7 +121,7 @@ describe('validateMigrationSourceLinks', () => {
     }
   )
 
-  it('resolves a parent traversal after a directory link before deciding what moves', async () => {
+  it('uses filesystem semantics for parent traversal after a directory link', async () => {
     const artifacts = join(from, 'artifacts')
     const outside = join(to, 'outside')
     await mkdir(artifacts, { recursive: true })
@@ -135,12 +135,17 @@ describe('validateMigrationSourceLinks', () => {
     )
     const sourceLink = join(artifacts, 'data.csv')
     await symlink(['alias', '..', 'dataset.csv'].join('/'), sourceLink, 'file')
-    expect(await readFile(sourceLink, 'utf8')).toBe('external data')
-
-    await expect(validateMigrationSourceLinks(from, ['artifacts'])).resolves.toMatchObject({
-      ok: false,
-      error: expect.stringContaining('data.csv')
-    })
+    // Windows collapses parent segments syntactically; POSIX traverses the directory link
+    // first. Only the latter reference escapes this migration's path set.
+    expect(await readFile(sourceLink, 'utf8')).toBe(
+      process.platform === 'win32' ? 'unrelated internal data' : 'external data'
+    )
+    const result = await validateMigrationSourceLinks(from, ['artifacts'])
+    if (process.platform === 'win32') {
+      expect(result).toEqual({ ok: true })
+    } else {
+      expect(result).toMatchObject({ ok: false, error: expect.stringContaining('data.csv') })
+    }
   })
 
   it('preserves internal relative references and external absolute references after source cleanup', async () => {

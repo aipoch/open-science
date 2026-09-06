@@ -49,6 +49,8 @@ const DataRootMissingDialog = ({
     setStillMissing(false)
     setOperationError(undefined)
     try {
+      // Recovery requires the current storage API; older Web backends without getStatus are
+      // intentionally unsupported. Usage scan failures must not block a reconnected folder.
       const status = await window.api.storage.getStatus()
       if (status.dataRootMissing) {
         setStillMissing(true)

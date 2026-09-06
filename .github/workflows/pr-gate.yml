@@ -728,7 +728,9 @@ jobs:
           src/main/settings/preferences.test.ts
           src/main/settings/shell-path.test.ts
           src/main/specialist/repository.test.ts
+          src/main/storage/data-migration.test.ts
           src/main/storage/data-path.test.ts
+          src/main/storage/migration-service.test.ts
           src/main/storage/normalize-legacy-paths.test.ts
           src/main/storage/path-presence.test.ts
           --maxWorkers=1
