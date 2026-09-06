@@ -97,9 +97,15 @@ jobs:
         # unrelated shards or native sandbox. These are the suites from the recent failed batches.
         run: >-
           npm test --
-          cli/lifecycle.test.ts
-          src/main/cli-install/launcher.test.ts
-          src/main/cli-install/ipc.test.ts
+          vitest.config.test.ts
+          scripts/ci/release-workflows.test.ts
+          scripts/windows-release-workflows.test.ts
+          src/main/database/database-null-and-version-bounds.test.ts
+          src/main/database/migration-service.test.ts
+          src/main/notebook/runtime-service.test.ts
+          src/main/artifacts/provenance-repository.test.ts
+          src/main/artifacts/provenance-write-contract.test.ts
+          src/main/delegation/production-composition.test.ts
           --maxWorkers=1 --testTimeout=60000 --hookTimeout=60000
 
   notebook_sandbox:
