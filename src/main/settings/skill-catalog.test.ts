@@ -1326,3 +1326,39 @@ it('returns an opaque etag with the detail and changes it after an unconditional
   } as never)
   expect((await catalog.getSkillDetail(before.id)).body).toBe('Fresh')
 })
+
+// Windows cannot represent these historical POSIX basenames as ordinary files.
+it.skipIf(process.platform === 'win32').each(['CON.csv', 'trailing.'])(
+  'preserves a historical reference named %s through an editor save',
+  async (name) => {
+    const catalog = await createCatalog()
+    await catalog.createSkill({ name: 'legacy', description: 'Original', body: 'Original body' })
+    const refsDir = join(userSkillSourceDir(catalog, 'personal'), 'legacy', 'references')
+    await mkdir(refsDir)
+    await writeFile(join(refsDir, name), 'historical bytes')
+    const detail = await catalog.getSkillDetail('personal-legacy')
+    expect(detail.references).toEqual([{ path: name, sizeBytes: 16 }])
+
+    await catalog.updateSkill({
+      id: detail.id,
+      etag: detail.etag,
+      description: detail.description,
+      body: 'Edited body',
+      references: detail.references.map(({ path }) => ({ path }))
+    })
+    const updated = await catalog.getSkillDetail(detail.id)
+    expect(updated.body).toContain('Edited body')
+    expect(updated.references).toEqual(detail.references)
+    expect(await readFile(join(refsDir, name), 'utf8')).toBe('historical bytes')
+
+    await catalog.updateSkill({
+      id: updated.id,
+      etag: updated.etag,
+      description: updated.description,
+      body: updated.body,
+      references: []
+    })
+    expect((await catalog.getSkillDetail(detail.id)).references).toEqual([])
+    await expect(readFile(join(refsDir, name))).rejects.toMatchObject({ code: 'ENOENT' })
+  }
+)

@@ -1,4 +1,4 @@
-import { mkdtemp, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises'
+import { mkdtemp, mkdir, readFile, readdir, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { zipSync } from 'fflate'
@@ -366,5 +366,67 @@ it.each(['agent-home', 'zip', 'github'] as const)(
     await expect(importSkill()).rejects.toThrow(/Specialist/)
     expect(await readFile(join(dir, '.specialist-package.json'), 'utf8')).toBe(metadata)
     expect(await readFile(join(dir, 'data.csv'), 'utf8')).toBe('changed locally')
+  }
+)
+
+describe('existing nonportable reference names', () => {
+  it.skipIf(process.platform === 'win32').each(['CON.csv', 'trailing.'])(
+    'allows a published package with %s to be edited without renaming its reference',
+    async (name) => {
+      const { root, repo } = await fixture()
+      const source = join(root, 'draft')
+      await mkdir(join(source, 'references'), { recursive: true })
+      await writeFile(join(source, 'SKILL.md'), document())
+      await writeFile(join(source, 'references', name), 'published bytes')
+      const id = await repo.publishPersonalDirectory('demo', source)
+
+      await repo.updatePersonal(id, {
+        ...baseInput,
+        body: 'edited after publishing',
+        references: [{ path: name }]
+      })
+      expect(await repo.body(id)).toContain('edited after publishing')
+      const file = join(root, 'skills', 'personal', 'demo', 'references', name)
+      expect(await readFile(file, 'utf8')).toBe('published bytes')
+
+      await expect(
+        repo.updatePersonal(id, { ...baseInput, references: [reference(name, 'replacement')] })
+      ).rejects.toThrow('Unsafe Skill reference filename')
+      expect(await readFile(file, 'utf8')).toBe('published bytes')
+      expect(await repo.body(id)).toContain('edited after publishing')
+    }
+  )
+
+  it.each(['CON.csv', 'trailing.', '../SKILL.md', 'nested/file.csv'])(
+    'does not accept an unproven name-only reference %s',
+    async (name) => {
+      const { root, repo } = await fixture()
+      const id = await repo.createPersonal(baseInput)
+      // A name-only request is not proof that a file already exists in references/.
+      await expect(
+        repo.updatePersonal(id, { ...baseInput, body: 'changed', references: [{ path: name }] })
+      ).rejects.toThrow('Unsafe Skill reference filename')
+      expect(await repo.body(id)).toContain('original')
+      expect(await readdir(join(root, 'skills', 'personal', 'demo'))).toEqual(['SKILL.md'])
+    }
+  )
+})
+
+it.skipIf(process.platform === 'win32').each(['directory', 'symlink'] as const)(
+  'does not treat an existing %s as a retained legacy reference file',
+  async (kind) => {
+    const { root, repo } = await fixture()
+    const id = await repo.createPersonal(baseInput)
+    const refsDir = join(root, 'skills', 'personal', 'demo', 'references')
+    await mkdir(refsDir)
+    const outside = join(root, 'outside.csv')
+    await writeFile(outside, 'untouched')
+    if (kind === 'directory') await mkdir(join(refsDir, 'CON.csv'))
+    else await symlink(outside, join(refsDir, 'CON.csv'))
+    await expect(
+      repo.updatePersonal(id, { ...baseInput, body: 'changed', references: [{ path: 'CON.csv' }] })
+    ).rejects.toThrow(/Unsafe Skill reference filename|symbolic link/)
+    expect(await repo.body(id)).toContain('original')
+    expect(await readFile(outside, 'utf8')).toBe('untouched')
   }
 )

@@ -77,7 +77,10 @@ const packageFileSizeError = (): Error => new Error('Skill package contains an o
 
 const packageTotalSizeError = (): Error => new Error('Skill package exceeds the total size limit.')
 
-const prepareSkillWrite = (input: WriteSkillInput): PreparedSkillWrite => {
+const prepareSkillWrite = (
+  input: WriteSkillInput,
+  existingReferences?: ReadonlySet<string>
+): PreparedSkillWrite => {
   const document = serializePersonalSkillDocument(input)
   const documentBytes = Buffer.byteLength(document, 'utf8')
   if (documentBytes > SKILL_IMPORT_LIMITS.maxFileBytes) throw packageFileSizeError()
@@ -86,7 +89,9 @@ const prepareSkillWrite = (input: WriteSkillInput): PreparedSkillWrite => {
   const references = new Map<string, SkillReference>()
   for (const reference of input.references) {
     const name = reference.path
-    if (!isSafeSkillReferenceName(name)) {
+    // Historical/published POSIX names may be retained, but never introduced or overwritten.
+    const retained = reference.dataBase64 === undefined && existingReferences?.has(name)
+    if (!isSafeSkillReferenceName(name) && !retained) {
       throw new Error(`Unsafe Skill reference filename: ${name}`)
     }
     references.set(name, reference)
@@ -317,7 +322,6 @@ export class UserSkillStore {
     const parsed = parseUserSkillId(id)
     if (!parsed || parsed.source !== 'personal') throw new Error(`Not a personal skill id: ${id}`)
     const name = parsed.directoryName
-    const prepared = prepareSkillWrite(input)
 
     await this.transactions.runMutationRecovered(async () => {
       const live = this.skillDirectory('personal', name)
@@ -339,6 +343,21 @@ export class UserSkillStore {
             return true
           }
         })
+        // Read exact regular-file names from the staged, symlink-free copy under the write lock.
+        const entries = input.references?.some(
+          (reference) => !isSafeSkillReferenceName(reference.path)
+        )
+          ? await readdir(join(staging, 'references'), { withFileTypes: true }).catch(
+              (error: NodeJS.ErrnoException) => {
+                if (error.code === 'ENOENT') return []
+                throw error
+              }
+            )
+          : []
+        const existingReferences = new Set(
+          entries.filter((entry) => entry.isFile()).map((entry) => entry.name)
+        )
+        const prepared = prepareSkillWrite(input, existingReferences)
         await this.writeSkillDirectory(staging, prepared)
         await inspectSkillPackage(staging)
       })
