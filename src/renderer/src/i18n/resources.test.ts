@@ -1426,10 +1426,7 @@ describe('mandatory product glossary', () => {
         de.renderer['Loaded {{loaded}} of {{total}} runs. Scroll up to load earlier history.'],
       producerRun: de.renderer['The Environment changed while the producer run was executing.'],
       runMark: de.renderer['{{state}} Run Mark'],
-      tokenCoverage:
-        de.renderer[
-          'Token totals are available for {{reported}} of {{count}} runs in this period._other'
-        ]
+      tokenCoverage: de.renderer['Only reported token usage is included.']
     }).toEqual({
       autoReview: 'Auto-Review',
       requestReview: 'Review anfordern',
@@ -1451,8 +1448,7 @@ describe('mandatory product glossary', () => {
         'Ausführungen: {{loaded}} von {{total}} geladen. Scrollen Sie nach oben, um den früheren Verlauf zu laden.',
       producerRun: 'Die Umgebung wurde geändert, während die erzeugende Ausführung lief.',
       runMark: '{{state}} Ausführungsmarkierung',
-      tokenCoverage:
-        'Token-Gesamtwerte sind für {{reported}} von {{count}} Ausführungen in diesem Zeitraum verfügbar.'
+      tokenCoverage: 'Es werden nur gemeldete Token-Nutzungsdaten berücksichtigt.'
     })
 
     const wrongReviewGender = Object.entries(de.renderer)
@@ -2182,18 +2178,6 @@ describe('mandatory product glossary', () => {
     const actual = Object.fromEntries(Object.keys(expected).map((key) => [key, catalog('fr')[key]]))
 
     expect(actual).toEqual(expected)
-  })
-
-  it('uses an agreement-safe French token coverage ratio for every plural category', () => {
-    const expectedValue =
-      'Disponibilité des totaux de jetons pour cette période : {{reported}}/{{count}}.'
-    const keys = [
-      'Token totals are available for {{reported}} of {{count}} runs in this period._one',
-      'Token totals are available for {{reported}} of {{count}} runs in this period._other',
-      'Token totals are available for {{reported}} of {{count}} runs in this period._many'
-    ]
-
-    expect(keys.map((key) => catalog('fr')[key])).toEqual(keys.map(() => expectedValue))
   })
 
   it('does not use financial terms for French permission grants', () => {

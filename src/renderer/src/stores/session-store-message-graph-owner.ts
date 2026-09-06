@@ -460,7 +460,9 @@ export const createSessionMessageGraphOwner = <
           ...(agentTarget ? { agentTarget } : {})
         }
     const messages = [
-      ...sourceMessages.map(({ message, sortIndex }) => copySnapshotMessage(message, sortIndex)),
+      ...sourceMessages.map(({ message, sortIndex }) =>
+        copySnapshotMessage(message, sortIndex, source.id)
+      ),
       ...(userMessage ? [userMessage] : [])
     ]
     const normalizedAgentBackendId = agentBackendId?.trim() || source.agentBackendId
