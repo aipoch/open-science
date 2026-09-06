@@ -28,6 +28,7 @@ import { useSettingsStore } from '@/stores/settings-store'
 import { GitHubTokenControl } from './GitHubTokenControl'
 import { MaskedPasswordField } from './MaskedPasswordField'
 import { DeviceCredentialEditor } from './DeviceCredentialEditor'
+import { DeviceCredentialLoadNotice } from './DeviceCredentialLoadNotice'
 import { localizeCredentialError } from './credential-error-message'
 import { SettingsSection } from './SettingsLayout'
 import { UnpaywallCredentialForm } from './UnpaywallCredentialForm'
@@ -63,6 +64,8 @@ export function CredentialsPanel({
   const ncbi = useSettingsStore((state) => state.ncbi)
   const customServers = useSettingsStore((state) => state.customServers)
   const deviceCredentials = useSettingsStore((state) => state.deviceCredentials)
+  const credentialsLoaded = useSettingsStore((state) => state.deviceCredentialsLoaded)
+  const credentialsError = useSettingsStore((state) => state.deviceCredentialsError)
   const providers = useSettingsStore((state) => state.providers)
   const loadConnectors = useSettingsStore((state) => state.loadConnectors)
   const loadDeviceCredentials = useSettingsStore((state) => state.loadDeviceCredentials)
@@ -158,6 +161,10 @@ export function CredentialsPanel({
         onDone={() => onNavigate({ kind: 'list' })}
         onCancel={() => onNavigate({ kind: 'list' })}
       />
+    ) : !credentialsLoaded || credentialsError ? (
+      <div className="p-5">
+        <DeviceCredentialLoadNotice />
+      </div>
     ) : (
       <div className="p-5 text-sm text-muted-foreground">
         {t('This credential no longer exists.')}
@@ -513,6 +520,7 @@ export function CredentialsPanel({
             </Button>
           }
         >
+          <DeviceCredentialLoadNotice />
           {deviceCredentials.length > 0 ? (
             <div className="divide-y divide-border rounded-xl border border-border">
               {deviceCredentials.map((credential) => (
@@ -532,7 +540,9 @@ export function CredentialsPanel({
                               : t('OAuth')}
                           {' · '}
                           {encryptionAvailable
-                            ? t('Replacement required')
+                            ? credential.kind === 'oauth' && !credential.needsClientSecret
+                              ? t('Sign-in required')
+                              : t('Replacement required')
                             : t('Temporarily unavailable')}
                         </>
                       ) : credential.kind === 'api_key' ? (
@@ -586,9 +596,9 @@ export function CredentialsPanel({
                 </div>
               ))}
             </div>
-          ) : (
+          ) : credentialsLoaded && !credentialsError ? (
             <p className="text-sm text-muted-foreground">{t('No Connector credentials yet.')}</p>
-          )}
+          ) : null}
           {credentialMessage ? (
             <p className="mt-3 text-sm text-destructive" role="alert">
               {credentialMessage}

@@ -1553,6 +1553,8 @@ export type DeviceCredentialView = {
   transport?: DeviceOAuthTransport
   oauth?: DeviceOAuthRegistration
   hasClientSecret?: boolean
+  // Derived separately from unreadable OAuth login state; never persisted.
+  needsClientSecret?: boolean
   consumerCount: number
   consumerNames: string[]
   createdAt: number
@@ -1560,7 +1562,9 @@ export type DeviceCredentialView = {
 }
 
 export type DeviceCredentialsSnapshot = { credentials: DeviceCredentialView[] }
-export type CreateDeviceCredentialResult = DeviceCredentialsSnapshot & {
+export type CreateDeviceCredentialResult = {
+  // Missing when creation committed but the full consumer projection could not be read.
+  credentials?: DeviceCredentialView[]
   createdCredential: DeviceCredentialView
 }
 
