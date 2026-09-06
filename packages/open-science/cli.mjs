@@ -302,6 +302,9 @@ export const parseCliArgs = (argv) => {
   if (options.json && options.jsonl) {
     throw new CliUsageError('Use only one of --json or --jsonl.')
   }
+  if (options.json && (command === 'start' || command === 'url')) {
+    throw new CliUsageError(`--json is not supported for ${command}.`)
+  }
   if (options.cwd !== undefined && !options.cwd.trim()) {
     throw new CliUsageError('--cwd requires a non-empty path.')
   }
@@ -649,7 +652,7 @@ export const formatStartupFailure = (outcome, logTail, options) => {
 }
 
 const startCommand = async (options, deps = DEFAULT_DEPS) => {
-  const existing = await deps.findServiceState({ override: options.configRoot })
+  const existing = await findCurrentState(options, deps)
   if (await healthCheck(existing, deps)) {
     const url = await authenticatedUrl(existing, deps)
     deps.log(`Open Science is already running (PID ${existing.pid}).`)
@@ -713,19 +716,29 @@ const startCommand = async (options, deps = DEFAULT_DEPS) => {
 }
 
 const findCurrentState = async (options, deps = DEFAULT_DEPS) => {
-  const state = await deps.findServiceState({ override: options.configRoot })
-  if (!state) return undefined
-  if (!deps.isAlive(state.pid)) {
-    await deps.removeState(state.configRoot)
-    return undefined
-  }
-  return state
+  let firstLiveState
+  const state = await deps.findServiceState({
+    override: options.configRoot,
+    accept: async (candidate) => {
+      if (!deps.isAlive(candidate.pid)) {
+        await deps.removeState(candidate.configRoot)
+        return false
+      }
+      firstLiveState ??= candidate
+      return healthCheck(candidate, deps)
+    }
+  })
+  // Keep a live but unhealthy candidate when none passed: stop must still authenticate its shutdown
+  // or fail, rather than claim that an unreachable process has already stopped.
+  return state ?? firstLiveState
 }
 
 export const stopCommand = async (options, deps = DEFAULT_DEPS) => {
   const state = await findCurrentState(options, deps)
   if (!state) {
-    deps.log('Open Science is not running.')
+    deps.log(
+      options.json ? JSON.stringify({ result: 'already-stopped' }) : 'Open Science is not running.'
+    )
     return
   }
   const token = await deps.readWebToken(state.configRoot)
@@ -740,7 +753,7 @@ export const stopCommand = async (options, deps = DEFAULT_DEPS) => {
     shutdownAccepted = true
     await response.arrayBuffer()
   } catch (error) {
-    deps.warn(`Graceful shutdown failed: ${error.message}`)
+    if (!options.json) deps.warn(`Graceful shutdown failed: ${error.message}`)
   }
 
   if (!shutdownAccepted) {
@@ -759,7 +772,11 @@ export const stopCommand = async (options, deps = DEFAULT_DEPS) => {
       )
     }
     await deps.removeState(state.configRoot)
-    deps.log('Open Science web service stopped; the app is still running.')
+    deps.log(
+      options.json
+        ? JSON.stringify({ result: 'web-service-stopped' })
+        : 'Open Science web service stopped; the app is still running.'
+    )
     return
   }
 
@@ -777,7 +794,7 @@ export const stopCommand = async (options, deps = DEFAULT_DEPS) => {
     )
   }
   await deps.removeState(state.configRoot)
-  deps.log('Open Science stopped.')
+  deps.log(options.json ? JSON.stringify({ result: 'daemon-stopped' }) : 'Open Science stopped.')
 }
 
 export const statusCommand = async (options, deps = DEFAULT_DEPS) => {

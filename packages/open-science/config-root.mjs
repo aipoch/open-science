@@ -44,7 +44,9 @@ export const readStateFromRoot = async (configRoot) => {
     ) {
       return undefined
     }
-    return { ...state, configRoot: state.configRoot || configRoot }
+    // The containing directory owns both the state and token. A stale or edited payload must not
+    // redirect credential reads or cleanup outside the enumerated candidate.
+    return { ...state, configRoot }
   } catch {
     return undefined
   }
@@ -54,7 +56,7 @@ export const findServiceState = async (options = {}) => {
   for (const configRoot of candidateConfigRoots(options)) {
     if (!(await exists(join(configRoot, STATE_FILE)))) continue
     const state = await readStateFromRoot(configRoot)
-    if (state) return state
+    if (state && (!options.accept || (await options.accept(state)))) return state
   }
   return undefined
 }

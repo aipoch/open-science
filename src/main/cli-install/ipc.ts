@@ -57,7 +57,7 @@ const createCliCommandOwner = (): CliCommandOwnerWithLifecycle => ({
       return await getCliLauncherStatus(resolveCliLauncherEnv())
     } catch (error) {
       logger.error('cli get-status failed', error)
-      return { installed: false, target: '', onPath: false }
+      throw error
     }
   },
   install: async (): Promise<CliLauncherStatus> => {
