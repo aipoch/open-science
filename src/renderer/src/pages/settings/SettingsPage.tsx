@@ -1176,7 +1176,7 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
                                   setIsMobileNavOpen(false)
                                   navigatePanel(id)
                                 }}
-                                className={`flex h-8 w-full items-center gap-2 rounded-lg px-2 text-left text-sm transition-colors duration-150 motion-reduce:transition-none ${
+                                className={`flex h-8 w-full items-center gap-2 rounded-lg px-2 text-left text-sm ${
                                   isActive
                                     ? 'bg-muted font-medium text-foreground'
                                     : 'text-muted-foreground hover:bg-muted hover:text-foreground'
@@ -1203,7 +1203,7 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
                     href={APP.links.githubFeedback}
                     target="_blank"
                     rel="noreferrer"
-                    className="flex h-8 w-full items-center gap-2 rounded-lg px-2 text-left text-sm text-muted-foreground transition-colors duration-150 motion-reduce:transition-none hover:bg-muted hover:text-foreground"
+                    className="flex h-8 w-full items-center gap-2 rounded-lg px-2 text-left text-sm text-muted-foreground hover:bg-muted hover:text-foreground"
                   >
                     <MessageSquare
                       className="size-4 shrink-0 text-muted-foreground"

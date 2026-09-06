@@ -7,6 +7,111 @@ import { CitationStylesView } from './CitationStylesView'
 
 afterEach(cleanup)
 
+it('pins a clicked example, retries in place, and ignores hover over another style', async () => {
+  vi.useFakeTimers()
+  const previousApi = window.api
+  const citationStyles = vi
+    .fn()
+    .mockRejectedValueOnce(new Error('offline'))
+    .mockResolvedValue({
+      styles: [],
+      preview: { styleId: 'apa', inText: '(Rivera, 2024)', reference: 'Complete reference' }
+    })
+  window.api = { literature: { citationStyles } } as unknown as Window['api']
+  try {
+    render(
+      <CitationStylesView
+        styles={[
+          { id: 'apa', title: 'APA', source: 'built-in' },
+          { id: 'mla', title: 'MLA', source: 'built-in' }
+        ]}
+        onBack={vi.fn()}
+        onStylesChange={vi.fn()}
+      />
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'Preview: APA' }))
+    await act(() => vi.advanceTimersByTimeAsync(0))
+    expect(within(screen.getByRole('dialog')).getByText('Preview unavailable')).not.toBeNull()
+    fireEvent.pointerLeave(screen.getByRole('button', { name: 'Preview: APA' }))
+    fireEvent.pointerEnter(screen.getByRole('button', { name: 'Preview: MLA' }), {
+      pointerType: 'mouse'
+    })
+    await act(() => vi.advanceTimersByTimeAsync(400))
+    expect(citationStyles).toHaveBeenCalledTimes(1)
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }))
+    await act(() => vi.advanceTimersByTimeAsync(0))
+    expect(within(screen.getByRole('dialog')).getByText('Complete reference')).not.toBeNull()
+    // An internal scroll keeps the reading surface open; scrolling the page dismisses it.
+    fireEvent.scroll(screen.getByRole('dialog'))
+    expect(screen.queryByRole('dialog')).not.toBeNull()
+    fireEvent.scroll(document)
+    expect(screen.queryByRole('dialog')).toBeNull()
+  } finally {
+    cleanup()
+    window.api = previousApi
+    vi.useRealTimers()
+  }
+})
+
+it('shares the browsing delay and does not mix late preview results across styles', async () => {
+  vi.useFakeTimers()
+  const previousApi = window.api
+  let finishFirst!: (value: unknown) => void
+  const citationStyles = vi
+    .fn()
+    .mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finishFirst = resolve
+        })
+    )
+    .mockResolvedValue({
+      styles: [],
+      preview: { styleId: 'mla', inText: 'MLA citation', reference: 'MLA reference' }
+    })
+  window.api = { literature: { citationStyles } } as unknown as Window['api']
+  const props = { onBack: vi.fn(), onStylesChange: vi.fn() }
+  try {
+    const view = render(
+      <CitationStylesView
+        {...props}
+        styles={[
+          { id: 'apa', title: 'APA', source: 'built-in' },
+          { id: 'mla', title: 'MLA', source: 'built-in' }
+        ]}
+      />
+    )
+    const first = screen.getByRole('button', { name: 'Preview: APA' })
+    const second = screen.getByRole('button', { name: 'Preview: MLA' })
+    fireEvent.pointerEnter(first, { pointerType: 'mouse' })
+    await act(() => vi.advanceTimersByTimeAsync(199))
+    expect(citationStyles).not.toHaveBeenCalled()
+    await act(() => vi.advanceTimersByTimeAsync(1))
+    fireEvent.pointerLeave(first, { pointerType: 'mouse' })
+    fireEvent.pointerEnter(second, { pointerType: 'mouse' })
+    await act(() => vi.advanceTimersByTimeAsync(0))
+    expect(within(screen.getByRole('dialog')).getByText('MLA reference')).not.toBeNull()
+    await act(async () =>
+      finishFirst({
+        styles: [],
+        preview: { styleId: 'apa', inText: 'APA citation', reference: 'APA reference' }
+      })
+    )
+    expect(within(screen.getByRole('dialog')).queryByText('APA reference')).toBeNull()
+    fireEvent.pointerLeave(second, { pointerType: 'mouse' })
+    fireEvent.pointerEnter(first, { pointerType: 'mouse' })
+    expect(within(screen.getByRole('dialog')).getByText('APA reference')).not.toBeNull()
+    expect(citationStyles).toHaveBeenCalledTimes(2)
+    view.rerender(<CitationStylesView {...props} styles={[]} />)
+    await act(() => vi.advanceTimersByTimeAsync(0))
+    expect(screen.queryByRole('dialog')).toBeNull()
+  } finally {
+    cleanup()
+    window.api = previousApi
+    vi.useRealTimers()
+  }
+})
+
 it('does not request a preview when the pointer only passes briefly over a style', async () => {
   vi.useFakeTimers()
   const previousApi = window.api
@@ -31,7 +136,7 @@ it('does not request a preview when the pointer only passes briefly over a style
     fireEvent.pointerMove(trigger, { pointerType: 'mouse' })
     await act(() => vi.advanceTimersByTimeAsync(200))
     expect(citationStyles).toHaveBeenCalledExactlyOnceWith({ kind: 'preview', styleId: 'apa' })
-    expect(within(screen.getByRole('tooltip')).getByText('Loading preview…')).not.toBeNull()
+    expect(within(screen.getByRole('dialog')).getByText('Loading preview…')).not.toBeNull()
   } finally {
     cleanup()
     window.api = previousApi
@@ -73,7 +178,7 @@ it('imports, previews, and removes a custom CSL through the style manager', asyn
     const trigger = screen.getByLabelText('Preview: Test journal')
     fireEvent.pointerEnter(trigger, { pointerType: 'mouse' })
     fireEvent.pointerMove(trigger, { pointerType: 'mouse' })
-    const tooltip = await screen.findByRole('tooltip')
+    const tooltip = await screen.findByRole('dialog')
     expect(await within(tooltip).findByText('Rivera. Test reference.')).not.toBeNull()
     expect(citationStyles).toHaveBeenLastCalledWith({ kind: 'preview', styleId: style.id })
 

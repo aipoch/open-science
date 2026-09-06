@@ -333,9 +333,10 @@ colors communicate a successful or failed probe/migration result.
 - Small buttons, tabs, and toolbar buttons: `rounded-md`, approximately `6px`.
 - Inputs, shared menu items, and navigation items: `rounded-lg`, `8px`.
 - Cards / viewer panels: `rounded-lg`; viewer radius is `8px`.
-- Dialog: `rounded-xl`, `12px`; shared DropdownMenu / Select content: `rounded-lg`, `8px`.
+- Dialog: `rounded-xl`, `12px`; shared DropdownMenu / Select content: `rounded-[15px]` around `8px` items with `6px` padding and a `1px` border.
 - Composer: `rounded-2xl`, `16px`.
 - Pills, drag handles, and status dots: `rounded-full`.
+- Nested corners follow the inset: outer radius approximately equals inner radius plus padding and border. For example, Notebook figure cards use `16px` around an `8px` image inset by `8px`; flush-clipped images inherit their container radius.
 
 ### Background and Elevation
 
@@ -370,10 +371,10 @@ colors communicate a successful or failed probe/migration result.
 
 ### Motion
 
-- Standard interaction: `transition-colors duration-150 motion-reduce:transition-none`.
+- Menu, option, and navigation hover highlights update immediately; do not animate their background or foreground colors.
 - Inline action reveal: `transition-opacity duration-150`, default `opacity-0`, then `opacity-100` on hover or focus-visible.
-- Workspace interactions use `transition-colors duration-200 ease-out`.
-- Session row action reveal uses `transition-[opacity,color,background-color] duration-200 ease-out`.
+- Keep purposeful transforms and dialog entry/exit motion, with reduced-motion support.
+- Session row action reveal uses `transition-opacity duration-200 ease-out`; its hover colors update immediately.
 - Dialog open: `data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=open]:zoom-in-95`.
 - Dialog close: `data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=closed]:zoom-out-95`.
 - Overlay: `fade-in-0 / fade-out-0`; the light scrim is `rgb(0 0 0 / 0.5)`.
@@ -463,7 +464,7 @@ colors communicate a successful or failed probe/migration result.
 ### DropdownMenu / Popover / Select
 
 - Use DropdownMenu for action menus, Popover for lightweight auxiliary layers, and Select for single-value selection.
-- `DropdownMenuContent`: `overscroll-contain rounded-lg border border-border bg-popover p-1.5 text-popover-foreground shadow-menu`; `shadow-menu` is `0 2px 8px rgb(0 0 0 / 0.08)`. Popovers may keep their domain-specific layout.
+- `DropdownMenuContent`: `overscroll-contain rounded-[15px] border border-border bg-popover p-1.5 text-popover-foreground shadow-menu`; `shadow-menu` is `0 2px 8px rgb(0 0 0 / 0.08)`. Popovers may keep their domain-specific layout.
 - Menu header / label: `px-2 pt-1 pb-0.5 text-xs text-muted-foreground`.
 - Item: `h-8 rounded-lg px-2 py-1.5 text-sm`.
 - Shared item hover / keyboard highlight: `bg-muted text-foreground`; disabled items are non-interactive at `opacity-50`.
@@ -502,11 +503,14 @@ colors communicate a successful or failed probe/migration result.
 - Holding `Cmd` on macOS or `Ctrl` on Windows/Linux reveals numbered shortcut pills beside the first nine Sessions in their current visual order. `Cmd+1`–`Cmd+9` or `Ctrl+1`–`Ctrl+9` opens the matching Session; modal dialogs and modified Alt/Shift chords retain priority.
 - Session row wrapper owns hover/active visuals only: `group mx-1.5 rounded-md px-2.5 py-1.5 text-sm text-text-000 hover:bg-bg-300 select-none`; active adds `bg-bg-300`.
 - Session title button is the row click target: `flex min-w-0 flex-1 cursor-pointer items-center gap-1.5 text-left`.
-- Session titles stay on one line and clip without an ellipsis. A right-edge gradient from transparent to the current row surface covers overflowing text and leaves the Session action trigger legible; it ends in `rail-card-bg` at rest and `bg-bg-300` on hovered or selected rows.
+- Session titles stay still on one line with an ellipsis; the preview wraps the complete title. A right-edge gradient from transparent to the current row surface covers overflowing text and leaves the Session action trigger legible; it ends in `rail-card-bg` at rest and `bg-bg-300` on hovered or selected rows.
 - In the `Active` group, running and user-waiting Session titles use `font-semibold`; recently completed idle Sessions keep the regular title weight.
 - Session status dots are decorative and `aria-hidden`; provide adjacent `sr-only` text such as `Session status: Running`.
 - Session groups appear in `Pinned`, `Active`, `Today`, `Yesterday`, `This week`, `Older` order and omit empty headings. Pinning has priority over every activity or date group. `Active` includes running and user-waiting Sessions plus idle Sessions for 15 minutes after their latest activity; selection and Side chat activity alone do not make a Session active. Date groups use the device's local calendar, with `This week` beginning Monday at 00:00, and refresh at local midnight.
 - Footer settings area uses a top fade `bg-gradient-to-t from-rail-card-bg to-rail-card-bg/0` and a `h-8 w-8` icon button.
+
+- Desktop Session previews wait 300ms on the first hover, then switch immediately within a browsing burst. Allow 300ms to cross into the card and reset the first-hover delay 300ms after closing. Load details only when the preview opens through the existing branch-aware owner.
+- Interactive Session previews use non-modal Popover, with keyboard entry to rename, Escape dismissal, and focus restoration. Editing and pending saves protect the active Session against hover replacement; Enter/blur commits and Escape cancels through the existing rename flow.
 
 ### Message Center
 
@@ -1040,3 +1044,11 @@ alert region excludes the diagnostic payload so opening it does not announce the
 - Reasoning or response explanations should use neutral wording, such as "the time the system spends preparing a response", and should avoid personified or brand-specific language.
 - Technical terms such as shadcn, Radix, Tailwind, token, class, hover, focus, and active may remain in English. User-facing interface copy should use a consistent language style within the same page.
 - Every icon button must provide a localizable `aria-label` and `Tooltip`; do not rely on the icon alone to communicate meaning.
+
+### Hover content and numeric stability
+
+- Mount one TooltipProvider per coherent toolbar, list, or action group. The first hint waits 200–300ms; subsequent hints within a 300ms skip window open immediately. Do not mount a new provider for every adjacent icon. Keep explicit longer explanatory delays and immediate chart inspection separate.
+- Text hints remain hoverable, dismissible with Escape, and bounded by the viewport. Long content gets internal scrolling. Preserve primary reference, attachment, and run-jump clicks.
+- CSL examples use a focusable preview button and a non-modal Popover: hover/focus discovers, click/tap pins, Escape/outside interaction dismisses, and internal scrolling preserves the panel. Show the complete style title, lazy-load and deduplicate per style, retain cached examples, and offer Retry after failure. The formatter's plain-text contract and content-addressed style identities stay unchanged.
+- Root canvas, body, and application root share the current theme background so exposed scrolling regions remain continuous; document canvases retain their own surface.
+- Use tabular digits for comparable numeric columns and changing counts/durations. Right-align numeric columns and reserve a minimum duration width where appropriate; retain existing formats and units.

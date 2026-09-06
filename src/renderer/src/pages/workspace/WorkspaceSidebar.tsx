@@ -44,7 +44,6 @@ import { fuzzyScore } from './composer/fuzzy-match'
 import {
   SessionHoverPreview,
   SessionHoverPreviewProvider,
-  SessionTitleMarquee,
   type SessionPreviewRequest
 } from './SessionHoverPreview'
 import {
@@ -247,7 +246,7 @@ const getNextSessionSectionRefreshAt = (sessions: ChatSession[], now: number): n
   }, tomorrow.getTime())
 }
 
-const sidebarInteractiveTransitionClassName = 'transition-colors duration-200 ease-out'
+const sidebarInteractiveTransitionClassName = 'transition-none'
 
 const sessionRowClassName = cn(
   'group relative mx-1.5 select-none rounded-md px-2.5 py-1.5 text-sm text-text-000 hover:bg-bg-300',
@@ -255,7 +254,7 @@ const sessionRowClassName = cn(
 )
 
 const sessionRowActionClassName =
-  'absolute right-1.5 top-1/2 z-10 -translate-y-1/2 rounded p-0.5 text-text-100 opacity-0 transition-[opacity,color,background-color] duration-200 ease-out hover:!opacity-100 hover:bg-bg-400 hover:text-text-000 focus-visible:opacity-100 group-hover:opacity-100 data-[state=open]:opacity-100'
+  'absolute right-1.5 top-1/2 z-10 -translate-y-1/2 rounded p-0.5 text-text-100 opacity-0 transition-opacity duration-200 ease-out hover:!opacity-100 hover:bg-bg-400 hover:text-text-000 focus-visible:opacity-100 group-hover:opacity-100 data-[state=open]:opacity-100'
 
 const SESSION_ACTION_TARGET_PREFIX = 'session:'
 const sessionActionDangerClassName =
@@ -932,14 +931,16 @@ const WorkspaceSidebarView = ({
                               status: t(sessionStatusLabelKeys[presentedStatus])
                             })}
                           </span>
-                          <SessionTitleMarquee
-                            title={session.title}
+                          <span
                             className={cn(
+                              'min-w-0 flex-1 truncate',
                               section.label === 'Active' &&
                                 presentedStatus !== 'idle' &&
                                 'font-semibold'
                             )}
-                          />
+                          >
+                            {session.title}
+                          </span>
                           {showSessionShortcuts && shortcutNumber ? (
                             <kbd
                               aria-hidden="true"

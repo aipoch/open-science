@@ -8,6 +8,40 @@ afterEach(() => {
   vi.useRealTimers()
 })
 
+it('opens subsequent hints immediately and restores the initial delay after leaving', async () => {
+  vi.useFakeTimers()
+  render(
+    <LiteratureTable>
+      <tbody>
+        <tr>
+          {['First', 'Second'].map((label) => (
+            <td key={label}>
+              <LiteratureTextTooltip text={`${label} full text`}>
+                <button>{label}</button>
+              </LiteratureTextTooltip>
+            </td>
+          ))}
+        </tr>
+      </tbody>
+    </LiteratureTable>
+  )
+  const first = screen.getByRole('button', { name: 'First' })
+  const second = screen.getByRole('button', { name: 'Second' })
+  fireEvent.pointerMove(first, { pointerType: 'mouse' })
+  await act(() => vi.advanceTimersByTimeAsync(300))
+  fireEvent.keyDown(first, { key: 'Escape' })
+  fireEvent.pointerLeave(first, { pointerType: 'mouse' })
+  fireEvent.pointerMove(second, { pointerType: 'mouse' })
+  expect(screen.getByRole('tooltip').textContent).toBe('Second full text')
+  fireEvent.keyDown(second, { key: 'Escape' })
+  fireEvent.pointerLeave(second, { pointerType: 'mouse' })
+  await act(() => vi.advanceTimersByTimeAsync(301))
+  fireEvent.pointerMove(first, { pointerType: 'mouse' })
+  expect(screen.queryByRole('tooltip')).toBeNull()
+  await act(() => vi.advanceTimersByTimeAsync(300))
+  expect(screen.getByRole('tooltip').textContent).toBe('First full text')
+})
+
 it('uses a consistent short delay and white-on-black contrast for long text hints', async () => {
   vi.useFakeTimers()
   render(

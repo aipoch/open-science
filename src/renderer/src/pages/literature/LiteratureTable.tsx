@@ -4,7 +4,7 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/comp
 // One delay/skip-delay context for every text and attachment hint in the table.
 export function LiteratureTable(props: ComponentProps<'table'>): React.JSX.Element {
   return (
-    <TooltipProvider delayDuration={300} skipDelayDuration={0}>
+    <TooltipProvider delayDuration={300} skipDelayDuration={300}>
       <table {...props} />
     </TooltipProvider>
   )
