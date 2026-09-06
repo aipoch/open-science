@@ -4575,6 +4575,8 @@
     "Your draft is still below. Choose how to handle the latest version before saving.": "你的草稿仍保留在下方。儲存前，請確認如何處理最新版本。",
     "Continue editing draft": "繼續編輯草稿",
     "Tag version updated": "標籤版本已更新",
-    "Not saved yet. Saving later will replace the latest version.": "尚未儲存。之後儲存會覆寫最新版本。"
+    "Not saved yet. Saving later will replace the latest version.": "尚未儲存。之後儲存會覆寫最新版本。",
+    "Tag assignments are preserved.": "標籤關聯已保留。",
+    "{{count}} tagged resources are currently unavailable._other": "{{count}} 個已關聯資源暫時無法使用。"
   }
 }

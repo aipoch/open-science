@@ -4889,6 +4889,10 @@
     "Your draft is still below. Choose how to handle the latest version before saving.": "Votre brouillon est conservé ci-dessous. Avant de l’enregistrer, choisissez comment traiter la dernière version.",
     "Continue editing draft": "Continuer à modifier le brouillon",
     "Tag version updated": "Version du tag mise à jour",
-    "Not saved yet. Saving later will replace the latest version.": "Pas encore enregistré. Un enregistrement ultérieur remplacera la dernière version."
+    "Not saved yet. Saving later will replace the latest version.": "Pas encore enregistré. Un enregistrement ultérieur remplacera la dernière version.",
+    "Tag assignments are preserved.": "Les associations de tags sont conservées.",
+    "{{count}} tagged resources are currently unavailable._many": "{{count}} ressources associées à ce tag sont actuellement indisponibles.",
+    "{{count}} tagged resources are currently unavailable._other": "{{count}} ressources associées à ce tag sont actuellement indisponibles.",
+    "{{count}} tagged resources are currently unavailable._one": "{{count}} ressource associée à ce tag est actuellement indisponible."
   }
 }

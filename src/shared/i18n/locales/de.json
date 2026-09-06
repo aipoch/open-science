@@ -4728,6 +4728,9 @@
     "Your draft is still below. Choose how to handle the latest version before saving.": "Ihr Entwurf bleibt unten erhalten. Wählen Sie vor dem Speichern, wie Sie mit der neuesten Version umgehen möchten.",
     "Continue editing draft": "Entwurf weiter bearbeiten",
     "Tag version updated": "Tag-Version aktualisiert",
-    "Not saved yet. Saving later will replace the latest version.": "Noch nicht gespeichert. Späteres Speichern ersetzt die neueste Version."
+    "Not saved yet. Saving later will replace the latest version.": "Noch nicht gespeichert. Späteres Speichern ersetzt die neueste Version.",
+    "Tag assignments are preserved.": "Die Tag-Zuordnungen bleiben erhalten.",
+    "{{count}} tagged resources are currently unavailable._other": "{{count}} getaggte Ressourcen sind derzeit nicht verfügbar.",
+    "{{count}} tagged resources are currently unavailable._one": "{{count}} getaggte Ressource ist derzeit nicht verfügbar."
   }
 }

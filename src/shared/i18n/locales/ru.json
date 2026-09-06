@@ -5021,6 +5021,11 @@
     "Your draft is still below. Choose how to handle the latest version before saving.": "Ваш черновик сохранён ниже. Перед сохранением выберите, как поступить с последней версией.",
     "Continue editing draft": "Продолжить редактирование",
     "Tag version updated": "Версия тега обновлена",
-    "Not saved yet. Saving later will replace the latest version.": "Ещё не сохранено. При сохранении последняя версия будет заменена."
+    "Not saved yet. Saving later will replace the latest version.": "Ещё не сохранено. При сохранении последняя версия будет заменена.",
+    "Tag assignments are preserved.": "Связи тегов сохранены.",
+    "{{count}} tagged resources are currently unavailable._many": "{{count}} ресурсов с тегом сейчас недоступны.",
+    "{{count}} tagged resources are currently unavailable._few": "{{count}} ресурса с тегом сейчас недоступны.",
+    "{{count}} tagged resources are currently unavailable._other": "{{count}} ресурса с тегом сейчас недоступны.",
+    "{{count}} tagged resources are currently unavailable._one": "{{count}} ресурс с тегом сейчас недоступен."
   }
 }

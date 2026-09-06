@@ -4889,6 +4889,10 @@
     "Your draft is still below. Choose how to handle the latest version before saving.": "Su borrador se conserva a continuación. Antes de guardar, elija cómo gestionar la última versión.",
     "Continue editing draft": "Seguir editando el borrador",
     "Tag version updated": "Versión de etiqueta actualizada",
-    "Not saved yet. Saving later will replace the latest version.": "Aún no se ha guardado. Al guardar más adelante se reemplazará la última versión."
+    "Not saved yet. Saving later will replace the latest version.": "Aún no se ha guardado. Al guardar más adelante se reemplazará la última versión.",
+    "Tag assignments are preserved.": "Las asociaciones de etiquetas se conservan.",
+    "{{count}} tagged resources are currently unavailable._many": "{{count}} recursos etiquetados no están disponibles actualmente.",
+    "{{count}} tagged resources are currently unavailable._other": "{{count}} recursos etiquetados no están disponibles actualmente.",
+    "{{count}} tagged resources are currently unavailable._one": "{{count}} recurso etiquetado no está disponible actualmente."
   }
 }

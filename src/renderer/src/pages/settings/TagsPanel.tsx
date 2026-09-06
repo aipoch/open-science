@@ -580,6 +580,12 @@ const TagsList = ({
     (type) => typeFilter === 'all' || typeFilter === type
   )
   const catalogsReady = visibleCatalogTypes.every((type) => catalogLoads[type].status === 'ready')
+  const unavailableAssignmentCount = selectedAssignments.filter(
+    (assignment) =>
+      visibleCatalogTypes.includes(assignment.resourceType) &&
+      catalogLoads[assignment.resourceType].status === 'ready' &&
+      !resourcesByKey.has(`${assignment.resourceType}:${assignment.resourceId}`)
+  ).length
 
   const confirmDelete = async (): Promise<void> => {
     if (!deleting || deleteBusy) return
@@ -951,6 +957,18 @@ const TagsList = ({
                   </p>
                 )
               })}
+              {unavailableAssignmentCount > 0 ? (
+                <div className="mb-4">
+                  <ErrorNotice
+                    role="status"
+                    title={t('{{count}} tagged resources are currently unavailable.', {
+                      count: unavailableAssignmentCount,
+                      defaultValue_one: '{{count}} tagged resource is currently unavailable.'
+                    })}
+                    description={t('Tag assignments are preserved.')}
+                  />
+                </div>
+              ) : null}
               {filteredResources.length > 0 ? (
                 <div data-slot="tag-resource-groups" className="divide-y divide-border">
                   {resourceGroups.map(({ resourceType, resources: groupedResources }) => {
@@ -1043,7 +1061,7 @@ const TagsList = ({
                     )
                   })}
                 </div>
-              ) : catalogsReady ? (
+              ) : catalogsReady && unavailableAssignmentCount === 0 ? (
                 <p className="py-12 text-center text-sm text-muted-foreground">
                   {t('No resources match this Tag.')}
                 </p>

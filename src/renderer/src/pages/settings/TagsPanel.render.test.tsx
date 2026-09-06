@@ -157,6 +157,70 @@ describe('TagsPanel', () => {
     }
   )
 
+  it('explains an unavailable assignment without reporting an empty Tag, and recovers with the catalog', async () => {
+    useSpecialistStore.setState({ isLoaded: true, loadError: undefined })
+    useSettingsStore.setState((state) => ({
+      skills: state.skills.map((skill) => ({ ...skill, available: false }))
+    }))
+    await act(async () =>
+      root.render(
+        <TagsPanel view={{ kind: 'list' }} onNavigate={vi.fn()} onOpenResource={vi.fn()} />
+      )
+    )
+    expect(useTagStore.getState().assignments).toHaveLength(1)
+    expect(container.querySelector('[data-slot="tag-list-count"]')?.textContent).toBe('1')
+    expect(container.querySelector('[data-slot="tag-resource-row"]')).toBeNull()
+    expect(container.textContent).not.toContain('No resources match this Tag.')
+    const notice = container.querySelector('[role="status"]')!
+    expect(notice.textContent).toContain('1 tagged resource is currently unavailable.')
+    expect(notice.textContent).toContain('Tag assignments are preserved.')
+    expect(notice.closest('section')!.querySelector('button')).toBeNull()
+
+    act(() => useTagStore.getState().setBrowserTypeFilter('catalog.connector'))
+    expect(container.querySelector('[role="status"]')).toBeNull()
+    expect(container.textContent).toContain('No resources match this Tag.')
+
+    act(() => useTagStore.getState().setBrowserTypeFilter('all'))
+    act(() =>
+      useSettingsStore.setState((state) => ({
+        skills: state.skills.map((skill) => ({ ...skill, available: true }))
+      }))
+    )
+    expect(container.querySelector('[role="status"]')).toBeNull()
+    expect(container.querySelector('[data-slot="tag-resource-row"]')?.textContent).toContain(
+      'Analysis'
+    )
+    expect(useTagStore.getState().assignments).toHaveLength(1)
+  })
+
+  it('keeps available resources visible alongside unresolved assignments', async () => {
+    useSpecialistStore.setState({ isLoaded: true, loadError: undefined })
+    useTagStore.setState((state) => ({
+      assignments: [
+        ...state.assignments,
+        {
+          tagId: 'tag-favorite',
+          resourceType: 'catalog.skill',
+          resourceId: 'unavailable',
+          createdAt: 2
+        }
+      ]
+    }))
+    await act(async () =>
+      root.render(
+        <TagsPanel view={{ kind: 'list' }} onNavigate={vi.fn()} onOpenResource={vi.fn()} />
+      )
+    )
+    expect(container.querySelector('[data-slot="tag-list-count"]')?.textContent).toBe('2')
+    expect(container.querySelector('[role="status"]')?.textContent).toContain(
+      '1 tagged resource is currently unavailable.'
+    )
+    expect(container.querySelector('[data-slot="tag-resource-row"]')?.textContent).toContain(
+      'Analysis'
+    )
+    expect(container.textContent).not.toContain('No resources match this Tag.')
+  })
+
   it.each(['catalog.skill', 'catalog.connector', 'catalog.specialist', 'literature.item'] as const)(
     'shows pending and failed %s independently of loaded resources',
     async (type) => {

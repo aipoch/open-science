@@ -4575,6 +4575,8 @@
     "Your draft is still below. Choose how to handle the latest version before saving.": "下の下書きは保持されています。保存する前に、最新バージョンをどう扱うか選んでください。",
     "Continue editing draft": "下書きの編集を続ける",
     "Tag version updated": "タグのバージョンが更新されました",
-    "Not saved yet. Saving later will replace the latest version.": "まだ保存されていません。後で保存すると最新バージョンを上書きします。"
+    "Not saved yet. Saving later will replace the latest version.": "まだ保存されていません。後で保存すると最新バージョンを上書きします。",
+    "Tag assignments are preserved.": "タグの関連付けは保持されています。",
+    "{{count}} tagged resources are currently unavailable._other": "タグ付けされたリソース {{count}} 件は現在利用できません。"
   }
 }
