@@ -18,7 +18,6 @@ export function DeviceCredentialLoadNotice({
     return (
       <div role="alert" className="mb-4">
         <ErrorNotice
-          showBrand={false}
           icon={AlertTriangle}
           tone="amber"
           title={
