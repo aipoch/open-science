@@ -47,6 +47,23 @@ const changeInput = async (input: HTMLInputElement, value: string): Promise<void
 }
 
 describe('NetworkPanel offline retry', () => {
+  it('allows checking again after a successful reachability probe', async () => {
+    Object.defineProperty(window.navigator, 'onLine', { value: true, configurable: true })
+    useNetworkStore.setState({ isOnline: true, connectivity: 'reachable' })
+    const checkConnectivity = vi.fn().mockResolvedValue(false)
+    ;(window as unknown as { api: unknown }).api = { network: { checkConnectivity } }
+    await act(async () =>
+      root.render(<NetworkPanel view={{ kind: 'list' }} onNavigate={() => {}} />)
+    )
+    expect(buttonWithText('Check again')).not.toBeUndefined()
+    await act(async () => buttonWithText('Check again').click())
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(500)
+    })
+    expect(container.textContent).toContain(
+      'The network link is up, but package registries are unreachable.'
+    )
+  })
   it('confirms a CA bundle change and shows progress while saving', async () => {
     let resolveSave!: () => void
     const setPackageMirror = vi.fn(

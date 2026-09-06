@@ -1784,7 +1784,6 @@
     "The app could not write to the log file during its most recent attempt.": "최근 시도에서 앱이 로그 파일에 쓰지 못했습니다.",
     "Not compatible with the active agent framework.": "활성 에이전트 프레임워크와 호환되지 않습니다.",
     "Not configured": "구성되지 않음",
-    "Not configured — packages come from the public hosts (conda.anaconda.org, pypi.org)": "구성되지 않음 - 패키지가 공개 호스트(conda.anaconda.org, pypi.org)에서 제공됩니다.",
     "Not importable": "가져올 수 없음",
     "Not installed": "설치되지 않음",
     "Not probed": "프로브되지 않음",
@@ -1912,7 +1911,6 @@
     "In session context": "세션 컨텍스트에 추가됨",
     "Open PDF context {{name}}": "PDF 컨텍스트 {{name}} 열기",
     "Leave blank to use public certificate authorities. Otherwise, choose a complete PEM bundle with public and corporate roots; Notebook sessions and package downloads will trust it.": "비워 두면 공용 인증 기관을 사용합니다. 그렇지 않으면 공용 루트와 회사 루트가 포함된 전체 PEM 번들을 선택하세요. Notebook 세션과 패키지 다운로드에서 이 번들을 신뢰합니다.",
-    "Custom CA bundle configured": "사용자 지정 CA 번들 구성됨",
     "PHASE {{number}}": "단계 {{number}}",
     "PINNED": "고정됨",
     "Package": "패키지",
@@ -4556,6 +4554,17 @@
     "Direct PDF link": "PDF 직접 링크",
     "arXiv identifier required": "arXiv 식별자 필요",
     "Latest PDF via arXiv identifier. No API key required. The file is checked when downloaded.": "arXiv 식별자로 최신 PDF를 가져옵니다. API 키가 필요하지 않습니다. 다운로드할 때 파일을 검증합니다.",
-    "Add a DOI, PMID, PMCID or arXiv identifier to find a matching full-text PDF.": "DOI, PMID, PMCID 또는 arXiv 식별자를 추가하여 일치하는 전문 PDF를 찾으세요."
+    "Add a DOI, PMID, PMCID or arXiv identifier to find a matching full-text PDF.": "DOI, PMID, PMCID 또는 arXiv 식별자를 추가하여 일치하는 전문 PDF를 찾으세요.",
+    "Choose a proxy mode.": "프록시 모드를 선택하세요.",
+    "Choose System, Manual, or Direct.": "시스템, 수동 또는 직접 연결을 선택하세요.",
+    "Enter a proxy server URL, for example http://127.0.0.1:1086.": "프록시 서버 URL을 입력하세요. 예: http://127.0.0.1:1086.",
+    "Use an http, https, socks, socks4, or socks5 proxy URL.": "http, https, socks, socks4 또는 socks5 프록시 URL을 사용하세요.",
+    "Enter a proxy URL with a host name or IP address.": "호스트 이름 또는 IP 주소가 포함된 프록시 URL을 입력하세요.",
+    "Proxy URLs with embedded usernames or passwords are not supported.": "사용자 이름이나 비밀번호가 포함된 프록시 URL은 지원되지 않습니다.",
+    "Enter only the proxy scheme, host, and optional port.": "프록시 스킴, 호스트 및 선택 사항인 포트만 입력하세요.",
+    "Enter a complete proxy URL, for example http://127.0.0.1:1086.": "완전한 프록시 URL을 입력하세요. 예: http://127.0.0.1:1086.",
+    "Automatic mirror selection": "미러 자동 선택",
+    "Automatic mirror selection · Custom CA bundle configured": "미러 자동 선택 · 사용자 지정 CA 번들 설정됨",
+    "Turning off a built-in domain removes automatic access. Exact hostnames in Allowed domains remain allowed.": "기본 제공 도메인을 끄면 자동 액세스가 해제됩니다. 허용된 도메인에 등록한 정확한 호스트 이름은 계속 허용됩니다."
   }
 }

@@ -1660,7 +1660,6 @@
     "Not available yet.": "Noch nicht verfügbar.",
     "Not compatible with the active agent framework.": "Nicht mit dem aktiven Agenten-Framework kompatibel.",
     "Not configured": "Nicht konfiguriert",
-    "Not configured — packages come from the public hosts (conda.anaconda.org, pypi.org)": "Nicht konfiguriert – Pakete stammen von den öffentlichen Hosts (conda.anaconda.org, pypi.org)",
     "Not importable": "Nicht importierbar",
     "Not installed": "Nicht installiert",
     "Not probed": "Nicht geprüft",
@@ -1785,7 +1784,6 @@
     "PDB couldn't be read for preview": "PDB konnte nicht zur Vorschau gelesen werden",
     "PDB viewer could not be initialized: {{error}}": "PDB-Viewer konnte nicht initialisiert werden: {{error}}",
     "Leave blank to use public certificate authorities. Otherwise, choose a complete PEM bundle with public and corporate roots; Notebook sessions and package downloads will trust it.": "Lassen Sie das Feld leer, um öffentliche Zertifizierungsstellen zu verwenden. Wählen Sie andernfalls ein vollständiges PEM-Bundle mit öffentlichen und unternehmensinternen Stammzertifikaten; Notebook-Sitzungen und Paketdownloads vertrauen dann diesen Zertifikaten.",
-    "Custom CA bundle configured": "Benutzerdefiniertes CA-Bundle konfiguriert",
     "PHASE {{number}}": "PHASE {{number}}",
     "PINNED": "GEPINNT",
     "Package": "Paket",
@@ -4711,6 +4709,17 @@
     "Direct PDF link": "Direkter PDF-Link",
     "arXiv identifier required": "arXiv-Kennung erforderlich",
     "Latest PDF via arXiv identifier. No API key required. The file is checked when downloaded.": "Neueste PDF über die arXiv-Kennung. Kein API-Schlüssel erforderlich. Die Datei wird beim Herunterladen geprüft.",
-    "Add a DOI, PMID, PMCID or arXiv identifier to find a matching full-text PDF.": "Fügen Sie eine DOI, PMID, PMCID oder arXiv-Kennung hinzu, um eine passende Volltext-PDF zu finden."
+    "Add a DOI, PMID, PMCID or arXiv identifier to find a matching full-text PDF.": "Fügen Sie eine DOI, PMID, PMCID oder arXiv-Kennung hinzu, um eine passende Volltext-PDF zu finden.",
+    "Choose a proxy mode.": "Wählen Sie einen Proxy-Modus.",
+    "Choose System, Manual, or Direct.": "Wählen Sie System, Manuell oder Direkt.",
+    "Enter a proxy server URL, for example http://127.0.0.1:1086.": "Geben Sie eine Proxyserver-URL ein, zum Beispiel http://127.0.0.1:1086.",
+    "Use an http, https, socks, socks4, or socks5 proxy URL.": "Verwenden Sie eine Proxy-URL mit http, https, socks, socks4 oder socks5.",
+    "Enter a proxy URL with a host name or IP address.": "Geben Sie eine Proxy-URL mit Hostnamen oder IP-Adresse ein.",
+    "Proxy URLs with embedded usernames or passwords are not supported.": "Proxy-URLs mit eingebetteten Benutzernamen oder Passwörtern werden nicht unterstützt.",
+    "Enter only the proxy scheme, host, and optional port.": "Geben Sie nur Proxy-Protokoll, Host und optionalen Port ein.",
+    "Enter a complete proxy URL, for example http://127.0.0.1:1086.": "Geben Sie eine vollständige Proxy-URL ein, zum Beispiel http://127.0.0.1:1086.",
+    "Automatic mirror selection": "Automatische Spiegelauswahl",
+    "Automatic mirror selection · Custom CA bundle configured": "Automatische Spiegelauswahl · Benutzerdefiniertes CA-Bündel konfiguriert",
+    "Turning off a built-in domain removes automatic access. Exact hostnames in Allowed domains remain allowed.": "Das Deaktivieren einer integrierten Domain hebt den automatischen Zugriff auf. Exakte Hostnamen unter Erlaubte Domains bleiben erlaubt."
   }
 }

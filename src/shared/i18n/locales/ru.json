@@ -1844,7 +1844,6 @@
     "The app could not write to the log file during its most recent attempt.": "При последней попытке приложению не удалось записать данные в файл журнала.",
     "Not compatible with the active agent framework.": "Несовместимо с активным фреймворком агента.",
     "Not configured": "Не настроен",
-    "Not configured — packages come from the public hosts (conda.anaconda.org, pypi.org)": "Не настроен — пакеты поступают с публичных хостов (conda.anaconda.org, pypi.org)",
     "Not importable": "Невозможно импортировать",
     "Not installed": "Не установлен",
     "Not probed": "Не проверен",
@@ -1973,7 +1972,6 @@
     "In session context": "В контексте сеанса",
     "Open PDF context {{name}}": "Открыть контекст PDF {{name}}",
     "Leave blank to use public certificate authorities. Otherwise, choose a complete PEM bundle with public and corporate roots; Notebook sessions and package downloads will trust it.": "Оставьте поле пустым, чтобы использовать общедоступные центры сертификации. В противном случае выберите полный PEM-пакет с общедоступными и корпоративными корневыми сертификатами; ему будут доверять сессии Notebook и загрузки пакетов.",
-    "Custom CA bundle configured": "Настроен пользовательский пакет сертификатов CA",
     "PHASE {{number}}": "ФАЗА {{number}}",
     "PINNED": "ЗАКРЕПЛЕННЫЙ",
     "Package": "Пакет",
@@ -5004,6 +5002,17 @@
     "Direct PDF link": "Прямая ссылка на PDF",
     "arXiv identifier required": "Требуется идентификатор arXiv",
     "Latest PDF via arXiv identifier. No API key required. The file is checked when downloaded.": "Последний PDF по идентификатору arXiv. API-ключ не требуется. Файл проверяется при скачивании.",
-    "Add a DOI, PMID, PMCID or arXiv identifier to find a matching full-text PDF.": "Добавьте DOI, PMID, PMCID или идентификатор arXiv, чтобы найти подходящий PDF полного текста."
+    "Add a DOI, PMID, PMCID or arXiv identifier to find a matching full-text PDF.": "Добавьте DOI, PMID, PMCID или идентификатор arXiv, чтобы найти подходящий PDF полного текста.",
+    "Choose a proxy mode.": "Выберите режим прокси.",
+    "Choose System, Manual, or Direct.": "Выберите системный, ручной или прямой режим.",
+    "Enter a proxy server URL, for example http://127.0.0.1:1086.": "Введите URL прокси-сервера, например http://127.0.0.1:1086.",
+    "Use an http, https, socks, socks4, or socks5 proxy URL.": "Используйте URL прокси с протоколом http, https, socks, socks4 или socks5.",
+    "Enter a proxy URL with a host name or IP address.": "Введите URL прокси с именем хоста или IP-адресом.",
+    "Proxy URLs with embedded usernames or passwords are not supported.": "URL прокси со встроенными именами пользователей или паролями не поддерживаются.",
+    "Enter only the proxy scheme, host, and optional port.": "Введите только протокол прокси, хост и необязательный порт.",
+    "Enter a complete proxy URL, for example http://127.0.0.1:1086.": "Введите полный URL прокси, например http://127.0.0.1:1086.",
+    "Automatic mirror selection": "Автоматический выбор зеркала",
+    "Automatic mirror selection · Custom CA bundle configured": "Автоматический выбор зеркала · Настроен пользовательский пакет CA",
+    "Turning off a built-in domain removes automatic access. Exact hostnames in Allowed domains remain allowed.": "Отключение встроенного домена отменяет автоматический доступ. Точные имена хостов в списке разрешённых доменов остаются разрешёнными."
   }
 }

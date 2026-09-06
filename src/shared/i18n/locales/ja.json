@@ -1769,7 +1769,6 @@
     "The app could not write to the log file during its most recent attempt.": "直近の試行で、アプリはログファイルに書き込めませんでした。",
     "Not compatible with the active agent framework.": "アクティブなエージェントフレームワークと互換性がありません。",
     "Not configured": "未設定",
-    "Not configured — packages come from the public hosts (conda.anaconda.org, pypi.org)": "未設定 — パッケージはパブリックホスト (conda.anaconda.org、pypi.org) から取得されます。",
     "Not importable": "インポート不可",
     "Not installed": "インストールされていません",
     "Not probed": "未確認",
@@ -1901,7 +1900,6 @@
     "In session context": "セッションのコンテキストに追加済み",
     "Open PDF context {{name}}": "PDF コンテキスト {{name}} を開く",
     "Leave blank to use public certificate authorities. Otherwise, choose a complete PEM bundle with public and corporate roots; Notebook sessions and package downloads will trust it.": "空欄の場合は公開認証局を使用します。それ以外の場合は、公開ルートと企業ルートを含む完全な PEM バンドルを選択してください。Notebook セッションとパッケージのダウンロードで信頼されます。",
-    "Custom CA bundle configured": "カスタム CA バンドルを設定済み",
     "PHASE {{number}}": "フェーズ {{number}}",
     "PINNED": "固定済み",
     "Package": "パッケージ",
@@ -4558,6 +4556,17 @@
     "Direct PDF link": "PDF への直接リンク",
     "arXiv identifier required": "arXiv 識別子が必要です",
     "Latest PDF via arXiv identifier. No API key required. The file is checked when downloaded.": "arXiv 識別子から最新の PDF を取得します。API キーは不要です。ダウンロード時にファイルを検証します。",
-    "Add a DOI, PMID, PMCID or arXiv identifier to find a matching full-text PDF.": "DOI、PMID、PMCID または arXiv 識別子を追加して、一致する全文 PDF を検索します。"
+    "Add a DOI, PMID, PMCID or arXiv identifier to find a matching full-text PDF.": "DOI、PMID、PMCID または arXiv 識別子を追加して、一致する全文 PDF を検索します。",
+    "Choose a proxy mode.": "プロキシモードを選択してください。",
+    "Choose System, Manual, or Direct.": "システム、手動、または直接接続を選択してください。",
+    "Enter a proxy server URL, for example http://127.0.0.1:1086.": "プロキシサーバーの URL を入力してください（例：http://127.0.0.1:1086）。",
+    "Use an http, https, socks, socks4, or socks5 proxy URL.": "http、https、socks、socks4、または socks5 のプロキシ URL を使用してください。",
+    "Enter a proxy URL with a host name or IP address.": "ホスト名または IP アドレスを含むプロキシ URL を入力してください。",
+    "Proxy URLs with embedded usernames or passwords are not supported.": "ユーザー名やパスワードを含むプロキシ URL はサポートされていません。",
+    "Enter only the proxy scheme, host, and optional port.": "プロキシのスキーム、ホスト、任意のポートのみを入力してください。",
+    "Enter a complete proxy URL, for example http://127.0.0.1:1086.": "完全なプロキシ URL を入力してください（例：http://127.0.0.1:1086）。",
+    "Automatic mirror selection": "ミラーを自動選択",
+    "Automatic mirror selection · Custom CA bundle configured": "ミラーを自動選択 · カスタム CA バンドル設定済み",
+    "Turning off a built-in domain removes automatic access. Exact hostnames in Allowed domains remain allowed.": "組み込みドメインを無効にすると、自動アクセスが解除されます。「許可されたドメイン」に登録した完全一致のホスト名は引き続き許可されます。"
   }
 }

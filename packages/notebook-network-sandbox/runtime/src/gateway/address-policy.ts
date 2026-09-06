@@ -12,6 +12,7 @@ type Rule = Readonly<{
 
 type DestinationPolicyOptions = Readonly<{
   allowedDomains: readonly string[]
+  askDomains?: readonly string[]
   deniedDomains: readonly string[]
   deniedDomainReasons?: Readonly<Record<string, string>>
 }>
@@ -167,11 +168,13 @@ const isInternetAddress = (address: string): boolean => {
 
 class DestinationPolicy {
   readonly #allowed: readonly Rule[]
+  readonly #asked: readonly Rule[]
   readonly #denied: readonly Readonly<{ raw: string; rule: Rule }>[]
   readonly #reasons: Readonly<Record<string, string>>
 
   constructor(options: DestinationPolicyOptions) {
     this.#allowed = options.allowedDomains.map(parseRule)
+    this.#asked = (options.askDomains ?? []).map(parseRule)
     this.#denied = options.deniedDomains.map((raw) => ({ raw, rule: parseRule(raw) }))
     this.#reasons = options.deniedDomainReasons ?? {}
   }
@@ -204,7 +207,14 @@ class DestinationPolicy {
       }
     }
     const address = addresses[0]!
-    if (this.#allowed.some((rule) => ruleAccepts(rule, host, port))) {
+    const needsApproval = this.#asked.some((rule) => ruleAccepts(rule, host, port))
+    if (
+      this.#allowed.some(
+        (rule) =>
+          ruleAccepts(rule, host, port) &&
+          (!needsApproval || (!rule.subdomains && !rule.labels && !rule.all))
+      )
+    ) {
       return { kind: 'allow', address }
     }
     return { kind: 'ask', host, address }

@@ -7,6 +7,10 @@ const gateway = vi.hoisted(() => ({
   close: vi.fn().mockResolvedValue(undefined)
 }))
 
+vi.mock('node:dns/promises', () => ({
+  lookup: vi.fn(async () => [{ address: '8.8.8.8', family: 4 }])
+}))
+
 vi.mock('../runtime/src/gateway/command-gateway.js', () => ({
   CommandGateway: { open: vi.fn().mockResolvedValue(gateway) }
 }))
@@ -38,6 +42,11 @@ import {
   type NetworkRuntimeConfig
 } from '../runtime/src/notebook-runtime.js'
 import { CommandGateway } from '../runtime/src/gateway/command-gateway.js'
+import {
+  buildNotebookNetworkPolicy,
+  normalizeNotebookNetworkSettings
+} from '../../../src/shared/notebook-network.js'
+import { createRuntimeConfig } from './config.js'
 import { linuxLaunch } from '../runtime/src/platform/linux-isolation.js'
 import { readAppContainerStatus } from '../runtime/src/platform/windows-appcontainer.js'
 import {
@@ -78,6 +87,22 @@ afterEach(async () => {
 })
 
 describe('Notebook runtime configuration updates', () => {
+  it('routes disabled overlapping domains through approval after a live policy update', async () => {
+    const settings = normalizeNotebookNetworkSettings({
+      disabledOpenScienceDomains: ['rest.uniprot.org']
+    })
+    const next = (value: typeof settings): NetworkRuntimeConfig =>
+      createRuntimeConfig({
+        resources: { root: '/resources' },
+        policy: buildNotebookNetworkPolicy(value)
+      })
+    NotebookNetworkRuntime.updateConfig(next(settings))
+    const decide = vi.mocked(CommandGateway.open).mock.calls[0]![0].decide
+    await expect(decide('rest.uniprot.org', 443)).resolves.toMatchObject({ allowed: false })
+    await expect(decide('www.uniprot.org', 443)).resolves.toMatchObject({ allowed: true })
+    NotebookNetworkRuntime.updateConfig(next({ ...settings, allowedDomains: ['rest.uniprot.org'] }))
+    await expect(decide('rest.uniprot.org', 443)).resolves.toMatchObject({ allowed: true })
+  })
   it('disconnects existing tunnels before they can outlive a policy change', () => {
     NotebookNetworkRuntime.updateConfig(config([]))
 

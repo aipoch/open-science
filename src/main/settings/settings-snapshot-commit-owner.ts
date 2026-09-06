@@ -21,7 +21,13 @@ class SettingsSnapshotCommitOwner {
 
   async projectAfter<Result>(pending: Promise<Result>): Promise<Result> {
     const result = await pending
-    await this.enqueueCurrentSnapshot(true)
+    try {
+      await this.enqueueCurrentSnapshot(true)
+    } catch (error) {
+      // The operation has already committed. A projection failure cannot undo it or turn
+      // its authoritative result into a failed save. Explicit snapshot reads remain retryable.
+      console.warn('Settings operation completed, but snapshot publication failed.', error)
+    }
     return result
   }
 

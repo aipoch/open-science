@@ -2,6 +2,7 @@
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { startNetworkMonitor, useNetworkStore } from './network-store'
+import { useSettingsStore } from './settings-store'
 
 type CheckConnectivity = () => Promise<boolean>
 
@@ -54,6 +55,53 @@ describe('useNetworkStore', () => {
 })
 
 describe('probeConnectivity', () => {
+  it.each(['unreachable', 'probe-failed'] as const)(
+    'rechecks a saved proxy and discards prior success on %s',
+    async (result) => {
+      const checkConnectivity = vi.fn().mockResolvedValueOnce(true)
+      if (result === 'unreachable') checkConnectivity.mockResolvedValue(false)
+      else checkConnectivity.mockRejectedValue(new Error('probe unavailable'))
+      ;(window as unknown as { api: unknown }).api = {
+        network: { checkConnectivity },
+        settings: {
+          setNetworkProxy: vi
+            .fn()
+            .mockResolvedValue({ mode: 'manual', server: `http://${result}.example:8080` })
+        }
+      }
+      await useNetworkStore.getState().probeConnectivity()
+      expect(useNetworkStore.getState().connectivity).toBe('reachable')
+      await useSettingsStore
+        .getState()
+        .setNetworkProxy({ mode: 'manual', server: `http://${result}.example:8080` })
+      window.dispatchEvent(new Event('focus'))
+      await vi.advanceTimersByTimeAsync(500)
+      expect.soft(checkConnectivity).toHaveBeenCalledTimes(2)
+      expect(useNetworkStore.getState().connectivity).toBe(result)
+    }
+  )
+
+  it('ignores a delayed probe from before a proxy change', async () => {
+    let finish!: (value: boolean) => void
+    const checkConnectivity = vi
+      .fn()
+      .mockReturnValueOnce(
+        new Promise<boolean>((resolve) => {
+          finish = resolve
+        })
+      )
+      .mockResolvedValue(false)
+    ;(window as unknown as { api: unknown }).api = {
+      network: { checkConnectivity },
+      settings: { setNetworkProxy: vi.fn().mockResolvedValue({ mode: 'direct' }) }
+    }
+    const previous = useNetworkStore.getState().probeConnectivity()
+    await useSettingsStore.getState().setNetworkProxy({ mode: 'direct' })
+    await vi.advanceTimersByTimeAsync(500)
+    finish(true)
+    await previous
+    expect(useNetworkStore.getState().connectivity).toBe('unreachable')
+  })
   beforeEach(() => {
     vi.useFakeTimers()
   })

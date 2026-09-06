@@ -72,6 +72,7 @@ const validateDomainPattern = (pattern: string, allowFlexibleWildcard: boolean):
 
 const normalizePolicy = (policy: NotebookNetworkPolicy): NotebookNetworkPolicy => ({
   allowedDomains: normalizeDomains(policy.allowedDomains),
+  ...(policy.askDomains ? { askDomains: normalizeDomains(policy.askDomains) } : {}),
   deniedDomains: normalizeDomains(policy.deniedDomains),
   ...(policy.deniedDomainReasons
     ? {
@@ -91,6 +92,7 @@ const createRuntimeConfig = (
   const arch = architectureDirectory(architecture)
   const policy = normalizePolicy(options.policy)
   for (const domain of policy.allowedDomains) validateDomainPattern(domain, false)
+  for (const domain of policy.askDomains ?? []) validateDomainPattern(domain, false)
   for (const domain of policy.deniedDomains) validateDomainPattern(domain, true)
   const resourceRoot = options.resources.root
   const installationId = WINDOWS_INSTALLATION_ID
@@ -103,6 +105,7 @@ const createRuntimeConfig = (
   )
   return {
     allowedDomains: [...policy.allowedDomains],
+    ...(policy.askDomains ? { askDomains: [...policy.askDomains] } : {}),
     deniedDomains: [...policy.deniedDomains],
     ...(policy.deniedDomainReasons
       ? { deniedDomainReasons: { ...policy.deniedDomainReasons } }

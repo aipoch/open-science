@@ -1854,7 +1854,6 @@
     "The app could not write to the log file during its most recent attempt.": "應用程式在最近一次嘗試中無法寫入日誌檔案。",
     "Not compatible with the active agent framework.": "與目前的智能體框架不相容。",
     "Not configured": "未設定",
-    "Not configured — packages come from the public hosts (conda.anaconda.org, pypi.org)": "未設定 —— 套件來自公共來源（conda.anaconda.org、pypi.org）",
     "Not importable": "無法匯入",
     "Not installed": "未安裝",
     "Not probed": "未探測",
@@ -1986,7 +1985,6 @@
     "In session context": "已加入目前工作階段上下文",
     "Open PDF context {{name}}": "開啟 PDF 上下文 {{name}}",
     "Leave blank to use public certificate authorities. Otherwise, choose a complete PEM bundle with public and corporate roots; Notebook sessions and package downloads will trust it.": "留空將使用公開憑證授權單位。否則，請選擇包含公開根憑證與企業根憑證的完整 PEM 憑證包；Notebook 工作階段和套件下載都會信任它。",
-    "Custom CA bundle configured": "已設定自訂 CA 憑證包",
     "PHASE {{number}}": "階段 {{number}}",
     "PINNED": "已釘選",
     "Package": "套件",
@@ -4558,6 +4556,17 @@
     "Direct PDF link": "PDF 直接連結",
     "arXiv identifier required": "需要 arXiv 識別碼",
     "Latest PDF via arXiv identifier. No API key required. The file is checked when downloaded.": "透過 arXiv 識別碼取得最新 PDF。無需 API 金鑰，下載時會驗證檔案。",
-    "Add a DOI, PMID, PMCID or arXiv identifier to find a matching full-text PDF.": "新增 DOI、PMID、PMCID 或 arXiv 識別碼以尋找相符的全文 PDF。"
+    "Add a DOI, PMID, PMCID or arXiv identifier to find a matching full-text PDF.": "新增 DOI、PMID、PMCID 或 arXiv 識別碼以尋找相符的全文 PDF。",
+    "Choose a proxy mode.": "請選擇代理模式。",
+    "Choose System, Manual, or Direct.": "請選擇系統、手動或直接連線。",
+    "Enter a proxy server URL, for example http://127.0.0.1:1086.": "請輸入代理伺服器 URL，例如 http://127.0.0.1:1086。",
+    "Use an http, https, socks, socks4, or socks5 proxy URL.": "請使用 http、https、socks、socks4 或 socks5 代理 URL。",
+    "Enter a proxy URL with a host name or IP address.": "請輸入包含主機名稱或 IP 位址的代理 URL。",
+    "Proxy URLs with embedded usernames or passwords are not supported.": "不支援包含使用者名稱或密碼的代理 URL。",
+    "Enter only the proxy scheme, host, and optional port.": "請僅輸入代理通訊協定、主機及選填的連接埠。",
+    "Enter a complete proxy URL, for example http://127.0.0.1:1086.": "請輸入完整的代理 URL，例如 http://127.0.0.1:1086。",
+    "Automatic mirror selection": "自動選擇鏡像",
+    "Automatic mirror selection · Custom CA bundle configured": "自動選擇鏡像 · 已設定自訂 CA 憑證組合",
+    "Turning off a built-in domain removes automatic access. Exact hostnames in Allowed domains remain allowed.": "關閉內建網域會取消自動存取權限。「允許的網域」中的精確主機名稱仍可存取。"
   }
 }
