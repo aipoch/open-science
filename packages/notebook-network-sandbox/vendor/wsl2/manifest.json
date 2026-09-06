@@ -1,0 +1,9 @@
+{
+  "schemaVersion": 1,
+  "appVersion": "0.25.1",
+  "assets": [
+    "wsl2-execution-wrapper-v1",
+    "wsl2-exact-cleanup-v1",
+    "wsl2-network-bridge-v1"
+  ]
+}

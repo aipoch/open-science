@@ -122,6 +122,7 @@ export class AcpProviderSessionAdopter {
           skillImport: capability.descriptor.capabilities.includes('skill-import')
         },
         role: capability.descriptor.role,
+        shellRuntimeAgentContract: capability.shellRuntimeAgentContract,
         backendSystemPromptAppends: startupBackend.prompt.systemPromptAppends,
         extraSystemPromptAppends: [
           handoffAppend,

@@ -132,11 +132,13 @@ const WorkspacePage = ({
   const pendingLiteratureReviewPrefill = useNavigationStore(
     (state) => state.pendingLiteratureReviewPrefill
   )
+  const pendingWslSupportPrefill = useNavigationStore((state) => state.pendingWslSupportPrefill)
   const pendingArtifactMention = useNavigationStore((state) => state.pendingArtifactMention)
   const consumeCustomizePrefill = useNavigationStore((state) => state.consumeCustomizePrefill)
   const consumeLiteratureReviewPrefill = useNavigationStore(
     (state) => state.consumeLiteratureReviewPrefill
   )
+  const consumeWslSupportPrefill = useNavigationStore((state) => state.consumeWslSupportPrefill)
   const consumeArtifactMention = useNavigationStore((state) => state.consumeArtifactMention)
   const setArtifactMentionAvailability = useNavigationStore(
     (state) => state.setArtifactMentionAvailability
@@ -477,7 +479,9 @@ const WorkspacePage = ({
     newConversationDraftKey,
     activeProjectId,
     pendingCustomizePrefill,
+    pendingWslSupportPrefill,
     onCustomizePrefillApplied: sessionController.actions.resetNewConversationSpecialist,
+    onWslSupportPrefillApplied: sessionController.actions.resetNewConversationSpecialist,
     historyEntries: composerHistoryEntries,
     activeSession,
     historyPolicy: composerHistoryPolicy,
@@ -842,6 +846,10 @@ const WorkspacePage = ({
   useEffect(() => {
     if (pendingCustomizePrefill !== undefined) consumeCustomizePrefill()
   }, [pendingCustomizePrefill, consumeCustomizePrefill])
+
+  useEffect(() => {
+    if (pendingWslSupportPrefill !== undefined) consumeWslSupportPrefill()
+  }, [pendingWslSupportPrefill, consumeWslSupportPrefill])
 
   // The first agent-side notebook call reveals the new notebook entry and its preview together.
   useEffect(() => {

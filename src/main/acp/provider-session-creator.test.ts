@@ -3,6 +3,8 @@ import { resolve } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 
 import type { SessionPermissionProfileState } from '../../shared/permission-profiles'
+import type { ShellRuntimeAgentContract } from '../notebook/shell-runtime'
+import { shellRuntimeAgentContract } from '../notebook/shell-runtime'
 import {
   claudeCodeFramework,
   codexFramework,
@@ -57,6 +59,7 @@ const createHarness = (options: {
   projectAgentContextError?: Error
   specialistIdentity?: { append: string; prefix: string }
   capabilityMcpServers?: McpServer[]
+  shellRuntimeAgentContract?: ShellRuntimeAgentContract
 }): CreatorHarness => {
   const order = options.order ?? []
   const sessionSetupAppends: string[][] = []
@@ -116,6 +119,9 @@ const createHarness = (options: {
     return {
       mcpServers,
       descriptor,
+      ...(options.shellRuntimeAgentContract
+        ? { shellRuntimeAgentContract: options.shellRuntimeAgentContract }
+        : {}),
       includeFrameworkMcpServers: (servers: readonly McpServer[]) => ({
         mcpServers: [...mcpServers, ...servers],
         descriptor: {
@@ -255,6 +261,25 @@ describe('AcpProviderSessionCreator', () => {
       'event callback',
       'state callback'
     ])
+  })
+
+  it('presents the captured WSL2 binding before the first provider turn', async () => {
+    const harness = createHarness({
+      descriptorCapabilities: ['notebook'],
+      shellRuntimeAgentContract: shellRuntimeAgentContract({
+        kind: 'wsl2-bash',
+        profileId: 'private-profile',
+        distro: 'Ubuntu-22.04',
+        user: 'researcher'
+      })
+    })
+
+    await harness.creator.create({ cwd: 'C:\\workspace', projectId: 'project-a' })
+
+    const setupText = harness.sessionSetupAppends[0].join('\n')
+    expect(setupText).toContain('Notebook `bash_execute` is bound to WSL2 Bash')
+    expect(setupText).toContain('host and workspace path are Windows')
+    expect(setupText).not.toMatch(/private-profile|Ubuntu-22\.04|researcher/)
   })
 
   it('disposes the provisional Session and releases capabilities when configuration fails', async () => {

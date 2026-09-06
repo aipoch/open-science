@@ -4,8 +4,16 @@ import { fileViewerRenderers } from '@file-viewer/vite-plugin'
 import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
 
-export default defineConfig({
+export default defineConfig(({ command }) => ({
   main: {
+    define: {
+      __OPEN_SCIENCE_WSL2_BASH_PREVIEW__:
+        process.env.OPEN_SCIENCE_BUILD_WSL2_BASH_PREVIEW === '0' ? 'false' : 'true',
+      __OPEN_SCIENCE_WSL2_BASH_DEVELOPMENT_PREVIEW__:
+        command === 'serve' && process.env.OPEN_SCIENCE_DEV_WSL2_BASH_PREVIEW === '1'
+          ? 'true'
+          : 'false'
+    },
     build: {
       // This workspace package is TypeScript source, not a separately built runtime dependency.
       // Bundle it into the Electron main process so development and packaged builds never ask
@@ -57,4 +65,4 @@ export default defineConfig({
       }
     }
   }
-})
+}))

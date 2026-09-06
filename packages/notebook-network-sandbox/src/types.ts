@@ -25,6 +25,27 @@ export type NotebookFilesystemPolicy = Readonly<{
   deniedWriteRoots: readonly string[]
 }>
 
+export type NotebookSandboxTarget =
+  | Readonly<{ kind: 'native' }>
+  | Readonly<{
+      kind: 'wsl2'
+      profileId: string
+      distro: string
+      user: string
+    }>
+
+export type NotebookSandboxCleanupReason = 'exit' | 'cancel' | 'timeout' | 'spawn-failed'
+
+export type NotebookSandboxCleanupResult = Readonly<{
+  processesTerminated: boolean
+  networkClosed: boolean
+  temporaryResourcesRemoved: boolean
+}>
+
+export type NotebookSandboxProcessOutcome = Readonly<{
+  processesTerminated: boolean
+}>
+
 export type NotebookNetworkAccessRequest = Readonly<{
   host: string
   port?: number
@@ -46,6 +67,7 @@ export type NotebookNetworkSandboxStatus =
   | Readonly<{ kind: 'error'; message: string }>
 
 export type NotebookSandboxCommand = Readonly<{
+  target?: NotebookSandboxTarget
   command: string
   // Protected Windows launches use the exact process argv so PowerShell never has to initialize the
   // AppContainer's working drive before the requested process can start.
@@ -53,10 +75,13 @@ export type NotebookSandboxCommand = Readonly<{
   args?: readonly string[]
   cwd: string
   env?: NodeJS.ProcessEnv
+  pathEnvironment?: NodeJS.ProcessEnv
   shell?: string | Readonly<{ kind: 'powershell' | 'cmd'; path: string }>
   signal?: AbortSignal
   localRpcSocketPath?: string
   inheritedFileDescriptorCount?: number
+  // Opt-in ownership for short-lived workers; ordinary persistent kernels keep their current path.
+  superviseProcessTree?: boolean
   filesystem?: NotebookFilesystemPolicy
   onNetworkAccessRequest: NotebookNetworkDecisionHandler
 }>
@@ -64,11 +89,15 @@ export type NotebookSandboxCommand = Readonly<{
 export type NotebookSandboxedProcess = Readonly<{
   argv: readonly string[]
   env: NodeJS.ProcessEnv
-  /** The native host owns a kill-on-close Job Object covering every workload descendant. */
-  windowsJobObject?: true
+  // Only launchers backed by a kill-on-close Job Object may provide this proof check.
+  confirmProcessTreeTermination?: () => Promise<boolean>
+  beginSpawn?: () => Readonly<{ started: () => void; notStarted: () => void }>
   annotateStderr: (stderr: string) => string
   resetNetworkConnections: () => void
-  cleanup: () => void
+  cleanup: (
+    reason: NotebookSandboxCleanupReason,
+    processOutcome: NotebookSandboxProcessOutcome
+  ) => Promise<NotebookSandboxCleanupResult>
 }>
 
 export type NotebookNetworkSandboxOptions = Readonly<{

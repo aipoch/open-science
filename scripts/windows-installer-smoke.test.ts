@@ -1,19 +1,25 @@
 import { createHash } from 'node:crypto'
 import { EventEmitter } from 'node:events'
-import { mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import { describe, expect, it, vi } from 'vitest'
+
+import { WSL2_BASH_PREVIEW_MANIFEST } from '../src/shared/wsl2-preview-manifest'
 
 import {
   assertPackagedResources,
   assertDatabaseDowngradeBlocked,
   authenticatePackagedAppEndpoint,
   assertUpgradeProfilePreserved,
+  assertWsl2RestartCleanupBlocked,
   buildSmokePlan,
+  cleanupOwnedSmokeRegistrations,
+  cleanupSmokeRegistrations,
   cleanupSmokeRoot,
   createUpgradeProfileGuard,
+  createWslCommandTempEvidence,
   executeSmokePlan,
   fetchWithTimeout,
   findSetupInstaller,
@@ -28,6 +34,7 @@ import {
   readPackagedAppConfigRoot,
   releasedMigrationCountForPhase,
   requestPackagedAppShutdown,
+  removeWslCommandTempEvidence,
   runProcess,
   terminateDirectoryProcesses,
   terminateProcessTree,
@@ -79,7 +86,11 @@ describe('Windows installer smoke plan', () => {
   it('parses an optional positive released migration count', () => {
     expect(parseArguments(['--installer-dir', 'dist'])).toMatchObject({
       artifactRpcContract: 'reservation',
-      expectedMigrationCount: undefined
+      expectedMigrationCount: undefined,
+      retainInstallation: false
+    })
+    expect(parseArguments(['--installer-dir', 'dist', '--retain-installation'])).toMatchObject({
+      retainInstallation: true
     })
     expect(
       parseArguments([
@@ -118,6 +129,69 @@ describe('Windows installer smoke plan', () => {
     expect(() => parseArguments(['--installer-dir', 'dist', '--scenario', 'unsupported'])).toThrow(
       /Unsupported Windows installer smoke scenario/
     )
+  })
+
+  it('accepts a complete packaged WSL2 restart certification profile only', () => {
+    expect(
+      parseArguments([
+        '--installer-dir',
+        'dist',
+        '--wsl-certification-distro',
+        'Ubuntu-22.04',
+        '--wsl-certification-user',
+        'researcher'
+      ])
+    ).toMatchObject({
+      wslCertificationProfile: {
+        profileId: 'packaged-preview-v1',
+        distro: 'Ubuntu-22.04',
+        user: 'researcher'
+      }
+    })
+    expect(() =>
+      parseArguments(['--installer-dir', 'dist', '--wsl-certification-distro', 'Ubuntu-22.04'])
+    ).toThrow(/must be provided together/)
+  })
+
+  it('creates exact valid and malformed command-temp ownership evidence', async () => {
+    const ownerRoot = await mkdtemp(join(tmpdir(), 'open-science-wsl-restart-evidence-'))
+    const profile = {
+      profileId: 'packaged-preview-v1',
+      distro: 'Ubuntu-22.04',
+      user: 'researcher'
+    }
+    const valid = await createWslCommandTempEvidence({ ownerRoot, profile, malformed: false })
+    expect(await readFile(valid.receipt, 'utf8')).toBe(
+      `v1 command-${valid.id} wsl2 packaged-preview-v1 Ubuntu-22.04 researcher\n`
+    )
+    expect(await readFile(join(valid.root, 'left-by-prior-process'), 'utf8')).toBe('certification')
+
+    const malformed = await createWslCommandTempEvidence({
+      ownerRoot,
+      profile,
+      malformed: true
+    })
+    expect(await readFile(malformed.receipt, 'utf8')).toContain('malformed')
+
+    await removeWslCommandTempEvidence(valid)
+    await removeWslCommandTempEvidence(malformed)
+    await rm(ownerRoot, { recursive: true, force: true })
+  })
+
+  it('accepts malformed receipt startup only when the packaged app fails closed', () => {
+    expect(() =>
+      assertWsl2RestartCleanupBlocked({
+        becameHealthy: false,
+        output:
+          'notebook-network-sandbox-initialize completed\nsandbox process preparation failed\napplication startup failed'
+      })
+    ).not.toThrow()
+    expect(() =>
+      assertWsl2RestartCleanupBlocked({ becameHealthy: true, output: 'healthy' })
+    ).toThrow(/unexpectedly became healthy/)
+    expect(() =>
+      assertWsl2RestartCleanupBlocked({ becameHealthy: false, output: 'unrelated failure' })
+    ).toThrow(/sandbox preparation/)
   })
 
   it('accepts only explicit packaged Artifact RPC contracts', () => {
@@ -268,7 +342,7 @@ describe('Windows installer smoke plan', () => {
     ).toEqual([undefined, 4, undefined, 4])
   })
 
-  it('drills upgrade, process-lock rollback without old-app health, and final restart', async () => {
+  it('restarts current before rollback and restores current after the rollback drill', async () => {
     const plan = buildSmokePlan({
       currentInstaller: 'current.exe',
       previousInstaller: 'previous.exe'
@@ -280,6 +354,7 @@ describe('Windows installer smoke plan', () => {
     expect(runCycle.mock.calls).toEqual([
       [{ installer: 'previous.exe', phase: 'previous' }],
       [{ installer: 'current.exe', phase: 'current', runningInstaller: 'previous.exe' }],
+      [{ installer: 'current.exe', phase: 'restart', reuseInstallation: true }],
       [
         {
           installer: 'previous.exe',
@@ -288,7 +363,16 @@ describe('Windows installer smoke plan', () => {
           launchInstalledApp: false
         }
       ],
-      [{ installer: 'current.exe', phase: 'restart' }]
+      [{ installer: 'current.exe', phase: 'current' }]
+    ])
+  })
+
+  it('installs, initializes, redetects, and restarts a current-only packaged app', () => {
+    expect(
+      buildSmokePlan({ currentInstaller: 'current.exe', previousInstaller: undefined })
+    ).toEqual([
+      { installer: 'current.exe', phase: 'current' },
+      { installer: 'current.exe', phase: 'restart', reuseInstallation: true }
     ])
   })
 
@@ -637,6 +721,7 @@ Open Science Web: http://127.0.0.1:52378/?token=iUFHGSACwBz2k1kSJfPixHbclDywVg0C
       join(installDirectory, 'open-science.exe'),
       join(installDirectory, 'resources', 'app.asar'),
       join(installDirectory, 'resources', 'micromamba.exe'),
+      join(installDirectory, 'resources', 'notebook-network-sandbox', 'wsl2', 'manifest.json'),
       join(
         installDirectory,
         'resources',
@@ -657,10 +742,37 @@ Open Science Web: http://127.0.0.1:52378/?token=iUFHGSACwBz2k1kSJfPixHbclDywVg0C
       writeFile(join(installDirectory, 'open-science.exe'), ''),
       writeFile(join(resources, 'app.asar'), ''),
       writeFile(join(resources, 'micromamba.exe'), ''),
+      mkdir(join(resources, 'notebook-network-sandbox', 'wsl2'), { recursive: true }).then(() =>
+        writeFile(
+          join(resources, 'notebook-network-sandbox', 'wsl2', 'manifest.json'),
+          JSON.stringify(WSL2_BASH_PREVIEW_MANIFEST)
+        )
+      ),
       writeFile(join(prismaClient, 'query_engine-windows.dll.node'), '')
     ])
 
-    await expect(assertPackagedResources(installDirectory)).resolves.toBeUndefined()
+    await expect(
+      assertPackagedResources(installDirectory, WSL2_BASH_PREVIEW_MANIFEST.appVersion)
+    ).resolves.toBeUndefined()
+    await writeFile(
+      join(resources, 'notebook-network-sandbox', 'wsl2', 'manifest.json'),
+      JSON.stringify({
+        ...WSL2_BASH_PREVIEW_MANIFEST,
+        assets: [...WSL2_BASH_PREVIEW_MANIFEST.assets, 'uncertified-extra']
+      })
+    )
+    await expect(
+      assertPackagedResources(installDirectory, WSL2_BASH_PREVIEW_MANIFEST.appVersion)
+    ).rejects.toThrow(/missing or version-mismatched/)
+    await rm(join(resources, 'notebook-network-sandbox'), { recursive: true, force: true })
+    await expect(
+      assertPackagedResources(installDirectory, '0.23.0', { certifyWslPreview: false })
+    ).resolves.toBeUndefined()
+    await mkdir(join(resources, 'notebook-network-sandbox', 'wsl2'), { recursive: true })
+    await writeFile(
+      join(resources, 'notebook-network-sandbox', 'wsl2', 'manifest.json'),
+      JSON.stringify(WSL2_BASH_PREVIEW_MANIFEST)
+    )
     await writeFile(join(prismaClient, 'libquery_engine-debian-openssl-3.0.x.so.node'), '')
     await expect(assertPackagedResources(installDirectory)).rejects.toThrow(
       /exactly one Prisma engine/
@@ -700,5 +812,117 @@ Open Science Web: http://127.0.0.1:52378/?token=iUFHGSACwBz2k1kSJfPixHbclDywVg0C
     )
 
     warning.mockRestore()
+  })
+
+  it('removes only stale registrations owned by the exact failed smoke root', async () => {
+    const root = 'C:\\Temp\\open-science-installer-smoke-owned'
+    const uninstall = join(root, 'installed app 程序', 'Uninstall open-science.exe')
+    const install = join(root, 'installed app 程序')
+    const run = vi.fn(async (_executable: string, args: string[]) => {
+      if (args[0] === 'delete') return { code: 0, stdout: '', stderr: '' }
+      const output = args[1].includes('CurrentVersion')
+        ? `DisplayName    REG_SZ    Open Science\r\nDisplayVersion    REG_SZ    0.25.1\r\nInstallLocation    REG_SZ    ${install}\r\nUninstallString    REG_SZ    "${uninstall}"\r\nQuietUninstallString    REG_SZ    "${uninstall}" /S\r\n`
+        : `InstallLocation    REG_SZ    ${install}\r\n`
+      return { code: 0, stdout: output, stderr: '' }
+    })
+
+    await cleanupOwnedSmokeRegistrations(root, '0.25.1', { run })
+
+    expect(run.mock.calls.filter(([, args]) => args[0] === 'delete')).toEqual([
+      [
+        'reg.exe',
+        [
+          'delete',
+          'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\a65c5229-0b29-5716-a0fe-d8755e62f3ca',
+          '/f'
+        ]
+      ],
+      ['reg.exe', ['delete', 'HKCU\\Software\\a65c5229-0b29-5716-a0fe-d8755e62f3ca', '/f']]
+    ])
+  })
+
+  it('preserves unrelated installer registrations', async () => {
+    const root = 'C:\\Temp\\open-science-installer-smoke-owned'
+    const unrelated = 'C:\\Program Files\\Open Science\\Uninstall open-science.exe'
+    const run = vi.fn(async (_executable: string, args: string[]) => {
+      if (args[0] === 'delete') throw new Error('unrelated registration was deleted')
+      const output = args[1].includes('CurrentVersion')
+        ? `DisplayName    REG_SZ    Open Science\r\nDisplayVersion    REG_SZ    0.25.1\r\nInstallLocation    REG_SZ    \r\nUninstallString    REG_SZ    "${unrelated}"\r\nQuietUninstallString    REG_SZ    "${unrelated}" /S\r\n`
+        : 'InstallLocation    REG_SZ    C:\\Program Files\\Open Science\r\n'
+      return { code: 0, stdout: output, stderr: '' }
+    })
+
+    await cleanupOwnedSmokeRegistrations(root, '0.25.1', { run })
+
+    expect(run.mock.calls.filter(([, args]) => args[0] === 'delete')).toEqual([])
+  })
+
+  it('removes the observed owned uninstall registration with an empty install location', async () => {
+    const root = 'C:\\Temp\\open-science-installer-smoke-owned'
+    const uninstall = join(root, 'installed app 程序', 'Uninstall open-science.exe')
+    const run = vi.fn(async (_executable: string, args: string[]) => {
+      if (args[0] === 'delete') return { code: 0, stdout: '', stderr: '' }
+      if (!args[1].includes('CurrentVersion')) return { code: 1, stdout: '', stderr: '' }
+      return {
+        code: 0,
+        stdout: `DisplayName    REG_SZ    Open Science\r\nDisplayVersion    REG_SZ    0.25.1\r\nInstallLocation    REG_SZ    \r\nUninstallString    REG_SZ    "${uninstall}"\r\nQuietUninstallString    REG_SZ    "${uninstall}" /S\r\n`,
+        stderr: ''
+      }
+    })
+
+    await cleanupOwnedSmokeRegistrations(root, '0.25.1', { run })
+
+    expect(run.mock.calls.filter(([, args]) => args[0] === 'delete')).toEqual([
+      [
+        'reg.exe',
+        [
+          'delete',
+          'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\a65c5229-0b29-5716-a0fe-d8755e62f3ca',
+          '/f'
+        ]
+      ]
+    ])
+  })
+
+  it('preserves an incomplete registration even when one path is under the smoke root', async () => {
+    const root = 'C:\\Temp\\open-science-installer-smoke-owned'
+    const uninstall = join(root, 'installed app 程序', 'Uninstall open-science.exe')
+    const run = vi.fn(async (_executable: string, args: string[]) => {
+      if (args[0] === 'delete') throw new Error('incomplete registration was deleted')
+      if (!args[1].includes('CurrentVersion')) return { code: 1, stdout: '', stderr: '' }
+      return {
+        code: 0,
+        stdout: `DisplayName    REG_SZ    Open Science\r\nDisplayVersion    REG_SZ    0.25.1\r\nInstallLocation    REG_SZ    \r\nUninstallString    REG_SZ    "${uninstall}"\r\n`,
+        stderr: ''
+      }
+    })
+
+    await cleanupOwnedSmokeRegistrations(root, '0.25.1', { run })
+
+    expect(run.mock.calls.filter(([, args]) => args[0] === 'delete')).toEqual([])
+  })
+
+  it('preserves the primary smoke failure when registration cleanup also fails', async () => {
+    const cleanup = vi.fn().mockRejectedValue(new Error('registry unavailable'))
+    const warning = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+
+    await expect(
+      cleanupSmokeRegistrations('safe-smoke-root', '0.25.1', new Error('startup failed'), cleanup)
+    ).resolves.toBeUndefined()
+    expect(warning).toHaveBeenCalledWith(expect.stringContaining('registry unavailable'))
+    await expect(
+      cleanupSmokeRegistrations('safe-smoke-root', '0.25.1', undefined, cleanup)
+    ).rejects.toThrow('registry unavailable')
+
+    warning.mockRestore()
+  })
+
+  it('rejects registration cleanup outside a generated installer smoke root', async () => {
+    const run = vi.fn()
+
+    await expect(
+      cleanupOwnedSmokeRegistrations('C:\\Temp\\unrelated', '0.25.1', { run })
+    ).rejects.toThrow('unexpected smoke root')
+    expect(run).not.toHaveBeenCalled()
   })
 })

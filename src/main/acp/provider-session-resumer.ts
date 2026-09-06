@@ -434,6 +434,7 @@ export class AcpProviderSessionResumer {
         memoryEnabled: request.memoryEnabled
       })
       const capabilityDescriptor = capability.descriptor
+      const shellRuntimeAgentContract = capability.shellRuntimeAgentContract
       const existingAggregate = this.deps.registry.lookup(request.sessionId)?.aggregate
       let specialistBindingRevision = existingAggregate?.specialistBindingRevision() ?? 0
       let specialistId = request.specialistId ?? existingAggregate?.snapshot().specialistId
@@ -459,6 +460,7 @@ export class AcpProviderSessionResumer {
               skillImport: capabilityDescriptor.capabilities.includes('skill-import')
             },
             role: capabilityDescriptor.role,
+            shellRuntimeAgentContract,
             backendSystemPromptAppends: currentBackend.prompt.systemPromptAppends,
             extraSystemPromptAppends: [projectContextAppend, identity?.append].filter(
               (append): append is string => Boolean(append)

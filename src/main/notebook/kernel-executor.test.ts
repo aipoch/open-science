@@ -489,7 +489,11 @@ gate('NotebookKernelExecutor (fake loop)', () => {
     cwdDir = await makeDefaultEnvCwd('os-kernel-network-sandbox-')
     const request = baseRequest(cwdDir)
     const requestController = new AbortController()
-    const cleanup = vi.fn()
+    const cleanup = vi.fn().mockResolvedValue({
+      processesTerminated: true,
+      networkClosed: true,
+      temporaryResourcesRemoved: true
+    })
     const endExecution = vi.fn()
     const beginExecution = vi.fn(() => endExecution)
     const annotateStderr = vi.fn(
@@ -681,8 +685,13 @@ gate('NotebookKernelExecutor (fake loop)', () => {
       ].join('\n')
     )
     let cleaned = false
-    const cleanup = vi.fn(() => {
+    const cleanup = vi.fn(async () => {
       cleaned = true
+      return {
+        processesTerminated: true,
+        networkClosed: true,
+        temporaryResourcesRemoved: true
+      }
     })
     const annotateStderr = vi.fn((stderr: string) =>
       cleaned ? stderr : `${stderr}<sandbox_violations>hidden path</sandbox_violations>`
@@ -3514,7 +3523,361 @@ describe('NotebookKernelExecutor shutdown reaping', () => {
 
 const REPL_LOOP = join(__dirname, '../../../resources/notebook/repl_loop.js')
 
+const delayedSandboxCleanup = (
+  options: { executable?: string; args?: string[] } = {}
+): {
+  processSandbox: NotebookProcessSandbox
+  cleanup: ReturnType<typeof vi.fn>
+  release: () => void
+} => {
+  let release!: () => void
+  const gate = new Promise<void>((resolve) => {
+    release = resolve
+  })
+  const cleanup = vi.fn(async (_reason, processOutcome: { processesTerminated: boolean }) => {
+    await gate
+    return {
+      processesTerminated: processOutcome.processesTerminated,
+      networkClosed: true,
+      temporaryResourcesRemoved: true
+    }
+  })
+  return {
+    processSandbox: {
+      wrap: vi.fn(async (invocation) => ({
+        executable: options.executable ?? invocation.executable,
+        args: options.args ?? invocation.args,
+        env: invocation.env,
+        annotateStderr: (stderr: string) => stderr,
+        cleanup
+      }))
+    },
+    cleanup,
+    release
+  }
+}
+
 describe('NotebookKernelExecutor repl kind (real repl_loop.js)', () => {
+  it('registers POSIX kernel ownership before reporting an incomplete post-exit reap', async () => {
+    cwdDir = await mkdtemp(join(tmpdir(), 'os-kernel-repl-owned-cleanup-'))
+    let releaseReaping: (() => void) | undefined
+    const gate = new Promise<void>((resolve) => {
+      releaseReaping = resolve
+    })
+    const registerOwnedProcessGroup = vi.fn()
+    const terminateTree = vi.fn(async () => {
+      await gate
+      return { reaped: false }
+    })
+    const sandbox = delayedSandboxCleanup()
+    const executor = new NotebookKernelExecutor({
+      replLoopPath: REPL_LOOP,
+      platform: 'linux',
+      processSandbox: sandbox.processSandbox,
+      registerOwnedProcessGroup,
+      terminateTree
+    })
+    let completed = false
+
+    try {
+      const execution = executor
+        .execute({
+          ...baseRequest(cwdDir),
+          code: 'process.exit(7)',
+          kind: 'repl',
+          sessionId: 'session-1',
+          projectId: 'project-1'
+        })
+        .then((result) => {
+          completed = true
+          return result
+        })
+
+      await vi.waitFor(() => expect(registerOwnedProcessGroup).toHaveBeenCalledOnce())
+      await vi.waitFor(() => expect(terminateTree).toHaveBeenCalledOnce())
+      expect(completed).toBe(false)
+      releaseReaping?.()
+      await vi.waitFor(() =>
+        expect(sandbox.cleanup).toHaveBeenCalledWith('exit', { processesTerminated: false })
+      )
+      expect(completed).toBe(false)
+      sandbox.release()
+      await expect(execution).resolves.toMatchObject({ status: 'failed' })
+    } finally {
+      releaseReaping?.()
+      sandbox.release()
+      await executor.shutdown()
+    }
+  })
+
+  it.runIf(process.platform !== 'win32')(
+    'reaps a kernel helper after its leader exits',
+    async () => {
+      cwdDir = await mkdtemp(join(tmpdir(), 'os-kernel-repl-orphan-'))
+      const pidFile = join(cwdDir, 'helper.pid')
+      const executor = new NotebookKernelExecutor({ replLoopPath: REPL_LOOP, platform: 'linux' })
+      let helperPid: number | undefined
+
+      try {
+        await executor.execute({
+          ...baseRequest(cwdDir),
+          code: [
+            "const { spawn } = require('node:child_process')",
+            "const fs = require('node:fs')",
+            `const helper = spawn(process.execPath, ['-e', ${JSON.stringify("process.on('SIGTERM',()=>{});setInterval(()=>{},1000)")}], { stdio: 'ignore', detached: true })`,
+            `fs.writeFileSync(${JSON.stringify(pidFile)}, String(helper.pid))`,
+            'setTimeout(() => process.exit(0), 25)',
+            "return 'scheduled'"
+          ].join(';'),
+          kind: 'repl'
+        })
+        await vi.waitFor(() => expect(existsSync(pidFile)).toBe(true))
+        helperPid = Number(await readFile(pidFile, 'utf8'))
+        await vi.waitFor(() => expect(procFor(executor, 'repl')).toBeUndefined())
+
+        await expect(executor.shutdown()).resolves.toEqual({ reaped: true })
+        await vi.waitFor(() => expect(() => process.kill(helperPid as number, 0)).toThrow())
+      } finally {
+        await executor.shutdown()
+        if (helperPid) {
+          try {
+            process.kill(helperPid, 'SIGKILL')
+          } catch {
+            // Expected once the owned kernel group has been reaped.
+          }
+        }
+      }
+    },
+    15_000
+  )
+
+  it('waits for sandbox cleanup before an unexpected exit completes its caller', async () => {
+    cwdDir = await mkdtemp(join(tmpdir(), 'os-kernel-repl-exit-cleanup-'))
+    const sandbox = delayedSandboxCleanup()
+    const executor = new NotebookKernelExecutor({
+      replLoopPath: REPL_LOOP,
+      processSandbox: sandbox.processSandbox
+    })
+    let completed = false
+
+    try {
+      const execution = executor
+        .execute({
+          ...baseRequest(cwdDir),
+          code: 'process.exit(7)',
+          kind: 'repl',
+          sessionId: 'session-1',
+          projectId: 'project-1'
+        })
+        .then((result) => {
+          completed = true
+          return result
+        })
+
+      await vi.waitFor(() =>
+        expect(sandbox.cleanup).toHaveBeenCalledWith('exit', {
+          processesTerminated: process.platform !== 'win32'
+        })
+      )
+      expect(completed).toBe(false)
+      sandbox.release()
+      await expect(execution).resolves.toMatchObject({ status: 'failed' })
+      expect(sandbox.cleanup).toHaveBeenCalledOnce()
+    } finally {
+      sandbox.release()
+      await executor.shutdown()
+    }
+  })
+
+  it('waits for sandbox cleanup before spawn failure completes its caller', async () => {
+    cwdDir = await mkdtemp(join(tmpdir(), 'os-kernel-repl-spawn-cleanup-'))
+    const sandbox = delayedSandboxCleanup({
+      executable: join(cwdDir, 'missing-kernel-executable')
+    })
+    const executor = new NotebookKernelExecutor({
+      replLoopPath: REPL_LOOP,
+      processSandbox: sandbox.processSandbox
+    })
+    let completed = false
+
+    try {
+      const execution = executor
+        .execute({
+          ...baseRequest(cwdDir),
+          code: 'return 1',
+          kind: 'repl',
+          sessionId: 'session-1',
+          projectId: 'project-1'
+        })
+        .then((result) => {
+          completed = true
+          return result
+        })
+
+      await vi.waitFor(() =>
+        expect(sandbox.cleanup).toHaveBeenCalledWith('spawn-failed', {
+          processesTerminated: true
+        })
+      )
+      expect(completed).toBe(false)
+      sandbox.release()
+      await expect(execution).resolves.toMatchObject({ status: 'failed' })
+      expect(sandbox.cleanup).toHaveBeenCalledOnce()
+    } finally {
+      sandbox.release()
+      await executor.shutdown()
+    }
+  })
+
+  it('waits for exactly one sandbox cleanup when spawn throws synchronously', async () => {
+    cwdDir = await mkdtemp(join(tmpdir(), 'os-kernel-repl-sync-spawn-cleanup-'))
+    const sandbox = delayedSandboxCleanup({ args: ['\0'] })
+    const executor = new NotebookKernelExecutor({
+      replLoopPath: REPL_LOOP,
+      processSandbox: sandbox.processSandbox
+    })
+    let completed = false
+
+    try {
+      const execution = executor
+        .execute({
+          ...baseRequest(cwdDir),
+          code: 'return 1',
+          kind: 'repl',
+          sessionId: 'session-1',
+          projectId: 'project-1'
+        })
+        .then((result) => {
+          completed = true
+          return result
+        })
+
+      await vi.waitFor(() =>
+        expect(sandbox.cleanup).toHaveBeenCalledWith('spawn-failed', {
+          processesTerminated: false
+        })
+      )
+      expect(completed).toBe(false)
+      sandbox.release()
+
+      const result = await execution
+      expect(result).toMatchObject({ status: 'failed', kernelDispatched: false })
+      expect(result.stderr).toContain('null bytes')
+      expect(sandbox.cleanup).toHaveBeenCalledOnce()
+    } finally {
+      sandbox.release()
+      await executor.shutdown()
+    }
+  })
+
+  it('waits for sandbox cleanup before terminate completes', async () => {
+    cwdDir = await mkdtemp(join(tmpdir(), 'os-kernel-repl-terminate-cleanup-'))
+    const sandbox = delayedSandboxCleanup()
+    const executor = new NotebookKernelExecutor({
+      replLoopPath: REPL_LOOP,
+      processSandbox: sandbox.processSandbox
+    })
+    let completed = false
+
+    try {
+      await executor.execute({
+        ...baseRequest(cwdDir),
+        code: 'return 1',
+        kind: 'repl',
+        sessionId: 'session-1',
+        projectId: 'project-1'
+      })
+      const termination = executor.terminate('repl', '').then(() => {
+        completed = true
+      })
+
+      await vi.waitFor(() =>
+        expect(sandbox.cleanup).toHaveBeenCalledWith('cancel', { processesTerminated: true })
+      )
+      expect(completed).toBe(false)
+      sandbox.release()
+      await termination
+      expect(sandbox.cleanup).toHaveBeenCalledOnce()
+    } finally {
+      sandbox.release()
+      await executor.shutdown()
+    }
+  })
+
+  it('waits for an error-triggered sandbox cleanup before shutdown completes', async () => {
+    cwdDir = await mkdtemp(join(tmpdir(), 'os-kernel-repl-error-cleanup-'))
+    const sandbox = delayedSandboxCleanup()
+    const executor = new NotebookKernelExecutor({
+      replLoopPath: REPL_LOOP,
+      processSandbox: sandbox.processSandbox
+    })
+    let completed = false
+
+    try {
+      await executor.execute({
+        ...baseRequest(cwdDir),
+        code: 'return 1',
+        kind: 'repl',
+        sessionId: 'session-1',
+        projectId: 'project-1'
+      })
+      procFor(executor, 'repl')?.child.emit('error', new Error('kernel handle failed'))
+      await vi.waitFor(() =>
+        expect(sandbox.cleanup).toHaveBeenCalledWith('spawn-failed', {
+          processesTerminated: true
+        })
+      )
+      const shutdown = executor.shutdown().then((result) => {
+        completed = true
+        return result
+      })
+
+      await new Promise((resolve) => setTimeout(resolve, 0))
+      expect(completed).toBe(false)
+      sandbox.release()
+      await expect(shutdown).resolves.toEqual({ reaped: true })
+      expect(sandbox.cleanup).toHaveBeenCalledOnce()
+    } finally {
+      sandbox.release()
+      await executor.shutdown()
+    }
+  })
+
+  it('waits for sandbox cleanup before shutdown completes', async () => {
+    cwdDir = await mkdtemp(join(tmpdir(), 'os-kernel-repl-shutdown-cleanup-'))
+    const sandbox = delayedSandboxCleanup()
+    const executor = new NotebookKernelExecutor({
+      replLoopPath: REPL_LOOP,
+      processSandbox: sandbox.processSandbox
+    })
+    let completed = false
+
+    try {
+      await executor.execute({
+        ...baseRequest(cwdDir),
+        code: 'return 1',
+        kind: 'repl',
+        sessionId: 'session-1',
+        projectId: 'project-1'
+      })
+      const shutdown = executor.shutdown().then((result) => {
+        completed = true
+        return result
+      })
+
+      await vi.waitFor(() =>
+        expect(sandbox.cleanup).toHaveBeenCalledWith('cancel', { processesTerminated: true })
+      )
+      expect(completed).toBe(false)
+      sandbox.release()
+      await expect(shutdown).resolves.toEqual({ reaped: true })
+      expect(sandbox.cleanup).toHaveBeenCalledOnce()
+    } finally {
+      sandbox.release()
+      await executor.shutdown()
+    }
+  })
+
   it('starts the Linux repl with an fd-only RPC token', async () => {
     cwdDir = await mkdtemp(join(tmpdir(), 'os-kernel-repl-rpc-fd-'))
     const token = 'kernel-fd-only-token'

@@ -51,7 +51,11 @@ it.skipIf(process.platform !== 'darwin')(
           args: invocation.args,
           env: invocation.env,
           annotateStderr: (stderr) => stderr,
-          cleanup: () => {}
+          cleanup: async () => ({
+            processesTerminated: true,
+            networkClosed: true,
+            temporaryResourcesRemoved: true
+          })
         })
       }
     })
@@ -378,7 +382,11 @@ it.skipIf(process.platform === 'win32')(
             args: invocation.args,
             env: invocation.env,
             annotateStderr: (stderr) => stderr,
-            cleanup: () => {}
+            cleanup: async () => ({
+              processesTerminated: true,
+              networkClosed: true,
+              temporaryResourcesRemoved: true
+            })
           })
         }
       })
@@ -555,7 +563,11 @@ it.skipIf(process.platform !== 'darwin' || !existsSync(micromamba))(
             args: ['-f', profile, invocation.executable, ...invocation.args],
             env: invocation.env,
             annotateStderr: (stderr) => stderr,
-            cleanup: () => {}
+            cleanup: async () => ({
+              processesTerminated: true,
+              networkClosed: true,
+              temporaryResourcesRemoved: true
+            })
           })
         }
       })
@@ -631,7 +643,11 @@ it.skipIf(process.platform !== 'darwin' || !existsSync(micromamba))(
           ],
           env: invocation.env,
           annotateStderr: (stderr: string) => stderr,
-          cleanup: () => {}
+          cleanup: async () => ({
+            processesTerminated: true,
+            networkClosed: true,
+            temporaryResourcesRemoved: true
+          })
         })
       }
       const provisioner = createProductionProvisioner(

@@ -88,11 +88,27 @@ const runProcess = (executable, args, options = {}) =>
     child.stderr?.on('data', (chunk) => (stderr += chunk))
     child.once('error', rejectProcess)
     child.once('exit', (code) => {
+      // Electron's detached crashpad process can inherit these descriptors after the app exits.
+      // Close our readers at the direct child's exit so the successful smoke does not stay alive
+      // waiting for an unrelated crash reporter to close its copy of the pipe.
+      child.stdout?.destroy()
+      child.stderr?.destroy()
       if (code === 0) resolveProcess({ stdout, stderr })
       else
         rejectProcess(new Error(`${basename(executable)} exited with ${code}.\n${stdout}${stderr}`))
     })
   })
+
+const terminateSpawnedProcessGroup = (child) => {
+  if (!child.pid) return
+  try {
+    // launchAndProbe gives the packaged app a private session. Electron's macOS crashpad handler
+    // can outlive its direct parent, so reap that exact test-owned group before removing the mount.
+    process.kill(-child.pid, 'SIGKILL')
+  } catch {
+    // ESRCH means every process in the private group has already exited.
+  }
+}
 
 const assertPackagedResources = async (appBundle) => {
   const resources = join(appBundle, 'Contents', 'Resources')
@@ -103,7 +119,17 @@ const assertPackagedResources = async (appBundle) => {
     // electron-builder compiles build/icon.icon into the adaptive catalog and also emits an ICNS
     // fallback for macOS releases that predate Icon Composer.
     join(resources, 'Assets.car'),
-    join(resources, 'icon.icns')
+    join(resources, 'icon.icns'),
+    join(
+      resources,
+      'app.asar.unpacked',
+      'node_modules',
+      '@aipoch',
+      'process-tree-native',
+      'build',
+      'Release',
+      'process_tree_native.node'
+    )
   ]
   for (const path of paths) await access(path)
   const prismaRoot = join(resources, 'node_modules', '.prisma', 'client')
@@ -117,7 +143,7 @@ const assertPackagedResources = async (appBundle) => {
   if (!/^libquery_engine-darwin(?:-arm64)?\.dylib\.node$/.test(nativeEngines[0])) {
     throw new Error(`Packaged macOS Prisma engine is incompatible: ${nativeEngines[0]}.`)
   }
-  return { executable: paths[0], micromamba: paths[2] }
+  return { executable: paths[0], micromamba: paths[2], processTreeNative: paths[5] }
 }
 
 const packagedLaunchArguments = (userDataRoot) => [
@@ -128,6 +154,7 @@ const packagedLaunchArguments = (userDataRoot) => [
 
 const launchAndProbe = async ({ executable, expectedVersion, env, userDataRoot }) => {
   const child = spawn(executable, packagedLaunchArguments(userDataRoot), {
+    detached: true,
     env,
     stdio: ['ignore', 'pipe', 'pipe']
   })
@@ -138,7 +165,11 @@ const launchAndProbe = async ({ executable, expectedVersion, env, userDataRoot }
   child.stderr?.on('data', (chunk) => (output += `\n${chunk}`))
   const exit = new Promise((resolveExit, rejectExit) => {
     child.once('error', rejectExit)
-    child.once('exit', resolveExit)
+    child.once('exit', (code) => {
+      child.stdout?.destroy()
+      child.stderr?.destroy()
+      resolveExit(code)
+    })
   })
 
   try {
@@ -176,10 +207,12 @@ const launchAndProbe = async ({ executable, expectedVersion, env, userDataRoot }
         throw new Error('Packaged macOS app did not exit after shutdown.')
       })
     ])
+    terminateSpawnedProcessGroup(child)
     if (exitCode !== 0) throw new Error(`Packaged macOS app exited with ${exitCode}.\n${output}`)
     return parsePackagedSqliteVersion(output)
   } catch (error) {
     child.kill('SIGKILL')
+    terminateSpawnedProcessGroup(child)
     throw error
   }
 }
@@ -210,8 +243,22 @@ const smokeAppBundle = async ({
       }
     )
   }
-  const { executable, micromamba } = await assertPackagedResources(appBundle)
+  const { executable, micromamba, processTreeNative } = await assertPackagedResources(appBundle)
   await runProcess(micromamba, ['--version'], { env })
+  await runProcess(
+    executable,
+    [
+      '-e',
+      'const binding=require(process.env.OPEN_SCIENCE_PROCESS_TREE_NATIVE);const table=binding.listDarwinProcesses();const self=binding.getDarwinProcess(process.pid);if(!table?.complete||!self||self.pid!==process.pid)process.exit(1)'
+    ],
+    {
+      env: {
+        ...env,
+        ELECTRON_RUN_AS_NODE: '1',
+        OPEN_SCIENCE_PROCESS_TREE_NATIVE: processTreeNative
+      }
+    }
+  )
   const sqliteVersions = []
   for (let launch = 0; launch < launches; launch += 1) {
     sqliteVersions.push(await launchAndProbe({ executable, expectedVersion, env, userDataRoot }))
@@ -342,10 +389,17 @@ const main = async () => {
 const invokedAsScript =
   process.argv[1] !== undefined && import.meta.url === pathToFileURL(resolve(process.argv[1])).href
 if (invokedAsScript) {
-  main().catch((error) => {
-    console.error(error)
-    process.exitCode = 1
-  })
+  void main().then(
+    () => {
+      // Prisma/fetch or a detached Electron crash reporter may retain a libuv handle after every
+      // asserted launch has shut down. Flush the success line, then end this finite smoke command.
+      process.stdout.write('', () => process.exit(0))
+    },
+    (error) => {
+      console.error(error)
+      process.stderr.write('', () => process.exit(1))
+    }
+  )
 }
 
 export {

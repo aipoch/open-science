@@ -34,7 +34,8 @@ import type {
   NotebookSessionStateRequest,
   NotebookSessionReference,
   NotebookSessionState,
-  RunNotebookCellRequest
+  RunNotebookCellRequest,
+  ShellRuntimeBinding
 } from '../../shared/notebook'
 import { publishUserFile } from '../user-file-publisher'
 import { NotebookBackgroundRunError } from '../../shared/notebook'
@@ -251,6 +252,9 @@ type NotebookRuntimeServiceOptions = ProjectIdScope & {
   // environment projection, and timeout teardown; tests inject a fake without crossing IPC/shared.
   shellProcess?: NotebookShellProcess
   shellConcurrencyLimit?: number
+  // Immutable shell capability selected before execution. Later switching creates a fresh service /
+  // capability; an in-flight Run never re-reads Settings.
+  shellRuntimeBinding?: ShellRuntimeBinding
   processSandbox?: NotebookProcessSandbox
   // Latency-probe deps for the fastest-mirror auto-selection, injectable so tests stay hermetic (the
   // real probe does live HEAD requests). Undefined in production → effectiveMirrorAsync's real probe.
@@ -691,6 +695,7 @@ class NotebookRuntimeService {
       helperModules: this.helperModules,
       logger: this.runtimeLogger,
       platform: options.platform,
+      shellRuntimeBinding: options.shellRuntimeBinding,
       shellProcess:
         options.shellProcess ??
         new NotebookShellProcessAdapter(

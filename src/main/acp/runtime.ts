@@ -72,7 +72,11 @@ import { ArtifactRepository } from '../artifacts/repository'
 import { ArtifactRunRegistry } from '../artifacts/run-registry'
 import type { NotebookRpcConnection } from '../notebook/mcp-server'
 import type { NotebookHandoffContext } from '../notebook/runtime-service'
-import type { NotebookExecutionRpcMethod, NotebookPromptInput } from '../../shared/notebook'
+import type {
+  NotebookExecutionRpcMethod,
+  NotebookPromptInput,
+  ShellRuntimeBinding
+} from '../../shared/notebook'
 import type { SkillImportRpcConnection } from '../skills/mcp-server'
 import { codexStorageDir, codexSubscriptionStorageDir } from '../agent-framework/codex'
 import { getAppClaudeConfigDir } from '../settings/provider-env'
@@ -445,6 +449,8 @@ type AcpRuntimeNotebookOptions = {
   mcpEntryPath: string
   mcpCommand?: string
   memoryTools?: boolean
+  isMemoryEnabled?: () => Promise<boolean>
+  getShellRuntimeBinding?: () => ShellRuntimeBinding | Promise<ShellRuntimeBinding>
   getRpcConnection?: (binding: {
     sessionId: string
     projectId: string

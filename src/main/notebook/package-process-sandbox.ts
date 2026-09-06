@@ -12,6 +12,7 @@ import {
 import { delimiter, dirname, isAbsolute, join, relative, resolve, win32 } from 'node:path'
 
 import { defaultSpawn, type InstallRequest, type InstallSpawn } from './package-manager'
+import { terminateProcessTree } from '../process-tree'
 import { buildNotebookKernelEnvironment } from './process-environment'
 import type { NotebookProcessSandbox } from './process-sandbox'
 
@@ -22,6 +23,7 @@ type PackageProcessSandboxOptions = Readonly<{
   storageRoot: string
   interpreter?: Readonly<{ command: string; condaPrefix?: string }>
   platform?: NodeJS.Platform
+  terminateTree?: typeof terminateProcessTree
 }>
 
 const PACKAGE_ENV_KEYS = [
@@ -178,6 +180,7 @@ export const sandboxedPackageSpawn =
       projectId: request.projectId ?? 'notebook-package-manager',
       runtime: request.language,
       signal: spawnOptions?.signal,
+      superviseProcessTree: platform === 'win32',
       filesystem: {
         readOnlyRoots: [...absolutePath(dirname(command)), ...absolutePath(request.workspaceCwd)],
         readWriteRoots: [
@@ -191,6 +194,7 @@ export const sandboxedPackageSpawn =
     })
     let endExecution: (() => void) | undefined
     let ended = false
+    let processesTerminated = false
     try {
       spawnOptions?.signal?.throwIfAborted()
       endExecution = sandboxed.beginExecution?.()
@@ -202,13 +206,17 @@ export const sandboxedPackageSpawn =
         onBeforeSpawn,
         captureCondaJson ?? args.includes('--json'),
         cwd,
-        spawnOptions
+        spawnOptions,
+        options.terminateTree,
+        platform,
+        sandboxed.confirmProcessTreeTermination
       )
       endExecution?.()
       ended = true
+      processesTerminated = result.processesTerminated ?? true
       return { ...result, stderr: sandboxed.annotateStderr(result.stderr) }
     } finally {
       if (!ended) endExecution?.()
-      sandboxed.cleanup()
+      await sandboxed.cleanup(ended ? 'exit' : 'spawn-failed', { processesTerminated })
     }
   }

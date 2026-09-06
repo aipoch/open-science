@@ -303,6 +303,19 @@ const sanitizeSettings = (value: unknown): StoredSettings => {
   if (value.notebookNetwork !== undefined) {
     settings.notebookNetwork = normalizeNotebookNetworkSettings(value.notebookNetwork)
   }
+  if (value.localShellRuntime === 'powershell' || value.localShellRuntime === 'wsl2-bash') {
+    settings.localShellRuntime = value.localShellRuntime
+  }
+  if (isRecord(value.wslSelection)) {
+    const distro = asString(value.wslSelection.distro)?.trim()
+    const user = asString(value.wslSelection.user)?.trim()
+    if (distro && user) settings.wslSelection = { distro, user }
+  }
+  if (isRecord(value.activatedWslSelection)) {
+    const distro = asString(value.activatedWslSelection.distro)?.trim()
+    const user = asString(value.activatedWslSelection.user)?.trim()
+    if (distro && user) settings.activatedWslSelection = { distro, user }
+  }
 
   const pathsNormalizedAt = asNumber(value.pathsNormalizedAt)
   if (pathsNormalizedAt !== undefined) settings.pathsNormalizedAt = pathsNormalizedAt

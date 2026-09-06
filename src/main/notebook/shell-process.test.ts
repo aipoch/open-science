@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto'
 import * as processTree from '../process-tree'
 import { ShellProcessOwnershipRegistry } from './shell-process-ownership.windows-posix'
 import { mkdtemp, readFile, rm } from 'node:fs/promises'
+import { EventEmitter } from 'node:events'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -12,14 +13,28 @@ import {
   buildShellEnv,
   normalizePowerShellStderr,
   resolveShellInvocation,
+  resolveShellProcessInvocation,
   runShellCommand,
   terminateShellOnTimeout
 } from './shell-process'
 import { NOTEBOOK_TEXT_LIMIT_BYTES } from './content-limits'
 import type { NotebookProcessSandbox } from './process-sandbox'
 import { normalizeFilesystemLayout } from '../../../packages/notebook-network-sandbox/runtime/src/platform/filesystem-layout.js'
+import { terminateProcessTree } from '../process-tree'
+import { notebookWorkloadCacheEnv } from './notebook-workload-cache-paths'
 
-afterEach(() => vi.unstubAllEnvs())
+let portableRuntimeRoot: string
+
+beforeEach(async () => {
+  portableRuntimeRoot = await mkdtemp(join(tmpdir(), 'os-shell-portable-runtime-'))
+})
+
+afterEach(async () => {
+  vi.unstubAllEnvs()
+  await rm(portableRuntimeRoot, { recursive: true, force: true })
+})
+
+const previewAvailable = (): boolean => true
 
 describe('notebook shell process behavior', () => {
   describe('invocation', () => {
@@ -89,6 +104,231 @@ describe('notebook shell process behavior', () => {
       expect(script).toContain('[ScriptBlock]::Create($openScienceCommandText)')
       expect(script).toContain('& $openScienceCommand')
     })
+
+    it('uses the shell captured by a native POSIX binding instead of re-reading the host platform', () => {
+      expect(
+        resolveShellInvocation('echo hi', {
+          kind: 'native-posix',
+          shell: '/opt/local/bin/zsh'
+        })
+      ).toEqual({ executable: '/opt/local/bin/zsh', args: ['-c', 'echo hi'] })
+    })
+
+    it('keeps host write protection separate from the selected Shell runtime', () => {
+      vi.stubEnv('SystemRoot', 'C:\\Windows')
+      const nativeBinding = { kind: 'native-posix' as const, shell: '/bin/sh' }
+      const wslBinding = {
+        kind: 'wsl2-bash' as const,
+        profileId: 'profile-1',
+        distro: 'Ubuntu-22.04',
+        user: 'researcher'
+      }
+
+      expect(
+        resolveShellProcessInvocation('echo hi', nativeBinding, '/managed/runtime', 'darwin', false)
+      ).toMatchObject({
+        executable: '/usr/bin/sandbox-exec',
+        args: expect.arrayContaining(['/bin/sh', '-c', 'echo hi'])
+      })
+      expect(
+        resolveShellProcessInvocation('echo hi', nativeBinding, '/managed/runtime', 'linux', false)
+      ).toEqual({ executable: '/bin/sh', args: ['-c', 'echo hi'] })
+      expect(
+        resolveShellProcessInvocation(
+          'Write-Output hi',
+          { kind: 'powershell', version: '5.1' },
+          'C:\\managed\\runtime',
+          'win32',
+          false
+        ).executable
+      ).toMatch(/WindowsPowerShell\\v1\.0\\powershell\.exe$/)
+      expect(
+        resolveShellProcessInvocation('echo hi', wslBinding, 'C:\\managed\\runtime', 'win32', true)
+      ).toEqual({ executable: '/bin/bash', args: ['-c', 'echo hi'] })
+    })
+
+    it('uses Bash and the exact selected profile for a WSL2 sandbox target', async () => {
+      vi.stubEnv('OPEN_SCIENCE_ENABLE_WSL2_BASH', '1')
+      const processSandbox: NotebookProcessSandbox = {
+        wrap: vi.fn(async (invocation) => {
+          throw new Error(`prepared:${JSON.stringify(invocation.target)}:${invocation.executable}`)
+        })
+      }
+
+      const result = await runShellCommand({
+        command: 'echo hi',
+        cwd: 'C:\\workspace',
+        handoffDir: 'C:\\handoff',
+        runtimeRoot: portableRuntimeRoot,
+        sessionId: 'session-1',
+        projectId: 'project-1',
+        platform: 'win32',
+        runtimeBinding: {
+          kind: 'wsl2-bash',
+          profileId: 'profile-1',
+          distro: 'Ubuntu-22.04',
+          user: 'researcher'
+        },
+        processSandbox,
+        previewAvailable
+      })
+
+      expect(result).toEqual({
+        stdout: '',
+        stderr: 'SHELL_RUNTIME_UNAVAILABLE: The selected WSL2 Bash runtime is unavailable.',
+        exitCode: null,
+        runtimeStatus: 'unavailable',
+        errorCode: 'shell-runtime-unavailable'
+      })
+      expect(processSandbox.wrap).toHaveBeenCalledWith(
+        expect.objectContaining({
+          target: {
+            kind: 'wsl2',
+            profileId: 'profile-1',
+            distro: 'Ubuntu-22.04',
+            user: 'researcher'
+          },
+          executable: '/bin/bash',
+          pathEnvironment: {
+            OPEN_SCIENCE_HANDOFF_DIR: 'C:\\handoff',
+            ...notebookWorkloadCacheEnv(portableRuntimeRoot)
+          }
+        })
+      )
+    })
+
+    it('does not prepare a selected WSL2 runtime while the main Preview gate is closed', async () => {
+      const processSandbox: NotebookProcessSandbox = {
+        wrap: vi.fn()
+      }
+
+      const result = await runShellCommand({
+        command: 'echo should-not-run',
+        cwd: 'C:\\workspace',
+        handoffDir: 'C:\\handoff',
+        runtimeRoot: portableRuntimeRoot,
+        sessionId: 'session-1',
+        projectId: 'project-1',
+        platform: 'win32',
+        runtimeBinding: {
+          kind: 'wsl2-bash',
+          profileId: 'profile-1',
+          distro: 'Ubuntu-22.04',
+          user: 'researcher'
+        },
+        processSandbox,
+        previewAvailable: () => false
+      })
+
+      expect(result).toEqual({
+        stdout: '',
+        stderr: 'SHELL_RUNTIME_UNAVAILABLE: The selected WSL2 Bash runtime is unavailable.',
+        exitCode: null,
+        runtimeStatus: 'unavailable',
+        errorCode: 'shell-runtime-unavailable'
+      })
+      expect(processSandbox.wrap).not.toHaveBeenCalled()
+    })
+
+    it('surfaces the stable fail-closed diagnostic when guest-to-host transport is unsupported', async () => {
+      vi.stubEnv('OPEN_SCIENCE_ENABLE_WSL2_BASH', '1')
+      const processSandbox: NotebookProcessSandbox = {
+        wrap: vi.fn(async () => {
+          throw new Error(
+            'WSL2_NETWORK_TRANSPORT_UNSUPPORTED: WSL2 Bash Preview network access requires mirrored networking.'
+          )
+        })
+      }
+
+      await expect(
+        runShellCommand({
+          command: 'echo should-not-run',
+          cwd: 'C:\\workspace',
+          handoffDir: 'C:\\handoff',
+          runtimeRoot: portableRuntimeRoot,
+          sessionId: 'session-1',
+          projectId: 'project-1',
+          platform: 'win32',
+          runtimeBinding: {
+            kind: 'wsl2-bash',
+            profileId: 'profile-1',
+            distro: 'Ubuntu-22.04',
+            user: 'researcher'
+          },
+          processSandbox,
+          previewAvailable
+        })
+      ).resolves.toEqual({
+        stdout: '',
+        stderr:
+          'WSL2_NETWORK_TRANSPORT_UNSUPPORTED: WSL2 Bash Preview network access requires mirrored networking.',
+        exitCode: null,
+        errorCode: 'shell-network-transport-unsupported'
+      })
+    })
+
+    it('prioritizes incomplete WSL preparation cleanup over an aborted signal', async () => {
+      vi.stubEnv('OPEN_SCIENCE_ENABLE_WSL2_BASH', '1')
+      const controller = new AbortController()
+      const processSandbox: NotebookProcessSandbox = {
+        wrap: vi.fn(async () => {
+          controller.abort()
+          throw new Error(
+            'SHELL_CLEANUP_INCOMPLETE: WSL2 shell preparation cleanup could not be verified.'
+          )
+        })
+      }
+
+      await expect(
+        runShellCommand({
+          command: 'echo should-not-run',
+          cwd: 'C:\\workspace',
+          handoffDir: 'C:\\handoff',
+          runtimeRoot: portableRuntimeRoot,
+          sessionId: 'session-1',
+          projectId: 'project-1',
+          platform: 'win32',
+          signal: controller.signal,
+          runtimeBinding: {
+            kind: 'wsl2-bash',
+            profileId: 'profile-1',
+            distro: 'Ubuntu-22.04',
+            user: 'researcher'
+          },
+          processSandbox,
+          previewAvailable
+        })
+      ).resolves.toMatchObject({
+        exitCode: null,
+        errorCode: 'shell-cleanup-incomplete'
+      })
+    })
+
+    it('fails a selected WSL2 runtime closed with a stable unavailable code instead of native fallback', async () => {
+      const result = await runShellCommand({
+        command: 'Write-Output should-not-run',
+        cwd: 'C:\\workspace',
+        handoffDir: 'C:\\handoff',
+        runtimeRoot: portableRuntimeRoot,
+        sessionId: 'session-1',
+        projectId: 'project-1',
+        platform: 'win32',
+        runtimeBinding: {
+          kind: 'wsl2-bash',
+          profileId: 'profile-1',
+          distro: 'Ubuntu-22.04',
+          user: 'researcher'
+        }
+      })
+
+      expect(result).toEqual({
+        stdout: '',
+        stderr: 'SHELL_RUNTIME_UNAVAILABLE: The selected WSL2 Bash runtime is unavailable.',
+        exitCode: null,
+        runtimeStatus: 'unavailable',
+        errorCode: 'shell-runtime-unavailable'
+      })
+    })
   })
 
   describe('platform support', () => {
@@ -120,6 +360,64 @@ describe('notebook shell process behavior', () => {
         '</Objs>\n'
 
       expect(normalizePowerShellStderr(errorClixml, 'win32')).toBe(errorClixml)
+    })
+
+    it('normalizes CLIXML only for the PowerShell binding on a Windows host', async () => {
+      vi.stubEnv('OPEN_SCIENCE_ENABLE_WSL2_BASH', '1')
+      vi.stubEnv('SystemRoot', 'C:\\Windows')
+      const runtimeRoot = await mkdtemp(join(tmpdir(), 'os-shell-binding-stderr-'))
+      const execute = async (
+        runtimeBinding:
+          | { kind: 'powershell'; version: '5.1' }
+          | {
+              kind: 'wsl2-bash'
+              profileId: string
+              distro: string
+              user: string
+            }
+      ): Promise<string> => {
+        const processSandbox: NotebookProcessSandbox = {
+          wrap: vi.fn(async (invocation) => ({
+            executable: process.execPath,
+            args: ['-e', `process.stderr.write(${JSON.stringify(completedProgressClixml)})`],
+            env: invocation.env,
+            annotateStderr: (stderr: string) => stderr,
+            cleanup: vi.fn(async () => ({
+              processesTerminated: true,
+              networkClosed: true,
+              temporaryResourcesRemoved: true
+            }))
+          }))
+        }
+        const result = await runShellCommand({
+          command: 'emit stderr',
+          cwd: process.cwd(),
+          handoffDir: process.cwd(),
+          runtimeRoot,
+          sessionId: 'session-1',
+          projectId: 'project-1',
+          platform: 'win32',
+          runtimeBinding,
+          processSandbox,
+          previewAvailable,
+          terminateTree: async () => ({ reaped: true })
+        })
+        return result.stderr
+      }
+
+      try {
+        await expect(
+          execute({
+            kind: 'wsl2-bash',
+            profileId: 'profile-1',
+            distro: 'Ubuntu-22.04',
+            user: 'researcher'
+          })
+        ).resolves.toBe(completedProgressClixml)
+        await expect(execute({ kind: 'powershell', version: '5.1' })).resolves.toBe('')
+      } finally {
+        await rm(runtimeRoot, { recursive: true, force: true })
+      }
     })
 
     it('keeps Windows shell runtime variables while excluding host secrets', () => {
@@ -175,8 +473,9 @@ describe('notebook shell process behavior', () => {
       )
 
       let settled = false
-      const termination = terminateShellOnTimeout(child, terminateTree).then(() => {
+      const termination = terminateShellOnTimeout(child, 'win32', terminateTree).then((result) => {
         settled = true
+        return result
       })
 
       expect(termination).toBeInstanceOf(Promise)
@@ -185,8 +484,251 @@ describe('notebook shell process behavior', () => {
       expect(settled).toBe(false)
 
       finishTermination?.({ reaped: true })
-      await expect(termination).resolves.toBeUndefined()
+      return expect(termination).resolves.toEqual({ reaped: true })
     })
+
+    it('waits for bounded POSIX process-tree reaping before reporting termination', async () => {
+      const child = Object.assign(new EventEmitter(), { pid: 4321 }) as unknown as ChildProcess
+      let finishTermination: ((result: { reaped: boolean }) => void) | undefined
+      const terminateTree = vi.fn(
+        () =>
+          new Promise<{ reaped: boolean }>((resolve) => {
+            finishTermination = resolve
+          })
+      )
+      let completed = false
+
+      const termination = terminateShellOnTimeout(child, 'linux', terminateTree).then((result) => {
+        completed = true
+        return result
+      })
+
+      await new Promise((resolve) => setTimeout(resolve, 0))
+      expect(terminateTree).toHaveBeenCalledWith(child)
+      expect(completed).toBe(false)
+      finishTermination?.({ reaped: true })
+      await expect(termination).resolves.toEqual({ reaped: true })
+    })
+
+    it('reports an incomplete bounded POSIX teardown without claiming success', async () => {
+      const child = { pid: 4321 } as unknown as ChildProcess
+      const terminateTree = vi.fn(async () => ({ reaped: false }))
+
+      await expect(terminateShellOnTimeout(child, 'darwin', terminateTree)).resolves.toEqual({
+        reaped: false
+      })
+    })
+  })
+
+  it('awaits exactly one structured cleanup when spawn throws synchronously', async () => {
+    const runtimeRoot = await mkdtemp(join(tmpdir(), 'os-shell-sync-spawn-cleanup-'))
+    let releaseCleanup: (() => void) | undefined
+    const cleanupGate = new Promise<void>((resolve) => {
+      releaseCleanup = resolve
+    })
+    const cleanup = vi.fn(async () => {
+      await cleanupGate
+      return {
+        processesTerminated: false,
+        networkClosed: true,
+        temporaryResourcesRemoved: true
+      }
+    })
+    const endExecution = vi.fn()
+    const beginExecution = vi.fn(() => endExecution)
+    const spawnStarted = vi.fn()
+    const spawnNotStarted = vi.fn()
+    const beginSpawn = vi.fn(() => ({ started: spawnStarted, notStarted: spawnNotStarted }))
+    const processSandbox: NotebookProcessSandbox = {
+      wrap: vi.fn(async (invocation) => ({
+        executable: invocation.executable,
+        args: ['\0'],
+        env: invocation.env,
+        beginExecution,
+        beginSpawn,
+        annotateStderr: (stderr: string) => stderr,
+        cleanup
+      }))
+    }
+    let completed = false
+
+    const completion = runShellCommand({
+      command: 'echo unreachable',
+      cwd: process.cwd(),
+      handoffDir: process.cwd(),
+      runtimeRoot,
+      sessionId: 'session-1',
+      projectId: 'project-1',
+      platform: process.platform,
+      processSandbox
+    }).then((result) => {
+      completed = true
+      return result
+    })
+
+    await vi.waitFor(
+      () => expect(cleanup).toHaveBeenCalledWith('spawn-failed', { processesTerminated: false }),
+      { timeout: 5_000 }
+    )
+    expect(completed).toBe(false)
+    expect(beginExecution).toHaveBeenCalledOnce()
+    expect(endExecution).toHaveBeenCalledOnce()
+    expect(beginSpawn).toHaveBeenCalledOnce()
+    expect(spawnNotStarted).toHaveBeenCalledOnce()
+    expect(spawnStarted).not.toHaveBeenCalled()
+    releaseCleanup?.()
+
+    const result = await completion
+    expect(result).toMatchObject({ exitCode: null })
+    expect(result.stderr).toContain('null bytes')
+    expect(cleanup).toHaveBeenCalledOnce()
+    expect(endExecution).toHaveBeenCalledOnce()
+    await rm(runtimeRoot, { recursive: true, force: true })
+  })
+
+  it('does not admit a WSL spawn when cancellation wins after preparation', async () => {
+    vi.stubEnv('OPEN_SCIENCE_ENABLE_WSL2_BASH', '1')
+    const controller = new AbortController()
+    const beginSpawn = vi.fn()
+    const cleanup = vi.fn(async () => ({
+      processesTerminated: true,
+      networkClosed: true,
+      temporaryResourcesRemoved: true
+    }))
+    const processSandbox: NotebookProcessSandbox = {
+      wrap: vi.fn(async (invocation) => {
+        controller.abort()
+        return {
+          executable: process.execPath,
+          args: ['-e', 'process.exit(0)'],
+          env: invocation.env,
+          beginSpawn,
+          annotateStderr: (stderr: string) => stderr,
+          cleanup
+        }
+      })
+    }
+
+    await expect(
+      runShellCommand({
+        command: 'echo never-spawned',
+        cwd: 'C:\\workspace',
+        handoffDir: 'C:\\handoff',
+        runtimeRoot: portableRuntimeRoot,
+        sessionId: 'session-1',
+        projectId: 'project-1',
+        platform: 'win32',
+        signal: controller.signal,
+        runtimeBinding: {
+          kind: 'wsl2-bash',
+          profileId: 'profile-1',
+          distro: 'Ubuntu-22.04',
+          user: 'researcher'
+        },
+        processSandbox,
+        previewAvailable
+      })
+    ).resolves.toMatchObject({ cancelled: true, exitCode: null })
+    expect(beginSpawn).not.toHaveBeenCalled()
+    expect(cleanup).toHaveBeenCalledWith('cancel', { processesTerminated: false })
+  })
+
+  it('returns a stable failure instead of trusting an exit when sandbox cleanup is incomplete', async () => {
+    const runtimeRoot = await mkdtemp(join(tmpdir(), 'os-shell-incomplete-cleanup-'))
+    const cleanup = vi.fn(async () => ({
+      processesTerminated: false,
+      networkClosed: true,
+      temporaryResourcesRemoved: false
+    }))
+    const processSandbox: NotebookProcessSandbox = {
+      wrap: vi.fn(async (invocation) => ({
+        executable: process.execPath,
+        args: ['-e', 'process.stdout.write("finished")'],
+        env: invocation.env,
+        annotateStderr: (stderr: string) => stderr,
+        cleanup
+      }))
+    }
+
+    try {
+      await expect(
+        runShellCommand({
+          command: 'echo finished',
+          cwd: process.cwd(),
+          handoffDir: process.cwd(),
+          runtimeRoot,
+          sessionId: 'session-1',
+          projectId: 'project-1',
+          platform: process.platform,
+          processSandbox,
+          terminateTree: async () => ({ reaped: true })
+        })
+      ).resolves.toEqual({
+        stdout: 'finished',
+        stderr:
+          'SHELL_CLEANUP_INCOMPLETE: Shell execution cleanup did not complete; the result is not trusted.',
+        exitCode: null,
+        errorCode: 'shell-cleanup-incomplete'
+      })
+      expect(cleanup).toHaveBeenCalledOnce()
+      expect(cleanup).toHaveBeenCalledWith('exit', { processesTerminated: true })
+    } finally {
+      await rm(runtimeRoot, { recursive: true, force: true })
+    }
+  })
+
+  it('retries an incomplete WSL cleanup once before reporting the shell result', async () => {
+    vi.stubEnv('OPEN_SCIENCE_ENABLE_WSL2_BASH', '1')
+    const runtimeRoot = await mkdtemp(join(tmpdir(), 'os-shell-wsl-cleanup-retry-'))
+    const cleanup = vi
+      .fn()
+      .mockResolvedValueOnce({
+        processesTerminated: true,
+        networkClosed: false,
+        temporaryResourcesRemoved: false
+      })
+      .mockResolvedValueOnce({
+        processesTerminated: true,
+        networkClosed: true,
+        temporaryResourcesRemoved: true
+      })
+    const processSandbox: NotebookProcessSandbox = {
+      wrap: vi.fn(async (invocation) => ({
+        executable: process.execPath,
+        args: ['-e', 'process.stdout.write("finished")'],
+        env: invocation.env,
+        annotateStderr: (stderr: string) => stderr,
+        cleanup
+      }))
+    }
+
+    try {
+      await expect(
+        runShellCommand({
+          command: 'echo finished',
+          cwd: process.cwd(),
+          handoffDir: process.cwd(),
+          runtimeRoot,
+          sessionId: 'session-1',
+          projectId: 'project-1',
+          platform: 'win32',
+          runtimeBinding: {
+            kind: 'wsl2-bash',
+            profileId: 'profile-1',
+            distro: 'Ubuntu-22.04',
+            user: 'researcher'
+          },
+          processSandbox,
+          previewAvailable,
+          terminateTree: async () => ({ reaped: true })
+        })
+      ).resolves.toEqual({ stdout: 'finished', stderr: '', exitCode: 0 })
+      expect(cleanup).toHaveBeenCalledTimes(2)
+      expect(cleanup).toHaveBeenNthCalledWith(1, 'exit', { processesTerminated: true })
+      expect(cleanup).toHaveBeenNthCalledWith(2, 'exit', { processesTerminated: true })
+    } finally {
+      await rm(runtimeRoot, { recursive: true, force: true })
+    }
   })
 
   describe.runIf(process.platform !== 'win32')('process results', () => {
@@ -315,9 +857,41 @@ describe('notebook shell process behavior', () => {
       })
     })
 
+    it('reaps a setsid helper that outlives the shell leader', async () => {
+      const helperScript = "process.on('SIGTERM',()=>{});setInterval(()=>{},1000)"
+      const parentScript = [
+        "const {spawn}=require('node:child_process')",
+        `const helper=spawn(process.execPath,['-e',${JSON.stringify(helperScript)}],{stdio:'ignore',detached:true})`,
+        'helper.unref()',
+        'process.stdout.write(String(helper.pid))'
+      ].join(';')
+      let helperPid: number | undefined
+
+      try {
+        const result = await execute(
+          `${JSON.stringify(process.execPath)} -e ${JSON.stringify(parentScript)}`
+        )
+        helperPid = Number(result.stdout)
+        expect(result.exitCode).toBe(0)
+        await vi.waitFor(() => expect(() => process.kill(helperPid as number, 0)).toThrow())
+      } finally {
+        if (helperPid) {
+          try {
+            process.kill(helperPid, 'SIGKILL')
+          } catch {
+            // Expected once the tracked setsid helper has been reaped.
+          }
+        }
+      }
+    }, 15_000)
+
     it('wraps Notebook Bash with the shared process sandbox', async () => {
       const inputRoot = join(process.cwd(), '.open-science-test-inputs')
-      const cleanup = vi.fn()
+      const cleanup = vi.fn().mockResolvedValue({
+        processesTerminated: true,
+        networkClosed: true,
+        temporaryResourcesRemoved: true
+      })
       const endExecution = vi.fn()
       const beginExecution = vi.fn(() => endExecution)
       const processSandbox: NotebookProcessSandbox = {
@@ -360,6 +934,228 @@ describe('notebook shell process behavior', () => {
       expect(beginExecution).toHaveBeenCalledOnce()
       expect(endExecution).toHaveBeenCalledOnce()
       expect(cleanup).toHaveBeenCalledOnce()
+      expect(cleanup).toHaveBeenCalledWith('exit', { processesTerminated: true })
+    })
+
+    it('waits for exit-tree inspection and reports an incomplete outcome exactly', async () => {
+      let releaseInspection: (() => void) | undefined
+      const inspectionGate = new Promise<void>((resolve) => {
+        releaseInspection = resolve
+      })
+      const terminateTree = vi.fn(async () => {
+        await inspectionGate
+        return { reaped: false }
+      })
+      const cleanup = vi.fn().mockResolvedValue({
+        processesTerminated: false,
+        networkClosed: true,
+        temporaryResourcesRemoved: true
+      })
+      const processSandbox: NotebookProcessSandbox = {
+        wrap: vi.fn(async (invocation) => ({
+          executable: invocation.executable,
+          args: invocation.args,
+          env: invocation.env,
+          annotateStderr: (stderr: string) => stderr,
+          cleanup
+        }))
+      }
+      let completed = false
+
+      const completion = runShellCommand({
+        command: 'exit 0',
+        cwd: process.cwd(),
+        handoffDir: process.cwd(),
+        runtimeRoot: portableRuntimeRoot,
+        sessionId: 'session-1',
+        projectId: 'project-1',
+        platform: 'linux',
+        processSandbox,
+        terminateTree
+      }).then((result) => {
+        completed = true
+        return result
+      })
+
+      await vi.waitFor(() => expect(terminateTree).toHaveBeenCalledOnce())
+      expect(completed).toBe(false)
+      expect(cleanup).not.toHaveBeenCalled()
+      releaseInspection?.()
+      await expect(completion).resolves.toMatchObject({
+        exitCode: null,
+        errorCode: 'shell-cleanup-incomplete'
+      })
+      expect(cleanup).toHaveBeenCalledWith('exit', { processesTerminated: false })
+    })
+
+    it.each([
+      {
+        name: 'timeout',
+        command: 'sleep 5',
+        timeoutMs: 25,
+        reason: 'timeout' as const,
+        cancel: false
+      },
+      {
+        name: 'cancel',
+        command: 'sleep 5',
+        timeoutMs: 5_000,
+        reason: 'cancel' as const,
+        cancel: true
+      }
+    ])(
+      'awaits one structured cleanup after $name',
+      async ({ command, timeoutMs, reason, cancel }) => {
+        const signal = cancel ? AbortSignal.timeout(25) : undefined
+        const cleanup = vi.fn().mockResolvedValue({
+          processesTerminated: true,
+          networkClosed: true,
+          temporaryResourcesRemoved: true
+        })
+        const processSandbox: NotebookProcessSandbox = {
+          wrap: vi.fn(async (invocation) => ({
+            executable: invocation.executable,
+            args: invocation.args,
+            env: invocation.env,
+            annotateStderr: (stderr: string) => stderr,
+            cleanup
+          }))
+        }
+
+        await runShellCommand({
+          command,
+          cwd: process.cwd(),
+          handoffDir: process.cwd(),
+          runtimeRoot: portableRuntimeRoot,
+          sessionId: 'session-1',
+          projectId: 'project-1',
+          platform: 'linux',
+          timeoutMs,
+          signal,
+          processSandbox
+        })
+
+        expect(cleanup).toHaveBeenCalledOnce()
+        expect(cleanup).toHaveBeenCalledWith(reason, { processesTerminated: true })
+      }
+    )
+
+    it.each([
+      { name: 'successful reaping', reaped: true },
+      { name: 'bounded reaping failure', reaped: false }
+    ])('waits for $name before timeout cleanup completes', async ({ reaped }) => {
+      let releaseReaping: (() => void) | undefined
+      const reapingGate = new Promise<void>((resolve) => {
+        releaseReaping = resolve
+      })
+      const terminateTree = vi.fn(async (child: ChildProcess) => {
+        const actual = await terminateProcessTree(child)
+        expect(actual).toEqual({ reaped: true })
+        await reapingGate
+        return { reaped }
+      })
+      const cleanup = vi.fn(async (_reason, processOutcome: { processesTerminated: boolean }) => ({
+        processesTerminated: processOutcome.processesTerminated,
+        networkClosed: true,
+        temporaryResourcesRemoved: true
+      }))
+      const processSandbox: NotebookProcessSandbox = {
+        wrap: vi.fn(async (invocation) => ({
+          executable: invocation.executable,
+          args: invocation.args,
+          env: invocation.env,
+          annotateStderr: (stderr: string) => stderr,
+          cleanup
+        }))
+      }
+      let completed = false
+
+      const completion = runShellCommand({
+        command: 'sleep 5',
+        cwd: process.cwd(),
+        handoffDir: process.cwd(),
+        runtimeRoot: portableRuntimeRoot,
+        sessionId: 'session-1',
+        projectId: 'project-1',
+        platform: 'linux',
+        timeoutMs: 25,
+        processSandbox,
+        terminateTree
+      }).then((result) => {
+        completed = true
+        return result
+      })
+
+      await vi.waitFor(() => expect(terminateTree).toHaveBeenCalledOnce())
+      expect(completed).toBe(false)
+      expect(cleanup).not.toHaveBeenCalled()
+      releaseReaping?.()
+      await expect(completion).resolves.toMatchObject({ exitCode: null })
+      expect(cleanup).toHaveBeenCalledWith('timeout', { processesTerminated: reaped })
+    })
+
+    it('awaits one structured cleanup when process spawning fails', async () => {
+      const cleanup = vi.fn().mockResolvedValue({
+        processesTerminated: true,
+        networkClosed: true,
+        temporaryResourcesRemoved: true
+      })
+      const processSandbox: NotebookProcessSandbox = {
+        wrap: vi.fn(async (invocation) => ({
+          executable: join(process.cwd(), 'missing-sandbox-executable'),
+          args: invocation.args,
+          env: invocation.env,
+          annotateStderr: (stderr: string) => stderr,
+          cleanup
+        }))
+      }
+
+      await expect(
+        runShellCommand({
+          command: 'echo unreachable',
+          cwd: process.cwd(),
+          handoffDir: process.cwd(),
+          runtimeRoot: portableRuntimeRoot,
+          sessionId: 'session-1',
+          projectId: 'project-1',
+          platform: 'linux',
+          processSandbox
+        })
+      ).resolves.toMatchObject({ exitCode: null })
+
+      expect(cleanup).toHaveBeenCalledOnce()
+      expect(cleanup).toHaveBeenCalledWith('spawn-failed', { processesTerminated: true })
+    })
+
+    it('reports bounded spawn-failure teardown failure without assuming termination', async () => {
+      const cleanup = vi.fn().mockResolvedValue({
+        processesTerminated: false,
+        networkClosed: true,
+        temporaryResourcesRemoved: true
+      })
+      const processSandbox: NotebookProcessSandbox = {
+        wrap: vi.fn(async (invocation) => ({
+          executable: join(process.cwd(), 'missing-sandbox-executable'),
+          args: invocation.args,
+          env: invocation.env,
+          annotateStderr: (stderr: string) => stderr,
+          cleanup
+        }))
+      }
+
+      await runShellCommand({
+        command: 'echo unreachable',
+        cwd: process.cwd(),
+        handoffDir: process.cwd(),
+        runtimeRoot: portableRuntimeRoot,
+        sessionId: 'session-1',
+        projectId: 'project-1',
+        platform: 'linux',
+        processSandbox,
+        terminateTree: vi.fn(async () => ({ reaped: false }))
+      })
+
+      expect(cleanup).toHaveBeenCalledWith('spawn-failed', { processesTerminated: false })
     })
 
     it('reserves stderr capacity after stdout reaches its capture limit', async () => {

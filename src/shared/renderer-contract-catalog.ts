@@ -45,6 +45,17 @@ import type {
   SideChatStartRequest,
   SideChatStartResponse
 } from './side-chat'
+import type {
+  OpenWslTerminalRequest,
+  LocalShellRuntimePreference,
+  SelectWslProfileRequest,
+  SwitchToPowerShellResult,
+  UseWsl2BashResult,
+  WslPlatformInstallResult,
+  Wsl2BashPreviewStatus,
+  WslSetupSnapshot,
+  WslSupportHandoff
+} from './wsl-setup'
 import type { SourcePreviewLoadState } from './source-preview'
 import type { ArtifactLiteratureManifest } from './artifact-literature'
 import type {
@@ -2071,6 +2082,43 @@ export const RENDERER_API_CONTRACT = Object.freeze({
     'settings',
     ['settings:get-notebook-network-status', LOCAL]
   ),
+  'settings.getWsl2BashPreviewStatus': callable<() => Promise<Wsl2BashPreviewStatus>>()(
+    'settings',
+    ['settings:get-wsl2-bash-preview-status', LOCAL]
+  ),
+  'settings.getLocalShellRuntimePreference': callable<
+    () => Promise<LocalShellRuntimePreference | undefined>
+  >()('settings', ['settings:get-local-shell-runtime-preference', LOCAL]),
+  'settings.probeWslSetup': callable<() => Promise<WslSetupSnapshot>>()('settings', [
+    'settings:probe-wsl-setup',
+    LOCAL
+  ]),
+  'settings.installWslPlatform': callable<() => Promise<WslPlatformInstallResult>>()('settings', [
+    'settings:install-wsl-platform',
+    LOCAL
+  ]),
+  'settings.createWslSupportHandoff': callable<() => Promise<WslSupportHandoff>>()('settings', [
+    'settings:create-wsl-support-handoff',
+    LOCAL
+  ]),
+  'settings.selectWslProfile': callable<
+    (request: SelectWslProfileRequest) => Promise<WslSetupSnapshot>
+  >()('settings', ['settings:select-wsl-profile', LOCAL]),
+  'settings.switchLocalShellToPowerShell': callable<() => Promise<SwitchToPowerShellResult>>()(
+    'settings',
+    ['settings:switch-local-shell-to-powershell', LOCAL]
+  ),
+  'settings.useWsl2Bash': callable<() => Promise<UseWsl2BashResult>>()('settings', [
+    'settings:use-wsl2-bash',
+    LOCAL
+  ]),
+  'settings.installRecommendedWslDistro': callable<() => Promise<WslSetupSnapshot>>()('settings', [
+    'settings:install-recommended-wsl-distro',
+    LOCAL
+  ]),
+  'settings.openWslTerminal': callable<
+    (request: OpenWslTerminalRequest) => Promise<WslSetupSnapshot>
+  >()('settings', ['settings:open-wsl-terminal', LOCAL]),
   'settings.installNotebookNetwork': callable<() => Promise<NotebookNetworkStatus>>()('settings', [
     'settings:install-notebook-network',
     LOCAL

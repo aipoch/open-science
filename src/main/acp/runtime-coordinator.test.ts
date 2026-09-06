@@ -764,6 +764,87 @@ describe('AcpRuntimeCoordinator', () => {
     expect(created[1].requestRetirement).toHaveBeenCalledOnce()
   })
 
+  it('refreshes Shell capabilities across default and explicit targets before the next prompt', async () => {
+    const created: ReturnType<typeof createFakeRuntime>[] = []
+    const coordinator = new AcpRuntimeCoordinator((callbacks, _permissionGrants, target) => {
+      const fake = createFakeRuntime({
+        frameworkId: target?.frameworkId ?? 'claude-code',
+        sessionIds: [`session-${created.length}`],
+        callbacks
+      })
+      created.push(fake)
+      return fake.runtime
+    })
+    const explicitTarget: AcpSessionAgentTarget = {
+      frameworkId: 'opencode',
+      providerId: 'provider-explicit',
+      model: 'model-explicit',
+      reasoningEffort: 'high'
+    }
+    const defaultSession = await coordinator.createSession()
+    const explicitSession = await coordinator.createSession({ agentTarget: explicitTarget })
+
+    await coordinator.requestShellCapabilityRefresh()
+
+    expect(created[0].requestRetirement).toHaveBeenCalledOnce()
+    expect(created[1].requestRetirement).toHaveBeenCalledOnce()
+    await coordinator.resumeSession({
+      sessionId: defaultSession.sessionId,
+      cwd: '/workspace'
+    })
+    await coordinator.resumeSession({
+      sessionId: explicitSession.sessionId,
+      cwd: '/workspace',
+      agentTarget: explicitTarget
+    })
+    await coordinator.sendPrompt({ sessionId: defaultSession.sessionId, text: 'next default turn' })
+    await coordinator.sendPrompt({ sessionId: explicitSession.sessionId, text: 'next pinned turn' })
+
+    expect(created[0].sendPrompt).not.toHaveBeenCalled()
+    expect(created[1].sendPrompt).not.toHaveBeenCalled()
+    expect(created[2].sendPrompt).toHaveBeenCalledOnce()
+    expect(created[3].sendPrompt).toHaveBeenCalledOnce()
+  })
+
+  it('retires a generation admitted while an earlier Shell refresh is still rejecting', async () => {
+    const created: ReturnType<typeof createFakeRuntime>[] = []
+    const retirement = createDeferred<void>()
+    const refreshFailure = new Error('retirement failed')
+    const coordinator = new AcpRuntimeCoordinator((callbacks) => {
+      const fake = createFakeRuntime({
+        frameworkId: 'claude-code',
+        sessionIds: [`session-${created.length}`],
+        callbacks
+      })
+      if (created.length === 0) {
+        fake.requestRetirement.mockImplementationOnce(async () => {
+          await retirement.promise
+          throw refreshFailure
+        })
+      }
+      created.push(fake)
+      return fake.runtime
+    })
+
+    await coordinator.createSession()
+    const failedRefresh = coordinator.requestShellCapabilityRefresh()
+    await vi.waitFor(() => expect(created[0].requestRetirement).toHaveBeenCalledOnce())
+    const lazySession = await coordinator.createSession()
+
+    retirement.resolve()
+    await expect(failedRefresh).rejects.toBe(refreshFailure)
+    await coordinator.requestShellCapabilityRefresh()
+    await coordinator.resumeSession({ sessionId: lazySession.sessionId, cwd: '/workspace' })
+    await coordinator.sendPrompt({
+      sessionId: lazySession.sessionId,
+      text: 'first prompt after rollback'
+    })
+
+    expect(created[1].requestRetirement).toHaveBeenCalledOnce()
+    expect(created[1].sendPrompt).not.toHaveBeenCalled()
+    expect(created[2].sendPrompt).toHaveBeenCalledOnce()
+  })
+
   it('reloads framework Skills only for matching targeted generations', async () => {
     const created: ReturnType<typeof createFakeRuntime>[] = []
     const coordinator = new AcpRuntimeCoordinator((callbacks, _permissionGrants, target) => {

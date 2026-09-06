@@ -97,6 +97,7 @@ export class AcpProviderSessionCreator {
           skillImport: capability.descriptor.capabilities.includes('skill-import')
         },
         role: capability.descriptor.role,
+        shellRuntimeAgentContract: capability.shellRuntimeAgentContract,
         backendSystemPromptAppends: startupBackend.prompt.systemPromptAppends,
         extraSystemPromptAppends: [projectContextAppend, specialist.append].filter(
           (append): append is string => Boolean(append)

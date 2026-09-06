@@ -308,6 +308,11 @@ import { GrantedLocalRootsRepository } from './local-fs/granted-roots-repository
 import { LocalFsService } from './local-fs/service'
 import { SettingsService } from './settings/service'
 import { SettingsRepository } from './settings/repository'
+import { WslSetupOwner } from './wsl/wsl-setup-owner'
+import { initializeWsl2BashPreview, wsl2BashPreviewStatus } from './wsl/wsl2-preview-gate'
+import { runPackagedWsl2RestartCertification } from './wsl/wsl2-packaged-restart-certification'
+import { resolveConfiguredShellRuntimeBinding } from './notebook/configured-shell-runtime'
+import { probeWindowsVolume } from './wsl/windows-volume-probe'
 import { SettingsSnapshotCommitOwner } from './settings/settings-snapshot-commit-owner'
 import type { SettingsDocumentStore } from './settings/document-store'
 import { NetworkProxyRuntime } from './settings/network-proxy-runtime'
@@ -560,6 +565,28 @@ const createApplicationModules = async (
     settingsStore ?? resolveConfigRoot(),
     (operation) => specialistPackageSkillAdapter.runMutationExclusive(operation)
   )
+  initializeWsl2BashPreview({
+    platform: process.platform,
+    arch: process.arch,
+    packaged: app.isPackaged,
+    resourcesPath: process.resourcesPath,
+    appVersion: app.getVersion()
+  })
+  const wslSetup = new WslSetupOwner({
+    // Managed workspaces, handoff data, and caches live below this local NTFS mount root. The
+    // execution adapter will still validate each invocation's concrete authorized paths.
+    workspacePath: resolveDataRoot,
+    volumeProbe: probeWindowsVolume,
+    readSelection: async () => (await settingsRepository.getSettings()).wslSelection,
+    readActivation: async () => {
+      const settings = await settingsRepository.getSettings()
+      return {
+        runtime: settings.localShellRuntime,
+        selection: settings.activatedWslSelection
+      }
+    },
+    writeSelection: (selection) => settingsRepository.setWslSelection(selection)
+  })
   const networkProxyRuntime = new NetworkProxyRuntime({
     setProxy: (config) => session.defaultSession.setProxy(config)
   })
@@ -594,6 +621,7 @@ const createApplicationModules = async (
       resourceRoot: app.isPackaged
         ? join(process.resourcesPath, 'notebook-network-sandbox')
         : join(app.getAppPath(), 'packages', 'notebook-network-sandbox', 'vendor'),
+      temporaryRoot: join(app.getPath('userData'), 'notebook-command-temp'),
       getSettings: async () => {
         const service = settingsServiceRef.current
         if (!service) throw new Error('Settings are not ready.')
@@ -684,6 +712,7 @@ const createApplicationModules = async (
       getNotebookNetworkStatus: () => notebookNetworkSandbox.status(),
       installNotebookNetwork: () => notebookNetworkSandbox.installWindows(),
       removeNotebookNetwork: () => notebookNetworkSandbox.removeWindows(),
+      wslSetup,
       resolveCodexProxyEnvironment: () =>
         Promise.resolve(networkProxyRuntime.getChildProcessProxyEnvironment())
     })
@@ -714,6 +743,16 @@ const createApplicationModules = async (
   const storedSettings = await settingsService.getStoredSettings()
   const storageLog = createLogger('storage')
   await networkProxyRuntime.apply(storedSettings.networkProxy)
+  await runPackagedWsl2RestartCertification({
+    appPackaged: app.isPackaged,
+    headless,
+    platform: process.platform,
+    arch: process.arch,
+    previewAvailable: wsl2BashPreviewStatus().available,
+    storageRoot: resolveConfigRoot(),
+    environment: process.env,
+    processSandbox: notebookNetworkSandbox
+  })
   // Prime the data-root cache from settings before any data repository is constructed below. A change
   // to this value only takes effect after a restart, so reading it once here is sufficient.
   initDataRoot(storedSettings.dataRoot)
@@ -2447,7 +2486,9 @@ const createApplicationModules = async (
       settingsService,
       permissionGrantRegistry,
       specialistService,
-      sessionPersistenceCoordinator
+      sessionPersistenceCoordinator,
+      getShellRuntimeBinding: async () =>
+        resolveConfiguredShellRuntimeBinding(await settingsRepository.getSettings())
     },
     notebookRpcServer: requireNotebookRpcServer,
     readSession: ({ projectId, sessionId }) => sessionRepository.loadSession(projectId, sessionId),
@@ -3056,6 +3097,8 @@ const createApplicationModules = async (
       managedFileVersions: managedFileVersionService,
       uploadRepository,
       notebookRpcServer,
+      getShellRuntimeBinding: async () =>
+        resolveConfiguredShellRuntimeBinding(await settingsRepository.getSettings()),
       peekNotebookHandoffContext: (sessionId) => notebookService.peekHandoffContext(sessionId),
       authorizeSkillImportReferencedUploads: (projectId, sessionId, paths) =>
         conversationSkillImporter.authorizeReferencedUploads(projectId, sessionId, paths),
@@ -3708,6 +3751,9 @@ const createApplicationModules = async (
         void runtime.requestAgentFrameworkSwitch(frameworkId)
         void sideChatRuntime.requestProviderReconnect()
       }
+    },
+    localShell: {
+      requestShellRuntimeRefresh: () => runtime.requestShellCapabilityRefresh()
     },
     skills: {
       requestSkillsReload: () => void runtime.requestSkillsReload(),
@@ -4519,6 +4565,7 @@ const createApplicationModules = async (
       runtime: settingsWorkflows.runtime,
       service: settingsService,
       appearance: settingsWorkflows.appearance,
+      localShell: settingsWorkflows.localShell,
       snapshotCommits: settingsSnapshotCommits,
       emitInstallEvent: (event) => broadcastToRenderers(SETTINGS_INSTALL_LOG_CHANNEL, event),
       listAppIconPreviews

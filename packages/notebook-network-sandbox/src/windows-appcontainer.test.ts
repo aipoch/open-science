@@ -1,6 +1,6 @@
 import { spawn, spawnSync } from 'node:child_process'
 import { once } from 'node:events'
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -10,6 +10,7 @@ import {
   connectionProbeSpecification,
   windowsElevationScript,
   windowsLaunch,
+  windowsSupervisedLaunch,
   windowsStandardLaunch
 } from '../runtime/src/platform/windows-appcontainer.js'
 
@@ -43,6 +44,38 @@ describe('Windows AppContainer elevation', () => {
 })
 
 describe('Windows AppContainer launch', () => {
+  it('supervises standard-mode commands without requiring AppContainer setup', () => {
+    const request = {
+      command: 'Write-Output ready',
+      cwd: 'C:\\workspace',
+      hostPath: 'C:\\resources\\notebook-sandbox-host.exe',
+      gatewayPort: 49700,
+      gatewayCredentials: { username: 'command', password: 'secret' },
+      env: {}
+    }
+
+    const launch = windowsSupervisedLaunch(request)
+    const specification = JSON.parse(
+      Buffer.from(launch.argv.at(-1)!, 'base64url').toString('utf8')
+    ) as {
+      executable: string
+      arguments: string[]
+      cwd: string
+      terminationProofPath: string
+      terminationProofToken: string
+    }
+
+    expect(launch.argv.slice(0, 2)).toEqual([request.hostPath, 'supervise'])
+    expect(launch.confirmProcessTreeTermination).toBeTypeOf('function')
+    expect(specification).toMatchObject({
+      executable: 'powershell.exe',
+      arguments: ['-NoLogo', '-NoProfile', '-NonInteractive', '-Command', request.command],
+      cwd: request.cwd,
+      terminationProofPath: expect.stringContaining('.open-science-process-tree-terminated-'),
+      terminationProofToken: expect.any(String)
+    })
+  })
+
   it('launches a structured standard-mode executable directly to preserve persistent stdio', () => {
     const request = {
       command:
@@ -117,6 +150,7 @@ describe('Windows AppContainer launch', () => {
       arguments: ['/app/python_loop.py'],
       cwd: '/workspace'
     })
+    expect(launch.confirmProcessTreeTermination).toBeTypeOf('function')
   })
 
   it('launches a structured batch-file shim through cmd.exe', () => {
@@ -198,6 +232,60 @@ describe('Windows AppContainer launch', () => {
         if (child.exitCode === null) {
           child.kill()
           await once(child, 'exit')
+        }
+        rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
+      }
+    },
+    5_000
+  )
+
+  it.runIf(process.platform === 'win32' && process.arch === 'x64')(
+    'preserves the leader exit code and reaps its standard-mode helper before proving cleanup',
+    async () => {
+      const root = mkdtempSync(join(tmpdir(), 'os-supervised-launch-'))
+      const pidFile = join(root, 'helper.pid')
+      const leader = join(root, 'leader.js')
+      writeFileSync(
+        leader,
+        [
+          "const { spawn } = require('node:child_process')",
+          "const { writeFileSync } = require('node:fs')",
+          "const helper = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { detached: true, stdio: 'ignore' })",
+          `writeFileSync(${JSON.stringify(pidFile)}, String(helper.pid))`,
+          'helper.unref()',
+          'process.exitCode = 19'
+        ].join(';')
+      )
+      const launch = windowsSupervisedLaunch({
+        command: 'unused',
+        executable: process.execPath,
+        args: [leader],
+        cwd: root,
+        hostPath: join(
+          process.cwd(),
+          'packages/notebook-network-sandbox/vendor/windows/x64/notebook-appcontainer-host.exe'
+        ),
+        gatewayPort: 49700,
+        gatewayCredentials: { username: 'command', password: 'secret' },
+        env: process.env
+      })
+      const supervisor = spawn(launch.argv[0]!, launch.argv.slice(1), {
+        cwd: root,
+        env: launch.env,
+        stdio: ['ignore', 'pipe', 'pipe']
+      })
+      const [code] = (await once(supervisor, 'exit')) as [number | null]
+      const helperPid = Number(readFileSync(pidFile, 'utf8'))
+
+      try {
+        expect(code).toBe(19)
+        await expect(launch.confirmProcessTreeTermination()).resolves.toBe(true)
+        expect(() => process.kill(helperPid, 0)).toThrow()
+      } finally {
+        try {
+          process.kill(helperPid, 'SIGKILL')
+        } catch {
+          // Expected once the supervisor closes its kill-on-close Job Object.
         }
         rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
       }

@@ -1,12 +1,24 @@
-import { spawn, type ChildProcess } from 'node:child_process'
+import { spawn, type ChildProcess, type ChildProcessWithoutNullStreams } from 'node:child_process'
 import { dirname } from 'node:path'
 import { assertShellSearchScope } from './shell-search-scope'
 
 import { protectManagedRuntimeWrites } from './managed-runtime-guard'
-import type { NotebookProcessSandbox } from './process-sandbox'
-import { registerOwnedPosixProcessGroup, terminateProcessTree } from '../process-tree'
+import { wsl2BashPreviewStatus } from '../wsl/wsl2-preview-gate'
+import type {
+  NotebookProcessSandbox,
+  NotebookSandboxCleanupReason,
+  NotebookSandboxCleanupResult,
+  NotebookSandboxProcessOutcome
+} from './process-sandbox'
+import {
+  createPosixProcessTreeOwnership,
+  trackOwnedPosixProcessTree,
+  terminateProcessTree,
+  type ProcessTreeKillResult
+} from '../process-tree'
 import { resolveWindowsPowerShellExecutable } from '../windows-powershell'
 import { NOTEBOOK_SHELL_DEFAULT_TIMEOUT_MS } from '../../shared/notebook'
+import type { ShellRuntimeBinding } from '../../shared/notebook'
 import {
   notebookWorkloadCacheEnv,
   notebookWorkloadCacheRoot,
@@ -18,10 +30,16 @@ import {
   limitUtf8
 } from './content-limits'
 import { buildNotebookShellEnvironment, environmentPathRoots } from './process-environment'
+import {
+  defaultShellRuntimeBinding,
+  shellRuntimePlatform,
+  shellRuntimeSandboxTarget
+} from './shell-runtime'
 
-// Grace between the POSIX process group's polite termination and an uncatchable group kill.
-const SHELL_KILL_GRACE_MS = 2_000
 const SHELL_TIMEOUT_MESSAGE_RESERVE_BYTES = 256
+const SHELL_CLEANUP_INCOMPLETE_MESSAGE =
+  'SHELL_CLEANUP_INCOMPLETE: Shell execution cleanup did not complete; the result is not trusted.'
+const SHELL_NETWORK_TRANSPORT_UNSUPPORTED_PREFIX = 'WSL2_NETWORK_TRANSPORT_UNSUPPORTED:'
 
 // Result of one stateless bash_execute run. No status/traceback classification: the shell is
 // expected to fail non-zero sometimes, so the caller inspects exitCode directly instead of a
@@ -34,6 +52,9 @@ type NotebookShellResult = {
   cancelled?: boolean
   // Runtime-private cleanup evidence. Public adapters project only the legacy result fields.
   ownedTreeReaped?: boolean
+  runtimeStatus?: 'unavailable'
+  errorCode?:
+    'shell-runtime-unavailable' | 'shell-cleanup-incomplete' | 'shell-network-transport-unsupported'
 }
 
 type NotebookShellProcessRequest = {
@@ -46,10 +67,12 @@ type NotebookShellProcessRequest = {
   inputRoot?: string
   protectedDirs?: readonly string[]
   environment?: NodeJS.ProcessEnv
+  executionReference?: string
   sessionId: string
   projectId: string
   timeoutMs?: number
   signal?: AbortSignal
+  runtimeBinding?: ShellRuntimeBinding
 }
 
 // Runtime-private port: platform invocation, encoding, env projection, and teardown stay in its adapter.
@@ -178,9 +201,10 @@ const encodePowerShellCommand = (command: string): string => {
 // cmd.exe, whose command language cannot run the POSIX-style commands agents commonly emit.
 const resolveShellInvocation = (
   command: string,
-  platform: NodeJS.Platform = process.platform
-): ShellInvocation =>
-  platform === 'win32'
+  runtime: NodeJS.Platform | ShellRuntimeBinding = process.platform
+): ShellInvocation => {
+  const binding = typeof runtime === 'string' ? defaultShellRuntimeBinding(runtime) : runtime
+  return binding.kind === 'powershell'
     ? {
         executable: resolveWindowsPowerShellExecutable(),
         args: [
@@ -191,118 +215,193 @@ const resolveShellInvocation = (
           encodePowerShellCommand(command)
         ]
       }
-    : { executable: '/bin/sh', args: ['-c', command] }
+    : {
+        executable: binding.kind === 'wsl2-bash' ? '/bin/bash' : binding.shell,
+        args: ['-c', command]
+      }
+}
 
-// POSIX shells are spawned as independent groups below. Signal that group first so descendants do
-// not survive a timeout; if group signaling is unavailable, fall back to the direct child handle.
-const signalPosixShellGroup = (child: ChildProcess, signal: NodeJS.Signals): void => {
-  const groupId = child.pid
-  if (groupId !== undefined && Number.isSafeInteger(groupId) && groupId > 0) {
-    try {
-      process.kill(-groupId, signal)
-      return
-    } catch {
-      // The group may already be gone or the platform may reject group signaling.
-    }
-  }
-
-  try {
-    child.kill(signal)
-  } catch {
-    // It exited between timeout detection and this best-effort signal.
-  }
+const resolveShellProcessInvocation = (
+  command: string,
+  runtimeBinding: ShellRuntimeBinding,
+  runtimeRoot: string,
+  hostPlatform: NodeJS.Platform,
+  hasProcessSandbox: boolean
+): ShellInvocation => {
+  const invocation = resolveShellInvocation(command, runtimeBinding)
+  return hasProcessSandbox
+    ? invocation
+    : protectManagedRuntimeWrites(invocation, runtimeRoot, hostPlatform)
 }
 
 // Cancellation and timeout settle only after the bounded process-tree terminator finishes, so callers
 // may safely tear down or remove the Session workspace after this promise resolves.
 const terminateShellOnTimeout = async (
   child: ChildProcess,
-  platformOrTerminateTree:
-    NodeJS.Platform | ((process: ChildProcess) => Promise<unknown>) = process.platform,
-  terminateTree: (process: ChildProcess) => Promise<unknown> = terminateProcessTree
-): Promise<boolean | undefined> => {
-  const legacyCall = typeof platformOrTerminateTree === 'function'
-  const platform = legacyCall ? process.platform : platformOrTerminateTree
-  const effectiveTerminateTree = legacyCall ? platformOrTerminateTree : terminateTree
-  if (platform !== 'win32') {
-    if (legacyCall) {
-      try {
-        await effectiveTerminateTree(child)
-      } catch {
-        // Preserve the historical never-reject teardown contract.
-      }
-      return undefined
-    }
-    signalPosixShellGroup(child, 'SIGTERM')
-    setTimeout(() => signalPosixShellGroup(child, 'SIGKILL'), SHELL_KILL_GRACE_MS)
-    return false
-  }
-
+  platform: NodeJS.Platform = process.platform,
+  terminateTree: (process: ChildProcess) => Promise<ProcessTreeKillResult> = terminateProcessTree
+): Promise<ProcessTreeKillResult> => {
+  void platform
   try {
-    const result = (await effectiveTerminateTree(child)) as { reaped?: boolean }
-    return legacyCall ? undefined : result.reaped === true
+    return await terminateTree(child)
   } catch {
     // Preserve runShellCommand's never-reject contract even when the best-effort terminator fails.
-    return false
+    return { reaped: false }
   }
 }
 
 // Runs one fresh platform-native process with the Session cwd and handoff channel. Spawn failure,
 // non-zero exit, and timeout all resolve as ordinary results instead of rejecting.
+class ShellPreparationError extends Error {
+  constructor(readonly result: NotebookShellResult) {
+    super(result.stderr)
+  }
+}
+
 const prepareShellLaunch = async (
-  options: NotebookShellProcessRequest,
+  options: NotebookShellProcessRequest & { previewAvailable?: () => boolean },
   platform: NodeJS.Platform = process.platform,
   processSandbox?: NotebookProcessSandbox
 ): Promise<PreparedShellLaunch> => {
-  await assertShellSearchScope(options.command, options.cwd, platform, options.signal)
-  const baseEnv = options.environment
-    ? { ...options.environment }
-    : buildShellEnv(
-        options.handoffDir,
-        platform,
-        process.env,
-        options.runtimeRoot,
-        prepareNotebookWorkloadCache(options.runtimeRoot)
-      )
-  const nativeInvocation = resolveShellInvocation(options.command, platform)
-  const invocation = processSandbox
-    ? nativeInvocation
-    : protectManagedRuntimeWrites(nativeInvocation, options.runtimeRoot, platform)
-  const sandboxed = processSandbox
-    ? await processSandbox.wrap({
-        executable: invocation.executable,
-        args: invocation.args,
-        env: baseEnv,
-        cwd: options.cwd,
-        commandText: options.command,
-        sessionId: options.sessionId,
-        projectId: options.projectId,
-        runtime: 'bash',
-        filesystem: {
-          readOnlyRoots: [
-            options.runtimeRoot,
-            ...(options.inputRoot ? [options.inputRoot] : []),
-            dirname(invocation.executable),
-            ...environmentPathRoots(baseEnv, platform)
-          ],
-          readWriteRoots: [
-            options.notebookSessionRoot ?? options.cwd,
-            options.cwd,
-            options.handoffDir,
-            notebookWorkloadCacheRoot(options.runtimeRoot)
-          ],
-          deniedReadRoots: options.protectedDirs ?? [],
-          deniedWriteRoots: options.protectedDirs ?? []
-        },
-        ...(options.signal ? { signal: options.signal } : {})
+  return prepareShellLaunchOptions({ ...options, platform, processSandbox })
+}
+
+const prepareShellLaunchOptions = async (
+  options: NotebookShellProcessRequest & {
+    platform?: NodeJS.Platform
+    processSandbox?: NotebookProcessSandbox
+    previewAvailable?: () => boolean
+  }
+): Promise<PreparedShellLaunch> => {
+  const hostPlatform = options.platform ?? process.platform
+  const runtimeBinding = options.runtimeBinding ?? defaultShellRuntimeBinding(hostPlatform)
+  if (
+    runtimeBinding.kind === 'wsl2-bash' &&
+    (!(options.previewAvailable ?? (() => wsl2BashPreviewStatus().available))() ||
+      !options.processSandbox)
+  ) {
+    throw new ShellPreparationError({
+      stdout: '',
+      stderr: 'SHELL_RUNTIME_UNAVAILABLE: The selected WSL2 Bash runtime is unavailable.',
+      exitCode: null,
+      runtimeStatus: 'unavailable',
+      errorCode: 'shell-runtime-unavailable'
+    })
+  }
+  const runtimePlatform = shellRuntimePlatform(runtimeBinding, hostPlatform)
+  await assertShellSearchScope(options.command, options.cwd, runtimePlatform, options.signal)
+
+  let shellEnv: NodeJS.ProcessEnv
+  let workloadCacheEnv: NodeJS.ProcessEnv
+  try {
+    workloadCacheEnv = prepareNotebookWorkloadCache(options.runtimeRoot)
+    shellEnv = options.environment
+      ? { ...options.environment }
+      : buildShellEnv(
+          options.handoffDir,
+          runtimePlatform,
+          process.env,
+          options.runtimeRoot,
+          workloadCacheEnv
+        )
+  } catch (error) {
+    throw new ShellPreparationError({
+      stdout: '',
+      stderr: error instanceof Error ? error.message : String(error),
+      exitCode: null
+    })
+  }
+
+  const platform = hostPlatform
+  const invocation = resolveShellProcessInvocation(
+    options.command,
+    runtimeBinding,
+    options.runtimeRoot,
+    hostPlatform,
+    Boolean(options.processSandbox)
+  )
+  const baseEnv = shellEnv
+  let sandboxed: Awaited<ReturnType<NotebookProcessSandbox['wrap']>> | undefined
+  try {
+    sandboxed = options.processSandbox
+      ? await options.processSandbox.wrap({
+          target: shellRuntimeSandboxTarget(runtimeBinding),
+          executable: invocation.executable,
+          args: invocation.args,
+          env: baseEnv,
+          pathEnvironment: {
+            OPEN_SCIENCE_HANDOFF_DIR: options.handoffDir,
+            ...workloadCacheEnv
+          },
+          cwd: options.cwd,
+          commandText: options.command,
+          ...(options.executionReference ? { executionReference: options.executionReference } : {}),
+          sessionId: options.sessionId,
+          projectId: options.projectId,
+          runtime: 'bash',
+          filesystem: {
+            readOnlyRoots: [
+              options.runtimeRoot,
+              ...(options.inputRoot ? [options.inputRoot] : []),
+              ...(runtimeBinding.kind === 'wsl2-bash'
+                ? []
+                : [
+                    dirname(invocation.executable),
+                    ...environmentPathRoots(baseEnv, runtimePlatform)
+                  ])
+            ],
+            readWriteRoots: [
+              options.notebookSessionRoot ?? options.cwd,
+              options.cwd,
+              options.handoffDir,
+              notebookWorkloadCacheRoot(options.runtimeRoot)
+            ],
+            deniedReadRoots: options.protectedDirs ?? [],
+            deniedWriteRoots: options.protectedDirs ?? []
+          },
+          ...(options.signal ? { signal: options.signal } : {})
+        })
+      : undefined
+  } catch (error) {
+    if (runtimeBinding.kind !== 'wsl2-bash') throw error
+    const message = error instanceof Error ? error.message : String(error)
+    if (message.startsWith('SHELL_CLEANUP_INCOMPLETE:')) {
+      throw new ShellPreparationError({
+        stdout: '',
+        stderr: SHELL_CLEANUP_INCOMPLETE_MESSAGE,
+        exitCode: null,
+        errorCode: 'shell-cleanup-incomplete'
       })
-    : undefined
+    }
+    if (options.signal?.aborted) {
+      throw new ShellPreparationError({
+        stdout: '',
+        stderr: 'Shell command was cancelled.',
+        exitCode: null,
+        cancelled: true
+      })
+    }
+    if (message.startsWith(SHELL_NETWORK_TRANSPORT_UNSUPPORTED_PREFIX)) {
+      throw new ShellPreparationError({
+        stdout: '',
+        stderr: message,
+        exitCode: null,
+        errorCode: 'shell-network-transport-unsupported'
+      })
+    }
+    throw new ShellPreparationError({
+      stdout: '',
+      stderr: 'SHELL_RUNTIME_UNAVAILABLE: The selected WSL2 Bash runtime is unavailable.',
+      exitCode: null,
+      runtimeStatus: 'unavailable',
+      errorCode: 'shell-runtime-unavailable'
+    })
+  }
   return {
     platform,
     invocation,
     baseEnv,
     sandboxed,
-    // Consuming one-shot grants here freezes them at admission, before a queued Run waits.
     endSandboxExecution: sandboxed?.beginExecution?.()
   }
 }
@@ -322,6 +421,8 @@ const runShellCommand = (
       abort(): void
     }
     preparedLaunch?: PreparedShellLaunch
+    terminateTree?: (process: ChildProcess) => Promise<ProcessTreeKillResult>
+    previewAvailable?: () => boolean
   }
 ): Promise<NotebookShellResult> => {
   const run = async (): Promise<NotebookShellResult> => {
@@ -334,37 +435,118 @@ const runShellCommand = (
         cancelled: true
       }
     }
+
+    const runtimeBinding = options.runtimeBinding ?? defaultShellRuntimeBinding(options.platform)
+    const runtimePlatform = shellRuntimePlatform(runtimeBinding, options.platform)
     const timeoutMs = options.timeoutMs ?? NOTEBOOK_SHELL_DEFAULT_TIMEOUT_MS
     const prepared =
       options.preparedLaunch ??
       (await prepareShellLaunch(options, options.platform, options.processSandbox))
     const { platform, invocation, baseEnv, sandboxed, endSandboxExecution } = prepared
+    const cleanupCompleted = (result: NotebookSandboxCleanupResult): boolean =>
+      result.processesTerminated && result.networkClosed && result.temporaryResourcesRemoved
+    let sandboxCleanupPromise: Promise<NotebookSandboxCleanupResult> | undefined
+    const cleanupSandbox = async (
+      reason: NotebookSandboxCleanupReason,
+      processOutcome: NotebookSandboxProcessOutcome
+    ): Promise<NotebookSandboxCleanupResult> => {
+      if (!sandboxCleanupPromise) {
+        sandboxCleanupPromise =
+          sandboxed?.cleanup(reason, processOutcome) ??
+          Promise.resolve({
+            processesTerminated: processOutcome.processesTerminated,
+            networkClosed: true,
+            temporaryResourcesRemoved: true
+          })
+      }
+      try {
+        const result = await sandboxCleanupPromise
+        if (!cleanupCompleted(result)) sandboxCleanupPromise = undefined
+        return result
+      } catch (error) {
+        sandboxCleanupPromise = undefined
+        throw error
+      }
+    }
+    const cleanupSandboxWithRetry = async (
+      reason: NotebookSandboxCleanupReason,
+      processOutcome: NotebookSandboxProcessOutcome
+    ): Promise<NotebookSandboxCleanupResult> => {
+      const firstResult = await cleanupSandbox(reason, processOutcome)
+      if (runtimeBinding.kind !== 'wsl2-bash' || cleanupCompleted(firstResult)) return firstResult
+      return cleanupSandbox(reason, processOutcome)
+    }
+    const withIncompleteCleanup = (result: NotebookShellResult): NotebookShellResult => ({
+      ...result,
+      stderr:
+        result.stderr +
+        `${result.stderr && !result.stderr.endsWith('\n') ? '\n' : ''}${SHELL_CLEANUP_INCOMPLETE_MESSAGE}`,
+      exitCode: null,
+      errorCode: 'shell-cleanup-incomplete'
+    })
+
+    if (options.signal?.aborted) {
+      endSandboxExecution?.()
+      let cleanupResult: NotebookSandboxCleanupResult | undefined
+      try {
+        cleanupResult = await cleanupSandboxWithRetry('cancel', { processesTerminated: false })
+      } catch {
+        cleanupResult = undefined
+      }
+      const cancelled: NotebookShellResult = {
+        stdout: '',
+        stderr: 'Shell command was cancelled.',
+        exitCode: null,
+        cancelled: true
+      }
+      return cleanupResult && cleanupCompleted(cleanupResult)
+        ? cancelled
+        : withIncompleteCleanup(cancelled)
+    }
+
+    const spawnAdmission = sandboxed?.beginSpawn?.()
+    const processTreeOwnership = createPosixProcessTreeOwnership(
+      sandboxed?.env ?? baseEnv,
+      platform
+    )
+    const launchOwnership = options.prepareProcessOwnership?.()
+    let child: ChildProcessWithoutNullStreams
+    try {
+      child = spawn(
+        sandboxed?.executable ?? invocation.executable,
+        sandboxed?.args ?? invocation.args,
+        {
+          cwd: options.cwd,
+          env: processTreeOwnership.env,
+          // On POSIX this makes the shell the leader of a private process group/session. Keep its handle
+          // and stdio referenced (no unref), preserving normal completion while enabling safe -PGID kills.
+          detached: platform !== 'win32'
+        }
+      )
+    } catch (error) {
+      launchOwnership?.abort()
+      spawnAdmission?.notStarted()
+      endSandboxExecution?.()
+      let complete = false
+      try {
+        complete = cleanupCompleted(
+          await cleanupSandboxWithRetry('spawn-failed', { processesTerminated: false })
+        )
+      } catch {
+        // The stable cleanup failure below preserves the executor's never-reject contract.
+      }
+      const result: NotebookShellResult = {
+        stdout: '',
+        stderr: error instanceof Error ? error.message : String(error),
+        exitCode: null
+      }
+      return complete ? result : withIncompleteCleanup(result)
+    }
+    spawnAdmission?.started()
+    if (platform !== 'win32' && process.platform !== 'win32')
+      trackOwnedPosixProcessTree(child, processTreeOwnership.token)
 
     return new Promise((resolve) => {
-      const launchOwnership = options.prepareProcessOwnership?.()
-      let child: ChildProcess
-      try {
-        child = spawn(
-          sandboxed?.executable ?? invocation.executable,
-          sandboxed?.args ?? invocation.args,
-          {
-            cwd: options.cwd,
-            env: sandboxed?.env ?? baseEnv,
-            // POSIX spawn makes this shell the leader of a private process group/session.
-            detached: platform !== 'win32'
-          }
-        )
-      } catch (error) {
-        launchOwnership?.abort()
-        disposePreparedShellLaunch(prepared)
-        resolve({
-          stdout: '',
-          stderr: error instanceof Error ? error.message : String(error),
-          exitCode: null
-        })
-        return
-      }
-      if (platform !== 'win32') registerOwnedPosixProcessGroup(child)
       let releaseProcessOwnership: (() => void) | undefined
       try {
         releaseProcessOwnership = launchOwnership
@@ -398,7 +580,6 @@ const runShellCommand = (
           })
         return
       }
-
       let stdout = ''
       let stderr = ''
       let stdoutBytes = 0
@@ -408,51 +589,68 @@ const runShellCommand = (
       // Timeout owns settlement even if Windows taskkill emits exit before its promise resolves.
       let timedOut = false
       let cancelled = false
+      let exited = false
+      let failed = false
 
-      const finish = (result: NotebookShellResult, ownedTreeReaped = true): void => {
+      const finish = async (
+        result: NotebookShellResult,
+        cleanupReason: NotebookSandboxCleanupReason,
+        processOutcome: NotebookSandboxProcessOutcome
+      ): Promise<void> => {
         if (settled) return
         settled = true
         clearTimeout(timeoutTimer)
         options.signal?.removeEventListener('abort', abort)
         // A receipt is removal authority and recovery evidence. Keep it whenever full-tree teardown
         // cannot be proved so startup recovery can retry and new work remains fenced fail-closed.
-        if (ownedTreeReaped) releaseProcessOwnership?.()
+        if (processOutcome.processesTerminated) releaseProcessOwnership?.()
         endSandboxExecution?.()
-        const normalized = normalizePowerShellStderr(result.stderr)
+        const normalized =
+          runtimeBinding.kind === 'powershell'
+            ? normalizePowerShellStderr(result.stderr, runtimePlatform)
+            : result.stderr
         const stderr = sandboxed ? sandboxed.annotateStderr(normalized) : normalized
-        if (ownedTreeReaped) sandboxed?.cleanup()
-        const completed = { ...result, stderr }
-        if (!ownedTreeReaped) {
-          // Keep cleanup evidence runtime-private and out of the exact legacy foreground payload.
-          Object.defineProperty(completed, 'ownedTreeReaped', { value: false })
+        let complete = false
+        try {
+          complete = cleanupCompleted(await cleanupSandboxWithRetry(cleanupReason, processOutcome))
+        } catch {
+          complete = false
         }
+        const normalizedResult = { ...result, stderr }
+        const completed = complete ? normalizedResult : withIncompleteCleanup(normalizedResult)
+        if (!processOutcome.processesTerminated || !complete)
+          Object.defineProperty(completed, 'ownedTreeReaped', { value: false })
         resolve(completed)
       }
 
-      const terminateAndFinish = (result: NotebookShellResult): void => {
-        // Do not expose a terminal result until the complete owned tree is gone. This keeps the
-        // Session workspace and ownership receipt valid throughout timeout cleanup on every OS.
-        void terminateProcessTree(child).then((tree) => finish(result, tree.reaped))
+      const terminateAndFinish = (
+        result: NotebookShellResult,
+        cleanupReason: 'cancel' | 'timeout'
+      ): void => {
+        void terminateShellOnTimeout(child, platform, options.terminateTree).then(({ reaped }) => {
+          void finish(result, cleanupReason, { processesTerminated: reaped })
+        })
       }
 
       const abort = (): void => {
-        if (settled || timedOut || cancelled) return
+        if (settled || timedOut || cancelled || exited || failed) return
         cancelled = true
         clearTimeout(timeoutTimer)
-        const result = {
-          stdout,
-          stderr:
-            stderr + `${stderr && !stderr.endsWith('\n') ? '\n' : ''}Shell command was cancelled.`,
-          exitCode: null,
-          cancelled: true as const
-        }
-        // Stop and lifecycle teardown do not settle until the entire owned tree is confirmed gone.
-        // This is deliberately stronger than timeout's prompt-return compatibility path.
-        void terminateProcessTree(child).then((tree) => finish(result, tree.reaped))
+        terminateAndFinish(
+          {
+            stdout,
+            stderr:
+              stderr +
+              `${stderr && !stderr.endsWith('\n') ? '\n' : ''}Shell command was cancelled.`,
+            exitCode: null,
+            cancelled: true
+          },
+          'cancel'
+        )
       }
 
       const timeoutTimer = setTimeout(() => {
-        if (settled || cancelled) return
+        if (settled || cancelled || exited || failed) return
         timedOut = true
         const timeoutResult: NotebookShellResult = {
           stdout,
@@ -462,7 +660,7 @@ const runShellCommand = (
           exitCode: null,
           ...(truncated ? { truncated: true } : {})
         }
-        terminateAndFinish(timeoutResult)
+        terminateAndFinish(timeoutResult, 'timeout')
       }, timeoutMs)
 
       options.signal?.addEventListener('abort', abort, { once: true })
@@ -502,35 +700,52 @@ const runShellCommand = (
         )
       })
       child.once('error', (error) => {
-        if (!timedOut && !cancelled) {
-          const result = {
-            stdout,
-            stderr: stderr || error.message,
-            exitCode: null,
-            ...(truncated ? { truncated: true } : {})
-          }
-          void terminateProcessTree(child).then((tree) => finish(result, tree.reaped))
-        }
+        if (timedOut || cancelled || exited || failed) return
+        failed = true
+        clearTimeout(timeoutTimer)
+        void terminateShellOnTimeout(child, platform, options.terminateTree).then(({ reaped }) => {
+          void finish(
+            {
+              stdout,
+              stderr: stderr || error.message,
+              exitCode: null,
+              ...(truncated ? { truncated: true } : {})
+            },
+            'spawn-failed',
+            { processesTerminated: reaped }
+          )
+        })
       })
       child.once('exit', (code) => {
-        if (!timedOut && !cancelled) {
-          const result = {
-            stdout,
-            stderr,
-            exitCode: code,
-            ...(truncated ? { truncated: true } : {})
-          }
-          void terminateProcessTree(child).then((tree) => finish(result, tree.reaped))
-        }
+        if (timedOut || cancelled || exited || failed) return
+        exited = true
+        clearTimeout(timeoutTimer)
+        void terminateShellOnTimeout(child, platform, options.terminateTree).then(({ reaped }) => {
+          // On Windows, taskkill runs after Node observes the PowerShell exit and can report that
+          // the PID no longer exists. A numeric exit code is authoritative for this normal native
+          // completion; timeout/cancel and WSL guest cleanup retain their stricter ownership checks.
+          const processesTerminated =
+            reaped ||
+            (platform === 'win32' && runtimeBinding.kind === 'powershell' && code !== null)
+          void finish(
+            { stdout, stderr, exitCode: code, ...(truncated ? { truncated: true } : {}) },
+            'exit',
+            { processesTerminated }
+          )
+        })
       })
     })
   }
 
-  return run().catch((error: unknown) => ({
-    stdout: '',
-    stderr: error instanceof Error ? error.message : String(error),
-    exitCode: null
-  }))
+  return run().catch((error: unknown) =>
+    error instanceof ShellPreparationError
+      ? error.result
+      : {
+          stdout: '',
+          stderr: error instanceof Error ? error.message : String(error),
+          exitCode: null
+        }
+  )
 }
 
 // Stateless production adapter: a shared instance adds no queue or process registry.
@@ -564,7 +779,13 @@ class NotebookShellProcessAdapter implements NotebookShellProcess {
     execute(signal?: AbortSignal): Promise<NotebookShellResult>
     dispose(): void
   }> {
-    const preparedLaunch = await prepareShellLaunch(request, this.platform, this.processSandbox)
+    let preparedLaunch: PreparedShellLaunch
+    try {
+      preparedLaunch = await prepareShellLaunch(request, this.platform, this.processSandbox)
+    } catch (error) {
+      if (!(error instanceof ShellPreparationError)) throw error
+      return { execute: async () => error.result, dispose: () => undefined }
+    }
     let consumed = false
     return {
       execute: (signal?: AbortSignal) => {
@@ -632,6 +853,7 @@ export {
   buildShellEnv,
   normalizePowerShellStderr,
   resolveShellInvocation,
+  resolveShellProcessInvocation,
   runShellCommand,
   terminateShellOnTimeout
 }

@@ -67,6 +67,7 @@ import {
   type UpsertProviderRequest,
   type ValidateProviderRequest
 } from '../../shared/settings'
+import type { OpenWslTerminalRequest, SelectWslProfileRequest } from '../../shared/wsl-setup'
 import { SettingsService } from './service'
 import { connectorTemplateExportSelection } from './connector-template'
 import type { SettingsWorkflows } from './workflows'
@@ -343,6 +344,26 @@ const registerSettingsIpcHandlers = ({
 
   ipcMainHandle('settings:get-package-mirror', () => service.getPackageMirror())
   ipcMainHandle('settings:get-notebook-network-status', () => service.getNotebookNetworkStatus())
+  ipcMainHandle('settings:get-wsl2-bash-preview-status', () => service.getWsl2BashPreviewStatus())
+  ipcMainHandle('settings:get-local-shell-runtime-preference', () =>
+    service.getLocalShellRuntimePreference()
+  )
+  ipcMainHandle('settings:probe-wsl-setup', () => service.probeWslSetup())
+  ipcMainHandle('settings:install-wsl-platform', () => service.installWslPlatform())
+  ipcMainHandle('settings:create-wsl-support-handoff', () => service.createWslSupportHandoff())
+  ipcMainHandle('settings:select-wsl-profile', (_event, request: SelectWslProfileRequest) =>
+    service.selectWslProfile(request)
+  )
+  ipcMainHandle('settings:switch-local-shell-to-powershell', () =>
+    workflows.localShell.switchToPowerShell()
+  )
+  ipcMainHandle('settings:use-wsl2-bash', () => workflows.localShell.useWsl2Bash())
+  ipcMainHandle('settings:install-recommended-wsl-distro', () =>
+    service.installRecommendedWslDistro()
+  )
+  ipcMainHandle('settings:open-wsl-terminal', (_event, request: OpenWslTerminalRequest) =>
+    service.openWslTerminal(request)
+  )
   ipcMainHandle('settings:set-package-mirror', (_event, request: SetPackageMirrorRequest) =>
     snapshotCommits.projectAfter(service.setPackageMirror(request))
   )

@@ -12,6 +12,7 @@ import {
 import { ViolationLog } from './gateway/violation-log.js'
 import { checkLinuxTools, linuxLaunch } from './platform/linux-isolation.js'
 import { macosLaunch } from './platform/macos-isolation.js'
+import { wsl2Launch } from './platform/wsl2-isolation.js'
 import {
   checkWindowsAppContainer,
   installWindowsAppContainer,
@@ -19,6 +20,7 @@ import {
   readAppContainerStatus,
   removeWindowsAppContainer,
   windowsLaunch,
+  windowsSupervisedLaunch,
   windowsStandardLaunch,
   type WindowsShell
 } from './platform/windows-appcontainer.js'
@@ -49,7 +51,29 @@ type NetworkAskCallback = (request: {
   commandId?: string
 }) => Promise<boolean>
 
+type NotebookSandboxTarget =
+  | Readonly<{ kind: 'native' }>
+  | Readonly<{
+      kind: 'wsl2'
+      profileId: string
+      distro: string
+      user: string
+    }>
+
+type SandboxCleanupResult = Readonly<{
+  processesTerminated: boolean
+  networkClosed: boolean
+  temporaryResourcesRemoved: boolean
+}>
+
+type SandboxProcessOutcome = Readonly<{
+  processesTerminated: boolean
+}>
+
+type SandboxCleanupReason = 'exit' | 'cancel' | 'timeout' | 'spawn-failed'
+
 type NetworkWrapRequest = Readonly<{
+  target?: NotebookSandboxTarget
   command: string
   executable?: string
   args?: readonly string[]
@@ -57,15 +81,19 @@ type NetworkWrapRequest = Readonly<{
   shell?: string | WindowsShell
   cwd: string
   env: NodeJS.ProcessEnv
+  pathEnvironment?: NodeJS.ProcessEnv
   localRpcSocketPath?: string
   inheritedFileDescriptorCount?: number
+  superviseProcessTree?: boolean
   filesystem: FilesystemLayoutInput
+  signal?: AbortSignal
 }>
 
 type RuntimeContext = {
   filesystem: FilesystemLayout
-  gateway: CommandGateway
-  releasePlatform?: () => Promise<void>
+  gateway?: CommandGateway
+  releasePlatform?: (reason: SandboxCleanupReason) => Promise<boolean | void | SandboxCleanupResult>
+  platformOwnsProcesses?: boolean
 }
 
 let runtimeConfig: NetworkRuntimeConfig | undefined
@@ -73,7 +101,7 @@ let approval: NetworkAskCallback | undefined
 let destinationPolicy: DestinationPolicy | undefined
 let windowsProtectedGatewayPort: number | undefined
 const commandContexts = new Map<string, RuntimeContext>()
-const finishing = new Set<Promise<void>>()
+const finishing = new Set<Promise<unknown>>()
 const violations = new ViolationLog()
 
 const parentSettings = (config: NetworkRuntimeConfig): ParentProxySettings | undefined => {
@@ -168,10 +196,16 @@ const initialize = async (config: NetworkRuntimeConfig, ask: NetworkAskCallback)
 
 const wrap = async (
   request: NetworkWrapRequest
-): Promise<{ argv: string[]; env: NodeJS.ProcessEnv; windowsJobObject?: true }> => {
+): Promise<{
+  argv: string[]
+  env: NodeJS.ProcessEnv
+  confirmProcessTreeTermination?: () => Promise<boolean>
+  beginSpawn?: () => Readonly<{ started: () => void; notStarted: () => void }>
+}> => {
   if (finishing.size > 0) await Promise.allSettled([...finishing])
   const config = runtimeConfig
   if (!config) throw new Error('Notebook process runtime is not initialized.')
+  const target = request.target ?? { kind: 'native' }
   const filesystem = normalizeFilesystemLayout({
     ...request.filesystem,
     ...((process.platform === 'darwin' || process.platform === 'linux') &&
@@ -182,6 +216,60 @@ const wrap = async (
   const credentials = {
     username: `notebook-${request.commandId}`,
     password: randomBytes(32).toString('base64url')
+  }
+  if (target.kind === 'wsl2') {
+    if (process.platform !== 'win32') {
+      throw new Error('Notebook WSL2 sandbox target requires a Windows host.')
+    }
+    const gateway = await CommandGateway.open({
+      decide: (host, port) => decide(request.commandId, host, port),
+      credentials,
+      ...(request.localRpcSocketPath ? { localRpcSocketPath: request.localRpcSocketPath } : {}),
+      parentProxy: parentSettings(config)
+    })
+    try {
+      const launch = await wsl2Launch({
+        target,
+        command: request.command,
+        cwd: request.cwd,
+        env: request.env,
+        ...(request.pathEnvironment ? { pathEnvironment: request.pathEnvironment } : {}),
+        filesystem,
+        gatewayPort: gateway.port,
+        gatewayCredentials: credentials,
+        onCleanupReady: (releasePlatform) => {
+          commandContexts.set(request.commandId, {
+            filesystem,
+            gateway,
+            releasePlatform,
+            platformOwnsProcesses: true
+          })
+        },
+        ...(request.signal ? { signal: request.signal } : {})
+      })
+      commandContexts.set(request.commandId, {
+        filesystem,
+        gateway,
+        releasePlatform: launch.release,
+        platformOwnsProcesses: true
+      })
+      return { argv: launch.argv, env: launch.env, beginSpawn: launch.beginSpawn }
+    } catch (error) {
+      if (commandContexts.has(request.commandId)) {
+        const cleanup = await cleanupAfterCommand(request.commandId, 'spawn-failed', {
+          processesTerminated: true
+        })
+        if (!Object.values(cleanup).every(Boolean)) {
+          throw new Error(
+            'SHELL_CLEANUP_INCOMPLETE: WSL2 shell preparation cleanup could not be verified.',
+            { cause: error }
+          )
+        }
+      } else {
+        await gateway.close()
+      }
+      throw error
+    }
   }
   const windowsGatewayPort = windowsProtectedGatewayPort
   const gateway = await CommandGateway.open({
@@ -238,6 +326,15 @@ const wrap = async (
         env: request.env,
         ...(request.localRpcSocketPath ? { localRpcSocketPath: request.localRpcSocketPath } : {})
       }
+      // Standard mode has no AppContainer, but opted-in short-lived workers still need reliable
+      // process-tree ownership so a normal leader exit cannot poison the next cleanup attempt.
+      if (!windowsGatewayPort && request.superviseProcessTree) {
+        return windowsSupervisedLaunch({
+          ...launchRequest,
+          cwd: request.cwd,
+          hostPath: config.windowsHostPath
+        })
+      }
       if (!windowsGatewayPort) return windowsStandardLaunch(launchRequest)
       return windowsLaunch({
         ...launchRequest,
@@ -256,21 +353,64 @@ const wrap = async (
   }
 }
 
-const closeContext = async (commandId: string, context: RuntimeContext): Promise<void> => {
-  await Promise.allSettled([context.gateway.close(), context.releasePlatform?.()])
-  violations.forget(commandId)
+const closeContext = async (
+  context: RuntimeContext,
+  reason: SandboxCleanupReason,
+  processOutcome: SandboxProcessOutcome
+): Promise<SandboxCleanupResult> => {
+  const [network, temporaryResources] = await Promise.allSettled([
+    context.gateway?.close(),
+    context.releasePlatform?.(reason)
+  ])
+  const platformResult =
+    temporaryResources.status === 'fulfilled' ? temporaryResources.value : false
+  const platformProcessesTerminated =
+    typeof platformResult === 'object'
+      ? platformResult.processesTerminated
+      : platformResult !== false
+  const platformNetworkClosed =
+    typeof platformResult === 'object' ? platformResult.networkClosed : platformResult !== false
+  const platformTemporaryResourcesRemoved =
+    typeof platformResult === 'object'
+      ? platformResult.temporaryResourcesRemoved
+      : platformResult !== false
+  return {
+    processesTerminated: context.platformOwnsProcesses
+      ? platformProcessesTerminated
+      : platformProcessesTerminated && processOutcome.processesTerminated,
+    networkClosed: network.status === 'fulfilled' && platformNetworkClosed,
+    temporaryResourcesRemoved: platformTemporaryResourcesRemoved
+  }
 }
 
-const cleanupAfterCommand = (commandId: string): void => {
+const cleanupAfterCommand = async (
+  commandId: string,
+  reason: SandboxCleanupReason,
+  processOutcome: SandboxProcessOutcome
+): Promise<SandboxCleanupResult> => {
   const context = commandContexts.get(commandId)
-  if (!context) return
-  commandContexts.delete(commandId)
-  const task = closeContext(commandId, context).finally(() => finishing.delete(task))
+  if (!context) {
+    return {
+      processesTerminated: processOutcome.processesTerminated,
+      networkClosed: true,
+      temporaryResourcesRemoved: true
+    }
+  }
+  const task = closeContext(context, reason, processOutcome)
+    .then((result) => {
+      if (Object.values(result).every(Boolean)) {
+        commandContexts.delete(commandId)
+        violations.forget(commandId)
+      }
+      return result
+    })
+    .finally(() => finishing.delete(task))
   finishing.add(task)
+  return task
 }
 
 const resetCommandConnections = (commandId: string): void => {
-  commandContexts.get(commandId)?.gateway.resetConnections()
+  commandContexts.get(commandId)?.gateway?.resetConnections()
 }
 
 const updateConfig = (config: NetworkRuntimeConfig): void => {
@@ -279,16 +419,30 @@ const updateConfig = (config: NetworkRuntimeConfig): void => {
   destinationPolicy = buildPolicy(config)
   const nextParent = parentSettings(config)
   for (const context of commandContexts.values()) {
-    context.gateway.updateParentProxy(nextParent)
-    context.gateway.resetConnections()
+    context.gateway?.updateParentProxy(nextParent)
+    context.gateway?.resetConnections()
   }
 }
 
 const reset = async (): Promise<void> => {
   const active = [...commandContexts.entries()]
-  commandContexts.clear()
-  await Promise.all([...finishing, ...active.map(([id, context]) => closeContext(id, context))])
+  await Promise.all([
+    ...finishing,
+    ...active.map(([id, context]) =>
+      closeContext(context, 'cancel', { processesTerminated: false }).then((result) => {
+        const complete = context.platformOwnsProcesses
+          ? Object.values(result).every(Boolean)
+          : result.networkClosed && result.temporaryResourcesRemoved
+        if (!complete) return
+        commandContexts.delete(id)
+        violations.forget(id)
+      })
+    )
+  ])
   finishing.clear()
+  if (commandContexts.size > 0) {
+    throw new Error('Notebook process runtime cleanup was incomplete.')
+  }
   violations.clear()
   runtimeConfig = undefined
   approval = undefined

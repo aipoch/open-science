@@ -15,6 +15,7 @@ import {
 
 type TestSettingsWorkflowEffects = Partial<
   SettingsWorkflowEffects['runtime'] &
+    SettingsWorkflowEffects['localShell'] &
     SettingsWorkflowEffects['skills'] &
     SettingsWorkflowEffects['connectors'] &
     SettingsWorkflowEffects['appearance']
@@ -26,6 +27,9 @@ const testEffects = (effects: TestSettingsWorkflowEffects = {}): SettingsWorkflo
   runtime: {
     requestProviderReconnect: effects.requestProviderReconnect ?? (() => undefined),
     requestAgentFrameworkSwitch: effects.requestAgentFrameworkSwitch ?? (() => undefined)
+  },
+  localShell: {
+    requestShellRuntimeRefresh: effects.requestShellRuntimeRefresh ?? (async () => undefined)
   },
   skills: {
     requestSkillsReload: effects.requestSkillsReload ?? (() => undefined),
@@ -93,6 +97,24 @@ const fakeStore = () => {
     logoutIsolatedCodex: vi.fn().mockResolvedValue({ ok: true, category: 'ok' }),
     waitXaiOAuthLogin: vi.fn().mockResolvedValue({ ok: true }),
     logoutXaiOAuth: vi.fn().mockResolvedValue(snapshot()),
+    switchLocalShellToPowerShell: vi.fn().mockResolvedValue({
+      result: {
+        runtimeBinding: { kind: 'powershell', version: '5.1' },
+        appliesTo: 'subsequent-executions',
+        wslProfilePreserved: true
+      },
+      mutation: { revision: 1, runtime: 'powershell', previous: undefined }
+    }),
+    getLocalShellRuntimePreference: vi.fn().mockResolvedValue(undefined),
+    restoreLocalShellRuntimePreference: vi.fn().mockResolvedValue(true),
+    useWsl2Bash: vi.fn().mockResolvedValue({
+      result: {
+        runtime: 'wsl2-bash',
+        selection: { distro: 'Ubuntu-24.04', user: 'scientist' },
+        appliesTo: 'subsequent-executions'
+      },
+      mutation: { revision: 2, runtime: 'wsl2-bash', previous: 'powershell' }
+    }),
     setSkillEnabled: vi.fn().mockResolvedValue([]),
     setSkillsEnabled: vi.fn().mockResolvedValue([]),
     createSkill: vi.fn().mockResolvedValue([]),

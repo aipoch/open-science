@@ -90,6 +90,10 @@ type FakeSettingsService = Record<
   | 'logoutXaiOAuth'
   | 'refreshProviderModels'
   | 'markOnboardingComplete'
+  | 'switchLocalShellToPowerShell'
+  | 'useWsl2Bash'
+  | 'getLocalShellRuntimePreference'
+  | 'restoreLocalShellRuntimePreference'
   | 'getPackageMirror'
   | 'setPackageMirror'
   | 'setNetworkProxy'
@@ -218,6 +222,24 @@ const createFakeService = (): FakeSettingsService => ({
   logoutXaiOAuth: vi.fn().mockResolvedValue({ claude: {}, providers: [] }),
   refreshProviderModels: vi.fn().mockResolvedValue({ ok: true, models: [] }),
   markOnboardingComplete: vi.fn().mockResolvedValue({ claude: {}, providers: [] }),
+  switchLocalShellToPowerShell: vi.fn().mockResolvedValue({
+    result: {
+      runtimeBinding: { kind: 'powershell', version: '5.1' },
+      appliesTo: 'subsequent-executions',
+      wslProfilePreserved: true
+    },
+    mutation: { revision: 1, runtime: 'powershell', previous: undefined }
+  }),
+  useWsl2Bash: vi.fn().mockResolvedValue({
+    result: {
+      runtime: 'wsl2-bash',
+      selection: { distro: 'Ubuntu-24.04', user: 'scientist' },
+      appliesTo: 'subsequent-executions'
+    },
+    mutation: { revision: 2, runtime: 'wsl2-bash', previous: 'powershell' }
+  }),
+  getLocalShellRuntimePreference: vi.fn().mockResolvedValue(undefined),
+  restoreLocalShellRuntimePreference: vi.fn().mockResolvedValue(true),
   getPackageMirror: vi.fn().mockResolvedValue({}),
   setPackageMirror: vi.fn().mockResolvedValue({}),
   setNetworkProxy: vi.fn().mockResolvedValue({ mode: 'system' }),
@@ -295,6 +317,7 @@ const asService = (fake: FakeSettingsService): SettingsService => fake as unknow
 type TestSettingsIpcOptions = {
   service: SettingsService
   onActiveProviderChanged?: () => void
+  onShellRuntimeRefresh?: () => void
   onAgentFrameworkChanged?: SettingsWorkflowEffects['runtime']['requestAgentFrameworkSwitch']
   onSkillsChanged?: () => void
   onConnectorsChanged?: () => void
@@ -310,6 +333,7 @@ type TestSettingsIpcOptions = {
 const registerTestSettingsIpcHandlers = ({
   service,
   onActiveProviderChanged,
+  onShellRuntimeRefresh,
   onAgentFrameworkChanged,
   onSkillsChanged,
   onConnectorsChanged,
@@ -329,6 +353,9 @@ const registerTestSettingsIpcHandlers = ({
       runtime: {
         requestProviderReconnect: onActiveProviderChanged ?? (() => undefined),
         requestAgentFrameworkSwitch: onAgentFrameworkChanged ?? (() => undefined)
+      },
+      localShell: {
+        requestShellRuntimeRefresh: async () => onShellRuntimeRefresh?.()
       },
       skills: {
         requestSkillsReload: onSkillsChanged ?? (() => undefined),
@@ -605,6 +632,39 @@ describe('settings IPC handlers', () => {
     await invoke('settings:mark-onboarding-complete')
 
     expect(service.markOnboardingComplete).toHaveBeenCalledTimes(1)
+  })
+
+  it('persists a PowerShell switch before refreshing subsequent Shell sessions', async () => {
+    handlers.clear()
+    const service = createFakeService()
+    const onShellRuntimeRefresh = vi.fn()
+    registerTestSettingsIpcHandlers({
+      service: asService(service),
+      onShellRuntimeRefresh
+    })
+
+    await invoke('settings:switch-local-shell-to-powershell')
+
+    expect(service.switchLocalShellToPowerShell).toHaveBeenCalledOnce()
+    expect(onShellRuntimeRefresh).toHaveBeenCalledOnce()
+    expect(service.switchLocalShellToPowerShell.mock.invocationCallOrder[0]).toBeLessThan(
+      onShellRuntimeRefresh.mock.invocationCallOrder[0]
+    )
+  })
+
+  it('routes explicit WSL2 Bash enablement through the same awaited capability refresh', async () => {
+    handlers.clear()
+    const service = createFakeService()
+    const onShellRuntimeRefresh = vi.fn()
+    registerTestSettingsIpcHandlers({
+      service: asService(service),
+      onShellRuntimeRefresh
+    })
+
+    await invoke('settings:use-wsl2-bash')
+
+    expect(service.useWsl2Bash).toHaveBeenCalledOnce()
+    expect(onShellRuntimeRefresh).toHaveBeenCalledOnce()
   })
 
   it('fires onConnectorsChanged after a connector is toggled', async () => {

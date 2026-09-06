@@ -199,6 +199,41 @@ describe('notebook MCP server config', () => {
     })
   })
 
+  it('serializes the immutable shell binding into the capability process', () => {
+    const binding = {
+      kind: 'wsl2-bash' as const,
+      profileId: 'profile-1',
+      distro: 'Ubuntu-22.04',
+      user: 'researcher'
+    }
+    const config = createNotebookMcpServerConfig({
+      command: 'Open Science.exe',
+      entryPath: 'main.js',
+      endpoint: 'http://localhost',
+      token: 'secret-token',
+      projectId: 'default-project',
+      sessionId: 'session-1',
+      workspaceCwd: 'C:\\workspace',
+      memoryTools: false,
+      shellRuntime: binding
+    })
+
+    expect(config.env).toContainEqual({
+      name: 'OPEN_SCIENCE_NOTEBOOK_SHELL_RUNTIME',
+      value: JSON.stringify(binding)
+    })
+    expect(
+      createNotebookMcpEnvironmentFromProcess({
+        OPEN_SCIENCE_NOTEBOOK_RPC_ENDPOINT: 'http://localhost',
+        OPEN_SCIENCE_NOTEBOOK_RPC_TOKEN: 'secret-token',
+        OPEN_SCIENCE_NOTEBOOK_PROJECT_ID: 'default-project',
+        OPEN_SCIENCE_NOTEBOOK_SESSION_ID: 'session-1',
+        OPEN_SCIENCE_NOTEBOOK_WORKSPACE_CWD: 'C:\\workspace',
+        OPEN_SCIENCE_NOTEBOOK_SHELL_RUNTIME: JSON.stringify(binding)
+      }).shellRuntime
+    ).toEqual(binding)
+  })
+
   it('advertises memory tools only to an eligible main-agent environment', () => {
     const base = {
       endpoint: 'http://127.0.0.1:4567',
@@ -1573,6 +1608,35 @@ describe('bash_execute tool', () => {
     expect(windowsDoc).not.toContain("generated file's absolute local path")
   })
 
+  it('derives the WSL2 Bash tool contract from the same captured binding', () => {
+    const binding = {
+      kind: 'wsl2-bash' as const,
+      profileId: 'profile-1',
+      distro: 'Ubuntu-22.04',
+      user: 'researcher'
+    }
+    const tools = notebookRpcToolsForEnvironment({
+      endpoint: 'http://127.0.0.1:4567',
+      token: 'secret-token',
+      projectId: 'default-project',
+      sessionId: 'session-1',
+      workspaceCwd: 'C:\\workspace',
+      shellRuntime: binding
+    })
+    const wslTool = tools.find((entry) => entry.name === 'bash_execute')
+
+    expect(wslTool?.description).toContain('WSL2 Bash')
+    expect(wslTool?.description).toContain('Bash syntax')
+    expect(wslTool?.description).toContain('$OPEN_SCIENCE_HANDOFF_DIR')
+    expect(wslTool?.description).not.toContain('Windows PowerShell')
+    expect(wslTool?.inputSchema.command.description).toBe(
+      'WSL2 Bash command using POSIX syntax; do not use PowerShell syntax.'
+    )
+    expect(wslTool?.inputSchema.command.description).not.toMatch(
+      /profile-1|Ubuntu-22\.04|researcher/
+    )
+  })
+
   it('forwards bash_execute input to the executeShell RPC method', async () => {
     const environment = {
       endpoint: 'http://127.0.0.1:4567',
@@ -1604,6 +1668,37 @@ describe('bash_execute tool', () => {
     } finally {
       globalThis.fetch = originalFetch
     }
+  })
+
+  it('injects the advertised binding and ignores a forged per-call binding', async () => {
+    const binding = {
+      kind: 'wsl2-bash' as const,
+      profileId: 'profile-1',
+      distro: 'Ubuntu-22.04',
+      user: 'researcher'
+    }
+    let body: { params: Record<string, unknown> } | undefined
+    await callNotebookRpc(
+      {
+        endpoint: 'http://127.0.0.1:4567',
+        token: 'secret-token',
+        projectId: 'default-project',
+        sessionId: 'session-1',
+        workspaceCwd: 'C:\\workspace',
+        shellRuntime: binding
+      },
+      'executeShell',
+      { command: 'echo hi', shellRuntime: { kind: 'powershell', version: '5.1' } },
+      async (_environment, init) => {
+        body = JSON.parse(String(init.body)) as { params: Record<string, unknown> }
+        return {
+          ok: true,
+          json: async () => ({ result: { stdout: '', stderr: '', exitCode: 0 } })
+        } as Response
+      }
+    )
+
+    expect(body?.params.shellRuntime).toEqual(binding)
   })
 })
 

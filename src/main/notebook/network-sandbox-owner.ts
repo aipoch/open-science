@@ -2,7 +2,8 @@ import { NotebookNetworkSandbox } from '@aipoch/notebook-network-sandbox'
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import { existsSync } from 'node:fs'
-import { mkdtemp, rm } from 'node:fs/promises'
+import { randomUUID } from 'node:crypto'
+import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -19,6 +20,10 @@ import type {
   NotebookProcessSandbox,
   NotebookNetworkAccessDecisionRequest,
   NotebookNetworkAccessDecisionResult,
+  NotebookSandboxCleanupReason,
+  NotebookSandboxCleanupResult,
+  NotebookSandboxProcessOutcome,
+  NotebookSandboxTarget,
   NotebookSandboxedSpawn,
   NotebookSandboxInvocation
 } from './process-sandbox'
@@ -58,6 +63,17 @@ type NotebookNetworkDecisionRequest = Readonly<{
   signal: AbortSignal
 }>
 
+type PendingCommandCleanup = Readonly<{
+  target: NotebookSandboxTarget
+  retry: () => Promise<NotebookSandboxCleanupResult>
+}>
+
+const sameCleanupDomain = (left: NotebookSandboxTarget, right: NotebookSandboxTarget): boolean => {
+  if (left.kind !== right.kind) return false
+  if (left.kind === 'native') return true
+  return right.kind === 'wsl2' && left.distro === right.distro && left.user === right.user
+}
+
 type NotebookCommandRuntime = NotebookSandboxInvocation['runtime']
 
 const executionGrantKey = (sessionId: string, runtime: NotebookCommandRuntime): string =>
@@ -84,7 +100,22 @@ type NotebookNetworkSandboxOwnerOptions = Readonly<{
   getGrantedLocalRoots?: () => Promise<readonly GrantedLocalRoot[]>
   platform?: NodeJS.Platform
   logger?: Logger
+  temporaryRoot?: string
 }>
+
+const COMMAND_TEMP_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/u
+
+const completedPreparationCleanupCause = (error: unknown): unknown | undefined => {
+  if (
+    !(error instanceof Error) ||
+    error.name !== 'NotebookSandboxPreparationError' ||
+    !('cleanupComplete' in error) ||
+    error.cleanupComplete !== true
+  ) {
+    return undefined
+  }
+  return error.cause
+}
 
 const quotePosix = (value: string): string => `'${value.replaceAll("'", `'"'"'`)}'`
 const quotePowerShell = (value: string): string => `'${value.replaceAll("'", "''")}'`
@@ -153,6 +184,8 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
     string,
     Map<NotebookCommandRuntime, Set<string>>
   >()
+  private readonly pendingTemporaryRoots = new Map<string, string>()
+  private readonly pendingCommandCleanups = new Set<PendingCommandCleanup>()
   private readonly platform: NodeJS.Platform
   private readonly log: Logger
   private lastStatusSignature: string | undefined
@@ -195,9 +228,12 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
 
   async wrap(invocation: NotebookSandboxInvocation): Promise<NotebookSandboxedSpawn> {
     await this.initialize()
+    const target = invocation.target ?? { kind: 'native' as const }
+    await this.reconcilePendingCommandCleanups(target)
     await this.updateTrustBundle()
     const grantedRoots = (await this.options.getGrantedLocalRoots?.()) ?? []
-    const commandTempRoot = await mkdtemp(join(tmpdir(), 'open-science-notebook-'))
+    const { commandTempRoot, receipt } = await this.createCommandTemporaryRoot(target)
+    this.pendingTemporaryRoots.set(commandTempRoot, receipt)
     const env = {
       ...invocation.env,
       ...notebookTrustBundleEnvironment(this.trustBundle?.path),
@@ -207,26 +243,32 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
     }
     let activeExecutionGrants: ReadonlySet<string> = new Set()
     let executionActive = false
-    let wrapped: Awaited<ReturnType<NotebookNetworkSandbox['wrap']>>
+    let wrapped: Awaited<ReturnType<NotebookNetworkSandbox['wrap']>> | undefined
     try {
       wrapped = await this.sandbox!.wrap({
-        command: commandLine(invocation, this.platform),
-        ...(this.platform === 'win32'
+        target,
+        command: commandLine(
+          invocation,
+          invocation.target?.kind === 'wsl2' ? 'linux' : this.platform
+        ),
+        ...(this.platform === 'win32' && invocation.target?.kind !== 'wsl2'
           ? { executable: invocation.executable, args: invocation.args }
           : {}),
         cwd: invocation.cwd,
         env,
+        ...(invocation.pathEnvironment ? { pathEnvironment: invocation.pathEnvironment } : {}),
         ...(invocation.localRpcSocketPath
           ? { localRpcSocketPath: invocation.localRpcSocketPath }
           : {}),
         ...(invocation.inheritedFileDescriptorCount
           ? { inheritedFileDescriptorCount: invocation.inheritedFileDescriptorCount }
           : {}),
+        ...(invocation.superviseProcessTree ? { superviseProcessTree: true } : {}),
         filesystem: {
           privateRoot: homedir(),
           readOnlyRoots: [
             ...invocation.filesystem.readOnlyRoots,
-            ...environmentPathRoots(env, this.platform),
+            ...(invocation.target?.kind === 'wsl2' ? [] : environmentPathRoots(env, this.platform)),
             ...grantedRoots.map((root) => root.path),
             ...(this.trustBundle ? [this.trustBundle.path] : [])
           ],
@@ -256,39 +298,147 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
             request
           )
       })
+      if (target.kind === 'wsl2') {
+        // Returning from the runtime certifies guest-receipt reconciliation for this exact profile.
+        // Host temp recovery must stay behind that stop-before-remove boundary.
+        await this.reconcileCommandTemporaryRoots(target)
+      }
+      this.log.info('sandbox process prepared', {
+        executionReference: invocation.executionReference,
+        phase: 'sandbox-prepare',
+        result: 'complete',
+        platform: this.platform,
+        target: invocation.target?.kind ?? 'native',
+        runtime: invocation.runtime
+      })
     } catch (error) {
-      await rm(commandTempRoot, { recursive: true, force: true }).catch(() => undefined)
+      if (wrapped) {
+        const cleanup = await wrapped
+          .cleanup('spawn-failed', { processesTerminated: true })
+          .catch(() => undefined)
+        if (!cleanup || !Object.values(cleanup).every(Boolean)) {
+          throw new Error(
+            'SHELL_CLEANUP_INCOMPLETE: Shell preparation cleanup could not be verified.',
+            { cause: error }
+          )
+        }
+        try {
+          await this.removeCommandTemporaryRoot(commandTempRoot, receipt)
+          this.pendingTemporaryRoots.delete(commandTempRoot)
+        } catch (cleanupError) {
+          throw new Error(
+            'SHELL_CLEANUP_INCOMPLETE: Command temporary cleanup could not be verified.',
+            { cause: cleanupError }
+          )
+        }
+      }
+      const preparationCause = completedPreparationCleanupCause(error)
+      if (preparationCause !== undefined) {
+        try {
+          await this.removeCommandTemporaryRoot(commandTempRoot, receipt)
+          this.pendingTemporaryRoots.delete(commandTempRoot)
+        } catch (cleanupError) {
+          throw new Error(
+            'SHELL_CLEANUP_INCOMPLETE: Command temporary cleanup could not be verified.',
+            { cause: cleanupError }
+          )
+        }
+      }
       this.log.error('sandbox process preparation failed', {
         platform: this.platform,
         runtime: invocation.runtime,
         ...diagnosticErrorFields(error)
       })
-      throw error
+      throw preparationCause ?? error
     }
-    let cleaned = false
-    const cleanup = (): void => {
-      if (cleaned) return
-      cleaned = true
+    if (!wrapped) throw new Error('Notebook network sandbox did not return a process.')
+    let cleanupPromise: Promise<NotebookSandboxCleanupResult> | undefined
+    let cleanupReason: NotebookSandboxCleanupReason | undefined
+    let cleanupOutcome: NotebookSandboxProcessOutcome | undefined
+    const pendingCleanup: PendingCommandCleanup = {
+      target,
+      retry: () => cleanup(cleanupReason!, cleanupOutcome!)
+    }
+    const cleanup: NotebookSandboxedSpawn['cleanup'] = (reason, processOutcome) => {
+      cleanupReason ??= reason
+      cleanupOutcome ??= processOutcome
+      if (cleanupPromise) return cleanupPromise
       activeExecutionGrants = new Set()
       executionActive = false
-      try {
-        wrapped.cleanup()
-      } finally {
-        void rm(commandTempRoot, { recursive: true, force: true }).catch(() => undefined)
-      }
+      cleanupPromise = (async () => {
+        const sandboxCleanup = await Promise.resolve(
+          wrapped.cleanup(cleanupReason!, cleanupOutcome!)
+        ).then(
+          (value) => ({ status: 'fulfilled' as const, value }),
+          (error) => ({ status: 'rejected' as const, reason: error })
+        )
+        const backendComplete =
+          sandboxCleanup.status === 'fulfilled' &&
+          Object.values(sandboxCleanup.value).every(Boolean)
+        const temporaryCleanup = backendComplete
+          ? await this.removeCommandTemporaryRoot(commandTempRoot, receipt).then(
+              () => ({ status: 'fulfilled' as const }),
+              (error) => ({ status: 'rejected' as const, reason: error })
+            )
+          : { status: 'rejected' as const, reason: new Error('Backend cleanup incomplete.') }
+        if (temporaryCleanup.status === 'fulfilled') {
+          this.pendingTemporaryRoots.delete(commandTempRoot)
+        }
+        const result: NotebookSandboxCleanupResult = {
+          processesTerminated:
+            sandboxCleanup.status === 'fulfilled' && sandboxCleanup.value.processesTerminated,
+          networkClosed:
+            sandboxCleanup.status === 'fulfilled' && sandboxCleanup.value.networkClosed,
+          temporaryResourcesRemoved:
+            sandboxCleanup.status === 'fulfilled' &&
+            sandboxCleanup.value.temporaryResourcesRemoved &&
+            temporaryCleanup.status === 'fulfilled'
+        }
+        this.log.info('sandbox cleanup completed', {
+          executionReference: invocation.executionReference,
+          phase: 'sandbox-cleanup',
+          result: Object.values(result).every(Boolean) ? 'complete' : 'incomplete',
+          platform: this.platform,
+          target: invocation.target?.kind ?? 'native',
+          runtime: invocation.runtime,
+          reason: cleanupReason,
+          ...result,
+          incompleteStageCount: Object.values(result).filter((complete) => !complete).length
+        })
+        return result
+      })()
+      cleanupPromise = cleanupPromise.then(
+        (result) => {
+          if (Object.values(result).every(Boolean)) {
+            this.pendingCommandCleanups.delete(pendingCleanup)
+          } else {
+            this.pendingCommandCleanups.add(pendingCleanup)
+            cleanupPromise = undefined
+          }
+          return result
+        },
+        (error) => {
+          cleanupPromise = undefined
+          throw error
+        }
+      )
+      return cleanupPromise
     }
     const [executable, ...args] = wrapped.argv
     if (!executable) {
-      cleanup()
+      await cleanup('spawn-failed', { processesTerminated: true })
       throw new Error('Notebook network sandbox returned an empty command.')
     }
     return {
       executable,
       args,
       env: wrapped.env,
-      ...(wrapped.windowsJobObject ? { windowsJobObject: true as const } : {}),
+      ...(wrapped.confirmProcessTreeTermination
+        ? { confirmProcessTreeTermination: wrapped.confirmProcessTreeTermination }
+        : {}),
+      ...(wrapped.beginSpawn ? { beginSpawn: wrapped.beginSpawn } : {}),
       beginExecution: () => {
-        if (cleaned) throw new Error('Notebook sandbox process is already closed.')
+        if (cleanupPromise) throw new Error('Notebook sandbox process is already closed.')
         if (executionActive) throw new Error('Notebook sandbox execution is already active.')
         wrapped.resetNetworkConnections()
         executionActive = true
@@ -539,7 +689,7 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
       return result
     } finally {
       endExecution?.()
-      invocation?.cleanup()
+      await invocation?.cleanup('exit', { processesTerminated: true })
       await rm(cwd, { recursive: true, force: true })
     }
   }
@@ -572,6 +722,11 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
     await this.initializePromise?.catch(() => undefined)
     try {
       await this.sandbox?.dispose()
+      for (const [root, receipt] of this.pendingTemporaryRoots) {
+        await this.removeCommandTemporaryRoot(root, receipt)
+        this.pendingTemporaryRoots.delete(root)
+      }
+      this.pendingCommandCleanups.clear()
     } catch (error) {
       this.log.error('sandbox disposal failed', diagnosticErrorFields(error))
       throw error
@@ -633,6 +788,110 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
     const level = status.kind === 'error' ? 'error' : status.kind === 'ready' ? 'info' : 'warn'
     this.log[level]('sandbox status changed', { ...fields, ...extraFields })
     return status
+  }
+
+  private async reconcilePendingCommandCleanups(target: NotebookSandboxTarget): Promise<void> {
+    const pending = [...this.pendingCommandCleanups].filter((cleanup) =>
+      sameCleanupDomain(cleanup.target, target)
+    )
+    if (pending.length === 0) return
+    const results = await Promise.all(pending.map((cleanup) => cleanup.retry()))
+    if (results.some((result) => !Object.values(result).every(Boolean))) {
+      throw new Error('SHELL_CLEANUP_INCOMPLETE: Previous shell cleanup could not be reconciled.')
+    }
+  }
+
+  private commandTemporaryRoot(): string {
+    return this.options.temporaryRoot ?? join(tmpdir(), 'open-science-notebook')
+  }
+
+  private async createCommandTemporaryRoot(
+    target: NonNullable<NotebookSandboxInvocation['target']>
+  ): Promise<{
+    commandTempRoot: string
+    receipt: string
+  }> {
+    const ownerRoot = this.commandTemporaryRoot()
+    const id = randomUUID()
+    const commandTempRoot = join(ownerRoot, `command-${id}`)
+    const receipt = join(ownerRoot, `command-${id}.receipt`)
+    await mkdir(ownerRoot, { recursive: true, mode: 0o700 })
+    const ownership =
+      target.kind === 'wsl2'
+        ? `wsl2 ${encodeURIComponent(target.profileId)} ${encodeURIComponent(target.distro)} ${encodeURIComponent(target.user)}`
+        : 'native'
+    await writeFile(receipt, `v1 command-${id} ${ownership}\n`, { flag: 'wx', mode: 0o600 })
+    try {
+      await mkdir(commandTempRoot, { mode: 0o700 })
+    } catch (error) {
+      await rm(receipt, { force: true }).catch(() => undefined)
+      throw error
+    }
+    return { commandTempRoot, receipt }
+  }
+
+  private async removeCommandTemporaryRoot(root: string, receipt: string): Promise<void> {
+    await rm(root, { recursive: true, force: true })
+    await rm(receipt, { force: true })
+  }
+
+  private async reconcileCommandTemporaryRoots(
+    target: Extract<NonNullable<NotebookSandboxInvocation['target']>, { kind: 'wsl2' }>
+  ): Promise<void> {
+    const ownerRoot = this.commandTemporaryRoot()
+    await mkdir(ownerRoot, { recursive: true, mode: 0o700 })
+    const entries = await readdir(ownerRoot, { withFileTypes: true })
+    const receipts = new Map<string, { receipt: string; matchesTarget: boolean }>()
+    for (const entry of entries) {
+      const match = /^command-(.+)\.receipt$/u.exec(entry.name)
+      if (!match) continue
+      const id = match[1]!
+      if (!entry.isFile() || !COMMAND_TEMP_ID.test(id)) {
+        throw new Error('SHELL_CLEANUP_INCOMPLETE: Command temporary receipt is invalid.')
+      }
+      const receipt = join(ownerRoot, entry.name)
+      const fields = (await readFile(receipt, 'utf8')).match(
+        /^v1 command-([0-9a-f-]{36}) (native|wsl2 ([^ ]+) ([^ ]+) ([^ \r\n]+))\n$/u
+      )
+      if (!fields || fields[1] !== id) {
+        throw new Error('SHELL_CLEANUP_INCOMPLETE: Command temporary receipt is invalid.')
+      }
+      let matchesTarget = false
+      if (fields[2] !== 'native') {
+        try {
+          const profileId = decodeURIComponent(fields[3]!)
+          const distro = decodeURIComponent(fields[4]!)
+          const user = decodeURIComponent(fields[5]!)
+          if (
+            encodeURIComponent(profileId) !== fields[3] ||
+            encodeURIComponent(distro) !== fields[4] ||
+            encodeURIComponent(user) !== fields[5]
+          ) {
+            throw new Error('non-canonical ownership')
+          }
+          matchesTarget =
+            profileId === target.profileId && distro === target.distro && user === target.user
+        } catch {
+          throw new Error('SHELL_CLEANUP_INCOMPLETE: Command temporary receipt is invalid.')
+        }
+      }
+      receipts.set(id, { receipt, matchesTarget })
+    }
+    for (const entry of entries) {
+      const match = /^command-(.+)$/u.exec(entry.name)
+      if (!match || entry.name.endsWith('.receipt')) continue
+      const id = match[1]!
+      if (!entry.isDirectory() || !COMMAND_TEMP_ID.test(id) || !receipts.has(id)) {
+        throw new Error('SHELL_CLEANUP_INCOMPLETE: Command temporary ownership is incomplete.')
+      }
+    }
+    for (const [id, ownership] of receipts) {
+      const root = join(ownerRoot, `command-${id}`)
+      // Native children can outlive the Electron parent, so a restart does not prove they stopped.
+      // Their roots stay retained; only same-process verified cleanup may remove them.
+      if (!ownership.matchesTarget || this.pendingTemporaryRoots.has(root)) continue
+      await this.removeCommandTemporaryRoot(root, ownership.receipt)
+    }
   }
 
   private networkAccessResult(

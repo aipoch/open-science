@@ -6,7 +6,7 @@ import {
   readFileSync,
   rmSync
 } from 'node:fs'
-import { spawn as nodeSpawn } from 'node:child_process'
+import { spawn as nodeSpawn, type ChildProcess } from 'node:child_process'
 import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Transform, type TransformCallback } from 'node:stream'
@@ -48,6 +48,12 @@ import { recoverWindowsMaxPathPackage } from './micromamba-cache-recovery'
 import { notebookWorkloadCacheEnv } from './notebook-workload-cache-paths'
 import { withExclusiveCacheLocks, withSharedCacheLocks } from './pkgs-cache-lock'
 import { CHILD_UNCONFIRMED, killAndConfirmExit } from './provisioner-runtime'
+import {
+  createPosixProcessTreeOwnership,
+  trackOwnedPosixProcessTree,
+  terminateProcessTree,
+  type ProcessTreeKillResult
+} from '../process-tree'
 import {
   DEFAULT_PY_ENV,
   DEFAULT_R_ENV,
@@ -135,6 +141,8 @@ export type SpawnResult = {
   // Bounded recovery-only evidence reduced from the complete capture. It is never merged into the
   // user-facing log or persisted activity result.
   maxPathRecoveryEvidence?: string
+  // Observation from the bounded process-tree teardown performed before this result settles.
+  processesTerminated?: boolean
 }
 export type InstallSpawnOptions = Readonly<{
   signal?: AbortSignal
@@ -972,18 +980,21 @@ const discardCondaJsonCapture = async (capture: CondaJsonCapture | undefined): P
   await finalizeCondaJsonCapture(capture, false)
 }
 
-// Real spawn wrapper collecting stdout/stderr and the exit code; replaced by an injected spawn in tests.
+// Real spawn wrapper collecting stdout/stderr and the exit code, then boundedly reaping its owned tree.
 // Exported so its fail-closed spawn-intent / kill-on-record-failure branches are directly testable.
-export const defaultSpawn: InstallSpawn = (
-  command,
-  args,
-  env,
-  onChild,
-  onBeforeSpawn,
-  captureCondaJson,
-  cwd,
-  options
-) => {
+export const defaultSpawn = (
+  command: string,
+  args: string[],
+  env?: NodeJS.ProcessEnv,
+  onChild?: (pid: number) => void,
+  onBeforeSpawn?: () => void,
+  captureCondaJson?: boolean,
+  cwd?: string,
+  options?: InstallSpawnOptions,
+  terminateTree: (child: ChildProcess) => Promise<ProcessTreeKillResult> = terminateProcessTree,
+  platform: NodeJS.Platform = process.platform,
+  confirmProcessTreeTermination?: () => Promise<boolean>
+): Promise<SpawnResult> => {
   const signal = options?.signal
   if (signal?.aborted) {
     return Promise.reject(
@@ -1022,13 +1033,15 @@ export const defaultSpawn: InstallSpawn = (
       })
       return
     }
+    const processTreeOwnership = createPosixProcessTreeOwnership(env, platform)
     let child: ReturnType<typeof nodeSpawn>
     try {
       child = nodeSpawn(command, args, {
         stdio: ['ignore', 'pipe', 'pipe'],
-        env,
+        env: processTreeOwnership.env,
         cwd,
-        windowsHide: true
+        windowsHide: true,
+        detached: platform !== 'win32'
       })
     } catch (error) {
       void discardCondaJsonCapture(condaJsonCapture)
@@ -1039,6 +1052,8 @@ export const defaultSpawn: InstallSpawn = (
       })
       return
     }
+    if (platform !== 'win32' && process.platform !== 'win32')
+      trackOwnedPosixProcessTree(child, processTreeOwnership.token)
     if (child.pid !== undefined) {
       try {
         onChild?.(child.pid)
@@ -1046,7 +1061,7 @@ export const defaultSpawn: InstallSpawn = (
         // Recording the PID failed. FAIL CLOSED: kill it and only settle once it is CONFIRMED gone.
         // If it can't be confirmed, REJECT with the CHILD_UNCONFIRMED marker so the caller retains the
         // recovery evidence (a worker may still be writing) instead of clearing it.
-        void killAndConfirmExit(child).then((confirmed) => {
+        void killAndConfirmExit(child, terminateTree).then((confirmed) => {
           void discardCondaJsonCapture(condaJsonCapture)
           if (confirmed) {
             resolve({
@@ -1087,15 +1102,26 @@ export const defaultSpawn: InstallSpawn = (
       clearTimeout(timeout)
       signal?.removeEventListener('abort', onAbort)
     }
-    const result = async (code: number): Promise<SpawnResult> => {
+    const result = async (
+      code: number,
+      processOutcome: ProcessTreeKillResult,
+      normalExit: boolean
+    ): Promise<SpawnResult> => {
       const stdoutSnapshot = stdout.snapshot()
       const stderrSnapshot = stderr.snapshot()
+      const processTreeTerminationConfirmed =
+        platform === 'win32' && normalExit && confirmProcessTreeTermination
+          ? await confirmProcessTreeTermination().catch(() => false)
+          : false
       const condaJsonSummary = await finalizeCondaJsonCapture(
         condaJsonCapture,
         stdoutSnapshot.droppedBytes > 0 || stderrSnapshot.droppedBytes > 0
       )
       return {
         code,
+        // taskkill cannot inspect descendants after the leader has exited. A supervised launcher
+        // supplies a one-time proof only after its Job Object has reached zero active processes.
+        processesTerminated: processOutcome.reaped || processTreeTerminationConfirmed,
         stdout: stdoutSnapshot.text,
         stderr: stderrSnapshot.text,
         ...(stdoutSnapshot.droppedBytes > 0
@@ -1107,11 +1133,14 @@ export const defaultSpawn: InstallSpawn = (
         ...(condaJsonSummary ?? {})
       }
     }
-    const settle = (code: number): void => {
+    const settle = (code: number, normalExit: boolean): void => {
       if (settled) return
       settled = true
       cleanup()
-      void result(code).then(resolve, reject)
+      void terminateTree(child)
+        .catch(() => ({ reaped: false }))
+        .then((processOutcome) => result(code, processOutcome, normalExit))
+        .then(resolve, reject)
     }
     const rejectOnce = (error: unknown): void => {
       if (settled) return
@@ -1121,7 +1150,7 @@ export const defaultSpawn: InstallSpawn = (
     }
     const terminate = (reason: 'abort' | 'timeout'): void => {
       terminationReason ??= reason
-      termination ??= killAndConfirmExit(child)
+      termination ??= killAndConfirmExit(child, terminateTree)
       void termination.then((confirmed) => {
         if (!confirmed) {
           rejectOnce(
@@ -1159,11 +1188,11 @@ export const defaultSpawn: InstallSpawn = (
         })
         return
       }
-      settle(1)
+      settle(1, false)
     })
     child.on('close', (code) => {
       if (!termination) {
-        settle(code ?? 1)
+        settle(code ?? 1, code !== null)
         return
       }
       void termination.then((confirmed) => {

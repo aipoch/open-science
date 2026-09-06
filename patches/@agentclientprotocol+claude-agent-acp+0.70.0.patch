@@ -11,7 +11,7 @@ index 243386d..f0a16da 100644
      inputTokens: number;
      outputTokens: number;
 diff --git a/node_modules/@agentclientprotocol/claude-agent-acp/dist/acp-agent.js b/node_modules/@agentclientprotocol/claude-agent-acp/dist/acp-agent.js
-index f11169b..cca061f 100644
+index f11169b..d039533 100644
 --- a/node_modules/@agentclientprotocol/claude-agent-acp/dist/acp-agent.js
 +++ b/node_modules/@agentclientprotocol/claude-agent-acp/dist/acp-agent.js
 @@ -570,6 +570,62 @@ class ClientConnection {
@@ -95,7 +95,7 @@ index f11169b..cca061f 100644
                              lastAssistantWasUsageLimit = isSyntheticUsageLimitMessage(message.message);
                              if (message.error || lastAssistantWasUsageLimit) {
                                  lastAssistantFailureTitle = assistantMessageText(message.message);
-@@ -3715,7 +3771,16 @@ export class ClaudeAcpAgent {
+@@ -3718,7 +3774,16 @@ export class ClaudeAcpAgent {
          if (this.sessions[params.sessionId]) {
              await this.teardownSession(params.sessionId);
          }
@@ -113,7 +113,7 @@ index f11169b..cca061f 100644
          return {};
      }
      async setSessionMode(params) {
-@@ -4995,6 +5051,7 @@ export class ClaudeAcpAgent {
+@@ -4995,6 +5060,7 @@ export class ClaudeAcpAgent {
          let initializationResult;
          try {
              initializationResult = await q.initializationResult();
@@ -121,7 +121,7 @@ index f11169b..cca061f 100644
          }
          catch (error) {
              if (creationOpts.resume &&
-@@ -5259,15 +5316,10 @@ function sessionUsage(session) {
+@@ -5259,15 +5325,10 @@ function sessionUsage(session) {
              session.accumulatedUsage.cachedWriteTokens,
      };
  }
@@ -141,7 +141,7 @@ index f11169b..cca061f 100644
  }
  /**
   * Build the `data` payload attached to a `RequestError.internalError` when we
-@@ -5284,7 +5336,7 @@ function errorKindData(errorKind) {
+@@ -5284,7 +5345,7 @@ function errorKindData(errorKind) {
  }
  /** Project a nullable API usage object into our non-null snapshot shape.
   *  Both SDK message_start and assistant message `usage` have `number | null`

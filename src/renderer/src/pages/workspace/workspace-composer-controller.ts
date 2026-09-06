@@ -17,7 +17,7 @@ import {
   type SessionPdfContextSource
 } from '../../../../shared/session-persistence'
 import { buildCustomizePrefillDoc } from '@/lib/customize-chat'
-import type { CustomizePrefillIntent } from '@/stores/navigation-store'
+import type { CustomizePrefillIntent, WslSupportPrefillIntent } from '@/stores/navigation-store'
 import {
   pendingPdfContextBindingId,
   pendingPdfContextSelections,
@@ -101,7 +101,9 @@ type WorkspaceComposerControllerInput = {
   newConversationDraftKey: string
   activeProjectId: string | undefined
   pendingCustomizePrefill: CustomizePrefillIntent | undefined
+  pendingWslSupportPrefill?: WslSupportPrefillIntent | undefined
   onCustomizePrefillApplied: () => void
+  onWslSupportPrefillApplied?: () => void
   historyEntries: ComposerHistoryEntry[]
   activeSession: ComposerSessionContext | undefined
   historyPolicy: {
@@ -189,7 +191,9 @@ const useWorkspaceComposerController = ({
   newConversationDraftKey,
   activeProjectId,
   pendingCustomizePrefill,
+  pendingWslSupportPrefill,
   onCustomizePrefillApplied,
+  onWslSupportPrefillApplied = () => undefined,
   historyEntries,
   activeSession,
   historyPolicy,
@@ -213,7 +217,11 @@ const useWorkspaceComposerController = ({
   const [historyBrowsingKey, setHistoryBrowsingKey] = useState<string>()
   const [historyStatus, setHistoryStatus] = useState('')
   const [skillCatalogReady, setSkillCatalogReady] = useState(historyPolicy.skillCatalogReady)
-  const appliedCustomizePrefillRef = useRef<CustomizePrefillIntent>(undefined)
+  const appliedConversationPrefillRef = useRef<{
+    kind: 'customize' | 'wsl-support'
+    projectId: string
+    requestId: number
+  }>(undefined)
   const [caretRequest, setCaretRequest] = useState<{
     key: number
     position: ComposerCaretPosition
@@ -803,20 +811,33 @@ const useWorkspaceComposerController = ({
 
   // Save the outgoing draft and activate the target before applying its prefill.
   useLayoutEffect(() => {
+    const pendingConversationPrefill = pendingWslSupportPrefill
+      ? { ...pendingWslSupportPrefill, kind: 'wsl-support' as const }
+      : pendingCustomizePrefill
+        ? {
+            ...pendingCustomizePrefill,
+            kind: 'customize' as const,
+            doc: buildCustomizePrefillDoc(pendingCustomizePrefill.goal)
+          }
+        : undefined
+    const applied = appliedConversationPrefillRef.current
     if (
-      !pendingCustomizePrefill ||
-      pendingCustomizePrefill.projectId !== activeProjectId ||
+      !pendingConversationPrefill ||
+      pendingConversationPrefill.projectId !== activeProjectId ||
       currentDraftKey !== newConversationDraftKey ||
-      appliedCustomizePrefillRef.current?.requestId === pendingCustomizePrefill.requestId
+      (applied?.kind === pendingConversationPrefill.kind &&
+        applied.projectId === pendingConversationPrefill.projectId &&
+        applied.requestId === pendingConversationPrefill.requestId)
     )
       return
-    appliedCustomizePrefillRef.current = pendingCustomizePrefill
+    appliedConversationPrefillRef.current = pendingConversationPrefill
     clearHistory(currentDraftKey)
     clearPastedTextUndo(currentDraftKey)
     clearUndo(currentDraftKey)
     markChanged(currentDraftKey)
-    setActiveDoc(buildCustomizePrefillDoc(pendingCustomizePrefill.goal))
-    onCustomizePrefillApplied()
+    setActiveDoc(pendingConversationPrefill.doc)
+    if (pendingConversationPrefill.kind === 'wsl-support') onWslSupportPrefillApplied()
+    else onCustomizePrefillApplied()
   }, [
     activeProjectId,
     clearHistory,
@@ -826,7 +847,9 @@ const useWorkspaceComposerController = ({
     markChanged,
     newConversationDraftKey,
     onCustomizePrefillApplied,
+    onWslSupportPrefillApplied,
     pendingCustomizePrefill,
+    pendingWslSupportPrefill,
     setActiveDoc
   ])
 

@@ -64,6 +64,7 @@
     "@agentclientprotocol/claude-agent-acp": "^0.70.0",
     "@agentclientprotocol/sdk": "^1.2.1",
     "@aipoch/notebook-network-sandbox": "file:packages/notebook-network-sandbox",
+    "@aipoch/process-tree-native": "file:packages/process-tree-native",
     "@aipoch/safe-file-publisher-native": "file:packages/safe-file-publisher-native",
     "@anthropic-ai/tokenizer": "^0.0.4",
     "@bokuweb/zstd-wasm": "^0.0.27",

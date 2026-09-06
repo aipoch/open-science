@@ -7,11 +7,16 @@ import type { AcpCreateSessionResponse, AcpResumeSessionRequest } from '../../sh
 import type { SessionPermissionProfileState } from '../../shared/permission-profiles'
 import type { EffectiveSpecialistSkills } from '../../shared/specialist'
 import { claudeCodeFramework, codexFramework, opencodeFramework } from '../agent-framework'
+import {
+  shellRuntimeAgentContract,
+  type ShellRuntimeAgentContract
+} from '../notebook/shell-runtime'
 import type { AcpBackendGenerationView } from './backend-generation-owner'
 import { AcpProviderSessionResumer } from './provider-session-resumer'
 import {
   CURRENT_PRIMARY_SESSION_CAPABILITY_POLICY,
   SIDE_CHAT_SESSION_CAPABILITY_POLICY,
+  type SessionCapabilityName,
   type SessionCapabilityPolicy
 } from './session-capability-owner'
 import { AcpSessionRegistry } from './session-registry'
@@ -89,6 +94,8 @@ type HarnessOptions = {
   supportsResume?: boolean
   supportsClose?: boolean
   capabilityMcpServers?: McpServer[]
+  descriptorCapabilities?: SessionCapabilityName[]
+  shellRuntimeAgentContract?: ShellRuntimeAgentContract
 }
 
 type ResumerHarness = {
@@ -257,7 +264,7 @@ const createHarness = (options: HarnessOptions = {}): ResumerHarness => {
       role: 'primary' as const,
       delegation: 'denied' as const,
       transport: 'none' as const,
-      capabilities: [],
+      capabilities: options.descriptorCapabilities ?? [],
       canonicalMcpServerNames: [],
       modelFacingMcpServerNames: [],
       controlRpcMethods: []
@@ -265,6 +272,9 @@ const createHarness = (options: HarnessOptions = {}): ResumerHarness => {
     return {
       mcpServers,
       descriptor,
+      ...(options.shellRuntimeAgentContract
+        ? { shellRuntimeAgentContract: options.shellRuntimeAgentContract }
+        : {}),
       includeFrameworkMcpServers: (servers: readonly McpServer[]) => ({
         mcpServers: [...mcpServers, ...servers],
         descriptor: {
@@ -463,6 +473,40 @@ describe('AcpProviderSessionResumer', () => {
       expect.objectContaining({ mcpServers: [capabilityServer, skillServer] }),
       expect.objectContaining({ cancellationSignal: expect.any(AbortSignal) })
     )
+  })
+
+  it('resumes with one redacted WSL shell prompt after persistent instructions', async () => {
+    const contract = shellRuntimeAgentContract({
+      kind: 'wsl2-bash',
+      profileId: 'private-profile',
+      distro: 'Ubuntu-22.04',
+      user: 'researcher'
+    })
+    const harness = createHarness({
+      descriptorCapabilities: ['notebook'],
+      shellRuntimeAgentContract: contract,
+      providerSessionId: '019fb8c8-6c66-7f22-9653-17b5b287dbbb',
+      initialBackend: {
+        ...codexResponsesBackend,
+        prompt: {
+          systemPromptAppends: [],
+          persistentSystemPrompt: 'Baked Codex developer instructions.'
+        }
+      }
+    })
+
+    await harness.resume({
+      providerSessionId: '019fb8c8-6c66-7f22-9653-17b5b287dbbb'
+    })
+
+    const setupText = harness.sessionSetupAppends.flat().join('\n')
+    expect(setupText.match(/Notebook `bash_execute` is bound to WSL2 Bash/g)).toHaveLength(1)
+    expect(setupText).not.toMatch(/private-profile|Ubuntu-22\.04|researcher/)
+    const prefix = harness.registry
+      .lookup('stable-app-session')
+      ?.aggregate.snapshot().sessionSetupPromptPrefix
+    expect(prefix).toContain('host and workspace path are Windows')
+    expect(prefix).not.toContain('Baked Codex developer instructions.')
   })
 
   it.each([

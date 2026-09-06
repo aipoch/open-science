@@ -35,6 +35,7 @@ import {
   type RuntimeUsage
 } from '../../../../shared/notebook-runtime'
 import type { NotebookLanguage } from '../../../../shared/notebook'
+import type { Wsl2BashPreviewStatus } from '../../../../shared/wsl-setup'
 import { SettingsRow, SettingsSection, SettingsToggle } from './SettingsLayout'
 import {
   getSettingsSearchKeyShortcuts,
@@ -42,6 +43,7 @@ import {
 } from './settings-search-shortcut'
 import { PythonIcon, RIcon } from './language-icons'
 import { NotebookNetworkProtectionBanner } from './NotebookNetworkProtectionBanner'
+import { WslLocalShellSection } from './WslLocalShellSection'
 import { envReadyLine, managedLine, providerType } from './runtimes-panel-view'
 import { provisionProgressText } from '../workspace/provision-progress-text'
 
@@ -168,6 +170,35 @@ const RuntimesPanel = ({
   const [packages, setPackages] = useState<EnvPackage[] | null>(null)
   const [packagesError, setPackagesError] = useState<string | null>(null)
   const [packagesRetryNonce, setPackagesRetryNonce] = useState(0)
+  const [wsl2Preview, setWsl2Preview] = useState<{
+    available: boolean
+    development: boolean
+    needsPowerShellRecovery: boolean
+    reason: Wsl2BashPreviewStatus['reason']
+  }>()
+
+  useEffect(() => {
+    let cancelled = false
+    if (window.api.platform !== 'win32') return () => undefined
+    void Promise.all([
+      window.api.settings
+        .getWsl2BashPreviewStatus()
+        .catch((): Wsl2BashPreviewStatus => ({ available: false, reason: 'not-initialized' })),
+      window.api.settings.getLocalShellRuntimePreference().catch(() => undefined)
+    ]).then(([status, preference]) => {
+      if (!cancelled) {
+        setWsl2Preview({
+          available: status.available,
+          development: status.development === true,
+          needsPowerShellRecovery: !status.available && preference === 'wsl2-bash',
+          reason: status.reason
+        })
+      }
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [])
   const [packagesFilter, setPackagesFilter] = useState('')
   const packagesFilterRef = useRef<HTMLInputElement>(null)
   useSettingsSearchShortcut(packagesFilterRef, packagesEnv !== null)
@@ -898,6 +929,13 @@ const RuntimesPanel = ({
           })
         )}
       </SettingsSection>
+      {wsl2Preview?.available || wsl2Preview?.needsPowerShellRecovery ? (
+        <WslLocalShellSection
+          previewAvailable={wsl2Preview.available}
+          developmentPreview={wsl2Preview.development}
+          previewUnavailableReason={wsl2Preview.available ? undefined : wsl2Preview.reason}
+        />
+      ) : null}
 
       <AlertDialog.Root
         open={managedRepair !== null}

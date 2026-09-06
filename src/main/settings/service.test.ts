@@ -31,6 +31,7 @@ import type { UserSkillRepository as UserSkillRepositoryType } from '../skills/u
 import type { SystemProxyEnvironment } from './system-proxy'
 import type { AgentBackendResolutionContext } from './backend-resolver'
 import type { Logger } from '../logger'
+import type { SettingsServiceOptions } from './service'
 
 // Reversible fake safeStorage so provider keys can be encrypted/decrypted without an OS keychain.
 vi.mock('electron', () => ({
@@ -200,6 +201,8 @@ const createService = (
     userAgentsDir?: string
     userSkills?: UserSkillRepositoryType
     log?: Logger
+    wslSetup?: SettingsServiceOptions['wslSetup']
+    wsl2PreviewStatus?: SettingsServiceOptions['wsl2PreviewStatus']
   } = {}
 ): InstanceType<typeof SettingsService> =>
   new SettingsService({
@@ -287,7 +290,10 @@ const createService = (
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     claudeIsolatedAuth: options.claudeIsolatedAuth as any,
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    claudeSharedAuth: options.claudeSharedAuth as any
+    claudeSharedAuth: options.claudeSharedAuth as any,
+    wslSetup: options.wslSetup,
+    wsl2PreviewStatus:
+      options.wsl2PreviewStatus ?? (() => ({ available: true, reason: 'available' }))
   })
 
 beforeEach(async () => {
@@ -317,6 +323,116 @@ afterEach(async () => {
   vi.unstubAllEnvs()
   await makeTreeWritable(storageRoot)
   await rm(storageRoot, { recursive: true, force: true })
+})
+
+describe('SettingsService: Local Shell runtime', () => {
+  it('returns an immutable PowerShell binding and preserves the selected WSL profile', async () => {
+    const service = createService()
+    const profile = { distro: 'Ubuntu-22.04', user: 'scientist' }
+    await repository.setWslSelection(profile)
+    await repository.setLocalShellRuntime('wsl2-bash', profile)
+
+    const write = await service.switchLocalShellToPowerShell()
+
+    expect(write.result).toEqual({
+      runtimeBinding: { kind: 'powershell', version: '5.1' },
+      appliesTo: 'subsequent-executions',
+      wslProfilePreserved: true
+    })
+    expect(Object.isFrozen(write)).toBe(true)
+    expect(Object.isFrozen(write.result)).toBe(true)
+    expect(Object.isFrozen(write.result.runtimeBinding)).toBe(true)
+    await expect(repository.getSettings()).resolves.toMatchObject({
+      localShellRuntime: 'powershell',
+      wslSelection: { distro: 'Ubuntu-22.04', user: 'scientist' }
+    })
+  })
+
+  it('uses only the latest service-validated ready WSL2 profile', async () => {
+    vi.stubEnv('OPEN_SCIENCE_ENABLE_WSL2_BASH', '1')
+    const selection = { distro: 'Ubuntu-22.04', user: 'scientist' }
+    const priorActive = { distro: 'Ubuntu-20.04', user: 'active-user' }
+    const service = createService(undefined, {
+      wslSetup: {
+        probe: vi.fn(),
+        installPlatform: vi.fn(),
+        select: vi.fn(),
+        installRecommendedDistro: vi.fn(),
+        openTerminal: vi.fn(),
+        createSupportHandoff: vi.fn(),
+        requireLatestReadySelection: vi.fn(async () => selection)
+      }
+    })
+    await repository.setLocalShellRuntime('wsl2-bash', priorActive)
+    await repository.setLocalShellRuntime('powershell')
+    await repository.setWslSelection(selection)
+    await expect(repository.getSettings()).resolves.toMatchObject({
+      localShellRuntime: 'powershell',
+      activatedWslSelection: priorActive,
+      wslSelection: selection
+    })
+
+    await expect(service.useWsl2Bash()).resolves.toMatchObject({
+      result: {
+        runtime: 'wsl2-bash',
+        selection,
+        appliesTo: 'subsequent-executions'
+      }
+    })
+    await expect(repository.getSettings()).resolves.toMatchObject({
+      localShellRuntime: 'wsl2-bash',
+      activatedWslSelection: selection
+    })
+  })
+
+  it('does not enable WSL2 Bash when the latest readiness admission rejects it', async () => {
+    vi.stubEnv('OPEN_SCIENCE_ENABLE_WSL2_BASH', '1')
+    const service = createService(undefined, {
+      wslSetup: {
+        probe: vi.fn(),
+        installPlatform: vi.fn(),
+        select: vi.fn(),
+        installRecommendedDistro: vi.fn(),
+        openTerminal: vi.fn(),
+        createSupportHandoff: vi.fn(),
+        requireLatestReadySelection: vi.fn(async () => {
+          throw new Error('The selected WSL2 Shell profile is not ready.')
+        })
+      }
+    })
+    await repository.setLocalShellRuntime('powershell')
+
+    await expect(service.useWsl2Bash()).rejects.toThrow('is not ready')
+    await expect(repository.getSettings()).resolves.toMatchObject({
+      localShellRuntime: 'powershell'
+    })
+  })
+
+  it('does not persist WSL2 Bash while the main-owned Preview gate is closed', async () => {
+    const service = createService(undefined, {
+      wsl2PreviewStatus: () => ({ available: false, reason: 'build-disabled' }),
+      wslSetup: {
+        probe: vi.fn(),
+        installPlatform: vi.fn(),
+        select: vi.fn(),
+        installRecommendedDistro: vi.fn(),
+        openTerminal: vi.fn(),
+        createSupportHandoff: vi.fn(),
+        requireLatestReadySelection: vi.fn(async () => ({
+          distro: 'Ubuntu-22.04',
+          user: 'scientist'
+        }))
+      }
+    })
+    await repository.setLocalShellRuntime('powershell')
+
+    await expect(service.useWsl2Bash()).rejects.toThrow(
+      'Notebook WSL2 Bash Preview is unavailable.'
+    )
+    await expect(repository.getSettings()).resolves.toMatchObject({
+      localShellRuntime: 'powershell'
+    })
+  })
 })
 
 describe('SettingsService: load diagnostics', () => {
