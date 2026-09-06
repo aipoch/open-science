@@ -364,6 +364,63 @@ describe('PlanService', () => {
     expect(fixture.context()).not.toHaveProperty('plan')
   })
 
+  it('keeps oversized artifact-only legacy Plans readable and rejectable', async () => {
+    const fixture = setup()
+    await fixture.service.generate({
+      projectId: 'project-1',
+      sessionId: 'session-1',
+      executionId: 'execution-1',
+      interactionId: 'interaction-1',
+      content
+    })
+    const document = {
+      schema_version: 1,
+      ...content,
+      phases: [
+        {
+          name: 'Analysis',
+          delegations: [
+            {
+              name: 'Primary agent',
+              steps: Array.from({ length: 662 }, (_, index) => ({
+                title: `Step ${index}`,
+                description: 'Work.'
+              }))
+            }
+          ]
+        }
+      ]
+    }
+    const bytes = JSON.stringify(document)
+    const checksum = createHash('sha256').update(bytes).digest('hex')
+    const legacy = { ...fixture.context().plan!, artifactChecksum: checksum }
+    delete legacy.document
+    fixture.setContext({ ...fixture.context(), plan: legacy })
+    vi.mocked(fixture.dependencies.readArtifactVersion).mockResolvedValue({
+      content: bytes,
+      checksum
+    })
+    const identity = {
+      projectId: 'project-1',
+      sessionId: 'session-1',
+      artifactVersionId: legacy.artifactVersionId,
+      expectedRevision: fixture.context().revision
+    }
+    await expect(fixture.service.getProjection('project-1', 'session-1')).resolves.toMatchObject({
+      counts: { steps: 662 }
+    })
+    await expect(
+      fixture.service.respond({ ...identity, decision: 'approved' })
+    ).rejects.toMatchObject({
+      code: 'invalid-plan',
+      message: expect.stringMatching(/too large.*split/i)
+    })
+    await expect(
+      fixture.service.respond({ ...identity, decision: 'rejected' })
+    ).resolves.toMatchObject({ projection: { approval: 'rejected' } })
+    expect(fixture.status()).toBe('idle')
+  })
+
   it('durably verifies a generated Plan before atomically activating it for the Session', async () => {
     const { service, dependencies, context, status } = setup()
 

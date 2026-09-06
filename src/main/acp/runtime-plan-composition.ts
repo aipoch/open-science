@@ -166,8 +166,10 @@ const composeAcpRuntimePlanWorkflow = (
   const rejectApprovalForInteraction = (
     sessionId: string,
     interactionId: string,
-    reason: string
+    reason: string,
+    expectedApprovalToken = interactions.approvalTokenFor(sessionId)
   ): void => {
+    if (interactions.approvalTokenFor(sessionId) !== expectedApprovalToken) return
     interactions.releaseApprovalReservation(sessionId, interactionId)
     if (interactions.approvalInteractionIdFor(sessionId) !== interactionId) return
     interactions.rejectApproval(sessionId, reason)
@@ -433,7 +435,8 @@ const composeAcpRuntimePlanWorkflow = (
           rejectApprovalForInteraction(
             input.sessionId,
             approvalInteractionId,
-            'The paused Session Plan interaction was superseded before feedback was routed.'
+            'The paused Session Plan interaction was superseded before feedback was routed.',
+            approvalToken
           )
         }
         throw new Error('The paused Session Plan interaction is no longer available.')
@@ -476,7 +479,8 @@ const composeAcpRuntimePlanWorkflow = (
             rejectApprovalForInteraction(
               input.sessionId,
               approvalInteractionId,
-              'The paused Session Plan interaction was superseded before feedback was persisted.'
+              'The paused Session Plan interaction was superseded before feedback was persisted.',
+              approvalToken
             )
             throw new PlanCommandError(
               'interaction-mismatch',
@@ -579,7 +583,8 @@ const composeAcpRuntimePlanWorkflow = (
           rejectApprovalForInteraction(
             input.sessionId,
             approvalInteractionId,
-            'The paused Session Plan interaction was superseded while feedback was routed.'
+            'The paused Session Plan interaction was superseded while feedback was routed.',
+            approvalToken
           )
         }
         throw new Error('The paused Session Plan interaction is no longer available.')

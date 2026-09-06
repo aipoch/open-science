@@ -276,6 +276,62 @@ beforeEach(() => {
 })
 
 describe('ACP Session Plan approval causality', () => {
+  it('preserves a replacement waiter when stale feedback cleanup reuses the prompt ID', async () => {
+    const harness = createHarness()
+    harness.interactions.register({
+      sessionId: 'session-1',
+      artifactVersionId: 'version-1',
+      interactionId: 'prompt-1'
+    })
+    const oldApproval = harness.interactions
+      .parkApproval('session-1', 'prompt-1')
+      .catch(() => undefined)
+    const entered = Promise.withResolvers<void>()
+    const resume = Promise.withResolvers<void>()
+    const originalRespond = harness.respond.getMockImplementation() as (
+      input: unknown
+    ) => Promise<unknown>
+    harness.respond.mockImplementationOnce(async (input) => {
+      entered.resolve()
+      await resume.promise
+      return originalRespond(input)
+    })
+    const response = harness.workflow
+      .respond({
+        projectId: 'project-1',
+        sessionId: 'session-1',
+        feedback: 'Revise the analysis.'
+      })
+      .catch((error: unknown) => error)
+    await entered.promise
+    harness.interactions.rejectApproval('session-1', 'old prompt detached')
+    await oldApproval
+    harness.sessionInteractions.release(harness.interaction)
+    harness.sessionInteractions.claim({
+      sessionId: 'session-1',
+      kind: 'prompt',
+      promptMessageId: 'prompt-1'
+    })
+    harness.interactions.register({
+      sessionId: 'session-1',
+      artifactVersionId: 'version-2',
+      interactionId: 'prompt-1'
+    })
+    const rejected = vi.fn()
+    const replacement = harness.interactions.parkApproval('session-1', 'prompt-1').catch(rejected)
+    const token = harness.interactions.approvalTokenFor('session-1')
+    try {
+      resume.resolve()
+      expect(await response).toMatchObject({ code: 'interaction-mismatch' })
+      expect.soft(rejected).not.toHaveBeenCalled()
+      expect.soft(harness.interactions.approvalTokenFor('session-1')).toBe(token)
+      expect(harness.interactions.interactionIdFor('session-1', 'version-2')).toBe('prompt-1')
+    } finally {
+      harness.interactions.clearSession('session-1', 'test cleanup')
+      await replacement
+    }
+  })
+
   it.each(
     ['approved', 'rejected', 'feedback'].flatMap((responseKind) =>
       [false, true].map((reusePrompt) => ({

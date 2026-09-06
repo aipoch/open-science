@@ -7917,6 +7917,7 @@ describe('notebook runtime service', () => {
       const root = await createStorageRoot()
       const events: string[] = []
       let releaseInstall: (() => void) | undefined
+      const installStarted = Promise.withResolvers<void>()
       // v4: a session runs ONE env per language, so "different envs" now means different SESSIONS —
       // an installer session bound to a named env vs a runner session on the app-managed default.
       const namedPy = pythonBin(envPrefix(getRuntimeRoot(root), 'my-analysis'))
@@ -7960,6 +7961,7 @@ describe('notebook runtime service', () => {
           events.push('install:my-analysis:start')
           await new Promise<void>((resolve) => {
             releaseInstall = resolve
+            installStarted.resolve()
           })
           return { ok: true, needsRestart: false, log: '' }
         }
@@ -7977,7 +7979,7 @@ describe('notebook runtime service', () => {
         language: 'python',
         packages: ['numpy']
       })
-      await vi.waitFor(() => expect(releaseInstall).toBeDefined())
+      await installStarted.promise
 
       // A run in a DIFFERENT session on the DEFAULT python env proceeds while the my-analysis install
       // holds only its own env lock — the lock is keyed by resolved env name, not language.
