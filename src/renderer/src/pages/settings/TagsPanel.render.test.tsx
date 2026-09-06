@@ -114,12 +114,12 @@ describe('TagsPanel', () => {
       expect(container.querySelector('[role="alert"]')?.textContent).toContain(
         'Tag version updated'
       )
-      expect(container.querySelector('[role="alert"]')?.textContent).toContain(
-        'Latest saved version'
-      )
-      expect(container.querySelector('[role="alert"]')?.textContent).toContain(
-        contentChanged ? 'Remote' : 'Research'
-      )
+      const alert = container.querySelector('[role="alert"]')!
+      expect(alert.querySelector('button')).toBeNull()
+      expect(alert.textContent).not.toContain('Latest saved version')
+      const notice = alert.closest('section')!
+      expect(notice.textContent).toContain('Latest saved version')
+      expect(notice.textContent).toContain(contentChanged ? 'Remote' : 'Research')
       await act(async () => container.querySelector<HTMLFormElement>('form')!.requestSubmit())
       expect(update).not.toHaveBeenCalled()
       const keep = Array.from(container.querySelectorAll('button')).find(
@@ -141,7 +141,7 @@ describe('TagsPanel', () => {
           tags: [{ ...tag, name: 'Latest', iconKey: 'star', colorKey: 'red', updatedAt: 4 }]
         })
       )
-      const latestSummary = container.querySelector('[role="alert"]')!
+      const latestSummary = container.querySelector('[role="alert"]')!.closest('section')!
       expect(latestSummary.textContent).toContain('Latest')
       expect(latestSummary.textContent).toContain('Icon: Star')
       expect(latestSummary.textContent).toContain('Color: Red')

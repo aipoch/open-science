@@ -193,8 +193,9 @@ const TagForm = ({
         {t('Choose a name, icon, and color. Names are unique regardless of case.')}
       </p>
       {conflicted ? (
-        <div role="alert">
+        <div>
           <ErrorNotice
+            role="alert"
             title={t('Tag version updated')}
             description={t(
               'Your draft is still below. Choose how to handle the latest version before saving.'
