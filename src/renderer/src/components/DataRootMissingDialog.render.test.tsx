@@ -12,6 +12,7 @@ let root: Root
 
 type MockStorageApi = {
   acceptMissingDataRoot: ReturnType<typeof vi.fn>
+  getStatus: ReturnType<typeof vi.fn>
   getInfo: ReturnType<typeof vi.fn>
   pickDirectory: ReturnType<typeof vi.fn>
   inspectDataRoot: ReturnType<typeof vi.fn>
@@ -21,6 +22,7 @@ type MockStorageApi = {
 const installApi = (overrides: Partial<MockStorageApi> = {}): MockStorageApi => {
   const api: MockStorageApi = {
     acceptMissingDataRoot: vi.fn().mockResolvedValue(undefined),
+    getStatus: vi.fn().mockResolvedValue({ dataRootMissing: true }),
     getInfo: vi.fn().mockResolvedValue({ dataRootMissing: true }),
     pickDirectory: vi.fn().mockResolvedValue(null),
     inspectDataRoot: vi.fn(),
@@ -58,6 +60,37 @@ afterEach(() => {
 })
 
 describe('DataRootMissingDialog', () => {
+  it('resolves remote reconnection even when a workspace usage scan is denied', async () => {
+    const api = installApi({
+      getInfo: vi
+        .fn()
+        .mockRejectedValue(Object.assign(new Error('workspace denied'), { code: 'EACCES' }))
+    })
+    const getStatus = vi.fn().mockResolvedValue({ dataRootMissing: false })
+    Object.assign(api, { getStatus })
+    document.documentElement.setAttribute(WEB_EVENT_SURFACE_ATTRIBUTE, 'true')
+    document.documentElement.setAttribute(WEB_CALLER_LOCATION_ATTRIBUTE, 'remote')
+    const onResolved = vi.fn()
+    await act(async () => {
+      root.render(
+        <DataRootMissingDialog open dataRoot="/mnt/drive/OpenScience" onResolved={onResolved} />
+      )
+    })
+    expect(document.body.querySelectorAll('button')).toHaveLength(1)
+    await act(async () => {
+      clickButton(/reconnect/i)
+    })
+    expect({
+      resolved: onResolved.mock.calls.length,
+      error: document.body.querySelector('[role="alert"]')?.textContent
+    }).toEqual({
+      resolved: 1,
+      error: undefined
+    })
+    expect(getStatus).toHaveBeenCalledOnce()
+    expect(api.getInfo).not.toHaveBeenCalled()
+  })
+
   it('offers only remote-safe retry when the host data root is missing in Web', async () => {
     installApi()
     document.documentElement.setAttribute(WEB_EVENT_SURFACE_ATTRIBUTE, 'true')
@@ -163,8 +196,8 @@ describe('DataRootMissingDialog', () => {
     expect(document.body.textContent).not.toContain('Data folder not found')
   })
 
-  it('Reconnect & retry closes the dialog once getInfo reports the drive is back', async () => {
-    const api = installApi({ getInfo: vi.fn().mockResolvedValue({ dataRootMissing: false }) })
+  it('Reconnect & retry closes the dialog once getStatus reports the drive is back', async () => {
+    const api = installApi({ getStatus: vi.fn().mockResolvedValue({ dataRootMissing: false }) })
     const onResolved = vi.fn()
 
     await act(async () => {
@@ -178,12 +211,12 @@ describe('DataRootMissingDialog', () => {
       await Promise.resolve()
     })
 
-    expect(api.getInfo).toHaveBeenCalledTimes(1)
+    expect(api.getStatus).toHaveBeenCalledTimes(1)
     expect(onResolved).toHaveBeenCalledTimes(1)
   })
 
   it('Reconnect & retry shows a still-not-found note when the drive is still missing', async () => {
-    const api = installApi({ getInfo: vi.fn().mockResolvedValue({ dataRootMissing: true }) })
+    const api = installApi({ getStatus: vi.fn().mockResolvedValue({ dataRootMissing: true }) })
     const onResolved = vi.fn()
 
     await act(async () => {
@@ -197,13 +230,13 @@ describe('DataRootMissingDialog', () => {
       await Promise.resolve()
     })
 
-    expect(api.getInfo).toHaveBeenCalledTimes(1)
+    expect(api.getStatus).toHaveBeenCalledTimes(1)
     expect(onResolved).not.toHaveBeenCalled()
     expect(document.body.textContent).toContain('Still not found')
   })
 
-  it('Reconnect & retry re-enables every action when getInfo rejects', async () => {
-    installApi({ getInfo: vi.fn().mockRejectedValue(new Error('IPC unavailable')) })
+  it('Reconnect & retry re-enables every action when getStatus rejects', async () => {
+    installApi({ getStatus: vi.fn().mockRejectedValue(new Error('IPC unavailable')) })
 
     await act(async () => {
       root.render(

@@ -14,7 +14,7 @@ import {
 } from 'node:fs/promises'
 import { writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join, relative } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const diskSpace = vi.hoisted(() => ({
@@ -88,6 +88,88 @@ const exists = async (path: string): Promise<boolean> => {
 }
 
 describe('validateMigrationSourceLinks', () => {
+  it.each(['external', 'missing external', 'unselected subtree', 'indirect escape'])(
+    'rejects a relative reference to %s before copying',
+    async (kind) => {
+      const sourceLink = join(from, 'artifacts', 'data.csv')
+      await mkdir(dirname(sourceLink), { recursive: true })
+      let target = join(to, 'outside', 'dataset.csv')
+      await mkdir(dirname(target), { recursive: true })
+      if (kind === 'unselected subtree') {
+        target = join(from, 'artifacts-other', 'dataset.csv')
+        await mkdir(dirname(target), { recursive: true })
+      }
+      if (kind !== 'missing external') await writeFile(target, 'original dataset')
+      if (kind === 'indirect escape') {
+        const alias = join(from, 'artifacts', 'alias')
+        await symlink(dirname(target), alias, process.platform === 'win32' ? 'junction' : 'dir')
+        target = join(alias, 'missing.csv')
+      }
+      await symlink(relative(dirname(sourceLink), target), sourceLink, 'file')
+
+      await expect(
+        copyAndVerify({
+          from,
+          to,
+          dirs: ['artifacts'],
+          signal: new AbortController().signal,
+          onProgress: () => {}
+        })
+      ).resolves.toMatchObject({ ok: false, error: expect.stringContaining('data.csv') })
+      expect(await exists(join(to, 'artifacts'))).toBe(false)
+      expect(await readlink(sourceLink)).toBe(relative(dirname(sourceLink), target))
+    }
+  )
+
+  it('resolves a parent traversal after a directory link before deciding what moves', async () => {
+    const artifacts = join(from, 'artifacts')
+    const outside = join(to, 'outside')
+    await mkdir(artifacts, { recursive: true })
+    await mkdir(join(outside, 'child'), { recursive: true })
+    await writeFile(join(outside, 'dataset.csv'), 'external data')
+    await writeFile(join(artifacts, 'dataset.csv'), 'unrelated internal data')
+    await symlink(
+      join(outside, 'child'),
+      join(artifacts, 'alias'),
+      process.platform === 'win32' ? 'junction' : 'dir'
+    )
+    const sourceLink = join(artifacts, 'data.csv')
+    await symlink(['alias', '..', 'dataset.csv'].join('/'), sourceLink, 'file')
+    expect(await readFile(sourceLink, 'utf8')).toBe('external data')
+
+    await expect(validateMigrationSourceLinks(from, ['artifacts'])).resolves.toMatchObject({
+      ok: false,
+      error: expect.stringContaining('data.csv')
+    })
+  })
+
+  it('preserves internal relative references and external absolute references after source cleanup', async () => {
+    await seedFixture()
+    const sibling = join(from, 'uploads', '..dataset.csv')
+    await writeFile(sibling, 'shared data')
+    await symlink(
+      relative(join(from, 'artifacts'), sibling),
+      join(from, 'artifacts', 'relative.csv'),
+      'file'
+    )
+    const external = join(to, 'external.csv')
+    await writeFile(external, 'external data')
+    await symlink(external, join(from, 'artifacts', 'absolute.csv'), 'file')
+
+    await expect(
+      copyAndVerify({
+        from,
+        to,
+        dirs: ['artifacts', 'uploads'],
+        signal: new AbortController().signal,
+        onProgress: () => {}
+      })
+    ).resolves.toEqual({ ok: true })
+    await deleteSources(from, ['artifacts', 'uploads'])
+    expect(await readFile(join(to, 'artifacts', 'relative.csv'), 'utf8')).toBe('shared data')
+    expect(await readFile(join(to, 'artifacts', 'absolute.csv'), 'utf8')).toBe('external data')
+  })
+
   it('rejects an absolute target text inside the source even when an intermediate link escapes', async () => {
     const artifacts = join(from, 'artifacts')
     const outside = join(to, 'outside')

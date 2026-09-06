@@ -49,8 +49,8 @@ const DataRootMissingDialog = ({
     setStillMissing(false)
     setOperationError(undefined)
     try {
-      const info = await window.api.storage.getInfo()
-      if (info.dataRootMissing) {
+      const status = await window.api.storage.getStatus()
+      if (status.dataRootMissing) {
         setStillMissing(true)
         return
       }
