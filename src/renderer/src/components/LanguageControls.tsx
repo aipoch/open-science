@@ -1,4 +1,4 @@
-import { AlertTriangle, Check, Languages } from 'lucide-react'
+import { Check, Languages } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 
 import {
@@ -35,16 +35,18 @@ const useOptions = (): { value: LanguagePreference; label: string; description?:
   )
 }
 
-const LanguageSaveError = (): React.JSX.Element | null => {
+const LanguageSaveError = ({ className }: { className?: string }): React.JSX.Element | null => {
   const { t } = useTranslation()
   const saveFailed = useLocaleStore((state) => state.saveFailed)
   if (!saveFailed) return null
 
   return (
-    <div role="alert" className="mt-3">
+    <div
+      role="alert"
+      className={cn('rounded-lg border border-danger-000/30 bg-danger-000/5 p-3', className)}
+    >
       <ErrorNotice
-        icon={AlertTriangle}
-        tone="amber"
+        showBrand={false}
         title={t('Could not save the language.')}
         description={t('The saved language has been restored. Select a language to try again.')}
         secondaryButton={{
@@ -82,7 +84,7 @@ export const LanguageSelect = (): React.JSX.Element => {
           ))}
         </SelectContent>
       </Select>
-      <LanguageSaveError />
+      <LanguageSaveError className="mt-3" />
     </div>
   )
 }
@@ -141,7 +143,7 @@ export const LanguagePreferenceMenu = ({
         </DropdownMenuContent>
       </DropdownMenu>
       {saveFailed && !isSettingsOpen ? (
-        <div className="absolute right-0 top-full z-40 mt-2 w-80 max-w-[calc(100vw-2rem)] rounded-xl border bg-popover p-4 shadow-md">
+        <div className="absolute right-0 top-full z-40 mt-2 w-80 max-w-[calc(100vw-2rem)] rounded-lg bg-popover shadow-md">
           <LanguageSaveError />
         </div>
       ) : null}

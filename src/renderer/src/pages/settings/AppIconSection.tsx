@@ -1,4 +1,4 @@
-import { AlertTriangle, Check } from 'lucide-react'
+import { Check } from 'lucide-react'
 import { RadioGroup } from 'radix-ui'
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -67,10 +67,10 @@ const AppIconSection = (): React.JSX.Element | null => {
         </p>
       ) : null}
       {loadState === 'error' ? (
-        <div role="alert">
+        <div role="alert" className="rounded-lg border border-danger-000/30 bg-danger-000/5 p-3">
           <ErrorNotice
-            icon={AlertTriangle}
-            tone="amber"
+            showBrand={false}
+            className="grid max-w-none grid-cols-[minmax(0,1fr)_auto] items-center"
             title={t('Could not load app icons.')}
             secondaryButton={{
               label: t('Retry'),
