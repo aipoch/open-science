@@ -98,8 +98,10 @@ export const ReadingContextPicker = ({
     }
   }, [atLimit, loadRevision, open, projectId])
 
+  const isCurrentProject = result.projectId === projectId
   const linked = useMemo(() => new Set(linkedSources.map(sourceKey)), [linkedSources])
   const items = useMemo(() => {
+    if (!isCurrentProject) return []
     const needle = query.trim()
     return result.items
       .filter(({ source }) => !linked.has(sourceKey(source)))
@@ -107,9 +109,10 @@ export const ReadingContextPicker = ({
       .filter(({ match }) => match !== null)
       .sort((a, b) => (b.match?.score ?? 0) - (a.match?.score ?? 0))
       .map(({ item }) => item)
-  }, [linked, query, result.items])
+  }, [isCurrentProject, linked, query, result.items])
 
   const select = async (item: EligiblePdf): Promise<void> => {
+    if (!isCurrentProject || result.status !== 'loaded') return
     const key = sourceKey(item.source)
     setPendingKey(key)
     try {
@@ -160,7 +163,7 @@ export const ReadingContextPicker = ({
           <p className="px-2 py-2 text-sm text-text-300">
             {t('A conversation can link up to 3 PDFs.')}
           </p>
-        ) : result.status === 'loading' || result.status === 'idle' ? (
+        ) : !isCurrentProject || result.status === 'loading' || result.status === 'idle' ? (
           <p role="status" className="flex items-center gap-2 px-2 py-2 text-sm text-text-300">
             <Loader2 className="size-4 animate-spin" aria-hidden="true" />
             {t('Checking PDFs…')}

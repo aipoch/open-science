@@ -384,7 +384,7 @@ class LiteratureDocumentReader {
       }
     }
     const descriptors = [...descriptorByExtractionId.values()]
-    const fallbackResponse = (reason: 'empty-bm25' | 'bm25-error'): unknown => {
+    const fallbackResponse = (reason: 'empty-bm25' | 'bm25-error' | 'cjk-query'): unknown => {
       const passages = fallbackSearch(descriptors, query)
       log.info('Literature retrieval completed', {
         retrievalMode: 'fallback',
@@ -425,6 +425,9 @@ class LiteratureDocumentReader {
         })
       }
     }
+    // unicode61 cannot match concepts embedded in unsegmented CJK sentences. Route the
+    // entire query through lexical retrieval even when an English term would match FTS.
+    if (CJK_CHARACTER.test(query)) return fallbackResponse('cjk-query')
     let index: LiteratureFullTextIndex | undefined
     try {
       index = await LiteratureFullTextIndex.open(this.options.storageRoot)

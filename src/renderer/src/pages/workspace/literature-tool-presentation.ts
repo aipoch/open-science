@@ -138,7 +138,6 @@ const buildLiteratureToolSummary = (
   const presentation = outputs.map(presentationRecord).find(Boolean)
   const output = outputs.find(isLiteratureOutputRecord)
   const query = asString(input.query)
-  const presentedQuery = query && !/\p{Script=Han}/u.test(query) ? query : undefined
   const action: LiteratureToolAction = query ? 'search' : 'read'
   const presentationNames = Array.isArray(presentation?.documentNames)
     ? presentation.documentNames.flatMap((name) =>
@@ -173,7 +172,7 @@ const buildLiteratureToolSummary = (
 
   return {
     action,
-    ...(presentedQuery ? { query: presentedQuery } : {}),
+    ...(query ? { query } : {}),
     documentNames,
     documentCount: documentNames.length || requestedIds.length,
     ...(passageCount !== undefined ? { passageCount } : {}),

@@ -2,6 +2,9 @@ import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
+import { Client } from '@modelcontextprotocol/sdk/client/index.js'
+import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js'
+
 import { PrismaClient } from '@prisma/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -10,6 +13,8 @@ import type { PersistedChatSession } from '../../shared/session-persistence'
 import { extractPdfText } from '../uploads/attachment-media'
 import { LiteratureDocumentReader } from './document-reader'
 import { LiteratureFullTextIndex, literatureIndexPath } from './full-text-index'
+
+import { createLiteratureMcpServer, LITERATURE_READ_DOCUMENT_TOOL_NAME } from './mcp-server'
 
 vi.mock('../uploads/attachment-media', () => ({ extractPdfText: vi.fn() }))
 
@@ -115,6 +120,96 @@ describe('LiteratureDocumentReader', () => {
   afterEach(async () => {
     await rm(root, { recursive: true, force: true })
     vi.restoreAllMocks()
+  })
+
+  it.each([
+    { query: 'DNA', pages: [1] },
+    { query: '修复机制', pages: [2] },
+    { query: 'DNA 修复机制', pages: [1, 2] }
+  ])(
+    'retrieves the matching pages for "$query" in the same bilingual PDF',
+    async ({ query, pages }) => {
+      vi.mocked(extractPdfText).mockResolvedValue({
+        text: '--- Page 1 ---\nDNA background discussion.\n--- Page 2 ---\n本研究的主要结论是修复机制显著提高可靠性。',
+        pageCount: 2,
+        truncated: false
+      })
+      const reader = new LiteratureDocumentReader({
+        storageRoot: root,
+        sessions: { loadSessionForContinuation: vi.fn(async () => session()) },
+        inputs: {
+          resolveVersion: vi.fn(async () => input),
+          resolveContent: vi.fn(async () => join(root, 'paper.pdf'))
+        }
+      })
+      const result = (await reader.readCurrent({
+        projectId: 'project-1',
+        sessionId: 'session-1',
+        promptMessageId: 'message-1',
+        input: { documentIds: ['binding-1'], query }
+      })) as { passages: Array<{ documentId: string; pageStart: number }> }
+
+      expect(result.passages.every(({ documentId }) => documentId === 'binding-1')).toBe(true)
+      expect(result.passages.map(({ pageStart }) => pageStart).sort()).toEqual(pages)
+    }
+  )
+
+  it('does not silently broaden a singular document search through the MCP boundary', async () => {
+    vi.mocked(extractPdfText).mockImplementation(async (path) => ({
+      text:
+        path === join(root, 'second.pdf')
+          ? '--- Page 1 ---\nneedle\n--- Page 2 ---\nconclusion'
+          : '--- Page 1 ---\nbackground\n--- Page 2 ---\nunrelated',
+      pageCount: 2,
+      truncated: false
+    }))
+    const reader = new LiteratureDocumentReader({
+      storageRoot: root,
+      sessions: { loadSessionForContinuation: vi.fn(async () => session()) },
+      inputs: {
+        resolveVersion: vi.fn(async ({ inputFileVersionId }) =>
+          inputFileVersionId === 'version-2' ? secondInput : input
+        ),
+        resolveContent: vi.fn(async (resolved) =>
+          join(root, resolved.inputFileVersionId === 'version-2' ? 'second.pdf' : 'paper.pdf')
+        )
+      }
+    })
+    const server = createLiteratureMcpServer({
+      readDocument: (request) =>
+        reader.readCurrent({
+          projectId: 'project-1',
+          sessionId: 'session-1',
+          promptMessageId: 'message-1',
+          input: request
+        })
+    })
+    const client = new Client({ name: 'literature-scope-test', version: '1.0.0' })
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair()
+    await Promise.all([server.connect(serverTransport), client.connect(clientTransport)])
+    try {
+      const scoped = await client.callTool({
+        name: LITERATURE_READ_DOCUMENT_TOOL_NAME,
+        arguments: { documentIds: ['binding-1'], query: 'needle' }
+      })
+      expect(scoped.structuredContent).toMatchObject({ passages: [] })
+      const all = await client.callTool({
+        name: LITERATURE_READ_DOCUMENT_TOOL_NAME,
+        arguments: { query: 'needle' }
+      })
+      expect(all.structuredContent).toMatchObject({
+        documents: [{ id: 'binding-1' }, { id: 'binding-2' }],
+        passages: [expect.objectContaining({ documentId: 'binding-2' })]
+      })
+      const ambiguous = await client.callTool({
+        name: LITERATURE_READ_DOCUMENT_TOOL_NAME,
+        arguments: { documentId: 'binding-1', query: 'needle' }
+      })
+      expect(ambiguous).toMatchObject({ isError: true })
+    } finally {
+      await client.close()
+      await server.close()
+    }
   })
 
   it('reads only the current message PDF snapshot and uses BM25 for a query', async () => {
