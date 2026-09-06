@@ -586,3 +586,61 @@ it('retains arXiv and other results when OpenAlex credential lookup fails', asyn
   expect(result.notices).toContain('openalex-unavailable')
   expect(result.candidates.map(({ provider }) => provider)).toEqual(['europe-pmc', 'arxiv'])
 })
+
+it.each([
+  { count: 9, arxivIndex: -1, hasIdentifier: true },
+  { count: 10, arxivIndex: -1, hasIdentifier: true },
+  { count: 12, arxivIndex: -1, hasIdentifier: true },
+  { count: 12, arxivIndex: 0, hasIdentifier: true },
+  { count: 12, arxivIndex: 9, hasIdentifier: true },
+  { count: 12, arxivIndex: 11, hasIdentifier: true },
+  { count: 12, arxivIndex: -1, hasIdentifier: false }
+])(
+  'reserves one bounded result for arXiv without duplicating provider URLs: %j',
+  async ({ count, arxivIndex, hasIdentifier }) => {
+    const { finder, options, item } = setup()
+    const arxivUrl = 'https://arxiv.org/pdf/2401.12345'
+    if (hasIdentifier)
+      item.item.identifiers.push({ scheme: 'arxiv', value: '2401.12345', isPrimary: false })
+    const urls = Array.from({ length: count }, (_, index) =>
+      index === arxivIndex ? arxivUrl : `https://journal.example/paper-${index}.pdf`
+    )
+    options.openAlexKey = async () => 'test-key'
+    options.fetch = vi.fn(async (input) => {
+      const host = new URL(String(input)).hostname
+      if (host === 'api.openalex.org')
+        return Response.json({
+          results: [
+            {
+              doi: '10.1000/example',
+              locations: urls.map((url) => ({ is_oa: true, pdf_url: url }))
+            }
+          ]
+        })
+      if (host === 'pmc.ncbi.nlm.nih.gov') return Response.json({ records: [] })
+      return Response.json({ resultList: { result: [] } })
+    })
+    const result = await finder.run({ mode: 'search', itemId: item.id })
+    if (result.mode !== 'search') throw new Error('Expected search')
+    const selectedUrls = result.candidates.map(({ url }) => url)
+    expect(selectedUrls).toHaveLength(10)
+    expect(new Set(selectedUrls).size).toBe(10)
+    if (!hasIdentifier || (arxivIndex >= 0 && arxivIndex < 10)) {
+      expect(selectedUrls).toEqual(urls.slice(0, 10))
+    } else {
+      expect(selectedUrls).toEqual([...urls.slice(0, 9), arxivUrl])
+    }
+    expect(options.download).not.toHaveBeenCalled()
+    if (hasIdentifier) {
+      const selected = result.candidates.find(({ url }) => url === arxivUrl)!
+      // Retain the first provider's attribution when it already discovered the same PDF.
+      expect(selected.provider).toBe(arxivIndex >= 0 ? 'openalex' : 'arxiv')
+      await finder.run({ mode: 'attach', itemId: item.id, candidateId: selected.id })
+      expect(options.download).toHaveBeenCalledWith(
+        arxivUrl,
+        expect.any(Number),
+        expect.any(Function)
+      )
+    }
+  }
+)

@@ -291,9 +291,13 @@ class LiteratureFullTextFinder {
         sourceUrl: arxivPage,
         url: arxivPage.replace('/abs/', '/pdf/')
       })
+    const shortlist = found.slice(0, 10)
+    const arxivCandidate = found.find(({ url }) => url === arxivPage?.replace('/abs/', '/pdf/'))
+    // Keep the identified arXiv PDF selectable even when other sources fill the result limit.
+    if (arxivCandidate && !shortlist.includes(arxivCandidate)) shortlist[9] = arxivCandidate
     const now = Date.now()
     for (const [id, value] of this.candidates) if (value.expires < now) this.candidates.delete(id)
-    const candidates = found.slice(0, 10).map((candidate) => {
+    const candidates = shortlist.map((candidate) => {
       const id = randomUUID()
       this.candidates.set(id, {
         candidate,
