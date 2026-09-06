@@ -106,6 +106,7 @@ type ResourceEntry = ManagedPreviewResource & {
   ownerId: number
   filePath: string
   trustedLease?: ManagedPreviewTrustedLease
+  activeReaders?: number
   strictSnapshot?: {
     dev: bigint
     ino: bigint
@@ -414,8 +415,13 @@ class ManagedPreviewResources {
     }
 
     if (resource.trustedLease) {
-      const data = await resource.trustedLease.readRange(begin, end)
-      return { begin, end, total: resource.size, data: new Uint8Array(data) }
+      const releaseRead = this.retainTrustedLease(resource)
+      try {
+        const data = await resource.trustedLease.readRange(begin, end)
+        return { begin, end, total: resource.size, data: new Uint8Array(data) }
+      } finally {
+        await releaseRead()
+      }
     }
 
     const buffer = Buffer.allocUnsafe(end - begin)
@@ -465,13 +471,13 @@ class ManagedPreviewResources {
     }
 
     if (resource.trustedLease) {
+      const releaseRead = this.retainTrustedLease(resource)
       return {
         fileHandle: {
           read: (buffer, offset, length, position) =>
             resource.trustedLease!.read(buffer, offset, length, position),
-          // One capability may serve several concurrent HTTP range requests. The resource owner,
-          // not an individual response, closes the pinned handle.
-          close: async () => undefined
+          // Each admitted response pins the shared lease until completion or cancellation.
+          close: releaseRead
         },
         mimeType: resource.mimeType,
         size: resource.size,
@@ -573,12 +579,28 @@ class ManagedPreviewResources {
   private revokeResource(resourceId: string, ownerId: number): void {
     const resource = this.resources.get(resourceId)
     this.resources.delete(resourceId)
-    if (resource?.trustedLease) void resource.trustedLease.close().catch(() => undefined)
+    if (resource?.trustedLease && !resource.activeReaders) {
+      void resource.trustedLease.close().catch(() => undefined)
+    }
     this.releasedOwners.set(resourceId, ownerId)
     while (this.releasedOwners.size > MAX_RELEASED_RESOURCE_TOMBSTONES) {
       const oldestResourceId = this.releasedOwners.keys().next().value
       if (oldestResourceId === undefined) break
       this.releasedOwners.delete(oldestResourceId)
+    }
+  }
+
+  private retainTrustedLease(resource: ResourceEntry): () => Promise<void> {
+    resource.activeReaders = (resource.activeReaders ?? 0) + 1
+    let released = false
+    return async () => {
+      if (released) return
+      released = true
+      resource.activeReaders! -= 1
+      // Revocation removes access immediately; only already-admitted reads may finish.
+      if (!resource.activeReaders && this.resources.get(resource.id) !== resource) {
+        await resource.trustedLease!.close().catch(() => undefined)
+      }
     }
   }
 
