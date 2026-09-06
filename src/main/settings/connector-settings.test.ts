@@ -2613,6 +2613,21 @@ describe('ConnectorSettingsModule', () => {
     expect(stored?.env).toEqual({ TOKEN: 'keep-me' })
   })
 
+  it('persists removal of every argument through a fresh repository', async () => {
+    const added = await addCustomServer({
+      name: 'clear-args',
+      transport: 'stdio',
+      command: 'node',
+      args: ['old.js', '--old']
+    })
+    const id = added.customServers[0].id
+    await service.updateCustomServer({ id, transport: 'stdio', command: 'node', args: [] })
+    const fresh = new ConnectorSettingsModule(new SettingsRepository(dir))
+    const server = (await fresh.getConnectors())?.customMcpServers?.find((item) => item.id === id)
+    expect(server).toBeDefined()
+    expect(server?.args ?? []).toEqual([])
+  })
+
   it('invalidates remembered authority before persisting a security-sensitive server edit', async () => {
     const added = await addCustomServer({
       name: 'mutable-endpoint',

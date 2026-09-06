@@ -4,6 +4,10 @@ import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { ConnectorAddForm } from './ConnectorAddForm'
+import {
+  parseConnectorTemplate,
+  buildConnectorTemplateExport
+} from '../../../../main/settings/connector-template'
 import { createInitialSettingsState, useSettingsStore } from '@/stores/settings-store'
 
 if (!Element.prototype.hasPointerCapture) {
@@ -462,6 +466,37 @@ describe('ConnectorAddForm (local command)', () => {
     expect(advancedButton()?.getAttribute('aria-expanded')).toBe('true')
     expect(document.body.querySelector('[aria-label="Connector name"]')).not.toBeNull()
     expect(document.body.textContent).toContain('This name is reserved by a built-in Connector.')
+  })
+
+  it('round-trips parsed literal template arguments through the editor and both exports', async () => {
+    const args = ['  two words  ', '', '--label', 'first', '--label', 'second', 'first\nsecond']
+    const parsed = parseConnectorTemplate(
+      JSON.stringify({
+        schema_version: 1,
+        kind: 'open-science.connector',
+        name: 'literal',
+        display_name: 'Literal',
+        transport: 'stdio',
+        command: 'node',
+        args
+      })
+    )
+    expect(parsed.ready).toBe(true)
+    act(() =>
+      root.render(
+        <ConnectorAddForm initialTemplate={parsed.definition} onDone={vi.fn()} onCancel={vi.fn()} />
+      )
+    )
+    checkTrust()
+    await act(async () => addButton()?.click())
+    const submitted = vi.mocked(useSettingsStore.getState().addCustomServer).mock.calls[0][0]
+    expect(submitted.args).toEqual(args)
+    const exported = buildConnectorTemplateExport({ ...submitted, id: 'literal' })
+    expect(exported.preview.ready).toBe(true)
+    for (const contents of [exported.contents, exported.mcpClientContents]) {
+      const reparsed = parseConnectorTemplate(contents!)
+      expect((reparsed.definition ?? reparsed.definitions?.[0])?.args).toEqual(args)
+    }
   })
 
   it('prefills an imported template and requires a device credential binding', async () => {
