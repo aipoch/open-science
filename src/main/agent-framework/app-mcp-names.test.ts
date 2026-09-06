@@ -25,6 +25,17 @@ const APP_MCP_CODEC_CASES = appMcpToolIdentities().flatMap((identity) => {
 })
 
 describe('resolveCanonicalMcpToolIdentity', () => {
+  it.each([
+    ['claude-code', 'mcp__open-science-notebook__'],
+    ['codebuddy', 'mcp__open_science_notebook__'],
+    ['opencode', 'open_science_notebook_'],
+    ['codex', '']
+  ] as const)('renders the memory query references for %s', (frameworkId, prefix) => {
+    expect(
+      renderAppMcpToolReferences(frameworkId, 'Use list_memory_categories then search_memories.')
+    ).toBe(`Use ${prefix}list_memory_categories then ${prefix}search_memories.`)
+  })
+
   it('keeps the app MCP inventory aligned with the remembered-permission catalog', () => {
     expect(PRE_REGISTERED_PERMISSION_IDENTITIES.mcp_tool.toSorted()).toEqual(
       appMcpToolIdentities()

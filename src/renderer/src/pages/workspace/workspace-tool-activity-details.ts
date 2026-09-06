@@ -1,6 +1,12 @@
 import type { ContentBlock, ToolCallContent, ToolKind } from '@agentclientprotocol/sdk'
 
 import { formatByteSize } from '@/lib/utils'
+import {
+  buildNotebookToolSummary,
+  isNotebookSummaryTool,
+  readNotebookToolResult,
+  type ToolSummary
+} from './notebook-tool-presentation'
 import type { ToolActivity } from '@/stores/session-store'
 import { memoryAgentRememberResultSchema, memoryAgentResultSchema } from '../../../../shared/memory'
 import type { NotebookRunStatus } from '../../../../shared/notebook'
@@ -49,7 +55,9 @@ type ToolLiteratureSection = {
   summary: LiteratureToolSummary
 }
 
-type ToolDetailSection = ToolCodeSection | ToolDiffSection | ToolLiteratureSection
+type ToolSummarySection = { kind: 'summary'; summary: ToolSummary; file?: boolean }
+type ToolDetailSection =
+  ToolCodeSection | ToolDiffSection | ToolLiteratureSection | ToolSummarySection
 
 type ToolActivityDetails = {
   displayName: string
@@ -532,7 +540,10 @@ const getRecordNumber = (
 }
 
 // Summarizes a saved artifact file (name/type/size/path) without reading or echoing its raw bytes.
-const buildArtifactDetails = (activity: ToolActivity): ToolActivityDetails | undefined => {
+const buildArtifactDetails = (
+  activity: ToolActivity,
+  t: TranslateClause
+): ToolActivityDetails | undefined => {
   const rawInput = isRecord(activity.rawInput) ? activity.rawInput : undefined
   const output = extractArtifactOutput(activity)
   const filename =
@@ -549,24 +560,22 @@ const buildArtifactDetails = (activity: ToolActivity): ToolActivityDetails | und
 
   if (!filename && !path) return undefined
 
-  const summary: Record<string, string> = {}
-
-  if (filename) summary.file = filename
-  if (mimeType) summary.type = mimeType
-  if (sizeLabel) summary.size = sizeLabel
-  if (path) summary.path = path
-
-  const summarySection = createCodeSection(
-    mimeType?.startsWith('image/') ? 'Tool output image' : 'File',
-    JSON.stringify(summary, null, 2),
-    'json'
-  )
+  const fields: ToolSummary['fields'] = []
+  if (mimeType) fields.push({ label: t('Type'), value: mimeType })
+  if (sizeLabel) fields.push({ label: t('Size'), value: sizeLabel })
+  if (path) fields.push({ label: t('Path'), value: path, expandable: true })
+  const summary: ToolSummary = {
+    title: mimeType?.startsWith('image/') ? t('Tool output image') : t('File'),
+    subtitle: filename ?? path,
+    fields,
+    ...(activity.status === 'failed' ? { error: getOutputText(activity)?.code ?? t('Failed') } : {})
+  }
 
   return {
     displayName: 'Write file',
     subtitle: filename ?? path,
     metaLabel: sizeLabel,
-    sections: summarySection ? [summarySection] : []
+    sections: [{ kind: 'summary', summary, file: true }]
   }
 }
 
@@ -1207,7 +1216,39 @@ const buildToolActivityDetails = (
   const literatureDetails = buildLiteratureDetails(activity)
   if (literatureDetails) return literatureDetails
   // Saved files show a metadata summary instead of dumping their (possibly base64) content.
-  if (isArtifactWriteActivity(activity)) return buildArtifactDetails(activity)
+  if (isArtifactWriteActivity(activity)) return buildArtifactDetails(activity, t)
+  const notebookIdentity = [activity.providerToolName, activity.title].find(isNotebookSummaryTool)
+  const notebookResult = notebookIdentity
+    ? [activity.rawOutput, ...collectToolTexts(activity)]
+        .map((value) => readNotebookToolResult(value))
+        .find(Boolean)
+    : undefined
+  const confirmedNotebookResult =
+    activity.status === 'failed' && notebookResult?.status === 'restarted'
+      ? { ...notebookResult, status: undefined }
+      : notebookResult
+  const notebookSummary = buildNotebookToolSummary(
+    notebookIdentity,
+    activity.rawInput,
+    confirmedNotebookResult,
+    t
+  )
+  if (notebookSummary) {
+    if (activity.status === 'failed' && !notebookSummary.error)
+      notebookSummary.error = notebookResult
+        ? t('Failed')
+        : (getOutputText(activity)?.code ?? t('Failed'))
+    const fallback = buildGenericDetails(activity)
+    return {
+      displayName: notebookSummary.title,
+      sections: [
+        { kind: 'summary', summary: notebookSummary },
+        ...(fallback?.sections ?? []).map((section) =>
+          section.kind === 'code' ? { ...section, collapsible: true } : section
+        )
+      ]
+    }
+  }
   // File edits prefer a diff view, falling back to raw input/output when no diff is provided.
   if (isEditActivity(activity))
     return buildDiffDetails(activity, t) ?? buildGenericDetails(activity)

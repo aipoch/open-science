@@ -229,7 +229,8 @@ describe('D02/D04 persisted database boundaries', () => {
 
   afterEach(async () => {
     await client?.$disconnect()
-    if (root) await rm(root, { recursive: true, force: true })
+    // Windows may briefly retain the SQLite file handle after Prisma disconnects.
+    if (root) await rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
   })
 
   describe('current schema', () => {

@@ -1074,6 +1074,117 @@ describe('ACP permission broker with durable grants', () => {
     expect(emitted).toEqual([])
   })
 
+  it.each([
+    ['open-science-notebook', 'list_notebook_runtimes'],
+    ['open-science-notebook', 'notebook_state'],
+    ['open-science-notebook', 'list_memory_categories'],
+    ['open-science-notebook', 'search_memories'],
+    ['open-science-notebook', 'inspect_packages'],
+    ['open-science-plan', 'update_step_status']
+  ])(
+    'uses the default %s/%s Global grant across frameworks and respects revocation',
+    async (server, tool) => {
+      storageRoot = await mkdtemp(join(tmpdir(), 'open-science-broker-notebook-default-'))
+      client = createProjectDbClient(storageRoot)
+      await migrateApplicationDatabase(client)
+      const registry = await createPermissionGrantRegistry({ getClient: async () => client! })
+      await seedDefaultPermissionGrants(registry, client)
+      const emit = vi.fn()
+      const broker = new AcpPermissionBroker(emit, undefined, registry)
+      const context = {
+        profile: 'ask' as const,
+        mcpServerNames: [server]
+      }
+      const requests = [
+        mcpRequest('claude', `mcp__${server}__${tool}`),
+        mcpRequest('codebuddy', `mcp__${server.replaceAll('-', '_')}__${tool}`),
+        mcpRequest('opencode', `${server.replaceAll('-', '_')}_${tool}`),
+        mcpRequest('codex-response', `mcp.${server}.${tool}`),
+        withTrustedMcpToolIdentity(
+          {
+            ...titleOnlyRequest('Execute MCP tool'),
+            sessionId: 'codex-bridge',
+            _meta: { is_mcp_tool_approval: true }
+          },
+          `${server}/${tool}`
+        )
+      ]
+
+      for (const request of requests) {
+        await expect(
+          broker.requestPermission(request, { ...context, projectId: request.sessionId })
+        ).resolves.toEqual({
+          outcome: { outcome: 'selected', optionId: 'provider-allow-once' }
+        })
+      }
+      expect(emit).not.toHaveBeenCalled()
+
+      const withoutOneShot = {
+        ...requests[0]!,
+        options: [{ optionId: 'always', name: 'Always', kind: 'allow_always' as const }]
+      }
+      await expect(broker.requestPermission(withoutOneShot, context)).resolves.toEqual({
+        outcome: { outcome: 'cancelled' }
+      })
+      expect(emit).not.toHaveBeenCalled()
+
+      const granted = (await registry.list()).find(
+        (grant) => grant.capability.key === `mcp:${server}/${tool}`
+      )!
+      await registry.revoke({ grants: [{ id: granted.id, revision: granted.revision }] })
+      for (const request of requests) {
+        const pending = broker.requestPermission(request, context)
+        await vi.waitFor(() => expect(emit).toHaveBeenCalledOnce())
+        const [approval] = emit.mock.calls[0]!
+        broker.respond({ requestId: approval.requestId, optionId: 'provider-reject-once' })
+        await expect(pending).resolves.toEqual({
+          outcome: { outcome: 'selected', optionId: 'provider-reject-once' }
+        })
+        emit.mockClear()
+      }
+    }
+  )
+
+  it('does not use default grants for presentation text, unknown servers, or unapproved tools', async () => {
+    storageRoot = await mkdtemp(join(tmpdir(), 'open-science-broker-notebook-default-boundary-'))
+    client = createProjectDbClient(storageRoot)
+    await migrateApplicationDatabase(client)
+    const registry = await createPermissionGrantRegistry({ getClient: async () => client! })
+    await seedDefaultPermissionGrants(registry, client)
+    const emit = vi.fn()
+    const broker = new AcpPermissionBroker(emit, undefined, registry)
+
+    for (const request of [
+      titleOnlyRequest('mcp__open-science-notebook__notebook_state'),
+      titleOnlyRequest('mcp__open-science-notebook__list_notebook_runtimes'),
+      titleOnlyRequest('mcp__open-science-notebook__list_memory_categories'),
+      titleOnlyRequest('mcp__open-science-notebook__search_memories'),
+      titleOnlyRequest('mcp__open-science-notebook__inspect_packages'),
+      titleOnlyRequest('mcp__open-science-plan__update_step_status'),
+      mcpRequest('other-package-server', 'mcp__other_notebook__inspect_packages'),
+      mcpRequest('other-plan-server', 'mcp__other_plan__update_step_status'),
+      mcpRequest('plan-decision', 'mcp__open_science_plan__generate_plan'),
+      mcpRequest('environment-mutation', 'mcp__open_science_notebook__manage_environments'),
+      mcpRequest('other-server', 'mcp__other_notebook__notebook_state'),
+      mcpRequest('execution', 'mcp__open_science_notebook__notebook_execute'),
+      mcpRequest('packages', 'mcp__open_science_notebook__manage_packages'),
+      mcpRequest('memory-write', 'mcp__open_science_notebook__remember_memory'),
+      mcpRequest('other-memory-server', 'mcp__other_notebook__search_memories')
+    ]) {
+      const pending = broker.requestPermission(request, {
+        profile: 'ask',
+        mcpServerNames: ['open-science-notebook', 'open-science-plan']
+      })
+      await vi.waitFor(() => expect(emit).toHaveBeenCalledOnce())
+      const [approval] = emit.mock.calls[0]!
+      broker.respond({ requestId: approval.requestId, optionId: 'provider-reject-once' })
+      await expect(pending).resolves.toEqual({
+        outcome: { outcome: 'selected', optionId: 'provider-reject-once' }
+      })
+      emit.mockClear()
+    }
+  })
+
   it('reuses one app MCP grant across Claude Code, Codex, OpenCode, and runtime-trusted sparse requests', async () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open-science-broker-acp-mcp-aliases-'))
     client = createProjectDbClient(storageRoot)

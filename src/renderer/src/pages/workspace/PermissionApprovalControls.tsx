@@ -10,6 +10,12 @@ import type { NotebookSessionRequest } from '../../../../shared/notebook'
 import { resolveProjectId } from '../../../../shared/project-scope'
 import { isEnvEnabled } from '../../../../shared/notebook-runtime'
 import { Badge } from '@/components/ui/badge'
+import {
+  buildNotebookToolSummary,
+  notebookInput,
+  type ToolSummary
+} from './notebook-tool-presentation'
+import { WorkspaceToolSummaryCard } from './WorkspaceToolSummaryCard'
 import { Button } from '@/components/ui/button'
 import { dialogTitleClassName } from '@/components/ui/dialog-chrome'
 import { Popover, PopoverAnchor, PopoverContent } from '@/components/ui/popover'
@@ -760,6 +766,43 @@ const PermissionApprovalCard = ({
   const literatureSummary = isLiteratureReadRequest(request)
     ? buildLiteratureToolSummary(request.rawInput)
     : undefined
+  const notebookSummary = isMcpPermissionRequest(request)
+    ? buildNotebookToolSummary(request.mcpIdentity, request.rawInput, undefined, t, true)
+    : undefined
+  const fileInput = notebookInput(request.rawInput)
+  let fileSource = fileInput.source
+  if (typeof fileSource === 'string') {
+    try {
+      fileSource = JSON.parse(fileSource)
+    } catch {
+      /* Keep invalid input reviewable. */
+    }
+  }
+  const fileSourceRecord =
+    fileSource && typeof fileSource === 'object' && !Array.isArray(fileSource)
+      ? (fileSource as Record<string, unknown>)
+      : undefined
+  const filePath = fileSourceRecord?.path ?? fileInput.path
+  const fileSummary: ToolSummary | undefined = isArtifactWriteRequest(request)
+    ? {
+        title: t('Write file'),
+        subtitle: typeof fileInput.filename === 'string' ? fileInput.filename : undefined,
+        fields: [
+          ...(typeof fileInput.mimeType === 'string'
+            ? [{ label: t('Type'), value: fileInput.mimeType }]
+            : []),
+          ...(typeof filePath === 'string' ? [{ label: t('Path'), value: filePath }] : [])
+        ]
+      }
+    : undefined
+  // Preserve all request metadata for consent, without mounting inline file bytes in the DOM.
+  const fileDetails = fileSummary
+    ? JSON.stringify(
+        { ...fileInput, ...(fileSource !== undefined ? { source: fileSource } : {}) },
+        (key, value) => (key === 'content' ? `[${t('File content omitted')}]` : value),
+        2
+      )
+    : undefined
   const sourcePresentation = describePermissionRequest(request)
   const presentation: PermissionPresentation = {
     ...sourcePresentation,
@@ -968,7 +1011,23 @@ const PermissionApprovalCard = ({
       {/* Specialist switch/delete requests show a friendly detail block instead of the raw
           redacted payload; all other requests keep the activity-style code preview. Skill loads
           show the SKILL.md document itself — it is the payload being approved. */}
-      {literatureSummary ? (
+      {notebookSummary || fileSummary ? (
+        <div key={requestId} className="space-y-2">
+          <WorkspaceToolSummaryCard
+            summary={(notebookSummary ?? fileSummary)!}
+            file={Boolean(fileSummary)}
+          />
+          {fileDetails || (notebookSummary && permCode) ? (
+            <details className="text-xs text-text-300">
+              <summary className="cursor-pointer">{t('Input')}</summary>
+              <WorkspaceToolCodeBlock
+                code={fileDetails ?? permCode!.code}
+                language={fileDetails ? 'json' : permCode!.language}
+              />
+            </details>
+          ) : null}
+        </div>
+      ) : literatureSummary ? (
         <WorkspaceLiteratureToolCard summary={literatureSummary} />
       ) : isNotebookNetworkApprovalRequest(request) ? (
         <NotebookNetworkApprovalDetail request={request} />
