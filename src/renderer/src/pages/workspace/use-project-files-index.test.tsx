@@ -241,6 +241,40 @@ describe('useProjectFilesIndex', () => {
     }
   )
 
+  it.each(['reset', 'upsert'] as const)(
+    'invalidates a first artifact request before its loading state renders on %s',
+    async (kind) => {
+      await renderHook()
+      let releaseStale: (() => void) | undefined
+      let artifactReads = 0
+      listFiles.mockImplementation(async (request) => {
+        if (request.collection.kind === 'uploads') return { items: [], totalCount: 0 }
+        artifactReads += 1
+        if (artifactReads === 1) {
+          await new Promise<void>((resolve) => {
+            releaseStale = resolve
+          })
+          return { items: [artifact('deleted-artifact')], totalCount: 1 }
+        }
+        return { items: [], totalCount: 0 }
+      })
+
+      await act(async () => {
+        const pending = current.loadMoreArtifacts('session-1')
+        expect(releaseStale).toBeTypeOf('function')
+        // React has not committed the loading page yet; the public request is already in flight.
+        expect(current.artifactsBySession['session-1']).toBeUndefined()
+        changedListener?.({ projectId: 'project-1', sources: ['artifact'], kind })
+        releaseStale!()
+        await pending
+      })
+
+      expect(current.artifactsBySession['session-1']?.items).toEqual([])
+      expect(current.artifactsBySession['session-1']?.isLoading).toBe(false)
+      expect(artifactReads).toBe(2)
+    }
+  )
+
   it('discards an older refresh tail after a second notification', async () => {
     let files = Array.from({ length: 60 }, (_, index) => upload(String(index)))
     let releaseTail: (() => void) | undefined

@@ -602,6 +602,8 @@ const useProjectFilesIndex = (
           ? [
               ...new Set([
                 ...Object.keys(pagesRef.current.artifactsBySession),
+                // Requests register synchronously, before React commits their loading pages.
+                ...loadingArtifactsRef.current.keys(),
                 ...(scopeSessionId ? [scopeSessionId] : [])
               ])
             ]
