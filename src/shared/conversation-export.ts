@@ -1,4 +1,4 @@
-import { Lexer, Marked, Renderer, Tokenizer } from 'marked'
+import { Lexer, Marked, Renderer, Tokenizer, type Token } from 'marked'
 
 import {
   isHiddenControlMessage,
@@ -55,7 +55,7 @@ export type ConversationExportTurn = {
   messages: PersistedChatMessage[]
 }
 
-const THINK_BLOCK_PATTERN = /^<think\b[^>]*>[\s\S]*?(?:<\/think\s*>|$)/i
+const THINK_BLOCK_PATTERN = /^<think\b[^>]*>/i
 const UNSAFE_FILENAME_CHARACTERS = /[<>:"/\\|?*]+/g
 const RENDERER_AUTO_TITLE_PREFIX_LENGTH = 48
 const HEADLESS_AUTO_TITLE_MAX_LENGTH = 60
@@ -168,15 +168,72 @@ const getMessageAttachments = (
   return attachments
 }
 
+// Markdown containers remove quote/list prefixes before tokenizing their children. Map each
+// de-prefixed line back to its original line so code ranges preserve the source byte-for-byte.
+const exportCodeRanges = (content: string): Array<{ start: number; end: number }> => {
+  const ranges: Array<{ start: number; end: number }> = []
+  const mapLines = (text: string, raw: string, positions: number[]): number[] => {
+    const lines = raw.split('\n')
+    let rawOffset = 0
+    const textLines = text.split('\n')
+    return textLines.flatMap((line, index) => {
+      const original = lines[index] ?? ''
+      const column = original.lastIndexOf(line)
+      const mapped = Array.from(
+        { length: line.length },
+        (_, i) => positions[rawOffset + Math.max(column, 0) + i]
+      )
+      if (index < textLines.length - 1) mapped.push(positions[rawOffset + original.length])
+      rawOffset += original.length + 1
+      return mapped
+    })
+  }
+  const visit = (tokens: Token[], positions: number[]): void => {
+    let offset = 0
+    for (const token of tokens) {
+      const mapped = positions.slice(offset, offset + token.raw.length)
+      if (token.type === 'code' && mapped.length) {
+        ranges.push({ start: mapped[0], end: mapped[mapped.length - 1] + 1 })
+      } else if (token.type === 'blockquote') {
+        visit(token.tokens ?? [], mapLines(token.text, token.raw, mapped))
+      } else if (token.type === 'list') {
+        let itemOffset = 0
+        for (const item of token.items) {
+          const itemPositions = mapped.slice(itemOffset, itemOffset + item.raw.length)
+          visit(item.tokens, mapLines(item.text, item.raw, itemPositions))
+          itemOffset += item.raw.length
+        }
+      }
+      offset += token.raw.length
+    }
+  }
+  const positions: number[] = []
+  const normalized = content.replace(/\r\n|\r|[^\r]/g, (character, offset: number) => {
+    positions.push(offset)
+    return character.startsWith('\r') ? '\n' : character
+  })
+  visit(Lexer.lex(normalized), positions)
+  return ranges
+}
+
 // Reuse Markdown's code/escape tokenizers so literal tags cannot open a reasoning block.
 // Consume a real reasoning block in one step, including any code inside that private block.
 export const sanitizeExportMarkdown = (content: string): string => {
   const tokenizer = new Tokenizer()
   new Lexer({ tokenizer }) // Initializes the tokenizer's Markdown grammar.
+  const codeRanges = exportCodeRanges(content)
+  let rangeIndex = 0
   const parts: { raw: string; code: boolean }[] = []
   let offset = 0
   while (offset < content.length) {
-    const remaining = content.slice(offset)
+    while (codeRanges[rangeIndex]?.end <= offset) rangeIndex += 1
+    const range = codeRanges[rangeIndex]
+    if (range && offset >= range.start) {
+      parts.push({ raw: content.slice(offset, range.end), code: true })
+      offset = range.end
+      continue
+    }
+    const remaining = content.slice(offset, range?.start)
     const lineStart = offset === 0 || content[offset - 1] === '\n'
     const code =
       (lineStart && (tokenizer.fences(remaining) ?? tokenizer.code(remaining))) ||
@@ -186,9 +243,16 @@ export const sanitizeExportMarkdown = (content: string): string => {
       offset += code.raw.length
       continue
     }
-    const thought = THINK_BLOCK_PATTERN.exec(remaining)
+    const thought = THINK_BLOCK_PATTERN.exec(content.slice(offset))
     if (thought) {
-      offset += thought[0].length
+      // A closing tag inside a fenced example belongs to the example, not the outer block.
+      const closing = /<\/think\s*>/gi
+      closing.lastIndex = offset + thought[0].length
+      let end: RegExpExecArray | null
+      do {
+        end = closing.exec(content)
+      } while (end && codeRanges.some((code) => end!.index >= code.start && end!.index < code.end))
+      offset = end ? closing.lastIndex : content.length
       continue
     }
     const raw =
