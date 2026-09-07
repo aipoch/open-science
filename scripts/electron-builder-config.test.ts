@@ -5,7 +5,10 @@ import { FileMatcher } from 'app-builder-lib/out/fileMatcher'
 import { load } from 'js-yaml'
 import { describe, expect, it } from 'vitest'
 
-import { WSL2_BASH_PREVIEW_MANIFEST } from '../src/shared/wsl2-preview-manifest'
+import {
+  WSL2_BASH_PREVIEW_MANIFEST,
+  matchesWsl2BashPreviewManifest
+} from '../src/shared/wsl2-preview-manifest'
 
 import {
   WINDOWS_CACHE_DANGEROUS_RIGHT_NAMES,
@@ -76,15 +79,7 @@ describe('electron-builder native image processing', () => {
   })
 })
 
-describe('WSL2 Bash Preview certification', () => {
-  it('keeps the certification contract tied to the packaged application version', () => {
-    const packageJson = JSON.parse(readFileSync(join(process.cwd(), 'package.json'), 'utf8')) as {
-      version: string
-    }
-
-    expect(WSL2_BASH_PREVIEW_MANIFEST.appVersion).toBe(packageJson.version)
-  })
-
+describe('WSL2 Bash Preview resource compatibility', () => {
   it('keeps the packaged manifest identical to the main-process certification contract', () => {
     const packagedManifest = JSON.parse(
       readFileSync(
@@ -103,22 +98,20 @@ describe('WSL2 Bash Preview certification', () => {
     expect(packagedManifest).toEqual(WSL2_BASH_PREVIEW_MANIFEST)
   })
 
-  it('keeps the versioned reference record privacy-safe and tied to the packaged app', () => {
-    const packageJson = JSON.parse(readFileSync(join(process.cwd(), 'package.json'), 'utf8')) as {
-      version: string
-    }
-    const record = readFileSync(
-      join(process.cwd(), 'docs', 'certification', 'wsl2-bash-preview-v1.md'),
-      'utf8'
-    )
+  it('uses a resource compatibility contract independent of application releases', () => {
+    expect(WSL2_BASH_PREVIEW_MANIFEST).not.toHaveProperty('appVersion')
+    expect(matchesWsl2BashPreviewManifest(WSL2_BASH_PREVIEW_MANIFEST)).toBe(true)
+  })
 
-    expect(record).toContain(`Application version: ${packageJson.version}`)
-    expect(record).toContain(`Open Science ${packageJson.version}, Windows x64 package`)
-    expect(record).toMatch(/\| WSL\s+\| 2\.1\.5\.0/)
-    expect(record).toContain('Ubuntu-22.04')
-    expect(record).toContain('networkingMode=mirrored')
-    expect(record).not.toContain('open-science-spike')
-    expect(record).not.toMatch(/[A-Za-z]:[\\/]/)
+  it.each([
+    null,
+    {},
+    { ...WSL2_BASH_PREVIEW_MANIFEST, schemaVersion: -1 },
+    { ...WSL2_BASH_PREVIEW_MANIFEST, assets: [] },
+    { ...WSL2_BASH_PREVIEW_MANIFEST, assets: [...WSL2_BASH_PREVIEW_MANIFEST.assets, 'unknown'] },
+    { ...WSL2_BASH_PREVIEW_MANIFEST, appVersion: 'old-release' }
+  ])('rejects incompatible resource metadata: %j', (manifest) => {
+    expect(matchesWsl2BashPreviewManifest(manifest)).toBe(false)
   })
 })
 

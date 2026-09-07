@@ -751,9 +751,7 @@ Open Science Web: http://127.0.0.1:52378/?token=iUFHGSACwBz2k1kSJfPixHbclDywVg0C
       writeFile(join(prismaClient, 'query_engine-windows.dll.node'), '')
     ])
 
-    await expect(
-      assertPackagedResources(installDirectory, WSL2_BASH_PREVIEW_MANIFEST.appVersion)
-    ).resolves.toBeUndefined()
+    await expect(assertPackagedResources(installDirectory)).resolves.toBeUndefined()
     await writeFile(
       join(resources, 'notebook-network-sandbox', 'wsl2', 'manifest.json'),
       JSON.stringify({
@@ -761,12 +759,12 @@ Open Science Web: http://127.0.0.1:52378/?token=iUFHGSACwBz2k1kSJfPixHbclDywVg0C
         assets: [...WSL2_BASH_PREVIEW_MANIFEST.assets, 'uncertified-extra']
       })
     )
-    await expect(
-      assertPackagedResources(installDirectory, WSL2_BASH_PREVIEW_MANIFEST.appVersion)
-    ).rejects.toThrow(/missing or version-mismatched/)
+    await expect(assertPackagedResources(installDirectory)).rejects.toThrow(
+      /missing or version-mismatched/
+    )
     await rm(join(resources, 'notebook-network-sandbox'), { recursive: true, force: true })
     await expect(
-      assertPackagedResources(installDirectory, '0.23.0', { certifyWslPreview: false })
+      assertPackagedResources(installDirectory, { certifyWslPreview: false })
     ).resolves.toBeUndefined()
     await mkdir(join(resources, 'notebook-network-sandbox', 'wsl2'), { recursive: true })
     await writeFile(

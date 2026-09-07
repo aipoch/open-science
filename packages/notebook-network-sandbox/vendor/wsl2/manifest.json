@@ -1,6 +1,5 @@
 {
-  "schemaVersion": 1,
-  "appVersion": "0.25.1",
+  "schemaVersion": 2,
   "assets": [
     "wsl2-execution-wrapper-v1",
     "wsl2-exact-cleanup-v1",

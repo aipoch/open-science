@@ -569,8 +569,7 @@ const createApplicationModules = async (
     platform: process.platform,
     arch: process.arch,
     packaged: app.isPackaged,
-    resourcesPath: process.resourcesPath,
-    appVersion: app.getVersion()
+    resourcesPath: process.resourcesPath
   })
   const wslSetup = new WslSetupOwner({
     // Managed workspaces, handoff data, and caches live below this local NTFS mount root. The

@@ -157,19 +157,24 @@ describe('WslLocalShellSection', () => {
     expect(container.textContent).toContain('Future Shell commands will use PowerShell')
   })
 
-  it('uses the installation-integrity tone when packaged Preview assets are unavailable', async () => {
+  it.each([
+    ['assets-unavailable', 'failure'],
+    ['build-disabled', 'warning']
+  ] as const)('uses the appropriate compact notice tone for %s', async (reason, tone) => {
     await act(async () =>
       root.render(
-        <WslLocalShellSection
-          previewAvailable={false}
-          previewUnavailableReason="assets-unavailable"
-        />
+        <WslLocalShellSection previewAvailable={false} previewUnavailableReason={reason} />
       )
     )
     await flush()
 
-    expect(container.querySelector('.bg-status-failure-surface')).not.toBeNull()
-    expect(container.querySelector('.bg-status-warning-surface')).toBeNull()
+    const notice = container.querySelector('section')
+    expect(notice?.querySelector(`.text-status-${tone}-foreground`)).not.toBeNull()
+    expect(
+      notice?.querySelector(`.text-status-${tone === 'failure' ? 'warning' : 'failure'}-foreground`)
+    ).toBeNull()
+    expect(container.textContent).toContain('WSL2 Bash Preview is unavailable')
+    expect(probe).not.toHaveBeenCalled()
   })
 
   it('explicitly switches only future Shell commands to PowerShell and never retries failed work', async () => {

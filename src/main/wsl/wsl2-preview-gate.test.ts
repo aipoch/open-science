@@ -99,7 +99,6 @@ describe('WSL2 Bash Preview admission', () => {
 
   it('admits a packaged Windows x64 build only with matching versioned assets', async () => {
     const resourcesPath = await mkdtemp(join(tmpdir(), 'wsl-preview-assets-'))
-    const appVersion = WSL2_BASH_PREVIEW_MANIFEST.appVersion
     try {
       const assetDirectory = join(resourcesPath, 'notebook-network-sandbox', 'wsl2')
       await mkdir(assetDirectory, { recursive: true })
@@ -110,8 +109,7 @@ describe('WSL2 Bash Preview admission', () => {
           buildEnabled: true,
           developmentEnabled: false,
           packaged: true,
-          resourcesPath,
-          appVersion
+          resourcesPath
         })
       ).toEqual({ available: false, reason: 'assets-unavailable' })
       await writeFile(
@@ -126,21 +124,28 @@ describe('WSL2 Bash Preview admission', () => {
           buildEnabled: true,
           developmentEnabled: false,
           packaged: true,
-          resourcesPath,
-          appVersion
+          resourcesPath
         })
       ).toEqual({ available: true, reason: 'available' })
-      expect(
-        evaluateWsl2BashPreview({
-          platform: 'win32',
-          arch: 'x64',
-          buildEnabled: true,
-          developmentEnabled: false,
-          packaged: true,
-          resourcesPath,
-          appVersion: `${appVersion}-mismatch`
+      for (const content of [
+        'invalid JSON',
+        JSON.stringify({
+          ...WSL2_BASH_PREVIEW_MANIFEST,
+          assets: ['incompatible-wrapper']
         })
-      ).toEqual({ available: false, reason: 'assets-unavailable' })
+      ]) {
+        await writeFile(join(assetDirectory, 'manifest.json'), content)
+        expect(
+          evaluateWsl2BashPreview({
+            platform: 'win32',
+            arch: 'x64',
+            buildEnabled: true,
+            developmentEnabled: true,
+            packaged: true,
+            resourcesPath
+          })
+        ).toEqual({ available: false, reason: 'assets-unavailable' })
+      }
     } finally {
       await rm(resourcesPath, { recursive: true, force: true })
     }

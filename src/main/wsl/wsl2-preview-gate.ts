@@ -14,15 +14,14 @@ type PreviewEvaluation = Readonly<{
   developmentEnabled: boolean
   packaged: boolean
   resourcesPath?: string
-  appVersion?: string
 }>
 
-const packagedAssetsMatch = (resourcesPath: string, appVersion: string): boolean => {
+const packagedAssetsMatch = (resourcesPath: string): boolean => {
   try {
     const parsed: unknown = JSON.parse(
       readFileSync(join(resourcesPath, 'notebook-network-sandbox', 'wsl2', 'manifest.json'), 'utf8')
     )
-    return matchesWsl2BashPreviewManifest(parsed, appVersion)
+    return matchesWsl2BashPreviewManifest(parsed)
   } catch {
     return false
   }
@@ -37,11 +36,7 @@ export const evaluateWsl2BashPreview = (input: PreviewEvaluation): Wsl2BashPrevi
       ? { available: true, reason: 'available', development: true }
       : { available: false, reason: 'unpackaged-build' }
   }
-  if (
-    !input.resourcesPath ||
-    !input.appVersion ||
-    !packagedAssetsMatch(input.resourcesPath, input.appVersion)
-  ) {
+  if (!input.resourcesPath || !packagedAssetsMatch(input.resourcesPath)) {
     return { available: false, reason: 'assets-unavailable' }
   }
   return { available: true, reason: 'available' }
@@ -51,7 +46,7 @@ export const evaluateWsl2BashPreview = (input: PreviewEvaluation): Wsl2BashPrevi
 // OPEN_SCIENCE_BUILD_WSL2_BASH_PREVIEW=0 to produce a rollback build; no runtime environment
 // variable, renderer override, remote flag, or persisted preference can reopen that build. The
 // development switch is checked only for unpackaged Windows x64 processes and cannot bypass this
-// build rollback or packaged asset certification.
+// build rollback or packaged resource compatibility.
 export const WSL2_BASH_PREVIEW_BUILD_ENABLED =
   typeof __OPEN_SCIENCE_WSL2_BASH_PREVIEW__ === 'boolean'
     ? __OPEN_SCIENCE_WSL2_BASH_PREVIEW__

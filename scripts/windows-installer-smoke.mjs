@@ -16,6 +16,7 @@ import { createServer } from 'node:http'
 import { homedir, tmpdir } from 'node:os'
 import { basename, join, resolve, win32 } from 'node:path'
 import { pathToFileURL } from 'node:url'
+import { isDeepStrictEqual } from 'node:util'
 
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
@@ -762,11 +763,7 @@ const removeWslCommandTempEvidence = async ({ root, receipt }) => {
   await rm(receipt, { force: true })
 }
 
-const assertPackagedResources = async (
-  installDirectory,
-  expectedVersion,
-  { certifyWslPreview = true } = {}
-) => {
+const assertPackagedResources = async (installDirectory, { certifyWslPreview = true } = {}) => {
   for (const path of packagedResourcePaths(installDirectory, {
     includeWslPreview: certifyWslPreview
   })) {
@@ -787,7 +784,7 @@ const assertPackagedResources = async (
       'utf8'
     )
   )
-  const certifiedWslManifest = JSON.parse(
+  const expectedWslManifest = JSON.parse(
     await readFile(
       join(
         process.cwd(),
@@ -800,10 +797,7 @@ const assertPackagedResources = async (
       'utf8'
     )
   )
-  if (
-    (expectedVersion && certifiedWslManifest.appVersion !== expectedVersion) ||
-    JSON.stringify(wslManifest) !== JSON.stringify(certifiedWslManifest)
-  ) {
+  if (!isDeepStrictEqual(wslManifest, expectedWslManifest)) {
     throw new Error('Packaged Windows WSL2 sandbox assets are missing or version-mismatched.')
   }
 }
@@ -1094,7 +1088,7 @@ const installAndProbe = async ({
   if (!reuseInstallation) {
     await runProcess(installer, ['/S', `/D=${installDirectory}`], { env })
   }
-  await assertPackagedResources(installDirectory, installerVersion(installer), {
+  await assertPackagedResources(installDirectory, {
     certifyWslPreview: phase === 'current' || phase === 'restart'
   })
   await runProcess(join(installDirectory, 'resources', 'micromamba.exe'), ['--version'], { env })
@@ -1137,7 +1131,7 @@ const installOverRunningApp = async ({
     throw error
   }
 
-  await assertPackagedResources(installDirectory, installerVersion(installer), {
+  await assertPackagedResources(installDirectory, {
     certifyWslPreview: phase === 'current' || phase === 'restart'
   })
   await runProcess(join(installDirectory, 'resources', 'micromamba.exe'), ['--version'], { env })
