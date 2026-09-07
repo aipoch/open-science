@@ -4630,6 +4630,12 @@
     "UTF-16 CSV preview is not supported. Save a copy as UTF-8 to preview it.": "暂不支持预览 UTF-16 编码的 CSV。请另存一份 UTF-8 编码的副本以进行预览。",
     "The preview limit was reached before a complete header could be read.": "尚未读取完整表头，已达到预览上限。",
     "The file exceeds the preview limit. Only complete records are shown.": "文件超出预览上限，仅显示完整记录。",
-    "The delimiter could not be detected reliably. Commas are used in this preview.": "无法可靠识别分隔符。本次预览使用逗号作为分隔符。"
+    "The delimiter could not be detected reliably. Commas are used in this preview.": "无法可靠识别分隔符。本次预览使用逗号作为分隔符。",
+    "JSON validation unavailable": "无法验证 JSON",
+    "Lines {{start}}–{{end}}": "第 {{start}}–{{end}} 行",
+    "Loaded bytes {{start}}–{{end}}": "已读取字节 {{start}}–{{end}}",
+    "First line is continued from the previous page": "首行接续上一页的内容",
+    "Last line continues on the next page": "末行将在下一页继续",
+    "Partial source context; syntax highlighting is unavailable": "源码上下文不完整，无法进行语法高亮"
   }
 }

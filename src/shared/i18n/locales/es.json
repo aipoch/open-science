@@ -4946,6 +4946,12 @@
     "UTF-16 CSV preview is not supported. Save a copy as UTF-8 to preview it.": "La vista previa de CSV en UTF-16 no es compatible. Guarde una copia en UTF-8 para previsualizarla.",
     "The preview limit was reached before a complete header could be read.": "Se alcanzó el límite de la vista previa antes de poder leer una cabecera completa.",
     "The file exceeds the preview limit. Only complete records are shown.": "El archivo supera el límite de la vista previa. Solo se muestran registros completos.",
-    "The delimiter could not be detected reliably. Commas are used in this preview.": "No se pudo detectar el delimitador de forma fiable. Se utilizan comas en esta vista previa."
+    "The delimiter could not be detected reliably. Commas are used in this preview.": "No se pudo detectar el delimitador de forma fiable. Se utilizan comas en esta vista previa.",
+    "JSON validation unavailable": "Validación de JSON no disponible",
+    "Lines {{start}}–{{end}}": "Líneas {{start}}–{{end}}",
+    "Loaded bytes {{start}}–{{end}}": "Bytes cargados {{start}}–{{end}}",
+    "First line is continued from the previous page": "La primera línea continúa desde la página anterior",
+    "Last line continues on the next page": "La última línea continúa en la página siguiente",
+    "Partial source context; syntax highlighting is unavailable": "Contexto de código fuente parcial; resaltado de sintaxis no disponible"
   }
 }
