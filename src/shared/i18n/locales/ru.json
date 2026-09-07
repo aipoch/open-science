@@ -5074,6 +5074,12 @@
     "UTF-16 CSV preview is not supported. Save a copy as UTF-8 to preview it.": "Предпросмотр CSV в UTF-16 не поддерживается. Сохраните копию в UTF-8 для предпросмотра.",
     "The preview limit was reached before a complete header could be read.": "Предел предпросмотра достигнут до завершения чтения заголовка.",
     "The file exceeds the preview limit. Only complete records are shown.": "Файл превышает предел предпросмотра. Показаны только полные записи.",
-    "The delimiter could not be detected reliably. Commas are used in this preview.": "Не удалось надёжно определить разделитель. В этом предпросмотре используются запятые."
+    "The delimiter could not be detected reliably. Commas are used in this preview.": "Не удалось надёжно определить разделитель. В этом предпросмотре используются запятые.",
+    "JSON validation unavailable": "Проверка JSON недоступна",
+    "Lines {{start}}–{{end}}": "Строки {{start}}–{{end}}",
+    "Loaded bytes {{start}}–{{end}}": "Загруженные байты {{start}}–{{end}}",
+    "First line is continued from the previous page": "Первая строка продолжается с предыдущей страницы",
+    "Last line continues on the next page": "Последняя строка продолжается на следующей странице",
+    "Partial source context; syntax highlighting is unavailable": "Неполный контекст исходного кода; подсветка синтаксиса недоступна"
   }
 }

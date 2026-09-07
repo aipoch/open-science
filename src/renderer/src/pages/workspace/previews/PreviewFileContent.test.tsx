@@ -582,7 +582,7 @@ describe('PreviewFileContent', () => {
     consoleError.mockRestore()
   })
 
-  it('formats valid JSON previews with indentation', async () => {
+  it('preserves the original JSON source', async () => {
     vi.mocked(window.api.artifacts.readPreview).mockResolvedValue({
       content: '{"name":"sample","values":[1,true]}',
       encoding: 'utf8',
@@ -598,8 +598,8 @@ describe('PreviewFileContent', () => {
       fileId: 'file-1',
       maxBytes: 1024 * 1024
     })
-    expect(container.querySelector('pre')?.textContent).toContain('"name": "sample"')
-    expect(container.querySelector('pre')?.textContent).toContain('"values": [')
+    expect(container.querySelector('pre')?.textContent).toContain('"name":"sample"')
+    expect(container.querySelector('pre')?.textContent).toContain('"values":[')
   })
 
   it('renders line numbers next to text previews', async () => {
@@ -734,6 +734,12 @@ describe('PreviewFileContent', () => {
 
     await renderFile(createFileItem({ format: 'code', name: 'large.py' }))
 
+    expect(container.querySelectorAll('[data-testid="source-line-number"]')).toHaveLength(2000)
+    for (let page = 0; page < 6; page += 1) {
+      await act(async () => {
+        container.querySelector<HTMLButtonElement>('[aria-label="Next preview page"]')?.click()
+      })
+    }
     expect(container.textContent).toContain('import pandas as pd # 13999')
     expect(highlightSpy).not.toHaveBeenCalled()
     expect(container.querySelector('[data-testid="source-code-token"]')).toBeNull()
@@ -863,7 +869,7 @@ describe('PreviewFileContent', () => {
     consoleError.mockRestore()
   })
 
-  it('renders line numbers next to formatted JSON previews', async () => {
+  it('renders line numbers next to original JSON previews', async () => {
     vi.mocked(window.api.artifacts.readPreview).mockResolvedValue({
       content: '{"name":"sample","values":[1,true]}',
       encoding: 'utf8',
@@ -874,7 +880,7 @@ describe('PreviewFileContent', () => {
     await renderFile(createFileItem({ format: 'json', name: 'data.json' }))
 
     expect(container.querySelector('[data-testid="source-line-number"]')?.textContent).toBe('1')
-    expect(container.textContent).toContain('"name": "sample"')
+    expect(container.textContent).toContain('"name":"sample"')
   })
 
   it('uses paged source instead of parsing truncated JSON', async () => {
