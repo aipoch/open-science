@@ -1,0 +1,12 @@
+diff --git a/node_modules/electron-updater/out/differentialDownloader/multipleRangeDownloader.js b/node_modules/electron-updater/out/differentialDownloader/multipleRangeDownloader.js
+index 56adc38fe..79fd6e85b 100644
+--- a/node_modules/electron-updater/out/differentialDownloader/multipleRangeDownloader.js
++++ b/node_modules/electron-updater/out/differentialDownloader/multipleRangeDownloader.js
+@@ -74,6 +74,7 @@ function doExecuteTasks(differentialDownloader, options, out, resolve, reject) {
+     const requestOptions = differentialDownloader.createRequestOptions();
+     requestOptions.headers.Range = ranges.substring(0, ranges.length - 2);
+     const request = differentialDownloader.httpExecutor.createRequest(requestOptions, response => {
++        response.on("error", reject);
+         if (!checkIsRangesSupported(response, reject)) {
+             return;
+         }
