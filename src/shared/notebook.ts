@@ -44,6 +44,54 @@ export type NotebookRunInputKind = 'cell' | 'terminal'
 export type NotebookRunStatus =
   'queued' | 'running' | 'completed' | 'failed' | 'timeout' | 'interrupted' | 'cancelled'
 
+export type NotebookBackgroundRunReceipt = Readonly<{
+  runId: string
+  executionType: 'python-notebook-run' | 'r-notebook-run' | 'javascript-repl' | 'shell-command'
+  projectId: string
+  sessionId: string
+  status: NotebookRunStatus
+  acceptedAt: number
+  lifecycleScope: 'app-process'
+  submissionIdentity: string
+  shellConcurrency?: Readonly<{ limit: number; slot?: number }>
+}>
+
+export type NotebookBackgroundRunResult = Readonly<{
+  receipt: NotebookBackgroundRunReceipt
+  run: NotebookRunSummary
+  // Present on Agent queries. Terminal results report whether this query suppressed the fallback
+  // or automatic delivery was already committed; non-terminal snapshots remain `pending`.
+  followUpDelivery?: 'pending' | 'suppressed' | 'committed'
+}>
+
+export type NotebookBackgroundRunErrorDetail = Readonly<{
+  code: string
+  stage: 'pre-admission' | 'query' | 'cancel'
+  retryable: boolean
+  hint: string
+  runId?: string
+  submissionIdentity?: string
+}>
+
+export class NotebookBackgroundRunError extends Error {
+  readonly name = 'NotebookBackgroundRunError'
+
+  constructor(
+    readonly detail: NotebookBackgroundRunErrorDetail,
+    message: string
+  ) {
+    super(message)
+  }
+}
+
+export type NotebookBackgroundRunLookupRequest = NotebookSessionRequest & {
+  runId?: string
+  submissionIdentity?: string
+  // The authenticated local RPC bridge overwrites this with its capability-bound Agent Frame.
+  // Renderer Session management supplies the frame recorded on the selected Run.
+  agentFrameId?: string
+}
+
 export type NotebookRunProvenanceContext = {
   rootFrameId: string
   agentFrameId: string
@@ -113,6 +161,7 @@ export const notebookEnvironmentApplicationCommandContracts = Object.freeze({
 // Identifies which kernel produced a run: python/r are analysis cells, repl/bash are
 // control-plane/shell.
 export type NotebookKernelKind = 'python' | 'r' | 'repl' | 'bash'
+export type NotebookPersistentKernelKind = Exclude<NotebookKernelKind, 'bash'>
 
 export type NotebookPackageSource =
   | {
@@ -450,6 +499,49 @@ export type NotebookHelperEvidenceStatus =
 // Stores one durable notebook execution, including code, output, and generated-file references.
 export type NotebookRunRecord = {
   runId: string
+  executionMode?: 'foreground' | 'background'
+  // Stable, lane-scoped identity for durable admission. Reusing it with the same fingerprint
+  // returns this canonical Run; reusing it for different submitted work is a conflict. Optional
+  // keeps historical run.json documents readable.
+  submissionIdentity?: string
+  submissionFingerprint?: string
+  admittedAt?: number
+  // Orthogonal durable intent. The primary status remains queued/running until the executor wins
+  // the cancellation race and commits a confirmed terminal outcome.
+  cancellationRequestedAt?: number
+  cancellationReason?: string
+  frozenRuntimeTarget?: {
+    language: NotebookPersistentKernelKind
+    environment: string
+    processKey: string
+    runtimeId?: string
+    source?: 'managed' | 'external'
+    interpreterPath?: string
+    command?: string
+    args?: string[]
+    condaPrefix?: string
+  }
+  frozenPermissionScope?: {
+    allowedHelperSkillIds: string[]
+  }
+  // Exact stateless-shell launch context captured before durable admission. Optional keeps legacy
+  // records readable; new bash Runs never re-read mutable Session paths or host environment at
+  // dispatch time.
+  frozenShellContext?: {
+    cwd: string
+    handoffDir: string
+    runtimeRoot: string
+    notebookSessionRoot: string
+    inputRoot: string
+    protectedDirs: string[]
+    environment: Record<string, string>
+    timeoutMs: number
+    platform: NodeJS.Platform
+  }
+  shellConcurrency?: {
+    limit: number
+    slot?: number
+  }
   // App-owned one-shot identity joining an authorized ACP tool call to the execution admitted by
   // the authenticated Notebook RPC bridge. Optional keeps existing run.json documents readable.
   executionInvocationId?: string
@@ -492,6 +584,8 @@ export type NotebookRunRecord = {
   // documents readable; repository normalization supplies an empty array for old records.
   inputFiles?: NotebookRunInputFile[]
   truncated?: boolean
+  // Exact stateless-shell outcome. Optional keeps non-shell and historical records compatible.
+  exitCode?: number | null
   // Named env that produced this run (python/r only; omitted for repl/bash).
   environment?: string
   // Immutable completed-run environment evidence. The cache that helped build it is never referenced.
@@ -591,6 +685,37 @@ export type NotebookEnvironmentStatus = {
   restartRecommended?: boolean
 }
 
+// Lightweight, process-local projection for the Project Compute overview. Unlike state(), this
+// describes only live execution resources and never materializes a dormant Notebook or reads Run
+// history from disk.
+export type NotebookProjectKernelActivity = ProjectIdScope & {
+  sessionId: string
+  processKey: string
+  kind: 'python' | 'r' | 'repl'
+  environment?: string
+  status: Extract<
+    NotebookKernelMetadata['lastKnownStatus'],
+    'starting' | 'idle' | 'running' | 'restarting'
+  >
+  lastActivityAt: number
+}
+
+export type NotebookProjectBackgroundRunActivity = ProjectIdScope & {
+  sessionId: string
+  runId: string
+  executionType: 'python' | 'r' | 'repl' | 'shell'
+  processKey?: string
+  title: string
+  acceptedAt: number
+}
+
+export type NotebookProjectActivityRequest = ProjectIdScope
+
+export type NotebookProjectActivity = Readonly<{
+  kernels: readonly NotebookProjectKernelActivity[]
+  backgroundRuns: readonly NotebookProjectBackgroundRunActivity[]
+}>
+
 // Bounded, non-persisted discovery metadata for one Agent's complete durable history. The renderer
 // requests one summary at a time so old kernel kinds remain exportable without widening `runs`.
 export type NotebookRunHistorySummary = {
@@ -664,7 +789,15 @@ export type NotebookAvailableEvent = NotebookSessionReference
 export type NotebookChangedEvent = NotebookSessionReference
 
 // Extends a run record with workspace roots so the agent can decide what to do next.
-export type NotebookRunSummary = Omit<NotebookRunRecord, 'inputFiles'> & {
+export type NotebookRunSummary = Omit<
+  NotebookRunRecord,
+  | 'inputFiles'
+  | 'submissionIdentity'
+  | 'submissionFingerprint'
+  | 'admittedAt'
+  | 'frozenRuntimeTarget'
+  | 'frozenPermissionScope'
+> & {
   inputFiles: NotebookInputFileSummary[]
   notebookSessionRoot: string
   dataRoot: string
@@ -834,6 +967,7 @@ export type AbortNotebookCodeCellRequest = FinishNotebookCodeCellRequest
 // Runs an existing cell in the shared interpreter.
 export type RunNotebookCellRequest = NotebookSessionRequest & {
   cellId: string
+  background?: boolean
   timeoutMs?: number
   source?: NotebookRunSource
   inputKind?: NotebookRunInputKind
@@ -844,6 +978,7 @@ export type RunNotebookCellRequest = NotebookSessionRequest & {
 // Convenience request that writes a cell and runs it in one command.
 export type ExecuteNotebookCodeRequest = NotebookSessionRequest & {
   code: string
+  background?: boolean
   // Stable IDs resolved by the host-owned registered Skill catalog. Callers cannot provide helper
   // implementation paths, source, or digests.
   helperModules?: string[]
@@ -865,6 +1000,7 @@ export type ExecuteNotebookCodeRequest = NotebookSessionRequest & {
 // Distinct from data cells: durable Run history uses kernelKind "repl", with no NotebookLanguage.
 export type ExecuteNotebookControlRequest = NotebookSessionRequest & {
   code: string
+  background?: boolean
   timeoutMs?: number
 }
 
@@ -872,5 +1008,6 @@ export type ExecuteNotebookControlRequest = NotebookSessionRequest & {
 // persistent process or NotebookLanguage, but each invocation is persisted as a "bash" Run.
 export type ExecuteShellRequest = NotebookSessionRequest & {
   command: string
+  background?: boolean
   timeoutMs?: number
 }

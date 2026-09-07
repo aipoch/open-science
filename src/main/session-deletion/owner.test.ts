@@ -6,6 +6,7 @@ import {
   type DeleteSessionRequest
 } from '../../shared/session-persistence'
 import { SessionDeletionOwner } from './owner'
+import type { SessionDeletionBackgroundResults } from './owner'
 
 const snapshot = (sessionIds: string[]): AcpStateSnapshot =>
   ({ sessionIds }) as unknown as AcpStateSnapshot
@@ -17,22 +18,30 @@ const createOwner = (
     deleteRuntime?: (request: { sessionId: string }) => Promise<AcpStateSnapshot>
     liveSessionProjectId?: (sessionId: string) => string | undefined
     deletePersisted?: (request: DeleteSessionRequest) => Promise<void>
+    backgroundResults?: SessionDeletionBackgroundResults
   } = {}
 ): {
   owner: SessionDeletionOwner
   deleteRuntime: (request: { sessionId: string }) => Promise<AcpStateSnapshot>
   liveSessionProjectId: (sessionId: string) => string | undefined
   deletePersisted: (request: DeleteSessionRequest) => Promise<void>
+  backgroundResults: SessionDeletionBackgroundResults
   log: { warn: ReturnType<typeof vi.fn> }
 } => {
   const deleteRuntime = overrides.deleteRuntime ?? vi.fn().mockResolvedValue(snapshot([]))
   const liveSessionProjectId =
     overrides.liveSessionProjectId ?? vi.fn().mockReturnValue('project-1')
   const deletePersisted = overrides.deletePersisted ?? vi.fn().mockResolvedValue(undefined)
+  const backgroundResults = overrides.backgroundResults ?? {
+    prepareSessionDeletion: vi.fn().mockResolvedValue(undefined),
+    commitSessionDeletion: vi.fn().mockResolvedValue(undefined),
+    abortSessionDeletion: vi.fn().mockResolvedValue(undefined)
+  }
   const log = { warn: vi.fn() }
   const owner = new SessionDeletionOwner({
     runtime: { deleteSession: deleteRuntime, liveSessionProjectId },
     persistence: { deleteSession: deletePersisted },
+    backgroundResults,
     log
   })
   return {
@@ -40,11 +49,42 @@ const createOwner = (
     deleteRuntime,
     liveSessionProjectId,
     deletePersisted,
+    backgroundResults,
     log
   }
 }
 
 describe('SessionDeletionOwner', () => {
+  it('fences delivery before runtime detach and cleans it after Session authority deletion', async () => {
+    const order: string[] = []
+    const { owner } = createOwner({
+      deleteRuntime: vi.fn(async () => {
+        order.push('runtime')
+        return snapshot([])
+      }),
+      deletePersisted: vi.fn(async () => {
+        order.push('persistence')
+      }),
+      backgroundResults: {
+        prepareSessionDeletion: vi.fn(async () => {
+          order.push('prepare-delivery')
+        }),
+        commitSessionDeletion: vi.fn(async () => {
+          order.push('commit-delivery')
+        }),
+        abortSessionDeletion: vi.fn(async () => {
+          order.push('abort-delivery')
+        })
+      }
+    })
+
+    await expect(owner.delete(request)).resolves.toEqual({
+      status: 'deleted',
+      runtimeDetached: true
+    })
+    expect(order).toEqual(['prepare-delivery', 'runtime', 'persistence', 'commit-delivery'])
+  })
+
   it('hides runtime-first ordering behind one successful deletion interface', async () => {
     const order: string[] = []
     const { owner, deleteRuntime, deletePersisted } = createOwner({
@@ -77,7 +117,7 @@ describe('SessionDeletionOwner', () => {
   })
 
   it('does not delete persistence when runtime teardown rejects', async () => {
-    const { owner, deletePersisted, log } = createOwner({
+    const { owner, deletePersisted, backgroundResults, log } = createOwner({
       deleteRuntime: vi.fn().mockRejectedValue(new Error('provider unavailable'))
     })
 
@@ -88,6 +128,7 @@ describe('SessionDeletionOwner', () => {
     })
 
     expect(deletePersisted).not.toHaveBeenCalled()
+    expect(backgroundResults.abortSessionDeletion).toHaveBeenCalledWith('project-1', 'session-1')
     expect(log.warn).toHaveBeenCalledWith(
       'Session runtime deletion failed',
       expect.objectContaining({ phase: 'delete-runtime', errorCategory: 'error' })
@@ -135,7 +176,7 @@ describe('SessionDeletionOwner', () => {
   })
 
   it('returns a retryable persistence result after runtime deletion succeeds', async () => {
-    const { owner } = createOwner({
+    const { owner, backgroundResults } = createOwner({
       deletePersisted: vi.fn().mockRejectedValue(new Error('disk locked'))
     })
 
@@ -144,6 +185,8 @@ describe('SessionDeletionOwner', () => {
       reason: 'persistence',
       runtimeDetached: true
     })
+    expect(backgroundResults.abortSessionDeletion).not.toHaveBeenCalled()
+    expect(backgroundResults.commitSessionDeletion).not.toHaveBeenCalled()
   })
 
   it('reports committed persistence errors as deleted with unfinished cleanup', async () => {
@@ -185,7 +228,7 @@ describe('SessionDeletionOwner', () => {
     const first = owner.delete(request)
     const second = owner.delete(request)
     expect(second).toBe(first)
-    expect(deleteRuntime).toHaveBeenCalledOnce()
+    await vi.waitFor(() => expect(deleteRuntime).toHaveBeenCalledOnce())
 
     finishRuntime?.(snapshot([]))
     await expect(first).resolves.toMatchObject({ status: 'deleted' })

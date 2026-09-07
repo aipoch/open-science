@@ -109,29 +109,35 @@ describe('reviewer count strings', () => {
   })
 })
 
-describe('remote job badge strings', () => {
-  it('pluralizes the job counts through the catalog', () => {
+describe('background tasks chip strings', () => {
+  it('pluralizes the task counts through the catalog', () => {
     switchTo('en')
-    expect(i18next.t('{{count}} jobs', { defaultValue_one: '{{count}} job', count: 1 })).toBe(
-      '1 job'
+    expect(i18next.t('{{count}} tasks', { defaultValue_one: '{{count}} task', count: 1 })).toBe(
+      '1 task'
     )
-    expect(i18next.t('{{count}} jobs', { defaultValue_one: '{{count}} job', count: 4 })).toBe(
-      '4 jobs'
+    expect(i18next.t('{{count}} tasks', { defaultValue_one: '{{count}} task', count: 4 })).toBe(
+      '4 tasks'
     )
     expect(
-      i18next.t('{{count}} running remote jobs', {
-        defaultValue_one: '{{count}} running remote job',
+      i18next.t('{{count}} running background tasks', {
+        defaultValue_one: '{{count}} running background task',
         count: 1
       })
-    ).toBe('1 running remote job')
+    ).toBe('1 running background task')
 
     switchTo('zh-Hant')
-    expect(i18next.t('{{count}} jobs', { defaultValue_one: '{{count}} job', count: 1 })).toBe(
+    expect(i18next.t('{{count}} tasks', { defaultValue_one: '{{count}} task', count: 1 })).toBe(
       '1 個任務'
     )
-    expect(i18next.t('{{count}} jobs', { defaultValue_one: '{{count}} job', count: 4 })).toBe(
+    expect(i18next.t('{{count}} tasks', { defaultValue_one: '{{count}} task', count: 4 })).toBe(
       '4 個任務'
     )
+    expect(
+      i18next.t('{{count}} running background tasks', {
+        defaultValue_one: '{{count}} running background task',
+        count: 4
+      })
+    ).toBe('4 個背景工作正在執行')
   })
 })
 

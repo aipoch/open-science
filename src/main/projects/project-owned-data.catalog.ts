@@ -22,6 +22,7 @@ type PrismaOwnerModel = Readonly<{
 }>
 
 type ProjectDeletionPath =
+  | 'background-result-delivery-target-delete'
   | 'compute-job-project-delete'
   | 'delegated-runtime-quiescence'
   | 'notification-session-invalidation'
@@ -235,6 +236,24 @@ const PROJECT_OWNED_DATA_CATALOG: readonly ProjectOwnedDataCatalogEntry[] = [
       retention: 'Retained with the soft-deleted Project row.',
       reason:
         'Project metadata and Session Usage facts remain queryable for per-Project and global historical totals.'
+    }
+  },
+  {
+    id: 'background-result-delivery',
+    medium: 'sqlite',
+    resources: ['BackgroundResultDelivery'],
+    prismaModels: [
+      {
+        name: 'BackgroundResultDelivery',
+        ownerFields: [requiredOwner('projectId'), requiredOwner('sessionId')]
+      }
+    ],
+    policy: {
+      kind: 'coordinator-cleanup',
+      effect: 'hard-delete',
+      path: 'background-result-delivery-target-delete',
+      operation: 'BackgroundResultDeliveryOwner.commitProjectDeletion',
+      note: 'Delivery obligations and replay tombstones are removed only after Project authority deletion.'
     }
   },
   {

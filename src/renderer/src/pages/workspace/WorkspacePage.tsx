@@ -19,7 +19,9 @@ import { useProjectStore } from '@/stores/project-store'
 import { useSettingsStore } from '@/stores/settings-store'
 import {
   createNotebookPreviewItem,
+  createProjectComputePreviewItem,
   createProjectFilesPreviewItem,
+  PROJECT_COMPUTE_PREVIEW_ID,
   PROJECT_FILES_PREVIEW_ID,
   usePreviewWorkbenchStore
 } from '@/stores/preview-workbench-store'
@@ -1142,8 +1144,10 @@ const WorkspacePage = ({
   }
 
   // Opens the right preview when the user explicitly selects the notebook entry.
-  const openNotebookPreview = (notebook: NotebookSessionReference): void => {
-    usePreviewWorkbenchStore.getState().upsertAndActivateItem(createNotebookPreviewItem(notebook))
+  const openNotebookPreview = (notebook: NotebookSessionReference, runId?: string): void => {
+    usePreviewWorkbenchStore
+      .getState()
+      .upsertAndActivateItem(createNotebookPreviewItem(notebook, runId))
   }
 
   // Opens the project file library as a stable preview workbench tool tab.
@@ -1152,6 +1156,13 @@ const WorkspacePage = ({
 
     usePreviewWorkbenchStore.getState().upsertAndActivateItem(createProjectFilesPreviewItem())
   }
+
+  const openComputePreview = (): void => {
+    if (!isSessionPersistenceReady) return
+    usePreviewWorkbenchStore.getState().upsertAndActivateItem(createProjectComputePreviewItem())
+  }
+  const canOpenProjectCompute =
+    typeof window.api.backgroundResultDelivery?.getProjectActivity === 'function'
 
   return (
     <main className="h-[100dvh] overflow-hidden bg-bg-10 text-[13px] leading-normal text-text-000 md:h-screen md:p-[10px]">
@@ -1188,6 +1199,10 @@ const WorkspacePage = ({
             isFilesOpen={activePreviewItemId === PROJECT_FILES_PREVIEW_ID}
             onOpenFiles={openFilesPreview}
             onOpenLiterature={() => openProjectLiterature(scopedProjectId, 'user')}
+            isComputeOpen={
+              canOpenProjectCompute && activePreviewItemId === PROJECT_COMPUTE_PREVIEW_ID
+            }
+            onOpenCompute={canOpenProjectCompute ? openComputePreview : undefined}
             onOpenSession={openSessionWithoutExportError}
             onRenameSession={sessionController.actions.openEdit}
             onRenameSessionTitle={sessionController.actions.renameTitle}
@@ -1245,6 +1260,17 @@ const WorkspacePage = ({
             onOpenLiterature={() => {
               if (openProjectLiterature(scopedProjectId, 'user')) close()
             }}
+            isComputeOpen={
+              canOpenProjectCompute && activePreviewItemId === PROJECT_COMPUTE_PREVIEW_ID
+            }
+            onOpenCompute={
+              canOpenProjectCompute
+                ? () => {
+                    close()
+                    openComputePreview()
+                  }
+                : undefined
+            }
             onOpenSession={(sessionId) => {
               close()
               openSessionWithoutExportError(sessionId)
@@ -1402,7 +1428,8 @@ const WorkspacePage = ({
             sessionTools={{
               notebookReference: activeNotebookReference,
               openNotebook: openNotebookPreview,
-              openJobs: sessionController.actions.openJobList
+              openJobs: sessionController.actions.openJobList,
+              openJob: sessionController.actions.openJob
             }}
             subagents={{
               unavailable: activeSession
@@ -1475,6 +1502,7 @@ const WorkspacePage = ({
         key={sessionController.view.dialogs.jobList.sessionId}
         open={sessionController.view.dialogs.jobList.open}
         sessionId={sessionController.view.dialogs.jobList.sessionId}
+        initialJob={sessionController.view.dialogs.jobList.initialJob}
         onClose={sessionController.actions.closeJobList}
       />
 

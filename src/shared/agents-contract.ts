@@ -65,6 +65,7 @@ export type TrustedControlInvocationIdentity = {
   turnId: string
   controlInvocationGeneration: number
   toolInvocationId: string
+  executionMode?: 'foreground' | 'background'
   originatingTurnId?: string
   originatingUserMessageId?: string
   attachmentIds?: string[]

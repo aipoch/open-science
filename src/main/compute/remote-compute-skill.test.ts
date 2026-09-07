@@ -7,7 +7,7 @@ import { parseSkillDocument } from '../../shared/skill-frontmatter'
 
 const skillPath = join(process.cwd(), 'resources', 'skills', 'remote-compute-ssh', 'SKILL.md')
 
-describe('remote-compute-ssh immediate failure guidance', () => {
+describe('remote-compute-ssh saved-id result guidance', () => {
   it('keeps valid public Skill identity metadata', async () => {
     const skill = parseSkillDocument(await readFile(skillPath, 'utf8'))
     expect(skill).toMatchObject({
@@ -17,57 +17,43 @@ describe('remote-compute-ssh immediate failure guidance', () => {
     expect(skill.description).toBeTruthy()
   })
 
-  it('executes submit, one bounded wait, and one proactive non-blocking result fetch', async () => {
+  it('returns the exact submitted job_id without waiting or fetching speculatively', async () => {
     const skill = await readFile(skillPath, 'utf8')
     const workflow = skill.match(
       /## API reference \(async jobs\)[\s\S]*?```javascript\n([\s\S]*?)\n```/
     )?.[1]
 
     expect(workflow).toBeDefined()
-    const events: string[] = []
-    const resultSnapshot = { job_id: 'job-1', status: 'failed', stderr_tail: 'missing executable' }
-    const result = vi.fn(async () => {
-      events.push('result')
-      return resultSnapshot
-    })
-    const status = vi.fn(async () => {
-      events.push('status')
-      return { job_id: 'job-1', status: 'failed' }
-    })
-    const attachJob = vi.fn((jobId: string) => {
-      events.push(`attach:${jobId}`)
-      return { result, status }
-    })
+    const attachJob = vi.fn()
     const submitJob = vi.fn(async () => {
-      events.push('submit')
       return { job_id: 'job-1', provider_id: 'ssh:test', status: 'submitted' }
     })
-    const create = vi.fn(() => {
-      events.push('create')
-      return { submitJob, attachJob }
-    })
+    const create = vi.fn(() => ({ submitJob, attachJob }))
     const print = vi.fn(() => {
       throw new Error('the JS kernel has no print; use a trailing expression or return')
     })
     const execute = new AsyncFunction('host', 'print', workflow!)
-    let returned: unknown
-    vi.useFakeTimers()
-    try {
-      const completion = execute({ compute: { create } }, print)
-      await vi.waitFor(() => expect(submitJob).toHaveBeenCalledOnce())
-      expect(result).not.toHaveBeenCalled()
-      await vi.advanceTimersByTimeAsync(1999)
-      expect(result).not.toHaveBeenCalled()
-      await vi.advanceTimersByTimeAsync(1)
-      returned = await completion
-    } finally {
-      vi.useRealTimers()
-    }
+    const returned = await execute({ compute: { create } }, print)
 
-    expect(events).toEqual(['create', 'submit', 'attach:job-1', 'result'])
-    expect(returned).toBe(resultSnapshot)
-    expect(status).not.toHaveBeenCalled()
-    expect(result).toHaveBeenCalledOnce()
+    expect(returned).toMatchObject({ job_id: 'job-1', status: 'submitted' })
+    expect(submitJob).toHaveBeenCalledOnce()
+    expect(attachJob).not.toHaveBeenCalled()
+  })
+
+  it('documents saved-id non-blocking snapshots and acknowledged fallback suppression', async () => {
+    const skill = await readFile(skillPath, 'utf8')
+
+    expect(skill).toContain('Save the exact `job_id`')
+    expect(skill).toMatch(/\.status\(\)` and `\.result\(\)/u)
+    expect(skill).toContain('non-blocking')
+    expect(skill).toContain('Treat only `result_final: true` as')
+    expect(skill).toContain("`follow_up_delivery: 'suppressed'`")
+    expect(skill).toContain('`committed`')
+    expect(skill).toMatch(/unread final\s+result is delivered in a later Agent Turn/u)
+    expect(skill).not.toMatch(/peek once|query once|result read once|do not poll|never poll/i)
+    expect(skill).not.toContain('wait_for_notification')
+    expect(skill).not.toContain('setTimeout(resolve, 2000)')
+    expect(skill).not.toMatch(/listJobs|list jobs|Job history/i)
   })
 
   it('publishes harvested outputs through the exposed artifact tool contract', async () => {

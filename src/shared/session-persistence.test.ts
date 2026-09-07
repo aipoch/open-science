@@ -315,6 +315,57 @@ const createHistoricalPlan = (): ActivePlanProjection => ({
 })
 
 describe('conversation graph materialization diagnostics', () => {
+  it('repairs a bound Session persisted with its provisional conversation root', () => {
+    const pendingSessionId = 'pending-session-123-1'
+    const messages: PersistedChatMessage[] = [
+      {
+        id: 'message-1',
+        role: 'user',
+        content: 'Persist me',
+        status: 'complete',
+        eventIds: [],
+        createdAt: 1,
+        updatedAt: 1
+      }
+    ]
+    const restored = normalizeSessionFile({
+      ...createSessionWithActivity(undefined),
+      id: 'runtime-session-1',
+      messages,
+      conversationGraph: createLinearConversationGraph({
+        sessionId: pendingSessionId,
+        messages,
+        createdAt: 1,
+        updatedAt: 1
+      })
+    })
+
+    expect(restored?.conversationGraph).toMatchObject({
+      rootFrameId: 'root-frame-runtime-session-1',
+      activeFrameId: 'root-frame-runtime-session-1',
+      frames: [
+        {
+          id: 'root-frame-runtime-session-1',
+          activeBranchId: 'message-branch-runtime-session-1'
+        }
+      ],
+      branches: [
+        {
+          id: 'message-branch-runtime-session-1',
+          agentFrameId: 'root-frame-runtime-session-1'
+        }
+      ],
+      messages: [
+        {
+          id: 'message-1',
+          agentFrameId: 'root-frame-runtime-session-1',
+          introducedOnBranchId: 'message-branch-runtime-session-1',
+          runtimeSegmentId: 'runtime-segment-runtime-session-1'
+        }
+      ]
+    })
+  })
+
   it('preserves a conversation written by a not-yet-known Agent framework', () => {
     const messages: PersistedChatMessage[] = [
       {
@@ -837,6 +888,21 @@ describe('message attribution persistence', () => {
         jobIds: ['job-1'],
         rendererClaim: true
       })
+    ).toBeUndefined()
+  })
+
+  it('keeps strict durable Agent result delivery attribution', () => {
+    const attribution = {
+      kind: 'application' as const,
+      feature: 'background-results' as const,
+      purpose: 'agent-result-delivery' as const,
+      deliveryKey: 'agent-result-delivery:continuation-1',
+      deliveryIds: ['local-run:run-1']
+    }
+
+    expect(sanitizeMessageAttribution(attribution)).toEqual(attribution)
+    expect(
+      sanitizeMessageAttribution({ ...attribution, deliveryIds: [], rendererClaim: true })
     ).toBeUndefined()
   })
 

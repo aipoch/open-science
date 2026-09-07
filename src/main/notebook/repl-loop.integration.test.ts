@@ -216,6 +216,42 @@ describe('repl_loop local RPC transport', () => {
     }
   }, 60_000)
 
+  it('preserves structured background-safety guidance from Host SDK failures', async () => {
+    const server = createServer((_request, response) => {
+      response.writeHead(409, { 'content-type': 'application/json' }).end(
+        JSON.stringify({
+          error: {
+            code: 'BACKGROUND_HOST_METHOD_UNSAFE',
+            method: 'host.agents.switch',
+            retryable: false,
+            hint: 'Run this Host SDK operation in foreground repl_execute.'
+          }
+        })
+      )
+    })
+    const connection = await listenForLocalRpc(server, {
+      name: 'repl-loop-background-safety-test',
+      transport: 'pipe'
+    })
+    const { child, send } = startLoop({
+      OPEN_SCIENCE_MCP_RPC_ENDPOINT: connection.endpoint,
+      OPEN_SCIENCE_MCP_RPC_SOCKET_PATH: connection.socketPath,
+      OPEN_SCIENCE_MCP_RPC_TOKEN: 'test-token'
+    })
+
+    try {
+      const result = await send('return await host.agents.switch(null)')
+      expect(result.error).toContain('BACKGROUND_HOST_METHOD_UNSAFE')
+      expect(result.error).toContain('host.agents.switch')
+      expect(result.error).toContain('foreground repl_execute')
+    } finally {
+      child.kill()
+      await new Promise<void>((resolve, reject) =>
+        server.close((error) => (error ? reject(error) : resolve()))
+      )
+    }
+  }, 60_000)
+
   it('routes the reserved Windows RPC endpoint through the authenticated command gateway', async () => {
     let received:
       | {

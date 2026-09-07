@@ -838,7 +838,9 @@ class AcpRuntimeCoordinator {
 
   sendApplicationPrompt(
     request: AcpPromptRequest,
-    attribution: MessageAttribution
+    attribution: MessageAttribution,
+    _promptAttemptId?: string,
+    onApplicationPromptAdmitted?: (prompt: ReturnType<AcpRuntime['sendPrompt']>) => void
   ): ReturnType<AcpRuntime['sendApplicationPrompt']> {
     return this.linearizeRootAdmission(request.sessionId, () =>
       this.dispatchPrompt(
@@ -847,7 +849,8 @@ class AcpRuntimeCoordinator {
         'sendApplicationPrompt',
         undefined,
         false,
-        attribution
+        attribution,
+        onApplicationPromptAdmitted
       )
     )
   }

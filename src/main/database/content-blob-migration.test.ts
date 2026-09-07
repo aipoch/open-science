@@ -73,7 +73,8 @@ describe('Content blob migration', () => {
         '0030_literature_foundation',
         '0031_project_archive_revision',
         '0032_permission_approval_summary',
-        '0033_compute_job_harvest_retry'
+        '0033_compute_job_harvest_retry',
+        '0034_background_result_delivery'
       ]
     })
     await expect(
@@ -150,10 +151,11 @@ describe('Content blob migration', () => {
                 '0030_literature_foundation',
                 '0031_project_archive_revision',
                 '0032_permission_approval_summary',
-                '0033_compute_job_harvest_retry'
+                '0033_compute_job_harvest_retry',
+                '0034_background_result_delivery'
               ],
         from: schema === 'pre-ledger' ? null : '0029_compute_host_execution_mode',
-        to: '0033_compute_job_harvest_retry'
+        to: '0034_background_result_delivery'
       })
 
       await expect(

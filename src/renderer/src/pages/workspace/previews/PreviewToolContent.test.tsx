@@ -52,6 +52,9 @@ vi.mock('../NotebookPreview', () => ({
 vi.mock('../ProjectFilesView', () => ({
   ProjectFilesView: (): React.JSX.Element => <div data-testid="project-files">files</div>
 }))
+vi.mock('../ProjectComputeInbox', () => ({
+  ProjectComputeInbox: (): React.JSX.Element => <div data-testid="project-compute">compute</div>
+}))
 vi.mock('../SessionReviewerPanel', () => ({
   SessionReviewerPanel: ({
     review,
@@ -89,6 +92,10 @@ describe('PreviewToolContent', () => {
 
   it('routes project file tools through a project-scoped remount boundary', () => {
     expect(render(createItem({ toolKind: 'files' }))).toContain('data-testid="project-files"')
+  })
+
+  it('routes Project Compute through a project-scoped remount boundary', () => {
+    expect(render(createItem({ toolKind: 'compute' }))).toContain('data-testid="project-compute"')
   })
 
   it('shows the reviewer empty state when the requested session has no reviews', () => {

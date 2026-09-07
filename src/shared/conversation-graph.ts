@@ -149,6 +149,69 @@ export const createLinearConversationGraph = (
   }
 }
 
+export const rebindConversationGraphSessionId = (
+  graph: PersistedConversationGraph,
+  previousSessionId: string,
+  sessionId: string
+): PersistedConversationGraph => {
+  if (previousSessionId === sessionId) return graph
+
+  const previousRootFrameId = graphId('root-frame', previousSessionId)
+  if (graph.rootFrameId !== previousRootFrameId) return graph
+
+  const rootFrameId = graphId('root-frame', sessionId)
+  const previousBranchId = graphId('message-branch', previousSessionId)
+  const branchId = graphId('message-branch', sessionId)
+  const previousRuntimeSegmentId = graphId('runtime-segment', previousSessionId)
+  const runtimeSegmentId = graphId('runtime-segment', sessionId)
+  const rebindRootFrameId = (id: string): string => (id === previousRootFrameId ? rootFrameId : id)
+  const rebindBranchId = (id: string): string => (id === previousBranchId ? branchId : id)
+  const rebindRuntimeSegmentId = (id: string): string =>
+    id === previousRuntimeSegmentId ? runtimeSegmentId : id
+
+  return {
+    ...graph,
+    rootFrameId,
+    activeFrameId: rebindRootFrameId(graph.activeFrameId),
+    frames: graph.frames.map((frame) => ({
+      ...frame,
+      id: rebindRootFrameId(frame.id),
+      ...(frame.parentFrameId ? { parentFrameId: rebindRootFrameId(frame.parentFrameId) } : {}),
+      activeBranchId: rebindBranchId(frame.activeBranchId)
+    })),
+    branches: graph.branches.map((branch) => ({
+      ...branch,
+      id: rebindBranchId(branch.id),
+      agentFrameId: rebindRootFrameId(branch.agentFrameId),
+      ...(branch.parentBranchId ? { parentBranchId: rebindBranchId(branch.parentBranchId) } : {})
+    })),
+    messages: graph.messages.map((message) => ({
+      ...message,
+      agentFrameId: rebindRootFrameId(message.agentFrameId),
+      introducedOnBranchId: rebindBranchId(message.introducedOnBranchId),
+      ...(message.runtimeSegmentId
+        ? { runtimeSegmentId: rebindRuntimeSegmentId(message.runtimeSegmentId) }
+        : {})
+    })),
+    activities: graph.activities.map((activity) => ({
+      ...activity,
+      agentFrameId: rebindRootFrameId(activity.agentFrameId),
+      messageBranchId: rebindBranchId(activity.messageBranchId),
+      runtimeSegmentId: rebindRuntimeSegmentId(activity.runtimeSegmentId)
+    })),
+    activityGroups: graph.activityGroups.map((group) => ({
+      ...group,
+      agentFrameId: rebindRootFrameId(group.agentFrameId),
+      messageBranchId: rebindBranchId(group.messageBranchId)
+    })),
+    runtimeSegments: graph.runtimeSegments.map((segment) => ({
+      ...segment,
+      id: rebindRuntimeSegmentId(segment.id),
+      agentFrameId: rebindRootFrameId(segment.agentFrameId)
+    }))
+  }
+}
+
 const indexById = <T extends { id: string }>(items: readonly T[]): Map<string, T> =>
   new Map(items.map((item) => [item.id, item]))
 

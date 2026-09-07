@@ -215,6 +215,7 @@ describe('Project-owned data catalog architecture', () => {
       'project-preview-state',
       'vision-evidence',
       'session-metadata-usage-history',
+      'background-result-delivery',
       'notification-inbox-history',
       'literature-inbox-provenance',
       'project-literature-links',
@@ -249,6 +250,7 @@ describe('Project-owned data catalog architecture', () => {
         )
       ].sort()
     ).toEqual([
+      'background-result-delivery-target-delete',
       'compute-job-project-delete',
       'delegated-runtime-quiescence',
       'execution-file-evidence-tail',

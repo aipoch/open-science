@@ -366,6 +366,27 @@ describe('preview workbench store', () => {
     })
   })
 
+  it('carries a selected background Run into the stable Notebook preview tab', () => {
+    const notebook = {
+      sessionId: 'session-1',
+      projectId: 'default-project',
+      workspaceCwd: '/workspace',
+      notebookSessionRoot: '/notebooks/session-1',
+      dataRoot: '/notebooks/session-1/data',
+      runtimeRoot: '/runtime',
+      runJsonPath: '/notebooks/session-1/run.json'
+    }
+    usePreviewWorkbenchStore
+      .getState()
+      .upsertAndActivateItem(createNotebookPreviewItem(notebook, 'run-background-1'))
+
+    expect(usePreviewWorkbenchStore.getState().items[0]).toMatchObject({
+      id: 'tool:session-1:notebook',
+      notebookRunId: 'run-background-1',
+      notebookRunFocusRequest: expect.any(Number)
+    })
+  })
+
   it('reconciles finalized upload paths across project slices without opening new tabs', () => {
     const store = usePreviewWorkbenchStore.getState()
 

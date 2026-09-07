@@ -19,6 +19,7 @@ import type {
 } from '../../../../shared/acp'
 import type { LinkedFolderFileReference } from '../../../../shared/artifacts'
 import type { NotebookSessionReference } from '../../../../shared/notebook'
+import type { JobSummary } from '../../../../shared/compute'
 import type {
   PermissionProfileId,
   SessionPermissionProfileState
@@ -66,7 +67,6 @@ import {
 import { FileDropOverlay } from '@/components/FileDropOverlay'
 import { DiagnosticDetails } from '@/components/diagnostic-details'
 import { ErrorNotice } from '@/components/error-notice'
-import { RemoteJobBadge } from '@/components/RemoteJobBadge'
 import { Button } from '@/components/ui/button'
 import { ResizablePanel } from '@/components/ui/resizable'
 import {
@@ -85,7 +85,6 @@ import {
   useSessionStore,
   type ChatSession
 } from '@/stores/session-store'
-import { useSessionJobStore } from '@/stores/session-job-store'
 import { useSettingsStore } from '@/stores/settings-store'
 import { useSpecialistStore } from '@/stores/specialist-store'
 import { ConnectorCredentialControls } from '@/pages/settings/ConnectorCredentialDialog'
@@ -104,6 +103,9 @@ import { ComposerAgentControlsMenu } from './ComposerAgentControlsMenu'
 import { ComposerComputeTargetIndicator } from './ComposerComputeTargetIndicator'
 import { NotificationBell } from '@/components/NotificationBell'
 import { ComposerContextUsage } from './ComposerContextUsage'
+import { BackgroundTasksChip } from './BackgroundTasksChip'
+import { SessionBackgroundActivity } from './SessionBackgroundActivity'
+import { useSessionBackgroundTasks } from './use-session-background-tasks'
 import { ComposerMessageQueueContent, ComposerMessageQueueTrigger } from './ComposerMessageQueue'
 import { ContextWindowDialog } from './ContextWindowDialog'
 import { ComposerModelPicker } from './ComposerModelPicker'
@@ -382,8 +384,9 @@ type ConversationPanelWorkflows = {
 
 type ConversationPanelSessionTools = {
   notebookReference: NotebookSessionReference | undefined
-  openNotebook: (notebook: NotebookSessionReference) => void
+  openNotebook: (notebook: NotebookSessionReference, runId?: string) => void
   openJobs: (sessionId: string) => void
+  openJob?: (job: JobSummary) => void
 }
 
 type ConversationPanelSubagents = {
@@ -587,7 +590,12 @@ const ConversationPanel = ({
     running: isSavingAsSkill,
     request: onSaveAsSkill
   } = saveAsSkill
-  const { notebookReference, openNotebook: onOpenNotebook, openJobs: onOpenJobList } = sessionTools
+  const {
+    notebookReference,
+    openNotebook: onOpenNotebook,
+    openJobs: onOpenJobList,
+    openJob: onOpenJob
+  } = sessionTools
   const { unavailable: subagentUnavailable, stop: onStopSubagents } = subagents
   const specialistId = activeSession
     ? specialist.view.specialist.barrierInFlight
@@ -700,9 +708,17 @@ const ConversationPanel = ({
 
   const handleStopSubagents = (): void => submitStop(activeSession?.id, onStopSubagents)
 
-  // Unconditional hook: check if the active session has any jobs (running or finished).
-  const allJobsForSession = useSessionJobStore((s) => s.allJobsForSession)
-  const hasAnyJobs = activeSession !== undefined && allJobsForSession(activeSession.id).length > 0
+  // Unconditional hook: one shared data source for the background-task strip chip and
+  // the expandable ledger. Compute Jobs stay observable before the Notebook exists.
+  const backgroundTasks = useSessionBackgroundTasks(
+    activeSession?.id,
+    activeSession?.projectId,
+    notebookReference
+  )
+  const backgroundTasksVisible =
+    activeSession !== undefined &&
+    (backgroundTasks.summary.activeCount > 0 || backgroundTasks.summary.totalTasks > 0)
+  const [backgroundTasksExpanded, setBackgroundTasksExpanded] = useState(false)
   const activeBranchPlan = selectActiveBranchPlan(activeSession)
   const subagentSummary = projectSessionSubagents(activeSession, pendingPermissions)
   const hasSubagents = subagentSummary.children.length > 0
@@ -1240,11 +1256,27 @@ const ConversationPanel = ({
                   />
                 ) : null}
 
+                {/* The expanded ledger opens above the strip; the strip (Notebook entry, chip,
+                    message queue) stays in place. */}
+                {backgroundTasksExpanded && activeSession ? (
+                  <SessionBackgroundActivity
+                    sessionId={activeSession.id}
+                    projectId={activeSession.projectId}
+                    notebook={notebookReference}
+                    runs={backgroundTasks.runs}
+                    jobs={backgroundTasks.jobs}
+                    now={backgroundTasks.now}
+                    onOpenNotebook={onOpenNotebook}
+                    onOpenComputeJob={onOpenJob ?? ((job) => onOpenJobList(job.session_id))}
+                    onOpenJobList={onOpenJobList}
+                  />
+                ) : null}
+
                 {/* Switching between a compact job bar and Notebook chrome remounts this layer so a
                     Notebook that becomes available after jobs still receives its entrance animation. */}
                 {notebookReference ||
                 messageQueue.items.length > 0 ||
-                hasAnyJobs ||
+                backgroundTasksVisible ||
                 hasSubagents ||
                 (activeBranchPlan ? isPlanProgressVisible(activeBranchPlan) : false) ? (
                   <div
@@ -1297,12 +1329,12 @@ const ConversationPanel = ({
                       </button>
                     ) : null}
                     <div className="flex-1" />
-                    {hasAnyJobs && activeSession ? (
-                      <RemoteJobBadge
-                        sessionId={activeSession.id}
-                        onOpenJobList={
-                          onOpenJobList ? () => onOpenJobList(activeSession.id) : undefined
-                        }
+                    {backgroundTasksVisible && activeSession ? (
+                      <BackgroundTasksChip
+                        summary={backgroundTasks.summary}
+                        now={backgroundTasks.now}
+                        expanded={backgroundTasksExpanded}
+                        onToggle={() => setBackgroundTasksExpanded((expanded) => !expanded)}
                       />
                     ) : null}
                     <ComposerMessageQueueTrigger

@@ -41,6 +41,7 @@ export type PreviewFileFormat =
 // their path is an absolute filesystem path read via window.api.localFs.
 export type PreviewFileSource = 'artifact' | 'upload' | 'notebook-input' | 'literature' | 'local'
 export const PROJECT_FILES_PREVIEW_ID = 'tool:project:files'
+export const PROJECT_COMPUTE_PREVIEW_ID = 'tool:project:compute'
 
 type PreviewItemBase = {
   id: string
@@ -68,8 +69,10 @@ export type PreviewFileItem = PreviewItemBase & {
 // Tool previews share the workbench chrome with files, but keep their own render path.
 export type PreviewToolItem = PreviewItemBase & {
   type: 'tool'
-  toolKind?: 'notebook' | 'files' | 'reviewer' | 'plan' | 'subagents'
+  toolKind?: 'notebook' | 'files' | 'compute' | 'reviewer' | 'plan' | 'subagents'
   notebook?: NotebookSessionReference
+  notebookRunId?: string
+  notebookRunFocusRequest?: number
   // Reviewer-specific: which session's reviews to show, which review to select, and the active
   // finding to scroll to.
   reviewerSessionId?: string
@@ -330,14 +333,20 @@ const mergeRestoredPreviewSlice = (
   }
 }
 
+let notebookRunFocusRequest = 0
+
 // Builds the stable preview tab identity for the notebook attached to one chat session.
-const createNotebookPreviewItem = (notebook: NotebookSessionReference): PreviewToolItem => ({
+const createNotebookPreviewItem = (
+  notebook: NotebookSessionReference,
+  runId?: string
+): PreviewToolItem => ({
   id: `tool:${notebook.sessionId}:notebook`,
   sessionId: notebook.sessionId,
   type: 'tool',
   toolKind: 'notebook',
   title: 'Notebook',
-  notebook
+  notebook,
+  ...(runId ? { notebookRunId: runId, notebookRunFocusRequest: ++notebookRunFocusRequest } : {})
 })
 
 const createSessionPlanPreviewItem = (
@@ -390,6 +399,14 @@ const createProjectFilesPreviewItem = (): PreviewToolItem => ({
   type: 'tool',
   toolKind: 'files',
   title: 'Files'
+})
+
+const createProjectComputePreviewItem = (): PreviewToolItem => ({
+  id: PROJECT_COMPUTE_PREVIEW_ID,
+  sessionId: '__project_compute__',
+  type: 'tool',
+  toolKind: 'compute',
+  title: 'Compute'
 })
 
 // Input for opening the Session reviewer panel; findingId/locator determine scroll position.
@@ -913,6 +930,7 @@ export const usePreviewWorkbenchStore = create<PreviewWorkbenchStore>((set, get)
 export {
   createNotebookPreviewItem,
   createProjectFilesPreviewItem,
+  createProjectComputePreviewItem,
   createSessionPlanPreviewItem,
   createSessionSubagentsPreviewItem,
   createSessionReviewerPreviewItem
