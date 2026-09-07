@@ -179,6 +179,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
 
   // Applies an editable Project patch and merges the updated row into the cache.
   updateProject: async (request) => {
+    const loadSequence = projectLoadSequence
     const generation = beginProjectProjection()
     const project = await window.api.projects.update(request)
     if (!project) return undefined
@@ -189,12 +190,16 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
     projectMutationSequence += 1
     if (commitProjectProjection(project.id, generation)) {
       set((state) => ({ projects: upsertProjectList(state.projects, project) }))
+    } else if (loadSequence !== projectLoadSequence) {
+      // The overlapping read may predate the DB commit. Re-read instead of applying a stale reply.
+      await get().loadProjects()
     }
 
     return project
   },
 
   updateProjectArchive: async (request) => {
+    const loadSequence = projectLoadSequence
     const generation = beginProjectProjection()
     let project: Project
     try {
@@ -216,12 +221,16 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
     projectMutationSequence += 1
     if (commitProjectProjection(project.id, generation)) {
       set((state) => ({ projects: upsertProjectList(state.projects, project) }))
+    } else if (loadSequence !== projectLoadSequence) {
+      // The overlapping read may predate the DB commit. Re-read instead of applying a stale reply.
+      await get().loadProjects()
     }
     return project
   },
 
   // Drops committed Project deletion from the cache. Session cascade is handled by the session store.
   deleteProject: async (id) => {
+    const loadSequence = projectLoadSequence
     const projectionGeneration = beginProjectProjection()
     const generation = ++projectOperationGeneration
     set((state) => {
@@ -264,6 +273,9 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
         projectDeletionRequests
       }
     })
+    if (!ownsProjection && loadSequence !== projectLoadSequence) {
+      await Promise.all([get().loadProjects(), get().loadDeletionCleanup()])
+    }
     return outcome
   },
 

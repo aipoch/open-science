@@ -174,7 +174,8 @@ describe('project store', () => {
   it('does not let a late update result replace a newer lifecycle projection', async () => {
     const original = createProject({ name: 'Original', updatedAt: 1 })
     const command = createDeferred<Project>()
-    setProjectsApi({ update: vi.fn().mockReturnValue(command.promise) })
+    const list = vi.fn()
+    setProjectsApi({ update: vi.fn().mockReturnValue(command.promise), list })
     useProjectStore.setState({ projects: [original], isLoaded: true })
 
     const update = useProjectStore
@@ -187,6 +188,7 @@ describe('project store', () => {
     await update
 
     expect(useProjectStore.getState().projects).toEqual([lifecycle])
+    expect(list).not.toHaveBeenCalled()
   })
 
   it.each([
@@ -219,6 +221,80 @@ describe('project store', () => {
       expect(useProjectStore.getState().projects).toEqual([authority])
     }
   )
+
+  it.each(['update', 'archive', 'delete'] as const)(
+    'refreshes authority when a later list reads before an earlier %s commits',
+    async (operation) => {
+      const original = createProject()
+      const updated = createProject({
+        name: 'Committed update',
+        updatedAt: 30,
+        archivedAt: 40,
+        archiveRevision: 1
+      })
+      const command = createDeferred<Project>()
+      const deletion = createDeferred<{ status: 'cleanup-pending' }>()
+      const authority = operation === 'delete' ? [] : [updated]
+      const cleanup = [{ projectId: original.id, phase: 'running' as const, failureCount: 0 }]
+      const list = vi.fn().mockResolvedValueOnce([original]).mockResolvedValue(authority)
+      setProjectsApi({
+        list,
+        update: vi.fn().mockReturnValue(command.promise),
+        updateArchive: vi.fn().mockReturnValue(command.promise),
+        delete: vi.fn().mockReturnValue(deletion.promise),
+        listDeletionCleanup: vi.fn().mockResolvedValue(cleanup)
+      })
+      useProjectStore.setState({ projects: [original] })
+      const mutation =
+        operation === 'delete'
+          ? useProjectStore.getState().deleteProject(original.id)
+          : operation === 'archive'
+            ? useProjectStore.getState().updateProjectArchive({
+                id: original.id,
+                archived: true,
+                expectedArchiveRevision: 0
+              })
+            : useProjectStore.getState().updateProject({
+                id: original.id,
+                name: updated.name,
+                expectedUpdatedAt: original.updatedAt
+              })
+      await useProjectStore.getState().loadProjects()
+      expect(useProjectStore.getState().projects).toEqual([original])
+      command.resolve(updated)
+      deletion.resolve({ status: 'cleanup-pending' })
+      await mutation
+      expect(useProjectStore.getState().projects).toEqual(authority)
+      expect(list).toHaveBeenCalledTimes(2)
+      if (operation === 'delete')
+        expect(useProjectStore.getState().deletionCleanup).toEqual(cleanup)
+    }
+  )
+
+  it('keeps the accepted projection and successful mutation result when reconciliation fails', async () => {
+    const command = createDeferred<Project>()
+    const accepted = createProject({ name: 'Accepted', updatedAt: 30 })
+    const result = createProject({ name: 'Delayed reply', updatedAt: 20 })
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    setProjectsApi({
+      update: vi.fn().mockReturnValue(command.promise),
+      list: vi.fn().mockResolvedValueOnce([accepted]).mockRejectedValue(new Error('read failed'))
+    })
+    try {
+      const update = useProjectStore
+        .getState()
+        .updateProject({ id: result.id, name: result.name, expectedUpdatedAt: 1 })
+      await useProjectStore.getState().loadProjects()
+      command.resolve(result)
+      await expect(update).resolves.toEqual(result)
+      expect(useProjectStore.getState().projects).toEqual([accepted])
+      expect(useProjectStore.getState().loadError).toBe(
+        'Open Science could not load projects. Retry to continue.'
+      )
+    } finally {
+      warn.mockRestore()
+    }
+  })
 
   it('allows a later-started pending update to commit after an earlier list resolves', async () => {
     const snapshot = createDeferred<Project[]>()
