@@ -476,6 +476,101 @@ describe('workspace composer controller', () => {
     })
   })
 
+  it.each(['empty session', 'linked session', 'another project', 'return to origin'] as const)(
+    'does not replay queued Reading into a later %s',
+    async (destination) => {
+      const sourceA = {
+        sourceKind: 'upload-version' as const,
+        sourceFileId: 'upload-a',
+        sourceVersionId: 'version-a'
+      }
+      const sourceB = {
+        sourceKind: 'upload-version' as const,
+        sourceFileId: 'upload-b',
+        sourceVersionId: 'version-b'
+      }
+      const bindingB = {
+        version: 1 as const,
+        bindingId: 'binding-b',
+        ...sourceB,
+        sourceFileId: 'upload-b',
+        sourceSessionId: 'source-session',
+        name: 'paper-b.pdf',
+        mimeType: 'application/pdf' as const,
+        sizeBytes: 42,
+        checksum: 'b'.repeat(64),
+        linkedAt: 1
+      }
+      const firstLink = deferred<{ version: 1; revision: number }>()
+      const linkPdfContext = vi
+        .fn()
+        .mockImplementationOnce(() => firstLink.promise)
+        .mockResolvedValueOnce({
+          version: 1,
+          revision: 1,
+          pdfContext: { version: 1, bindings: [bindingB] }
+        })
+      window.api = {
+        sessions: { linkPdfContext, unlinkPdfContext: vi.fn().mockResolvedValue({ revision: 1 }) }
+      } as unknown as Window['api']
+      const hook = renderController(uploads(), undefined, [], {
+        id: 'session-a',
+        projectId: 'project',
+        runtimeContext: { revision: 0 }
+      })
+      mounted.push(hook)
+
+      let linkA!: Promise<void>
+      act(() => {
+        linkA = hook.result.current.actions.linkReadingContext(sourceA)
+      })
+      act(() =>
+        hook.selectSession({
+          id: 'session-b',
+          projectId: 'project',
+          runtimeContext: { revision: 0 }
+        })
+      )
+      let linkB!: Promise<void>
+      act(() => {
+        linkB = hook.result.current.actions.linkReadingContext(sourceB)
+      })
+
+      hook.selectSession({
+        id: 'session-c',
+        projectId: destination === 'another project' ? 'project-c' : 'project',
+        runtimeContext: {
+          revision: 0,
+          ...(destination === 'linked session'
+            ? {
+                pdfContext: {
+                  version: 1 as const,
+                  bindings: [{ ...bindingB, bindingId: 'binding-c', sourceVersionId: 'version-c' }]
+                }
+              }
+            : {})
+        }
+      })
+
+      if (destination === 'return to origin') {
+        hook.selectSession({
+          id: 'session-b',
+          projectId: 'project',
+          runtimeContext: { revision: 0 }
+        })
+      }
+      await act(async () => {
+        firstLink.resolve({ version: 1, revision: 1 })
+        await Promise.all([linkA, linkB])
+      })
+
+      expect({
+        links: linkPdfContext.mock.calls.slice(1),
+        unlinks: vi.mocked(window.api.sessions.unlinkPdfContext).mock.calls
+      }).toEqual({ links: [], unlinks: [] })
+    }
+  )
+
   it('undoes and redoes Reading changes while coalescing rapid async mutations', async () => {
     const source = {
       sourceKind: 'upload-version' as const,
@@ -951,6 +1046,58 @@ describe('workspace composer controller', () => {
     expect(uploadApi.abortTransfer).toHaveBeenCalledWith({ transferId: expect.any(String) })
   })
 
+  it('captures the viewed single-page PDF before send-time candidate filtering', () => {
+    const preview = usePreviewWorkbenchStore.getState()
+    preview.activateProject('project')
+    const selections: PendingPdfContextSelection[] = [1, 2].map((id) => ({
+      kind: 'version',
+      sourceKind: 'literature-attachment-version',
+      sourceVersionId: `version-${id}`,
+      previewItemId: `literature:version-${id}`
+    }))
+    for (const id of [1, 2])
+      preview.upsertItem({
+        id: `literature:version-${id}`,
+        projectId: 'project',
+        sessionId: 'literature-library',
+        type: 'file',
+        source: 'literature',
+        title: `paper-${id}.pdf`,
+        name: `paper-${id}.pdf`,
+        format: 'pdf',
+        path: `literature-attachment-version:version-${id}`,
+        mimeType: 'application/pdf',
+        size: 100
+      })
+    preview.setPendingPdfContext('project', createPendingPdfContext(selections))
+    // Workspace hydration must not remove the file identities backing this Reading draft.
+    preview.activateProject('project', { items: [], panelState: 'collapsed' })
+    const hook = renderController(uploads(), undefined, [], null)
+    mounted.push(hook)
+    act(() => {
+      hook.result.current.actions.openReadingContext(
+        'version:literature-attachment-version:version-1'
+      )
+      usePreviewWorkbenchStore
+        .getState()
+        .setPdfReadingPosition('version:literature-attachment-version:version-1', {
+          pageNumber: 1,
+          pageCount: 1
+        })
+    })
+    expect(hook.result.current.lifecycle.captureSend()).toMatchObject({
+      pendingPdfContextVersions: [
+        { sourceKind: 'literature-attachment-version', sourceVersionId: 'version-1' },
+        { sourceKind: 'literature-attachment-version', sourceVersionId: 'version-2' }
+      ],
+      pdfReadingPosition: { pageNumber: 1, pageCount: 1 },
+      pdfReadingPositionSource: {
+        sourceKind: 'literature-attachment-version',
+        sourceVersionId: 'version-1'
+      }
+    })
+  })
+
   it('previews and removes individual PDFs from a three-document draft and sends the remaining sources', () => {
     const preview = usePreviewWorkbenchStore.getState()
     preview.activateProject('project')
@@ -1079,7 +1226,8 @@ describe('workspace composer controller', () => {
 
     expect(hook.result.current.lifecycle.captureSend()).toMatchObject({
       pendingPdfContextAttachmentIds: ['upload-pdf-1'],
-      pdfReadingPosition: { pageNumber: 7, pageCount: 14 }
+      pdfReadingPosition: { pageNumber: 7, pageCount: 14 },
+      pdfReadingPositionSource: { attachmentId: 'upload-pdf-1' }
     })
   })
 

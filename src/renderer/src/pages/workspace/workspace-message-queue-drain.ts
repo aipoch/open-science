@@ -123,6 +123,7 @@ const dispatchQueuedSession = (
             parts: item.snapshot ? docToMessageParts(item.snapshot.doc) : undefined,
             pdfContext: item.snapshot?.pdfContext,
             pdfReadingPosition: item.snapshot?.pdfReadingPosition,
+            pdfReadingPositionSource: item.snapshot?.pdfReadingPositionSource,
             pendingPdfContextAttachmentIds: item.snapshot?.pendingPdfContextAttachmentIds,
             pendingPdfContextVersions: item.snapshot?.pendingPdfContextVersions,
             cwd: item.cwd,
