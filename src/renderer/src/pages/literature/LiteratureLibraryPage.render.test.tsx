@@ -419,6 +419,93 @@ describe('LiteratureLibraryPage', () => {
     vi.unstubAllGlobals()
   })
 
+  it('shows the load error after the initial Inbox request settles', async () => {
+    search.mockImplementation((request: LiteratureCatalogSearchRequest) =>
+      request.scope === 'inbox' && request.limit !== 1
+        ? Promise.reject(new Error('Inbox unavailable'))
+        : Promise.resolve({ entries: [], totalCount: 0 })
+    )
+    render(<LiteratureLibraryPage />)
+    await act(async () => {})
+    expect(
+      search.mock.calls.some(([request]) => request.scope === 'inbox' && request.limit !== 1)
+    ).toBe(true)
+    expect(screen.queryByText('Literature could not be loaded.')).not.toBeNull()
+    expect(screen.queryByText('Loading…')).toBeNull()
+    expect(screen.queryByText('Inbox is clear')).toBeNull()
+    search.mockImplementation((request: LiteratureCatalogSearchRequest) =>
+      Promise.resolve(request.scope === 'inbox' ? inboxPage : { entries: [] })
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }))
+    await screen.findByText(libraryItem.item.title)
+    expect(screen.queryByText('Literature could not be loaded.')).toBeNull()
+  })
+
+  it('makes every collection reachable when navigation spans multiple pages', async () => {
+    const collections = Array.from({ length: 101 }, (_, index) => ({
+      id: `collection-${index + 1}`,
+      name: `Collection ${index + 1}`,
+      description: '',
+      itemCount: 0,
+      createdAt: 1,
+      updatedAt: 1
+    }))
+    search.mockImplementation((request: LiteratureCatalogSearchRequest) => {
+      const offset = request.offset ?? 0
+      return Promise.resolve(
+        request.scope === 'collections'
+          ? {
+              entries: collections.slice(offset, offset + 100),
+              totalCount: 101,
+              nextOffset: offset === 0 ? 100 : undefined
+            }
+          : { entries: [], totalCount: 0 }
+      )
+    })
+    render(<LiteratureLibraryPage />)
+    fireEvent.click(await screen.findByRole('button', { name: 'Show all collections' }))
+    await act(async () => {})
+    expect(screen.queryByRole('button', { name: 'Collection 100' })).not.toBeNull()
+    expect(screen.queryByRole('button', { name: 'Collection 101' })).not.toBeNull()
+  })
+
+  it('prevents metadata edits from being lost while a save is in flight', async () => {
+    search.mockImplementation((request: LiteratureCatalogSearchRequest) =>
+      Promise.resolve(request.scope === 'library' ? { entries: [libraryItem] } : { entries: [] })
+    )
+    get.mockResolvedValue(libraryItem)
+    let finish: () => void = () => {}
+    transact.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finish = () => resolve({ kind: 'item', id: libraryItem.id, state: 'present' })
+        })
+    )
+    render(<LiteratureLibraryPage />)
+    fireEvent.click(screen.getByRole('button', { name: 'All references' }))
+    await openReferenceDetail(await screen.findByText(libraryItem.item.title))
+    await openMenu(screen.getByRole('button', { name: 'More actions' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Edit metadata' }))
+    const title = screen.getByLabelText('Title') as HTMLInputElement
+    fireEvent.change(title, { target: { value: 'Submitted title' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+    expect((screen.getByRole('button', { name: 'Save' }) as HTMLButtonElement).disabled).toBe(true)
+    const locked = title.matches(':disabled') || title.readOnly
+    if (!locked) fireEvent.change(title, { target: { value: 'New unsaved title' } })
+    expect(title.value).toBe(locked ? 'Submitted title' : 'New unsaved title')
+    get.mockResolvedValue({
+      ...libraryItem,
+      metadataRevision: 2,
+      item: { ...libraryItem.item, title: 'Submitted title' }
+    })
+    await act(async () => finish())
+    expect(transact).toHaveBeenCalledTimes(1)
+    expect(
+      locked ||
+        (screen.queryByLabelText('Title') as HTMLInputElement | null)?.value === 'New unsaved title'
+    ).toBe(true)
+  })
+
   it('previews selected duplicate groups before committing and reports the batch result', async () => {
     let merged = false
     search.mockImplementation(async (request: { scope: string }) =>
@@ -4565,6 +4652,140 @@ describe('LiteratureLibraryPage', () => {
 
     expect(screen.getByRole('menuitem', { name: 'Edit' })).not.toBeNull()
     expect(filePreviewRenderCount.value).toBe(0)
+  })
+
+  it('refreshes committed references when a later lifecycle batch fails', async () => {
+    let items = Array.from({ length: 201 }, (_, index) => createLibraryItem(index))
+    search.mockImplementation((request: LiteratureCatalogSearchRequest) => {
+      if (request.scope !== 'library') return Promise.resolve({ entries: [] })
+      const offset = request.offset ?? 0
+      const limit = request.limit ?? 100
+      return Promise.resolve({
+        entries: items.slice(offset, offset + limit),
+        totalCount: items.length,
+        nextOffset: offset + limit < items.length ? offset + limit : undefined
+      })
+    })
+    transact
+      .mockImplementationOnce(async (command) => {
+        items = items.filter(({ id }) => !command.itemIds.includes(id))
+        return { kind: 'item', id: command.itemIds[0], state: 'deleted' }
+      })
+      .mockRejectedValueOnce(new Error('One or more Literature Items are unavailable.'))
+    render(<LiteratureLibraryPage />)
+    fireEvent.click(screen.getByRole('button', { name: 'All references' }))
+    await screen.findByText('Reference 0')
+    fireEvent.click(screen.getByLabelText('Select all references'))
+    fireEvent.click(screen.getByRole('button', { name: 'Select all matching references 201' }))
+    const toolbar = document.querySelector<HTMLElement>(
+      '[data-slot="literature-selection-toolbar"]'
+    )!
+    await openMenu(within(toolbar).getByRole('button', { name: 'More actions' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Move to Trash' }))
+    await act(async () => {})
+    expect(items).toHaveLength(1)
+    expect(
+      transact.mock.calls.filter(([command]) => command.kind === 'set-item-lifecycle')
+    ).toHaveLength(2)
+    expect(screen.queryByText('Reference 0')).toBeNull()
+    expect(screen.queryByText('Reference 200')).not.toBeNull()
+    expect(screen.getByText('Updated: 200. Not updated: 1.')).not.toBeNull()
+    expect(screen.getByText('1 selected')).not.toBeNull()
+    transact.mockImplementationOnce(async (command) => {
+      items = items.filter(({ id }) => !command.itemIds.includes(id))
+      return { kind: 'item', id: command.itemIds[0], state: 'deleted' }
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }))
+    await act(async () => {})
+    expect(transact).toHaveBeenLastCalledWith({
+      kind: 'set-item-lifecycle',
+      itemIds: ['item-200'],
+      state: 'deleted'
+    })
+    expect(items).toHaveLength(0)
+    expect(screen.queryByText('Updated: 200. Not updated: 1.')).toBeNull()
+  })
+
+  it('refreshes project and collection counts through delete and restore, including zero', async () => {
+    let deleted = false
+    search.mockImplementation((request: LiteratureCatalogSearchRequest) => {
+      if (request.scope === 'project-counts')
+        return Promise.resolve({
+          entries: deleted ? [] : [{ projectId: 'project-1', itemCount: 1 }]
+        })
+      if (request.scope === 'collections')
+        return Promise.resolve({
+          entries: [
+            {
+              id: 'c1',
+              name: 'Reading',
+              description: '',
+              itemCount: deleted ? 0 : 1,
+              createdAt: 1,
+              updatedAt: 1
+            }
+          ]
+        })
+      if (request.scope === 'library') {
+        const visible = (request.lifecycle === 'deleted') === deleted
+        return Promise.resolve({
+          entries: visible ? [libraryItem] : [],
+          totalCount: visible ? 1 : 0
+        })
+      }
+      return Promise.resolve({ entries: [] })
+    })
+    render(<LiteratureLibraryPage />)
+    fireEvent.click(screen.getByRole('button', { name: 'All references' }))
+    for (const [action, expectedCount] of [
+      ['Move to Trash', '0'],
+      ['Restore', '1']
+    ] as const) {
+      const row = (await screen.findByText(libraryItem.item.title)).closest('tr')!
+      await openMenu(within(row).getByRole('button', { name: 'More actions' }))
+      transact.mockImplementationOnce(async () => {
+        deleted = !deleted
+        return { kind: 'item', id: libraryItem.id, state: deleted ? 'deleted' : 'active' }
+      })
+      fireEvent.click(screen.getByRole('menuitem', { name: action }))
+      await act(async () => {})
+      expect(
+        within(screen.getByRole('button', { name: 'Retrieval research' })).getByText(expectedCount)
+      ).not.toBeNull()
+      expect(
+        within(screen.getByRole('button', { name: 'Reading' })).getByText(expectedCount)
+      ).not.toBeNull()
+      if (deleted) fireEvent.click(screen.getByRole('button', { name: 'Trash' }))
+    }
+  })
+
+  it('does not publish a truncated collection navigation when a continuation fails and permits retry', async () => {
+    const collections = Array.from({ length: 101 }, (_, index) => ({
+      id: `c-${index}`,
+      name: `Collection ${index}`,
+      description: '',
+      itemCount: 0,
+      createdAt: 1,
+      updatedAt: 1
+    }))
+    let fail = true
+    search.mockImplementation((request: LiteratureCatalogSearchRequest) => {
+      if (request.scope !== 'collections') return Promise.resolve({ entries: [] })
+      if (request.offset === 100 && fail) return Promise.reject(new Error('Page unavailable'))
+      return Promise.resolve({
+        entries: collections.slice(request.offset ?? 0, (request.offset ?? 0) + 100),
+        nextOffset: request.offset === 100 ? undefined : 100,
+        totalCount: 101
+      })
+    })
+    render(<LiteratureLibraryPage />)
+    await act(async () => {})
+    expect(screen.getByText('Literature could not be loaded.')).not.toBeNull()
+    expect(screen.queryByRole('button', { name: 'Collection 0' })).toBeNull()
+    fail = false
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Show all collections' }))
+    expect(screen.getByRole('button', { name: 'Collection 100' })).not.toBeNull()
   })
 
   it('applies a bulk action to every matching page in bounded command batches', async () => {
