@@ -4872,6 +4872,14 @@
     "Direct PDF link": "Lien direct vers le PDF",
     "arXiv identifier required": "Identifiant arXiv requis",
     "Latest PDF via arXiv identifier. No API key required. The file is checked when downloaded.": "Dernier PDF via l’identifiant arXiv. Aucune clé API requise. Le fichier est vérifié lors du téléchargement.",
-    "Add a DOI, PMID, PMCID or arXiv identifier to find a matching full-text PDF.": "Ajoutez un DOI, PMID, PMCID ou identifiant arXiv pour trouver un PDF du texte intégral correspondant."
+    "Add a DOI, PMID, PMCID or arXiv identifier to find a matching full-text PDF.": "Ajoutez un DOI, PMID, PMCID ou identifiant arXiv pour trouver un PDF du texte intégral correspondant.",
+    "Could not close Side chat: {{error}}": "Impossible de fermer la discussion parallèle : {{error}}",
+    "Could not restore Side chats: {{error}}": "Impossible de restaurer les discussions parallèles : {{error}}",
+    "Restoring Side chats…": "Restauration des discussions parallèles…",
+    "Closing Side chat…": "Fermeture de la discussion parallèle…",
+    "Side chat was interrupted when the app closed. Send a Follow up to continue.": "La discussion parallèle a été interrompue à la fermeture de l’application. Envoyez un nouveau message pour continuer.",
+    "Side chat connection ended. Send a Follow up to reconnect.": "La connexion à la discussion parallèle a été interrompue. Envoyez un nouveau message pour vous reconnecter.",
+    "Side chat prompt cancelled.": "Demande de discussion parallèle annulée.",
+    "Could not save Side chat: {{error}}": "Impossible d’enregistrer la discussion parallèle : {{error}}"
   }
 }

@@ -4556,6 +4556,14 @@
     "Direct PDF link": "PDF 직접 링크",
     "arXiv identifier required": "arXiv 식별자 필요",
     "Latest PDF via arXiv identifier. No API key required. The file is checked when downloaded.": "arXiv 식별자로 최신 PDF를 가져옵니다. API 키가 필요하지 않습니다. 다운로드할 때 파일을 검증합니다.",
-    "Add a DOI, PMID, PMCID or arXiv identifier to find a matching full-text PDF.": "DOI, PMID, PMCID 또는 arXiv 식별자를 추가하여 일치하는 전문 PDF를 찾으세요."
+    "Add a DOI, PMID, PMCID or arXiv identifier to find a matching full-text PDF.": "DOI, PMID, PMCID 또는 arXiv 식별자를 추가하여 일치하는 전문 PDF를 찾으세요.",
+    "Could not close Side chat: {{error}}": "사이드 채팅을 닫지 못했습니다: {{error}}",
+    "Could not restore Side chats: {{error}}": "사이드 채팅을 복원하지 못했습니다: {{error}}",
+    "Restoring Side chats…": "사이드 채팅 복원 중…",
+    "Closing Side chat…": "사이드 채팅 닫는 중…",
+    "Side chat was interrupted when the app closed. Send a Follow up to continue.": "앱이 닫힐 때 사이드 채팅이 중단되었습니다. 계속하려면 후속 메시지를 보내세요.",
+    "Side chat connection ended. Send a Follow up to reconnect.": "사이드 채팅 연결이 종료되었습니다. 다시 연결하려면 후속 메시지를 보내세요.",
+    "Side chat prompt cancelled.": "사이드 채팅 요청이 취소되었습니다.",
+    "Could not save Side chat: {{error}}": "사이드 채팅을 저장하지 못했습니다: {{error}}"
   }
 }

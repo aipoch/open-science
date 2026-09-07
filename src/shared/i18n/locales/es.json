@@ -4872,6 +4872,14 @@
     "Direct PDF link": "Enlace directo al PDF",
     "arXiv identifier required": "Se requiere un identificador de arXiv",
     "Latest PDF via arXiv identifier. No API key required. The file is checked when downloaded.": "PDF más reciente mediante el identificador de arXiv. No requiere clave de API. El archivo se verifica al descargarlo.",
-    "Add a DOI, PMID, PMCID or arXiv identifier to find a matching full-text PDF.": "Añada un DOI, PMID, PMCID o identificador de arXiv para encontrar un PDF de texto completo correspondiente."
+    "Add a DOI, PMID, PMCID or arXiv identifier to find a matching full-text PDF.": "Añada un DOI, PMID, PMCID o identificador de arXiv para encontrar un PDF de texto completo correspondiente.",
+    "Could not close Side chat: {{error}}": "No se pudo cerrar el chat lateral: {{error}}",
+    "Could not restore Side chats: {{error}}": "No se pudieron restaurar los chats laterales: {{error}}",
+    "Restoring Side chats…": "Restaurando chats laterales…",
+    "Closing Side chat…": "Cerrando chat lateral…",
+    "Side chat was interrupted when the app closed. Send a Follow up to continue.": "El chat lateral se interrumpió al cerrar la aplicación. Envíe otro mensaje para continuar.",
+    "Side chat connection ended. Send a Follow up to reconnect.": "La conexión del chat lateral finalizó. Envíe otro mensaje para volver a conectarse.",
+    "Side chat prompt cancelled.": "Solicitud del chat lateral cancelada.",
+    "Could not save Side chat: {{error}}": "No se pudo guardar el chat lateral: {{error}}"
   }
 }
