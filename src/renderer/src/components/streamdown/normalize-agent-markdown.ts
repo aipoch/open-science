@@ -1,4 +1,4 @@
-import { createCodeFenceTracker } from './code-fence'
+import { createMarkdownFenceScanner } from './code-fence'
 
 const quoteAxisListItems = (raw: string): string => {
   const items: string[] = []
@@ -84,17 +84,14 @@ const replaceGfmAlerts = (markdown: string): string =>
 // Transform only prose spans. Fence lines and bodies retain their original bytes, including
 // incomplete streaming fences and CRLF line endings.
 const normalizeGfmAlerts = (markdown: string): string => {
-  const tracker = createCodeFenceTracker()
+  const tracker = createMarkdownFenceScanner()
   let proseStart = 0
   let output = ''
   for (const match of markdown.matchAll(/[^\n]*(?:\n|$)/g)) {
     const line = match[0]
     if (!line) continue
-    const wasOpen = tracker.isOpen()
-    const isOpen = tracker.feed(line.replace(/\r?\n$/, ''))
-    if (!wasOpen && isOpen) output += replaceGfmAlerts(markdown.slice(proseStart, match.index))
-    if (wasOpen || isOpen) {
-      output += line
+    if (tracker.feed(line.replace(/\r?\n$/, ''))) {
+      output += replaceGfmAlerts(markdown.slice(proseStart, match.index)) + line
       proseStart = match.index + line.length
     }
   }
@@ -182,7 +179,7 @@ const widenPastMermaidOpener = (markdown: string, boundary: number): number => {
 // the first line not yet fed to the tracker; only the per-call widening still walks the text.
 const createNormalizationBoundaryFinder = (): ((markdown: string) => number) => {
   let cachedInput: string | null = null
-  let fenceTracker = createCodeFenceTracker()
+  let fenceTracker = createMarkdownFenceScanner()
   let fenceOpenerStart = -1
   let boundary = 0
   // Start of the first line not yet fed to the tracker. The trailing partial line is never fed:
@@ -190,7 +187,7 @@ const createNormalizationBoundaryFinder = (): ((markdown: string) => number) => 
   let scanPosition = 0
 
   const reset = (): void => {
-    fenceTracker = createCodeFenceTracker()
+    fenceTracker = createMarkdownFenceScanner()
     fenceOpenerStart = -1
     boundary = 0
     scanPosition = 0
@@ -205,7 +202,8 @@ const createNormalizationBoundaryFinder = (): ((markdown: string) => number) => 
       const line = markdown.slice(scanPosition, newlineIndex)
 
       const fenceWasOpen = fenceTracker.isOpen()
-      const fenceIsOpen = fenceTracker.feed(line)
+      fenceTracker.feed(line)
+      const fenceIsOpen = fenceTracker.isOpen()
       if (!fenceWasOpen && fenceIsOpen) {
         fenceOpenerStart = scanPosition
       } else if (fenceWasOpen && !fenceIsOpen) {

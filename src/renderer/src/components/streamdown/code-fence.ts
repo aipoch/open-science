@@ -91,7 +91,7 @@ const feedScanFence = (state: PluginNeedsScanState, line: string): boolean => {
   return state.fenceOpen
 }
 
-const scanPluginNeedsLine = (state: PluginNeedsScanState, rawLine: string): void => {
+const scanPluginNeedsLine = (state: PluginNeedsScanState, rawLine: string): boolean => {
   const wasOpen = state.fenceOpen
   let line = rawLine
   let blockquoteDepth = 0
@@ -100,6 +100,20 @@ const scanPluginNeedsLine = (state: PluginNeedsScanState, rawLine: string): void
     if (!prefix) break
     line = line.slice(prefix.length)
     blockquoteDepth += 1
+  }
+
+  // A fenced block cannot outlive its enclosing blockquote or list item. Reprocess the
+  // first outside line as Markdown so a new fence or alert can start there immediately.
+  if (
+    wasOpen &&
+    (blockquoteDepth < state.fenceBlockquoteDepth ||
+      (state.fenceListIndent > 0 &&
+        line.trim() &&
+        (line.match(LEADING_WHITESPACE)?.[0].length ?? 0) < state.fenceListIndent))
+  ) {
+    state.fenceOpen = false
+    state.fenceListIndent = 0
+    return scanPluginNeedsLine(state, rawLine)
   }
 
   if (wasOpen && state.fenceListIndent > 0) {
@@ -128,14 +142,27 @@ const scanPluginNeedsLine = (state: PluginNeedsScanState, rawLine: string): void
   if (!wasOpen && isOpen) {
     state.fenceBlockquoteDepth = blockquoteDepth
     state.fenceListIndent = state.listContentIndents.at(-1) ?? 0
+    state.code = true
+    const language = line.replace(FENCE_LINE, '').trim().split(/\s+/, 1)[0]
+    if (language === 'mermaid') state.mermaid = true
   } else if (wasOpen && !isOpen) {
     state.fenceListIndent = 0
   }
-  if (wasOpen || !isOpen) return
+  return wasOpen || isOpen
+}
 
-  state.code = true
-  const language = line.replace(FENCE_LINE, '').trim().split(/\s+/, 1)[0]
-  if (language === 'mermaid') state.mermaid = true
+// Normalization needs the same container context as plugin detection, while deferred code
+// rendering can keep using the raw-line tracker above.
+const createMarkdownFenceScanner = (): {
+  // Returns whether this line belongs to a code fence, including opening and closing markers.
+  feed: (line: string) => boolean
+  isOpen: () => boolean
+} => {
+  const state = createPluginNeedsScanState()
+  return {
+    feed: (line: string): boolean => scanPluginNeedsLine(state, line),
+    isOpen: () => state.fenceOpen
+  }
 }
 
 const getMarkdownPluginNeeds = (markdown: string): MarkdownPluginNeeds => {
@@ -200,6 +227,7 @@ const createMarkdownPluginNeedsScanner = (): ((markdown: string) => MarkdownPlug
 export {
   FENCE_LINE,
   createCodeFenceTracker,
+  createMarkdownFenceScanner,
   createMarkdownPluginNeedsScanner,
   getMarkdownPluginNeeds
 }

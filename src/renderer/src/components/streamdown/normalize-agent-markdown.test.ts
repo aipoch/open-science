@@ -287,3 +287,29 @@ it('keeps a fence info string inside an open code block literal', () => {
     expect(incremental(code.slice(0, end))).toBe(code.slice(0, end))
   }
 })
+
+it.each([
+  '> ```markdown\n> [!NOTE]\n> Literal.\n> ```\n',
+  '> - ```markdown\n>   > [!NOTE]\n>   > Literal.\n>   ```\n'
+])('preserves alert source in a container fence: %s', (code) => {
+  expect(normalizeAgentMarkdown(code)).toBe(code)
+  const incremental = createAgentMarkdownNormalizer()
+  for (let end = 1; end <= code.length; end += 1) {
+    expect(incremental(code.slice(0, end))).toBe(code.slice(0, end))
+  }
+  const alert = '\n> [!TIP]\n> Outside.'
+  expect(incremental(code + alert)).toBe(code + normalizeGfmAlerts(alert))
+})
+
+it.each(['> ```md\n> Literal.\n\n', '- ```md\n  Literal.\n\n'])(
+  'converts alerts after an unclosed fence leaves its container: %s',
+  (code) => {
+    const alert = '> [!NOTE]\n> Outside.'
+    const input = code + alert
+    expect(normalizeAgentMarkdown(input)).toBe(code + normalizeGfmAlerts(alert))
+    const incremental = createAgentMarkdownNormalizer()
+    for (let end = 1; end <= input.length; end += 1) {
+      expect(incremental(input.slice(0, end))).toBe(normalizeAgentMarkdown(input.slice(0, end)))
+    }
+  }
+)
