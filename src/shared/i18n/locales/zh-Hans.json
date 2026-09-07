@@ -4609,6 +4609,10 @@
     "Python commands": "Python 命令",
     "Python 3 commands": "Python 3 命令",
     "Node.js commands": "Node.js 命令",
-    "R scripts": "R 脚本"
+    "R scripts": "R 脚本",
+    "Find": "查找",
+    "Find text": "查找文本",
+    "Find in window": "在窗口中查找",
+    "Close find": "关闭查找"
   }
 }

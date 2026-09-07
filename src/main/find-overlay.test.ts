@@ -1,4 +1,5 @@
 import { EventEmitter } from 'node:events'
+import { registerFindOverlayOwner, resolveFindOverlayOwner } from './find-overlay-registry'
 
 import { describe, expect, it, vi, type Mock } from 'vitest'
 
@@ -33,13 +34,13 @@ const HTML_PATH = '/r/find-overlay/index.html'
 
 type FindOverlayTestFakes = {
   view: {
-    webContents: { loadFile: Mock; send: Mock; focus: Mock }
+    webContents: { loadFile: Mock; send: Mock; focus: Mock; close: Mock; isDestroyed: Mock }
     setBounds: Mock
     setBackgroundColor: Mock
-    destroy: Mock
   }
   mainWindow: {
-    contentView: { addChildView: Mock }
+    contentView: { addChildView: Mock; removeChildView: Mock }
+    isDestroyed: () => boolean
     getContentBounds: () => { width: number; height: number }
     on: Mock
     removeListener: Mock
@@ -52,13 +53,19 @@ type FindOverlayTestFakes = {
 
 const createFakes = (): FindOverlayTestFakes => {
   const view = {
-    webContents: { loadFile: vi.fn(() => Promise.resolve()), send: vi.fn(), focus: vi.fn() },
+    webContents: {
+      loadFile: vi.fn(() => Promise.resolve()),
+      send: vi.fn(),
+      focus: vi.fn(),
+      close: vi.fn(),
+      isDestroyed: vi.fn(() => false)
+    },
     setBounds: vi.fn(),
-    setBackgroundColor: vi.fn(),
-    destroy: vi.fn()
+    setBackgroundColor: vi.fn()
   }
   const mainWindow = {
-    contentView: { addChildView: vi.fn() },
+    contentView: { addChildView: vi.fn(), removeChildView: vi.fn() },
+    isDestroyed: () => false,
     getContentBounds: () => ({ width: 1000, height: 800 }),
     on: vi.fn(),
     removeListener: vi.fn(),
@@ -159,6 +166,8 @@ describe('find overlay manager', () => {
 
     expect(createView).toHaveBeenCalledTimes(1)
     expect(mainWindow.contentView.addChildView).toHaveBeenCalledTimes(1)
+    expect(mainWindow.contentView.removeChildView).not.toHaveBeenCalled()
+    expect(view.webContents.close).not.toHaveBeenCalled()
     expect(view.webContents.focus).toHaveBeenCalledTimes(1)
     expect(view.webContents.send).toHaveBeenCalledTimes(1)
     expect(view.webContents.send).toHaveBeenCalledWith(WINDOW_FIND_SHOW_CHANNEL, {
@@ -209,7 +218,7 @@ describe('find overlay manager', () => {
     failLoad?.(new Error('load failed'))
     await vi.waitFor(() => expect(manager.isOpen()).toBe(false))
 
-    expect(view.destroy).toHaveBeenCalledTimes(1)
+    expect(view.webContents.close).toHaveBeenCalledTimes(1)
     manager.open()
 
     expect(createView).toHaveBeenCalledTimes(2)
@@ -259,7 +268,8 @@ describe('find overlay manager', () => {
 
   it('removes its resize listener when the main window is destroyed', () => {
     const mainWindow = Object.assign(new EventEmitter(), {
-      contentView: { addChildView: vi.fn() },
+      contentView: { addChildView: vi.fn(), removeChildView: vi.fn() },
+      isDestroyed: () => false,
       getContentBounds: () => ({ width: 1000, height: 800 }),
       webContents: { focus: vi.fn(), send: vi.fn(), stopFindInPage: vi.fn() }
     })
@@ -273,5 +283,125 @@ describe('find overlay manager', () => {
     expect(mainWindow.listenerCount('resize')).toBe(1)
     expect(() => manager.destroy()).not.toThrow()
     expect(mainWindow.listenerCount('resize')).toBe(0)
+  })
+})
+
+describe('find overlay resource ownership', () => {
+  const setup = (
+    fail: boolean
+  ): {
+    manager: FindOverlayManager
+    attached: Set<object>
+    views: FindOverlayTestFakes['view'][]
+    removeChildView: Mock
+    mainWindow: FindOverlayTestFakes['mainWindow']
+  } => {
+    const attached = new Set<object>()
+    const views: Array<{
+      webContents: { loadFile: Mock; send: Mock; focus: Mock; close: Mock; isDestroyed: Mock }
+      setBounds: Mock
+      setBackgroundColor: Mock
+    }> = []
+    const { mainWindow } = createFakes()
+    const removeChildView = vi.fn((view: object) => attached.delete(view))
+    mainWindow.contentView = {
+      addChildView: vi.fn((view: object) => attached.add(view)),
+      removeChildView
+    }
+    const manager = createFindOverlayManager({
+      mainWindow,
+      createView: () => {
+        const view = {
+          webContents: {
+            loadFile: vi.fn(() =>
+              fail ? Promise.reject(new Error('load failed')) : Promise.resolve()
+            ),
+            send: vi.fn(),
+            focus: vi.fn(),
+            close: vi.fn(),
+            isDestroyed: vi.fn(() => false)
+          },
+          setBounds: vi.fn(),
+          setBackgroundColor: vi.fn()
+        }
+        views.push(view)
+        return view
+      },
+      preloadPath: PRELOAD_PATH,
+      overlayHtmlPath: HTML_PATH,
+      registerOwner: registerFindOverlayOwner
+    })
+    return { manager, attached, views, removeChildView, mainWindow }
+  }
+
+  it('releases failed views before repeated retries', async () => {
+    const { manager, attached, views, removeChildView } = setup(true)
+    for (let attempt = 0; attempt < 2; attempt++) {
+      manager.open()
+      await Promise.resolve()
+    }
+    expect(views).toHaveLength(2)
+    expect.soft(attached.size).toBe(0)
+    expect.soft(removeChildView).toHaveBeenCalledTimes(2)
+    for (const view of views) {
+      expect.soft(view.webContents.close).toHaveBeenCalledTimes(1)
+      expect.soft(resolveFindOverlayOwner(view.webContents)).toBeUndefined()
+    }
+  })
+
+  it('releases a loaded view and its owner on terminal destruction', async () => {
+    const { manager, attached, views, removeChildView } = setup(false)
+    manager.open()
+    await Promise.resolve()
+    manager.destroy()
+    manager.destroy()
+    expect.soft(attached.size).toBe(0)
+    expect.soft(removeChildView).toHaveBeenCalledTimes(1)
+    expect.soft(views[0].webContents.close).toHaveBeenCalledTimes(1)
+    expect.soft(resolveFindOverlayOwner(views[0].webContents)).toBeUndefined()
+  })
+})
+
+describe('find overlay terminal races', () => {
+  it('closes a loading view and ignores its late load completion', async () => {
+    const { manager, view } = createFakes()
+    let finishLoad!: () => void
+    view.webContents.loadFile.mockReturnValue(
+      new Promise<void>((resolve) => {
+        finishLoad = resolve
+      })
+    )
+    manager.open()
+    manager.destroy()
+    finishLoad()
+    await Promise.resolve()
+    expect(view.webContents.close).toHaveBeenCalledTimes(1)
+    expect(view.webContents.focus).not.toHaveBeenCalled()
+    expect(view.webContents.send).not.toHaveBeenCalled()
+    expect(manager.isOpen()).toBe(false)
+  })
+
+  it('does not access the content view after the parent window is destroyed', async () => {
+    const { manager, mainWindow, view } = createFakes()
+    manager.open()
+    await Promise.resolve()
+    mainWindow.isDestroyed = () => true
+    Object.defineProperty(mainWindow, 'contentView', {
+      get: () => {
+        throw new Error('Object has been destroyed')
+      }
+    })
+    manager.destroy()
+    expect(view.webContents.close).toHaveBeenCalledTimes(1)
+  })
+
+  it('does not close webContents that Electron already destroyed', async () => {
+    const { manager, view, mainWindow } = createFakes()
+    manager.open()
+    await Promise.resolve()
+    view.webContents.isDestroyed.mockReturnValue(true)
+    manager.destroy()
+    expect(view.webContents.close).not.toHaveBeenCalled()
+    expect(mainWindow.contentView.removeChildView).toHaveBeenCalledTimes(1)
   })
 })

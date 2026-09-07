@@ -4,7 +4,7 @@ import {
   WINDOW_FIND_SHOW_CHANNEL,
   type WindowFindAppearance
 } from '../shared/window-controls'
-import type { FindOverlayOwner } from './find-overlay-registry'
+import { unregisterFindOverlayOwner, type FindOverlayOwner } from './find-overlay-registry'
 
 // Preferred geometry for the find overlay, in CSS pixels. 420px ~ 26rem at the app's 16px base.
 const OVERLAY_WIDTH = 420
@@ -33,17 +33,19 @@ type OverlayWebContents = {
   loadFile(path: string): Promise<void>
   send(channel: string, payload?: unknown): void
   focus(): void
+  close(): void
+  isDestroyed(): boolean
 }
 type OverlayView = {
   webContents: OverlayWebContents
   setBounds(bounds: { x: number; y: number; width: number; height: number }): void
   setBackgroundColor(color: string): void
-  destroy?(): void
 }
 
 // The main window the overlay searches and attaches to. Structural for the same testability reason.
 type OverlayMainWindow = {
-  contentView: { addChildView(view: OverlayView): void }
+  contentView: { addChildView(view: OverlayView): void; removeChildView(view: OverlayView): void }
+  isDestroyed(): boolean
   getContentBounds(): { width: number; height: number }
   on(event: 'resize', listener: () => void): void
   removeListener?(event: 'resize', listener: () => void): void
@@ -92,6 +94,16 @@ export const createFindOverlayManager = (deps: FindOverlayDeps): FindOverlayMana
   let opened = false
   let cachedAppearance = FALLBACK_APPEARANCE
 
+  const disposeView = (): void => {
+    const disposedView = view
+    view = null
+    loadPromise = null
+    if (!disposedView) return
+    unregisterFindOverlayOwner(disposedView.webContents)
+    if (!deps.mainWindow.isDestroyed()) deps.mainWindow.contentView.removeChildView(disposedView)
+    if (!disposedView.webContents.isDestroyed()) disposedView.webContents.close()
+  }
+
   const backgroundFor = (appearance: WindowFindAppearance): string =>
     appearance.theme === 'dark' ? DARK_BACKGROUND : LIGHT_BACKGROUND
 
@@ -116,7 +128,9 @@ export const createFindOverlayManager = (deps: FindOverlayDeps): FindOverlayMana
   }
 
   const appearancesEqual = (left: WindowFindAppearance, right: WindowFindAppearance): boolean =>
-    left.theme === right.theme && left.followsSystem === right.followsSystem
+    left.theme === right.theme &&
+    left.followsSystem === right.followsSystem &&
+    JSON.stringify(left.localization) === JSON.stringify(right.localization)
 
   const showLoadedView = (): void => {
     if (!opened || !view || loadPromise) return
@@ -150,8 +164,7 @@ export const createFindOverlayManager = (deps: FindOverlayDeps): FindOverlayMana
             if (loadPromise !== firstLoad) return
             loadPromise = null
             close()
-            pendingView.destroy?.()
-            if (view === pendingView) view = null
+            disposeView()
           }
         )
         deps.mainWindow.contentView.addChildView(view)
@@ -182,9 +195,7 @@ export const createFindOverlayManager = (deps: FindOverlayDeps): FindOverlayMana
       } else {
         deps.mainWindow.off?.('resize', onResize)
       }
-      view?.destroy?.()
-      view = null
-      loadPromise = null
+      disposeView()
       opened = false
     }
   }

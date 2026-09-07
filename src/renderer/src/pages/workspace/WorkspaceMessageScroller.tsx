@@ -734,10 +734,26 @@ const WorkspaceMessageScrollerImpl = ({
     undefined
   )
   const showWindowFind = useCallback((): void => {
+    const acknowledgedScope = windowFindAcknowledgedScopeRef.current
+    if (
+      acknowledgedScope &&
+      acknowledgedScope.scopeId === currentPresentationScopeId &&
+      presentationBarrierIndex < 0 &&
+      transcriptWindow.entries.length === conversationItems.length
+    ) {
+      window.api?.window?.announceWindowFindContentReady?.()
+      return
+    }
     windowFindAcknowledgedScopeRef.current = undefined
     setWindowFindOpen(true)
     revealFullTranscript()
-  }, [revealFullTranscript])
+  }, [
+    conversationItems.length,
+    currentPresentationScopeId,
+    presentationBarrierIndex,
+    revealFullTranscript,
+    transcriptWindow.entries.length
+  ])
   useEffect(() => {
     return window.api?.window?.onShowWindowFind?.(showWindowFind)
   }, [showWindowFind])

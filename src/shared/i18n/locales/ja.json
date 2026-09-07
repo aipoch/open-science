@@ -4609,6 +4609,10 @@
     "Python commands": "Python コマンド",
     "Python 3 commands": "Python 3 コマンド",
     "Node.js commands": "Node.js コマンド",
-    "R scripts": "R スクリプト"
+    "R scripts": "R スクリプト",
+    "Find": "検索",
+    "Find text": "テキストを検索",
+    "Find in window": "ウィンドウ内を検索",
+    "Close find": "検索を閉じる"
   }
 }
