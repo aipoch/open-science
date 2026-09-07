@@ -109,16 +109,25 @@ describe('runtime workflows', () => {
       runnable: true
     }
     discoveryState.r = [env]
+    const settingsService = fakeSettingsService()
     const events: string[] = []
     const setWindowsRuntimeAccess = vi.fn(async (_path: string, authorized: boolean) => {
       events.push(authorized ? 'grant' : 'remove')
       return { cancelled: false }
     })
     const workflows = createRuntimeWorkflows({
-      settingsService: fakeSettingsService(),
+      settingsService,
       runtimeRoot: () => '/runtime',
       setWindowsRuntimeAccess,
       onRuntimeDisabled: async () => {
+        expect((await settingsService.getRuntimeEnablement('r')).enabled[env.envId]).toBe(false)
+        await expect(
+          workflows.setEnvironmentEnabled({
+            language: 'r',
+            envId: env.envId,
+            enabled: true
+          })
+        ).rejects.toThrow('already in progress')
         events.push('drain')
       }
     })

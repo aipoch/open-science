@@ -187,6 +187,36 @@ const click = async (el: Element | null): Promise<void> => {
 
 describe('RuntimesPanel', () => {
   it.each([false, true])(
+    'refreshes disabled R state after access removal (cancelled: %s)',
+    async (cancelled) => {
+      Object.assign(window.api, { platform: 'win32' })
+      getEnablement.mockResolvedValue({
+        enabled: { [rEnvs[0].envId]: true },
+        installAuthorized: {}
+      })
+      Object.assign(window.api.runtime, {
+        setSandboxAccess: vi.fn(async () => {
+          getEnablement.mockResolvedValue({
+            enabled: { [rEnvs[0].envId]: false },
+            installAuthorized: {}
+          })
+          return { cancelled }
+        })
+      })
+      await render()
+      await click(
+        Array.from(container.querySelectorAll('button')).find(
+          (button) => button.textContent === 'Remove R access'
+        )!
+      )
+      const authorize = Array.from(container.querySelectorAll('button')).find(
+        (button) => button.textContent === 'Authorize and verify'
+      )!
+      expect(authorize.disabled).toBe(true)
+      expect(container.textContent?.includes('R access removed')).toBe(!cancelled)
+    }
+  )
+  it.each([false, true])(
     'verifies only the selected R and does not confirm cancelled authorization (%s)',
     async (cancelled) => {
       Object.assign(window.api, { platform: 'win32' })

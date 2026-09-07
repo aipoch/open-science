@@ -132,6 +132,13 @@ const RuntimesPanel = ({
     } catch (error) {
       setError(error instanceof Error ? error.message : t('Could not update R access.'))
     } finally {
+      if (!authorized) {
+        try {
+          setEnablement('r', await window.api.runtime.getEnablement('r'))
+        } catch {
+          setError(t('Could not re-check runtimes.'))
+        }
+      }
       setBusy(false)
     }
   }

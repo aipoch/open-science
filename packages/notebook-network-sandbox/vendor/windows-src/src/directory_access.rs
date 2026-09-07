@@ -1,5 +1,5 @@
 //! Non-inheriting directory listing grants. Never propagates ACLs into descendants.
-use std::{mem::size_of, path::Path};
+use std::{mem::size_of, path::Path, ptr::NonNull};
 
 use anyhow::{Context, Result, bail};
 use windows::Win32::{
@@ -11,7 +11,9 @@ use windows::Win32::{
             ConvertStringSidToSidW, GetNamedSecurityInfoW, SE_FILE_OBJECT, SetSecurityInfo,
         },
         DACL_SECURITY_INFORMATION, EqualSid, GetAce, GetAclInformation, GetLengthSid,
-        INHERITED_ACE, InitializeAcl, PSECURITY_DESCRIPTOR, PSID,
+        GetSecurityDescriptorControl, INHERITED_ACE, InitializeAcl, PSECURITY_DESCRIPTOR, PSID,
+        SE_DACL_AUTO_INHERIT_REQ, SE_DACL_AUTO_INHERITED, SECURITY_DESCRIPTOR_CONTROL,
+        SetFileSecurityW, SetSecurityDescriptorControl,
     },
     Storage::FileSystem::{
         CreateFileW, FILE_FLAG_BACKUP_SEMANTICS, FILE_SHARE_DELETE, FILE_SHARE_READ,
@@ -73,6 +75,9 @@ fn access(path: &str, identity: &str, change: Option<bool>, allow_existing: bool
     .ok()
     .with_context(|| format!("read runtime directory permissions: {path}"))?;
     let _descriptor = Allocation(descriptor.0);
+    let mut original_control = 0u16;
+    let mut revision = 0u32;
+    unsafe { GetSecurityDescriptorControl(descriptor, &mut original_control, &mut revision) }?;
     if dacl.is_null() {
         bail!("Runtime directory has no concrete DACL: {path}");
     }
@@ -90,10 +95,17 @@ fn access(path: &str, identity: &str, change: Option<bool>, allow_existing: bool
     for index in 0..info.AceCount {
         let mut ace = std::ptr::null_mut();
         unsafe { GetAce(dacl, index, &mut ace) }?;
-        let header = unsafe { &*ace.cast::<ACE_HEADER>() };
+        let ace = NonNull::new(ace).context("Windows returned a null directory ACE")?;
+        let header = unsafe { ace.cast::<ACE_HEADER>().as_ref() };
+        if (header.AceSize as usize) < size_of::<ACE_HEADER>() {
+            bail!("Invalid directory ACE header; preserving {path}");
+        }
         // Simple allow and deny ACEs share the SID/mask layout. Never adopt a deny or inherited ACE.
         if header.AceType <= 1 {
-            let entry = unsafe { &*ace.cast::<ACCESS_ALLOWED_ACE>() };
+            if (header.AceSize as usize) < size_of::<ACCESS_ALLOWED_ACE>() {
+                bail!("Invalid directory ACE; preserving {path}");
+            }
+            let entry = unsafe { ace.cast::<ACCESS_ALLOWED_ACE>().as_ref() };
             let entry_sid = PSID((&entry.SidStart as *const u32).cast_mut().cast());
             if unsafe { EqualSid(sid, entry_sid) }.is_ok() {
                 if found
@@ -108,7 +120,9 @@ fn access(path: &str, identity: &str, change: Option<bool>, allow_existing: bool
                 continue;
             }
         }
-        aces.push(unsafe { std::slice::from_raw_parts(ace.cast::<u8>(), header.AceSize as usize) });
+        aces.push(unsafe {
+            std::slice::from_raw_parts(ace.cast::<u8>().as_ptr(), header.AceSize as usize)
+        });
     }
     let Some(add) = change else {
         return Ok(found);
@@ -192,5 +206,36 @@ fn access(path: &str, identity: &str, change: Option<bool>, allow_existing: bool
         let _ = CloseHandle(handle);
     }
     result.with_context(|| format!("update runtime directory permissions: {path}"))?;
+    // SetSecurityInfo upgrades legacy inheritance-control flags even with propagation disabled.
+    // Preserve the current ACL and restore only those flags, as the filesystem lease owner does.
+    let mut updated = PSECURITY_DESCRIPTOR::default();
+    unsafe {
+        GetNamedSecurityInfoW(
+            PCWSTR(name.as_ptr()),
+            SE_FILE_OBJECT,
+            DACL_SECURITY_INFORMATION,
+            None,
+            None,
+            None,
+            None,
+            &mut updated,
+        )
+    }
+    .ok()?;
+    let _updated = Allocation(updated.0);
+    let mut updated_control = 0u16;
+    unsafe { GetSecurityDescriptorControl(updated, &mut updated_control, &mut revision) }?;
+    let mask = SE_DACL_AUTO_INHERITED.0 | SE_DACL_AUTO_INHERIT_REQ.0;
+    if original_control & mask != updated_control & mask {
+        unsafe {
+            SetSecurityDescriptorControl(
+                updated,
+                SECURITY_DESCRIPTOR_CONTROL(mask),
+                SECURITY_DESCRIPTOR_CONTROL(original_control & mask),
+            )
+        }?;
+        unsafe { SetFileSecurityW(PCWSTR(name.as_ptr()), DACL_SECURITY_INFORMATION, updated) }
+            .ok()?;
+    }
     Ok(add)
 }

@@ -908,6 +908,11 @@ mod windows_host {
     ) -> Result<()> {
         let _lock = OperationLock::acquire(installation_id)?;
         let root = ownership_directory(installation_id, requested_root)?;
+        if journal_path(&root).exists() {
+            bail!(
+                "Complete the pending protected-mode operation before changing runtime permissions"
+            );
+        }
         let mut authorized = false;
         let mut registered = false;
         if let Some(record) = ownership_record(installation_id, &root)? {
@@ -2219,6 +2224,11 @@ mod windows_host {
             let path = root.to_string_lossy();
             let child_path = child.to_string_lossy();
             let original = capture_acl_snapshot(&path).unwrap();
+            let mut legacy_control = original.clone();
+            legacy_control.dacl_auto_inherited = false;
+            legacy_control.dacl_auto_inherit_requested = false;
+            restore_acl_snapshot(&legacy_control).unwrap();
+            let original = capture_acl_snapshot(&path).unwrap();
             let child_original = capture_acl_snapshot(&child_path).unwrap();
             let capability = CommandCapability::new(format!(
                 "open-science.test.{}",
@@ -2234,7 +2244,112 @@ mod windows_host {
             super::super::directory_access::update(&path, &identity, false, true).unwrap();
             super::super::directory_access::update(&path, &identity, false, true).unwrap();
             assert_eq!(capture_acl_snapshot(&path).unwrap(), original);
+            run_icacls(
+                &path,
+                &["/grant:r", &format!("*{identity}:RX"), "/Q"],
+                "alter test grant",
+            )
+            .unwrap();
+            let changed = capture_acl_snapshot(&path).unwrap();
+            assert!(super::super::directory_access::update(&path, &identity, false, true).is_err());
+            assert_eq!(capture_acl_snapshot(&path).unwrap(), changed);
+            restore_acl_snapshot(&original).unwrap();
             fs::remove_dir_all(&root).unwrap();
+        }
+
+        #[test]
+        fn runtime_directory_reconciliation_preserves_shared_paths_and_retries_after_rollback() {
+            let installation_id = "fedcba9876543210fedcba98";
+            let parent = unique_test_root("runtime-reconciliation");
+            let ownership = parent.join(installation_id);
+            let request_root = ownership.to_string_lossy();
+            prepare_setup(installation_id, &request_root).unwrap();
+            let empty = read_record(&journal_path(&ownership)).unwrap().unwrap();
+            cancel_setup(installation_id, &request_root).unwrap();
+            let shared = parent.join("shared");
+            let first = shared.join("a");
+            let second = shared.join("b");
+            fs::create_dir_all(&first).unwrap();
+            fs::create_dir_all(&second).unwrap();
+            let snapshot = capture_acl_snapshot(&shared.to_string_lossy()).unwrap();
+            // Exercise the ACL reconciliation boundary on owned temporary directories. Full profile
+            // setup and WFP removal require the elevated integration suite; no drive ACL is changed here.
+            let entry = |leaf: &Path| RuntimeDirectoryAccess {
+                executable: leaf.join("bin/Rscript.exe").to_string_lossy().into_owned(),
+                selected_executable: leaf.join("bin/Rscript.exe").to_string_lossy().into_owned(),
+                directories: vec![
+                    shared.to_string_lossy().into_owned(),
+                    leaf.to_string_lossy().into_owned(),
+                ],
+            };
+            let mut both = empty.clone();
+            both.runtime_directory_access = vec![entry(&first), entry(&second)];
+            reconcile_runtime_directories(&both, Some(&empty)).unwrap();
+            let mut remaining = both.clone();
+            remaining.runtime_directory_access.remove(0);
+            reconcile_runtime_directories(&remaining, Some(&both)).unwrap();
+            assert!(
+                super::super::directory_access::is_granted(
+                    &shared.to_string_lossy(),
+                    &empty.profile_sid
+                )
+                .unwrap()
+            );
+            assert!(
+                super::super::directory_access::is_granted(
+                    &second.to_string_lossy(),
+                    &empty.profile_sid
+                )
+                .unwrap()
+            );
+            assert!(
+                !super::super::directory_access::is_granted(
+                    &first.to_string_lossy(),
+                    &empty.profile_sid
+                )
+                .unwrap()
+            );
+            reconcile_runtime_directories(&empty, Some(&remaining)).unwrap();
+            reconcile_runtime_directories(&empty, Some(&remaining)).unwrap();
+            assert_eq!(
+                capture_acl_snapshot(&shared.to_string_lossy()).unwrap(),
+                snapshot
+            );
+
+            let missing = shared.join("z-missing");
+            let mut interrupted = empty.clone();
+            interrupted.runtime_directory_access = vec![entry(&first), entry(&missing)];
+            assert!(reconcile_runtime_directories(&interrupted, Some(&empty)).is_err());
+            assert!(
+                super::super::directory_access::is_granted(
+                    &first.to_string_lossy(),
+                    &empty.profile_sid
+                )
+                .unwrap()
+            );
+            rollback_runtime_directories(&interrupted, Some(&empty)).unwrap();
+            assert_eq!(
+                capture_acl_snapshot(&shared.to_string_lossy()).unwrap(),
+                snapshot
+            );
+            assert!(
+                !super::super::directory_access::is_granted(
+                    &first.to_string_lossy(),
+                    &empty.profile_sid
+                )
+                .unwrap()
+            );
+            fs::create_dir_all(&missing).unwrap();
+            reconcile_runtime_directories(&interrupted, Some(&empty)).unwrap();
+            assert!(
+                super::super::directory_access::is_granted(
+                    &missing.to_string_lossy(),
+                    &empty.profile_sid
+                )
+                .unwrap()
+            );
+            reconcile_runtime_directories(&empty, Some(&interrupted)).unwrap();
+            fs::remove_dir_all(&parent).unwrap();
         }
 
         #[test]
@@ -2282,16 +2397,43 @@ mod windows_host {
             let pending = read_record(&journal_path(&root)).unwrap().unwrap();
             assert_eq!(pending.schema_version, 5);
             assert_eq!(pending.runtime_directory_access.len(), 1);
+            assert!(
+                runtime_access_status(
+                    installation_id,
+                    &request_root,
+                    &executable.to_string_lossy(),
+                )
+                .is_err(),
+                "pending authorization must not report successful absent permissions"
+            );
             let entry = &pending.runtime_directory_access[0];
             assert_eq!(
                 entry.directories,
-                r_installation_directories(&executable).unwrap()
+                r_installation_directories(Path::new(&entry.executable)).unwrap()
             );
             assert!(
                 !entry
                     .directories
                     .contains(&home.to_string_lossy().into_owned())
             );
+            let partial_directory = parent.to_string_lossy();
+            super::super::directory_access::update(
+                &partial_directory,
+                &record.profile_sid,
+                true,
+                false,
+            )
+            .unwrap();
+            assert!(cancel_setup(installation_id, &request_root).is_err());
+            assert!(journal_path(&root).exists());
+            assert!(receipt_path(&root).exists());
+            super::super::directory_access::update(
+                &partial_directory,
+                &record.profile_sid,
+                false,
+                true,
+            )
+            .unwrap();
             cancel_setup(installation_id, &request_root).unwrap();
             assert_eq!(
                 read_record(&receipt_path(&root))
