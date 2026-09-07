@@ -2054,6 +2054,7 @@
     "Preview {{title}}": "Предпросмотр {{title}}",
     "Preview — matches the list and picker.": "Предпросмотр соответствует списку и средству выбора.",
     "Previous Artifact version": "Предыдущая версия артефакта",
+    "Message revisions are unavailable while this session is busy or blocked.": "Версии сообщений недоступны, пока этот сеанс занят или заблокирован.",
     "Previous message revision": "Предыдущий выпуск сообщения",
     "Previous page": "Предыдущая страница",
     "Previous preview page": "Предыдущая страница предпросмотра",

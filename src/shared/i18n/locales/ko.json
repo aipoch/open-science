@@ -1993,6 +1993,7 @@
     "Preview {{title}}": "{{title}} 미리보기",
     "Preview — matches the list and picker.": "미리보기 — 목록 및 선택기와 일치합니다.",
     "Previous Artifact version": "이전 아티팩트 버전",
+    "Message revisions are unavailable while this session is busy or blocked.": "이 세션이 처리 중이거나 차단된 동안에는 메시지 버전을 전환할 수 없습니다.",
     "Previous message revision": "이전 메시지 개정판",
     "Previous page": "이전 페이지",
     "Previous preview page": "이전 미리보기 페이지",

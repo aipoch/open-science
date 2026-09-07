@@ -1162,6 +1162,8 @@ const resendEditedWorkspaceMessage = async (
         forcedSkillIds: input.forcedSkillIds,
         referencedArtifacts: input.referencedArtifacts,
         pdfContext: sourceMessage.pdfContext,
+        turnIntent:
+          sourceMessage.turnIntent === 'plan-first' ? sourceMessage.turnIntent : undefined,
         agentFrameworkId: options.agentFrameworkId,
         agentBackendId: options.agentBackendId,
         agentModel: options.agentModel,

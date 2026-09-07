@@ -1982,6 +1982,7 @@
     "Preview {{title}}": "{{title}} をプレビュー",
     "Preview — matches the list and picker.": "プレビュー — リストとピッカーの表示と一致します。",
     "Previous Artifact version": "以前のアーティファクトのバージョン",
+    "Message revisions are unavailable while this session is busy or blocked.": "このセッションが処理中またはブロックされている間は、メッセージのバージョンを切り替えられません。",
     "Previous message revision": "以前のメッセージのリビジョン",
     "Previous page": "前のページ",
     "Previous preview page": "前のプレビューページ",

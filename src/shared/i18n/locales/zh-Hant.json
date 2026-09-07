@@ -2066,6 +2066,7 @@
     "Preview {{title}}": "預覽 {{title}}",
     "Preview — matches the list and picker.": "預覽 — 與清單和選擇器一致。",
     "Previous Artifact version": "上一個 Artifact 版本",
+    "Message revisions are unavailable while this session is busy or blocked.": "此工作階段忙碌或受阻時，無法切換訊息版本。",
     "Previous message revision": "上一個訊息版本",
     "Previous page": "上一頁",
     "Previous preview page": "上一預覽頁",

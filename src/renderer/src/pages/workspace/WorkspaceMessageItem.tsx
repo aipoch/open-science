@@ -152,6 +152,7 @@ type WorkspaceMessageItemProps = {
   revisionNavigation?: {
     index: number
     total: number
+    disabledReason?: string
     onPrevious?: () => void
     onNext?: () => void
   }
@@ -1824,16 +1825,29 @@ const WorkspaceMessageItemImpl = ({
                           data-slot="user-message-revision-navigation"
                           className="flex items-center gap-0.5 text-[13px] text-text-100"
                         >
-                          <UserMessageActionTooltip label={t('Previous message revision')}>
-                            <button
-                              type="button"
-                              className={userMessageActionButtonClassName}
-                              aria-label={t('Previous message revision')}
-                              disabled={!revisionNavigation.onPrevious || !canEditMessage}
-                              onClick={revisionNavigation.onPrevious}
+                          <UserMessageActionTooltip
+                            label={
+                              revisionNavigation.disabledReason ?? t('Previous message revision')
+                            }
+                          >
+                            <span
+                              tabIndex={revisionNavigation.disabledReason ? 0 : undefined}
+                              aria-label={revisionNavigation.disabledReason}
                             >
-                              <ChevronLeft className="size-3.5" aria-hidden="true" />
-                            </button>
+                              <button
+                                type="button"
+                                className={userMessageActionButtonClassName}
+                                aria-label={t('Previous message revision')}
+                                disabled={
+                                  !revisionNavigation.onPrevious ||
+                                  !canEditMessage ||
+                                  Boolean(revisionNavigation.disabledReason)
+                                }
+                                onClick={revisionNavigation.onPrevious}
+                              >
+                                <ChevronLeft className="size-3.5" aria-hidden="true" />
+                              </button>
+                            </span>
                           </UserMessageActionTooltip>
                           <GitBranch
                             data-slot="user-message-revision-icon"
@@ -1843,16 +1857,27 @@ const WorkspaceMessageItemImpl = ({
                           <span aria-label={t('Message revision')} className="min-w-7 text-center">
                             {revisionNavigation.index + 1}/{revisionNavigation.total}
                           </span>
-                          <UserMessageActionTooltip label={t('Next message revision')}>
-                            <button
-                              type="button"
-                              className={userMessageActionButtonClassName}
-                              aria-label={t('Next message revision')}
-                              disabled={!revisionNavigation.onNext || !canEditMessage}
-                              onClick={revisionNavigation.onNext}
+                          <UserMessageActionTooltip
+                            label={revisionNavigation.disabledReason ?? t('Next message revision')}
+                          >
+                            <span
+                              tabIndex={revisionNavigation.disabledReason ? 0 : undefined}
+                              aria-label={revisionNavigation.disabledReason}
                             >
-                              <ChevronRight className="size-3.5" aria-hidden="true" />
-                            </button>
+                              <button
+                                type="button"
+                                className={userMessageActionButtonClassName}
+                                aria-label={t('Next message revision')}
+                                disabled={
+                                  !revisionNavigation.onNext ||
+                                  !canEditMessage ||
+                                  Boolean(revisionNavigation.disabledReason)
+                                }
+                                onClick={revisionNavigation.onNext}
+                              >
+                                <ChevronRight className="size-3.5" aria-hidden="true" />
+                              </button>
+                            </span>
                           </UserMessageActionTooltip>
                         </div>
                       </>
@@ -2001,6 +2026,7 @@ const areRevisionNavigationsEqual = (
     next !== undefined &&
     previous.index === next.index &&
     previous.total === next.total &&
+    previous.disabledReason === next.disabledReason &&
     (previous.onPrevious === undefined) === (next.onPrevious === undefined) &&
     (previous.onNext === undefined) === (next.onNext === undefined))
 

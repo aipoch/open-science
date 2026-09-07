@@ -441,6 +441,19 @@ const WorkspaceMessageScrollerImpl = ({
           onError: onAnnotationError
         }
       : undefined
+  const revisionNavigationDisabledReason =
+    activeSession &&
+    (activeSession.activeRun ||
+      activeSession.status === 'running' ||
+      activeSession.status === 'waiting-for-user' ||
+      activeSession.status === 'waiting-permission' ||
+      activeSession.status === 'waiting-plan-approval' ||
+      activeSession.fixLoopActive ||
+      activeSession.compacting ||
+      activeSession.branchSwitchBlocked ||
+      activeSession.conversationGraphSyncBlocked)
+      ? t('Message revisions are unavailable while this session is busy or blocked.')
+      : undefined
   const currentProjectId = activeSession?.projectId
   const statusAllowsScrollToFirstMessage = Boolean(
     activeSession &&
@@ -1446,6 +1459,7 @@ const WorkspaceMessageScrollerImpl = ({
                         ? {
                             index: revisionIndex,
                             total: revisions.length,
+                            disabledReason: revisionNavigationDisabledReason,
                             onPrevious: activateRevision(revisionIndex - 1),
                             onNext: activateRevision(revisionIndex + 1)
                           }
