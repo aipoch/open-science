@@ -1,16 +1,35 @@
-import { createCodeFenceTracker } from './code-fence'
+import { createMarkdownFenceScanner } from './code-fence'
 
-const quoteAxisListItems = (raw: string): string =>
-  raw
-    .split(',')
+const quoteAxisListItems = (raw: string): string => {
+  const items: string[] = []
+  let start = 0
+  let quote = ''
+  for (let index = 0; index < raw.length; index += 1) {
+    const char = raw[index]
+    if (quote) {
+      if (char === '\\') index += 1
+      else if (char === quote) quote = ''
+    } else if (char === '"' || char === "'") {
+      // Embedded quotes in an unquoted label are ambiguous; preserve the source.
+      if (raw.slice(start, index).trim()) return raw
+      quote = char
+    } else if (char === ',') {
+      items.push(raw.slice(start, index))
+      start = index + 1
+    }
+  }
+  if (quote) return raw
+  items.push(raw.slice(start))
+  return items
     .map((item) => item.trim())
     .filter(Boolean)
     .map((item) => {
       if (item.startsWith('"') || item.startsWith("'")) return item
       if (/^-?\d+(\.\d+)?$/.test(item)) return item
-      return `"${item.replace(/^["']|["']$/g, '')}"`
+      return `"${item}"`
     })
     .join(', ')
+}
 
 const normalizeXychartLine = (line: string): string[] => {
   const titleAndXAxis = line.match(/^\s*"([^"]+)"\s+x-axis\s+\[(.+)\]\s*$/i)
@@ -48,7 +67,7 @@ const normalizeMermaidBlocks = (markdown: string): string =>
   )
 
 /** GitHub-style alerts: > [!NOTE] → styled aside (ChatGPT/Cursor/Claude docs style). */
-const normalizeGfmAlerts = (markdown: string): string =>
+const replaceGfmAlerts = (markdown: string): string =>
   markdown.replace(
     /^>\s*\[!([A-Z]+)\]\s*\r?\n((?:>\s?.+\r?\n?)+)/gim,
     (_match, type: string, body: string) => {
@@ -61,6 +80,23 @@ const normalizeGfmAlerts = (markdown: string): string =>
       return `<aside data-agent-alert="${type.toLowerCase()}">\n\n${content}\n\n</aside>\n\n`
     }
   )
+
+// Transform only prose spans. Fence lines and bodies retain their original bytes, including
+// incomplete streaming fences and CRLF line endings.
+const normalizeGfmAlerts = (markdown: string): string => {
+  const tracker = createMarkdownFenceScanner()
+  let proseStart = 0
+  let output = ''
+  for (const match of markdown.matchAll(/[^\n]*(?:\n|$)/g)) {
+    const line = match[0]
+    if (!line) continue
+    if (tracker.feed(line.replace(/\r?\n$/, ''))) {
+      output += replaceGfmAlerts(markdown.slice(proseStart, match.index)) + line
+      proseStart = match.index + line.length
+    }
+  }
+  return output + replaceGfmAlerts(markdown.slice(proseStart))
+}
 
 /** Normalize agent markdown before Streamdown parses it. */
 const normalizeAgentMarkdown = (markdown: string): string =>
@@ -143,7 +179,7 @@ const widenPastMermaidOpener = (markdown: string, boundary: number): number => {
 // the first line not yet fed to the tracker; only the per-call widening still walks the text.
 const createNormalizationBoundaryFinder = (): ((markdown: string) => number) => {
   let cachedInput: string | null = null
-  let fenceTracker = createCodeFenceTracker()
+  let fenceTracker = createMarkdownFenceScanner()
   let fenceOpenerStart = -1
   let boundary = 0
   // Start of the first line not yet fed to the tracker. The trailing partial line is never fed:
@@ -151,7 +187,7 @@ const createNormalizationBoundaryFinder = (): ((markdown: string) => number) => 
   let scanPosition = 0
 
   const reset = (): void => {
-    fenceTracker = createCodeFenceTracker()
+    fenceTracker = createMarkdownFenceScanner()
     fenceOpenerStart = -1
     boundary = 0
     scanPosition = 0
@@ -166,7 +202,8 @@ const createNormalizationBoundaryFinder = (): ((markdown: string) => number) => 
       const line = markdown.slice(scanPosition, newlineIndex)
 
       const fenceWasOpen = fenceTracker.isOpen()
-      const fenceIsOpen = fenceTracker.feed(line)
+      fenceTracker.feed(line)
+      const fenceIsOpen = fenceTracker.isOpen()
       if (!fenceWasOpen && fenceIsOpen) {
         fenceOpenerStart = scanPosition
       } else if (fenceWasOpen && !fenceIsOpen) {
