@@ -3931,6 +3931,8 @@
     "Edit session": "Sitzung bearbeiten",
     "This session's title or description changed in another window. Your changes were not saved. Close and reopen the editor to review the latest details.": "Der Titel oder die Beschreibung dieser Sitzung wurde in einem anderen Fenster geändert. Ihre Änderungen wurden nicht gespeichert. Schließen Sie den Editor und öffnen Sie ihn erneut, um die neuesten Details zu prüfen.",
     "Could not save session details.": "Die Sitzungsdetails konnten nicht gespeichert werden.",
+    "Shorten the title to 80 characters or fewer before saving.": "Kürzen Sie den Titel vor dem Speichern auf höchstens 80 Zeichen.",
+    "Shorten the description to 1000 characters or fewer before saving.": "Kürzen Sie die Beschreibung vor dem Speichern auf höchstens 1000 Zeichen.",
     "Generates a title and description after the first message is saved.": "Erstellt einen Titel und eine Beschreibung, nachdem die erste Nachricht gespeichert wurde.",
     "Models for session details, subagents, review, and image understanding.": "Modelle für Sitzungsdetails, Unteragenten, Reviews und Bildverständnis.",
     "Session details": "Sitzungsdetails",
@@ -4038,7 +4040,7 @@
     "Saved names: {{names}}.": "Gespeicherte Namen: {{names}}.",
     "Failed to restore scratch auto-detection.": "Die automatische Erkennung des Scratch-Verzeichnisses konnte nicht wiederhergestellt werden.",
     "Helper source evidence is incomplete for this version.": "Die Nachweise zum Quellcode der Hilfsprogramme sind für diese Version unvollständig.",
-    "Supporting code evidence is incomplete for this version.": "Die Nachweise zum unterstützenden Code sind für diese Version unvollständig.",
+    "Supporting code is incomplete. Failed or interrupted cells may have changed kernel state before stopping.": "Der unterstützende Code ist unvollständig. Fehlgeschlagene oder unterbrochene Zellen haben möglicherweise vor dem Abbruch den Kernel-Zustand verändert.",
     "Reconstructed directly from the immutable Execution Log · see <logLink>Execution Log</logLink> for the raw record": "Direkt aus dem unveränderlichen Ausführungsprotokoll rekonstruiert · den Rohdatensatz finden Sie im <logLink>Ausführungsprotokoll</logLink>",
     "Reconstructing directly from recorded helper and execution evidence.": "Direkte Rekonstruktion aus den aufgezeichneten Hilfsprogramm- und Ausführungsnachweisen.",
     "This script can be reconstructed directly from the immutable Execution Log.": "Dieses Skript kann direkt aus dem unveränderlichen Ausführungsprotokoll rekonstruiert werden.",
@@ -4811,7 +4813,11 @@
     "Version storage is unavailable. Check that the storage location is accessible, then retry.": "Der Versionsspeicher ist nicht verfügbar. Prüfen Sie, ob der Speicherort erreichbar ist, und versuchen Sie es erneut.",
     "This comparison could not be completed. Return to the version preview to check the file.": "Dieser Vergleich konnte nicht abgeschlossen werden. Kehren Sie zur Versionsvorschau zurück, um die Datei zu prüfen.",
     "View version": "Version anzeigen",
-    "Shorten the title to 80 characters or fewer before saving.": "Kürzen Sie den Titel vor dem Speichern auf höchstens 80 Zeichen.",
-    "Shorten the description to 1000 characters or fewer before saving.": "Kürzen Sie die Beschreibung vor dem Speichern auf höchstens 1000 Zeichen."
+    "Only the first record is previewed.": "Nur der erste Datensatz wird in der Vorschau angezeigt.",
+    "No atoms found": "Keine Atome gefunden",
+    "Previewing model 1 of {{total}}.": "Vorschau von Modell 1 von {{total}}.",
+    "Hydrogens are hidden; alternate locations use blank or A. Atom count refers to the displayed model.": "Wasserstoffatome sind ausgeblendet; alternative Positionen verwenden ein Leerzeichen oder A. Die Atomzahl bezieht sich auf das angezeigte Modell.",
+    "Generating surface…": "Oberfläche wird erzeugt…",
+    "Surface could not be generated. Showing sticks.": "Die Oberfläche konnte nicht erzeugt werden. Stäbchen werden angezeigt."
   }
 }

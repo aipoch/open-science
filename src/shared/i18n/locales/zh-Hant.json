@@ -1427,7 +1427,7 @@
     "Generated from the name when possible. Edit it now or leave it blank to generate automatically; it cannot be changed after creation.": "可根據名稱自動產生。現在可以編輯，或留空以自動產生；建立後不可變更。",
     "Generating reconstructed script": "正在產生重建腳本",
     "Helper source evidence is incomplete for this version.": "此版本的 Helper 原始碼證據不完整。",
-    "Supporting code evidence is incomplete for this version.": "此版本的支援程式碼證據不完整。",
+    "Supporting code is incomplete. Failed or interrupted cells may have changed kernel state before stopping.": "輔助程式碼不完整。失敗或中斷的儲存格可能在停止前已改變核心狀態。",
     "Generating script…": "正在產生腳本…",
     "Generating…": "正在產生…",
     "Get a desktop notification when a task finishes, fails, or waits for your approval while you're away from the app.": "當你不在應用程式中時，任務完成、失敗或等待核准時會收到桌面通知。",
@@ -4067,6 +4067,8 @@
     "Edit session": "編輯工作階段",
     "This session's title or description changed in another window. Your changes were not saved. Close and reopen the editor to review the latest details.": "此工作階段的標題或描述已在另一個視窗中變更。你的變更尚未儲存。請關閉並重新開啟編輯器，以查看最新詳細資料。",
     "Could not save session details.": "無法儲存工作階段詳細資料。",
+    "Shorten the title to 80 characters or fewer before saving.": "請將標題縮短至 80 個字元以內再儲存。",
+    "Shorten the description to 1000 characters or fewer before saving.": "請將描述縮短至 1000 個字元以內再儲存。",
     "Generates a title and description after the first message is saved.": "儲存第一則訊息後產生標題與說明。",
     "Models for session details, subagents, review, and image understanding.": "用於工作階段詳細資訊、子智能體、審查與影像理解的模型。",
     "Session details": "工作階段詳細資訊",
@@ -4657,7 +4659,11 @@
     "Version storage is unavailable. Check that the storage location is accessible, then retry.": "版本儲存空間無法使用。請確認儲存位置可以存取後重試。",
     "This comparison could not be completed. Return to the version preview to check the file.": "無法完成此次比較。請返回版本預覽檢查檔案。",
     "View version": "查看版本",
-    "Shorten the title to 80 characters or fewer before saving.": "請將標題縮短至 80 個字元以內再儲存。",
-    "Shorten the description to 1000 characters or fewer before saving.": "請將描述縮短至 1000 個字元以內再儲存。"
+    "Only the first record is previewed.": "僅預覽首筆記錄。",
+    "No atoms found": "找不到原子",
+    "Previewing model 1 of {{total}}.": "正在預覽第 1 個模型，共 {{total}} 個。",
+    "Hydrogens are hidden; alternate locations use blank or A. Atom count refers to the displayed model.": "隱藏氫原子；替代位置使用空白或 A。原子數指目前顯示的模型。",
+    "Generating surface…": "正在產生表面…",
+    "Surface could not be generated. Showing sticks.": "無法產生表面。已顯示為棍狀。"
   }
 }

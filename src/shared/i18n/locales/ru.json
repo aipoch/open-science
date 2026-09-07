@@ -1403,7 +1403,7 @@
     "Generated from the name when possible. Edit it now or leave it blank to generate automatically; it cannot be changed after creation.": "Создано из имени, если возможно. Редактируйте его сейчас или оставьте пустым, чтобы сгенерировать автоматически; после создания изменить нельзя.",
     "Generating reconstructed script": "Создание восстановленного скрипта",
     "Helper source evidence is incomplete for this version.": "Данные об исходном коде вспомогательных модулей для этой версии неполны.",
-    "Supporting code evidence is incomplete for this version.": "Данные о вспомогательном коде для этой версии неполны.",
+    "Supporting code is incomplete. Failed or interrupted cells may have changed kernel state before stopping.": "Вспомогательный код неполон. Ячейки с ошибкой или прерванным выполнением могли изменить состояние ядра до остановки.",
     "Generating script…": "Создание скрипта…",
     "Generating…": "Создание…",
     "Get a desktop notification when a task finishes, fails, or waits for your approval while you're away from the app.": "Получать уведомления, когда задача завершена, завершилась с ошибкой или ожидает разрешения, пока приложение неактивно.",
@@ -4503,6 +4503,8 @@
     "Edit session": "Изменить сессию",
     "This session's title or description changed in another window. Your changes were not saved. Close and reopen the editor to review the latest details.": "Название или описание этой сессии было изменено в другом окне. Ваши изменения не сохранены. Закройте и снова откройте редактор, чтобы просмотреть актуальные данные.",
     "Could not save session details.": "Не удалось сохранить сведения о сессии.",
+    "Shorten the title to 80 characters or fewer before saving.": "Перед сохранением сократите название до 80 символов или меньше.",
+    "Shorten the description to 1000 characters or fewer before saving.": "Перед сохранением сократите описание до 1000 символов или меньше.",
     "Generates a title and description after the first message is saved.": "Создаёт название и описание после сохранения первого сообщения.",
     "Models for session details, subagents, review, and image understanding.": "Модели для сведений о сессии, субагентов, проверки и анализа изображений.",
     "Session details": "Сведения о сессии",
@@ -5106,7 +5108,11 @@
     "Version storage is unavailable. Check that the storage location is accessible, then retry.": "Хранилище версий недоступно. Проверьте доступность места хранения и повторите попытку.",
     "This comparison could not be completed. Return to the version preview to check the file.": "Не удалось завершить сравнение. Вернитесь к предпросмотру версии, чтобы проверить файл.",
     "View version": "Открыть версию",
-    "Shorten the title to 80 characters or fewer before saving.": "Перед сохранением сократите название до 80 символов или меньше.",
-    "Shorten the description to 1000 characters or fewer before saving.": "Перед сохранением сократите описание до 1000 символов или меньше."
+    "Only the first record is previewed.": "В предпросмотре показана только первая запись.",
+    "No atoms found": "Атомы не найдены",
+    "Previewing model 1 of {{total}}.": "Предпросмотр модели 1 из {{total}}.",
+    "Hydrogens are hidden; alternate locations use blank or A. Atom count refers to the displayed model.": "Атомы водорода скрыты; для альтернативных положений используются пробел или A. Число атомов относится к отображаемой модели.",
+    "Generating surface…": "Создание поверхности…",
+    "Surface could not be generated. Showing sticks.": "Не удалось создать поверхность. Показана стержневая модель."
   }
 }

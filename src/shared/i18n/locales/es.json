@@ -1404,7 +1404,7 @@
     "Generated from the name when possible. Edit it now or leave it blank to generate automatically; it cannot be changed after creation.": "Se genera a partir del nombre cuando es posible. Edítelo ahora o déjelo en blanco para generarlo automáticamente; no podrá cambiarse después de la creación.",
     "Generating reconstructed script": "Generando script reconstruido",
     "Helper source evidence is incomplete for this version.": "La evidencia del código fuente del helper está incompleta para esta versión.",
-    "Supporting code evidence is incomplete for this version.": "La evidencia del código complementario está incompleta para esta versión.",
+    "Supporting code is incomplete. Failed or interrupted cells may have changed kernel state before stopping.": "El código de apoyo está incompleto. Las celdas fallidas o interrumpidas pueden haber cambiado el estado del kernel antes de detenerse.",
     "Generating script…": "Generando script…",
     "Generating…": "Generando…",
     "Get a desktop notification when a task finishes, fails, or waits for your approval while you're away from the app.": "Reciba una notificación de escritorio cuando una tarea finalice, falle o espere su aprobación mientras esté fuera de la aplicación.",
@@ -4374,6 +4374,8 @@
     "Edit session": "Editar sesión",
     "This session's title or description changed in another window. Your changes were not saved. Close and reopen the editor to review the latest details.": "El título o la descripción de esta sesión cambió en otra ventana. Sus cambios no se guardaron. Cierre y vuelva a abrir el editor para revisar los detalles más recientes.",
     "Could not save session details.": "No se pudieron guardar los detalles de la sesión.",
+    "Shorten the title to 80 characters or fewer before saving.": "Acorte el título a 80 caracteres o menos antes de guardar.",
+    "Shorten the description to 1000 characters or fewer before saving.": "Acorte la descripción a 1000 caracteres o menos antes de guardar.",
     "Generates a title and description after the first message is saved.": "Genera un título y una descripción después de guardar el primer mensaje.",
     "Models for session details, subagents, review, and image understanding.": "Modelos para detalles de sesión, subagentes, revisión y comprensión de imágenes.",
     "Session details": "Detalles de la sesión",
@@ -4973,7 +4975,11 @@
     "Version storage is unavailable. Check that the storage location is accessible, then retry.": "El almacenamiento de versiones no está disponible. Compruebe que la ubicación sea accesible y vuelva a intentarlo.",
     "This comparison could not be completed. Return to the version preview to check the file.": "No se pudo completar la comparación. Vuelva a la vista previa de la versión para comprobar el archivo.",
     "View version": "Ver versión",
-    "Shorten the title to 80 characters or fewer before saving.": "Acorte el título a 80 caracteres o menos antes de guardar.",
-    "Shorten the description to 1000 characters or fewer before saving.": "Acorte la descripción a 1000 caracteres o menos antes de guardar."
+    "Only the first record is previewed.": "Solo se muestra una vista previa del primer registro.",
+    "No atoms found": "No se encontraron átomos",
+    "Previewing model 1 of {{total}}.": "Vista previa del modelo 1 de {{total}}.",
+    "Hydrogens are hidden; alternate locations use blank or A. Atom count refers to the displayed model.": "Los hidrógenos están ocultos; las posiciones alternativas usan un espacio o A. El número de átomos corresponde al modelo mostrado.",
+    "Generating surface…": "Generando superficie…",
+    "Surface could not be generated. Showing sticks.": "No se pudo generar la superficie. Se muestra en forma de varillas."
   }
 }

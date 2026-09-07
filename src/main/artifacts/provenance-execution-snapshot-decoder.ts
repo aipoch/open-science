@@ -119,6 +119,7 @@ const executionRunValue = (value: unknown): boolean => {
     typeof run.runtimeSegmentId === 'string' &&
     typeof run.promptMessageId === 'string' &&
     (run.kernelEpochId === undefined || typeof run.kernelEpochId === 'string') &&
+    (run.kernelDispatched === undefined || typeof run.kernelDispatched === 'boolean') &&
     (run.kernelKind === 'python' ||
       run.kernelKind === 'r' ||
       run.kernelKind === 'repl' ||

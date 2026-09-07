@@ -1361,7 +1361,7 @@
     "Generated from the name when possible. Edit it now or leave it blank to generate automatically; it cannot be changed after creation.": "가능한 경우 이름에서 생성됩니다. 지금 편집하거나 자동으로 생성되도록 비워 두세요. 생성 후에는 변경할 수 없습니다.",
     "Generating reconstructed script": "재구성된 스크립트 생성",
     "Helper source evidence is incomplete for this version.": "이 버전의 헬퍼 소스 근거가 불완전합니다.",
-    "Supporting code evidence is incomplete for this version.": "이 버전의 지원 코드 근거가 불완전합니다.",
+    "Supporting code is incomplete. Failed or interrupted cells may have changed kernel state before stopping.": "보조 코드가 불완전합니다. 실패하거나 중단된 셀이 멈추기 전에 커널 상태를 변경했을 수 있습니다.",
     "Generating script…": "스크립트 생성 중…",
     "Generating…": "생성 중…",
     "Get a desktop notification when a task finishes, fails, or waits for your approval while you're away from the app.": "앱을 사용하지 않는 동안 작업이 완료되거나 실패하거나 승인을 기다리는 경우 데스크톱 알림을 받습니다.",
@@ -4064,6 +4064,8 @@
     "Edit session": "세션 편집",
     "This session's title or description changed in another window. Your changes were not saved. Close and reopen the editor to review the latest details.": "이 세션의 제목 또는 설명이 다른 창에서 변경되었습니다. 변경 사항이 저장되지 않았습니다. 편집기를 닫았다가 다시 열어 최신 세부 정보를 확인하세요.",
     "Could not save session details.": "세션 세부 정보를 저장할 수 없습니다.",
+    "Shorten the title to 80 characters or fewer before saving.": "저장하기 전에 제목을 80자 이하로 줄이세요.",
+    "Shorten the description to 1000 characters or fewer before saving.": "저장하기 전에 설명을 1000자 이하로 줄이세요.",
     "Generates a title and description after the first message is saved.": "첫 메시지가 저장된 후 제목과 설명을 생성합니다.",
     "Models for session details, subagents, review, and image understanding.": "세션 세부 정보, 서브에이전트, 검토 및 이미지 이해에 사용할 모델입니다.",
     "Session details": "세션 세부 정보",
@@ -4655,7 +4657,11 @@
     "Version storage is unavailable. Check that the storage location is accessible, then retry.": "버전 저장소를 사용할 수 없습니다. 저장 위치에 접근할 수 있는지 확인한 후 다시 시도하세요.",
     "This comparison could not be completed. Return to the version preview to check the file.": "비교를 완료하지 못했습니다. 버전 미리보기로 돌아가 파일을 확인하세요.",
     "View version": "버전 보기",
-    "Shorten the title to 80 characters or fewer before saving.": "저장하기 전에 제목을 80자 이하로 줄이세요.",
-    "Shorten the description to 1000 characters or fewer before saving.": "저장하기 전에 설명을 1000자 이하로 줄이세요."
+    "Only the first record is previewed.": "첫 번째 레코드만 미리 봅니다.",
+    "No atoms found": "원자를 찾을 수 없습니다",
+    "Previewing model 1 of {{total}}.": "모델 {{total}}개 중 1번을 미리 봅니다.",
+    "Hydrogens are hidden; alternate locations use blank or A. Atom count refers to the displayed model.": "수소 원자는 숨깁니다. 대체 위치는 공백 또는 A를 사용합니다. 원자 수는 표시된 모델 기준입니다.",
+    "Generating surface…": "표면 생성 중…",
+    "Surface could not be generated. Showing sticks.": "표면을 생성하지 못했습니다. 막대 형태로 표시합니다."
   }
 }

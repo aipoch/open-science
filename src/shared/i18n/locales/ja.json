@@ -1342,7 +1342,7 @@
     "Generated from the name when possible. Edit it now or leave it blank to generate automatically; it cannot be changed after creation.": "可能な場合は名前から生成されます。今すぐ編集するか、空白のままにすると自動的に生成されます。作成後は変更できません。",
     "Generating reconstructed script": "再構築されたスクリプトの生成",
     "Helper source evidence is incomplete for this version.": "このバージョンのヘルパーソースの証拠は不完全です。",
-    "Supporting code evidence is incomplete for this version.": "このバージョンの補助コードの証拠は不完全です。",
+    "Supporting code is incomplete. Failed or interrupted cells may have changed kernel state before stopping.": "補助コードが不完全です。失敗または中断したセルは、停止前にカーネルの状態を変更した可能性があります。",
     "Generating script…": "スクリプトを生成中…",
     "Generating…": "生成中…",
     "Get a desktop notification when a task finishes, fails, or waits for your approval while you're away from the app.": "アプリを離れている間にタスクが完了、失敗、または承認待ちになったときに、デスクトップ通知を受け取ります。",
@@ -4066,6 +4066,8 @@
     "Edit session": "セッションを編集",
     "This session's title or description changed in another window. Your changes were not saved. Close and reopen the editor to review the latest details.": "このセッションのタイトルまたは説明が別のウィンドウで変更されました。変更は保存されていません。エディターを閉じて再度開き、最新の詳細を確認してください。",
     "Could not save session details.": "セッションの詳細を保存できませんでした。",
+    "Shorten the title to 80 characters or fewer before saving.": "保存する前にタイトルを80文字以内に短くしてください。",
+    "Shorten the description to 1000 characters or fewer before saving.": "保存する前に説明を1000文字以内に短くしてください。",
     "Generates a title and description after the first message is saved.": "最初のメッセージが保存された後にタイトルと説明を生成します。",
     "Models for session details, subagents, review, and image understanding.": "セッションの詳細、サブエージェント、レビュー、画像理解に使用するモデルです。",
     "Session details": "セッションの詳細",
@@ -4657,7 +4659,11 @@
     "Version storage is unavailable. Check that the storage location is accessible, then retry.": "バージョンの保存先を利用できません。保存先にアクセスできることを確認してから再試行してください。",
     "This comparison could not be completed. Return to the version preview to check the file.": "比較を完了できませんでした。バージョンのプレビューに戻ってファイルを確認してください。",
     "View version": "バージョンを表示",
-    "Shorten the title to 80 characters or fewer before saving.": "保存する前にタイトルを80文字以内に短くしてください。",
-    "Shorten the description to 1000 characters or fewer before saving.": "保存する前に説明を1000文字以内に短くしてください。"
+    "Only the first record is previewed.": "最初のレコードのみプレビューしています。",
+    "No atoms found": "原子が見つかりません",
+    "Previewing model 1 of {{total}}.": "{{total}} 個中のモデル 1 をプレビューしています。",
+    "Hydrogens are hidden; alternate locations use blank or A. Atom count refers to the displayed model.": "水素原子は非表示です。代替位置は空白または A を使用します。原子数は表示中のモデルのものです。",
+    "Generating surface…": "表面を生成中…",
+    "Surface could not be generated. Showing sticks.": "表面を生成できませんでした。スティック表示に戻しました。"
   }
 }
