@@ -107,20 +107,28 @@ import type { AnnotationPort } from './annotations/annotation-port'
 const TranscriptEndSync = ({
   scopeId,
   itemCount,
+  mountedItemCount,
   following
 }: {
   scopeId: string | undefined
   itemCount: number
+  mountedItemCount: number
   following: boolean
 }): null => {
   const { scrollToEnd } = useMessageScroller()
-  const previousRef = useRef<{ scopeId: string | undefined; itemCount: number } | undefined>(
-    undefined
-  )
+  const previousRef = useRef<
+    { scopeId: string | undefined; itemCount: number; mountedItemCount: number } | undefined
+  >(undefined)
   useLayoutEffect(() => {
     const previous = previousRef.current
-    previousRef.current = { scopeId, itemCount }
-    if (following && previous?.scopeId === scopeId && previous && itemCount > previous.itemCount) {
+    previousRef.current = { scopeId, itemCount, mountedItemCount }
+    if (
+      following &&
+      previous &&
+      previous.scopeId === scopeId &&
+      itemCount > previous.itemCount &&
+      mountedItemCount === previous.mountedItemCount
+    ) {
       // Content processes the replaced rows in a MutationObserver, which can select a new
       // prompt anchor. Restore follow intent after that observer, before the next paint.
       let cancelled = false
@@ -132,7 +140,7 @@ const TranscriptEndSync = ({
       }
     }
     return undefined
-  }, [following, itemCount, scopeId, scrollToEnd])
+  }, [following, itemCount, mountedItemCount, scopeId, scrollToEnd])
   return null
 }
 
@@ -1869,6 +1877,7 @@ const WorkspaceMessageScrollerImpl = ({
           <TranscriptEndSync
             scopeId={currentPresentationScopeId}
             itemCount={conversationItems.length}
+            mountedItemCount={transcriptWindow.entries.length}
             following={transcriptWindow.isFollowingEnd}
           />
 

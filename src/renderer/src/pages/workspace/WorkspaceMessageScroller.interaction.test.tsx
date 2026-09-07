@@ -4241,6 +4241,27 @@ describe('WorkspaceMessageScroller artifact click behavior', () => {
     }
   )
 
+  it('leaves ordinary transcript growth to the native scroller anchor policy', async () => {
+    const { WorkspaceMessageScroller } = await import('./WorkspaceMessageScroller')
+    root = createRoot(container)
+    const messages = [createMessage({})]
+    const render = async (): Promise<void> => {
+      await act(async () =>
+        root.render(
+          <WorkspaceMessageScroller
+            activeSession={createSession({ status: 'idle', messages: [...messages] })}
+            onSendEditedMessage={vi.fn()}
+          />
+        )
+      )
+    }
+    await render()
+    scrollToEndMock.mockClear()
+    messages.push(createMessage({ id: 'ordinary-append', createdAt: 1710000000001 }))
+    await render()
+    expect(scrollToEndMock).not.toHaveBeenCalled()
+  })
+
   it('mounts the latest window before the end button measures its scroll target', async () => {
     const { WorkspaceMessageScroller } = await import('./WorkspaceMessageScroller')
     const messages = Array.from({ length: 240 }, (_, index) =>
