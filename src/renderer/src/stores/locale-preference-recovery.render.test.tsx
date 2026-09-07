@@ -5,9 +5,8 @@ import { join } from 'node:path'
 import { act, cleanup, render } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { LanguagePreferenceMenu, LanguageSelect } from '@/components/LanguageControls'
+import { LanguageSelect } from '@/components/LanguageControls'
 import { i18next, setI18nLocale } from '@/i18n'
-import { useSettingsStore } from '@/stores/settings-store'
 import { LocalePreferenceOwner } from '../../../main/locale/owner'
 import { SettingsRepository } from '../../../main/settings/repository'
 import type { LanguagePreference, LocalePreferenceSnapshot } from '../../../shared/locale'
@@ -28,7 +27,6 @@ beforeEach(async () => {
   document.documentElement.lang = 'en'
   setI18nLocale('en')
   useLocaleStore.setState({ preference: 'en', locale: 'en', saveFailed: false })
-  useSettingsStore.setState({ isSettingsOpen: false })
   vi.stubGlobal('api', {
     locale: {
       initialize: ({ cachedPreference }: { cachedPreference: LanguagePreference }) =>
@@ -71,35 +69,30 @@ const settle = async (): Promise<void> => {
 }
 
 describe('G01 desktop locale persistence recovery', () => {
-  it.each([LanguageSelect, LanguagePreferenceMenu])(
-    'restores the confirmed language and exposes the failure at %s',
-    async (Control) => {
-      stop = startLocalePreferenceSync()
+  it('restores the confirmed language and exposes the failure in Settings', async () => {
+    stop = startLocalePreferenceSync()
+    await settle()
+    const view = render(<LanguageSelect />)
+    vi.spyOn(repository, 'setLocalePreference').mockRejectedValue(
+      new Error('settings write rejected')
+    )
+
+    await act(async () => {
+      useLocaleStore.getState().setPreference('ja')
       await settle()
-      const view = render(<Control />)
-      vi.spyOn(repository, 'setLocalePreference').mockRejectedValue(
-        new Error('settings write rejected')
-      )
+    })
 
-      await act(async () => {
-        useLocaleStore.getState().setPreference('ja')
-        await settle()
-      })
-
-      expect.soft(projection()).toEqual({
-        main: { preference: 'en', locale: 'en' },
-        renderer: { preference: 'en', locale: 'en' },
-        cache: 'en',
-        html: 'en',
-        i18next: 'en'
-      })
-      if (Control === LanguageSelect)
-        expect.soft(view.getByRole('combobox').textContent).toBe('English')
-      else expect.soft(view.queryByRole('button', { name: 'Language: English' })).not.toBeNull()
-      expect.soft(view.queryByRole('alert')).not.toBeNull()
-      expect((await repository.getSettings()).localePreference).toBe('en')
-    }
-  )
+    expect.soft(projection()).toEqual({
+      main: { preference: 'en', locale: 'en' },
+      renderer: { preference: 'en', locale: 'en' },
+      cache: 'en',
+      html: 'en',
+      i18next: 'en'
+    })
+    expect.soft(view.getByRole('combobox').textContent).toBe('English')
+    expect.soft(view.queryByRole('alert')).not.toBeNull()
+    expect((await repository.getSettings()).localePreference).toBe('en')
+  })
 
   it.each(['ja', 'fr'] as const)(
     'does not let an older failure overwrite a newer successful %s selection',
@@ -200,18 +193,6 @@ describe('G02 browser locale storage synchronization', () => {
 })
 
 describe('locale synchronization lifecycle', () => {
-  it('shows only the Settings error when the Home control remains mounted behind Settings', () => {
-    useSettingsStore.setState({ isSettingsOpen: true })
-    useLocaleStore.setState({ saveFailed: true })
-    const view = render(
-      <>
-        <LanguagePreferenceMenu />
-        <LanguageSelect />
-      </>
-    )
-    expect(view.getAllByRole('alert')).toHaveLength(1)
-  })
-
   it('removes browser listeners and ignores unrelated keys and session storage', () => {
     vi.stubGlobal('api', {})
     stop = startLocalePreferenceSync()

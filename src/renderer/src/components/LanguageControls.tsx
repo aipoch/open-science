@@ -1,17 +1,8 @@
-import { Check, Languages } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuLabel,
-  DropdownMenuTrigger
-} from '@/components/ui/dropdown-menu'
 import { Select, SelectContent, SelectItem, SelectTrigger } from '@/components/ui/select'
 import { cn } from '@/lib/utils'
 import { useLocaleStore } from '@/stores/locale-store'
-import { useSettingsStore } from '@/stores/settings-store'
 import {
   LANGUAGE_PREFERENCES,
   LOCALE_SELF_NAMES,
@@ -20,15 +11,14 @@ import {
 
 // Only the 'System' option follows the interface language. Order puts 'System' first, then the
 // locales in LOCALES order.
-const useOptions = (): { value: LanguagePreference; label: string; description?: string }[] => {
+const useOptions = (): { value: LanguagePreference; label: string }[] => {
   const { t } = useTranslation()
 
   return LANGUAGE_PREFERENCES.map((value) =>
     value === 'system'
       ? {
           value,
-          label: t('System', { context: 'language' }),
-          description: t('Match your device')
+          label: t('System', { context: 'language' })
         }
       : { value, label: LOCALE_SELF_NAMES[value] }
   )
@@ -59,7 +49,7 @@ const LanguageSaveError = ({ className }: { className?: string }): React.JSX.Ele
   )
 }
 
-// Language picker for Settings > Appearance. A Select rather than a segmented control: nine options
+// Language picker for Settings > Appearance. A Select rather than a segmented control: ten options
 // with localized labels overflow the row width the theme control fits into.
 export const LanguageSelect = (): React.JSX.Element => {
   const { t } = useTranslation()
@@ -86,68 +76,6 @@ export const LanguageSelect = (): React.JSX.Element => {
         </SelectContent>
       </Select>
       <LanguageSaveError className="mt-2" />
-    </div>
-  )
-}
-
-type LanguagePreferenceMenuProps = {
-  className?: string
-}
-
-// Compact icon button for the home header, sized to match the neighboring theme / GitHub / settings
-// actions. The trigger is a single glyph (unlike the theme menu, whose icon encodes the current
-// choice) because a language has no natural icon; the active choice is shown by the check in the list.
-export const LanguagePreferenceMenu = ({
-  className
-}: LanguagePreferenceMenuProps): React.JSX.Element => {
-  const { t } = useTranslation()
-  const preference = useLocaleStore((state) => state.preference)
-  const setPreference = useLocaleStore((state) => state.setPreference)
-  const options = useOptions()
-  const active = options.find((option) => option.value === preference) ?? options[0]
-
-  const saveFailed = useLocaleStore((state) => state.saveFailed)
-  const isSettingsOpen = useSettingsStore((state) => state.isSettingsOpen)
-  return (
-    <div className="relative">
-      <DropdownMenu>
-        <DropdownMenuTrigger asChild>
-          <button
-            type="button"
-            aria-label={`${t('Language')}: ${active.label}`}
-            title={`${t('Language')}: ${active.label}`}
-            className={cn(
-              'inline-flex size-9 items-center justify-center rounded-lg text-text-300 transition-colors duration-150 ease-out hover:bg-bg-300 hover:text-text-000',
-              className
-            )}
-          >
-            <Languages className="size-4" strokeWidth={2} aria-hidden="true" />
-          </button>
-        </DropdownMenuTrigger>
-        <DropdownMenuContent align="end" className="w-44">
-          <DropdownMenuLabel>{t('Language')}</DropdownMenuLabel>
-          {options.map(({ value, label, description }) => (
-            <DropdownMenuItem key={value} onSelect={() => setPreference(value)} className="gap-2">
-              <span className="flex-1">
-                <span className="block leading-tight">{label}</span>
-                {description ? (
-                  <span className="block text-xs leading-tight text-muted-foreground">
-                    {description}
-                  </span>
-                ) : null}
-              </span>
-              {preference === value ? (
-                <Check className="size-4 text-foreground" strokeWidth={2.5} aria-hidden="true" />
-              ) : null}
-            </DropdownMenuItem>
-          ))}
-        </DropdownMenuContent>
-      </DropdownMenu>
-      {saveFailed && !isSettingsOpen ? (
-        <div className="absolute right-0 top-full z-40 mt-2 w-max max-w-[calc(100vw-2rem)]">
-          <LanguageSaveError />
-        </div>
-      ) : null}
     </div>
   )
 }

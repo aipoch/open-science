@@ -733,6 +733,8 @@ colors communicate a successful or failed probe/migration result.
 - Root: `min-h-svh bg-background text-foreground`.
 - Container: `mx-auto max-w-[1080px] px-8 py-7 pb-16`.
 - Header: `flex items-center justify-between`.
+- Language and theme preferences live in Settings > General > Appearance; omit their shortcuts
+  from the Home header. The Settings gear opens Settings directly.
 - Brand title: display `Open Science`, `text-[26px] leading-none font-medium`.
 - Global search: expose a `Search` ghost icon action in the header; it opens the same shared dialog as
   `Cmd/Ctrl+K` and does not maintain a second search state.

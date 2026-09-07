@@ -43,11 +43,9 @@ import { useArchiveUndoStore } from '@/stores/archive-undo-store'
 import { useSettingsStore } from '@/stores/settings-store'
 import { useProjectFormDialog } from '@/hooks/useProjectFormDialog'
 import { GitHubStarBadge } from '@/components/GitHubStarBadge'
-import { LanguagePreferenceMenu } from '@/components/LanguageControls'
 import { NetworkStatusIndicator } from '@/components/NetworkStatusIndicator'
 import { NotificationBell } from '@/components/NotificationBell'
 import { ProjectDeletionCleanupNotice } from '@/components/ProjectDeletionCleanupNotice'
-import { ThemePreferenceMenu } from '@/components/ThemeControls'
 import { UpdateCapsule } from '@/components/UpdateCapsule'
 import { sessionWaitReasonLabelKeys } from '@/lib/session-wait-reason-labels'
 import { APP } from '../../../../shared/app-config'
@@ -702,8 +700,6 @@ const HomePage = ({
               >
                 <BookOpenText className="size-4" strokeWidth={2} aria-hidden="true" />
               </Button>
-              <LanguagePreferenceMenu />
-              <ThemePreferenceMenu />
               <NotificationBell />
               <button
                 type="button"
