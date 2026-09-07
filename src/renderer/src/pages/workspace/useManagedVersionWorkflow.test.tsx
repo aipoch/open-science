@@ -134,6 +134,38 @@ afterEach(async () => {
   vi.unstubAllGlobals()
 })
 
+it.each(['literature', 'local', 'notebook-input'] as const)(
+  'does not inspect %s identities as Artifacts, including after an Artifact preview',
+  async (source) => {
+    inspect.mockResolvedValue({ ok: true, value: snapshot('artifact', 1) })
+    const item = itemFor('artifact')
+    await render(item)
+    expect(workflow.inspect).toBeDefined()
+    expect(changedListeners.size).toBe(1)
+    inspect.mockClear()
+
+    await render({ ...item, source })
+    expect(inspect).not.toHaveBeenCalled()
+    expect(workflow.identity).toBeUndefined()
+    expect(workflow.inspect).toBeUndefined()
+    expect(workflow.inspectError).toBeUndefined()
+    expect(workflow.inspectLoading).toBe(false)
+    expect(workflow.controlsInspect).toBeUndefined()
+    expect(changedListeners.size).toBe(0)
+  }
+)
+
+it('retains the established default Artifact source', async () => {
+  inspect.mockResolvedValue({ ok: true, value: snapshot('artifact', 1) })
+  await render({ ...itemFor('artifact'), source: undefined })
+  expect(inspect).toHaveBeenCalledWith({
+    source: 'artifact',
+    projectId: 'project-1',
+    fileId: 'file-1'
+  })
+  expect(workflow.inspect?.source).toBe('artifact')
+})
+
 describe.each(['upload', 'artifact'] as const)('%s version inspection freshness', (source) => {
   it('refreshes the head, editable text and download context when the same file metadata changes', async () => {
     inspect.mockResolvedValueOnce({ ok: true, value: snapshot(source, 1) })
