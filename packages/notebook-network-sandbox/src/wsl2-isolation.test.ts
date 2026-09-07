@@ -14,6 +14,53 @@ const reconciled = async (): Promise<boolean> => true
 afterEach(() => vi.unstubAllEnvs())
 
 describe('WSL2 sandbox adapter', () => {
+  it('creates standalone read-only mount destinations before sealing the private scaffolding', async () => {
+    const roots = ['/mnt/d/app/notebook-inputs/session/attachment', '/mnt/d/app/trust/ca.pem']
+    const launch = await wsl2Launch({
+      target: {
+        kind: 'wsl2',
+        profileId: 'readonly-inputs',
+        distro: 'Ubuntu-22.04',
+        user: 'open-science-spike'
+      },
+      command: 'true',
+      cwd: '/mnt/d/workspace',
+      env: {},
+      filesystem: {
+        readOnlyRoots: roots,
+        readWriteRoots: ['/mnt/d/workspace'],
+        deniedReadRoots: [],
+        deniedWriteRoots: []
+      },
+      reconcileGuest: reconciled,
+      mapPath: async (path) => path,
+      gatewayPort: 4312,
+      gatewayCredentials: { username: 'command-user', password: 'command-secret' },
+      openBridge: async () => ({
+        socketPath: '/tmp/open-science-network-command/gateway.sock',
+        close: async () => ({ networkClosed: true, temporaryResourcesRemoved: true })
+      })
+    })
+    try {
+      const seal = launch.argv.findIndex(
+        (arg, index) => arg === '--remount-ro' && launch.argv[index + 1] === '/mnt'
+      )
+      expect(seal).toBeGreaterThan(0)
+      for (const root of roots) {
+        const bind = launch.argv.findIndex(
+          (arg, index) => arg === '--ro-bind' && launch.argv[index + 1] === root
+        )
+        expect(bind).toBeGreaterThan(0)
+        expect(bind).toBeLessThan(seal)
+      }
+      expect(
+        launch.argv.some((arg, index) => arg === '--dir' && launch.argv[index + 1] === roots[1])
+      ).toBe(false)
+    } finally {
+      await launch.release()
+    }
+  })
+
   it('compiles Windows policy into a gateway-only bwrap Bash launch', async () => {
     const runtimeRoot = 'C:\\Open Science\\runtime 路径'
     const cacheEnvironment = notebookWorkloadCacheEnv(runtimeRoot)

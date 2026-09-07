@@ -795,11 +795,10 @@ const wsl2Launch = async (request: Wsl2LaunchRequest): Promise<Wsl2Launch> => {
     (parent) => parent !== '/home' && parent !== '/mnt' && parent !== '/media'
   )
   for (const parent of visibleParents) bwrap.push('--dir', parent)
-  // Materialize writable/hidden destinations before sealing the private root. Bind operations may
-  // then safely apply in specificity order without trying to create directories under that seal.
+  // Materialize writable/hidden directories. Read-only binds may refer to either files or
+  // directories, so let bwrap create those destinations with the correct source type below.
   for (const root of readWriteRoots) bwrap.push('--dir', root)
   for (const root of explicitDeniedReadRoots) bwrap.push('--dir', root)
-  for (const root of sensitiveRoots) bwrap.push('--remount-ro', root)
   // A later bind on an ancestor hides an earlier descendant mount. Apply allowed parents before
   // their more-specific children; then apply denies last because a denied ancestor owns its entire
   // subtree and must not be reopened by a narrower grant.
@@ -820,6 +819,9 @@ const wsl2Launch = async (request: Wsl2LaunchRequest): Promise<Wsl2Launch> => {
   }
   for (const root of explicitDeniedWriteRoots) bwrap.push('--ro-bind', root, root)
   for (const root of explicitDeniedReadRoots) bwrap.push('--tmpfs', root)
+  // Seal the scaffolding only after all bind destinations exist. This remount is non-recursive:
+  // explicit writable child mounts remain writable, while ungranted siblings stay read-only.
+  for (const root of sensitiveRoots) bwrap.push('--remount-ro', root)
   bwrap.push('--clearenv')
   for (const [key, value] of Object.entries(guestEnvironment)) {
     bwrap.push('--setenv', key, value)

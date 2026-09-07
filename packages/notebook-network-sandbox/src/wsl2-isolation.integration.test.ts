@@ -86,7 +86,7 @@ describe.runIf(enabled)('WSL2 sandbox real profile', () => {
     await rm(root, { recursive: true, force: true })
   })
 
-  const launch = (command: string): Promise<Wsl2Launch> =>
+  const launch = (command: string, readOnlyRoots: string[] = []): Promise<Wsl2Launch> =>
     wsl2Launch({
       target: {
         kind: 'wsl2',
@@ -108,7 +108,7 @@ describe.runIf(enabled)('WSL2 sandbox real profile', () => {
       },
       filesystem: {
         privateRoot: root,
-        readOnlyRoots: [],
+        readOnlyRoots,
         readWriteRoots: [workspace, handoff, cache],
         deniedReadRoots: [unauthorized],
         deniedWriteRoots: []
@@ -198,6 +198,40 @@ mkdir -p "$MPLCONFIGDIR" "$UV_CACHE_DIR" "$HF_DATASETS_CACHE" "$HF_XET_CACHE" "$
       stderr: 'failed'
     })
     await prepared.release()
+  })
+
+  it('mounts standalone notebook inputs and read-only files before sealing their parents', async () => {
+    const input = join(root, 'notebook-inputs', 'session', 'attachment')
+    const certificate = join(root, 'trust', 'bundle', 'current', 'ca.pem')
+    await mkdir(input, { recursive: true })
+    await mkdir(join(root, 'trust', 'bundle', 'current'), { recursive: true })
+    await writeFile(join(input, 'data.txt'), 'input-ok')
+    await writeFile(certificate, 'certificate-ok')
+    const guestPath = (path: string): string =>
+      execFileSync('wsl.exe', ['-d', distro!, '-u', user!, '--exec', 'wslpath', '-a', '-u', path], {
+        encoding: 'utf8'
+      }).trim()
+    const inputPath = guestPath(input)
+    const certificatePath = guestPath(certificate)
+    const prepared = await launch(
+      `set -eu
+[ "$(cat '${inputPath}/data.txt')" = input-ok ]
+[ "$(cat '${certificatePath}')" = certificate-ok ]
+if touch '${inputPath}/blocked' 2>/dev/null; then exit 41; fi
+if touch '${inputPath}/../blocked' 2>/dev/null; then exit 42; fi
+if /bin/sh -c 'echo changed > "${certificatePath}"' 2>/dev/null; then exit 43; fi
+printf writable > output.txt
+printf inputs-ok`,
+      [input, certificate]
+    )
+    try {
+      const admission = prepared.beginSpawn()
+      const execution = execute(prepared.argv, prepared.env, workspace)
+      admission.started()
+      await expect(execution).resolves.toEqual({ exitCode: 0, stdout: 'inputs-ok', stderr: '' })
+    } finally {
+      await prepared.release()
+    }
   })
 
   it('preserves nested read-only and denied roots under writable parents', async () => {
