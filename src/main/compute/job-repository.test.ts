@@ -1278,6 +1278,14 @@ describe('ComputeJob repository (SQLite integration)', () => {
       repo.transitionAnalysis({
         sessionId: 'session-1',
         jobIds: ['job-failed'],
+        messageId: 'replacement-analysis',
+        state: 'dispatched'
+      })
+    ).rejects.toThrow(/does not match its durable dispatch/)
+    await expect(
+      repo.transitionAnalysis({
+        sessionId: 'session-1',
+        jobIds: ['job-failed'],
         messageId: 'different-message',
         state: 'succeeded'
       })
