@@ -46,6 +46,10 @@ export type OperationRecoveryDeps = {
   // publish those transaction-authorized archives before clearing the journal; it must not rerun the
   // normal interrupted-operation action (notably, a successful install must not be marked broken).
   publishArchives?: (record: RuntimeOperationRecord) => Promise<void>
+  // A materialize transaction whose managed target is provably absent did not commit an environment.
+  // Startup may discard its pre-publication ambiguity and disposable working cache instead of blocking
+  // every later cache writer. The coordinator owns the filesystem/path validation behind this seam.
+  canDiscardPendingArchivePublication?: (record: RuntimeOperationRecord) => Promise<boolean>
   // The coordinator defers clearing successfully published records until their exact disposable cache
   // roots are also removed. Keeping the record durable makes a transient cleanup failure retryable even
   // when the recorded TEMP fallback is no longer one of the current process's candidates.
@@ -66,6 +70,7 @@ export type RecoveryAction =
   | 'verify-or-rebuild'
   | 'repair-required'
   | 'noop'
+  | 'discard-uncommitted-publication'
   // Liveness was 'unknown' — a survivor might still be writing, so the entry is left for a later startup.
   | 'skipped-child-unknown'
 
@@ -114,6 +119,12 @@ export const reconcileInterruptedOperations = async (
         continue
       }
       if (record.archivePublicationPending) {
+        if (await deps.canDiscardPendingArchivePublication?.(record)) {
+          await journal.complete(record.operationId)
+          reconciled.push(record)
+          deps.onReconciled?.(record, 'discard-uncommitted-publication')
+          continue
+        }
         // The mutation may have committed, but the process died before immutable archive authority was
         // persisted. Normal interrupted-operation repair could be safe for the prefix yet must not also
         // authorize deletion of the only retained archive bytes. Keep both target and working cache
