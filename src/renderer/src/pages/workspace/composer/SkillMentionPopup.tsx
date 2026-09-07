@@ -1,5 +1,8 @@
 import { useEffect, useId, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+import { CircleAlert, LoaderCircle, PackageOpen, RotateCw, SearchX } from 'lucide-react'
+
+import { Button } from '@/components/ui/button'
 
 import type { SkillSource, SkillView } from '../../../../../shared/settings'
 import { useSettingsStore } from '@/stores/settings-store'
@@ -165,9 +168,16 @@ export const SkillMentionPopup = ({
 
   const loading = skills.length === 0 && !skillsLoaded && !loadError
   const failed = skills.length === 0 && !skillsLoaded && loadError
+  const StatusIcon = loading
+    ? LoaderCircle
+    : failed
+      ? CircleAlert
+      : visibleSkills.length === 0
+        ? PackageOpen
+        : SearchX
 
   return (
-    <div className="absolute bottom-full left-0 mb-1 z-50 flex flex-col bg-bg-000 border-0.5 border-border-200 rounded-xl shadow-[0_4px_16px_hsl(var(--always-black)/10%)] p-1.5 min-w-[320px] max-w-[440px] max-h-[min(45vh,18rem)] overflow-hidden">
+    <div className="absolute bottom-full left-0 mb-1 z-50 flex flex-col bg-bg-000 border-0.5 border-border-200 rounded-xl shadow-[0_4px_16px_hsl(var(--always-black)/10%)] p-1.5 w-max min-w-[min(320px,100%)] max-w-[min(440px,100%)] max-h-[min(45vh,18rem)] overflow-hidden">
       <ul
         id={resolvedListboxId}
         role="listbox"
@@ -175,8 +185,19 @@ export const SkillMentionPopup = ({
         className="min-h-0 flex-1 overflow-y-auto"
       >
         {matches.length === 0 && (
-          <li role="presentation" className="px-2 py-3 text-sm text-text-300">
-            <div role={failed ? 'alert' : 'status'}>
+          <li role="presentation" className="flex min-h-18 items-center gap-3 px-3 py-3.5">
+            <span
+              aria-hidden="true"
+              className={`flex size-8 shrink-0 items-center justify-center rounded-lg ${failed ? 'bg-status-warning-surface text-status-warning-foreground dark:bg-status-warning-dark-surface dark:text-status-warning-dark-foreground' : 'bg-bg-200 text-text-100'}`}
+            >
+              <StatusIcon
+                className={`size-4${loading ? ' animate-spin motion-reduce:animate-none' : ''}`}
+              />
+            </span>
+            <div
+              role={failed ? 'alert' : 'status'}
+              className="min-w-0 flex-1 text-sm font-medium leading-5 text-text-000"
+            >
               {loading
                 ? t('Loading skills…')
                 : failed
@@ -186,17 +207,19 @@ export const SkillMentionPopup = ({
                     : t('No matching skills')}
             </div>
             {failed && (
-              <button
+              <Button
                 type="button"
-                className="mt-2 rounded px-2 py-1 text-text-100 hover:bg-bg-200"
+                variant="outline"
+                size="sm"
                 onMouseDown={(event) => event.preventDefault()}
                 onClick={() => {
                   setLoadError(false)
                   setRetryAttempt((attempt) => attempt + 1)
                 }}
               >
+                <RotateCw aria-hidden="true" />
                 {t('Retry')}
-              </button>
+              </Button>
             )}
           </li>
         )}
@@ -232,19 +255,28 @@ export const SkillMentionPopup = ({
           )
         })}
       </ul>
-      <div className="mt-1 -mx-1.5 -mb-1.5 shrink-0 px-3.5 pt-1.5 pb-2 border-t border-border-300 flex items-center gap-3 text-[11px] text-text-400 select-none">
+      <div className="mt-1 -mx-1.5 -mb-1.5 flex shrink-0 items-center justify-end gap-3 border-t border-border-200 bg-bg-200/40 px-3 py-1.5 text-[11px] text-text-100 select-none">
         {matches.length > 0 && (
           <>
             <span>
-              <span className="text-text-300">↑↓</span> {t('navigate')}
+              <kbd className="rounded border border-border-200 bg-bg-000 px-1 py-0.5 font-sans text-[10px] font-medium">
+                ↑↓
+              </kbd>{' '}
+              {t('navigate')}
             </span>
             <span>
-              <span className="text-text-300">Enter / Tab</span> {t('select')}
+              <kbd className="rounded border border-border-200 bg-bg-000 px-1 py-0.5 font-sans text-[10px] font-medium">
+                Enter / Tab
+              </kbd>{' '}
+              {t('select')}
             </span>
           </>
         )}
         <span>
-          <span className="text-text-300">Esc</span> {t('close')}
+          <kbd className="rounded border border-border-200 bg-bg-000 px-1 py-0.5 font-sans text-[10px] font-medium">
+            Esc
+          </kbd>{' '}
+          {t('close')}
         </span>
       </div>
     </div>
