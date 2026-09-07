@@ -1780,41 +1780,53 @@ it.each(['current failure', 'historical failure', 'image budget', 'evidence budg
   }
 )
 
-it('retains current inline images before native upload overflow', async () => {
-  const root = await createRoot()
-  const uploads = new UploadRepository(root)
-  const currentUploads = await stageUploadFixtures(uploads, {
-    files: Array.from({ length: 9 }, (_, index) => ({
-      name: `upload-${index}.png`,
-      mimeType: 'image/png',
-      content: Buffer.alloc(2 * 1024 * 1024, index).toString('base64')
-    }))
-  })
-  const currentData = Buffer.alloc(MAX_ACP_MESSAGE_IMAGE_BYTES, 42).toString('base64')
-  const owner = new AcpPromptContentOwner({
-    uploadRepository: uploads,
-    fileReferenceResolver: createManagedFileReferenceResolver({ uploads }),
-    inlineImageBudgetBytes: 64 * 1024 * 1024
-  })
-  const prepared = await owner.prepare({
-    appSessionId: 'session-1',
-    projectId: 'default-project',
-    text: 'Inspect these images',
-    historyImages: [],
-    historyUploads: [],
-    currentUploads,
-    currentImages: [
-      { mimeType: 'image/png', data: currentData, byteLength: MAX_ACP_MESSAGE_IMAGE_BYTES }
-    ],
-    references: [],
-    codexSkillInputs: [],
-    skillImportEnabled: false
-  })
-  try {
-    const blocks = contentBlocks(prepared.content)
-    expect(blocks.some((block) => block.type === 'image' && block.data === currentData)).toBe(true)
-    expect(blocks.some((block) => block.type === 'resource_link')).toBe(true)
-  } finally {
-    prepared.close()
+it.each(['current', 'historical'] as const)(
+  'retains current inline images before native %s upload overflow',
+  async (origin) => {
+    const root = await createRoot()
+    const uploads = new UploadRepository(root)
+    const pendingUploads = await stageUploadFixtures(uploads, {
+      files: Array.from({ length: 9 }, (_, index) => ({
+        name: `upload-${index}.png`,
+        mimeType: 'image/png',
+        content: Buffer.alloc(2 * 1024 * 1024, index).toString('base64')
+      }))
+    })
+    const finalizedUploads = await uploads.finalizePendingSessionUploads(
+      'session-1',
+      pendingUploads,
+      'default-project'
+    )
+    const currentData = Buffer.alloc(MAX_ACP_MESSAGE_IMAGE_BYTES, 42).toString('base64')
+    const owner = new AcpPromptContentOwner({
+      uploadRepository: uploads,
+      fileReferenceResolver: createManagedFileReferenceResolver({ uploads }),
+      inlineImageBudgetBytes: 64 * 1024 * 1024
+    })
+    const prepared = await owner.prepare({
+      appSessionId: 'session-1',
+      projectId: 'default-project',
+      text: 'Inspect these images',
+      historyImages: [],
+      historyUploads: origin === 'historical' ? finalizedUploads : [],
+      currentUploads: origin === 'current' ? finalizedUploads : [],
+      currentImages: [
+        { mimeType: 'image/png', data: currentData, byteLength: MAX_ACP_MESSAGE_IMAGE_BYTES }
+      ],
+      references: [],
+      codexSkillInputs: [],
+      skillImportEnabled: false
+    })
+    try {
+      const blocks = contentBlocks(prepared.content)
+      expect(blocks.some((block) => block.type === 'image' && block.data === currentData)).toBe(
+        true
+      )
+      expect(blocks.some((block) => block.type === 'resource_link')).toBe(true)
+      expect(prepared.historyImageCount).toBe(origin === 'historical' ? 9 : 0)
+      expect(prepared.imageSources).toHaveLength(10)
+    } finally {
+      prepared.close()
+    }
   }
-})
+)

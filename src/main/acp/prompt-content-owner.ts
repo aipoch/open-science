@@ -262,7 +262,14 @@ class AcpPromptContentOwner {
       const contentBlocks: ContentBlock[] = input.text.trim()
         ? [{ type: 'text', text: input.text }]
         : []
-      let imageBudget: InlineImageBudget = { imageCount: 0, base64Bytes: 0 }
+      // Reserve current images before admitting history, without changing the historical prefix.
+      const currentImageBudget = input.imageCompatibilityRelay
+        ? { imageCount: 0, base64Bytes: 0 }
+        : currentImages.reduce<InlineImageBudget>(
+            (budget, image) => consumeInlineImageBudget(budget, image),
+            { imageCount: 0, base64Bytes: 0 }
+          )
+      let imageBudget: InlineImageBudget = currentImageBudget
       const totalFileTextBudget = Math.max(1, Math.floor(input.fileTextBudget ?? 12_000))
       const fileTextBudget: PromptFileTextBudget = {
         remaining: totalFileTextBudget,
@@ -318,7 +325,10 @@ class AcpPromptContentOwner {
         }
       }
       if (input.historyImages.length > 0) {
-        this.setSessionInlineImageBytes(input, imageBudget.base64Bytes)
+        this.setSessionInlineImageBytes(
+          input,
+          imageBudget.base64Bytes - currentImageBudget.base64Bytes
+        )
       }
 
       if (hasUploads) {
@@ -379,7 +389,9 @@ class AcpPromptContentOwner {
       // Keep the historical prefix while admitting current inline images before upload fallbacks.
       await appendUploads(0, input.historyUploads.length)
       for (const image of currentImages) {
-        appendBlock({ type: 'image', data: image.data, mimeType: image.mimeType })
+        // Sanitized above and already reserved in the native request budget.
+        contentBlocks.push({ type: 'image', data: image.data, mimeType: image.mimeType })
+        imageSources.push(undefined)
       }
       await appendUploads(input.historyUploads.length, promptUploads.length)
 
