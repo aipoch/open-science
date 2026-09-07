@@ -4921,6 +4921,10 @@
     "Python commands": "Comandos de Python",
     "Python 3 commands": "Comandos de Python 3",
     "Node.js commands": "Comandos de Node.js",
-    "R scripts": "Scripts de R"
+    "R scripts": "Scripts de R",
+    "Find": "Buscar",
+    "Find text": "Buscar texto",
+    "Find in window": "Buscar en la ventana",
+    "Close find": "Cerrar búsqueda"
   }
 }

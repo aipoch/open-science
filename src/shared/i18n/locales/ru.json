@@ -5054,6 +5054,10 @@
     "Python commands": "Команды Python",
     "Python 3 commands": "Команды Python 3",
     "Node.js commands": "Команды Node.js",
-    "R scripts": "Скрипты R"
+    "R scripts": "Скрипты R",
+    "Find": "Найти",
+    "Find text": "Найти текст",
+    "Find in window": "Найти в окне",
+    "Close find": "Закрыть поиск"
   }
 }

@@ -4308,6 +4308,31 @@ describe('WorkspaceMessageScroller artifact click behavior', () => {
     expect(container.textContent).toContain('prefetched transcript sentinel')
   })
 
+  it('acknowledges every find show request in an unchanged conversation', async () => {
+    const { WorkspaceMessageScroller } = await import('./WorkspaceMessageScroller')
+    root = createRoot(container)
+    await act(async () => {
+      root.render(
+        <WorkspaceMessageScroller
+          activeSession={createSession({
+            status: 'idle',
+            messages: [createMessage({ content: 'searchable text' })]
+          })}
+          onSendEditedMessage={vi.fn()}
+        />
+      )
+    })
+    await act(async () => showWindowFindListener?.())
+    expect(announceWindowFindContentReady).toHaveBeenCalledTimes(1)
+    announceWindowFindContentReady.mockClear()
+    await act(async () => showWindowFindListener?.())
+    expect.soft(announceWindowFindContentReady).toHaveBeenCalledTimes(1)
+    await act(async () => hideWindowFindListener?.())
+    announceWindowFindContentReady.mockClear()
+    await act(async () => showWindowFindListener?.())
+    expect(announceWindowFindContentReady).toHaveBeenCalledTimes(1)
+  })
+
   it('reveals the full transcript only while whole-window find is open', async () => {
     const { WorkspaceMessageScroller } = await import('./WorkspaceMessageScroller')
     const messages = Array.from({ length: 120 }, (_, index) =>

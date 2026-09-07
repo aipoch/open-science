@@ -4603,6 +4603,10 @@
     "Python commands": "Python 명령",
     "Python 3 commands": "Python 3 명령",
     "Node.js commands": "Node.js 명령",
-    "R scripts": "R 스크립트"
+    "R scripts": "R 스크립트",
+    "Find": "찾기",
+    "Find text": "텍스트 찾기",
+    "Find in window": "창에서 찾기",
+    "Close find": "찾기 닫기"
   }
 }
