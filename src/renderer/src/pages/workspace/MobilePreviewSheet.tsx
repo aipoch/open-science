@@ -108,7 +108,7 @@ const MobilePreviewSheet = ({
         <div
           ref={setContentRef}
           tabIndex={-1}
-          role={isMobile ? 'dialog' : undefined}
+          role={modalOpen ? 'dialog' : undefined}
           aria-modal={modalOpen || undefined}
           aria-label={isMobile ? t('Preview') : undefined}
           aria-description={

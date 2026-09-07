@@ -376,6 +376,18 @@ describe('preview draft lifecycle', () => {
     expect(confirmation()).toBeNull()
   })
 
+  it('allows the workspace navigation shortcut when the mobile preview is closed', async () => {
+    viewport.mobile = true
+    usePreviewWorkbenchStore.getState().syncPanelState('collapsed')
+    await act(async () => root.render(<ResponsivePreview />))
+    await act(async () =>
+      window.dispatchEvent(new KeyboardEvent('keydown', { key: 'b', ctrlKey: true, bubbles: true }))
+    )
+    expect(
+      document.querySelector('[role="dialog"][aria-label="Workspace navigation"]')
+    ).not.toBeNull()
+  })
+
   it('isolates the mobile background, guards Escape, and preserves a nested confirmation across resizing', async () => {
     await act(async () =>
       root.render(
