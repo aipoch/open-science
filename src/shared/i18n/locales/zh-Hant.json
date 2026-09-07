@@ -100,6 +100,7 @@
     "Import Connector configuration": "匯入連接器設定"
   },
   "renderer": {
+    "Not answered": "未填寫",
     "Automatic contrast": "自動對比度",
     "Display range": "顯示範圍",
     "Your draft is preserved. Reload the current details, then merge them into your draft before saving.": "草稿已保留。請重新載入目前說明，將其合併至草稿後再儲存。",

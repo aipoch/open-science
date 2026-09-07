@@ -103,6 +103,7 @@
     "Import Connector configuration": "Импорт конфигурации коннектора"
   },
   "renderer": {
+    "Not answered": "Нет ответа",
     "Automatic contrast": "Автоматическая контрастность",
     "Display range": "Диапазон отображения",
     "Your draft is preserved. Reload the current details, then merge them into your draft before saving.": "Черновик сохранён. Загрузите актуальное описание и объедините его с черновиком перед сохранением.",

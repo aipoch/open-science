@@ -6326,6 +6326,7 @@ describe('session store public contract', () => {
         'setBranchSwitchBlocked',
         'setContextUsage',
         'setElicitationDraftAnswers',
+        'setElicitationEditDraft',
         'setElicitationHistoryReplayRequest',
         'setElicitationPending',
         'setFixLoopActive',
@@ -6391,6 +6392,7 @@ describe('session store public contract', () => {
       'src/renderer/src/pages/workspace/WorkspaceAgentLoadingRow.tsx',
       'src/renderer/src/pages/workspace/WorkspaceArtifactVisibility.tsx',
       'src/renderer/src/pages/workspace/WorkspaceContextCompactionActivityRow.tsx',
+      'src/renderer/src/pages/workspace/WorkspaceElicitationCard.tsx',
       'src/renderer/src/pages/workspace/WorkspaceManagePackagesActivityRow.tsx',
       'src/renderer/src/pages/workspace/WorkspaceMessageItem.tsx',
       'src/renderer/src/pages/workspace/WorkspaceMessageScroller.tsx',
@@ -7310,6 +7312,135 @@ describe('truncateSessionFromMessage', () => {
     seedSession({ filesRevision: 3 })
     useSessionStore.getState().truncateSessionFromMessage('session-1', 'user-2')
     expect(useSessionStore.getState().sessions[0].filesRevision).toBe(3)
+  })
+
+  const seedEditableElicitation = (): void => {
+    seedSession({
+      activities: [
+        {
+          ...createActivity('choice-1', baseTime + 200),
+          status: 'in_progress',
+          elicitation: {
+            message: 'Choose',
+            state: 'pending',
+            durable: { kind: 'agent-user-choice', requestId: 'request-1' },
+            fields: [
+              {
+                id: 'question_0',
+                label: 'Choice',
+                kind: 'single-select',
+                options: [
+                  { value: 'a', label: 'A' },
+                  { value: 'b', label: 'B' }
+                ]
+              },
+              { id: 'question_0_custom', label: 'Other', kind: 'text' }
+            ]
+          }
+        }
+      ]
+    })
+  }
+  const editSnapshot = {
+    requestId: 'request-1',
+    activeQuestionIndex: 0,
+    values: { question_0_custom: 'Unsubmitted text' }
+  }
+
+  it('keeps bounded elicitation edits in memory across save acknowledgements', () => {
+    seedEditableElicitation()
+    const before = useSessionStore.getState().sessions[0]
+    useSessionStore.getState().setElicitationEditDraft('session-1', 'choice-1', 'request-1', {
+      ...editSnapshot,
+      values: { question_0_custom: 'x'.repeat(5000), unknown: 'discard' }
+    })
+    const source = useSessionStore.getState().sessions[0]
+    expect(source.updatedAt).toBe(before.updatedAt)
+    expect(source.activities).toBe(before.activities)
+    expect(source.elicitationEditDrafts?.['choice-1'].values).toEqual({
+      question_0: undefined,
+      question_0_custom: 'x'.repeat(4000)
+    })
+    expect(source.activities?.[0].elicitation).not.toHaveProperty('answers')
+    expect(source.activities?.[0].elicitation).not.toHaveProperty('draftAnswers')
+    const persisted = toPersistedSession(source)
+    expect(persisted).not.toHaveProperty('elicitationEditDrafts')
+    expect(JSON.stringify(persisted)).not.toContain('x'.repeat(4000))
+    useSessionStore.getState().applyDurableSessionProjection({
+      source,
+      session: persisted,
+      mode: 'replace-persisted-if-current'
+    })
+    expect(useSessionStore.getState().sessions[0].elicitationEditDrafts).toEqual(
+      source.elicitationEditDrafts
+    )
+  })
+
+  it('rejects stale elicitation edits and clears snapshots when the request settles', () => {
+    seedEditableElicitation()
+    const owner = useSessionStore.getState()
+    const notify = vi.fn()
+    const unsubscribe = useSessionStore.subscribe(notify)
+    owner.setElicitationEditDraft('session-1', 'choice-1', 'old-request', editSnapshot)
+    owner.setElicitationEditDraft('session-1', 'missing', 'request-1', editSnapshot)
+    owner.setElicitationEditDraft('session-1', 'choice-1', 'request-1', {
+      ...editSnapshot,
+      activeQuestionIndex: 99
+    })
+    expect(notify).not.toHaveBeenCalled()
+    owner.setElicitationEditDraft('session-1', 'choice-1', 'request-1', editSnapshot)
+    expect(notify).toHaveBeenCalledOnce()
+    owner.setElicitationEditDraft('session-1', 'choice-1', 'old-request', undefined)
+    expect(notify).toHaveBeenCalledOnce()
+    const elicitation = useSessionStore.getState().sessions[0].activities![0].elicitation!
+    owner.upsertToolActivity({
+      sessionId: 'session-1',
+      toolCallId: 'choice-1',
+      eventId: 'settled',
+      elicitation: { ...elicitation, state: 'cancelled' }
+    })
+    expect(
+      useSessionStore.getState().sessions[0].elicitationEditDrafts?.['choice-1']
+    ).toBeUndefined()
+    owner.setElicitationEditDraft('session-1', 'choice-1', 'request-1', editSnapshot)
+    expect(
+      useSessionStore.getState().sessions[0].elicitationEditDrafts?.['choice-1']
+    ).toBeUndefined()
+    unsubscribe()
+  })
+
+  it('retains hidden-branch elicitation edits without applying them to another activity', () => {
+    seedEditableElicitation()
+    const owner = useSessionStore.getState()
+    owner.setElicitationEditDraft('session-1', 'choice-1', 'request-1', editSnapshot)
+    owner.truncateSessionFromMessage('session-1', 'user-2')
+    const source = useSessionStore.getState().sessions[0]
+    expect(source.activities?.some((item) => item.id === 'choice-1')).toBe(false)
+    const persisted = toPersistedSession(source)
+    expect(persisted.conversationGraph?.activities.some((item) => item.id === 'choice-1')).toBe(
+      true
+    )
+    owner.applyDurableSessionProjection({
+      source,
+      session: persisted,
+      mode: 'replace-persisted-if-current'
+    })
+    expect(
+      useSessionStore.getState().sessions[0].elicitationEditDrafts?.['choice-1']
+    ).toMatchObject(editSnapshot)
+    const before = useSessionStore.getState()
+    owner.setElicitationEditDraft('session-1', 'choice-1', 'request-1', {
+      ...editSnapshot,
+      values: {}
+    })
+    expect(useSessionStore.getState()).toBe(before)
+    owner.activateMessageBranch('session-1', persisted.conversationGraph!.branches[0].id)
+    expect(
+      useSessionStore.getState().sessions[0].activities?.some((item) => item.id === 'choice-1')
+    ).toBe(true)
+    expect(
+      useSessionStore.getState().sessions[0].elicitationEditDrafts?.['choice-1']
+    ).toMatchObject(editSnapshot)
   })
 
   it('persists completed steps for a pending multi-question elicitation', () => {

@@ -181,9 +181,21 @@ export const projectToolActivity = (
 
   if (existingActivity) {
     if (existingActivity.eventIds.includes(input.eventId)) return session
+    let editDrafts = session.elicitationEditDrafts
+    if (
+      editDrafts?.[input.toolCallId] &&
+      input.elicitation &&
+      (input.elicitation.state !== 'pending' ||
+        (input.elicitation.durable &&
+          input.elicitation.durable.requestId !== editDrafts[input.toolCallId]?.requestId))
+    ) {
+      editDrafts = { ...editDrafts }
+      delete editDrafts[input.toolCallId]
+    }
     const activityWasTerminal = isTerminalToolActivityStatus(existingActivity.status)
     return {
       ...session,
+      elicitationEditDrafts: editDrafts,
       status: getToolActivitySessionStatus(session),
       activities: activities.map((activity) =>
         activity.id === input.toolCallId
