@@ -7,6 +7,8 @@ import { dialogOverlayClassName, dialogPanelClassName } from '@/components/ui/di
 import { ActionMenuProvider, ActionMenuTarget } from '@/components/action-menu'
 import { ResizablePanel } from '@/components/ui/resizable'
 import { cn } from '@/lib/utils'
+import { errorDetail } from '@/lib/error-detail'
+import { ErrorNotice } from '@/components/error-notice'
 import { useNavigationStore } from '@/stores/navigation-store'
 import type {
   PreviewFileItem,
@@ -23,6 +25,7 @@ import {
   createPreviewTabActionBindings,
   getPreviewTabActionRecipe,
   PREVIEW_TAB_ACTION_CATALOG,
+  PreviewTabActionError,
   type PreviewTabActionCommand,
   type PreviewTabActionContext,
   type PreviewTabActionDeps
@@ -34,6 +37,7 @@ import { PreviewToolContent } from './previews/PreviewToolContent'
 import type { RestoredPlanResponder } from './session-plan/SessionPlanSurfaces'
 import { useHorizontalScrollFade } from './use-horizontal-scroll-fade'
 import { usePdfContextAction } from './use-pdf-context-action'
+import { requestComposerFocus } from './composer-focus-events'
 
 type PreviewPanelProps = PreviewInteractionPort & {
   panelRef: React.Ref<PanelImperativeHandle>
@@ -114,6 +118,7 @@ const PreviewTabActionTarget = ({
   )
   const context: PreviewTabActionContext = {
     tabCount,
+    pdfContextPending: pdfAction?.pending,
     ...(pdfAction && !pdfAction.disabled ? { pdfContext: pdfAction.state } : {})
   }
   const stageLocalPath = window.api.uploads?.stageLocalPath
@@ -165,7 +170,12 @@ const PreviewTabActionTarget = ({
         const composerFocusRequested = composerFocusRequestedRef.current
         composerFocusRequestedRef.current = false
         if (!composerFocusRequested) {
-          document.getElementById(getPreviewTabId(item.id))?.focus()
+          const activeId = usePreviewWorkbenchStore.getState().activeItemId
+          const target =
+            document.getElementById(getPreviewTabId(item.id)) ??
+            (activeId ? document.getElementById(getPreviewTabId(activeId)) : null)
+          if (target) target.focus()
+          else requestComposerFocus()
         }
       }}
       asChild
@@ -675,6 +685,34 @@ const PreviewPanelSurface = ({
   onUnlinkReadingContext,
   ...annotationPort
 }: PreviewPanelSurfaceProps): React.JSX.Element => {
+  const { t } = useTranslation()
+  const [actionFailure, setActionFailure] = useState<PreviewTabActionError>()
+  const [retryPending, setRetryPending] = useState(false)
+  const retryPendingRef = useRef(false)
+  const retryAction = async (): Promise<void> => {
+    if (!actionFailure || retryPendingRef.current) return
+    retryPendingRef.current = true
+    setRetryPending(true)
+    try {
+      await actionFailure.retry()
+      setActionFailure((current) => (current === actionFailure ? undefined : current))
+    } catch (error) {
+      setActionFailure((current) =>
+        current === actionFailure
+          ? new PreviewTabActionError(
+              actionFailure.command,
+              actionFailure.fileName,
+              actionFailure.retry,
+              error
+            )
+          : current
+      )
+    } finally {
+      retryPendingRef.current = false
+      setRetryPending(false)
+    }
+  }
+
   const items = usePreviewWorkbenchStore((state) => state.items)
   const activeItemId = usePreviewWorkbenchStore((state) => state.activeItemId)
   const panelState = usePreviewWorkbenchStore((state) => state.panelState)
@@ -695,7 +733,13 @@ const PreviewPanelSurface = ({
       : (activeItem?.id ?? 'empty')
 
   return (
-    <ActionMenuProvider testId="preview-tab-context-menu">
+    <ActionMenuProvider
+      testId="preview-tab-context-menu"
+      onActionError={(error) => {
+        if (error instanceof PreviewTabActionError) setActionFailure(error)
+        else console.error('Failed to execute preview tab action', error)
+      }}
+    >
       <aside
         id="right-panel"
         className={cn(
@@ -716,6 +760,32 @@ const PreviewPanelSurface = ({
               onPdfContextError={onPdfContextError}
               onLinkReadingContext={onLinkReadingContext}
               onUnlinkReadingContext={onUnlinkReadingContext}
+            />
+          </div>
+        ) : null}
+        {actionFailure ? (
+          <div
+            className="mx-2 my-2 max-h-[50%] shrink-0 overflow-y-auto"
+            data-testid="preview-tab-action-error"
+          >
+            <ErrorNotice
+              role="alert"
+              tone="amber"
+              title={
+                actionFailure.command === 'copy-path'
+                  ? t('Could not copy the file path.')
+                  : actionFailure.command === 'download'
+                    ? t('Could not download this file.')
+                    : t('Could not save this file as an artifact.')
+              }
+              description={actionFailure.fileName}
+              errorCode={errorDetail(actionFailure.cause)}
+              primaryButton={{
+                label: t('Retry'),
+                onClick: () => void retryAction(),
+                loading: retryPending
+              }}
+              secondaryButton={{ label: t('Close'), onClick: () => setActionFailure(undefined) }}
             />
           </div>
         ) : null}

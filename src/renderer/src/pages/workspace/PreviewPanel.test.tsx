@@ -1307,6 +1307,80 @@ describe('PreviewPanel', () => {
     window.removeEventListener(FOCUS_COMPOSER_EVENT, focusListener)
   })
 
+  it('disables the PDF tab command while linking is pending', async () => {
+    let finish!: () => void
+    const linkPdfContext = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          finish = resolve
+        })
+    )
+    usePreviewWorkbenchStore.getState().activateProject('project-1')
+    window.api.sessions = {
+      linkPdfContext,
+      unlinkPdfContext: vi.fn()
+    } as unknown as Window['api']['sessions']
+    window.api.artifacts = {
+      getLineage: vi.fn().mockResolvedValue(undefined)
+    } as unknown as Window['api']['artifacts']
+    useSessionStore.setState({
+      sessions: [
+        {
+          id: 'session-1',
+          projectId: 'project-1',
+          title: 'Session',
+          cwd: '/workspace',
+          status: 'idle',
+          messages: [],
+          runtimeContext: { version: 1, revision: 1 },
+          createdAt: 1,
+          updatedAt: 1
+        } as ChatSession
+      ],
+      selectedSessionId: 'session-1'
+    })
+    const focusListener = vi.fn()
+    window.addEventListener(FOCUS_COMPOSER_EVENT, focusListener)
+    usePreviewWorkbenchStore.getState().upsertAndActivateItem(
+      createFileItem({
+        format: 'pdf',
+        title: 'paper.pdf',
+        name: 'paper.pdf',
+        artifactId: 'artifact-1',
+        selectedVersionId: 'version-1',
+        path: 'artifact-version:project-1/session-1/artifact-1/version-1'
+      })
+    )
+    await renderPanel()
+
+    await openTabContextMenu(0)
+    expect(menuCommands()[0]).toBe('toggle-pdf-context')
+    expect(
+      document.body.querySelector('[data-action-id="toggle-pdf-context"]')?.textContent
+    ).toContain('Read with agent')
+
+    await clickMenuCommand('toggle-pdf-context')
+
+    try {
+      expect(linkPdfContext).toHaveBeenCalledTimes(1)
+      await openTabContextMenu(0)
+      const command = document.body.querySelector('[data-action-id="toggle-pdf-context"]')
+      expect(command).not.toBeNull()
+      expect(command?.getAttribute('aria-disabled')).toBe('true')
+      await clickMenuCommand('toggle-pdf-context')
+      expect(linkPdfContext).toHaveBeenCalledTimes(1)
+    } finally {
+      await act(async () => finish())
+      window.removeEventListener(FOCUS_COMPOSER_EVENT, focusListener)
+    }
+    await openTabContextMenu(0)
+    expect(
+      document.body
+        .querySelector('[data-action-id="toggle-pdf-context"]')
+        ?.getAttribute('aria-disabled')
+    ).not.toBe('true')
+  })
+
   it('routes the PDF tab command through the Composer Reading history port when provided', async () => {
     const linkPdfContext = vi.fn()
     const onLinkReadingContext = vi.fn().mockResolvedValue(undefined)
@@ -1551,5 +1625,117 @@ describe('PreviewPanel', () => {
     expect(stageLocalPath).toHaveBeenCalledWith(
       expect.objectContaining({ name: 'notes.md', sourcePath: '/tmp/notes.md' })
     )
+  })
+  it.each([
+    ['download', 'Could not download this file.'],
+    ['copy-path', 'Could not copy the file path.'],
+    ['save-as-artifact', 'Could not save this file as an artifact.']
+  ])('shows a retryable failure for %s from an inactive tab', async (command, title) => {
+    const failure = new Error('File operation denied')
+    const rejectOperation = vi.fn().mockRejectedValue(failure)
+    const log = vi.spyOn(console, 'error').mockImplementation(() => {})
+    Object.assign(navigator, { clipboard: { writeText: rejectOperation } })
+    if (command === 'download') window.api.saveManagedFile = rejectOperation
+    if (command === 'save-as-artifact') window.api.uploads.stageLocalPath = rejectOperation
+    usePreviewWorkbenchStore.getState().upsertAndActivateItem(createFileItem({}))
+    usePreviewWorkbenchStore.getState().upsertItem(
+      createFileItem({
+        id: 'local-file',
+        source: 'local',
+        name: 'notes.png',
+        title: 'notes.png',
+        path: '/workspace/notes.png'
+      })
+    )
+    await renderPanel()
+    try {
+      await openTabContextMenu(1)
+      await clickMenuCommand(command)
+      expect(rejectOperation).toHaveBeenCalledTimes(1)
+      expect(usePreviewWorkbenchStore.getState().activeItemId).toBe('item-1')
+      expect(document.body.querySelector('[role="menu"]')).toBeNull()
+      const notice = container.querySelector('[data-testid="preview-tab-action-error"]')
+      expect(notice?.closest('[hidden]')).toBeNull()
+      expect(notice?.querySelector('[role="alert"]')?.textContent).toContain(title)
+      expect(document.body.textContent).toContain(title)
+      expect(document.body.textContent).toContain(failure.message)
+      const retry = Array.from(document.body.querySelectorAll('button')).find(
+        (button) => button.textContent === 'Try again' || button.textContent === 'Retry'
+      )
+      expect(retry).toBeDefined()
+      // Retry still targets the original file after its tab has been removed.
+      await act(async () => usePreviewWorkbenchStore.getState().removeItem('local-file'))
+      await act(async () => retry!.click())
+      expect(rejectOperation).toHaveBeenCalledTimes(2)
+      expect(document.body.textContent).toContain(title)
+      let finish!: () => void
+      rejectOperation.mockImplementation(
+        () =>
+          new Promise<void>((resolve) => {
+            finish = resolve
+          })
+      )
+      await act(async () => retry!.click())
+      expect(retry!.disabled).toBe(true)
+      await act(async () => retry!.click())
+      expect(rejectOperation).toHaveBeenCalledTimes(3)
+      const request = rejectOperation.mock.calls[2][0]
+      if (command === 'copy-path') expect(request).toBe('/workspace/notes.png')
+      else
+        expect(request).toEqual(
+          expect.objectContaining(
+            command === 'download'
+              ? { path: '/workspace/notes.png' }
+              : { sourcePath: '/workspace/notes.png' }
+          )
+        )
+      await act(async () => finish())
+      expect(document.body.textContent).not.toContain(title)
+    } finally {
+      log.mockRestore()
+    }
+  })
+
+  it('focuses the remaining active tab after closing the focused tab from its menu', async () => {
+    await renderTwoFileTabs()
+    container.querySelector<HTMLButtonElement>('[role="tab"]')!.focus()
+    await openTabContextMenu(0)
+    await clickMenuCommand('close')
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0))
+    })
+    expect(usePreviewWorkbenchStore.getState().activeItemId).toBe('item-2')
+    const remaining = document.getElementById('preview-tab-item-2')
+    expect(remaining).not.toBeNull()
+    expect(document.activeElement).toBe(remaining)
+  })
+  it('keeps download cancellation silent', async () => {
+    vi.mocked(window.api.saveManagedFile).mockResolvedValue({ saved: false })
+    await renderTwoFileTabs()
+    await openTabContextMenu(0)
+    await clickMenuCommand('download')
+    expect(window.api.saveManagedFile).toHaveBeenCalledTimes(1)
+    expect(container.querySelector('[data-testid="preview-tab-action-error"]')).toBeNull()
+  })
+
+  it('hands focus to the composer after the last tab is closed from its menu', async () => {
+    const composer = document.createElement('textarea')
+    document.body.appendChild(composer)
+    const focusComposer = (): void => composer.focus()
+    window.addEventListener(FOCUS_COMPOSER_EVENT, focusComposer)
+    usePreviewWorkbenchStore.getState().upsertAndActivateItem(createFileItem({}))
+    await renderPanel()
+    try {
+      await openTabContextMenu(0)
+      await clickMenuCommand('close')
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 0))
+      })
+      expect(usePreviewWorkbenchStore.getState().items).toHaveLength(0)
+      expect(document.activeElement).toBe(composer)
+    } finally {
+      window.removeEventListener(FOCUS_COMPOSER_EVENT, focusComposer)
+      composer.remove()
+    }
   })
 })
