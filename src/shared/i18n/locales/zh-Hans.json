@@ -4621,6 +4621,10 @@
     "Automatic correction stopped because the active conversation changed.": "活动对话已变化，自动修正已停止。",
     "Review did not start. Please try again.": "审查未启动，请重试。",
     "Review failed. You can try again.": "审查失败，可以重试。",
-    "No checkable claims": "没有可检查的主张"
+    "No checkable claims": "没有可检查的主张",
+    "UTF-16 CSV preview is not supported. Save a copy as UTF-8 to preview it.": "暂不支持预览 UTF-16 编码的 CSV。请另存一份 UTF-8 编码的副本以进行预览。",
+    "The preview limit was reached before a complete header could be read.": "尚未读取完整表头，已达到预览上限。",
+    "The file exceeds the preview limit. Only complete records are shown.": "文件超出预览上限，仅显示完整记录。",
+    "The delimiter could not be detected reliably. Commas are used in this preview.": "无法可靠识别分隔符。本次预览使用逗号作为分隔符。"
   }
 }

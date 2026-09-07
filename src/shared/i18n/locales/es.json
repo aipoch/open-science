@@ -4937,6 +4937,10 @@
     "Automatic correction stopped because the active conversation changed.": "La corrección automática se detuvo porque cambió la conversación activa.",
     "Review did not start. Please try again.": "La revisión no se inició. Vuelva a intentarlo.",
     "Review failed. You can try again.": "La revisión falló. Puede volver a intentarlo.",
-    "No checkable claims": "No hay afirmaciones verificables"
+    "No checkable claims": "No hay afirmaciones verificables",
+    "UTF-16 CSV preview is not supported. Save a copy as UTF-8 to preview it.": "La vista previa de CSV en UTF-16 no es compatible. Guarde una copia en UTF-8 para previsualizarla.",
+    "The preview limit was reached before a complete header could be read.": "Se alcanzó el límite de la vista previa antes de poder leer una cabecera completa.",
+    "The file exceeds the preview limit. Only complete records are shown.": "El archivo supera el límite de la vista previa. Solo se muestran registros completos.",
+    "The delimiter could not be detected reliably. Commas are used in this preview.": "No se pudo detectar el delimitador de forma fiable. Se utilizan comas en esta vista previa."
   }
 }

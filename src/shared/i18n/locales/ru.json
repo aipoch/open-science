@@ -5070,6 +5070,10 @@
     "Automatic correction stopped because the active conversation changed.": "Автоматическое исправление остановлено, поскольку активный диалог изменился.",
     "Review did not start. Please try again.": "Проверка не началась. Повторите попытку.",
     "Review failed. You can try again.": "Проверка завершилась ошибкой. Можно повторить попытку.",
-    "No checkable claims": "Нет утверждений для проверки"
+    "No checkable claims": "Нет утверждений для проверки",
+    "UTF-16 CSV preview is not supported. Save a copy as UTF-8 to preview it.": "Предпросмотр CSV в UTF-16 не поддерживается. Сохраните копию в UTF-8 для предпросмотра.",
+    "The preview limit was reached before a complete header could be read.": "Предел предпросмотра достигнут до завершения чтения заголовка.",
+    "The file exceeds the preview limit. Only complete records are shown.": "Файл превышает предел предпросмотра. Показаны только полные записи.",
+    "The delimiter could not be detected reliably. Commas are used in this preview.": "Не удалось надёжно определить разделитель. В этом предпросмотре используются запятые."
   }
 }
