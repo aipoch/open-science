@@ -77,6 +77,8 @@ const runOfficePreview = async (
   const { start, container, fetchFile, reportState } = options
   const controller = new AbortController()
   let disposeRender: OfficePreviewRuntimeCleanup | undefined
+  let ready = false
+  let sessionError: Error | undefined
 
   try {
     reportState({ sessionId: start.sessionId, phase: 'reading' })
@@ -132,6 +134,13 @@ const runOfficePreview = async (
         name: start.name,
         container,
         signal: controller.signal,
+        onError: (error) => {
+          if (controller.signal.aborted) return
+          sessionError = error
+          controller.abort(error)
+          if (ready)
+            reportState({ sessionId: start.sessionId, phase: 'error', error: 'RENDER_FAILED' })
+        },
         onStatus: (status) =>
           reportState({
             sessionId: start.sessionId,
@@ -150,6 +159,11 @@ const runOfficePreview = async (
       }
       throw asRuntimeError(error, 'RENDER_FAILED', 'Office preview rendering failed')
     }
+    if (sessionError) {
+      await disposeRender?.()
+      throw asRuntimeError(sessionError, 'RENDER_FAILED', 'Office preview rendering failed')
+    }
+    ready = true
     reportState({ sessionId: start.sessionId, phase: 'ready' })
   } catch (error) {
     controller.abort(error)

@@ -1,5 +1,5 @@
 diff --git a/node_modules/@file-viewer/renderer-spreadsheet/dist/spreadsheet.js b/node_modules/@file-viewer/renderer-spreadsheet/dist/spreadsheet.js
-index 3378e4a..d779036 100644
+index 3378e4a7..55292dc1 100644
 --- a/node_modules/@file-viewer/renderer-spreadsheet/dist/spreadsheet.js
 +++ b/node_modules/@file-viewer/renderer-spreadsheet/dist/spreadsheet.js
 @@ -4,6 +4,8 @@ import { buildRows, clampWindowStart, collectWindowStarts, createEmptyVirtualSta
@@ -39,6 +39,18 @@ index 3378e4a..d779036 100644
      let scrollDirection = 1;
      let lastScrollY = 0;
      let sheetSessionId = 0;
+@@ -636,9 +652,9 @@ const renderFileViewerSpreadsheet = async (buffer, target, type, context) => {
+     const getActiveSheet = () => sheets.find(sheet => sheet.id === sheetIndex);
+     const getSheetTabs = () => {
+         const visible = sheets.filter(sheet => !sheet.hidden);
+-        return visible.length ? visible : sheets;
++        return visible;
+     };
+-    const getActiveSheetId = () => { var _a; return sheetIndex !== null && sheetIndex !== void 0 ? sheetIndex : (_a = sheets[0]) === null || _a === void 0 ? void 0 : _a.id; };
++    const getActiveSheetId = () => { var _a; return sheetIndex !== null && sheetIndex !== void 0 ? sheetIndex : (_a = sheets.find(sheet => !sheet.hidden)) === null || _a === void 0 ? void 0 : _a.id; };
+     const getHostHeight = () => tableHost.clientHeight || 0;
+     const showBlockingLoading = () => !errorMessage && !hasInitialWindow && (loadingState || sheetInitializing);
+     const showStreamingLoading = () => !showBlockingLoading() &&
 @@ -905,7 +921,7 @@ const renderFileViewerSpreadsheet = async (buffer, target, type, context) => {
              endRow,
              direction: scrollDirection,
@@ -201,8 +213,28 @@ index 3378e4a..d779036 100644
          cached.loadingWindows.clear();
          virtualState = cached;
          errorMessage = '';
-@@ -1431,13 +1519,28 @@ const renderFileViewerSpreadsheet = async (buffer, target, type, context) => {
+@@ -1418,7 +1506,7 @@ const renderFileViewerSpreadsheet = async (buffer, target, type, context) => {
+     };
+     controller.onWorkerEvent('sheets', ({ sheets: list }) => {
+         sheets = list;
+-        const firstSheet = list.find((sheet) => !sheet.hidden) || list[0];
++        const firstSheet = list.find((sheet) => !sheet.hidden);
+         if (firstSheet) {
+             sheetIndex = firstSheet.id;
+             renderChrome();
+@@ -1428,16 +1516,39 @@ const renderFileViewerSpreadsheet = async (buffer, target, type, context) => {
+         }
+         sheetInitializing = false;
+         loadingState = false;
++        const empty = documentRef.createElement('p');
++        empty.className = 'spreadsheet-empty';
++        empty.setAttribute('role', 'status');
++        empty.textContent = t(list.length ? 'state.empty.message' : 'state.empty.title');
++        tableHost.replaceChildren(empty);
          renderChrome();
++        setHidden(toolbar, true);
++        hasNotifiedFirstPaint = true;
++        context?.onProgressiveRender?.();
      });
      controller.onWorkerEvent('parseSheet', ({ sessionId, sheet, sheetData: ws }) => {
 +        const startRow = ws.meta?.startRow;
@@ -230,7 +262,7 @@ index 3378e4a..d779036 100644
              return;
          }
          sheetInitializing = false;
-@@ -1458,6 +1561,8 @@ const renderFileViewerSpreadsheet = async (buffer, target, type, context) => {
+@@ -1458,6 +1569,8 @@ const renderFileViewerSpreadsheet = async (buffer, target, type, context) => {
          renderChrome();
      });
      controller.onWorkerError((event) => {
@@ -239,3 +271,30 @@ index 3378e4a..d779036 100644
          sheetInitializing = false;
          loadingState = false;
          errorMessage = event.message || t('spreadsheet.error.workerFailed');
+@@ -1469,7 +1582,7 @@ const renderFileViewerSpreadsheet = async (buffer, target, type, context) => {
+     });
+     (_k = context === null || context === void 0 ? void 0 : context.registerThumbnailAdapter) === null || _k === void 0 ? void 0 : _k.call(context, {
+         beforeCapture: async ({ signal }) => {
+-            while (!hasInitialWindow && !errorMessage && !disposed) {
++            while (!hasNotifiedFirstPaint && !errorMessage && !disposed) {
+                 if (signal === null || signal === void 0 ? void 0 : signal.aborted) {
+                     throw signal.reason;
+                 }
+diff --git a/node_modules/@file-viewer/renderer-spreadsheet/dist/spreadsheet/worker/sheetjs/parser.js b/node_modules/@file-viewer/renderer-spreadsheet/dist/spreadsheet/worker/sheetjs/parser.js
+index 25966063..5d904cb1 100644
+--- a/node_modules/@file-viewer/renderer-spreadsheet/dist/spreadsheet/worker/sheetjs/parser.js
++++ b/node_modules/@file-viewer/renderer-spreadsheet/dist/spreadsheet/worker/sheetjs/parser.js
+@@ -73,12 +73,9 @@ const parseSheets = (context) => {
+         const ref = worksheet === null || worksheet === void 0 ? void 0 : worksheet['!ref'];
+         const drawingBounds = getDrawingBounds(worksheet);
+         const chartBounds = getChartBounds(context.charts[name]);
+-        if (!ref && !drawingBounds.rowCount && !drawingBounds.colCount && !chartBounds.rowCount && !chartBounds.colCount) {
+-            return result;
+-        }
+         const range = ref ? utils.decode_range(ref) : utils.decode_range('A1');
+         result.push({
+-            id: result.length,
++            id: sourceIndex,
+             name,
+             hidden: !!((_a = workbookSheets[sourceIndex]) === null || _a === void 0 ? void 0 : _a.Hidden),
+             rowCount: Math.max(range.e.r + 1, drawingBounds.rowCount, chartBounds.rowCount),

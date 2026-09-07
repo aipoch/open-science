@@ -4978,6 +4978,8 @@
     "Previewing model 1 of {{total}}.": "Vista previa del modelo 1 de {{total}}.",
     "Hydrogens are hidden; alternate locations use blank or A. Atom count refers to the displayed model.": "Los hidrógenos están ocultos; las posiciones alternativas usan un espacio o A. El número de átomos corresponde al modelo mostrado.",
     "Generating surface…": "Generando superficie…",
-    "Surface could not be generated. Showing sticks.": "No se pudo generar la superficie. Se muestra en forma de varillas."
+    "Surface could not be generated. Showing sticks.": "No se pudo generar la superficie. Se muestra en forma de varillas.",
+    "This workbook has no worksheets.": "Este libro no contiene hojas de cálculo.",
+    "This workbook has no visible worksheets.": "Este libro no contiene hojas de cálculo visibles."
   }
 }

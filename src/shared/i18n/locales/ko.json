@@ -4660,6 +4660,8 @@
     "Previewing model 1 of {{total}}.": "모델 {{total}}개 중 1번을 미리 봅니다.",
     "Hydrogens are hidden; alternate locations use blank or A. Atom count refers to the displayed model.": "수소 원자는 숨깁니다. 대체 위치는 공백 또는 A를 사용합니다. 원자 수는 표시된 모델 기준입니다.",
     "Generating surface…": "표면 생성 중…",
-    "Surface could not be generated. Showing sticks.": "표면을 생성하지 못했습니다. 막대 형태로 표시합니다."
+    "Surface could not be generated. Showing sticks.": "표면을 생성하지 못했습니다. 막대 형태로 표시합니다.",
+    "This workbook has no worksheets.": "이 통합 문서에는 워크시트가 없습니다.",
+    "This workbook has no visible worksheets.": "이 통합 문서에는 표시된 워크시트가 없습니다."
   }
 }
