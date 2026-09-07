@@ -794,10 +794,13 @@ const InstalledSpecialistsPanel = ({
               }).then(() => undefined)
             }
             onToggle={() => void setEnabled(specialist.id, !specialist.enabled)}
-            onDuplicate={() =>
-              void duplicateSpecialist(specialist.id).then((draft) =>
-                onNavigate({ kind: 'create', draft })
-              )
+            onDuplicate={
+              webPackageImport && !window.api.specialist.duplicate
+                ? undefined
+                : () =>
+                    void duplicateSpecialist(specialist.id).then((draft) =>
+                      onNavigate({ kind: 'create', draft })
+                    )
             }
             onUpdate={() => {
               if (!listing) return
@@ -813,10 +816,14 @@ const InstalledSpecialistsPanel = ({
               })
             }}
             onManageSources={() => onNavigate({ kind: 'marketplace-sources' })}
-            onUninstall={() => {
-              openDeleteDialog(specialist, 'uninstall')
-              onNavigate({ kind: 'list' })
-            }}
+            onUninstall={
+              webPackageImport && !window.api.specialist.delete
+                ? undefined
+                : () => {
+                    openDeleteDialog(specialist, 'uninstall')
+                    onNavigate({ kind: 'list' })
+                  }
+            }
           />
         )
       }

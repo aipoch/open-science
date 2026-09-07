@@ -2118,6 +2118,30 @@ describe('SpecialistsPanel', () => {
     )
   })
 
+  it('disables unsupported Web package actions in Marketplace-installed Specialist details', async () => {
+    const managed = {
+      ...(specialistItems[0] as Extract<SpecialistListItem, { kind: 'custom' }>),
+      origin: 'marketplace' as const
+    }
+    window.api.specialist.beginPackageUpload = vi.fn()
+    useSpecialistStore.setState({ items: [managed] })
+    ;(window.api.specialist.list as ReturnType<typeof vi.fn>).mockResolvedValue({
+      items: [managed],
+      integrity: { status: 'ok' }
+    })
+    await act(async () => {
+      root.render(<SpecialistsPanel view={{ kind: 'edit', id: managed.id }} onNavigate={vi.fn()} />)
+    })
+    for (const name of ['Create editable copy', 'Uninstall']) {
+      const button = Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).find(
+        (item) => item.textContent === name
+      )
+      expect(button).toBeDefined()
+      expect(button!.disabled).toBe(true)
+    }
+    expect(document.body.querySelector<HTMLButtonElement>('[role="switch"]')!.disabled).toBe(false)
+  })
+
   it('marks a Marketplace Specialist whose source was removed and links source management', async () => {
     const managed = {
       ...(specialistItems[0] as Extract<SpecialistListItem, { kind: 'custom' }>),

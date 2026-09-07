@@ -21,10 +21,10 @@ type Props = {
   onBack: () => void
   onAppearanceChange: (patch: { iconKey?: string; colorKey?: string }) => Promise<void>
   onToggle: () => void
-  onDuplicate: () => void
+  onDuplicate?: () => void
   onUpdate: () => void
   onManageSources: () => void
-  onUninstall: () => void
+  onUninstall?: () => void
 }
 
 const MarketplaceManagedSpecialistDetail = ({
@@ -201,7 +201,12 @@ const MarketplaceManagedSpecialistDetail = ({
         </section>
 
         <div className="mt-8 flex flex-wrap items-center gap-2">
-          <Button type="button" variant="outline" disabled={disabled} onClick={onDuplicate}>
+          <Button
+            type="button"
+            variant="outline"
+            disabled={disabled || !onDuplicate}
+            onClick={onDuplicate}
+          >
             <Copy data-icon="inline-start" aria-hidden="true" />
             {t('Create editable copy')}
           </Button>
@@ -209,7 +214,7 @@ const MarketplaceManagedSpecialistDetail = ({
             type="button"
             variant="ghost"
             className="ml-auto text-destructive hover:bg-destructive/10 hover:text-destructive"
-            disabled={disabled}
+            disabled={disabled || !onUninstall}
             onClick={onUninstall}
           >
             <Trash2 data-icon="inline-start" aria-hidden="true" />
