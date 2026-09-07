@@ -283,3 +283,26 @@ it('retries the failed apply command instead of only refreshing the task', async
   ])
   expect(screen.queryByRole('alert')).toBeNull()
 })
+
+it('retires a failed apply request when the user changes the selection', async () => {
+  job.state = 'review'
+  job.rows[0]!.status = 'ready'
+  jobs.mockImplementation(async (request) => {
+    if (request.action === 'apply') throw new Error('checkpoint unavailable')
+    return { jobs: [structuredClone(job)] }
+  })
+  open(id)
+  await flush()
+  fireEvent.click(screen.getByRole('button', { name: 'Apply metadata (1)' }))
+  await act(async () => {})
+  fireEvent.click(screen.getByRole('checkbox'))
+  await act(async () => {})
+  jobs.mockRejectedValueOnce(new Error('read unavailable'))
+  fireEvent(window, new Event('literature-job-refresh'))
+  await act(async () => {})
+  expect(screen.getByRole('alert')).toBeTruthy()
+  fireEvent.click(screen.getByRole('button', { name: 'Retry' }))
+  await act(async () => {})
+  expect(jobs.mock.calls.filter(([request]) => request.action === 'apply')).toHaveLength(1)
+  expect((screen.getByRole('checkbox') as HTMLInputElement).checked).toBe(false)
+})

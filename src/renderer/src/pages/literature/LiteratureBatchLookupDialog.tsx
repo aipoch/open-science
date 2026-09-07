@@ -176,6 +176,7 @@ export const LiteratureBatchLookupDialog = ({
   const update = (id: string, patch: Partial<Row>): void => {
     const row = rows.find((row) => row.id === id)
     if (!job || !row) return
+    failedCommand.current = undefined
     const selected = { ...row, ...patch }
     setRows((current) => current.map((row) => (row.id === id ? { ...row, ...patch } : row)))
     pendingDrafts.current.set(id, {
