@@ -1136,6 +1136,38 @@ describe('renderer session persistence bridge', () => {
     })
   })
 
+  it.each([false, true])(
+    'persists a pin-only edit after fallback hydration (refresh=%s)',
+    async (refresh) => {
+      const base = createPersistedSession({ revision: 42, pinned: false })
+      useSessionStore.getState().hydrateSessions([base])
+      const api = createApi()
+      const save = createStoreSaver(api, useSessionStore.getState())
+      const hydrated = useSessionStore.getState().sessions[0]
+      expect(isExternallyHydratedSession(hydrated)).toBe(true)
+
+      useSessionStore.getState().togglePinned(base.id)
+      if (refresh) {
+        useSessionStore.getState().applyDurableSessionProjection({
+          source: useSessionStore.getState().sessions[0],
+          session: { ...base, revision: 43 },
+          mode: 'archive-authority'
+        })
+      }
+      expect(useSessionStore.getState().sessions[0]).not.toBe(hydrated)
+      expect(isExternallyHydratedSession(useSessionStore.getState().sessions[0])).toBe(false)
+      await save(useSessionStore.getState())
+
+      expect(api.saveSession).toHaveBeenCalledOnce()
+      expect(api.saveSession).toHaveBeenCalledWith(expect.objectContaining({ pinned: true }), {
+        conflictRebaseFields: ['pinned']
+      })
+      const durable = await vi.mocked(api.saveSession).mock.results[0].value
+      useSessionStore.getState().hydrateSessions([durable])
+      expect(useSessionStore.getState().sessions[0].pinned).toBe(true)
+    }
+  )
+
   it('does not echo archive refresh for the full session loaded with startup summaries', async () => {
     const base = createPersistedSession({ revision: 42 })
     useSessionStore.getState().hydrateSessionSummaries(
