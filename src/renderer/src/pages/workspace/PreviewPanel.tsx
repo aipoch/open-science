@@ -94,7 +94,7 @@ const PREVIEW_TAB_EDGE_INSET = 8
 const PreviewTabActionTarget = ({
   item,
   tabCount,
-  retryPending,
+  retryPendingKeys,
   onPdfContextError,
   onFileActionSuccess,
   onLinkReadingContext,
@@ -103,7 +103,7 @@ const PreviewTabActionTarget = ({
 }: {
   item: PreviewItem
   tabCount: number
-  retryPending?: PreviewTabActionError
+  retryPendingKeys?: ReadonlySet<string>
   onPdfContextError?: (message: string | null) => void
   onFileActionSuccess?: (command: PreviewTabActionCommand, item: PreviewItem) => void
   onLinkReadingContext?: PreviewInteractionPort['onLinkReadingContext']
@@ -122,7 +122,7 @@ const PreviewTabActionTarget = ({
   )
   const context: PreviewTabActionContext = {
     tabCount,
-    retryPending,
+    retryPendingKeys,
     pdfContextPending: pdfAction?.pending,
     ...(pdfAction && !pdfAction.disabled ? { pdfContext: pdfAction.state } : {})
   }
@@ -244,7 +244,7 @@ const PreviewTab = ({
   containerRef,
   tabRef,
   tabCount,
-  retryPending,
+  retryPendingKeys,
   onPdfContextError,
   onFileActionSuccess,
   onLinkReadingContext,
@@ -258,7 +258,7 @@ const PreviewTab = ({
   containerRef: (element: HTMLDivElement | null) => void
   tabRef: (element: HTMLButtonElement | null) => void
   tabCount: number
-  retryPending?: PreviewTabActionError
+  retryPendingKeys?: ReadonlySet<string>
   onPdfContextError?: (message: string | null) => void
   onFileActionSuccess?: (command: PreviewTabActionCommand, item: PreviewItem) => void
   onLinkReadingContext?: PreviewInteractionPort['onLinkReadingContext']
@@ -282,7 +282,7 @@ const PreviewTab = ({
       <PreviewTabActionTarget
         item={tab}
         tabCount={tabCount}
-        retryPending={retryPending}
+        retryPendingKeys={retryPendingKeys}
         onPdfContextError={onPdfContextError}
         onFileActionSuccess={onFileActionSuccess}
         onLinkReadingContext={onLinkReadingContext}
@@ -346,7 +346,7 @@ const PreviewTab = ({
 // Horizontal, scrollable strip of every file the user has asked to preview this session.
 const PreviewTabBar = ({
   tabs,
-  retryPending,
+  retryPendingKeys,
   activeItemId,
   onActivate,
   onClose,
@@ -356,7 +356,7 @@ const PreviewTabBar = ({
   onUnlinkReadingContext
 }: {
   tabs: PreviewItem[]
-  retryPending?: PreviewTabActionError
+  retryPendingKeys?: ReadonlySet<string>
   activeItemId: string | undefined
   onActivate: (id: string) => void
   onClose: (id: string) => boolean
@@ -458,7 +458,7 @@ const PreviewTabBar = ({
             tabRefs.current[index] = element
           }}
           tabCount={tabs.length}
-          retryPending={retryPending}
+          retryPendingKeys={retryPendingKeys}
           onPdfContextError={onPdfContextError}
           onFileActionSuccess={onFileActionSuccess}
           onLinkReadingContext={onLinkReadingContext}
@@ -732,8 +732,8 @@ const PreviewPanelSurface = ({
   const activeProjectId = useNavigationStore((state) => state.activeProjectId)
   const [actionFailure, setActionFailure] = useState<PreviewTabActionError>()
   useEffect(() => setActionFailure(undefined), [activeProjectId])
-  const [retryPending, setRetryPending] = useState<PreviewTabActionError>()
-  const retryPendingRef = useRef<PreviewTabActionError | undefined>(undefined)
+  const [retryPendingKeys, setRetryPendingKeys] = useState<ReadonlySet<string>>(() => new Set())
+  const retryPendingKeysRef = useRef(new Set<string>())
   const clearActionFailure = (command: PreviewTabActionCommand, item: PreviewItem): void => {
     setActionFailure((current) =>
       current &&
@@ -747,12 +747,12 @@ const PreviewPanelSurface = ({
   const retryAction = async (): Promise<void> => {
     if (
       !actionFailure ||
-      retryPendingRef.current === actionFailure ||
+      retryPendingKeysRef.current.has(actionFailure.retryKey) ||
       actionFailure.projectId !== useNavigationStore.getState().activeProjectId
     )
       return
-    retryPendingRef.current = actionFailure
-    setRetryPending(actionFailure)
+    retryPendingKeysRef.current.add(actionFailure.retryKey)
+    setRetryPendingKeys((current) => new Set(current).add(actionFailure.retryKey))
     try {
       await actionFailure.retry()
       setActionFailure((current) => (current === actionFailure ? undefined : current))
@@ -765,13 +765,19 @@ const PreviewPanelSurface = ({
               actionFailure.retry,
               error,
               actionFailure.projectId,
-              actionFailure.itemId
+              actionFailure.itemId,
+              actionFailure.retryKey
             )
           : current
       )
     } finally {
-      if (retryPendingRef.current === actionFailure) retryPendingRef.current = undefined
-      setRetryPending((current) => (current === actionFailure ? undefined : current))
+      retryPendingKeysRef.current.delete(actionFailure.retryKey)
+      setRetryPendingKeys((current) => {
+        if (!current.has(actionFailure.retryKey)) return current
+        const next = new Set(current)
+        next.delete(actionFailure.retryKey)
+        return next
+      })
     }
   }
 
@@ -819,7 +825,7 @@ const PreviewPanelSurface = ({
           >
             <PreviewTabBar
               tabs={items}
-              retryPending={retryPending?.projectId === activeProjectId ? retryPending : undefined}
+              retryPendingKeys={retryPendingKeys}
               onFileActionSuccess={clearActionFailure}
               activeItemId={activeItemId}
               onActivate={activateItem}
@@ -850,7 +856,7 @@ const PreviewPanelSurface = ({
               primaryButton={{
                 label: t('Retry'),
                 onClick: () => void retryAction(),
-                loading: retryPending === actionFailure
+                loading: retryPendingKeys.has(actionFailure.retryKey)
               }}
               secondaryButton={{ label: t('Close'), onClick: () => setActionFailure(undefined) }}
             />

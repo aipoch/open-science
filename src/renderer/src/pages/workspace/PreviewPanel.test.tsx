@@ -1923,4 +1923,60 @@ describe('PreviewPanel', () => {
       })
     }
   })
+
+  it('keeps each concurrent retry disabled in its tab menu', async () => {
+    let finishFirst!: () => void
+    let finishSecond!: () => void
+    const save = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('First save failed'))
+      .mockImplementationOnce(
+        () =>
+          new Promise<void>((resolve) => {
+            finishFirst = resolve
+          })
+      )
+      .mockRejectedValueOnce(new Error('Second save failed'))
+      .mockImplementationOnce(
+        () =>
+          new Promise<void>((resolve) => {
+            finishSecond = resolve
+          })
+      )
+    window.api.uploads.stageLocalPath = save
+    usePreviewWorkbenchStore.getState().upsertAndActivateItem(createFileItem({ source: 'local' }))
+    usePreviewWorkbenchStore.getState().upsertItem(
+      createFileItem({
+        id: 'second-local-file',
+        source: 'local',
+        name: 'second.txt',
+        title: 'second.txt',
+        path: '/workspace/second.txt'
+      })
+    )
+    await renderPanel()
+    const retryButton = (): HTMLButtonElement =>
+      container.querySelector<HTMLButtonElement>('[data-testid="preview-tab-action-error"] button')!
+
+    try {
+      await openTabContextMenu(0)
+      await clickMenuCommand('save-as-artifact')
+      await act(async () => retryButton().click())
+      await openTabContextMenu(1)
+      await clickMenuCommand('save-as-artifact')
+      await act(async () => retryButton().click())
+
+      await openTabContextMenu(0)
+      expect(
+        document.body
+          .querySelector('[data-action-id="save-as-artifact"]')
+          ?.getAttribute('aria-disabled')
+      ).toBe('true')
+    } finally {
+      await act(async () => {
+        finishFirst?.()
+        finishSecond?.()
+      })
+    }
+  })
 })
