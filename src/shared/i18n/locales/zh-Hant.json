@@ -2952,6 +2952,7 @@
     "View raw JSON": "查看原始 JSON",
     "View release notes on GitHub": "在 GitHub 上檢視發布說明",
     "View source": "查看原始碼",
+    "View diagram": "查看圖表",
     "View this device's runtime log — it records what the app is doing so problems can be diagnosed.": "檢視這台裝置的執行記錄檔 —— 它記錄了應用程式正在做什麼，便於排查問題。",
     "View {{name}}": "檢視 {{name}}",
     "Viewer failed": "檢視器失敗",

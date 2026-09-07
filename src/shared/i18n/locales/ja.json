@@ -2868,6 +2868,7 @@
     "View raw JSON": "生の JSON を表示する",
     "View release notes on GitHub": "GitHub でリリースノートを表示する",
     "View source": "ソースを見る",
+    "View diagram": "図を表示",
     "View this device's runtime log — it records what the app is doing so problems can be diagnosed.": "このデバイスのランタイムログを表示します。問題を診断できるように、アプリの動作が記録されます。",
     "View {{name}}": "{{name}} を表示する",
     "Viewer failed": "ビューアが失敗しました",
