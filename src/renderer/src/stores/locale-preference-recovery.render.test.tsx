@@ -2,10 +2,10 @@
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { act, cleanup, render } from '@testing-library/react'
+import { act, cleanup, fireEvent, render } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { LanguageSelect } from '@/components/LanguageControls'
+import { LanguageSaveToast, LanguageSelect } from '@/components/LanguageControls'
 import { i18next, setI18nLocale } from '@/i18n'
 import { LocalePreferenceOwner } from '../../../main/locale/owner'
 import { SettingsRepository } from '../../../main/settings/repository'
@@ -69,6 +69,36 @@ const settle = async (): Promise<void> => {
 }
 
 describe('G01 desktop locale persistence recovery', () => {
+  it('keeps a delayed save failure visible after Settings closes and allows dismissal', async () => {
+    stop = startLocalePreferenceSync()
+    await settle()
+    let rejectWrite: ((error: Error) => void) | undefined
+    vi.spyOn(repository, 'setLocalePreference').mockImplementationOnce(
+      () =>
+        new Promise((_, reject) => {
+          rejectWrite = reject
+        })
+    )
+    const view = render(<LanguageSelect />)
+    await act(async () => {
+      useLocaleStore.getState().setPreference('ja')
+    })
+    await vi.waitFor(() => expect(rejectWrite).toBeTypeOf('function'))
+    // Closing Settings unmounts its picker and exposes the application's base presentation.
+    view.rerender(<LanguageSaveToast />)
+    expect(view.queryByRole('status')).toBeNull()
+    await act(async () => {
+      rejectWrite?.(new Error('settings write rejected after closing'))
+      await settle()
+    })
+    expect(view.getByRole('status').textContent).toContain('Could not save the language.')
+    expect(view.getByRole('status').textContent).toContain('The saved language has been restored.')
+    expect(useLocaleStore.getState().locale).toBe('en')
+    fireEvent.click(view.getByRole('button', { name: 'Dismiss' }))
+    expect(view.queryByRole('status')).toBeNull()
+    expect(useLocaleStore.getState().saveFailed).toBe(false)
+  })
+
   it('restores the confirmed language and exposes the failure in Settings', async () => {
     stop = startLocalePreferenceSync()
     await settle()

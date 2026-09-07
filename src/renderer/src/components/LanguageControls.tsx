@@ -1,5 +1,6 @@
 import { useTranslation } from 'react-i18next'
 
+import { ActionToast } from '@/components/ActionToast'
 import { Select, SelectContent, SelectItem, SelectTrigger } from '@/components/ui/select'
 import { cn } from '@/lib/utils'
 import { useLocaleStore } from '@/stores/locale-store'
@@ -77,5 +78,22 @@ export const LanguageSelect = (): React.JSX.Element => {
       </Select>
       <LanguageSaveError className="mt-2" />
     </div>
+  )
+}
+
+// The shared failure survives the Settings picker, including a rejection delivered after close.
+export const LanguageSaveToast = (): React.JSX.Element | null => {
+  const { t } = useTranslation()
+  const saveFailed = useLocaleStore((state) => state.saveFailed)
+  if (!saveFailed) return null
+
+  return (
+    <ActionToast
+      title={`${t('Could not save the language.')} ${t('The saved language has been restored. Select a language to try again.')}`}
+      dismissLabel={t('Dismiss')}
+      onDismiss={() => useLocaleStore.setState({ saveFailed: false })}
+      className="top-auto bottom-3"
+      testId="language-save-error-toast"
+    />
   )
 }
