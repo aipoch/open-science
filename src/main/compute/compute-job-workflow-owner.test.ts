@@ -5,6 +5,8 @@ import { join, resolve } from 'node:path'
 import { describe, expect, it, vi, afterEach, beforeEach } from 'vitest'
 
 import type { ComputeHost } from '../../shared/compute'
+import { ArtifactRepository } from '../artifacts/repository'
+import { writeArtifactFileForCurrentRun } from '../artifacts/mcp-server'
 import { decodeDataPath } from '../storage/data-path'
 import {
   ComputeJobWorkflowOwner,
@@ -241,6 +243,46 @@ const makeJobRepo = (
 }
 
 describe('ComputeJobWorkflowOwner.submitJob', () => {
+  it('guides Direct SSH users who submit a Slurm directive before approval', async () => {
+    const runner = makeFakeRunner({
+      exitCode: 0,
+      stdout: '',
+      stderr: '',
+      truncated: false,
+      timedOut: false
+    })
+    const { repo: jobRepo, createCalls } = makeJobRepo()
+    const { repo: hostRepo } = makeRepo(sampleHost({ executionMode: 'direct_ssh' }))
+    const requestWithContext = vi.fn(() => Promise.resolve('once' as const))
+    const broker = {
+      request: vi.fn(),
+      requestWithContext,
+      respond: vi.fn()
+    } as unknown as ComputeApprovalBroker
+
+    const service = makeOwner(runner, hostRepo, broker, jobRepo)
+    const submission = service.submitJob(
+      'ssh:biowulf',
+      'scheduler intent on direct host',
+      '#SBATCH --partition=debug\necho hi',
+      {},
+      { sessionId: 's1', projectId: 'p1' }
+    )
+
+    await expect(submission).rejects.toMatchObject({
+      computeCallError: {
+        error_code: 'invalid_resources',
+        retry_after_user_action: true
+      }
+    })
+    await expect(submission).rejects.toThrow(
+      'Choose Slurm in Compute settings to submit scheduler directives'
+    )
+    expect(requestWithContext).not.toHaveBeenCalled()
+    expect(createCalls).not.toHaveBeenCalled()
+    expect(runner.run).not.toHaveBeenCalled()
+  })
+
   it('does not create a job when cancellation wins after approval', async () => {
     const controller = new AbortController()
     const runner = makeFakeRunner({
@@ -602,7 +644,7 @@ describe('ComputeJobWorkflowOwner.submitJob', () => {
       timedOut: false
     })
     const { repo: jobRepo } = makeJobRepo()
-    const { repo } = makeRepo()
+    const { repo } = makeRepo(sampleHost({ executionMode: 'slurm' }))
 
     const requestWithContext = vi.fn(() => Promise.resolve('session' as const))
     const broker = {
@@ -618,7 +660,7 @@ describe('ComputeJobWorkflowOwner.submitJob', () => {
       'ssh:biowulf',
       'test',
       'echo hi',
-      { resourceRequest: '{"cpus":4}', timeoutSeconds: 120 },
+      { environment: 'protein-gpu', resourceRequest: '{"cpus":4}', timeoutSeconds: 120 },
       { sessionId: 's1', projectId: 'p1' },
       signal
     )
@@ -626,6 +668,8 @@ describe('ComputeJobWorkflowOwner.submitJob', () => {
     expect(requestWithContext).toHaveBeenCalledWith(
       expect.objectContaining({
         operation: 'submit_job',
+        execution_mode: 'slurm',
+        environment: 'protein-gpu',
         resources: '{"cpus":4}',
         timeout_seconds: 120,
         remote_workdir: expect.stringContaining('/.openscience/jobs/')
@@ -664,6 +708,38 @@ describe('ComputeJobWorkflowOwner.submitJob', () => {
       .catch((e) => e)
 
     expect(err.computeCallError?.error_code).toBe('timeout')
+  })
+
+  it('rejects an unsafe environment name before approval or persistence', async () => {
+    const runner = makeFakeRunner({
+      exitCode: 0,
+      stdout: '',
+      stderr: '',
+      truncated: false,
+      timedOut: false
+    })
+    const { repo: jobRepo, createCalls } = makeJobRepo()
+    const { repo } = makeRepo()
+    const requestWithContext = vi.fn(() => Promise.resolve('once' as const))
+    const broker = {
+      request: vi.fn(),
+      requestWithContext,
+      respond: vi.fn()
+    } as unknown as ComputeApprovalBroker
+
+    const service = makeOwner(runner, repo, broker, jobRepo)
+
+    await expect(
+      service.submitJob(
+        'ssh:biowulf',
+        'test',
+        'echo hi',
+        { environment: '../escape' },
+        { sessionId: 's1', projectId: 'p1' }
+      )
+    ).rejects.toThrow('Compute environment must be 1-64 characters')
+    expect(requestWithContext).not.toHaveBeenCalled()
+    expect(createCalls).not.toHaveBeenCalled()
   })
 
   it('approval fires before any DB row is created (security contract)', async () => {
@@ -1364,6 +1440,7 @@ describe('ComputeJobWorkflowOwner.getJobResult', () => {
 
     expect(result.status).toBe('success')
     expect(result.exit_code).toBe(0)
+    expect(result.local_output_root).toBe(join(tmpDir, 'notebooks', 'proj-1', 'sess-1'))
     expect(result.featured_files).toContain('hpc/job-result-1/featured/out.result')
     expect(result.hidden_files).toContain('hpc/job-result-1/hidden/debug.log')
     expect(result.output_files).toContain('hpc/job-result-1/featured/out.result')
@@ -1372,6 +1449,51 @@ describe('ComputeJobWorkflowOwner.getJobResult', () => {
     const featIdx = result.output_files.indexOf('hpc/job-result-1/featured/out.result')
     const hidIdx = result.output_files.indexOf('hpc/job-result-1/hidden/debug.log')
     expect(featIdx).toBeLessThan(hidIdx)
+  })
+
+  it('publishes a harvested binary file by joining local_output_root with a featured path', async () => {
+    const sessionRoot = join(tmpDir, 'notebooks', 'proj-1', 'sess-1')
+    const harvestDir = join(sessionRoot, 'hpc', 'job-result-1')
+    const bytes = Buffer.from([0, 1, 2, 255, 10, 13])
+    await mkdir(join(harvestDir, 'featured'), { recursive: true })
+    await writeFile(join(harvestDir, 'featured', 'results.bin'), bytes)
+
+    const service = makeServiceWithStorageRoot(
+      baseJob({
+        harvested_at: Date.now(),
+        harvest_error: undefined,
+        producer_run_id: 'notebook-run-submit'
+      }),
+      tmpDir
+    )
+    const result = await service.getJobResult('job-result-1')
+    const localOutputRoot = result.local_output_root
+    expect(localOutputRoot).toBe(sessionRoot)
+    expect(result.producer_run_id).toBe('notebook-run-submit')
+    expect(result.featured_files).toEqual(['hpc/job-result-1/featured/results.bin'])
+
+    const currentRunFile = join(tmpDir, 'current-run.json')
+    await writeFile(currentRunFile, JSON.stringify({ runId: 'analysis-run-1' }), 'utf8')
+    const artifact = await writeArtifactFileForCurrentRun(
+      new ArtifactRepository(tmpDir),
+      {
+        storageRoot: tmpDir,
+        projectId: 'proj-1',
+        sessionId: 'sess-1',
+        currentRunFile,
+        allowedImportRoots: [localOutputRoot!]
+      },
+      {
+        filename: 'results.bin',
+        mimeType: 'application/octet-stream',
+        source: {
+          kind: 'localPath',
+          path: join(localOutputRoot!, result.featured_files[0]!)
+        }
+      }
+    )
+
+    await expect(readFile(artifact.path)).resolves.toEqual(bytes)
   })
 
   it('reads attach_job results from the data-root workspace when config and data roots differ', async () => {

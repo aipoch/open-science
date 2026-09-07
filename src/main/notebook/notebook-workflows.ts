@@ -6,6 +6,7 @@ import type {
   ExportNotebookAllResult,
   ExportNotebookKernelRequest,
   ExportNotebookResult,
+  AbortNotebookCodeCellRequest,
   FinishNotebookCodeCellRequest,
   NotebookCell,
   NotebookNamespaceRequest,
@@ -49,6 +50,7 @@ type NotebookCommandRuntime = {
   getSessionReference(request: NotebookSessionRequest): Promise<NotebookSessionReference | null>
   beginCodeCell(request: BeginNotebookCodeCellRequest): Promise<BeginNotebookCodeCellResult>
   appendCodeCell(request: AppendNotebookCodeCellRequest): Promise<AppendNotebookCodeCellResult>
+  abortCodeCell(request: AbortNotebookCodeCellRequest): Promise<FinishNotebookCodeCellResult>
   finishCodeCell(request: FinishNotebookCodeCellRequest): Promise<FinishNotebookCodeCellResult>
   runCell(request: RunNotebookCellRequest): Promise<NotebookRunSummary>
   execute(request: ExecuteNotebookCodeRequest): Promise<NotebookRunSummary>
@@ -64,6 +66,7 @@ type NotebookCommandWorkflows = {
   reference(request: NotebookSessionRequest): Promise<NotebookSessionReference | null>
   beginCodeCell(request: BeginNotebookCodeCellRequest): Promise<BeginNotebookCodeCellResult>
   appendCodeCell(request: AppendNotebookCodeCellRequest): Promise<AppendNotebookCodeCellResult>
+  abortCodeCell(request: AbortNotebookCodeCellRequest): Promise<FinishNotebookCodeCellResult>
   finishCodeCell(request: FinishNotebookCodeCellRequest): Promise<FinishNotebookCodeCellResult>
   runCell(request: RunNotebookCellRequest): Promise<NotebookRunSummary>
   execute(request: ExecuteNotebookCodeRequest): Promise<NotebookRunSummary>
@@ -97,11 +100,15 @@ const withoutTrustedTurnContext = <
 const createNotebookCommandWorkflows = (
   runtime: NotebookCommandRuntime
 ): NotebookCommandWorkflows => ({
-  state: (request) => runtime.state(request),
-  inspectNamespace: (request) => runtime.inspectNamespace(withoutTrustedTurnContext(request)),
+  // These projections can initialize a previously unseen Notebook session and persist run.json,
+  // so they share the same data-root admission as explicit mutation commands.
+  state: (request) => withDataRootWrite(() => runtime.state(request)),
+  inspectNamespace: (request) =>
+    withDataRootWrite(() => runtime.inspectNamespace(withoutTrustedTurnContext(request))),
   reference: (request) => runtime.getSessionReference(request),
   beginCodeCell: (request) => withDataRootWrite(() => runtime.beginCodeCell(request)),
   appendCodeCell: (request) => withDataRootWrite(() => runtime.appendCodeCell(request)),
+  abortCodeCell: (request) => withDataRootWrite(() => runtime.abortCodeCell(request)),
   finishCodeCell: (request) => withDataRootWrite(() => runtime.finishCodeCell(request)),
   runCell: (request) =>
     withDataRootWrite(() => runtime.runCell(withoutTrustedTurnContext(request))),

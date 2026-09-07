@@ -1,6 +1,8 @@
+import { realpath, writeFile } from 'node:fs/promises'
 import { expect } from '@playwright/test'
 import type { Locator, Page } from 'playwright'
 import { test } from './fixtures/electron-app'
+import { sendPrompt } from './certification/helpers'
 
 const PROJECT_NAME = 'Project files journey'
 const FILE_NAME = 'research-notes.md'
@@ -243,9 +245,7 @@ test('shows structured text replacements with character-level highlights', async
     mimeType: 'text/x-shellscript',
     buffer: Buffer.from(SCRIPT_CONTENT)
   })
-  await page.getByRole('textbox', { name: 'Ask anything' }).fill('Use the attached script.')
-  await page.getByRole('button', { name: 'Send message' }).click()
-  await expect(page.getByText('Deterministic reply:', { exact: false })).toBeVisible()
+  await sendPrompt(page, 'Use the attached script.', 'Deterministic reply:')
 
   await page.getByRole('button', { name: 'Files', exact: true }).click()
   await page.getByRole('button', { name: `Preview uploaded file ${SCRIPT_NAME}` }).click()
@@ -294,4 +294,165 @@ test('loads managed image previews from Project files', async ({ app }) => {
   await expect
     .poll(() => image.evaluate((element) => (element as HTMLImageElement).naturalWidth))
     .toBeGreaterThan(0)
+})
+
+test.describe('Workspace dividers', () => {
+  test.beforeEach(async ({ app }) => {
+    const page = await app.completeOnboarding()
+    await createProject(page)
+    const directory = await realpath(await app.createTestDirectory('resize-preview'))
+    await writeFile(`${directory}/resize.txt`, 'Resize preview content')
+    await page.getByRole('button', { name: 'Files', exact: true }).click()
+    await page.getByRole('button', { name: 'Filter project files' }).click()
+    await page
+      .getByRole('menu', { name: 'Filter project files' })
+      .getByRole('menuitemradio')
+      .last()
+      .click()
+    const browser = page.getByLabel('Local file browser')
+    // Wait for the initial Home listing to finish populating the address bar before editing it.
+    const address = browser.getByLabel('Directory path')
+    await expect(address).not.toHaveValue('')
+    await address.fill(directory)
+    await expect(address).toHaveValue(directory)
+    await address.press('Enter')
+    await browser
+      .getByRole('list', { name: 'Directory contents' })
+      .getByRole('button')
+      .filter({ hasText: 'resize.txt' })
+      .click()
+    await expect(page.getByRole('tab').filter({ hasText: 'resize.txt' })).toHaveAttribute(
+      'aria-selected',
+      'true'
+    )
+  })
+
+  for (const side of ['left', 'right'] as const) {
+    test(`${side} divider ignores the bottom edge while a file preview is expanded`, async ({
+      app
+    }, testInfo) => {
+      const page = app.page
+      const handle = page.getByRole('separator', {
+        name: `Resize ${side} panel`,
+        includeHidden: true
+      })
+      const original = (await handle.boundingBox())!
+      await page.getByRole('button', { name: 'Open full screen preview of resize.txt' }).click()
+      const modal = page.getByRole('dialog', { name: 'Preview resize.txt' })
+      await expect(modal).toBeVisible()
+      const x = original.x + original.width / 2
+      const y = original.y + original.height - 2
+      await page.mouse.move(x, y)
+      await expect(handle).not.toHaveAttribute('data-separator', 'hover')
+      expect(
+        await page.locator('body').evaluate((element) => getComputedStyle(element).cursor)
+      ).not.toMatch(/resize/)
+      await page.screenshot({ path: testInfo.outputPath(`${side}-modal-isolation.png`) })
+      await page.mouse.down()
+      await page.mouse.move(x - 60, y, { steps: 5 })
+      await page.mouse.up()
+      expect((await handle.boundingBox())!.x).toBeCloseTo(original.x, 0)
+      // Releasing on the backdrop can dismiss the modal through its normal click behavior.
+      if (await modal.isVisible()) {
+        await modal.getByRole('button', { name: 'Close preview of resize.txt' }).click()
+      }
+      await expect(modal).toBeHidden()
+      await page.mouse.move(x, y)
+      await expect(handle).toHaveAttribute('data-separator', 'hover')
+      await page.mouse.down()
+      await page.mouse.move(x + (side === 'left' ? 60 : -60), y, { steps: 5 })
+      await page.mouse.up()
+      expect(Math.abs((await handle.boundingBox())!.x - original.x)).toBeGreaterThan(30)
+    })
+
+    test(`${side} workspace divider responds to arrow keys after reopening`, async ({ app }) => {
+      const page = app.page
+      await page.emulateMedia({ reducedMotion: 'reduce' })
+      const handle = page.getByRole('separator', { name: `Resize ${side} panel` })
+      const panelName = side === 'left' ? 'sidebar' : 'preview'
+      const direction = side === 'left' ? 1 : -1
+      for (const reopen of [false, true]) {
+        if (reopen) {
+          await page.getByRole('button', { name: `Collapse ${panelName} panel` }).click()
+          await expect(handle).toHaveCount(0)
+          await page.getByRole('button', { name: `Expand ${panelName} panel` }).click()
+        }
+        await expect(handle).toBeVisible()
+        const box = (await handle.boundingBox())!
+        await handle.focus()
+        await page.keyboard.press(side === 'left' ? 'ArrowRight' : 'ArrowLeft')
+        await expect
+          .poll(async () => direction * ((await handle.boundingBox())!.x - box.x), {
+            timeout: 3000
+          })
+          .toBeGreaterThan(0)
+      }
+    })
+
+    test(`${side} workspace divider shows a full-height line on hover`, async ({
+      app
+    }, testInfo) => {
+      const page = app.page
+      const handle = page.getByRole('separator', { name: `Resize ${side} panel` })
+      await expect(handle).toBeVisible()
+      const box = (await handle.boundingBox())!
+      // Hover away from the old central tick: the divider itself should be discoverable.
+      await page.mouse.move(box.x + box.width / 2, box.y + box.height / 4)
+      await page.screenshot({ path: testInfo.outputPath(`${side}-hover.png`) })
+      await expect
+        .poll(() =>
+          handle.evaluate((el) => {
+            const line = getComputedStyle(el, '::before')
+            return {
+              visible: Number(line.opacity) >= 0.9,
+              fullHeight: parseFloat(line.height) >= el.getBoundingClientRect().height * 0.9
+            }
+          })
+        )
+        .toEqual({ visible: true, fullHeight: true })
+
+      await page.mouse.move(box.x + 40, box.y + box.height / 4)
+      await expect
+        .poll(() => handle.evaluate((el) => getComputedStyle(el, '::before').opacity))
+        .toBe('0')
+      await handle.focus()
+      // Enter through the keyboard: programmatic focus after a mouse click is not focus-visible.
+      await page.keyboard.press('Tab')
+      await page.keyboard.press('Shift+Tab')
+      await expect(handle).toBeFocused()
+      await expect
+        .poll(() => handle.evaluate((el) => Number(getComputedStyle(el, '::before').opacity)))
+        .toBeGreaterThanOrEqual(0.9)
+    })
+
+    test(`${side} workspace divider can be dragged from either side of its edge`, async ({
+      app
+    }) => {
+      const page = app.page
+      const handle = page.getByRole('separator', { name: `Resize ${side} panel` })
+      await expect(handle).toBeVisible()
+      const direction = side === 'left' ? 1 : -1
+      for (const offset of [-8, 8]) {
+        const box = (await handle.boundingBox())!
+        const x = box.x + box.width / 2 + offset
+        const y = box.y + box.height / 4
+        await page.mouse.move(x, y)
+        await page.mouse.down()
+        await page.mouse.move(x + direction * 40, y, { steps: 5 })
+        await page.mouse.up()
+        await expect
+          .poll(async () => direction * ((await handle.boundingBox())!.x - box.x))
+          .toBeGreaterThan(30)
+      }
+      await page
+        .getByRole('button', {
+          name: side === 'left' ? 'Collapse sidebar panel' : 'Collapse preview panel'
+        })
+        .click()
+      await expect(handle).toHaveCount(0)
+      await expect(
+        page.getByRole('separator', { name: `Resize ${side} panel`, includeHidden: true })
+      ).toHaveAttribute('data-separator', 'disabled')
+    })
+  }
 })

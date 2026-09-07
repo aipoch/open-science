@@ -69,6 +69,30 @@ describe('remote-compute-ssh immediate failure guidance', () => {
     expect(status).not.toHaveBeenCalled()
     expect(result).toHaveBeenCalledOnce()
   })
+
+  it('publishes harvested outputs through the exposed artifact tool contract', async () => {
+    const skill = await readFile(skillPath, 'utf8')
+
+    expect(skill).toContain('Call the `write_artifact_file` tool')
+    expect(skill).toContain('outside `repl_execute`')
+    expect(skill).toContain('"kind": "localPath"')
+    expect(skill).toContain('r.local_output_root')
+    expect(skill).toContain('r.producer_run_id')
+    expect(skill).toContain('"producerRunId": "<producer_run_id>"')
+    expect(skill).toContain('"path": "<local_output_root>/hpc/<job_id>/featured/results.csv"')
+    expect(skill).toContain(
+      "df = pd.read_csv(Path('<local_output_root>') / 'hpc/<job_id>/featured/results.csv')"
+    )
+    expect(skill).not.toContain("host.mcp('artifacts'")
+  })
+
+  it('describes the user time directive and the derived scheduler default consistently', async () => {
+    const skill = await readFile(skillPath, 'utf8')
+
+    expect(skill).toContain('You may set the scheduler allocation limit with')
+    expect(skill).toContain('Open Science derives a default allocation')
+    expect(skill).not.toContain('Open Science owns the Slurm time')
+  })
 })
 
 const AsyncFunction = Object.getPrototypeOf(async function () {

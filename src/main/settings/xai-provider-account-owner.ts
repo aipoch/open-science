@@ -28,22 +28,22 @@ export class XaiProviderAccountOwner {
               ...(provider?.accountEmail ? { accountEmail: provider.accountEmail } : {})
             }
           },
-          save: (expectedKeyRef, refreshToken, accountEmail, clearValidation) =>
+          save: (
+            expectedKeyRef,
+            refreshToken,
+            accountEmail,
+            clearValidation,
+            isCurrent = () => true
+          ) =>
             serialize(async () => {
-              const provider = await this.provider()
-              if (!provider || provider.keyRef !== expectedKeyRef) return false
-              const updated = {
-                ...provider,
-                keyRef: encryptKey(refreshToken),
-                accountEmail: accountEmail ?? provider.accountEmail
-              }
-              if (clearValidation) {
-                delete updated.lastValidatedAt
-                delete updated.lastValidatedTarget
-                delete updated.lastValidationFailure
-              }
-              await this.repository.upsertProvider(updated)
-              return true
+              const keyRef = encryptKey(refreshToken)
+              const applied = await this.repository.updateXaiCredentialsIfKeyMatches(
+                expectedKeyRef,
+                { keyRef, accountEmail },
+                clearValidation ?? false,
+                isCurrent
+              )
+              return applied ? keyRef : false
             }),
           clear: () =>
             serialize(async () => {
@@ -79,6 +79,10 @@ export class XaiProviderAccountOwner {
 
   getAccessToken(forceRefresh = false): Promise<string> {
     return this.oauth.getAccessToken(forceRefresh)
+  }
+
+  getAccessCredential(): ReturnType<XaiOAuthControllerPort['getAccessCredential']> {
+    return this.oauth.getAccessCredential()
   }
 
   async isUsable(): Promise<boolean> {

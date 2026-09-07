@@ -156,7 +156,7 @@ describe('ChatProviderCompatibilityBridge', () => {
     const body = await response.text()
     expect(body).toContain('"content":"ready"')
     expect(body).toContain('"name":"search"')
-    expect(body).toContain('"prompt_tokens":11')
+    expect(body).toContain('"prompt_tokens":16')
     expect(body).toContain('data: [DONE]')
     const request = JSON.parse(String(upstream.mock.calls[0]?.[1]?.body))
     expect(request).toMatchObject({

@@ -21,6 +21,7 @@ import {
   toPersistedSession,
   useSessionStore
 } from '../../stores/session-store'
+import { SESSION_SIZE_LIMIT_ERROR_CODE } from '../../../../shared/session-persistence'
 import { createInitialSettingsState, useSettingsStore } from '../../stores/settings-store'
 import { resetDeferredArtifactEventsForTests } from './workspace-events'
 import { acceptAcpRuntimeSnapshotRevision } from './runtime-snapshot-revision-owner'
@@ -119,10 +120,10 @@ describe('workspace Agent Runtime hook contract', () => {
     return null
   }
 
-  const render = async (): Promise<void> => {
+  const render = async (onSessionSizeLimit?: (sessionId: string) => void): Promise<void> => {
     await act(async () =>
       root.render(
-        <WorkspaceAgentRuntimeProvider>
+        <WorkspaceAgentRuntimeProvider onSessionSizeLimit={onSessionSizeLimit}>
           <Probe />
         </WorkspaceAgentRuntimeProvider>
       )
@@ -288,6 +289,123 @@ describe('workspace Agent Runtime hook contract', () => {
       sendPreparationInFlightSessionIds: [],
       saveAsSkillInFlightSessionIds: [],
       nativeContextCompactionSessionIds: ['session-1']
+    })
+  })
+
+  it('Q03 validates captured configurations and forwards their target through the real runtime hook', async () => {
+    useSettingsStore.setState({
+      activeProviderId: 'provider',
+      activeModel: 'model-a',
+      agentFrameworkId: 'claude-code',
+      agentFrameworks: [
+        {
+          id: 'claude-code',
+          displayName: 'Claude Code',
+          supportsSkills: true,
+          supportedApiTypes: ['anthropic']
+        }
+      ],
+      providers: [
+        {
+          id: 'provider',
+          type: 'custom',
+          name: 'Provider',
+          apiEndpoints: ['anthropic'],
+          baseUrl: 'https://example.test/v1',
+          model: 'model-a',
+          models: ['model-a', 'model-b'],
+          supportsImageInput: false,
+          hasKey: true,
+          needsKey: false
+        }
+      ]
+    })
+    const pending = useSessionStore.getState().appendUserMessage({
+      sessionId: 'session-1',
+      content: 'Original',
+      cwd: workspacePath,
+      projectId: 'project-1',
+      agentFrameworkId: 'claude-code',
+      agentConfiguration: { providerId: 'provider', model: 'model-a', reasoningEffort: 'default' }
+    })
+    if (!pending) throw new Error('Expected the original message fixture')
+    useSessionStore.getState().finishRun('session-1')
+    const runtime = createRuntime(createSnapshot({ sessionIds: ['session-1'] }))
+    runtimeMock.current = runtime
+    await render()
+    const captured = {
+      providerId: 'provider',
+      model: 'model-b',
+      reasoningEffort: 'default' as const
+    }
+    await act(async () => {
+      await latest.steerFollowUp({
+        sessionId: 'session-1',
+        text: 'Queued',
+        agentConfiguration: captured
+      })
+    })
+    expect(runtime.steerFollowUp).toHaveBeenCalledWith({
+      sessionId: 'session-1',
+      text: 'Queued',
+      agentTarget: { frameworkId: 'claude-code', ...captured }
+    })
+    runtime.steerFollowUp.mockClear()
+    await act(async () => {
+      expect(
+        await latest.steerFollowUp({
+          sessionId: 'session-1',
+          text: 'Queued',
+          agentConfiguration: { ...captured, model: 'removed' }
+        })
+      ).toMatchObject({ injected: false })
+      expect(
+        await latest.resendEditedMessage('session-1', pending.messageId, {
+          text: 'Revision',
+          agentConfiguration: { ...captured, model: 'removed' }
+        })
+      ).toBe(false)
+    })
+    expect(runtime.steerFollowUp).not.toHaveBeenCalled()
+    expect(runtime.sendPrompt).not.toHaveBeenCalled()
+    await act(async () => {
+      expect(
+        await latest.sendMessage({
+          sessionId: 'session-1',
+          text: 'Queued',
+          agentConfiguration: captured,
+          expectedFrameworkId: 'opencode'
+        })
+      ).toBeUndefined()
+      expect(
+        await latest.resendEditedMessage('session-1', pending.messageId, {
+          text: 'Revision',
+          agentConfiguration: captured,
+          expectedFrameworkId: 'opencode'
+        })
+      ).toBe(false)
+      expect(
+        await latest.steerFollowUp({
+          sessionId: 'session-1',
+          text: 'Queued',
+          agentConfiguration: captured,
+          expectedFrameworkId: 'opencode'
+        })
+      ).toMatchObject({ injected: false })
+    })
+    expect(runtime.sendPrompt).not.toHaveBeenCalled()
+    expect(runtime.steerFollowUp).not.toHaveBeenCalled()
+    expect(useSessionStore.getState().sessions[0].messages[0].content).toBe('Original')
+    await act(async () => {
+      await latest.resendEditedMessage('session-1', pending.messageId, {
+        text: 'Revision',
+        agentConfiguration: captured
+      })
+    })
+    expect(runtime.sendPrompt).toHaveBeenCalledOnce()
+    expect(runtime.resumeSession.mock.calls[0]?.[10]).toEqual({
+      frameworkId: 'claude-code',
+      ...captured
     })
   })
 
@@ -923,6 +1041,31 @@ describe('workspace Agent Runtime hook contract', () => {
     deferred.resolve(createSnapshot({ sessionIds: ['session-1'] }))
     await act(async () => response)
     expect(latest.pendingPermissions).toEqual([])
+  })
+
+  it('reports a permission response size limit for the affected Session', async () => {
+    const request = {
+      requestId: 'permission-size-limit',
+      sessionId: 'session-1',
+      toolCallId: 'tool-1',
+      title: 'Allow command?',
+      options: [{ optionId: 'allow-once', name: 'Allow once', kind: 'allow_once' }]
+    }
+    const runtime = createRuntime(
+      createSnapshot({ sessionIds: ['session-1'], pendingPermissions: [request] })
+    )
+    runtime.respondToPermission.mockRejectedValue(
+      Object.assign(new Error('Session exceeds the persistence limit.'), {
+        code: SESSION_SIZE_LIMIT_ERROR_CODE
+      })
+    )
+    runtimeMock.current = runtime
+    const onSessionSizeLimit = vi.fn()
+    await render(onSessionSizeLimit)
+
+    await act(async () => latest.respondToPermission(request.requestId, 'allow-once'))
+
+    expect(onSessionSizeLimit).toHaveBeenCalledWith('session-1')
   })
 
   it('reattaches a restored permission wait before sending its main-validated decision', async () => {

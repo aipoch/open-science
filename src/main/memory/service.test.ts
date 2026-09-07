@@ -2,7 +2,7 @@ import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-import type { PrismaClient } from '@prisma/client'
+import type { Prisma, PrismaClient } from '@prisma/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import {
@@ -88,6 +88,70 @@ describe('MemoryService', () => {
       })
     ).rejects.toThrow('The About you category cannot be deleted.')
     expect((await service.snapshot()).categories[0]?.entries).toHaveLength(1)
+  })
+
+  it('loads every Memory entry into the settings snapshot', async () => {
+    const service = createService()
+    const entryCount = 25
+    for (let index = 0; index < entryCount; index += 1) {
+      await service.createEntry({
+        categoryId: ABOUT_YOU_MEMORY_CATEGORY_ID,
+        content: `Durable note ${index}.`
+      })
+    }
+
+    const snapshot = await service.snapshot()
+    expect(snapshot.categories[0]?.entries).toHaveLength(entryCount)
+  })
+
+  it('rejects stale revisions for both note and category updates in SQLite', async () => {
+    const service = createService()
+    const created = await service.createCategory({
+      name: 'Experiments',
+      guidance: 'Original guidance',
+      autoRecall: true
+    })
+    const category = created.categories.find((item) => 'name' in item)!
+    const withNote = await service.createEntry({
+      categoryId: category.id,
+      content: 'Original note'
+    })
+    const note = withNote.categories.find((item) => item.id === category.id)!.entries[0]!
+    await service.updateEntry({
+      id: note.id,
+      expectedRevision: note.revision,
+      content: 'Another window saved'
+    })
+    await service.updateCategory({
+      id: category.id,
+      expectedRevision: category.revision,
+      name: 'Experiments',
+      guidance: 'Another window guidance',
+      autoRecall: false
+    })
+    await expect(
+      service.updateEntry({
+        id: note.id,
+        expectedRevision: note.revision,
+        content: 'My stale draft'
+      })
+    ).rejects.toThrow('Memory note changed or no longer exists.')
+    await expect(
+      service.updateCategory({
+        id: category.id,
+        expectedRevision: category.revision,
+        name: 'Experiments',
+        guidance: 'Original guidance',
+        autoRecall: true
+      })
+    ).rejects.toThrow('Memory category changed. Refresh and try again.')
+    expect(await client.memoryEntry.findUniqueOrThrow({ where: { id: note.id } })).toMatchObject({
+      content: 'Another window saved',
+      revision: 2
+    })
+    expect(
+      await client.memoryCategory.findUniqueOrThrow({ where: { id: category.id } })
+    ).toMatchObject({ guidance: 'Another window guidance', autoRecall: false, revision: 2 })
   })
 
   it('rejects duplicate global Memory content within the same scope', async () => {
@@ -301,6 +365,21 @@ describe('MemoryService', () => {
     ).resolves.toEqual([expect.objectContaining({ content: '显微镜 alignment uses channel C.' })])
   })
 
+  it('retains short scientific terms in multi-word searches', async () => {
+    const service = createService()
+    await service.setEnabled({ enabled: true })
+    await service.createEntry({
+      categoryId: ABOUT_YOU_MEMORY_CATEGORY_ID,
+      content: 'pH and Na govern this buffer preparation.'
+    })
+    for (const query of ['pH', 'Na', 'pH Na', 'pH unrelated', 'Na unrelated']) {
+      const results = await service.searchForAgent({ query, limit: 5 }, agentContext)
+      expect(results, query).toEqual([
+        expect.objectContaining({ content: 'pH and Na govern this buffer preparation.' })
+      ])
+    }
+  })
+
   it('searches mixed short terms and samples long token lists through the tail', async () => {
     const service = createService()
     await service.createEntry({
@@ -507,6 +586,132 @@ describe('MemoryService', () => {
     await expect(searching).rejects.toThrow('Memory is turned off.')
     await expect(remembering).rejects.toThrow('Memory is turned off.')
     expect(await client.memoryEntry.count()).toBe(1)
+  })
+
+  it.each(['categories', 'search'] as const)(
+    'discards pending Agent %s results after access expires',
+    async (kind) => {
+      const repository = new MemoryRepository(async () => client)
+      const service = new MemoryService(repository, { publish: vi.fn() })
+      await service.setEnabled({ enabled: true })
+      let allowed = true
+      let release!: () => void
+      let reading!: () => void
+      const started = new Promise<void>((resolve) => {
+        reading = resolve
+      })
+      const resume = new Promise<void>((resolve) => {
+        release = resolve
+      })
+      if (kind === 'categories') {
+        const snapshot = repository.snapshot.bind(repository)
+        vi.spyOn(repository, 'snapshot').mockImplementationOnce(async () => {
+          const result = await snapshot()
+          reading()
+          await resume
+          return result
+        })
+      } else {
+        const search = repository.searchCandidates.bind(repository)
+        vi.spyOn(repository, 'searchCandidates').mockImplementationOnce(async (request) => {
+          const result = await search(request)
+          reading()
+          await resume
+          return result
+        })
+      }
+      const checkAccess = async (): Promise<void> => {
+        if (!allowed) throw new Error('access revoked')
+      }
+      const pending =
+        kind === 'categories'
+          ? service.listCategoriesForAgent(agentContext, checkAccess)
+          : service.searchForAgent({ query: 'pH', limit: 5 }, agentContext, checkAccess)
+      const rejected = expect(pending).rejects.toThrow('access revoked')
+      try {
+        await started
+        allowed = false
+        release()
+        await rejected
+      } finally {
+        release()
+        await pending.catch(() => undefined)
+      }
+    }
+  )
+
+  it('withholds committed write results when access expires during snapshot publication', async () => {
+    const repository = new MemoryRepository(async () => client)
+    const service = new MemoryService(repository, { publish: vi.fn() })
+    await service.setEnabled({ enabled: true })
+    let allowed = true
+    const snapshot = repository.snapshot.bind(repository)
+    vi.spyOn(repository, 'snapshot').mockImplementationOnce(async () => {
+      const result = await snapshot()
+      allowed = false
+      return result
+    })
+    await expect(
+      service.rememberForAgent(
+        rememberRequest('A committed durable fact.'),
+        agentContext,
+        async () => {
+          if (!allowed) throw new Error('access revoked')
+        }
+      )
+    ).rejects.toThrow('access revoked')
+    // Revocation after the commit decision prevents disclosure, not the already accepted commit.
+    expect(await client.memoryEntry.count()).toBe(1)
+  })
+
+  it('rolls back a Memory insert and revision when access expires inside the transaction', async () => {
+    const service = createService()
+    await service.setEnabled({ enabled: true })
+    const before = await service.snapshot()
+    let allowed = true
+    let release!: () => void
+    let inserted!: () => void
+    const paused = new Promise<void>((resolve) => {
+      inserted = resolve
+    })
+    const resume = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const transaction = client.$transaction.bind(client)
+    vi.spyOn(client, '$transaction').mockImplementationOnce((async (
+      operation: (tx: Prisma.TransactionClient) => Promise<unknown>
+    ) =>
+      transaction(async (tx) => {
+        const create = tx.memoryEntry.create.bind(tx.memoryEntry)
+        vi.spyOn(tx.memoryEntry, 'create').mockImplementationOnce((async (
+          args: Prisma.MemoryEntryCreateArgs
+        ) => {
+          const result = await create(args)
+          inserted()
+          await resume
+          return result
+        }) as unknown as typeof tx.memoryEntry.create)
+        return operation(tx)
+      })) as typeof client.$transaction)
+    const writing = service.rememberForAgent(
+      rememberRequest('A cancelled durable fact.'),
+      agentContext,
+      async () => {
+        if (!allowed) throw new Error('access revoked')
+      }
+    )
+    const rejected = expect(writing).rejects.toThrow('access revoked')
+    try {
+      await paused
+      allowed = false
+      release()
+      await rejected
+      expect(await client.memoryEntry.count()).toBe(0)
+      expect((await service.snapshot()).revision).toBe(before.revision)
+    } finally {
+      release()
+      await writing.catch(() => undefined)
+    }
   })
 
   it('deduplicates Agent writes and persists host-attributed provenance', async () => {

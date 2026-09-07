@@ -14,6 +14,25 @@ import {
 import { DEFAULT_PY_ENV, DEFAULT_R_ENV, envPrefix, rBin, rScriptBin } from './runtime-paths'
 
 describe('defaultDiscoveryDeps Windows conda R probes', () => {
+  it('probes an R environment version through Rscript instead of launching R.exe', async () => {
+    const interpreter = 'C:\\Program Files\\R\\R-4.6.0\\bin\\x64\\R.exe'
+    const exec = vi.fn(async (): Promise<{ stdout: string; stderr: string }> => ({
+      stdout: '',
+      stderr: 'R scripting front-end version 4.6.0 (2026-04-24)'
+    }))
+    const deps = defaultDiscoveryDeps('C:\\Users\\HM\\OpenScience\\runtime', undefined, {
+      platform: 'win32',
+      exec
+    })
+
+    await expect(deps.probeVersion(interpreter, 'r')).resolves.toBe('4.6.0')
+    expect(exec).toHaveBeenCalledWith(
+      'C:\\Program Files\\R\\R-4.6.0\\bin\\x64\\Rscript.exe',
+      ['--version'],
+      expect.objectContaining({ windowsHide: true })
+    )
+  })
+
   it('uses the injected environment and subprocess port for interpreter probes', async () => {
     const env = { PATH: 'injected-path', DISCOVERY_SENTINEL: 'injected' }
     const exec = vi.fn(
@@ -69,7 +88,7 @@ describe('defaultDiscoveryDeps Windows conda R probes', () => {
     await expect(deps.probeVersion(interpreter, 'r')).resolves.toBe('4.4.3')
     await expect(deps.rRunnable(interpreter)).resolves.toBe(true)
     expect(exec.mock.calls.map(([file]) => file)).toEqual([
-      interpreter,
+      `${prefix}\\Lib\\R\\bin\\Rscript.exe`,
       `${prefix}\\Lib\\R\\bin\\Rscript.exe`
     ])
   })

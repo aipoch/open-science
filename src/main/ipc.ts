@@ -40,6 +40,7 @@ import {
   MAIN_SESSION_DETAILS_LIFECYCLE_CLIENT_ID,
   MAIN_RUNTIME_CONTEXT_LIFECYCLE_CLIENT_ID
 } from '../shared/lifecycle-events'
+import { parseLiteratureAttachmentVersionReference } from '../shared/literature'
 
 import { createAcpRuntime } from './acp/runtime-composition'
 import { SideChatRelayOwner } from './acp/side-chat-relay-owner'
@@ -78,6 +79,19 @@ import { createSessionCatalogHydration } from './compute/session-catalog-hydrati
 import { SessionEnabledComputeHostsOwner } from './compute/session-enabled-hosts-owner'
 import { createComputeJobRuntime } from './compute/job-runtime'
 import { LiteratureFullTextIndex } from './literature/full-text-index'
+import { LiteratureCatalog } from './literature/catalog'
+import { LiteratureAttachmentAuthority } from './literature/attachment-authority'
+import { LiteraturePdfImporter } from './literature/pdf-importer'
+import { LiteratureCitationFormatter } from './literature/citation-formatter'
+import { LiteratureCitationDocument } from './literature/citation-document'
+import { LiteratureCitationStyleLibrary } from './literature/citation-style-library'
+import { LiteratureMetadataEnricher } from './literature/metadata-enricher'
+import { LiteratureFullTextFinder } from './literature/full-text-finder'
+import { LiteratureBatchJobs } from './literature/batch-jobs'
+import { AgentPdfAcquisition } from './literature/agent-pdf-acquisition'
+import { downloadFullText } from './literature/full-text-download'
+import { parseSystemProxyRules } from './settings/system-proxy'
+import { SessionPdfSourceResolver } from './literature/session-pdf-source-resolver'
 import { waitForInitialConnectorRefresh } from './connector-reload'
 import { createConnectorApplicationModule } from './connectors/application'
 import { isCustomMcpServerRouteSafe } from './connectors/custom-mcp-bootstrap'
@@ -211,7 +225,8 @@ import {
   createSessionPersistenceHandlersWithAttributionAuthority,
   loadSessionMetadataAfterProjectRecovery,
   recoverProjectDeletionsForSessionRead,
-  registerSessionPersistenceIpcHandlers
+  registerSessionPersistenceIpcHandlers,
+  withSessionDeletionCleanup
 } from './session-persistence/ipc'
 import {
   createConversationExportService,
@@ -245,6 +260,7 @@ import {
   type ComputeJobDeletionParticipant,
   type SessionDeletion
 } from './session-persistence/coordinator'
+import { createSessionRuntimeLookup } from './session-persistence/runtime-lookup'
 import { withSessionCacheDeletion } from './compute/session-cache-owner'
 import { createMainPromptSideChatRelay } from './side-chat/main-prompt-relay'
 import { registerSideChatIpcHandlers } from './side-chat/ipc'
@@ -319,10 +335,8 @@ import {
   FileCompletionHandoffRepository
 } from './agents/completion-handoff-lifecycle'
 import { registerCompletionHandoffIpcHandlers } from './agents/completion-handoff-ipc'
-import {
-  registerClaudeCodeCompletionGateRuntime,
-  selectPersistedUserTaskContext
-} from './agents/claude-code-handoff'
+import { createPersistedClaudeReplayPreparer } from './session-persistence/claude-replay'
+import { registerClaudeCodeCompletionGateRuntime } from './agents/claude-code-handoff'
 import { installCompletionGateDiagnostics } from './agents/completion-gate-diagnostics'
 import { PendingSessionSpecialistBindings } from './agents/pending-session-specialist-bindings'
 import { createCodexCompletionGateRuntime } from './acp/codex-completion-handoff'
@@ -354,10 +368,13 @@ import type {
 import { registerStorageIpcHandlers } from './storage/ipc'
 import { createStorageCommandOwner } from './storage/command-owner'
 import {
+  initializeDataRootWriteAvailability,
   isMigrationInProgress,
   isMigrationPending,
+  runDataRootStartupRecovery,
   withDataRootWrite
 } from './storage/migration-state'
+import { isDataRootMissing } from './storage/path-presence'
 import { normalizeLegacyDataPaths } from './storage/normalize-legacy-paths'
 import { DataRootCleanupJournal } from './storage/data-root-cleanup'
 import {
@@ -390,6 +407,7 @@ import type { UpdateBlocker } from '../shared/update'
 import { startUpdateScheduler } from './update/scheduler'
 import { createDefaultUploadRepository, registerUploadIpcHandlers } from './uploads/ipc'
 import { createUploadCommandOwner } from './uploads/command-owner'
+import { ContentRepository } from './storage/content-repository'
 import { broadcastToRenderers, installRendererBroadcastEventHub } from './renderer-broadcast'
 import {
   installElectronRuntimeAdapters,
@@ -456,6 +474,8 @@ export type ApplicationRuntimeInterfaces = {
   archiveCapability: Pick<ArchiveCoordinator, 'isSessionAvailableById' | 'setMarkReadSessions'>
   detectActiveSessions: () => ReturnType<typeof detectActiveSessions>
   hasActiveReviewerWork: () => boolean
+  getActiveSettingsInstallId: () => string | undefined
+  holdSettingsInstallAdmission: () => () => void
   prepareForQuit: () => Promise<Extract<ShutdownStepOutcome, 'completed' | 'timeout' | 'failed'>>
   abortQuitPreparation: () => void
 }
@@ -621,8 +641,8 @@ const createApplicationModules = async (
       dispose: () => capability.dispose()
     }
   })
-  const settingsService = await modules.add(undefined, () => ({
-    capability: new SettingsService({
+  const settingsService = await modules.add(undefined, () => {
+    const capability = new SettingsService({
       repository: settingsRepository,
       skillRuntimeMcpEntryPath: mainEntryPath,
       openAlexFetch: netFetchStandard,
@@ -646,7 +666,14 @@ const createApplicationModules = async (
       resolveCodexProxyEnvironment: () =>
         Promise.resolve(networkProxyRuntime.getChildProcessProxyEnvironment())
     })
-  }))
+    return {
+      name: 'settings-service',
+      capability,
+      rollback: () => capability.dispose(),
+      dispose: () => capability.dispose(),
+      disposeTimeoutMs: QUIT_SHUTDOWN_BUDGET_MS
+    }
+  })
   settingsServiceRef.current = settingsService
   const settingsSnapshotCommits = new SettingsSnapshotCommitOwner(
     settingsService,
@@ -669,26 +696,33 @@ const createApplicationModules = async (
   // Prime the data-root cache from settings before any data repository is constructed below. A change
   // to this value only takes effect after a restart, so reading it once here is sufficient.
   initDataRoot(storedSettings.dataRoot)
+  const configuredDataRootMissing =
+    Boolean(storedSettings.dataRoot?.trim()) && (await isDataRootMissing(resolveDataRoot()))
+  initializeDataRootWriteAvailability(configuredDataRootMissing)
   const dataRootCleanupJournal = new DataRootCleanupJournal(resolveConfigRoot())
-  try {
-    const cleanup = await dataRootCleanupJournal.recover(
-      resolveDataRoot(),
-      deleteSources,
-      (sourceRoot) => {
-        const runtimeRoot = join(sourceRoot, 'runtime')
-        const workloadRemoved = removeNotebookWorkloadCache(runtimeRoot)
-        const micromambaRemoved = removeMicromambaCacheForRoot(runtimeRoot)
-        return workloadRemoved && micromambaRemoved
+  await runDataRootStartupRecovery(
+    async () => {
+      const cleanup = await dataRootCleanupJournal.recover(
+        resolveDataRoot(),
+        deleteSources,
+        (sourceRoot) => {
+          const runtimeRoot = join(sourceRoot, 'runtime')
+          const workloadRemoved = removeNotebookWorkloadCache(runtimeRoot)
+          const micromambaRemoved = removeMicromambaCacheForRoot(runtimeRoot)
+          return workloadRemoved && micromambaRemoved
+        }
+      )
+      if (cleanup.pending) {
+        storageLog.warn('old data root cleanup remains pending', {
+          cleanupFailureCount: cleanup.failureCount
+        })
       }
-    )
-    if (cleanup.pending) {
-      storageLog.warn('old data root cleanup remains pending', {
-        cleanupFailureCount: cleanup.failureCount
-      })
+    },
+    {
+      reportFailure: (error) =>
+        storageLog.warn('old data root cleanup recovery failed', diagnosticErrorFields(error))
     }
-  } catch (error) {
-    storageLog.warn('old data root cleanup recovery failed', diagnosticErrorFields(error))
-  }
+  )
   const notificationInbox = createNotificationInboxController({
     headless,
     repository: new NotificationInboxDbRepository(() => getProjectDbClient(resolveConfigRoot())),
@@ -707,16 +741,16 @@ const createApplicationModules = async (
   // Constructed once here (rather than left to each register*IpcHandlers' own default) so the
   // one-time legacy-path normalization pass below can share the exact instances the IPC surface uses.
   const uploadRepository = createDefaultUploadRepository()
-  try {
-    await uploadRepository.recoverStagingUploads()
-  } catch (error) {
-    // Ready bytes remain fail-closed; keep startup available so Files can surface unaffected rows and
-    // the next launch can retry any recoverable staging Version.
-    storageLog.error(
-      'staging upload recovery incomplete; will retry next launch',
-      diagnosticErrorFields(error)
-    )
-  }
+  await runDataRootStartupRecovery(() => uploadRepository.recoverStagingUploads(), {
+    reportFailure: (error) => {
+      // Ready bytes remain fail-closed; keep startup available so Files can surface unaffected rows and
+      // the next launch can retry any recoverable staging Version.
+      storageLog.error(
+        'staging upload recovery incomplete; will retry next launch',
+        diagnosticErrorFields(error)
+      )
+    }
+  })
   const managedFileVersionService = new ManagedFileVersionService({
     storageRoot: resolveDataRoot(),
     getClient: () => getProjectDbClient(resolveConfigRoot())
@@ -783,25 +817,29 @@ const createApplicationModules = async (
   // startup on failure: an error is logged and the marker stays unset, so the pass simply retries on
   // the next launch.
   if (!storedSettings.pathsNormalizedAt) {
-    const normalizationOperation = startDiagnosticOperation(storageLog, {
-      operation: 'legacy-data-root-normalization',
-      fields: { mode: 'legacy-normalize' }
-    })
-    normalizationOperation.phase('rewrite-paths')
-    try {
-      await normalizeLegacyDataPaths({
-        sessionRepository,
-        sessionUploads: uploadRepository,
-        previewStateRepository,
-        projectRepository,
-        dataRoot: resolveDataRoot()
-      })
-      normalizationOperation.phase('persist-marker')
-      await settingsService.markPathsNormalized()
-      normalizationOperation.complete()
-    } catch (error) {
-      normalizationOperation.fail(error)
-    }
+    let normalizationOperation: DiagnosticOperation | undefined
+    await runDataRootStartupRecovery(
+      async () => {
+        normalizationOperation = startDiagnosticOperation(storageLog, {
+          operation: 'legacy-data-root-normalization',
+          fields: { mode: 'legacy-normalize' }
+        })
+        normalizationOperation.phase('rewrite-paths')
+        await normalizeLegacyDataPaths({
+          sessionRepository,
+          sessionUploads: uploadRepository,
+          previewStateRepository,
+          projectRepository,
+          dataRoot: resolveDataRoot()
+        })
+        normalizationOperation.phase('persist-marker')
+        await settingsService.markPathsNormalized()
+        normalizationOperation.complete()
+      },
+      {
+        reportFailure: (error) => normalizationOperation?.fail(error)
+      }
+    )
   }
 
   // Share one repository and registry so runtime artifact claims and renderer finalization meet.
@@ -817,6 +855,18 @@ const createApplicationModules = async (
     managedFileVersions: managedFileVersionService,
     compatibilityRepository: artifactRepository,
     loadSession: (projectId, appSessionId) => sessionRepository.loadSession(projectId, appSessionId)
+  })
+  const contentRepository = new ContentRepository({
+    storageRoot: resolveDataRoot(),
+    getClient: () => getProjectDbClient(resolveConfigRoot())
+  })
+  const literatureAttachmentAuthority = new LiteratureAttachmentAuthority({
+    getClient: () => getProjectDbClient(resolveConfigRoot()),
+    content: contentRepository
+  })
+  const sessionPdfSourceResolver = new SessionPdfSourceResolver({
+    inputs: immutableInputAuthority,
+    literature: literatureAttachmentAuthority
   })
   const provenanceMessageSnapshots = new ProvenanceMessageSnapshotRepository({
     storageRoot: resolveDataRoot(),
@@ -840,7 +890,7 @@ const createApplicationModules = async (
   )
   // One source-neutral resolver keeps previews and user-requested exports on identical trust checks.
   const resolveManagedFilePath = (
-    _source: Extract<ManagedPreviewSource, 'local'>,
+    source: Extract<ManagedPreviewSource, 'literature' | 'local'>,
     request: {
       path: string
       projectId?: string
@@ -849,6 +899,14 @@ const createApplicationModules = async (
       versionId?: string
     }
   ): Promise<string> => {
+    if (source === 'literature') {
+      const versionId = parseLiteratureAttachmentVersionReference(request.path)
+      if (!versionId) return Promise.reject(new Error('Invalid Literature attachment reference.'))
+      return literatureAttachmentAuthority.resolveVersion(versionId).then((version) => {
+        if (!version) throw new Error('Literature attachment Version is unavailable.')
+        return version.path
+      })
+    }
     return localFsService.resolveFilePath(request)
   }
   // One registry owns short-lived capability URLs for both managed artifact repositories.
@@ -1052,7 +1110,7 @@ const createApplicationModules = async (
     }
   )
   const sessionPdfContextOwner = new SessionPdfContextOwner({
-    inputs: immutableInputAuthority,
+    sources: sessionPdfSourceResolver,
     pendingUploads: {
       resolveContent: ({ projectId, path }) =>
         uploadRepository.resolveManagedUploadPath(
@@ -1079,7 +1137,7 @@ const createApplicationModules = async (
   }))
   const literatureDocumentReader = new LiteratureDocumentReader({
     storageRoot: resolveDataRoot(),
-    inputs: immutableInputAuthority,
+    sources: sessionPdfSourceResolver,
     sessions: sessionPersistenceCoordinator
   })
   const sideChatRelay = new SideChatRelayOwner({
@@ -1188,11 +1246,19 @@ const createApplicationModules = async (
     projectRepository,
     sessionPersistenceCoordinator,
     {
-      isSessionBusy: (projectId, sessionId) =>
-        sideChatOwnerRef.current?.hasForParent(sessionId) === true ||
-        detectArchiveBlockingSessions().some(
-          (session) => session.projectId === projectId && session.sessionId === sessionId
-        ),
+      isSessionBusy: async (projectId, sessionId) => {
+        const computeJobs = computeJobActivityRef.current
+        if (!computeJobs) throw new Error('Compute Job activity is not initialized.')
+        const jobs = await computeJobs.countNonTerminalBySession(sessionId)
+        // Read synchronous activity after the database await so a newly active runtime is visible.
+        return (
+          jobs > 0 ||
+          sideChatOwnerRef.current?.hasForParent(sessionId) === true ||
+          detectArchiveBlockingSessions().some(
+            (session) => session.projectId === projectId && session.sessionId === sessionId
+          )
+        )
+      },
       isProjectBusy: async (projectId) => {
         if (
           reviewerProjectRuntime.isProjectBusy(projectId) ||
@@ -1298,6 +1364,7 @@ const createApplicationModules = async (
     },
     loadUsage: async () => {
       await ensureSessionProjection()
+      await auxiliaryUsageRecorder.flush()
       return sessionRepository.loadSessionUsageProjection()
     },
     loadOne: async ({ projectId, sessionId }) => {
@@ -1351,11 +1418,11 @@ const createApplicationModules = async (
     updateArchive: async (request) => {
       return archiveCoordinator.updateSessionArchive(request)
     },
-    deleteSession: async (projectId, sessionId) => {
-      const result = await sessionPersistenceCoordinator.deleteSession(projectId, sessionId)
-      await permissionGrantRegistry.prune({ kind: 'session', projectId, sessionId })
-      return result
-    },
+    deleteSession: withSessionDeletionCleanup(
+      (projectId, sessionId) => sessionPersistenceCoordinator.deleteSession(projectId, sessionId),
+      (projectId, sessionId) =>
+        permissionGrantRegistry.prune({ kind: 'session', projectId, sessionId })
+    ),
     saveManifest: async (request) => {
       return sessionPersistenceCoordinator.saveManifest(request)
     }
@@ -1461,7 +1528,13 @@ const createApplicationModules = async (
       listSkills: () => settingsService.listSkills(),
       listConnectors: () => settingsService.listConnectors(),
       listSpecialists: async () =>
-        (await specialistService.listForSettings()).filter(({ kind }) => kind !== 'reviewer')
+        (await specialistService.listForSettings()).filter(({ kind }) => kind !== 'reviewer'),
+      listLiteratureItems: async () => {
+        const database = await getProjectDbClient(configRoot)
+        return database.literatureItem.findMany({
+          select: { id: true }
+        })
+      }
     }),
     applicationEvents
   )
@@ -1469,6 +1542,56 @@ const createApplicationModules = async (
     new MemoryRepository(() => getProjectDbClient(configRoot)),
     applicationEvents
   )
+  const literatureCatalog = new LiteratureCatalog(() => getProjectDbClient(configRoot))
+  const literatureCitationStyles = new LiteratureCitationStyleLibrary(
+    join(resolveDataRoot(), 'literature', 'citation-styles')
+  )
+  const literatureCitationFormatter = new LiteratureCitationFormatter(literatureCitationStyles)
+  const literatureCitationDocument = new LiteratureCitationDocument(
+    literatureCatalog,
+    literatureCitationFormatter
+  )
+  const literatureMetadataEnricher = new LiteratureMetadataEnricher(
+    literatureCatalog,
+    netFetchStandard
+  )
+  const downloadLiteraturePdf: typeof downloadFullText = (url, maxBytes, onProgress) =>
+    downloadFullText(url, maxBytes, onProgress, async (target) => {
+      const environment = parseSystemProxyRules(await session.defaultSession.resolveProxy(target))
+      return environment.HTTPS_PROXY ?? environment.ALL_PROXY
+    })
+  const literatureFullTextFinder = new LiteratureFullTextFinder({
+    catalog: literatureCatalog,
+    content: contentRepository,
+    download: downloadLiteraturePdf,
+    openAlexKey: async () =>
+      tryDecryptKey((await settingsService.getConnectors())?.openAlexApiKeyRef),
+    contactEmail: async () => (await settingsService.getConnectors())?.contactEmail
+  })
+  const literaturePdfImporter = new LiteraturePdfImporter({
+    uploads: uploadRepository,
+    content: contentRepository,
+    catalog: literatureCatalog
+  })
+  const literaturePdfAcquisition = new AgentPdfAcquisition({
+    catalog: literatureCatalog,
+    fullText: literatureFullTextFinder,
+    content: contentRepository,
+    download: downloadLiteraturePdf
+  })
+  const literatureBatchJobs = new LiteratureBatchJobs({
+    path: join(resolveDataRoot(), 'literature', 'batch-jobs.json'),
+    catalog: literatureCatalog,
+    metadata: literatureMetadataEnricher,
+    fullText: literatureFullTextFinder,
+    onError: (error) =>
+      literatureContextLog.error('Literature batch task failed', errorLogFields(error))
+  })
+  await modules.add(undefined, () => ({
+    name: 'literature-batch-jobs',
+    capability: undefined,
+    dispose: () => literatureBatchJobs.close()
+  }))
   const tagCleanupLog = createLogger('tags:cleanup')
   const removeResourceTagsOrThrow = async (
     resources: Parameters<TagService['removeResources']>[0]
@@ -1613,12 +1736,14 @@ const createApplicationModules = async (
   // (validate + record) and the runtime switch so a hot-switch lands on the same source of truth.
   const sessionBindingService = new SessionBindingService(specialistService)
   const specialistPersistLog = createLogger('specialist:persist')
+  const findRuntimeSessions = createSessionRuntimeLookup({
+    repository: sessionRepository,
+    coordinator: sessionPersistenceCoordinator
+  })
   const loadSessionSpecialistBinding = async (
     sessionId: string
   ): Promise<PersistedSessionSpecialistBinding | undefined> => {
-    const session = (await sessionRepository.loadAll()).sessions.find(
-      (candidate) => candidate.id === sessionId
-    )
+    const session = (await findRuntimeSessions(sessionId))[0]
     return session
       ? {
           specialistId: session.specialistId,
@@ -1631,8 +1756,7 @@ const createApplicationModules = async (
     specialistId: string | undefined,
     pending: boolean
   ): Promise<void> => {
-    const allSessions = await sessionRepository.loadAll()
-    const session = allSessions.sessions.find((candidate) => candidate.id === sessionId)
+    const session = (await findRuntimeSessions(sessionId))[0]
     if (!session) {
       // Fresh unsent drafts are not durable yet. Carry both the desired ID and pending marker into
       // their first save; the marker can also be cleared here when runtime applies before that save.
@@ -1937,15 +2061,22 @@ const createApplicationModules = async (
   sessionEnabledComputeHostsOwnerRef.current = sessionEnabledComputeHostsOwner
   sessionCacheOwnerRef.current = sessionCacheOwner
   computeJobDeletionRef.current = withSessionCacheDeletion(jobDeletionOwner, sessionCacheOwner)
-  await projectDeletionCoordinator.restorePendingDeletionBarriers()
-  try {
-    await withDataRootWrite(() => managedFileVersionService.recoverPendingWrites())
-  } catch (error) {
-    storageLog.error(
-      'managed file version recovery incomplete; will retry next launch',
-      diagnosticErrorFields(error)
-    )
-  }
+  await runDataRootStartupRecovery(() =>
+    projectDeletionCoordinator.restorePendingDeletionBarriers()
+  )
+  await runDataRootStartupRecovery(
+    async () => {
+      await withDataRootWrite(() => managedFileVersionService.recoverPendingWrites())
+    },
+    {
+      reportFailure: (error) => {
+        storageLog.error(
+          'managed file version recovery incomplete; will retry next launch',
+          diagnosticErrorFields(error)
+        )
+      }
+    }
+  )
   void managedFileVersionService
     .auditActiveVersionIntegrity()
     .then((integrityErrors) => {
@@ -2096,8 +2227,7 @@ const createApplicationModules = async (
       commands: sessionPersistenceCoordinator,
       readSession: ({ projectId, sessionId }) =>
         sessionRepository.loadSession(projectId, sessionId),
-      findSessions: async (sessionId) =>
-        (await sessionRepository.loadAll()).sessions.filter((session) => session.id === sessionId)
+      findSessions: findRuntimeSessions
     },
     async resolveInput(identity, session) {
       const artifact = parseArtifactVersionLocator(identity)
@@ -2388,9 +2518,10 @@ const createApplicationModules = async (
       connectorService,
       computeService: agentComputeService,
       memoryService,
-      isMemoryEnabledForSession: async (sessionId) =>
-        (runtimeRef.current?.isSessionMemoryEnabled(sessionId) ?? false) &&
-        (await memoryService.isEnabled()),
+      // The Memory service checks the global gate inside its own queue.
+      isMemoryEnabledForSession: (sessionId) =>
+        runtimeRef.current?.isSessionMemoryEnabled(sessionId) ?? false,
+      sessionMemorySignal: (sessionId) => runtimeRef.current?.sessionMemorySignal(sessionId),
       skillImporter: conversationSkillImporter,
       planService: {
         call: (input) => {
@@ -2683,6 +2814,9 @@ const createApplicationModules = async (
       specialistService,
       sessionPersistenceCoordinator,
       literatureReader: literatureDocumentReader,
+      literatureAttachments: literatureAttachmentAuthority,
+      literatureCatalog,
+      literaturePdfAcquisition,
       delegatedWork: delegatedWork.root,
       sideChatRelays: mainPromptSideChatRelay,
       imageInputCompatibility,
@@ -3076,15 +3210,11 @@ const createApplicationModules = async (
         }
       }
     },
-    prepareReplayContext: async (input) => {
-      const persisted = (await sessionRepository.loadAll()).sessions.find(
-        (session) => session.id === input.sessionId
-      )
-      runtime.prepareClaudeCodeHandoffReplay({
-        ...input,
-        supportedTaskContext: selectPersistedUserTaskContext(persisted?.messages ?? [])
-      })
-    },
+    prepareReplayContext: createPersistedClaudeReplayPreparer({
+      repository: sessionRepository,
+      coordinator: sessionPersistenceCoordinator,
+      prepareReplay: (input) => runtime.prepareClaudeCodeHandoffReplay(input)
+    }),
     discardReplayContext: async (sessionId) => runtime.discardClaudeCodeHandoffReplay(sessionId),
     switchSpecialist: (sessionId, specialistId) =>
       sessionSpecialistReconfiguration.applyPersisted(sessionId, specialistId),
@@ -3150,6 +3280,7 @@ const createApplicationModules = async (
       notebook: notebookService
     }).map((session) => session.kind)
     if (reviewerModelRuntimeShutdown?.hasActiveWork()) blockers.push('reviewer')
+    if (settingsService.hasActiveInstall()) blockers.push('settings-install')
     return blockers
   }
   const durableDataRootHandoffGate = (
@@ -3178,20 +3309,28 @@ const createApplicationModules = async (
   // Construct update handling only after its backend-shutdown gate exists. The in-place strategy owns
   // this immutable dependency from construction; the manifest fallback ignores it because it does not
   // quit the running app to install.
+  let releaseSettingsInstallAdmission: (() => void) | undefined
   const abortUpdateHandoff = (): void => {
+    const releaseAdmission = releaseSettingsInstallAdmission
+    releaseSettingsInstallAdmission = undefined
+    releaseAdmission?.()
     try {
       sideChatRuntime.resumeAfterHandoff()
     } finally {
       notifyRendererDurabilityAborted()
     }
   }
+  const updateInstallGate = createActiveResearchSafeInstallGate(
+    detectResearchBlockers,
+    durableBackendHandoffGate,
+    () => isMigrationInProgress() || isMigrationPending()
+  )
   const updateStrategy = createUpdateStrategy(process.platform, {
     translate,
-    installGate: createActiveResearchSafeInstallGate(
-      detectResearchBlockers,
-      durableBackendHandoffGate,
-      () => isMigrationInProgress() || isMigrationPending()
-    ),
+    installGate: async () => {
+      releaseSettingsInstallAdmission = settingsService.holdInstallAdmission()
+      return updateInstallGate()
+    },
     releaseInstallHandoff: abortUpdateHandoff
   })
   const updateCommandOwner = createUpdateCommandOwner(updateStrategy)
@@ -3336,10 +3475,10 @@ const createApplicationModules = async (
   // binding in one place.
   const originalDeleteSession =
     sessionPersistenceBackend.deleteSession.bind(sessionPersistenceBackend)
-  sessionPersistenceBackend.deleteSession = async (projectId, sessionId) => {
-    await originalDeleteSession(projectId, sessionId)
-    sessionSpecialistReconfiguration.clearSession(sessionId)
-  }
+  sessionPersistenceBackend.deleteSession = withSessionDeletionCleanup(
+    originalDeleteSession,
+    (_projectId, sessionId) => sessionSpecialistReconfiguration.clearSession(sessionId)
+  )
   const sessionPersistenceHandlers = createSessionPersistenceHandlersWithAttributionAuthority(
     sessionPersistenceBackend,
     reviewRepository,
@@ -3628,9 +3767,10 @@ const createApplicationModules = async (
   // create, on-demand materialize, install) can await it and never race recovery's cleanup/delete.
   // Fire-and-forget so a slow/failed recovery never blocks IPC registration; the barrier itself is what
   // actually orders the prefix work.
-  void notebookService
-    .recoverInterruptedOperations()
-    .catch((error) => notebookStartupLog.error('operation recovery failed', errorLogFields(error)))
+  void runDataRootStartupRecovery(() => notebookService.recoverInterruptedOperations(), {
+    reportFailure: (error) =>
+      notebookStartupLog.error('operation recovery failed', errorLogFields(error))
+  })
   const waitForRecovery = (): Promise<void> => notebookService.ensureRecovered()
   // Lets UI provision/repair refuse when recovery left the default env's prefix blocked (an
   // unknown-liveness orphan may still be writing it) — throws with an actionable message.
@@ -3675,6 +3815,12 @@ const createApplicationModules = async (
   composition.phase('notebook-provisioner')
 
   // Registered after the acp/notebook handlers exist: migration needs to interrupt both runtimes.
+  let releaseDataRootInstallAdmission: (() => void) | undefined
+  const abortDataRootInstallAdmission = (): void => {
+    const releaseAdmission = releaseDataRootInstallAdmission
+    releaseDataRootInstallAdmission = undefined
+    releaseAdmission?.()
+  }
   const storageCommandOwner = createStorageCommandOwner({
     runtime,
     notebook: notebookService,
@@ -3686,6 +3832,7 @@ const createApplicationModules = async (
     micromambaRunner,
     acknowledgeWebRendererFlush: webSessionPersistenceFlush.acknowledge,
     notifyDataRootHandoffAborted: () => {
+      abortDataRootInstallAdmission()
       try {
         sideChatRuntime.resumeAfterHandoff()
       } finally {
@@ -3698,12 +3845,16 @@ const createApplicationModules = async (
     },
     prepareDataRootHandoff: async (target, confirmedInterruption) => {
       let prepared = false
+      releaseDataRootInstallAdmission ??= settingsService.holdInstallAdmission()
       try {
         const readiness = await durableDataRootHandoffGate(target, confirmedInterruption)
         prepared = readiness.completed && readiness.reaped
         return prepared
       } finally {
-        if (!prepared) sideChatRuntime.resumeAfterHandoff()
+        if (!prepared) {
+          abortDataRootInstallAdmission()
+          sideChatRuntime.resumeAfterHandoff()
+        }
       }
     },
     cleanupJournal: dataRootCleanupJournal
@@ -4017,6 +4168,164 @@ const createApplicationModules = async (
     },
     permissionGrants: permissionGrantProjection,
     tags: tagService,
+    literature: {
+      jobs: (request) => literatureBatchJobs.run(request),
+      citationStyles: async (request) => {
+        if (request.kind === 'preview') {
+          const [styles, preview] = await Promise.all([
+            literatureCitationStyles.list(),
+            literatureCitationFormatter.formatStyleExample(request.styleId)
+          ])
+          return { styles, preview: { styleId: request.styleId, ...preview } }
+        }
+        let changedStyleId: string | undefined
+        if (request.kind === 'import') {
+          changedStyleId = await literatureCitationStyles.import(request.content)
+          literatureCitationFormatter.invalidateStyles()
+        } else if (request.kind === 'delete') {
+          await literatureCitationStyles.delete(request.styleId)
+          changedStyleId = request.styleId
+          literatureCitationFormatter.invalidateStyles()
+        }
+        return {
+          styles: await literatureCitationStyles.list(),
+          ...(changedStyleId ? { changedStyleId } : {})
+        }
+      },
+      completeMetadata: (request) => literatureMetadataEnricher.complete(request),
+      fullText: (request) => literatureFullTextFinder.run(request),
+      formatDocument: async (request) => {
+        const literature = await artifactProvenanceRepository.getVersionLiterature({
+          projectId: request.projectId,
+          appSessionId: request.sessionId,
+          artifactId: request.artifactId,
+          versionId: request.versionId
+        })
+        if (!literature) {
+          throw new Error('This Artifact Version has no Literature manifest.')
+        }
+        if (request.mode === 'preview') {
+          const references = await literatureCitationFormatter.formatReferences(
+            literature.references.map((reference) => ({
+              id: reference.itemId,
+              item: reference.item
+            })),
+            request.styleId,
+            request.locale
+          )
+          return { mode: 'preview' as const, references }
+        }
+
+        const lease = await managedFileVersionService.openVersion(
+          { source: 'artifact', projectId: request.projectId, fileId: request.artifactId },
+          request.versionId
+        )
+        let content: Uint8Array
+        try {
+          content = lease.size === 0 ? new Uint8Array() : await lease.readRange(0, lease.size)
+        } finally {
+          await lease.close()
+        }
+        const formatted = await literatureCitationDocument.reformat({
+          content,
+          literature,
+          styleId: request.styleId,
+          locale: request.locale
+        })
+        const saved = await withDataRootWrite(() =>
+          managedFileVersionService.saveDerivedArtifactEdit({
+            source: 'artifact',
+            projectId: request.projectId,
+            fileId: request.artifactId,
+            basedOnVersionId: request.versionId,
+            expectedHeadVersionId: request.expectedHeadVersionId,
+            operationId: request.operationId,
+            content: formatted.content,
+            literature: formatted.literature
+          })
+        )
+        if (saved.kind !== 'created') {
+          throw new Error(
+            saved.kind === 'conflict'
+              ? 'This file has a newer version.'
+              : 'Citation formatting did not create a new version.'
+          )
+        }
+        if (!saved.replayed) {
+          broadcastToRenderers('project-files:changed', {
+            projectId: request.projectId,
+            sources: ['artifact'],
+            kind: 'upsert'
+          })
+        }
+        return {
+          mode: 'save' as const,
+          versionId: saved.version.id,
+          versionNumber: saved.version.versionNumber
+        }
+      },
+      formatReferences: async (request) => {
+        const items = await literatureCatalog.getMany(request.itemIds)
+        const itemsById = new Map(items.map((item) => [item.id, item]))
+        const references = request.itemIds.map((itemId) => {
+          const item = itemsById.get(itemId)
+          if (!item) throw new Error(`Literature Item is unavailable: ${itemId}`)
+          return { id: itemId, item: item.item }
+        })
+        const [formatted, bibtex, ris] = await Promise.all([
+          literatureCitationFormatter.formatReferences(references, request.styleId, request.locale),
+          literatureCitationFormatter.exportReferences(references, 'bibtex'),
+          literatureCitationFormatter.exportReferences(references, 'ris')
+        ])
+        return {
+          references: formatted,
+          exports: { bibtex, ris }
+        }
+      },
+      get: (itemId) => literatureCatalog.get(itemId),
+      importPdf: (request) => literaturePdfImporter.import(request),
+      importRecords: async (request) => {
+        const parsed = await literatureCitationFormatter.parseReferences(request.content)
+        const entries = await literatureCatalog.inspectImportItems(parsed.items, parsed.errors)
+        if (request.mode === 'preview') return { ...parsed, entries }
+        if (parsed.items.length === 0) throw new Error('No valid references were found.')
+        return {
+          ...parsed,
+          entries,
+          imported: await literatureCatalog.importItems(
+            parsed.items,
+            request.collectionId,
+            request.duplicatePolicy
+          )
+        }
+      },
+      search: (request) => literatureCatalog.search(request),
+      transact: async (command) => {
+        if (command.kind !== 'delete-items-permanently') {
+          return literatureCatalog.transact(command)
+        }
+        const contentBlobIds = await literatureCatalog.contentBlobIdsForItems(command.itemIds)
+        const receipt = await literatureCatalog.transact(command)
+        try {
+          const sweep = await contentRepository.sweep({
+            createdBefore: new Date(Date.now() + 1),
+            contentIds: contentBlobIds
+          })
+          if (sweep.failedIds.length > 0) {
+            literatureContextLog.warn(
+              'Permanent Literature deletion left content for later cleanup',
+              { failedContentCount: sweep.failedIds.length }
+            )
+          }
+        } catch (error) {
+          literatureContextLog.warn(
+            'Permanent Literature deletion could not start content cleanup',
+            errorLogFields(error)
+          )
+        }
+        return receipt
+      }
+    },
     memory: {
       snapshot: () => memoryService.snapshot(),
       setEnabled: async (request) => {
@@ -4204,6 +4513,8 @@ const createApplicationModules = async (
         notebook: notebookService
       }),
     hasActiveReviewerWork: () => reviewerModelRuntimeShutdown?.hasActiveWork() ?? false,
+    getActiveSettingsInstallId: () => settingsService.getActiveInstallId(),
+    holdSettingsInstallAdmission: () => settingsService.holdInstallAdmission(),
     prepareForQuit: () => runtime.prepareForQuit(),
     abortQuitPreparation: () => runtime.abortQuitPreparation(),
     electronAdapters: {
@@ -4225,12 +4536,6 @@ const createApplicationModules = async (
           if (!projectId) return undefined
           const session = await sessionRepository.loadSession(projectId, sessionId)
           return session ? session.memoryEnabled !== false : undefined
-        },
-        respondDelegatedQuestion: (input) => {
-          if (!delegatedWork.root.respondQuestion) {
-            throw new Error('Delegated question response owner is unavailable.')
-          }
-          return delegatedWork.root.respondQuestion(input)
         }
       },
       afterAcp: afterAcpAdapters

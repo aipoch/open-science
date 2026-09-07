@@ -50,20 +50,20 @@ describe('NetworkPanel list view', () => {
   it('translates the heading and the unconfigured status, and re-renders on language change', () => {
     render(<NetworkPanel view={{ kind: 'list' }} onNavigate={noop} />)
     expect(container.textContent).toContain('Package mirror')
-    expect(container.textContent).toContain('Not configured')
+    expect(container.textContent).toContain('Automatic mirror selection')
     expect(container.textContent).toContain('Configure')
 
     switchTo('zh-Hans')
     expect(container.textContent).toContain('软件包镜像')
-    expect(container.textContent).toContain('未配置')
+    expect(container.textContent).toContain('自动选择镜像')
     expect(container.textContent).toContain('配置')
     expect(container.textContent).not.toContain('Package mirror')
-    expect(container.textContent).not.toContain('Not configured')
+    expect(container.textContent).not.toContain('Automatic mirror selection')
 
     // zh-Hant has its own catalog; a fallback to zh-Hans would leave Simplified glyphs on screen.
     switchTo('zh-Hant')
     expect(container.textContent).toContain('套件鏡像')
-    expect(container.textContent).toContain('未設定')
+    expect(container.textContent).toContain('自動選擇鏡像')
     expect(container.textContent).not.toContain('软件包镜像')
   })
 

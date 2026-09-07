@@ -184,7 +184,15 @@ export class XaiOAuthProviderBridge {
     if (!wantsStream) return json(response, 200, translated)
     response.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache' })
     if (this.wire === 'anthropic') this.writeAnthropicStream(response, translated)
-    else this.writeChatStream(response, translated)
+    else
+      this.writeChatStream(
+        response,
+        translated,
+        typeof body.stream_options === 'object' &&
+          body.stream_options !== null &&
+          'include_usage' in body.stream_options &&
+          body.stream_options.include_usage === true
+      )
   }
 
   private advertise(id: string): void {
@@ -285,18 +293,27 @@ export class XaiOAuthProviderBridge {
     response.end()
   }
 
-  private writeChatStream(response: ServerResponse, completion: Record<string, unknown>): void {
+  private writeChatStream(
+    response: ServerResponse,
+    completion: Record<string, unknown>,
+    includeUsage: boolean
+  ): void {
     const choices = Array.isArray(completion.choices) ? completion.choices : []
     const first = choices[0] as Record<string, unknown> | undefined
     const message =
       first && typeof first.message === 'object' ? (first.message as Record<string, unknown>) : {}
     const chunk = (delta: unknown, finishReason: unknown = null): void => {
       response.write(
-        `data: ${JSON.stringify({ id: completion.id, object: 'chat.completion.chunk', created: completion.created, model: completion.model, choices: [{ index: 0, delta, finish_reason: finishReason }] })}\n\n`
+        `data: ${JSON.stringify({ id: completion.id, object: 'chat.completion.chunk', created: completion.created, model: completion.model, choices: [{ index: 0, delta, finish_reason: finishReason }], ...(includeUsage ? { usage: null } : {}) })}\n\n`
       )
     }
     chunk({ role: 'assistant', content: message.content, tool_calls: message.tool_calls })
     chunk({}, first?.finish_reason)
+    if (includeUsage) {
+      response.write(
+        `data: ${JSON.stringify({ id: completion.id, object: 'chat.completion.chunk', created: completion.created, model: completion.model, choices: [], usage: completion.usage })}\n\n`
+      )
+    }
     response.end('data: [DONE]\n\n')
   }
 }

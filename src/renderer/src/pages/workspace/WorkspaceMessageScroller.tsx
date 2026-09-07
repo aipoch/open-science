@@ -52,6 +52,7 @@ import { JobDetailModal } from '@/components/JobDetailModal'
 import { extractJobIdFromActivity } from '@/components/job-binding-utils'
 import { MessageScrollerItem } from '@/components/ui/message-scroller'
 import { Button } from '@/components/ui/button'
+import { TooltipProvider } from '@/components/ui/tooltip'
 import { ReviewerCard } from '@/components/ReviewerCard'
 import { WorkspaceActivityGroup } from './WorkspaceActivityGroup'
 import { WorkspaceContextCompactionActivityRow } from './WorkspaceContextCompactionActivityRow'
@@ -733,10 +734,26 @@ const WorkspaceMessageScrollerImpl = ({
     undefined
   )
   const showWindowFind = useCallback((): void => {
+    const acknowledgedScope = windowFindAcknowledgedScopeRef.current
+    if (
+      acknowledgedScope &&
+      acknowledgedScope.scopeId === currentPresentationScopeId &&
+      presentationBarrierIndex < 0 &&
+      transcriptWindow.entries.length === conversationItems.length
+    ) {
+      window.api?.window?.announceWindowFindContentReady?.()
+      return
+    }
     windowFindAcknowledgedScopeRef.current = undefined
     setWindowFindOpen(true)
     revealFullTranscript()
-  }, [revealFullTranscript])
+  }, [
+    conversationItems.length,
+    currentPresentationScopeId,
+    presentationBarrierIndex,
+    revealFullTranscript,
+    transcriptWindow.entries.length
+  ])
   useEffect(() => {
     return window.api?.window?.onShowWindowFind?.(showWindowFind)
   }, [showWindowFind])
@@ -868,12 +885,19 @@ const WorkspaceMessageScrollerImpl = ({
   useEffect(() => clearScrollToFirstMessageHideTimeout, [clearScrollToFirstMessageHideTimeout])
   useEffect(() => {
     if (typeof ResizeObserver === 'undefined') return
-    const observer = new ResizeObserver(updateScrollToFirstMessageEligibility)
+    let eligibilityFrame = 0
+    const observer = new ResizeObserver(() => {
+      window.cancelAnimationFrame(eligibilityFrame)
+      eligibilityFrame = window.requestAnimationFrame(updateScrollToFirstMessageEligibility)
+    })
     const viewport = messageScrollerViewportRef.current
     const content = messageScrollerContentRef.current
     if (viewport) observer.observe(viewport)
     if (content) observer.observe(content)
-    return () => observer.disconnect()
+    return () => {
+      window.cancelAnimationFrame(eligibilityFrame)
+      observer.disconnect()
+    }
   }, [currentSessionId, updateScrollToFirstMessageEligibility])
   const showScrollToFirstMessage =
     statusAllowsScrollToFirstMessage && scrollThresholdAllowsFirstMessage
@@ -1261,7 +1285,11 @@ const WorkspaceMessageScrollerImpl = ({
   }
 
   return (
-    <>
+    <TooltipProvider
+      key={activeSession?.id ?? 'empty-conversation'}
+      delayDuration={200}
+      skipDelayDuration={300}
+    >
       <MessageScrollerProvider
         key={activeSession?.id ?? 'empty-conversation'}
         autoScroll
@@ -1521,7 +1549,9 @@ const WorkspaceMessageScrollerImpl = ({
                         className="min-w-0"
                         disableContainment
                       >
-                        <div className="px-4 pb-1 md:px-6">
+                        {/* Match the loading row's 60px minimum so completion cannot pull
+                            bottom-follow back after the final text has appeared. */}
+                        <div className="min-h-[60px] px-4 pb-1 md:px-6">
                           <div className="mx-auto w-full max-w-[56rem]">
                             <WorkspaceAssistantTurnCompletion
                               message={item.message}
@@ -1837,7 +1867,7 @@ const WorkspaceMessageScrollerImpl = ({
           onClose={handleCloseModal}
         />
       )}
-    </>
+    </TooltipProvider>
   )
 }
 

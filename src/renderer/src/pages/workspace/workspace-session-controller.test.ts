@@ -7,9 +7,10 @@ import type {
   CompletionHandoffLifecycleEvent,
   SpecialistListItem
 } from '../../../../shared/specialist'
-import type {
-  PersistedChatSession,
-  SessionDeletionResult
+import {
+  SessionSizeLimitError,
+  type PersistedChatSession,
+  type SessionDeletionResult
 } from '../../../../shared/session-persistence'
 import { createLinearConversationGraph } from '../../../../shared/conversation-graph'
 import { useArchiveUndoStore } from '@/stores/archive-undo-store'
@@ -199,6 +200,7 @@ const renderController = (overrides: Partial<Options> = {}): ControllerHook => {
 
 const mounted: Array<ReturnType<typeof renderController>> = []
 const originalApi = window.api
+const originalSessionArchive = useSessionStore.getState().updateSessionArchive
 
 beforeEach(() => {
   window.api = {} as Window['api']
@@ -317,6 +319,25 @@ describe('workspace session controller', () => {
       revision: 3
     })
     expect(hook.result.current.view.dialogs.edit).toBeNull()
+  })
+
+  it('reports Edit session size failures through the Session recovery owner', async () => {
+    const active = session()
+    const onSessionSizeLimit = vi.fn()
+    window.api = {
+      sessions: { editDetails: vi.fn().mockRejectedValue(new SessionSizeLimitError()) }
+    } as unknown as Window['api']
+    const hook = renderController({ activeSession: active, onSessionSizeLimit })
+    mounted.push(hook)
+
+    act(() => hook.result.current.actions.openEdit(active))
+    act(() => hook.result.current.actions.confirmEdit({ preventDefault: vi.fn() } as never))
+    await act(async () => {
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    expect(onSessionSizeLimit).toHaveBeenCalledWith(active.id)
   })
 
   it('does not close a newly opened Edit dialog when the previous save succeeds', async () => {
@@ -711,6 +732,58 @@ describe('workspace session controller', () => {
     expect(hook.result.current.lifecycle.canStartSend(inactive.id)).toBe(false)
   })
 
+  it('keeps a stale archive rejected until a new user action uses refreshed authority', async () => {
+    const active = session({ revision: 3 })
+    const refreshed = { ...active, revision: 4 }
+    const archived = { ...refreshed, revision: 5, archivedAt: 2 }
+    const updateArchive = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('Session revision conflict: expected 3, actual 4.'))
+      .mockResolvedValueOnce(archived)
+    window.api = {
+      sessions: { updateArchive, loadOne: vi.fn().mockResolvedValue(refreshed) }
+    } as unknown as Window['api']
+    const enqueueSession = vi.fn()
+    const clearSelection = vi.fn()
+    useArchiveUndoStore.setState({ enqueueSession })
+    useSessionStore.setState({
+      sessions: [active],
+      selectedSessionId: active.id,
+      updateSessionArchive: originalSessionArchive,
+      clearSelection
+    })
+    const hook = renderController({ activeSession: active })
+    mounted.push(hook)
+    await act(async () => hook.result.current.actions.archive(active))
+    expect(updateArchive).toHaveBeenCalledOnce()
+    expect(updateArchive).toHaveBeenLastCalledWith({
+      projectId: active.projectId,
+      sessionId: active.id,
+      archived: true,
+      expectedRevision: 3
+    })
+    expect(hook.result.current.view.exportError).toContain('Session revision conflict:')
+    expect(enqueueSession).not.toHaveBeenCalled()
+    expect(clearSelection).not.toHaveBeenCalled()
+    const current = useSessionStore.getState().sessions[0]
+    expect(current.revision).toBe(4)
+    expect(current.archivedAt).toBeUndefined()
+    hook.rerender(current)
+    await act(async () => hook.result.current.actions.archive(current))
+    expect(updateArchive).toHaveBeenCalledTimes(2)
+    expect(updateArchive).toHaveBeenLastCalledWith({
+      projectId: active.projectId,
+      sessionId: active.id,
+      archived: true,
+      expectedRevision: 4
+    })
+    expect(enqueueSession).toHaveBeenCalledWith(
+      expect.objectContaining({ revision: 5, archivedAt: 2 })
+    )
+    expect(clearSelection).toHaveBeenCalledOnce()
+    expect(hook.result.current.view.exportError).toBeNull()
+  })
+
   it('archives durably before enqueueing undo and clearing the active selection', async () => {
     const active = session()
     const order: string[] = []
@@ -738,6 +811,26 @@ describe('workspace session controller', () => {
 
     expect(order).toEqual(['archive', 'undo', 'clear'])
     expect(hook.result.current.lifecycle.canArchive(active)).toBe(true)
+  })
+
+  it('reports archive size failures through the Session recovery owner', async () => {
+    const active = session()
+    const onSessionSizeLimit = vi.fn()
+    useSessionStore.setState({
+      sessions: [active],
+      selectedSessionId: active.id,
+      updateSessionArchive: vi.fn().mockRejectedValue(new SessionSizeLimitError())
+    })
+    const hook = renderController({ activeSession: active, onSessionSizeLimit })
+    mounted.push(hook)
+
+    await act(async () => {
+      hook.result.current.actions.archive(active)
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    expect(onSessionSizeLimit).toHaveBeenCalledWith(active.id)
   })
 
   it('does not archive while context compaction owns the Session', () => {
@@ -1273,6 +1366,68 @@ describe('workspace session controller', () => {
     expect(hook.result.current.view.deletingIds.has(active.id)).toBe(false)
     expect(hook.result.current.view.dialogs.delete).toBeNull()
   })
+
+  it('settles committed deletion and reports unfinished cleanup without offering a live Session retry', async () => {
+    const active = session()
+    const settleSessionDeletion = vi.fn()
+    const hook = renderController({
+      activeSession: active,
+      settleSessionDeletion,
+      deleteSession: vi.fn().mockResolvedValue({
+        status: 'deleted',
+        runtimeDetached: true,
+        cleanupPending: true
+      })
+    })
+    mounted.push(hook)
+    act(() => hook.result.current.actions.openDelete(active))
+    await act(async () => hook.result.current.actions.confirmDelete())
+
+    expect(settleSessionDeletion).toHaveBeenCalledWith(active.id, true)
+    expect(hook.result.current.view.dialogs.delete).toBeNull()
+    expect(hook.result.current.view.exportError).toBe(
+      'The Session was deleted, but some cleanup could not be completed.'
+    )
+  })
+
+  it.each(['before commit', 'after commit'])(
+    'keeps a rejected deletion result uncertain %s and retries the same Session',
+    async (failurePoint) => {
+      const active = session()
+      let serverHasSession = true
+      const deleteSession = vi
+        .fn()
+        .mockImplementationOnce(async () => {
+          if (failurePoint === 'after commit') serverHasSession = false
+          throw new Error('Connection lost')
+        })
+        .mockImplementationOnce(async () => {
+          serverHasSession = false
+          return { status: 'deleted', runtimeDetached: true }
+        })
+      const settleSessionDeletion = vi.fn()
+      const hook = renderController({ activeSession: active, deleteSession, settleSessionDeletion })
+      mounted.push(hook)
+      act(() => hook.result.current.actions.openDelete(active))
+      await act(async () => hook.result.current.actions.confirmDelete())
+
+      expect(serverHasSession).toBe(failurePoint === 'before commit')
+      expect(hook.result.current.view.dialogs.delete).toMatchObject({
+        session: { id: active.id },
+        isDeleting: false,
+        error: 'unknown'
+      })
+      expect(hook.result.current.view.deletingIds.has(active.id)).toBe(false)
+      await act(async () => hook.result.current.actions.confirmDelete())
+      expect(deleteSession).toHaveBeenNthCalledWith(2, {
+        projectId: active.projectId,
+        sessionId: active.id
+      })
+      expect(serverHasSession).toBe(false)
+      expect(settleSessionDeletion).toHaveBeenLastCalledWith(active.id, true)
+      expect(hook.result.current.view.dialogs.delete).toBeNull()
+    }
+  )
 
   it('keeps a background Session dialog open with a retryable persistence error', async () => {
     const active = session({ id: 'session-active' })

@@ -17,6 +17,17 @@ type UpdateStore = {
 }
 
 let cleanupUpdateSubscriptions: (() => void) | undefined
+let statusRevision = 0
+
+// ponytail: local observation order protects replies from newer live state. Arbitrarily reordered
+// broadcasts would require a main-process revision shared by every response and event.
+const acceptUpdateResponse = async (request: () => Promise<UpdateStatus | void>): Promise<void> => {
+  const revision = statusRevision
+  const status = await request()
+  if (!status || revision !== statusRevision) return
+  statusRevision += 1
+  useUpdateStore.setState({ status })
+}
 
 // Single source of truth for update state in the renderer. The main process broadcasts every
 // transition; this store mirrors it so the settings section and the external capsule agree.
@@ -42,15 +53,17 @@ export const useUpdateStore = create<UpdateStore>((set, get) => ({
     // immediately a status (electron-updater does on every tick) would otherwise wipe the speed the
     // progress event just set. Preserve downloadProgress across a status update while downloading so
     // DownloadProgressLine keeps rendering speed/ETA on Win/Linux.
-    const removeStatusListener = api.onStatus((status) =>
+    const removeStatusListener = api.onStatus((status) => {
+      statusRevision += 1
       set((s) => ({
         status: {
           ...status,
           downloadProgress: status.state === 'downloading' ? s.status.downloadProgress : undefined
         }
       }))
-    )
-    const removeProgressListener = api.onProgress((progress) =>
+    })
+    const removeProgressListener = api.onProgress((progress) => {
+      statusRevision += 1
       set((s) => ({
         status: {
           ...s.status,
@@ -63,16 +76,14 @@ export const useUpdateStore = create<UpdateStore>((set, get) => ({
           downloadProgress: progress
         }
       }))
-    )
-    void api.getStatus().then((status) => {
-      // Only apply the startup snapshot if no live broadcast has updated us yet.
-      if (get().status.state === 'idle') set({ status })
     })
+    void acceptUpdateResponse(() => api.getStatus())
 
     let active = true
     const cleanup = (): void => {
       if (!active) return
       active = false
+      statusRevision += 1
       removeStatusListener?.()
       removeProgressListener?.()
       if (cleanupUpdateSubscriptions === cleanup) cleanupUpdateSubscriptions = undefined
@@ -84,7 +95,7 @@ export const useUpdateStore = create<UpdateStore>((set, get) => ({
   check: async () => {
     const api = window.api?.update
     if (!api) return
-    set({ status: await api.check() })
+    await acceptUpdateResponse(() => api.check())
   },
 
   openDialog: () => set({ isDialogOpen: true }),
@@ -101,19 +112,18 @@ export const useUpdateStore = create<UpdateStore>((set, get) => ({
   download: async () => {
     const api = window.api?.update
     if (!api) return
-    set({ status: await api.download() })
+    await acceptUpdateResponse(() => api.download())
   },
 
   cancel: async () => {
     const cancel = window.api?.update?.cancel
     if (!cancel) return
-    set({ status: await cancel() })
+    await acceptUpdateResponse(() => cancel())
   },
 
   apply: async () => {
     const api = window.api?.update
     if (!api) return
-    const status = await api.apply()
-    if (status) set({ status })
+    await acceptUpdateResponse(() => api.apply())
   }
 }))

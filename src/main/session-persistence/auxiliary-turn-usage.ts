@@ -51,7 +51,19 @@ const optionalPositiveInt = (value: number | undefined, field: string): number |
   return value
 }
 
+type PendingAuxiliaryUsage = {
+  projectId: string
+  data: Prisma.SessionAuxiliaryTurnUsageUncheckedCreateInput
+}
+
+class AuxiliaryUsageOwnershipError extends Error {}
+
 class SessionAuxiliaryTurnUsageRecorder {
+  // ponytail: this backlog lives for the process lifetime; use a durable outbox if recovery must
+  // survive restart. Retain measurements, never rerun the model to recover bookkeeping.
+  private readonly pending = new Map<string, PendingAuxiliaryUsage>()
+  private retryOperation: Promise<void> | undefined
+
   constructor(private readonly client: AuxiliaryUsageClient) {}
 
   async record(input: SessionAuxiliaryTurnUsageRecord): Promise<boolean> {
@@ -71,6 +83,68 @@ class SessionAuxiliaryTurnUsageRecorder {
       throw new Error('Auxiliary turn Usage cache read/write detail must be reported together.')
     }
 
+    const key = JSON.stringify([projectId, sessionId, eventId])
+    // Validate and snapshot before queueing, so malformed input cannot poison later statistics and
+    // callers cannot mutate token totals while a failed write is waiting to be retried.
+    const data: PendingAuxiliaryUsage['data'] = {
+      sessionId,
+      eventId,
+      source: input.source,
+      frameworkId,
+      providerId,
+      model,
+      completedAtMs: nonNegative(input.completedAtMs, 'completedAtMs'),
+      inputTokens: nonNegative(input.usage.inputTokens, 'inputTokens'),
+      cacheTokens: nonNegative(input.usage.cacheTokens, 'cacheTokens'),
+      cachedReadTokens,
+      cachedWriteTokens,
+      outputTokens: nonNegative(input.usage.outputTokens, 'outputTokens'),
+      modelCallCount: optionalPositiveInt(input.usage.turnCount, 'modelCallCount')
+    }
+    const entry = this.pending.get(key) ?? { projectId, data }
+    let inserted: boolean
+    try {
+      inserted = await this.write(entry)
+      this.pending.delete(key)
+    } catch (error) {
+      if (!(error instanceof AuxiliaryUsageOwnershipError)) this.pending.set(key, entry)
+      throw error
+    }
+    // A successful new measurement is also an opportunity to recover earlier failures. Keep its
+    // result independent; unresolved earlier failures remain observable through flush on Usage reads.
+    await this.flush().catch(() => undefined)
+    return inserted
+  }
+
+  flush(): Promise<void> {
+    this.retryOperation ??= this.retryPending().finally(() => {
+      this.retryOperation = undefined
+    })
+    return this.retryOperation
+  }
+
+  private async retryPending(): Promise<void> {
+    let failure: unknown
+    for (const [key, entry] of [...this.pending]) {
+      try {
+        await this.write(entry)
+        if (this.pending.get(key) === entry) this.pending.delete(key)
+      } catch (error) {
+        // Retrying must not resurrect deleted Sessions or retain invalid ownership forever.
+        if (error instanceof AuxiliaryUsageOwnershipError) {
+          if (this.pending.get(key) === entry) this.pending.delete(key)
+        } else {
+          failure ??= error
+        }
+      }
+    }
+    if (this.pending.size > 0) {
+      throw failure ?? new Error('Auxiliary turn Usage is pending persistence.')
+    }
+  }
+
+  private async write({ projectId, data }: PendingAuxiliaryUsage): Promise<boolean> {
+    const { sessionId, eventId } = data
     const client = await this.client()
     try {
       return await client.$transaction(async (tx) => {
@@ -78,28 +152,17 @@ class SessionAuxiliaryTurnUsageRecorder {
           where: { id: sessionId, projectId, deletedAtMs: null },
           select: { id: true }
         })
-        if (!owner) throw new Error('Auxiliary turn Usage Session ownership is unavailable.')
+        if (!owner)
+          throw new AuxiliaryUsageOwnershipError(
+            'Auxiliary turn Usage Session ownership is unavailable.'
+          )
         const existing = await tx.sessionAuxiliaryTurnUsage.findUnique({
           where: { sessionId_eventId: { sessionId, eventId } },
           select: { eventId: true }
         })
         if (existing) return false
         await tx.sessionAuxiliaryTurnUsage.create({
-          data: {
-            sessionId,
-            eventId,
-            source: input.source,
-            frameworkId,
-            providerId,
-            model,
-            completedAtMs: nonNegative(input.completedAtMs, 'completedAtMs'),
-            inputTokens: nonNegative(input.usage.inputTokens, 'inputTokens'),
-            cacheTokens: nonNegative(input.usage.cacheTokens, 'cacheTokens'),
-            cachedReadTokens,
-            cachedWriteTokens,
-            outputTokens: nonNegative(input.usage.outputTokens, 'outputTokens'),
-            modelCallCount: optionalPositiveInt(input.usage.turnCount, 'modelCallCount')
-          }
+          data
         })
         return true
       })

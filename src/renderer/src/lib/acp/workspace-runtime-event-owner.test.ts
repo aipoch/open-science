@@ -6,10 +6,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { AcpRuntimeEvent, AcpStateSnapshot } from '../../../../shared/acp'
 import type { PersistedChatSession } from '../../../../shared/session-persistence'
 import { createInitialSessionState, useSessionStore } from '../../stores/session-store'
+import { getAgentLoadingPhase } from '../../pages/workspace/agent-loading-message'
 import { acceptAcpRuntimeSnapshotRevision } from './runtime-snapshot-revision-owner'
 import {
+  processIncrementalWorkspaceRuntimeEvents,
   refreshDelegatedWorkSessions,
   resetWorkspaceRuntimeEventOwnerForTests,
+  syncWorkspaceInteractionStateFromSnapshot,
   useWorkspaceRuntimeEventIngest
 } from './workspace-runtime-event-owner'
 
@@ -17,7 +20,7 @@ import {
 
 const renderHook = <Value>(
   hook: () => Value
-): { result: { current: Value }; unmount: () => void } => {
+): { result: { current: Value }; rerender: () => void; unmount: () => void } => {
   const container = document.createElement('div')
   const root = createRoot(container)
   const result = { current: undefined as unknown as Value }
@@ -30,6 +33,7 @@ const renderHook = <Value>(
   })
   return {
     result,
+    rerender: () => act(() => root.render(createElement(HookHarness))),
     unmount: () =>
       act(() => {
         root.unmount()
@@ -269,8 +273,145 @@ describe('live runtime event ingest', () => {
       status: 'running',
       activeRun: undefined,
       agentPromptInFlight: true,
-      awaitingFirstAgentOutput: undefined
+      awaitingFirstAgentOutput: true
     })
+    unmount()
+  })
+
+  it('preserves a continuation when another Session releases ownership during its drain', async () => {
+    const { messageId: promptMessageId } = useSessionStore.getState().appendUserMessage({
+      sessionId: 'concurrent-session-a',
+      content: 'Continue the first request'
+    })!
+    useSessionStore.getState().appendUserMessage({
+      sessionId: 'concurrent-session-b',
+      content: 'Complete the other request'
+    })
+    let snapshot = createSnapshot({
+      revision: 1,
+      agentPromptInFlightSessionIds: ['concurrent-session-a', 'concurrent-session-b']
+    })
+    let publish!: (events: readonly AcpRuntimeEvent[], snapshot?: AcpStateSnapshot) => void
+    const subscribeRuntimeEvents = (listener: typeof publish): (() => void) => {
+      publish = listener
+      return () => undefined
+    }
+    const { rerender, unmount } = renderHook(() =>
+      useWorkspaceRuntimeEventIngest(
+        { state: snapshot, subscribeRuntimeEvents },
+        () => undefined,
+        true,
+        () => undefined,
+        () => true,
+        () => ({ target: 'codex-bridge' })
+      )
+    )
+    const events: AcpRuntimeEvent[] = [
+      {
+        id: 'concurrent-provider-stop',
+        timestamp: 1,
+        kind: 'stop',
+        level: 'info',
+        sessionId: 'concurrent-session-a',
+        promptMessageId,
+        text: 'end_turn'
+      },
+      {
+        id: 'concurrent-continuation-tool',
+        timestamp: 2,
+        kind: 'tool',
+        level: 'info',
+        sessionId: 'concurrent-session-a',
+        promptMessageId,
+        toolCallId: 'concurrent-tool',
+        title: 'Continue after answer',
+        status: 'in_progress'
+      }
+    ]
+
+    // Commit B's state-only release before A's asynchronous stop is applied.
+    act(() => publish(events, snapshot))
+    snapshot = createSnapshot({
+      revision: 2,
+      agentPromptInFlightSessionIds: ['concurrent-session-a']
+    })
+    rerender()
+    await act(async () => processIncrementalWorkspaceRuntimeEvents(events))
+
+    const session = useSessionStore
+      .getState()
+      .sessions.find((s) => s.id === 'concurrent-session-a')!
+    expect(session.activities?.find((activity) => activity.id === 'concurrent-tool')?.status).toBe(
+      'in_progress'
+    )
+    expect(session.agentPromptInFlight).toBe(true)
+    expect(getAgentLoadingPhase(session)).toBe('interacting-with-tools')
+    unmount()
+  })
+
+  it('returns to Thinking when a continuation tool completes in the provider-stop batch', async () => {
+    const { messageId: promptMessageId } = useSessionStore.getState().appendUserMessage({
+      sessionId: 'completed-continuation-session',
+      content: 'Continue after the answer'
+    })!
+    const snapshot = createSnapshot({
+      revision: 1,
+      agentPromptInFlightSessionIds: ['completed-continuation-session']
+    })
+    let publish!: (events: readonly AcpRuntimeEvent[], snapshot?: AcpStateSnapshot) => void
+    const { unmount } = renderHook(() =>
+      useWorkspaceRuntimeEventIngest(
+        {
+          state: snapshot,
+          subscribeRuntimeEvents: (listener) => {
+            publish = listener
+            return () => undefined
+          }
+        },
+        () => undefined,
+        true,
+        () => undefined,
+        () => true,
+        () => ({ target: 'codex-bridge' })
+      )
+    )
+    const runningTool: AcpRuntimeEvent = {
+      id: 'completed-continuation-start',
+      timestamp: 2,
+      kind: 'tool',
+      level: 'info',
+      sessionId: 'completed-continuation-session',
+      promptMessageId,
+      toolCallId: 'completed-continuation-tool',
+      title: 'Read result',
+      status: 'in_progress'
+    }
+    const events: AcpRuntimeEvent[] = [
+      {
+        id: 'completed-continuation-provider-stop',
+        timestamp: 1,
+        kind: 'stop',
+        level: 'info',
+        sessionId: 'completed-continuation-session',
+        promptMessageId,
+        text: 'end_turn'
+      },
+      runningTool,
+      { ...runningTool, id: 'completed-continuation-end', timestamp: 3, status: 'completed' }
+    ]
+    await act(async () => {
+      publish(events, snapshot)
+      await processIncrementalWorkspaceRuntimeEvents(events)
+    })
+
+    const session = useSessionStore
+      .getState()
+      .sessions.find((s) => s.id === 'completed-continuation-session')!
+    expect(session.agentPromptInFlight).toBe(true)
+    expect(
+      session.activities?.find((activity) => activity.id === 'completed-continuation-tool')?.status
+    ).toBe('completed')
+    expect(getAgentLoadingPhase(session)).toBe('thinking')
     unmount()
   })
 
@@ -357,6 +498,66 @@ describe('live runtime event ingest', () => {
     })
     unmount()
   })
+
+  it.each(['live-event', 'stale-snapshot', 'stale-render'] as const)(
+    'does not restore a released prompt from the previous React state through %s',
+    async (delivery) => {
+      const sessionId = `released-before-react-${delivery}`
+      useSessionStore.getState().appendUserMessage({ sessionId, content: 'Complete this request' })
+      useSessionStore.getState().finishRun(sessionId)
+      let snapshot = createSnapshot({ revision: 1, agentPromptInFlightSessionIds: [sessionId] })
+      let publish!: (events: readonly AcpRuntimeEvent[], snapshot?: AcpStateSnapshot) => void
+      const subscribeRuntimeEvents = (listener: typeof publish): (() => void) => {
+        publish = listener
+        return () => undefined
+      }
+      const { rerender, unmount } = renderHook(() =>
+        useWorkspaceRuntimeEventIngest(
+          { state: snapshot, subscribeRuntimeEvents },
+          () => undefined,
+          true,
+          () => undefined,
+          () => true,
+          () => ({ target: 'codex-bridge' })
+        )
+      )
+
+      // The command result is authoritative before React commits the corresponding state update.
+      act(() => {
+        expect(
+          syncWorkspaceInteractionStateFromSnapshot(
+            createSnapshot({
+              revision: 2,
+              agentPromptInFlightSessionIds: []
+            })
+          )
+        ).toBe(true)
+      })
+      const event: AcpRuntimeEvent = {
+        id: `late-${delivery}`,
+        timestamp: 1,
+        kind: 'system',
+        level: 'info',
+        sessionId,
+        text: 'Queued runtime event'
+      }
+      if (delivery === 'stale-render') {
+        snapshot = { ...snapshot, agentPromptInFlightSessionIds: [sessionId] }
+        rerender()
+      } else {
+        await act(async () => {
+          publish([event], delivery === 'stale-snapshot' ? snapshot : undefined)
+          await processIncrementalWorkspaceRuntimeEvents([event])
+        })
+      }
+
+      const session = useSessionStore.getState().sessions.find((s) => s.id === sessionId)!
+      expect(session.agentPromptInFlight).toBeUndefined()
+      expect(session.awaitingFirstAgentOutput).toBeUndefined()
+      expect(getAgentLoadingPhase(session)).toBe('hidden')
+      unmount()
+    }
+  )
 
   it('does not revive prompt ownership from a stale initial snapshot', async () => {
     useSessionStore.getState().appendUserMessage({

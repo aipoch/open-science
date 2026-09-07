@@ -76,6 +76,7 @@ export type CreateJobRequest = {
   id: string
   providerId: string
   shape: string
+  executionMode?: import('../../shared/compute').ComputeExecutionMode
   sessionId: string
   projectId: string
   intent: string
@@ -230,6 +231,7 @@ export class ComputeJobRepository {
         id: request.id,
         providerId: request.providerId,
         shape: request.shape,
+        executionMode: request.executionMode ?? 'direct_ssh',
         sessionId: request.sessionId,
         projectId: request.projectId,
         status: initialStatus,
@@ -430,6 +432,27 @@ export class ComputeJobRepository {
           include: { operations: { where: { kind: 'cancel' } } }
         })
         return row ? this.toJob(row) : null
+      })
+    })
+  }
+
+  // A launch response may arrive after cancellation fenced ordinary lifecycle transitions.
+  // Preserve only the missing handle, without reviving execution or overwriting another observer.
+  async recordCancellationHandle(jobId: string, remoteHandle: string): Promise<void> {
+    await this.runMutation(async () => {
+      const client = await this.getClient()
+      await client.$transaction(async (transaction) => {
+        const current = await transaction.computeJob.findUnique({ where: { id: jobId } })
+        if (!current || !this.isOwnerMutable(current.projectId, current.sessionId)) return
+        await transaction.computeJob.updateMany({
+          where: {
+            id: jobId,
+            status: { in: ['submitted', 'running'] },
+            remoteHandle: null,
+            operations: { some: { kind: 'cancel', phase: 'active' } }
+          },
+          data: this.toUpdateData({ remoteHandle }, current.sensitiveDataEncrypted === true)
+        })
       })
     })
   }
@@ -680,8 +703,7 @@ export class ComputeJobRepository {
     return await client.computeJob.count({
       where: {
         sessionId,
-        status: { in: ['submitted', 'running'] },
-        operations: { none: { kind: 'cancel' } }
+        status: { in: ['submitted', 'running'] }
       }
     })
   }
@@ -693,8 +715,7 @@ export class ComputeJobRepository {
     return await client.computeJob.count({
       where: {
         providerId,
-        status: { in: ['submitted', 'running'] },
-        operations: { none: { kind: 'cancel' } }
+        status: { in: ['submitted', 'running'] }
       }
     })
   }
@@ -727,6 +748,10 @@ export class ComputeJobRepository {
       job_id: row.id,
       provider_id: row.providerId,
       shape: row.shape,
+      execution_mode:
+        row.executionMode === 'slurm' || row.executionMode === 'direct_ssh'
+          ? row.executionMode
+          : 'direct_ssh',
       session_id: row.sessionId,
       project_id: row.projectId,
       status: asStatus(row.status),

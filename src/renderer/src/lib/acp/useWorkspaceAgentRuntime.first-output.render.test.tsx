@@ -115,6 +115,35 @@ describe('workspace Agent first-output runtime sync', () => {
     expect(container.textContent).toBe('thinking')
   })
 
+  it('retains the existing silent gap across a provider stop while Main owns the continuation', async () => {
+    const snapshot = createSnapshot({
+      revision: 1,
+      agentPromptInFlightSessionIds: ['session-1']
+    })
+    runtimeMock.current = createRuntime(snapshot)
+    await act(async () => root.render(<Harness />))
+    expect(container.textContent).toBe('thinking')
+
+    runtimeMock.current = createRuntime({
+      ...snapshot,
+      revision: 2,
+      events: [
+        {
+          id: 'silent-continuation-stop',
+          timestamp: 1,
+          kind: 'stop',
+          level: 'info',
+          sessionId: 'session-1',
+          text: 'end_turn'
+        }
+      ]
+    })
+    await act(async () => root.render(<Harness />))
+
+    expect(useSessionStore.getState().sessions[0].agentPromptInFlight).toBe(true)
+    expect(container.textContent).toBe('thinking')
+  })
+
   it('keeps a detached user-choice continuation visible after its provider run stops', async () => {
     await act(async () => root.render(<Harness />))
     const promptMessageId = useSessionStore.getState().sessions[0].messages[0].id
@@ -178,7 +207,7 @@ describe('workspace Agent first-output runtime sync', () => {
       status: 'running',
       activeRun: undefined,
       agentPromptInFlight: true,
-      awaitingFirstAgentOutput: undefined
+      awaitingFirstAgentOutput: true
     })
     expect(container.textContent).toBe('interacting-with-tools')
 

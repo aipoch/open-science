@@ -168,28 +168,20 @@ const SpecialistEditor = ({
     try {
       const trimmed = {
         displayName: form.name.trim(),
-        description: form.description.trim() || undefined,
-        systemPrompt: form.systemPrompt.trim() || undefined,
+        description: isEdit ? form.description.trim() : form.description.trim() || undefined,
+        systemPrompt: isEdit ? form.systemPrompt.trim() : form.systemPrompt.trim() || undefined,
         iconKey: form.iconKey,
         colorKey: form.colorKey,
         capabilityMode: form.capabilityMode,
         fullAccess: {
-          ...(editSpecialist?.fullAccess ?? {
-            excludedSkillIds: [],
-            excludedConnectorIds: [],
-            connectorTools: []
-          }),
           excludedSkillIds: form.excludedSkillIds,
-          excludedConnectorIds: form.excludedConnectorIds
+          excludedConnectorIds: form.excludedConnectorIds,
+          connectorTools: form.fullConnectorTools
         },
         selectedCapabilities: {
-          ...(editSpecialist?.selectedCapabilities ?? {
-            skillIds: [],
-            connectorIds: [],
-            connectorTools: []
-          }),
           skillIds: form.selectedSkillIds,
-          connectorIds: form.connectorIds
+          connectorIds: form.connectorIds,
+          connectorTools: form.selectedConnectorTools
         }
       }
       if (editSpecialist) {

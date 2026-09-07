@@ -2,6 +2,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { useUpdateStore } from './update-store'
+import type { UpdateStatus } from '../../../shared/update'
 
 const resetStore = (): void =>
   useUpdateStore.setState({
@@ -11,6 +12,104 @@ const resetStore = (): void =>
   })
 
 describe('useUpdateStore', () => {
+  it.each(['check', 'download', 'cancel', 'apply'] as const)(
+    'accepts a %s response when no newer status was observed',
+    async (command) => {
+      const status: UpdateStatus = { state: 'ready', current: '0.2.0', latest: '0.3.0' }
+      ;(window as unknown as { api: unknown }).api = {
+        update: { [command]: async () => status }
+      }
+      await useUpdateStore.getState()[command]()
+      expect(useUpdateStore.getState().status).toBe(status)
+    }
+  )
+
+  it.each(['getStatus', 'check', 'download', 'cancel', 'apply'] as const)(
+    'preserves progress received while %s is waiting',
+    async (command) => {
+      let progressListener!: (progress: unknown) => void
+      let releaseResponse!: (status: UpdateStatus) => void
+      const response = new Promise<UpdateStatus>((resolve) => {
+        releaseResponse = resolve
+      })
+      ;(window as unknown as { api: unknown }).api = {
+        update: {
+          getAppInfo: async () => ({ name: 'Open Science', version: '0.2.0', copyright: '' }),
+          getStatus: async () => ({ state: 'downloading', current: '0.2.0', progress: 10 }),
+          onStatus: vi.fn(),
+          onProgress: (listener: (progress: unknown) => void) => {
+            progressListener = listener
+          },
+          [command]: () => response
+        }
+      }
+      const cleanup = useUpdateStore.getState().init()
+      await Promise.resolve()
+      const pending =
+        command === 'getStatus' ? Promise.resolve() : useUpdateStore.getState()[command]()
+      progressListener({
+        phase: 'downloading',
+        percent: 70,
+        transferred: 700,
+        total: 1000,
+        bytesPerSecond: 100,
+        attempt: 0
+      })
+      releaseResponse({ state: 'downloading', current: '0.2.0', progress: 10 })
+      await pending
+      await Promise.resolve()
+      expect(useUpdateStore.getState().status.progress).toBe(70)
+      expect(useUpdateStore.getState().status.downloadProgress?.bytesPerSecond).toBe(100)
+      cleanup()
+    }
+  )
+
+  it.each(['check', 'download', 'cancel', 'apply'] as const)(
+    'U02: a delayed %s response cannot overwrite newer live status',
+    async (command) => {
+      let statusListener!: (status: UpdateStatus) => void
+      let releaseResponse!: (status: UpdateStatus) => void
+      const response = new Promise<UpdateStatus>((resolve) => {
+        releaseResponse = resolve
+      })
+      ;(window as unknown as { api: unknown }).api = {
+        update: {
+          getAppInfo: async () => ({ name: 'Open Science', version: '0.2.0', copyright: '' }),
+          getStatus: async () => ({ state: 'available', current: '0.2.0', latest: '0.3.0' }),
+          onStatus: (listener: (status: UpdateStatus) => void) => {
+            statusListener = listener
+            return () => undefined
+          },
+          onProgress: vi.fn(),
+          [command]: () => response
+        }
+      }
+      const cleanup = useUpdateStore.getState().init()
+      await Promise.resolve()
+      try {
+        const pending = useUpdateStore.getState()[command]()
+        statusListener({ state: 'available', current: '0.2.0', latest: '0.3.0' })
+        statusListener({ state: 'downloading', current: '0.2.0', latest: '0.3.0' })
+        statusListener({
+          state: 'ready',
+          current: '0.2.0',
+          latest: '0.3.0',
+          localPath: '/installer'
+        })
+        expect(useUpdateStore.getState().status.state).toBe('ready')
+        releaseResponse({ state: 'available', current: '0.2.0', latest: '0.3.0' })
+        await pending
+
+        expect(useUpdateStore.getState().status).toMatchObject({
+          state: 'ready',
+          localPath: '/installer'
+        })
+      } finally {
+        cleanup()
+      }
+    }
+  )
+
   beforeEach(() => {
     resetStore()
     vi.restoreAllMocks()

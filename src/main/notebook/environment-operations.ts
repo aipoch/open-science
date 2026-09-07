@@ -1,8 +1,12 @@
 import type { NotebookKernelMetadata, NotebookLanguage } from '../../shared/notebook'
 import type { ProvisionProgress } from '../../shared/notebook-env'
 import type { NotebookSessionRuntimeBinding } from './session-aggregate'
-import type { NotebookLaneIdentity } from './lane-identity'
-import { EnvironmentLeaseManager, type EnvironmentLeaseMode } from './environment-lease-manager'
+import { notebookLaneKey, type NotebookLaneIdentity } from './lane-identity'
+import {
+  EnvironmentLeaseManager,
+  type EnvironmentLease,
+  type EnvironmentLeaseMode
+} from './environment-lease-manager'
 import type { NotebookRecoveryCoordinator } from './recovery-coordinator'
 import { errorLogFields } from '../logger'
 import {
@@ -208,8 +212,12 @@ export class NotebookEnvironmentOperations {
     return this.withLease(kind, environment, 'shared', operation)
   }
 
-  runMutation<T>(environment: string, operation: () => Promise<T>): Promise<T> {
-    return this.withLease('mutation', environment, 'exclusive', operation)
+  runMutation<T>(
+    environment: string,
+    operation: () => Promise<T>,
+    signal?: AbortSignal
+  ): Promise<T> {
+    return this.withLease('mutation', environment, 'exclusive', operation, signal)
   }
 
   describeRuntimeUsage(
@@ -237,18 +245,14 @@ export class NotebookEnvironmentOperations {
     runtimeId: string,
     options: { force?: boolean } = {}
   ): Promise<void> {
-    const targetSessions = Array.from(this.options.sessions()).filter((session) => {
-      const binding = session.runtimeBinding(language)
-      return binding?.runtimeId === runtimeId && binding.status !== 'unavailable'
-    })
+    // A pending selection can enter or leave this runtime. Match after the lane's earlier binding
+    // writes settle, rather than omitting a not-yet-published selection from revocation.
+    const targetSessions = Array.from(this.options.sessions())
     await this.options.bindings.runWrites(
-      targetSessions.map((session) => session.sessionId),
+      targetSessions.map((session) => notebookLaneKey(session.lane)),
       async () => {
         for (const session of targetSessions) {
-          const current = Array.from(this.options.sessions()).find(
-            (candidate) => candidate.sessionId === session.sessionId
-          )
-          if (current !== session) continue
+          if (!Array.from(this.options.sessions()).includes(session)) continue
           const revocation = await this.options.bindings.revoke(
             session,
             language,
@@ -403,10 +407,28 @@ export class NotebookEnvironmentOperations {
     kind: EnvironmentOperationKind,
     environment: string,
     mode: EnvironmentLeaseMode,
-    operation: () => Promise<T>
+    operation: () => Promise<T>,
+    signal?: AbortSignal
   ): Promise<T> {
-    const lease = await this.leases.acquire(environment, mode).granted
+    signal?.throwIfAborted()
+    if (mode === 'exclusive' && signal && this.leases.hasExclusive(environment)) {
+      throw new Error(
+        `ENVIRONMENT_MUTATION_ALREADY_PENDING: another environment mutation is already running or queued for "${environment}".`
+      )
+    }
+    const acquisition = this.leases.acquire(environment, mode)
+    const cancelAcquisition = (): void => {
+      acquisition.cancel()
+    }
+    signal?.addEventListener('abort', cancelAcquisition, { once: true })
+    let lease: EnvironmentLease
     try {
+      lease = await acquisition.granted
+    } finally {
+      signal?.removeEventListener('abort', cancelAcquisition)
+    }
+    try {
+      signal?.throwIfAborted()
       return await this.track(kind, environment, operation)
     } finally {
       lease.release()

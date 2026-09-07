@@ -13,6 +13,7 @@ import type {
   SessionTextAnnotationItemType
 } from '../../../../../shared/annotations'
 import { prepareImagePointAnnotations } from './image-annotation-payload'
+import { annotationValidationMessage } from './annotation-validation-message'
 import { SentAnnotationCards, type SentAnnotationCardView } from './SentAnnotationCards'
 
 const sessionItemSourceLabel = (itemType: SessionTextAnnotationItemType, t: TFunction): string => {
@@ -117,16 +118,19 @@ const AnnotationDraftCards = ({
   const [hoveredId, setHoveredId] = useState<string>()
   const [editTooltipId, setEditTooltipId] = useState<string>()
   const [note, setNote] = useState('')
+  const [validationError, setValidationError] = useState<AnnotationValidationError>()
   const editButtons = useRef(new Map<string, HTMLButtonElement>())
   const imagePoints = new Map(
     prepareImagePointAnnotations(annotations).points.map((point) => [point.annotationId, point])
   )
   const closeEditor = (id: string): void => {
     setEditingId(undefined)
+    setValidationError(undefined)
     setTimeout(() => editButtons.current.get(id)?.focus(), 0)
   }
   const openEditor = (annotation: Annotation): void => {
     setEditingId(annotation.id)
+    setValidationError(undefined)
     setNote(annotation.note ?? '')
   }
   if (annotations.length === 0) return null
@@ -271,8 +275,26 @@ const AnnotationDraftCards = ({
                   value={note}
                   maxLength={2_000}
                   placeholder={t('Add context for the Agent')}
-                  onChange={(event) => setNote(event.target.value)}
+                  aria-invalid={!!validationError}
+                  aria-describedby={
+                    validationError ? `annotation-error-${annotation.id}` : undefined
+                  }
+                  onChange={(event) => {
+                    setNote(event.target.value)
+                    setValidationError(undefined)
+                  }}
                 />
+                {validationError ? (
+                  <p
+                    id={`annotation-error-${annotation.id}`}
+                    role="alert"
+                    className="text-xs text-destructive"
+                  >
+                    {annotation.kind === 'image-point' && !note.trim()
+                      ? t('Add a note for this image annotation')
+                      : annotationValidationMessage(validationError, t)}
+                  </p>
+                ) : null}
                 <div className="flex justify-end gap-2">
                   <Button
                     type="button"
@@ -286,7 +308,9 @@ const AnnotationDraftCards = ({
                     type="button"
                     size="sm"
                     onClick={() => {
-                      if (!onUpdateNote(annotation.id, note)) closeEditor(annotation.id)
+                      const error = onUpdateNote(annotation.id, note)
+                      setValidationError(error)
+                      if (!error) closeEditor(annotation.id)
                     }}
                   >
                     {t('Save')}

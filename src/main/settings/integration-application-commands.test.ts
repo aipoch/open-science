@@ -288,7 +288,13 @@ describe('Settings integration application commands', () => {
     await router.dispatcher.invoke(
       settingsIntegrationApplicationCommands.updateSkill,
       invocation([
-        { id: 'personal-skill', name: 'Skill', description: 'Updated', body: 'Body' }
+        {
+          id: 'personal-skill',
+          name: 'Skill',
+          etag: 'version',
+          description: 'Updated',
+          body: 'Body'
+        }
       ] as const)
     )
     await router.dispatcher.invoke(
@@ -324,6 +330,7 @@ describe('Settings integration application commands', () => {
     })
     expect(skillMethod('updateSkill')).toHaveBeenCalledWith({
       id: 'personal-skill',
+      etag: 'version',
       name: 'Skill',
       description: 'Updated',
       body: 'Body'

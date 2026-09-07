@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { Trans, useTranslation } from 'react-i18next'
 import {
   AlertTriangle,
@@ -234,6 +234,9 @@ const InstalledSpecialistsPanel = ({
   const [reportStatus, setReportStatus] = useState<string | undefined>()
   const [includedExportSkillIds, setIncludedExportSkillIds] = useState<string[]>([])
   const [exportBusy, setExportBusy] = useState(false)
+  const [exportChecking, setExportChecking] = useState(false)
+  const [exportValidationFailed, setExportValidationFailed] = useState(false)
+  const exportPreviewRequest = useRef(0)
   const [exportSaved, setExportSaved] = useState(false)
   const [exportError, setExportError] = useState<string | undefined>()
   // Specialist currently exporting from the list row (direct export bypasses the chooser).
@@ -284,21 +287,50 @@ const InstalledSpecialistsPanel = ({
 
   useEffect(() => {
     if (view.kind !== 'export') return
-    let active = true
-    void previewExport(view.id)
+    const requestId = ++exportPreviewRequest.current
+    void Promise.resolve()
+      .then(() => {
+        if (requestId !== exportPreviewRequest.current) return
+        setExportChecking(true)
+        setExportValidationFailed(false)
+        return previewExport(view.id)
+      })
       .then((preview) => {
-        if (!active) return
+        if (!preview || requestId !== exportPreviewRequest.current) return
         setIncludedExportSkillIds(
           preview.skills.filter((skill) => skill.selected).map((skill) => skill.id)
         )
       })
       .catch(() => {
-        if (active) setExportError('Could not preview this Specialist export. Try again.')
+        if (requestId !== exportPreviewRequest.current) return
+        setExportValidationFailed(true)
+        setExportError('Could not preview this Specialist export. Try again.')
+      })
+      .finally(() => {
+        if (requestId === exportPreviewRequest.current) setExportChecking(false)
       })
     return () => {
-      active = false
+      exportPreviewRequest.current += 1
     }
   }, [previewExport, view])
+
+  const recheckExportSelection = (includedSkillIds: string[]): void => {
+    if (view.kind !== 'export') return
+    setIncludedExportSkillIds(includedSkillIds)
+    setExportChecking(true)
+    setExportValidationFailed(false)
+    setExportError(undefined)
+    const requestId = ++exportPreviewRequest.current
+    void previewExport(view.id, includedSkillIds)
+      .catch(() => {
+        if (requestId !== exportPreviewRequest.current) return
+        setExportValidationFailed(true)
+        setExportError('Could not preview this Specialist export. Try again.')
+      })
+      .finally(() => {
+        if (requestId === exportPreviewRequest.current) setExportChecking(false)
+      })
+  }
 
   // Direct export from the list action menu: silently preview with the approved default selection
   // (builtin + owned Skills), then open the native save dialog. The chooser page is skipped unless
@@ -582,18 +614,20 @@ const InstalledSpecialistsPanel = ({
           <span
             role="status"
             className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-semibold ${
-              exportPreview?.canExport
+              !exportChecking && !exportValidationFailed && exportPreview?.canExport
                 ? 'bg-success-000/10 text-success-000'
                 : exportPreview
                   ? 'bg-danger-000/10 text-danger-000'
                   : 'bg-muted text-muted-foreground'
             }`}
           >
-            {exportPreview?.canExport
-              ? t('✓ Ready')
-              : exportPreview
-                ? t('× Blocked')
-                : t('Checking…')}
+            {exportChecking
+              ? t('Checking…')
+              : !exportValidationFailed && exportPreview?.canExport
+                ? t('✓ Ready')
+                : exportPreview
+                  ? t('× Blocked')
+                  : t('Checking…')}
           </span>
         </div>
         {exportError ? (
@@ -627,12 +661,12 @@ const InstalledSpecialistsPanel = ({
                     <input
                       type="checkbox"
                       checked={checked}
-                      disabled={!skill.selectable}
+                      disabled={!skill.selectable || exportBusy}
                       onChange={(event) =>
-                        setIncludedExportSkillIds((current) =>
+                        recheckExportSelection(
                           event.target.checked
-                            ? [...new Set([...current, skill.id])]
-                            : current.filter((id) => id !== skill.id)
+                            ? [...new Set([...includedExportSkillIds, skill.id])]
+                            : includedExportSkillIds.filter((id) => id !== skill.id)
                         )
                       }
                     />
@@ -690,7 +724,9 @@ const InstalledSpecialistsPanel = ({
               </Button>
               <Button
                 type="button"
-                disabled={!exportPreview.canExport || exportBusy}
+                disabled={
+                  !exportPreview.canExport || exportBusy || exportChecking || exportValidationFailed
+                }
                 onClick={() => {
                   setExportBusy(true)
                   setExportError(undefined)
@@ -795,7 +831,7 @@ const InstalledSpecialistsPanel = ({
             onReload={async () => {
               // Load the fresh list and read the result from the store directly —
               // not from the render closure, which captured the pre-load items.
-              await load()
+              await load({ force: true })
               const refreshed = useSpecialistStore
                 .getState()
                 .items.find((item) => item.kind === 'custom' && item.id === view.id)
@@ -1548,7 +1584,7 @@ const InstalledSpecialistsPanel = ({
             variant="outline"
             size="sm"
             className="mt-3"
-            onClick={() => void load()}
+            onClick={() => void load({ force: true })}
           >
             {t('Retry')}
           </Button>
@@ -1570,7 +1606,12 @@ const InstalledSpecialistsPanel = ({
             </div>
           </div>
           <div className="mt-3 flex gap-2">
-            <Button type="button" variant="outline" size="sm" onClick={() => void load()}>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => void load({ force: true })}
+            >
               {t('Retry')}
             </Button>
             <Button
@@ -2432,7 +2473,7 @@ const InstalledSpecialistsPanel = ({
                       }
                     } catch (err) {
                       // Reload the list so a retry picks up the current revision.
-                      void load()
+                      void load({ force: true })
                       setDeleteError(
                         err instanceof Error
                           ? err.message

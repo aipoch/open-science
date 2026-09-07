@@ -122,6 +122,96 @@ const blockSegment = (method: string): HTMLButtonElement | null => {
 }
 
 describe('ConnectorDetailView', () => {
+  it('C05 keeps both permission changes when the user edits two tools in succession', async () => {
+    const initial = {
+      ...detail,
+      tools: detail.tools.map((tool) => ({ ...tool, permission: 'allow' as const }))
+    }
+    vi.mocked(window.api.settings.getConnectorDetail).mockResolvedValue(initial)
+    let finishFirst!: (value: ConnectorDetail) => void
+    let finishSecond!: (value: ConnectorDetail) => void
+    const setToolPermission = vi
+      .fn()
+      .mockImplementationOnce(
+        () =>
+          new Promise<ConnectorDetail>((resolve) => {
+            finishFirst = resolve
+          })
+      )
+      .mockImplementationOnce(
+        () =>
+          new Promise<ConnectorDetail>((resolve) => {
+            finishSecond = resolve
+          })
+      )
+    useSettingsStore.setState({ setToolPermission })
+    await render()
+    await act(async () => {
+      blockSegment('lookup_gene')!.click()
+    })
+    await act(async () => {
+      blockSegment('list_species')!.click()
+    })
+    const bothBlocked: ConnectorDetail = {
+      ...initial,
+      tools: initial.tools.map((tool) => ({ ...tool, permission: 'block' }))
+    }
+    const firstBlocked: ConnectorDetail = {
+      ...initial,
+      tools: [{ ...initial.tools[0], permission: 'block' }, initial.tools[1]]
+    }
+    if (setToolPermission.mock.calls.length === 2) {
+      // Original UI permits both requests: reproduce the reported reversed responses.
+      await act(async () => {
+        finishSecond(bothBlocked)
+      })
+      expect(blockSegment('list_species')?.getAttribute('aria-checked')).toBe('true')
+      await act(async () => {
+        finishFirst(firstBlocked)
+      })
+    } else {
+      // The repaired UI requires finishing the pending save before the second edit.
+      expect(blockSegment('list_species')?.disabled).toBe(true)
+      await act(async () => {
+        finishFirst(firstBlocked)
+      })
+      expect(blockSegment('list_species')?.disabled).toBe(false)
+      await act(async () => {
+        blockSegment('list_species')!.click()
+      })
+      expect(setToolPermission).toHaveBeenCalledTimes(2)
+      await act(async () => {
+        finishSecond(bothBlocked)
+      })
+    }
+    expect(blockSegment('lookup_gene')?.getAttribute('aria-checked')).toBe('true')
+    expect(blockSegment('list_species')?.getAttribute('aria-checked')).toBe('true')
+  })
+
+  it('C05 restores permission controls after a save fails', async () => {
+    let reject!: (error: Error) => void
+    const setToolPermission = vi.fn(
+      () =>
+        new Promise<ConnectorDetail>((_, fail) => {
+          reject = fail
+        })
+    )
+    useSettingsStore.setState({ setToolPermission })
+    await render()
+    await act(async () => {
+      blockSegment('lookup_gene')!.click()
+    })
+    expect(blockSegment('list_species')?.disabled).toBe(true)
+    await act(async () => {
+      reject(new Error('save failed'))
+    })
+    expect(blockSegment('lookup_gene')?.disabled).toBe(false)
+    expect(blockSegment('lookup_gene')?.getAttribute('aria-checked')).toBe('false')
+    expect(document.body.textContent).toContain(
+      'Could not save this setting. The previous value was restored.'
+    )
+  })
+
   it('renders the connector name and a permission control per tool', async () => {
     await render()
 

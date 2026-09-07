@@ -38,6 +38,7 @@ type ComputeCommandOwner = Pick<
   | 'scratchSet'
   | 'scratchClear'
   | 'concurrencySet'
+  | 'executionModeSet'
   | 'listDir'
   | 'download'
   | 'revealInFolder'
@@ -165,6 +166,11 @@ const computeApplicationCommands = Object.freeze({
     OwnerArgs<ComputeCommandOwner, 'concurrencySet'>,
     OwnerResult<ComputeCommandOwner, 'concurrencySet'>
   >('compute:concurrency:set'),
+  executionModeSet: defineApplicationCommand<
+    'compute:execution-mode:set',
+    OwnerArgs<ComputeCommandOwner, 'executionModeSet'>,
+    OwnerResult<ComputeCommandOwner, 'executionModeSet'>
+  >('compute:execution-mode:set'),
   listDir: defineApplicationCommand<
     'compute:list-dir',
     OwnerArgs<ComputeCommandOwner, 'listDir'>,
@@ -262,6 +268,7 @@ const computeApplicationCommandGroup = defineApplicationCommandGroup('compute', 
   computeApplicationCommands.bookmarksSet,
   computeApplicationCommands.changeAuthentication,
   computeApplicationCommands.concurrencySet,
+  computeApplicationCommands.executionModeSet,
   computeApplicationCommands.create,
   computeApplicationCommands.createPassword,
   computeApplicationCommands.delete,
@@ -376,6 +383,8 @@ const registerComputeApplicationCommands = (
       'compute:scratch:clear': ({ args }) => dependencies.compute.scratchClear(args[0]),
       'compute:concurrency:set': ({ args }) =>
         dependencies.compute.concurrencySet(args[0], args[1]),
+      'compute:execution-mode:set': ({ args }) =>
+        dependencies.compute.executionModeSet(args[0], args[1]),
       'compute:list-dir': ({ args }) =>
         withSerializedRemoteFsError(() => dependencies.compute.listDir(args[0], args[1])),
       'compute:download': ({ args, callerContext }) => {

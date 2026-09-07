@@ -94,16 +94,18 @@ delete process.env.OPEN_SCIENCE_MCP_RPC_SOCKET_PATH
 delete process.env.OPEN_SCIENCE_MCP_RPC_TOKEN
 delete process.env.OPEN_SCIENCE_MCP_RPC_TOKEN_FD
 
-// Notebook session/project identity for host.compute grant-scope approval memory (This conversation /
-// This project). Not secret, but captured and removed alongside the RPC creds so sandbox user code that
-// enumerates process.env sees neither the token nor the routing identity. Absent -> host.compute call
-// payloads omit them and the approval broker falls back to 'once'-only semantics.
+// Notebook session/project identity and the Agent Session workspace for host.compute. They are not
+// secret, but are captured and removed alongside the RPC creds so sandbox user code cannot replace
+// the workspace used for relative input resolution. Absent identity -> host.compute approval falls
+// back to 'once'-only semantics; absent workspace -> keep the legacy process.cwd() behavior.
 const COMPUTE_SESSION_ID = process.env.OPEN_SCIENCE_NOTEBOOK_SESSION_ID
 const COMPUTE_PROJECT_ID =
   process.env.OPEN_SCIENCE_NOTEBOOK_PROJECT_ID || process.env.OPEN_SCIENCE_NOTEBOOK_PROJECT_NAME
+const COMPUTE_WORKSPACE_CWD = process.env.OPEN_SCIENCE_NOTEBOOK_WORKSPACE_CWD || process.cwd()
 delete process.env.OPEN_SCIENCE_NOTEBOOK_SESSION_ID
 delete process.env.OPEN_SCIENCE_NOTEBOOK_PROJECT_ID
 delete process.env.OPEN_SCIENCE_NOTEBOOK_PROJECT_NAME
+delete process.env.OPEN_SCIENCE_NOTEBOOK_WORKSPACE_CWD
 
 // Updated only by the trusted kernel request frame while one serialized control invocation is
 // running. It is never exposed to sandbox code; host.agents forwards it as server context so an
@@ -3356,6 +3358,8 @@ const hostCompute = {
 
       // Non-blocking job submission. Returns immediately with job_id + remote_workdir.
       // options: { environment?, resources?, inputs?, outputs?, timeoutSeconds?, harvest? }
+      // A named environment resolves to the host-owned
+      // ~/.openscience/environments/<name>.sh activation file in the Host's configured execution mode.
       // Session/project context is always threaded from spawn env for grant-scope memory.
       // workspace_cwd is captured at spawn time so the main process can resolve workspace paths.
       async submitJob(intent, command, options = {}) {
@@ -3417,7 +3421,7 @@ const hostCompute = {
           harvest,
           session_id: COMPUTE_SESSION_ID,
           project_id: COMPUTE_PROJECT_ID,
-          workspace_cwd: process.cwd()
+          workspace_cwd: COMPUTE_WORKSPACE_CWD
         })
       },
 

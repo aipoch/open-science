@@ -25,7 +25,7 @@ const positiveInteger = (value: unknown): number | undefined =>
 
 // Keeps the UI summary in its own small content block. Passage bodies can exceed the shared
 // transcript limit and be truncated mid-JSON; this block remains valid across every ACP adapter.
-const createPresentationBlock = (result: unknown): UnknownRecord | undefined => {
+const literatureReadPresentation = (result: unknown): UnknownRecord | undefined => {
   if (!isRecord(result)) return undefined
   const documents = Array.isArray(result.documents)
     ? result.documents.filter(isRecord)
@@ -59,9 +59,12 @@ const createPresentationBlock = (result: unknown): UnknownRecord | undefined => 
     ...('nextCursor' in result ? { hasMore: result.nextCursor !== null } : {})
   }
 
-  return Object.keys(presentation).length > 0
-    ? { openScienceLiteraturePresentation: presentation }
-    : undefined
+  return Object.keys(presentation).length > 0 ? presentation : undefined
+}
+
+const createPresentationBlock = (result: unknown): UnknownRecord | undefined => {
+  const presentation = literatureReadPresentation(result)
+  return presentation ? { openScienceLiteraturePresentation: presentation } : undefined
 }
 
 const createLiteratureMcpServer = (handler: LiteratureMcpHandler): ModelContextProtocolServer => {
@@ -74,13 +77,34 @@ const createLiteratureMcpServer = (handler: LiteratureMcpHandler): ModelContextP
     {
       title: 'Read linked literature',
       description:
-        'Read one to three multi-page PDFs explicitly linked to the current Open Science message. Omit query and provide documentId to read one document in bounded sequential batches, following nextCursor until null. Provide query to retrieve relevant passages across documentIds, or all linked documents when documentIds is omitted. Use this instead of Notebook, shell, filesystem, or Python for linked-PDF reading.',
-      inputSchema: {
-        documentId: z.string().trim().min(1).max(512).optional(),
-        documentIds: z.array(z.string().trim().min(1).max(512)).min(1).max(3).optional(),
-        query: z.string().trim().min(1).max(2_000).optional(),
-        cursor: z.string().trim().min(1).max(128).optional()
-      }
+        'Read one to three multi-page PDFs explicitly linked to the current Open Science message. Omit query and provide documentId to read one document in bounded sequential batches, following nextCursor until null. Provide query to retrieve relevant passages across documentIds, or all linked documents when documentIds is omitted. Search requests must not include documentId or cursor; sequential requests must not include documentIds. Use this instead of Notebook, shell, filesystem, or Python for linked-PDF reading.',
+      inputSchema: z
+        .object({
+          documentId: z.string().trim().min(1).max(512).optional(),
+          documentIds: z.array(z.string().trim().min(1).max(512)).min(1).max(3).optional(),
+          query: z.string().trim().min(1).max(2_000).optional(),
+          cursor: z.string().trim().min(1).max(128).optional()
+        })
+        .superRefine((request, context) => {
+          if (request.query !== undefined) {
+            for (const field of ['documentId', 'cursor'] as const) {
+              if (request[field] !== undefined)
+                context.addIssue({
+                  code: 'custom',
+                  path: [field],
+                  message:
+                    'Search requests accept query and documentIds only; omit documentId and cursor.'
+                })
+            }
+          } else if (request.documentIds !== undefined) {
+            context.addIssue({
+              code: 'custom',
+              path: ['documentIds'],
+              message:
+                'Sequential requests accept documentId and cursor only; omit documentIds or provide query.'
+            })
+          }
+        })
     },
     async (request) => {
       try {
@@ -111,5 +135,10 @@ const createLiteratureMcpServer = (handler: LiteratureMcpHandler): ModelContextP
   return server
 }
 
-export { LITERATURE_MCP_SERVER_NAME, LITERATURE_READ_DOCUMENT_TOOL_NAME, createLiteratureMcpServer }
+export {
+  LITERATURE_MCP_SERVER_NAME,
+  LITERATURE_READ_DOCUMENT_TOOL_NAME,
+  createLiteratureMcpServer,
+  literatureReadPresentation
+}
 export type { LiteratureMcpHandler, LiteratureReadDocumentRequest }

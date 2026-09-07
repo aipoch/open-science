@@ -101,6 +101,7 @@ import {
   type MemoryAgentContext
 } from '../../shared/memory'
 import type { MemoryService } from '../memory/service'
+import { withDataRootWrite } from '../storage/migration-state'
 import { isRecord } from '../value-guards'
 
 const log = createLogger('notebook:local-rpc')
@@ -134,6 +135,7 @@ type NotebookLocalRpcServerOptions = {
     'listCategoriesForAgent' | 'searchForAgent' | 'rememberForAgent'
   >
   isMemoryEnabledForSession?: (sessionId: string) => boolean | Promise<boolean>
+  sessionMemorySignal?: (sessionId: string) => AbortSignal | undefined
   computeService?: {
     callCommand(
       context: { sessionId: string; projectId: string },
@@ -568,6 +570,7 @@ class NotebookLocalRpcServer {
   private readonly connectorService: NotebookLocalRpcServerOptions['connectorService']
   private readonly memoryService: NotebookLocalRpcServerOptions['memoryService']
   private readonly isMemoryEnabledForSession: NotebookLocalRpcServerOptions['isMemoryEnabledForSession']
+  private readonly sessionMemorySignal: NotebookLocalRpcServerOptions['sessionMemorySignal']
   private readonly computeService: NotebookLocalRpcServerOptions['computeService']
   private readonly skillImporter: NotebookLocalRpcServerOptions['skillImporter']
   private readonly planService: NotebookLocalRpcServerOptions['planService']
@@ -598,6 +601,12 @@ class NotebookLocalRpcServer {
   // notebook process. Keeping it here prevents an agent from selecting another Specialist's scope
   // by forging an RPC parameter.
   private readonly sessionSpecialists = new Map<string, string>()
+  // One cancellation scope per authenticated producer, rotated with its task or capability.
+  private readonly codeWriteProducers = new Map<
+    string,
+    { sessionId: string; controller: AbortController }
+  >()
+
   private readonly activeArtifactTurnBindings = new Map<string, ActiveArtifactTurnBinding>()
   private readonly activeInputRunLeases = new Map<string, Set<NotebookInputRunLease>>()
   private readonly inputRunLeaseIds = new WeakMap<NotebookInputRunLease, string>()
@@ -628,6 +637,7 @@ class NotebookLocalRpcServer {
     this.connectorService = options.connectorService
     this.memoryService = options.memoryService
     this.isMemoryEnabledForSession = options.isMemoryEnabledForSession
+    this.sessionMemorySignal = options.sessionMemorySignal
     this.computeService = options.computeService
     this.skillImporter = options.skillImporter
     this.planService = options.planService
@@ -767,6 +777,7 @@ class NotebookLocalRpcServer {
       }
       this.hostViewImage?.discardSession(binding.sessionId)
     }
+    this.cancelCodeWriteProducers()
     this.sessionRpcCapabilities.clear()
     this.hostViewImage?.shutdown()
     this.sessionRpcTokens.clear()
@@ -889,10 +900,40 @@ class NotebookLocalRpcServer {
     return ownedSessionIds
   }
 
+  private codeWriteProducerSignal(token: string, sessionId: string): AbortSignal {
+    let producer = this.codeWriteProducers.get(token)
+    if (!producer) {
+      producer = { sessionId, controller: new AbortController() }
+      this.codeWriteProducers.set(token, producer)
+    }
+    return producer.controller.signal
+  }
+
+  private cancelCodeWriteProducers(sessionId?: string): void {
+    for (const [token, producer] of this.codeWriteProducers) {
+      const owner = this.sessionAliases.get(producer.sessionId) ?? producer.sessionId
+      if (sessionId !== undefined && owner !== sessionId) continue
+      // A child Attempt owns its connection independently of the Main task lifecycle.
+      if (
+        sessionId !== undefined &&
+        this.sessionRpcCapabilities.get(token)?.delegatedWorkRole === 'delegate'
+      )
+        continue
+      producer.controller.abort()
+      this.codeWriteProducers.delete(token)
+    }
+  }
+
+  private revokeSessionCapability(token: string): void {
+    this.codeWriteProducers.get(token)?.controller.abort()
+    this.codeWriteProducers.delete(token)
+    this.sessionRpcCapabilities.delete(token)
+  }
+
   private revokeAgentSessionCapabilities(sessionId: string): void {
     for (const ownedSessionId of this.resolveSessionCapabilityOwners(sessionId)) {
       const token = this.sessionRpcTokens.get(ownedSessionId)
-      if (token) this.sessionRpcCapabilities.delete(token)
+      if (token) this.revokeSessionCapability(token)
       this.sessionRpcTokens.delete(ownedSessionId)
     }
   }
@@ -900,7 +941,7 @@ class NotebookLocalRpcServer {
   private revokeSkillImportSessionCapabilities(sessionId: string): void {
     for (const ownedSessionId of this.resolveSessionCapabilityOwners(sessionId)) {
       const token = this.skillImportRpcTokens.get(ownedSessionId)
-      if (token) this.sessionRpcCapabilities.delete(token)
+      if (token) this.revokeSessionCapability(token)
       this.skillImportRpcTokens.delete(ownedSessionId)
     }
   }
@@ -908,7 +949,7 @@ class NotebookLocalRpcServer {
   private revokePlanSessionCapabilities(sessionId: string): void {
     for (const ownedSessionId of this.resolveSessionCapabilityOwners(sessionId)) {
       const token = this.planRpcTokens.get(ownedSessionId)
-      if (token) this.sessionRpcCapabilities.delete(token)
+      if (token) this.revokeSessionCapability(token)
       this.planRpcTokens.delete(ownedSessionId)
     }
   }
@@ -922,6 +963,7 @@ class NotebookLocalRpcServer {
     this.revokeSkillImportSessionCapabilities(sessionId)
     this.revokePlanSessionCapabilities(sessionId)
     for (const ownedSessionId of ownedSessionIds) {
+      this.cancelCodeWriteProducers(ownedSessionId)
       this.sessionSpecialists.delete(ownedSessionId)
       this.executionAuthorizations.delete(ownedSessionId)
       this.consumedExecutionToolCalls.delete(ownedSessionId)
@@ -1108,7 +1150,7 @@ class NotebookLocalRpcServer {
         if (this.sessionRpcTokens.get(sessionId) === token) {
           this.sessionRpcTokens.delete(sessionId)
         }
-        this.sessionRpcCapabilities.delete(token)
+        this.revokeSessionCapability(token)
       }
     }
   }
@@ -1169,7 +1211,7 @@ class NotebookLocalRpcServer {
     const revoke = (): Promise<void> => {
       if (revokePromise) return revokePromise
       delegatedNotebook.revoked = true
-      this.sessionRpcCapabilities.delete(token)
+      this.revokeSessionCapability(token)
       const drained =
         delegatedNotebook.inFlightRequests === 0
           ? Promise.resolve()
@@ -1213,7 +1255,7 @@ class NotebookLocalRpcServer {
         if (this.skillImportRpcTokens.get(sessionId) === token) {
           this.skillImportRpcTokens.delete(sessionId)
         }
-        this.sessionRpcCapabilities.delete(token)
+        this.revokeSessionCapability(token)
       }
     }
   }
@@ -1235,7 +1277,7 @@ class NotebookLocalRpcServer {
       token,
       release: () => {
         if (this.planRpcTokens.get(sessionId) === token) this.planRpcTokens.delete(sessionId)
-        this.sessionRpcCapabilities.delete(token)
+        this.revokeSessionCapability(token)
       }
     }
   }
@@ -1320,7 +1362,7 @@ class NotebookLocalRpcServer {
           this.hostViewImage?.discard(controlInvocationId)
         }
         ownedControlInvocationIds.clear()
-        this.sessionRpcCapabilities.delete(token)
+        this.revokeSessionCapability(token)
       }
     }
   }
@@ -1339,6 +1381,7 @@ class NotebookLocalRpcServer {
       (previous.ownerExecutionId !== binding.ownerExecutionId ||
         previous.provenanceContext.promptMessageId !== binding.provenanceContext.promptMessageId)
     ) {
+      this.cancelCodeWriteProducers(sessionId)
       this.executionAuthorizations.delete(sessionId)
       this.consumedExecutionToolCalls.delete(sessionId)
     }
@@ -1363,6 +1406,7 @@ class NotebookLocalRpcServer {
   clearArtifactTurnBinding(sessionId: string, ownerExecutionId: string): void {
     if (this.activeArtifactTurnBindings.get(sessionId)?.ownerExecutionId !== ownerExecutionId)
       return
+    this.cancelCodeWriteProducers(sessionId)
     this.activeArtifactTurnBindings.delete(sessionId)
     this.executionAuthorizations.delete(sessionId)
     this.consumedExecutionToolCalls.delete(sessionId)
@@ -1541,6 +1585,7 @@ class NotebookLocalRpcServer {
     response: ServerResponse
   ): Promise<void> {
     const disconnect = new AbortController()
+    let writeProducerSignal: AbortSignal | undefined
     const activeRequest: NotebookRpcRequestLifecycle = {
       request,
       response,
@@ -1561,6 +1606,7 @@ class NotebookLocalRpcServer {
     let releaseArtifactRequest: (() => void) | undefined
     let releaseDelegatedNotebookRequest: (() => void) | undefined
     let authenticatedSessionBinding: NotebookRpcSessionBinding | undefined
+    let checkMemoryAccess: (() => Promise<void>) | undefined
     try {
       if (lifecycle.closing) {
         disconnect.abort()
@@ -1623,22 +1669,42 @@ class NotebookLocalRpcServer {
         const sessionBinding = this.sessionRpcCapabilities.get(bearerToken)
         if (sessionBinding) {
           authenticatedSessionBinding = sessionBinding
+          if (method === 'beginCodeCell') {
+            writeProducerSignal = this.codeWriteProducerSignal(
+              bearerToken,
+              sessionBinding.sessionId
+            )
+          }
           if (sessionBinding.allowedMethods && !sessionBinding.allowedMethods.has(method)) {
             throw new RpcHttpError(403, `Notebook RPC capability does not allow ${method}.`)
           }
           if (MEMORY_RPC_METHODS.has(method)) {
-            let memoryEnabled = sessionBinding.memoryTools === true
-            if (this.isMemoryEnabledForSession) {
-              memoryEnabled = false
-              try {
-                memoryEnabled = await this.isMemoryEnabledForSession(sessionBinding.sessionId)
-              } catch (error) {
-                log.warn('Memory Session gate read failed', errorLogFields(error))
+            const memorySignal = this.sessionMemorySignal?.(sessionBinding.sessionId)
+            checkMemoryAccess = async () => {
+              const checkLifetime = (): void => {
+                if (this.sessionRpcCapabilities.get(bearerToken) !== sessionBinding) {
+                  throw new RpcHttpError(401, 'Invalid notebook RPC token.')
+                }
+                if (memorySignal?.aborted) {
+                  throw new RpcHttpError(403, 'Memory is disabled for this Session.')
+                }
+                disconnect.signal.throwIfAborted()
               }
+              checkLifetime()
+              let memoryEnabled = sessionBinding.memoryTools === true
+              if (this.isMemoryEnabledForSession) {
+                memoryEnabled = false
+                try {
+                  memoryEnabled = await this.isMemoryEnabledForSession(sessionBinding.sessionId)
+                } catch (error) {
+                  log.warn('Memory Session gate read failed', errorLogFields(error))
+                }
+              }
+              if (!memoryEnabled)
+                throw new RpcHttpError(403, 'Memory is disabled for this Session.')
+              checkLifetime()
             }
-            if (!memoryEnabled) {
-              throw new RpcHttpError(403, 'Memory is disabled for this Session.')
-            }
+            await checkMemoryAccess()
           }
           if (
             (method === 'artifactsCall' || method === 'lineageCall') &&
@@ -1935,10 +2001,17 @@ class NotebookLocalRpcServer {
           resolvedParams = { ...resolvedParams, executionInvocationId }
         }
       }
+      const dispatchSignal = writeProducerSignal
+        ? AbortSignal.any([disconnect.signal, writeProducerSignal])
+        : disconnect.signal
       const result =
         method === 'capabilitiesCall'
           ? hostCapabilities
-          : await this.dispatch(method, resolvedParams, disconnect.signal)
+          : isNotebookLocalRpcMethod(method) && method !== 'requestNetworkAccess'
+            ? await withDataRootWrite(() =>
+                this.dispatch(method, resolvedParams, dispatchSignal, checkMemoryAccess)
+              )
+            : await this.dispatch(method, resolvedParams, dispatchSignal, checkMemoryAccess)
 
       writeJson(response, 200, { result })
     } catch (error) {
@@ -1971,9 +2044,13 @@ class NotebookLocalRpcServer {
         response,
         error instanceof RpcHttpError
           ? error.statusCode
-          : error instanceof ResourceBudgetExceededError
-            ? 413
-            : 500,
+          : MEMORY_RPC_METHODS.has(activeRequest.method ?? '') &&
+              error instanceof Error &&
+              error.message === 'Memory is turned off.'
+            ? 403
+            : error instanceof ResourceBudgetExceededError
+              ? 413
+              : 500,
         { error: serializedError }
       )
     } finally {
@@ -1989,7 +2066,8 @@ class NotebookLocalRpcServer {
   private async dispatch(
     method: string,
     params: Record<string, unknown>,
-    signal: AbortSignal
+    signal: AbortSignal,
+    checkMemoryAccess?: () => Promise<void>
   ): Promise<unknown> {
     if (MEMORY_RPC_METHODS.has(method)) {
       if (!this.memoryService) throw new Error('Memory service is not configured.')
@@ -2006,7 +2084,7 @@ class NotebookLocalRpcServer {
         ...(typeof params.turnId === 'string' ? { turnId: params.turnId } : {})
       }
       if (method === 'memoryListCategories') {
-        return this.memoryService.listCategoriesForAgent(context)
+        return this.memoryService.listCategoriesForAgent(context, checkMemoryAccess)
       }
       if (method === 'memorySearch') {
         return this.memoryService.searchForAgent(
@@ -2017,7 +2095,8 @@ class NotebookLocalRpcServer {
               limit: params.limit
             })
           ),
-          context
+          context,
+          checkMemoryAccess
         )
       }
       return this.memoryService.rememberForAgent(
@@ -2028,7 +2107,8 @@ class NotebookLocalRpcServer {
             analysis: params.analysis
           })
         ),
-        context
+        context,
+        checkMemoryAccess
       )
     }
 

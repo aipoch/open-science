@@ -1,10 +1,12 @@
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { mkdir, rm } from 'node:fs/promises'
+import { mkdir, readFile, writeFile, rm } from 'node:fs/promises'
 import { randomUUID } from 'node:crypto'
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 
 import { SpecialistService } from './service'
+import { ConnectorService } from '../connectors/service'
+import { SessionBindingService } from './session-binding'
 import { SpecialistRepository } from './repository'
 import type { BuiltinSpecialistRegistryEntry } from '../../shared/specialist-package'
 import { emptyFullAccessConfig, emptySelectedConfig } from '../../shared/specialist'
@@ -941,4 +943,139 @@ describe('SpecialistService stable Skill/Connector references', () => {
     expect(detached.selectedCapabilities.skillIds).not.toContain('skill-v1')
     expect(detached.selectedCapabilities.skillIds).toContain('skill-v2')
   })
+})
+
+describe.each(['full', 'selected'] as const)(
+  'S03 damaged capability records in %s mode',
+  (capabilityMode) => {
+    it.each([
+      ['method array', { connectorTools: [{ connectorId: 'demo', includedMethods: 'read' }] }],
+      ['rule object', { connectorTools: [null] }],
+      ['pattern type', { connectorTools: [{ connectorId: 'demo', includeToolsPattern: 42 }] }],
+      ['empty pattern', { connectorTools: [{ connectorId: 'demo', includeToolsPattern: '' }] }],
+      ['mode configuration', null]
+    ])(
+      'blocks a record with damaged %s while keeping its healthy neighbor',
+      async (_label, damaged) => {
+        const source = await service.create({
+          name: 'Restricted',
+          capabilityMode,
+          selectedCapabilities: {
+            skillIds: [],
+            connectorIds: ['demo'],
+            connectorTools: [{ connectorId: 'demo', includedMethods: ['read'] }]
+          },
+          fullAccess: {
+            excludedSkillIds: [],
+            excludedConnectorIds: [],
+            connectorTools: [{ connectorId: 'demo', includedMethods: ['read'] }]
+          }
+        })
+        const healthy = await service.create({ name: 'Healthy neighbor' })
+        const path = join(tmpDir, 'specialists.json')
+        const original = await readFile(path, 'utf8')
+        const document = JSON.parse(original)
+        document.specialists[0].fullAccess =
+          damaged === null ? null : { ...document.specialists[0].fullAccess, ...damaged }
+        document.specialists.unshift(null) // Dropped records must not shift the validity association.
+        const corrupted = JSON.stringify(document)
+        await writeFile(path, corrupted)
+
+        expect.soft((await service.listForSettingsSnapshot()).integrity.status).toBe('degraded')
+        const dispatch = vi.fn().mockResolvedValue({ ok: true })
+        const gate = new ConnectorService({
+          mcpClientManager: {
+            call: dispatch,
+            listTools: vi.fn().mockResolvedValue([{ name: 'danger' }])
+          },
+          getConnectors: () => ({
+            enabledIds: [],
+            autoAllowIds: [],
+            customMcpServers: [
+              {
+                id: 'demo',
+                name: 'demo',
+                displayName: 'Demo',
+                transport: 'stdio',
+                command: 'unused-test-command',
+                enabled: true
+              }
+            ]
+          }),
+          resolveApiKey: () => undefined,
+          resolveSpecialistProfile: (id) => service.resolveRunnableById(id)
+        })
+        await expect
+          .soft(
+            gate.call(
+              'demo',
+              'danger',
+              {},
+              { origin: 'agent', sessionId: 'damaged-session', specialistId: source.id }
+            )
+          )
+          .rejects.toThrow()
+        expect.soft(dispatch).not.toHaveBeenCalled()
+        await expect.soft(service.resolveRunnableByName(source.name)).rejects.toThrow()
+        await expect.soft(service.resolveRunnableByReference(source.id)).rejects.toThrow()
+        await expect.soft(service.resolveRunnableByReference(source.name)).rejects.toThrow()
+        const bindings = new SessionBindingService(service)
+        bindings.setBinding('damaged-session', source.id)
+        bindings.setBinding('healthy-session', healthy.id)
+        expect
+          .soft(await bindings.resolve('damaged-session'))
+          .toMatchObject({ kind: 'unavailable' })
+        expect(await bindings.resolve('healthy-session')).toMatchObject({
+          kind: 'bound',
+          profile: { id: healthy.id }
+        })
+        expect(await readFile(path, 'utf8')).toBe(corrupted)
+
+        await writeFile(path, original)
+        expect(await bindings.resolve('damaged-session')).toMatchObject({
+          kind: 'bound',
+          profile: { id: source.id }
+        })
+      }
+    )
+  }
+)
+
+it.each([1, 2])(
+  'keeps legitimate version %i defaults runnable without rewriting history',
+  async (version) => {
+    const source = await service.create({ name: 'Legacy defaults' })
+    const path = join(tmpDir, 'specialists.json')
+    const document = JSON.parse(await readFile(path, 'utf8'))
+    document.version = version
+    for (const key of [
+      'fullAccess',
+      'selectedCapabilities',
+      'revision',
+      'packageVersion',
+      'origin',
+      'ownedSkillIds'
+    ])
+      delete document.specialists[0][key]
+    const original = JSON.stringify(document)
+    await writeFile(path, original)
+    expect(await service.resolveRunnableById(source.id)).toMatchObject({
+      id: source.id,
+      fullAccess: emptyFullAccessConfig(),
+      selectedCapabilities: emptySelectedConfig()
+    })
+    expect(await service.resolveRunnableByName(source.name)).toMatchObject({ id: source.id })
+    expect(await service.resolveRunnableByReference(source.id)).toMatchObject({ id: source.id })
+    expect(await readFile(path, 'utf8')).toBe(original)
+  }
+)
+
+it('does not disable a record for an unrelated appearance diagnostic', async () => {
+  const source = await service.create({ name: 'Healthy capabilities' })
+  const path = join(tmpDir, 'specialists.json')
+  const document = JSON.parse(await readFile(path, 'utf8'))
+  document.specialists[0].iconKey = 42
+  await writeFile(path, JSON.stringify(document))
+  expect((await service.listForSettingsSnapshot()).integrity.status).toBe('degraded')
+  expect(await service.resolveRunnableById(source.id)).toMatchObject({ id: source.id })
 })

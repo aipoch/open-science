@@ -60,7 +60,7 @@ describe('text annotation range reconciliation', () => {
     surface.remove()
   })
 
-  it('drops deleted IDs and uses deterministic quote order only after a real remount', () => {
+  it('drops deleted IDs and leaves ambiguous legacy quotes unresolved after a real remount', () => {
     const first = surfaceWithDuplicates()
     const exactFirst = rangeAt(first.text, 0)
     const exactSecond = rangeAt(first.text, 12)
@@ -87,7 +87,7 @@ describe('text annotation range reconciliation', () => {
       ],
       existing
     )
-    expect(Array.from(fallback.values()).map((range) => range.startOffset)).toEqual([0, 12])
+    expect(fallback.size).toBe(0)
     remounted.surface.remove()
   })
 
@@ -98,13 +98,19 @@ describe('text annotation range reconciliation', () => {
 
     const result = reconcileTextAnnotationRanges(
       surface,
-      [{ id: 'point', quote: 'repeat' }],
+      [
+        {
+          id: 'point',
+          quote: 'repeat',
+          anchor: { position: { start: 12, end: 18 }, prefix: 'repeat then ' }
+        }
+      ],
       new Map([['point', stale]])
     )
 
     expect(result.get('point')).not.toBe(stale)
     expect(result.get('point')?.toString()).toBe('repeat')
-    expect(result.get('point')?.startOffset).toBe(7)
+    expect(result.get('point')?.startOffset).toBe(19)
     surface.remove()
   })
 

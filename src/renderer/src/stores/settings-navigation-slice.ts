@@ -20,6 +20,7 @@ export type SettingsNavigationState = {
 export type SettingsNavigationActions = {
   openSettings: () => void
   openSettingsToPanel: (panel: SettingsPanelId) => void
+  openSettingsToOpenAlex: () => void
   closeSettings: () => void
   openSettingsToSkill: (skillId: string) => void
   openSettingsToSpecialist: (specialistId: string) => void
@@ -58,6 +59,8 @@ export const createSettingsNavigationSlice = ({
     openSettings: () => setState({ isSettingsOpen: true }),
 
     openSettingsToPanel: (panel) => openTo(settingsPanelRoute(panel)),
+    openSettingsToOpenAlex: () =>
+      openTo({ panel: 'credentials', view: { kind: 'service', serviceId: 'openalex' } }),
 
     closeSettings: () =>
       setState({

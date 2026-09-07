@@ -4,6 +4,10 @@ import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { ConnectorAddForm } from './ConnectorAddForm'
+import {
+  parseConnectorTemplate,
+  buildConnectorTemplateExport
+} from '../../../../main/settings/connector-template'
 import { createInitialSettingsState, useSettingsStore } from '@/stores/settings-store'
 
 if (!Element.prototype.hasPointerCapture) {
@@ -22,6 +26,9 @@ beforeEach(() => {
   useSettingsStore.setState({
     ...createInitialSettingsState(),
     encryptionAvailable: true,
+    // This component fixture starts from a successfully loaded credential catalog.
+    deviceCredentialsLoaded: true,
+    loadDeviceCredentials: vi.fn().mockResolvedValue(undefined),
     addCustomServer: vi.fn().mockResolvedValue(undefined)
   })
   container = document.createElement('div')
@@ -262,21 +269,21 @@ describe('ConnectorAddForm (local command)', () => {
     expect(onDone).toHaveBeenCalled()
   })
 
-  it('submits whitespace-separated header input as separate arguments', async () => {
+  it('submits multiline arguments without splitting spaces', async () => {
     act(() => {
       root.render(<ConnectorAddForm initialTransport="local" onDone={vi.fn()} onCancel={vi.fn()} />)
     })
 
     setValue('Display name', 'Header Server')
     openAdvancedSettings()
-    setValue('Arguments', '--header Authorization: Bearer plaintext-secret')
+    setValue('Arguments', '--header\nAuthorization: Bearer plaintext-secret')
     checkTrust()
 
     await act(async () => addButton()?.click())
 
     expect(useSettingsStore.getState().addCustomServer).toHaveBeenCalledWith(
       expect.objectContaining({
-        args: ['--header', 'Authorization:', 'Bearer', 'plaintext-secret']
+        args: ['--header', 'Authorization: Bearer plaintext-secret']
       })
     )
   })
@@ -458,6 +465,37 @@ describe('ConnectorAddForm (local command)', () => {
     expect(document.body.textContent).toContain('This name is reserved by a built-in Connector.')
   })
 
+  it('round-trips parsed literal template arguments through the editor and both exports', async () => {
+    const args = ['  two words  ', '', '--label', 'first', '--label', 'second', 'first\nsecond']
+    const parsed = parseConnectorTemplate(
+      JSON.stringify({
+        schema_version: 1,
+        kind: 'open-science.connector',
+        name: 'literal',
+        display_name: 'Literal',
+        transport: 'stdio',
+        command: 'node',
+        args
+      })
+    )
+    expect(parsed.ready).toBe(true)
+    act(() =>
+      root.render(
+        <ConnectorAddForm initialTemplate={parsed.definition} onDone={vi.fn()} onCancel={vi.fn()} />
+      )
+    )
+    checkTrust()
+    await act(async () => addButton()?.click())
+    const submitted = vi.mocked(useSettingsStore.getState().addCustomServer).mock.calls[0][0]
+    expect(submitted.args).toEqual(args)
+    const exported = buildConnectorTemplateExport({ ...submitted, id: 'literal' })
+    expect(exported.preview.ready).toBe(true)
+    for (const contents of [exported.contents, exported.mcpClientContents]) {
+      const reparsed = parseConnectorTemplate(contents!)
+      expect((reparsed.definition ?? reparsed.definitions?.[0])?.args).toEqual(args)
+    }
+  })
+
   it('prefills an imported template and requires a device credential binding', async () => {
     useSettingsStore.setState({ deviceCredentials: [staticCredential] })
     act(() => {
@@ -470,7 +508,7 @@ describe('ConnectorAddForm (local command)', () => {
             displayName: 'Example Research',
             transport: 'stdio',
             command: 'npx',
-            args: ['-y', '@example/research-mcp', '--label', 'two words'],
+            args: ['-y', '@example/research-mcp', '--label', 'two words', ''],
             requiredSecrets: { environment: ['API_TOKEN'] }
           }}
           onDone={vi.fn()}
@@ -504,7 +542,7 @@ describe('ConnectorAddForm (local command)', () => {
         name: 'example-research',
         displayName: 'Example Research',
         command: 'npx',
-        args: ['-y', '@example/research-mcp', '--label', 'two words'],
+        args: ['-y', '@example/research-mcp', '--label', 'two words', ''],
         envCredentialIds: { API_TOKEN: 'credential-static' }
       })
     )
@@ -1069,6 +1107,128 @@ describe('ConnectorAddForm (edit)', () => {
     command: 'npx',
     args: ['-y', 'old-pkg']
   }
+
+  it('C04 preserves argv boundaries when saving an unchanged existing connector', async () => {
+    const args = ['/path/My Project/server.js', '--label', 'hello world', '']
+    const updateCustomServer = vi.fn().mockResolvedValue(undefined)
+    useSettingsStore.setState({ updateCustomServer })
+    await act(async () => {
+      root.render(
+        <ConnectorAddForm
+          editServer={{ ...editServer, args }}
+          onDone={vi.fn()}
+          onCancel={vi.fn()}
+        />
+      )
+    })
+    const save = Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).find(
+      (button) => button.textContent?.trim() === 'Save changes'
+    )
+    expect(save?.disabled).toBe(false)
+    await act(async () => {
+      save!.click()
+    })
+    expect(updateCustomServer).toHaveBeenCalledOnce()
+    expect(updateCustomServer).toHaveBeenCalledWith(expect.objectContaining({ args }))
+  })
+
+  it('C04 edits arguments in one multiline field and can clear the saved argv', async () => {
+    const updateCustomServer = vi.fn().mockResolvedValue(undefined)
+    useSettingsStore.setState({ updateCustomServer })
+    await act(async () =>
+      root.render(
+        <ConnectorAddForm
+          editServer={{ ...editServer, args: ['original', ''] }}
+          onDone={vi.fn()}
+          onCancel={vi.fn()}
+        />
+      )
+    )
+    const field = document.body.querySelector<HTMLTextAreaElement>(
+      'textarea[aria-label="Arguments"]'
+    )
+    expect(field).not.toBeNull()
+    expect(field!.value).toBe('original\n')
+    expect(document.body.textContent).not.toContain('Add argument')
+    setValue('Arguments', '  /path/My Project/server.js  \n\n--label\nhello world\n')
+    const save = Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).find(
+      (button) => button.textContent?.trim() === 'Save changes'
+    )!
+    await act(async () => save.click())
+    expect(updateCustomServer).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        args: ['  /path/My Project/server.js  ', '', '--label', 'hello world', '']
+      })
+    )
+    setValue('Arguments', '')
+    await act(async () => save.click())
+    expect(updateCustomServer).toHaveBeenLastCalledWith(expect.objectContaining({ args: [] }))
+  })
+
+  it('preserves original arguments with embedded line breaks unless the text is edited', async () => {
+    const args = ['first\nsecond', '', ' repeated ']
+    const updateCustomServer = vi.fn().mockResolvedValue(undefined)
+    useSettingsStore.setState({ updateCustomServer })
+    await act(async () =>
+      root.render(
+        <ConnectorAddForm
+          editServer={{ ...editServer, args }}
+          onDone={vi.fn()}
+          onCancel={vi.fn()}
+        />
+      )
+    )
+    setValue('Display name', 'Renamed')
+    const save = Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).find(
+      (button) => button.textContent?.trim() === 'Save changes'
+    )!
+    await act(async () => save.click())
+    expect(updateCustomServer).toHaveBeenCalledWith(expect.objectContaining({ args }))
+  })
+
+  it('clears a saved empty argument when Delete is pressed in the empty field', async () => {
+    const updateCustomServer = vi.fn().mockResolvedValue(undefined)
+    useSettingsStore.setState({ updateCustomServer })
+    await act(async () =>
+      root.render(
+        <ConnectorAddForm
+          editServer={{ ...editServer, args: [''] }}
+          onDone={vi.fn()}
+          onCancel={vi.fn()}
+        />
+      )
+    )
+    const field = document.body.querySelector<HTMLTextAreaElement>(
+      'textarea[aria-label="Arguments"]'
+    )!
+    expect(field.value).toBe('')
+    act(() => field.dispatchEvent(new KeyboardEvent('keydown', { key: 'Delete', bubbles: true })))
+    const save = Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).find(
+      (button) => button.textContent?.trim() === 'Save changes'
+    )!
+    await act(async () => save.click())
+    expect(updateCustomServer).toHaveBeenCalledWith(expect.objectContaining({ args: [] }))
+  })
+
+  it('omits unavailable argv when it has not been edited', async () => {
+    const updateCustomServer = vi.fn().mockResolvedValue(undefined)
+    useSettingsStore.setState({ updateCustomServer })
+    await act(async () =>
+      root.render(
+        <ConnectorAddForm
+          editServer={{ ...editServer, args: undefined }}
+          onDone={vi.fn()}
+          onCancel={vi.fn()}
+        />
+      )
+    )
+    setValue('Display name', 'Renamed')
+    const save = Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).find(
+      (button) => button.textContent?.trim() === 'Save changes'
+    )!
+    await act(async () => save.click())
+    expect(updateCustomServer.mock.calls[0][0].args).toBeUndefined()
+  })
 
   it('pre-fills fields, locks the name, and updates on save', async () => {
     useSettingsStore.setState({

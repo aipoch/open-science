@@ -85,6 +85,79 @@ afterEach(() => {
 })
 
 describe('TokenUsagePanel', () => {
+  it('keeps the reporting note visible after an application correction', () => {
+    const now = localTime(2026, 8, 15, 18)
+    const session = createSession(now)
+    session.messages.push(
+      message('correction', 'user', now, {
+        attribution: {
+          kind: 'application',
+          feature: 'reviewer',
+          purpose: 'correction',
+          causeReviewId: 'review-1'
+        }
+      }),
+      message('corrected', 'agent', now, {
+        responseToMessageId: 'correction',
+        turnUsage: { inputTokens: 10, cacheTokens: 2, outputTokens: 3 }
+      })
+    )
+    act(() => root.render(<TokenUsagePanel sessions={[session]} projects={[]} now={now} />))
+    expect(document.body.querySelector('[data-slot="token-usage-summary"]')?.textContent).toContain(
+      '165'
+    )
+    expect(
+      document.body.querySelector('[data-slot="token-usage-coverage"]')?.textContent
+    ).toContain('Only reported token usage is included.')
+  })
+
+  it.each(['complete usage', 'a response crossing midnight'])(
+    'shows a fixed reporting note without a coverage ratio for %s',
+    (scenario) => {
+      const now = localTime(2026, 8, 15, 18)
+      const session = createSession(now)
+      if (scenario === 'complete usage') {
+        session.messages[3].turnUsage = { inputTokens: 10, cacheTokens: 2, outputTokens: 3 }
+        delete session.messages[3].turnUsageUnavailable
+      } else {
+        session.messages[0].createdAt = localTime(2026, 8, 14, 23) + 59 * 60_000
+        session.messages[1].completedAt = localTime(2026, 8, 15, 0) + 60_000
+      }
+      act(() => root.render(<TokenUsagePanel sessions={[session]} projects={[]} now={now} />))
+      act(() => document.body.querySelector<HTMLButtonElement>('[aria-label="Today"]')?.click())
+      const note = document.body.querySelector('[data-slot="token-usage-coverage"]')
+      expect(note?.textContent).toBe(
+        'Only reported token usage is included. Older conversations or some providers may not report usage.'
+      )
+      expect(document.body.textContent).not.toMatch(/\d+ of \d+ runs?/)
+      expect(
+        document.body.querySelector('[data-slot="token-usage-summary"]')?.textContent
+      ).toContain(scenario === 'complete usage' ? 'Total tokens15' : 'Total tokens150')
+    }
+  )
+
+  it('uses SQLite session totals for the empty chart when no sessions are hydrated', async () => {
+    const now = localTime(2026, 8, 15, 18)
+    window.api = {
+      sessions: {
+        loadUsage: vi.fn().mockResolvedValue({
+          sessionCreatedAt: [now - 40 * 86_400_000],
+          projectCreatedAt: [],
+          artifactCreatedAt: [],
+          runsAt: [],
+          usageEvents: [],
+          totalArtifacts: 0
+        })
+      }
+    } as unknown as Window['api']
+    await act(async () => root.render(<TokenUsagePanel sessions={[]} projects={[]} now={now} />))
+    expect(document.body.textContent).toContain('Total sessions1')
+    expect(document.body.textContent).toContain(
+      'No token usage has been reported in the last 30 days.'
+    )
+    expect(document.body.textContent).not.toContain('Start a conversation to see token usage here.')
+  })
+
   it('waits for the SQLite projection before displaying initial usage totals', async () => {
     const now = localTime(2026, 8, 15, 18)
     let resolveUsage: ((projection: SessionUsageProjection) => void) | undefined
@@ -128,8 +201,7 @@ describe('TokenUsagePanel', () => {
             timestamp: now,
             inputTokens: 900,
             cacheTokens: 90,
-            outputTokens: 9,
-            rootRunUsage: true
+            outputTokens: 9
           }
         ],
         totalArtifacts: 0
@@ -197,8 +269,7 @@ describe('TokenUsagePanel', () => {
           timestamp: now,
           inputTokens,
           cacheTokens: 0,
-          outputTokens: 0,
-          rootRunUsage: true
+          outputTokens: 0
         }
       ],
       totalArtifacts: 0
@@ -281,8 +352,7 @@ describe('TokenUsagePanel', () => {
           timestamp: now,
           inputTokens,
           cacheTokens: 0,
-          outputTokens: 0,
-          rootRunUsage: true
+          outputTokens: 0
         }
       ],
       totalArtifacts: 0
@@ -407,7 +477,7 @@ describe('TokenUsagePanel', () => {
     ])
     expect(
       document.body.querySelector('[data-slot="token-usage-coverage"]')?.textContent
-    ).toContain('1 of 2 runs')
+    ).toContain('Only reported token usage is included.')
     expect(
       document.body.querySelectorAll('[aria-label="Daily activity for the last 30 days"] button')
     ).toHaveLength(30)

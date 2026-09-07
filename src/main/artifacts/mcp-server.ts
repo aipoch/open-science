@@ -2,7 +2,7 @@ import type { McpServerStdio } from '@agentclientprotocol/sdk'
 import { McpServer as ModelContextProtocolServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { createHash, randomUUID } from 'node:crypto'
-import { readFile } from 'node:fs/promises'
+import { readFile, stat } from 'node:fs/promises'
 import { z } from 'zod'
 
 import type {
@@ -18,6 +18,12 @@ import type {
   ReserveArtifactWriteRequest,
   ReplayArtifactVersionRequest
 } from '../../shared/artifact-provenance'
+import {
+  ARTIFACT_LITERATURE_SIDECAR_SUFFIX,
+  artifactLiteratureRequestSchema,
+  artifactLiteratureSidecarSchema,
+  type ArtifactLiteratureRequest
+} from '../../shared/artifact-literature'
 import { resolveProjectId } from '../../shared/project-scope'
 import type { ProjectIdScope } from '../../shared/project-scope'
 import { ARTIFACT_MCP_SERVER_ARG } from '../mcp-server-args'
@@ -25,6 +31,7 @@ import { fetchLocalRpc } from '../local-rpc-transport'
 import { createLogger } from '../logger'
 import { LOCAL_RESOURCE_BUDGETS } from '../resource-budget'
 import { ArtifactRepository } from './repository'
+import { resolveAllowedImportFilePath } from './storage-access'
 
 const ARTIFACT_MCP_SERVER_NAME = 'open-science-artifacts'
 const log = createLogger('artifacts:mcp')
@@ -73,6 +80,7 @@ type ArtifactToolWriteInput = {
   content?: string
   encoding?: ArtifactWriteEncoding
   producerRunId?: string
+  literature?: ArtifactLiteratureRequest
 }
 
 type ArtifactWriteInvocation = {
@@ -118,7 +126,7 @@ const writeArtifactFileToolSchema = {
             .string()
             .min(1)
             .describe(
-              'Path to an ALREADY-SAVED file. A bare filename or relative path (e.g. "plot.png") resolves against the notebook session data dir (the kernel cwd), or the session workspace when there is no notebook data dir this turn — pass the same name you saved with. The session-relative `data/plot.png` form returned by Notebook `workingFiles[].relativePath` is also accepted. An absolute path also works. Do NOT rebuild a path from an env var; the kernel cwd already IS the data dir. The file must exist before you call this — the app copies it.'
+              'Path to an ALREADY-SAVED file. A bare filename or relative path (e.g. "plot.png") resolves first against the notebook session data dir (the kernel cwd), then the session workspace — pass the same name you saved with. The session-relative `data/plot.png` form returned by Notebook `workingFiles[].relativePath` is also accepted. An absolute path also works. Do NOT rebuild a path from an env var; the kernel cwd already IS the data dir. The file must exist before you call this — the app copies it.'
             )
         })
       ])
@@ -132,13 +140,19 @@ const writeArtifactFileToolSchema = {
     .optional()
     .describe(
       'Required when a Notebook cell/REPL/bash execution produced this file: pass the exact runId returned by that execution. Omit only when no Notebook execution produced it.'
+    ),
+  literature: z
+    .preprocess(parseJsonString, artifactLiteratureRequestSchema)
+    .optional()
+    .describe(
+      'Advanced fallback for artifacts without prepared citation metadata. For DOCX or LaTeX ZIP output, use the Literature preparation tool first and omit this field; write_artifact_file discovers its checksum-bound citation metadata automatically. If needed here, pass citationId and itemId; the app supplies metadata revisions and freezes verified snapshots.'
     )
 }
 
 const writeArtifactFileToolDefinition = {
   title: 'Write artifact file',
   description:
-    'Attach a file this turn generated as a downloadable artifact (chart, image, report, CSV, archive, …). For small generated text such as Markdown or plain text, pass inline content directly; do not use Notebook, REPL, shell, or workspace file tools merely to create an intermediate file. For binary or otherwise disk-generated output, the file must already exist before this call. Simplest use inside a notebook: save with a relative name (e.g. plt.savefig("plot.png") / R png("plot.png")) then call this with just `filename: "plot.png"` — the app resolves it against the notebook session data dir (the kernel cwd) and copies it. You may also pass an explicit `source`: {kind:"localPath", path} where path is a bare filename, a path relative to the notebook data dir or session workspace, the session-relative `data/plot.png` returned by Notebook `workingFiles`, or an absolute path to an already-saved file; or {kind:"inline", content} for small in-memory text. The app assigns session/message ownership.',
+    'Attach a file this turn generated as a downloadable artifact (chart, image, report, CSV, archive, …). For small generated text such as Markdown or plain text, pass inline content directly; do not use Notebook, REPL, shell, or workspace file tools merely to create an intermediate file. For binary or otherwise disk-generated output, the file must already exist before this call. Simplest use inside a notebook: save with a relative name (e.g. plt.savefig("plot.png") / R png("plot.png")) then call this with just `filename: "plot.png"` — the app resolves it against the notebook session data dir (the kernel cwd) and copies it. Literature formatting tools attach their prepared DOCX and LaTeX outputs themselves; do not write those files again. You may also pass an explicit `source`: {kind:"localPath", path} where path is a bare filename, a path relative to the notebook data dir or session workspace, the session-relative `data/plot.png` returned by Notebook `workingFiles`, or an absolute path to an already-saved file; or {kind:"inline", content} for small in-memory text. The app assigns session/message ownership; do not call this before the file is written.',
   inputSchema: writeArtifactFileToolSchema
 }
 
@@ -383,6 +397,38 @@ const isNotebookWorkingFilePath = (source: ArtifactWriteSource): boolean => {
   return segments[0] === 'data' && !segments.includes('..')
 }
 
+const isMissingFileError = (error: unknown): boolean =>
+  typeof error === 'object' &&
+  error !== null &&
+  'code' in error &&
+  (error as { code?: unknown }).code === 'ENOENT'
+
+const readPreparedLiteratureSidecar = async (
+  source: ArtifactWriteSource,
+  allowedImportRoots: string[],
+  relativeBaseDirs: string[]
+): Promise<ReturnType<typeof artifactLiteratureSidecarSchema.parse> | undefined> => {
+  if (source.kind !== 'localPath' || !/\.(?:docx|zip)$/iu.test(source.path)) {
+    return undefined
+  }
+  const sourcePath = await resolveAllowedImportFilePath(
+    source.path,
+    allowedImportRoots,
+    relativeBaseDirs
+  )
+  const candidate = `${sourcePath}${ARTIFACT_LITERATURE_SIDECAR_SUFFIX}`
+  try {
+    await stat(candidate)
+  } catch (error) {
+    if (isMissingFileError(error)) return undefined
+    throw error
+  }
+  const sidecarPath = await resolveAllowedImportFilePath(candidate, allowedImportRoots)
+  return artifactLiteratureSidecarSchema.parse(
+    JSON.parse(await readFile(sidecarPath, 'utf8')) as unknown
+  )
+}
+
 // Writes one tool call into the current pending run selected by the main process.
 const writeArtifactFileForCurrentRun = async (
   repository: ArtifactRepository,
@@ -397,16 +443,17 @@ const writeArtifactFileForCurrentRun = async (
     input,
     Boolean(context.notebookDataDir || environment.allowedImportRoots[0])
   )
-  // A relative source normally has one authoritative base. Notebook workingFiles are the one bounded
-  // exception: their `data/...` path is session-root relative, so probe the current session root after
-  // the kernel cwd. Never probe additional workspace roots during a Notebook turn — that could import
-  // a stale same-named file from outside the current Notebook Session.
+  // Native Agent file tools keep writing to the session workspace even when Notebook is available,
+  // while Notebook code writes to the kernel cwd. Prefer the active Notebook locations, then fall
+  // back to the trusted session workspace so the Agent can pass the same relative path either tool
+  // returned instead of rediscovering its absolute path or duplicating the file as inline content.
   const relativeBaseDirs = context.notebookDataDir
     ? [
         context.notebookDataDir,
         ...(context.notebookSessionRoot && isNotebookWorkingFilePath(source)
           ? [context.notebookSessionRoot]
-          : [])
+          : []),
+        ...environment.allowedImportRoots.slice(0, 1)
       ]
     : environment.allowedImportRoots.slice(0, 1)
   const writeRequest = {
@@ -421,15 +468,13 @@ const writeArtifactFileForCurrentRun = async (
     // The kernel's final session root (from the per-turn handoff) is the authoritative import root
     // for notebook writes; add it to the static roots so a resolved relative path is accepted even
     // when the env was built under a pre-start alias. Authorization-only: it must NOT also join
-    // relativeBaseDirs — a relative name resolves against the kernel cwd (notebookDataDir), never
-    // against the session root.
+    // relativeBaseDirs unless it is the bounded `data/...` workingFiles representation.
     allowedImportRoots: context.notebookSessionRoot
       ? [...environment.allowedImportRoots, context.notebookSessionRoot]
       : environment.allowedImportRoots,
     relativeBaseDirs,
     signal: invocation.signal
   }
-
   // Old handoff files remain writable during migration. New production handoffs always include the
   // graph locators and RPC capability; only that complete trusted envelope may create a durable
   // Version in SQLite.
@@ -489,6 +534,11 @@ const writeArtifactFileForCurrentRun = async (
     if (replay) return replay
   }
 
+  const preparedLiterature = input.literature
+    ? undefined
+    : await readPreparedLiteratureSidecar(source, writeOptions.allowedImportRoots, relativeBaseDirs)
+  const literature = input.literature ?? preparedLiterature?.literature
+
   const nativeWriteOptions = {
     ...writeOptions,
     reserveFile: (fileBytes: number) =>
@@ -521,6 +571,11 @@ const writeArtifactFileForCurrentRun = async (
     nativeWriteOptions,
     async (_pendingFile, sourceFileObservation, _bindVersionRouting, fileDigest, reservation) => {
       if (!reservation) throw new Error('Artifact write reservation was not created.')
+      if (preparedLiterature && preparedLiterature.contentChecksum !== fileDigest.checksum) {
+        throw new Error(
+          'Prepared citation metadata does not match this file. Run the Literature preparation tool again.'
+        )
+      }
       const contentChecksum = fileDigest.checksum
       const writeRequestChecksum = createHash('sha256')
         .update(
@@ -529,6 +584,7 @@ const writeArtifactFileForCurrentRun = async (
             contentType: input.mimeType ?? null,
             filename: input.filename,
             producerRunId: input.producerRunId ?? null,
+            literature: literature ?? null,
             sourceKind: source.kind,
             sourceFileObservation: sourceFileObservation ?? null
           })
@@ -561,7 +617,8 @@ const writeArtifactFileForCurrentRun = async (
           contentType: input.mimeType,
           resourceReservationId: reservation.id,
           resourceSizeBytes: fileDigest.sizeBytes,
-          resourceChecksum: fileDigest.checksum
+          resourceChecksum: fileDigest.checksum,
+          ...(literature ? { literature } : {})
         },
         invocation.signal
       )
@@ -714,6 +771,7 @@ export {
   createArtifactMcpEnvironmentFromProcess,
   createArtifactMcpServer,
   createArtifactMcpServerConfig,
+  readCurrentRunContext,
   runArtifactMcpServer,
   callArtifactRpc,
   toWriteArtifactToolResult,

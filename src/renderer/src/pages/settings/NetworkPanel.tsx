@@ -247,26 +247,28 @@ const NetworkPanel = ({
               )}
             </ul>
 
-            {!isOnline || connectivity === 'unreachable' || connectivity === 'probe-failed' ? (
-              <div className="mb-4 rounded-lg bg-bg-10 px-4 py-4 ring-1 ring-border-200">
-                <ol className="list-decimal space-y-1 pl-5 text-xs leading-relaxed text-muted-foreground">
-                  {!isOnline ? <li>{t('Check your cable or Wi-Fi connection.')}</li> : null}
-                  <li>{t('Check proxy, VPN, or firewall settings.')}</li>
-                  <li>{t('Check the package mirror configuration below.')}</li>
-                </ol>
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  className="mt-3"
-                  onClick={handleRetry}
-                  disabled={isChecking}
-                >
-                  <RefreshCw className={cn(isChecking && 'animate-spin')} aria-hidden="true" />
-                  {isChecking ? t('Checking…') : t('Check again')}
-                </Button>
-              </div>
-            ) : null}
+            <div className="pb-4">
+              {!isOnline || connectivity === 'unreachable' || connectivity === 'probe-failed' ? (
+                <div className="mb-4 rounded-lg bg-bg-10 px-4 py-4 ring-1 ring-border-200">
+                  <ol className="list-decimal space-y-1 pl-5 text-xs leading-relaxed text-muted-foreground">
+                    {!isOnline ? <li>{t('Check your cable or Wi-Fi connection.')}</li> : null}
+                    <li>{t('Check proxy, VPN, or firewall settings.')}</li>
+                    <li>{t('Check the package mirror configuration below.')}</li>
+                  </ol>
+                </div>
+              ) : null}
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="mt-3"
+                onClick={handleRetry}
+                disabled={isChecking}
+              >
+                <RefreshCw className={cn(isChecking && 'animate-spin')} aria-hidden="true" />
+                {isChecking ? t('Checking…') : t('Check again')}
+              </Button>
+            </div>
           </div>
         </section>
       ) : null}

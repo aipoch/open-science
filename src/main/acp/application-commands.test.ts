@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 
 import type { AcpStateSnapshot } from '../../shared/acp'
 import { toAcpStateCommandResponse } from '../../shared/acp'
+import { SessionSizeLimitError } from '../../shared/session-persistence'
 import {
   createApplicationCommandRouter,
   type ApplicationCallerLease,
@@ -61,6 +62,7 @@ const createDependencies = (): AcpApplicationCommandDependencies => ({
     respondToElicitation: vi.fn(async () => snapshot),
     getSessionPlanProjection: vi.fn(async () => null),
     respondSessionPlan: vi.fn(async () => ({ projection: {} as never, changed: true })),
+    discardUnavailableSessionPlan: vi.fn(async () => ({ revision: 2 })),
     setPermissionProfile: vi.fn(async () => snapshot),
     revokePermissionGrant: vi.fn(async () => snapshot)
   },
@@ -139,6 +141,7 @@ describe('ACP application commands', () => {
       'acp:continue-interrupted-turn',
       'acp:create-session',
       'acp:delete-session',
+      'acp:discard-unavailable-plan',
       'acp:disconnect',
       'acp:get-plan-projection',
       'acp:get-state',
@@ -405,6 +408,55 @@ describe('ACP application commands', () => {
     expect(dependencies.runtime.respondToPermission).toHaveBeenCalledTimes(humanCallers.length)
   })
 
+  it('admits explicit unavailable Plan discard only for a current human and an available Session', async () => {
+    const dependencies = createDependencies()
+    const router = createApplicationCommandRouter()
+    const available = vi.fn(
+      async (_project: string, _session: string, operation: () => Promise<unknown>) => operation()
+    )
+    const archiveAvailability = {
+      ...ownerResolvingArchiveAvailability('project-1'),
+      withSessionAvailable: available
+    } as NonNullable<AcpApplicationCommandDependencies['archiveAvailability']>
+    registerAcpCommands(router.registrar, { ...dependencies, archiveAvailability })
+    const request = {
+      projectId: 'project-1',
+      sessionId: 'session-1',
+      artifactVersionId: 'version-1',
+      expectedRevision: 1
+    }
+    await expect(
+      router.dispatcher.invoke(acpCommands.discardUnavailablePlan, invocation([request]))
+    ).resolves.toEqual({ revision: 2 })
+    expect(available).toHaveBeenCalledWith('project-1', 'session-1', expect.any(Function))
+    await expect(
+      router.dispatcher.invoke(
+        acpCommands.discardUnavailablePlan,
+        invocation([request], createTaskCallerContext())
+      )
+    ).rejects.toThrow('Only a current human')
+    await expect(
+      router.dispatcher.invoke(
+        acpCommands.discardUnavailablePlan,
+        invocation(
+          [request],
+          createWebCallerContext('stale', { isAuthorizationCurrent: () => false })
+        )
+      )
+    ).rejects.toThrow('Caller authorization')
+    await expect(
+      router.dispatcher.invoke(
+        acpCommands.discardUnavailablePlan,
+        invocation([{ ...request, expectedRevision: -1 }])
+      )
+    ).rejects.toBeInstanceOf(Error)
+    available.mockRejectedValueOnce(new Error('Session archived'))
+    await expect(
+      router.dispatcher.invoke(acpCommands.discardUnavailablePlan, invocation([request]))
+    ).rejects.toThrow('Session archived')
+    expect(dependencies.runtime.discardUnavailableSessionPlan).toHaveBeenCalledTimes(1)
+  })
+
   it('routes Plan decisions and revision feedback from current humans and Task automation', async () => {
     const dependencies = createDependencies()
     const router = createApplicationCommandRouter()
@@ -451,6 +503,58 @@ describe('ACP application commands', () => {
     ).rejects.toThrow(
       'Only a current human or Task automation caller can respond to a Session Plan.'
     )
+  })
+
+  it('preserves the Session size-limit code for Plan responses', async () => {
+    const dependencies = createDependencies()
+    vi.mocked(dependencies.runtime.respondSessionPlan).mockRejectedValue(
+      new SessionSizeLimitError(1024)
+    )
+    const router = createApplicationCommandRouter()
+    registerAcpCommands(router.registrar, dependencies)
+
+    await expect(
+      router.dispatcher.invoke(
+        acpCommands.respondPlan,
+        invocation([
+          {
+            projectId: 'project-1',
+            sessionId: 'session-1',
+            artifactVersionId: 'version-1',
+            expectedRevision: 2,
+            decision: 'approved'
+          }
+        ])
+      )
+    ).rejects.toMatchObject({
+      name: 'ApplicationCommandError',
+      code: 'session-size-limit'
+    })
+  })
+
+  it('preserves the Session size-limit code for permission and elicitation responses', async () => {
+    const dependencies = createDependencies()
+    vi.mocked(dependencies.runtime.respondToPermission).mockRejectedValue(
+      new SessionSizeLimitError(1024)
+    )
+    vi.mocked(dependencies.runtime.respondToElicitation).mockRejectedValue(
+      new SessionSizeLimitError(1024)
+    )
+    const router = createApplicationCommandRouter()
+    registerAcpCommands(router.registrar, dependencies)
+
+    await expect(
+      router.dispatcher.invoke(
+        acpCommands.respondPermission,
+        invocation([{ requestId: 'permission-1', optionId: 'allow-once' }])
+      )
+    ).rejects.toMatchObject({ name: 'ApplicationCommandError', code: 'session-size-limit' })
+    await expect(
+      router.dispatcher.invoke(
+        acpCommands.respondElicitation,
+        invocation([{ requestId: 'question-1', action: 'decline' }])
+      )
+    ).rejects.toMatchObject({ name: 'ApplicationCommandError', code: 'session-size-limit' })
   })
 
   it('checks archive availability before resetting Session context or compacting', async () => {
@@ -577,11 +681,31 @@ describe('ACP application commands', () => {
 
     const outcome = await router.dispatcher.invoke(
       acpCommands.steerFollowUp,
-      invocation([{ sessionId: 'session-1', text: 'focus on tests' }])
+      invocation([
+        {
+          sessionId: 'session-1',
+          text: 'focus on tests',
+          agentTarget: {
+            frameworkId: 'claude-code',
+            providerId: 'provider',
+            model: 'queued-model',
+            reasoningEffort: 'high'
+          }
+        }
+      ])
     )
 
     expect(outcome).toEqual({ injected: false, reason: 'prompt-required' })
-    expect(dependencies.runtime.steerFollowUp).toHaveBeenCalledOnce()
+    expect(dependencies.runtime.steerFollowUp).toHaveBeenCalledWith(
+      expect.objectContaining({
+        agentTarget: {
+          frameworkId: 'claude-code',
+          providerId: 'provider',
+          model: 'queued-model',
+          reasoningEffort: 'high'
+        }
+      })
+    )
   })
 
   it('holds Session admission through ACP response mutations', async () => {

@@ -240,7 +240,89 @@ const normalizeSessionArtifactReferences = (
     transformInlineMarkdown(markdown, artifacts, 'all')
   )
 
+// Incremental `normalizeSessionArtifactReferences` for append-only streaming, mirroring
+// `createAgentMarkdownNormalizer`. The transform splits safely at any newline where the fence
+// tracker sits outside a fence (a closed fence also resets `fenceBlockquoteDepth` to its initial
+// state), so a growing message reprocesses only the tail past the last such boundary. Anything
+// else — edits, replacement, a new artifacts array — falls back to a full pass.
+const createSessionArtifactReferenceNormalizer = (): ((
+  content: string,
+  artifacts: readonly MessageArtifact[]
+) => string) => {
+  let cachedArtifacts: readonly MessageArtifact[] | null = null
+  let cachedInput: string | null = null
+  let cachedOutput = ''
+  // Invariant: boundaryOutput === normalizeSessionArtifactReferences(cachedInput.slice(0, boundary), cachedArtifacts).
+  let boundary = 0
+  let boundaryOutput = ''
+  let fenceTracker = createCodeFenceTracker()
+  let fenceBlockquoteDepth = 0
+  let scanPosition = 0
+
+  const resetScan = (): void => {
+    fenceTracker = createCodeFenceTracker()
+    fenceBlockquoteDepth = 0
+    scanPosition = 0
+    boundary = 0
+    boundaryOutput = ''
+  }
+
+  // Feeds only newline-terminated lines so the trailing partial line — which a later append can
+  // still turn into a fence marker — is re-evaluated on the next call. Returns the latest
+  // fence-closed line end.
+  const advanceBoundary = (content: string): number => {
+    for (;;) {
+      const newlineIndex = content.indexOf('\n', scanPosition)
+      if (newlineIndex === -1) return boundary
+      const line = content.slice(scanPosition, newlineIndex)
+      const fenceWasOpen = fenceTracker.isOpen()
+      const blockquote = stripBlockquotePrefixes(line)
+      const fenceContent = fenceWasOpen
+        ? stripBlockquotePrefixes(line, fenceBlockquoteDepth).content
+        : stripListMarker(blockquote.content)
+      const fenceIsOpen = fenceTracker.feed(fenceContent)
+      if (!fenceWasOpen && fenceIsOpen) fenceBlockquoteDepth = blockquote.depth
+      if (fenceWasOpen && !fenceIsOpen) fenceBlockquoteDepth = 0
+      if (!fenceIsOpen) boundary = newlineIndex + 1
+      scanPosition = newlineIndex + 1
+    }
+  }
+
+  return (content, artifacts) => {
+    // Only managed-file artifacts can rewrite a reference; without one every token passes
+    // through untouched, so skip the lexing entirely.
+    if (!artifacts.some((artifact) => artifact.kind === 'managed-file')) return content
+    if (content === cachedInput && artifacts === cachedArtifacts) return cachedOutput
+
+    const isAppend =
+      artifacts === cachedArtifacts && cachedInput !== null && content.startsWith(cachedInput)
+    if (!isAppend) resetScan()
+
+    const previousBoundary = boundary
+    const output = isAppend
+      ? boundaryOutput +
+        normalizeSessionArtifactReferences(content.slice(previousBoundary), artifacts)
+      : normalizeSessionArtifactReferences(content, artifacts)
+
+    const nextBoundary = advanceBoundary(content)
+    if (nextBoundary > previousBoundary) {
+      // Extend the cached prefix without reprocessing it; both split points are fence-closed.
+      boundaryOutput += normalizeSessionArtifactReferences(
+        content.slice(previousBoundary, nextBoundary),
+        artifacts
+      )
+      boundary = nextBoundary
+    }
+
+    cachedArtifacts = artifacts
+    cachedInput = content
+    cachedOutput = output
+    return output
+  }
+}
+
 export {
+  createSessionArtifactReferenceNormalizer,
   normalizeSessionArtifactImages,
   normalizeSessionArtifactLinks,
   normalizeSessionArtifactReferences,

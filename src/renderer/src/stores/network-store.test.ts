@@ -2,6 +2,7 @@
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { startNetworkMonitor, useNetworkStore } from './network-store'
+import { useSettingsStore } from './settings-store'
 
 type CheckConnectivity = () => Promise<boolean>
 
@@ -54,6 +55,53 @@ describe('useNetworkStore', () => {
 })
 
 describe('probeConnectivity', () => {
+  it.each(['unreachable', 'probe-failed'] as const)(
+    'rechecks a saved proxy and discards prior success on %s',
+    async (result) => {
+      const checkConnectivity = vi.fn().mockResolvedValueOnce(true)
+      if (result === 'unreachable') checkConnectivity.mockResolvedValue(false)
+      else checkConnectivity.mockRejectedValue(new Error('probe unavailable'))
+      ;(window as unknown as { api: unknown }).api = {
+        network: { checkConnectivity },
+        settings: {
+          setNetworkProxy: vi
+            .fn()
+            .mockResolvedValue({ mode: 'manual', server: `http://${result}.example:8080` })
+        }
+      }
+      await useNetworkStore.getState().probeConnectivity()
+      expect(useNetworkStore.getState().connectivity).toBe('reachable')
+      await useSettingsStore
+        .getState()
+        .setNetworkProxy({ mode: 'manual', server: `http://${result}.example:8080` })
+      window.dispatchEvent(new Event('focus'))
+      await vi.advanceTimersByTimeAsync(500)
+      expect.soft(checkConnectivity).toHaveBeenCalledTimes(2)
+      expect(useNetworkStore.getState().connectivity).toBe(result)
+    }
+  )
+
+  it('ignores a delayed probe from before a proxy change', async () => {
+    let finish!: (value: boolean) => void
+    const checkConnectivity = vi
+      .fn()
+      .mockReturnValueOnce(
+        new Promise<boolean>((resolve) => {
+          finish = resolve
+        })
+      )
+      .mockResolvedValue(false)
+    ;(window as unknown as { api: unknown }).api = {
+      network: { checkConnectivity },
+      settings: { setNetworkProxy: vi.fn().mockResolvedValue({ mode: 'direct' }) }
+    }
+    const previous = useNetworkStore.getState().probeConnectivity()
+    await useSettingsStore.getState().setNetworkProxy({ mode: 'direct' })
+    await vi.advanceTimersByTimeAsync(500)
+    finish(true)
+    await previous
+    expect(useNetworkStore.getState().connectivity).toBe('unreachable')
+  })
   beforeEach(() => {
     vi.useFakeTimers()
   })
@@ -237,10 +285,9 @@ describe('startNetworkMonitor silent recovery', () => {
   })
 
   it('does not re-probe on focus while already reachable', async () => {
-    const checkConnectivity = vi.fn().mockResolvedValue(true)
+    const checkConnectivity = vi.fn().mockResolvedValue(false)
     stubCheckConnectivity(checkConnectivity)
-    await useNetworkStore.getState().probeConnectivity()
-    checkConnectivity.mockClear()
+    useNetworkStore.setState({ isOnline: true, connectivity: 'reachable' })
 
     window.dispatchEvent(new Event('focus'))
     await Promise.resolve()
@@ -248,29 +295,6 @@ describe('startNetworkMonitor silent recovery', () => {
 
     expect(checkConnectivity).not.toHaveBeenCalled()
     expect(useNetworkStore.getState().connectivity).toBe('reachable')
-  })
-
-  it('silently re-probes a reachable result that is stale when the window regains focus', async () => {
-    vi.useFakeTimers()
-    try {
-      vi.setSystemTime(new Date('2026-08-30T00:00:00.000Z'))
-      const checkConnectivity = vi.fn().mockResolvedValueOnce(true).mockResolvedValueOnce(false)
-      stubCheckConnectivity(checkConnectivity)
-
-      await useNetworkStore.getState().probeConnectivity()
-      expect(useNetworkStore.getState().connectivity).toBe('reachable')
-
-      await vi.advanceTimersByTimeAsync(60_001)
-      window.dispatchEvent(new Event('focus'))
-      await vi.advanceTimersByTimeAsync(0)
-
-      expect(checkConnectivity).toHaveBeenCalledTimes(2)
-      expect(useNetworkStore.getState().connectivity).toBe('unreachable')
-    } finally {
-      vi.useRealTimers()
-      stubCheckConnectivity(vi.fn().mockResolvedValue(true))
-      await useNetworkStore.getState().probeConnectivity()
-    }
   })
 
   it('does not re-probe on focus while the link is down', async () => {
@@ -324,112 +348,5 @@ describe('startNetworkMonitor silent recovery', () => {
 
     expect(checkConnectivity).not.toHaveBeenCalled()
     expect(useNetworkStore.getState().connectivity).toBe('unreachable')
-  })
-
-  it('silently re-probes a fresh reachable result after system resume', async () => {
-    vi.resetModules()
-    let notifySystemResume: (() => void) | undefined
-    const checkConnectivity = vi.fn().mockResolvedValueOnce(true).mockResolvedValueOnce(false)
-    ;(window as unknown as { api: unknown }).api = {
-      network: {
-        checkConnectivity,
-        onSystemResume: (listener: () => void) => {
-          notifySystemResume = listener
-          return vi.fn()
-        }
-      }
-    }
-    setNavigatorOnline(true)
-
-    const freshNetworkStore = await import('./network-store')
-    freshNetworkStore.startNetworkMonitor()
-    await vi.waitFor(() => {
-      expect(freshNetworkStore.useNetworkStore.getState().connectivity).toBe('reachable')
-    })
-
-    expect(notifySystemResume).toBeTypeOf('function')
-    notifySystemResume?.()
-
-    await vi.waitFor(() => {
-      expect(freshNetworkStore.useNetworkStore.getState().connectivity).toBe('unreachable')
-    })
-    expect(checkConnectivity).toHaveBeenCalledTimes(2)
-  })
-
-  it('refreshes a cached offline state before re-probing after system resume', async () => {
-    vi.resetModules()
-    let notifySystemResume: (() => void) | undefined
-    const checkConnectivity = vi.fn().mockResolvedValue(true)
-    ;(window as unknown as { api: unknown }).api = {
-      network: {
-        checkConnectivity,
-        onSystemResume: (listener: () => void) => {
-          notifySystemResume = listener
-          return vi.fn()
-        }
-      }
-    }
-    setNavigatorOnline(false)
-
-    const freshNetworkStore = await import('./network-store')
-    freshNetworkStore.startNetworkMonitor()
-    expect(freshNetworkStore.useNetworkStore.getState()).toMatchObject({
-      isOnline: false,
-      connectivity: 'unreachable'
-    })
-
-    setNavigatorOnline(true)
-    notifySystemResume?.()
-
-    await vi.waitFor(() => {
-      expect(freshNetworkStore.useNetworkStore.getState()).toMatchObject({
-        isOnline: true,
-        connectivity: 'reachable'
-      })
-    })
-    expect(checkConnectivity).toHaveBeenCalledOnce()
-  })
-
-  it('runs a pending forced resume recheck after a silent probe finishes', async () => {
-    vi.resetModules()
-    let notifySystemResume: (() => void) | undefined
-    let resolveInFlight!: (reachable: boolean) => void
-    const inFlightResult = new Promise<boolean>((resolve) => {
-      resolveInFlight = resolve
-    })
-    const checkConnectivity = vi
-      .fn()
-      .mockResolvedValueOnce(true)
-      .mockReturnValueOnce(inFlightResult)
-      .mockResolvedValueOnce(false)
-    ;(window as unknown as { api: unknown }).api = {
-      network: {
-        checkConnectivity,
-        onSystemResume: (listener: () => void) => {
-          notifySystemResume = listener
-          return vi.fn()
-        }
-      }
-    }
-    setNavigatorOnline(true)
-
-    const freshNetworkStore = await import('./network-store')
-    freshNetworkStore.startNetworkMonitor()
-    await vi.waitFor(() => {
-      expect(freshNetworkStore.useNetworkStore.getState().connectivity).toBe('reachable')
-    })
-
-    notifySystemResume?.()
-    await vi.waitFor(() => {
-      expect(checkConnectivity).toHaveBeenCalledTimes(2)
-    })
-    notifySystemResume?.()
-    await Promise.resolve()
-    resolveInFlight(true)
-
-    await vi.waitFor(() => {
-      expect(checkConnectivity).toHaveBeenCalledTimes(3)
-    })
-    expect(freshNetworkStore.useNetworkStore.getState().connectivity).toBe('unreachable')
   })
 })

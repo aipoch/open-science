@@ -454,20 +454,35 @@ const streamSummaryObserver = (
   }
 }
 
-const rewriteSseLine = (
-  line: string,
+const rewriteSseEvent = (
+  lines: readonly string[],
   aliases: NativeResponsesToolAliases,
   observe: (value: unknown) => void
 ): string => {
-  if (!line.startsWith('data:')) return line
-  const data = line.slice('data:'.length).trimStart()
-  if (!data || data === '[DONE]') return line
+  const dataLines = lines.filter((line) => line.startsWith('data:'))
+  const data = dataLines
+    .map((line) =>
+      line
+        .replace(/\r?\n$/, '')
+        .slice(5)
+        .replace(/^ /, '')
+    )
+    .join('\n')
+  if (!data || data === '[DONE]') return lines.join('')
   try {
     const payload = JSON.parse(data) as unknown
     observe(payload)
-    return `data: ${JSON.stringify(restoreNativeResponsesPayload(payload, aliases))}`
+    const restored = JSON.stringify(restoreNativeResponsesPayload(payload, aliases))
+    const firstDataIndex = lines.findIndex((line) => line.startsWith('data:'))
+    return lines
+      .map((line, index) => {
+        if (!line.startsWith('data:')) return line
+        if (index !== firstDataIndex) return ''
+        return `data: ${restored}${line.match(/\r?\n$/)?.[0] ?? ''}`
+      })
+      .join('')
   } catch {
-    return line
+    return lines.join('')
   }
 }
 
@@ -495,7 +510,7 @@ const streamResponse = async (
   const flushEvent = (): void => {
     if (pendingEvent.length === 0) return
     writeHeaders()
-    response.write(pendingEvent.join(''))
+    response.write(rewriteSseEvent(pendingEvent, aliases, observer.observe))
     pendingEvent = []
     eventBytes = 0
   }
@@ -511,7 +526,7 @@ const streamResponse = async (
         throw new ResponseBodyLimitError('Native Responses upstream SSE event', limits.eventBytes)
       }
     }
-    pendingEvent.push(rewriteSseLine(line, aliases, observer.observe) + (newline ? '\n' : ''))
+    pendingEvent.push(line + (newline ? '\n' : ''))
     if (boundary) flushEvent()
   }
 

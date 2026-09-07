@@ -15,7 +15,7 @@ import {
 } from './artifact-preview-utils'
 import { PdfThumbnail } from './previews/renderers/PdfThumbnail'
 import { TiffThumbnail } from './previews/renderers/TiffThumbnail'
-import { createPreviewResourceKey } from './previews/preview-resource-key'
+import { usePreviewResourceKey } from './previews/usePreviewResourceGeneration'
 import { useCachedPreviewImage } from './previews/useCachedPreviewImage'
 
 type MessageArtifact = NonNullable<ChatSession['artifacts']>[number]
@@ -287,7 +287,7 @@ const ManagedImageThumbnail = ({
   selectedVersionId?: string
   enabled: boolean
 }): React.JSX.Element => {
-  const requestKey = createPreviewResourceKey({
+  const requestKey = usePreviewResourceKey({
     projectId,
     sessionId,
     source,

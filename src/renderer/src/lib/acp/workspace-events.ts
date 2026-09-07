@@ -235,6 +235,7 @@ const isNonActionableCodexDiagnostic = (text: string): boolean => {
 }
 
 type WorkspaceRuntimeEventDependencies = {
+  agentPromptInFlight?: boolean
   finalizeRunArtifacts?: (request: FinalizeRunArtifactsRequest) => Promise<ArtifactFile[]>
   reconcilePendingArtifacts?: (
     request: ReconcilePendingArtifactsRequest
@@ -309,7 +310,10 @@ const finalizeArtifactEvent = async (
     if (!attachedSession) {
       throw new Error('Artifact finalization Session is no longer available.')
     }
-    const submittedSession = toPersistedSession(attachedSession)
+    const submittedSession = toPersistedSession(
+      attachedSession,
+      useSessionStore.getState().streamingMessages
+    )
     const durableSession = await (dependencies.saveSession ?? saveSessionInRuntimeOrder)(
       submittedSession
     )
@@ -359,6 +363,14 @@ const finalizeArtifactEvent = async (
         result.flatMap((artifact) => (artifact.versionId ? [artifact.versionId] : []))
       )
       if (artifactVersionIds.every((versionId) => reconciledVersionIds.has(versionId))) {
+        // Reconciliation also completes ordinary pre-stop Artifact events. Publish the returned
+        // descriptor into the live projection so preview readiness changes without changing bytes.
+        useSessionStore.getState().replaceMessageArtifacts({
+          sessionId: event.sessionId,
+          messageId: appliedMessage.id,
+          artifacts: result,
+          preserveArtifactIds: appliedMessage.artifactIds
+        })
         const resolvedArtifactIds = new Set([
           ...event.artifacts.map((artifact) => artifact.id),
           ...result.map((artifact) => artifact.id)
@@ -610,7 +622,7 @@ const triggerAutoReview = async (
     // intentionally cadence-limited, so a fixed debounce can still expose the previous message graph.
     // This runs inside the fire-and-forget auto-review task: the main turn remains settled while only
     // Reviewer waits for this Session's terminal Message and stop metadata to become readable.
-    await saveSession(toPersistedSession(session))
+    await saveSession(toPersistedSession(session, useSessionStore.getState().streamingMessages))
 
     // Retry a started:false a bounded number of times, but ONLY for reasons a persistence race can
     // produce (the session may not be flushed to disk yet). Every other reason is terminal for the auto
@@ -872,6 +884,15 @@ const applyWorkspaceRuntimeEvent = async (
       deferredArtifactEventsBySession.delete(event.sessionId)
       pendingArtifactTurnUsageBySession.delete(event.sessionId)
       return true
+    }
+
+    // Main can own a continuation beyond this provider stop. Keep its liveness projection before
+    // Artifact finalization yields, without restarting a waiting edge already cleared by output.
+    if (dependencies.agentPromptInFlight) {
+      store.setAgentPromptInFlight(event.sessionId, true)
+      if (activeSession?.awaitingFirstAgentOutput) {
+        store.setAwaitingFirstAgentOutput(event.sessionId, true)
+      }
     }
 
     if (deferredAttachmentFailed) {

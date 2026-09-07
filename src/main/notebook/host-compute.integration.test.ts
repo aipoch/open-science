@@ -139,6 +139,7 @@ const baseRequest = (
     mcpRpcToken: string
     sessionId: string
     projectId: string
+    workspaceCwd: string
   }>
 ): Parameters<NotebookKernelExecutor['execute']>[0] => ({
   code: '',
@@ -231,13 +232,16 @@ gate('repl kernel host.compute', () => {
   it('maps listCompute, details, submitJob, attachJob, and setConcurrencyLimit to unchanged wire params', async () => {
     const stub = await startStub()
     const exec = makeExecutor()
+    const workspaceCwd = join(process.cwd(), 'agent-session-workspace')
     const result = await exec.execute(
       baseRequest({
         code:
+          "if (process.env.OPEN_SCIENCE_NOTEBOOK_WORKSPACE_CWD !== undefined) throw new Error('workspace env leaked'); " +
+          "process.env.OPEN_SCIENCE_NOTEBOOK_WORKSPACE_CWD = '/forged-by-repl-code'; " +
           "const c = host.compute.create('ssh:x'); " +
           'await host.compute.listCompute(); ' +
           "await host.compute.details('ssh:x', { mode: 'replace', text: 'new', oldText: 'old' }); " +
-          "const job = await c.submitJob('analyze', 'run', { timeoutSeconds: 60, " +
+          "const job = await c.submitJob('analyze', 'run', { environment: 'rna-gpu', timeoutSeconds: 60, " +
           "inputs: [{ src: 'in.dat', dstFilename: 'input.dat' }, { remotePath: '/remote/ref.dat', dstFilename: 'ref.dat' }], " +
           "outputs: ['*.csv'], harvest: { exclude: ['tmp/**'], maxFileMb: 10, maxTotalMb: 20 } }); " +
           'await c.attachJob(job.job_id).status(); await c.attachJob(job.job_id).result(); ' +
@@ -245,7 +249,8 @@ gate('repl kernel host.compute', () => {
         mcpRpcEndpoint: stub.endpoint,
         mcpRpcToken: 'tok',
         sessionId: 'session-7',
-        projectId: 'proj-x'
+        projectId: 'proj-x',
+        workspaceCwd
       })
     )
     await exec.shutdown()
@@ -268,6 +273,7 @@ gate('repl kernel host.compute', () => {
         provider_id: 'ssh:x',
         intent: 'analyze',
         command: 'run',
+        environment: 'rna-gpu',
         inputs: [
           { src: 'in.dat', dst_filename: 'input.dat' },
           { remote_path: '/remote/ref.dat', dst_filename: 'ref.dat' }
@@ -277,12 +283,30 @@ gate('repl kernel host.compute', () => {
         harvest: { exclude: ['tmp/**'], max_file_mb: 10, max_total_mb: 20 },
         session_id: 'session-7',
         project_id: 'proj-x',
-        workspace_cwd: process.cwd()
+        workspace_cwd: workspaceCwd
       },
       { op: 'job_status', provider_id: 'ssh:x', job_id: 'job-1' },
       { op: 'job_result', provider_id: 'ssh:x', job_id: 'job-1' },
       { op: 'set_concurrency_limit', session_id: 'session-7', limit: 2 }
     ])
+  })
+
+  it('falls back to the repl cwd when older callers omit the Agent Session workspace', async () => {
+    const stub = await startStub()
+    const exec = makeExecutor()
+    const request = baseRequest({
+      code: "await host.compute.create('ssh:x').submitJob('analyze', 'run')",
+      mcpRpcEndpoint: stub.endpoint,
+      mcpRpcToken: 'tok',
+      sessionId: 'session-7',
+      projectId: 'proj-x'
+    })
+    const result = await exec.execute(request)
+    await exec.shutdown()
+    stub.close()
+
+    expect(result.status).toBe('completed')
+    expect(stub.received()[0]?.params?.workspace_cwd).toBe(request.cwd)
   })
 
   it('retries a lost submitJob response with the same invocation id', async () => {

@@ -56,6 +56,7 @@ const createDependencies = (): ComputeApplicationCommandDependencies => ({
     scratchSet: vi.fn(async () => undefined),
     scratchClear: vi.fn(async () => undefined),
     concurrencySet: vi.fn(async () => undefined),
+    executionModeSet: vi.fn(async () => undefined),
     listDir: vi.fn(async () => ({ path: '/work', entries: [] })),
     download: vi.fn(async () => ({ path: '/tmp/result.csv', name: 'result.csv', size: 10 })),
     revealInFolder: vi.fn(() => undefined),
@@ -95,14 +96,14 @@ const invocation = <Args extends readonly unknown[]>(
 }
 
 describe('Compute application commands', () => {
-  it('defines exactly the 34 public Compute commands without session-internal handlers', () => {
+  it('defines exactly the 35 public Compute commands without session-internal handlers', () => {
     const publicComputeChannels = RENDERER_CONTRACT_GROUPS.find(
       (group) => group.capability === 'compute'
     )
       ?.contracts.filter((contract) => contract.kind === 'method')
       .map((contract) => contract.channel)
 
-    expect(publicComputeChannels).toHaveLength(34)
+    expect(publicComputeChannels).toHaveLength(35)
     expect(computeApplicationCommandGroup.commands.map(({ name }) => name)).toEqual(
       publicComputeChannels
     )

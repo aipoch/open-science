@@ -30,6 +30,48 @@ afterEach(() => {
 })
 
 describe('UpdateDialog', () => {
+  it('U04: offers manual download instead of an inert button when the installer artifact is missing', () => {
+    useUpdateStore.setState({
+      isDialogOpen: true,
+      status: {
+        state: 'available',
+        current: '0.2.0',
+        latest: '0.3.0',
+        applyKind: 'installer'
+      }
+    })
+    act(() => root.render(<UpdateDialog />))
+
+    const downloadButton = Array.from(document.body.querySelectorAll('button')).find((button) =>
+      button.textContent?.includes('Download update')
+    )
+    expect.soft(downloadButton).toBeUndefined()
+    const manualLink = Array.from(document.body.querySelectorAll('a')).find((link) =>
+      link.textContent?.includes('Download manually')
+    )
+    expect.soft(manualLink?.getAttribute('href')).toBe(APP.update.downloadPage)
+    expect(document.body.textContent).toContain('An installer is not available for this platform.')
+  })
+
+  it('U04: keeps in-place downloads actionable without a manifest download field', () => {
+    useUpdateStore.setState({
+      isDialogOpen: true,
+      status: {
+        state: 'available',
+        current: '0.2.0',
+        latest: '0.3.0',
+        applyKind: 'restart'
+      }
+    })
+    act(() => root.render(<UpdateDialog />))
+
+    const downloadButton = Array.from(document.body.querySelectorAll('button')).find((button) =>
+      button.textContent?.includes('Download update')
+    )
+    expect(downloadButton).toBeDefined()
+    expect(downloadButton?.disabled).toBe(false)
+  })
+
   it('preserves a covered update request while suppressing its presentation', () => {
     useUpdateStore.setState({
       isDialogOpen: true,
@@ -249,6 +291,28 @@ describe('UpdateDialog', () => {
     expect(document.body.textContent).toContain('Quit and reopen Open Science')
     const issueLink = document.body.querySelector(`a[href="${APP.links.githubIssues}"]`)
     expect(issueLink?.textContent).toContain('open a GitHub issue')
+  })
+
+  it('localizes the active Agent Runtime installation blocker', async () => {
+    await act(async () => i18next.changeLanguage('zh-Hans'))
+    useUpdateStore.setState({
+      isDialogOpen: true,
+      status: {
+        state: 'error',
+        current: '0.17.0',
+        latest: '0.18.0',
+        error:
+          'An Agent Runtime is still installing. Wait for it to finish before restarting to update.'
+      }
+    })
+
+    act(() => root.render(<UpdateDialog />))
+
+    expect(document.body.textContent).toContain(
+      '智能体运行时仍在安装。请等待安装完成后再重启更新。'
+    )
+    expect(document.body.textContent).not.toContain('An Agent Runtime is still installing')
+    await act(async () => i18next.changeLanguage('en'))
   })
 
   it('shows download size on the download button when totalBytes is present', () => {

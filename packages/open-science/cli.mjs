@@ -140,6 +140,30 @@ const VALUE_OPTIONS = {
 
 const TASK_COMMANDS = new Set(['project', 'run', 'session', 'settings', 'plan', 'artifacts'])
 const GROUP_COMMANDS = new Set(['codex', 'project', 'session', 'settings', 'plan', 'artifacts'])
+// Project create, update, and session-defaults intentionally remain unbounded because their
+// positional Project names may contain multiple unquoted words.
+const POSITIONAL_LIMITS = new Map([
+  ['start', 0],
+  ['stop', 0],
+  ['status', 0],
+  ['url', 0],
+  ['update', 0],
+  ['rollback-to-0.7.3', 0],
+  ['codex login', 0],
+  ['project list', 0],
+  ['run', 0],
+  ['run status', 1],
+  ['run cancel', 1],
+  ['session status', 1],
+  ['session config', 2],
+  ['settings agent-routing', 1],
+  ['plan show', 1],
+  ['plan approve', 1],
+  ['plan reject', 1],
+  ['plan revise', 1],
+  ['artifacts list', 1],
+  ['artifacts download', 1]
+])
 
 export class CliUsageError extends Error {
   constructor(message) {
@@ -157,6 +181,16 @@ const parsePortOption = (value) => {
     throw new CliUsageError(`Invalid port: ${value}`)
   }
   return port
+}
+
+const assertPositionalLimit = (command, subcommand, positionals) => {
+  const commandPath = [command, subcommand].filter(Boolean).join(' ')
+  const limit = POSITIONAL_LIMITS.get(commandPath)
+  if (limit === undefined || positionals.length <= limit) return
+  if (limit === 0) throw new CliUsageError(`${commandPath} accepts no arguments.`)
+  throw new CliUsageError(
+    `${commandPath} accepts ${limit === 1 ? 'one argument' : 'two arguments'}.`
+  )
 }
 
 export const parseCliArgs = (argv) => {
@@ -302,6 +336,9 @@ export const parseCliArgs = (argv) => {
   if (options.json && options.jsonl) {
     throw new CliUsageError('Use only one of --json or --jsonl.')
   }
+  if (options.json && (command === 'start' || command === 'url')) {
+    throw new CliUsageError(`--json is not supported for ${command}.`)
+  }
   if (options.cwd !== undefined && !options.cwd.trim()) {
     throw new CliUsageError('--cwd requires a non-empty path.')
   }
@@ -331,9 +368,6 @@ export const parseCliArgs = (argv) => {
   }
   if (options.force && (command !== 'codex' || subcommand !== 'login')) {
     throw new CliUsageError('--force requires codex login.')
-  }
-  if (command === 'update' && positionals.length > 0) {
-    throw new CliUsageError('update accepts no arguments.')
   }
   const isProjectCreate = command === 'project' && subcommand === 'create'
   const isProjectUpdate = command === 'project' && subcommand === 'update'
@@ -372,7 +406,6 @@ export const parseCliArgs = (argv) => {
     if (options.json || options.jsonl) {
       throw new CliUsageError('codex login does not support machine-readable output.')
     }
-    if (positionals.length > 0) throw new CliUsageError('codex login accepts no arguments.')
   }
   const sessionConfigAction = command === 'session' && subcommand === 'config' && positionals[0]
   const projectDefaultsAction =
@@ -456,6 +489,7 @@ export const parseCliArgs = (argv) => {
   ) {
     throw new CliUsageError('Plan response options require a plan command.')
   }
+  assertPositionalLimit(command, subcommand, positionals)
   return {
     command,
     ...(subcommand ? { subcommand } : {}),
@@ -649,7 +683,7 @@ export const formatStartupFailure = (outcome, logTail, options) => {
 }
 
 const startCommand = async (options, deps = DEFAULT_DEPS) => {
-  const existing = await deps.findServiceState({ override: options.configRoot })
+  const existing = await findCurrentState(options, deps)
   if (await healthCheck(existing, deps)) {
     const url = await authenticatedUrl(existing, deps)
     deps.log(`Open Science is already running (PID ${existing.pid}).`)
@@ -713,19 +747,29 @@ const startCommand = async (options, deps = DEFAULT_DEPS) => {
 }
 
 const findCurrentState = async (options, deps = DEFAULT_DEPS) => {
-  const state = await deps.findServiceState({ override: options.configRoot })
-  if (!state) return undefined
-  if (!deps.isAlive(state.pid)) {
-    await deps.removeState(state.configRoot)
-    return undefined
-  }
-  return state
+  let firstLiveState
+  const state = await deps.findServiceState({
+    override: options.configRoot,
+    accept: async (candidate) => {
+      if (!deps.isAlive(candidate.pid)) {
+        await deps.removeState(candidate.configRoot)
+        return false
+      }
+      firstLiveState ??= candidate
+      return healthCheck(candidate, deps)
+    }
+  })
+  // Keep a live but unhealthy candidate when none passed: stop must still authenticate its shutdown
+  // or fail, rather than claim that an unreachable process has already stopped.
+  return state ?? firstLiveState
 }
 
 export const stopCommand = async (options, deps = DEFAULT_DEPS) => {
   const state = await findCurrentState(options, deps)
   if (!state) {
-    deps.log('Open Science is not running.')
+    deps.log(
+      options.json ? JSON.stringify({ result: 'already-stopped' }) : 'Open Science is not running.'
+    )
     return
   }
   const token = await deps.readWebToken(state.configRoot)
@@ -740,7 +784,7 @@ export const stopCommand = async (options, deps = DEFAULT_DEPS) => {
     shutdownAccepted = true
     await response.arrayBuffer()
   } catch (error) {
-    deps.warn(`Graceful shutdown failed: ${error.message}`)
+    if (!options.json) deps.warn(`Graceful shutdown failed: ${error.message}`)
   }
 
   if (!shutdownAccepted) {
@@ -759,7 +803,11 @@ export const stopCommand = async (options, deps = DEFAULT_DEPS) => {
       )
     }
     await deps.removeState(state.configRoot)
-    deps.log('Open Science web service stopped; the app is still running.')
+    deps.log(
+      options.json
+        ? JSON.stringify({ result: 'web-service-stopped' })
+        : 'Open Science web service stopped; the app is still running.'
+    )
     return
   }
 
@@ -777,7 +825,7 @@ export const stopCommand = async (options, deps = DEFAULT_DEPS) => {
     )
   }
   await deps.removeState(state.configRoot)
-  deps.log('Open Science stopped.')
+  deps.log(options.json ? JSON.stringify({ result: 'daemon-stopped' }) : 'Open Science stopped.')
 }
 
 export const statusCommand = async (options, deps = DEFAULT_DEPS) => {

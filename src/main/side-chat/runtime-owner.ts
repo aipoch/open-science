@@ -148,9 +148,11 @@ type ActiveSideChat = {
   entrySequence: number
   running: boolean
   error?: string
+  persistenceError?: string
   reconnect?: Promise<void>
   turn?: Promise<PromptResponse>
   turnAccepted?: Deferred
+  turnAdmitted?: boolean
   closing: boolean
   frameworkId: PersistedSideChat['frameworkId']
   providerId?: string
@@ -235,15 +237,25 @@ const buildResumeFallback = (active: ActiveSideChat): string | undefined => {
     )
     .map((entry) => `${entry.role === 'user' ? 'User' : 'Assistant'}: ${entry.text}`)
     .join('\n\n')
-  const full = [
-    active.historyPreamble,
-    transcript ? `Side chat transcript before this follow-up:\n${transcript}` : undefined
+  const main = active.historyPreamble ?? ''
+  const mainHeader = 'Main conversation snapshot:\n'
+  const sideHeader = 'Side chat transcript before this follow-up:\n'
+  if (!main && !transcript) return undefined
+  const budget = SIDE_CHAT_MESSAGE_LIMIT - mainHeader.length - sideHeader.length - 2
+  // Keep both sources when either is long; short sources leave their unused budget to the other.
+  const mainBudget = Math.min(
+    main.length,
+    Math.max(Math.floor(budget / 2), budget - transcript.length)
+  )
+  const sideBudget = budget - mainBudget
+  const tail = (text: string, limit: number): string =>
+    text.length <= limit ? text : `[Earlier context truncated]\n${text.slice(-(limit - 28))}`
+  return [
+    main ? mainHeader + tail(main, mainBudget) : undefined,
+    transcript ? sideHeader + tail(transcript, sideBudget) : undefined
   ]
-    .filter((section): section is string => Boolean(section))
+    .filter(Boolean)
     .join('\n\n')
-  if (!full) return undefined
-  if (full.length <= SIDE_CHAT_MESSAGE_LIMIT) return full
-  return `[Earlier context truncated]\n${full.slice(-(SIDE_CHAT_MESSAGE_LIMIT - 28))}`
 }
 
 const boundedPersistedEntries = (entries: readonly SideChatEntry[]): SideChatEntry[] => {
@@ -283,6 +295,7 @@ class SideChatRuntimeOwner {
   private readonly startingByParent = new Map<string, StartingSideChat>()
   private readonly closingByParent = new Map<string, Promise<void>>()
   private readonly dispatches = new Set<Promise<void>>()
+  private readonly pendingDispatches = new Map<string, AbortController>()
   private readonly closeRequestedParents = new Set<string>()
   private readonly invalidatedParents = new Set<string>()
   private readonly invalidatedProjects = new Set<string>()
@@ -478,7 +491,10 @@ class SideChatRuntimeOwner {
           onPermissionRequest: (permission) =>
             this.handlePermission(runtimeRef.current, permission),
           onProviderPromptAccepted: (sideSessionId) => {
-            if (activeChat?.runtimeSessionId === sideSessionId) activeChat.turnAccepted?.resolve()
+            if (activeChat?.runtimeSessionId === sideSessionId) {
+              activeChat.turnAdmitted = true
+              activeChat.turnAccepted?.resolve()
+            }
           }
         }
       }
@@ -528,7 +544,7 @@ class SideChatRuntimeOwner {
         }
         throw new Error('Side chat closed before startup completed.')
       }
-      await this.dispatch({
+      await this.send({
         sideSessionId: sideChatId,
         text,
         historyPreamble: request.historyPreamble
@@ -561,11 +577,21 @@ class SideChatRuntimeOwner {
     }
   }
 
-  send(request: SideChatPromptRequest & Readonly<{ historyPreamble?: string }>): Promise<void> {
-    const dispatch = this.dispatch(request)
+  send(
+    request: SideChatPromptRequest & Readonly<{ historyPreamble?: string }>,
+    cancellation = new AbortController()
+  ): Promise<void> {
+    if (this.pendingDispatches.has(request.sideSessionId)) {
+      return Promise.reject(new Error('A Side chat prompt is already running.'))
+    }
+    this.pendingDispatches.set(request.sideSessionId, cancellation)
+    const dispatch = this.dispatch(request, cancellation.signal)
     this.dispatches.add(dispatch)
     const finish = (): void => {
       this.dispatches.delete(dispatch)
+      if (this.pendingDispatches.get(request.sideSessionId) === cancellation) {
+        this.pendingDispatches.delete(request.sideSessionId)
+      }
     }
     void dispatch.then(finish, finish)
     return dispatch
@@ -628,8 +654,11 @@ class SideChatRuntimeOwner {
   }
 
   async cancel(request: SideChatSessionRequest): Promise<void> {
-    const active = this.requireActive(request.sideSessionId)
-    if (active.turn) await active.runtime.cancelPrompt({ sessionId: active.runtimeSessionId })
+    const pending = this.pendingDispatches.get(request.sideSessionId)
+    pending?.abort(new Error('Side chat prompt cancelled.'))
+    const active = this.findActive(request.sideSessionId)
+    if (!active && !pending) throw new Error('Side chat Session is not active.')
+    if (active?.turn) await active.runtime.cancelPrompt({ sessionId: active.runtimeSessionId })
   }
 
   async close(request: SideChatSessionRequest): Promise<void> {
@@ -808,14 +837,19 @@ class SideChatRuntimeOwner {
   }
 
   private async dispatch(
-    request: SideChatPromptRequest & { historyPreamble?: string }
+    request: SideChatPromptRequest & { historyPreamble?: string },
+    signal: AbortSignal
   ): Promise<void> {
+    signal.throwIfAborted()
     const text = requirePromptText(request.text)
     const active = await this.ensureActive(request.sideSessionId)
+    signal.throwIfAborted()
     this.assertDispatchActive(active)
     if (active.turn || active.running) throw new Error('A Side chat prompt is already running.')
     await this.flushQueuedPersistence(active)
+    signal.throwIfAborted()
     this.assertDispatchActive(active)
+    if (request.historyPreamble !== undefined) active.historyPreamble = request.historyPreamble
     let historyPreamble = request.historyPreamble
     let needsReplay = active.needsReplay === true
     if (needsReplay) {
@@ -824,6 +858,7 @@ class SideChatRuntimeOwner {
     while (active.reconnect) {
       const reconnect = active.reconnect
       await reconnect
+      signal.throwIfAborted()
       this.assertDispatchActive(active)
       if (active.reconnect !== reconnect) continue
       const resumed = await active.runtime.resumeSession({
@@ -837,6 +872,7 @@ class SideChatRuntimeOwner {
         previousFrameworkId: active.frameworkId,
         ...(active.backendId ? { previousBackendId: active.backendId } : {})
       })
+      signal.throwIfAborted()
       this.assertDispatchActive(active)
       this.applyProviderIdentity(active, resumed)
       this.syncBridgeScopes(active)
@@ -847,6 +883,7 @@ class SideChatRuntimeOwner {
         historyPreamble = buildResumeFallback(active)
       }
       await this.persistActive(active, 'open')
+      signal.throwIfAborted()
       this.assertDispatchActive(active)
     }
     const resumeFallback = buildResumeFallback(active)
@@ -862,18 +899,26 @@ class SideChatRuntimeOwner {
     this.touch(active)
     try {
       await this.persistActive(active, 'open')
+      signal.throwIfAborted()
     } catch (error) {
       active.entries.pop()
       active.entrySequence -= 1
       active.running = false
-      active.error = error instanceof Error ? error.message : 'Side chat could not be saved.'
+      active.error = signal.aborted
+        ? undefined
+        : error instanceof Error
+          ? error.message
+          : 'Side chat could not be saved.'
       active.needsReplay = needsReplay
       this.touch(active)
+      if (signal.aborted) this.queuePersist(active, 'open')
       throw error
     }
+    signal.throwIfAborted()
     this.assertDispatchActive(active)
     const accepted = deferred()
     active.turnAccepted = accepted
+    active.turnAdmitted = false
     const turn = active.runtime.sendPrompt({
       sessionId: active.runtimeSessionId,
       text,
@@ -881,6 +926,11 @@ class SideChatRuntimeOwner {
       ...(resumeFallback ? { resumeFallback: { historyPreamble: resumeFallback } } : {})
     })
     active.turn = turn
+    const userEntryId = `user-${active.entrySequence}`
+    const removeUnadmittedEntry = (): void => {
+      if (active.turnAdmitted) return
+      active.entries = active.entries.filter((entry) => entry.id !== userEntryId)
+    }
     const finish = (): void => {
       if (this.activeByParent.get(active.parentSessionId) === active && active.turn === turn) {
         active.turn = undefined
@@ -889,6 +939,7 @@ class SideChatRuntimeOwner {
     }
     void turn.then(
       () => {
+        removeUnadmittedEntry()
         accepted.reject(new Error('Side chat prompt ended before provider admission.'))
         if (active.closing || this.activeByParent.get(active.parentSessionId) !== active) return
         if (active.running) {
@@ -899,6 +950,7 @@ class SideChatRuntimeOwner {
         finish()
       },
       (error) => {
+        removeUnadmittedEntry()
         accepted.reject(error)
         if (active.closing || this.activeByParent.get(active.parentSessionId) !== active) return
         active.running = false
@@ -1002,6 +1054,7 @@ class SideChatRuntimeOwner {
             this.handlePermission(runtimeRef.current, permission),
           onProviderPromptAccepted: (runtimeSessionId) => {
             if (activeChat?.runtimeSessionId === runtimeSessionId) {
+              activeChat.turnAdmitted = true
               activeChat.turnAccepted?.resolve()
             }
           }
@@ -1174,7 +1227,13 @@ class SideChatRuntimeOwner {
         })
       })
     active.persistTail = write
-    return write.then(() => persisted!)
+    return write.then(() => {
+      if (active.persistenceError) {
+        active.persistenceError = undefined
+        this.publishPersistenceState(active)
+      }
+      return persisted!
+    })
   }
 
   private registerBridgeScope(active: ActiveSideChat, bridge: HostMessageBridge): void {
@@ -1226,9 +1285,9 @@ class SideChatRuntimeOwner {
     void queued
       .catch((error) => {
         if (active.closing) return
-        active.running = false
-        active.error = error instanceof Error ? error.message : 'Side chat could not be saved.'
-        this.touch(active)
+        active.persistenceError =
+          error instanceof Error ? error.message : 'Side chat could not be saved.'
+        this.publishPersistenceState(active)
       })
       .finally(() => {
         if (active.queuedPersist === queued) active.queuedPersist = undefined
@@ -1428,12 +1487,6 @@ class SideChatRuntimeOwner {
     })
   }
 
-  private requireActive(sideSessionId: string): ActiveSideChat {
-    const active = this.findActive(sideSessionId)
-    if (active) return active
-    throw new Error('Side chat Session is not active.')
-  }
-
   private findActive(sideSessionId: string): ActiveSideChat | undefined {
     for (const active of this.activeByParent.values()) {
       if (active.sideSessionId === sideSessionId && !active.closing) return active
@@ -1477,6 +1530,17 @@ class SideChatRuntimeOwner {
     }
   }
 
+  private publishPersistenceState(active: ActiveSideChat): void {
+    if (active.closing || this.activeByParent.get(active.parentSessionId) !== active) return
+    this.options.onEvent({
+      revision: this.touch(active),
+      parentSessionId: active.parentSessionId,
+      projectId: active.projectId,
+      sideSessionId: active.sideSessionId,
+      event: { kind: 'persistence', error: active.persistenceError }
+    })
+  }
+
   private snapshotActive(active: ActiveSideChat): SideChatSnapshot {
     return {
       revision: active.revision,
@@ -1485,7 +1549,8 @@ class SideChatRuntimeOwner {
       sideSessionId: active.sideSessionId,
       entries: active.entries.map((entry) => ({ ...entry })),
       running: active.running,
-      ...(active.error ? { error: active.error } : {})
+      ...(active.error ? { error: active.error } : {}),
+      ...(active.persistenceError ? { persistenceError: active.persistenceError } : {})
     }
   }
 
@@ -1499,9 +1564,9 @@ class SideChatRuntimeOwner {
       entries: dormant.sideChat.entries.map((entry) => ({ ...entry })),
       running: false,
       ...(lifecycle === 'interrupted'
-        ? { error: 'Side chat was interrupted when the app closed. Send a Follow up to continue.' }
+        ? { notice: 'interrupted' as const }
         : lifecycle === 'error'
-          ? { error: 'Side chat connection ended. Send a Follow up to reconnect.' }
+          ? { notice: 'connection-ended' as const }
           : {})
     }
   }

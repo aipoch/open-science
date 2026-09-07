@@ -6,10 +6,43 @@ import { cn } from '@/lib/utils'
 
 function ResizablePanelGroup({
   className,
+  disabled,
+  elementRef,
   ...props
 }: React.ComponentProps<typeof Group>): React.JSX.Element {
+  const groupElementRef = React.useRef<HTMLDivElement>(null)
+  const [isModalBlocked, setIsModalBlocked] = React.useState(false)
+
+  React.useImperativeHandle(elementRef, () => groupElementRef.current!, [])
+  React.useLayoutEffect(() => {
+    const element = groupElementRef.current
+    if (!element) return
+
+    // Document hit-testing bypasses inert and also sees inline modal content as part of this group.
+    // Groups inside a modal remain usable; only its containing or isolated background groups stop.
+    const syncModalBlocked = (): void =>
+      setIsModalBlocked(
+        element.closest('[inert]') !== null ||
+          element.querySelector('[aria-modal="true"]:not([data-state="closed"])') !== null
+      )
+    const observer = new MutationObserver(syncModalBlocked)
+    observer.observe(element, {
+      subtree: true,
+      childList: true,
+      attributes: true,
+      attributeFilter: ['inert', 'aria-modal', 'data-state']
+    })
+    for (let ancestor = element.parentElement; ancestor; ancestor = ancestor.parentElement) {
+      observer.observe(ancestor, { attributes: true, attributeFilter: ['inert'] })
+    }
+    syncModalBlocked()
+    return () => observer.disconnect()
+  }, [])
+
   return (
     <Group
+      elementRef={groupElementRef}
+      disabled={disabled || isModalBlocked}
       data-slot="resizable-panel-group"
       className={cn('flex h-full w-full', className)}
       {...props}
@@ -34,6 +67,9 @@ function ResizableHandle({
 }): React.JSX.Element {
   return (
     <Separator
+      // The library caches keyboard panel associations at registration, excluding disabled edges.
+      // Re-register when enabled so an initially collapsed panel supports keyboard resizing.
+      key={props.disabled ? 'disabled' : 'enabled'}
       data-slot="resizable-handle"
       className={cn(
         // Wide after-hit area makes CSS :hover match the draggable edge; default tick is thin and centered.

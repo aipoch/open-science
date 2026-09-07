@@ -1,3 +1,4 @@
+import type { AgentFrameworkId, SessionAgentConfiguration } from '../../../../shared/settings'
 import {
   createContext,
   createElement,
@@ -18,6 +19,8 @@ import {
   type AcpPermissionRequest,
   type AcpPermissionResponse,
   type AcpSaveAsSkillRequest,
+  type AcpSteerFollowUpRequest,
+  type AcpSteerFollowUpResult,
   type DelegatedWorkUnavailableReason
 } from '../../../../shared/acp'
 import {
@@ -25,11 +28,15 @@ import {
   type PermissionProfileId,
   type SessionPermissionProfileState
 } from '../../../../shared/permission-profiles'
-import type { MessagePdfContextSnapshot } from '../../../../shared/session-persistence'
+import {
+  isSessionSizeLimitError,
+  type MessagePdfContextSnapshot
+} from '../../../../shared/session-persistence'
 import { useSessionStore, type ChatSession } from '../../stores/session-store'
 import {
   usePreviewWorkbenchStore,
-  type PendingPdfContextSelection
+  pendingPdfContextSelections,
+  type PendingPdfContext
 } from '../../stores/preview-workbench-store'
 import { selectVisionRelayAvailable, useSettingsStore } from '../../stores/settings-store'
 import { useAcpRuntime } from './useAcpRuntime'
@@ -91,18 +98,18 @@ export const revealLinkedPdfContext = (
 }
 export const clearLinkedPendingPdfContext = (
   projectId: string,
-  selection: PendingPdfContextSelection | undefined,
+  selection: PendingPdfContext | undefined,
   pdfContext: MessagePdfContextSnapshot
 ): void => {
-  if (!selection) return
-  const linked = pdfContext.bindings.some((binding) =>
-    selection.kind === 'staged-upload'
-      ? binding.sourceKind === 'upload-version' && binding.sourceFileId === selection.attachmentId
-      : binding.sourceKind === selection.sourceKind &&
-        binding.sourceVersionId === selection.sourceVersionId
-  )
-  if (!linked) return
-  usePreviewWorkbenchStore.getState().clearPendingPdfContext(projectId, selection)
+  for (const entry of pendingPdfContextSelections(selection)) {
+    const linked = pdfContext.bindings.some((binding) =>
+      entry.kind === 'staged-upload'
+        ? binding.sourceKind === 'upload-version' && binding.sourceFileId === entry.attachmentId
+        : binding.sourceKind === entry.sourceKind &&
+          binding.sourceVersionId === entry.sourceVersionId
+    )
+    if (linked) usePreviewWorkbenchStore.getState().clearPendingPdfContext(projectId, entry)
+  }
 }
 const setWorkspacePermissionProfile = async (
   runtime: WorkspacePermissionProfileRuntime,
@@ -147,7 +154,12 @@ type WorkspaceAgentRuntime = {
     input: ResendEditedMessageInput
   ) => Promise<boolean>
   cancelRun: (sessionId: string) => Promise<void>
-  steerFollowUp: ReturnType<typeof useAcpRuntime>['steerFollowUp']
+  steerFollowUp: (
+    request: AcpSteerFollowUpRequest & {
+      agentConfiguration?: SessionAgentConfiguration
+      expectedFrameworkId?: AgentFrameworkId
+    }
+  ) => Promise<AcpSteerFollowUpResult>
   resumeInterruptedSession: (sessionId: string) => Promise<void>
   respondToPermission: (requestId: string, optionId?: string) => Promise<void>
   setPermissionProfile: (sessionId: string, profile: PermissionProfileId) => Promise<boolean>
@@ -157,7 +169,9 @@ type WorkspaceAgentRuntime = {
 }
 const WorkspaceAgentRuntimeContext = createContext<WorkspaceAgentRuntime | null>(null)
 const RuntimeProvider = WorkspaceAgentRuntimeContext.Provider
-const useOwnedWorkspaceAgentRuntime = (): WorkspaceAgentRuntime => {
+const useOwnedWorkspaceAgentRuntime = (
+  onSessionSizeLimit?: (sessionId: string) => void
+): WorkspaceAgentRuntime => {
   const runtime = useAcpRuntime()
   const subagentRuntimeUpdateListeners = useRef(new Set<SubagentRuntimeListener>())
   const subscribeToSubagentRuntimeUpdates = useCallback(
@@ -381,7 +395,8 @@ const useOwnedWorkspaceAgentRuntime = (): WorkspaceAgentRuntime => {
               pendingPdfContextSelection,
               pdfContext
             )
-          }
+          },
+          onSessionSizeLimit
         }
       )
     },
@@ -390,6 +405,7 @@ const useOwnedWorkspaceAgentRuntime = (): WorkspaceAgentRuntime => {
       drainRuntimeEvents,
       handleSendPreparationStateChange,
       lifecycleOwner,
+      onSessionSizeLimit,
       resolveRuntimeSelection,
       runtime,
       visionRelayAvailable
@@ -398,7 +414,11 @@ const useOwnedWorkspaceAgentRuntime = (): WorkspaceAgentRuntime => {
 
   const resendEditedMessage = useCallback(
     (sessionId: string, messageId: string, input: ResendEditedMessageInput): Promise<boolean> => {
-      const configuration = admitSendConfiguration({ sessionId })
+      const configuration = admitSendConfiguration({
+        sessionId,
+        agentConfiguration: input.agentConfiguration,
+        expectedFrameworkId: input.expectedFrameworkId
+      })
       if (!configuration) return Promise.resolve(false)
       const selected = resolveRuntimeSelection(configuration)
       return resendEditedWorkspaceMessage(
@@ -413,7 +433,8 @@ const useOwnedWorkspaceAgentRuntime = (): WorkspaceAgentRuntime => {
           agentConfiguration: configuration,
           historyReplayDescriptor: selected.historyReplayDescriptor,
           onSendPreparationStateChange: handleSendPreparationStateChange,
-          drainRuntimeEvents
+          drainRuntimeEvents,
+          onSessionSizeLimit
         }
       )
     },
@@ -421,10 +442,28 @@ const useOwnedWorkspaceAgentRuntime = (): WorkspaceAgentRuntime => {
       admitSendConfiguration,
       drainRuntimeEvents,
       handleSendPreparationStateChange,
+      onSessionSizeLimit,
       resolveRuntimeSelection,
       runtime,
       visionRelayAvailable
     ]
+  )
+
+  const steerFollowUp = useCallback<WorkspaceAgentRuntime['steerFollowUp']>(
+    ({ agentConfiguration, expectedFrameworkId, ...request }) => {
+      if (!agentConfiguration) return runtime.steerFollowUp(request)
+      const configuration = admitSendConfiguration({
+        sessionId: request.sessionId,
+        agentConfiguration,
+        expectedFrameworkId
+      })
+      if (!configuration) return Promise.resolve({ injected: false, reason: 'prompt-required' })
+      const selected = resolveRuntimeSelection(configuration)
+      if (!selected.agentTarget)
+        return Promise.resolve({ injected: false, reason: 'prompt-required' })
+      return runtime.steerFollowUp({ ...request, agentTarget: selected.agentTarget })
+    },
+    [admitSendConfiguration, resolveRuntimeSelection, runtime]
   )
 
   const compactContext = useCallback(
@@ -442,9 +481,11 @@ const useOwnedWorkspaceAgentRuntime = (): WorkspaceAgentRuntime => {
         runtime,
         sessionId,
         enabled,
-        handleSendPreparationStateChange
+        handleSendPreparationStateChange,
+        undefined,
+        onSessionSizeLimit
       ),
-    [handleSendPreparationStateChange, lifecycleOwner, runtime]
+    [handleSendPreparationStateChange, lifecycleOwner, onSessionSizeLimit, runtime]
   )
   const { saveAsSkillInFlightSessionIds, saveAsSkill } = useWorkspaceRuntimeSaveAsSkillOwner({
     runtime,
@@ -556,7 +597,9 @@ const useOwnedWorkspaceAgentRuntime = (): WorkspaceAgentRuntime => {
             })
           }
         } catch (error) {
-          if (request && isRestoredRequest) {
+          if (request && isSessionSizeLimitError(error)) {
+            onSessionSizeLimit?.(request.sessionId)
+          } else if (request && isRestoredRequest) {
             // The main-owned authority is still valid. Keep the card actionable; useAcpRuntime retains
             // the transient action error separately for the active Session to display.
             const permission = useSessionStore
@@ -579,7 +622,13 @@ const useOwnedWorkspaceAgentRuntime = (): WorkspaceAgentRuntime => {
       attempt.promise = tracked
       return tracked
     },
-    [getSessionAgentTarget, pendingPermissions, permissionResponseAttemptOwner, runtime]
+    [
+      getSessionAgentTarget,
+      onSessionSizeLimit,
+      pendingPermissions,
+      permissionResponseAttemptOwner,
+      runtime
+    ]
   )
   const setPermissionProfile = useCallback(
     (sessionId: string, profile: PermissionProfileId): Promise<boolean> =>
@@ -614,7 +663,7 @@ const useOwnedWorkspaceAgentRuntime = (): WorkspaceAgentRuntime => {
     sendMessage,
     resendEditedMessage,
     cancelRun,
-    steerFollowUp: runtime.steerFollowUp,
+    steerFollowUp,
     resumeInterruptedSession,
     respondToPermission,
     setPermissionProfile,
@@ -623,8 +672,17 @@ const useOwnedWorkspaceAgentRuntime = (): WorkspaceAgentRuntime => {
   }
 }
 
-const WorkspaceAgentRuntimeProvider = ({ children }: PropsWithChildren): ReactElement =>
-  createElement(RuntimeProvider, { value: useOwnedWorkspaceAgentRuntime() }, children)
+const WorkspaceAgentRuntimeProvider = ({
+  children,
+  onSessionSizeLimit
+}: PropsWithChildren<{
+  onSessionSizeLimit?: (sessionId: string) => void
+}>): ReactElement =>
+  createElement(
+    RuntimeProvider,
+    { value: useOwnedWorkspaceAgentRuntime(onSessionSizeLimit) },
+    children
+  )
 
 const useWorkspaceAgentRuntime = (): WorkspaceAgentRuntime => {
   const runtime = useContext(WorkspaceAgentRuntimeContext)

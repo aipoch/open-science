@@ -40,7 +40,7 @@ const runtime = vi.hoisted(() => ({
   sendMessage: vi.fn(),
   compactContext: vi.fn(),
   ensureSessionReady: vi.fn().mockResolvedValue(undefined),
-  cancelRun: vi.fn(),
+  cancelRun: vi.fn().mockResolvedValue(undefined),
   deleteRuntimeSession: vi.fn(),
   respondToPermission: vi.fn(),
   setMemoryEnabled: vi.fn()
@@ -235,13 +235,16 @@ describe('WorkspacePage send gate while compacting', () => {
     container.remove()
   })
 
-  const renderPage = async (): Promise<void> => {
+  const renderPage = async (
+    persistenceBlockedSessionIds: readonly string[] = []
+  ): Promise<void> => {
     root = createRoot(container)
     await act(async () => {
       root.render(
         <WorkspacePage
           isSessionPersistenceHydrated={true}
           isSessionPersistenceReady={true}
+          persistenceBlockedSessionIds={persistenceBlockedSessionIds}
           canDeleteConversations={true}
         />
       )
@@ -270,6 +273,26 @@ describe('WorkspacePage send gate while compacting', () => {
       useSessionStore.getState().finishRun('sess-a')
     })
     expect(conversationProps.conversation.availability.submit).toBe(true)
+  })
+
+  it('blocks further sends after an active Session exceeds the storage limit', async () => {
+    useSessionStore.setState({
+      ...createInitialSessionState(),
+      sessions: [
+        createSession({
+          status: 'running',
+          activeRun: { promptMessageId: 'prompt-1', startedAt: 1 }
+        })
+      ],
+      selectedSessionId: 'sess-a'
+    })
+
+    await renderPage(['sess-a'])
+
+    await act(async () => {
+      conversationProps.composer.actions.changeDoc(textDoc('continue growing'))
+    })
+    expect(conversationProps.conversation.availability.submit).toBe(false)
   })
 
   it('defaults Memory off and explains the global gate when Memory is off in Settings', async () => {
@@ -465,7 +488,7 @@ describe('WorkspacePage send gate while compacting', () => {
     expect(conversationProps.agentControls.canChange).toBe(false)
   })
 
-  it('unlocks a waiting Session after main drops unreadable Plan authority', async () => {
+  it('unlocks a waiting Session after main confirms there is no active Plan', async () => {
     useSessionStore.setState({
       sessions: [createSession({ status: 'waiting-plan-approval' })],
       selectedSessionId: 'sess-a'
@@ -496,7 +519,7 @@ describe('WorkspacePage send gate while compacting', () => {
       await firstProjection.catch(() => undefined)
     })
 
-    expect(conversationProps.view.actionError).toBe('Unable to restore plan state. Retrying…')
+    expect(conversationProps.conversation.planProjectionRecoveryError).toBe(true)
     expect(conversationProps.view.canEditDraft).toBe(false)
 
     await act(async () => {
@@ -504,9 +527,77 @@ describe('WorkspacePage send gate while compacting', () => {
     })
 
     expect(window.api.acp.getPlanProjection).toHaveBeenCalledTimes(2)
+    expect(conversationProps.conversation.planProjectionRecoveryError).toBe(false)
     expect(useSessionStore.getState().sessions[0]?.status).toBe('idle')
     expect(conversationProps.view.actionError).toBeNull()
     expect(conversationProps.view.canEditDraft).toBe(true)
+  })
+
+  it('retries a failed feedback refresh while an old projection was cached', async () => {
+    vi.useFakeTimers()
+    const pending = {
+      ...planProjection('pending'),
+      originatingPromptMessageId: planOriginMessage.id
+    }
+    useSessionStore.setState({
+      sessions: [
+        createSession({
+          status: 'waiting-plan-approval',
+          messages: [planOriginMessage],
+          activePlanProjection: pending,
+          runtimeContext: {
+            version: 1,
+            revision: pending.revision,
+            plan: {
+              artifactId: pending.artifactId,
+              artifactVersionId: pending.artifactVersionId,
+              artifactChecksum: pending.artifactChecksum,
+              approval: 'pending',
+              stepStatuses: {},
+              originatingPromptMessageId: planOriginMessage.id,
+              document: pending.document
+            }
+          }
+        })
+      ],
+      selectedSessionId: 'sess-a'
+    })
+    vi.mocked(window.api.acp.respondPlan).mockResolvedValue({
+      kind: 'feedback',
+      message: {
+        id: 'committed-feedback',
+        content: 'Split by cohort.',
+        createdAt: 2,
+        responseToMessageId: planOriginMessage.id
+      },
+      planRevision: pending.revision + 1
+    })
+    vi.mocked(window.api.acp.getPlanProjection).mockRejectedValue(
+      new Error('temporary refresh failure')
+    )
+    await renderPage()
+    await act(async () => {
+      await conversationProps.conversation.actions.submit.restoredPlan({
+        feedback: 'Split by cohort.'
+      })
+    })
+    expect(
+      useSessionStore
+        .getState()
+        .sessions[0].messages.some((message) => message.id === 'committed-feedback')
+    ).toBe(true)
+    const callsAfterSubmission = vi.mocked(window.api.acp.getPlanProjection).mock.calls.length
+    const latest = { ...pending, revision: pending.revision + 1 }
+    vi.mocked(window.api.acp.getPlanProjection).mockResolvedValue(latest)
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2_000)
+    })
+    expect(vi.mocked(window.api.acp.getPlanProjection).mock.calls.length).toBeGreaterThan(
+      callsAfterSubmission
+    )
+    expect(useSessionStore.getState().sessions[0].activePlanProjection?.revision).toBe(
+      latest.revision
+    )
   })
 
   it('submits restored Plan-card feedback through the atomic human-gated Plan command', async () => {

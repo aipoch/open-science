@@ -12,6 +12,7 @@ import type {
   DeleteSessionRequest,
   SessionDeletionResult
 } from '../../../../shared/session-persistence'
+import { isSessionSizeLimitError, sessionRevision } from '../../../../shared/session-persistence'
 import type {
   CompletionHandoffLifecycleEvent,
   SpecialistListItem
@@ -57,12 +58,13 @@ type WorkspaceSessionControllerOptions = {
   beginSessionDeletion: (sessionId: string) => boolean
   settleSessionDeletion: (sessionId: string, deleted: boolean) => void
   deleteSession: (request: DeleteSessionRequest) => Promise<SessionDeletionResult>
+  onSessionSizeLimit?: (sessionId: string) => void
 }
 type SessionDeletionFailureReason = Extract<SessionDeletionResult, { status: 'failed' }>['reason']
 type SessionDeleteDialogState = {
   session: ChatSession
   isDeleting: boolean
-  error: SessionDeletionFailureReason | null
+  error: SessionDeletionFailureReason | 'unknown' | null
 }
 type SpecialistSendIntent = {
   draftSpecialistId: string | null | undefined
@@ -150,7 +152,8 @@ const useWorkspaceSessionController = ({
   hasUnfinishedTransfers,
   beginSessionDeletion,
   settleSessionDeletion,
-  deleteSession
+  deleteSession,
+  onSessionSizeLimit
 }: WorkspaceSessionControllerOptions): WorkspaceSessionController => {
   const { t } = useTranslation()
   const togglePinned = useSessionStore((state) => state.togglePinned)
@@ -179,8 +182,10 @@ const useWorkspaceSessionController = ({
   )
   const specialistItemsRef = useRef(specialistItems)
   const [exportError, setExportError] = useState<string | null>(null)
-  const sessionDetails = useWorkspaceSessionDetailsController(isPersistenceReady, () =>
-    setExportError(t('Could not load this session for editing.'))
+  const sessionDetails = useWorkspaceSessionDetailsController(
+    isPersistenceReady,
+    () => setExportError(t('Could not load this session for editing.')),
+    onSessionSizeLimit
   )
   const [deleteDialog, setDeleteDialog] = useState<SessionDeleteDialogState | null>(null)
   const [downloadArtifactsDialog, setDownloadArtifactsDialog] = useState<ChatSession | null>(null)
@@ -255,14 +260,17 @@ const useWorkspaceSessionController = ({
       projectId: session.projectId,
       sessionId: session.id,
       archived: true,
-      expectedArchivedAt: null
+      expectedRevision: sessionRevision(session)
     })
       .then((archived) => {
         if (clearIdleRetry(session.id)) clearPending(session.id)
         enqueueSessionArchive(archived)
         if (selectedSessionId === session.id) clearSelection()
       })
-      .catch((error: unknown) => setExportError(errorMessage(error)))
+      .catch((error: unknown) => {
+        if (isSessionSizeLimitError(error)) onSessionSizeLimit?.(session.id)
+        setExportError(errorMessage(error))
+      })
       .finally(() => {
         setArchivingIds((current) => {
           const next = new Set(current)
@@ -296,6 +304,8 @@ const useWorkspaceSessionController = ({
         const deleted = result.status === 'deleted'
         settleSessionDeletion(sessionId, deleted)
         if (deleted) {
+          if (result.cleanupPending)
+            setExportError(t('The Session was deleted, but some cleanup could not be completed.'))
           if (clearIdleRetry(sessionId)) clearPending(sessionId)
           setDeleteDialog((current) => (current?.session.id === sessionId ? null : current))
           return
@@ -315,7 +325,7 @@ const useWorkspaceSessionController = ({
         settleSessionDeletion(sessionId, false)
         setDeleteDialog((current) =>
           current?.session.id === sessionId
-            ? { ...current, isDeleting: false, error: 'runtime' }
+            ? { ...current, isDeleting: false, error: 'unknown' }
             : current
         )
       })

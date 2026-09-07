@@ -1,5 +1,8 @@
 import type { SettingsSnapshot } from '../../shared/settings'
 import type { ApplicationEventPublisher } from '../application-events'
+import { createLogger, diagnosticErrorFields } from '../logger'
+
+const log = createLogger('settings')
 
 type SettingsSnapshotStore = {
   getSettingsView(): Promise<SettingsSnapshot>
@@ -21,7 +24,16 @@ class SettingsSnapshotCommitOwner {
 
   async projectAfter<Result>(pending: Promise<Result>): Promise<Result> {
     const result = await pending
-    await this.enqueueCurrentSnapshot(true)
+    try {
+      await this.enqueueCurrentSnapshot(true)
+    } catch (error) {
+      // The operation has already committed. A projection failure cannot undo it or turn
+      // its authoritative result into a failed save. Explicit snapshot reads remain retryable.
+      log.warn(
+        'Settings operation completed, but snapshot publication failed.',
+        diagnosticErrorFields(error)
+      )
+    }
     return result
   }
 

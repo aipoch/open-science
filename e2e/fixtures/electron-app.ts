@@ -1,6 +1,6 @@
 import { expect, test as base } from '@playwright/test'
 import { spawn } from 'node:child_process'
-import { chmod, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
+import { chmod, copyFile, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { delimiter, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { _electron as electron, type ElectronApplication, type Page } from 'playwright'
@@ -69,6 +69,7 @@ type ElectronCleanupTarget = {
 type ElectronCleanupOptions = {
   forcedTimeoutMs: number
   gracefulTimeoutMs: number
+  requireGraceful?: boolean
 }
 
 const settlesWithin = async (promise: Promise<void>, timeoutMs: number): Promise<boolean> =>
@@ -88,7 +89,7 @@ const settlesWithin = async (promise: Promise<void>, timeoutMs: number): Promise
 
 const closeElectronApplicationForCleanup = async (
   target: ElectronCleanupTarget,
-  { gracefulTimeoutMs, forcedTimeoutMs }: ElectronCleanupOptions
+  { gracefulTimeoutMs, forcedTimeoutMs, requireGraceful = false }: ElectronCleanupOptions
 ): Promise<void> => {
   const forceCloseWithinBudget = async (): Promise<void> => {
     if (await settlesWithin(target.forceClose(), forcedTimeoutMs)) return
@@ -107,11 +108,15 @@ const closeElectronApplicationForCleanup = async (
 
   await forceCloseWithinBudget()
   if (closeError !== undefined) throw closeError
+  if (requireGraceful) {
+    throw new Error(`Electron E2E graceful close did not finish within ${gracefulTimeoutMs}ms.`)
+  }
 }
 
 type ElectronApp = {
   readonly page: Page
   allowRendererConsoleError: (text: string) => void
+  captureMainLog: (name: string) => Promise<string>
   armDelegatedHandoffCleanupSabotage: (childName: string) => Promise<void>
   beginResourceProfile: (options?: RuntimeResourceProfilerOptions) => Promise<void>
   capturePersistedLocaleNativeQuitDialog: () => Promise<{
@@ -163,6 +168,11 @@ const launchEnvironment = (
   environment.OPEN_SCIENCE_E2E_STORAGE_ROOT = storageRoot
   environment.OPEN_SCIENCE_E2E_HANDOFF_CAPTURE_ROOT = join(storageRoot, 'e2e-handoff-captures')
   environment.OPEN_SCIENCE_E2E_WINDOW_MODE = windowMode
+  if (process.platform === 'win32' && environment.OPEN_SCIENCE_E2E_MICROMAMBA_EVENTS) {
+    // The production runner caches resolved tools under LocalAppData. Keep the controlled process
+    // fixture isolated from any micromamba selected by an ordinary Open Science session.
+    environment.LOCALAPPDATA = join(storageRoot, 'local-app-data')
+  }
   if (sessionPerformanceTrace) environment.OPEN_SCIENCE_PERF_SESSION_TRACE = '1'
   if (fakeRemoteItRoot) {
     environment.OPEN_SCIENCE_FAKE_REMOTEIT_STATE = join(storageRoot, 'fake-remoteit-state.json')
@@ -275,11 +285,12 @@ const waitForRendererReady = async (page: Page): Promise<void> => {
           const bridge = globalThis as unknown as {
             api: { databaseStartup: { getState: () => Promise<{ phase: string }> } }
           }
-          return (await bridge.api.databaseStartup.getState()).phase
+          // Preserve startup diagnostics when a migration blocks before the journey can begin.
+          return await bridge.api.databaseStartup.getState()
         }),
       { timeout: 60_000 }
     )
-    .toBe('ready')
+    .toMatchObject({ phase: 'ready' })
   await page.getByText('Loading settings...').waitFor({ state: 'hidden', timeout: 60_000 })
 }
 
@@ -358,6 +369,15 @@ class ElectronAppHarness implements ElectronApp {
 
   allowRendererConsoleError(text: string): void {
     this.rendererFailures.allowConsoleError(text)
+  }
+
+  async captureMainLog(name: string): Promise<string> {
+    if (!/^[a-z0-9-]+\.log$/u.test(name)) throw new Error(`Invalid E2E log name: ${name}`)
+    const evidenceRoot = resolve('.scratch', 'notebook-lifecycle-e2e', 'evidence')
+    await mkdir(evidenceRoot, { recursive: true })
+    const destination = join(evidenceRoot, name)
+    await copyFile(join(this.roots.userDataRoot, 'logs', 'main.log'), destination)
+    return destination
   }
 
   async beginResourceProfile(options: RuntimeResourceProfilerOptions = {}): Promise<void> {
@@ -582,6 +602,18 @@ class ElectronAppHarness implements ElectronApp {
       process.platform === 'win32' ? 'opencode.cmd' : 'opencode'
     )
     settings.opencodeVersion = '1.0.0'
+    if (
+      process.env.OPEN_SCIENCE_E2E_MICROMAMBA_EVENTS ||
+      process.env.OPEN_SCIENCE_E2E_REAL_MICROMAMBA
+    ) {
+      // Keep lifecycle checks on the mutation path itself. Without an explicit channel,
+      // named-environment creation first performs an unrelated live mirror probe.
+      settings.packageMirror = {
+        condaChannel: process.env.OPEN_SCIENCE_E2E_REAL_MICROMAMBA
+          ? 'https://mirrors.ustc.edu.cn/anaconda/cloud/conda-forge/'
+          : 'conda-forge'
+      }
+    }
     // Specs assert English copy. Pin the locale so the host language can't leak in — Main
     // resolves a 'system' preference from the OS language list, ignoring Chromium's --lang.
     settings.localePreference = 'en'
@@ -906,16 +938,10 @@ class ElectronAppHarness implements ElectronApp {
   }
 
   private async close(): Promise<void> {
-    if (!this.application) return
-
-    const application = this.application
-    this.resourceProfiler?.detach(application)
-    this.application = undefined
-    this.currentPage = undefined
-    await application.close()
+    await this.closeForCleanup(true)
   }
 
-  private async closeForCleanup(): Promise<void> {
+  private async closeForCleanup(requireGraceful = false): Promise<void> {
     if (!this.application) return
 
     const application = this.application
@@ -931,7 +957,7 @@ class ElectronAppHarness implements ElectronApp {
             throw new Error('Electron E2E forced close did not reap the process tree.')
         }
       },
-      { gracefulTimeoutMs: 10_000, forcedTimeoutMs: 10_000 }
+      { gracefulTimeoutMs: 10_000, forcedTimeoutMs: 10_000, requireGraceful }
     )
   }
 }

@@ -8,6 +8,7 @@ import {
   ComputeJobCancellationOwner,
   ComputeJobCancellationReaper
 } from './compute-job-cancellation-owner'
+import { ComputeJobLifecycle } from './compute-job-lifecycle'
 import { ComputeJobOperationRepository } from './compute-job-operation-repository'
 import { OptionalSecureStorageStringProtection, type SecureStorageCipher } from './credential-vault'
 import { ComputeJobRepository } from './job-repository'
@@ -57,7 +58,8 @@ type CancellationTestSetup = Readonly<{
   operations: ComputeJobOperationRepository
   createJob(
     status: 'queued' | 'submitted' | 'running' | 'success',
-    handle?: typeof remoteHandle
+    handle?: typeof remoteHandle,
+    executionMode?: 'direct_ssh' | 'slurm'
   ): Promise<void>
 }>
 
@@ -72,7 +74,8 @@ describe('Compute Job cancellation owner (SQLite + fake SSH)', () => {
     const operations = database.repositories.operations
     const createJob = async (
       status: 'queued' | 'submitted' | 'running' | 'success',
-      handle = status === 'running' ? remoteHandle : undefined
+      handle = status === 'running' ? remoteHandle : undefined,
+      executionMode: 'direct_ssh' | 'slurm' = 'direct_ssh'
     ): Promise<void> => {
       await jobs.create({
         id: 'job-1',
@@ -83,6 +86,7 @@ describe('Compute Job cancellation owner (SQLite + fake SSH)', () => {
         intent: 'long calculation',
         command: 'sleep 100',
         commandHash: 'hash',
+        executionMode,
         remoteWorkdir: '~/.openscience/jobs/job-1',
         initialStatus: status,
         allowUnencryptedPersistence: !encrypted
@@ -242,6 +246,33 @@ describe('Compute Job cancellation owner (SQLite + fake SSH)', () => {
     })
   })
 
+  it('does not cancel a name-matching Slurm candidate with mismatched ownership evidence', async () => {
+    const { jobs, operations, createJob } = await setup()
+    await createJob('running', undefined, 'slurm')
+    const run = vi
+      .fn<ComputeConnectionLease['run']>()
+      .mockResolvedValue(
+        success(
+          'expected|/home/researcher/.openscience/jobs/job-1\n' +
+            'active|456|openscience-job-1|/shared/other/.openscience/jobs/job-1\n'
+        )
+      )
+    const owner = new ComputeJobCancellationOwner(operations, jobs)
+    const reaper = new ComputeJobCancellationReaper(operations, jobs, {
+      acquire: vi.fn(async () => ({ run }) as unknown as ComputeConnectionLease)
+    })
+
+    await owner.request('job-1', scope)
+    await reaper.runOnce()
+
+    expect(run).toHaveBeenCalledTimes(1)
+    expect(run.mock.calls.some(([command]) => command.startsWith('scancel '))).toBe(false)
+    await expect(owner.status('job-1', scope)).resolves.toMatchObject({
+      status: 'running',
+      cancellation_status: 'cancelling'
+    })
+  })
+
   it('supersedes cancellation when the job was terminal first', async () => {
     const { jobs, operations, createJob } = await setup()
     await createJob('success')
@@ -348,6 +379,37 @@ describe('Compute Job cancellation owner (SQLite + fake SSH)', () => {
     await expect(owner.status('job-1', scope)).resolves.toMatchObject({
       cancellation_status: 'cancelled'
     })
+  })
+
+  it('preserves an encrypted launch handle during cancellation without reviving execution', async () => {
+    const { client, jobs, operations, createJob } = await setup(true)
+    await createJob('submitted')
+    const owner = new ComputeJobCancellationOwner(operations, jobs)
+    await owner.request('job-1', scope)
+    const lifecycle = new ComputeJobLifecycle(jobs)
+    await expect(lifecycle.dispatchRunning('job-1', remoteHandle)).resolves.toEqual({
+      kind: 'ignored'
+    })
+    await expect(jobs.get('job-1')).resolves.toMatchObject({
+      status: 'submitted',
+      remote_handle: remoteHandle
+    })
+    const [stored] = await client.$queryRaw<
+      Array<{ remoteHandle: string }>
+    >`SELECT "remoteHandle" FROM "ComputeJob" WHERE "id" = 'job-1'`
+    expect(stored.remoteHandle).toContain('open-science:protected')
+    expect(stored.remoteHandle).not.toContain('4321')
+    await lifecycle.dispatchRunning('job-1', remoteHandle.replace('4321', '5678'))
+    expect((await jobs.get('job-1'))?.remote_handle).toBe(remoteHandle)
+    await expect(
+      lifecycle.finishPolled('job-1', {
+        status: 'success',
+        errorCode: null,
+        stdoutTail: null,
+        stderrTail: null
+      })
+    ).resolves.toEqual({ kind: 'ignored' })
+    expect((await owner.status('job-1', scope)).cancellation_status).toBe('cancelling')
   })
 
   it('linearizes request against a terminal poll CAS', async () => {

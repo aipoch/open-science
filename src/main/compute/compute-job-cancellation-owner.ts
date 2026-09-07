@@ -1,3 +1,5 @@
+import { sharedDispatchTracker, type DispatchTracker } from './dispatch-tracker'
+import { probeRemoteLaunch } from './remote-launch-recovery'
 import { randomUUID } from 'node:crypto'
 
 import {
@@ -19,8 +21,10 @@ import {
   probeRemoteJobProcessOwnership,
   terminateRemoteJobProcessIfOwned
 } from './remote-job-process'
+import { cancelSlurmJob, recoverSlurmJob } from './slurm-driver'
 
 type ReaperOptions = Readonly<{
+  dispatchTracker?: Pick<DispatchTracker, 'has'>
   now?: () => Date
   leaseMs?: number
   retryDelayMs?: (attempt: number) => number
@@ -75,6 +79,7 @@ class ComputeJobCancellationOwner {
 }
 
 class ComputeJobCancellationReaper {
+  private readonly dispatchTracker: Pick<DispatchTracker, 'has'>
   private readonly now: () => Date
   private readonly leaseMs: number
   private readonly retryDelayMs: (attempt: number) => number
@@ -88,10 +93,11 @@ class ComputeJobCancellationReaper {
 
   constructor(
     private readonly operations: ComputeJobOperationRepository,
-    private readonly jobs: Pick<ComputeJobRepository, 'get'>,
+    private readonly jobs: Pick<ComputeJobRepository, 'get' | 'recordCancellationHandle'>,
     private readonly connectionBroker: ComputeConnectionBrokerAcquirer,
     options: ReaperOptions = {}
   ) {
+    this.dispatchTracker = options.dispatchTracker ?? sharedDispatchTracker
     this.now = options.now ?? (() => new Date())
     this.leaseMs = options.leaseMs ?? 30_000
     this.retryDelayMs =
@@ -158,16 +164,46 @@ class ComputeJobCancellationReaper {
     // repository so encrypted handles/workdirs are revealed by the single persistence owner.
     const job = await this.jobs.get(claim.jobId)
     if (!job) return
-    const handle = parseRemoteJobHandle(job.remote_handle, job.remote_workdir)
-    if (!handle) {
-      await this.scheduleRetry(claim)
-      return
-    }
+    let handle = parseRemoteJobHandle(job.remote_handle, job.remote_workdir)
 
     try {
+      if (!handle && this.dispatchTracker.has(job.job_id)) {
+        await this.scheduleRetry(claim)
+        return
+      }
       const connection = await this.connectionBroker.acquire(job.provider_id, {
         intent: 'job_cleanup'
       })
+      if (!handle && job.execution_mode === 'slurm') {
+        handle = (await recoverSlurmJob(job, connection)) ?? null
+        if (handle) await this.jobs.recordCancellationHandle(job.job_id, JSON.stringify(handle))
+      }
+      if (!handle && job.execution_mode !== 'slurm' && job.remote_workdir) {
+        const observation = await probeRemoteLaunch(connection, job.remote_workdir)
+        if (observation.kind === 'running') {
+          handle = observation.handle
+          await this.jobs.recordCancellationHandle(job.job_id, JSON.stringify(handle))
+        } else if (
+          observation.kind === 'not_started' ||
+          observation.kind === 'exited' ||
+          observation.kind === 'vanished'
+        ) {
+          await this.confirm(claim, observation.kind === 'not_started')
+          return
+        }
+      }
+      if (!handle) {
+        await this.scheduleRetry(claim)
+        return
+      }
+      if (handle.driver === 'slurm') {
+        if (await cancelSlurmJob(handle, connection)) {
+          await this.confirm(claim)
+          return
+        }
+        await this.scheduleRetry(claim)
+        return
+      }
       const ownership = await probeRemoteJobProcessOwnership(handle.pid, handle.workdir, connection)
       if (ownership === 'mismatch' || ownership === 'absent') {
         await this.confirm(claim)
@@ -196,8 +232,11 @@ class ComputeJobCancellationReaper {
     )
   }
 
-  private async confirm(claim: ClaimedComputeJobOperation): Promise<void> {
-    if (await this.operations.fulfill(claim, this.now())) {
+  private async confirm(
+    claim: ClaimedComputeJobOperation,
+    remoteWorkdirAbsent = false
+  ): Promise<void> {
+    if (await this.operations.fulfill(claim, this.now(), remoteWorkdirAbsent)) {
       await this.onConfirmed?.(claim.jobId)
     }
   }

@@ -14,6 +14,7 @@ import {
   type AccessibilityUiFinding
 } from './accessibility-reporter'
 import { test } from './fixtures/electron-app'
+import { setTheme } from './fixtures/settings-preferences'
 
 const AXE_PATH = resolve(process.cwd(), 'node_modules/axe-core/axe.min.js')
 const WCAG_TAGS = ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa']
@@ -97,31 +98,6 @@ const waitForFiniteAnimations = async (page: Page): Promise<void> => {
 const setViewport = async (page: Page, width: number, height = 800): Promise<void> => {
   await page.setViewportSize({ width, height })
   await expect.poll(() => page.evaluate(() => window.innerWidth)).toBe(width)
-}
-
-const setTheme = async (page: Page, theme: 'Dark' | 'Light'): Promise<void> => {
-  const homeThemeMenu = page.getByRole('button', { name: /^Theme:/ })
-  const workspaceNavigation = page.getByRole('complementary', { name: 'Workspace navigation' })
-  await expect(homeThemeMenu.or(workspaceNavigation)).toBeVisible()
-  if (await homeThemeMenu.isVisible()) {
-    await homeThemeMenu.click()
-    await page.getByRole('menuitem', { name: new RegExp(`^${theme}`) }).click()
-  } else {
-    await page.getByRole('button', { name: 'Settings', exact: true }).click()
-    const settings = page.getByRole('dialog', { name: 'Settings' })
-    await settings
-      .getByRole('navigation', { name: 'Settings' })
-      .getByRole('button', { name: 'General', exact: true })
-      .click()
-    await settings
-      .getByRole('radiogroup', { name: 'Theme' })
-      .getByRole('radio', { name: theme })
-      .click()
-    await page.keyboard.press('Escape')
-    await expect(settings).toBeHidden()
-  }
-  if (theme === 'Dark') await expect(page.locator('html')).toHaveClass(/dark/)
-  else await expect(page.locator('html')).not.toHaveClass(/dark/)
 }
 
 const focusWithTab = async (page: Page, target: Locator, maxTabs = 80): Promise<boolean> => {
@@ -230,11 +206,36 @@ test('reports accessibility violations in permission and file preview states', a
   await expect(page.locator('[data-testid="files-view"]')).toBeVisible()
   await waitForFiniteAnimations(page)
   await scanAccessibility(page, 'Project files (narrow)')
-  await page.getByRole('button', { name: 'Preview uploaded file accessible-preview.md' }).click()
+  // Hold the real preview read so fast disks cannot skip the loading-state contrast check.
+  await page.evaluate(() => {
+    const originalFetch = window.fetch
+    const resume = new Promise<void>((resolve) => {
+      window.addEventListener('resume-preview-read', () => resolve(), { once: true })
+    })
+    window.addEventListener(
+      'resume-preview-read',
+      () => {
+        window.fetch = originalFetch
+      },
+      { once: true }
+    )
+    window.fetch = async (...args) => {
+      const input = args[0]
+      const url = input instanceof Request ? input.url : String(input)
+      if (url.startsWith('open-science-preview:')) await resume
+      return originalFetch(...args)
+    }
+  })
   const preview = page.getByRole('dialog', { name: 'Preview accessible-preview.md' })
-  await expect(preview).toBeVisible()
-  await waitForFiniteAnimations(page)
-  await scanAccessibility(page, 'File preview dialog')
+  try {
+    await page.getByRole('button', { name: 'Preview uploaded file accessible-preview.md' }).click()
+    await expect(preview.locator('[data-preview-status="loading"]')).toBeVisible()
+    await waitForFiniteAnimations(page)
+    await scanAccessibility(page, 'File preview dialog')
+  } finally {
+    await page.evaluate(() => window.dispatchEvent(new Event('resume-preview-read')))
+  }
+  await expect(preview.getByText('Rendered in the file dialog.', { exact: true })).toBeVisible()
 })
 
 test('reports accessibility violations across representative state combinations', async ({
@@ -386,44 +387,51 @@ test('supports the core project journey with keyboard input only', async ({ app 
     return
 
   const settingsTrigger = page.getByRole('button', { name: 'Settings', exact: true })
-  if (!(await focusWithTab(page, settingsTrigger))) return
-  await page.keyboard.press('Enter')
-  const settings = page.getByRole('dialog', { name: 'Settings' })
-  if (
-    !(await expectKeyboardOutcome(page, 'Open settings with Enter', async () => {
-      await expect(settings).toBeVisible()
-    }))
-  )
-    return
-  const compute = settings
-    .getByRole('navigation', { name: 'Settings' })
-    .getByRole('button', { name: 'Compute', exact: true })
-  if (!(await focusWithTab(page, compute))) return
-  await page.keyboard.press('Enter')
-  if (
-    !(await expectKeyboardOutcome(page, 'Open Compute settings with Enter', async () => {
-      await expect(settings.getByRole('heading', { name: 'SSH hosts' })).toBeVisible()
-    }))
-  )
-    return
-  await page.keyboard.press('Escape')
-  if (
-    !(await expectKeyboardOutcome(page, 'Close settings with Escape', async () => {
-      await expect(settings).toBeHidden()
-    }))
-  )
-    return
-  const settingsFocusRestored = await settingsTrigger.evaluate(
-    (element) => document.activeElement === element
-  )
-  if (ACCESSIBILITY_COLLECT_ALL && !settingsFocusRestored) {
-    await recordAccessibilityFinding(
-      'Keyboard focus restoration',
-      'Closing settings did not restore focus to the settings trigger.'
+  for (const delayedFocus of [false, true]) {
+    if (!(await focusWithTab(page, settingsTrigger))) return
+    if (delayedFocus) {
+      // Focus-scope cleanup can restore focus on a later task after the dialog is hidden.
+      await settingsTrigger.evaluate((element) => {
+        const focus = element.focus.bind(element)
+        element.focus = (options) => {
+          element.focus = focus
+          window.setTimeout(() => focus(options), 1_000)
+        }
+      })
+    }
+    await page.keyboard.press('Enter')
+    const settings = page.getByRole('dialog', { name: 'Settings' })
+    if (
+      !(await expectKeyboardOutcome(page, 'Open settings with Enter', async () => {
+        await expect(settings).toBeVisible()
+      }))
     )
-    return
+      return
+    const compute = settings
+      .getByRole('navigation', { name: 'Settings' })
+      .getByRole('button', { name: 'Compute', exact: true })
+    if (!(await focusWithTab(page, compute))) return
+    await page.keyboard.press('Enter')
+    if (
+      !(await expectKeyboardOutcome(page, 'Open Compute settings with Enter', async () => {
+        await expect(settings.getByRole('heading', { name: 'SSH hosts' })).toBeVisible()
+      }))
+    )
+      return
+    await page.keyboard.press('Escape')
+    if (
+      !(await expectKeyboardOutcome(page, 'Close settings with Escape', async () => {
+        await expect(settings).toBeHidden()
+      }))
+    )
+      return
+    if (
+      !(await expectKeyboardOutcome(page, 'Keyboard focus restoration', async () => {
+        await expect(settingsTrigger).toBeFocused()
+      }))
+    )
+      return
   }
-  await expect(settingsTrigger).toBeFocused()
 })
 
 for (const width of [375, 767] as const) {

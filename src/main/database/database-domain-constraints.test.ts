@@ -160,7 +160,7 @@ describe('database domain constraints', () => {
       },
       {
         name: 'ComputeJob harvest payload',
-        sql: `UPDATE "ComputeJob" SET "harvestError" = 'failed' WHERE "id" = 'base-job'`
+        sql: `UPDATE "ComputeJob" SET "leftOnRemote" = '[]' WHERE "id" = 'base-job'`
       },
       {
         name: 'ComputeJob harvest state',

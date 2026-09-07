@@ -3,6 +3,7 @@ import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { validateAnnotations, ANNOTATION_LIMITS } from '../../../../../shared/annotations'
 import type { Annotation, AnnotationValidationError } from '../../../../../shared/annotations'
 import {
   createInitialPreviewWorkbenchState,
@@ -127,6 +128,36 @@ describe('AnnotationCards image projection', () => {
     expect(container.textContent).toContain('Image point 1')
     expect(container.textContent).toContain('Point 1 at 500, 100')
     expect(container.textContent).toContain('Inspect the peak.')
+  })
+
+  it('shows retained PDF region metadata with an explicit missing-image message', async () => {
+    const region = pdfAnnotations[1]!
+    if (region.kind !== 'pdf' || region.selector.kind !== 'region')
+      throw new Error('Expected region fixture')
+    const omitted: Annotation = {
+      ...region,
+      note: 'Keep the evidence.',
+      selector: { ...region.selector, image: undefined, imageOmissionReason: 'session-budget' }
+    }
+    await act(async () => root.render(<AnnotationMessageCards annotations={[omitted]} />))
+    expect(container.textContent).toContain('results.pdf · Page 9')
+    expect(container.textContent).toContain('Keep the evidence.')
+    expect(container.textContent).toContain('Image not retained: session image budget reached.')
+    expect(container.querySelector('img')).toBeNull()
+  })
+
+  it('reveals ordinary sent text and image sources through their card buttons', async () => {
+    const onReveal = vi.fn()
+    await act(async () =>
+      root.render(<AnnotationMessageCards annotations={annotations} onReveal={onReveal} />)
+    )
+    const buttons = container.querySelectorAll<HTMLButtonElement>(
+      'button[aria-label="Show annotation source"]'
+    )
+    expect(buttons).toHaveLength(2)
+    await act(async () => buttons[0].click())
+    await act(async () => buttons[1].click())
+    expect(onReveal.mock.calls.map(([annotation]) => annotation.id)).toEqual(['quote-1', 'point-1'])
   })
 
   it('renders PDF quotes and regions as distinct sent evidence cards that reveal their source', async () => {
@@ -402,6 +433,55 @@ describe('AnnotationCards image projection', () => {
     expect(document.body.querySelector('[data-annotation-note-editor]')).toBeNull()
     expect(document.activeElement).toBe(edit)
   })
+
+  it.each(['empty-note', 'payload-limit'] as const)(
+    'explains rejected image note edits: %s',
+    async (reason) => {
+      const point = annotations[1]!
+      const messageText =
+        reason === 'payload-limit' ? 'x'.repeat(ANNOTATION_LIMITS.messagePayload - 500) : ''
+      expect(validateAnnotations([point], messageText)).toBeUndefined()
+      const attempted = reason === 'empty-note' ? '' : 'x'.repeat(1_000)
+      const onUpdateNote = vi.fn((id: string, note: string) =>
+        validateAnnotations([{ ...point, id, note: note.trim() }], messageText)
+      )
+      await act(async () =>
+        root.render(
+          <AnnotationDraftCards
+            annotations={[point]}
+            disabled={false}
+            onUpdateNote={onUpdateNote}
+            onRemove={vi.fn()}
+          />
+        )
+      )
+      await act(async () =>
+        container.querySelector<HTMLButtonElement>('[aria-label="Edit annotation note"]')!.click()
+      )
+      const editor = document.body.querySelector<HTMLElement>('[data-annotation-note-editor]')!
+      const textarea = editor.querySelector('textarea')!
+      await act(async () => {
+        Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!.call(
+          textarea,
+          attempted
+        )
+        textarea.dispatchEvent(new InputEvent('input', { bubbles: true }))
+      })
+      await act(async () =>
+        Array.from(editor.querySelectorAll('button'))
+          .find((button) => button.textContent === 'Save')!
+          .click()
+      )
+      expect(onUpdateNote).toHaveBeenCalledWith(point.id, attempted)
+      expect(onUpdateNote.mock.results[0].value).toBe(
+        reason === 'empty-note' ? 'invalid' : 'payload-too-large'
+      )
+      expect(document.body.querySelector('[data-annotation-note-editor]')).not.toBeNull()
+      expect(textarea.value).toBe(attempted)
+      expect.soft(editor.querySelector('[role="alert"]')?.textContent).toBeTruthy()
+      expect.soft(textarea.getAttribute('aria-invalid')).toBe('true')
+    }
+  )
 
   it('closes after a successful save and stays open after a validation error', async () => {
     const onUpdateNote = vi.fn<(id: string, note: string) => AnnotationValidationError | undefined>(

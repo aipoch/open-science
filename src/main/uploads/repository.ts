@@ -14,6 +14,8 @@ import {
   type UploadedAttachment
 } from '../../shared/uploads'
 import type { PersistedChatSession } from '../../shared/session-persistence'
+import { isDataRootMissing } from '../storage/path-presence'
+import { ContentRepository } from '../storage/content-repository'
 import { ActiveTransferOwner } from './active-transfer-owner'
 import { LegacyRecoveryOwner, type LegacyUploadUpgradeOptions } from './legacy-recovery-owner'
 import { ManagedUploadResolver, type ResolvedManagedUpload } from './managed-upload-resolver'
@@ -40,12 +42,18 @@ type UploadRepositoryOptions = {
 // Public upload seam. Owners are composed once here; all behavior lives behind the existing 15
 // async methods so Electron, Web, CLI, Task, local-RPC and MCP callers retain the same interface.
 class UploadRepository {
+  private readonly contentRepository: ContentRepository | undefined
   private readonly transferOwner: ActiveTransferOwner
   private readonly managedUploadResolver: ManagedUploadResolver
   private readonly stagedPublicationOwner: StagedPublicationOwner
   private readonly legacyRecoveryOwner: LegacyRecoveryOwner
+  private readonly dataRoot: string
 
   constructor(dataRoot: string, options: UploadRepositoryOptions = {}) {
+    this.dataRoot = dataRoot
+    this.contentRepository = options.getClient
+      ? new ContentRepository({ storageRoot: dataRoot, getClient: options.getClient })
+      : undefined
     this.transferOwner = new ActiveTransferOwner(dataRoot, options)
     this.managedUploadResolver = new ManagedUploadResolver(dataRoot, options)
     const cleanupOwner = new VerifiedLegacyCleanupOwner(dataRoot, options, {
@@ -115,8 +123,18 @@ class UploadRepository {
   }
 
   async recoverStagingUploads(): Promise<void> {
+    // Recovery must never manufacture an absent data root merely to discover that no recoverable
+    // bytes are available. In particular, recursive staging mkdir would hide the configured-root
+    // recovery prompt before the renderer can observe it.
+    if (await isDataRootMissing(this.dataRoot)) return
     await this.legacyRecoveryOwner.recoverStagingUploads()
     await this.transferOwner.reconcileCrashOrphanedTransfers()
+    const sweep = await this.contentRepository?.sweep({
+      createdBefore: new Date(Date.now() - 60 * 60 * 1_000)
+    })
+    if (sweep && sweep.failedIds.length > 0) {
+      throw new Error(`Could not sweep ${sweep.failedIds.length} orphaned Content Blob(s).`)
+    }
   }
 
   async deleteUpload(request: DeleteUploadRequest): Promise<void> {

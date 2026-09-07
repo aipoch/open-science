@@ -5,6 +5,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import {
   createInitialPreviewWorkbenchState,
+  createPendingPdfContext,
+  pendingPdfContextSelections,
   type PreviewFileItem,
   usePreviewWorkbenchStore
 } from '@/stores/preview-workbench-store'
@@ -29,6 +31,7 @@ vi.mock('./ArtifactProvenancePanel', () => ({
     item: PreviewFileItem
     onClose: () => void
     onVersionChange?: (item: PreviewFileItem) => boolean
+    initialTab?: 'sources'
   }) => {
     provenancePanelSpy(props)
     return (
@@ -84,6 +87,7 @@ vi.mock('./ManagedVersionDiffContent', () => ({
 }))
 
 import { PreviewFileSurface } from './PreviewFileSurface'
+import { createPreviewFileItemFromPdfContext } from './preview-file-item'
 import { FOCUS_COMPOSER_EVENT } from './composer-focus-events'
 
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
@@ -342,6 +346,437 @@ describe('PreviewFileSurface managed text versions', () => {
       .mockResolvedValue({ ok: true, value: managedInspect })
   })
 
+  it.each([
+    ['initial', 'result'],
+    ['initial', 'rejection'],
+    ['version change', 'result'],
+    ['version change', 'rejection']
+  ])('reports and retries inspect failure on %s via %s', async (stage, failure) => {
+    type Result = Awaited<ReturnType<typeof window.api.managedFileVersions.inspect>>
+    const inspect = vi.mocked(window.api.managedFileVersions.inspect)
+    if (stage === 'version change') {
+      await act(async () =>
+        root.render(<PreviewFileSurface item={managedUploadItem} onClose={vi.fn()} />)
+      )
+    }
+    const error = { code: 'STORAGE_UNAVAILABLE' as const, message: 'Version storage is offline.' }
+    if (failure === 'result') inspect.mockResolvedValueOnce({ ok: false, error })
+    else inspect.mockRejectedValueOnce(new Error('Version transport disconnected.'))
+    if (stage === 'initial') {
+      await act(async () =>
+        root.render(<PreviewFileSurface item={managedUploadItem} onClose={vi.fn()} />)
+      )
+    } else {
+      await click(container.querySelector('[aria-label="Previous file version"]'))
+    }
+
+    const alert = container.querySelector('[role="alert"]')
+    expect(alert).not.toBeNull()
+    expect(alert?.textContent).toContain('Version check failed.')
+    expect(alert?.textContent).toContain(
+      failure === 'result' ? error.message : 'Version transport disconnected.'
+    )
+    const notice = alert!.closest('section')!
+    const diagnostics = notice.querySelector('details')
+    if (failure === 'result') {
+      expect(diagnostics!.open).toBe(false)
+      expect(diagnostics!.closest('[role="alert"]')).toBeNull()
+      expect(diagnostics!.textContent).toContain(error.code)
+    } else {
+      expect(diagnostics).toBeNull()
+    }
+    expect(container.querySelector('[aria-label="Edit README.md"]')).toBeNull()
+    const failedRequest = inspect.mock.calls.at(-1)![0]
+    let finish!: (result: Result) => void
+    inspect.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finish = resolve
+        })
+    )
+    await click(notice.querySelector('button'))
+    expect(inspect).toHaveBeenLastCalledWith(failedRequest)
+    expect(
+      [...container.querySelectorAll('[role="status"]')].some((status) =>
+        status.textContent?.includes('Checking version…')
+      )
+    ).toBe(true)
+    await act(async () =>
+      finish({
+        ok: true,
+        value: { ...managedInspect, selectedVersionId: failedRequest.versionId! }
+      })
+    )
+    expect(container.querySelector('[role="alert"]')).toBeNull()
+    expect(container.querySelector('[aria-label="Edit README.md"]')).not.toBeNull()
+  })
+
+  it.each(['rejection', 'storage error', 'integrity error'])(
+    'replays the same save after a committed response is lost via %s',
+    async (failure) => {
+      type Request = Parameters<typeof window.api.managedFileVersions.saveTextEdit>[0]
+      const version = { ...managedInspect.versions[1], id: 'upload-v3', versionNumber: 3 }
+      let committed: Request | undefined
+      const save = vi.fn<typeof window.api.managedFileVersions.saveTextEdit>(async (request) => {
+        if (!committed) {
+          committed = request
+          if (failure === 'rejection') throw new Error('Response lost after commit')
+          return {
+            ok: false,
+            error: {
+              code:
+                failure === 'integrity error' ? 'CONTENT_INTEGRITY_FAILED' : 'STORAGE_UNAVAILABLE',
+              message: 'Result unavailable'
+            }
+          }
+        }
+        return {
+          ok: true,
+          value:
+            request.operationId === committed.operationId
+              ? { kind: 'created', version, headVersionId: version.id, replayed: true }
+              : {
+                  kind: 'conflict',
+                  expectedHeadVersionId: request.expectedHeadVersionId,
+                  actualHead: version
+                }
+        }
+      })
+      window.api.managedFileVersions.saveTextEdit = save
+      await act(async () =>
+        root.render(<PreviewFileSurface item={managedUploadItem} onClose={vi.fn()} />)
+      )
+      await click(container.querySelector('[aria-label="Edit README.md"]'))
+      await changeTextarea(container.querySelector<HTMLTextAreaElement>('textarea')!, '# Revised\n')
+      await click(container.querySelector('[aria-label="Save changes"]'))
+      expect(container.querySelector('[role="alert"]')).not.toBeNull()
+      expect(container.querySelector<HTMLTextAreaElement>('textarea')?.value).toBe('# Revised\n')
+      await click(container.querySelector('[aria-label="Save changes"]'))
+      expect(save.mock.calls[1][0]).toEqual(save.mock.calls[0][0])
+      expect(container.querySelector('textarea')).toBeNull()
+      expect(container.textContent).not.toContain('This file has a newer version.')
+    }
+  )
+
+  it.each(['reported', 'response lost'])(
+    'starts a fresh save after a terminal storage collision: %s',
+    async (outcome) => {
+      type Request = Parameters<typeof window.api.managedFileVersions.saveTextEdit>[0]
+      const version = { ...managedInspect.versions[1], id: 'upload-v3', versionNumber: 3 }
+      let failed: Request | undefined
+      const save = vi.fn<typeof window.api.managedFileVersions.saveTextEdit>(async (request) => {
+        if (!failed) {
+          failed = request
+          if (outcome === 'response lost') throw new Error('Terminal collision response lost')
+          return {
+            ok: false,
+            error: { code: 'STORAGE_COLLISION', message: 'All destinations collided' }
+          }
+        }
+        if (request.operationId === failed.operationId) {
+          return {
+            ok: false,
+            error: { code: 'OPERATION_FAILED', message: 'Operation failed recovery' }
+          }
+        }
+        return {
+          ok: true,
+          value: { kind: 'created', version, headVersionId: version.id, replayed: false }
+        }
+      })
+      window.api.managedFileVersions.saveTextEdit = save
+      await act(async () =>
+        root.render(<PreviewFileSurface item={managedUploadItem} onClose={vi.fn()} />)
+      )
+      await click(container.querySelector('[aria-label="Edit README.md"]'))
+      await changeTextarea(container.querySelector<HTMLTextAreaElement>('textarea')!, '# Revised\n')
+      await click(container.querySelector('[aria-label="Save changes"]'))
+      expect(container.querySelector('[role="alert"]')).not.toBeNull()
+      expect(container.querySelector<HTMLTextAreaElement>('textarea')?.value).toBe('# Revised\n')
+      await click(container.querySelector('[aria-label="Save changes"]'))
+      if (outcome === 'response lost') {
+        expect(save.mock.calls[1][0]).toEqual(save.mock.calls[0][0])
+        expect(container.querySelector<HTMLTextAreaElement>('textarea')?.value).toBe('# Revised\n')
+        await click(container.querySelector('[aria-label="Save changes"]'))
+      }
+      expect(save).toHaveBeenCalledTimes(outcome === 'response lost' ? 3 : 2)
+      const retry = save.mock.calls.at(-1)![0]
+      expect(retry.operationId).not.toBe(save.mock.calls[0][0].operationId)
+      expect(retry).toEqual({
+        ...save.mock.calls[0][0],
+        operationId: retry.operationId
+      })
+      expect(container.querySelector('textarea')).toBeNull()
+      expect(container.querySelector('[role="alert"]')).toBeNull()
+    }
+  )
+
+  it.each(['content', 'baseline', 'edit session'])(
+    'starts a new save operation after the %s changes',
+    async (change) => {
+      const save = vi.fn().mockRejectedValue(new Error('Save result unavailable'))
+      window.api.managedFileVersions.saveTextEdit = save
+      await act(async () =>
+        root.render(<PreviewFileSurface item={managedUploadItem} onClose={vi.fn()} />)
+      )
+      await click(container.querySelector('[aria-label="Edit README.md"]'))
+      await changeTextarea(container.querySelector<HTMLTextAreaElement>('textarea')!, '# Draft\n')
+      await click(container.querySelector('[aria-label="Save changes"]'))
+      if (change === 'content') {
+        await changeTextarea(
+          container.querySelector<HTMLTextAreaElement>('textarea')!,
+          '# Changed\n'
+        )
+      } else {
+        await click(
+          [...container.querySelectorAll('button')].find(
+            (button) => button.textContent === 'Cancel'
+          )!
+        )
+        await confirmDiscard()
+        if (change === 'baseline') {
+          vi.mocked(window.api.managedFileVersions.inspect).mockResolvedValue({
+            ok: true,
+            value: { ...managedInspect, selectedVersionId: 'upload-v1' }
+          })
+          await click(container.querySelector('[aria-label="Previous file version"]'))
+        }
+        await click(container.querySelector('[aria-label="Edit README.md"]'))
+        await changeTextarea(container.querySelector<HTMLTextAreaElement>('textarea')!, '# Draft\n')
+      }
+      await click(container.querySelector('[aria-label="Save changes"]'))
+      expect(save).toHaveBeenCalledTimes(2)
+      expect(save.mock.calls[1][0].operationId).not.toBe(save.mock.calls[0][0].operationId)
+      if (change === 'baseline') expect(save.mock.calls[1][0].basedOnVersionId).toBe('upload-v1')
+    }
+  )
+  it.each(['upload', 'artifact'] as const)(
+    'links the confirmed %s PDF version after a head-only refresh',
+    async (source) => {
+      selectPdfContextSession()
+      const { linkPdfContext } = installPdfContextApi()
+      let notify!: Parameters<typeof window.api.projectFiles.onChanged>[0]
+      window.api.projectFiles = {
+        ...window.api.projectFiles,
+        onChanged: vi.fn((listener) => {
+          notify = listener
+          return vi.fn()
+        })
+      }
+      let head = 'upload-v2'
+      window.api.managedFileVersions.inspect = vi.fn(async () => ({
+        ok: true as const,
+        value: {
+          ...managedInspect,
+          source,
+          headVersionId: head,
+          selectedVersionId: head,
+          versions: managedInspect.versions.map((version, index) => ({
+            ...version,
+            source,
+            id: index === 1 ? head : version.id,
+            versionNumber: index === 1 && head === 'upload-v3' ? 3 : version.versionNumber,
+            displayName: 'paper.pdf'
+          }))
+        }
+      }))
+      const pdfItem: PreviewFileItem = {
+        ...managedUploadItem,
+        source,
+        format: 'pdf',
+        name: 'paper.pdf',
+        title: 'paper.pdf',
+        selectedVersionId: undefined,
+        artifactId: source === 'artifact' ? 'upload-file-1' : undefined,
+        path: `${source === 'upload' ? 'upload-version' : 'artifact-version'}:project-1/session-1/upload-file-1/upload-v2`
+      }
+      await act(async () => root.render(<PreviewFileSurface item={pdfItem} onClose={vi.fn()} />))
+      head = 'upload-v3'
+      await act(async () => notify({ projectId: 'project-1', sources: [source], kind: 'upsert' }))
+      await clickHeaderAction('Read with agent')
+      expect(linkPdfContext).toHaveBeenCalledWith(
+        expect.objectContaining({
+          sources: [
+            {
+              sourceKind: `${source}-version`,
+              sourceFileId: 'upload-file-1',
+              sourceVersionId: 'upload-v3'
+            }
+          ]
+        })
+      )
+    }
+  )
+
+  it('uses the refreshed head for editing and downloads after same-file metadata changes', async () => {
+    const latestVersion = { ...managedInspect.versions[1], id: 'upload-v3', versionNumber: 3 }
+    const currentItem = { ...managedUploadItem, selectedVersionId: undefined }
+    await act(async () => root.render(<PreviewFileSurface item={currentItem} onClose={vi.fn()} />))
+    window.api.managedFileVersions.inspect = vi.fn().mockResolvedValue({
+      ok: true,
+      value: {
+        ...managedInspect,
+        headVersionId: 'upload-v3',
+        selectedVersionId: 'upload-v3',
+        versions: [...managedInspect.versions, latestVersion],
+        text: '# New head\n'
+      }
+    })
+    await act(async () =>
+      root.render(
+        <PreviewFileSurface
+          item={{ ...currentItem, size: 100, mtimeMs: 3, versionNumber: 3 }}
+          onClose={vi.fn()}
+        />
+      )
+    )
+    expect(downloadButtonSpy).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        versionId: 'upload-v3',
+        latestVersionId: 'upload-v3'
+      })
+    )
+    await click(container.querySelector('[aria-label="Edit README.md"]'))
+    expect(container.querySelector<HTMLTextAreaElement>('textarea')?.value).toBe('# New head\n')
+  })
+
+  it('refreshes the head from parent metadata while keeping a locally selected historical version', async () => {
+    let head = 'upload-v2'
+    window.api.managedFileVersions.inspect = vi.fn<typeof window.api.managedFileVersions.inspect>(
+      async (request) => ({
+        ok: true,
+        value: {
+          ...managedInspect,
+          headVersionId: head,
+          headVersion: {
+            ...managedInspect.versions[1],
+            id: head,
+            versionNumber: head === 'upload-v2' ? 2 : 3
+          },
+          selectedVersionId: request.versionId ?? head
+        }
+      })
+    )
+    const currentItem = { ...managedUploadItem, selectedVersionId: undefined }
+    await act(async () => root.render(<PreviewFileSurface item={currentItem} onClose={vi.fn()} />))
+    await click(container.querySelector('[aria-label="Previous file version"]'))
+    expect(window.api.managedFileVersions.inspect).toHaveBeenLastCalledWith(
+      expect.objectContaining({ versionId: 'upload-v1' })
+    )
+    head = 'upload-v3'
+    await act(async () =>
+      root.render(
+        <PreviewFileSurface
+          item={{ ...currentItem, mtimeMs: 3, versionNumber: 3 }}
+          onClose={vi.fn()}
+        />
+      )
+    )
+    expect(downloadButtonSpy).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        versionId: 'upload-v1',
+        latestVersionId: 'upload-v3'
+      })
+    )
+  })
+
+  it('preserves a draft and its original version baseline when the default file path advances', async () => {
+    const currentItem = { ...managedUploadItem, selectedVersionId: undefined }
+    await act(async () => root.render(<PreviewFileSurface item={currentItem} onClose={vi.fn()} />))
+    await click(container.querySelector('[aria-label="Edit README.md"]'))
+    await changeTextarea(container.querySelector<HTMLTextAreaElement>('textarea')!, '# Draft\n')
+    window.api.managedFileVersions.inspect = vi.fn().mockResolvedValue({
+      ok: true,
+      value: {
+        ...managedInspect,
+        headVersionId: 'upload-v3',
+        selectedVersionId: 'upload-v3',
+        text: '# New head\n'
+      }
+    })
+    window.api.managedFileVersions.saveTextEdit = vi.fn().mockResolvedValue({
+      ok: true,
+      value: { kind: 'conflict', actualHead: managedInspect.versions[1] }
+    })
+    await act(async () =>
+      root.render(
+        <PreviewFileSurface
+          item={{
+            ...currentItem,
+            path: 'upload-version:project-1/session-1/upload-v3',
+            versionNumber: 3
+          }}
+          onClose={vi.fn()}
+        />
+      )
+    )
+    expect(container.querySelector<HTMLTextAreaElement>('textarea')?.value).toBe('# Draft\n')
+    await click(container.querySelector('[aria-label="Save changes"]'))
+    expect(window.api.managedFileVersions.saveTextEdit).toHaveBeenCalledWith(
+      expect.objectContaining({
+        basedOnVersionId: 'upload-v2',
+        expectedHeadVersionId: 'upload-v2',
+        content: '# Draft\n'
+      })
+    )
+  })
+
+  it.each([true, false])(
+    'retains draft controls during reinspection and after deletion (text available: %s)',
+    async (hasText) => {
+      let notify!: Parameters<typeof window.api.projectFiles.onChanged>[0]
+      window.api.projectFiles = {
+        ...window.api.projectFiles,
+        onChanged: vi.fn((listener) => {
+          notify = listener
+          return vi.fn()
+        })
+      }
+      await act(async () =>
+        root.render(<PreviewFileSurface item={managedUploadItem} onClose={vi.fn()} />)
+      )
+      await click(container.querySelector('[aria-label="Edit README.md"]'))
+      await changeTextarea(container.querySelector<HTMLTextAreaElement>('textarea')!, '# Draft\n')
+      type Result = Awaited<ReturnType<typeof window.api.managedFileVersions.inspect>>
+      let resolveInspect!: (value: Result) => void
+      window.api.managedFileVersions.inspect = vi.fn(
+        () =>
+          new Promise<Result>((resolve) => {
+            resolveInspect = resolve
+          })
+      )
+      await act(async () =>
+        notify?.({ projectId: 'project-1', sources: ['upload'], kind: 'delete' })
+      )
+      const saveButton = (): HTMLButtonElement | null =>
+        container.querySelector<HTMLButtonElement>('[aria-label="Save changes"]')
+      expect(saveButton()?.disabled).toBe(true)
+      expect(container.querySelector<HTMLTextAreaElement>('textarea')?.value).toBe('# Draft\n')
+      await act(async () =>
+        resolveInspect({
+          ok: true,
+          value: {
+            ...managedInspect,
+            canEdit: false,
+            canDiff: false,
+            text: hasText ? managedInspect.text : undefined,
+            unavailableReason: 'FILE_DELETED'
+          }
+        })
+      )
+      expect(saveButton()?.disabled).toBe(true)
+      await click(saveButton())
+      expect(window.api.managedFileVersions.saveTextEdit).not.toHaveBeenCalled()
+      const cancel = Array.from(container.querySelectorAll('button')).find(
+        (button) => button.textContent === 'Cancel'
+      )
+      await click(cancel ?? null)
+      expect(
+        document.body.querySelector('[data-testid="discard-preview-changes-confirmation"]')
+      ).not.toBeNull()
+    }
+  )
+
   it.each(['plot.png', 'report.pdf', 'README.md'])(
     'offers older history for %s only alongside a version navigator',
     async (name) => {
@@ -354,7 +789,8 @@ describe('PreviewFileSurface managed text versions', () => {
           nextCursor: '1',
           text: isText ? managedInspect.text : undefined,
           canEdit: isText,
-          canDiff: isText
+          canDiff: isText,
+          ...(isText ? {} : { unavailableReason: 'NOT_EDITABLE_EXTENSION' as const })
         }
       })
       await act(async () =>
@@ -363,6 +799,8 @@ describe('PreviewFileSurface managed text versions', () => {
       expect(
         container.querySelector('[data-testid="managed-preview-version-navigation"]') !== null
       ).toBe(isText)
+      expect(container.querySelector('[role="alert"]')).toBeNull()
+      expect(container.textContent).not.toContain('Checking version…')
       const loader = [...container.querySelectorAll('button')].find(
         (button) => button.textContent === 'Load earlier versions'
       )
@@ -563,8 +1001,8 @@ describe('PreviewFileSurface managed text versions', () => {
       expect.objectContaining({
         annotationVersionId: 'artifact-v2',
         item: expect.objectContaining({
-          path: '/stale/managed-file-projection.md',
-          selectedVersionId: undefined
+          path: 'artifact-version:project-1/session-1/artifact-1/artifact-v2',
+          selectedVersionId: 'artifact-v2'
         })
       })
     )
@@ -2246,7 +2684,11 @@ describe('PreviewFileSurface Provenance entry', () => {
     await click(container.querySelector('[aria-label="Open Provenance for sin.png"]'))
 
     expect(container.querySelector('[data-testid="provenance-panel"]')).not.toBeNull()
-    expect(container.querySelector('[data-testid="preview-content"]')).toBeNull()
+    expect(
+      container
+        .querySelector('[data-testid="preview-file-content-surface"]')
+        ?.classList.contains('hidden')
+    ).toBe(true)
     expect(provenancePanelSpy).toHaveBeenCalledWith(
       expect.objectContaining({
         item: expect.objectContaining({
@@ -2266,6 +2708,119 @@ describe('PreviewFileSurface Provenance entry', () => {
 
     expect(container.querySelector('[data-testid="provenance-panel"]')).toBeNull()
     expect(container.querySelector('[data-testid="preview-content"]')).not.toBeNull()
+  })
+
+  it('opens Literature directly from an Artifact Version that cites references', async () => {
+    vi.mocked(window.api.artifacts.getLineage).mockResolvedValue({
+      artifactId: 'artifact-1',
+      filename: 'sin.png',
+      originSession: { sessionId: 'session-1', state: 'active', title: 'Sine' },
+      versions: [{ ...descriptor, hasLiterature: true }, secondDescriptor]
+    })
+
+    await act(async () => {
+      root.render(<PreviewFileSurface item={item} onClose={vi.fn()} />)
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    const entry = container.querySelector<HTMLButtonElement>(
+      '[data-testid="artifact-literature-entry"]'
+    )
+    expect(entry).not.toBeNull()
+    await click(entry)
+
+    expect(container.querySelector('[data-testid="provenance-panel"]')).not.toBeNull()
+    expect(provenancePanelSpy).toHaveBeenLastCalledWith(
+      expect.objectContaining({ initialTab: 'sources' })
+    )
+  })
+
+  it('docks Provenance by preview width, preserves the document, and respects dismissal', async () => {
+    let resizePreview: (width: number) => void = () => undefined
+    const OriginalResizeObserver = globalThis.ResizeObserver
+    vi.stubGlobal(
+      'ResizeObserver',
+      class {
+        constructor(private callback: ResizeObserverCallback) {}
+        observe(target: Element): void {
+          if (target.getAttribute('data-testid') === 'preview-file-root') {
+            resizePreview = (width) =>
+              this.callback(
+                [{ target, contentRect: { width } } as ResizeObserverEntry],
+                this as unknown as ResizeObserver
+              )
+          }
+        }
+        unobserve(): void {
+          /* no-op measurement stub */
+        }
+        disconnect(): void {
+          /* no-op measurement stub */
+        }
+      }
+    )
+    try {
+      await act(async () =>
+        root.render(<PreviewFileSurface item={item} onClose={vi.fn()} provenanceEntry="leading" />)
+      )
+      const content = container.querySelector('[data-testid="preview-content"]')
+      expect(container.querySelector('[data-testid="provenance-panel"]')).toBeNull()
+      await act(async () => resizePreview(900))
+      expect(container.querySelector('[data-testid="provenance-panel"]')).not.toBeNull()
+      expect(container.querySelector('[data-testid="preview-content"]')).toBe(content)
+      expect(
+        container.querySelector('[data-testid="preview-provenance-pane"]')?.className
+      ).toContain('basis-[40%]')
+      await act(async () => resizePreview(600))
+      expect(container.querySelector('[data-testid="provenance-panel"]')).toBeNull()
+      expect(container.querySelector('[data-testid="preview-content"]')).toBe(content)
+      await act(async () => resizePreview(900))
+      await click(container.querySelector('[data-testid="provenance-panel"] button'))
+      await act(async () => {
+        resizePreview(600)
+      })
+      await act(async () => {
+        resizePreview(900)
+      })
+      expect(container.querySelector('[data-testid="provenance-panel"]')).toBeNull()
+      await click(container.querySelector('[aria-label="Open Provenance for sin.png"]'))
+      expect(container.querySelector('[data-testid="provenance-panel"]')).not.toBeNull()
+    } finally {
+      vi.stubGlobal('ResizeObserver', OriginalResizeObserver)
+    }
+  })
+
+  it('shows Literature for a managed projection of an Artifact Version', async () => {
+    vi.mocked(window.api.artifacts.getLineage).mockResolvedValue({
+      artifactId: 'artifact-1',
+      filename: 'sin.png',
+      originSession: { sessionId: 'session-1', state: 'active', title: 'Sine' },
+      versions: [{ ...descriptor, hasLiterature: true }]
+    })
+
+    await act(async () => {
+      root.render(
+        <PreviewFileSurface
+          item={{ ...item, managedFileId: 'artifact-1', selectedVersionId: undefined }}
+          onClose={vi.fn()}
+        />
+      )
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    expect(container.querySelector('[data-testid="artifact-literature-entry"]')).not.toBeNull()
+  })
+
+  it('does not show the Literature entry when the selected Version has no manifest', async () => {
+    await act(async () => {
+      root.render(<PreviewFileSurface item={item} onClose={vi.fn()} />)
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    expect(container.querySelector('[data-testid="artifact-literature-entry"]')).toBeNull()
   })
 
   it('does not offer Provenance for uploaded inputs', async () => {
@@ -2299,7 +2854,11 @@ describe('PreviewFileSurface Provenance entry', () => {
     })
 
     expect(container.querySelector('[data-testid="provenance-panel"]')).not.toBeNull()
-    expect(container.querySelector('[data-testid="preview-content"]')).toBeNull()
+    expect(
+      container
+        .querySelector('[data-testid="preview-file-content-surface"]')
+        ?.classList.contains('hidden')
+    ).toBe(true)
   })
 
   it('hides managed text actions and version navigation for a non-editable image', async () => {
@@ -2657,6 +3216,120 @@ describe('PreviewFileSurface PDF context action matrix', () => {
     window.removeEventListener(FOCUS_COMPOSER_EVENT, focusListener)
   })
 
+  it('opens a Reading Literature PDF without an Artifact version error', async () => {
+    selectPdfContextSession()
+    installPdfContextApi()
+    window.api.managedFileVersions.inspect = vi.fn().mockResolvedValue({
+      ok: false,
+      error: { code: 'FILE_NOT_FOUND', message: 'Managed Artifact was not found.' }
+    })
+    const readingItem = createPreviewFileItemFromPdfContext(
+      {
+        version: 1,
+        bindingId: 'literature-binding',
+        sourceKind: 'literature-attachment-version',
+        sourceFileId: 'attachment-1',
+        sourceVersionId: 'attachment-version-1',
+        name: 'paper.pdf',
+        mimeType: 'application/pdf',
+        sizeBytes: 4096,
+        checksum: 'pdf-checksum',
+        linkedAt: 1
+      },
+      'project-1'
+    )
+    await act(async () => {
+      root.render(<PreviewFileSurface item={readingItem} onClose={vi.fn()} />)
+    })
+
+    expect(container.querySelector('[data-testid="preview-content"]')).not.toBeNull()
+    const download = container.querySelector<HTMLButtonElement>('[aria-label="Download paper.pdf"]')
+    expect.soft(download?.disabled).toBe(false)
+    expect.soft(container.textContent).not.toContain('Managed Artifact was not found.')
+    expect.soft(window.api.managedFileVersions.inspect).not.toHaveBeenCalled()
+    await click(download)
+    expect(window.api.saveManagedFile).toHaveBeenCalledWith({
+      source: 'literature',
+      path: readingItem.path,
+      suggestedName: 'paper.pdf'
+    })
+  })
+
+  it('adds an immutable Literature PDF Version to the active Session context', async () => {
+    selectPdfContextSession()
+    const { linkPdfContext } = installPdfContextApi()
+    const literaturePdf: PreviewFileItem = {
+      ...pdfItem,
+      id: 'literature-version:attachment-version-1',
+      sessionId: '__literature__',
+      path: 'literature-attachment-version:attachment-version-1',
+      source: 'literature',
+      artifactId: undefined,
+      selectedVersionId: undefined
+    }
+
+    await act(async () => {
+      root.render(<PreviewFileSurface item={literaturePdf} onClose={vi.fn()} />)
+      await Promise.resolve()
+    })
+    await clickHeaderAction('Read with agent')
+
+    expect(linkPdfContext).toHaveBeenCalledWith({
+      projectId: 'project-1',
+      sessionId: 'active-session',
+      expectedRevision: 3,
+      sources: [
+        {
+          sourceKind: 'literature-attachment-version',
+          sourceVersionId: 'attachment-version-1'
+        }
+      ]
+    })
+  })
+
+  it('hides Reading context controls when the preview owner disables them', async () => {
+    selectPdfContextSession()
+    installPdfContextApi()
+
+    await act(async () => {
+      root.render(
+        <PreviewFileSurface item={pdfItem} allowReadingContext={false} onClose={vi.fn()} />
+      )
+      await Promise.resolve()
+    })
+
+    expect(container.querySelector('[data-testid="pdf-context-action"]')).toBeNull()
+    act(() => {
+      container
+        .querySelector('[data-testid="preview-file-content-surface"]')
+        ?.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, clientX: 80, clientY: 120 }))
+    })
+    await act(async () => Promise.resolve())
+    expect(document.body.querySelector('[data-testid="pdf-preview-context-menu"]')).toBeNull()
+  })
+
+  it('lets a Library preview supply its own Read with agent action without linking a Session', async () => {
+    selectPdfContextSession()
+    const direct = installPdfContextApi()
+    const onReadWithAgent = vi.fn()
+
+    await act(async () => {
+      root.render(
+        <PreviewFileSurface
+          item={pdfItem}
+          allowReadingContext={false}
+          onReadWithAgent={onReadWithAgent}
+          onClose={vi.fn()}
+        />
+      )
+      await Promise.resolve()
+    })
+    await clickHeaderAction('Read with agent')
+
+    expect(onReadWithAgent).toHaveBeenCalledWith(expect.objectContaining({ id: pdfItem.id }))
+    expect(direct.linkPdfContext).not.toHaveBeenCalled()
+  })
+
   it('routes active-Session link and unlink actions through the Composer Reading history port', async () => {
     selectPdfContextSession()
     const direct = installPdfContextApi()
@@ -2899,6 +3572,54 @@ describe('PreviewFileSurface PDF context action matrix', () => {
       sourceVersionId: 'version-1',
       previewItemId: 'artifact-1'
     })
+  })
+
+  it('preserves other draft PDFs when removing one and enforces the three PDF limit', async () => {
+    installPdfContextApi()
+    const selections = ['1', '2', '3'].map((id) => ({
+      kind: 'version' as const,
+      sourceKind: 'artifact-version' as const,
+      sourceFileId: `artifact-${id}`,
+      sourceVersionId: `version-${id}`,
+      previewItemId: `artifact-${id}`
+    }))
+    usePreviewWorkbenchStore
+      .getState()
+      .setPendingPdfContext('project-1', createPendingPdfContext(selections))
+    await act(async () => {
+      root.render(<PreviewFileSurface item={pdfItem} onClose={vi.fn()} />)
+    })
+    await openMenu(container.querySelector('[data-testid="pdf-context-status"]'))
+    await clickMenuItem('Remove PDF from context')
+    expect(
+      pendingPdfContextSelections(
+        usePreviewWorkbenchStore.getState().pendingPdfContextByProject['project-1']
+      )
+    ).toEqual(selections.slice(1))
+
+    await clickHeaderAction('Read with agent')
+    expect(
+      pendingPdfContextSelections(
+        usePreviewWorkbenchStore.getState().pendingPdfContextByProject['project-1']
+      )
+    ).toHaveLength(3)
+    await act(async () => {
+      root.render(
+        <PreviewFileSurface
+          item={{
+            ...pdfItem,
+            id: 'artifact-4',
+            managedFileId: 'artifact-4',
+            selectedVersionId: 'version-4',
+            path: 'artifact-version:project-1/session-1/artifact-4/version-4'
+          }}
+          onClose={vi.fn()}
+        />
+      )
+    })
+    expect(
+      container.querySelector<HTMLButtonElement>('[data-testid="pdf-context-action"]')?.disabled
+    ).toBe(true)
   })
 
   it('links from the modal to the visible project instead of a stale selected Session', async () => {

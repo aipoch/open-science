@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { startTransition, useEffect, useRef, useState } from 'react'
 
 const RESERVE_GRAPHEMES = 18
 const PREBUFFER_MS = 500
@@ -13,6 +13,22 @@ const CATCH_UP_GRAPHEMES = 600
 const CATCH_UP_FRAMES = 30
 // Bound a single frame's reveal so draining a large backlog never flashes a huge block.
 const CATCH_UP_MAX_GRAPHEMES_PER_FRAME = 48
+// Each commit re-renders the whole Markdown subtree at O(visible length), so per-frame commits
+// make a long message cost O(n²) total. Past this target length, commit at a lengthening
+// interval (32/48/64ms) with proportionally larger batches: the reveal rate in graphemes per
+// millisecond — and therefore the catch-up drain bound — stays identical to per-frame pacing.
+const FRAME_MS = 16
+const ADAPTIVE_CADENCE_CONTENT_LENGTH = 2000
+const MAX_COMMIT_INTERVAL_MS = 64
+
+// Nominal milliseconds between visible-content commits for a target of the given length.
+const commitIntervalFor = (targetLength: number): number =>
+  targetLength <= ADAPTIVE_CADENCE_CONTENT_LENGTH
+    ? FRAME_MS
+    : Math.min(
+        MAX_COMMIT_INTERVAL_MS,
+        FRAME_MS * Math.ceil(targetLength / ADAPTIVE_CADENCE_CONTENT_LENGTH)
+      )
 const graphemeSegmenter =
   typeof Intl.Segmenter === 'function'
     ? new Intl.Segmenter(undefined, { granularity: 'grapheme' })
@@ -69,6 +85,7 @@ const useSmoothStreamingContent = (
   const lastTargetUpdateAtRef = useRef(0)
   const sourceOpenRef = useRef(sourceOpen)
   const isPresentingRef = useRef(animateOnMount)
+  const lastCommitAtRef = useRef(0)
 
   useEffect(() => {
     const now = Date.now()
@@ -140,7 +157,18 @@ const useSmoothStreamingContent = (
     const commit = (value: string): void => {
       if (visibleContentRef.current === value) return
       visibleContentRef.current = value
+      lastCommitAtRef.current = Date.now()
       setVisibleContent(value)
+    }
+    // Intermediate reveals go through a transition so a long message's Markdown re-render
+    // stays interruptible by urgent updates (composer input) and under load React may
+    // coalesce several reveals into one paint. The pacing refs advance synchronously, so
+    // skipped paints simply reveal a larger batch on the next commit.
+    const commitFrame = (value: string): void => {
+      if (visibleContentRef.current === value) return
+      visibleContentRef.current = value
+      lastCommitAtRef.current = Date.now()
+      startTransition(() => setVisibleContent(value))
     }
     const finishPresentation = (): void => {
       if (sourceOpenRef.current || !isPresentingRef.current) return
@@ -153,6 +181,7 @@ const useSmoothStreamingContent = (
       playbackStartedRef.current = false
       presentationSpeedRef.current = 1
       bufferingStartedAtRef.current = undefined
+      lastCommitAtRef.current = 0
     }
     const scheduleFrame = (callback: () => void): (() => void) => {
       if (typeof requestAnimationFrame === 'function') {
@@ -194,20 +223,30 @@ const useSmoothStreamingContent = (
             presentationSpeedRef.current,
             remaining
           )
+          // Larger batches at the lengthened interval keep the per-millisecond reveal rate
+          // (and the CATCH_UP_FRAMES drain bound) identical to per-frame pacing.
+          const intervalMs = commitIntervalFor(target.length)
+          const revealScale = intervalMs / FRAME_MS
           const frameReveal =
             remaining > CATCH_UP_GRAPHEMES
               ? Math.min(
-                  CATCH_UP_MAX_GRAPHEMES_PER_FRAME,
-                  Math.max(presentationSpeedRef.current, Math.ceil(remaining / CATCH_UP_FRAMES))
+                  CATCH_UP_MAX_GRAPHEMES_PER_FRAME * revealScale,
+                  Math.max(presentationSpeedRef.current, Math.ceil(remaining / CATCH_UP_FRAMES)) *
+                    revealScale
                 )
-              : presentationSpeedRef.current
+              : presentationSpeedRef.current * revealScale
           const revealCount = Math.min(releasable, frameReveal)
           const nextIndex = pendingIndexRef.current + revealCount
-          commit(`${current}${pending.slice(pendingIndexRef.current, nextIndex).join('')}`)
-          pendingIndexRef.current = nextIndex
+          const nextContent = `${current}${pending.slice(pendingIndexRef.current, nextIndex).join('')}`
           if (nextIndex === pending.length) {
+            // Urgent: pairs with setIsPresenting(false) so the gate releases with final content.
+            commit(nextContent)
+            pendingIndexRef.current = nextIndex
             resetPending()
             finishPresentation()
+          } else if (now - lastCommitAtRef.current >= intervalMs) {
+            commitFrame(nextContent)
+            pendingIndexRef.current = nextIndex
           }
         }
       } else {

@@ -780,6 +780,82 @@ describe('release-gate Subagent surfaces', () => {
     expect(screen.queryByText('Thinking')).toBeNull()
   })
 
+  it('recovers the selected Frame without waiting for unrelated Session history', async () => {
+    const durable = createSession()
+    const incomplete = createSession()
+    incomplete.conversationGraph!.frames = incomplete.conversationGraph!.frames.filter(
+      (frame) => frame.id !== 'child-a'
+    )
+    useSessionStore.setState({ sessions: [incomplete] })
+    let releaseCatalog!: () => void
+    const catalogGate = new Promise<void>((resolve) => {
+      releaseCatalog = resolve
+    })
+    vi.stubGlobal('api', {
+      ...window.api,
+      sessions: {
+        ...window.api.sessions,
+        loadAll: async () => {
+          await catalogGate
+          return { sessions: [durable] }
+        },
+        loadOne: async (request: { projectId: string; sessionId: string }) =>
+          request.projectId === durable.projectId && request.sessionId === durable.id
+            ? durable
+            : undefined
+      }
+    })
+    renderSurface(
+      <SubagentPreview
+        item={{
+          id: 'tool:session-1:subagents',
+          type: 'tool',
+          toolKind: 'subagents',
+          title: 'Subagents',
+          sessionId: durable.id,
+          selectedAgentFrameId: 'child-a'
+        }}
+      />
+    )
+    try {
+      await act(async () => {
+        fireEvent.click(screen.getByRole('button', { name: 'Retry Subagent preview' }))
+      })
+      expect(
+        screen.queryByRole('alert') === null,
+        'selected Frame remains blocked by unrelated history'
+      ).toBe(true)
+    } finally {
+      await act(async () => {
+        releaseCatalog()
+      })
+    }
+  })
+
+  it('recovers a restored legacy tab before its Session owner is known', async () => {
+    useSessionStore.setState({ sessions: [] })
+    vi.stubGlobal('api', {
+      ...window.api,
+      sessions: { ...window.api.sessions, loadAll: async () => ({ sessions: [createSession()] }) }
+    })
+    renderSurface(
+      <SubagentPreview
+        item={{
+          id: 'tool:session-1:subagents',
+          type: 'tool',
+          toolKind: 'subagents',
+          title: 'Subagents',
+          sessionId: 'session-1',
+          selectedAgentFrameId: 'child-a'
+        }}
+      />
+    )
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Retry Subagent preview' }))
+    })
+    expect(screen.queryByRole('alert')).toBeNull()
+  })
+
   it('offers Retry when the selected durable Frame cannot be read', () => {
     renderSurface(
       <SubagentPreview

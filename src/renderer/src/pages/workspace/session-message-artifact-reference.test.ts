@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
 import {
+  createSessionArtifactReferenceNormalizer,
   normalizeSessionArtifactImages,
   normalizeSessionArtifactLinks,
   normalizeSessionArtifactReferences,
@@ -212,5 +213,126 @@ describe('session message artifact references', () => {
         '- [List preview](/.open-science/artifact/version-1)'
       ].join('\n')
     )
+  })
+})
+
+describe('createSessionArtifactReferenceNormalizer', () => {
+  // Feeds every append-only prefix of `chunks` through the incremental normalizer and pins each
+  // step to the full one-shot normalization of the same text.
+  const expectAppendStreamMatchesFull = (
+    chunks: string[],
+    artifacts: MessageArtifact[] = [createArtifact()]
+  ): void => {
+    const incremental = createSessionArtifactReferenceNormalizer()
+    let streamed = ''
+    for (const chunk of chunks) {
+      streamed += chunk
+      expect(incremental(streamed, artifacts)).toBe(
+        normalizeSessionArtifactReferences(streamed, artifacts)
+      )
+    }
+  }
+
+  it('returns the input unchanged when there are no artifacts to rewrite', () => {
+    const incremental = createSessionArtifactReferenceNormalizer()
+    const content = '![Curve](sin_curve.png)\n\n[Download](sin_curve.png)'
+
+    expect(incremental(content, [])).toBe(content)
+    expect(incremental(`${content}\n\n![More](sin_curve.png)`, [])).toBe(
+      `${content}\n\n![More](sin_curve.png)`
+    )
+  })
+
+  it('matches full normalization for append-only growth with artifact images and links', () => {
+    expectAppendStreamMatchesFull([
+      'Here is the chart.\n\n![Cur',
+      've](sin_curve.png)\n\n[Down',
+      'load](sin_curve.png)',
+      '\n\n[Remote](https://example.com/sin_curve.png)'
+    ])
+  })
+
+  it('matches full normalization when an append splits a code fence marker', () => {
+    expectAppendStreamMatchesFull([
+      'Rendered below.\n\n``',
+      '`md\n![Fenced](sin_curve.png)\n```',
+      '\n\n![Rendered](sin_curve.png)'
+    ])
+  })
+
+  it('matches full normalization for an unclosed fence that later closes', () => {
+    expectAppendStreamMatchesFull([
+      '```md\n![Fenced](sin_curve.png)',
+      '\n[Also fenced](sin_curve.png)',
+      '\n```\n\n[Rendered link](sin_curve.png)'
+    ])
+  })
+
+  it('matches full normalization for blockquoted and list-nested fences', () => {
+    expectAppendStreamMatchesFull([
+      '> ```md\n> ![Quoted code](sin_curve.png)\n> ```',
+      '\n> ![Quoted preview](sin_curve.png)\n\n- ```md',
+      '\n  [List code](sin_curve.png)\n  ```',
+      '\n- [List preview](sin_curve.png)'
+    ])
+  })
+
+  it('matches full normalization when the stream ends inside a partial image reference', () => {
+    expectAppendStreamMatchesFull([
+      '![Curve](sin_',
+      'curve.png)',
+      '\n\nNext paragraph with [a link](sin_curve.png).'
+    ])
+  })
+
+  it('falls back to full normalization for non-append changes', () => {
+    const artifacts = [createArtifact()]
+    const incremental = createSessionArtifactReferenceNormalizer()
+    incremental('![Curve](sin_curve.png)\n\nOriginal tail.', artifacts)
+
+    const edited = '![Curve](sin_curve.png)\n\nEdited tail.'
+    expect(incremental(edited, artifacts)).toBe(
+      normalizeSessionArtifactReferences(edited, artifacts)
+    )
+
+    // The stream can keep growing incrementally after an edit.
+    const grown = `${edited}\n\n[Download](sin_curve.png)`
+    expect(incremental(grown, artifacts)).toBe(normalizeSessionArtifactReferences(grown, artifacts))
+  })
+
+  it('recomputes when the artifacts array identity changes', () => {
+    const incremental = createSessionArtifactReferenceNormalizer()
+    const first = [createArtifact()]
+    const second = [createArtifact({ id: 'version-2', versionId: 'version-2' })]
+    const content = '![Curve](sin_curve.png)'
+
+    expect(incremental(content, first)).toBe(
+      '<session-artifact-image artifact_ref="version-1" alt_text="Curve"></session-artifact-image>'
+    )
+    expect(incremental(content, second)).toBe(
+      '<session-artifact-image artifact_ref="version-2" alt_text="Curve"></session-artifact-image>'
+    )
+    expect(incremental(`${content}\n\n![Again](sin_curve.png)`, second)).toBe(
+      normalizeSessionArtifactReferences(`${content}\n\n![Again](sin_curve.png)`, second)
+    )
+  })
+
+  it('returns the cached output for repeated identical input', () => {
+    const artifacts = [createArtifact()]
+    const incremental = createSessionArtifactReferenceNormalizer()
+    const content = '![Curve](sin_curve.png)'
+
+    expect(incremental(content, artifacts)).toBe(
+      normalizeSessionArtifactReferences(content, artifacts)
+    )
+    expect(incremental(content, artifacts)).toBe(
+      normalizeSessionArtifactReferences(content, artifacts)
+    )
+  })
+
+  it('handles empty input', () => {
+    const incremental = createSessionArtifactReferenceNormalizer()
+    expect(incremental('', [createArtifact()])).toBe('')
+    expectAppendStreamMatchesFull(['![Curve](sin_curve.png)', '\n\nDone.'])
   })
 })

@@ -382,6 +382,7 @@ type RuntimeSchemaTarget = {
 
 type RuntimeSchemaExtensions = Readonly<{
   tableNames?: readonly string[]
+  indexNames?: readonly string[]
   triggerNames?: readonly string[]
 }>
 
@@ -548,6 +549,7 @@ const adaptMigrationOperationsForCurrentSchema = async (
 
 type LegacySchemaExtensions = {
   tableNames?: readonly string[]
+  indexNames?: readonly string[]
   schemaObjects?: readonly { type: 'trigger' | 'view'; name: string }[]
   columns?: Readonly<Record<string, readonly string[]>>
 }
@@ -627,9 +629,10 @@ const classifyLegacySchema = async (
      WHERE "type" = 'index' AND "name" NOT LIKE 'sqlite_autoindex_%'
      ORDER BY "name"`
   )
+  const knownIndexNames = new Set([...TARGET_INDEX_NAMES, ...(extensions.indexNames ?? [])])
   const unknownIndexes = indexes
     .map((index) => index.name)
-    .filter((indexName) => !TARGET_INDEX_NAMES.has(indexName))
+    .filter((indexName) => !knownIndexNames.has(indexName))
   if (unknownIndexes.length > 0) {
     throw new DatabaseValidationError(`Legacy database classification found unknown indexes.`, {
       kind: 'unknown-indexes',
@@ -993,7 +996,7 @@ const verifyRuntimeSchemaTarget = async (
        WHERE "type" = 'index' AND "name" NOT LIKE 'sqlite_autoindex_%'
        ORDER BY "name"`
     )
-    const expectedIndexes = new Set(target.indexes.keys())
+    const expectedIndexes = new Set([...target.indexes.keys(), ...(extensions.indexNames ?? [])])
     const unexpectedIndexes = indexes
       .map((index) => index.name)
       .filter((indexName) => !expectedIndexes.has(indexName))

@@ -146,9 +146,10 @@ describe('FilePreviewDialog closing lifecycle', () => {
     )
 
     const onInteractOutside = contentSpy.mock.calls[0]?.[0].onInteractOutside as
-      ((event: { preventDefault: () => void }) => void) | undefined
+      | ((event: { preventDefault: () => void; detail: { originalEvent: Event } }) => void)
+      | undefined
     const preventDefault = vi.fn()
-    onInteractOutside?.({ preventDefault })
+    onInteractOutside?.({ preventDefault, detail: { originalEvent: new Event('pointerdown') } })
     expect(preventDefault).toHaveBeenCalledOnce()
   })
 

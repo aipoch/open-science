@@ -1,5 +1,5 @@
 import { Check, Plus, Search, Tags, X } from 'lucide-react'
-import { useEffect, useState } from 'react'
+import { useEffect, useState, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { TAG_NAME_MAX_LENGTH, type TagResourceRef } from '../../../../shared/tags'
@@ -19,7 +19,19 @@ import { useTagStore } from '@/stores/tag-store'
 import { tagPresentation } from './tag-presentation'
 import { TagBadge } from './tag-visuals'
 
-const ResourceTagMenu = ({ reference }: { reference: TagResourceRef }): React.JSX.Element => {
+const ResourceTagMenu = ({
+  reference,
+  trigger,
+  open,
+  onOpenChange,
+  keepOpenOnSelect = true
+}: {
+  reference: TagResourceRef
+  trigger?: ReactNode
+  open?: boolean
+  onOpenChange?: (open: boolean) => void
+  keepOpenOnSelect?: boolean
+}): React.JSX.Element => {
   const { t } = useTranslation()
   const tags = useTagStore((state) => state.tags)
   const assignments = useTagStore((state) => state.assignments)
@@ -64,7 +76,7 @@ const ResourceTagMenu = ({ reference }: { reference: TagResourceRef }): React.JS
   return (
     <TooltipProvider>
       <Tooltip>
-        <DropdownMenu>
+        <DropdownMenu modal={false} open={open} onOpenChange={onOpenChange}>
           <TooltipTrigger
             asChild
             onFocus={(event) => {
@@ -72,9 +84,17 @@ const ResourceTagMenu = ({ reference }: { reference: TagResourceRef }): React.JS
             }}
           >
             <DropdownMenuTrigger asChild>
-              <Button type="button" variant="ghost" size="icon-sm" aria-label={t('Manage Tags')}>
-                <Tags className="size-4" aria-hidden="true" />
-              </Button>
+              {trigger ?? (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon-sm"
+                  aria-label={t('Manage Tags')}
+                  style={{ pointerEvents: 'auto' }}
+                >
+                  <Tags className="size-4" aria-hidden="true" />
+                </Button>
+              )}
             </DropdownMenuTrigger>
           </TooltipTrigger>
           <DropdownMenuContent align="end" className="min-w-52">
@@ -102,7 +122,7 @@ const ResourceTagMenu = ({ reference }: { reference: TagResourceRef }): React.JS
                   key={tag.id}
                   className="gap-2"
                   onSelect={(event) => {
-                    event.preventDefault()
+                    if (keepOpenOnSelect) event.preventDefault()
                     setError(undefined)
                     void setAssignment({ ...reference, tagId: tag.id, assigned: !assigned }).catch(
                       () => setError(t('Could not update Tags.'))
@@ -121,7 +141,7 @@ const ResourceTagMenu = ({ reference }: { reference: TagResourceRef }): React.JS
                 className="gap-2"
                 disabled={creating}
                 onSelect={(event) => {
-                  event.preventDefault()
+                  if (keepOpenOnSelect) event.preventDefault()
                   void createAndAssign()
                 }}
               >
@@ -185,11 +205,15 @@ const TagFilter = ({
 const ResourceTagBadges = ({
   reference,
   limit = 2,
-  onOpenTag
+  removable = true,
+  onOpenTag,
+  className
 }: {
   reference: TagResourceRef
   limit?: number
+  removable?: boolean
   onOpenTag?: (tagId: string) => void
+  className?: string
 }): React.JSX.Element => {
   const { t } = useTranslation()
   const tags = useTagStore((state) => state.tags)
@@ -227,7 +251,8 @@ const ResourceTagBadges = ({
         className={cn(
           compact
             ? 'flex min-w-0 max-w-52 flex-nowrap items-center justify-end gap-1 overflow-hidden'
-            : 'flex flex-wrap items-center gap-1'
+            : 'flex flex-wrap items-center gap-1',
+          className
         )}
       >
         {assigned.slice(0, limit).map((tag) => {
@@ -236,6 +261,13 @@ const ResourceTagBadges = ({
             tag: presentation.name
           })
           const badge = <TagBadge tag={tag} className={compact ? 'min-w-0 max-w-24' : undefined} />
+          if (!removable) {
+            return (
+              <span key={tag.id} className={cn('inline-flex min-w-0', compact && 'max-w-24')}>
+                {badge}
+              </span>
+            )
+          }
           return (
             <span
               key={tag.id}
@@ -292,11 +324,17 @@ const ResourceTagBadges = ({
 const ResourceTagSummary = ({
   reference,
   className,
-  onOpenTag
+  onOpenTag,
+  menuOpen,
+  onMenuOpenChange,
+  keepMenuOpenOnSelect = false
 }: {
   reference: TagResourceRef
   className?: string
   onOpenTag?: (tagId: string) => void
+  menuOpen?: boolean
+  onMenuOpenChange?: (open: boolean) => void
+  keepMenuOpenOnSelect?: boolean
 }): React.JSX.Element => {
   const { t } = useTranslation()
   return (
@@ -307,7 +345,12 @@ const ResourceTagSummary = ({
         limit={Number.POSITIVE_INFINITY}
         onOpenTag={onOpenTag}
       />
-      <ResourceTagMenu reference={reference} />
+      <ResourceTagMenu
+        reference={reference}
+        open={menuOpen}
+        onOpenChange={onMenuOpenChange}
+        keepOpenOnSelect={keepMenuOpenOnSelect}
+      />
     </div>
   )
 }

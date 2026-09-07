@@ -6,6 +6,7 @@ import { shell } from 'electron'
 import { basename, dirname } from 'node:path'
 
 import { ipcMainHandle } from '../ipc-handler-registry'
+import type { ArtifactLiteratureManifest } from '../../shared/artifact-literature'
 
 import {
   ARTIFACT_FINALIZATION_INVALID_PROOF,
@@ -64,6 +65,9 @@ type ArtifactHandlers = {
   getLineage: (
     request: GetArtifactLineageRequest
   ) => Promise<ProvenanceReadResult<ArtifactLineageProvenance | undefined>>
+  getVersionLiterature: (
+    request: GetArtifactVersionProvenanceRequest
+  ) => Promise<ArtifactLiteratureManifest | undefined>
   getVersionProvenance: (
     request: GetArtifactVersionProvenanceRequest
   ) => Promise<ProvenanceReadResult<ArtifactVersionProvenance>>
@@ -112,6 +116,7 @@ type ArtifactHandlerDependencies = {
     | 'getLineage'
     | 'getVersionProvenance'
     | 'getVersionCore'
+    | 'getVersionLiterature'
     | 'getVersionExecution'
     | 'getVersionMessages'
     | 'getVersionReview'
@@ -304,6 +309,10 @@ const createArtifactHandlers = (
         if (!dependencies.provenance) throw new Error('Artifact Provenance is not configured.')
         return dependencies.provenance.getVersionReview(request)
       }),
+    getVersionLiterature: (request) => {
+      if (!dependencies.provenance) throw new Error('Artifact Provenance is not configured.')
+      return dependencies.provenance.getVersionLiterature(request)
+    },
     getCodeReconstruction: (request) => {
       if (!dependencies.codeReconstruction) {
         throw new Error('Artifact code reconstruction is not configured.')
@@ -485,6 +494,7 @@ const registerArtifactIpcHandlers = (
     | 'getLineage'
     | 'getVersionProvenance'
     | 'getVersionCore'
+    | 'getVersionLiterature'
     | 'getVersionExecution'
     | 'getVersionMessages'
     | 'getVersionReview'
@@ -557,6 +567,10 @@ const registerArtifactIpcHandlers = (
   ipcMainHandle(
     'artifacts:get-version-provenance',
     (_event, request: GetArtifactVersionProvenanceRequest) => handlers.getVersionProvenance(request)
+  )
+  ipcMainHandle(
+    'artifacts:get-version-literature',
+    (_event, request: GetArtifactVersionProvenanceRequest) => handlers.getVersionLiterature(request)
   )
   ipcMainHandle(
     'artifacts:get-version-execution',

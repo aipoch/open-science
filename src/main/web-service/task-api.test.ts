@@ -932,7 +932,8 @@ describe('HeadlessTaskApi adapter', () => {
     expect(invoke).toHaveBeenCalledWith('preview-resources:acquire', taskCallerContext(), [
       {
         source: 'artifact',
-        path: '/artifacts/query.csv',
+        projectId: 'project-1',
+        fileId: 'artifact-query',
         mimeType: 'text/csv'
       }
     ])

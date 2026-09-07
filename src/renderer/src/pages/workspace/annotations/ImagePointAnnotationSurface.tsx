@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useLayoutEffect, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { Button } from '@/components/ui/button'
@@ -23,7 +23,10 @@ import {
   type ImagePointAnnotationSource
 } from './image-annotation-source'
 import { createAnnotationId } from './annotation-id'
-import { subscribeAnnotationReveal } from './annotation-reveal'
+import {
+  subscribeAnnotationReveal,
+  subscribeAnnotationRevealPreparation
+} from './annotation-reveal'
 import { useAnnotationSurfaceScale } from './use-annotation-surface-scale'
 
 const IMAGE_POINT_CLICK_THRESHOLD = 4
@@ -39,7 +42,7 @@ type PendingPoint = Readonly<{
 }>
 
 const sameImageVersion = (
-  annotation: ImagePointAnnotation,
+  annotation: Pick<ImagePointAnnotation, 'source'>,
   source: ImagePointAnnotationSource | undefined
 ): boolean =>
   !!source &&
@@ -88,32 +91,46 @@ const ImagePointAnnotationSurface = ({
         .map((annotation, index) => ({ annotation, number: index + 1 })),
     [activeAnnotations]
   )
-  const visibleAnnotations = numberedImageAnnotations.filter(({ annotation }) =>
-    sameImageVersion(annotation, source)
+  const visibleAnnotations = useMemo(
+    () => numberedImageAnnotations.filter(({ annotation }) => sameImageVersion(annotation, source)),
+    [numberedImageAnnotations, source]
+  )
+  const pendingIsDraft = visibleAnnotations.some(
+    ({ annotation }) => annotation.id === pending?.annotationId
   )
   const pendingNumber = numberedImageAnnotations.length + 1
   const displayNumber = pending?.number ?? pendingNumber
 
-  useEffect(
-    () =>
-      subscribeAnnotationReveal((annotationId) => {
-        const match = visibleAnnotations.find(({ annotation }) => annotation.id === annotationId)
-        if (!match) return false
-        focusReturnRef.current = surfaceRef.current
-        setPending({
-          annotationId: match.annotation.id,
-          number: match.number,
-          point: match.annotation.point,
-          source: match.annotation.source,
-          naturalSize: match.annotation.naturalSize
-        })
-        setNote(match.annotation.note)
-        setNoteRequired(false)
-        setPendingMode('preview')
-        return true
-      }),
-    [visibleAnnotations]
-  )
+  useLayoutEffect(() => {
+    let prepared: ImagePointAnnotation | undefined
+    const stopPreparation = subscribeAnnotationRevealPreparation((annotation) => {
+      prepared =
+        annotation.kind === 'image-point' && sameImageVersion(annotation, source)
+          ? annotation
+          : undefined
+    })
+    const stopReveal = subscribeAnnotationReveal((annotationId) => {
+      const match = visibleAnnotations.find(({ annotation }) => annotation.id === annotationId)
+      const annotation = match?.annotation ?? (prepared?.id === annotationId ? prepared : undefined)
+      if (!annotation || !naturalSize) return false
+      focusReturnRef.current = surfaceRef.current
+      setPending({
+        annotationId: annotation.id,
+        number: match?.number ?? 1,
+        point: annotation.point,
+        source: annotation.source,
+        naturalSize: annotation.naturalSize
+      })
+      setNote(annotation.note)
+      setNoteRequired(false)
+      setPendingMode('preview')
+      return true
+    })
+    return () => {
+      stopPreparation()
+      stopReveal()
+    }
+  }, [visibleAnnotations, source, naturalSize])
 
   const clearPending = (): void => {
     const focusReturn = focusReturnRef.current
@@ -301,7 +318,7 @@ const ImagePointAnnotationSurface = ({
           {number}
         </button>
       ))}
-      {pending ? (
+      {pending && sameImageVersion(pending, source) ? (
         <Popover open onOpenChange={(open) => !open && clearPending()}>
           <PopoverAnchor asChild>
             <span
@@ -364,7 +381,7 @@ const ImagePointAnnotationSurface = ({
               </>
             )}
             <div className="flex justify-end gap-2">
-              {pendingMode === 'preview' && pending.annotationId && onRemove ? (
+              {pendingMode === 'preview' && pendingIsDraft && pending.annotationId && onRemove ? (
                 <Button
                   type="button"
                   variant="ghost"
@@ -379,9 +396,15 @@ const ImagePointAnnotationSurface = ({
                 </Button>
               ) : null}
               {pendingMode === 'preview' ? (
-                <Button type="button" size="sm" onClick={() => setPendingMode('edit')}>
-                  {t('Edit')}
-                </Button>
+                pendingIsDraft ? (
+                  <Button type="button" size="sm" onClick={() => setPendingMode('edit')}>
+                    {t('Edit')}
+                  </Button>
+                ) : (
+                  <Button type="button" size="sm" onClick={clearPending}>
+                    {t('Close')}
+                  </Button>
+                )
               ) : (
                 <>
                   <Button

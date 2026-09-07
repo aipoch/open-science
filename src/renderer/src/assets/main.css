@@ -1,4 +1,4 @@
-/* Hallmark · pre-emit critique: P5 H5 E5 S5 R5 V4 */
+/* Hallmark · genre: modern-minimal · tone: quiet productivity · palette: existing teal semantic tokens · macrostructure: library split pane with contextual heading actions · pre-emit critique: P5 H5 E5 S5 R5 V4 */
 @import 'tailwindcss';
 @import 'tw-animate-css';
 @import './agent-markdown.css';
@@ -197,7 +197,7 @@
   --color-storage-runtime: var(--color-violet-500);
   --color-storage-uploads: var(--color-amber-500);
   --color-storage-notebooks: var(--color-emerald-500);
-  --color-storage-execution-evidence: var(--color-indigo-500);
+  --color-storage-notebook-evidence: var(--color-indigo-500);
   --color-storage-workspaces: var(--color-rose-500);
   --color-status-success-surface: var(--color-emerald-100);
   --color-status-success-foreground: var(--color-emerald-700);
@@ -433,6 +433,7 @@
   body,
   #root {
     min-height: 100vh;
+    @apply bg-bg-10;
   }
 
   body {
@@ -467,6 +468,22 @@
 }
 
 @layer components {
+  @keyframes literature-review-cta-attention-bounce {
+    0%,
+    100% {
+      transform: translateY(0);
+    }
+    40% {
+      transform: translateY(-0.25rem);
+    }
+  }
+
+  /* A finite discovery cue for the scoped review entry; the session flag prevents repeat motion. */
+  .literature-review-cta[data-attention='true'] .literature-review-cta__mark {
+    animation: literature-review-cta-attention-bounce 500ms cubic-bezier(0.28, 0.84, 0.42, 1) 700ms
+      both;
+  }
+
   .managed-version-diff-markdown :is(li, td, th):has(> [data-managed-diff-marker='added']),
   .managed-version-diff-markdown :is(li, td, th):has(> p > [data-managed-diff-marker='added']) {
     color: var(--diff-added-foreground);
@@ -873,6 +890,10 @@
   }
 
   @media (prefers-reduced-motion: reduce) {
+    .literature-review-cta[data-attention='true'] .literature-review-cta__mark {
+      animation: none;
+    }
+
     .composer-specialist-color-in {
       animation: none;
       opacity: 1;

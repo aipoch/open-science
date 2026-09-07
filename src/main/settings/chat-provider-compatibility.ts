@@ -149,6 +149,14 @@ const chatToAnthropic = (body: Json, model: string): Json => {
 }
 
 const anthropicToChat = (message: Json, model: string): Json => {
+  if (
+    message.stop_reason != null &&
+    !['end_turn', 'stop_sequence', 'tool_use', 'max_tokens', 'refusal'].includes(
+      String(message.stop_reason)
+    )
+  ) {
+    throw new Error('Unsupported upstream Messages stop reason.')
+  }
   const content = Array.isArray(message.content) ? message.content.filter(object) : []
   const toolCalls = content
     .filter((part) => part.type === 'tool_use' && typeof part.name === 'string')
@@ -166,7 +174,10 @@ const anthropicToChat = (message: Json, model: string): Json => {
     .map((part) => part.thinking)
     .join('')
   const usage = object(message.usage) ? message.usage : {}
-  const promptTokens = Number(usage.input_tokens ?? 0)
+  const promptTokens =
+    Number(usage.input_tokens ?? 0) +
+    Number(usage.cache_read_input_tokens ?? 0) +
+    Number(usage.cache_creation_input_tokens ?? 0)
   const completionTokens = Number(usage.output_tokens ?? 0)
   return {
     id: message.id ?? `chatcmpl_${Date.now()}`,
@@ -182,7 +193,14 @@ const anthropicToChat = (message: Json, model: string): Json => {
           ...(reasoning ? { reasoning_content: reasoning } : {}),
           ...(toolCalls.length > 0 ? { tool_calls: toolCalls } : {})
         },
-        finish_reason: toolCalls.length > 0 ? 'tool_calls' : 'stop'
+        finish_reason:
+          message.stop_reason === 'max_tokens'
+            ? 'length'
+            : message.stop_reason === 'refusal'
+              ? 'content_filter'
+              : toolCalls.length > 0
+                ? 'tool_calls'
+                : 'stop'
       }
     ],
     usage: {
@@ -191,6 +209,9 @@ const anthropicToChat = (message: Json, model: string): Json => {
       total_tokens: promptTokens + completionTokens,
       ...(typeof usage.cache_read_input_tokens === 'number'
         ? { prompt_tokens_details: { cached_tokens: usage.cache_read_input_tokens } }
+        : {}),
+      ...(typeof usage.cache_creation_input_tokens === 'number'
+        ? { cache_creation_input_tokens: usage.cache_creation_input_tokens }
         : {})
     }
   }
@@ -216,7 +237,9 @@ const writeChatStream = (response: ServerResponse, completion: Json): void => {
     role: 'assistant',
     content: message.content,
     ...(message.reasoning_content ? { reasoning_content: message.reasoning_content } : {}),
-    ...(message.tool_calls ? { tool_calls: message.tool_calls } : {})
+    ...(Array.isArray(message.tool_calls)
+      ? { tool_calls: message.tool_calls.map((call, index) => ({ ...call, index })) }
+      : {})
   })
   chunk({}, choice.finish_reason, completion.usage)
   response.end('data: [DONE]\n\n')

@@ -5,6 +5,7 @@ import { waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { ToolActivity } from '@/stores/session-store'
+import { useNavigationStore } from '@/stores/navigation-store'
 import type { NotebookRunRecord } from '../../../../shared/notebook'
 
 import { formatNotebookRunOutputLineMeta } from './notebook-run-figures'
@@ -150,10 +151,273 @@ describe('WorkspaceToolDetailsRow', () => {
 
     expect(container.textContent).toContain('BM25')
     expect(container.textContent).toContain('4 passages')
+    expect(container.textContent).toContain('Pages 4–13')
     expect(container.textContent).toContain('Sources')
     expect(container.textContent).toContain('paper.pdf')
     expect(container.textContent).toContain('CRAG comparison scores')
     expect(container.textContent).not.toContain('private-binding-id')
+  })
+
+  it('distinguishes batched Library searches by scope, result range, and completion', async () => {
+    const activity = createActivity({
+      providerToolName: 'mcp__open-science-library__search_library',
+      title: 'mcp__open-science-library__search_library',
+      rawInput: { scope: 'collection', query: 'TP53', offset: 20, limit: 5 },
+      toolContent: [
+        {
+          type: 'content',
+          content: {
+            type: 'text',
+            text: JSON.stringify({
+              openScienceLiteraturePresentation: {
+                libraryAction: 'search',
+                libraryScope: 'collection',
+                itemTitles: ['Paper 21', 'Paper 22'],
+                resultCount: 5,
+                totalCount: 27,
+                offset: 20,
+                limit: 5,
+                nextOffset: 25,
+                hasMore: true
+              }
+            })
+          }
+        }
+      ]
+    })
+    const details = buildToolActivityDetails(activity)
+
+    root = createRoot(container)
+    await act(async () => {
+      root.render(
+        <WorkspaceToolDetailsRow
+          activity={activity}
+          details={details!}
+          isExpanded={true}
+          onToggle={vi.fn()}
+        />
+      )
+    })
+
+    expect(container.textContent).toContain('Collections')
+    expect(container.textContent).toContain('Results 21–25 of 27')
+    expect(container.textContent).not.toContain('Page 5')
+    expect(container.textContent).toContain('More results are available')
+    expect(container.textContent).toContain('TP53')
+    expect(container.textContent).toContain('Paper 21 · Paper 22')
+  })
+
+  it.each([
+    { input: { offset: 20, limit: 20 }, output: undefined, label: 'Requested results 21–40' },
+    { input: { offset: 40 }, output: undefined, label: 'Starting at result 41' },
+    {
+      input: { offset: 40, limit: 20 },
+      output: { items: [{ title: 'Last paper' }] },
+      label: 'Results 41–41'
+    },
+    { input: { offset: 60, limit: 20 }, output: { items: [], totalCount: 50 }, label: '0 results' }
+  ])(
+    'renders search attributes without overstating returned results: $label',
+    async ({ input, output, label }) => {
+      const activity = createActivity({
+        providerToolName: 'mcp.open-science-library.search_library',
+        rawInput: { arguments: input },
+        rawOutput: output
+      })
+      root = createRoot(container)
+      await act(async () => {
+        root.render(
+          <WorkspaceToolDetailsRow
+            activity={activity}
+            details={buildToolActivityDetails(activity)!}
+            isExpanded={true}
+            onToggle={vi.fn()}
+          />
+        )
+      })
+      expect(container.textContent).toContain(label)
+      if (output !== undefined) expect(container.textContent).not.toContain('Requested results')
+    }
+  )
+
+  it('identifies a batch abstract read by its count and titles', async () => {
+    const activity = createActivity({
+      providerToolName: 'open_science_library_read_library_abstract',
+      rawInput: { itemIds: ['private-1', 'private-2'] },
+      rawOutput: { items: [{ title: 'TP53 regulation' }, { title: 'Cancer genomics' }] }
+    })
+    root = createRoot(container)
+    await act(async () => {
+      root.render(
+        <WorkspaceToolDetailsRow
+          activity={activity}
+          details={buildToolActivityDetails(activity)!}
+          isExpanded={true}
+          onToggle={vi.fn()}
+        />
+      )
+    })
+    expect(container.textContent).toContain('2 references')
+    expect(container.textContent).toContain('TP53 regulation · Cancer genomics')
+    expect(container.textContent).not.toContain('private-')
+  })
+
+  it('opens the Literature Inbox from a completed save card', async () => {
+    const activity = createActivity({
+      providerToolName: 'mcp__open-science-library__save_to_inbox',
+      rawInput: { candidates: [{ item: { title: 'Paper A' } }] },
+      toolContent: [
+        {
+          type: 'content',
+          content: {
+            type: 'text',
+            text: JSON.stringify({
+              openScienceLiteraturePresentation: {
+                libraryAction: 'save',
+                itemTitles: ['Paper A'],
+                candidateCount: 1,
+                savedCount: 1
+              }
+            })
+          }
+        }
+      ]
+    })
+
+    useNavigationStore.setState({ view: 'workspace' })
+    root = createRoot(container)
+    await act(async () => {
+      root.render(
+        <WorkspaceToolDetailsRow
+          activity={activity}
+          details={buildToolActivityDetails(activity)!}
+          isExpanded={true}
+          onToggle={vi.fn()}
+        />
+      )
+    })
+
+    const card = container.querySelector('[data-testid="literature-tool-card"]')
+    expect(card?.tagName).toBe('BUTTON')
+    expect(card?.textContent).toContain('Open')
+    act(() => card?.dispatchEvent(new MouseEvent('click', { bubbles: true })))
+    expect(useNavigationStore.getState().view).toBe('library')
+  })
+
+  it('presents citation document formatting as a first-party Literature action', async () => {
+    const activity = createActivity({
+      providerToolName: 'mcp__open-science-library__format_citation_document',
+      rawInput: { sourceFile: 'review.docx' },
+      toolContent: [
+        {
+          type: 'content',
+          content: {
+            type: 'text',
+            text: JSON.stringify({
+              openScienceLiteraturePresentation: {
+                libraryAction: 'format',
+                documentNames: ['review.cited.docx'],
+                resultCount: 4
+              }
+            })
+          }
+        }
+      ]
+    })
+    const details = buildToolActivityDetails(activity)
+
+    root = createRoot(container)
+    await act(async () => {
+      root.render(
+        <WorkspaceToolDetailsRow
+          activity={activity}
+          details={details!}
+          isExpanded={true}
+          onToggle={vi.fn()}
+        />
+      )
+    })
+
+    expect(container.textContent).toContain('Format')
+    expect(container.textContent).toContain('Citation')
+    expect(container.textContent).toContain('review.cited.docx')
+  })
+
+  it('presents formatted references as a compact Literature card', async () => {
+    const activity = createActivity({
+      providerToolName: 'mcp__open-science-library__format_references',
+      rawInput: { itemIds: ['private-item-1', 'private-item-2'], styleId: 'apa', locale: 'en-US' },
+      rawOutput: {
+        structuredContent: {
+          references: [
+            { itemId: 'private-item-1', reference: 'Reference one', inText: '(One, 2025)' },
+            { itemId: 'private-item-2', reference: 'Reference two', inText: '(Two, 2026)' }
+          ]
+        }
+      }
+    })
+
+    root = createRoot(container)
+    await act(async () => {
+      root.render(
+        <WorkspaceToolDetailsRow
+          activity={activity}
+          details={buildToolActivityDetails(activity)!}
+          isExpanded={true}
+          onToggle={vi.fn()}
+        />
+      )
+    })
+
+    expect(container.textContent).toContain('Format')
+    expect(container.textContent).toContain('APA · en-US')
+    expect(container.textContent).toContain('2 references')
+    expect(container.textContent).not.toContain('private-item-1')
+    expect(container.textContent).not.toContain('Reference one')
+  })
+
+  it('labels exact-item searches separately from Project and Collection searches', async () => {
+    const activity = createActivity({
+      providerToolName: 'mcp__open-science-library__search_library',
+      rawInput: { scope: 'items', itemIds: ['item-1', 'item-2'], limit: 20 },
+      toolContent: [
+        {
+          type: 'content',
+          content: {
+            type: 'text',
+            text: JSON.stringify({
+              openScienceLiteraturePresentation: {
+                libraryAction: 'search',
+                libraryScope: 'items',
+                itemTitles: ['Paper one', 'Paper two'],
+                resultCount: 2,
+                totalCount: 2,
+                offset: 0,
+                limit: 20,
+                hasMore: false
+              }
+            })
+          }
+        }
+      ]
+    })
+
+    root = createRoot(container)
+    await act(async () => {
+      root.render(
+        <WorkspaceToolDetailsRow
+          activity={activity}
+          details={buildToolActivityDetails(activity)!}
+          isExpanded={true}
+          onToggle={vi.fn()}
+        />
+      )
+    })
+
+    expect(container.textContent).toContain('Selected references')
+    expect(container.textContent).toContain('Results 1–2 of 2')
+    expect(container.textContent).not.toContain('Page 1')
+    expect(container.textContent).toContain('Paper one · Paper two')
   })
 
   it('does not read a path-only image artifact without a logical identity', async () => {
@@ -184,7 +448,7 @@ describe('WorkspaceToolDetailsRow', () => {
     })
     const details = buildToolActivityDetails(activity)
 
-    expect(details?.sections[0]?.kind).toBe('code')
+    expect(details?.sections[0]?.kind).toBe('summary')
 
     root = createRoot(container)
     await act(async () => {

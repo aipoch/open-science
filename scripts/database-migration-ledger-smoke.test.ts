@@ -17,10 +17,13 @@ import {
 } from './database-migration-ledger-smoke.mjs'
 import { PrismaClient } from '@prisma/client'
 
+// Match the production SQLite connection limit: migration PRAGMAs are connection-local.
+
 const rebuildComputeJobWithoutAnalysisConstraints = async (
   client: PrismaClient,
   dropAnalysisColumns: boolean
 ): Promise<void> => {
+  await client.$executeRawUnsafe('ALTER TABLE "ComputeHost" DROP COLUMN "executionMode"')
   await client.$executeRawUnsafe('ALTER TABLE "ComputeJob" DROP COLUMN "fileEvidence"')
   await client.$executeRawUnsafe('ALTER TABLE "ComputeJob" DROP COLUMN "producerRunId"')
   const [{ sql }] = await client.$queryRawUnsafe<Array<{ sql: string }>>(
@@ -37,6 +40,7 @@ const rebuildComputeJobWithoutAnalysisConstraints = async (
       : [])
   ]
   const legacyDdl = sql
+    .replace(/,\s*"executionMode" TEXT NOT NULL DEFAULT 'direct_ssh'/u, '')
     .split('\n')
     .filter((line) => removedLines.every((removed) => !line.includes(removed)))
     .join('\n')
@@ -48,6 +52,7 @@ const rebuildComputeJobWithoutAnalysisConstraints = async (
     .map(({ name }) => name)
     .filter(
       (name) =>
+        name !== 'executionMode' &&
         name !== 'remoteCleanupDisposition' &&
         (!dropAnalysisColumns ||
           !['analysisState', 'analysisMessageId', 'analysisUpdatedAt'].includes(name))
@@ -70,9 +75,36 @@ const rebuildComputeJobWithoutAnalysisConstraints = async (
   await client.$executeRawUnsafe('CREATE INDEX "ComputeJob_status_idx" ON "ComputeJob"("status")')
 }
 
+const removeArchiveAndLiteratureSchema = async (client: PrismaClient): Promise<void> => {
+  await client.$executeRawUnsafe('ALTER TABLE "PermissionGrant" DROP COLUMN "approvalSummary"')
+  await client.$executeRawUnsafe('ALTER TABLE "Project" DROP COLUMN "archiveRevision"')
+  for (const table of [
+    'ArtifactLiteratureManifest',
+    'ProjectLiterature',
+    'LiteratureCollectionItem',
+    'LiteratureCollection',
+    'LiteratureSourceRecord',
+    'LiteratureInboxPdf',
+    'LiteratureInboxCandidate',
+    'LiteratureIdentifier',
+    'LiteratureItemCreator',
+    'LiteratureCreator',
+    'LiteratureAttachmentVersion',
+    'LiteratureAttachment',
+    'LiteratureItem'
+  ]) {
+    await client.$executeRawUnsafe(`DROP TABLE "${table}"`)
+  }
+  await client.$executeRawUnsafe('DROP INDEX "UploadVersion_contentBlobId_idx"')
+  await client.$executeRawUnsafe('DROP INDEX "ArtifactVersion_contentBlobId_idx"')
+  await client.$executeRawUnsafe('ALTER TABLE "UploadVersion" DROP COLUMN "contentBlobId"')
+  await client.$executeRawUnsafe('ALTER TABLE "ArtifactVersion" DROP COLUMN "contentBlobId"')
+  await client.$executeRawUnsafe('DROP TABLE "ContentBlob"')
+}
+
 describe('packaged database migration ledger smoke', () => {
   it('pins every packaged application migration identity and checksum', () => {
-    expect(MIGRATION_MANIFEST.slice(-6).map(({ id, checksum }) => ({ id, checksum }))).toEqual([
+    expect(MIGRATION_MANIFEST.slice(-11).map(({ id, checksum }) => ({ id, checksum }))).toEqual([
       {
         id: '0023_compute_job_operation',
         checksum: 'c625e336996c7dd1eba64da8ccd306104ccd68cf219e60ee2c3889749f86b079'
@@ -96,6 +128,26 @@ describe('packaged database migration ledger smoke', () => {
       {
         id: '0028_database_numeric_and_null_constraints',
         checksum: '7ee2e3ec746080d5e1bedcddaea5ded1b080d8bcbc8ec59ed4139ff8c5e5de4a'
+      },
+      {
+        id: '0029_compute_host_execution_mode',
+        checksum: 'cb99c71c85d5632a42a06a9de0659f67874a9e347af5ca0aa41925d27146c49d'
+      },
+      {
+        id: '0030_literature_foundation',
+        checksum: '0f432ea09aec2d7edbd9834a4f2c38dd6bc4870cd4ff01d4ea4899b3e66dc5e2'
+      },
+      {
+        id: '0031_project_archive_revision',
+        checksum: '77d0476e02c6993e54772e2a17908b62a6998c540c56d826a691fe358ac1093a'
+      },
+      {
+        id: '0032_permission_approval_summary',
+        checksum: '84b4035c8bd97ac41a7d08e630b6af9205cff6012e1ae02e5e9dbaaf25979c66'
+      },
+      {
+        id: '0033_compute_job_harvest_retry',
+        checksum: 'd248c3aeb6db69b95e1fc5706ebc01146b841bd3e5c5c2c5900312d3ba9e40e6'
       }
     ])
     expect(() => assertApplicationMigrationLedger(MIGRATION_MANIFEST)).not.toThrow()
@@ -107,7 +159,9 @@ describe('packaged database migration ledger smoke', () => {
   it('adds automatic-analysis state without reclassifying historical Compute Jobs', async () => {
     const root = await mkdtemp(join(tmpdir(), 'open-science-ledger-job-analysis-'))
     const databasePath = join(root, 'open-science.db').replaceAll('\\', '/')
-    const client = new PrismaClient({ datasources: { db: { url: `file:${databasePath}` } } })
+    const client = new PrismaClient({
+      datasources: { db: { url: `file:${databasePath}?connection_limit=1` } }
+    })
 
     try {
       await migrateApplicationDatabase(client)
@@ -132,8 +186,9 @@ describe('packaged database migration ledger smoke', () => {
         })
       }
       await rebuildComputeJobWithoutAnalysisConstraints(client, true)
+      await removeArchiveAndLiteratureSchema(client)
       await client.$executeRawUnsafe(
-        `DELETE FROM "_open_science_migrations" WHERE "id" IN ('0020_compute_job_analysis_state', '0021_compute_job_analysis_constraints', '0022_memory_global_content_unique', '0023_compute_job_operation', '0024_compute_job_file_evidence', '0025_managed_file_version_foundation', '0026_compute_job_remote_cleanup', '0027_project_session_defaults', '0028_database_numeric_and_null_constraints')`
+        `DELETE FROM "_open_science_migrations" WHERE "id" IN ('0020_compute_job_analysis_state', '0021_compute_job_analysis_constraints', '0022_memory_global_content_unique', '0023_compute_job_operation', '0024_compute_job_file_evidence', '0025_managed_file_version_foundation', '0026_compute_job_remote_cleanup', '0027_project_session_defaults', '0028_database_numeric_and_null_constraints', '0029_compute_host_execution_mode', '0030_literature_foundation', '0031_project_archive_revision', '0032_permission_approval_summary', '0033_compute_job_harvest_retry')`
       )
 
       await migrateApplicationDatabase(client)
@@ -163,13 +218,15 @@ describe('packaged database migration ledger smoke', () => {
   it('blocks analysis constraints when a historical Compute Job has an invalid state', async () => {
     const root = await mkdtemp(join(tmpdir(), 'open-science-ledger-job-analysis-invalid-'))
     const databasePath = join(root, 'open-science.db').replaceAll('\\', '/')
-    const client = new PrismaClient({ datasources: { db: { url: `file:${databasePath}` } } })
+    const client = new PrismaClient({
+      datasources: { db: { url: `file:${databasePath}?connection_limit=1` } }
+    })
 
     try {
       await migrateApplicationDatabase(client)
       await rebuildComputeJobWithoutAnalysisConstraints(client, false)
       await client.$executeRawUnsafe(
-        `DELETE FROM "_open_science_migrations" WHERE "id" IN ('0021_compute_job_analysis_constraints', '0022_memory_global_content_unique', '0023_compute_job_operation', '0024_compute_job_file_evidence', '0025_managed_file_version_foundation', '0026_compute_job_remote_cleanup', '0027_project_session_defaults', '0028_database_numeric_and_null_constraints')`
+        `DELETE FROM "_open_science_migrations" WHERE "id" IN ('0021_compute_job_analysis_constraints', '0022_memory_global_content_unique', '0023_compute_job_operation', '0024_compute_job_file_evidence', '0025_managed_file_version_foundation', '0026_compute_job_remote_cleanup', '0027_project_session_defaults', '0028_database_numeric_and_null_constraints', '0029_compute_host_execution_mode', '0030_literature_foundation', '0031_project_archive_revision', '0032_permission_approval_summary', '0033_compute_job_harvest_retry')`
       )
       await client.$executeRawUnsafe(`INSERT INTO "ComputeJob" (
         "id", "providerId", "shape", "sessionId", "projectId", "status", "intent",
@@ -197,13 +254,15 @@ describe('packaged database migration ledger smoke', () => {
   it('blocks the global Memory index without deleting duplicate historical entries', async () => {
     const root = await mkdtemp(join(tmpdir(), 'open-science-ledger-memory-duplicate-'))
     const databasePath = join(root, 'open-science.db').replaceAll('\\', '/')
-    const client = new PrismaClient({ datasources: { db: { url: `file:${databasePath}` } } })
+    const client = new PrismaClient({
+      datasources: { db: { url: `file:${databasePath}?connection_limit=1` } }
+    })
 
     try {
       await migrateApplicationDatabase(client)
       await client.$executeRawUnsafe('DROP INDEX "MemoryEntry_global_contentKey_key"')
       await client.$executeRawUnsafe(
-        `DELETE FROM "_open_science_migrations" WHERE "id" IN ('0022_memory_global_content_unique', '0023_compute_job_operation', '0024_compute_job_file_evidence', '0025_managed_file_version_foundation', '0026_compute_job_remote_cleanup', '0027_project_session_defaults', '0028_database_numeric_and_null_constraints')`
+        `DELETE FROM "_open_science_migrations" WHERE "id" IN ('0022_memory_global_content_unique', '0023_compute_job_operation', '0024_compute_job_file_evidence', '0025_managed_file_version_foundation', '0026_compute_job_remote_cleanup', '0027_project_session_defaults', '0028_database_numeric_and_null_constraints', '0029_compute_host_execution_mode', '0030_literature_foundation', '0031_project_archive_revision', '0032_permission_approval_summary', '0033_compute_job_harvest_retry')`
       )
       await client.memoryEntry.createMany({
         data: [
@@ -239,7 +298,9 @@ describe('packaged database migration ledger smoke', () => {
   it('adds usage attribution columns without changing existing usage rows', async () => {
     const root = await mkdtemp(join(tmpdir(), 'open-science-ledger-usage-attribution-'))
     const databasePath = join(root, 'open-science.db').replaceAll('\\', '/')
-    const client = new PrismaClient({ datasources: { db: { url: `file:${databasePath}` } } })
+    const client = new PrismaClient({
+      datasources: { db: { url: `file:${databasePath}?connection_limit=1` } }
+    })
 
     try {
       await migrateApplicationDatabase(client)
@@ -301,9 +362,10 @@ describe('packaged database migration ledger smoke', () => {
         'ALTER TABLE "SessionAuxiliaryTurnUsage" DROP COLUMN "providerId"'
       )
       await client.$executeRawUnsafe(
-        `DELETE FROM "_open_science_migrations" WHERE "id" IN ('0019_session_usage_attribution', '0020_compute_job_analysis_state', '0021_compute_job_analysis_constraints', '0022_memory_global_content_unique', '0023_compute_job_operation', '0024_compute_job_file_evidence', '0025_managed_file_version_foundation', '0026_compute_job_remote_cleanup', '0027_project_session_defaults', '0028_database_numeric_and_null_constraints')`
+        `DELETE FROM "_open_science_migrations" WHERE "id" IN ('0019_session_usage_attribution', '0020_compute_job_analysis_state', '0021_compute_job_analysis_constraints', '0022_memory_global_content_unique', '0023_compute_job_operation', '0024_compute_job_file_evidence', '0025_managed_file_version_foundation', '0026_compute_job_remote_cleanup', '0027_project_session_defaults', '0028_database_numeric_and_null_constraints', '0029_compute_host_execution_mode', '0030_literature_foundation', '0031_project_archive_revision', '0032_permission_approval_summary', '0033_compute_job_harvest_retry')`
       )
       await rebuildComputeJobWithoutAnalysisConstraints(client, true)
+      await removeArchiveAndLiteratureSchema(client)
 
       await migrateApplicationDatabase(client)
 
@@ -344,7 +406,9 @@ describe('packaged database migration ledger smoke', () => {
   it('adds Review query indexes without changing existing Review or Finding rows', async () => {
     const root = await mkdtemp(join(tmpdir(), 'open-science-ledger-review-indexes-'))
     const databasePath = join(root, 'open-science.db').replaceAll('\\', '/')
-    const client = new PrismaClient({ datasources: { db: { url: `file:${databasePath}` } } })
+    const client = new PrismaClient({
+      datasources: { db: { url: `file:${databasePath}?connection_limit=1` } }
+    })
 
     try {
       await migrateApplicationDatabase(client)
@@ -379,10 +443,13 @@ describe('packaged database migration ledger smoke', () => {
            '0025_managed_file_version_foundation',
            '0026_compute_job_remote_cleanup',
            '0027_project_session_defaults',
-           '0028_database_numeric_and_null_constraints'
+           '0028_database_numeric_and_null_constraints',
+           '0029_compute_host_execution_mode',
+           '0030_literature_foundation', '0031_project_archive_revision', '0032_permission_approval_summary', '0033_compute_job_harvest_retry'
          )`
       )
       await rebuildComputeJobWithoutAnalysisConstraints(client, true)
+      await removeArchiveAndLiteratureSchema(client)
       await client.$executeRawUnsafe(
         'ALTER TABLE "ComputeJob" DROP COLUMN "sensitiveDataEncrypted"'
       )
@@ -433,7 +500,9 @@ describe('packaged database migration ledger smoke', () => {
     const root = await mkdtemp(join(tmpdir(), 'open-science-ledger-auth-persistence-'))
     await seedLegacyDatabase(root)
     const databasePath = join(root, 'open-science.db').replaceAll('\\', '/')
-    const client = new PrismaClient({ datasources: { db: { url: `file:${databasePath}` } } })
+    const client = new PrismaClient({
+      datasources: { db: { url: `file:${databasePath}?connection_limit=1` } }
+    })
 
     try {
       await migrateApplicationDatabase(client)
@@ -535,7 +604,9 @@ describe('packaged database migration ledger smoke', () => {
     try {
       await seedLegacyDatabase(root)
       const databasePath = join(root, 'open-science.db').replaceAll('\\', '/')
-      const client = new PrismaClient({ datasources: { db: { url: `file:${databasePath}` } } })
+      const client = new PrismaClient({
+        datasources: { db: { url: `file:${databasePath}?connection_limit=1` } }
+      })
       try {
         await expect(client.$queryRawUnsafe('SELECT "id" FROM "Project"')).resolves.toHaveLength(1)
         await expect(
@@ -556,7 +627,9 @@ describe('packaged database migration ledger smoke', () => {
     try {
       await seedLegacyDatabase(root)
       const databasePath = join(root, 'open-science.db').replaceAll('\\', '/')
-      const client = new PrismaClient({ datasources: { db: { url: `file:${databasePath}` } } })
+      const client = new PrismaClient({
+        datasources: { db: { url: `file:${databasePath}?connection_limit=1` } }
+      })
       try {
         await client.$executeRawUnsafe(
           `ALTER TABLE "Project" ADD COLUMN "agentContext" TEXT NOT NULL DEFAULT ''`

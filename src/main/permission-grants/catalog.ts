@@ -7,6 +7,8 @@ import type {
   PermissionGrantView
 } from '../../shared/permission-grants'
 import { missingDefaultGlobalPermissionCapabilities } from './defaults'
+import { approvalSummaryFor } from './approval-summary'
+import { CONNECTOR_CATALOG } from '../connectors/catalog'
 
 type PermissionGrantNames = {
   projects?: ReadonlyMap<string, string>
@@ -129,7 +131,11 @@ const connectorProjection = (
   policy: ConnectorPolicySnapshot | undefined
 ): Pick<
   PermissionGrantView,
-  'connectorServerId' | 'connectorToolName' | 'effectiveState' | 'policyHint'
+  | 'connectorServerId'
+  | 'connectorDisplayName'
+  | 'connectorToolName'
+  | 'effectiveState'
+  | 'policyHint'
 > => {
   if (record.capability.kind !== 'mcp_tool') return {}
   const match = /^mcp:([^/]+)\/(.+)$/.exec(record.capability.key)
@@ -137,7 +143,10 @@ const connectorProjection = (
   const [, serverId, toolName] = match
   const custom = policy?.customMcpServers?.find((server) => server.id === serverId)
   const isBundled = policy?.bundledConnectorIds?.includes(serverId) ?? false
-  if (!custom && !isBundled) return {}
+  if (!custom && !isBundled)
+    return serverId.startsWith('open-science-')
+      ? {}
+      : { connectorServerId: serverId, connectorDisplayName: serverId, connectorToolName: toolName }
   const aliases = custom ? [custom.name] : [serverId]
   const hasToolPolicy = (entries: readonly string[] | undefined): boolean =>
     aliases.some((alias) => entries?.includes(`${alias}/${toolName}`)) ?? false
@@ -151,6 +160,10 @@ const connectorProjection = (
 
   return {
     connectorServerId: serverId,
+    connectorDisplayName:
+      custom?.displayName ||
+      CONNECTOR_CATALOG.find((connector) => connector.id === serverId)?.displayName ||
+      serverId,
     connectorToolName: toolName,
     effectiveState: blocked ? 'blocked_by_policy' : covered ? 'covered_by_policy' : 'active',
     ...(blocked
@@ -185,6 +198,20 @@ const projectGrantRecord = (
     ...(qualifierLabelFor(record) ? { qualifierLabel: qualifierLabelFor(record) } : {}),
     scopeKind: scope.kind,
     scopeLabel,
+    scopeName: (scope.kind === 'project' ? projectName : sessionName) ?? null,
+    ...(record.capability.qualifier
+      ? {
+          qualifierKind:
+            record.capability.qualifier.mode === 'category' &&
+            record.capability.kind === 'execution' &&
+            record.capability.qualifier.value.startsWith('argv-prefix:sha256:v1:')
+              ? ('command_group' as const)
+              : record.capability.qualifier.mode
+        }
+      : {}),
+    ...(record.approvalSummary && record.approvalSummary === approvalSummaryFor(record.capability)
+      ? { approvalSummary: record.approvalSummary }
+      : {}),
     ...(coveredBy ? { coveredBy } : {}),
     ...connectorProjection(record, names.connectorPolicy),
     ...(scope.kind === 'global' ? {} : { projectId: scope.projectId }),
@@ -221,6 +248,7 @@ const projectPermissionGrantMutation = (
 ): PermissionGrantMutationView => ({
   ...projectPermissionGrantSnapshot(result.grants, names, metadata),
   ...(result.receipt ? { receipt: result.receipt } : {}),
+  ...(result.restoredCount !== undefined ? { restoredCount: result.restoredCount } : {}),
   conflicts: result.conflicts
 })
 

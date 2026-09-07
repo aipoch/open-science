@@ -15,6 +15,7 @@ export const ARTIFACT_IMAGE_PREVIEW_BYTES = 1024 * 1024
 export const getArtifactName = (artifact: MessageArtifact): string => artifact.name ?? artifact.path
 
 export const isPendingArtifactPublication = (artifact: MessageArtifact): boolean => {
+  if (artifact.versionId) return artifact.isPublished !== true
   const segments = artifact.path.split(/[\\/]+/u)
   // Pending files end in `.pending/<runId>/<filename>`; a published filename may itself be `.pending`.
   return segments[segments.length - 3] === '.pending'

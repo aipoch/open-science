@@ -15,10 +15,12 @@ import type {
   NpmAvailability
 } from '../../shared/settings'
 import { terminateProcessTree } from '../process-tree'
+import { createLogger, diagnosticErrorFields } from '../logger'
 import { augmentedPathEnv } from './shell-path'
 
 const execFileAsync = promisify(execFile)
 const INSTALL_CLEANUP_TIMEOUT_MS = 8_000
+const log = createLogger('settings-install')
 
 // Constructs and runs the one-click claude installer for a chosen source, streaming output back so
 // the UI can show live progress and never spin silently. Command construction is pure and testable;
@@ -279,6 +281,8 @@ export type RunInstallOptions = {
   source: ClaudeInstallSource
   installId: string
   onEvent: (event: ClaudeInstallEvent) => void
+  signal?: AbortSignal
+  onCleanupFailure?: (error: Error) => void
   timeoutMs?: number
   // Host platform, injectable so tests exercise a fixed OS's spawn spec (e.g. bash vs powershell for
   // the official script) regardless of the machine running them. Defaults to the real process.platform.
@@ -300,7 +304,7 @@ export type RunInstallOptions = {
 // Options for the region-block-aware install. Extends the run options with an injectable npm probe so
 // the fallback's availability check can be driven in tests without shelling out to a real npm.
 export type RunInstallWithFallbackOptions = RunInstallOptions & {
-  npmProbe?: () => Promise<unknown>
+  npmProbe?: (signal?: AbortSignal) => Promise<unknown>
   // Maximum extra attempts after the initial one (default 2 → total 3). Injectable so tests skip waits.
   maxNetworkRetries?: number
   // Delay between network-failure retries; injectable so tests run instantly.
@@ -327,6 +331,8 @@ const runInstall = async ({
   source,
   installId,
   onEvent,
+  signal,
+  onCleanupFailure,
   timeoutMs = DEFAULT_INSTALL_TIMEOUT_MS,
   spawnImpl = defaultInstallSpawn,
   platform = process.platform,
@@ -340,6 +346,8 @@ const runInstall = async ({
     source === 'npm' && platform !== 'win32' && !(await npmPrefixWritable())
       ? join(homedir(), '.local')
       : undefined
+
+  if (signal?.aborted) return { installId, ok: false, error: 'Installation cancelled.' }
 
   const spec = getInstallSpawnSpec(source, platform, npmPrefixOverride, installTarget)
   const publisher = createInstallStreamPublisher(installId, onEvent)
@@ -366,7 +374,7 @@ const runInstall = async ({
     publisher.progress({ kind: 'progress', installId, phase: 'installing' })
 
     let settled = false
-    let timedOut = false
+    let terminating = false
     let cleanupTimer: ReturnType<typeof setTimeout> | undefined
     // Bounded tail of stdout+stderr, scanned on failure to spot a region-block HTML page.
     let captured = ''
@@ -382,25 +390,47 @@ const runInstall = async ({
       settled = true
       clearTimeout(timer)
       if (cleanupTimer !== undefined) clearTimeout(cleanupTimer)
+      signal?.removeEventListener('abort', abortInstall)
       publisher.flush()
       resolve(result)
     }
 
-    const timer = setTimeout(() => {
-      timedOut = true
-      publisher.log('system', 'Install timed out; terminating.\n')
-      const cleanupDeadline = new Promise<void>((resolve) => {
-        cleanupTimer = setTimeout(resolve, INSTALL_CLEANUP_TIMEOUT_MS)
+    const terminate = (result: ClaudeInstallResult, message: string): void => {
+      if (settled || terminating) return
+      terminating = true
+      publisher.log('system', message)
+      const cleanupDeadline = new Promise<Error>((resolve) => {
+        cleanupTimer = setTimeout(
+          () => resolve(new Error('Installer process tree cleanup timed out.')),
+          INSTALL_CLEANUP_TIMEOUT_MS
+        )
         cleanupTimer.unref?.()
       })
       void Promise.race([
         terminateProcessTree(child).then(
-          () => undefined,
-          () => undefined
+          ({ reaped }) =>
+            reaped ? undefined : new Error('Installer process tree cleanup was not confirmed.'),
+          (cause: unknown) => new Error('Installer process tree cleanup failed.', { cause })
         ),
         cleanupDeadline
-      ]).then(() => settle({ installId, ok: false, timedOut: true }))
+      ]).then((error) => {
+        if (error) {
+          log.warn('installer cleanup failed', { installId, ...diagnosticErrorFields(error) })
+          onCleanupFailure?.(error)
+        }
+        settle(result)
+      })
+    }
+
+    const abortInstall = (): void => {
+      terminate({ installId, ok: false, error: 'Installation cancelled.' }, 'Install cancelled.\n')
+    }
+
+    const timer = setTimeout(() => {
+      terminate({ installId, ok: false, timedOut: true }, 'Install timed out; terminating.\n')
     }, timeoutMs)
+    signal?.addEventListener('abort', abortInstall, { once: true })
+    if (signal?.aborted) abortInstall()
 
     child.stdout.on('data', (data: Buffer) => {
       const chunk = data.toString('utf8')
@@ -415,12 +445,12 @@ const runInstall = async ({
     })
 
     child.on('error', (error) => {
-      if (timedOut) return
+      if (terminating) return
       settle({ installId, ok: false, error: error.message })
     })
 
     child.on('exit', (code) => {
-      if (timedOut) return
+      if (terminating) return
       const ok = code === 0
 
       settle({
@@ -442,17 +472,19 @@ const runInstall = async ({
 // Reports whether npm is on PATH so the UI can default to/enable the npm source. PATH is augmented
 // with common node locations so a GUI-launched app doesn't falsely report npm as missing.
 const detectNpmAvailable = async (
-  runNpm: () => Promise<unknown> = () =>
+  runNpm: (signal?: AbortSignal) => Promise<unknown> = (signal) =>
     execFileAsync('npm', ['--version'], {
       timeout: 10_000,
       // On Windows npm is an `npm.cmd` shim that execFile can't launch without a shell.
       shell: process.platform === 'win32',
       windowsHide: true,
+      signal,
       env: augmentedPathEnv()
-    })
+    }),
+  signal?: AbortSignal
 ): Promise<NpmAvailability> => {
   try {
-    await runNpm()
+    await runNpm(signal)
 
     return { available: true }
   } catch {
@@ -470,6 +502,8 @@ const runInstallWithFallback = async ({
   source,
   installId,
   onEvent,
+  signal,
+  onCleanupFailure,
   timeoutMs,
   spawnImpl,
   platform,
@@ -485,6 +519,8 @@ const runInstallWithFallback = async ({
       source,
       installId,
       onEvent,
+      signal,
+      onCleanupFailure,
       timeoutMs,
       spawnImpl,
       platform,
@@ -494,9 +530,11 @@ const runInstallWithFallback = async ({
 
     if (result.ok || source !== 'official-script' || !result.regionBlocked) return result
 
-    const { available } = await detectNpmAvailable(npmProbe)
+    const { available } = await detectNpmAvailable(npmProbe, signal)
 
-    if (!available) return result
+    if (!available || signal?.aborted) {
+      return signal?.aborted ? { installId, ok: false, error: 'Installation cancelled.' } : result
+    }
 
     onEvent({
       kind: 'log',
@@ -509,6 +547,8 @@ const runInstallWithFallback = async ({
       source: 'npm',
       installId,
       onEvent,
+      signal,
+      onCleanupFailure,
       timeoutMs,
       spawnImpl,
       platform,
@@ -522,7 +562,14 @@ const runInstallWithFallback = async ({
   for (let attempt = 0; ; attempt++) {
     const result = await runOnce()
 
-    if (result.ok || !result.retryableNetworkFailure || attempt >= maxNetworkRetries) return result
+    if (
+      result.ok ||
+      signal?.aborted ||
+      !result.retryableNetworkFailure ||
+      attempt >= maxNetworkRetries
+    ) {
+      return signal?.aborted ? { installId, ok: false, error: 'Installation cancelled.' } : result
+    }
 
     const backoffMs = Math.min(2000 * 2 ** attempt, 15_000)
     onEvent({
@@ -531,7 +578,21 @@ const runInstallWithFallback = async ({
       stream: 'system',
       chunk: `Install interrupted, retrying… (attempt ${attempt + 2})\n`
     })
-    await retrySleep(backoffMs)
+    if (!signal) {
+      await retrySleep(backoffMs)
+      continue
+    }
+    let abortRetry = (): void => undefined
+    const aborted = new Promise<void>((resolve) => {
+      abortRetry = resolve
+      signal.addEventListener('abort', abortRetry, { once: true })
+    })
+    try {
+      await Promise.race([retrySleep(backoffMs), aborted])
+    } finally {
+      signal.removeEventListener('abort', abortRetry)
+    }
+    if (signal.aborted) return { installId, ok: false, error: 'Installation cancelled.' }
   }
 }
 

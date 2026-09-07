@@ -6,7 +6,6 @@ import {
 import type { AcpHandlerWorkflows } from './acp/handler-workflows'
 import type { AcpRuntimeCoordinator } from './acp/runtime-coordinator'
 import { installComputeIpcHandlers, type ComputeIpcAdapter } from './compute/ipc'
-import type { ElicitationResponse } from '../shared/acp'
 
 type Awaitable<T> = T | Promise<T>
 
@@ -28,9 +27,6 @@ export type ElectronRuntimeAdapterInterfaces = {
     workflows: AcpHandlerWorkflows
     sessionAdmission: AcpIpcSessionAdmission
     resolveMemoryEnabled?: AcpSessionMemoryPreferenceResolver
-    respondDelegatedQuestion?: (
-      input: NonNullable<ElicitationResponse['delegatedQuestion']> & { requestId: string }
-    ) => Promise<void>
   }
   readonly afterAcp: readonly NamedElectronSurfaceAdapter[]
 }
@@ -74,7 +70,6 @@ export const installElectronRuntimeAdapters = async ({
       installAcpIpcHandlers(
         acp.runtime,
         acp.workflows,
-        acp.respondDelegatedQuestion,
         acp.sessionAdmission,
         acp.resolveMemoryEnabled
       )

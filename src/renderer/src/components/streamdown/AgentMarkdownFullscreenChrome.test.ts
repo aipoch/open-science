@@ -7,14 +7,18 @@ import { Streamdown } from 'streamdown'
 import { describe, expect, it } from 'vitest'
 
 describe('AgentMarkdown fullscreen chrome', () => {
-  it('hides empty streaming blocks before the terminal block without any caret styling', () => {
+  it('keeps per-commit structural re-match selectors out of the streaming block', () => {
     const css = readFileSync(resolve(__dirname, '../../assets/agent-markdown.css'), 'utf8')
     const streamingBlock = css.slice(
       css.indexOf('.agent-markdown-streaming'),
       css.indexOf('/* --- Streamdown dropdown panels')
     )
 
-    expect(streamingBlock).toContain('& > div > :empty:not(:last-child)')
+    // Quote/empty-block hiding while streaming is decided render-side (createStreamingBlockquote);
+    // :has()/:empty here would re-match on every streamed DOM mutation.
+    expect(streamingBlock).not.toContain(':has(')
+    expect(streamingBlock).not.toContain(':empty')
+    expect(streamingBlock).toContain('& hr {')
     expect(streamingBlock).not.toContain('cursor-blink')
     expect(streamingBlock).not.toContain('background-color: currentColor')
   })

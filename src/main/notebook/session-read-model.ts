@@ -98,7 +98,7 @@ type NotebookSessionReadModelOptions<Session extends NotebookSessionReadSource> 
   defaultProjectId: string
   repository: NotebookRunRepository
   dependencyAnalyzer: Pick<NotebookDependencyAnalyzer, 'project'>
-  findSession: (sessionId: string) => Session | undefined
+  findSession: (projectId: string, sessionId: string) => Session | undefined
   runtimeBindings: (session: Session) => NotebookRuntimeBindings
   runtimeEnvironment?: (session: Session, language: NotebookLanguage) => string
   isRestartRecommended: (processKey: string) => boolean
@@ -110,7 +110,7 @@ class NotebookSessionReadModel<Session extends NotebookSessionReadSource> {
 
   // A handoff peek must never create a Session or read disk: absent/non-actionable live state is absent.
   peekHandoffContext(sessionId: string): NotebookHandoffContext | undefined {
-    const session = this.options.findSession(sessionId)
+    const session = this.options.findSession(this.options.defaultProjectId, sessionId)
     if (!session) return undefined
 
     const snapshot = session.snapshot()
@@ -249,8 +249,10 @@ class NotebookSessionReadModel<Session extends NotebookSessionReadSource> {
     request: NotebookSessionRequest
   ): Promise<NotebookSessionReference | null> {
     const projectId = resolveProjectId(request, this.options.defaultProjectId)
-    const live = this.options.findSession(request.sessionId)
-    if (live) return this.toSessionReference(live)
+    const live = this.options.findSession(projectId, request.sessionId)
+    if (live?.projectId === projectId && live.sessionId === request.sessionId) {
+      return this.toSessionReference(live)
+    }
 
     const document = await this.options.repository.findAnyExisting(projectId, request.sessionId)
     if (!document) return null

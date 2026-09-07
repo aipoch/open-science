@@ -97,10 +97,15 @@ class SessionPlanInteractionOwner {
     return this.rows.get(sessionId)?.approval?.interactionId
   }
 
-  resolveApproval(sessionId: string, result: unknown): boolean {
+  // The parking object is an opaque, non-reusable identity, including when a prompt ID is reused.
+  approvalTokenFor(sessionId: string): object | undefined {
+    return this.rows.get(sessionId)?.approval
+  }
+
+  resolveApproval(sessionId: string, result: unknown, expectedToken: object | undefined): boolean {
     const row = this.rows.get(sessionId)
     const approval = row?.approval
-    if (!row || !approval) return false
+    if (!row || !approval || approval !== expectedToken) return false
     delete row.approval
     this.prune(sessionId, row)
     approval.resolve(result)

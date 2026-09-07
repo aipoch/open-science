@@ -146,7 +146,7 @@ const createDeletionRuntimeHarness = async (
   deleteOwner(): Promise<unknown>
   releaseCleanupPlanning(): void
   releaseRemoteCleanup(): void
-  runScheduledPoll(): void
+  runScheduledPoll(): Promise<void>
   survivorStatus(): Promise<JobStatusResult>
   deletedStatus(): Promise<JobStatusResult>
   dispose(): Promise<void>
@@ -207,6 +207,7 @@ const createDeletionRuntimeHarness = async (
 
   let scheduledTick: (() => void) | undefined
   const initialTick = deferred()
+  const survivorUpdated = deferred()
   const pollerRepository = Object.create(jobRepository) as ComputeJobRepository
   pollerRepository.findNonTerminal = async () => {
     const jobs = await jobRepository.findNonTerminal()
@@ -217,6 +218,9 @@ const createDeletionRuntimeHarness = async (
     connectionBroker,
     hostRepository,
     jobRepository: pollerRepository,
+    onJobUpdated: (job) => {
+      if (job.job_id === 'survivor-job') survivorUpdated.resolve()
+    },
     makeNonce: () => NONCE,
     setInterval: (callback) => {
       scheduledTick = callback
@@ -296,9 +300,10 @@ const createDeletionRuntimeHarness = async (
     deleteOwner: () => deletionCase.deleteOwner(coordinator),
     releaseCleanupPlanning: releaseCleanupPlanning.resolve,
     releaseRemoteCleanup: releaseRemoteCleanup.resolve,
-    runScheduledPoll: () => {
+    runScheduledPoll: async () => {
       if (!scheduledTick) throw new Error('Job poller did not install its scheduled tick.')
       scheduledTick()
+      await survivorUpdated.promise
     },
     survivorStatus: () =>
       readStatus('survivor-job', deletionCase.survivorProjectId, 'survivor-session'),
@@ -308,7 +313,7 @@ const createDeletionRuntimeHarness = async (
       releaseCleanupPlanning.resolve()
       releaseRemoteCleanup.resolve()
       unbindRuntime()
-      poller.stop()
+      await poller.stop()
       await client.$disconnect()
       await rm(storageRoot, { recursive: true, force: true })
     }

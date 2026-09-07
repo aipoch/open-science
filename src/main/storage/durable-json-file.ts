@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto'
-import { mkdir, readFile, readdir, rename, rm, stat, writeFile } from 'node:fs/promises'
+import { mkdir, open, readFile, readdir, rename, rm, stat, writeFile } from 'node:fs/promises'
 import { basename, dirname, join } from 'node:path'
+import { StringDecoder } from 'node:string_decoder'
 
 import { defaultFileDurability } from './file-durability'
 import { retryFileReplacement } from './file-replacement'
@@ -32,6 +33,7 @@ export type DurableJsonFileDependencies = {
   mkdir(path: string, options: { recursive: true }): Promise<unknown>
   readDirectoryEntries(path: string): Promise<DurableJsonDirectoryEntry[]>
   readFile(path: string): Promise<string>
+  readFileWithinLimit(path: string, maxBytes: number): Promise<string>
   remove(path: string, options: { force: true; recursive: false }): Promise<void>
   rename(source: string, destination: string): Promise<void>
   stat(path: string): Promise<DurableJsonFileStat>
@@ -45,11 +47,53 @@ export type DurableJsonFileDependencies = {
 // Recovery must preserve it and stop instead of falling back to an older decodable candidate.
 export class DurableJsonRecoveryBarrierError extends Error {}
 
+export class DurableJsonReadLimitError extends DurableJsonRecoveryBarrierError {
+  constructor(
+    readonly fileName: string,
+    readonly maxBytes: number
+  ) {
+    super(`${fileName} exceeds the ${maxBytes} byte read limit.`)
+    this.name = 'DurableJsonReadLimitError'
+  }
+}
+
+const BOUNDED_READ_CHUNK_BYTES = 64 * 1024
+
+export const readFileWithinLimit = async (path: string, maxBytes: number): Promise<string> => {
+  const file = await open(path, 'r')
+  try {
+    const metadata = await file.stat()
+    if (!metadata.isFile()) throw new Error(`${basename(path)} is not a regular file.`)
+    if (metadata.size > maxBytes) throw new DurableJsonReadLimitError(basename(path), maxBytes)
+
+    const decoder = new StringDecoder('utf8')
+    const parts: string[] = []
+    let bytesReadTotal = 0
+    while (bytesReadTotal <= maxBytes) {
+      const buffer = Buffer.allocUnsafe(
+        Math.min(BOUNDED_READ_CHUNK_BYTES, maxBytes + 1 - bytesReadTotal)
+      )
+      const { bytesRead } = await file.read(buffer, 0, buffer.length, null)
+      if (bytesRead === 0) break
+      bytesReadTotal += bytesRead
+      if (bytesReadTotal > maxBytes) {
+        throw new DurableJsonReadLimitError(basename(path), maxBytes)
+      }
+      parts.push(decoder.write(buffer.subarray(0, bytesRead)))
+    }
+    parts.push(decoder.end())
+    return parts.join('')
+  } finally {
+    await file.close()
+  }
+}
+
 const DEFAULT_DEPENDENCIES: DurableJsonFileDependencies = {
   createTemporarySuffix: () => `${process.pid}-${randomUUID()}`,
   mkdir: (path, options) => mkdir(path, options),
   readDirectoryEntries: (path) => readdir(path, { withFileTypes: true }),
   readFile: (path) => readFile(path, 'utf8'),
+  readFileWithinLimit,
   remove: (path, options) => rm(path, options),
   rename: (source, destination) => rename(source, destination),
   stat: (path) => stat(path),
@@ -169,6 +213,11 @@ const isProcessAlive = (pid: number): boolean => {
   }
 }
 
+export const isRecoverableDurableJsonTemporaryFile = (filePath: string, name: string): boolean => {
+  const recognized = recognizeTemporarySuffix(filePath, name)
+  return recognized !== undefined && !isProcessAlive(recognized.activeCreatorPid ?? 0)
+}
+
 const listTemporaryCandidates = async (
   filePath: string,
   dependencies: DurableJsonFileDependencies
@@ -189,8 +238,7 @@ const listTemporaryCandidates = async (
         if (!entry.isFile() || !entry.name.startsWith(prefix) || !entry.name.endsWith('.tmp')) {
           return false
         }
-        const recognized = recognizeTemporarySuffix(filePath, entry.name)
-        return recognized && !isProcessAlive(recognized.activeCreatorPid ?? 0)
+        return isRecoverableDurableJsonTemporaryFile(filePath, entry.name)
       })
       .map(async (entry) => {
         const path = join(directory, entry.name)
@@ -235,14 +283,13 @@ export const readDurableJsonFile = async <Value>(
   options: DurableJsonReadOptions = {}
 ): Promise<DurableJsonReadResult<Value>> => {
   const dependencies = { ...DEFAULT_DEPENDENCIES, ...dependencyOverrides }
-  const readContents = async (path: string, recoveryCandidate = false): Promise<string> => {
+  const readContents = async (path: string): Promise<string> => {
     if (options.maxBytes !== undefined) {
       const { size } = await dependencies.stat(path)
       if (size > options.maxBytes) {
-        const message = `${basename(path)} exceeds the ${options.maxBytes} byte read limit.`
-        if (recoveryCandidate) throw new DurableJsonRecoveryBarrierError(message)
-        throw new Error(message)
+        throw new DurableJsonReadLimitError(basename(path), options.maxBytes)
       }
+      return dependencies.readFileWithinLimit(path, options.maxBytes)
     }
     return dependencies.readFile(path)
   }
@@ -253,13 +300,11 @@ export const readDurableJsonFile = async <Value>(
     } catch (error) {
       if (!isMissingFileError(error)) throw error
       const candidates = await listTemporaryCandidates(filePath, dependencies)
-      await assertNoRecoveryBarrier(candidates, decode, dependencies, (path) =>
-        readContents(path, true)
-      )
+      await assertNoRecoveryBarrier(candidates, decode, dependencies, readContents)
       for (const candidate of candidates) {
         let candidateContents: string
         try {
-          candidateContents = await readContents(candidate.path, true)
+          candidateContents = await readContents(candidate.path)
         } catch (candidateReadError) {
           if (isMissingFileError(candidateReadError)) continue
           throw candidateReadError
@@ -287,9 +332,7 @@ export const readDurableJsonFile = async <Value>(
 
     const value = decode(primaryContents)
     const candidates = await listTemporaryCandidates(filePath, dependencies)
-    await assertNoRecoveryBarrier(candidates, decode, dependencies, (path) =>
-      readContents(path, true)
-    )
+    await assertNoRecoveryBarrier(candidates, decode, dependencies, readContents)
     await cleanupTemporaryCandidates(candidates, dependencies)
     return { status: 'found', value }
   })
@@ -298,7 +341,8 @@ export const readDurableJsonFile = async <Value>(
 export const recoverDurableJsonDirectory = async (
   directory: string,
   decode: (targetPath: string, contents: string) => unknown,
-  dependencyOverrides: Partial<DurableJsonFileDependencies> = {}
+  dependencyOverrides: Partial<DurableJsonFileDependencies> = {},
+  options: DurableJsonReadOptions = {}
 ): Promise<void> => {
   const dependencies = { ...DEFAULT_DEPENDENCIES, ...dependencyOverrides }
   let entries: DurableJsonDirectoryEntry[]
@@ -327,6 +371,11 @@ export const recoverDurableJsonDirectory = async (
     } catch (error) {
       if (!isMissingFileError(error)) throw error
     }
-    await readDurableJsonFile(targetPath, (contents) => decode(targetPath, contents), dependencies)
+    await readDurableJsonFile(
+      targetPath,
+      (contents) => decode(targetPath, contents),
+      dependencies,
+      options
+    )
   }
 }

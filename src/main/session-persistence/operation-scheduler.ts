@@ -22,7 +22,11 @@ class SessionPersistenceOperationScope {
 class SessionPersistenceOperationScheduler {
   private globalTail: Promise<void> = Promise.resolve()
   private generation = 0
-  private readonly scopeTails = new Map<string, Map<number, Promise<void>>>()
+  private sequence = 0
+  private readonly scopeTails = new Map<
+    string,
+    Map<number, { sequence: number; tail: Promise<void> }>
+  >()
 
   runProject<Result>(projectId: string, operation: ScopedOperation<Result>): Promise<Result> {
     return this.runScoped([projectScope(projectId)], operation)
@@ -79,7 +83,9 @@ class SessionPersistenceOperationScheduler {
   runGlobal<Result>(operation: Operation<Result>): Promise<Result> {
     const predecessors = new Set([
       this.globalTail,
-      ...[...this.scopeTails.values()].flatMap((tails) => [...tails.values()])
+      ...[...this.scopeTails.values()].flatMap((tails) =>
+        [...tails.values()].map(({ tail }) => tail)
+      )
     ])
     const run = Promise.all(predecessors).then(operation)
     this.globalTail = settledTail(run)
@@ -92,11 +98,12 @@ class SessionPersistenceOperationScheduler {
     operation: ScopedOperation<Result>
   ): Promise<Result> {
     const generation = this.generation
+    const sequence = ++this.sequence
     const uniqueScopes = [...new Set(scopes)]
     const predecessors = new Set([
       this.globalTail,
       ...uniqueScopes.flatMap((scope) => {
-        const tail = this.scopeTails.get(scope)?.get(generation)
+        const tail = this.scopeTails.get(scope)?.get(generation)?.tail
         return tail ? [tail] : []
       })
     ])
@@ -105,11 +112,16 @@ class SessionPersistenceOperationScheduler {
       const additionalSessionIds = sessionIds.filter(
         (sessionId) => !heldScopes.has(sessionScope(sessionId))
       )
-      return this.runNestedSessionIdentities(generation, additionalSessionIds, nestedOperation)
+      return this.runNestedSessionIdentities(
+        generation,
+        sequence,
+        additionalSessionIds,
+        nestedOperation
+      )
     })
     const run = Promise.all(predecessors).then(() => operation(operationScope))
     const tail = settledTail(run)
-    this.recordScopeTail(uniqueScopes, generation, tail)
+    this.recordScopeTail(uniqueScopes, generation, sequence, tail)
     return run
   }
 
@@ -117,36 +129,47 @@ class SessionPersistenceOperationScheduler {
   // a later global barrier cannot become both its predecessor and its dependent.
   private runNestedSessionIdentities<Result>(
     generation: number,
+    sequence: number,
     sessionIds: readonly string[],
     operation: Operation<Result>
   ): Promise<Result> {
     const uniqueScopes = [...new Set(sessionIds.map(sessionScope))]
-    const predecessors = new Set(
-      uniqueScopes.flatMap((scope) => {
-        const tail = this.scopeTails.get(scope)?.get(generation)
-        return tail ? [tail] : []
-      })
-    )
+    const reservations = uniqueScopes.flatMap((scope) => {
+      const reservation = this.scopeTails.get(scope)?.get(generation)
+      return reservation ? [reservation] : []
+    })
+    // A later reservation may depend on this operation, directly or through another scope.
+    // Fail before recording any identity rather than forming a cycle or bypassing its predecessors.
+    // ponytail: conservatively reject later reservations; track dependencies only if retries become costly.
+    if (reservations.some((reservation) => reservation.sequence > sequence)) {
+      return Promise.reject(
+        new Error(
+          'Session identity reservation conflicted with a later operation. Retry the operation.'
+        )
+      )
+    }
+    const predecessors = new Set(reservations.map(({ tail }) => tail))
     const run = Promise.all(predecessors).then(operation)
     const tail = settledTail(run)
-    this.recordScopeTail(uniqueScopes, generation, tail)
+    this.recordScopeTail(uniqueScopes, generation, sequence, tail)
     return run
   }
 
   private recordScopeTail(
     scopes: readonly string[],
     generation: number,
+    sequence: number,
     tail: Promise<void>
   ): void {
     for (const scope of scopes) {
-      const tails = this.scopeTails.get(scope) ?? new Map<number, Promise<void>>()
-      tails.set(generation, tail)
+      const tails = this.scopeTails.get(scope) ?? new Map()
+      tails.set(generation, { sequence, tail })
       this.scopeTails.set(scope, tails)
     }
     void tail.then(() => {
       for (const scope of scopes) {
         const tails = this.scopeTails.get(scope)
-        if (tails?.get(generation) !== tail) continue
+        if (tails?.get(generation)?.tail !== tail) continue
         tails.delete(generation)
         if (tails.size === 0) this.scopeTails.delete(scope)
       }

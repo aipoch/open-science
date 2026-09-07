@@ -17,6 +17,7 @@ import {
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { ArtifactFile } from '../../../shared/artifacts'
+import { MAX_ACP_RUNTIME_EVENTS } from '../../../shared/acp'
 import { DEFAULT_PERMISSION_PROFILE } from '../../../shared/permission-profiles'
 import {
   INTERRUPTED_SESSION_ERROR,
@@ -37,6 +38,7 @@ import {
   type ToolActivity
 } from './session-store'
 import { mergePersistedRuntimeIdentityProjection } from './session-store-persistence-merge'
+import { createStoreSaver } from '../lib/session-persistence/session-persistence'
 
 const createArtifactFile = (overrides: Partial<ArtifactFile> = {}): ArtifactFile => ({
   id: 'artifact-session-1:run-1:result.txt',
@@ -134,6 +136,91 @@ describe('session store', () => {
     vi.useFakeTimers()
     vi.setSystemTime(new Date('2026-07-04T08:00:00.000Z'))
     useSessionStore.setState(createInitialSessionState())
+  })
+
+  it.each([
+    'runtime-context-authority',
+    'permission-authority',
+    'delegated-authority',
+    'session-details-authority',
+    'compute-host-access-authority',
+    'archive-authority',
+    'merge-upload-identities',
+    'replace-persisted-if-current'
+  ] as const)('preserves an incoming reset obligation through %s', (mode) => {
+    useSessionStore.getState().appendUserMessage({
+      sessionId: 'session-1',
+      content: 'Remember the selected branch',
+      projectId: 'project-1',
+      cwd: '/workspace'
+    })
+    useSessionStore.getState().finishRun('session-1')
+    const source = useSessionStore.getState().sessions[0]
+    const incoming = {
+      ...toPersistedSession(source),
+      revision: (source.revision ?? 0) + 1,
+      branchContextResetRequired: true
+    }
+
+    useSessionStore.getState().applyDurableSessionProjection({ source, session: incoming, mode })
+
+    const projected = useSessionStore.getState().sessions[0]
+    expect(projected.branchContextResetRequired).toBe(true)
+    expect(toPersistedSession(projected).branchContextResetRequired).toBe(true)
+  })
+
+  it.each([
+    'upsert',
+    'permission-authority',
+    'runtime-context-authority',
+    'merge-upload-identities',
+    'changed-source-upload',
+    'delegation-policy'
+  ] as const)('preserves a reset-only stale projection through %s', (mode) => {
+    useSessionStore.getState().appendUserMessage({
+      sessionId: 'session-1',
+      content: 'Keep the current conversation',
+      projectId: 'project-1',
+      cwd: '/workspace'
+    })
+    useSessionStore.getState().finishRun('session-1')
+    const base = toPersistedSession(useSessionStore.getState().sessions[0])
+    useSessionStore.getState().hydrateSessions([
+      {
+        ...base,
+        revision: 2,
+        runtimeContext: { version: 1, revision: 2 },
+        updatedAt: base.updatedAt + 2
+      }
+    ])
+    const source = useSessionStore.getState().sessions[0]
+    const incoming = {
+      ...base,
+      revision: 1,
+      runtimeContext: { version: 1 as const, revision: 1 },
+      updatedAt: base.updatedAt + 1,
+      branchContextResetRequired: true
+    }
+    if (mode === 'upsert') {
+      useSessionStore.getState().upsertPersistedSession(incoming)
+    } else if (mode === 'delegation-policy') {
+      useSessionStore.getState().applyDelegationPolicyAuthority(incoming)
+    } else {
+      if (mode === 'changed-source-upload') {
+        vi.setSystemTime(base.updatedAt + 3)
+        useSessionStore.getState().renameSession('session-1', 'Unsaved local title')
+      }
+      useSessionStore.getState().applyDurableSessionProjection({
+        source,
+        session: incoming,
+        mode: mode === 'changed-source-upload' ? 'merge-upload-identities' : mode
+      })
+    }
+    const projected = useSessionStore.getState().sessions[0]
+    expect(projected.branchContextResetRequired).toBe(true)
+    expect(projected.revision).toBe(2)
+    expect(projected.runtimeContext?.revision).toBe(2)
+    expect(projected.messages).toEqual(source.messages)
   })
 
   it('keeps a newer runtime revision authoritative when Reading context was removed', () => {
@@ -539,9 +626,141 @@ describe('session store', () => {
     unsubscribe()
 
     expect(commits).toBe(1)
+    // The first delta creates the Message; later same-batch deltas accumulate in the streaming
+    // slice until the turn ends.
+    const state = useSessionStore.getState()
+    const message = state.sessions[0].messages.at(-1)!
+    expect(message).toMatchObject({ content: 'Hello', eventIds: ['event-1'] })
+    expect(state.streamingMessages[message.id]).toMatchObject({
+      content: 'Hello world',
+      eventIds: ['event-1', 'event-2']
+    })
+
+    useSessionStore.getState().finishRun('transport-session-1')
     expect(useSessionStore.getState().sessions[0].messages.at(-1)).toMatchObject({
       content: 'Hello world',
       eventIds: ['event-1', 'event-2']
+    })
+    expect(useSessionStore.getState().streamingMessages[message.id]).toBeUndefined()
+  })
+
+  it('keeps Session and messages references stable across pure text-growth ticks', () => {
+    useSessionStore.getState().appendUserMessage({
+      sessionId: 'transport-session-1',
+      content: 'Stream a response'
+    })
+    useSessionStore.getState().appendAgentMessageChunk({
+      sessionId: 'transport-session-1',
+      streamId: 'assistant-message-1',
+      eventId: 'event-1',
+      content: 'Hello'
+    })
+    const before = useSessionStore.getState()
+
+    useSessionStore.getState().appendAgentMessageChunks([
+      {
+        sessionId: 'transport-session-1',
+        streamId: 'assistant-message-1',
+        eventId: 'event-2',
+        content: ' world'
+      }
+    ])
+    const after = useSessionStore.getState()
+
+    expect(after.sessions).toBe(before.sessions)
+    expect(after.sessions[0]).toBe(before.sessions[0])
+    expect(after.sessions[0].messages).toBe(before.sessions[0].messages)
+    expect(after.sessions[0].messages.at(-1)).toBe(before.sessions[0].messages.at(-1))
+    const messageId = before.sessions[0].messages.at(-1)!.id
+    expect(after.streamingMessages[messageId]).toMatchObject({
+      content: 'Hello world',
+      eventIds: ['event-1', 'event-2']
+    })
+
+    // A duplicate in-flight event is still dropped without touching Session identity.
+    useSessionStore.getState().appendAgentMessageChunks([
+      {
+        sessionId: 'transport-session-1',
+        streamId: 'assistant-message-1',
+        eventId: 'event-2',
+        content: ' world'
+      }
+    ])
+    const deduped = useSessionStore.getState()
+    expect(deduped.sessions).toBe(after.sessions)
+    expect(deduped.streamingMessages[messageId]?.content).toBe('Hello world')
+  })
+
+  it('clears the first-output wait with one identity change, then stabilizes', () => {
+    useSessionStore.getState().appendUserMessage({
+      sessionId: 'transport-session-1',
+      content: 'Stream a response'
+    })
+    useSessionStore.getState().appendAgentMessageChunk({
+      sessionId: 'transport-session-1',
+      streamId: 'assistant-message-1',
+      eventId: 'event-1',
+      content: ' '
+    })
+    useSessionStore.setState((state) => ({
+      sessions: state.sessions.map((session) => ({ ...session, awaitingFirstAgentOutput: true }))
+    }))
+
+    // The first visible chunk clears the wait flag, which legitimately changes Session identity.
+    useSessionStore.getState().appendAgentMessageChunk({
+      sessionId: 'transport-session-1',
+      streamId: 'assistant-message-1',
+      eventId: 'event-2',
+      content: 'Visible'
+    })
+    const cleared = useSessionStore.getState()
+    expect(cleared.sessions[0].awaitingFirstAgentOutput).toBeUndefined()
+
+    // Later text-growth ticks keep the Session stable again.
+    useSessionStore.getState().appendAgentMessageChunk({
+      sessionId: 'transport-session-1',
+      streamId: 'assistant-message-1',
+      eventId: 'event-3',
+      content: ' output'
+    })
+    const after = useSessionStore.getState()
+    expect(after.sessions[0]).toBe(cleared.sessions[0])
+    expect(after.sessions[0].messages).toBe(cleared.sessions[0].messages)
+  })
+
+  it('materializes the streaming slice into the same terminal Message state as direct commits', () => {
+    useSessionStore.getState().appendUserMessage({
+      sessionId: 'transport-session-1',
+      content: 'Stream a response'
+    })
+    for (const [index, content] of ['Hello', ' world', ' again'].entries()) {
+      useSessionStore.getState().appendAgentMessageChunk({
+        sessionId: 'transport-session-1',
+        streamId: 'assistant-message-1',
+        eventId: `event-${index + 1}`,
+        content
+      })
+    }
+
+    useSessionStore.getState().finishRun('transport-session-1')
+
+    const state = useSessionStore.getState()
+    const session = state.sessions[0]
+    const message = session.messages.at(-1)!
+    expect(message).toMatchObject({
+      content: 'Hello world again',
+      status: 'complete',
+      eventIds: ['event-1', 'event-2', 'event-3']
+    })
+    expect(Object.keys(state.streamingMessages)).toEqual([])
+    // The conversation graph and the durable projection observe the complete turn as well.
+    expect(
+      session.conversationGraph?.messages.find((candidate) => candidate.id === message.id)
+    ).toMatchObject({ content: 'Hello world again' })
+    const persisted = toPersistedSession(session, state.streamingMessages)
+    expect(persisted.messages.at(-1)).toMatchObject({
+      content: 'Hello world again',
+      eventIds: ['event-1', 'event-2', 'event-3']
     })
   })
 
@@ -602,7 +821,10 @@ describe('session store', () => {
     const batchedChunkReads = measureHistoricalReads(8)
 
     expect(batchedChunkReads).toBeLessThanOrEqual(singleChunkReads * 2)
-    expect(useSessionStore.getState().sessions[0].messages.at(-1)).toMatchObject({
+    const state = useSessionStore.getState()
+    const message = state.sessions[0].messages.at(-1)!
+    expect(message).toMatchObject({ content: 'x', eventIds: ['event-0'] })
+    expect(state.streamingMessages[message.id]).toMatchObject({
       content: 'xxxxxxxx',
       eventIds: Array.from({ length: 8 }, (_, index) => `event-${index}`)
     })
@@ -1393,6 +1615,72 @@ describe('session store', () => {
     expect(useSessionStore.getState().sessions[0].activePlanProjection).toBe(projection)
   })
 
+  it.each(['none', 'title', 'pin'] as const)(
+    'adopts newer durable metadata when a summary has only %s locally edited',
+    (editedField) => {
+      useSessionStore.getState().hydrateSessionSummaries(
+        [
+          {
+            number: 1,
+            id: 'session-1',
+            projectId: 'project-1',
+            title: 'Old summary title',
+            status: 'idle',
+            presentedStatus: 'idle',
+            pinned: false,
+            revision: 1,
+            activeMessageCount: 1,
+            artifactCount: 0,
+            filesRevision: 0,
+            createdAt: 1,
+            updatedAt: 2,
+            needsStartupRecovery: false
+          }
+        ],
+        undefined
+      )
+      expect(useSessionStore.getState().sessions[0].unsavedTitle).toBeUndefined()
+      if (editedField === 'title')
+        useSessionStore.getState().renameSession('session-1', 'Local title')
+      if (editedField === 'pin') useSessionStore.getState().togglePinned('session-1')
+
+      useSessionStore.getState().upsertPersistedSession({
+        id: 'session-1',
+        projectId: 'project-1',
+        title: 'New durable title',
+        cwd: '/workspace',
+        status: 'idle',
+        pinned: editedField !== 'pin',
+        archivedAt: 3,
+        revision: 2,
+        messages: [
+          {
+            id: 'message-1',
+            role: 'user',
+            content: 'New durable body',
+            status: 'complete',
+            eventIds: [],
+            createdAt: 1,
+            updatedAt: 1
+          }
+        ],
+        createdAt: 1,
+        updatedAt: 3
+      })
+
+      const current = useSessionStore.getState().sessions[0]
+      expect(current.contentLoaded).not.toBe(false)
+      expect(current.revision).toBe(2)
+      expect(current.messages[0].content).toBe('New durable body')
+      expect(current).toMatchObject({
+        title: editedField === 'title' ? 'Local title' : 'New durable title',
+        pinned: editedField !== 'pin',
+        archivedAt: 3
+      })
+      expect(current.unsavedTitle).toBe(editedField === 'title' ? true : undefined)
+    }
+  )
+
   it('preserves pending summary metadata edits when lazy hydration finishes', () => {
     useSessionStore.getState().hydrateSessionSummaries(
       [
@@ -1454,6 +1742,79 @@ describe('session store', () => {
       messages: [{ id: 'message-1' }]
     })
     expect(useSessionStore.getState().sessions[0]?.contentLoaded).not.toBe(false)
+  })
+
+  it('keeps a loaded Session body after selecting a different Session', () => {
+    const loadedMessages = Array.from({ length: 12 }, (_, index) => ({
+      id: `message-${index + 1}`,
+      role: 'user' as const,
+      content: `Turn ${index + 1}`,
+      status: 'complete' as const,
+      eventIds: [],
+      createdAt: index + 1,
+      updatedAt: index + 1
+    }))
+    useSessionStore.getState().hydrateSessionSummaries(
+      [
+        {
+          number: 1,
+          id: 'session-loaded',
+          projectId: 'project-1',
+          title: 'Loaded session',
+          status: 'idle',
+          presentedStatus: 'idle',
+          pinned: false,
+          revision: 1,
+          activeMessageCount: loadedMessages.length,
+          artifactCount: 0,
+          filesRevision: 0,
+          createdAt: 1,
+          updatedAt: 4,
+          needsStartupRecovery: false
+        },
+        {
+          number: 2,
+          id: 'session-summary',
+          projectId: 'project-1',
+          title: 'Summary session',
+          status: 'idle',
+          presentedStatus: 'idle',
+          pinned: false,
+          revision: 1,
+          activeMessageCount: 0,
+          artifactCount: 0,
+          filesRevision: 0,
+          createdAt: 2,
+          updatedAt: 3,
+          needsStartupRecovery: false
+        }
+      ],
+      {
+        id: 'session-loaded',
+        projectId: 'project-1',
+        title: 'Loaded session',
+        cwd: '/workspace',
+        status: 'idle',
+        messages: loadedMessages,
+        createdAt: 1,
+        updatedAt: 4,
+        revision: 1
+      }
+    )
+
+    useSessionStore.getState().selectSession('session-summary')
+
+    const loaded = useSessionStore
+      .getState()
+      .sessions.find((session) => session.id === 'session-loaded')
+    const summary = useSessionStore
+      .getState()
+      .sessions.find((session) => session.id === 'session-summary')
+    expect(useSessionStore.getState().selectedSessionId).toBe('session-summary')
+    expect(loaded?.contentLoaded).not.toBe(false)
+    expect(loaded?.messages).toHaveLength(12)
+    expect(summary?.contentLoaded).toBe(false)
+    expect(summary?.messages).toEqual([])
   })
 
   it('applies archive state from an older durable Session update without losing newer local state', () => {
@@ -1728,6 +2089,74 @@ describe('session store', () => {
     })
     expect(useSessionStore.getState().sessions[0].title).toBe('Remote later')
   })
+
+  it('keeps the new run reference when an old source acknowledges the same message and millisecond', () => {
+    const now = vi.spyOn(Date, 'now').mockReturnValue(1710000000000)
+    try {
+      const input = {
+        sessionId: 'session-1',
+        messageId: 'retry-prompt',
+        content: 'Retry the same question'
+      }
+      useSessionStore.getState().appendUserMessage(input)
+      const source = useSessionStore.getState().sessions[0]
+      const durable = structuredClone(toPersistedSession(source))
+      durable.revision = (durable.revision ?? 0) + 1
+      useSessionStore.getState().finishRun('session-1')
+      useSessionStore.getState().appendUserMessage({ ...input, rearmExisting: true })
+      const current = useSessionStore.getState().sessions[0]
+      expect(current).not.toBe(source)
+      expect(current.activeRun).toBeDefined()
+      expect(current.activeRun).toEqual(source.activeRun)
+      expect(current.activeRun).not.toBe(source.activeRun)
+
+      useSessionStore.getState().applyDurableSessionProjection({
+        source,
+        session: durable,
+        mode: 'replace-persisted-if-current'
+      })
+
+      const projected = useSessionStore.getState().sessions[0]
+      expect(projected.activeRun).toBe(current.activeRun)
+      expect(projected.activeRun).not.toBe(source.activeRun)
+      expect(projected.status).toBe('running')
+    } finally {
+      now.mockRestore()
+    }
+  })
+
+  it.each(['promptMessageId', 'startedAt'] as const)(
+    'does not reuse the old run reference when the current save acknowledgement changes %s',
+    (field) => {
+      useSessionStore.getState().appendUserMessage({
+        sessionId: 'session-1',
+        messageId: 'earlier-prompt',
+        content: 'Earlier question'
+      })
+      useSessionStore.getState().finishRun('session-1')
+      useSessionStore.getState().appendUserMessage({
+        sessionId: 'session-1',
+        messageId: 'current-prompt',
+        content: 'Current question'
+      })
+      const source = useSessionStore.getState().sessions[0]
+      const durable = structuredClone(toPersistedSession(source))
+      durable.revision = (durable.revision ?? 0) + 1
+      expect(durable.activeRun).toBeDefined()
+      if (field === 'promptMessageId') durable.activeRun!.promptMessageId = 'earlier-prompt'
+      else durable.activeRun!.startedAt += 1
+
+      useSessionStore.getState().applyDurableSessionProjection({
+        source,
+        session: durable,
+        mode: 'replace-persisted-if-current'
+      })
+
+      const projected = useSessionStore.getState().sessions[0]
+      expect(projected.activeRun).toEqual(durable.activeRun)
+      expect(projected.activeRun).not.toBe(source.activeRun)
+    }
+  )
 
   it('keeps a newer unsaved title when a durable save acknowledgement is for the previous title', () => {
     useSessionStore.getState().hydrateSessions([
@@ -2474,8 +2903,13 @@ describe('session store', () => {
     })
 
     const current = useSessionStore.getState().sessions[0]
-    expect(current.messages.at(-1)?.content).toBe('Delegation complete')
-    const persisted = toPersistedSession(current)
+    // Mid-stream text growth lives in the streamingMessages slice; the message object keeps the
+    // creation-time content until the turn materializes.
+    expect(current.messages.at(-1)?.content).toBe('De')
+    expect(useSessionStore.getState().streamingMessages[current.messages.at(-1)!.id]?.content).toBe(
+      'Delegation complete'
+    )
+    const persisted = toPersistedSession(current, useSessionStore.getState().streamingMessages)
     useSessionStore.getState().hydrateSessions([persisted])
 
     expect(persisted.messages.at(-1)?.content).toBe('Delegation complete')
@@ -2487,6 +2921,47 @@ describe('session store', () => {
         ({ id }) => id === current.conversationGraph?.frames[0].activeBranchId
       )?.headMessageId
     ).toBe(current.messages.at(-1)?.id)
+  })
+
+  it('invalidates only the matching transient Plan cache without changing durable Session data', () => {
+    useSessionStore.getState().hydrateSessions([
+      {
+        id: 'session-1',
+        projectId: 'project-1',
+        title: 'Plan cache recovery',
+        cwd: '/workspace',
+        status: 'idle',
+        messages: [],
+        createdAt: 1,
+        updatedAt: 2
+      }
+    ])
+    const projection = createPlanProjection('version-1')
+    useSessionStore.getState().setActivePlanProjection('session-1', projection)
+    const before = useSessionStore.getState().sessions[0]
+    const durable = toPersistedSession(before)
+    const listener = vi.fn()
+    const unsubscribe = useSessionStore.subscribe(listener)
+    for (const expected of [
+      { ...projection, artifactVersionId: 'old-version' },
+      { ...projection, revision: projection.revision - 1 }
+    ]) {
+      useSessionStore.getState().invalidateActivePlanProjection('session-1', expected)
+      expect(useSessionStore.getState().sessions[0]).toBe(before)
+    }
+    expect(listener).not.toHaveBeenCalled()
+
+    useSessionStore.getState().invalidateActivePlanProjection('session-1', projection)
+    const after = useSessionStore.getState().sessions[0]
+    expect(after.activePlanProjection).toBeUndefined()
+    expect(after.runtimeContext).toBe(before.runtimeContext)
+    expect(after.messages).toBe(before.messages)
+    expect(after.status).toBe(before.status)
+    expect(toPersistedSession(after)).toEqual(durable)
+    expect(listener).toHaveBeenCalledTimes(1)
+    useSessionStore.getState().invalidateActivePlanProjection('session-1', projection)
+    expect(listener).toHaveBeenCalledTimes(1)
+    unsubscribe()
   })
 
   it('restores branch-bound Plan history after saving and hydrating a Session', () => {
@@ -3356,11 +3831,19 @@ describe('session store', () => {
         'which appears to violate our Usage Policy (https://www.anthropic.com/legal/aup). Try rephrasing.'
     })
 
-    const session = useSessionStore.getState().sessions[0]
-    expect(session.messages[1]?.content).toBe(
+    const state = useSessionStore.getState()
+    const session = state.sessions[0]
+    const messageId = session.messages[1]!.id
+    // The merged, normalized text accumulates in the streaming slice until the turn ends.
+    expect(state.streamingMessages[messageId]?.content).toBe(
       'The selected model declined to complete this response under its safety policy. Try rephrasing.'
     )
-    expect(toPersistedSession(session).messages[1]?.content).toBe(
+    expect(toPersistedSession(session, state.streamingMessages).messages[1]?.content).toBe(
+      'The selected model declined to complete this response under its safety policy. Try rephrasing.'
+    )
+
+    useSessionStore.getState().finishRun('transport-session-1')
+    expect(useSessionStore.getState().sessions[0].messages[1]?.content).toBe(
       'The selected model declined to complete this response under its safety policy. Try rephrasing.'
     )
   })
@@ -3573,6 +4056,19 @@ describe('session store', () => {
     })
 
     expect(textChunk?.messageId).toBe(imageChunk?.messageId)
+    // The image delta owns the Message object; the following pure text delta accumulates in the
+    // streaming slice and folds back into the same Message when the turn ends.
+    expect(useSessionStore.getState().sessions[0].messages[1]).toMatchObject({
+      content: '',
+      eventIds: ['event-image'],
+      images: [{ id: 'event-image', mimeType: 'image/png', data: 'AQID', byteLength: 3 }]
+    })
+    expect(useSessionStore.getState().streamingMessages[imageChunk!.messageId]).toMatchObject({
+      content: 'Generated chart',
+      eventIds: ['event-image', 'event-text']
+    })
+
+    useSessionStore.getState().finishRun('transport-session-1')
     expect(useSessionStore.getState().sessions[0].messages[1]).toMatchObject({
       content: 'Generated chart',
       eventIds: ['event-image', 'event-text'],
@@ -3648,6 +4144,27 @@ describe('session store', () => {
     })
 
     expect(useSessionStore.getState().sessions[0]).toEqual(finishedSession)
+  })
+
+  it('keeps only the replayable event id window after a run finishes', () => {
+    useSessionStore.getState().appendUserMessage({
+      sessionId: 'transport-session-1',
+      content: 'Stream a long response'
+    })
+    useSessionStore.getState().appendAgentMessageChunks(
+      Array.from({ length: MAX_ACP_RUNTIME_EVENTS + 1 }, (_, index) => ({
+        sessionId: 'transport-session-1',
+        streamId: 'assistant-message-1',
+        eventId: `event-${index}`,
+        content: 'x'
+      }))
+    )
+
+    useSessionStore.getState().finishRun('transport-session-1')
+
+    expect(useSessionStore.getState().sessions[0].messages.at(-1)?.eventIds).toEqual(
+      Array.from({ length: MAX_ACP_RUNTIME_EVENTS }, (_, index) => `event-${index + 1}`)
+    )
   })
 
   it('marks the active run and streaming agent message as failed', () => {
@@ -5734,8 +6251,16 @@ describe('session store public contract', () => {
     const first = createInitialSessionState()
     const second = createInitialSessionState()
 
-    expect(first).toEqual({ sessions: [], selectedSessionId: undefined })
-    expect(Object.keys(first).sort()).toEqual(['selectedSessionId', 'sessions'])
+    expect(first).toEqual({
+      sessions: [],
+      selectedSessionId: undefined,
+      streamingMessages: {}
+    })
+    expect(Object.keys(first).sort()).toEqual([
+      'selectedSessionId',
+      'sessions',
+      'streamingMessages'
+    ])
     expect(first.sessions).not.toBe(second.sessions)
   })
 
@@ -5777,6 +6302,7 @@ describe('session store public contract', () => {
         'hydrateSessionSummaries',
         'hydrateSessions',
         'interruptRun',
+        'invalidateActivePlanProjection',
         'markDisconnected',
         'markResumed',
         'markSpecialistSwitchResetRequired',
@@ -5893,6 +6419,7 @@ describe('session store public contract', () => {
       'src/renderer/src/pages/workspace/session-action-menu.ts',
       'src/renderer/src/pages/workspace/session-message-artifact-reference.ts',
       'src/renderer/src/pages/workspace/session-notebook-projection.ts',
+      'src/renderer/src/pages/workspace/session-plan/UnavailablePlanNotice.tsx',
       'src/renderer/src/pages/workspace/session-plan/active-branch-plan.ts',
       'src/renderer/src/pages/workspace/session-plan/plan-file-projection.ts',
       'src/renderer/src/pages/workspace/session-plan/respond-to-session-plan.ts',
@@ -5901,6 +6428,7 @@ describe('session store public contract', () => {
       'src/renderer/src/pages/workspace/use-pdf-context-action.ts',
       'src/renderer/src/pages/workspace/use-side-chat-controller.ts',
       'src/renderer/src/pages/workspace/use-workspace-branch-switch-guard.ts',
+      'src/renderer/src/pages/workspace/useManagedVersionWorkflow.ts',
       'src/renderer/src/pages/workspace/visible-project-sessions.ts',
       'src/renderer/src/pages/workspace/workspace-agent-control-availability.ts',
       'src/renderer/src/pages/workspace/workspace-compute-host-access-controller.ts',
@@ -6052,7 +6580,6 @@ describe('session store public contract', () => {
       'agentStatus',
       'awaitingFirstAgentOutput',
       'agentPromptInFlight',
-      'branchContextResetRequired',
       'specialistSwitchResetRequired',
       'elicitationHistoryReplayRequestId',
       'branchSwitchBlocked',
@@ -7023,6 +7550,187 @@ describe('truncateSessionFromMessage', () => {
     useSessionStore.getState().activateMessageBranch('session-1', editedBranchId ?? '')
     expect(useSessionStore.getState().sessions[0].messages.at(-1)?.id).toBe(edited?.messageId)
     expect(useSessionStore.getState().sessions[0].branchContextResetRequired).toBe(true)
+  })
+
+  it.each([false, true])(
+    'handles a reset save acknowledged after local clear: %s',
+    async (clearReset) => {
+      vi.useRealTimers()
+      seedSession()
+      useSessionStore.getState().truncateSessionFromMessage('session-1', 'user-2')
+      useSessionStore.getState().appendUserMessage({
+        sessionId: 'session-1',
+        content: 'edited user-2'
+      })
+      useSessionStore.getState().finishRun('session-1')
+      useSessionStore.getState().clearBranchContextReset('session-1')
+      let durable = toPersistedSession(useSessionStore.getState().sessions[0])
+      let acknowledge!: () => void
+      let started!: () => void
+      const saveStarted = new Promise<void>((resolve) => {
+        started = resolve
+      })
+      const saveAcknowledged = new Promise<void>((resolve) => {
+        acknowledge = resolve
+      })
+      const saveSession = vi.fn(async (submitted: PersistedChatSession) => {
+        started()
+        await saveAcknowledged
+        durable = { ...submitted, revision: (submitted.revision ?? 0) + 1 }
+        return durable
+      })
+      const save = createStoreSaver({
+        loadAll: vi.fn(async () => ({
+          sessions: [durable],
+          manifest: { version: SESSION_MANIFEST_VERSION } as const
+        })),
+        loadOne: vi.fn(async () => durable),
+        saveSession,
+        deleteSession: vi.fn(),
+        saveManifest: vi.fn()
+      })
+      useSessionStore
+        .getState()
+        .activateMessageBranch('session-1', durable.conversationGraph!.branches[0].id)
+      const pendingSave = save(useSessionStore.getState())
+      await saveStarted
+      if (clearReset) useSessionStore.getState().clearBranchContextReset('session-1')
+      acknowledge()
+      await pendingSave
+
+      expect(useSessionStore.getState().sessions[0].branchContextResetRequired).toBe(
+        clearReset ? undefined : true
+      )
+      await save(useSessionStore.getState())
+      useSessionStore.setState(createInitialSessionState())
+      useSessionStore.getState().hydrateSessions([durable])
+      expect(useSessionStore.getState().sessions[0].branchContextResetRequired).toBe(
+        clearReset ? undefined : true
+      )
+    }
+  )
+
+  it.each([false, true])(
+    'persists a retained reset unless already durable: %s',
+    async (alreadyDurable) => {
+      seedSession()
+      useSessionStore.getState().truncateSessionFromMessage('session-1', 'user-2')
+      useSessionStore.getState().appendUserMessage({
+        sessionId: 'session-1',
+        content: 'edited user-2'
+      })
+      useSessionStore.getState().finishRun('session-1')
+      useSessionStore.getState().clearBranchContextReset('session-1')
+      const base = toPersistedSession(useSessionStore.getState().sessions[0])
+      let durable: PersistedChatSession = {
+        ...base,
+        revision: (base.revision ?? 0) + 1,
+        updatedAt: base.updatedAt + 1,
+        branchContextResetRequired: alreadyDurable || undefined
+      }
+      const saveSession = vi.fn(async (submitted: PersistedChatSession) => {
+        expect(submitted.revision).toBe(durable.revision)
+        durable = { ...submitted, revision: (submitted.revision ?? 0) + 1 }
+        return durable
+      })
+      const save = createStoreSaver({
+        loadAll: vi.fn(async () => ({
+          sessions: [durable],
+          manifest: { version: SESSION_MANIFEST_VERSION } as const
+        })),
+        loadOne: vi.fn(async () => durable),
+        saveSession,
+        deleteSession: vi.fn(),
+        saveManifest: vi.fn()
+      })
+      useSessionStore
+        .getState()
+        .activateMessageBranch('session-1', base.conversationGraph!.branches[0].id)
+      const selectedMessages = useSessionStore.getState().sessions[0].messages
+      useSessionStore.getState().upsertPersistedSession(durable)
+      expect(useSessionStore.getState().sessions[0].branchContextResetRequired).toBe(true)
+
+      await save(useSessionStore.getState())
+      useSessionStore.setState(createInitialSessionState())
+      useSessionStore.getState().hydrateSessions([durable])
+      expect(useSessionStore.getState().sessions[0].branchContextResetRequired).toBe(true)
+      expect(saveSession).toHaveBeenCalledTimes(alreadyDurable ? 0 : 1)
+      if (!alreadyDurable) {
+        expect(useSessionStore.getState().sessions[0].messages.map(({ id }) => id)).toEqual(
+          selectedMessages.map(({ id }) => id)
+        )
+      }
+    }
+  )
+
+  it('retains an external branch-reset obligation in the next persisted snapshot', () => {
+    seedSession({
+      activities: [
+        {
+          ...createActivity('original-tool', baseTime + 250),
+          activityGroupId: 'original-group',
+          promptMessageId: 'user-2'
+        }
+      ],
+      activityGroups: [
+        {
+          id: 'original-group',
+          title: 'Original tools',
+          sortIndex: 1,
+          activityIds: ['original-tool'],
+          promptMessageId: 'user-2',
+          createdAt: baseTime + 250,
+          updatedAt: baseTime + 250,
+          completedAt: baseTime + 250
+        }
+      ]
+    })
+    useSessionStore.getState().truncateSessionFromMessage('session-1', 'user-2')
+    useSessionStore.getState().appendUserMessage({
+      sessionId: 'session-1',
+      content: 'edited user-2'
+    })
+    useSessionStore.getState().upsertToolActivity({
+      sessionId: 'session-1',
+      toolCallId: 'edited-tool',
+      eventId: 'edited-tool-event',
+      title: 'Edited tools',
+      status: 'completed'
+    })
+    useSessionStore.getState().finishRun('session-1')
+    useSessionStore.getState().clearBranchContextReset('session-1')
+    const stale = toPersistedSession(useSessionStore.getState().sessions[0])
+    useSessionStore
+      .getState()
+      .activateMessageBranch('session-1', stale.conversationGraph!.branches[0].id)
+    const incoming = {
+      ...toPersistedSession(useSessionStore.getState().sessions[0]),
+      revision: (stale.revision ?? 0) + 1
+    }
+    expect(incoming.branchContextResetRequired).toBe(true)
+    expect(stale.branchContextResetRequired).toBeUndefined()
+
+    useSessionStore.getState().hydrateSessions([stale])
+    useSessionStore.getState().upsertPersistedSession(incoming)
+
+    const synchronized = useSessionStore.getState().sessions[0]
+    expect(synchronized.messages.map(({ id }) => id)).toEqual(stale.messages.map(({ id }) => id))
+    expect(synchronized.activities?.map(({ id }) => id)).toEqual(['edited-tool'])
+    expect(synchronized.activityGroups).toEqual(stale.activityGroups ?? [])
+    expect(synchronized.branchContextResetRequired).toBe(true)
+    expect(toPersistedSession(synchronized).branchContextResetRequired).toBe(true)
+
+    // Another renderer cannot discharge this renderer's pending reset obligation.
+    useSessionStore.getState().upsertPersistedSession({
+      ...incoming,
+      revision: incoming.revision + 1,
+      branchContextResetRequired: undefined
+    })
+    expect(useSessionStore.getState().sessions[0].branchContextResetRequired).toBe(true)
+    useSessionStore.getState().clearBranchContextReset('session-1')
+    expect(
+      toPersistedSession(useSessionStore.getState().sessions[0]).branchContextResetRequired
+    ).toBeUndefined()
   })
 
   it('does not activate another Message Branch while a Plan awaits approval', () => {

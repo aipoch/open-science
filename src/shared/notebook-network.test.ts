@@ -1,11 +1,44 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
+import { DestinationPolicy } from '../../packages/notebook-network-sandbox/runtime/src/gateway/address-policy'
+import { createRuntimeConfig } from '../../packages/notebook-network-sandbox/src/config'
 
 import {
   DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
   buildNotebookNetworkPolicy,
   normalizeNotebookNetworkSettings,
+  notebookNetworkSettingsAllowDomain,
   validateCustomAllowedDomain
 } from './notebook-network'
+
+vi.mock('node:dns/promises', () => ({
+  lookup: vi.fn(async () => [{ address: '8.8.8.8', family: 4 }])
+}))
+
+describe('disabled automatic domain access', () => {
+  it.each([
+    ['rest.uniprot.org', 'rest.uniprot.org', 'www.uniprot.org'],
+    ['*.ncbi.nlm.nih.gov', 'eutils.ncbi.nlm.nih.gov', 'www.nih.gov'],
+    ['*.uniprot.org', 'rest.uniprot.org', 'www.rcsb.org']
+  ])('asks for %s despite overlapping built-in rules', async (disabled, host, sibling) => {
+    const settings = normalizeNotebookNetworkSettings({ disabledOpenScienceDomains: [disabled] })
+    const inspect = (value: typeof settings): DestinationPolicy =>
+      new DestinationPolicy(
+        createRuntimeConfig({
+          policy: buildNotebookNetworkPolicy(value),
+          resources: { root: '/resources' }
+        })
+      )
+
+    expect.soft(await inspect(settings).inspect(host, 443)).toMatchObject({ kind: 'ask', host })
+    expect.soft(notebookNetworkSettingsAllowDomain(settings, host)).toBe(false)
+    expect(await inspect(settings).inspect(sibling, 443)).toMatchObject({ kind: 'allow' })
+
+    // A later explicit approval remains effective; turning off auto-allow is not a permanent ban.
+    const approved = { ...settings, allowedDomains: [host] }
+    expect(await inspect(approved).inspect(host, 443)).toMatchObject({ kind: 'allow' })
+    expect(notebookNetworkSettingsAllowDomain(approved, host)).toBe(true)
+  })
+})
 
 describe('notebook network policy', () => {
   it('enables every Open Science domain group by default', () => {
@@ -37,6 +70,13 @@ describe('notebook network policy', () => {
     expect(settings.disabledOpenScienceDomainGroups).toEqual([])
     expect(settings.disabledOpenScienceDomains).toEqual([])
     expect(buildNotebookNetworkPolicy(settings).allowedDomains).toContain('pypi.org')
+  })
+
+  it('allows only catalogued package-mirror redirect hosts', () => {
+    const policy = buildNotebookNetworkPolicy(DEFAULT_NOTEBOOK_NETWORK_SETTINGS)
+
+    expect(policy.allowedDomains).toContain('mirrors.nju.edu.cn')
+    expect(policy.allowedDomains).not.toContain('redirect.example')
   })
 
   it('rejects URLs, wildcards, local targets, IP literals, and single-label domains', () => {

@@ -4,6 +4,8 @@ import {
   createEmptySessionManifest,
   materializeSessionConversationGraph,
   SessionRevisionConflictError,
+  SessionSizeLimitError,
+  SessionDeletionCommittedError,
   type PersistedChatSession
 } from '../../shared/session-persistence'
 import type { Logger } from '../logger'
@@ -48,11 +50,13 @@ import {
   loadSessionMetadataAfterProjectRecovery,
   loadSessionsAfterProjectRecovery,
   registerSessionPersistenceIpcHandlers,
+  withSessionDeletionCleanup,
   type SessionPersistenceBackend,
   type SessionPersistenceHandlers
 } from './ipc'
 import { beginMigration, clearMigrationPending } from '../storage/migration-state'
 import { MainMessageAttributionAuthority } from './message-attribution-authority'
+import { SessionDeletionOwner } from '../session-deletion/owner'
 
 beforeEach(() => {
   ipcHandlers.clear()
@@ -80,6 +84,105 @@ const createMockReviewRepository = (): ReviewRepository =>
     deleteReviewsForSession: vi.fn().mockResolvedValue(undefined),
     deleteReviewsForProject: vi.fn().mockResolvedValue(undefined)
   }) as unknown as ReviewRepository
+
+describe('session deletion finalizers', () => {
+  it('preserves all cleanup failures and retries finalizers on a later deletion request', async () => {
+    const projectionFailure = new SessionDeletionCommittedError(new Error('projection failed'))
+    const permissionFailure = new Error('permission pruning failed')
+    const bindingFailure = new Error('binding cleanup failed')
+    const deleteAuthority = vi
+      .fn()
+      .mockRejectedValueOnce(projectionFailure)
+      .mockResolvedValue(undefined)
+    const prunePermissions = vi
+      .fn()
+      .mockRejectedValueOnce(permissionFailure)
+      .mockResolvedValue(undefined)
+    const clearBinding = vi.fn().mockImplementationOnce(() => {
+      throw bindingFailure
+    })
+    const deleteSession = withSessionDeletionCleanup(
+      withSessionDeletionCleanup(deleteAuthority, prunePermissions),
+      clearBinding
+    )
+
+    await expect(deleteSession('project-a', 'session-1')).rejects.toMatchObject({
+      name: 'SessionDeletionCommittedError',
+      cause: expect.objectContaining({
+        errors: [
+          expect.objectContaining({
+            cause: expect.objectContaining({ errors: [projectionFailure, permissionFailure] })
+          }),
+          bindingFailure
+        ]
+      })
+    })
+    await expect(deleteSession('project-a', 'session-1')).resolves.toBeUndefined()
+    expect(prunePermissions).toHaveBeenCalledTimes(2)
+    expect(clearBinding).toHaveBeenCalledTimes(2)
+  })
+
+  it.each(['authority', 'projection', 'permissions', 'binding', 'none'] as const)(
+    'preserves the commit boundary and attempts finalizers after %s failure',
+    async (failurePhase) => {
+      const failure = new Error(`injected ${failurePhase} failure`)
+      const calls: string[] = []
+      const deleteAuthority = vi.fn(async () => {
+        calls.push('authority')
+        if (failurePhase === 'authority') throw failure
+        if (failurePhase === 'projection') throw new SessionDeletionCommittedError(failure)
+      })
+      const prunePermissions = vi.fn(async () => {
+        calls.push('permissions')
+        if (failurePhase === 'permissions') throw failure
+      })
+      const clearBinding = vi.fn(() => {
+        calls.push('binding')
+        if (failurePhase === 'binding') throw failure
+      })
+      // These are the two wrappers used by the production composition root, in the same order.
+      const deleteSession = vi.fn(
+        withSessionDeletionCleanup(
+          withSessionDeletionCleanup(deleteAuthority, prunePermissions),
+          clearBinding
+        )
+      )
+      const owner = new SessionDeletionOwner({
+        runtime: {
+          liveSessionProjectId: () => undefined,
+          deleteSession: vi.fn().mockResolvedValue({ sessionIds: [] })
+        },
+        persistence: {
+          deleteSession: ({ projectId, sessionId }) => deleteSession(projectId, sessionId)
+        },
+        log: { warn: vi.fn() }
+      })
+      const request = { projectId: 'project-a', sessionId: 'session-1' }
+
+      const result = await owner.delete(request)
+
+      if (failurePhase === 'authority') {
+        expect(result).toEqual({ status: 'failed', reason: 'persistence', runtimeDetached: true })
+        expect(calls).toEqual(['authority'])
+        await expect(deleteSession.mock.results[0].value).rejects.toBe(failure)
+      } else {
+        expect.soft(calls).toEqual(['authority', 'permissions', 'binding'])
+        expect.soft(prunePermissions).toHaveBeenCalledWith(request.projectId, request.sessionId)
+        expect.soft(clearBinding).toHaveBeenCalledWith(request.projectId, request.sessionId)
+        expect(result).toEqual({
+          status: 'deleted',
+          runtimeDetached: true,
+          ...(failurePhase === 'none' ? {} : { cleanupPending: true })
+        })
+        if (failurePhase !== 'none') {
+          await expect(deleteSession.mock.results[0].value).rejects.toBeInstanceOf(
+            SessionDeletionCommittedError
+          )
+        }
+      }
+    }
+  )
+})
 
 describe('session persistence IPC handlers', () => {
   it('saves a Session for Project B while Project A cleanup remains failed', async () => {
@@ -149,7 +252,7 @@ describe('session persistence IPC handlers', () => {
       projectId: session.projectId,
       sessionId: session.id,
       archived: true,
-      expectedArchivedAt: null
+      expectedRevision: 0
     })
     await repository.deleteSession(session.projectId, session.id)
     await repository.saveManifest({ lastSessionId: session.id })
@@ -652,18 +755,11 @@ describe('session persistence IPC handlers', () => {
       'sessions:load-usage',
       'sessions:load-one',
       'sessions:save-session',
-      'sessions:update-archive',
       'sessions:save-manifest',
       'sessions:open-recovery-folder'
     ])
 
     const deleteRequest = { projectId: 'project-a', sessionId: 'session-1' }
-    const archiveRequest = {
-      projectId: 'project-a',
-      sessionId: 'session-1',
-      archived: true,
-      expectedArchivedAt: null
-    }
     const manifestRequest = { lastSessionId: 'session-1' }
     const event = { sender: { id: 2 } }
     await expect(ipcHandlers.get('sessions:load-all')?.()).resolves.toBe(loadResult)
@@ -676,13 +772,12 @@ describe('session persistence IPC handlers', () => {
     })
     const updatedSession = { ...session, title: 'Updated session', updatedAt: 1710000000001 }
     await ipcHandlers.get('sessions:save-session')?.(event, updatedSession)
-    await ipcHandlers.get('sessions:update-archive')?.(event, archiveRequest)
     await ipcHandlers.get('sessions:save-manifest')?.(undefined, manifestRequest)
     await ipcHandlers.get('sessions:open-recovery-folder')?.(event, { projectId: 'project-a' })
 
     expect(repository.saveSession).toHaveBeenCalledWith(session)
     expect(repository.loadOne).toHaveBeenCalledWith(deleteRequest)
-    expect(repository.updateArchive).toHaveBeenCalledWith(archiveRequest)
+    expect(repository.updateArchive).not.toHaveBeenCalled()
     expect(repository.deleteSession).not.toHaveBeenCalled()
     expect(reviewRepository.deleteReviewsForSession).not.toHaveBeenCalled()
     expect(repository.saveManifest).toHaveBeenCalledWith(manifestRequest)
@@ -693,10 +788,6 @@ describe('session persistence IPC handlers', () => {
     })
     expect(broadcastLifecycleEvent).toHaveBeenCalledWith('session:updated', {
       session: durableSession,
-      originClientId: 'electron:2'
-    })
-    expect(broadcastLifecycleEvent).toHaveBeenCalledWith('session:updated', {
-      session: { ...durableSession, archivedAt: 3 },
       originClientId: 'electron:2'
     })
   })
@@ -861,6 +952,40 @@ describe('session persistence IPC handlers', () => {
       error: {
         code: 'session-revision-conflict',
         message: conflict.message
+      }
+    })
+    expect(broadcastLifecycleEvent).not.toHaveBeenCalled()
+  })
+
+  it('returns a size-limit outcome without rejecting the Electron IPC handler', async () => {
+    const failure = new SessionSizeLimitError()
+    const repository: SessionPersistenceBackend = {
+      loadAll: vi.fn(),
+      loadOne: vi.fn(),
+      saveSession: vi.fn(),
+      deleteSession: vi.fn(),
+      saveManifest: vi.fn()
+    }
+    const handlers: SessionPersistenceHandlers = {
+      loadAll: vi.fn(),
+      list: vi.fn(),
+      loadUsage: vi.fn(),
+      loadOne: vi.fn(),
+      saveSession: vi.fn().mockRejectedValue(failure),
+      setDelegationPolicy: vi.fn(),
+      updateArchive: vi.fn(),
+      deleteSession: vi.fn(),
+      saveManifest: vi.fn()
+    }
+    registerSessionPersistenceIpcHandlers(repository, createMockReviewRepository(), handlers)
+
+    await expect(
+      ipcHandlers.get('sessions:save-session')?.({ sender: { id: 1 } }, createSession())
+    ).resolves.toEqual({
+      ok: false,
+      error: {
+        code: 'session-size-limit',
+        message: failure.message
       }
     })
     expect(broadcastLifecycleEvent).not.toHaveBeenCalled()

@@ -190,7 +190,22 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
 
   updateProjectArchive: async (request) => {
     const generation = beginProjectProjection()
-    const project = await window.api.projects.updateArchive(request)
+    let project: Project
+    try {
+      project = await window.api.projects.updateArchive(request)
+    } catch (error) {
+      // Refresh authority for the next explicit user action; never replay the rejected intent.
+      try {
+        const current = await window.api.projects.get(request.id)
+        if (current && commitProjectProjection(current.id, generation)) {
+          projectMutationSequence += 1
+          set((state) => ({ projects: upsertProjectList(state.projects, current) }))
+        }
+      } catch {
+        /* Keep the original command failure when recovery is also unavailable. */
+      }
+      throw error
+    }
 
     projectMutationSequence += 1
     if (commitProjectProjection(project.id, generation)) {

@@ -3,6 +3,7 @@ import { create } from 'zustand'
 import { setI18nLocale } from '@/i18n'
 import {
   applyHtmlLang,
+  LANGUAGE_STORAGE_KEY,
   persistPreference,
   resolveLocalePreference,
   resolvePreference
@@ -10,69 +11,124 @@ import {
 import type { LanguagePreference, Locale, LocalePreferenceSnapshot } from '../../../shared/locale'
 
 type LocaleStore = {
-  // The user's choice: 'system' (detect from the device) or an explicit locale.
   preference: LanguagePreference
-  // The concrete locale currently painting, after resolving 'system' against the device.
   locale: Locale
-  // Sets the preference, switches i18next, reflects <html lang>, and persists it. Unlike the theme's
-  // 'system', there is no live OS listener to wire: no platform reports a language change to a running
-  // process, so 'system' is resolved once per launch (the settings copy tells the user this).
+  saveFailed: boolean
   setPreference: (preference: LanguagePreference) => void
 }
 
-// Seeds from the stored preference (or 'system' on first run). main.tsx / web bootstrap.ts already
-// initialized i18next and applied <html lang> before React mounted, so the initial store state, the
-// DOM, and i18next are in sync.
-export const useLocaleStore = create<LocaleStore>((set) => ({
-  preference: resolvePreference(),
-  locale: resolveLocalePreference(resolvePreference()),
+const initialPreference = resolvePreference()
+let confirmed: LocalePreferenceSnapshot = {
+  preference: initialPreference,
+  locale: resolveLocalePreference(initialPreference)
+}
+let operation = 0
+let confirmedOperation = 0
+let pendingOperation: number | undefined
+let broadcastVersion = 0
+
+export const useLocaleStore = create<LocaleStore>(() => ({
+  ...confirmed,
+  saveFailed: false,
   setPreference: (preference) => {
-    const locale = resolveLocalePreference(preference)
-    setI18nLocale(locale)
-    applyHtmlLang(locale)
-    persistPreference(preference)
-    set({ preference, locale })
-    void window.api?.locale
-      ?.setPreference({ preference })
-      .then((snapshot) => {
-        if (useLocaleStore.getState().preference === preference) applyLocaleSnapshot(snapshot)
-      })
-      .catch(() => undefined)
+    const currentOperation = ++operation
+    const versionAtStart = broadcastVersion
+    const localeApi = window.api?.locale
+    // Before desktop synchronization starts, retain the existing first-paint projection as fallback.
+    if (pendingOperation === undefined && !stopLocalePreferenceSync) {
+      const state = useLocaleStore.getState()
+      confirmed = { preference: state.preference, locale: state.locale }
+    }
+    applyLocaleSnapshot({ preference, locale: resolveLocalePreference(preference) })
+    useLocaleStore.setState({ saveFailed: false })
+    if (!localeApi) return
+
+    pendingOperation = currentOperation
+    void (async () => {
+      try {
+        const snapshot = await localeApi.setPreference({ preference })
+        // Broadcasts are delivered in Main commit order. A delayed command reply must not replace
+        // a newer broadcast or successful command, even when the user picks the same value again.
+        if (versionAtStart === broadcastVersion && currentOperation > confirmedOperation) {
+          confirmed = snapshot
+          confirmedOperation = currentOperation
+        }
+        if (currentOperation === operation) applyLocaleSnapshot(confirmed)
+      } catch {
+        if (currentOperation === operation) {
+          applyLocaleSnapshot(confirmed)
+          useLocaleStore.setState({ saveFailed: true })
+        }
+      } finally {
+        if (pendingOperation === currentOperation) pendingOperation = undefined
+      }
+    })()
   }
 }))
 
-const applyLocaleSnapshot = (snapshot: LocalePreferenceSnapshot): void => {
+const applyLocaleSnapshot = (snapshot: LocalePreferenceSnapshot, persist = true): void => {
   setI18nLocale(snapshot.locale)
   applyHtmlLang(snapshot.locale)
-  persistPreference(snapshot.preference)
+  if (persist) persistPreference(snapshot.preference)
   useLocaleStore.setState(snapshot)
 }
 
 let stopLocalePreferenceSync: (() => void) | undefined
 
-// Electron Main owns the durable preference. localStorage remains a synchronous first-paint cache
-// and the one-time source for historical installs whose settings.json has no localePreference yet.
-// Web builds expose no locale bridge, so they keep browser-local ownership unchanged.
+// Main owns desktop persistence; browser tabs share only their local preference. In both cases the
+// subscription belongs to startup, not to a particular language control or Settings panel mount.
 export const startLocalePreferenceSync = (): (() => void) => {
   stopLocalePreferenceSync?.()
   const localeApi = window.api?.locale
-  if (!localeApi) return () => undefined
+  let active = true
+  let unsubscribe: () => void
 
-  const unsubscribe = localeApi.onChanged(applyLocaleSnapshot)
-  const cachedPreference = useLocaleStore.getState().preference
-  void localeApi
-    .initialize({ cachedPreference })
-    .then((snapshot) => {
-      // A user choice made while startup IPC was in flight wins over the older startup reply.
-      if (useLocaleStore.getState().preference === cachedPreference) {
-        applyLocaleSnapshot(snapshot)
-      }
+  if (localeApi) {
+    const versionAtStart = broadcastVersion
+    const operationAtStart = operation
+    unsubscribe = localeApi.onChanged((snapshot) => {
+      if (!active) return
+      broadcastVersion += 1
+      confirmed = snapshot
+      if (pendingOperation === undefined) applyLocaleSnapshot(snapshot)
     })
-    .catch(() => undefined)
-
-  stopLocalePreferenceSync = () => {
-    unsubscribe()
-    stopLocalePreferenceSync = undefined
+    const cachedPreference = useLocaleStore.getState().preference
+    void localeApi
+      .initialize({ cachedPreference })
+      .then((snapshot) => {
+        if (!active || versionAtStart !== broadcastVersion) return
+        if (operationAtStart >= confirmedOperation) confirmed = snapshot
+        // Startup can arrive after a failed optimistic choice. Reconcile that failure too, but never
+        // replace a pending choice or a newer successful command with an old startup snapshot.
+        if (
+          pendingOperation === undefined &&
+          (operationAtStart === operation || useLocaleStore.getState().saveFailed)
+        ) {
+          applyLocaleSnapshot(confirmed)
+        }
+      })
+      .catch(() => undefined)
+  } else {
+    const onStorage = (event: StorageEvent): void => {
+      if (
+        event.storageArea !== localStorage ||
+        (event.key !== null && event.key !== LANGUAGE_STORAGE_KEY)
+      )
+        return
+      const preference = resolvePreference()
+      applyLocaleSnapshot({ preference, locale: resolveLocalePreference(preference) }, false)
+    }
+    window.addEventListener('storage', onStorage)
+    unsubscribe = () => window.removeEventListener('storage', onStorage)
   }
-  return stopLocalePreferenceSync
+
+  const stop = (): void => {
+    active = false
+    unsubscribe()
+    if (stopLocalePreferenceSync === stop) stopLocalePreferenceSync = undefined
+  }
+  stopLocalePreferenceSync = stop
+  return stop
 }
+
+if (import.meta.hot) import.meta.hot.dispose(() => stopLocalePreferenceSync?.())

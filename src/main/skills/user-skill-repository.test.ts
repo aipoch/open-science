@@ -520,7 +520,7 @@ describe('UserSkillRepository', () => {
       name: 'foo',
       source: 'imported',
       license: 'MIT',
-      compatibility: expect.stringMatching(/^sha256-tree-v2:/)
+      compatibility: expect.stringMatching(/^sha256-tree-v3:/)
     })
   })
 
@@ -1605,7 +1605,7 @@ describe('UserSkillRepository', () => {
     expect((await restarted.previewZip(zip)).previews[0].alreadyImported).toBe(true)
   })
 
-  it('marks scanned candidates already imported by URL or by same name', async () => {
+  it('does not mark same-named candidates from another repository as imported', async () => {
     const repo = new UserSkillRepository(await makeStorage())
     const skillMd = ['---', 'name: Foo', 'description: An imported skill.', '---', 'body'].join(
       '\n'
@@ -1635,8 +1635,8 @@ describe('UserSkillRepository', () => {
 
     const scanned = await repo.scanRepo('other/repo', treeFetch)
     const byName = Object.fromEntries(scanned.map((skill) => [skill.name, skill.alreadyImported]))
-    // "foo" is a different repo (different URL) but the same folder name -> flagged by name.
-    expect(byName).toEqual({ foo: true, bar: false })
+    // A directory name collision is not a matching source identity.
+    expect(byName).toEqual({ foo: false, bar: false })
   })
 
   it('writes frontmatter that the reader can parse back', async () => {

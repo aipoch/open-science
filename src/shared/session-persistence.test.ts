@@ -1,10 +1,12 @@
 import { describe, expect, it } from 'vitest'
 
-import { MAX_ACP_SESSION_IMAGE_BYTES } from './acp'
+import { MAX_ACP_RUNTIME_EVENTS, MAX_ACP_SESSION_IMAGE_BYTES } from './acp'
+import { validateAnnotations, type PdfAnnotation } from './annotations'
 import { MAX_ELICITATION_OPTIONS_PER_FIELD } from './elicitation'
 
 import {
   SESSION_FILE_VERSION,
+  sessionDeletionResultSchema,
   collectSessionReferences,
   createSessionFile,
   ConversationGraphMaterializationError,
@@ -486,6 +488,47 @@ describe('conversation graph materialization diagnostics', () => {
     expect(written.session.conversationGraph.messages).toEqual([
       expect.objectContaining({ id: 'message-1', content: 'Persist me' })
     ])
+  })
+
+  it('compacts terminal event IDs in both canonical and compatibility projections', () => {
+    const eventIds = Array.from(
+      { length: MAX_ACP_RUNTIME_EVENTS + 1 },
+      (_, index) => `event-${index}`
+    )
+    const written = createSessionFile({
+      ...(createSessionWithActivity(
+        createOpenToolActivity('tool-1', { status: 'completed', eventIds })
+      ) as PersistedChatSession),
+      messages: [
+        {
+          id: 'prompt-1',
+          role: 'user',
+          content: 'Run the tests',
+          status: 'complete',
+          eventIds: [],
+          createdAt: 1,
+          updatedAt: 1
+        },
+        {
+          id: 'response-1',
+          role: 'agent',
+          content: 'Done',
+          status: 'complete',
+          responseToMessageId: 'prompt-1',
+          eventIds,
+          createdAt: 2,
+          updatedAt: 2
+        }
+      ]
+    })
+    const expected = eventIds.slice(1)
+
+    expect(written.session.messages[1]?.eventIds).toEqual(expected)
+    expect(written.session.activities?.[0]?.eventIds).toEqual(expected)
+    expect(
+      written.session.conversationGraph.messages.find(({ id }) => id === 'response-1')?.eventIds
+    ).toEqual(expected)
+    expect(written.session.conversationGraph.activities[0]?.eventIds).toEqual(expected)
   })
 
   it('identifies message synchronization failures without exposing the raw graph error', () => {
@@ -1150,6 +1193,119 @@ describe('message part persistence', () => {
       }
     ])
   })
+
+  it('preserves a validated immutable Literature snapshot and drops unknown fields', () => {
+    const restored = normalizeSessionFile({
+      ...createSessionWithActivity(undefined),
+      activities: undefined,
+      messages: [
+        {
+          id: 'message-1',
+          role: 'user',
+          content: '@A cited paper',
+          parts: [
+            {
+              type: 'literature',
+              itemId: 'item-1',
+              metadataRevision: 2,
+              attachmentVersionId: 'version-1',
+              localPath: '/must/not/persist.pdf',
+              item: {
+                itemType: 'journalArticle',
+                title: 'A cited paper',
+                abstract: '',
+                issuedText: '2025',
+                containerTitle: 'Research Journal',
+                shortTitle: '',
+                language: 'en',
+                rights: '',
+                url: '',
+                extra: '',
+                typeFields: {},
+                creators: [],
+                identifiers: []
+              }
+            }
+          ],
+          createdAt: 1,
+          updatedAt: 1
+        }
+      ]
+    })
+
+    expect(restored?.messages[0].parts).toEqual([
+      {
+        type: 'literature',
+        itemId: 'item-1',
+        metadataRevision: 2,
+        attachmentVersionId: 'version-1',
+        item: {
+          itemType: 'journalArticle',
+          title: 'A cited paper',
+          abstract: '',
+          issuedText: '2025',
+          containerTitle: 'Research Journal',
+          shortTitle: '',
+          language: 'en',
+          rights: '',
+          url: '',
+          extra: '',
+          typeFields: {},
+          creators: [],
+          identifiers: []
+        }
+      }
+    ])
+  })
+
+  it('preserves valid Library retrieval scopes and rejects incomplete Collection scopes', () => {
+    const restored = normalizeSessionFile({
+      ...createSessionWithActivity(undefined),
+      activities: undefined,
+      messages: [
+        {
+          id: 'message-1',
+          role: 'user',
+          content: '@Library @Evidence set',
+          parts: [
+            { type: 'literature-scope', scope: 'project', ignored: 'value' },
+            { type: 'literature-scope', scope: 'library' },
+            {
+              type: 'literature-scope',
+              scope: 'collection',
+              collectionId: 'collection-1',
+              name: 'Evidence set'
+            },
+            { type: 'literature-scope', scope: 'collection', name: 'Missing ID' },
+            {
+              type: 'literature-scope',
+              scope: 'collection',
+              collectionId: 'c'.repeat(513),
+              name: 'Oversized ID'
+            },
+            {
+              type: 'literature-scope',
+              scope: 'collection',
+              collectionId: 'collection-2',
+              name: 'n'.repeat(4097)
+            }
+          ],
+          createdAt: 1,
+          updatedAt: 1
+        }
+      ]
+    })
+
+    expect(restored?.messages[0].parts).toEqual([
+      { type: 'literature-scope', scope: 'project' },
+      {
+        type: 'literature-scope',
+        scope: 'collection',
+        collectionId: 'collection-1',
+        name: 'Evidence set'
+      }
+    ])
+  })
 })
 
 describe('interrupted turn intent persistence', () => {
@@ -1387,6 +1543,92 @@ describe('upload message persistence', () => {
 })
 
 describe('message image persistence', () => {
+  it('preserves accepted PDF region evidence when previous images exhaust the session budget', () => {
+    const region: PdfAnnotation = {
+      id: 'small-region',
+      kind: 'pdf',
+      target: 'agent',
+      note: 'Inspect this evidence.',
+      source: {
+        kind: 'upload-version',
+        projectId: 'project-a',
+        sessionId: 'session-1',
+        versionId: 'version-1',
+        name: 'paper.pdf',
+        path: 'upload-version:project-a/session-1/version-1',
+        checksum: 'a'.repeat(64)
+      },
+      selector: {
+        kind: 'region',
+        pageNumber: 6,
+        pageRotation: 0,
+        rect: { x: 0.2, y: 0.3, width: 0.4, height: 0.25 },
+        text: 'Figure 2. Retrieval evaluator.',
+        image: { mimeType: 'image/png', data: 'AQID', byteLength: 3 }
+      }
+    }
+    expect(validateAnnotations([region])).toBeUndefined()
+    const data = 'A'.repeat(4 * 1024 * 1024)
+    const byteLength = (data.length * 3) / 4
+    const history: PersistedChatMessage[] = Array.from(
+      { length: MAX_ACP_SESSION_IMAGE_BYTES / byteLength },
+      (_, index) => ({
+        id: `image-message-${index}`,
+        role: 'agent',
+        content: '',
+        status: 'complete',
+        eventIds: [],
+        createdAt: index,
+        updatedAt: index,
+        images: [{ id: `image-${index}`, mimeType: 'image/png', data, byteLength }]
+      })
+    )
+    const evidence: PersistedChatMessage = {
+      id: 'evidence-message',
+      role: 'user',
+      content: '',
+      status: 'complete',
+      eventIds: [],
+      createdAt: 10,
+      updatedAt: 10,
+      annotations: [region]
+    }
+    const session: PersistedChatSession = {
+      id: 'session-1',
+      projectId: 'project-a',
+      title: 'PDF evidence',
+      cwd: '/workspace',
+      status: 'idle',
+      messages: [...history, evidence],
+      createdAt: 1,
+      updatedAt: 10
+    }
+    const control = createSessionFile({ ...session, messages: [evidence] }).session
+    expect(control.messages[0].annotations).toEqual([region])
+    expect(
+      history
+        .flatMap((message) => message.images ?? [])
+        .reduce((total, image) => total + image.byteLength, 0)
+    ).toBe(MAX_ACP_SESSION_IMAGE_BYTES)
+    const saved = createSessionFile(session).session
+    expect(session.messages.at(-1)?.annotations).toEqual([region])
+    // A successful save must not silently turn accepted evidence into an empty user message.
+    const expected = {
+      ...region,
+      selector: {
+        ...region.selector,
+        image: undefined,
+        imageOmissionReason: 'session-budget'
+      }
+    }
+    expect.soft(saved.messages.at(-1)?.annotations).toEqual([expected])
+    expect.soft(saved.conversationGraph?.messages.at(-1)?.annotations).toEqual([expected])
+    const restored = normalizeSessionFile(
+      JSON.parse(JSON.stringify({ version: SESSION_FILE_VERSION, session: saved }))
+    )
+    expect(restored?.messages.at(-1)?.annotations).toEqual([expected])
+  })
+
   it('keeps only bounded raster images with recomputed byte metadata', () => {
     const images = sanitizeMessageImages([
       { id: 'image-1', mimeType: 'image/png', data: 'AQID', byteLength: 999 },
@@ -3053,6 +3295,80 @@ describe('normalizeSessionFile with activities', () => {
     expect(JSON.stringify(rawInput)).not.toContain('test-password-secret')
     expect(restored?.runtimeContext?.permission?.request.title).not.toContain(
       'test-permission-title-secret'
+    )
+  })
+
+  it('keeps a permission request when its optional tool input is too large to persist', () => {
+    const restored = normalizeSessionFile(
+      {
+        ...createSessionWithActivity(undefined),
+        activities: undefined,
+        runtimeContext: {
+          version: 1,
+          revision: 1,
+          permission: {
+            state: 'pending',
+            request: {
+              requestId: 'permission-large-input',
+              sessionId: 'session-1',
+              toolCallId: 'tool-large-input',
+              title: 'Write generated content',
+              options: [{ optionId: 'deny', name: 'Deny', kind: 'reject_once' }],
+              rawInput: { content: 'x'.repeat(9_000) }
+            },
+            originatingPromptMessageId: 'prompt-1',
+            fingerprint: 'a'.repeat(64),
+            createdAt: 1
+          }
+        }
+      },
+      { preserveRuntimeState: true }
+    )
+
+    expect(restored?.runtimeContext?.permission).toMatchObject({
+      state: 'pending',
+      request: {
+        requestId: 'permission-large-input',
+        toolCallId: 'tool-large-input'
+      },
+      fingerprint: 'a'.repeat(64)
+    })
+    expect(restored?.runtimeContext?.permission?.request.rawInput).toBeUndefined()
+  })
+
+  it('keeps a permission request with a bounded preview when its command title is very long', () => {
+    const longTitle = `python -c "${'x'.repeat(20_000)}"`
+    const restored = normalizeSessionFile(
+      {
+        ...createSessionWithActivity(undefined),
+        activities: undefined,
+        runtimeContext: {
+          version: 1,
+          revision: 1,
+          permission: {
+            state: 'pending',
+            request: {
+              requestId: 'permission-long-title',
+              sessionId: 'session-1',
+              toolCallId: 'tool-long-title',
+              title: longTitle,
+              options: [{ optionId: 'deny', name: 'Deny', kind: 'reject_once' }]
+            },
+            originatingPromptMessageId: 'prompt-1',
+            fingerprint: 'a'.repeat(64),
+            createdAt: 1
+          }
+        }
+      },
+      { preserveRuntimeState: true }
+    )
+
+    expect(restored?.runtimeContext?.permission?.request).toMatchObject({
+      requestId: 'permission-long-title',
+      toolCallId: 'tool-long-title'
+    })
+    expect(restored?.runtimeContext?.permission?.request.title.length).toBeLessThan(
+      longTitle.length
     )
   })
 
@@ -4805,8 +5121,30 @@ describe('normalizeSessionFile with activities', () => {
       linkedAt: 10
     }
     const snapshot = { version: 1, bindings: [binding] }
+    const literatureBinding = {
+      ...binding,
+      sourceKind: 'literature-attachment-version',
+      sourceFileId: 'attachment-1',
+      sourceVersionId: 'attachment-version-1',
+      sourceSessionId: undefined
+    }
 
     expect(sanitizeSessionPdfContext(snapshot)).toEqual(snapshot)
+    expect(sanitizeSessionPdfContext({ version: 1, bindings: [literatureBinding] })).toEqual({
+      version: 1,
+      bindings: [
+        expect.objectContaining({
+          sourceKind: 'literature-attachment-version',
+          sourceVersionId: 'attachment-version-1'
+        })
+      ]
+    })
+    expect(
+      sanitizeSessionPdfContext({
+        version: 1,
+        bindings: [{ ...literatureBinding, sourceSessionId: 'not-allowed' }]
+      })
+    ).toBeUndefined()
     expect(
       sanitizeSessionPdfContext({ version: 1, bindings: [{ ...binding, sourceKind: 'local' }] })
     ).toBeUndefined()
@@ -4872,5 +5210,25 @@ describe('normalizeSessionFile with activities', () => {
     expect(restored?.messages[0].pdfContext).toMatchObject({
       readingPosition: { pageNumber: 7, pageCount: 14 }
     })
+  })
+})
+
+// The response extension is transient and valid only for a committed deletion.
+describe('Session deletion result', () => {
+  it('accepts a cleanup warning without changing the existing deletion result', () => {
+    for (const result of [
+      { status: 'deleted', runtimeDetached: true },
+      { status: 'deleted', runtimeDetached: true, cleanupPending: true },
+      { status: 'failed', reason: 'persistence', runtimeDetached: true }
+    ])
+      expect(sessionDeletionResultSchema.parse(result)).toEqual(result)
+    expect(
+      sessionDeletionResultSchema.safeParse({
+        status: 'failed',
+        reason: 'persistence',
+        runtimeDetached: true,
+        cleanupPending: true
+      }).success
+    ).toBe(false)
   })
 })

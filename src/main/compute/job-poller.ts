@@ -29,6 +29,8 @@ import {
 import { classifyComputeJobExit } from './remote-launch-recovery'
 import { SubmittedJobRecovery, type SubmittedJobRecoveryResult } from './submitted-job-recovery'
 import { parseRemoteJobHandle, parseRemoteJobWorkdir } from './remote-job-handle'
+import { pollSlurmJobs, recoverSlurmJob, type SlurmObservation } from './slurm-driver'
+import type { SlurmRemoteHandle } from './job-dispatcher'
 
 // Polling interval: 15 seconds (design.md §8).
 export const POLL_INTERVAL_MS = 15_000
@@ -106,6 +108,7 @@ export type JobPollerDeps = {
   // Injectable harvest function (design §3). When omitted, harvest is disabled (no-op).
   // In production, wire this to harvestJob from harvest-engine.ts.
   harvestFn?: HarvestFn
+  harvestScheduler?: JobHarvestScheduler
   /**
    * Broadcast hook for compute_done notification (issue 06).
    * Used when emitting the notification for execution-error jobs (dispatch_failed).
@@ -159,9 +162,9 @@ export class JobPoller {
     this.clearIntervalFn = deps.clearInterval ?? ((h) => clearInterval(h))
     this.makeNonceFn = deps.makeNonce ?? (() => randomBytes(12).toString('hex') + '_')
     this.dispatchTracker = deps.dispatchTracker ?? sharedDispatchTracker
-    this.harvestScheduler = deps.harvestFn
-      ? new JobHarvestScheduler(deps.harvestFn, deps.now)
-      : undefined
+    this.harvestScheduler =
+      deps.harvestScheduler ??
+      (deps.harvestFn ? new JobHarvestScheduler(deps.harvestFn, deps.now) : undefined)
     this.lifecycle = new ComputeJobLifecycle(deps.jobRepository, deps.onJobUpdated)
     this.submittedJobRecovery = new SubmittedJobRecovery(this.lifecycle)
   }
@@ -310,6 +313,10 @@ export class JobPoller {
     jobs: ComputeJob[],
     signal: AbortSignal
   ): Promise<void> {
+    const slurmJobs = jobs.filter((job) => job.execution_mode === 'slurm')
+    if (slurmJobs.length > 0) await this._pollSlurmProvider(providerId, slurmJobs, signal)
+    jobs = jobs.filter((job) => job.execution_mode !== 'slurm')
+    if (jobs.length === 0) return
     const noHandle: ComputeJob[] = []
     const invalidHandle: ComputeJob[] = []
     const withHandle: ComputeJob[] = []
@@ -382,6 +389,148 @@ export class JobPoller {
       if (signal.aborted) return
       const batch = withHandle.slice(i, i + POLL_BATCH_MAX_JOBS)
       await this._pollBatch(batch, connection, signal)
+    }
+  }
+
+  private async _pollSlurmProvider(
+    providerId: string,
+    jobs: ComputeJob[],
+    signal: AbortSignal
+  ): Promise<void> {
+    let connection: ComputeConnectionLease
+    try {
+      connection = await this.deps.connectionBroker.acquire(providerId, {
+        intent: 'job_poll',
+        signal
+      })
+    } catch (error) {
+      if (signal.aborted) return
+      const code = error instanceof ComputeConnectionError ? error.code : 'host_unreachable'
+      await this._recordPollError(jobs, code, signal)
+      return
+    }
+
+    const dispatchable: Array<{ job: ComputeJob; handle: SlurmRemoteHandle }> = []
+    for (const job of jobs) {
+      if (signal.aborted) return
+      const parsed = parseRemoteJobHandle(job.remote_handle, job.remote_workdir)
+      let handle = parsed?.driver === 'slurm' ? parsed : undefined
+      if (!handle && (job.status === 'submitted' || job.status === 'running')) {
+        try {
+          handle = await recoverSlurmJob(job, connection)
+        } catch (error) {
+          await this.lifecycle.recordPollError(
+            job.job_id,
+            job.status,
+            error instanceof ComputeConnectionError ? error.code : 'slurm_recovery_unavailable'
+          )
+          continue
+        }
+        if (handle) {
+          if (job.status === 'submitted') {
+            await this.lifecycle.dispatchSubmitted(job.job_id, JSON.stringify(handle))
+          } else {
+            await this.lifecycle.recoverRemoteHandle(
+              job.job_id,
+              'running',
+              JSON.stringify(handle),
+              job.started_at ? new Date(job.started_at) : new Date()
+            )
+          }
+        } else {
+          await this.lifecycle.recordPollError(
+            job.job_id,
+            job.status,
+            'slurm_submission_unconfirmed: Open Science found no scheduler candidate with matching workdir ownership evidence; inspect squeue/sacct before resubmitting',
+            false
+          )
+          continue
+        }
+      }
+      if (!handle) {
+        await this.lifecycle.recordPollError(
+          job.job_id,
+          job.status === 'running' ? 'running' : 'submitted',
+          'slurm_handle_invalid',
+          false
+        )
+        continue
+      }
+      dispatchable.push({ job, handle })
+    }
+    if (dispatchable.length === 0) return
+
+    let observations: Map<string, SlurmObservation>
+    try {
+      observations = await pollSlurmJobs(dispatchable, connection)
+    } catch (error) {
+      if (signal.aborted) return
+      const code =
+        error instanceof ComputeConnectionError
+          ? error.code
+          : error instanceof Error
+            ? `slurm_poll_failed: ${error.message}`
+            : 'slurm_poll_failed'
+      await this._recordPollError(
+        dispatchable.map(({ job }) => job),
+        code,
+        signal
+      )
+      return
+    }
+
+    for (const { job, handle } of dispatchable) {
+      if (signal.aborted) return
+      const observation = observations.get(handle.scheduler_job_id)
+      if (!observation) continue
+      if (observation.kind === 'unknown') {
+        await this.lifecycle.recordPollError(
+          job.job_id,
+          job.status as 'submitted' | 'running',
+          observation.diagnostic,
+          false
+        )
+        continue
+      }
+      if (observation.kind === 'active') {
+        if (
+          job.status === 'submitted' &&
+          observation.state !== 'PENDING' &&
+          observation.state !== 'CONFIGURING'
+        ) {
+          await this.lifecycle.observeRunning(job.job_id, 'submitted', {
+            stdoutTail: null,
+            stderrTail: null
+          })
+        } else if (job.status === 'submitted') {
+          await this.lifecycle.recordPollError(
+            job.job_id,
+            'submitted',
+            observation.reason ? `slurm_pending: ${observation.reason}` : 'slurm_pending',
+            false
+          )
+        } else {
+          await this.lifecycle.observeRunning(job.job_id, 'running', {
+            stdoutTail: null,
+            stderrTail: null
+          })
+        }
+        continue
+      }
+      const timedOut = observation.state === 'TIMEOUT' || observation.exitCode === 124
+      const succeeded = observation.state === 'COMPLETED' && observation.exitCode === 0
+      const schedulerDiagnostic = `Slurm scheduler state: ${observation.state}.`
+      const failureStderr = `${observation.stderr}${
+        observation.stderr.length > 0 && !observation.stderr.endsWith('\n') ? '\n' : ''
+      }${schedulerDiagnostic}`.slice(-TAIL_MAX_BYTES)
+      const transition = await this.lifecycle.finishPolled(job.job_id, {
+        status: timedOut ? 'timeout' : succeeded ? 'success' : 'failed',
+        exitCode: observation.exitCode,
+        stdoutTail: observation.stdout || null,
+        stderrTail: succeeded ? observation.stderr || null : failureStderr,
+        errorCode: timedOut ? 'timeout' : succeeded ? null : 'job_failed'
+      })
+      if (transition.kind === 'applied') this.harvestScheduler?.schedule(transition.job, signal)
     }
   }
 
@@ -511,7 +660,7 @@ export class JobPoller {
     const batched: ComputeJob[] = []
     for (const job of jobs) {
       const handle = parseRemoteJobHandle(job.remote_handle, job.remote_workdir)
-      if (!handle) continue
+      if (!handle || handle.driver === 'slurm') continue
       batched.push(job)
 
       parts.push(
@@ -520,9 +669,9 @@ export class JobPoller {
         `process_owned_by_workdir ${handle.pid} "$workdir" && kill -0 ${handle.pid} 2>/dev/null && echo "${nonce}alive:1" || echo "${nonce}alive:0"`,
         `if [ -f ${quoteRemotePath(handle.exit_code_path)} ]; then POLL_EXIT_CODE=$(cat ${quoteRemotePath(handle.exit_code_path)}); else POLL_EXIT_CODE=; fi; printf '${nonce}exit:%s\\n' "$POLL_EXIT_CODE"`,
         `tail -c ${TAIL_MAX_BYTES} ${quoteRemotePath(handle.stdout_path)} 2>/dev/null || true`,
-        `echo "${nonce}STDOUT_END:${job.job_id}"`,
+        `printf '\n%s\n' '${nonce}STDOUT_END:${job.job_id}'`,
         `tail -c ${TAIL_MAX_BYTES} ${quoteRemotePath(handle.stderr_path)} 2>/dev/null || true`,
-        `echo "${nonce}STDERR_END:${job.job_id}"`
+        `printf '\n%s\n' '${nonce}STDERR_END:${job.job_id}'`
       )
     }
 
@@ -723,7 +872,7 @@ export class JobPoller {
         if (!current || (current.status !== 'submitted' && current.status !== 'running')) return
 
         const handle = parseRemoteJobHandle(current.remote_handle, current.remote_workdir)
-        if (!handle) {
+        if (!handle || handle.driver === 'slurm') {
           await this._recordTimeoutTerminationUnconfirmed(current)
           return
         }

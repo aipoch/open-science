@@ -8,6 +8,7 @@ import { pathToFileURL } from 'node:url'
 
 import type { FileReference } from '../../shared/artifacts'
 import { parseArtifactVersionLocator } from '../../shared/artifact-provenance'
+import { parseLiteratureAttachmentVersionReference } from '../../shared/literature'
 import type { GrantedLocalRoot } from '../../shared/local-fs'
 import { isPathWithin } from '../../shared/local-fs'
 import { MAX_UPLOAD_FILE_BYTES } from '../../shared/uploads'
@@ -332,6 +333,16 @@ export class FileReferenceResolver {
 export const createManagedFileReferenceResolver = (dependencies: {
   uploads?: UploadRepository
   artifacts?: ArtifactRepository
+  literature?: Readonly<{
+    resolveVersion: (versionId: string) => Promise<
+      | Readonly<{
+          path: string
+          filename: string
+          contentType: string
+        }>
+      | undefined
+    >
+  }>
   readOnlyProjectionMaxSessionBytes?: number
   // Resolves a granted local root id and current access level (settings-backed). Absent ⇒
   // linked-folder references stay unavailable, matching the pre-grant behavior.
@@ -347,8 +358,11 @@ export const createManagedFileReferenceResolver = (dependencies: {
 
   const resolveLogicalReference = async (
     projectId: string,
-    reference: Extract<FileReference, { source: 'artifact' | 'upload' }>
+    reference: FileReference
   ): Promise<ManagedFileReadLease> => {
+    if (reference.source !== 'artifact' && reference.source !== 'upload') {
+      throw new Error('Managed file reference must be an Artifact or Upload.')
+    }
     let sourceFileId = reference.sourceFileId
     if (reference.source === 'artifact') {
       const versionIdentity = parseArtifactVersionLocator(reference.path)
@@ -415,6 +429,29 @@ export const createManagedFileReferenceResolver = (dependencies: {
           versionId: logical.version.id,
           checksum: logical.version.checksum,
           trustedLease: logical
+        }
+      }
+    })
+  }
+
+  if (dependencies.literature) {
+    adapters.push({
+      source: 'literature',
+      resolve: async (_context, reference) => {
+        if (reference.source !== 'literature') {
+          throw new Error('Invalid Literature reference.')
+        }
+        const versionId = parseLiteratureAttachmentVersionReference(reference.path)
+        if (!versionId || versionId !== reference.versionId) {
+          throw new Error('Invalid Literature Attachment Version reference.')
+        }
+        const version = await dependencies.literature!.resolveVersion(versionId)
+        if (!version) throw new Error('Literature Attachment Version is unavailable.')
+        return {
+          absolutePath: version.path,
+          name: version.filename,
+          mimeType: version.contentType,
+          allowSkillImportReference: false
         }
       }
     })

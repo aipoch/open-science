@@ -1,9 +1,12 @@
 const APP_OWNED_ROOT_FILES = new Set(['.source.json', '.specialist-package.json'])
 
+export const isAppOwnedSkillRootFile = (relativePath: string): boolean =>
+  APP_OWNED_ROOT_FILES.has(relativePath.toLowerCase())
+
 // App-owned root metadata travels with a Skill package but is not part of the user-authored package
 // budget. Nested files with the same names remain ordinary package content.
 export const isSkillPackageBudgetedPath = (relativePath: string): boolean =>
-  !APP_OWNED_ROOT_FILES.has(relativePath)
+  !isAppOwnedSkillRootFile(relativePath)
 
 // Resource caps that bound a skill import from any source (a .zip/.skill bundle or a recursive
 // GitHub download). Without them a zip bomb or a very large repository could exhaust memory or freeze

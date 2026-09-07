@@ -16,7 +16,9 @@ class RendererFailureGate {
       if (message.type() !== 'error') return
       const text = message.text()
       if (this.allowedConsoleErrors.has(text)) return
-      this.failures.set(`console:${text}`, new Error(`[renderer console] ${text}`))
+      const { url, lineNumber, columnNumber } = message.location()
+      const location = url ? ` (${url}:${lineNumber + 1}:${columnNumber + 1})` : ''
+      this.failures.set(`console:${text}`, new Error(`[renderer console] ${text}${location}`))
     }
     const recordPageError = (error: Error): void => {
       this.failures.set(

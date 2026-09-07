@@ -1,6 +1,6 @@
 import { ExternalLink, FolderOpen, Globe, Terminal } from 'lucide-react'
 import type { TFunction } from 'i18next'
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { Trans, useTranslation } from 'react-i18next'
 
 import { ExternalTextLink } from '@/components/ExternalTextLink'
@@ -14,7 +14,7 @@ import { errorDetail } from '@/lib/error-detail'
 import { useSettingsStore } from '@/stores/settings-store'
 import type { CloseActionPreference } from '../../../../shared/window-controls'
 import type { CliLauncherStatus } from '../../../../shared/cli'
-import type { LogFileStatus } from '../../../../shared/logs'
+import type { LogFileStatus, LogWriteFailureCategory } from '../../../../shared/logs'
 import { APP } from '../../../../shared/app-config'
 import type {
   NotificationDesktopAvailability,
@@ -47,6 +47,21 @@ const generalActionErrorCopy = (error: GeneralActionError, t: TFunction): string
   }
 }
 
+const logFailureCopy = (category: LogWriteFailureCategory | null, t: TFunction): string => {
+  switch (category) {
+    case 'directory':
+      return t('The log folder could not be created.')
+    case 'inspect':
+      return t('The log file could not be checked.')
+    case 'rotation':
+      return t('The log backups could not be rotated.')
+    case 'append':
+      return t('The log record could not be appended.')
+    default:
+      return ''
+  }
+}
+
 // Discord and X are brand marks that lucide-react dropped in v1, so we inline the official SVGs.
 // currentColor lets them inherit the link's text color like the other icons.
 const DiscordMark = ({ className }: { className?: string }): React.JSX.Element => (
@@ -67,6 +82,43 @@ const GeneralPanel = (): React.JSX.Element => {
   const { t } = useTranslation()
   const isMac = window.api.platform === 'darwin'
   const [logStatus, setLogStatus] = useState<LogFileStatus | null>(null)
+  const [isCheckingLog, setIsCheckingLog] = useState(true)
+  const [logStatusError, setLogStatusError] = useState<string>()
+  const logStatusRequest = useRef(0)
+
+  const checkLogStatus = useCallback((): Promise<void> => {
+    const request = ++logStatusRequest.current
+    return Promise.resolve()
+      .then(() => window.api.logs.getStatus())
+      .then(
+        (status) => {
+          if (request !== logStatusRequest.current) return
+          setLogStatus(status)
+          setLogStatusError(undefined)
+        },
+        (error: unknown) => {
+          if (request !== logStatusRequest.current) return
+          setLogStatusError(errorDetail(error) ?? '')
+        }
+      )
+      .finally(() => {
+        if (request === logStatusRequest.current) setIsCheckingLog(false)
+      })
+  }, [])
+
+  const refreshLogStatus = useCallback((): Promise<void> => {
+    setIsCheckingLog(true)
+    return checkLogStatus()
+  }, [checkLogStatus])
+
+  useEffect(() => {
+    void checkLogStatus()
+    window.addEventListener('focus', refreshLogStatus)
+    return () => {
+      window.removeEventListener('focus', refreshLogStatus)
+      logStatusRequest.current += 1
+    }
+  }, [checkLogStatus, refreshLogStatus])
   const [message, setMessage] = useState<GeneralActionError | undefined>(undefined)
   const [isOpening, setIsOpening] = useState(false)
   const [cli, setCli] = useState<CliLauncherStatus | null>(null)
@@ -97,7 +149,6 @@ const GeneralPanel = (): React.JSX.Element => {
   }
 
   useEffect(() => {
-    void window.api.logs.getStatus().then(setLogStatus, () => setLogStatus(null))
     void window.api.cli.getStatus().then(setCli, (error) => {
       setCliError({ action: 'cli-status', detail: errorDetail(error) })
     })
@@ -157,6 +208,7 @@ const GeneralPanel = (): React.JSX.Element => {
     } catch (error) {
       setMessage({ action: 'open-log', detail: errorDetail(error) })
     } finally {
+      await refreshLogStatus()
       setIsOpening(false)
     }
   }
@@ -172,6 +224,8 @@ const GeneralPanel = (): React.JSX.Element => {
       }
     } catch (error) {
       setMessage({ action: 'reveal-log', detail: errorDetail(error) })
+    } finally {
+      await refreshLogStatus()
     }
   }
 
@@ -378,12 +432,48 @@ const GeneralPanel = (): React.JSX.Element => {
           className="overflow-x-auto rounded-lg border border-border bg-muted/60 px-3 py-2.5 font-mono text-xs text-foreground"
           aria-label={t('Log file path')}
         >
-          {logPath ?? t('Not available yet.')}
+          {logPath ??
+            (isCheckingLog
+              ? t('Loading…')
+              : logStatusError !== undefined
+                ? '—'
+                : t('Not available yet.'))}
         </pre>
 
-        {logStatus?.lastWriteSucceeded === false ? (
+        {logStatus &&
+        logPath &&
+        !logExists &&
+        !isCheckingLog &&
+        logStatusError === undefined &&
+        !logStatus.lastFailureCategory ? (
+          <p className="mt-2 text-xs text-muted-foreground" role="status">
+            {t('Not available yet.')}
+          </p>
+        ) : null}
+
+        {logStatusError !== undefined ? (
+          <div className="mt-2 space-y-2">
+            <p className="text-xs text-destructive" role="alert">
+              {t('Could not check the log file.')}
+            </p>
+            <DiagnosticDetails detail={logStatusError} />
+            <Button
+              type="button"
+              variant="outline"
+              disabled={isCheckingLog}
+              onClick={() => void refreshLogStatus()}
+            >
+              {isCheckingLog ? t('Loading…') : t('Check again')}
+            </Button>
+          </div>
+        ) : null}
+
+        {logStatus && (logStatus.lastWriteSucceeded === false || logStatus.lastFailureCategory) ? (
           <p className="mt-2 text-xs text-destructive" role="status">
-            {t('The app could not write to the log file during its most recent attempt.')}
+            {logStatus.lastWriteSucceeded === false
+              ? t('The app could not write to the log file during its most recent attempt.')
+              : null}{' '}
+            {logFailureCopy(logStatus.lastFailureCategory, t)}
           </p>
         ) : null}
 

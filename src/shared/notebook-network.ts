@@ -23,6 +23,7 @@ export type NotebookNetworkSettings = Readonly<{
 
 export type NotebookNetworkPolicy = Readonly<{
   allowedDomains: readonly string[]
+  askDomains: readonly string[]
   deniedDomains: readonly string[]
   deniedDomainReasons: Readonly<Record<string, string>>
 }>
@@ -208,8 +209,11 @@ export const notebookNetworkSettingsAllowDomain = (
   hostname: string
 ): boolean => {
   const normalized = hostname.toLowerCase().replace(/\.$/, '')
-  return buildNotebookNetworkPolicy(settings).allowedDomains.some((pattern) =>
-    domainPatternMatches(pattern, normalized)
+  const policy = buildNotebookNetworkPolicy(settings)
+  return (
+    policy.allowedDomains.includes(normalized) ||
+    (!policy.askDomains.some((pattern) => domainPatternMatches(pattern, normalized)) &&
+      policy.allowedDomains.some((pattern) => domainPatternMatches(pattern, normalized)))
   )
 }
 
@@ -289,6 +293,15 @@ export const buildNotebookNetworkPolicy = (
 ): NotebookNetworkPolicy => {
   const disabledGroups = new Set(settings.disabledOpenScienceDomainGroups)
   const disabledDomains = new Set(settings.disabledOpenScienceDomains)
+  const askDomains = uniqueSorted(
+    OPEN_SCIENCE_DOMAIN_GROUPS.flatMap((group) =>
+      group.locked
+        ? []
+        : group.domains.filter(
+            (domain) => disabledGroups.has(group.id) || disabledDomains.has(domain)
+          )
+    )
+  )
   const builtIn = OPEN_SCIENCE_DOMAIN_GROUPS.filter(
     (group) => group.locked || !disabledGroups.has(group.id)
   )
@@ -296,11 +309,14 @@ export const buildNotebookNetworkPolicy = (
     .filter(
       (domain) =>
         OPEN_SCIENCE_DOMAIN_GROUPS.find((group) => group.domains.includes(domain))?.locked ||
-        !disabledDomains.has(domain)
+        !askDomains.some((pattern) => domainPatternMatches(pattern, domain))
     )
 
   return {
     allowedDomains: uniqueSorted([...builtIn, ...settings.allowedDomains]),
+    // Exact custom approvals override these automatic-access exclusions. Remove matching
+    // built-in exact rules above so they cannot masquerade as explicit approvals.
+    askDomains,
     deniedDomains: [],
     deniedDomainReasons: {}
   }

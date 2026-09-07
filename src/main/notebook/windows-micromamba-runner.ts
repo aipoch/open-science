@@ -12,6 +12,7 @@ export type MicromambaRunnerCandidate = {
   id: string
   path: string
   expectedSha256?: string
+  selectionTier?: 'explicit' | 'pinned-primary' | 'compatibility' | 'fallback'
 }
 
 export type MicromambaRunner = {
@@ -142,8 +143,46 @@ const resolveRunner = async (opts: MicromambaRunnerResolverOptions): Promise<str
   const attempted = new Set<string>()
   const receipt = await readReceipt(receiptPath)
 
+  const tryCandidate = async (
+    candidate: MicromambaRunnerCandidate
+  ): Promise<string | undefined> => {
+    if (attempted.has(candidate.id)) return undefined
+    attempted.add(candidate.id)
+    try {
+      const materialized = await materializeCandidate(candidate, opts.toolsDir)
+      await preflight(materialized.path)
+      await mkdir(opts.toolsDir, { recursive: true })
+      await writeFile(
+        receiptPath,
+        JSON.stringify(
+          { schema: 1, candidateId: candidate.id, sha256: materialized.sha256 },
+          undefined,
+          2
+        ) + '\n',
+        'utf8'
+      )
+      return materialized.path
+    } catch (error) {
+      failures.push(`${candidate.id}: ${errorText(error)}`)
+      return undefined
+    }
+  }
+
+  const receiptCandidate = receipt
+    ? opts.candidates.find((candidate) => candidate.id === receipt.candidateId)
+    : undefined
+  const receiptTier = receiptCandidate?.selectionTier ?? 'fallback'
+  for (const candidate of opts.candidates) {
+    const supersedesReceipt =
+      (candidate.selectionTier === 'explicit' && candidate.id !== receiptCandidate?.id) ||
+      (candidate.selectionTier === 'pinned-primary' && receiptTier === 'fallback')
+    if (!supersedesReceipt) continue
+    const selected = await tryCandidate(candidate)
+    if (selected) return selected
+  }
+
   if (receipt) {
-    const cached = opts.candidates.find((candidate) => candidate.id === receipt.candidateId)
+    const cached = receiptCandidate
     const expected = cached?.expectedSha256?.toLowerCase()
     const sourceStillMatches =
       cached && !expected ? await existingFileMatches(cached.path, receipt.sha256) : true
@@ -162,25 +201,8 @@ const resolveRunner = async (opts: MicromambaRunnerResolverOptions): Promise<str
   }
 
   for (const candidate of opts.candidates) {
-    if (attempted.has(candidate.id)) continue
-    attempted.add(candidate.id)
-    try {
-      const materialized = await materializeCandidate(candidate, opts.toolsDir)
-      await preflight(materialized.path)
-      await mkdir(opts.toolsDir, { recursive: true })
-      await writeFile(
-        receiptPath,
-        JSON.stringify(
-          { schema: 1, candidateId: candidate.id, sha256: materialized.sha256 },
-          undefined,
-          2
-        ) + '\n',
-        'utf8'
-      )
-      return materialized.path
-    } catch (error) {
-      failures.push(`${candidate.id}: ${errorText(error)}`)
-    }
+    const selected = await tryCandidate(candidate)
+    if (selected) return selected
   }
 
   throw new Error(`No usable micromamba runner. ${failures.join('; ')}`)
@@ -208,7 +230,19 @@ export const createProductionMicromambaRunner = (
     return path ? { initialPath: path, resolve: async () => path } : undefined
   }
 
+  const env = deps.env ?? process.env
+  const home = deps.home ?? env.USERPROFILE ?? env.HOME
+  const localAppData = env.LOCALAPPDATA ?? (home ? join(home, 'AppData', 'Local') : undefined)
+  const toolsDir =
+    deps.localToolsDir ??
+    (localAppData ? join(localAppData, 'OpenScience', 'tools', 'micromamba') : undefined)
+  if (!toolsDir) {
+    if (locations.length === 0) return undefined
+    throw new Error('Could not resolve a local tools directory for micromamba.')
+  }
+
   const primaryDigest = micromambaVersions.binarySha256['win-64']
+  const primaryId = `primary-${micromambaVersions.releaseTag}`
   const candidates: MicromambaRunnerCandidate[] = []
   let pathIndex = 0
   const add = (location: (typeof locations)[number]): void => {
@@ -221,12 +255,29 @@ export const createProductionMicromambaRunner = (
     candidates.push({
       id,
       path: location.path,
-      expectedSha256: location.kind === 'bundled' ? primaryDigest : undefined
+      expectedSha256: location.kind === 'bundled' ? primaryDigest : undefined,
+      selectionTier:
+        location.kind === 'override'
+          ? 'explicit'
+          : location.kind === 'bundled'
+            ? 'pinned-primary'
+            : 'fallback'
     })
   }
 
   for (const location of locations.filter(({ kind }) => kind === 'override')) add(location)
   for (const location of locations.filter(({ kind }) => kind === 'bundled')) add(location)
+  if (!locations.some(({ kind }) => kind === 'bundled')) {
+    const cachedPrimary = targetPath(toolsDir, primaryId, primaryDigest)
+    if (isFile(cachedPrimary)) {
+      candidates.push({
+        id: primaryId,
+        path: cachedPrimary,
+        expectedSha256: primaryDigest,
+        selectionTier: 'pinned-primary'
+      })
+    }
+  }
 
   const resourcesPath = deps.resourcesPath ?? process.resourcesPath
   const compatibilityPath = resourcesPath ? join(resourcesPath, 'micromamba-compat.exe') : undefined
@@ -234,7 +285,8 @@ export const createProductionMicromambaRunner = (
     candidates.push({
       id: `compat-${micromambaVersions.compatibility.releaseTag}`,
       path: compatibilityPath,
-      expectedSha256: micromambaVersions.compatibility.binarySha256['win-64']
+      expectedSha256: micromambaVersions.compatibility.binarySha256['win-64'],
+      selectionTier: 'compatibility'
     })
   }
 
@@ -244,14 +296,6 @@ export const createProductionMicromambaRunner = (
     add(location)
   }
   if (candidates.length === 0) return undefined
-
-  const env = deps.env ?? process.env
-  const home = deps.home ?? env.USERPROFILE ?? env.HOME
-  const localAppData = env.LOCALAPPDATA ?? (home ? join(home, 'AppData', 'Local') : undefined)
-  const toolsDir =
-    deps.localToolsDir ??
-    (localAppData ? join(localAppData, 'OpenScience', 'tools', 'micromamba') : undefined)
-  if (!toolsDir) throw new Error('Could not resolve a local tools directory for micromamba.')
 
   return createMicromambaRunnerResolver({ candidates, toolsDir, preflight: deps.preflight })
 }

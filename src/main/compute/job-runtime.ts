@@ -1,3 +1,4 @@
+import { JobHarvestScheduler } from './job-harvest-scheduler'
 import { broadcastJobUpdated } from './ipc'
 import { harvestJob } from './harvest-engine'
 import { JobPoller, type JobPollerDeps } from './job-poller'
@@ -48,6 +49,7 @@ export const createComputeJobRuntime = (
 ): ComputeJobRuntime => {
   const broadcast = adapters.broadcast ?? broadcastJobUpdated
   const harvest = adapters.harvest ?? harvestJob
+  let harvestAbortController = new AbortController()
   const pollerDeps: JobPollerDeps = {
     connectionBroker: deps.connectionBroker,
     hostRepository: deps.hostRepository,
@@ -58,8 +60,14 @@ export const createComputeJobRuntime = (
       for (const issue of issues) log.warn('compute job needs attention', issue)
     },
     storageRoot: deps.storageRoot,
-    harvestFn: (job, signal) =>
-      harvest(job, {
+    harvestFn: async (job, signal) => {
+      signal = signal
+        ? AbortSignal.any([signal, harvestAbortController.signal])
+        : harvestAbortController.signal
+      if (signal.aborted) return
+      const latest = await deps.jobRepository.get(job.job_id)
+      if (!latest || latest.harvested_at || latest.remote_cleanup_disposition === 'cleaned') return
+      await harvest(latest, {
         connectionBroker: deps.connectionBroker,
         hostRepository: deps.hostRepository,
         jobRepository: deps.jobRepository,
@@ -68,7 +76,11 @@ export const createComputeJobRuntime = (
         publishJobUpdated: deps.computeService.handleJobUpdated,
         signal
       })
+    }
   }
+
+  const harvestScheduler = new JobHarvestScheduler(pollerDeps.harvestFn!)
+  pollerDeps.harvestScheduler = harvestScheduler
 
   const poller = adapters.createPoller?.(pollerDeps) ?? new JobPoller(pollerDeps)
   const cancellationReaper = deps.operationRepository
@@ -82,13 +94,7 @@ export const createComputeJobRuntime = (
             const job = await deps.jobRepository.get(jobId)
             if (!job) return
             try {
-              await harvest(job, {
-                connectionBroker: deps.connectionBroker,
-                hostRepository: deps.hostRepository,
-                jobRepository: deps.jobRepository,
-                storageRoot: deps.storageRoot,
-                broadcast
-              })
+              await harvestScheduler.schedule(job)
             } finally {
               const latest = await deps.jobRepository.get(jobId)
               if (latest) await deps.computeService.handleJobCancellationConfirmed(latest)
@@ -99,9 +105,11 @@ export const createComputeJobRuntime = (
     : undefined
   const deletionRuntime = {
     pause: async (): Promise<void> => {
+      harvestAbortController.abort()
       await Promise.all([poller.pause(), cancellationReaper?.pause()])
     },
     resume: (): void => {
+      harvestAbortController = new AbortController()
       poller.resume()
       cancellationReaper?.resume()
     }
@@ -131,6 +139,7 @@ export const createComputeJobRuntime = (
       unbindDeletionRuntime?.()
       await deps.computeService.stopQueueReconciliation()
       await startTask
+      harvestAbortController.abort()
       await Promise.all([poller.stop(), cancellationReaper?.stop()])
     }
   }

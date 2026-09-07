@@ -12,7 +12,6 @@ import { HomePage } from './HomePage'
 
 vi.mock('@/components/GitHubStarBadge', () => ({ GitHubStarBadge: () => null }))
 vi.mock('@/components/NetworkStatusIndicator', () => ({ NetworkStatusIndicator: () => null }))
-vi.mock('@/components/ThemeControls', () => ({ ThemePreferenceMenu: () => null }))
 vi.mock('@/components/UpdateCapsule', () => ({ UpdateCapsule: () => null }))
 vi.mock('./ProjectFormDialog', () => ({ ProjectFormDialog: () => null }))
 vi.mock('./DeleteProjectDialog', () => ({
@@ -247,7 +246,7 @@ describe('HomePage persistence recovery', () => {
     expect(updateProjectArchive).toHaveBeenCalledWith({
       id: project.id,
       archived: true,
-      expectedArchivedAt: null
+      expectedArchiveRevision: 0
     })
     expect(container.querySelector('[role="alert"]')?.textContent).toBe(
       'Repair the project index before archiving.'

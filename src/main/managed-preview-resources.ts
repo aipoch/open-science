@@ -67,8 +67,8 @@ const inferMimeType = (filePath: string, fallback?: string): string =>
 
 type ManagedPreviewResourcesOptions = {
   resolvePath: (
-    source: 'local',
-    request: Extract<AcquireManagedPreviewRequest, { source: 'local' }>
+    source: 'literature' | 'local',
+    request: Extract<AcquireManagedPreviewRequest, { source: 'literature' | 'local' }>
   ) => Promise<string>
   openLatestManagedFile?: (
     source: 'artifact' | 'upload',
@@ -106,6 +106,7 @@ type ResourceEntry = ManagedPreviewResource & {
   ownerId: number
   filePath: string
   trustedLease?: ManagedPreviewTrustedLease
+  activeReaders?: number
   strictSnapshot?: {
     dev: bigint
     ino: bigint
@@ -197,9 +198,11 @@ class ManagedPreviewResources {
     if (request.source === 'artifact' || request.source === 'upload') {
       throw new Error('Managed preview Version lease is unavailable.')
     }
-    if (request.source !== 'local') throw new Error('Managed preview lease is unavailable.')
+    if (request.source !== 'literature' && request.source !== 'local') {
+      throw new Error('Managed preview lease is unavailable.')
+    }
     // Path-backed sources still resolve through their source-specific trust boundary.
-    const filePath = await this.options.resolvePath('local', request)
+    const filePath = await this.options.resolvePath(request.source, request)
     const fileStat = await stat(filePath, { bigint: true })
     if (!fileStat.isFile()) throw new Error('Managed preview path is not a file.')
 
@@ -221,8 +224,8 @@ class ManagedPreviewResources {
           ? (() => {
               throw new Error('Managed preview Version lease is unavailable.')
             })()
-          : request.source === 'local'
-            ? await this.options.resolvePath('local', request)
+          : request.source === 'literature' || request.source === 'local'
+            ? await this.options.resolvePath(request.source, request)
             : (() => {
                 throw new Error('Managed preview lease is unavailable.')
               })()
@@ -414,8 +417,13 @@ class ManagedPreviewResources {
     }
 
     if (resource.trustedLease) {
-      const data = await resource.trustedLease.readRange(begin, end)
-      return { begin, end, total: resource.size, data: new Uint8Array(data) }
+      const releaseRead = this.retainTrustedLease(resource)
+      try {
+        const data = await resource.trustedLease.readRange(begin, end)
+        return { begin, end, total: resource.size, data: new Uint8Array(data) }
+      } finally {
+        await releaseRead()
+      }
     }
 
     const buffer = Buffer.allocUnsafe(end - begin)
@@ -465,13 +473,13 @@ class ManagedPreviewResources {
     }
 
     if (resource.trustedLease) {
+      const releaseRead = this.retainTrustedLease(resource)
       return {
         fileHandle: {
           read: (buffer, offset, length, position) =>
             resource.trustedLease!.read(buffer, offset, length, position),
-          // One capability may serve several concurrent HTTP range requests. The resource owner,
-          // not an individual response, closes the pinned handle.
-          close: async () => undefined
+          // Each admitted response pins the shared lease until completion or cancellation.
+          close: releaseRead
         },
         mimeType: resource.mimeType,
         size: resource.size,
@@ -573,12 +581,28 @@ class ManagedPreviewResources {
   private revokeResource(resourceId: string, ownerId: number): void {
     const resource = this.resources.get(resourceId)
     this.resources.delete(resourceId)
-    if (resource?.trustedLease) void resource.trustedLease.close().catch(() => undefined)
+    if (resource?.trustedLease && !resource.activeReaders) {
+      void resource.trustedLease.close().catch(() => undefined)
+    }
     this.releasedOwners.set(resourceId, ownerId)
     while (this.releasedOwners.size > MAX_RELEASED_RESOURCE_TOMBSTONES) {
       const oldestResourceId = this.releasedOwners.keys().next().value
       if (oldestResourceId === undefined) break
       this.releasedOwners.delete(oldestResourceId)
+    }
+  }
+
+  private retainTrustedLease(resource: ResourceEntry): () => Promise<void> {
+    resource.activeReaders = (resource.activeReaders ?? 0) + 1
+    let released = false
+    return async () => {
+      if (released) return
+      released = true
+      resource.activeReaders! -= 1
+      // Revocation removes access immediately; only already-admitted reads may finish.
+      if (!resource.activeReaders && this.resources.get(resource.id) !== resource) {
+        await resource.trustedLease!.close().catch(() => undefined)
+      }
     }
   }
 

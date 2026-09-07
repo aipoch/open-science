@@ -6,6 +6,7 @@ import type { ToolPermission } from '../../../../shared/settings'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 
 type ToolPermissionControlProps = {
+  disabled?: boolean
   value: ToolPermission
   onChange: (next: ToolPermission) => void
   label: string // accessible group label, e.g. "Permission for list_marts"
@@ -15,6 +16,7 @@ type ToolPermissionControlProps = {
 // only when the Broker cannot resolve an existing Global, Project, or Session approval.
 export function ToolPermissionControl({
   value,
+  disabled,
   onChange,
   label
 }: ToolPermissionControlProps): React.JSX.Element {
@@ -22,7 +24,7 @@ export function ToolPermissionControl({
 
   const segment = (active: boolean, allow: boolean): string => {
     const base =
-      'grid h-6 w-7 place-items-center rounded-md transition-colors motion-reduce:transition-none'
+      'grid h-6 w-7 place-items-center rounded-md disabled:opacity-50 transition-colors motion-reduce:transition-none'
     if (active) {
       return `${base} bg-card shadow-sm ${allow ? 'text-emerald-600 dark:text-emerald-400' : 'text-foreground'}`
     }
@@ -33,6 +35,7 @@ export function ToolPermissionControl({
     <TooltipProvider delayDuration={200}>
       <RadioGroup.Root
         aria-label={label}
+        disabled={disabled}
         value={value}
         onValueChange={(next) => onChange(next as ToolPermission)}
         orientation="horizontal"

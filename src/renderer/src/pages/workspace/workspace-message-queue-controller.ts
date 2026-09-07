@@ -114,7 +114,11 @@ const WorkspaceMessageQueueProvider = ({ children }: PropsWithChildren): ReactEl
   return createElement(WorkspaceMessageQueueContext.Provider, { value: owner }, children)
 }
 
-const WorkspaceMessageQueueRuntimeBridge = (): null => {
+const WorkspaceMessageQueueRuntimeBridge = ({
+  persistenceBlockedSessionIds
+}: {
+  persistenceBlockedSessionIds: readonly string[]
+}): null => {
   const owner = useProvidedWorkspaceMessageQueueOwner()
   const runtime = useWorkspaceAgentRuntime()
   const specialistCatalogLoaded = useSpecialistStore((state) => state.isLoaded)
@@ -123,6 +127,30 @@ const WorkspaceMessageQueueRuntimeBridge = (): null => {
   const openSideChatParentSessionIds = useOpenSideChatParentSessionIds()
   const projects = useProjectStore((state) => state.projects)
   const fallbackOptionsRef = useRef<WorkspaceMessageQueueControllerOptions>(undefined as never)
+  const cancelledPersistenceBlockedSessions = useRef(new Set<string>())
+  useEffect(() => {
+    const blocked = new Set(persistenceBlockedSessionIds)
+    for (const sessionId of cancelledPersistenceBlockedSessions.current) {
+      if (!blocked.has(sessionId)) cancelledPersistenceBlockedSessions.current.delete(sessionId)
+    }
+    for (const sessionId of blocked) {
+      if (cancelledPersistenceBlockedSessions.current.has(sessionId)) continue
+      const session = useSessionStore
+        .getState()
+        .sessions.find((candidate) => candidate.id === sessionId)
+      if (!session?.activeRun && !session?.agentPromptInFlight && session?.status !== 'running') {
+        continue
+      }
+      cancelledPersistenceBlockedSessions.current.add(sessionId)
+      void runtime
+        .cancelRun(sessionId)
+        .catch(() => runtime.cancelRun(sessionId))
+        .catch((error: unknown) => {
+          cancelledPersistenceBlockedSessions.current.delete(sessionId)
+          console.warn('Failed to stop oversized conversation:', error)
+        })
+    }
+  }, [persistenceBlockedSessionIds, runtime])
   const runtimeOptions: WorkspaceMessageQueueControllerOptions = {
     activeSession: undefined,
     promptInFlightSessionIds: runtime.promptInFlightSessionIds,
@@ -152,6 +180,7 @@ const WorkspaceMessageQueueRuntimeBridge = (): null => {
       )
     },
     isSideChatOpen: (sessionId) => openSideChatParentSessionIds.has(sessionId),
+    isPersistenceBlocked: (sessionId) => persistenceBlockedSessionIds.includes(sessionId),
     hasPendingPermissionRequest: (sessionId) =>
       runtime.pendingPermissions.some((request) => request.sessionId === sessionId),
     isProjectActive: (projectId) =>

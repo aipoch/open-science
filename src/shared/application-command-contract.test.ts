@@ -39,6 +39,12 @@ describe('application command contract', () => {
         message: 'Projects are unavailable.'
       })
     )
+    expect(() =>
+      unwrapApplicationCommandOutcome({
+        ok: false,
+        error: { code: 'session-size-limit', message: 'Session is too large.' }
+      })
+    ).toThrow(expect.objectContaining({ code: 'session-size-limit' }))
   })
 
   it('fails closed on malformed outcomes', () => {

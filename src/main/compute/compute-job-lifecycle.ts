@@ -50,6 +50,13 @@ export class ComputeJobLifecycle {
     })
   }
 
+  async dispatchSubmitted(
+    jobId: string,
+    remoteHandle: string
+  ): Promise<ComputeJobTransitionResult> {
+    return this.apply(jobId, ['submitted'], { remoteHandle, lastPollError: null })
+  }
+
   async recoverRemoteHandle(
     jobId: string,
     observedStatus: ActiveJobStatus,
@@ -142,7 +149,12 @@ export class ComputeJobLifecycle {
     updates: UpdateJobRequest
   ): Promise<ComputeJobTransitionResult> {
     const job = await this.repository.updateIfStatus(jobId, expectedStatuses, updates)
-    if (!job) return { kind: 'ignored' }
+    if (!job) {
+      if (updates.remoteHandle) {
+        await this.repository.recordCancellationHandle(jobId, updates.remoteHandle)
+      }
+      return { kind: 'ignored' }
+    }
     try {
       this.onApplied(job)
     } catch {

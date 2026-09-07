@@ -47,13 +47,6 @@ const fieldClassName = 'grid min-w-0 gap-1.5'
 const fieldLabelClassName = 'text-sm font-medium text-foreground'
 const helperClassName = 'text-xs leading-5 text-muted-foreground'
 
-// Splits an arguments textarea on any whitespace/newlines into a positional arg list, dropping empties.
-const parseArgs = (raw: string, onePerLine = false): string[] =>
-  raw
-    .split(onePerLine ? /\n/ : /\s+/)
-    .map((token) => token.trim())
-    .filter((token) => token.length > 0)
-
 type StaticCredentialUpdateMode = 'keep' | 'replace' | 'clear'
 type StaticCredentialTarget = { kind: 'env' | 'header'; name: string }
 
@@ -234,9 +227,13 @@ export function ConnectorAddForm({
     initialCommand && !initialCommandIsPreset ? initialCommand : ''
   )
   const command = commandChoice === 'other' ? customCommand : commandChoice
-  const [argsText, setArgsText] = useState(
-    (editServer?.args ?? initialTemplate?.args ?? []).join(initialTemplate ? '\n' : ' ')
-  )
+  const [initialArgs] = useState(editServer?.args ?? initialTemplate?.args)
+  const [argsDraft, setArgsDraft] = useState({ text: initialArgs?.join('\n') ?? '', edited: false })
+  const args = argsDraft.edited
+    ? argsDraft.text === ''
+      ? []
+      : argsDraft.text.split(/\r?\n/)
+    : initialArgs
   const [envText, setEnvText] = useState(
     (initialTemplate?.requiredSecrets?.environment ?? []).map((key) => `${key}=`).join('\n')
   )
@@ -339,7 +336,6 @@ export function ConnectorAddForm({
   const advancedVisible =
     advancedOpen || Boolean(displayName.trim() && nameError) || Boolean(idError)
 
-  const parsedArgs = parseArgs(argsText, initialTemplate !== undefined)
   const parsedEnvironment = parseNamedCredentialText(
     envText,
     'environment',
@@ -381,7 +377,9 @@ export function ConnectorAddForm({
     }
   })
   const selectedOAuthCredential = oauthCredentials.find(({ id }) => id === oauthCredentialId)
-  const commandPreview = [command.trim(), ...parsedArgs].filter((part) => part.length > 0).join(' ')
+  const commandPreview = [command.trim(), ...(args ?? []).map((arg) => JSON.stringify(arg))].join(
+    ' '
+  )
   const requiredEnvironment = initialTemplate?.requiredSecrets?.environment ?? []
   const requiredHeaders = initialTemplate?.requiredSecrets?.headers ?? []
   const authorizationServerError =
@@ -547,7 +545,7 @@ export function ConnectorAddForm({
         ...(mode === 'local'
           ? {
               command: command.trim(),
-              ...(parsedArgs.length > 0 ? { args: parsedArgs } : {})
+              ...(args !== undefined ? { args } : {})
             }
           : {
               url: url.trim()
@@ -923,16 +921,33 @@ export function ConnectorAddForm({
                     <Textarea
                       id="connector-args"
                       aria-label={t('Arguments')}
-                      value={argsText}
-                      rows={2}
-                      placeholder={t('-y @modelcontextprotocol/server-memory')}
+                      aria-describedby="connector-args-help"
+                      value={argsDraft.text}
+                      rows={4}
                       className="resize-y font-mono text-[13px]"
-                      onChange={(event) => setArgsText(event.target.value)}
+                      onChange={(event) => setArgsDraft({ text: event.target.value, edited: true })}
+                      onKeyDown={(event) => {
+                        // Deleting a saved empty argument produces no input event.
+                        if (
+                          event.currentTarget.value === '' &&
+                          ['Backspace', 'Delete'].includes(event.key)
+                        ) {
+                          setArgsDraft({ text: '', edited: true })
+                        }
+                      }}
                     />
-                    <p className={helperClassName}>
-                      {initialTemplate
-                        ? t('One argument per line.')
-                        : t('Separated by spaces or newlines.')}
+                    <p id="connector-args-help" className={helperClassName}>
+                      {t(
+                        'One argument per line. Spaces and blank lines are preserved. Clear the field to remove all arguments.'
+                      )}
+                      {initialArgs?.some((arg) => /[\r\n]/.test(arg)) && (
+                        <>
+                          {' '}
+                          {t(
+                            'The saved arguments contain embedded line breaks. Editing this field replaces the list using one argument per line.'
+                          )}
+                        </>
+                      )}
                     </p>
                   </div>
 

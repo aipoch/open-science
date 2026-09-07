@@ -49,6 +49,7 @@ const REMOTE_COMPUTE_AWARENESS_APPEND = [
   '<open_science_remote_compute_awareness>',
   'Before starting GPU, high-memory, parallel, batch, model-inference, bioinformatics, or potentially long-running scientific work locally, consider Remote Compute.',
   'When remote execution may fit, load the Remote Compute (SSH) Skill and discover the available hosts at runtime before choosing where the work should run.',
+  'When the chosen host lacks a repeatable software activation, load the Compute Environment Setup Skill rather than installing packages inside the science job.',
   '</open_science_remote_compute_awareness>'
 ].join('\n')
 
@@ -206,6 +207,8 @@ describe('ACP Session presentation policy', () => {
     expect(oneTarget).toBe(twoTargets)
     expect(oneTarget).toContain('execution-target pool')
     expect(oneTarget).toContain('host.compute.listHosts()')
+    expect(oneTarget).toContain('configured direct SSH or Slurm execution mode')
+    expect(oneTarget).toContain('Compute Environment Setup Skill')
     expect(oneTarget).toContain('one or more catalog entries')
     expect(oneTarget).toContain('Do not run task work in the local Notebook or shell')
     expect(oneTarget).toContain('do not silently fall back')

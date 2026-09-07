@@ -61,6 +61,8 @@ const ConnectorDetailView = ({
   const [loadState, setLoadState] = useState<'loading' | 'ready' | 'error'>('loading')
   const [operationError, setOperationError] = useState<string | undefined>()
   const loadRequestRef = useRef(0)
+  const savingToolRef = useRef(false)
+  const [savingTool, setSavingTool] = useState(false)
   // Ids of tools whose description is expanded.
   const [expanded, setExpanded] = useState<Set<string>>(new Set())
 
@@ -125,10 +127,24 @@ const ConnectorDetailView = ({
   }
 
   // Persist one tool's permission, folding the refreshed detail back into local state.
-  const handleToolChange = (toolId: string, permission: ToolPermission): Promise<void> =>
-    savePolicy(async () => {
-      setDetail(await setToolPermission(toolId, permission))
-    })
+  const handleToolChange = async (toolId: string, permission: ToolPermission): Promise<void> => {
+    if (savingToolRef.current) return
+    savingToolRef.current = true
+    setSavingTool(true)
+    const requestId = loadRequestRef.current
+    setOperationError(undefined)
+    try {
+      const updated = await setToolPermission(toolId, permission)
+      if (loadRequestRef.current === requestId) setDetail(updated)
+    } catch {
+      if (loadRequestRef.current === requestId) {
+        setOperationError(t('Could not save this setting. The previous value was restored.'))
+      }
+    } finally {
+      savingToolRef.current = false
+      setSavingTool(false)
+    }
+  }
 
   if (!detail) {
     return (
@@ -257,6 +273,7 @@ const ConnectorDetailView = ({
                       <span className="truncate text-sm text-foreground">{tool.method}</span>
                     </button>
                     <ToolPermissionControl
+                      disabled={savingTool}
                       value={tool.permission}
                       label={t('Permission for {{name}}', {
                         name: tool.method

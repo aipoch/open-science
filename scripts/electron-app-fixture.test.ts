@@ -66,6 +66,20 @@ describe('Electron E2E cleanup', () => {
     expect(forceClose).toHaveBeenCalledOnce()
   })
 
+  it('reaps a blocked restart without treating forced termination as a successful save', async () => {
+    vi.useFakeTimers()
+    const forceClose = vi.fn(async () => undefined)
+    const closing = closeElectronApplicationForCleanup(
+      { close: () => new Promise<void>(() => undefined), forceClose },
+      { gracefulTimeoutMs: 100, forcedTimeoutMs: 100, requireGraceful: true }
+    )
+    await Promise.all([
+      expect(closing).rejects.toThrow('graceful close did not finish within 100ms'),
+      vi.advanceTimersByTimeAsync(100)
+    ])
+    expect(forceClose).toHaveBeenCalledOnce()
+  })
+
   it('awaits forced reaping before propagating a graceful close error', async () => {
     const reaping = deferred()
     const forceClose = vi.fn(() => reaping.promise)

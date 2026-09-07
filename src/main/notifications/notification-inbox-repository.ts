@@ -164,9 +164,9 @@ export class NotificationInboxDbRepository {
     )
     return this.enqueue(async () => {
       const client = await this.getClient()
-      const [pendingRows, historyRows, metadata] = await Promise.all([
+      const [attentionRows, historyRows, metadata] = await Promise.all([
         client.notificationInboxItem.findMany({
-          where: ACTIVE_PENDING_WHERE,
+          where: { OR: [ACTIVE_PENDING_WHERE, { readAt: null }] },
           orderBy: { sequence: 'desc' }
         }),
         client.notificationInboxItem.findMany({
@@ -176,9 +176,10 @@ export class NotificationInboxDbRepository {
         }),
         stateFor(client, false)
       ])
-      const rows = [...pendingRows, ...historyRows].sort(
-        (left, right) => right.sequence - left.sequence
-      )
+      // The history window must never hide a row counted by the unread badge.
+      const rows = [
+        ...new Map([...attentionRows, ...historyRows].map((row) => [row.id, row])).values()
+      ].sort((left, right) => right.sequence - left.sequence)
       return { ...metadata, items: rows.map(toInboxItem) }
     })
   }
@@ -235,15 +236,22 @@ export class NotificationInboxDbRepository {
     })
   }
 
-  expireTransientPendingAuthorizations(settledAt: number): Promise<NotificationRepositoryState> {
+  expireTransientPendingActions(settledAt: number): Promise<NotificationRepositoryState> {
     return this.enqueue(async () => {
       const client = await this.getClient()
       return client.$transaction(async (transaction) => {
         const result = await transaction.notificationInboxItem.updateMany({
           where: {
-            kind: 'authorization.required',
             actionState: 'pending',
-            source: { not: 'session-plan' }
+            OR: [
+              { kind: 'authorization.required', source: { not: 'session-plan' } },
+              {
+                kind: 'task.needs-attention',
+                source: 'connector',
+                attentionReason: 'waiting-for-user',
+                dedupeKey: { startsWith: 'input:connector-credential:' }
+              }
+            ]
           },
           data: { actionState: 'expired', settledAt: new Date(settledAt) }
         })

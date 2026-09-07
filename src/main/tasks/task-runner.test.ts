@@ -10,9 +10,11 @@ import { ComputeHostPreferenceValidationError } from '../../shared/compute'
 import type { Project } from '../../shared/projects'
 import type { SettingsSnapshot } from '../../shared/settings'
 import {
+  materializeSessionConversationGraph,
   normalizeSessionFile,
   SessionConfigurationBusyError,
-  type PersistedChatSession
+  type PersistedChatSession,
+  type SettleTaskSessionCompletionRequest
 } from '../../shared/session-persistence'
 import type { TaskRun } from '../../shared/task-api'
 import { EnabledComputeHostsRegistry } from '../compute/enabled-hosts-registry'
@@ -1031,7 +1033,9 @@ describe('TaskRunner', () => {
       ...session,
       artifacts: [
         {
-          id: 'artifact-1',
+          id: 'version-1',
+          artifactId: 'artifact-1',
+          versionId: 'version-1',
           kind: 'managed-file',
           path: '/artifacts/report.md',
           name: 'report.md',
@@ -1056,7 +1060,9 @@ describe('TaskRunner', () => {
       ...session,
       artifacts: [
         {
-          id: 'artifact-1',
+          id: 'version-1',
+          artifactId: 'artifact-1',
+          versionId: 'version-1',
           kind: 'managed-file',
           path: '/artifacts/report.md',
           name: 'report.md',
@@ -1067,12 +1073,12 @@ describe('TaskRunner', () => {
     }
     const released: string[] = []
     const previewResources: TaskPreviewResourcePort = {
-      acquire: async () => ({
+      acquire: vi.fn(async () => ({
         id: 'resource-1',
         url: 'open-science-preview://resource-1/report.md',
         size: 12,
         mimeType: 'text/markdown'
-      }),
+      })),
       release: async (resourceId) => {
         released.push(resourceId)
       }
@@ -1082,9 +1088,16 @@ describe('TaskRunner', () => {
       previewResources
     })
 
-    await expect(runner.acquireArtifact('artifact-1')).resolves.toMatchObject({
+    await expect(runner.acquireArtifact('version-1')).resolves.toMatchObject({
       resourceId: 'resource-1',
       name: 'report.md',
+      mimeType: 'text/markdown'
+    })
+    expect(previewResources.acquire).toHaveBeenCalledWith({
+      source: 'artifact',
+      projectId: session.projectId,
+      fileId: 'artifact-1',
+      versionId: 'version-1',
       mimeType: 'text/markdown'
     })
     await runner.releaseArtifact('resource-1')
@@ -1912,7 +1925,8 @@ describe('TaskRunner', () => {
     })
 
     const started = await runner.startRun({ project: project.id, prompt: 'Research this.' })
-    await runner.waitForRun(started.id)
+    const completed = await runner.waitForRun(started.id)
+    expect(completed.error).toBeUndefined()
 
     expect(progress).toEqual([
       { phase: 'accepted', heartbeat: false },
@@ -3084,6 +3098,127 @@ describe('TaskRunner', () => {
     ])
   })
 
+  it('reuses the renderer-settled response identity when finalizing Task artifacts', async () => {
+    let emitEvent: ((event: AcpRuntimeEvent) => void) | undefined
+    const finalizeRun = vi.fn(async () => ({ ok: true as const, artifacts: [] }))
+    const settleCompletion = vi.fn(async (request: SettleTaskSessionCompletionRequest) => ({
+      ...session,
+      status: 'idle' as const,
+      taskRunCommitId: request.taskRunCommitId,
+      messages: []
+    }))
+    const modelCallUsage = [
+      {
+        id: 'task-user:model-call:0',
+        index: 0,
+        inputTokens: 10,
+        cacheTokens: 0,
+        outputTokens: 2
+      }
+    ]
+    const runner = createRunner({
+      sessions: {
+        list: async () => [session],
+        stageCompletion: async (request) =>
+          materializeSessionConversationGraph({
+            ...session,
+            status: 'idle',
+            messages: [
+              {
+                id: request.promptMessageId,
+                role: 'user',
+                content: 'Reuse this response.',
+                status: 'complete',
+                eventIds: [],
+                createdAt: 2,
+                updatedAt: 2
+              },
+              {
+                id: 'renderer-answer',
+                role: 'agent',
+                content: 'Done.',
+                status: 'complete',
+                responseToMessageId: request.promptMessageId,
+                eventIds: ['answer-event'],
+                turnUsage: { inputTokens: 10, cacheTokens: 0, outputTokens: 2, turnCount: 1 },
+                modelCallUsage,
+                createdAt: 3,
+                updatedAt: 3
+              }
+            ],
+            activeRun: undefined,
+            updatedAt: 3
+          }),
+        settleCompletion
+      },
+      agent: {
+        withSessionAvailable: async (_projectId, _sessionId, operation) => operation(),
+        listAttachedSessionIds: async () => [session.id],
+        resumeSession: async (request) => ({ sessionId: request.sessionId }),
+        prompt: async (_request, observer) => {
+          await observer?.onPromptAdmitted?.()
+          emitEvent?.({
+            id: 'answer-event',
+            timestamp: 3,
+            kind: 'message',
+            level: 'info',
+            sessionId: session.id,
+            role: 'assistant',
+            text: 'Done.'
+          })
+          emitEvent?.({
+            id: 'artifact-event',
+            timestamp: 4,
+            kind: 'artifact',
+            level: 'info',
+            sessionId: session.id,
+            runId: 'task-run',
+            artifactClaimId: 'claim-1',
+            artifacts: []
+          })
+          emitEvent?.({
+            id: 'stop-event',
+            timestamp: 5,
+            kind: 'stop',
+            level: 'info',
+            sessionId: session.id,
+            turnUsage: { inputTokens: 10, cacheTokens: 0, outputTokens: 2, turnCount: 1 },
+            modelCallUsage
+          })
+        }
+      },
+      artifacts: { finalizeRun },
+      runtimeEvents: {
+        subscribe: (listener) => {
+          emitEvent = listener
+          return () => undefined
+        }
+      },
+      createId: vi
+        .fn<() => string>()
+        .mockReturnValueOnce('task-user')
+        .mockReturnValueOnce('task-run')
+        .mockReturnValueOnce('task-answer')
+    })
+
+    const started = await runner.startRun({
+      project: project.id,
+      sessionId: session.id,
+      prompt: 'Reuse this response.'
+    })
+    const result = await runner.waitForRun(started.id)
+    expect(result.error).toBeUndefined()
+    expect(result).toMatchObject({ status: 'completed' })
+
+    expect(finalizeRun).toHaveBeenCalledWith({
+      claimId: 'claim-1',
+      messageId: 'renderer-answer'
+    })
+    expect(settleCompletion).toHaveBeenCalledWith(
+      expect.objectContaining({ messageId: 'renderer-answer' })
+    )
+  })
+
   it('freezes completion projections before asynchronous artifact finalization', async () => {
     let emitEvent: ((event: AcpRuntimeEvent) => void) | undefined
     let signalFinalizeStarted: (() => void) | undefined
@@ -3751,6 +3886,34 @@ describe('TaskRunner', () => {
       cancelledAt: undefined
     })
     expect(cancelPrompt).not.toHaveBeenCalled()
+  })
+
+  it('retries Task journal initialization after a transient load failure', async () => {
+    const load = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('temporary journal read failure'))
+      .mockResolvedValueOnce([
+        {
+          id: 'restored-run',
+          sessionId: session.id,
+          projectId: project.id,
+          cwd: session.cwd,
+          status: 'completed',
+          startedAt: 1,
+          completedAt: 2,
+          artifacts: [],
+          preferredComputeHostIds: []
+        } satisfies TaskRunJournalEntry
+      ])
+    const runner = createRunner({
+      runJournal: { load, replace: async () => undefined }
+    })
+
+    await expect(runner.initialize()).rejects.toThrow('temporary journal read failure')
+    await expect(runner.initialize()).resolves.toBeUndefined()
+
+    expect(load).toHaveBeenCalledTimes(2)
+    expect(runner.getRun('restored-run')).toMatchObject({ status: 'completed' })
   })
 
   it('recovers cancellation accepted while the final Session save is draining', async () => {

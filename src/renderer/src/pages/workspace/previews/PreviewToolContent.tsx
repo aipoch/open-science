@@ -255,13 +255,15 @@ const PlanPreviewToolContent = ({
   const respondPlan = async (decision: 'approved' | 'rejected'): Promise<void> => {
     if (!visiblePlanProjection || !item.projectId) return
     if (planSession?.activeRun) {
+      if (restoredPlanResponder?.canRespondToSession?.(item.sessionId) !== true) return
       await respondToSessionPlan(
         {
           projectId: item.projectId,
           sessionId: item.sessionId,
           projection: visiblePlanProjection
         },
-        { decision }
+        { decision },
+        { onSessionSizeLimit: restoredPlanResponder?.onSessionSizeLimit }
       )
       return
     }
@@ -269,7 +271,10 @@ const PlanPreviewToolContent = ({
     await restoredPlanResponder.respond({ decision })
   }
   const hasPlanResponsePath =
-    planSession?.activeRun !== undefined || restoredPlanResponder?.sessionId === item.sessionId
+    (planSession?.activeRun !== undefined &&
+      restoredPlanResponder?.canRespondToSession?.(item.sessionId) === true) ||
+    (restoredPlanResponder?.enabled !== false &&
+      restoredPlanResponder?.sessionId === item.sessionId)
   const canRespondToPlan =
     visiblePlanProjection !== undefined &&
     planSession?.status === 'waiting-plan-approval' &&

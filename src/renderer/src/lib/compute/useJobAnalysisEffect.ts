@@ -20,7 +20,8 @@ import {
 import { useSessionJobStore } from '../../stores/session-job-store'
 import { useSessionStore, type ChatSession } from '../../stores/session-store'
 import { createJobAnalysisTrigger } from '../compute/job-analysis-trigger'
-import type { ComputeJobAnalysisState } from '../../../../shared/compute'
+import { isComputeJobCompletionAttribution } from '../../../../shared/session-persistence'
+import type { JobAnalysisTriggerDeps } from './job-analysis-trigger'
 
 type AdmitMessageFn = (input: {
   session: ChatSession
@@ -56,6 +57,64 @@ type JobAnalysisRecoveryStatus = Readonly<{
   retry: () => void
 }>
 
+const DURABLE_SESSION_READINESS_RETRY_MS = 250
+
+const durableSessionAcceptsAnalysis = (
+  session: Pick<ChatSession, 'status' | 'activeRun'>
+): boolean =>
+  (session.status === 'idle' || session.status === 'error') && session.activeRun === undefined
+
+const findAnalysisPrompt = (
+  session: ChatSession,
+  messageId: string
+): ChatSession['messages'][number] | undefined =>
+  session.messages.find((message) => message.id === messageId) ??
+  session.conversationGraph?.messages.find((message) => message.id === messageId)
+
+const analysisTurnState = (
+  session: ChatSession | undefined,
+  messageId: string,
+  previousSession?: ChatSession
+): Awaited<ReturnType<JobAnalysisTriggerDeps['getTurnState']>> => {
+  if (!session) return 'missing'
+  const prompt = findAnalysisPrompt(session, messageId)
+  if (!prompt) return 'missing'
+  if (prompt.role !== 'user') return 'failed'
+  // A rearmed prompt may still have an older partial response. Its live run owns completion.
+  if (session.activeRun?.promptMessageId === messageId) return 'running'
+  const recovery =
+    session.resumeRecovery?.promptMessageId === messageId ? session.resumeRecovery : undefined
+  if (recovery?.cause === 'cancelled') return 'cancelled'
+  const graphPrompt = session.conversationGraph?.messages.find(
+    (message) => message.id === messageId
+  )
+  const visibleIds = new Set(session.messages.map((message) => message.id))
+  const responses = [
+    ...(session.conversationGraph?.messages.filter(
+      (message) =>
+        !visibleIds.has(message.id) &&
+        message.agentFrameId === graphPrompt?.agentFrameId &&
+        message.introducedOnBranchId === graphPrompt?.introducedOnBranchId
+    ) ?? []),
+    ...session.messages
+  ].filter((message) => message.role === 'agent' && message.responseToMessageId === messageId)
+  const response = responses.at(-1)
+  if (response?.status === 'complete') return 'succeeded'
+  if (response?.status === 'error') return 'failed'
+  if (recovery && recovery.cause !== 'app-restart') return 'failed'
+  // A live run can end without producing text. Only an observed transition of this exact run
+  // identifies that outcome; a terminal Session snapshot alone is not completion evidence.
+  if (
+    previousSession?.activeRun?.promptMessageId === messageId &&
+    !session.activeRun &&
+    !session.resumeRecovery
+  ) {
+    if (session.status === 'idle') return 'succeeded'
+    if (session.status === 'error') return 'failed'
+  }
+  return 'missing'
+}
+
 // Subscribes to all done-state compute:job-updated broadcasts and runs the analysis turn trigger.
 // Also scans every Session for pending notifications on startup (restart recovery path).
 export const useJobAnalysisEffect = ({
@@ -87,24 +146,74 @@ export const useJobAnalysisEffect = ({
     let pendingScanRetry: ReturnType<typeof setTimeout> | undefined
     const turnEndUnsubscribes = new Set<() => void>()
 
-    const loadAnalysisSession = async (sessionId: string): Promise<ChatSession | undefined> => {
+    const loadAnalysisSession = async (
+      sessionId: string,
+      waitForDurableReadiness = false
+    ): Promise<ChatSession | undefined> => {
       let session = useSessionStore
         .getState()
         .sessions.find((candidate) => candidate.id === sessionId)
-      if (!session || session.contentLoaded !== false) return session
-      const persisted = await loadPersistedSession({
-        projectId: session.projectId,
-        sessionId
-      })
-      if (!isActive || !persisted) return undefined
-      session = hydratePersistedSessionIfPresent(persisted)
-      return session
+      if (!session) return undefined
+      if (session.contentLoaded !== false && !waitForDurableReadiness) return session
+
+      while (isActive) {
+        const persisted = await loadPersistedSession({
+          projectId: session.projectId,
+          sessionId
+        })
+        if (!isActive) return undefined
+        // Older persistence adapters may not provide lazy single-Session reads. Preserve their
+        // existing in-memory behavior rather than preventing completion delivery.
+        if (!persisted) return session
+        if (waitForDurableReadiness && !durableSessionAcceptsAnalysis(persisted)) {
+          await new Promise((resolve) => setTimeout(resolve, DURABLE_SESSION_READINESS_RETRY_MS))
+          session =
+            useSessionStore.getState().sessions.find((candidate) => candidate.id === sessionId) ??
+            session
+          continue
+        }
+        return hydratePersistedSessionIfPresent(persisted)
+      }
+      return undefined
     }
 
     const trigger = createJobAnalysisTrigger({
-      sendPrompt: async (sessionId, text, messageId, jobIds) => {
+      preparePrompt: async (sessionId, text, messageId, jobIds) => {
+        // CLI Tasks commit their terminal Session after the ACP stop event. Keep the durable idle
+        // boundary before admission, but let the trigger retry a failed read without failing a turn.
+        const session = await loadAnalysisSession(sessionId, true)
+        if (!isActive || !session) return undefined
+        const prompt = findAnalysisPrompt(session, messageId)
+        if (!prompt) return text
+        if (prompt.role !== 'user') return undefined
+        const jobs = await window.api.compute.jobsList({ sessionId })
         if (!isActive) return undefined
-        const session = await loadAnalysisSession(sessionId)
+        const batch = jobs.filter((job) => job.analysis_message_id === messageId)
+        if (
+          batch.length !== jobIds.length ||
+          batch.some(
+            (job) =>
+              job.session_id !== sessionId ||
+              job.analysis_state !== 'dispatched' ||
+              !jobIds.includes(job.job_id)
+          )
+        )
+          return undefined
+        if (
+          prompt.attribution &&
+          (!isComputeJobCompletionAttribution(prompt.attribution) ||
+            prompt.attribution.deliveryKey !==
+              `compute_done:${sessionId}:${[...jobIds].sort().join(',')}` ||
+            prompt.attribution.jobIds.length !== jobIds.length ||
+            prompt.attribution.jobIds.some((jobId) => !jobIds.includes(jobId)))
+        )
+          return undefined
+        return prompt.content
+      },
+      sendPrompt: async (sessionId, text, messageId, jobIds) => {
+        const session = useSessionStore
+          .getState()
+          .sessions.find((candidate) => candidate.id === sessionId)
         if (!isActive || !session) return undefined
         return admitLatestMessage({
           session,
@@ -142,50 +251,33 @@ export const useJobAnalysisEffect = ({
       },
       getTurnState: async (sessionId, messageId) => {
         const session = await loadAnalysisSession(sessionId)
-        if (!session) return 'missing'
-        const prompt = session.messages.find((message) => message.id === messageId)
-        if (!prompt) return 'missing'
-        const response = session.messages.find(
-          (message) => message.role === 'agent' && message.responseToMessageId === messageId
-        )
-        if (response?.status === 'complete') return 'succeeded'
-        if (response?.status === 'error') return 'failed'
-        if (session.resumeRecovery?.promptMessageId === messageId) {
-          if (session.resumeRecovery.cause === 'cancelled') return 'cancelled'
-          if (session.resumeRecovery.cause === 'app-restart') return 'missing'
-          return 'failed'
-        }
-        if (session.activeRun?.promptMessageId === messageId) return 'running'
-        return 'missing'
+        return analysisTurnState(session, messageId)
       },
-      onTurnEnd: (sessionId, callback) => {
-        // Keep runtime completion listeners inside the same readiness lifecycle as dispatch.
+      onTurnEnd: (sessionId, messageId, callback) => {
         let settled = false
-        const settleIfTerminal = (state: ReturnType<typeof useSessionStore.getState>): void => {
-          if (settled) return
+        let unsubscribe = (): void => undefined
+        const settleIfTerminal = (
+          state: ReturnType<typeof useSessionStore.getState>,
+          previousState?: ReturnType<typeof useSessionStore.getState>
+        ): void => {
+          if (settled || !isActive) return
           const session = state.sessions.find((candidate) => candidate.id === sessionId)
-          if (!session) return
-          if (
-            session.status !== 'running' &&
-            session.status !== 'waiting-for-user' &&
-            session.status !== 'waiting-permission' &&
-            session.status !== 'waiting-plan-approval'
-          ) {
-            settled = true
-            unsubscribe()
-            turnEndUnsubscribes.delete(unsubscribe)
-            const outcome: Exclude<ComputeJobAnalysisState, 'dispatched'> =
-              session.status === 'idle'
-                ? 'succeeded'
-                : session.resumeRecovery?.cause === 'cancelled'
-                  ? 'cancelled'
-                  : 'failed'
-            if (isActive) callback(outcome)
-          }
+          const outcome = analysisTurnState(
+            session,
+            messageId,
+            previousState?.sessions.find((candidate) => candidate.id === sessionId)
+          )
+          if (outcome === 'missing' || outcome === 'running') return
+          settled = true
+          unsubscribe()
+          turnEndUnsubscribes.delete(unsubscribe)
+          callback(outcome)
         }
-        const unsubscribe = useSessionStore.subscribe(settleIfTerminal)
-        // Close the subscribe/check race when a fast turn ended before listener registration.
+        settleIfTerminal(useSessionStore.getState())
+        if (settled) return
+        unsubscribe = useSessionStore.subscribe(settleIfTerminal)
         turnEndUnsubscribes.add(unsubscribe)
+        // Reconcile again after subscription; only this Message can complete the batch.
         settleIfTerminal(useSessionStore.getState())
       },
       log: (tag, message) => {

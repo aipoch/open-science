@@ -23,6 +23,8 @@ export const rebaseSafeSessionFields = (
   fields: RebaseFields
 ): PersistedChatSession => {
   const rebased = { ...authoritative }
+  // A preference-only rebase cannot acknowledge completion of a pending context reset.
+  if (submitted.branchContextResetRequired) rebased.branchContextResetRequired = true
   for (const field of fields) {
     switch (field) {
       case 'title':

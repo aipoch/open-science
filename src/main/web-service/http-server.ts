@@ -160,6 +160,7 @@ type WebServerOptions = {
         | 'updateAgentRouting'
       >
     >
+  waitUntilTasksReady?: () => Promise<void>
   onShutdownRequest?: () => void
   bootstrap: {
     appName: string
@@ -970,10 +971,12 @@ const handleTaskApiRequest = async (
   requestBodyClientId: string,
   requestBodyBudgetRegistry: RequestBodyBudgetRegistry,
   idempotencyRegistry: TaskIdempotencyRegistry,
-  externalAuthorization?: ExternalWebAccessAuthorization
+  externalAuthorization?: ExternalWebAccessAuthorization,
+  waitUntilTasksReady?: () => Promise<void>
 ): Promise<boolean> =>
   tasks.runWithCallerContext(callerContext, async () => {
     try {
+      await waitUntilTasksReady?.()
       if (url.pathname === '/api/v1/projects' && request.method === 'GET') {
         assertExternalAuthorizationCurrent(externalAuthorization)
         json(response, 200, { data: await tasks.listProjects() })
@@ -1384,6 +1387,7 @@ const startWebHttpServer = async (options: WebServerOptions): Promise<RunningWeb
           : options.applicationCommands.remoteWeb.rejectedCommandNames()
         json(response, 200, {
           ...(auth.ok ? options.bootstrap : remoteWebBootstrap(options.bootstrap)),
+          webCallerLocation: auth.ok ? 'local' : 'remote',
           rpcProtocolVersion: WEB_RPC_PROTOCOL_VERSION,
           rpcCapabilities: auth.ok ? WEB_RPC_CAPABILITIES : [],
           rpcChannels,
@@ -1436,7 +1440,8 @@ const startWebHttpServer = async (options: WebServerOptions): Promise<RunningWeb
           requestBodyClientId,
           requestBodyBudgetRegistry,
           taskIdempotencyRegistry,
-          externalAuthorization
+          externalAuthorization,
+          options.waitUntilTasksReady
         ))
       ) {
         return

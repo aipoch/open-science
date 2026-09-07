@@ -17,6 +17,8 @@ export type ArtifactFile = ProjectIdScope & {
   artifactId?: string
   versionId?: string
   versionNumber?: number
+  // Derived from native publication authority; never persist as a second source of truth.
+  isPublished?: boolean
   checksum?: string
   createdAt?: string
   producerRunId?: string
@@ -29,8 +31,8 @@ export const artifactCreatedAtMs = (createdAt: string | undefined): number | und
   return Number.isFinite(timestamp) && timestamp >= 0 ? timestamp : undefined
 }
 
-// A user-picked reference to an existing file (upload or generated output) inserted via the
-// composer `@` mention. Carries the durable path so the runtime can resolve and attach the file.
+// A user-picked reference to an app-managed file inserted via the composer `@` mention. The
+// opaque path carries immutable identity; the main process resolves the underlying bytes.
 export type ArtifactReference = {
   id: string
   // Stable ManagedFile identity. Optional only for legacy Message parts written before file
@@ -38,7 +40,7 @@ export type ArtifactReference = {
   sourceFileId?: string
   name: string
   path: string
-  source: 'upload' | 'artifact'
+  source: 'upload' | 'artifact' | 'literature'
   mimeType?: string
   // Carries immutable version identity when the selected artifact has native provenance.
   versionId?: string

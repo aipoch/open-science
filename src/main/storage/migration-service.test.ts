@@ -10,7 +10,7 @@ import {
   writeFile
 } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { dirname, join } from 'node:path'
+import { dirname, join, relative } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from 'vitest'
 
 // classifyDataRoot now derives the target via storage-root's dataRootForParent, so migration-service
@@ -88,6 +88,102 @@ beforeEach(async () => {
 afterEach(async () => {
   await rm(currentParent, { recursive: true, force: true })
   await rm(emptyParent, { recursive: true, force: true })
+})
+
+describe('migration reference safety', () => {
+  it('preserves the source and reports an uncommitted pointer when settings persistence returns EIO', async () => {
+    const file = join(currentDataRoot, 'workspaces', 'session', 'data.csv')
+    await mkdir(dirname(file), { recursive: true })
+    await writeFile(file, 'original dataset')
+    const deps = { ...fakeDeps(), validateProvenanceState: async () => {} }
+    expect(await runDataRootMigration(deps, emptyParent, runOpts())).toEqual({ ok: true })
+    const marker = await readMigrationMarker(dataRootFor(emptyParent))
+    deps.setDataRoot.mockRejectedValue(
+      Object.assign(new Error('settings write failed'), { code: 'EIO' })
+    )
+
+    await expect(
+      commitDataRootSwitch({ ...deps, expectedToken: marker!.token }, emptyParent)
+    ).resolves.toMatchObject({
+      ok: false,
+      switchoverFailed: true,
+      error: expect.stringContaining('your current data is untouched')
+    })
+    expect(await readFile(file, 'utf8')).toBe('original dataset')
+    expect(
+      await readFile(join(dataRootFor(emptyParent), 'workspaces', 'session', 'data.csv'), 'utf8')
+    ).toBe('original dataset')
+  })
+
+  it('refuses to commit an older verified copy containing an external relative link', async () => {
+    const linkPath = join('workspaces', 'session', 'data.csv')
+    const target = dataRootFor(emptyParent)
+    const external = join(currentParent, 'dataset.csv')
+    const targetText = relative(dirname(join(currentDataRoot, linkPath)), external)
+    await writeFile(external, 'original dataset')
+    for (const root of [currentDataRoot, target]) {
+      await mkdir(dirname(join(root, linkPath)), { recursive: true })
+      await symlink(targetText, join(root, linkPath), 'file')
+    }
+    await seedVerifiedMarker(emptyParent, currentDataRoot)
+    const deps = fakeDeps()
+
+    await expect(
+      commitDataRootSwitch({ ...deps, expectedToken: 'tok-test' }, emptyParent)
+    ).resolves.toMatchObject({
+      ok: false,
+      error: expect.stringContaining('data.csv')
+    })
+    expect(deps.setDataRoot).not.toHaveBeenCalled()
+    expect(await readFile(join(currentDataRoot, linkPath), 'utf8')).toBe('original dataset')
+  })
+
+  it.each([false, true])(
+    'refuses an external relative link before copying when a replacement dataset exists: %s',
+    async (replacementExists) => {
+      const sourceLink = join(currentDataRoot, 'workspaces', 'session', 'data.csv')
+      const originalDataset = join(currentParent, 'dataset.csv')
+      const target = dataRootFor(emptyParent)
+      const targetLink = join(target, 'workspaces', 'session', 'data.csv')
+      await mkdir(dirname(sourceLink), { recursive: true })
+      await writeFile(originalDataset, 'original dataset')
+      if (replacementExists) await writeFile(join(emptyParent, 'dataset.csv'), 'wrong dataset')
+      await symlink(relative(dirname(sourceLink), originalDataset), sourceLink, 'file')
+      expect(await readFile(sourceLink, 'utf8')).toBe('original dataset')
+
+      const deps = fakeDeps()
+      const copy = await runDataRootMigration(
+        { ...deps, validateProvenanceState: async () => {} },
+        emptyParent,
+        runOpts()
+      )
+      // On the broken implementation, finish the real verified-copy/commit/delete flow to
+      // expose the changed referent, rather than inferring it from the link text alone.
+      let committed = false
+      let migratedRead: string | undefined
+      if (copy.ok) {
+        const marker = await readMigrationMarker(target)
+        const commit = await commitDataRootSwitch(
+          { ...deps, expectedToken: marker!.token },
+          emptyParent
+        )
+        expect(commit.ok).toBe(true)
+        committed = commit.ok
+        migratedRead = await readFile(targetLink, 'utf8').catch(
+          (error: NodeJS.ErrnoException) => error.code
+        )
+      }
+      expect(await readFile(originalDataset, 'utf8')).toBe('original dataset')
+      expect({ copied: copy.ok, committed, migratedRead }).toEqual({
+        copied: false,
+        committed: false,
+        migratedRead: undefined
+      })
+      expect(copy).toMatchObject({ ok: false, error: expect.stringContaining('data.csv') })
+      expect(deps.setDataRoot).not.toHaveBeenCalled()
+      expect(await readFile(sourceLink, 'utf8')).toBe('original dataset')
+    }
+  )
 })
 
 describe('classifyDataRoot', () => {

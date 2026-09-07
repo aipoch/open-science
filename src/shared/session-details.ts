@@ -55,6 +55,10 @@ const displayNameForPart = (part: MessagePart): string => {
       return `/${part.name.replace(/^\/+/, '')}`
     case 'session':
       return `#${collapseTitleWhitespace(part.title)}`
+    case 'literature':
+      return `@${collapseTitleWhitespace(part.item.title)}`
+    case 'literature-scope':
+      return `@${part.scope === 'collection' ? collapseTitleWhitespace(part.name) : 'Library'}`
     case 'artifact':
       return `@${
         part.source === 'linked-folder'

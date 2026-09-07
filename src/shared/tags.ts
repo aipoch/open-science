@@ -11,7 +11,8 @@ export const FAVORITE_TAG_ID = 'tag-favorite' as const
 export const TAG_RESOURCE_TYPES = [
   'catalog.skill',
   'catalog.connector',
-  'catalog.specialist'
+  'catalog.specialist',
+  'literature.item'
 ] as const
 export const TAG_ICON_KEYS = [
   'tag',

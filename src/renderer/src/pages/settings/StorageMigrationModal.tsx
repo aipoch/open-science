@@ -1,4 +1,4 @@
-import { Dialog } from 'radix-ui'
+import * as Dialog from '@/components/ui/dialog'
 import { Check, RefreshCw, TriangleAlert } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -6,7 +6,6 @@ import { useTranslation } from 'react-i18next'
 import { Button } from '@/components/ui/button'
 import { dialogCancelButtonClassName } from '@/components/ui/dialog-chrome'
 import { resolveActiveSessionDisplay, truncateLabel } from '@/lib/active-session-display'
-import { cn } from '@/lib/utils'
 import {
   hasDelegatedActiveSession,
   type ActiveSessionInfo,
@@ -204,7 +203,7 @@ const StorageMigrationModal = ({
 
   // "Restart now": commit the copied move (setDataRoot -> delete old -> relaunch). On success the app
   // relaunches, so control never returns here; a returned result means the commit failed, which we
-  // surface as the error stage (the copy is intact and the old root is untouched).
+  // surface as the error stage. The old root is untouched; the owner attempts to discard the copy.
   const handleRestart = (): void => {
     setStage('committing')
     void window.api.storage
@@ -269,19 +268,21 @@ const StorageMigrationModal = ({
   const elapsedMs = stage === 'migrating' && startedAt !== null ? Math.max(0, now - startedAt) : 0
   const hasDelegatedWork = hasDelegatedActiveSession(active)
 
-  // switchoverFailed is a success-with-caveat (the data DID move; only the auto-restart didn't), so
-  // the error stage renders it in a calmer, non-destructive tone than an outright failure.
+  // switchoverFailed means the new directory pointer was NOT committed. The app still uses
+  // the original location; restarting cannot finish this failed move.
   const isSwitchover = Boolean(outcome && 'switchoverFailed' in outcome)
 
   return (
-    <Dialog.Root open={isPresentationActive}>
+    <Dialog.Root
+      open={isPresentationActive}
+      onOpenChange={(open) => {
+        if (!open && dismissable) onClose()
+      }}
+    >
       <Dialog.Portal>
         <Dialog.Overlay className="fixed inset-0 z-[60] bg-black/50" />
         <Dialog.Content
           onInteractOutside={(event) => {
-            if (!dismissable) event.preventDefault()
-          }}
-          onEscapeKeyDown={(event) => {
             if (!dismissable) event.preventDefault()
           }}
           className="fixed left-1/2 top-1/2 z-[60] w-[min(460px,calc(100vw-2rem))] -translate-x-1/2 -translate-y-1/2 rounded-xl border border-border bg-card p-5 text-foreground shadow-dialog"
@@ -560,23 +561,14 @@ const StorageMigrationModal = ({
             <>
               <div className="flex items-start gap-3">
                 <span
-                  className={cn(
-                    'flex size-9 shrink-0 items-center justify-center rounded-full',
-                    isSwitchover
-                      ? 'bg-amber-500/10 text-amber-600 dark:text-amber-400'
-                      : 'bg-destructive/10 text-destructive'
-                  )}
+                  className="flex size-9 shrink-0 items-center justify-center rounded-full bg-destructive/10 text-destructive"
                   aria-hidden="true"
                 >
-                  {isSwitchover ? (
-                    <RefreshCw className="size-[18px]" />
-                  ) : (
-                    <TriangleAlert className="size-[18px]" />
-                  )}
+                  <TriangleAlert className="size-[18px]" />
                 </span>
                 <div className="min-w-0 flex-1">
                   <Dialog.Title className="text-sm font-semibold text-foreground">
-                    {isSwitchover ? t('Data moved — please restart') : t('Move failed')}
+                    {isSwitchover ? t('Location switch failed') : t('Move failed')}
                   </Dialog.Title>
                   <Dialog.Description
                     className="mt-1 text-xs leading-relaxed text-muted-foreground"
@@ -589,6 +581,13 @@ const StorageMigrationModal = ({
                         ? outcome.error
                         : null}
                   </Dialog.Description>
+                  {isSwitchover ? (
+                    <p className="mt-2 text-xs leading-relaxed text-muted-foreground">
+                      {t(
+                        'Open Science is still using the original location. Close this dialog and try moving your data again.'
+                      )}
+                    </p>
+                  ) : null}
                 </div>
               </div>
               <div className="mt-5 flex justify-end">

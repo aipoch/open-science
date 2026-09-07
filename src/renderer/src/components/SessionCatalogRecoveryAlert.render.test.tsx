@@ -173,6 +173,30 @@ describe('SessionCatalogRecoveryAlert', () => {
     expect(container.querySelector('[data-testid="session-persistence-retry"]')).toBeNull()
   })
 
+  it('keeps oversized Session files in place and offers their recovery folders', () => {
+    const openRecoveryFolder = vi.fn().mockResolvedValue(undefined)
+    act(() =>
+      root.render(
+        <SessionCatalogRecoveryAlert
+          recovery={{
+            kind: 'oversized-authority',
+            affectedFiles: [{ projectId: 'project-a', fileName: 'session-1.json' }]
+          }}
+          onOpenRecoveryFolder={openRecoveryFolder}
+        />
+      )
+    )
+
+    expect(container.textContent).toContain('Conversation storage limit reached')
+    expect(container.textContent).toContain('They were left unchanged and cannot be opened')
+    const details = [...container.querySelectorAll<HTMLButtonElement>('button')].find(
+      (button) => button.textContent === 'View affected conversations'
+    )
+    act(() => details?.click())
+    expect(document.body.textContent).toContain('session-1.json')
+    expect(document.body.textContent).toContain('Move them out of the Session folder')
+  })
+
   it('keeps unfinished Project deletion recovery distinct from index repair', () => {
     act(() =>
       root.render(

@@ -463,6 +463,24 @@ describe('NotebookSessionReadModel', () => {
     ).resolves.toBeNull()
   })
 
+  it.each([
+    { projectId: 'another-project', sessionId: 'session-1' },
+    { projectId: 'default-project', sessionId: 'another-session' }
+  ])(
+    'N05 rejects a live reference with mismatched identity $projectId/$sessionId',
+    async (identity) => {
+      const storageRoot = await createRoot()
+      const session = { ...makeSession(storageRoot), ...identity }
+      await expect(
+        makeReadModel(storageRoot, session).getSessionReference({
+          projectId: 'default-project',
+          sessionId: 'session-1',
+          workspaceCwd: storageRoot
+        })
+      ).resolves.toBeNull()
+    }
+  )
+
   it('exposes the one Session Notebook when only a child Frame has produced Runs', async () => {
     const storageRoot = await createRoot()
     const repository = new NotebookRunRepository(storageRoot)

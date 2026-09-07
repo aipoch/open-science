@@ -271,13 +271,7 @@ class AcpProviderPromptExecutor {
         const message = await Promise.race([input.session.nextUpdate(), promptFailure])
         if (message.kind === 'provider-rejection') throw message.error
 
-        if (!input.isCurrent()) {
-          if (message.kind !== 'stop') continue
-          await cancelProbe()
-          return Object.freeze({ kind: 'superseded', response: message.response })
-        }
-
-        if (!accepted) {
+        if (!accepted && input.isCurrent()) {
           accepted = true
           try {
             await input.onAccepted()
@@ -285,6 +279,13 @@ class AcpProviderPromptExecutor {
             reportBestEffort(input.reportBestEffortFailure, 'accepted', error)
           }
         }
+        // Acceptance can await durable delivery; the same owner must still hold the message.
+        if (!input.isCurrent()) {
+          if (message.kind !== 'stop') continue
+          await cancelProbe()
+          return Object.freeze({ kind: 'superseded', response: message.response })
+        }
+
         if (message.kind !== 'stop') {
           try {
             probe.observe?.(message.notification)

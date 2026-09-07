@@ -246,6 +246,11 @@ const reviewerCommands = Object.freeze({
 })
 
 const storageCommands = Object.freeze({
+  acceptMissingDataRoot: defineApplicationCommand<
+    'storage:accept-missing-data-root',
+    readonly [],
+    void
+  >('storage:accept-missing-data-root'),
   acknowledgeDataRootHandoffFlush: defineApplicationCommand<
     'storage:ack-data-root-handoff-flush',
     readonly [response: SessionPersistenceFlushResponse],
@@ -386,6 +391,7 @@ type HostApplicationCommandDependencies = Readonly<{
   >
   reviewer: Pick<ReviewerCommandOwner, 'run' | 'getForSession' | 'abort' | 'abortFixLoop'>
   storage: Readonly<{
+    acceptMissingDataRoot: () => Promise<void>
     acknowledgeDataRootHandoffFlush: (
       response: SessionPersistenceFlushResponse,
       lifecycleClientId: string
@@ -567,6 +573,10 @@ const registerHostApplicationCommands = (
       'reviewer:run': ({ args }) => dependencies.reviewer.run(args[0])
     })
     scope.registerGroup(hostApplicationCommandGroups[7], {
+      'storage:accept-missing-data-root': ({ callerContext }) =>
+        localCommand(callerContext, 'storage:accept-missing-data-root', () =>
+          dependencies.storage.acceptMissingDataRoot()
+        ),
       'storage:ack-data-root-handoff-flush': ({ args, callerContext }) =>
         localCommand(callerContext, 'storage:ack-data-root-handoff-flush', () => {
           const response = args[0]

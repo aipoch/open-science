@@ -247,6 +247,29 @@ class SettingsService {
   private deviceCredentialAuthenticationCanceller?: (credentialId: string) => Promise<void>
   private deviceCredentialDisconnector?: (credentialId: string) => Promise<void>
   private skillDeletionGuard?: (skillId: string) => Promise<void>
+
+  hasActiveInstall(): boolean {
+    return this.runtimeManager.hasActiveInstall()
+  }
+
+  getActiveInstallId(): string | undefined {
+    return this.runtimeManager.getActiveInstallId()
+  }
+
+  holdInstallAdmission(): () => void {
+    return this.runtimeManager.holdInstallAdmission()
+  }
+
+  async dispose(): Promise<void> {
+    const outcomes = await Promise.allSettled([
+      this.providers.dispose(),
+      this.runtimeManager.dispose()
+    ])
+    for (const outcome of outcomes) {
+      if (outcome.status === 'rejected') throw outcome.reason
+    }
+  }
+
   constructor(options: SettingsServiceOptions = {}) {
     this.configRoot = options.configRoot ?? resolveConfigRoot()
     this.repository = options.repository ?? new SettingsRepository(this.configRoot)

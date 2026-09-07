@@ -187,6 +187,63 @@ describe('ManagedPreviewResources', () => {
     expect(close).toHaveBeenCalledOnce()
   })
 
+  it.each(['release', 'owner teardown', 'read failure'])(
+    'keeps admitted protocol and IPC reads alive through %s, while rejecting new reads',
+    async (reason) => {
+      let finishRead!: () => void
+      const pending = new Promise<void>((resolve) => {
+        finishRead = resolve
+      })
+      let closed = false
+      const close = vi.fn(async () => {
+        closed = true
+      })
+      const resources = new ManagedPreviewResources({
+        resolvePath: vi.fn(),
+        openLatestManagedFile: vi.fn().mockResolvedValue({
+          path: '/managed/pinned.txt',
+          size: 1,
+          versionToken: 1,
+          snapshot: { dev: 1n, ino: 2n, size: 1n, mtimeNs: 1n },
+          read: vi.fn(),
+          readRange: async () => {
+            await pending
+            if (closed) throw new Error('Version file read lease is closed.')
+            if (reason === 'read failure') throw new Error('read failed')
+            return new Uint8Array([65])
+          },
+          verifyUnchanged: vi.fn(),
+          close
+        })
+      })
+      const resource = await resources.acquire(17, {
+        source: 'upload',
+        projectId: 'project-1',
+        fileId: 'file-1'
+      })
+      const protocol = await resources.resolveProtocolResource(resource.id)
+      if (!('fileHandle' in protocol)) throw new Error('Expected a pinned protocol lease')
+      const range = { resourceId: resource.id, begin: 0, end: 1 }
+      const reading = resources.readRange(17, range)
+      const result =
+        reason === 'read failure'
+          ? expect(reading).rejects.toThrow('read failed')
+          : expect(reading).resolves.toMatchObject({ data: new Uint8Array([65]) })
+
+      if (reason === 'owner teardown') resources.releaseOwner(17)
+      else resources.release(17, { resourceId: resource.id })
+      await expect(resources.resolveProtocolResource(resource.id)).rejects.toThrow('not available')
+      await expect(resources.readRange(17, range)).rejects.toThrow('not available')
+      expect(close).not.toHaveBeenCalled()
+      finishRead()
+      await result
+      expect(close).not.toHaveBeenCalled()
+      await protocol.fileHandle.close()
+      await protocol.fileHandle.close()
+      expect(close).toHaveBeenCalledOnce()
+    }
+  )
+
   it('keeps a Notebook input Version lease open for capability reads instead of resolving a path', async () => {
     const trustedBytes = Buffer.from('staged through a live lease')
     const close = vi.fn().mockResolvedValue(undefined)

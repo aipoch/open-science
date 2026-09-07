@@ -9,6 +9,7 @@ import type {
   PendingElicitationRequest
 } from '../../../../shared/acp'
 import type { PermissionProfileId } from '../../../../shared/permission-profiles'
+import { isSessionSizeLimitError } from '../../../../shared/session-persistence'
 import { useSessionStore, type ChatSession } from '../../stores/session-store'
 import type { WorkspaceSessionRuntimeSelection } from './useWorkspaceAgentRuntime'
 import {
@@ -87,30 +88,36 @@ const createWorkspaceElicitationRuntime = async (): Promise<WorkspaceElicitation
 })
 
 const useWorkspaceElicitation = (
-  resolveSessionRuntimeSelection: (sessionId: string) => WorkspaceSessionRuntimeSelection
+  resolveSessionRuntimeSelection: (sessionId: string) => WorkspaceSessionRuntimeSelection,
+  onSessionSizeLimit?: (sessionId: string) => void
 ): {
   respondToElicitation: (response: ElicitationResponse) => Promise<void>
 } => {
   const respondToElicitation = useCallback(
     async (response: ElicitationResponse): Promise<void> => {
-      const sessionId = response.request?.sessionId
+      const sessionId = response.request?.sessionId ?? response.delegatedQuestion?.sessionId
       const session = sessionId
         ? useSessionStore.getState().sessions.find((candidate) => candidate.id === sessionId)
         : undefined
       const selected = session ? resolveSessionRuntimeSelection(session.id) : undefined
 
-      await respondToWorkspaceElicitation(await createWorkspaceElicitationRuntime(), response, {
-        supportsImageInput: selected
-          ? selected.supportsImageInput || selected.supportsImageRelay
-          : undefined,
-        agentFrameworkId: selected?.agentFrameworkId,
-        agentBackendId: selected?.agentBackendId,
-        agentModel: selected?.agentModel,
-        agentTarget: selected?.agentTarget,
-        historyReplayDescriptor: selected?.historyReplayDescriptor
-      })
+      try {
+        await respondToWorkspaceElicitation(await createWorkspaceElicitationRuntime(), response, {
+          supportsImageInput: selected
+            ? selected.supportsImageInput || selected.supportsImageRelay
+            : undefined,
+          agentFrameworkId: selected?.agentFrameworkId,
+          agentBackendId: selected?.agentBackendId,
+          agentModel: selected?.agentModel,
+          agentTarget: selected?.agentTarget,
+          historyReplayDescriptor: selected?.historyReplayDescriptor
+        })
+      } catch (error) {
+        if (sessionId && isSessionSizeLimitError(error)) onSessionSizeLimit?.(sessionId)
+        throw error
+      }
     },
-    [resolveSessionRuntimeSelection]
+    [onSessionSizeLimit, resolveSessionRuntimeSelection]
   )
 
   return { respondToElicitation }

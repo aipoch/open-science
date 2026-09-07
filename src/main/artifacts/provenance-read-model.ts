@@ -9,6 +9,10 @@ import { dirname } from 'node:path'
 
 import type { Prisma, PrismaClient } from '@prisma/client'
 
+import {
+  artifactLiteratureManifestSchema,
+  type ArtifactLiteratureManifest
+} from '../../shared/artifact-literature'
 import type {
   ArtifactExecutionSnapshot,
   ArtifactLineageProvenance,
@@ -52,7 +56,6 @@ import { projectPublicArtifactExecutionSnapshot } from './provenance-execution-p
 import { readOptionalFile, resolveStorageKey } from './provenance-storage'
 import type { PersistedVersionFileRecord } from './provenance-version-writer'
 import { requireAgentArtifactVersion } from './provenance-version-kind'
-import { resolveArtifactContentStatus } from './provenance-content-status'
 
 const SAFE_SEGMENT_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]*$/
 
@@ -61,6 +64,30 @@ class UnsupportedMessageSnapshotVersionError extends Error {}
 const assertSafeSegment = (value: string, label: string): string => {
   if (!SAFE_SEGMENT_PATTERN.test(value)) throw new Error(`Invalid ${label}: ${value}`)
   return value
+}
+
+const parseArtifactLiteratureManifest = (
+  row: {
+    schemaVersion: number
+    styleId: string
+    locale: string
+    manifestJson: string
+    checksum: string
+  },
+  versionId: string
+): ArtifactLiteratureManifest => {
+  if (sha256(row.manifestJson) !== row.checksum) {
+    throw new Error(`Artifact Literature manifest is corrupt: ${versionId}`)
+  }
+  const manifest = artifactLiteratureManifestSchema.parse(JSON.parse(row.manifestJson))
+  if (
+    manifest.schemaVersion !== row.schemaVersion ||
+    manifest.styleId !== row.styleId ||
+    manifest.locale !== row.locale
+  ) {
+    throw new Error(`Artifact Literature manifest metadata is corrupt: ${versionId}`)
+  }
+  return manifest
 }
 
 type PersistedExecutionInputRow = {
@@ -177,6 +204,13 @@ type ArtifactProvenanceReadModelOptions = {
     request: GetArtifactVersionProvenanceRequest,
     filename: string
   ) => Promise<string>
+  inspectVersionContent: (version: {
+    id: string
+    contentBlobId: string | null
+    contentStorageKey: string
+    sizeBytes: bigint
+    checksum: string
+  }) => Promise<ArtifactVersionProvenance['contentStatus']>
 }
 
 class ArtifactProvenanceReadModel {
@@ -233,8 +267,6 @@ class ArtifactProvenanceReadModel {
           where: { ...visible, id: selected.basedOnVersionId }
         })
       : undefined
-    const project = (version: NonNullable<typeof head>): Promise<ArtifactVersionDescriptor> =>
-      this.options.projectVersionDescriptor(version, projectId, appSessionId)
     const [previous, next] = selected
       ? await Promise.all([
           client.artifactVersion.findFirst({
@@ -248,6 +280,26 @@ class ArtifactProvenanceReadModel {
         ])
       : [undefined, undefined]
     const page = versionHistoryPage(records)
+    const versionIds = [
+      ...new Set(
+        [...page.versions, previous, next, selected, head, basedOn].flatMap((version) =>
+          version ? [version.id] : []
+        )
+      )
+    ]
+    const manifests = await client.artifactLiteratureManifest.findMany({
+      where: { artifactVersionId: { in: versionIds } },
+      select: { artifactVersionId: true }
+    })
+    const literatureVersionIds = new Set(
+      manifests.map(({ artifactVersionId }) => artifactVersionId)
+    )
+    const project = async (
+      version: NonNullable<typeof head>
+    ): Promise<ArtifactVersionDescriptor> => ({
+      ...(await this.options.projectVersionDescriptor(version, projectId, appSessionId)),
+      hasLiterature: literatureVersionIds.has(version.id)
+    })
     return {
       artifactId: lineage.id,
       filename: lineage.filename,
@@ -303,6 +355,7 @@ class ArtifactProvenanceReadModel {
         },
         include: {
           artifact: true,
+          literatureManifest: true,
           messageSnapshot: true,
           inputs: { orderBy: { ordinal: 'asc' as const } }
         }
@@ -323,16 +376,10 @@ class ArtifactProvenanceReadModel {
     )
     const evidence = JSON.parse(evidenceMirror) as ArtifactVersionEvidence
     validateArtifactCoreEvidence(evidence, version)
-    const contentStatus = await resolveArtifactContentStatus({
-      storageRoot: this.options.storageRoot,
-      projectId,
-      sessionId: appSessionId,
-      fileId: artifactId,
-      versionId,
-      contentStorageKey: version.contentStorageKey,
-      checksum: version.checksum,
-      resolveVersion: this.options.resolveArtifactVersion
-    })
+    const contentStatus = await this.options.inspectVersionContent(version)
+    const literature = version.literatureManifest
+      ? parseArtifactLiteratureManifest(version.literatureManifest, versionId)
+      : undefined
 
     let execution: ArtifactExecutionSnapshot | ResolvedArtifactExecutionSnapshot | undefined
     if (
@@ -579,6 +626,7 @@ class ArtifactProvenanceReadModel {
       ),
       contentStatus,
       evidence,
+      literature,
       execution,
       messages,
       review
@@ -586,6 +634,32 @@ class ArtifactProvenanceReadModel {
     return options?.includePrivateHelperSource
       ? (result as ArtifactVersionReconstructionProvenance)
       : (result as ArtifactVersionProvenance)
+  }
+
+  async getVersionLiterature(
+    request: GetArtifactVersionProvenanceRequest
+  ): Promise<ArtifactLiteratureManifest | undefined> {
+    const projectId = assertSafeSegment(request.projectId, 'project id')
+    const appSessionId = assertSafeSegment(request.appSessionId, 'app session id')
+    const artifactId = assertSafeSegment(request.artifactId, 'artifact id')
+    const versionId = assertSafeSegment(request.versionId, 'version id')
+    const client = await this.options.getClient()
+    const version = await client.artifactVersion.findFirst({
+      where: {
+        id: versionId,
+        artifactId,
+        artifact: { is: { projectId, sessionId: appSessionId } },
+        OR: [
+          { originKind: 'agent_generated', state: { in: ['pending', 'finalized'] } },
+          { originKind: { in: ['user_edit', 'legacy'] }, state: 'finalized' }
+        ]
+      },
+      select: { literatureManifest: true }
+    })
+    if (!version) throw new Error(`Artifact Version not found: ${versionId}`)
+    return version.literatureManifest
+      ? parseArtifactLiteratureManifest(version.literatureManifest, versionId)
+      : undefined
   }
 
   async getVersionCore(

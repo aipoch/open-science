@@ -170,6 +170,42 @@ const setup = (
 }
 
 describe('AcpPromptPreparationOwner', () => {
+  it('adds immutable Literature metadata to provider-neutral prompt text', async () => {
+    const fixture = setup()
+
+    await fixture.prepare({
+      request: request({
+        parts: [
+          {
+            type: 'literature',
+            itemId: 'item-1',
+            metadataRevision: 2,
+            item: {
+              itemType: 'journalArticle',
+              title: 'A cited paper',
+              abstract: '',
+              issuedText: '2025',
+              containerTitle: 'Research Journal',
+              shortTitle: '',
+              language: 'en',
+              rights: '',
+              url: '',
+              extra: '',
+              typeFields: {},
+              creators: [],
+              identifiers: []
+            }
+          }
+        ]
+      })
+    })
+
+    const prepared = fixture.promptContent.prepare.mock.calls.at(-1)?.[0] as { text: string }
+    expect(prepared.text).toContain('immutable bibliographic snapshot')
+    expect(prepared.text).toContain('A cited paper')
+    expect(prepared.text).toMatch(/A cited paper[\s\S]+prepared task$/)
+  })
+
   it('filters unlinked PDF uploads from history replay while keeping linked PDFs and non-PDF files', async () => {
     const fixture = setup()
 

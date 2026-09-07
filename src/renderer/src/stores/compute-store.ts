@@ -5,6 +5,7 @@ import type {
   ComputeApprovalDecision,
   ComputeApprovalRequest,
   ComputeHost,
+  ComputeExecutionMode,
   CreateComputeHostRequest,
   CreatePasswordComputeHostRequest,
   ResetPasswordComputeHostRequest,
@@ -30,6 +31,8 @@ export type ComputeApproval = ComputeApprovalBase &
         operation: 'submit_job'
         commandPreview: string
         commandFull: string
+        executionMode?: ComputeExecutionMode
+        environment?: string
         inputsSummary?: string
         resources?: string
         timeoutSeconds: number
@@ -63,6 +66,8 @@ const projectComputeApprovalRequest = (request: ComputeApprovalRequest): Compute
     operation: request.operation,
     commandPreview: request.command_preview,
     commandFull: request.command_full,
+    ...(request.execution_mode ? { executionMode: request.execution_mode } : {}),
+    ...(request.environment ? { environment: request.environment } : {}),
     ...(request.inputs_summary ? { inputsSummary: request.inputs_summary } : {}),
     ...(request.resources ? { resources: request.resources } : {}),
     timeoutSeconds: request.timeout_seconds,
@@ -100,6 +105,8 @@ type ComputeStore = ComputeStoreData & {
   clearScratch: (providerId: string) => Promise<void>
   // Sets the enforced concurrent job limit (1..500).
   setConcurrency: (providerId: string, limit: number) => Promise<void>
+  // Selects the execution driver used for future jobs on this Host.
+  setExecutionMode: (providerId: string, executionMode: ComputeExecutionMode) => Promise<void>
   // Queues an incoming approval request (from the main-process compute gate).
   enqueueApproval: (request: ComputeApprovalRequest) => void
   // Removes a request after Main reports response, timeout, or cancellation settlement.
@@ -383,6 +390,18 @@ export const useComputeStore = create<ComputeStore>((set, get) => ({
     if (commitHostProjection(providerId, generation) && updatedHost) {
       set((state) => ({
         hosts: state.hosts.map((h) => (h.providerId === providerId ? updatedHost : h))
+      }))
+    }
+  },
+
+  setExecutionMode: async (providerId, executionMode) => {
+    const generation = beginHostProjection()
+    await window.api.compute.executionModeSet(providerId, executionMode)
+    hostMutationSequence += 1
+    const updatedHost = await window.api.compute.get(providerId)
+    if (commitHostProjection(providerId, generation) && updatedHost) {
+      set((state) => ({
+        hosts: state.hosts.map((host) => (host.providerId === providerId ? updatedHost : host))
       }))
     }
   },

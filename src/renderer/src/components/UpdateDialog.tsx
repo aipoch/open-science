@@ -1,5 +1,5 @@
 import { Download, ExternalLink, RefreshCw, X } from 'lucide-react'
-import { Dialog } from 'radix-ui'
+import * as Dialog from '@/components/ui/dialog'
 import { Trans, useTranslation } from 'react-i18next'
 
 import { DownloadProgressLine } from '@/components/DownloadProgressLine'
@@ -28,6 +28,8 @@ const UPDATE_BACKGROUND_PROCESS_ERROR =
   'Could not stop background processes before updating. Please try again.'
 const UPDATE_BACKGROUND_PROCESS_DEGRADED_ERROR =
   'Could not fully stop background processes before updating. Please try again.'
+const UPDATE_SETTINGS_INSTALL_ERROR =
+  'An Agent Runtime is still installing. Wait for it to finish before restarting to update.'
 
 // Update confirmation dialog: shows the target version and release notes so the user can decide
 // before a large download. Opened from the external capsule and the settings About section. When the
@@ -46,6 +48,10 @@ const UpdateDialog = ({ active = true }: { active?: boolean }): React.JSX.Elemen
   const isDownloading = dialogStatus?.state === 'downloading'
   const isReady = dialogStatus?.state === 'ready'
   const isApplying = dialogStatus?.state === 'applying'
+  const isInstallerUnavailable =
+    dialogStatus?.state === 'available' &&
+    dialogStatus.applyKind === 'installer' &&
+    !dialogStatus.download
   const isBackgroundProcessError =
     dialogStatus?.error === UPDATE_BACKGROUND_PROCESS_ERROR ||
     dialogStatus?.error === UPDATE_BACKGROUND_PROCESS_DEGRADED_ERROR
@@ -158,7 +164,11 @@ const UpdateDialog = ({ active = true }: { active?: boolean }): React.JSX.Elemen
                         ? t(
                             'Could not fully stop background processes before updating. Please try again.'
                           )
-                        : (dialogStatus.error ?? t('Update failed'))}
+                        : dialogStatus.error === UPDATE_SETTINGS_INSTALL_ERROR
+                          ? t(
+                              'An Agent Runtime is still installing. Wait for it to finish before restarting to update.'
+                            )
+                          : (dialogStatus.error ?? t('Update failed'))}
                   </p>
                   {isBackgroundProcessError ? (
                     <p className="mt-2 text-xs text-muted-foreground">
@@ -178,6 +188,13 @@ const UpdateDialog = ({ active = true }: { active?: boolean }): React.JSX.Elemen
                     {t('Download manually')}
                   </ExternalTextLink>
                 </div>
+              ) : null}
+              {isInstallerUnavailable ? (
+                <p className="mt-3 text-xs text-muted-foreground">
+                  {t(
+                    'An installer is not available for this platform. Download manually to check other installation options.'
+                  )}
+                </p>
               ) : null}
             </div>
 
@@ -220,6 +237,10 @@ const UpdateDialog = ({ active = true }: { active?: boolean }): React.JSX.Elemen
                     </>
                   )}
                 </button>
+              ) : isInstallerUnavailable ? (
+                <ExternalTextLink href={APP.update.downloadPage}>
+                  {t('Download manually')}
+                </ExternalTextLink>
               ) : (
                 <button
                   type="button"
