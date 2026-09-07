@@ -153,7 +153,6 @@
     "{{count}} missing fields_many": "{{count}} champs manquants",
     "{{count}} missing fields_other": "{{count}} champs manquants",
     "After merging": "Après fusion",
-    "All identifiers are kept.": "Tous les identifiants sont conservés.",
     "Compare references": "Comparer les références",
     "Date accessed": "Date de consultation",
     "Date added": "Date d’ajout",
@@ -4716,7 +4715,6 @@
     "Organization": "Organisation",
     "Remove author": "Supprimer l’auteur",
     "Add identifier": "Ajouter un identifiant",
-    "Primary": "Principal",
     "Remove identifier": "Supprimer l’identifiant",
     "URL": "URL",
     "Add reference": "Ajouter une référence",
@@ -5006,6 +5004,13 @@
     "{{count}} running background tasks_one": "{{count}} tâche en arrière-plan en cours",
     "{{count}} running background tasks_many": "{{count}} tâches en arrière-plan en cours",
     "{{count}} running background tasks_other": "{{count}} tâches en arrière-plan en cours",
-    "Updated: {{completed}}. Not updated: {{remaining}}.": "Références mises à jour : {{completed}}. Non mises à jour : {{remaining}}."
+    "Updated: {{completed}}. Not updated: {{remaining}}.": "Références mises à jour : {{completed}}. Non mises à jour : {{remaining}}.",
+    "Conflicting identifiers": "Identifiants contradictoires",
+    "Some identifiers disagree or match different references. Correct the source file or keep separate copies of every reference in this import.": "Certains identifiants se contredisent ou correspondent à des références différentes. Corrigez le fichier source ou conservez une copie distincte de chaque référence de cet import.",
+    "Library reference: {{title}}": "Référence de la bibliothèque : {{title}}",
+    "File reference {{number}}: {{title}}": "Référence {{number}} du fichier : {{title}}",
+    "Check author names. Original text is kept in Extra.": "Vérifiez les noms des auteurs. Le texte original est conservé dans les informations supplémentaires.",
+    "Preferred for {{scheme}}": "Valeur préférée pour {{scheme}}",
+    "All identifiers are kept. Preferred values come from the kept reference when available.": "Tous les identifiants sont conservés. Les valeurs préférées proviennent de la référence conservée, si elles sont disponibles."
   }
 }

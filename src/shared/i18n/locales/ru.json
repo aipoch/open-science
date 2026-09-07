@@ -155,7 +155,6 @@
     "{{count}} missing fields_many": "{{count}} незаполненных полей",
     "{{count}} missing fields_other": "{{count}} незаполненного поля",
     "After merging": "После объединения",
-    "All identifiers are kept.": "Все идентификаторы сохраняются.",
     "Compare references": "Сравнение записей",
     "Date accessed": "Дата обращения",
     "Date added": "Дата добавления",
@@ -4844,7 +4843,6 @@
     "Organization": "Организация",
     "Remove author": "Удалить автора",
     "Add identifier": "Добавить идентификатор",
-    "Primary": "Основной",
     "Remove identifier": "Удалить идентификатор",
     "URL": "URL",
     "Add reference": "Добавить источник",
@@ -5138,6 +5136,13 @@
     "{{count}} running background tasks_few": "{{count}} фоновые задачи выполняются",
     "{{count}} running background tasks_many": "{{count}} фоновых задач выполняется",
     "{{count}} running background tasks_other": "{{count}} фоновые задачи выполняются",
-    "Updated: {{completed}}. Not updated: {{remaining}}.": "Обновлено: {{completed}}. Не обновлено: {{remaining}}."
+    "Updated: {{completed}}. Not updated: {{remaining}}.": "Обновлено: {{completed}}. Не обновлено: {{remaining}}.",
+    "Conflicting identifiers": "Конфликтующие идентификаторы",
+    "Some identifiers disagree or match different references. Correct the source file or keep separate copies of every reference in this import.": "Некоторые идентификаторы противоречат друг другу или соответствуют разным источникам. Исправьте исходный файл или сохраните отдельную копию каждого импортируемого источника.",
+    "Library reference: {{title}}": "Источник в библиотеке: {{title}}",
+    "File reference {{number}}: {{title}}": "Источник {{number}} в файле: {{title}}",
+    "Check author names. Original text is kept in Extra.": "Проверьте имена авторов. Исходный текст сохранён в дополнительных сведениях.",
+    "Preferred for {{scheme}}": "Предпочтительный для {{scheme}}",
+    "All identifiers are kept. Preferred values come from the kept reference when available.": "Все идентификаторы сохраняются. Предпочтительные значения берутся из сохраняемого источника, если они доступны."
   }
 }

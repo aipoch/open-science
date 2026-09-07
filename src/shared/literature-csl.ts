@@ -1,6 +1,7 @@
 import {
   literatureItemInputSchema,
   normalizeLiteratureIdentifierValue,
+  preferredLiteratureIdentifier,
   type LiteratureCreatorInput,
   type LiteratureIdentifierInput,
   type LiteratureItemInput,
@@ -136,8 +137,7 @@ const identifierFor = (
   item: LiteratureItemInput,
   scheme: 'doi' | 'isbn' | 'issn'
 ): string | undefined => {
-  const identifiers = item.identifiers.filter((identifier) => identifier.scheme === scheme)
-  const identifier = identifiers.find(({ isPrimary }) => isPrimary) ?? identifiers[0]
+  const identifier = preferredLiteratureIdentifier(item.identifiers, scheme)
   return identifier
     ? normalizeLiteratureIdentifierValue(identifier.scheme, identifier.value)
     : undefined

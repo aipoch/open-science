@@ -11,6 +11,7 @@ import type {
 } from '../../../../shared/literature'
 import {
   literatureMergeRows,
+  buildLiteratureMergeItem,
   mergeFieldSource,
   mergeValueKey,
   type LiteratureMergeField,
@@ -41,6 +42,9 @@ export function LiteratureMergeReview({
   const { t, i18n } = useTranslation()
   const [showAll, setShowAll] = useState(false)
   const rows = literatureMergeRows(entries)
+  const merged = entries.some(({ id }) => id === survivorId)
+    ? buildLiteratureMergeItem(entries, survivorId, sources)
+    : undefined
   const differences = rows.filter(({ different }) => different)
   const date = (value: number): string =>
     new Intl.DateTimeFormat(i18n.language, {
@@ -183,7 +187,15 @@ export function LiteratureMergeReview({
                     {fieldName}
                     {field.startsWith('identifier:') && different ? (
                       <span className="ml-2 font-normal text-muted-foreground">
-                        {t('All identifiers are kept.')}
+                        {t(
+                          'All identifiers are kept. Preferred values come from the kept reference when available.'
+                        )}{' '}
+                        {
+                          merged?.identifiers.find(
+                            (identifier) =>
+                              identifier.scheme === field.slice(11) && identifier.isPrimary
+                          )?.value
+                        }
                       </span>
                     ) : null}
                   </th>

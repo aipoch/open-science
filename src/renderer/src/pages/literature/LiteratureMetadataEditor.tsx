@@ -9,6 +9,7 @@ import { Textarea } from '@/components/ui/textarea'
 import { cn } from '@/lib/utils'
 import {
   LITERATURE_IDENTIFIER_SCHEMES,
+  normalizeLiteratureIdentifierPreferences,
   LITERATURE_ITEM_TYPES,
   type LiteratureCreatorInput,
   type LiteratureIdentifierInput,
@@ -76,7 +77,7 @@ const LiteratureMetadataEditor = ({
   const [draft, setDraft] = useState<LiteratureItemInput>(() => ({
     ...item,
     creators: item.creators.map((creator) => ({ ...creator })),
-    identifiers: item.identifiers.map((identifier) => ({ ...identifier })),
+    identifiers: normalizeLiteratureIdentifierPreferences(item.identifiers),
     typeFields: { ...item.typeFields }
   }))
   const [advancedOpen, setAdvancedOpen] = useState(() =>
@@ -103,7 +104,7 @@ const LiteratureMetadataEditor = ({
           ? identifier.isPrimary
             ? { ...identifier, isPrimary: true }
             : identifier
-          : identifier.isPrimary
+          : identifier.isPrimary && entry.scheme === identifier.scheme
             ? { ...entry, isPrimary: false }
             : entry
       )
@@ -361,11 +362,11 @@ const LiteratureMetadataEditor = ({
               <label className="flex shrink-0 items-center gap-1 text-xs text-muted-foreground">
                 <input
                   type="radio"
-                  name="primary-literature-identifier"
+                  name={`primary-literature-identifier-${identifier.scheme}`}
                   checked={identifier.isPrimary}
                   onChange={() => updateIdentifier(index, { ...identifier, isPrimary: true })}
                 />
-                {t('Primary')}
+                {t('Preferred for {{scheme}}', { scheme: identifier.scheme.toUpperCase() })}
               </label>
               <Button
                 type="button"

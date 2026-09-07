@@ -151,7 +151,6 @@
     "{{count}} missing fields_one": "{{count}} fehlendes Feld",
     "{{count}} missing fields_other": "{{count}} fehlende Felder",
     "After merging": "Nach dem Zusammenführen",
-    "All identifiers are kept.": "Alle Kennungen bleiben erhalten.",
     "Compare references": "Literatureinträge vergleichen",
     "Date accessed": "Zugriffsdatum",
     "Date added": "Hinzugefügt am",
@@ -4502,7 +4501,6 @@
     "Patent": "Patent",
     "Place": "Ort",
     "Preprint": "Preprint",
-    "Primary": "Primär",
     "Project link could not be updated.": "Die Projektzuordnung konnte nicht aktualisiert werden.",
     "PubMed NBIB": "PubMed NBIB",
     "Publication": "Publikation",
@@ -4845,6 +4843,13 @@
     "{{count}} background tasks_other": "{{count}} Hintergrundaufgaben",
     "{{count}} running background tasks_one": "{{count}} laufende Hintergrundaufgabe",
     "{{count}} running background tasks_other": "{{count}} laufende Hintergrundaufgaben",
-    "Updated: {{completed}}. Not updated: {{remaining}}.": "Aktualisiert: {{completed}}. Nicht aktualisiert: {{remaining}}."
+    "Updated: {{completed}}. Not updated: {{remaining}}.": "Aktualisiert: {{completed}}. Nicht aktualisiert: {{remaining}}.",
+    "Conflicting identifiers": "Widersprüchliche Kennungen",
+    "Some identifiers disagree or match different references. Correct the source file or keep separate copies of every reference in this import.": "Einige Kennungen widersprechen sich oder passen zu verschiedenen Referenzen. Korrigieren Sie die Quelldatei oder behalten Sie jede Referenz dieses Imports als separate Kopie.",
+    "Library reference: {{title}}": "Referenz in der Bibliothek: {{title}}",
+    "File reference {{number}}: {{title}}": "Referenz {{number}} in der Datei: {{title}}",
+    "Check author names. Original text is kept in Extra.": "Prüfen Sie die Autorennamen. Der Originaltext bleibt unter Zusatzinformationen erhalten.",
+    "Preferred for {{scheme}}": "Bevorzugt für {{scheme}}",
+    "All identifiers are kept. Preferred values come from the kept reference when available.": "Alle Kennungen bleiben erhalten. Bevorzugte Werte stammen, sofern vorhanden, aus der beibehaltenen Referenz."
   }
 }

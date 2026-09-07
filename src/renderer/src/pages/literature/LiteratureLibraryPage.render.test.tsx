@@ -2,6 +2,7 @@
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { LITERATURE_IMPORT_IDENTITY_CONFLICT } from '../../../../shared/literature'
 import type {
   LiteratureCatalogSearchPage,
   LiteratureCatalogSearchRequest,
@@ -3706,6 +3707,56 @@ describe('LiteratureLibraryPage', () => {
     await waitFor(() =>
       expect(importRecords).toHaveBeenCalledWith({ mode: 'commit', content, duplicatePolicy })
     )
+  })
+
+  it('refreshes conflict details when identities change between preview and commit', async () => {
+    let changed = false
+    importRecords.mockImplementation(async (request: { mode: 'commit' | 'preview' }) => {
+      if (request.mode === 'commit') {
+        changed = true
+        throw new Error(LITERATURE_IMPORT_IDENTITY_CONFLICT)
+      }
+      return {
+        format: 'bibtex',
+        items: [libraryItem.item],
+        errors: [],
+        scannedEntries: 1,
+        truncated: false,
+        entries: [
+          {
+            index: 0,
+            title: libraryItem.item.title,
+            item: libraryItem.item,
+            warnings: [],
+            status: changed ? 'conflict' : 'ready',
+            ...(changed
+              ? {
+                  conflict: {
+                    identifiers: libraryItem.item.identifiers,
+                    matches: [{ itemId: 'new-owner', title: 'New matching reference' }]
+                  }
+                }
+              : {})
+          }
+        ]
+      }
+    })
+    render(<LiteratureLibraryPage />)
+    fireEvent.click(screen.getByRole('button', { name: 'All references' }))
+    const file = new File(['reference'], 'references.bib')
+    Object.defineProperty(file, 'text', { value: async () => 'reference' })
+    fireEvent.change(screen.getByLabelText('Import references'), { target: { files: [file] } })
+    await screen.findByRole('dialog')
+    fireEvent.click(await screen.findByRole('button', { name: 'Import references' }))
+    expect(await screen.findByText('Library reference: New matching reference')).not.toBeNull()
+    expect(
+      (screen.getByRole('button', { name: 'Import references' }) as HTMLButtonElement).disabled
+    ).toBe(true)
+    expect(importRecords.mock.calls.map(([request]) => request.mode)).toEqual([
+      'preview',
+      'commit',
+      'preview'
+    ])
   })
 
   it('previews and imports BibTeX records into the Library', async () => {
