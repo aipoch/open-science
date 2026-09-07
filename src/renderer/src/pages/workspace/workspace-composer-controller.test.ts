@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { act, createElement } from 'react'
+import { act, createElement, StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
@@ -25,6 +25,7 @@ import {
   type ComposerDoc,
   type ComposerPastedTextNode
 } from './composer/composer-doc'
+import { WorkspaceComposerDraftsProvider } from './workspace-composer-drafts'
 import { useWorkspaceComposerController } from './workspace-composer-controller'
 import type { ComposerHistoryEntry } from './composer/composer-history'
 
@@ -85,12 +86,15 @@ type ControllerHook = {
     session: Parameters<typeof useWorkspaceComposerController>[0]['activeSession']
   ) => void
   setCustomizePrefill: (prefill: CustomizePrefillIntent) => void
+  remount: () => void
   unmount: () => void
 }
 
 const renderController = (
   uploadApi = uploads(),
-  loadSkills = vi.fn().mockResolvedValue(undefined),
+  loadSkills: Parameters<
+    typeof useWorkspaceComposerController
+  >[0]['historyPolicy']['loadSkills'] = vi.fn().mockResolvedValue(undefined),
   historyEntries: ComposerHistoryEntry[] = [],
   // Pass null to exercise the new-conversation draft (no active Session); undefined selects the
   // default Session.
@@ -98,7 +102,11 @@ const renderController = (
     id: 'session-a',
     projectId: 'project'
   },
-  onSessionSizeLimit?: (sessionId: string) => void
+  onSessionSizeLimit?: (sessionId: string) => void,
+  historyPolicy: Partial<
+    Parameters<typeof useWorkspaceComposerController>[0]['historyPolicy']
+  > = {},
+  strictMode = false
 ): ControllerHook => {
   let currentDraftKey = 'session-a'
   let selectedActiveSession = activeSession ?? undefined
@@ -125,7 +133,8 @@ const renderController = (
         specialistCatalogReady: true,
         specialistId: undefined,
         loadSkills,
-        loadSpecialists: vi.fn().mockResolvedValue(undefined)
+        loadSpecialists: vi.fn().mockResolvedValue(undefined),
+        ...historyPolicy
       },
       canStageAttachments: true,
       supportsImageInput: true,
@@ -134,8 +143,13 @@ const renderController = (
     })
     return null
   }
-  const render = (): void => {
-    act(() => root.render(createElement(Harness)))
+  const render = (visible = true): void => {
+    const tree = createElement(
+      WorkspaceComposerDraftsProvider,
+      null,
+      visible ? createElement(Harness) : null
+    )
+    act(() => root.render(strictMode ? createElement(StrictMode, null, tree) : tree))
   }
   render()
   return {
@@ -154,6 +168,10 @@ const renderController = (
       currentDraftKey = 'new:project'
       render()
     },
+    remount: (): void => {
+      render(false)
+      render()
+    },
     unmount: (): void => act(() => root.unmount())
   }
 }
@@ -168,6 +186,225 @@ afterEach(() => {
 })
 
 describe('workspace composer controller', () => {
+  it('DF-01 retains both conversation drafts and annotations after route remount', () => {
+    const hook = renderController()
+    mounted.push(hook)
+    act(() => hook.result.current.actions.changeDoc(textDoc('A unsent')))
+    act(() => hook.result.current.actions.addAnnotation(annotation()))
+    hook.selectDraft('session-b')
+    act(() => hook.result.current.actions.changeDoc(textDoc('B unsent')))
+    hook.selectDraft('session-a')
+    expect(hook.result.current.view.doc).toEqual(textDoc('A unsent'))
+    hook.remount()
+    expect(hook.result.current.view.doc).toEqual(textDoc('A unsent'))
+    expect(hook.result.current.view.annotations).toEqual([annotation()])
+    hook.selectDraft('session-b')
+    expect(hook.result.current.view.doc).toEqual(textDoc('B unsent'))
+  })
+
+  it('retains drafts across repeated StrictMode route remounts and clears a sent draft', () => {
+    const hook = renderController(undefined, undefined, [], undefined, undefined, {}, true)
+    mounted.push(hook)
+    act(() => hook.result.current.actions.changeDoc(textDoc('strict draft')))
+    act(() => hook.result.current.actions.addAnnotation(annotation()))
+    hook.remount()
+    hook.remount()
+    expect(hook.result.current.view.doc).toEqual(textDoc('strict draft'))
+    expect(hook.result.current.view.annotations).toEqual([annotation()])
+    const snapshot = hook.result.current.lifecycle.captureSend()
+    act(() =>
+      expect(hook.result.current.lifecycle.clearDraft(snapshot.draftKey, snapshot.version)).toBe(
+        true
+      )
+    )
+    hook.remount()
+    expect(hook.result.current.view.doc).toEqual(emptyDoc)
+    expect(hook.result.current.view.annotations).toEqual([])
+  })
+
+  it('does not resurrect a deleted draft or its failed send after route remount', () => {
+    const hook = renderController()
+    mounted.push(hook)
+    act(() => hook.result.current.actions.changeDoc(textDoc('deleted draft')))
+    const snapshot = hook.result.current.lifecycle.captureSend()
+    expect(hook.result.current.lifecycle.beginSessionDeletion('session-a')).toBe(true)
+    act(() => hook.result.current.lifecycle.settleSessionDeletion('session-a', true))
+    hook.remount()
+    act(() => expect(hook.result.current.lifecycle.restoreFailedSend(snapshot)).toBe(false))
+    expect(hook.result.current.view.doc).toEqual(emptyDoc)
+  })
+
+  it('DF-01 parks the scratch rather than the browsed history item', () => {
+    const hook = renderController(uploads(), undefined, [
+      { id: 'recent', messageId: 'recent', doc: textDoc('history prompt') }
+    ])
+    mounted.push(hook)
+    act(() => hook.result.current.actions.changeDoc(textDoc('scratch before history')))
+    act(() => expect(hook.result.current.actions.navigateHistory('previous')).toBe(true))
+    hook.remount()
+    expect(hook.result.current.view.doc).toEqual(textDoc('scratch before history'))
+  })
+
+  it('DF-01 retains completed pending attachments and the draft version across remount', async () => {
+    const api = uploads(vi.fn().mockResolvedValue(pendingAttachment))
+    const hook = renderController(api)
+    mounted.push(hook)
+    act(() =>
+      hook.result.current.actions.stageFiles([
+        new File(['abc'], 'draft.txt', { type: 'text/plain' })
+      ])
+    )
+    await flushAsyncWork()
+    act(() => hook.result.current.actions.changeDoc(textDoc('unsent with file')))
+    const snapshot = hook.result.current.lifecycle.captureSend()
+    hook.remount()
+    expect(hook.result.current.view.attachments).toEqual([pendingAttachment])
+    expect(hook.result.current.lifecycle.captureSend().version).toBe(snapshot.version)
+    expect(api.deleteUpload).not.toHaveBeenCalled()
+  })
+
+  it('DF-01 retains unfinished pasted text as editable text after cancelling the route upload', async () => {
+    const pending = deferred<UploadedAttachment | null>()
+    const api = uploads(vi.fn(() => pending.promise))
+    const hook = renderController(api)
+    mounted.push(hook)
+    const node: ComposerPastedTextNode = {
+      type: 'pasted-text',
+      id: 'paste-remount',
+      text: 'long payload'
+    }
+    act(() => hook.result.current.actions.stagePastedText(pastedDoc(node), node))
+    await flushAsyncWork()
+    hook.remount()
+    expect(docToText(hook.result.current.view.doc)).toBe('before long payload after')
+    expect(hook.result.current.view.transfers).toEqual([])
+    expect(api.abortTransfer).toHaveBeenCalled()
+    await act(async () => pending.resolve(pendingAttachment))
+    await flushAsyncWork()
+    expect(hook.result.current.view.attachments).toEqual([])
+    expect(docToText(hook.result.current.view.doc)).toBe('before long payload after')
+  })
+
+  it.each(['skill', 'specialist'] as const)(
+    'DF-02 preserves the outgoing draft on %s customization',
+    (goal) => {
+      const hook = renderController()
+      mounted.push(hook)
+      act(() => hook.result.current.actions.changeDoc(textDoc('Session A unsent work')))
+      hook.setCustomizePrefill({ requestId: 1, projectId: 'project', goal })
+      expect(docToText(hook.result.current.view.doc)).not.toBe('Session A unsent work')
+      hook.selectDraft('session-a')
+      expect(hook.result.current.view.doc).toEqual(textDoc('Session A unsent work'))
+    }
+  )
+
+  it.each(['down', 'switch'] as const)(
+    'DF-03 retains the scratch and cursor when a skill history entry is loading (%s)',
+    (recovery) => {
+      const hook = renderController(
+        uploads(),
+        () => new Promise(() => {}),
+        [
+          { id: 'recent', messageId: 'recent', doc: textDoc('recent prompt') },
+          {
+            id: 'older',
+            messageId: 'older',
+            doc: { nodes: [{ type: 'skill', id: 'skill-a', name: 'Skill A' }] }
+          }
+        ],
+        undefined,
+        undefined,
+        { skillCatalogReady: false, refreshSkillCatalog: true }
+      )
+      mounted.push(hook)
+      act(() => hook.result.current.actions.changeDoc(textDoc('original scratch')))
+      act(() => expect(hook.result.current.actions.navigateHistory('previous')).toBe(true))
+      act(() => expect(hook.result.current.actions.navigateHistory('previous')).toBe(false))
+      expect(hook.result.current.view.historyStatus).toContain('loading')
+      expect(hook.result.current.view.doc).toEqual(textDoc('recent prompt'))
+      if (recovery === 'down') {
+        act(() => expect(hook.result.current.actions.navigateHistory('next')).toBe(true))
+      } else {
+        hook.selectDraft('session-b')
+        hook.selectDraft('session-a')
+      }
+      expect(hook.result.current.view.doc).toEqual(textDoc('original scratch'))
+    }
+  )
+
+  const pendingAttachment: UploadedAttachment = {
+    id: 'upload-df',
+    sessionId: '.pending',
+    name: 'draft.txt',
+    originalName: 'draft.txt',
+    path: '/uploads/.pending/draft.txt',
+    mimeType: 'text/plain',
+    size: 3
+  }
+
+  it.each(['active', 'background'] as const)(
+    'DF-04 keeps a pending attachment still referenced after a failed send conflict (%s)',
+    async (owner) => {
+      const api = uploads(vi.fn().mockResolvedValue(pendingAttachment))
+      const hook = renderController(api)
+      mounted.push(hook)
+      act(() =>
+        hook.result.current.actions.stageFiles([
+          new File(['abc'], 'draft.txt', { type: 'text/plain' })
+        ])
+      )
+      await flushAsyncWork()
+      act(() => hook.result.current.actions.addAnnotation(annotation()))
+      const snapshot = hook.result.current.lifecycle.captureSend()
+      act(() => hook.result.current.actions.changeDoc(textDoc('new draft')))
+      if (owner === 'background') hook.selectDraft('session-b')
+      act(() => expect(hook.result.current.lifecycle.restoreFailedSend(snapshot)).toBe(false))
+      if (owner === 'background') hook.selectDraft('session-a')
+      expect(hook.result.current.view.doc).toEqual(textDoc('new draft'))
+      expect(hook.result.current.view.attachments).toEqual([pendingAttachment])
+      expect(api.deleteUpload).not.toHaveBeenCalled()
+    }
+  )
+
+  it.each(['remove', 'cancel'] as const)(
+    'DF-05 preserves text undo and redo after attachment %s',
+    async (action) => {
+      const pending = deferred<UploadedAttachment | null>()
+      const api = uploads(
+        vi.fn(() => (action === 'remove' ? Promise.resolve(pendingAttachment) : pending.promise))
+      )
+      const hook = renderController(api)
+      mounted.push(hook)
+      act(() =>
+        hook.result.current.actions.stageFiles([
+          new File(['abc'], 'draft.txt', { type: 'text/plain' })
+        ])
+      )
+      await flushAsyncWork()
+      act(() => hook.result.current.actions.changeDoc(textDoc('original text')))
+      act(() => hook.result.current.actions.changeDoc(textDoc('edited text')))
+      act(() => {
+        if (action === 'remove')
+          hook.result.current.actions.removeAttachment(hook.result.current.view.attachments[0])
+        else hook.result.current.actions.cancelTransfer(hook.result.current.view.transfers[0])
+      })
+      await flushAsyncWork()
+      act(() => expect(hook.result.current.actions.undo()).toBe(true))
+      expect(hook.result.current.view.doc).toEqual(textDoc('original text'))
+      expect(hook.result.current.view.attachments).toEqual([])
+      expect(hook.result.current.view.transfers).toEqual([])
+      act(() => expect(hook.result.current.actions.redo()).toBe(true))
+      expect(hook.result.current.view.doc).toEqual(textDoc('edited text'))
+      expect(hook.result.current.view.attachments).toEqual([])
+      expect(hook.result.current.view.transfers).toEqual([])
+      if (action === 'cancel') {
+        await act(async () => pending.resolve(pendingAttachment))
+        await flushAsyncWork()
+        expect(hook.result.current.view.attachments).toEqual([])
+      }
+    }
+  )
+
   it('starts a Reading mutation for a newly selected Session after the previous Session settles', async () => {
     const sourceA = {
       sourceKind: 'upload-version' as const,

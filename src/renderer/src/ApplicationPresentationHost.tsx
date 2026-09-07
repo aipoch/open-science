@@ -1,3 +1,4 @@
+import { WorkspaceComposerDraftsProvider } from './pages/workspace/workspace-composer-drafts'
 import { memo, useCallback, useRef } from 'react'
 import { useTranslation } from 'react-i18next'
 
@@ -225,31 +226,33 @@ const ApplicationPresentationHost = (): React.JSX.Element => {
           ? writeErrorAlert
           : null}
         <WorkspaceAgentRuntimeProvider onSessionSizeLimit={sessions.reportSessionSizeLimit}>
-          <WorkspaceMessageQueueProvider>
-            <WorkspaceComputeRecoveryBridge enabled={sessions.isReady} />
-            <WorkspaceMessageQueueRuntimeBridge
-              persistenceBlockedSessionIds={sessions.persistenceBlockedSessionIds}
-            />
-            {events.navigation.view === 'home' ? (
-              <HomePage
-                canDeleteProjects={sessions.canDeleteSessionsAndProjects}
-                hasCompleteSessionCatalog={sessions.hasCompleteSessionCatalog}
-                catalogRecovery={sessions.catalogRecovery}
-                onOpenGlobalSearch={events.globalSearch.open}
-              />
-            ) : events.navigation.view === 'library' ? (
-              <StableLiteratureLibraryPage />
-            ) : (
-              <WorkspacePage
-                isSessionPersistenceHydrated={sessions.isHydrated}
-                isSessionPersistenceReady={sessions.isReady}
+          <WorkspaceComposerDraftsProvider>
+            <WorkspaceMessageQueueProvider>
+              <WorkspaceComputeRecoveryBridge enabled={sessions.isReady} />
+              <WorkspaceMessageQueueRuntimeBridge
                 persistenceBlockedSessionIds={sessions.persistenceBlockedSessionIds}
-                onSessionSizeLimit={sessions.reportSessionSizeLimit}
-                canDeleteConversations={sessions.canDeleteSessionsAndProjects}
-                isPreviewPresentationActive={isBasePresentationActive}
               />
-            )}
-          </WorkspaceMessageQueueProvider>
+              {events.navigation.view === 'home' ? (
+                <HomePage
+                  canDeleteProjects={sessions.canDeleteSessionsAndProjects}
+                  hasCompleteSessionCatalog={sessions.hasCompleteSessionCatalog}
+                  catalogRecovery={sessions.catalogRecovery}
+                  onOpenGlobalSearch={events.globalSearch.open}
+                />
+              ) : events.navigation.view === 'library' ? (
+                <StableLiteratureLibraryPage />
+              ) : (
+                <WorkspacePage
+                  isSessionPersistenceHydrated={sessions.isHydrated}
+                  isSessionPersistenceReady={sessions.isReady}
+                  persistenceBlockedSessionIds={sessions.persistenceBlockedSessionIds}
+                  onSessionSizeLimit={sessions.reportSessionSizeLimit}
+                  canDeleteConversations={sessions.canDeleteSessionsAndProjects}
+                  isPreviewPresentationActive={isBasePresentationActive}
+                />
+              )}
+            </WorkspaceMessageQueueProvider>
+          </WorkspaceComposerDraftsProvider>
         </WorkspaceAgentRuntimeProvider>
         <LifecycleToast
           notice={events.lifecycle.notice}
