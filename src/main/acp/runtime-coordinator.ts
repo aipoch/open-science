@@ -1416,10 +1416,14 @@ class AcpRuntimeCoordinator {
     await this.retireRuntimeGenerations(this.runtimes)
   }
 
-  async requestProjectAgentContextReload(): Promise<void> {
-    // Project Agent Context is captured during Session setup. Retire every generation so its idle
-    // Sessions resume with the current Project value before their next prompt.
-    await this.retireRuntimeGenerations(this.runtimes)
+  async requestProjectAgentContextReload(projectId: string): Promise<void> {
+    // Context is captured during Session setup. Shared generations still retire together,
+    // but generations serving only unrelated Projects can keep their Sessions connected.
+    const affected = new Set<AcpRuntime>()
+    for (const [sessionId, runtime] of this.sessionRuntimes) {
+      if (runtime.liveSessionProjectId(sessionId) === projectId) affected.add(runtime)
+    }
+    await this.retireRuntimeGenerations(affected)
   }
 
   async requestSkillsReloadForFramework(frameworkId: AgentFrameworkId): Promise<void> {

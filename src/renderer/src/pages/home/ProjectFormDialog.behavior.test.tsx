@@ -49,12 +49,21 @@ describe('project form public submission behavior', () => {
       render(<Harness />)
       fireEvent.click(screen.getByText(mode === 'create' ? 'Create fixture' : 'Edit fixture'))
       fireEvent.change(screen.getByLabelText('Name'), { target: { value: 'Research' } })
+      fireEvent.change(screen.getByLabelText('Description'), {
+        target: { value: 'Draft description' }
+      })
+      fireEvent.change(screen.getByLabelText('Agent Context'), {
+        target: { value: 'Draft context' }
+      })
       const submit = screen.getByRole('button', {
         name: mode === 'create' ? 'Create project' : 'Save'
       }) as HTMLButtonElement
       fireEvent.click(submit)
       expect(request).toHaveBeenCalledOnce()
       try {
+        for (const label of ['Name', 'Description', 'Agent Context']) {
+          expect.soft((screen.getByLabelText(label) as HTMLInputElement).disabled).toBe(true)
+        }
         expect
           .soft((screen.getByRole('button', { name: 'Close' }) as HTMLButtonElement).disabled)
           .toBe(true)
@@ -70,7 +79,17 @@ describe('project form public submission behavior', () => {
       expect((screen.getByRole('button', { name: 'Cancel' }) as HTMLButtonElement).disabled).toBe(
         false
       )
-      expect(screen.getByLabelText('Name').getAttribute('value')).toBe('Research')
+      for (const [label, value] of [
+        ['Name', 'Research'],
+        ['Description', 'Draft description'],
+        ['Agent Context', 'Draft context']
+      ]) {
+        const field = screen.getByLabelText(label) as HTMLInputElement
+        expect(field.disabled).toBe(false)
+        expect(field.value).toBe(value)
+        fireEvent.change(field, { target: { value: value + ' recovered' } })
+        expect(field.value).toBe(value + ' recovered')
+      }
     }
   )
 

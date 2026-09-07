@@ -1301,10 +1301,10 @@ const createApplicationModules = async (
   })
   const projectHandlers = createProjectHandlers(projectRepository, projectDeletionCoordinator, {
     updateArchive: (request) => archiveCoordinator.updateProjectArchive(request),
-    onAgentContextChanged: () => {
+    onAgentContextChanged: (projectId) => {
       // Runtime generations capture Project Agent Context during Session setup. Retiring them marks
       // idle Sessions for resume immediately; an in-flight turn drains before its next prompt.
-      void runtimeRef.current?.requestProjectAgentContextReload()
+      void runtimeRef.current?.requestProjectAgentContextReload(projectId)
     }
   })
   const projectFilesHandlers = createProjectFilesHandlers(

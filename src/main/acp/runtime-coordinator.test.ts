@@ -3199,79 +3199,101 @@ describe('AcpRuntimeCoordinator', () => {
     await reloadRequest
   })
 
-  it('uses a fresh runtime generation on the next prompt after Project Agent Context changes', async () => {
-    let storedAgentContext = 'Always cite DOIs.'
-    const promptContexts: string[] = []
-    const created: ReturnType<typeof createFakeRuntime>[] = []
-    const coordinator = new AcpRuntimeCoordinator((callbacks) => {
-      const generationAgentContext = storedAgentContext
-      const fake = createFakeRuntime({
-        frameworkId: 'claude-code',
-        sessionIds: created.length === 0 ? ['agent-session'] : ['fresh-session'],
-        callbacks,
-        prompt: async () => {
-          promptContexts.push(generationAgentContext)
-          return { stopReason: 'end_turn' }
-        }
+  it.each(['Prefer Python.', ''])(
+    'reloads only the affected project runtime when context becomes %j',
+    async (nextContext) => {
+      let storedAgentContext = 'Always cite DOIs.'
+      const promptContexts: string[] = []
+      const created: ReturnType<typeof createFakeRuntime>[] = []
+      const coordinator = new AcpRuntimeCoordinator((callbacks) => {
+        const generationAgentContext = storedAgentContext
+        const fake = createFakeRuntime({
+          frameworkId: 'claude-code',
+          sessionIds: created.length === 0 ? ['agent-session'] : ['fresh-session'],
+          callbacks,
+          prompt: async () => {
+            promptContexts.push(generationAgentContext)
+            return { stopReason: 'end_turn' }
+          }
+        })
+        created.push(fake)
+        return fake.runtime
       })
-      created.push(fake)
-      return fake.runtime
-    })
-    const project = {
-      id: 'project-1',
-      name: 'Research',
-      description: '',
-      agentContext: storedAgentContext,
-      isExample: false,
-      createdAt: 1,
-      updatedAt: 2
-    }
-    const repository = {
-      list: vi.fn(),
-      get: vi.fn(async () => ({ ...project, agentContext: storedAgentContext })),
-      create: vi.fn(),
-      update: vi.fn(async (request) => {
-        storedAgentContext = request.agentContext ?? storedAgentContext
-        return { ...project, agentContext: storedAgentContext, updatedAt: 3 }
-      })
-    }
-    const handlers = createProjectHandlers(
-      repository,
-      {
-        deleteProject: vi.fn(),
-        listDeletionCleanup: vi.fn().mockResolvedValue([]),
-        retryDeletionCleanup: vi.fn(),
-        waitForProjectOperations: vi.fn().mockResolvedValue(undefined)
-      },
-      {
-        updateArchive: vi.fn(),
-        onAgentContextChanged: () => {
-          void coordinator.requestProjectAgentContextReload()
-        }
+      const project = {
+        id: 'project-1',
+        name: 'Research',
+        description: '',
+        agentContext: storedAgentContext,
+        isExample: false,
+        createdAt: 1,
+        updatedAt: 2
       }
-    )
-    const session = await coordinator.createSession({ projectId: project.id })
+      const repository = {
+        list: vi.fn(),
+        get: vi.fn(async () => ({ ...project, agentContext: storedAgentContext })),
+        create: vi.fn(),
+        update: vi.fn(async (request) => {
+          storedAgentContext = request.agentContext ?? storedAgentContext
+          return { ...project, agentContext: storedAgentContext, updatedAt: 3 }
+        })
+      }
+      const handlers = createProjectHandlers(
+        repository,
+        {
+          deleteProject: vi.fn(),
+          listDeletionCleanup: vi.fn().mockResolvedValue([]),
+          retryDeletionCleanup: vi.fn(),
+          waitForProjectOperations: vi.fn().mockResolvedValue(undefined)
+        },
+        {
+          updateArchive: vi.fn(),
+          onAgentContextChanged: (projectId) => {
+            void coordinator.requestProjectAgentContextReload(projectId)
+          }
+        }
+      )
+      const session = await coordinator.createSession({ projectId: project.id })
 
-    await handlers.update({
-      id: project.id,
-      agentContext: 'Prefer Python.',
-      expectedUpdatedAt: project.updatedAt
-    })
+      const other = await coordinator.createSession({
+        projectId: 'project-b',
+        agentTarget: {
+          frameworkId: 'claude-code',
+          providerId: 'provider-b',
+          model: 'model',
+          reasoningEffort: 'high'
+        }
+      })
+      const otherRuntime = created.find((fake) =>
+        fake.createSession.mock.calls.some(([request]) => request?.projectId === 'project-b')
+      )!
+      const affectedRuntime = created[0]
 
-    expect(coordinator.getSnapshot().sessionIds).not.toContain(session.sessionId)
-    await coordinator.resumeSession({
-      sessionId: session.sessionId,
-      cwd: '/workspace',
-      projectId: project.id,
-      previousFrameworkId: 'claude-code'
-    })
-    await coordinator.sendPrompt({ sessionId: session.sessionId, text: 'Use the current policy' })
+      await handlers.update({
+        id: project.id,
+        agentContext: nextContext,
+        expectedUpdatedAt: project.updatedAt
+      })
 
-    expect(promptContexts).toEqual(['Prefer Python.'])
-    expect(created[0].sendPrompt).not.toHaveBeenCalled()
-    expect(created[1].resumeSession).toHaveBeenCalledOnce()
-    expect(created[1].sendPrompt).toHaveBeenCalledOnce()
-  })
+      expect.soft(otherRuntime.requestRetirement).not.toHaveBeenCalled()
+      expect.soft(coordinator.getSnapshot().sessionIds).toContain(other.sessionId)
+      expect(affectedRuntime.requestRetirement).toHaveBeenCalledOnce()
+      expect(coordinator.getSnapshot().sessionIds).not.toContain(session.sessionId)
+      await coordinator.resumeSession({
+        sessionId: session.sessionId,
+        cwd: '/workspace',
+        projectId: project.id,
+        previousFrameworkId: 'claude-code'
+      })
+      await coordinator.sendPrompt({ sessionId: session.sessionId, text: 'Use the current policy' })
+
+      expect(promptContexts).toEqual([nextContext])
+      expect(created[0].sendPrompt).not.toHaveBeenCalled()
+      expect(created.at(-1)!.resumeSession).toHaveBeenCalledOnce()
+      expect(created.at(-1)!.sendPrompt).toHaveBeenCalledOnce()
+      await coordinator.sendPrompt({ sessionId: other.sessionId, text: 'Continue without resume' })
+      expect(otherRuntime.sendPrompt).toHaveBeenCalledOnce()
+    }
+  )
 
   it('publishes prompt ownership only from the runtime that currently owns the session', async () => {
     const retirement = createDeferred<void>()

@@ -109,6 +109,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
   loadProjects: async () => {
     const loadSequence = ++projectLoadSequence
     const mutationSequence = projectMutationSequence
+    const generation = beginProjectProjection()
     try {
       const projects = await window.api.projects.list()
       if (loadSequence !== projectLoadSequence) return
@@ -117,6 +118,11 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
         return
       }
 
+      // An accepted snapshot supersedes earlier replies, including rows it has removed.
+      // Use the read's start order so a later-started pending command can still commit.
+      for (const project of [...get().projects, ...projects]) {
+        commitProjectProjection(project.id, generation)
+      }
       set({ projects: sortByUpdatedDesc(projects), isLoaded: true, loadError: undefined })
     } catch (error) {
       if (loadSequence !== projectLoadSequence) return

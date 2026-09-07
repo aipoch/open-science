@@ -107,6 +107,7 @@ const ProjectFormDialog = ({
                 </label>
                 <Input
                   id="project-form-name"
+                  disabled={isSubmitting}
                   aria-required={true}
                   value={nameDraft}
                   onChange={(event) => onNameChange(event.target.value)}
@@ -127,6 +128,7 @@ const ProjectFormDialog = ({
                 </p>
                 <textarea
                   id="project-form-description"
+                  disabled={isSubmitting}
                   aria-describedby="project-form-description-help"
                   value={descriptionDraft}
                   onChange={(event) => onDescriptionChange(event.target.value)}
@@ -147,6 +149,7 @@ const ProjectFormDialog = ({
                 </p>
                 <textarea
                   id="project-form-agent-context"
+                  disabled={isSubmitting}
                   aria-describedby="project-form-agent-context-help"
                   value={agentContextDraft}
                   onChange={(event) => onAgentContextChange(event.target.value)}

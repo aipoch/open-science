@@ -189,6 +189,71 @@ describe('project store', () => {
     expect(useProjectStore.getState().projects).toEqual([lifecycle])
   })
 
+  it.each([
+    { name: 'content', nameValue: 'Authority', updatedAt: 30 },
+    { name: 'management fields', nameValue: 'Original', updatedAt: 1 }
+  ])(
+    'keeps a later list projection over an old update reply: $name',
+    async ({ nameValue, updatedAt }) => {
+      const original = createProject()
+      const command = createDeferred<Project>()
+      const authority = createProject({
+        name: nameValue,
+        updatedAt,
+        pinned: true,
+        archivedAt: 40,
+        archiveRevision: 2
+      })
+      setProjectsApi({
+        update: vi.fn().mockReturnValue(command.promise),
+        list: vi.fn().mockResolvedValue([authority])
+      })
+      useProjectStore.setState({ projects: [original] })
+      const update = useProjectStore
+        .getState()
+        .updateProject({ id: original.id, name: 'Command', expectedUpdatedAt: 1 })
+      await useProjectStore.getState().loadProjects()
+      expect(useProjectStore.getState().projects).toEqual([authority])
+      command.resolve(createProject({ name: 'Command', updatedAt: 20 }))
+      await update
+      expect(useProjectStore.getState().projects).toEqual([authority])
+    }
+  )
+
+  it('allows a later-started pending update to commit after an earlier list resolves', async () => {
+    const snapshot = createDeferred<Project[]>()
+    const command = createDeferred<Project>()
+    const updated = createProject({ name: 'Updated', updatedAt: 30 })
+    setProjectsApi({
+      list: vi.fn().mockReturnValue(snapshot.promise),
+      update: vi.fn().mockReturnValue(command.promise)
+    })
+    const load = useProjectStore.getState().loadProjects()
+    const update = useProjectStore
+      .getState()
+      .updateProject({ id: updated.id, name: updated.name, expectedUpdatedAt: 1 })
+    snapshot.resolve([createProject()])
+    await load
+    command.resolve(updated)
+    await update
+    expect(useProjectStore.getState().projects).toEqual([updated])
+  })
+
+  it('refreshes an older pending list after a newer update completes', async () => {
+    const staleList = createDeferred<Project[]>()
+    const authority = createProject({ name: 'Updated', updatedAt: 30 })
+    const list = vi.fn().mockReturnValueOnce(staleList.promise).mockResolvedValueOnce([authority])
+    setProjectsApi({ list, update: vi.fn().mockResolvedValue(authority) })
+    const load = useProjectStore.getState().loadProjects()
+    await useProjectStore
+      .getState()
+      .updateProject({ id: authority.id, name: authority.name, expectedUpdatedAt: 1 })
+    staleList.resolve([createProject()])
+    await load
+    expect(list).toHaveBeenCalledTimes(2)
+    expect(useProjectStore.getState().projects).toEqual([authority])
+  })
+
   it('lets the later-started update win when both commands begin from the same projection', async () => {
     const original = createProject({ name: 'Original', updatedAt: 1 })
     const first = createDeferred<Project>()
