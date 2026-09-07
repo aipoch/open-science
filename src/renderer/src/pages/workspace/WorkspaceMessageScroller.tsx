@@ -1,10 +1,12 @@
+import { flushSync } from 'react-dom'
 /* Hallmark · pre-emit critique: P5 H5 E5 S5 R5 V4 */
 import {
   MessageScroller,
   MessageScrollerButton,
   MessageScrollerContent,
   MessageScrollerProvider,
-  MessageScrollerViewport
+  MessageScrollerViewport,
+  useMessageScroller
 } from '@/components/ui/message-scroller'
 import {
   usePreviewWorkbenchStore,
@@ -99,6 +101,40 @@ import { setWorkspacePresentationRevealing } from './workspace-presentation-reve
 import { useTranscriptWindow } from './use-transcript-window'
 import { subscribeAnnotationRevealPreparation } from './annotations/annotation-reveal'
 import type { AnnotationPort } from './annotations/annotation-port'
+
+// Replacing a bounded tail can keep the same row count. Tell the existing scroller to follow
+// after that replacement commits; its normal resize/streaming behavior remains authoritative.
+const TranscriptEndSync = ({
+  scopeId,
+  itemCount,
+  following
+}: {
+  scopeId: string | undefined
+  itemCount: number
+  following: boolean
+}): null => {
+  const { scrollToEnd } = useMessageScroller()
+  const previousRef = useRef<{ scopeId: string | undefined; itemCount: number } | undefined>(
+    undefined
+  )
+  useLayoutEffect(() => {
+    const previous = previousRef.current
+    previousRef.current = { scopeId, itemCount }
+    if (following && previous?.scopeId === scopeId && previous && itemCount > previous.itemCount) {
+      // Content processes the replaced rows in a MutationObserver, which can select a new
+      // prompt anchor. Restore follow intent after that observer, before the next paint.
+      let cancelled = false
+      queueMicrotask(() => {
+        if (!cancelled) scrollToEnd({ behavior: 'auto' })
+      })
+      return () => {
+        cancelled = true
+      }
+    }
+    return undefined
+  }, [following, itemCount, scopeId, scrollToEnd])
+  return null
+}
 
 type WorkspaceMessageScrollerProps = {
   activeSession: ChatSession | undefined
@@ -1336,6 +1372,20 @@ const WorkspaceMessageScrollerImpl = ({
             ref={handleMessageScrollerViewportRef}
             aria-label={t('Conversation')}
             onScroll={handleMessageScrollerScroll}
+            onWheel={transcriptWindow.recordUserScroll}
+            onTouchMove={transcriptWindow.recordUserScroll}
+            onPointerDown={(event) => {
+              if (event.target === event.currentTarget) transcriptWindow.recordUserScroll()
+            }}
+            onKeyDown={(event) => {
+              if (
+                ['ArrowUp', 'ArrowDown', 'PageUp', 'PageDown', 'Home', 'End', ' '].includes(
+                  event.key
+                )
+              ) {
+                transcriptWindow.recordUserScroll()
+              }
+            }}
           >
             {/* No wrapper div: message-scroller only measures/anchors Content's direct children. */}
             <MessageScrollerContent
@@ -1816,6 +1866,11 @@ const WorkspaceMessageScrollerImpl = ({
               ) : null}
             </MessageScrollerContent>
           </MessageScrollerViewport>
+          <TranscriptEndSync
+            scopeId={currentPresentationScopeId}
+            itemCount={conversationItems.length}
+            following={transcriptWindow.isFollowingEnd}
+          />
 
           {showScrollToFirstMessage ? (
             <MessageScrollerButton
@@ -1840,6 +1895,10 @@ const WorkspaceMessageScrollerImpl = ({
           ) : null}
 
           <MessageScrollerButton
+            onClick={() => {
+              // The primitive's click handler measures the end immediately after this callback.
+              flushSync(transcriptWindow.followEnd)
+            }}
             size="icon-lg"
             className="z-10 rounded-full border-transparent bg-bg-000 shadow-card hover:bg-bg-200 data-[direction=end]:bottom-3"
           />
