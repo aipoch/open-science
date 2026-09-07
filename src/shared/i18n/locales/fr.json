@@ -1289,6 +1289,7 @@
     "Execution Log": "Journal d'exécution",
     "Execution Plan already awaiting approval": "Plan d'exécution déjà en attente d'approbation",
     "Execution evidence was bounded for storage: omitted {{runs}} earlier runs, {{outputs}} outputs, and {{inputs}} inputs.": "Pour limiter le stockage, les preuves d'exécution omettent {{runs}} exécutions antérieures, {{outputs}} sorties et {{inputs}} entrées.",
+    "Table preview: showing first {{shown}} of {{total}} rows.": "Aperçu du tableau : affichage des {{shown}} premières lignes sur {{total}}.",
     "Existing agent sessions, notebook kernels, and installers keep their current connection. New requests and processes use the saved setting.": "Les sessions d'agent existantes, les noyaux Notebook et les programmes d'installation conservent leur connexion actuelle. Les nouvelles demandes et processus utilisent le paramètre enregistré.",
     "Exit full screen": "Quitter le plein écran",
     "Exit full screen files": "Quitter les fichiers plein écran",
@@ -2135,6 +2136,7 @@
     "Recent artifacts": "Artefacts récents",
     "Recent sessions": "Sessions récentes",
     "Recheck": "Revérifier",
+    "Recheck message snapshot": "Revérifier l’instantané des messages",
     "Recommended. Uses your existing Claude login from ~/.claude. Sign in once via browser OAuth and use across all Claude tools.": "Recommandé. Utilise votre connexion Claude existante à partir de ~/.claude. Connectez-vous une fois via le navigateur OAuth et utilisez tous les outils Claude.",
     "Reconciled": "Réconcilié",
     "Reconnect & retry": "Reconnectez-vous et réessayez",
@@ -4947,7 +4949,11 @@
     "The preview limit was reached before a complete header could be read.": "La limite de l’aperçu a été atteinte avant de pouvoir lire un en-tête complet.",
     "The file exceeds the preview limit. Only complete records are shown.": "Le fichier dépasse la limite de l’aperçu. Seuls les enregistrements complets sont affichés.",
     "The delimiter could not be detected reliably. Commas are used in this preview.": "Le séparateur n’a pas pu être détecté de manière fiable. Des virgules sont utilisées dans cet aperçu.",
-    "Recheck message snapshot": "Revérifier l’instantané des messages",
-    "Table preview: showing first {{shown}} of {{total}} rows.": "Aperçu du tableau : affichage des {{shown}} premières lignes sur {{total}}."
+    "JSON validation unavailable": "Validation JSON indisponible",
+    "Lines {{start}}–{{end}}": "Lignes {{start}}–{{end}}",
+    "Loaded bytes {{start}}–{{end}}": "Octets chargés {{start}}–{{end}}",
+    "First line is continued from the previous page": "La première ligne est la suite de la page précédente",
+    "Last line continues on the next page": "La dernière ligne continue sur la page suivante",
+    "Partial source context; syntax highlighting is unavailable": "Contexte du code source incomplet ; coloration syntaxique indisponible"
   }
 }

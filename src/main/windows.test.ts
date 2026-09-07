@@ -659,6 +659,59 @@ describe('window navigation policy', () => {
     }
   })
 
+  it('publishes committed in-page source URLs without restarting loading', () => {
+    createMainWindow()
+    const window = lastWindow!
+    const sourceUrl = 'https://citation.example/paper'
+    const frame = {
+      frameTreeNodeId: 2,
+      processId: 7,
+      routingId: 8,
+      name: 'open-science-source-preview',
+      url: 'about:blank',
+      parent: window.mainFrame
+    }
+    window.webContentsHandlers.get('will-frame-navigate')!({
+      url: sourceUrl,
+      isMainFrame: false,
+      frame,
+      preventDefault: vi.fn()
+    })
+    webFrameMainFromIdMock.mockReturnValue(frame)
+    window.webContentsHandlers.get('did-frame-navigate')!({}, sourceUrl, 200, 'OK', false, 7, 8)
+    expect(window.sendMock).toHaveBeenLastCalledWith('source-preview:load-state', {
+      sourceUrl,
+      currentUrl: sourceUrl,
+      navigationId: 1,
+      phase: 'loaded',
+      httpStatusCode: 200,
+      httpStatusText: 'OK'
+    })
+    for (const currentUrl of [
+      `${sourceUrl}#methods`,
+      `${sourceUrl}?section=results`,
+      `${sourceUrl}?section=discussion`,
+      `${sourceUrl}#methods`,
+      sourceUrl
+    ]) {
+      window.webContentsHandlers.get('did-start-navigation')!({
+        url: currentUrl,
+        isSameDocument: true,
+        isMainFrame: false,
+        frame
+      })
+      window.webContentsHandlers.get('did-navigate-in-page')?.({}, currentUrl, false, 7, 8)
+      expect(window.sendMock).toHaveBeenLastCalledWith('source-preview:load-state', {
+        sourceUrl,
+        currentUrl,
+        navigationId: 1,
+        phase: 'loaded',
+        httpStatusCode: 200,
+        httpStatusText: 'OK'
+      })
+    }
+  })
+
   it('reports source root loading and HTTP failures without observing unrelated subframes', () => {
     createMainWindow()
     const window = lastWindow!

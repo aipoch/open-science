@@ -1181,6 +1181,7 @@
     "Execution Log": "Ausführungsprotokoll",
     "Execution Plan already awaiting approval": "Ausführungsplan wartet bereits auf Freigabe",
     "Execution evidence was bounded for storage: omitted {{runs}} earlier runs, {{outputs}} outputs, and {{inputs}} inputs.": "Die Ausführungsnachweise wurden für die Speicherung begrenzt: {{runs}} frühere Ausführungen, {{outputs}} Ausgaben und {{inputs}} Eingaben wurden ausgelassen.",
+    "Table preview: showing first {{shown}} of {{total}} rows.": "Tabellenvorschau: Die ersten {{shown}} von {{total}} Zeilen werden angezeigt.",
     "Existing agent sessions, notebook kernels, and installers keep their current connection. New requests and processes use the saved setting.": "Vorhandene Agentensitzungen, Notebook-Kernel und Installationsprogramme behalten ihre aktuelle Verbindung. Neue Anfragen und Prozesse verwenden die gespeicherte Einstellung.",
     "Exit full screen": "Vollbildmodus beenden",
     "Exit full screen files": "Dateivollbild beenden",
@@ -1943,6 +1944,7 @@
     "Recent artifacts": "Aktuelle Artefakte",
     "Recent sessions": "Letzte Sitzungen",
     "Recheck": "Erneut prüfen",
+    "Recheck message snapshot": "Nachrichten-Snapshot erneut prüfen",
     "Recommended. Uses your existing Claude login from ~/.claude. Sign in once via browser OAuth and use across all Claude tools.": "Empfohlen. Verwendet Ihr vorhandenes Claude-Login von ~/.claude. Melden Sie sich einmalig über den Browser OAuth an und nutzen Sie alle Claude-Tools.",
     "Reconciled": "Abgeglichen",
     "Reconnect & retry": "Erneut verbinden und erneut versuchen",
@@ -4785,7 +4787,11 @@
     "The preview limit was reached before a complete header could be read.": "Das Vorschaulimit wurde erreicht, bevor die Kopfzeile vollständig gelesen werden konnte.",
     "The file exceeds the preview limit. Only complete records are shown.": "Die Datei überschreitet das Vorschaulimit. Es werden nur vollständige Datensätze angezeigt.",
     "The delimiter could not be detected reliably. Commas are used in this preview.": "Das Trennzeichen konnte nicht zuverlässig erkannt werden. In dieser Vorschau werden Kommas verwendet.",
-    "Recheck message snapshot": "Nachrichten-Snapshot erneut prüfen",
-    "Table preview: showing first {{shown}} of {{total}} rows.": "Tabellenvorschau: Die ersten {{shown}} von {{total}} Zeilen werden angezeigt."
+    "JSON validation unavailable": "JSON-Validierung nicht verfügbar",
+    "Lines {{start}}–{{end}}": "Zeilen {{start}}–{{end}}",
+    "Loaded bytes {{start}}–{{end}}": "Geladene Bytes {{start}}–{{end}}",
+    "First line is continued from the previous page": "Die erste Zeile wird von der vorherigen Seite fortgesetzt",
+    "Last line continues on the next page": "Die letzte Zeile wird auf der nächsten Seite fortgesetzt",
+    "Partial source context; syntax highlighting is unavailable": "Unvollständiger Quelltextkontext; Syntaxhervorhebung nicht verfügbar"
   }
 }

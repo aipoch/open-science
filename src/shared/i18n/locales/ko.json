@@ -1254,6 +1254,7 @@
     "Execution Log": "실행 로그",
     "Execution Plan already awaiting approval": "실행 계획이 이미 승인 대기 중입니다.",
     "Execution evidence was bounded for storage: omitted {{runs}} earlier runs, {{outputs}} outputs, and {{inputs}} inputs.": "실행 증거는 저장소로 제한되었습니다. 생략된 {{runs}} 이전 실행, {{outputs}} 출력 및 {{inputs}} 입력.",
+    "Table preview: showing first {{shown}} of {{total}} rows.": "표 미리보기: 전체 {{total}}행 중 처음 {{shown}}행 표시.",
     "Existing agent sessions, notebook kernels, and installers keep their current connection. New requests and processes use the saved setting.": "기존 에이전트 세션, Notebook 커널 및 설치자는 현재 연결을 유지합니다. 새로운 요청과 프로세스는 저장된 설정을 사용합니다.",
     "Exit full screen": "전체 화면 종료",
     "Exit full screen files": "파일 전체 화면 종료",
@@ -2075,6 +2076,7 @@
     "Recent artifacts": "최근 아티팩트",
     "Recent sessions": "최근 세션",
     "Recheck": "재확인",
+    "Recheck message snapshot": "메시지 스냅샷 다시 확인",
     "Recommended. Uses your existing Claude login from ~/.claude. Sign in once via browser OAuth and use across all Claude tools.": "추천합니다. ~/.claude의 기존 Claude 로그인을 사용합니다. 브라우저 OAuth를 통해 한 번 로그인하면 모든 Claude 도구에서 사용할 수 있습니다.",
     "Reconciled": "조정됨",
     "Reconnect & retry": "다시 연결하고 다시 시도하세요",
@@ -4629,7 +4631,11 @@
     "The preview limit was reached before a complete header could be read.": "전체 헤더를 읽기 전에 미리보기 한도에 도달했습니다.",
     "The file exceeds the preview limit. Only complete records are shown.": "파일이 미리보기 한도를 초과합니다. 완전한 레코드만 표시됩니다.",
     "The delimiter could not be detected reliably. Commas are used in this preview.": "구분자를 정확히 감지하지 못했습니다. 이 미리보기에서는 쉼표를 사용합니다.",
-    "Recheck message snapshot": "메시지 스냅샷 다시 확인",
-    "Table preview: showing first {{shown}} of {{total}} rows.": "표 미리보기: 전체 {{total}}행 중 처음 {{shown}}행 표시."
+    "JSON validation unavailable": "JSON 검증을 사용할 수 없습니다",
+    "Lines {{start}}–{{end}}": "{{start}}–{{end}}행",
+    "Loaded bytes {{start}}–{{end}}": "불러온 바이트 {{start}}–{{end}}",
+    "First line is continued from the previous page": "첫 번째 행은 이전 페이지에서 이어집니다",
+    "Last line continues on the next page": "마지막 행은 다음 페이지로 이어집니다",
+    "Partial source context; syntax highlighting is unavailable": "소스 컨텍스트이 일부만 있어 구문 강조를 사용할 수 없습니다"
   }
 }
