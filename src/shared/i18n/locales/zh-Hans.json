@@ -3601,7 +3601,6 @@
     "Reviewer requested corrections": "审查员已请求更正",
     "Connecting to remote computer…": "正在连接远程计算机…",
     "Reconnecting to remote computer… ({{attempt}}/{{maxAttempts}})": "正在重新连接远程计算机…（{{attempt}}/{{maxAttempts}}）",
-    "Remote access is off on the home computer. Re-enable a remote access mode in Open Science, then try again.": "主电脑上的远程访问已关闭。请在 Open Science 中重新启用远程访问模式，然后重试。",
     "This computer did not finish responding. {{detail}}": "这台电脑未能完成响应。{{detail}}",
     "Token usage": "词元用量",
     "Review token volume, daily composition, and conversation activity.": "查看词元用量、每日构成和会话活动。",
@@ -4585,6 +4584,8 @@
     "Tag version updated": "标签版本已更新",
     "Not saved yet. Saving later will replace the latest version.": "尚未保存。之后保存会覆盖最新版本。",
     "Tag assignments are preserved.": "标签关联已保留。",
-    "{{count}} tagged resources are currently unavailable._other": "{{count}} 个已关联资源暂不可用。"
+    "{{count}} tagged resources are currently unavailable._other": "{{count}} 个已关联资源暂不可用。",
+    "Access authorization has expired. Reopen the Web link from Open Science on the host computer, or return to the remote access entry page to pair again.": "访问授权已失效。请从主机上的 Open Science 重新打开 Web 链接，或返回远程访问入口页面重新配对。",
+    "The operation result could not be confirmed. It may still be running. Reconnect and check its status before trying again.": "无法确认操作结果。操作可能仍在进行。请重新连接并检查其状态，然后再决定是否重试。"
   }
 }

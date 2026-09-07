@@ -10,6 +10,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 
 vi.mock('electron', () => ({
   BrowserWindow: { getAllWindows: () => [] },
+  ipcMain: { handle: vi.fn() },
+  protocol: { handle: vi.fn(), unhandle: vi.fn() },
   net: { fetch: vi.fn() }
 }))
 
@@ -34,6 +36,13 @@ import {
   type RunningWebServer
 } from './http-server'
 import { TaskApiError } from './task-api'
+import { ManagedPreviewResources } from '../managed-preview-resources'
+import { createManagedPreviewOwnerRegistry } from '../managed-preview-ipc'
+import type { ApplicationCommandByNameDispatcher } from '../application-command-composition'
+import type {
+  AcquireManagedPreviewRequest,
+  ReadManagedPreviewRangeRequest
+} from '../../shared/preview-resources'
 
 const roots: string[] = []
 const servers: RunningWebServer[] = []
@@ -4387,5 +4396,97 @@ describe('startWebHttpServer', () => {
       expect(cancelStream).toHaveBeenCalledOnce()
       expect(tasks.releaseArtifact).toHaveBeenCalledWith('resource-disconnect')
     })
+  })
+})
+
+describe('Web preview reconnect owner contract', () => {
+  it('W01 replays a valid cursor after revoking the disconnected caller capabilities', async () => {
+    const staticRoot = await mkdtemp(join(tmpdir(), 'web-preview-reconnect-'))
+    roots.push(staticRoot)
+    const path = join(staticRoot, 'report.pdf')
+    await writeFile(path, new Uint8Array([1, 2, 3]))
+    const resources = new ManagedPreviewResources({ resolvePath: async () => path })
+    const released = vi.spyOn(resources, 'releaseOwner')
+    const owners = createManagedPreviewOwnerRegistry(resources)
+    const dispatcher: ApplicationCommandByNameDispatcher = {
+      commandNames: () => ['preview-resources:acquire', 'preview-resources:read-range'],
+      invoke: async (channel, { callerLease, args }) => {
+        if (!callerLease) throw new Error('Missing caller lease')
+        if (channel === 'preview-resources:acquire') {
+          return owners.acquire(callerLease, args[0] as AcquireManagedPreviewRequest)
+        }
+        return owners.readRange(callerLease, args[0] as ReadManagedPreviewRangeRequest)
+      }
+    }
+    const server = await startTestWebHttpServer({
+      host: '127.0.0.1',
+      port: 0,
+      token: 'test-token',
+      staticRoot,
+      rpc: { channels: () => [], invoke: vi.fn() },
+      applicationCommands: {
+        localWeb: dispatcher,
+        remoteWeb: { ...dispatcher, rejectedCommandNames: () => [] }
+      },
+      bootstrap: {
+        appName: 'Open Science',
+        appVersion: '0.0.0',
+        configRoot: staticRoot,
+        platform: 'test',
+        versions: { electron: '1', chrome: '1', node: '1' }
+      }
+    })
+    servers.push(server)
+    const base = `http://127.0.0.1:${server.port}`
+    const headers = {
+      authorization: 'Bearer test-token',
+      'x-open-science-client': 'preview-client'
+    }
+    const bootstrap = await (await fetch(`${base}/api/bootstrap`, { headers })).json()
+    const url = new URL(`${base.replace('http:', 'ws:')}/events`)
+    url.searchParams.set('client', 'preview-client')
+    url.searchParams.set('eventProtocol', String(WEB_EVENT_STREAM_PROTOCOL_VERSION))
+    url.searchParams.set('stream', bootstrap.eventStream.streamId)
+    url.searchParams.set('after', String(bootstrap.eventStream.latestSequence))
+    const sockets: WebSocket[] = []
+    const open = async (): Promise<WebSocket> => {
+      const socket = new WebSocket(url, { headers })
+      sockets.push(socket)
+      const frame = await new Promise((resolve, reject) => {
+        socket.once('message', (data) => resolve(JSON.parse(data.toString())))
+        socket.once('error', reject)
+      })
+      expect(frame).toMatchObject({
+        kind: 'ready',
+        latestSequence: bootstrap.eventStream.latestSequence
+      })
+      return socket
+    }
+    const rpc = (channel: string, request: unknown): Promise<Response> =>
+      fetch(`${base}/rpc/${encodeURIComponent(channel)}`, {
+        method: 'POST',
+        headers: { ...headers, 'content-type': 'application/json' },
+        body: JSON.stringify({ protocolVersion: WEB_RPC_PROTOCOL_VERSION, args: [request] })
+      })
+    try {
+      const socket = await open()
+      const acquired = await (
+        await rpc('preview-resources:acquire', { source: 'local', path })
+      ).json()
+      const range = { resourceId: acquired.result.id, begin: 0, end: 3 }
+      expect((await rpc('preview-resources:read-range', range)).status).toBe(200)
+      socket.close()
+      await vi.waitFor(() => expect(released).toHaveBeenCalledOnce())
+      await open()
+      expect((await rpc('preview-resources:read-range', range)).status).toBe(500)
+      const fresh = await (await rpc('preview-resources:acquire', { source: 'local', path })).json()
+      expect(fresh.result.id).not.toBe(range.resourceId)
+      expect(
+        (await rpc('preview-resources:read-range', { ...range, resourceId: fresh.result.id }))
+          .status
+      ).toBe(200)
+    } finally {
+      for (const socket of sockets) socket.close()
+    }
   })
 })

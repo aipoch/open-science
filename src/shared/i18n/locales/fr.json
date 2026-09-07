@@ -3794,7 +3794,6 @@
     "Reviewer requested corrections": "L'évaluateur a demandé des corrections",
     "Connecting to remote computer…": "Connexion à un ordinateur distant…",
     "Reconnecting to remote computer… ({{attempt}}/{{maxAttempts}})": "Reconnexion à l'ordinateur distant… ({{attempt}}/{{maxAttempts}})",
-    "Remote access is off on the home computer. Re-enable a remote access mode in Open Science, then try again.": "L'accès à distance est désactivé sur l'ordinateur personnel. Réactivez un mode d'accès à distance dans Open Science, puis réessayez.",
     "This computer did not finish responding. {{detail}}": "Cet ordinateur n'a pas fini de répondre. {{detail}}",
     "Token usage": "Utilisation des jetons",
     "Review token volume, daily composition, and conversation activity.": "Examinez le volume des jetons, la composition quotidienne et l’activité de conversation.",
@@ -4901,6 +4900,8 @@
     "Tag assignments are preserved.": "Les associations de tags sont conservées.",
     "{{count}} tagged resources are currently unavailable._many": "{{count}} ressources associées à ce tag sont actuellement indisponibles.",
     "{{count}} tagged resources are currently unavailable._other": "{{count}} ressources associées à ce tag sont actuellement indisponibles.",
-    "{{count}} tagged resources are currently unavailable._one": "{{count}} ressource associée à ce tag est actuellement indisponible."
+    "{{count}} tagged resources are currently unavailable._one": "{{count}} ressource associée à ce tag est actuellement indisponible.",
+    "Access authorization has expired. Reopen the Web link from Open Science on the host computer, or return to the remote access entry page to pair again.": "L’autorisation d’accès a expiré. Rouvrez le lien Web depuis Open Science sur l’ordinateur hôte, ou revenez à la page d’accès distant pour effectuer un nouvel appairage.",
+    "The operation result could not be confirmed. It may still be running. Reconnect and check its status before trying again.": "Le résultat de l’opération n’a pas pu être confirmé. Elle est peut-être encore en cours. Reconnectez-vous et vérifiez son état avant de réessayer."
   }
 }

@@ -3794,7 +3794,6 @@
     "Reviewer requested corrections": "El revisor solicitó correcciones",
     "Connecting to remote computer…": "Conectando con el equipo remoto…",
     "Reconnecting to remote computer… ({{attempt}}/{{maxAttempts}})": "Volviendo a conectar con el equipo remoto… ({{attempt}}/{{maxAttempts}})",
-    "Remote access is off on the home computer. Re-enable a remote access mode in Open Science, then try again.": "El acceso remoto está desactivado en el equipo principal. Vuelva a habilitar un modo de acceso remoto en Open Science e inténtelo de nuevo.",
     "This computer did not finish responding. {{detail}}": "Este equipo no terminó de responder. {{detail}}",
     "Token usage": "Uso de tokens",
     "Review token volume, daily composition, and conversation activity.": "Revisar el volumen de tokens, la composición diaria y la actividad de conversación.",
@@ -4901,6 +4900,8 @@
     "Tag assignments are preserved.": "Las asociaciones de etiquetas se conservan.",
     "{{count}} tagged resources are currently unavailable._many": "{{count}} recursos etiquetados no están disponibles actualmente.",
     "{{count}} tagged resources are currently unavailable._other": "{{count}} recursos etiquetados no están disponibles actualmente.",
-    "{{count}} tagged resources are currently unavailable._one": "{{count}} recurso etiquetado no está disponible actualmente."
+    "{{count}} tagged resources are currently unavailable._one": "{{count}} recurso etiquetado no está disponible actualmente.",
+    "Access authorization has expired. Reopen the Web link from Open Science on the host computer, or return to the remote access entry page to pair again.": "La autorización de acceso ha caducado. Vuelva a abrir el enlace Web desde Open Science en el equipo anfitrión o regrese a la página de acceso remoto para volver a emparejar.",
+    "The operation result could not be confirmed. It may still be running. Reconnect and check its status before trying again.": "No se ha podido confirmar el resultado de la operación. Es posible que siga en curso. Vuelva a conectarse y compruebe su estado antes de intentarlo de nuevo."
   }
 }
