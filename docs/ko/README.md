@@ -93,6 +93,14 @@ Open Science는 머신러닝, 통계학, 생명과학, 화학, 재료과학, 물
 
 > macOS 또는 Windows에서 확인되지 않은 개발자나 알 수 없는 게시자 경고가 표시되면, 계속하기 전에 패키지가 공식 Releases 페이지에서 제공된 것인지 확인하세요.
 
+macOS에서는 [Homebrew](https://brew.sh)로도 설치할 수 있습니다:
+
+```bash
+brew install --cask open-science
+```
+
+Homebrew는 Apple Silicon 또는 Intel용 패키지를 자동으로 선택합니다. 업데이트, 제거 및 수동 설치에서 전환하는 방법은 [설치 가이드(영문)](../installation.md)를 참고하세요.
+
 ### 2. 최초 설정 완료
 
 처음 실행할 때 다섯 단계의 안내가 제공됩니다.

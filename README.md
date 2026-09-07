@@ -92,6 +92,14 @@ Review the assets and verification information published on the release page. Se
 
 > If macOS or Windows shows an unidentified-developer or unknown-publisher warning, verify that the package came from the official Releases page before continuing.
 
+On macOS, you can also install with [Homebrew](https://brew.sh):
+
+```bash
+brew install --cask open-science
+```
+
+Homebrew selects the Apple Silicon or Intel package automatically. See the [installation guide](docs/installation.md) for upgrades, uninstalling, and switching from a manual installation.
+
 ### 2. Complete first-time setup
 
 The first launch has five guided steps:

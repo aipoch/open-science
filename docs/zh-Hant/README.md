@@ -93,6 +93,14 @@ Open Science 支援機器學習、統計學、生命科學、化學、材料科�
 
 > 如果 macOS 或 Windows 顯示無法識別的開發者或未知發佈者警告，請先確認套件來自官方 Releases 頁面，再繼續操作。
 
+macOS 使用者也可以透過 [Homebrew](https://brew.sh) 安裝：
+
+```bash
+brew install --cask open-science
+```
+
+Homebrew 會自動選擇 Apple Silicon 或 Intel 安裝套件。升級、解除安裝及從手動安裝切換的方法，請參閱[安裝指南（英文）](../installation.md)。
+
 ### 2. 完成首次設定
 
 首次啟動包含五個引導步驟：
