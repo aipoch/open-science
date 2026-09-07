@@ -1,5 +1,6 @@
 import { expect } from '@playwright/test'
 import type { Locator, Page } from 'playwright'
+import { sendPrompt } from './certification/helpers'
 import { test } from './fixtures/electron-app'
 import { openGeneralSettings, setTheme } from './fixtures/settings-preferences'
 
@@ -213,9 +214,11 @@ test('injects recent auto-recall memory after reopen into an unrelated Agent tur
   const dialog = page.getByRole('dialog', { name: 'New project' })
   await dialog.getByLabel('Name').fill('Memory recall project')
   await dialog.getByRole('button', { name: 'Create project' }).click()
-  await page.getByRole('textbox', { name: 'Ask anything' }).fill('Verify automatic memory recall.')
-  await page.getByRole('button', { name: 'Send message' }).click()
-  await expect(page.getByText('Automatic memory recall reached the provider.')).toBeVisible()
+  await sendPrompt(
+    page,
+    'Verify automatic memory recall.',
+    'Automatic memory recall reached the provider.'
+  )
 })
 
 test('contains long memory lists and layers destructive confirmations above settings', async ({
