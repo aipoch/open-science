@@ -158,6 +158,9 @@ describe('ArtifactSourcesPanel', () => {
     )
 
     const dialog = screen.getByRole('dialog')
+    // Preview dialogs use layers 60/61; both child surfaces must cover them.
+    expect(dialog.classList.contains('z-[65]')).toBe(true)
+    expect(dialog.previousElementSibling?.classList.contains('z-[65]')).toBe(true)
     expect(
       within(dialog).getByRole('heading', { name: literature.references[0]!.item.title })
     ).not.toBeNull()
