@@ -656,17 +656,21 @@ describe('App startup routing', () => {
     ])
 
     await render()
-    await act(async () => new Promise((resolve) => setTimeout(resolve, 0)))
+    // Recovery crosses asynchronous persistence and message-queue boundaries.
+    await act(async () => {
+      await vi.waitFor(() =>
+        expect(mocks.runtimeSendMessage).toHaveBeenCalledWith(
+          expect.objectContaining({
+            sessionId: 'session-1',
+            requireExistingSession: true,
+            attribution: expect.objectContaining({ feature: 'compute' })
+          })
+        )
+      )
+    })
 
     expect(container.querySelector('[data-testid="home-page"]')).not.toBeNull()
     expect(mocks.compute.jobsPendingNotification).toHaveBeenCalledWith({ allSessions: true })
-    expect(mocks.runtimeSendMessage).toHaveBeenCalledWith(
-      expect.objectContaining({
-        sessionId: 'session-1',
-        requireExistingSession: true,
-        attribution: expect.objectContaining({ feature: 'compute' })
-      })
-    )
   })
 
   it('opens Settings with Cmd/Ctrl+, after startup is interactive', async () => {
