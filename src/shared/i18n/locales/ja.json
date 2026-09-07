@@ -3514,7 +3514,6 @@
     "Reviewer requested corrections": "査読者が修正を要求しました",
     "Connecting to remote computer…": "リモートコンピューターに接続中…",
     "Reconnecting to remote computer… ({{attempt}}/{{maxAttempts}})": "リモートコンピューターに再接続しています… ({{attempt}}/{{maxAttempts}})",
-    "Remote access is off on the home computer. Re-enable a remote access mode in Open Science, then try again.": "自宅のコンピューターではリモートアクセスがオフになっています。Open Science でリモートアクセスモードを再度有効にして、再試行してください。",
     "This computer did not finish responding. {{detail}}": "このコンピューターは応答を完了していません。{{detail}}",
     "Token usage": "トークン使用量",
     "Review token volume, daily composition, and conversation activity.": "トークン量、日別の内訳、会話アクティビティを確認します。",
@@ -4567,6 +4566,8 @@
     "Enter a complete proxy URL, for example http://127.0.0.1:1086.": "完全なプロキシ URL を入力してください（例：http://127.0.0.1:1086）。",
     "Automatic mirror selection": "ミラーを自動選択",
     "Automatic mirror selection · Custom CA bundle configured": "ミラーを自動選択 · カスタム CA バンドル設定済み",
-    "Turning off a built-in domain removes automatic access. Exact hostnames in Allowed domains remain allowed.": "組み込みドメインを無効にすると、自動アクセスが解除されます。「許可されたドメイン」に登録した完全一致のホスト名は引き続き許可されます。"
+    "Turning off a built-in domain removes automatic access. Exact hostnames in Allowed domains remain allowed.": "組み込みドメインを無効にすると、自動アクセスが解除されます。「許可されたドメイン」に登録した完全一致のホスト名は引き続き許可されます。",
+    "Access authorization has expired. Reopen the Web link from Open Science on the host computer, or return to the remote access entry page to pair again.": "アクセス認証の有効期限が切れました。ホスト側の Open Science から Web リンクを開き直すか、リモートアクセスの入口ページに戻って再度ペアリングしてください。",
+    "The operation result could not be confirmed. It may still be running. Reconnect and check its status before trying again.": "操作結果を確認できませんでした。操作はまだ実行中の可能性があります。再接続して状態を確認してから、再試行してください。"
   }
 }

@@ -57,6 +57,10 @@ class FakeWebSocket {
 }
 
 type WebApi = {
+  settings: Record<
+    'installClaude' | 'installCodeBuddy' | 'installCodex' | 'installOpencode',
+    (request: unknown) => Promise<unknown>
+  >
   notebook: {
     execute: (request: unknown) => Promise<unknown>
   }
@@ -258,7 +262,7 @@ describe('Web bootstrap event connection', () => {
       'alert'
     )
     expect(document.getElementById('open-science-connection-message')?.textContent).toBe(
-      '主电脑上的远程访问已关闭。请在 Open Science 中重新启用远程访问模式，然后重试。'
+      '访问授权已失效。请从主机上的 Open Science 重新打开 Web 链接，或返回远程访问入口页面重新配对。'
     )
     expect(document.querySelector('button')?.textContent).toBe('重试')
   })
@@ -341,6 +345,10 @@ describe('Web bootstrap event connection', () => {
 
     await expect(outcome).resolves.toBe('rejected')
     expect(rpcSignal?.aborted).toBe(true)
+    await expect(request).rejects.toMatchObject({
+      name: 'TimeoutError',
+      message: expect.stringContaining('could not be confirmed')
+    })
   })
 
   it('lets a long Notebook execution finish under its own deadline', async () => {
@@ -930,5 +938,206 @@ describe('Web bootstrap event connection', () => {
     expect(phases).toContain('reload-required')
     expect(FakeWebSocket.instances).toHaveLength(1)
     window.removeEventListener(WEB_EVENT_CONNECTION_STATE_EVENT, stateListener)
+  })
+})
+
+describe('Web reliability regressions', () => {
+  it.each([
+    ['installClaude', 'settings:install-claude'],
+    ['installCodeBuddy', 'settings:install-codebuddy'],
+    ['installCodex', 'settings:install-codex'],
+    ['installOpencode', 'settings:install-opencode']
+  ] as const)(
+    'W02 keeps healthy long %s pending until its business result arrives',
+    async (method, channel) => {
+      let backendCompleted = false
+      let outcome: unknown = 'pending'
+      vi.stubGlobal(
+        'fetch',
+        vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+          if (String(input) === '/api/bootstrap') {
+            return Promise.resolve(
+              new Response(
+                JSON.stringify({
+                  ...bootstrapPayload,
+                  rpcChannels: [channel]
+                })
+              )
+            )
+          }
+          if (String(input) !== `/rpc/${encodeURIComponent(channel)}`)
+            throw new Error(String(input))
+          return new Promise<Response>((resolve, reject) => {
+            // Transport abort does not cancel the real installer owner.
+            window.setTimeout(() => {
+              backendCompleted = true
+              resolve(
+                new Response(
+                  JSON.stringify({
+                    protocolVersion: WEB_RPC_PROTOCOL_VERSION,
+                    ok: true,
+                    result: { installId: 'install-1', ok: true }
+                  })
+                )
+              )
+            }, 60_000)
+            init?.signal?.addEventListener('abort', () => reject(init.signal?.reason), {
+              once: true
+            })
+          })
+        })
+      )
+      const api = await loadBootstrap()
+      const socket = FakeWebSocket.instances[0]
+      socket.emit('open')
+      socket.emit('message', { data: readyFrame(0) })
+      const request = api.settings[method]({ source: 'managed' }).then(
+        (result) => {
+          outcome = result
+        },
+        (error) => {
+          outcome = error
+        }
+      )
+      for (let step = 0; step < 2; step += 1) {
+        await vi.advanceTimersByTimeAsync(20_000)
+        socket.emit('message', { data: heartbeatFrame(0) })
+      }
+      const beforeCompletion = outcome
+      await vi.advanceTimersByTimeAsync(20_000)
+      await request
+      expect(socket.closed).toBe(false)
+      expect(backendCompleted).toBe(true)
+      expect(beforeCompletion).toBe('pending')
+      expect(outcome).toEqual({ installId: 'install-1', ok: true })
+    }
+  )
+
+  it.each([
+    { status: 200, streaming: true },
+    { status: 404, streaming: true },
+    { status: 200, streaming: false },
+    { status: 404, streaming: false }
+  ])(
+    'W03 preserves download HTTP $status result (streaming: $streaming) when release fails',
+    async ({ status, streaming }) => {
+      const bytes: number[] = []
+      const close = vi.fn()
+      const release = vi.fn(() => Promise.reject(new Error('cleanup network failure')))
+      const picker = vi.fn(async () => ({
+        createWritable: async () =>
+          new WritableStream<Uint8Array>({
+            write(chunk) {
+              bytes.push(...chunk)
+            },
+            close
+          })
+      }))
+      const click = vi
+        .spyOn(HTMLAnchorElement.prototype, 'click')
+        .mockImplementation(() => undefined)
+      vi.stubGlobal(
+        'URL',
+        class extends URL {
+          static createObjectURL = vi.fn(() => 'blob:download')
+          static revokeObjectURL = vi.fn()
+        }
+      )
+      if (streaming) Object.assign(window, { showSaveFilePicker: picker })
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(async (input: RequestInfo | URL) => {
+          const url = String(input)
+          if (url === '/api/bootstrap') return new Response(JSON.stringify(bootstrapPayload))
+          if (url === '/rpc/preview-resources%3Aacquire')
+            return new Response(
+              JSON.stringify({
+                protocolVersion: WEB_RPC_PROTOCOL_VERSION,
+                ok: true,
+                result: { id: 'resource-1', url: '/preview/resource-1', size: 3 }
+              })
+            )
+          if (url === '/preview/resource-1')
+            return new Response(new Uint8Array([1, 2, 3]), { status })
+          if (url === '/rpc/preview-resources%3Arelease') return release()
+          throw new Error(url)
+        })
+      )
+      try {
+        const api = await loadBootstrap()
+        const outcome = await api
+          .saveManagedFile({ source: 'local', path: '/report.pdf', suggestedName: 'report.pdf' })
+          .then(
+            (result) => result,
+            (error) => error
+          )
+        expect(release).toHaveBeenCalledOnce()
+        if (status === 200) {
+          if (streaming) {
+            expect(bytes).toEqual([1, 2, 3])
+            expect(close).toHaveBeenCalledOnce()
+          } else {
+            expect(click).toHaveBeenCalledOnce()
+          }
+          expect(outcome).toEqual({ saved: true })
+        } else {
+          expect(close).not.toHaveBeenCalled()
+          expect(outcome).toMatchObject({ message: 'Download failed: HTTP 404' })
+        }
+      } finally {
+        click.mockRestore()
+        delete (window as unknown as { showSaveFilePicker?: unknown }).showSaveFilePicker
+      }
+    }
+  )
+
+  it.each(['disconnect', 'idle'] as const)(
+    'stops waiting for an installation on %s without claiming cancellation',
+    async (failure) => {
+      vi.stubGlobal(
+        'fetch',
+        vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+          if (String(input) === '/api/bootstrap')
+            return Promise.resolve(
+              new Response(
+                JSON.stringify({
+                  ...bootstrapPayload,
+                  rpcChannels: ['settings:install-claude']
+                })
+              )
+            )
+          return new Promise<Response>((_resolve, reject) => {
+            init?.signal?.addEventListener('abort', () => reject(init.signal?.reason), {
+              once: true
+            })
+          })
+        })
+      )
+      const api = await loadBootstrap()
+      const socket = FakeWebSocket.instances[0]
+      socket.emit('open')
+      socket.emit('message', { data: readyFrame(0) })
+      const outcome = api.settings.installClaude({ source: 'managed' }).catch((error) => error)
+      if (failure === 'disconnect') socket.close()
+      else await vi.advanceTimersByTimeAsync(30_001)
+      await expect(outcome).resolves.toMatchObject({
+        name: failure === 'disconnect' ? 'NetworkError' : 'TimeoutError',
+        message: expect.stringContaining('may still be running')
+      })
+    }
+  )
+
+  it('W04 treats an unqualified 401 as expired authorization rather than a disabled service', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response('Unauthorized', { status: 401 }))
+    )
+    await import('./bootstrap')
+    const message = document.getElementById('open-science-connection-message')?.textContent
+    expect(document.getElementById('open-science-connection-state')?.getAttribute('role')).toBe(
+      'alert'
+    )
+    expect(message).not.toMatch(/remote access is off/i)
+    expect(message).toMatch(/authoriz|pair|access.*expired/i)
   })
 })

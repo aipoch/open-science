@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { usePreviewResourceGeneration } from './usePreviewResourceGeneration'
 
 import type { ArtifactPreviewResult } from '../../../../../shared/artifacts'
 import type { ManagedPreviewResource } from '../../../../../shared/preview-resources'
@@ -167,7 +168,9 @@ export const usePreviewFileContent = ({
   maxBytes = PREVIEW_TEXT_MAX_BYTES,
   encoding = 'utf8'
 }: UsePreviewFileContentRequest): PreviewFileContentLoadState => {
+  const generation = usePreviewResourceGeneration()
   const fileKey = JSON.stringify([
+    generation,
     projectId ?? null,
     sessionId ?? null,
     source,

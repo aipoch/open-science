@@ -3525,7 +3525,6 @@
     "Reviewer requested corrections": "리뷰어가 수정을 요청함",
     "Connecting to remote computer…": "원격 컴퓨터에 연결하는 중…",
     "Reconnecting to remote computer… ({{attempt}}/{{maxAttempts}})": "원격 컴퓨터에 다시 연결하는 중… ({{attempt}}/{{maxAttempts}})",
-    "Remote access is off on the home computer. Re-enable a remote access mode in Open Science, then try again.": "집 컴퓨터에서 원격 액세스가 꺼져 있습니다. Open Science에서 원격 액세스 모드를 다시 활성화한 후 다시 시도하세요.",
     "This computer did not finish responding. {{detail}}": "이 컴퓨터가 응답을 완료하지 못했습니다. {{detail}}",
     "Token usage": "토큰 사용량",
     "Review token volume, daily composition, and conversation activity.": "토큰 볼륨, 일일 구성, 대화 활동을 검토합니다.",
@@ -4565,6 +4564,8 @@
     "Enter a complete proxy URL, for example http://127.0.0.1:1086.": "완전한 프록시 URL을 입력하세요. 예: http://127.0.0.1:1086.",
     "Automatic mirror selection": "미러 자동 선택",
     "Automatic mirror selection · Custom CA bundle configured": "미러 자동 선택 · 사용자 지정 CA 번들 설정됨",
-    "Turning off a built-in domain removes automatic access. Exact hostnames in Allowed domains remain allowed.": "기본 제공 도메인을 끄면 자동 액세스가 해제됩니다. 허용된 도메인에 등록한 정확한 호스트 이름은 계속 허용됩니다."
+    "Turning off a built-in domain removes automatic access. Exact hostnames in Allowed domains remain allowed.": "기본 제공 도메인을 끄면 자동 액세스가 해제됩니다. 허용된 도메인에 등록한 정확한 호스트 이름은 계속 허용됩니다.",
+    "Access authorization has expired. Reopen the Web link from Open Science on the host computer, or return to the remote access entry page to pair again.": "접근 인증이 만료되었습니다. 호스트 컴퓨터의 Open Science에서 Web 링크를 다시 열거나 원격 접근 시작 페이지로 돌아가 다시 페어링하세요.",
+    "The operation result could not be confirmed. It may still be running. Reconnect and check its status before trying again.": "작업 결과를 확인할 수 없습니다. 작업이 아직 실행 중일 수 있습니다. 다시 연결하여 상태를 확인한 후 재시도하세요."
   }
 }

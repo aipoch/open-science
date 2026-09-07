@@ -3902,7 +3902,6 @@
     "Reviewer requested corrections": "Рецензент запросил исправления",
     "Connecting to remote computer…": "Подключение к удалённому компьютеру…",
     "Reconnecting to remote computer… ({{attempt}}/{{maxAttempts}})": "Повторное подключение к удалённому компьютеру… ({{attempt}}/{{maxAttempts}})",
-    "Remote access is off on the home computer. Re-enable a remote access mode in Open Science, then try again.": "Удалённый доступ отключён на домашнем компьютере. Снова включите режим удалённого доступа в Open Science и повторите попытку.",
     "This computer did not finish responding. {{detail}}": "Этот компьютер не завершил ответ. {{detail}}",
     "Token usage": "Использование токенов",
     "Review token volume, daily composition, and conversation activity.": "Просмотреть объём токенов, распределение по дням и активность диалогов.",
@@ -5013,6 +5012,8 @@
     "Enter a complete proxy URL, for example http://127.0.0.1:1086.": "Введите полный URL прокси, например http://127.0.0.1:1086.",
     "Automatic mirror selection": "Автоматический выбор зеркала",
     "Automatic mirror selection · Custom CA bundle configured": "Автоматический выбор зеркала · Настроен пользовательский пакет CA",
-    "Turning off a built-in domain removes automatic access. Exact hostnames in Allowed domains remain allowed.": "Отключение встроенного домена отменяет автоматический доступ. Точные имена хостов в списке разрешённых доменов остаются разрешёнными."
+    "Turning off a built-in domain removes automatic access. Exact hostnames in Allowed domains remain allowed.": "Отключение встроенного домена отменяет автоматический доступ. Точные имена хостов в списке разрешённых доменов остаются разрешёнными.",
+    "Access authorization has expired. Reopen the Web link from Open Science on the host computer, or return to the remote access entry page to pair again.": "Срок действия разрешения на доступ истёк. Снова откройте веб-ссылку из Open Science на главном компьютере или вернитесь на страницу удалённого доступа для повторного сопряжения.",
+    "The operation result could not be confirmed. It may still be running. Reconnect and check its status before trying again.": "Не удалось подтвердить результат операции. Возможно, она ещё выполняется. Подключитесь снова и проверьте её состояние перед повторной попыткой."
   }
 }

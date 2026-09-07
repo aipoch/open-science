@@ -7,7 +7,7 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/comp
 import type { PreviewFileSource } from '@/stores/preview-workbench-store'
 
 import { PreviewErrorCard, PreviewLoadingContent } from '../PreviewFallback'
-import { createPreviewResourceKey } from '../preview-resource-key'
+import { usePreviewResourceKey } from '../usePreviewResourceGeneration'
 import { DEFAULT_TIFF_PREVIEW_LIMITS, type DecodedTiffPage } from '../tiff-preview-types'
 import { createTiffDecodeSession, type TiffDecodeSession } from '../tiff-preview-worker-client'
 import type { PreviewFileRendererProps } from '../preview-types'
@@ -132,7 +132,7 @@ const TiffPreviewContent = ({
 }): React.JSX.Element => {
   const { t } = useTranslation()
 
-  const resourceKey = createPreviewResourceKey({
+  const resourceKey = usePreviewResourceKey({
     projectId,
     sessionId,
     source,

@@ -3386,7 +3386,6 @@
     "Reviewer requested corrections": "Der Reviewer hat Korrekturen angefordert",
     "Connecting to remote computer…": "Verbindung zum Remote-Computer wird hergestellt…",
     "Reconnecting to remote computer… ({{attempt}}/{{maxAttempts}})": "Erneute Verbindung zum Remote-Computer… ({{attempt}}/{{maxAttempts}})",
-    "Remote access is off on the home computer. Re-enable a remote access mode in Open Science, then try again.": "Der Fernzugriff auf dem Heimcomputer ist deaktiviert. Aktivieren Sie einen Fernzugriffsmodus in Open Science erneut und versuchen Sie es erneut.",
     "This computer did not finish responding. {{detail}}": "Dieser Computer hat nicht vollständig reagiert. {{detail}}",
     "Token usage": "Token-Nutzung",
     "Review token volume, daily composition, and conversation activity.": "Überprüfen Sie das Token-Volumen, die tägliche Zusammensetzung und die Konversationsaktivität.",
@@ -4720,6 +4719,8 @@
     "Enter a complete proxy URL, for example http://127.0.0.1:1086.": "Geben Sie eine vollständige Proxy-URL ein, zum Beispiel http://127.0.0.1:1086.",
     "Automatic mirror selection": "Automatische Spiegelauswahl",
     "Automatic mirror selection · Custom CA bundle configured": "Automatische Spiegelauswahl · Benutzerdefiniertes CA-Bündel konfiguriert",
-    "Turning off a built-in domain removes automatic access. Exact hostnames in Allowed domains remain allowed.": "Das Deaktivieren einer integrierten Domain hebt den automatischen Zugriff auf. Exakte Hostnamen unter Erlaubte Domains bleiben erlaubt."
+    "Turning off a built-in domain removes automatic access. Exact hostnames in Allowed domains remain allowed.": "Das Deaktivieren einer integrierten Domain hebt den automatischen Zugriff auf. Exakte Hostnamen unter Erlaubte Domains bleiben erlaubt.",
+    "Access authorization has expired. Reopen the Web link from Open Science on the host computer, or return to the remote access entry page to pair again.": "Die Zugriffsberechtigung ist abgelaufen. Öffnen Sie den Web-Link erneut in Open Science auf dem Hostcomputer oder kehren Sie zur Einstiegsseite für den Fernzugriff zurück, um die Kopplung zu wiederholen.",
+    "The operation result could not be confirmed. It may still be running. Reconnect and check its status before trying again.": "Das Ergebnis des Vorgangs konnte nicht bestätigt werden. Er wird möglicherweise noch ausgeführt. Stellen Sie die Verbindung wieder her und prüfen Sie seinen Status, bevor Sie es erneut versuchen."
   }
 }
