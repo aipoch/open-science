@@ -1697,6 +1697,28 @@ describe('PreviewPanel', () => {
   })
 
   it.each(['download', 'copy-path', 'save-as-artifact'])(
+    'clears the failure after %s succeeds from the menu',
+    async (command) => {
+      const operation = vi.fn().mockRejectedValueOnce(new Error('File operation denied'))
+      Object.assign(navigator, { clipboard: { writeText: operation } })
+      if (command === 'download') window.api.saveManagedFile = operation
+      if (command === 'save-as-artifact') window.api.uploads.stageLocalPath = operation
+      usePreviewWorkbenchStore.getState().upsertAndActivateItem(createFileItem({ source: 'local' }))
+      await renderPanel()
+
+      await openTabContextMenu(0)
+      await clickMenuCommand(command)
+      expect(container.querySelector('[data-testid="preview-tab-action-error"]')).not.toBeNull()
+
+      operation.mockResolvedValue({ saved: true })
+      await openTabContextMenu(0)
+      await clickMenuCommand(command)
+      expect(operation).toHaveBeenCalledTimes(2)
+      expect(container.querySelector('[data-testid="preview-tab-action-error"]')).toBeNull()
+    }
+  )
+
+  it.each(['download', 'copy-path', 'save-as-artifact'])(
     'disables the same menu command while %s is being retried',
     async (command) => {
       let finish!: () => void

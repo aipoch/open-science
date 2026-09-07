@@ -96,6 +96,7 @@ const PreviewTabActionTarget = ({
   tabCount,
   retryPending,
   onPdfContextError,
+  onFileActionSuccess,
   onLinkReadingContext,
   onUnlinkReadingContext,
   children
@@ -104,6 +105,7 @@ const PreviewTabActionTarget = ({
   tabCount: number
   retryPending?: PreviewTabActionError
   onPdfContextError?: (message: string | null) => void
+  onFileActionSuccess?: (command: PreviewTabActionCommand, item: PreviewItem) => void
   onLinkReadingContext?: PreviewInteractionPort['onLinkReadingContext']
   onUnlinkReadingContext?: PreviewInteractionPort['onUnlinkReadingContext']
   children: React.ReactElement
@@ -142,10 +144,36 @@ const PreviewTabActionTarget = ({
     activeProjectId
   }
   const bindings = createPreviewTabActionBindings(context, deps)
-  const pdfContextBinding = bindings['toggle-pdf-context']
-  const focusAwareBindings = pdfContextBinding
+  const successAwareBindings = onFileActionSuccess
     ? {
         ...bindings,
+        download: {
+          ...bindings.download,
+          execute: async (invocation: PreviewItem) => {
+            await bindings.download?.execute(invocation)
+            onFileActionSuccess('download', invocation)
+          }
+        },
+        'copy-path': {
+          ...bindings['copy-path'],
+          execute: async (invocation: PreviewItem) => {
+            await bindings['copy-path']?.execute(invocation)
+            onFileActionSuccess('copy-path', invocation)
+          }
+        },
+        'save-as-artifact': {
+          ...bindings['save-as-artifact'],
+          execute: async (invocation: PreviewItem) => {
+            await bindings['save-as-artifact']?.execute(invocation)
+            onFileActionSuccess('save-as-artifact', invocation)
+          }
+        }
+      }
+    : bindings
+  const pdfContextBinding = successAwareBindings['toggle-pdf-context']
+  const focusAwareBindings = pdfContextBinding
+    ? {
+        ...successAwareBindings,
         'toggle-pdf-context': {
           ...pdfContextBinding,
           execute: (invocation: PreviewItem) => {
@@ -154,7 +182,7 @@ const PreviewTabActionTarget = ({
           }
         }
       }
-    : bindings
+    : successAwareBindings
 
   return (
     <ActionMenuTarget<PreviewTabActionCommand, PreviewItem>
@@ -218,6 +246,7 @@ const PreviewTab = ({
   tabCount,
   retryPending,
   onPdfContextError,
+  onFileActionSuccess,
   onLinkReadingContext,
   onUnlinkReadingContext,
   onActivate,
@@ -231,6 +260,7 @@ const PreviewTab = ({
   tabCount: number
   retryPending?: PreviewTabActionError
   onPdfContextError?: (message: string | null) => void
+  onFileActionSuccess?: (command: PreviewTabActionCommand, item: PreviewItem) => void
   onLinkReadingContext?: PreviewInteractionPort['onLinkReadingContext']
   onUnlinkReadingContext?: PreviewInteractionPort['onUnlinkReadingContext']
   onActivate: (id: string) => void
@@ -254,6 +284,7 @@ const PreviewTab = ({
         tabCount={tabCount}
         retryPending={retryPending}
         onPdfContextError={onPdfContextError}
+        onFileActionSuccess={onFileActionSuccess}
         onLinkReadingContext={onLinkReadingContext}
         onUnlinkReadingContext={onUnlinkReadingContext}
       >
@@ -320,6 +351,7 @@ const PreviewTabBar = ({
   onActivate,
   onClose,
   onPdfContextError,
+  onFileActionSuccess,
   onLinkReadingContext,
   onUnlinkReadingContext
 }: {
@@ -329,6 +361,7 @@ const PreviewTabBar = ({
   onActivate: (id: string) => void
   onClose: (id: string) => boolean
   onPdfContextError?: (message: string | null) => void
+  onFileActionSuccess?: (command: PreviewTabActionCommand, item: PreviewItem) => void
   onLinkReadingContext?: PreviewInteractionPort['onLinkReadingContext']
   onUnlinkReadingContext?: PreviewInteractionPort['onUnlinkReadingContext']
 }): React.JSX.Element => {
@@ -427,6 +460,7 @@ const PreviewTabBar = ({
           tabCount={tabs.length}
           retryPending={retryPending}
           onPdfContextError={onPdfContextError}
+          onFileActionSuccess={onFileActionSuccess}
           onLinkReadingContext={onLinkReadingContext}
           onUnlinkReadingContext={onUnlinkReadingContext}
           onActivate={onActivate}
@@ -700,6 +734,16 @@ const PreviewPanelSurface = ({
   useEffect(() => setActionFailure(undefined), [activeProjectId])
   const [retryPending, setRetryPending] = useState<PreviewTabActionError>()
   const retryPendingRef = useRef<PreviewTabActionError | undefined>(undefined)
+  const clearActionFailure = (command: PreviewTabActionCommand, item: PreviewItem): void => {
+    setActionFailure((current) =>
+      current &&
+      current.projectId === activeProjectId &&
+      current.itemId === item.id &&
+      current.command === command
+        ? undefined
+        : current
+    )
+  }
   const retryAction = async (): Promise<void> => {
     if (
       !actionFailure ||
@@ -776,6 +820,7 @@ const PreviewPanelSurface = ({
             <PreviewTabBar
               tabs={items}
               retryPending={retryPending?.projectId === activeProjectId ? retryPending : undefined}
+              onFileActionSuccess={clearActionFailure}
               activeItemId={activeItemId}
               onActivate={activateItem}
               onClose={removeItem}
