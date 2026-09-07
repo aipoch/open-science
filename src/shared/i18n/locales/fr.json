@@ -1842,7 +1842,6 @@
     "The app could not write to the log file during its most recent attempt.": "L’application n’a pas pu écrire dans le fichier journal lors de sa dernière tentative.",
     "Not compatible with the active agent framework.": "Non compatible avec le framework d'agents actif.",
     "Not configured": "Non configuré",
-    "Not configured — packages come from the public hosts (conda.anaconda.org, pypi.org)": "Non configuré — les paquets proviennent des hôtes publics (conda.anaconda.org, pypi.org)",
     "Not importable": "Non importable",
     "Not installed": "Non installé",
     "Not probed": "Non sondé",
@@ -1970,7 +1969,6 @@
     "In session context": "Dans le contexte de la session",
     "Open PDF context {{name}}": "Ouvrir le contexte PDF {{name}}",
     "Leave blank to use public certificate authorities. Otherwise, choose a complete PEM bundle with public and corporate roots; Notebook sessions and package downloads will trust it.": "Laissez ce champ vide pour utiliser les autorités de certification publiques. Sinon, choisissez un bundle PEM complet contenant les racines publiques et celles de votre entreprise ; les sessions Notebook et les téléchargements de paquets lui feront confiance.",
-    "Custom CA bundle configured": "Bundle d’autorités de certification personnalisé configuré",
     "PHASE {{number}}": "PHASE {{number}}",
     "PINNED": "ÉPINGLEÉ",
     "Package": "Paquet",
@@ -4872,6 +4870,17 @@
     "Direct PDF link": "Lien direct vers le PDF",
     "arXiv identifier required": "Identifiant arXiv requis",
     "Latest PDF via arXiv identifier. No API key required. The file is checked when downloaded.": "Dernier PDF via l’identifiant arXiv. Aucune clé API requise. Le fichier est vérifié lors du téléchargement.",
-    "Add a DOI, PMID, PMCID or arXiv identifier to find a matching full-text PDF.": "Ajoutez un DOI, PMID, PMCID ou identifiant arXiv pour trouver un PDF du texte intégral correspondant."
+    "Add a DOI, PMID, PMCID or arXiv identifier to find a matching full-text PDF.": "Ajoutez un DOI, PMID, PMCID ou identifiant arXiv pour trouver un PDF du texte intégral correspondant.",
+    "Choose a proxy mode.": "Choisissez un mode de proxy.",
+    "Choose System, Manual, or Direct.": "Choisissez Système, Manuel ou Direct.",
+    "Enter a proxy server URL, for example http://127.0.0.1:1086.": "Saisissez une URL de serveur proxy, par exemple http://127.0.0.1:1086.",
+    "Use an http, https, socks, socks4, or socks5 proxy URL.": "Utilisez une URL de proxy avec http, https, socks, socks4 ou socks5.",
+    "Enter a proxy URL with a host name or IP address.": "Saisissez une URL de proxy avec un nom d’hôte ou une adresse IP.",
+    "Proxy URLs with embedded usernames or passwords are not supported.": "Les URL de proxy contenant un nom d’utilisateur ou un mot de passe ne sont pas prises en charge.",
+    "Enter only the proxy scheme, host, and optional port.": "Saisissez uniquement le protocole du proxy, l’hôte et le port facultatif.",
+    "Enter a complete proxy URL, for example http://127.0.0.1:1086.": "Saisissez une URL de proxy complète, par exemple http://127.0.0.1:1086.",
+    "Automatic mirror selection": "Sélection automatique du miroir",
+    "Automatic mirror selection · Custom CA bundle configured": "Sélection automatique du miroir · Ensemble de certificats CA personnalisé configuré",
+    "Turning off a built-in domain removes automatic access. Exact hostnames in Allowed domains remain allowed.": "Désactiver un domaine intégré supprime l’accès automatique. Les noms d’hôte exacts dans Domaines autorisés restent autorisés."
   }
 }

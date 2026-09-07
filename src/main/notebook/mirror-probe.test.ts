@@ -1,6 +1,8 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { netFetchStandard } from '../skills/net-fetch'
+import { mirrorStatusText } from '../../renderer/src/pages/settings/mirror-view'
+import { i18next } from '../../renderer/src/i18n'
 
 import {
   DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
@@ -206,6 +208,14 @@ describe('pickFastestMirror', () => {
 })
 
 describe('effectiveMirrorAsync', () => {
+  it('describes automatic selection when an unconfigured install selects a third-party mirror', async () => {
+    const effective = await effectiveMirrorAsync(undefined, 'en-US', {
+      candidates,
+      probe: probeFrom(reachableLatencies)
+    })
+    expect(effective.condaChannel).toBe('https://tuna/conda-forge/')
+    expect(mirrorStatusText(undefined, i18next.getFixedT('en'))).toBe('Automatic mirror selection')
+  })
   it('returns the user override without probing', async () => {
     const probe = vi.fn()
     const result = await effectiveMirrorAsync({ condaChannel: 'https://corp/conda' }, 'en-US', {

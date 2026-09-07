@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { NetworkProxySettings } from '../../shared/network-proxy'
 import { createEmptySettings } from './types'
+import { SettingsSnapshotCommitOwner } from './settings-snapshot-commit-owner'
 
 vi.mock('electron', () => ({
   app: { getPath: () => tmpdir(), getAppPath: () => tmpdir(), isPackaged: false },
@@ -25,6 +26,34 @@ describe('Network proxy settings persistence', () => {
 
   afterEach(async () => {
     await rm(dir, { recursive: true, force: true })
+  })
+
+  it('returns the applied proxy when the subsequent settings projection fails', async () => {
+    const repository = new SettingsRepository(dir)
+    let applied: NetworkProxySettings = { mode: 'system' }
+    const service = new SettingsService({
+      repository,
+      configRoot: dir,
+      applyNetworkProxy: async (value) => {
+        applied = value
+      }
+    })
+    const publish = vi.fn()
+    const commits = new SettingsSnapshotCommitOwner(
+      {
+        getSettingsView: vi.fn().mockRejectedValue(new Error('snapshot unavailable'))
+      },
+      { publish }
+    )
+    const outcome = await commits.projectAfter(service.setNetworkProxy({ mode: 'direct' })).then(
+      (value) => ({ value }),
+      (error) => ({ error })
+    )
+
+    expect((await repository.getSettings()).networkProxy).toEqual({ mode: 'direct' })
+    expect(applied).toEqual({ mode: 'direct' })
+    expect(outcome).toEqual({ value: { mode: 'direct' } })
+    expect(publish).not.toHaveBeenCalled()
   })
 
   it('round-trips a normalized manual proxy without credentials', async () => {

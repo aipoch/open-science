@@ -23,6 +23,22 @@ const snapshot = (): SettingsSnapshot => ({
 })
 
 describe('SettingsSnapshotCommitOwner', () => {
+  it('preserves real operation errors and allows projection recovery after publication fails', async () => {
+    const current = snapshot()
+    const read = vi.fn().mockResolvedValue(current)
+    const failure = new Error('apply failed')
+    const publish = vi.fn().mockImplementationOnce(() => {
+      throw new Error('publication failed')
+    })
+    const owner = new SettingsSnapshotCommitOwner({ getSettingsView: read }, { publish })
+
+    await expect(owner.projectAfter(Promise.reject(failure))).rejects.toBe(failure)
+    expect(read).not.toHaveBeenCalled()
+    await expect(owner.projectAfter(Promise.resolve('saved'))).resolves.toBe('saved')
+    await expect(owner.readCurrentSnapshot()).resolves.toBe(current)
+    await expect(owner.projectAfter(Promise.resolve('saved again'))).resolves.toBe('saved again')
+    expect(publish).toHaveBeenCalledTimes(2)
+  })
   it('assigns monotonic revisions to distinct committed projections', async () => {
     const first = snapshot()
     const second = snapshot()
