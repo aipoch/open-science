@@ -125,7 +125,7 @@ type SettingsStoreData = RuntimeSetupState &
     codebuddyManaged: boolean
     onboardingCompletedAt: number | undefined
     encryptionAvailable: boolean
-    // Configured package mirror (conda/pip); undefined means public hosts (unconfigured).
+    // Configured package mirror (conda/pip); undefined means automatic mirror selection.
     packageMirror?: PackageMirror
     networkProxy: NetworkProxySettings
     notebookNetwork: NotebookNetworkSettings

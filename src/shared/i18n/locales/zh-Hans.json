@@ -1856,7 +1856,6 @@
     "The app could not write to the log file during its most recent attempt.": "应用在最近一次尝试中无法写入日志文件。",
     "Not compatible with the active agent framework.": "与当前智能体框架不兼容。",
     "Not configured": "未配置",
-    "Not configured — packages come from the public hosts (conda.anaconda.org, pypi.org)": "未配置 —— 软件包来自公共源（conda.anaconda.org、pypi.org）",
     "Not importable": "无法导入",
     "Not installed": "未安装",
     "Not probed": "未探测",
@@ -1988,7 +1987,6 @@
     "In session context": "已加入当前会话上下文",
     "Open PDF context {{name}}": "打开 PDF 上下文 {{name}}",
     "Leave blank to use public certificate authorities. Otherwise, choose a complete PEM bundle with public and corporate roots; Notebook sessions and package downloads will trust it.": "留空将使用公共证书颁发机构。否则，请选择包含公共根证书和企业根证书的完整 PEM 证书包；Notebook 会话和软件包下载都会信任它。",
-    "Custom CA bundle configured": "已配置自定义 CA 证书包",
     "PHASE {{number}}": "阶段 {{number}}",
     "PINNED": "已固定",
     "Package": "软件包",
@@ -4566,6 +4564,17 @@
     "Side chat was interrupted when the app closed. Send a Follow up to continue.": "应用关闭时，侧边聊天已中断。发送追问以继续。",
     "Side chat connection ended. Send a Follow up to reconnect.": "侧边聊天连接已结束。发送追问以重新连接。",
     "Side chat prompt cancelled.": "已取消侧边聊天请求。",
-    "Could not save Side chat: {{error}}": "无法保存侧边聊天：{{error}}"
+    "Could not save Side chat: {{error}}": "无法保存侧边聊天：{{error}}",
+    "Choose a proxy mode.": "请选择代理模式。",
+    "Choose System, Manual, or Direct.": "请选择系统、手动或直连。",
+    "Enter a proxy server URL, for example http://127.0.0.1:1086.": "请输入代理服务器 URL，例如 http://127.0.0.1:1086。",
+    "Use an http, https, socks, socks4, or socks5 proxy URL.": "请使用 http、https、socks、socks4 或 socks5 代理 URL。",
+    "Enter a proxy URL with a host name or IP address.": "请输入包含主机名或 IP 地址的代理 URL。",
+    "Proxy URLs with embedded usernames or passwords are not supported.": "不支持包含用户名或密码的代理 URL。",
+    "Enter only the proxy scheme, host, and optional port.": "请仅输入代理协议、主机和可选端口。",
+    "Enter a complete proxy URL, for example http://127.0.0.1:1086.": "请输入完整的代理 URL，例如 http://127.0.0.1:1086。",
+    "Automatic mirror selection": "自动选择镜像",
+    "Automatic mirror selection · Custom CA bundle configured": "自动选择镜像 · 已配置自定义 CA 证书包",
+    "Turning off a built-in domain removes automatic access. Exact hostnames in Allowed domains remain allowed.": "关闭内置域名会取消自动访问权限。“允许的域名”中的精确主机名仍可访问。"
   }
 }

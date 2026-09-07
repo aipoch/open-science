@@ -3391,7 +3391,7 @@ describe('SettingsPage layout', () => {
     })
 
     // Unconfigured by default (the mocked getSettings snapshot has no packageMirror).
-    expect(document.body.textContent).toContain('Not configured')
+    expect(document.body.textContent).toContain('Automatic mirror selection')
 
     const configureButton = Array.from(
       document.body.querySelectorAll<HTMLButtonElement>('button')
