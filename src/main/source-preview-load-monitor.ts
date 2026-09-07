@@ -18,6 +18,7 @@ type SourcePreviewLoadMonitor = {
     currentUrl: string,
     isSameDocument: boolean
   ) => void
+  navigateInPage: (frame: SourcePreviewFrameIdentity | null, currentUrl: string) => void
   finishNavigation: (
     frame: SourcePreviewFrameIdentity | null,
     currentUrl: string,
@@ -37,6 +38,7 @@ type TrackedSourceRoot = {
   currentUrl: string
   navigationId: number
   settled: boolean
+  lastState?: SourcePreviewLoadState
 }
 
 const BLOCKED_ERROR_CODES = new Set([-30, -27, -20])
@@ -58,6 +60,11 @@ const createSourcePreviewLoadMonitor = (
   const roots = new Map<number, TrackedSourceRoot>()
   const rootIdsByRoutingIdentity = new Map<string, number>()
   let nextNavigationId = 0
+
+  const publishState = (root: TrackedSourceRoot, state: SourcePreviewLoadState): void => {
+    root.lastState = state
+    publish(state)
+  }
 
   const getRoutingIdentity = (frame: SourcePreviewFrameIdentity): string | undefined =>
     frame.processId === undefined || frame.routingId === undefined
@@ -109,7 +116,7 @@ const createSourcePreviewLoadMonitor = (
       }
       roots.set(frame.frameTreeNodeId, root)
       rememberRoutingIdentity(frame, frame.frameTreeNodeId)
-      publish({
+      publishState(root, {
         navigationId: root.navigationId,
         sourceUrl,
         currentUrl: sourceUrl,
@@ -136,12 +143,18 @@ const createSourcePreviewLoadMonitor = (
       root.currentUrl = currentUrl
       root.navigationId = ++nextNavigationId
       root.settled = false
-      publish({
+      publishState(root, {
         navigationId: root.navigationId,
         sourceUrl: root.sourceUrl,
         currentUrl,
         phase: 'loading'
       })
+    },
+    navigateInPage: (frame, currentUrl) => {
+      const root = getActiveRoot(frame)
+      if (!root?.lastState || root.lastState.currentUrl === currentUrl) return
+      root.currentUrl = currentUrl
+      publishState(root, { ...root.lastState, currentUrl })
     },
     finishNavigation: (frame, currentUrl, httpStatusCode, httpStatusText) => {
       const root = getActiveRoot(frame)
@@ -149,7 +162,7 @@ const createSourcePreviewLoadMonitor = (
       root.settled = true
 
       if (httpStatusCode >= 400) {
-        publish({
+        publishState(root, {
           navigationId: root.navigationId,
           sourceUrl: root.sourceUrl,
           currentUrl,
@@ -161,7 +174,7 @@ const createSourcePreviewLoadMonitor = (
         return
       }
 
-      publish({
+      publishState(root, {
         navigationId: root.navigationId,
         sourceUrl: root.sourceUrl,
         currentUrl,
@@ -178,7 +191,7 @@ const createSourcePreviewLoadMonitor = (
       if (!root || root.settled) return
       root.settled = true
 
-      publish({
+      publishState(root, {
         navigationId: root.navigationId,
         sourceUrl: root.sourceUrl,
         currentUrl,

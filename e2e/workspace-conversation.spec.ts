@@ -636,6 +636,24 @@ test('previews and opens an Agent HTTPS source link in the isolated preview tab'
   await expect(sourceProgress).toHaveCount(0)
   await expect(sourceSkeleton).toHaveCount(0)
 
+  // Use real Chromium same-document navigations; IPC injection cannot verify this adapter.
+  const sourceDocument = sourceFrame.contentFrame().locator('body')
+  for (const operation of ['anchor', 'push', 'replace', 'back', 'forward']) {
+    const previousUrl = await sourceHeaderUrl.textContent()
+    await sourceDocument.evaluate((_body, action) => {
+      if (action === 'anchor') location.hash = 'methods'
+      else if (action === 'push') history.pushState({}, '', '?section=results')
+      else if (action === 'replace') history.replaceState({}, '', '?section=discussion')
+      else if (action === 'back') history.back()
+      else history.forward()
+    }, operation)
+    await expect.poll(() => sourceDocument.evaluate(() => location.href)).not.toBe(previousUrl)
+    await expect(sourceHeaderUrl).toHaveText(await sourceDocument.evaluate(() => location.href))
+    await expect(sourceSkeleton).toHaveCount(0)
+    await expect(sourceProgress).toHaveCount(0)
+    await expect(sourceFrame).toHaveAttribute('src', 'https://citation.example/paper')
+  }
+
   await page.screenshot({ path: testInfo.outputPath('citation-source-preview.png') })
 
   const replicationLink = page.getByRole('link', { name: 'Chen et al. 2026' })

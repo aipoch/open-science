@@ -360,6 +360,87 @@ describe('PreviewPanel', () => {
     expect(iframe?.closest<HTMLElement>('[role="tabpanel"]')?.hidden).toBe(false)
   })
 
+  it.each([
+    ['loaded', '[data-source-preview-header-external]'],
+    ['failed', '[data-source-preview-header-external]'],
+    ['failed', '[data-source-preview-error] button']
+  ] as const)(
+    'opens the displayed source URL after a %s navigation via %s',
+    async (phase, selector) => {
+      const sourceItem = createSourceItem()
+      const currentUrl = 'https://example.com/supplement'
+      usePreviewWorkbenchStore.getState().upsertAndActivateItem(sourceItem)
+      await renderPanel()
+      const iframe = container.querySelector('[data-source-preview-frame]')
+      const open = vi.spyOn(window, 'open').mockReturnValue(null)
+      try {
+        await act(async () => {
+          sourcePreviewListener!({
+            sourceUrl: sourceItem.url,
+            currentUrl,
+            navigationId: 2,
+            phase,
+            httpStatusCode: phase === 'failed' ? 404 : 200,
+            httpStatusText: phase === 'failed' ? 'Not Found' : 'OK',
+            ...(phase === 'failed' ? { failure: 'http' } : {})
+          })
+        })
+        expect(container.querySelector('[data-source-preview-header-url]')?.textContent).toBe(
+          currentUrl
+        )
+        const button = [...container.querySelectorAll<HTMLButtonElement>(selector)].find(
+          (candidate) =>
+            candidate.getAttribute('aria-label') === 'Open source in browser' ||
+            candidate.textContent === 'Open source in browser'
+        )
+        expect(button).toBeDefined()
+        await act(async () => button!.click())
+        expect(open).toHaveBeenLastCalledWith(currentUrl, '_blank', 'noreferrer')
+        expect(container.querySelector('[data-source-preview-frame]')).toBe(iframe)
+        expect(iframe?.getAttribute('src')).toBe(sourceItem.url)
+        await act(async () => {
+          container.querySelector<HTMLButtonElement>('[data-source-preview-header-close]')!.click()
+        })
+        expect(releaseSourcePreview).toHaveBeenCalledWith(sourceItem.url)
+      } finally {
+        open.mockRestore()
+      }
+    }
+  )
+
+  it.each(['http://example.com/paper', 'javascript:alert(1)', 'invalid'])(
+    'keeps the HTTPS fallback for an invalid current source URL: %s',
+    async (currentUrl) => {
+      const sourceItem = createSourceItem()
+      usePreviewWorkbenchStore.getState().upsertAndActivateItem(sourceItem)
+      await renderPanel()
+      const open = vi.spyOn(window, 'open').mockReturnValue(null)
+      try {
+        await act(async () => {
+          sourcePreviewListener!({
+            sourceUrl: sourceItem.url,
+            currentUrl,
+            navigationId: 1,
+            phase: 'loaded',
+            httpStatusCode: 200,
+            httpStatusText: 'OK'
+          })
+        })
+        expect(container.querySelector('[data-source-preview-header-url]')?.textContent).toBe(
+          sourceItem.url
+        )
+        await act(async () => {
+          container
+            .querySelector<HTMLButtonElement>('[data-source-preview-header-external]')!
+            .click()
+        })
+        expect(open).toHaveBeenCalledWith(sourceItem.url, '_blank', 'noreferrer')
+      } finally {
+        open.mockRestore()
+      }
+    }
+  )
+
   it('does not grant remote source previews permission to open popup windows', async () => {
     usePreviewWorkbenchStore.getState().upsertAndActivateItem(createSourceItem())
 
