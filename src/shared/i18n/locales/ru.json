@@ -106,6 +106,7 @@
     "Automatic contrast": "Автоматическая контрастность",
     "Display range": "Диапазон отображения",
     "Your draft is preserved. Reload the current details, then merge them into your draft before saving.": "Черновик сохранён. Загрузите актуальное описание и объедините его с черновиком перед сохранением.",
+    "Two Web Specialist imports are already active. Finish or cancel one, then try again.": "В веб-интерфейсе уже выполняются два импорта специалистов. Завершите или отмените один из них и повторите попытку.",
     "Could not import Specialist ZIP. Try again.": "Не удалось импортировать ZIP Специалиста. Повторите попытку.",
     "Uploading Specialist ZIP… {{percent}}%": "Загрузка ZIP Специалиста… {{percent}}%",
     "Project: {{name}}": "Проект: {{name}}",

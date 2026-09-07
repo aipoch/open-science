@@ -1,5 +1,6 @@
 import { readFile, stat } from 'node:fs/promises'
 import { z } from 'zod'
+import { ApplicationCommandError } from '../../shared/application-command-contract'
 import {
   SPECIALIST_PACKAGE_ARCHIVE_LIMITS,
   type SpecialistPackageInstallRequest,
@@ -27,7 +28,7 @@ import type { SpecialistPackageService } from './package/service'
 
 type Dependencies = {
   service: Pick<SpecialistService, 'listForSettingsSnapshot' | 'update' | 'setEnabled'>
-  packages: Pick<SpecialistPackageService, 'preview' | 'install' | 'cancel' | 'dispose'>
+  packages: Pick<SpecialistPackageService, 'preview' | 'install' | 'cancel' | 'dispose' | 'report'>
   uploads: UploadCommandOwner
   onProfilesChanged: () => void
 }
@@ -80,12 +81,20 @@ export const createSpecialistApplicationOwner = ({
   type Caller = {
     ownerId: number
     transferId?: string
+    candidateToken?: string
     busy: boolean
     disposed: boolean
     timer?: ReturnType<typeof setTimeout>
     release: () => void
   }
   const callers = new Map<ApplicationCallerLease, Caller>()
+  // Reserve before staging, and retain the slot through preview and installation. A disconnected
+  // operation still owns its slot until it settles, because its archive may remain in memory.
+  const webImports = new Set<Caller>()
+  const finishOperation = (caller: Caller): void => {
+    caller.busy = false
+    if (caller.disposed || (!caller.transferId && !caller.candidateToken)) webImports.delete(caller)
+  }
   const callerFor = (invocation: ApplicationInvocation<readonly unknown[]>): Caller => {
     const { callerLease } = invocation
     if (callerLease.signal.aborted || !callerLease.isCurrent())
@@ -105,6 +114,7 @@ export const createSpecialistApplicationOwner = ({
           callers.delete(callerLease)
           callerLease.signal.removeEventListener('abort', current.release)
           packages.dispose(current.ownerId)
+          if (!current.busy) webImports.delete(current)
           if (current.transferId && !current.busy) {
             void uploads
               .abortTransfer({ ...invocation, args: [{ transferId: current.transferId }] })
@@ -154,19 +164,30 @@ export const createSpecialistApplicationOwner = ({
       if (caller.busy) throw new Error('Specialist package preview is in progress.')
       if (caller.transferId && caller.transferId !== request.transferId)
         throw new Error('Cancel the previous Specialist upload first.')
+      if (invocation.callerContext.surface !== 'electron' && !webImports.has(caller)) {
+        if (webImports.size >= 2)
+          throw new ApplicationCommandError(
+            'command-failed',
+            'Two Web Specialist imports are already active. Finish or cancel one, then try again.'
+          )
+        webImports.add(caller)
+      }
       caller.busy = true
+      refreshExpiry(caller)
       try {
         const result = await uploads.beginTransfer(invocation)
         caller.transferId = request.transferId
         assertActive(caller)
         packages.dispose(caller.ownerId)
+        caller.candidateToken = undefined
         refreshExpiry(caller)
         return result
       } catch (error) {
         await uploads.abortTransfer(invocation).catch(() => undefined)
+        caller.transferId = undefined
         throw error
       } finally {
-        caller.busy = false
+        finishOperation(caller)
       }
     },
     previewUpload: async (invocation: ApplicationInvocation<readonly [UploadTransferRequest]>) => {
@@ -187,13 +208,17 @@ export const createSpecialistApplicationOwner = ({
         const preview = await packages.preview(new Uint8Array(await readFile(path)), caller.ownerId)
         if (caller.disposed) packages.dispose(caller.ownerId)
         assertActive(caller)
+        caller.candidateToken = preview.candidateToken
         refreshExpiry(caller)
         return preview
       } finally {
         caller.transferId = undefined
-        caller.busy = false
-        if (path) await uploads.deleteUpload({ ...invocation, args: [{ path }] })
-        else await uploads.abortTransfer(invocation).catch(() => undefined)
+        try {
+          if (path) await uploads.deleteUpload({ ...invocation, args: [{ path }] })
+          else await uploads.abortTransfer(invocation).catch(() => undefined)
+        } finally {
+          finishOperation(caller)
+        }
       }
     },
     abortUpload: async (invocation: ApplicationInvocation<readonly [UploadTransferRequest]>) => {
@@ -201,18 +226,37 @@ export const createSpecialistApplicationOwner = ({
       const caller = callerFor(invocation)
       if (caller.transferId !== request.transferId) return
       if (caller.busy) throw new Error('Specialist package preview is in progress.')
-      await uploads.abortTransfer(invocation)
-      caller.transferId = undefined
+      caller.busy = true
+      try {
+        await uploads.abortTransfer(invocation)
+        caller.transferId = undefined
+      } finally {
+        finishOperation(caller)
+      }
     },
     install: async (
       invocation: ApplicationInvocation<readonly [SpecialistPackageInstallRequest]>
     ) => {
       const caller = callerFor(invocation)
-      return packages.install(invocation.args[0], caller.ownerId)
+      if (caller.busy) throw new Error('Specialist package preview is in progress.')
+      caller.busy = true
+      try {
+        return await packages.install(invocation.args[0], caller.ownerId)
+      } finally {
+        // Confirmation failures keep their candidate; terminal outcomes consume it.
+        if (!packages.report(caller.candidateToken, caller.ownerId))
+          caller.candidateToken = undefined
+        finishOperation(caller)
+      }
     },
     cancel: (invocation: ApplicationInvocation<readonly [SpecialistPackageInstallRequest]>) => {
       const request = candidateRequest.parse(invocation.args[0])
-      packages.cancel(request.candidateToken, callerFor(invocation).ownerId)
+      const caller = callerFor(invocation)
+      packages.cancel(request.candidateToken, caller.ownerId)
+      if (caller.candidateToken === request.candidateToken) {
+        caller.candidateToken = undefined
+        if (!caller.busy) finishOperation(caller)
+      }
     },
     dispose: () => {
       for (const caller of callers.values()) caller.release()

@@ -60,14 +60,19 @@ type TestCaller = {
 type Fixture = {
   first: TestCaller
   second: TestCaller
-  upload: (bytes?: Uint8Array, transferId?: string) => Promise<{ transferId: string }>
+  third: TestCaller
+  upload: (
+    bytes?: Uint8Array,
+    transferId?: string,
+    caller?: TestCaller
+  ) => Promise<{ transferId: string }>
   uploads: ReturnType<typeof createUploadCommandOwner>
   packages: SpecialistPackageService
   root: string
   service: SpecialistService
   onProfilesChanged: ReturnType<typeof vi.fn>
 }
-const fixture = async (): Promise<Fixture> => {
+const fixture = async (beforeCatalog: () => Promise<void> = async () => {}): Promise<Fixture> => {
   const root = await mkdtemp(join(tmpdir(), 'specialist-web-'))
   cleanup.push(() => rm(root, { recursive: true, force: true }))
   const uploads = createUploadCommandOwner(new UploadRepository(root))
@@ -76,13 +81,16 @@ const fixture = async (): Promise<Fixture> => {
   const packages = new SpecialistPackageService({
     storageDir: root,
     repository,
-    catalog: async () => ({
-      appVersion: '0.25.1',
-      builtinSkills: [],
-      skills: [],
-      connectorIds: [],
-      protectedSpecialistIds: ['reviewer']
-    })
+    catalog: async () => {
+      await beforeCatalog()
+      return {
+        appVersion: '0.25.1',
+        builtinSkills: [],
+        skills: [],
+        connectorIds: [],
+        protectedSpecialistIds: ['reviewer']
+      }
+    }
   })
   const onProfilesChanged = vi.fn()
   const owner = createSpecialistApplicationOwner({ service, packages, uploads, onProfilesChanged })
@@ -115,22 +123,172 @@ const fixture = async (): Promise<Fixture> => {
   }
   const first = caller('first')
   const second = caller('second')
+  const third = caller('third')
   const upload = async (
     bytes: Uint8Array = zip,
-    transferId = 'package-one'
+    transferId = 'package-one',
+    uploader = first
   ): Promise<{ transferId: string }> => {
-    await first.invoke('specialist:package-upload-begin', {
+    await uploader.invoke('specialist:package-upload-begin', {
       transferId,
       name: 'research.zip',
       size: bytes.length
     })
-    await uploads.appendTransfer(first.invocation([{ transferId, offset: 0, chunk: bytes }]))
+    await uploads.appendTransfer(uploader.invocation([{ transferId, offset: 0, chunk: bytes }]))
     return { transferId }
   }
-  return { first, second, upload, uploads, packages, root, service, onProfilesChanged }
+  return { first, second, third, upload, uploads, packages, root, service, onProfilesChanged }
 }
 
 describe('Specialist Remote Web application commands', () => {
+  it.each(['abort', 'disconnect', 'expiry'] as const)(
+    'releases an idle upload slot on %s',
+    async (action) => {
+      const f = await fixture()
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+      const request = await f.upload()
+      await f.upload(zip, 'second', f.second)
+      if (action === 'abort') await f.first.invoke('specialist:package-upload-abort', request)
+      if (action === 'disconnect') f.first.release()
+      if (action === 'expiry') await vi.advanceTimersByTimeAsync(10 * 60 * 1000)
+      await expect(f.upload(zip, 'third', f.third)).resolves.toEqual({ transferId: 'third' })
+    }
+  )
+
+  it('keeps a disconnected preview reserved until its work settles', async () => {
+    let resume!: () => void
+    let entered!: () => void
+    const started = new Promise<void>((resolve) => {
+      entered = resolve
+    })
+    const pending = new Promise<void>((resolve) => {
+      resume = resolve
+    })
+    const f = await fixture(async () => {
+      entered()
+      await pending
+    })
+    const first = await f.upload()
+    await f.upload(zip, 'second', f.second)
+    const preview = f.first.invoke('specialist:package-upload-preview', first)
+    const outcome = expect(preview).rejects.toThrow(/expired/)
+    await started
+    f.first.release()
+    try {
+      await expect(f.upload(zip, 'third', f.third)).rejects.toThrow(/Two Web Specialist imports/)
+    } finally {
+      resume()
+    }
+    await outcome
+    await expect(f.upload(zip, 'third', f.third)).resolves.toEqual({ transferId: 'third' })
+  })
+
+  it('bounds retained Web imports to two without evicting existing candidates', async () => {
+    const f = await fixture()
+    const first = await f.first.invoke<SpecialistPackageCandidatePreview>(
+      'specialist:package-upload-preview',
+      await f.upload()
+    )
+    const second = await f.second.invoke<SpecialistPackageCandidatePreview>(
+      'specialist:package-upload-preview',
+      await f.upload(zip, 'second', f.second)
+    )
+    await expect(f.upload(zip, 'third', f.third)).rejects.toMatchObject({
+      name: 'ApplicationCommandError',
+      code: 'command-failed',
+      message:
+        'Two Web Specialist imports are already active. Finish or cancel one, then try again.'
+    })
+    expect(await f.uploads.transferStatus(f.third.invocation([{ transferId: 'third' }]))).toBeNull()
+    await f.third.invoke('specialist:package-cancel', { candidateToken: first.candidateToken })
+    await expect(f.upload(zip, 'third', f.third)).rejects.toThrow(/Two Web Specialist imports/)
+    expect(
+      await f.first.invoke('specialist:package-install', { candidateToken: first.candidateToken })
+    ).toMatchObject({ status: 'installed' })
+    await expect(f.upload(zip, 'third', f.third)).resolves.toEqual({ transferId: 'third' })
+    await f.second.invoke('specialist:package-cancel', { candidateToken: second.candidateToken })
+    await expect(f.upload(zip, 'next')).resolves.toEqual({ transferId: 'next' })
+  })
+
+  it('releases a consumed candidate after installation fails', async () => {
+    let catalogUnavailable = false
+    const f = await fixture(async () => {
+      if (catalogUnavailable) throw new Error('Catalog unavailable')
+    })
+    const preview = await f.first.invoke<SpecialistPackageCandidatePreview>(
+      'specialist:package-upload-preview',
+      await f.upload()
+    )
+    await f.upload(zip, 'second', f.second)
+    catalogUnavailable = true
+    await expect(
+      f.first.invoke('specialist:package-install', { candidateToken: preview.candidateToken })
+    ).resolves.toMatchObject({ status: 'failed', code: 'commit-failed' })
+    await expect(f.upload(zip, 'third', f.third)).resolves.toEqual({ transferId: 'third' })
+  })
+
+  it('retains a candidate awaiting overwrite confirmation', async () => {
+    const f = await fixture()
+    const initial = await f.first.invoke<SpecialistPackageCandidatePreview>(
+      'specialist:package-upload-preview',
+      await f.upload()
+    )
+    await f.first.invoke('specialist:package-install', { candidateToken: initial.candidateToken })
+    const replacement = await f.first.invoke<SpecialistPackageCandidatePreview>(
+      'specialist:package-upload-preview',
+      await f.upload(zip, 'replacement')
+    )
+    await f.upload(zip, 'second', f.second)
+    await expect(
+      f.first.invoke('specialist:package-install', { candidateToken: replacement.candidateToken })
+    ).resolves.toMatchObject({ status: 'failed', code: 'overwrite-confirmation-required' })
+    await expect(f.upload(zip, 'third', f.third)).rejects.toThrow(/Two Web Specialist imports/)
+    await expect(
+      f.first.invoke('specialist:package-install', {
+        candidateToken: replacement.candidateToken,
+        confirmOverwrite: true
+      })
+    ).resolves.toMatchObject({ status: 'installed' })
+    await expect(f.upload(zip, 'third', f.third)).resolves.toEqual({ transferId: 'third' })
+  })
+
+  it('keeps an installation reserved through caller release and rejects a concurrent replacement', async () => {
+    let installing = false
+    let resume!: () => void
+    let entered!: () => void
+    const started = new Promise<void>((resolve) => {
+      entered = resolve
+    })
+    const pending = new Promise<void>((resolve) => {
+      resume = resolve
+    })
+    const f = await fixture(async () => {
+      if (installing) {
+        entered()
+        await pending
+      }
+    })
+    const preview = await f.first.invoke<SpecialistPackageCandidatePreview>(
+      'specialist:package-upload-preview',
+      await f.upload()
+    )
+    await f.upload(zip, 'second', f.second)
+    installing = true
+    const installation = f.first.invoke('specialist:package-install', {
+      candidateToken: preview.candidateToken
+    })
+    await started
+    try {
+      await expect(f.upload(zip, 'replacement')).rejects.toThrow(/in progress/)
+      f.first.release()
+      await expect(f.upload(zip, 'third', f.third)).rejects.toThrow(/Two Web Specialist imports/)
+    } finally {
+      resume()
+    }
+    await expect(installation).resolves.toMatchObject({ status: 'installed' })
+    await expect(f.upload(zip, 'third', f.third)).resolves.toEqual({ transferId: 'third' })
+  })
+
   it('uploads, previews, installs pending setup, configures and enables a Specialist through public commands', async () => {
     const f = await fixture()
     const request = await f.upload()

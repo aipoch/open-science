@@ -4053,6 +4053,7 @@ describe('SettingsPage layout', () => {
   })
 
   it('labels the Specialist ZIP import breadcrumb with the active workflow', async () => {
+    window.api.specialist.selectPackage = vi.fn().mockResolvedValue({ cancelled: true })
     useSettingsStore.getState().openSettingsToPanel('specialists')
     await act(async () => {
       root.render(<SettingsPage open onClose={vi.fn()} />)

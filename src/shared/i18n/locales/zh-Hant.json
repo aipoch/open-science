@@ -103,6 +103,7 @@
     "Automatic contrast": "自動對比度",
     "Display range": "顯示範圍",
     "Your draft is preserved. Reload the current details, then merge them into your draft before saving.": "草稿已保留。請重新載入目前說明，將其合併至草稿後再儲存。",
+    "Two Web Specialist imports are already active. Finish or cancel one, then try again.": "已有兩項 Web 專家匯入正在進行。請完成或取消其中一項，然後重試。",
     "Could not import Specialist ZIP. Try again.": "無法匯入專家 ZIP。請重試。",
     "Uploading Specialist ZIP… {{percent}}%": "正在上傳專家 ZIP… {{percent}}%",
     "Project: {{name}}": "專案：{{name}}",

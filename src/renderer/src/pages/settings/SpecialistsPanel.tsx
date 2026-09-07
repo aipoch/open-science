@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { canImportSpecialistPackage } from '@/lib/specialist-package-upload'
 import { Trans, useTranslation } from 'react-i18next'
 import {
   AlertTriangle,
@@ -246,6 +247,7 @@ const InstalledSpecialistsPanel = ({
   const webPackageImport =
     typeof window.api.specialist?.beginPackageUpload === 'function' &&
     typeof window.api.specialist?.selectPackage !== 'function'
+  const packageImportAvailable = canImportSpecialistPackage()
 
   useEffect(() => {
     if (view.kind !== 'import' || typeof window.api.specialist?.selectPackage === 'function') return
@@ -956,15 +958,22 @@ const InstalledSpecialistsPanel = ({
               </Button>
               <Button
                 type="button"
-                disabled={packageBusy}
+                disabled={packageBusy || !packageImportAvailable}
                 onClick={() => {
                   setPackageErrorCode(undefined)
                   setTemplateSaveError(undefined)
                   setSkillConflictResolutions({})
                   setPackageBusy(true)
                   void selectPackage()
-                    .catch(() =>
-                      setTemplateSaveError('Could not import Specialist ZIP. Try again.')
+                    .catch((error: unknown) =>
+                      setTemplateSaveError(
+                        error instanceof Error &&
+                          error.message.includes('Two Web Specialist imports are already active.')
+                          ? t(
+                              'Two Web Specialist imports are already active. Finish or cancel one, then try again.'
+                            )
+                          : t('Could not import Specialist ZIP. Try again.')
+                      )
                     )
                     .finally(() => setPackageBusy(false))
                 }}
@@ -1556,7 +1565,7 @@ const InstalledSpecialistsPanel = ({
                 <DropdownMenuSeparator />
                 <DropdownMenuItem
                   className="gap-2.5"
-                  disabled={catalogReadOnly}
+                  disabled={catalogReadOnly || !packageImportAvailable}
                   onSelect={() => onNavigate({ kind: 'import' })}
                 >
                   <Upload className="size-4 shrink-0" aria-hidden="true" />

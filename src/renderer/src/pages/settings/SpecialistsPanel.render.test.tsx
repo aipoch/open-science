@@ -41,6 +41,20 @@ if (!Element.prototype.hasPointerCapture) {
 let container: HTMLDivElement
 let root: Root
 const initialStore = useSpecialistStore.getState()
+const installWebImportApi = (): void => {
+  delete (window.api.specialist as Partial<Window['api']['specialist']>).selectPackage
+  Object.assign(window.api.specialist, {
+    beginPackageUpload: vi.fn(),
+    previewPackageUpload: vi.fn(),
+    abortPackageUpload: vi.fn(),
+    installPackage: vi.fn(),
+    cancelPackage: vi.fn()
+  })
+  window.api.uploads = {
+    appendTransfer: vi.fn(),
+    getTransferStatus: vi.fn()
+  } as unknown as Window['api']['uploads']
+}
 const specialistItems: SpecialistListItem[] = [
   {
     kind: 'custom',
@@ -96,6 +110,7 @@ beforeEach(() => {
   resetMarketplaceStoreForTests()
   window.api = {
     specialist: {
+      selectPackage: vi.fn().mockResolvedValue({ cancelled: true }),
       list: vi.fn().mockResolvedValue({ items: specialistItems, integrity: { status: 'ok' } }),
       create: vi.fn(),
       update: vi.fn(),
@@ -705,8 +720,8 @@ describe('SpecialistsPanel', () => {
     expect(document.body.textContent).not.toContain('Export complete')
   })
 
-  it('opens a browser ZIP chooser on Remote Web without the Electron specialist API', async () => {
-    delete (window.api as { specialist?: Window['api']['specialist'] }).specialist
+  it('opens a browser ZIP chooser on Remote Web without the native picker', async () => {
+    installWebImportApi()
     useSpecialistStore.setState({ items: [], isLoaded: false })
     const selectionErrors: unknown[] = []
     // Observe the real store action without leaking its rejection into unrelated tests.
@@ -767,6 +782,29 @@ describe('SpecialistsPanel', () => {
     )
     expect(document.body.textContent).toContain('Choose ZIP')
     expect(document.body.textContent).toContain('Back')
+  })
+
+  it('explains when the host already has two active Web imports', async () => {
+    installWebImportApi()
+    useSpecialistStore.setState({
+      selectPackage: vi
+        .fn()
+        .mockRejectedValue(
+          new Error(
+            'Two Web Specialist imports are already active. Finish or cancel one, then try again.'
+          )
+        )
+    })
+    await act(async () =>
+      root.render(<SpecialistsPanel view={{ kind: 'import' }} onNavigate={vi.fn()} />)
+    )
+    const choose = Array.from(document.body.querySelectorAll('button')).find(
+      (node) => node.textContent === 'Choose ZIP'
+    )
+    await act(async () => choose?.click())
+    expect(document.body.textContent).toContain(
+      'Two Web Specialist imports are already active. Finish or cancel one, then try again.'
+    )
   })
 
   it('starts the template download directly without an intermediate page', async () => {
@@ -2123,7 +2161,7 @@ describe('SpecialistsPanel', () => {
       ...(specialistItems[0] as Extract<SpecialistListItem, { kind: 'custom' }>),
       origin: 'marketplace' as const
     }
-    window.api.specialist.beginPackageUpload = vi.fn()
+    installWebImportApi()
     useSpecialistStore.setState({ items: [managed] })
     ;(window.api.specialist.list as ReturnType<typeof vi.fn>).mockResolvedValue({
       items: [managed],
@@ -2273,6 +2311,35 @@ describe('SpecialistsPanel Chat with agent', () => {
       'Preview a package, then finish setup in the existing editor'
     )
     expect(onNavigate).toHaveBeenCalledWith({ kind: 'import' })
+  })
+
+  it.each([
+    ['specialist', 'beginPackageUpload'],
+    ['specialist', 'previewPackageUpload'],
+    ['specialist', 'abortPackageUpload'],
+    ['specialist', 'installPackage'],
+    ['specialist', 'cancelPackage'],
+    ['uploads', 'appendTransfer'],
+    ['uploads', 'getTransferStatus']
+  ] as const)('disables ZIP import when %s.%s is unavailable', async (namespace, method) => {
+    installWebImportApi()
+    Reflect.deleteProperty(window.api[namespace], method)
+    const onNavigate = vi.fn()
+    await act(async () =>
+      root.render(<SpecialistsPanel view={{ kind: 'list' }} onNavigate={onNavigate} />)
+    )
+    openRadixMenu(openAddSpecialistMenu())
+    const item = Array.from(document.body.querySelectorAll<HTMLElement>('[role="menuitem"]')).find(
+      (node) => node.textContent?.includes('Import ZIP')
+    )
+    expect(item?.getAttribute('aria-disabled')).toBe('true')
+    await act(async () =>
+      root.render(<SpecialistsPanel view={{ kind: 'import' }} onNavigate={onNavigate} />)
+    )
+    const choose = Array.from(document.body.querySelectorAll('button')).find(
+      (node) => node.textContent === 'Choose ZIP'
+    )
+    expect(choose?.disabled).toBe(true)
   })
 
   it('uses the approved Chat with agent subtitle copy', async () => {

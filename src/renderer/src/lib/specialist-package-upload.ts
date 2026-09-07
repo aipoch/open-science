@@ -2,6 +2,16 @@ import { uploadFileChunks } from '../pages/workspace/composer-upload-transfer'
 import type { SpecialistPackageCandidatePreview } from '../../../shared/specialist-package'
 import type { UploadTransferProgress } from '../../../shared/uploads'
 
+export const canImportSpecialistPackage = (): boolean =>
+  typeof window.api.specialist?.selectPackage === 'function' ||
+  (typeof window.api.specialist?.beginPackageUpload === 'function' &&
+    typeof window.api.specialist?.previewPackageUpload === 'function' &&
+    typeof window.api.specialist?.abortPackageUpload === 'function' &&
+    typeof window.api.specialist?.installPackage === 'function' &&
+    typeof window.api.specialist?.cancelPackage === 'function' &&
+    typeof window.api.uploads?.appendTransfer === 'function' &&
+    typeof window.api.uploads?.getTransferStatus === 'function')
+
 // Keep the picker synchronous with the user click so browser user activation is preserved.
 export const chooseSpecialistZip = (signal: AbortSignal): Promise<File | undefined> =>
   new Promise((resolve) => {

@@ -103,6 +103,7 @@
     "Automatic contrast": "自动对比度",
     "Display range": "显示范围",
     "Your draft is preserved. Reload the current details, then merge them into your draft before saving.": "草稿已保留。请重新加载当前说明，将其合并到草稿后再保存。",
+    "Two Web Specialist imports are already active. Finish or cancel one, then try again.": "已有两项 Web 专家导入正在进行。请完成或取消其中一项，然后重试。",
     "Could not import Specialist ZIP. Try again.": "无法导入专家 ZIP。请重试。",
     "Uploading Specialist ZIP… {{percent}}%": "正在上传专家 ZIP… {{percent}}%",
     "Project: {{name}}": "项目：{{name}}",

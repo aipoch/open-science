@@ -1,4 +1,8 @@
-import { chooseSpecialistZip, uploadSpecialistZip } from '../lib/specialist-package-upload'
+import {
+  canImportSpecialistPackage,
+  chooseSpecialistZip,
+  uploadSpecialistZip
+} from '../lib/specialist-package-upload'
 import { create, type StoreApi } from 'zustand'
 import type {
   SpecialistListItem,
@@ -226,6 +230,7 @@ const useSpecialistStore = create<SpecialistStore>((set) => ({
   duplicate: async (id: string) => window.api.specialist.duplicate({ id }),
 
   selectPackage: async () => {
+    if (!canImportSpecialistPackage()) throw new Error('Specialist ZIP import is unavailable.')
     if (useSpecialistStore.getState().integrity.status === 'degraded') {
       throw new Error(SPECIALIST_DOCUMENT_READ_ONLY_ERROR)
     }
