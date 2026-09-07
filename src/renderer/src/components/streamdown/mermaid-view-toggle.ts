@@ -1,5 +1,6 @@
 import { i18next } from '@/i18n'
 
+import { highlightMermaidSource } from './mermaid-source-highlight'
 import { getMermaidSource, MERMAID_RENDER_ID_ATTRIBUTE } from './mermaid-source-registry'
 
 const AGENT_MARKDOWN_ROOT_SELECTOR = '.agent-markdown-root'
@@ -13,13 +14,13 @@ const SOURCE_VIEW_ATTRIBUTE = 'data-mermaid-source-view'
 
 const BUTTON_CLASS =
   'cursor-pointer p-1 text-muted-foreground transition-all hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50'
-const SOURCE_VIEW_CLASS =
-  'm-0 max-h-[480px] overflow-auto whitespace-pre p-4 font-mono text-[13px] leading-5'
 
 const CODE_ICON =
   '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 6L2 12l6 6M16 6l6 6-6 6"/></svg>'
-const EYE_ICON =
-  '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></svg>'
+const DIAGRAM_ICON =
+  '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><path d="m19 9-5 5-4-4-3 3"/></svg>'
+
+const sourceByContainer = new WeakMap<HTMLElement, string>()
 
 const getDiagramBody = (block: HTMLElement): HTMLElement | null => {
   const last = block.lastElementChild
@@ -43,12 +44,26 @@ const syncButton = (button: HTMLButtonElement, block: HTMLElement): void => {
   if (button.dataset.toggleState === stateKey) return
   button.dataset.toggleState = stateKey
 
-  button.innerHTML = showingSource ? EYE_ICON : CODE_ICON
+  button.innerHTML = showingSource ? DIAGRAM_ICON : CODE_ICON
   const label = i18next.t(showingSource ? 'View diagram' : 'View source')
   button.title = label
   button.setAttribute('aria-label', label)
   button.setAttribute('aria-pressed', String(showingSource))
   button.disabled = disabled
+}
+
+// Renders the fence source like a fenced code block (see the [data-mermaid-source-view] rules in
+// agent-markdown.css): plain text immediately, upgraded to Shiki tokens when the shared
+// highlighter chunk resolves. Stale deliveries (toggled back, re-rendered chart) are dropped.
+const setSourceViewContent = (container: HTMLElement, source: string): void => {
+  sourceByContainer.set(container, source)
+  const code = container.querySelector('code')
+  if (!code) return
+  code.textContent = source
+  highlightMermaidSource(source, (html) => {
+    if (!container.isConnected || sourceByContainer.get(container) !== source) return
+    code.innerHTML = html
+  })
 }
 
 const showSource = (block: HTMLElement): void => {
@@ -57,15 +72,17 @@ const showSource = (block: HTMLElement): void => {
   const source = currentSource(block)
   if (!body || source === undefined) return
 
+  const container = document.createElement('div')
+  container.setAttribute(SOURCE_VIEW_ATTRIBUTE, '')
   const pre = document.createElement('pre')
-  pre.setAttribute(SOURCE_VIEW_ATTRIBUTE, '')
-  pre.className = SOURCE_VIEW_CLASS
-  pre.textContent = source
+  pre.appendChild(document.createElement('code'))
+  container.appendChild(pre)
   for (const child of body.children) {
     if (child instanceof HTMLElement) child.style.display = 'none'
   }
-  body.appendChild(pre)
+  body.appendChild(container)
   block.setAttribute(VIEW_ATTRIBUTE, 'source')
+  setSourceViewContent(container, source)
 }
 
 const showDiagram = (block: HTMLElement): void => {
@@ -113,10 +130,12 @@ const installMermaidViewToggle = (): (() => void) => {
       const block = button.closest(MERMAID_BLOCK_SELECTOR)
       if (!(block instanceof HTMLElement)) continue
       syncButton(button, block)
-      const sourceView = getDiagramBody(block)?.querySelector(`[${SOURCE_VIEW_ATTRIBUTE}]`)
+      const sourceView = getDiagramBody(block)?.querySelector<HTMLElement>(
+        `[${SOURCE_VIEW_ATTRIBUTE}]`
+      )
       const source = currentSource(block)
-      if (sourceView && source !== undefined && sourceView.textContent !== source) {
-        sourceView.textContent = source
+      if (sourceView && source !== undefined && sourceByContainer.get(sourceView) !== source) {
+        setSourceViewContent(sourceView, source)
       }
     }
   }

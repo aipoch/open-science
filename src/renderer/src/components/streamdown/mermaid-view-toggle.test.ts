@@ -1,10 +1,17 @@
 // @vitest-environment jsdom
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { initI18n, i18next } from '@/i18n'
 
+vi.mock('./mermaid-source-highlight', () => ({
+  highlightMermaidSource: vi.fn()
+}))
+
+import { highlightMermaidSource } from './mermaid-source-highlight'
 import { rememberMermaidSource } from './mermaid-source-registry'
 import { installMermaidViewToggle } from './mermaid-view-toggle'
+
+const mockHighlight = vi.mocked(highlightMermaidSource)
 
 const SOURCE = 'graph TD; A-->B'
 
@@ -42,6 +49,7 @@ const findToggle = (actions: HTMLElement): HTMLButtonElement | null =>
 let uninstall: (() => void) | undefined
 
 beforeEach(async () => {
+  mockHighlight.mockReset()
   await initI18n('en')
   uninstall = installMermaidViewToggle()
 })
@@ -102,6 +110,42 @@ describe('installMermaidViewToggle', () => {
     expect(body.querySelector('[data-mermaid-source-view]')).toBeNull()
     expect(diagram?.style.display).toBe('')
     expect(toggle?.title).toBe('View source')
+  })
+
+  it('upgrades the source view with highlighted markup when the highlighter resolves', async () => {
+    rememberMermaidSource('r-3b', SOURCE)
+    const { actions, body } = createMermaidBlock('r-3b')
+    await flushMutations()
+
+    mockHighlight.mockImplementation((source, apply) => {
+      apply(`<span style="color:#0550ae">${source}</span>`)
+    })
+    findToggle(actions)?.click()
+
+    const code = body.querySelector('[data-mermaid-source-view] code')
+    expect(code?.innerHTML).toBe('<span style="color:#0550ae">graph TD; A--&gt;B</span>')
+    expect(mockHighlight).toHaveBeenCalledWith(SOURCE, expect.any(Function))
+  })
+
+  it('drops highlight deliveries that arrive after toggling back to the diagram', async () => {
+    rememberMermaidSource('r-3c', SOURCE)
+    const { actions, body } = createMermaidBlock('r-3c')
+    await flushMutations()
+
+    let deliver: ((html: string) => void) | undefined
+    mockHighlight.mockImplementation((_source, apply) => {
+      deliver = apply
+    })
+    const toggle = findToggle(actions)
+    toggle?.click()
+    const container = body.querySelector('[data-mermaid-source-view]')
+    expect(container).not.toBeNull()
+
+    toggle?.click()
+    deliver?.('<span style="color:#0550ae">stale</span>')
+
+    expect(container?.querySelector('code')?.textContent).toBe(SOURCE)
+    expect(container?.isConnected).toBe(false)
   })
 
   it('refreshes a visible source view when the diagram re-renders', async () => {
