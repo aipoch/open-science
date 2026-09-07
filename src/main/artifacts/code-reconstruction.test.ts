@@ -234,64 +234,125 @@ const makeHarness = (value = provenance(), frameworkId: 'codex' | 'codebuddy' = 
 afterEach(() => vi.restoreAllMocks())
 
 describe('ArtifactCodeReconstructionService', () => {
-  it('refuses replay when an earlier failed cell may have mutated kernel state', async () => {
+  it.each([undefined, true])(
+    'refuses replay when an earlier failed cell may have mutated kernel state (dispatched: %s)',
+    async (kernelDispatched) => {
+      const value = provenance()
+      const helperSource = 'def offset(value):\n    return value + 2'
+      const helper = {
+        helperId: 'offset-helper',
+        skillIdentity: 'skill:offset-helper',
+        packageOrigin: 'built-in',
+        interfaceRevision: '1',
+        registeredGeneration: 'generation-1',
+        exports: ['offset'],
+        source: helperSource,
+        sourceDigest: digest(helperSource)
+      }
+      const first = value.execution!.runs[0]!
+      const producer = value.execution!.runs[1]!
+      first.script = 'baseline = 0'
+      first.kernelEpochId = producer.kernelEpochId = 'epoch-1'
+      producer.runIndex = 3
+      producer.script = 'print(offset(baseline))'
+      producer.helperModuleKeys = [notebookHelperEvidenceKey(helper)]
+      value.execution!.producerRunIndex = 3
+      if ('run_index' in value.evidence.producer) value.evidence.producer.run_index = 3
+      const failed = {
+        ...first,
+        runId: 'failed-run',
+        runIndex: 2,
+        status: 'failed' as const,
+        ...(kernelDispatched === undefined ? {} : { kernelDispatched }),
+        script: 'baseline = 40\nraise ValueError("after mutation")',
+        outputs: [{ type: 'error' as const, name: 'ValueError', message: 'after mutation' }]
+      }
+      value.execution!.runs = [first, failed, producer]
+      value.execution!.helperModules = [helper]
+      value.execution!.helperEvidenceStatus = { state: 'complete' }
+      const original = await execFileAsync('python3', [
+        '-c',
+        [
+          helperSource,
+          first.script,
+          'try:',
+          ...failed.script.split('\n').map((line) => `    ${line}`),
+          'except ValueError:',
+          '    pass',
+          producer.script
+        ].join('\n')
+      ])
+      expect(original.stdout.trim()).toBe('42')
+      const harness = makeHarness(value)
+      const generated = await harness.service.generate(request)
+      // On the broken implementation, demonstrate the semantic mismatch before the guard assertion.
+      if (generated.state === 'cached') {
+        const replay = await execFileAsync('python3', ['-c', generated.value.code])
+        expect.soft(replay.stdout.trim()).toBe(original.stdout.trim())
+        expect(generated.value).toMatchObject({ origin: 'app-replay', sourceTruncated: false })
+      }
+      expect(generated).toEqual({ state: 'unavailable', reason: 'supporting-code-incomplete' })
+      await expect(harness.service.get(request)).resolves.toEqual(generated)
+      expect(harness.run).not.toHaveBeenCalled()
+      expect(harness.writeCodeReconstructionCache).not.toHaveBeenCalled()
+    }
+  )
+
+  it.each(['app-replay', 'llm'] as const)(
+    'allows %s after an explicitly non-dispatched failure and caches the result',
+    async (origin) => {
+      const value = provenance()
+      const first = value.execution!.runs[0]!
+      const producer = value.execution!.runs[1]!
+      Object.assign(first, {
+        status: 'failed',
+        kernelDispatched: false,
+        script: 'raise RuntimeError("must not replay")'
+      })
+      first.kernelEpochId = producer.kernelEpochId = 'epoch-1'
+      producer.script = 'print(2)'
+      if (origin === 'app-replay') {
+        const source = 'def offset(value):\n    return value + 2'
+        const helper = {
+          helperId: 'offset-helper',
+          skillIdentity: 'skill:offset-helper',
+          packageOrigin: 'built-in',
+          interfaceRevision: '1',
+          registeredGeneration: 'generation-1',
+          exports: ['offset'],
+          source,
+          sourceDigest: digest(source)
+        }
+        value.execution!.helperModules = [helper]
+        value.execution!.helperEvidenceStatus = { state: 'complete' }
+        producer.helperModuleKeys = [notebookHelperEvidenceKey(helper)]
+        producer.script = 'print(offset(0))'
+      }
+      const harness = makeHarness(value)
+      harness.run.mockResolvedValue({ text: 'print(2)', frameworkId: 'codex', model: 'model-a' })
+      await expect(harness.service.get(request)).resolves.toMatchObject({ state: 'ready', origin })
+      const generated = await harness.service.generate(request)
+      expect(generated).toMatchObject({ state: 'cached', value: { origin } })
+      if (generated.state !== 'cached') throw new Error('expected cached reconstruction')
+      expect(generated.value.code).not.toContain('must not replay')
+      if (origin === 'app-replay') {
+        expect(harness.run).not.toHaveBeenCalled()
+        const replay = await execFileAsync('python3', ['-c', generated.value.code])
+        expect(replay.stdout.trim()).toBe('2')
+      }
+      await expect(harness.service.get(request)).resolves.toEqual(generated)
+    }
+  )
+
+  it('does not accept an undispatched failed producer as evidence of an artifact computation', async () => {
     const value = provenance()
-    const helperSource = 'def offset(value):\n    return value + 2'
-    const helper = {
-      helperId: 'offset-helper',
-      skillIdentity: 'skill:offset-helper',
-      packageOrigin: 'built-in',
-      interfaceRevision: '1',
-      registeredGeneration: 'generation-1',
-      exports: ['offset'],
-      source: helperSource,
-      sourceDigest: digest(helperSource)
-    }
-    const first = value.execution!.runs[0]!
-    const producer = value.execution!.runs[1]!
-    first.script = 'baseline = 0'
-    first.kernelEpochId = producer.kernelEpochId = 'epoch-1'
-    producer.runIndex = 3
-    producer.script = 'print(offset(baseline))'
-    producer.helperModuleKeys = [notebookHelperEvidenceKey(helper)]
-    value.execution!.producerRunIndex = 3
-    if ('run_index' in value.evidence.producer) value.evidence.producer.run_index = 3
-    const failed = {
-      ...first,
-      runId: 'failed-run',
-      runIndex: 2,
-      status: 'failed' as const,
-      script: 'baseline = 40\nraise ValueError("after mutation")',
-      outputs: [{ type: 'error' as const, name: 'ValueError', message: 'after mutation' }]
-    }
-    value.execution!.runs = [first, failed, producer]
-    value.execution!.helperModules = [helper]
-    value.execution!.helperEvidenceStatus = { state: 'complete' }
-    const original = await execFileAsync('python3', [
-      '-c',
-      [
-        helperSource,
-        first.script,
-        'try:',
-        ...failed.script.split('\n').map((line) => `    ${line}`),
-        'except ValueError:',
-        '    pass',
-        producer.script
-      ].join('\n')
-    ])
-    expect(original.stdout.trim()).toBe('42')
+    Object.assign(value.execution!.runs[1]!, { status: 'failed', kernelDispatched: false })
     const harness = makeHarness(value)
-    const generated = await harness.service.generate(request)
-    // On the broken implementation, demonstrate the semantic mismatch before the guard assertion.
-    if (generated.state === 'cached') {
-      const replay = await execFileAsync('python3', ['-c', generated.value.code])
-      expect.soft(replay.stdout.trim()).toBe(original.stdout.trim())
-      expect(generated.value).toMatchObject({ origin: 'app-replay', sourceTruncated: false })
-    }
-    expect(generated).toEqual({ state: 'unavailable', reason: 'supporting-code-incomplete' })
-    await expect(harness.service.get(request)).resolves.toEqual(generated)
+    await expect(harness.service.generate(request)).resolves.toEqual({
+      state: 'unavailable',
+      reason: 'supporting-code-incomplete'
+    })
     expect(harness.run).not.toHaveBeenCalled()
-    expect(harness.writeCodeReconstructionCache).not.toHaveBeenCalled()
   })
 
   it.each(['max_tokens', 'cancelled', 'refusal'] as const)(
@@ -496,6 +557,7 @@ describe('ArtifactCodeReconstructionService', () => {
       const producer = value.execution!.runs[1]!
       first.status = status
       first.kernelKind = producer.kernelKind = kernelKind
+      if ('kernel_kind' in value.evidence.producer) value.evidence.producer.kernel_kind = kernelKind
       // Legacy evidence has no epoch IDs, so isolation cannot be established.
       const harness = makeHarness(value)
       const code = 'print("cached")'

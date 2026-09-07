@@ -216,7 +216,8 @@ const sourceState = (
     return { state: 'unavailable', reason: 'producer-script-missing' }
   }
   // Failed/interrupted cells can mutate a persistent kernel before stopping. Apply this before
-  // cache lookup and both reconstruction paths; missing epoch IDs cannot prove isolation.
+  // cache lookup and both reconstruction paths. Only explicit non-dispatch makes earlier failures
+  // safe to omit; missing dispatch evidence or epoch IDs cannot prove isolation.
   if (
     producerRun.kernelKind !== 'bash' &&
     provenance.execution.runs.some(
@@ -226,7 +227,8 @@ const sourceState = (
         (!producerRun.kernelEpochId ||
           !run.kernelEpochId ||
           run.kernelEpochId === producerRun.kernelEpochId) &&
-        run.status !== 'completed'
+        run.status !== 'completed' &&
+        (run.runId === producerRun.runId || run.kernelDispatched !== false)
     )
   ) {
     return { state: 'unavailable', reason: 'supporting-code-incomplete' }
