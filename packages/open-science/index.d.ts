@@ -1,3 +1,85 @@
+export type ConnectorTransport = 'stdio' | 'streamable_http' | 'sse'
+export type ConnectorConfiguration = {
+  transport: ConnectorTransport
+  displayName?: string
+  description?: string
+  command?: string
+  args?: string[]
+  url?: string
+  envCredentialIds?: Record<string, string>
+  headerCredentialIds?: Record<string, string>
+  oauthCredentialId?: string
+}
+export type ConnectorView = {
+  id: string
+  name: string
+  displayName: string
+  description?: string
+  enabled: boolean
+  transport?: ConnectorTransport
+  command?: string
+  args?: string[]
+  url?: string
+  availability?: 'unavailable' | 'unauthenticated' | 'credential_unavailable'
+  checking?: boolean
+  hasEnv?: boolean
+  environmentNames?: string[]
+  hasHeaders?: boolean
+  headerNames?: string[]
+  oauthCredentialId?: string
+  oauth?: {
+    hasTokens: boolean
+    hasClientSecret?: boolean
+    sharedCredential?: boolean
+    clientMetadataUrl?: string
+    authorizationServerUrl?: string
+    clientId?: string
+    redirectUri?: string
+    scopes?: string[]
+  }
+}
+export type ConnectorsSnapshot = {
+  connectors: ConnectorView[]
+  customServers: ConnectorView[]
+  ncbi: { contactEmail?: string; hasApiKey: boolean }
+  openAlex?: { hasApiKey: boolean }
+  skillProjectionStatus?: 'degraded'
+  reservedCustomServerIds?: string[]
+}
+export type ConnectorTestResult = { success: boolean; toolCount?: number; message: string }
+export type CredentialInput =
+  | { kind: 'api_key' | 'token'; displayName: string; secret: string }
+  | {
+      kind: 'oauth'
+      displayName: string
+      resourceUri: string
+      transport: 'streamable_http' | 'sse'
+      oauth: {
+        clientMetadataUrl?: string
+        authorizationServerUrl?: string
+        clientId?: string
+        redirectUri?: string
+        scopes?: string[]
+        clientSecret?: string
+      }
+    }
+export type CredentialView = {
+  id: string
+  displayName: string
+  kind: 'api_key' | 'token' | 'oauth'
+  status: 'stored' | 'connected' | 'disconnected'
+  needsSecret: boolean
+  consumerCount: number
+  consumerNames: string[]
+  createdAt: number
+  updatedAt: number
+  resourceUri?: string
+  transport?: 'streamable_http' | 'sse'
+  hasClientSecret?: boolean
+  needsClientSecret?: boolean
+}
+export type CredentialsSnapshot = { credentials: CredentialView[] }
+
 export type PermissionProfile = 'ask' | 'auto' | 'full'
 export type DelegationPolicy = 'allow' | 'deny'
 export type TurnIntent = 'plan-first'
@@ -260,6 +342,34 @@ export class OpenScienceClient {
     requestTimeoutMs?: number
   })
   health(options?: RequestOptions): Promise<unknown>
+  listConnectors(options?: RequestOptions): Promise<ConnectorsSnapshot>
+  getConnector(id: string, options?: RequestOptions): Promise<ConnectorView>
+  setConnectorEnabled(
+    id: string,
+    enabled: boolean,
+    options?: RequestOptions
+  ): Promise<ConnectorsSnapshot>
+  addConnector(
+    request: ConnectorConfiguration & { name: string; displayName: string; id?: string },
+    options?: RequestOptions
+  ): Promise<ConnectorsSnapshot>
+  updateConnector(
+    id: string,
+    request: ConnectorConfiguration,
+    options?: RequestOptions
+  ): Promise<ConnectorsSnapshot>
+  removeConnector(id: string, options?: RequestOptions): Promise<ConnectorsSnapshot>
+  testConnector(id: string, options?: RequestOptions): Promise<ConnectorTestResult>
+  listCredentials(options?: RequestOptions): Promise<CredentialsSnapshot>
+  createCredential(
+    request: CredentialInput,
+    options?: RequestOptions
+  ): Promise<{ createdCredential: CredentialView; credentials?: CredentialView[] }>
+  updateCredential(
+    id: string,
+    request: { displayName?: string; secret?: string },
+    options?: RequestOptions
+  ): Promise<CredentialsSnapshot>
   listProjects(options?: RequestOptions): Promise<Project[]>
   createProject(
     request: {

@@ -142,6 +142,7 @@ const ELECTRON_NATIVE_COMMAND_NAMES = Object.freeze([
 ])
 
 const TASK_NATIVE_COMMAND_NAMES = Object.freeze([
+  'settings:test-custom-server',
   'projects:update-session-defaults',
   'reviewer:abort',
   'settings:set-agent-routing',
@@ -152,6 +153,18 @@ const TASK_NATIVE_COMMAND_NAMES = Object.freeze([
 ])
 
 const TASK_COMMAND_NAMES = Object.freeze([
+  'settings:list-connectors',
+  'settings:get-connector-detail',
+  'settings:set-connector-enabled',
+  'settings:set-custom-server-enabled',
+  'settings:add-custom-server',
+  'settings:update-custom-server',
+  'settings:remove-custom-server',
+  'settings:test-custom-server',
+  'settings:list-device-credentials',
+  'settings:create-device-credential',
+  'settings:update-device-credential',
+
   'projects:list',
   'projects:create',
   'projects:update',

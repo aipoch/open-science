@@ -289,10 +289,22 @@ describe('application command composition', () => {
     expect(composition.task.commandNames()).not.toContain('reviewer:abort-fix-loop')
   })
 
-  it('exposes only the twenty-one Task commands and no transport-wide capability', async () => {
+  it('exposes only the explicit Task commands and no transport-wide capability', async () => {
     const composition = createApplicationCommandComposition(dependencies())
 
     expect(composition.task.commandNames()).toEqual([
+      'settings:list-connectors',
+      'settings:get-connector-detail',
+      'settings:set-connector-enabled',
+      'settings:set-custom-server-enabled',
+      'settings:add-custom-server',
+      'settings:update-custom-server',
+      'settings:remove-custom-server',
+      'settings:test-custom-server',
+      'settings:list-device-credentials',
+      'settings:create-device-credential',
+      'settings:update-device-credential',
+
       'projects:list',
       'projects:create',
       'projects:update',
@@ -565,4 +577,20 @@ describe('application command composition', () => {
     ])
     expect(listProjects).toHaveBeenCalledTimes(2)
   })
+})
+
+it('routes Task Connector reads to the existing Settings owner without adding Web diagnostics', async () => {
+  const snapshot = { connectors: [], customServers: [], ncbi: { hasApiKey: false } }
+  const listConnectors = vi.fn(async () => snapshot)
+  const composition = createApplicationCommandComposition({
+    ...dependencies(),
+    settingsCore: { service: { listConnectors } } as never
+  })
+  await expect(composition.task.invoke('settings:list-connectors', invocation())).resolves.toEqual(
+    snapshot
+  )
+  expect(listConnectors).toHaveBeenCalledOnce()
+  expect(composition.localWeb.commandNames()).not.toContain('settings:test-custom-server')
+  expect(composition.remoteWeb.commandNames()).not.toContain('settings:test-custom-server')
+  composition.dispose()
 })

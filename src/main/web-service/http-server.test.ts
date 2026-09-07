@@ -1,3 +1,5 @@
+// @ts-expect-error The published ESM entry uses a sibling index.d.ts.
+import { OpenScienceClient } from '../../../packages/open-science/index.mjs'
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { request as httpRequest, type IncomingMessage, ServerResponse } from 'node:http'
 import { connect } from 'node:net'
@@ -35,7 +37,7 @@ import {
   type ExternalWebAccessAuthorization,
   type RunningWebServer
 } from './http-server'
-import { TaskApiError } from './task-api'
+import { HeadlessTaskApi, TaskApiError } from './task-api'
 import { ManagedPreviewResources } from '../managed-preview-resources'
 import { createManagedPreviewOwnerRegistry } from '../managed-preview-ipc'
 import type { ApplicationCommandByNameDispatcher } from '../application-command-composition'
@@ -4488,5 +4490,63 @@ describe('Web preview reconnect owner contract', () => {
     } finally {
       for (const socket of sockets) socket.close()
     }
+  })
+})
+
+describe('Connector Task HTTP routes', () => {
+  it('routes authenticated SDK reads and writes to the same Settings snapshot', async () => {
+    const snapshot = {
+      connectors: [],
+      customServers: [
+        {
+          id: 'sample',
+          name: 'sample',
+          displayName: 'Sample',
+          transport: 'stdio',
+          command: 'node',
+          enabled: false
+        }
+      ],
+      ncbi: { hasApiKey: false }
+    }
+    const invoke = vi.fn(async (channel: string, invocation: { args: readonly unknown[] }) => {
+      if (channel === 'settings:set-custom-server-enabled')
+        snapshot.customServers[0].enabled = (invocation.args[0] as { enabled: boolean }).enabled
+      return snapshot
+    })
+    const tasks = new HeadlessTaskApi({
+      commands: { commandNames: () => [], invoke },
+      agent: {} as never
+    })
+    const server = await startTestWebHttpServer({
+      host: '127.0.0.1',
+      port: 0,
+      token: 'test-token',
+      staticRoot: '/unused',
+      tasks,
+      rpc: { channels: () => [], invoke: vi.fn() },
+      bootstrap: {
+        appName: 'Open Science',
+        appVersion: 'test',
+        configRoot: '/fake/root',
+        platform: 'test',
+        versions: { electron: '1', chrome: '1', node: '1' }
+      }
+    })
+    servers.push(server)
+    const baseUrl = `http://127.0.0.1:${server.port}`
+    expect((await fetch(`${baseUrl}/api/v1/connectors`)).status).toBe(401)
+    const client = new OpenScienceClient({ baseUrl, token: 'test-token' })
+    expect((await client.listConnectors()).customServers[0].enabled).toBe(false)
+    await client.setConnectorEnabled('sample', true)
+    expect((await client.getConnector('sample')).enabled).toBe(true)
+    expect(invoke).toHaveBeenCalledWith(
+      'settings:set-custom-server-enabled',
+      expect.objectContaining({
+        args: [{ id: 'sample', enabled: true }],
+        callerContext: expect.objectContaining({ surface: 'task', location: 'local' })
+      })
+    )
+    await tasks.dispose()
   })
 })

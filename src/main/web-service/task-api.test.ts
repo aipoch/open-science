@@ -1548,3 +1548,66 @@ describe('HeadlessTaskApi adapter', () => {
     await api.runWithCallerContext(context, () => api.cancelRun(run.id))
   })
 })
+
+describe('Connector management through Task API', () => {
+  const snapshot = {
+    connectors: [{ id: 'bundled', enabled: true }],
+    customServers: [{ id: 'custom', enabled: false, transport: 'stdio', command: 'node' }],
+    ncbi: { hasApiKey: false }
+  }
+  it('shares Connector reads and mutations with Settings command owners', async () => {
+    const invoke = vi.fn(async () => snapshot)
+    const api = new HeadlessTaskApi({ commands: commandsFrom(invoke), agent: createAgent() })
+    expect(await api.listConnectors()).toEqual(snapshot)
+    expect(await api.getConnector('custom')).toEqual(snapshot.customServers[0])
+    await api.setConnectorEnabled('custom', true)
+    expect(invoke).toHaveBeenCalledWith('settings:set-custom-server-enabled', taskCallerContext(), [
+      { id: 'custom', enabled: true }
+    ])
+    await api.setConnectorEnabled('bundled', false)
+    expect(invoke).toHaveBeenCalledWith('settings:set-connector-enabled', taskCallerContext(), [
+      { id: 'bundled', enabled: false }
+    ])
+    await api.updateConnector('custom', { transport: 'stdio', args: [] })
+    expect(invoke).toHaveBeenCalledWith('settings:update-custom-server', taskCallerContext(), [
+      { id: 'custom', transport: 'stdio', args: [] }
+    ])
+    await api.removeConnector('custom')
+    expect(invoke).toHaveBeenCalledWith('settings:remove-custom-server', taskCallerContext(), [
+      { id: 'custom' }
+    ])
+  })
+
+  it('rejects remote mutation before accessing configuration', async () => {
+    const invoke = vi.fn(async () => snapshot)
+    const api = new HeadlessTaskApi({ commands: commandsFrom(invoke), agent: createAgent() })
+    await expect(
+      api.runWithCallerContext(createTaskCallerContext({ location: 'remote' }), () =>
+        api.updateConnector('custom', { transport: 'stdio' })
+      )
+    ).rejects.toThrow('local')
+    expect(invoke).not.toHaveBeenCalled()
+  })
+
+  it('does not forward secret-bearing failure messages', async () => {
+    const invoke = vi.fn(async () => {
+      throw new Error('bad secret=do-not-print')
+    })
+    const api = new HeadlessTaskApi({ commands: commandsFrom(invoke), agent: createAgent() })
+    await expect(
+      api.createCredential({ kind: 'token', displayName: 'A', secret: 'do-not-print' })
+    ).rejects.toThrow('Credential operation failed')
+  })
+})
+
+it('preserves the safe saved-but-refresh-failed outcome for credential updates', async () => {
+  const message =
+    'Credential changes were saved, but Connectors could not refresh. Retry from Settings > Connectors.'
+  const api = new HeadlessTaskApi({
+    commands: commandsFrom(async () => {
+      throw new Error(message)
+    }),
+    agent: createAgent()
+  })
+  await expect(api.updateCredential('credential', { secret: 'private' })).rejects.toThrow(message)
+})

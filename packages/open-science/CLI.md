@@ -527,3 +527,67 @@ not match SQLite, or when a rollback target already exists.
 
 The initial CLI does not expose file or directory attachments, per-run model selection, or per-run
 agent-backend selection. These require stable public runtime contracts before they can be added.
+
+## Connector management
+
+Connector commands use the running backend and the same saved Settings as the desktop and web UI.
+Use `--config-root` to select the intended instance. Custom MCP and credential mutations require a
+local authenticated connection; run the CLI on the server itself, including through SSH.
+
+```sh
+open-science connector list --json
+open-science connector show context7 --json
+open-science connector enable context7
+open-science connector disable context7
+open-science connector add --json < connector.json
+open-science connector update context7 --json < connector-update.json
+open-science connector remove context7
+open-science connector test context7 --json
+```
+
+`add` reads an object with `name`, `displayName`, `transport`, and `command` (stdio) or `url`
+(`streamable_http` or `sse`). Optional fields include `args`, `description`, `envCredentialIds`,
+`headerCredentialIds`, and `oauthCredentialId`. Names and IDs remain stable on update. `update`
+requires `transport`; omitted credential bindings retain their saved values. Use an empty binding
+object to clear environment/header bindings. Only custom MCP Connectors can be added, edited, or removed.
+
+```json
+{
+  "name": "context7",
+  "displayName": "Context7",
+  "transport": "streamable_http",
+  "url": "https://mcp.example.test/mcp"
+}
+```
+
+`list` and `show` expose safe Settings views, not raw credential material. `enabled` is a selection
+preference, not proof of connectivity or a global revocation of Specialist access. `availability`,
+`checking`, credential-presence fields, and `skillProjectionStatus` retain their Settings meanings.
+Changes reuse existing agent refresh behavior. Start a new session if its tool list remains unchanged;
+these commands do not force-reset active conversations.
+
+`test` opens a separate MCP connection, discovers tools, and closes it. It does not enable a disabled
+Connector or execute business tools. Its result is `{ success, toolCount?, message }`; failure exits
+nonzero. Discovery is bounded to ten seconds. Bundled Connector live diagnostics are unsupported.
+OAuth refresh may update existing encrypted token state; testing does not perform first-time browser login.
+
+### Credentials
+
+```sh
+open-science credential list --json
+open-science credential add --json < credential.json
+open-science credential update <credential-id> --json < credential-update.json
+```
+
+Credential writes read JSON exclusively from stdin. Do not put secrets in command arguments or shell
+history. Protect any input file and remove it when no longer needed. A token input has the shape
+`{ "displayName": "Service token", "kind": "token", "secret": "..." }`; `api_key` is also supported.
+The returned `createdCredential.id` can be bound in `envCredentialIds` or `headerCredentialIds`.
+Updates accept `displayName` and/or `secret`. Existing OAuth registration can be created with `kind:
+"oauth"`, `resourceUri`, remote `transport`, and an `oauth` registration object, then authenticated
+through Settings. First-time browserless OAuth login is outside these commands.
+
+Secrets use the existing OS-protected store. A headless machine without a usable system credential
+vault cannot save secrets; there is no plaintext fallback. Existing unreadable credentials need re-entry.
+These commands do not migrate historical configuration or store diagnostic history. Older backends that
+lack the endpoints return an endpoint error; the CLI never falls back to editing Settings files directly.

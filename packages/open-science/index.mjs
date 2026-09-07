@@ -179,6 +179,67 @@ export class OpenScienceClient {
     )
   }
 
+  listConnectors(options) {
+    return this.request(`/api/v1/connectors`, { ...options, method: 'GET' })
+  }
+
+  getConnector(id, options) {
+    return this.request(`/api/v1/connectors/${encodeURIComponent(id)}`, {
+      ...options,
+      method: 'GET'
+    })
+  }
+
+  setConnectorEnabled(id, enabled, options) {
+    return this.request(`/api/v1/connectors/${encodeURIComponent(id)}/enabled`, {
+      ...options,
+      method: 'PUT',
+      body: { enabled }
+    })
+  }
+
+  addConnector(request, options) {
+    return this.request(`/api/v1/connectors`, { ...options, method: 'POST', body: request })
+  }
+
+  updateConnector(id, request, options) {
+    return this.request(`/api/v1/connectors/${encodeURIComponent(id)}`, {
+      ...options,
+      method: 'PATCH',
+      body: request
+    })
+  }
+
+  removeConnector(id, options) {
+    return this.request(`/api/v1/connectors/${encodeURIComponent(id)}`, {
+      ...options,
+      method: 'DELETE'
+    })
+  }
+
+  testConnector(id, options) {
+    return this.request(`/api/v1/connectors/${encodeURIComponent(id)}/test`, {
+      ...options,
+      method: 'POST'
+    })
+  }
+
+  listCredentials(options) {
+    return this.request(`/api/v1/credentials`, { ...options, method: 'GET' })
+  }
+
+  createCredential(request, options) {
+    return this.request(`/api/v1/credentials`, { ...options, method: 'POST', body: request })
+  }
+
+  updateCredential(id, request, options) {
+    return this.request(`/api/v1/credentials/${encodeURIComponent(id)}`, {
+      ...options,
+      method: 'PATCH',
+      body: request
+    })
+  }
+
   listProjects(options) {
     return this.request('/api/v1/projects', options)
   }
