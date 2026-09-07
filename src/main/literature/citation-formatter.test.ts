@@ -38,7 +38,7 @@ describe('LiteratureCitationFormatter', () => {
     ],
     [
       'AU  - Smith JA',
-      [{ nameMode: 'person', familyName: 'Smith', givenName: 'JA', creatorType: 'author' }]
+      [{ nameMode: 'person', familyName: 'Smith', givenName: 'J. A.', creatorType: 'author' }]
     ],
     [
       'FAU - Smith, Jane Ann\nAU  - Smith JA\nCN  - Research Consortium\nFAU - Jones, Mary\nAU  - Jones M',
@@ -73,7 +73,7 @@ describe('LiteratureCitationFormatter', () => {
       'PMID- 12345\nTI  - Paper\nAU  - Smith JA\nFAU - Jones, Mary\nAU  - Jones M\nFAU - Jones, Mary\nAU  - Jones M\n'
     )
     expect(parsed.items[0].creators).toEqual([
-      { nameMode: 'person', familyName: 'Smith', givenName: 'JA', creatorType: 'author' },
+      { nameMode: 'person', familyName: 'Smith', givenName: 'J. A.', creatorType: 'author' },
       { nameMode: 'person', familyName: 'Jones', givenName: 'Mary', creatorType: 'author' },
       { nameMode: 'person', familyName: 'Jones', givenName: 'Mary', creatorType: 'author' }
     ])
@@ -84,8 +84,21 @@ describe('LiteratureCitationFormatter', () => {
       'PMID- 12345\nTI  - Paper\nAU  - Smith JA\nFAU - Smith, Mary\nAU  - Smith M\n'
     )
     expect(parsed.items[0].creators).toHaveLength(2)
-    expect(parsed.items[0].creators[0]).toMatchObject({ familyName: 'Smith', givenName: 'JA' })
+    expect(parsed.items[0].creators[0]).toMatchObject({ familyName: 'Smith', givenName: 'J. A.' })
     expect(parsed.items[0].creators[1]).toMatchObject({ familyName: 'Smith', givenName: 'Mary' })
+  })
+
+  it('preserves all abbreviated personal initials in formatted citations', async () => {
+    const formatter = new LiteratureCitationFormatter()
+    const parsed = await formatter.parseReferences(
+      'PMID- 12345\nTI  - Older personal author paper\nDP  - 1998\nAU  - Smith JA\n'
+    )
+    const [formatted] = await formatter.formatReferences(
+      [{ id: 'paper', item: parsed.items[0] }],
+      'vancouver',
+      'en-US'
+    )
+    expect(formatted.reference).toContain('Smith JA')
   })
 
   it('formats every pinned built-in style without network access', async () => {

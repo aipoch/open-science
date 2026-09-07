@@ -142,7 +142,12 @@ const nbibCreators = (
     const abbreviated =
       field === 'AU' ? /^(.*?)\s+([A-Z]+(?:\s+(?:Jr|Sr|II|III|IV))?)$/u.exec(value) : null
     const familyName = comma >= 0 ? value.slice(0, comma).trim() : (abbreviated?.[1] ?? value)
-    const givenName = comma >= 0 ? value.slice(comma + 1).trim() : (abbreviated?.[2] ?? '')
+    const givenName =
+      comma >= 0
+        ? value.slice(comma + 1).trim()
+        : (abbreviated?.[2]?.replace(/^[A-Z]+/u, (initials) =>
+            [...initials].map((initial) => `${initial}.`).join(' ')
+          ) ?? '')
     if (comma < 0 && !abbreviated) uncertain.push(`${field} - ${value}`)
     creators.push({ nameMode: 'person', familyName, givenName, creatorType: 'author' })
   }
