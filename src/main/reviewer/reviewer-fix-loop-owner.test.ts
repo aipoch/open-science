@@ -42,13 +42,24 @@ const session = (messages: PersistedChatSession['messages']): PersistedChatSessi
   title: 'Reviewer fix-loop owner test',
   cwd: join(tmpdir(), 'reviewer-fix-loop-workspace'),
   status: 'idle',
-  messages,
+  messages: [
+    {
+      id: 'originating-user',
+      role: 'user',
+      status: 'complete',
+      content: 'Task',
+      eventIds: [],
+      createdAt: 0,
+      updatedAt: 0
+    },
+    ...messages
+  ],
   createdAt: 1,
   updatedAt: 1
 })
 
 const initialMessage: PersistedChatSession['messages'][number] = {
-  id: 'initial-agent',
+  id: 'original-turn',
   role: 'agent',
   content: 'Initial answer',
   status: 'complete',
@@ -135,54 +146,159 @@ describe('reviewer fix-loop owner', () => {
     ])
   })
 
-  it('reviews the exact durable snapshot that proves the correction completed', async () => {
-    const before = session([initialMessage])
-    let correctionSnapshot: PersistedChatSession | undefined
-    const getSession = vi
-      .fn()
-      .mockResolvedValueOnce(before)
-      .mockImplementation(async () => {
-        const promptMessageId =
-          mocks.sendApplicationPrompt.mock.calls[0]?.[0].provenanceContext?.promptMessageId
-        if (!promptMessageId) throw new Error('expected correction prompt identity')
-        correctionSnapshot = session([
-          initialMessage,
-          { ...correctionMessage, responseToMessageId: promptMessageId }
-        ])
-        return correctionSnapshot
-      })
-    const submittedChecks: NewCheck[] = [
-      {
-        status: 'pass',
-        claim: 'Fixed',
-        evidence: 'Verified',
-        sourceFindingId: openCheck.id
-      }
-    ]
-    mocks.runReviewAssessment.mockResolvedValue({
-      review: review('assessment-review'),
-      submittedChecks
-    })
+  it('does not send a correction when cancellation arrives during the durable session load', async () => {
+    const controller = new AbortController()
     const repository = {
       commitFindingDispositions: vi.fn(),
       getReviewsForProjectSession: vi.fn().mockResolvedValue([])
     } as unknown as ReviewRepository
+    const getSession = vi.fn(async () => {
+      controller.abort()
+      return session([initialMessage])
+    })
 
-    await runReviewerFixLoop(makeOptions(getSession, repository))
+    await runReviewerFixLoop(
+      makeOptions(getSession, repository, { abortSignal: controller.signal })
+    )
 
-    expect(mocks.runReviewAssessment).toHaveBeenCalledWith(
-      expect.objectContaining({
-        mode: 'tracked',
-        session: correctionSnapshot,
-        scopeTurnMessageId: correctionMessage.id,
-        turnMessageId: 'original-turn',
-        trackedChecks: [openCheck]
+    expect(mocks.sendApplicationPrompt).not.toHaveBeenCalled()
+    expect(mocks.runReviewAssessment).not.toHaveBeenCalled()
+    expect(repository.commitFindingDispositions).toHaveBeenCalledWith([
+      expect.objectContaining({ trigger: 'aborted', outcome: 'unaddressed' })
+    ])
+  })
+
+  it('checks cancellation again after the correction prompt callback, before sending', async () => {
+    const controller = new AbortController()
+    const repository = {
+      commitFindingDispositions: vi.fn(),
+      getReviewsForProjectSession: vi.fn().mockResolvedValue([])
+    } as unknown as ReviewRepository
+    await runReviewerFixLoop({
+      ...makeOptions(async () => session([initialMessage]), repository, {
+        abortSignal: controller.signal
+      }),
+      onCorrectionPrompt: () => controller.abort()
+    })
+    expect(mocks.sendApplicationPrompt).not.toHaveBeenCalled()
+    expect(repository.commitFindingDispositions).toHaveBeenCalledWith([
+      expect.objectContaining({ trigger: 'aborted', outcome: 'unaddressed' })
+    ])
+  })
+
+  it('cancels an active tracked assessment and terminalizes remaining findings as aborted', async () => {
+    const controller = new AbortController()
+    const repository = {
+      commitFindingDispositions: vi.fn(),
+      getReviewsForProjectSession: vi.fn().mockResolvedValue([])
+    } as unknown as ReviewRepository
+    const getSession = vi
+      .fn()
+      .mockResolvedValueOnce(session([initialMessage]))
+      .mockImplementation(async () =>
+        session([
+          initialMessage,
+          {
+            ...correctionMessage,
+            responseToMessageId:
+              mocks.sendApplicationPrompt.mock.calls[0][0].provenanceContext.promptMessageId
+          }
+        ])
+      )
+    let releaseAssessment!: () => void
+    let assessmentSignal: AbortSignal | undefined
+    let entered!: () => void
+    const assessmentEntered = new Promise<void>((resolve) => {
+      entered = resolve
+    })
+    mocks.runReviewAssessment.mockImplementation(
+      ({ abortSignal }: { abortSignal?: AbortSignal }) => {
+        assessmentSignal = abortSignal
+        return new Promise((resolve) => {
+          releaseAssessment = () =>
+            resolve({
+              review: { ...review('cancelled-assessment'), lifecycle: 'error', outcome: null },
+              submittedChecks: []
+            })
+          abortSignal?.addEventListener('abort', releaseAssessment, { once: true })
+          entered()
+        })
+      }
+    )
+    const pending = runReviewerFixLoop(
+      makeOptions(getSession, repository, {
+        abortSignal: controller.signal
       })
     )
-    expect(getSession).toHaveBeenCalledTimes(2)
-    expect(mocks.getActiveConversationContext).toHaveBeenCalledWith({}, 'originating-user')
-    expect(repository.commitFindingDispositions).not.toHaveBeenCalled()
+    await assessmentEntered
+    controller.abort()
+    try {
+      expect(assessmentSignal).toBe(controller.signal)
+      await pending
+      expect(repository.commitFindingDispositions).toHaveBeenCalledWith([
+        expect.objectContaining({ trigger: 'aborted', outcome: 'unaddressed' })
+      ])
+    } finally {
+      // Release the deliberately held dependency even on the unfixed implementation.
+      releaseAssessment()
+      await pending
+    }
   })
+
+  it.each([false, true])(
+    'preserves the exact durable correction result when cancellation follows commit: %s',
+    async (cancelAfterCommit) => {
+      const controller = new AbortController()
+      const before = session([initialMessage])
+      let correctionSnapshot: PersistedChatSession | undefined
+      const getSession = vi
+        .fn()
+        .mockResolvedValueOnce(before)
+        .mockImplementation(async () => {
+          const promptMessageId =
+            mocks.sendApplicationPrompt.mock.calls[0]?.[0].provenanceContext?.promptMessageId
+          if (!promptMessageId) throw new Error('expected correction prompt identity')
+          correctionSnapshot = session([
+            initialMessage,
+            { ...correctionMessage, responseToMessageId: promptMessageId }
+          ])
+          return correctionSnapshot
+        })
+      const submittedChecks: NewCheck[] = [
+        {
+          status: 'pass',
+          claim: 'Fixed',
+          evidence: 'Verified',
+          sourceFindingId: openCheck.id
+        }
+      ]
+      mocks.runReviewAssessment.mockImplementation(async () => {
+        if (cancelAfterCommit) controller.abort()
+        return { review: review('assessment-review'), submittedChecks }
+      })
+      const repository = {
+        commitFindingDispositions: vi.fn(),
+        getReviewsForProjectSession: vi.fn().mockResolvedValue([])
+      } as unknown as ReviewRepository
+
+      await runReviewerFixLoop(
+        makeOptions(getSession, repository, { abortSignal: controller.signal })
+      )
+
+      expect(mocks.runReviewAssessment).toHaveBeenCalledWith(
+        expect.objectContaining({
+          mode: 'tracked',
+          session: correctionSnapshot,
+          scopeTurnMessageId: correctionMessage.id,
+          turnMessageId: 'original-turn',
+          trackedChecks: [openCheck]
+        })
+      )
+      expect(getSession).toHaveBeenCalledTimes(2)
+      expect(mocks.getActiveConversationContext).toHaveBeenCalledWith({}, 'originating-user')
+      expect(repository.commitFindingDispositions).not.toHaveBeenCalled()
+    }
+  )
 
   it('waits through stale and unrelated durable messages for the exact correction response', async () => {
     const before = session([initialMessage])

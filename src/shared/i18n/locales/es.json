@@ -4930,6 +4930,12 @@
     "Loading skills…": "Cargando habilidades…",
     "Could not load skills": "No se pudieron cargar las habilidades",
     "No skills available": "No hay habilidades disponibles",
-    "No matching sessions": "No hay sesiones coincidentes"
+    "No matching sessions": "No hay sesiones coincidentes",
+    "Current evidence could not be verified": "No se pudieron verificar las pruebas actuales",
+    "Historical results are retained. Retry to verify the current evidence.": "Se conservan los resultados anteriores. Vuelva a intentarlo para verificar las pruebas actuales.",
+    "Automatic correction stopped because the active conversation changed.": "La corrección automática se detuvo porque cambió la conversación activa.",
+    "Review did not start. Please try again.": "La revisión no se inició. Vuelva a intentarlo.",
+    "Review failed. You can try again.": "La revisión falló. Puede volver a intentarlo.",
+    "No checkable claims": "No hay afirmaciones verificables"
   }
 }

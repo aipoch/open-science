@@ -4614,6 +4614,12 @@
     "Loading skills…": "正在加载技能…",
     "Could not load skills": "无法加载技能",
     "No skills available": "没有可用技能",
-    "No matching sessions": "没有匹配的会话"
+    "No matching sessions": "没有匹配的会话",
+    "Current evidence could not be verified": "当前证据无法验证",
+    "Historical results are retained. Retry to verify the current evidence.": "已保留历史结果。请重试以验证当前证据。",
+    "Automatic correction stopped because the active conversation changed.": "活动对话已变化，自动修正已停止。",
+    "Review did not start. Please try again.": "审查未启动，请重试。",
+    "Review failed. You can try again.": "审查失败，可以重试。",
+    "No checkable claims": "没有可检查的主张"
   }
 }

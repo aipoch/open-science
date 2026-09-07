@@ -268,6 +268,37 @@ describe('terminateProcessTree (posix)', () => {
     expect(killSpy).toHaveBeenCalledWith(1000, 'SIGKILL')
   })
 
+  it.each(['linux', 'darwin'])(
+    'waits for descendants to disappear after SIGKILL when the parent exits first on %s',
+    async (platform) => {
+      vi.useFakeTimers()
+      setPlatform(platform)
+      const ps = new FakePs()
+      spawnMock.mockReturnValueOnce(ps)
+      let descendantAlive = true
+      const killSpy = vi.spyOn(process, 'kill').mockImplementation((pid, signal) => {
+        expect(pid).toBe(1001)
+        if (signal === 0 && !descendantAlive) throw esrch()
+        if (signal === 'SIGKILL') setTimeout(() => (descendantAlive = false), 100)
+        return true
+      })
+      const child = new FakeChild(1000)
+      const settled = vi.fn()
+      const pending = terminateProcessTree(child as never).then(settled)
+
+      ps.stdout.emit('data', Buffer.from('1000 1\n1001 1000\n'))
+      ps.emit('close', 0)
+      await Promise.resolve()
+      await Promise.resolve()
+      child.emit('exit', 0, null)
+      await vi.advanceTimersByTimeAsync(100)
+      await pending
+
+      expect(killSpy).toHaveBeenCalledWith(1001, 'SIGKILL')
+      expect(settled).toHaveBeenCalledExactlyOnceWith({ reaped: true })
+    }
+  )
+
   it('kills the direct child but reports unconfirmed when ps fails to produce a tree', async () => {
     setPlatform('darwin')
     const ps = new FakePs()

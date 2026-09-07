@@ -1629,6 +1629,68 @@ describe('WorkspaceMessageScroller artifact click behavior', () => {
     )
   })
 
+  it('reruns a failed historical card with its original scope branch', async () => {
+    const { WorkspaceMessageScroller } = await import('./WorkspaceMessageScroller')
+    const run = vi.fn().mockResolvedValue({ started: true })
+    window.api.reviewer.run = run
+    const messages = [
+      createMessage({ id: 'original-user', sortIndex: 1 }),
+      createMessage({
+        id: 'original-answer',
+        role: 'agent',
+        responseToMessageId: 'original-user',
+        sortIndex: 2
+      }),
+      createMessage({ id: 'newer-user', sortIndex: 3 })
+    ]
+    useReviewStore.getState().handleReviewUpdate({
+      review: {
+        id: 'historical-error',
+        projectId: 'default',
+        sessionId: 'session-1',
+        turnMessageId: 'original-answer',
+        scope: {
+          turnMessageId: 'original-answer',
+          messageBranchId: 'original-branch',
+          blocks: [],
+          artifactVersionIds: []
+        },
+        lifecycle: 'error',
+        outcome: null,
+        errorMessage: 'Temporary failure',
+        model: 'test',
+        reviewerLog: [],
+        checks: [],
+        createdAt: 1000,
+        updatedAt: 1000
+      }
+    })
+    root = createRoot(container)
+    await act(async () => {
+      root.render(
+        <WorkspaceMessageScroller
+          activeSession={createSession({ status: 'idle', messages })}
+          onSendEditedMessage={vi.fn()}
+        />
+      )
+    })
+    const retry = Array.from(container.querySelectorAll('button')).find(
+      (button) => button.textContent === 'Re-run review'
+    )
+    expect(retry).toBeDefined()
+    await act(async () => {
+      retry!.click()
+    })
+    expect(run).toHaveBeenCalledWith(
+      expect.objectContaining({
+        turnMessageId: 'original-answer',
+        scopeTurnMessageId: 'original-answer',
+        scopeMessageBranchId: 'original-branch',
+        origin: 'manual'
+      })
+    )
+  })
+
   it('renders one initial and three fix-loop Review Runs at their four distinct scope anchors', async () => {
     const { WorkspaceMessageScroller } = await import('./WorkspaceMessageScroller')
     const answerIds = ['answer-initial', 'answer-fix-1', 'answer-fix-2', 'answer-fix-3']

@@ -360,7 +360,8 @@ describe('review repository (integration)', { timeout: WINDOWS_SQLITE_TEST_TIMEO
     )[0]!.checks[0]
     expect(stored).toMatchObject({
       resolution: 'unaddressed',
-      unaddressedTrigger: 'correction_failed'
+      unaddressedTrigger: 'correction_failed',
+      unaddressedNote: 'The correction turn did not reach durable storage.'
     })
   })
 

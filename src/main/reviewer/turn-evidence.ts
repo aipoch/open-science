@@ -23,6 +23,7 @@ export type ReviewerFileEvidenceResolver = (request: {
 
 export type ResolvedReviewerTurnEvidence = {
   turnPlan?: ReviewerTurnPlanDescriptor
+  planEvidenceLimitation?: string
   fileEvidenceByBlockId: ReadonlyMap<string, ReviewerFileEvidenceDescriptor[]>
   sourceDocumentEvidence: ReviewerSourceEvidenceDescriptor[]
   sourceDocumentVersionIds: string[]
@@ -31,34 +32,46 @@ export type ResolvedReviewerTurnEvidence = {
 const effectivePlanForTurn = (
   session: PersistedChatSession,
   userMessageId: string | undefined
-): ReviewerTurnPlanDescriptor | undefined => {
-  if (!userMessageId) return undefined
+): Pick<ResolvedReviewerTurnEvidence, 'turnPlan' | 'planEvidenceLimitation'> => {
+  if (!userMessageId) return {}
   const authority = session.runtimeContext?.plan
-  if (
-    !authority ||
-    authority.originatingPromptMessageId !== userMessageId ||
-    authority.approval !== 'approved'
-  ) {
-    return undefined
-  }
-  const plan = session.planHistoryProjections?.find(
-    (candidate) =>
-      candidate.artifactVersionId === authority.artifactVersionId &&
-      candidate.artifactChecksum === authority.artifactChecksum &&
-      candidate.originatingPromptMessageId === userMessageId &&
-      candidate.approval === authority.approval
+  // Main archives the outgoing authority on replacement, preserving its final approval/progress.
+  // Select the last authority for THIS prompt before checking approval: searching for any approved
+  // entry would resurrect a requirement whose replacement was subsequently rejected.
+  const history = session.planHistoryProjections ?? []
+  const ownsCurrentPlan = authority?.originatingPromptMessageId === userMessageId
+  const plan = ownsCurrentPlan
+    ? history.find(
+        (candidate) =>
+          candidate.artifactVersionId === authority.artifactVersionId &&
+          candidate.artifactChecksum === authority.artifactChecksum &&
+          candidate.originatingPromptMessageId === userMessageId &&
+          candidate.approval === authority.approval
+      )
+    : history.findLast((candidate) => candidate.originatingPromptMessageId === userMessageId)
+  const approval = ownsCurrentPlan ? authority.approval : plan?.approval
+  if (approval && approval !== 'approved') return {}
+  if (!plan)
+    return {
+      planEvidenceLimitation:
+        'Approved plan evidence is unavailable for this turn; plan compliance was not assessed.'
+    }
+
+  const lifecycle = derivePlanLifecycle(
+    plan.document,
+    plan.approval,
+    ownsCurrentPlan ? authority.stepStatuses : plan.stepStatuses
   )
-  if (!plan) return undefined
-
-  const lifecycle = derivePlanLifecycle(plan.document, authority.approval, authority.stepStatuses)
-
   const status: ReviewerTurnPlanDescriptor['status'] =
     lifecycle === 'completed' ? 'completed' : lifecycle === 'approved' ? 'approved' : 'active'
   return {
-    versionId: plan.artifactVersionId,
-    status,
-    content: plan.document,
-    binding: 'current-turn'
+    turnPlan: {
+      versionId: plan.artifactVersionId,
+      checksum: plan.artifactChecksum,
+      status,
+      content: plan.document,
+      binding: 'current-turn'
+    }
   }
 }
 
@@ -122,7 +135,7 @@ export const resolveReviewerTurnEvidence = async (
         messageIds: scopedMessageIds
       })
     : []
-  const turnPlan = effectivePlanForTurn(session, userMessageId)
+  const planEvidence = effectivePlanForTurn(session, userMessageId)
   const fileEvidenceByBlockId = new Map<string, ReviewerFileEvidenceDescriptor[]>()
   const append = (blockId: string, descriptor: ReviewerFileEvidenceDescriptor): void => {
     const descriptors = fileEvidenceByBlockId.get(blockId) ?? []
@@ -151,7 +164,7 @@ export const resolveReviewerTurnEvidence = async (
   }
 
   return {
-    ...(turnPlan ? { turnPlan } : {}),
+    ...planEvidence,
     fileEvidenceByBlockId,
     sourceDocumentEvidence: [
       ...new Map(

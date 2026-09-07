@@ -1328,6 +1328,48 @@ describe('renderer session persistence bridge', () => {
     expect(api.saveSession).toHaveBeenCalledWith(expect.objectContaining({ revision: 43 }))
   })
 
+  it('keeps a refreshed archive retry valid when the persistence subscriber observes it', async () => {
+    const base = createPersistedSession({ revision: 3 })
+    let durable = { ...base, revision: 4 }
+    const saveSession = vi.fn<SessionPersistenceApi['saveSession']>(async (submitted) => {
+      if (submitted.revision !== durable.revision)
+        throw new SessionRevisionConflictError(submitted.revision ?? 0, durable.revision)
+      durable = { ...submitted, revision: durable.revision + 1 }
+      return durable
+    })
+    const loadOne = vi.fn(async () => durable)
+    const updateArchive = vi.fn(async (request: { expectedRevision: number }) => {
+      if (request.expectedRevision !== durable.revision)
+        throw new SessionRevisionConflictError(request.expectedRevision, durable.revision)
+      durable = { ...durable, revision: durable.revision + 1, archivedAt: 10 }
+      return durable
+    })
+    vi.stubGlobal('window', { api: { sessions: { updateArchive, loadOne } } })
+    try {
+      useSessionStore.getState().hydrateSessions([base])
+      const save = createStoreSaver(createApi({ saveSession, loadOne }), useSessionStore.getState())
+      const request = { projectId: base.projectId, sessionId: base.id, archived: true }
+      await expect(
+        useSessionStore.getState().updateSessionArchive({ ...request, expectedRevision: 3 })
+      ).rejects.toThrow('Session revision conflict')
+
+      // The fresh menu captures the refreshed authority. A persistence observation must not write
+      // that authority back and invalidate the new user action before it reaches Main.
+      const refreshed = useSessionStore.getState().sessions[0]
+      expect(refreshed.revision).toBe(4)
+      await save(useSessionStore.getState())
+      await expect(
+        useSessionStore.getState().updateSessionArchive({
+          ...request,
+          expectedRevision: refreshed.revision!
+        })
+      ).resolves.toMatchObject({ archivedAt: 10, revision: 5 })
+      expect(saveSession).not.toHaveBeenCalled()
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  })
+
   it('saves only the session whose reference changed', async () => {
     const api = createApi()
     const save = createStoreSaver(api)

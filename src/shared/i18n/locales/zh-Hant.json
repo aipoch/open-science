@@ -4614,6 +4614,12 @@
     "Loading skills…": "正在載入技能…",
     "Could not load skills": "無法載入技能",
     "No skills available": "沒有可用技能",
-    "No matching sessions": "沒有符合的會話"
+    "No matching sessions": "沒有符合的會話",
+    "Current evidence could not be verified": "目前證據無法驗證",
+    "Historical results are retained. Retry to verify the current evidence.": "已保留歷史結果。請重試以驗證目前證據。",
+    "Automatic correction stopped because the active conversation changed.": "作用中的對話已變更，自動修正已停止。",
+    "Review did not start. Please try again.": "審查未啟動，請重試。",
+    "Review failed. You can try again.": "審查失敗，可以重試。",
+    "No checkable claims": "沒有可檢查的主張"
   }
 }

@@ -5063,6 +5063,12 @@
     "Loading skills…": "Загрузка навыков…",
     "Could not load skills": "Не удалось загрузить навыки",
     "No skills available": "Нет доступных навыков",
-    "No matching sessions": "Нет совпадающих сессий"
+    "No matching sessions": "Нет совпадающих сессий",
+    "Current evidence could not be verified": "Не удалось проверить текущие свидетельства",
+    "Historical results are retained. Retry to verify the current evidence.": "Предыдущие результаты сохранены. Повторите попытку, чтобы проверить текущие свидетельства.",
+    "Automatic correction stopped because the active conversation changed.": "Автоматическое исправление остановлено, поскольку активный диалог изменился.",
+    "Review did not start. Please try again.": "Проверка не началась. Повторите попытку.",
+    "Review failed. You can try again.": "Проверка завершилась ошибкой. Можно повторить попытку.",
+    "No checkable claims": "Нет утверждений для проверки"
   }
 }

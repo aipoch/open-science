@@ -4768,6 +4768,12 @@
     "Loading skills…": "Fähigkeiten werden geladen…",
     "Could not load skills": "Fähigkeiten konnten nicht geladen werden",
     "No skills available": "Keine Fähigkeiten verfügbar",
-    "No matching sessions": "Keine passenden Sitzungen"
+    "No matching sessions": "Keine passenden Sitzungen",
+    "Current evidence could not be verified": "Die aktuellen Belege konnten nicht überprüft werden",
+    "Historical results are retained. Retry to verify the current evidence.": "Bisherige Ergebnisse bleiben erhalten. Versuchen Sie es erneut, um die aktuellen Belege zu überprüfen.",
+    "Automatic correction stopped because the active conversation changed.": "Die automatische Korrektur wurde gestoppt, weil sich die aktive Konversation geändert hat.",
+    "Review did not start. Please try again.": "Die Prüfung wurde nicht gestartet. Bitte versuchen Sie es erneut.",
+    "Review failed. You can try again.": "Die Prüfung ist fehlgeschlagen. Sie können es erneut versuchen.",
+    "No checkable claims": "Keine überprüfbaren Aussagen"
   }
 }
