@@ -30,6 +30,7 @@ type FindSnapshot = {
   scrollTop: number
   anchor?: ReadingAnchor
   target?: ReadingAnchor
+  followEnd?: boolean
 }
 
 // Use the registered transcript nodes, including standalone activities, as the reading boundary.
@@ -129,6 +130,7 @@ const useTranscriptWindow = (
       const snapshot = findRestoreRef.current
       if (snapshot && snapshot.window.scopeId === scopeId) {
         snapshot.target = anchor
+        snapshot.followEnd = false
         return
       }
       if (viewportRef.current && findMessageTarget(viewportRef.current, messageId)) {
@@ -188,6 +190,18 @@ const useTranscriptWindow = (
     const snapshot = findRestoreRef.current
     findRestoreRef.current = undefined
     if (!snapshot || snapshot.window.scopeId !== scopeId) return
+    if (snapshot.followEnd) {
+      readingAnchorRef.current = undefined
+      pendingTargetRef.current = undefined
+      setState({
+        scopeId,
+        itemCount: items.length,
+        start: Math.max(0, items.length - TRANSCRIPT_WINDOW_SIZE),
+        end: items.length,
+        followEnd: true
+      })
+      return
+    }
 
     const viewport = viewportRef.current
     const visibleAnchor = captureReadingAnchor(scopeId, viewport)
@@ -222,10 +236,18 @@ const useTranscriptWindow = (
 
   const recordUserScroll = (): void => {
     const snapshot = findRestoreRef.current
-    if (snapshot?.window.scopeId === scopeId && snapshot) snapshot.target = undefined
+    if (snapshot && snapshot.window.scopeId === scopeId) {
+      snapshot.target = undefined
+      snapshot.followEnd = false
+    }
   }
 
   const followEnd = (): void => {
+    const snapshot = findRestoreRef.current
+    if (snapshot && snapshot.window.scopeId === scopeId) {
+      snapshot.target = undefined
+      snapshot.followEnd = true
+    }
     readingAnchorRef.current = undefined
     pendingTargetRef.current = undefined
     setState({

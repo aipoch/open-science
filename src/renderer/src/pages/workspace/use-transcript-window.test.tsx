@@ -42,6 +42,54 @@ describe('useTranscriptWindow', () => {
     act(() => root.unmount())
   })
 
+  it('bounds items arriving after an empty session mounts', () => {
+    const root = createRoot(document.createElement('div'))
+    const ref = createRef<HTMLDivElement>()
+    let current!: ReturnType<typeof useTranscriptWindow>
+    const Harness = ({ rows }: { rows: typeof items }): null => {
+      current = useTranscriptWindow('empty-session', rows, -1, ref)
+      return null
+    }
+    act(() => root.render(<Harness rows={[]} />))
+    expect(current.entries).toHaveLength(0)
+    act(() => root.render(<Harness rows={items} />))
+    expect(current.entries).toHaveLength(80)
+    expect(current.entries[0].item.id).toBe('message-41')
+    expect(current.entries.at(-1)?.item.id).toBe('message-120')
+    expect(current.isFollowingEnd).toBe(true)
+    act(() => root.unmount())
+  })
+
+  it('keeps an explicit end selection when find closes', () => {
+    const root = createRoot(document.createElement('div'))
+    const ref = createRef<HTMLDivElement>()
+    let current!: ReturnType<typeof useTranscriptWindow>
+    const Harness = ({ rows = items }: { rows?: typeof items }): null => {
+      current = useTranscriptWindow('session', rows, -1, ref)
+      return null
+    }
+    act(() => root.render(<Harness />))
+    act(() => current.revealAll())
+    act(() => current.revealMessage('message-1'))
+    act(() => current.followEnd())
+    // The owner keeps whole-window find mounted until its hide event arrives.
+    act(() => current.revealAll())
+    act(() => current.restoreWindow())
+    expect(current.isFollowingEnd).toBe(true)
+    const appended = [
+      ...items,
+      {
+        id: 'latest',
+        type: 'message',
+        message: { id: 'latest' }
+      } as WorkspaceConversationTimelineItem
+    ]
+    act(() => root.render(<Harness rows={appended} />))
+    expect(current.entries).toHaveLength(80)
+    expect(current.entries.at(-1)?.item.id).toBe('latest')
+    act(() => root.unmount())
+  })
+
   it('keeps a stable reading row through insertions, resumes following, and resets scope', () => {
     const container = document.createElement('div')
     const root = createRoot(container)
