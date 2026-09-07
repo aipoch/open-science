@@ -163,6 +163,7 @@ export type TaskSessionConfiguration = Readonly<{
   }>
 }>
 
+/** Defaults for new Sessions created through Task automation (CLI/API), not desktop New drafts. */
 export type TaskProjectSessionDefaults = Readonly<{
   projectId: string
   updatedAt: number

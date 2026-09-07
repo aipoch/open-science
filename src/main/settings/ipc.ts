@@ -335,7 +335,7 @@ const registerSettingsIpcHandlers = ({
   ipcMainHandle(
     'settings:refresh-provider-models',
     (_event, request: RefreshProviderModelsRequest) =>
-      snapshotCommits.projectAfter(service.refreshProviderModels(request))
+      snapshotCommits.projectAfter(workflows.runtime.refreshProviderModels(request))
   )
   ipcMainHandle('settings:mark-onboarding-complete', () =>
     snapshotCommits.currentSnapshotAfter(service.markOnboardingComplete())

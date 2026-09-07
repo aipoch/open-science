@@ -4,6 +4,7 @@ import {
   CODEX_SUBSCRIPTION_PROVIDER_ID,
   XAI_SUBSCRIPTION_PROVIDER_ID,
   type ProviderDeletionScenarioModelHandling,
+  type RefreshProviderModelsRequest,
   type SetActiveProviderRequest,
   type SetAgentFrameworkRequest,
   type SetAgentRoutingRequest,
@@ -16,6 +17,7 @@ import type { SettingsService } from '../service'
 type RuntimeSettingsWorkflowStore = Pick<
   SettingsService,
   | 'getSettingsView'
+  | 'refreshProviderModels'
   | 'uninstallClaude'
   | 'uninstallOpencode'
   | 'uninstallCodeBuddy'
@@ -93,6 +95,27 @@ class RuntimeSettingsWorkflows {
     }
 
     return snapshot
+  }
+
+  async refreshProviderModels(
+    request: RefreshProviderModelsRequest
+  ): Promise<Awaited<ReturnType<RuntimeSettingsWorkflowStore['refreshProviderModels']>>> {
+    const before = await this.settings.getSettingsView()
+    const result = await this.settings.refreshProviderModels(request)
+    if (!result.ok) return result
+    const after = await this.settings.getSettingsView()
+    const previous = before.providers.find((provider) => provider.id === request.providerId)
+    const current = after.providers.find((provider) => provider.id === request.providerId)
+    // Catalog order can own an omitted model's default. Reconnect existing provider generations
+    // through the same deferred transition used for provider edits; do not interrupt active turns.
+    if (previous && current && JSON.stringify(previous.models) !== JSON.stringify(current.models)) {
+      this.effects.requestProviderReconnect(
+        affectedProviderIds(request.providerId),
+        request.providerId === before.activeProviderId ||
+          request.providerId === after.activeProviderId
+      )
+    }
+    return result
   }
 
   async deleteProvider(

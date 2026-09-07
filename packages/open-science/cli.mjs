@@ -42,7 +42,7 @@ Commands:
   project list
   project create <name> [--description <text>] [--agent-context <text> | --agent-context-file <path>]
   project update <id-or-name> [--name <name>] [--description <text>] [--agent-context <text> | --agent-context-file <path> | --clear-agent-context]
-  project session-defaults show <id-or-name>
+  project session-defaults show <id-or-name>  Automation new-session defaults
   project session-defaults update <id-or-name> [session options]
   run --project <id-or-name> (--prompt <text> | --prompt-file <path>) [--compute-host <provider-id>] [--wait]
   run status <run-id>
@@ -76,7 +76,7 @@ Options:
   --approval-profile <profile>  ask, auto, or full (default: ask)
   --provider <provider-id>  Configured Main provider
   --model <model-id>       Main model
-  --provider-default-model Use the provider-owned default model
+  --provider-default-model Follow the provider-owned default model
   --reasoning-effort <effort>  default, low, medium, high, xhigh, or max
   --skill <id>           Force-load a skill for this run (repeatable)
   --compute-host <provider-id>  Select a Compute Host execution target (repeatable)
@@ -93,7 +93,7 @@ Options:
   --reviewer-inherit | --reviewer-provider <id> --reviewer-model <id> [--reviewer-effort <effort>]
   --subagent-inherit | --subagent-provider <id> --subagent-model <id> [--subagent-effort <effort>]
   --clear-provider | --clear-approval-profile | --clear-auto-review | --clear-memory
-  --clear-delegation | --clear-specialist  Clear one Project Session default
+  --clear-delegation | --clear-specialist  Clear one automation new-session default
   --wait                 Wait for the run to finish
   --return-on-attention  With --wait, return when the Plan needs approval
   --timeout-ms <ms>      Stop waiting after this many milliseconds

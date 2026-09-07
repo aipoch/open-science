@@ -14,6 +14,60 @@ const CONTEXT_COMPACTION_PROMPT = 'Preview context compaction.'
 const CITATION_PREVIEW_PROMPT = 'Preview a cited source.'
 const AXE_PATH = resolve(process.cwd(), 'node_modules/axe-core/axe.min.js')
 
+test('preserves an unavailable saved model until an explicit replacement is selected', async ({
+  app
+}, testInfo) => {
+  await app.completeOnboarding()
+  const page = await app.configureFakeAgent()
+  await createProject(page)
+  await page.getByRole('textbox', { name: 'Ask anything' }).fill(USER_MESSAGE)
+  await page.getByRole('button', { name: 'Send message' }).click()
+  await expect(page.getByText(AGENT_REPLY, { exact: false })).toBeVisible()
+  const saved = await page.evaluate(async () => {
+    const loaded = await window.api.sessions.loadAll()
+    return loaded.sessions[0].agentConfiguration!
+  })
+  expect(saved?.providerId).toBeTruthy()
+  const fallback = await page.evaluate(async () => {
+    const snapshot = await window.api.settings.upsertProvider({
+      type: 'custom',
+      name: 'Replacement provider',
+      apiEndpoints: ['openai'],
+      baseUrl: 'http://127.0.0.1:9/v1',
+      model: 'replacement-model',
+      key: 'e2e-key',
+      reasoningEffortPreset: 'standard-5'
+    })
+    return snapshot.providers.find((provider) => provider.name === 'Replacement provider')!.id
+  })
+  await page.evaluate(async (id) => window.api.settings.deleteProvider({ id }), saved.providerId)
+  const unavailable = page.getByRole('button', { name: 'Session model unavailable', exact: true })
+  await expect(unavailable).toBeVisible()
+  await page.getByRole('textbox', { name: 'Ask anything' }).fill('Do not send this draft.')
+  await expect(page.getByRole('button', { name: 'Send message' })).toBeDisabled()
+  await unavailable.click()
+  await page.getByRole('menuitem', { name: /Model Provider and model for this chat/ }).hover()
+  await expect(page.getByRole('menuitemradio', { name: /replacement-model/ })).toBeVisible()
+  await page.screenshot({ path: testInfo.outputPath('unavailable-session-model.png') })
+  await expect
+    .poll(async () =>
+      page.evaluate(
+        async () => (await window.api.sessions.loadAll()).sessions[0].agentConfiguration
+      )
+    )
+    .toEqual(saved)
+  await page.getByRole('menuitemradio', { name: /replacement-model/ }).focus()
+  await page.keyboard.press('Enter')
+  await expect(unavailable).toHaveCount(0)
+  await expect
+    .poll(async () =>
+      page.evaluate(
+        async () => (await window.api.sessions.loadAll()).sessions[0].agentConfiguration
+      )
+    )
+    .toMatchObject({ providerId: fallback, model: 'replacement-model' })
+})
+
 test('keeps source icons inside table cells after expanding a message table', async ({ app }) => {
   await app.completeOnboarding()
   const page = await app.configureFakeAgent()
