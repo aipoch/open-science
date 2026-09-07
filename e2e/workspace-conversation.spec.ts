@@ -163,7 +163,9 @@ test('explains disabled revision navigation while a turn is running', async ({ a
   await page.screenshot({ path: testInfo.outputPath('revision-navigation-idle.png') })
 })
 
-test('edits and navigates message revisions that persist after relaunch', async ({ app }) => {
+test('edits and navigates message revisions that persist after relaunch', async ({
+  app
+}, testInfo) => {
   await app.completeOnboarding()
   let page = await app.configureFakeAgent()
   await createProject(page)
@@ -207,6 +209,16 @@ test('edits and navigates message revisions that persist after relaunch', async 
   await expect(revision).toHaveText(['1/2'])
   await expect(previousRevision).toBeDisabled()
   await expect(nextRevision).toBeEnabled()
+
+  await page
+    .getByRole('button', {
+      name: 'Add attachment, save as skill, view context window, or request review',
+      exact: true
+    })
+    .click()
+  await expect(page.getByTestId('menu-save-as-skill')).toBeEnabled()
+  await page.screenshot({ path: testInfo.outputPath('completed-branch-save-as-skill.png') })
+  await page.keyboard.press('Escape')
 
   await nextRevision.click()
   await expect(conversation.getByText(EDITED_USER_MESSAGE, { exact: true })).toBeVisible()

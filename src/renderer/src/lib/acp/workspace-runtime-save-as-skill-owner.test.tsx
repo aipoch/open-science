@@ -70,6 +70,7 @@ describe('workspace Save as skill owner', () => {
   let root: Root | undefined
 
   beforeEach(() => {
+    vi.mocked(flushSessionPersistence).mockReset().mockResolvedValue(undefined)
     useSettingsStore.setState({
       ...createInitialSettingsState(),
       activeProviderId: 'session-provider',
@@ -184,6 +185,76 @@ describe('workspace Save as skill owner', () => {
     })
     expect(owner.saveAsSkillInFlightSessionIds).toEqual([])
   })
+
+  it.each(['resume', 'persistence'] as const)(
+    'does not dispatch after cancellation during %s preparation',
+    async (phase) => {
+      useSessionStore.setState({ sessions: [structuredClone(session)] })
+      let release!: () => void
+      const waiting = new Promise<void>((resolve) => {
+        release = resolve
+      })
+      const saveAsSkill = vi.fn(async () => undefined)
+      const resumeSession = vi.fn(async () => {
+        if (phase === 'resume') await waiting
+      })
+      vi.mocked(flushSessionPersistence).mockImplementationOnce(async () => {
+        if (phase === 'persistence') await waiting
+      })
+      Object.defineProperty(window, 'api', {
+        configurable: true,
+        value: { acp: { saveAsSkill } }
+      })
+      let owner!: ReturnType<typeof useWorkspaceRuntimeSaveAsSkillOwner>
+      const Harness = (): null => {
+        owner = useWorkspaceRuntimeSaveAsSkillOwner({
+          runtime: { state: { sessionIds: [session.id] }, resumeSession } as never,
+          resolveSessionRuntimeSelection: sessionRuntimeSelection
+        })
+        return null
+      }
+      root = createRoot(document.createElement('div'))
+      act(() => root?.render(createElement(Harness)))
+      const graph = session.conversationGraph!
+      const frame = graph.frames.find(({ id }) => id === graph.activeFrameId)!
+      let result!: Promise<unknown>
+      await act(async () => {
+        result = owner
+          .saveAsSkill({
+            projectId: session.projectId,
+            sessionId: session.id,
+            agentFrameId: frame.id,
+            messageBranchId: frame.activeBranchId
+          })
+          .catch((error: unknown) => error)
+        await vi.waitFor(() =>
+          expect(
+            phase === 'resume' ? resumeSession : flushSessionPersistence
+          ).toHaveBeenCalledOnce()
+        )
+      })
+      const controlId = useSessionStore.getState().sessions[0].activeRun?.promptMessageId
+      if (phase === 'persistence') expect(controlId).toBeDefined()
+      act(() =>
+        useSessionStore
+          .getState()
+          .interruptRun(session.id, 'cancelled', 'Cancelled by user', controlId)
+      )
+      expect(useSessionStore.getState().sessions[0].resumeRecovery).toMatchObject({
+        cause: 'cancelled'
+      })
+      await act(async () => {
+        release()
+        await result
+      })
+      expect(saveAsSkill).not.toHaveBeenCalled()
+      expect(useSessionStore.getState().sessions[0].resumeRecovery).toMatchObject({
+        cause: 'cancelled',
+        ...(controlId ? { promptMessageId: controlId } : {})
+      })
+      expect(owner.saveAsSkillInFlightSessionIds).toEqual([])
+    }
+  )
 
   it('keeps a rejected hidden turn recoverable', async () => {
     useSessionStore.setState({
