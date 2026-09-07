@@ -172,6 +172,35 @@ describe('Office behavior through real parsers and adapters', () => {
     }
   )
 
+  it('waits for the first visible sheet window before completing first paint', async () => {
+    const postMessage = ParserWorker.prototype.postMessage
+    let releaseWindow: (() => void) | undefined
+    vi.spyOn(ParserWorker.prototype, 'postMessage').mockImplementation(function (
+      this: ParserWorker,
+      message
+    ) {
+      if (message.type === 'parseSheet') {
+        releaseWindow = () => postMessage.call(this, message)
+      } else {
+        postMessage.call(this, message)
+      }
+    })
+    const outcome = await renderWorkbook(workbookBytes('xlsx', true), 'xlsx')
+    await vi.waitFor(() => expect(releaseWindow).toBeDefined())
+    // Let any readiness callbacks from the sheets event settle while the data window is held.
+    await new Promise((resolve) => window.setTimeout(resolve, 50))
+    expect(outcome.state).toBe('pending')
+    expect(container.querySelector('.spreadsheet-empty')).toBeNull()
+    expect(getComputedStyle(container.querySelector<HTMLElement>('.toolbar')!).display).not.toBe(
+      'none'
+    )
+    releaseWindow!()
+    await vi.waitFor(() => expect(outcome.state).toBe('ready'))
+    expect(JSON.stringify(harness.instances.flatMap((table) => table.getRows()))).toContain(
+      'VISIBLE_DATA'
+    )
+  })
+
   it('keeps visible worksheet tabs displayed and switches to another worksheet', async () => {
     const workbook = utils.book_new()
     utils.book_append_sheet(workbook, utils.aoa_to_sheet([['FIRST_DATA']]), 'First')

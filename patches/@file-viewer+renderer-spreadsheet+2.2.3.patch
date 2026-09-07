@@ -213,7 +213,7 @@ index 3378e4a7..55292dc1 100644
          cached.loadingWindows.clear();
          virtualState = cached;
          errorMessage = '';
-@@ -1418,7 +1506,7 @@ const renderFileViewerSpreadsheet = async (buffer, target, type, context) => {
+@@ -1418,26 +1506,49 @@ const renderFileViewerSpreadsheet = async (buffer, target, type, context) => {
      };
      controller.onWorkerEvent('sheets', ({ sheets: list }) => {
          sheets = list;
@@ -222,7 +222,9 @@ index 3378e4a7..55292dc1 100644
          if (firstSheet) {
              sheetIndex = firstSheet.id;
              renderChrome();
-@@ -1428,16 +1516,39 @@ const renderFileViewerSpreadsheet = async (buffer, target, type, context) => {
+             startSheetSession();
+             scrollActiveSheetIntoView();
+             return;
          }
          sheetInitializing = false;
          loadingState = false;
