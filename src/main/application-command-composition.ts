@@ -1,3 +1,8 @@
+import {
+  specialistApplicationCommandGroup,
+  registerSpecialistApplicationCommands,
+  type SpecialistApplicationOwner
+} from './specialist/application-commands'
 import { ApplicationCommandError } from '../shared/application-command-contract'
 import {
   ELECTRON_APPLICATION_COMMAND_CHANNELS,
@@ -119,6 +124,7 @@ type ApplicationCommandCompositionDependencies = Readonly<{
   permissionGrants: PermissionGrantDependencies
   tags: TagCommandOwner
   memory: MemoryCommandOwner
+  specialist: SpecialistApplicationOwner
   literature: LiteratureCommandOwner
   dataContent: DataContentApplicationCommandDependencies
   host: Omit<HostApplicationCommandDependencies, 'remoteAccess'>
@@ -252,6 +258,9 @@ const createApplicationCommandModules = (
     ),
     defineApplicationCommandModule([memoryApplicationCommandGroup], (registrar) =>
       registerMemoryApplicationCommands(registrar, dependencies.memory)
+    ),
+    defineApplicationCommandModule([specialistApplicationCommandGroup], (registrar) =>
+      registerSpecialistApplicationCommands(registrar, dependencies.specialist)
     ),
     defineApplicationCommandModule([literatureApplicationCommandGroup], (registrar) =>
       registerLiteratureApplicationCommands(registrar, dependencies.literature)

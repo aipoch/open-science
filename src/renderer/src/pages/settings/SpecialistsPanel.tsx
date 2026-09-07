@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { canImportSpecialistPackage } from '@/lib/specialist-package-upload'
 import { Trans, useTranslation } from 'react-i18next'
 import {
   AlertTriangle,
@@ -231,6 +232,7 @@ const InstalledSpecialistsPanel = ({
   const [skillConflictResolutions, setSkillConflictResolutions] =
     useState<SkillConflictResolutionMap>({})
   const [overwriteConfirmationOpen, setOverwriteConfirmationOpen] = useState(false)
+  const packageUploadPercent = useSpecialistStore((state) => state.packageUploadPercent)
   const [reportStatus, setReportStatus] = useState<string | undefined>()
   const [includedExportSkillIds, setIncludedExportSkillIds] = useState<string[]>([])
   const [exportBusy, setExportBusy] = useState(false)
@@ -242,6 +244,17 @@ const InstalledSpecialistsPanel = ({
   // Specialist currently exporting from the list row (direct export bypasses the chooser).
   const [exportingId, setExportingId] = useState<string | null>(null)
   const catalogReadOnly = integrity.status === 'degraded'
+  const webPackageImport =
+    typeof window.api.specialist?.beginPackageUpload === 'function' &&
+    typeof window.api.specialist?.selectPackage !== 'function'
+  const packageImportAvailable = canImportSpecialistPackage()
+
+  useEffect(() => {
+    if (view.kind !== 'import' || typeof window.api.specialist?.selectPackage === 'function') return
+    return () => {
+      void cancelPackage().catch(() => undefined)
+    }
+  }, [view.kind, cancelPackage])
 
   // Memoised so visibleCustomItems' memo can reference a stable value.
   const customItems = useMemo(
@@ -783,10 +796,13 @@ const InstalledSpecialistsPanel = ({
               }).then(() => undefined)
             }
             onToggle={() => void setEnabled(specialist.id, !specialist.enabled)}
-            onDuplicate={() =>
-              void duplicateSpecialist(specialist.id).then((draft) =>
-                onNavigate({ kind: 'create', draft })
-              )
+            onDuplicate={
+              webPackageImport && !window.api.specialist.duplicate
+                ? undefined
+                : () =>
+                    void duplicateSpecialist(specialist.id).then((draft) =>
+                      onNavigate({ kind: 'create', draft })
+                    )
             }
             onUpdate={() => {
               if (!listing) return
@@ -802,10 +818,14 @@ const InstalledSpecialistsPanel = ({
               })
             }}
             onManageSources={() => onNavigate({ kind: 'marketplace-sources' })}
-            onUninstall={() => {
-              openDeleteDialog(specialist, 'uninstall')
-              onNavigate({ kind: 'list' })
-            }}
+            onUninstall={
+              webPackageImport && !window.api.specialist.delete
+                ? undefined
+                : () => {
+                    openDeleteDialog(specialist, 'uninstall')
+                    onNavigate({ kind: 'list' })
+                  }
+            }
           />
         )
       }
@@ -938,15 +958,29 @@ const InstalledSpecialistsPanel = ({
               </Button>
               <Button
                 type="button"
-                disabled={packageBusy}
+                disabled={packageBusy || !packageImportAvailable}
                 onClick={() => {
                   setPackageErrorCode(undefined)
+                  setTemplateSaveError(undefined)
                   setSkillConflictResolutions({})
                   setPackageBusy(true)
-                  void selectPackage().finally(() => setPackageBusy(false))
+                  void selectPackage()
+                    .catch((error: unknown) =>
+                      setTemplateSaveError(
+                        error instanceof Error &&
+                          error.message.includes('Two Web Specialist imports are already active.')
+                          ? t(
+                              'Two Web Specialist imports are already active. Finish or cancel one, then try again.'
+                            )
+                          : t('Could not import Specialist ZIP. Try again.')
+                      )
+                    )
+                    .finally(() => setPackageBusy(false))
                 }}
               >
-                {t('Choose ZIP')}
+                {packageUploadPercent === undefined
+                  ? t('Choose ZIP')
+                  : t('Uploading Specialist ZIP… {{percent}}%', { percent: packageUploadPercent })}
               </Button>
             </div>
             {templateSaveError ? (
@@ -1090,8 +1124,23 @@ const InstalledSpecialistsPanel = ({
                     size="sm"
                     variant="outline"
                     onClick={() => {
-                      void window.api.specialist
-                        .savePackageReport({ candidateToken: packagePreview.candidateToken })
+                      const save =
+                        typeof window.api.specialist.savePackageReport === 'function'
+                          ? window.api.specialist.savePackageReport({
+                              candidateToken: packagePreview.candidateToken
+                            })
+                          : window.api.saveBlobFile({
+                              suggestedName: 'specialist-package-report.json',
+                              mimeType: 'application/json',
+                              data: new TextEncoder().encode(
+                                JSON.stringify(
+                                  specialistPackageReportFromPreview(packagePreview),
+                                  null,
+                                  2
+                                )
+                              ).buffer
+                            })
+                      void save
                         .then((result) =>
                           setReportStatus(result.saved ? t('Report saved') : undefined)
                         )
@@ -1454,6 +1503,7 @@ const InstalledSpecialistsPanel = ({
           <div className="ml-auto flex shrink-0 items-center gap-2">
             <Button
               type="button"
+              disabled={webPackageImport && !window.api.specialist.listMarketplace}
               onClick={() => onNavigate({ kind: 'marketplace' })}
               className="whitespace-nowrap"
             >
@@ -1471,7 +1521,7 @@ const InstalledSpecialistsPanel = ({
               <DropdownMenuContent align="end">
                 <DropdownMenuItem
                   className="gap-2.5"
-                  disabled={catalogReadOnly}
+                  disabled={catalogReadOnly || (webPackageImport && !window.api.specialist.create)}
                   onSelect={() => onNavigate({ kind: 'create' })}
                 >
                   <Pencil className="size-4 shrink-0" aria-hidden="true" />
@@ -1515,7 +1565,7 @@ const InstalledSpecialistsPanel = ({
                 <DropdownMenuSeparator />
                 <DropdownMenuItem
                   className="gap-2.5"
-                  disabled={catalogReadOnly}
+                  disabled={catalogReadOnly || !packageImportAvailable}
                   onSelect={() => onNavigate({ kind: 'import' })}
                 >
                   <Upload className="size-4 shrink-0" aria-hidden="true" />
@@ -1774,7 +1824,10 @@ const InstalledSpecialistsPanel = ({
                         <DropdownMenuContent align="end">
                           <DropdownMenuItem
                             className="gap-2 text-xs"
-                            disabled={catalogReadOnly}
+                            disabled={
+                              catalogReadOnly ||
+                              (webPackageImport && !window.api.specialist.duplicate)
+                            }
                             onSelect={() =>
                               void duplicateSpecialist(item.id).then((draft) =>
                                 onNavigate({ kind: 'create', draft })
@@ -1787,7 +1840,9 @@ const InstalledSpecialistsPanel = ({
                           <DropdownMenuSeparator />
                           <DropdownMenuItem
                             className="gap-2 text-xs text-destructive"
-                            disabled={catalogReadOnly}
+                            disabled={
+                              catalogReadOnly || (webPackageImport && !window.api.specialist.delete)
+                            }
                             onSelect={() => openDeleteDialog(item, 'uninstall')}
                           >
                             <Trash2 className="size-3.5" aria-hidden="true" /> {t('Uninstall')}
@@ -2025,7 +2080,10 @@ const InstalledSpecialistsPanel = ({
                         <DropdownMenuContent align="end">
                           <DropdownMenuItem
                             className="gap-2 text-xs"
-                            disabled={catalogReadOnly}
+                            disabled={
+                              catalogReadOnly ||
+                              (webPackageImport && !window.api.specialist.duplicate)
+                            }
                             onSelect={() =>
                               void duplicateSpecialist(item.id).then((draft) =>
                                 onNavigate({ kind: 'create', draft })
@@ -2036,13 +2094,16 @@ const InstalledSpecialistsPanel = ({
                           </DropdownMenuItem>
                           <DropdownMenuItem
                             className="gap-2 text-xs"
+                            disabled={webPackageImport && !window.api.specialist.exportSpecialist}
                             onSelect={() => void runDirectExport(item.id)}
                           >
                             <Download className="size-3.5" aria-hidden="true" /> {t('Export ZIP')}
                           </DropdownMenuItem>
                           <DropdownMenuItem
                             className="gap-2 text-xs text-destructive"
-                            disabled={catalogReadOnly}
+                            disabled={
+                              catalogReadOnly || (webPackageImport && !window.api.specialist.delete)
+                            }
                             onSelect={() => openDeleteDialog(item, 'delete')}
                           >
                             <Trash2 className="size-3.5" aria-hidden="true" /> {t('Delete')}

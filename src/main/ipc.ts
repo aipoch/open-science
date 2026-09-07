@@ -1,3 +1,4 @@
+import { createSpecialistApplicationOwner } from './specialist/application-commands'
 import { basename, dirname, join } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { readFile, stat, writeFile } from 'node:fs/promises'
@@ -3584,6 +3585,15 @@ const createApplicationModules = async (
       }
     }
   )
+  const specialistApplicationOwner = createSpecialistApplicationOwner({
+    service: specialistService,
+    packages: specialistPackageService,
+    uploads: uploadCommandOwner,
+    onProfilesChanged: () => void runtime.requestSkillsReload()
+  })
+  specialistService.subscribe(() =>
+    applicationEvents.publish('specialist:catalog-changed', undefined)
+  )
   declareElectronAdapter('specialist', () =>
     registerSpecialistIpcHandlers(
       specialistService,
@@ -3630,7 +3640,8 @@ const createApplicationModules = async (
             translate
           )
       },
-      marketplaceService
+      marketplaceService,
+      specialistApplicationOwner
     )
   )
   // Runtime Settings UI: discover managed/external environments and pick an interpreter file. The
@@ -4118,6 +4129,7 @@ const createApplicationModules = async (
     return sender
   }
   const applicationCommandDependencies: ApplicationCommandCompositionDependencies = {
+    specialist: specialistApplicationOwner,
     acp: {
       runtime,
       workflows: acpHandlerWorkflows,

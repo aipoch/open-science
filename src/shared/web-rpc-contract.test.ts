@@ -37,8 +37,19 @@ describe('Web RPC contract', () => {
     const invokePaths = Object.keys(WEB_INVOKE_CHANNELS)
     const eventPaths = Object.keys(WEB_EVENT_CHANNELS)
 
-    expect(invokePaths.filter((path) => path.startsWith('specialist.'))).toEqual([])
-    expect(eventPaths.filter((path) => path.startsWith('specialist.'))).toEqual([])
+    expect(invokePaths.filter((path) => path.startsWith('specialist.'))).toEqual([
+      'specialist.abortPackageUpload',
+      'specialist.beginPackageUpload',
+      'specialist.cancelPackage',
+      'specialist.installPackage',
+      'specialist.list',
+      'specialist.previewPackageUpload',
+      'specialist.setEnabled',
+      'specialist.update'
+    ])
+    expect(eventPaths.filter((path) => path.startsWith('specialist.'))).toEqual([
+      'specialist.onCatalogChanged'
+    ])
 
     expect(invokePaths.filter((path) => path.startsWith('permissions.'))).toEqual([
       'permissions.extendUndo',

@@ -61,6 +61,11 @@ const EVENT_CONNECTION_IDLE_TIMEOUT_MS = 30_000
 const DOMAIN_OWNED_WEB_RPC_CHANNELS = new Set([
   'notebook:execute',
   'notebook:run-cell',
+  'specialist:package-upload-begin',
+  'specialist:package-upload-preview',
+  'specialist:package-upload-abort',
+  'specialist:package-install',
+  'specialist:package-cancel',
   'settings:install-claude',
   'settings:install-codebuddy',
   'settings:install-codex',
@@ -238,7 +243,13 @@ const invoke = async (channel: string, args: unknown[]): Promise<unknown> => {
   const { response, body } = await (
     DOMAIN_OWNED_WEB_RPC_CHANNELS.has(channel)
       ? request(connectionSignal)
-      : withRequestTimeout(WEB_RPC_TIMEOUT_MS, request)
+      : withRequestTimeout(
+          WEB_RPC_TIMEOUT_MS,
+          request,
+          channel === 'uploads:append-transfer' || channel === 'uploads:transfer-status'
+            ? connectionSignal
+            : undefined
+        )
   ).catch((error: unknown) => {
     // Aborting fetch does not confirm that the business operation was canceled or failed.
     throw new DOMException(
