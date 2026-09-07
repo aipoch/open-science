@@ -316,6 +316,7 @@ describe('ProjectFilesView', () => {
       )
 
     window.api.projectFiles = {
+      readExportFiles: vi.fn(),
       searchArtifacts: vi.fn(),
       getOverview: vi.fn(async (request) => {
         const library = getLibrary()
