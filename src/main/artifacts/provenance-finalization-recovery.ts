@@ -56,9 +56,10 @@ type ArtifactProvenanceFinalizationRecoveryOptions = {
   >
 }
 
-// Resolves the agent message owning the prepared prompt turn's output. It deliberately considers
-// only messages before the next user prompt on the declared Branch and Runtime Segment; choosing a
-// latest message (or accepting multiple candidates) could attach a crashed run to a later turn.
+// Resolves the agent message owning the prepared prompt turn's output. It prefers a single message
+// before the next user prompt on the declared Branch and Runtime Segment, and past that boundary
+// accepts only a message the durable Session already claims; choosing a latest message (or
+// accepting multiple unclaimed candidates) could attach a crashed run to a later turn.
 const inferDurableFinalizationMessageId = (
   session: PersistedChatSession,
   context: PreparedArtifactFinalizationContext,
@@ -81,19 +82,20 @@ const inferDurableFinalizationMessageId = (
     .slice(promptIndex + 1)
     .findIndex((message) => message.role === 'user')
   const turnEnd = followingUserOffset < 0 ? path.length : promptIndex + 1 + followingUserOffset
-  const candidates = path
-    .slice(promptIndex + 1, turnEnd)
-    .filter(
-      (message) =>
-        message.role === 'agent' &&
-        message.agentFrameId === context.agentFrameId &&
-        message.introducedOnBranchId === context.messageBranchId &&
-        message.runtimeSegmentId === context.runtimeSegmentId
-    )
-  let message = candidates.length === 1 ? candidates[0] : undefined
-  if (candidates.length > 1) {
-    // A turn may contain commentary before its result. Use durable attachments to distinguish the
-    // owner, but reject even a partial competing claim anywhere in the Session graph/projection.
+  const ownsRunOutput = (message: (typeof path)[number]): boolean =>
+    message.role === 'agent' &&
+    message.agentFrameId === context.agentFrameId &&
+    message.introducedOnBranchId === context.messageBranchId &&
+    message.runtimeSegmentId === context.runtimeSegmentId
+  const turnCandidates = path.slice(promptIndex + 1, turnEnd).filter(ownsRunOutput)
+  let message = turnCandidates.length === 1 ? turnCandidates[0] : undefined
+  if (!message) {
+    // A turn may contain commentary before its result, and a Session Plan persists review feedback
+    // as a durable user Message inside the still-open turn, so the owner can also follow that
+    // prompt boundary. Use durable attachments to distinguish the owner, but reject even a partial
+    // competing claim anywhere in the Session graph/projection.
+    const candidates =
+      turnCandidates.length > 0 ? turnCandidates : path.slice(promptIndex + 1).filter(ownsRunOutput)
     const claimedMessageIds = new Set(
       [...session.messages, ...(session.conversationGraph?.messages ?? [])]
         .filter((candidate) => candidate.artifactIds?.some((id) => versionIds.includes(id)))
@@ -108,7 +110,6 @@ const inferDurableFinalizationMessageId = (
       return undefined
     }
   }
-  if (!message) return undefined
 
   validateDurableMessageOwnership(session, { ...context, messageId: message.id })
   return message.id

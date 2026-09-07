@@ -17,7 +17,7 @@ import {
   ARTIFACT_FINALIZATION_INVALID_PROOF,
   type ReconcilePendingArtifactsRequest
 } from '../../shared/artifacts'
-import type { PersistedChatSession } from '../../shared/session-persistence'
+import type { PersistedChatMessage, PersistedChatSession } from '../../shared/session-persistence'
 import { createPngBytes, createPngInlineSource } from '../artifacts/artifact-test-fixtures'
 import { ProvenanceMessageSnapshotRepository } from '../artifacts/provenance-message-snapshot'
 import { ArtifactProvenanceRepository } from '../artifacts/provenance-repository'
@@ -460,6 +460,91 @@ describe('artifact finalization startup recovery', () => {
     await expect(coordinator.retryArtifactFinalization(request)).resolves.toMatchObject({
       artifacts: [expect.objectContaining({ versionId: versions[0].versionId })]
     })
+  })
+
+  it('recovers the run after Plan review feedback interleaves a user Message', async () => {
+    const { session, versions, coordinator, request } = await prepareAttachedRecovery()
+    const feedback: PersistedChatMessage = {
+      id: 'plan-feedback-1',
+      role: 'user',
+      content: 'tighten step 2',
+      status: 'complete',
+      eventIds: [],
+      createdAt: 2,
+      updatedAt: 2
+    }
+    const messages = [session.messages[0], feedback, ...session.messages.slice(1)]
+    session.messages = messages
+    session.conversationGraph = createLinearConversationGraph({
+      sessionId: SESSION_ID,
+      messages: messages.map(
+        ({ id, role, content, status, eventIds, createdAt, updatedAt, artifactIds }) => ({
+          id,
+          role,
+          content,
+          status,
+          eventIds,
+          createdAt,
+          updatedAt,
+          artifactIds
+        })
+      ),
+      frameworkId: 'codex',
+      createdAt: 1,
+      updatedAt: 3
+    })
+    await sessions.saveSession(session)
+
+    await expect(coordinator.retryArtifactFinalization(request)).resolves.toMatchObject({
+      artifacts: [expect.objectContaining({ versionId: versions[0].versionId })]
+    })
+    await expect(
+      client.artifactVersion.findUniqueOrThrow({ where: { id: versions[0].versionId } })
+    ).resolves.toMatchObject({
+      state: 'finalized',
+      messageId: 'message-1',
+      managedVisibleAt: expect.any(Date)
+    })
+    await expect(
+      client.artifactLineage.findUniqueOrThrow({ where: { id: versions[0].artifactId } })
+    ).resolves.toMatchObject({ currentVersionId: versions[0].versionId })
+  })
+
+  it('leaves an unclaimed run unresolved when a user Message interleaves the turn', async () => {
+    const { session, coordinator, request } = await prepareAttachedRecovery()
+    const feedback: PersistedChatMessage = {
+      id: 'plan-feedback-1',
+      role: 'user',
+      content: 'tighten step 2',
+      status: 'complete',
+      eventIds: [],
+      createdAt: 2,
+      updatedAt: 2
+    }
+    const messages = [session.messages[0], feedback, ...session.messages.slice(1)]
+    session.artifacts = []
+    for (const message of messages) message.artifactIds = undefined
+    session.messages = messages
+    session.conversationGraph = createLinearConversationGraph({
+      sessionId: SESSION_ID,
+      messages: messages.map(({ id, role, content, status, eventIds, createdAt, updatedAt }) => ({
+        id,
+        role,
+        content,
+        status,
+        eventIds,
+        createdAt,
+        updatedAt
+      })),
+      frameworkId: 'codex',
+      createdAt: 1,
+      updatedAt: 3
+    })
+    await sessions.saveSession(session)
+
+    await expect(coordinator.retryArtifactFinalization(request)).rejects.toThrow(
+      'Native Artifact finalization remains unresolved.'
+    )
   })
 
   it('replays an explicitly requested finalized Version that is already linked', async () => {
