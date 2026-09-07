@@ -4881,6 +4881,18 @@
     "Enter a complete proxy URL, for example http://127.0.0.1:1086.": "Introduzca una URL de proxy completa, p. ej., http://127.0.0.1:1086.",
     "Automatic mirror selection": "Selección automática de mirror",
     "Automatic mirror selection · Custom CA bundle configured": "Selección automática de mirror · Paquete de CA personalizado configurado",
-    "Turning off a built-in domain removes automatic access. Exact hostnames in Allowed domains remain allowed.": "Desactivar un dominio integrado elimina el acceso automático. Los nombres de host exactos de Dominios permitidos siguen estando permitidos."
+    "Turning off a built-in domain removes automatic access. Exact hostnames in Allowed domains remain allowed.": "Desactivar un dominio integrado elimina el acceso automático. Los nombres de host exactos de Dominios permitidos siguen estando permitidos.",
+    "Could not load {{type}}.": "No se pudo cargar: {{type}}.",
+    "Loading {{type}}…": "Cargando {{type}}…",
+    "Tag assignments are loaded, but these resource details are unavailable.": "Las asociaciones de etiquetas se han cargado, pero los detalles de estos recursos no están disponibles.",
+    "Replace your draft with the latest values.": "Reemplazar su borrador por los valores más recientes.",
+    "Your draft is still below. Choose how to handle the latest version before saving.": "Su borrador se conserva a continuación. Antes de guardar, elija cómo gestionar la última versión.",
+    "Continue editing draft": "Seguir editando el borrador",
+    "Tag version updated": "Versión de etiqueta actualizada",
+    "Not saved yet. Saving later will replace the latest version.": "Aún no se ha guardado. Al guardar más adelante se reemplazará la última versión.",
+    "Tag assignments are preserved.": "Las asociaciones de etiquetas se conservan.",
+    "{{count}} tagged resources are currently unavailable._many": "{{count}} recursos etiquetados no están disponibles actualmente.",
+    "{{count}} tagged resources are currently unavailable._other": "{{count}} recursos etiquetados no están disponibles actualmente.",
+    "{{count}} tagged resources are currently unavailable._one": "{{count}} recurso etiquetado no está disponible actualmente."
   }
 }

@@ -4567,6 +4567,16 @@
     "Enter a complete proxy URL, for example http://127.0.0.1:1086.": "请输入完整的代理 URL，例如 http://127.0.0.1:1086。",
     "Automatic mirror selection": "自动选择镜像",
     "Automatic mirror selection · Custom CA bundle configured": "自动选择镜像 · 已配置自定义 CA 证书包",
-    "Turning off a built-in domain removes automatic access. Exact hostnames in Allowed domains remain allowed.": "关闭内置域名会取消自动访问权限。“允许的域名”中的精确主机名仍可访问。"
+    "Turning off a built-in domain removes automatic access. Exact hostnames in Allowed domains remain allowed.": "关闭内置域名会取消自动访问权限。“允许的域名”中的精确主机名仍可访问。",
+    "Could not load {{type}}.": "无法加载{{type}}。",
+    "Loading {{type}}…": "正在加载{{type}}…",
+    "Tag assignments are loaded, but these resource details are unavailable.": "标签关联已加载，但暂时无法显示这些资源的详细信息。",
+    "Replace your draft with the latest values.": "用最新内容替换当前草稿。",
+    "Your draft is still below. Choose how to handle the latest version before saving.": "你的草稿仍保留在下方。保存前，请确认如何处理最新版本。",
+    "Continue editing draft": "继续编辑草稿",
+    "Tag version updated": "标签版本已更新",
+    "Not saved yet. Saving later will replace the latest version.": "尚未保存。之后保存会覆盖最新版本。",
+    "Tag assignments are preserved.": "标签关联已保留。",
+    "{{count}} tagged resources are currently unavailable._other": "{{count}} 个已关联资源暂不可用。"
   }
 }

@@ -5013,6 +5013,19 @@
     "Enter a complete proxy URL, for example http://127.0.0.1:1086.": "Введите полный URL прокси, например http://127.0.0.1:1086.",
     "Automatic mirror selection": "Автоматический выбор зеркала",
     "Automatic mirror selection · Custom CA bundle configured": "Автоматический выбор зеркала · Настроен пользовательский пакет CA",
-    "Turning off a built-in domain removes automatic access. Exact hostnames in Allowed domains remain allowed.": "Отключение встроенного домена отменяет автоматический доступ. Точные имена хостов в списке разрешённых доменов остаются разрешёнными."
+    "Turning off a built-in domain removes automatic access. Exact hostnames in Allowed domains remain allowed.": "Отключение встроенного домена отменяет автоматический доступ. Точные имена хостов в списке разрешённых доменов остаются разрешёнными.",
+    "Could not load {{type}}.": "Не удалось загрузить: {{type}}.",
+    "Loading {{type}}…": "Загрузка: {{type}}…",
+    "Tag assignments are loaded, but these resource details are unavailable.": "Связи тегов загружены, но сведения об этих ресурсах недоступны.",
+    "Replace your draft with the latest values.": "Заменить черновик актуальными значениями.",
+    "Your draft is still below. Choose how to handle the latest version before saving.": "Ваш черновик сохранён ниже. Перед сохранением выберите, как поступить с последней версией.",
+    "Continue editing draft": "Продолжить редактирование",
+    "Tag version updated": "Версия тега обновлена",
+    "Not saved yet. Saving later will replace the latest version.": "Ещё не сохранено. При сохранении последняя версия будет заменена.",
+    "Tag assignments are preserved.": "Связи тегов сохранены.",
+    "{{count}} tagged resources are currently unavailable._many": "{{count}} ресурсов с тегом сейчас недоступны.",
+    "{{count}} tagged resources are currently unavailable._few": "{{count}} ресурса с тегом сейчас недоступны.",
+    "{{count}} tagged resources are currently unavailable._other": "{{count}} ресурса с тегом сейчас недоступны.",
+    "{{count}} tagged resources are currently unavailable._one": "{{count}} ресурс с тегом сейчас недоступен."
   }
 }

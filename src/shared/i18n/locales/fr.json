@@ -4881,6 +4881,18 @@
     "Enter a complete proxy URL, for example http://127.0.0.1:1086.": "Saisissez une URL de proxy complète, par exemple http://127.0.0.1:1086.",
     "Automatic mirror selection": "Sélection automatique du miroir",
     "Automatic mirror selection · Custom CA bundle configured": "Sélection automatique du miroir · Ensemble de certificats CA personnalisé configuré",
-    "Turning off a built-in domain removes automatic access. Exact hostnames in Allowed domains remain allowed.": "Désactiver un domaine intégré supprime l’accès automatique. Les noms d’hôte exacts dans Domaines autorisés restent autorisés."
+    "Turning off a built-in domain removes automatic access. Exact hostnames in Allowed domains remain allowed.": "Désactiver un domaine intégré supprime l’accès automatique. Les noms d’hôte exacts dans Domaines autorisés restent autorisés.",
+    "Could not load {{type}}.": "Impossible de charger : {{type}}.",
+    "Loading {{type}}…": "Chargement : {{type}}…",
+    "Tag assignments are loaded, but these resource details are unavailable.": "Les associations de tags sont chargées, mais les détails de ces ressources sont indisponibles.",
+    "Replace your draft with the latest values.": "Remplacer votre brouillon par les dernières valeurs.",
+    "Your draft is still below. Choose how to handle the latest version before saving.": "Votre brouillon est conservé ci-dessous. Avant de l’enregistrer, choisissez comment traiter la dernière version.",
+    "Continue editing draft": "Continuer à modifier le brouillon",
+    "Tag version updated": "Version du tag mise à jour",
+    "Not saved yet. Saving later will replace the latest version.": "Pas encore enregistré. Un enregistrement ultérieur remplacera la dernière version.",
+    "Tag assignments are preserved.": "Les associations de tags sont conservées.",
+    "{{count}} tagged resources are currently unavailable._many": "{{count}} ressources associées à ce tag sont actuellement indisponibles.",
+    "{{count}} tagged resources are currently unavailable._other": "{{count}} ressources associées à ce tag sont actuellement indisponibles.",
+    "{{count}} tagged resources are currently unavailable._one": "{{count}} ressource associée à ce tag est actuellement indisponible."
   }
 }

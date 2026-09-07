@@ -64,6 +64,7 @@ const ApplicationPresentationHost = (): React.JSX.Element => {
           className="flex min-h-svh items-center justify-center bg-background p-6 text-foreground"
         >
           <ErrorNotice
+            fullPage
             title={t('Settings could not be loaded')}
             description={startup.settings.loadError}
             primaryButton={{

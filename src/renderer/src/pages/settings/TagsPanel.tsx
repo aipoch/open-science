@@ -20,6 +20,7 @@ import {
 } from 'lucide-react'
 import {
   useEffect,
+  useCallback,
   useLayoutEffect,
   useMemo,
   useRef,
@@ -40,6 +41,7 @@ import {
 import type { LiteratureItemView } from '../../../../shared/literature'
 import type { ArtifactLiteratureReference } from '../../../../shared/artifact-literature'
 import { Button } from '@/components/ui/button'
+import { ErrorNotice } from '@/components/error-notice'
 import {
   dialogBodyClassName,
   dialogCancelButtonClassName,
@@ -148,12 +150,16 @@ const TagForm = ({
   const { t } = useTranslation()
   const createTag = useTagStore((state) => state.create)
   const updateTag = useTagStore((state) => state.update)
+  const loadTags = useTagStore((state) => state.load)
+  const [baseVersion, setBaseVersion] = useState(tag?.updatedAt)
   const [draft, setDraft] = useState<TagDraft>(
     tag ? { name: tag.name, iconKey: tag.iconKey, colorKey: tag.colorKey } : EMPTY_DRAFT
   )
   const [saving, setSaving] = useState(false)
   const [formError, setFormError] = useState<string>()
-  const canSubmit = Boolean(draft.name.trim()) && !saving
+  const conflicted = tag !== undefined && tag.updatedAt !== baseVersion
+  const LatestIcon = tag ? TAG_ICONS[tag.iconKey] : undefined
+  const canSubmit = Boolean(draft.name.trim()) && !saving && !conflicted
 
   const save = async (): Promise<void> => {
     if (!canSubmit) return
@@ -161,13 +167,14 @@ const TagForm = ({
     setFormError(undefined)
     try {
       if (tag) {
-        await updateTag({ id: tag.id, expectedUpdatedAt: tag.updatedAt, ...draft })
+        await updateTag({ id: tag.id, expectedUpdatedAt: baseVersion!, ...draft })
         onSaved(tag.id)
       } else {
         onSaved(await createTag(draft))
       }
     } catch {
       setFormError(t('Could not save Tag.'))
+      if (tag) await loadTags()
     } finally {
       setSaving(false)
     }
@@ -185,6 +192,53 @@ const TagForm = ({
       <p className="text-sm text-muted-foreground">
         {t('Choose a name, icon, and color. Names are unique regardless of case.')}
       </p>
+      {conflicted ? (
+        <div>
+          <ErrorNotice
+            role="alert"
+            title={t('Tag version updated')}
+            description={t(
+              'Your draft is still below. Choose how to handle the latest version before saving.'
+            )}
+            secondaryButton={{
+              label: t('Load latest version'),
+              description: t('Replace your draft with the latest values.'),
+              onClick: () => {
+                setDraft({ name: tag.name, iconKey: tag.iconKey, colorKey: tag.colorKey })
+                setBaseVersion(tag.updatedAt)
+                setFormError(undefined)
+              },
+              disabled: saving
+            }}
+            primaryButton={{
+              label: t('Continue editing draft'),
+              description: t('Not saved yet. Saving later will replace the latest version.'),
+              onClick: () => {
+                setBaseVersion(tag.updatedAt)
+                setFormError(undefined)
+              },
+              disabled: saving
+            }}
+          >
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-2 border-t border-border pt-3 text-sm">
+              <span className="text-muted-foreground">{t('Latest saved version')}</span>
+              <span className="inline-flex min-w-0 items-center gap-1.5 font-medium text-foreground [overflow-wrap:anywhere]">
+                {LatestIcon ? (
+                  <LatestIcon
+                    className={cn('size-4 shrink-0 rounded-sm', TAG_COLORS[tag.colorKey])}
+                    aria-hidden="true"
+                  />
+                ) : null}
+                {tag.name}
+              </span>
+              <span className="text-xs text-muted-foreground">
+                {t('Icon')}: {iconLabel(t, tag.iconKey)} · {t('Color')}:{' '}
+                {colorLabel(t, tag.colorKey)}
+              </span>
+            </div>
+          </ErrorNotice>
+        </div>
+      ) : null}
       <label className="space-y-1.5 text-sm font-medium" htmlFor="tag-form-name">
         <span>
           {t('Name')}
@@ -263,6 +317,36 @@ const TagForm = ({
   )
 }
 
+const useResourceCatalogLoad = (
+  load: (retry: boolean) => Promise<void>,
+  loaded: boolean,
+  loadError?: string
+): { status: 'loading' | 'error' | 'ready'; retry(): void } => {
+  const [attempt, setAttempt] = useState(0)
+  const [failed, setFailed] = useState(false)
+  useEffect(() => {
+    let active = true
+    void load(attempt > 0).then(
+      () => {
+        if (active) setFailed(false)
+      },
+      () => {
+        if (active) setFailed(true)
+      }
+    )
+    return () => {
+      active = false
+    }
+  }, [load, attempt])
+  return {
+    status: loadError || (failed && !loaded) ? 'error' : loaded ? 'ready' : 'loading',
+    retry: () => {
+      setFailed(false)
+      setAttempt((value) => value + 1)
+    }
+  }
+}
+
 const TagsList = ({
   onOpenResource,
   onSelectedTagChange,
@@ -290,6 +374,14 @@ const TagsList = ({
   const loadConnectors = useSettingsStore((state) => state.loadConnectors)
   const specialistItems = useSpecialistStore((state) => state.items)
   const loadSpecialists = useSpecialistStore((state) => state.load)
+  const skillsLoaded = useSettingsStore((state) => state.skillsLoaded)
+  const connectorsLoaded = useSettingsStore((state) => state.connectorsLoaded)
+  const specialistsLoaded = useSpecialistStore((state) => state.isLoaded)
+  const specialistLoadError = useSpecialistStore((state) => state.loadError)
+  const refreshSpecialists = useCallback(
+    (force: boolean) => loadSpecialists({ force }),
+    [loadSpecialists]
+  )
   const selectedId = useTagStore((state) => state.browserSelectedId)
   const setSelectedId = useTagStore((state) => state.setBrowserSelectedId)
   const typeFilter = useTagStore((state) => state.browserTypeFilter)
@@ -312,9 +404,12 @@ const TagsList = ({
   const [tagDropTarget, setTagDropTarget] = useState<TagDropTarget>()
   const [selectedLiteratureReference, setSelectedLiteratureReference] =
     useState<ArtifactLiteratureReference>()
+  const [literatureLoadAttempt, setLiteratureLoadAttempt] = useState(0)
   const [literatureResourceCache, setLiteratureResourceCache] = useState<{
     key: string
     rows: TagResourceRow[]
+    failed?: boolean
+    attempt?: number
   }>({ key: '', rows: [] })
   const tagPointerDragRef = useRef<TagPointerDrag | undefined>(undefined)
   const currentSelectedId = tags.some((tag) => tag.id === selectedId) ? selectedId : tags[0]?.id
@@ -334,41 +429,72 @@ const TagsList = ({
     [literatureResourceCache, literatureResourceIdsKey]
   )
 
+  const catalogLoads = {
+    'catalog.skill': useResourceCatalogLoad(loadSkills, skillsLoaded),
+    'catalog.connector': useResourceCatalogLoad(loadConnectors, connectorsLoaded),
+    'catalog.specialist': useResourceCatalogLoad(
+      refreshSpecialists,
+      specialistsLoaded,
+      specialistLoadError
+    ),
+    'literature.item': {
+      status: !literatureResourceIdsKey
+        ? 'ready'
+        : literatureResourceCache.key !== literatureResourceIdsKey ||
+            literatureResourceCache.attempt !== literatureLoadAttempt
+          ? 'loading'
+          : literatureResourceCache.failed
+            ? 'error'
+            : 'ready',
+      retry: () => setLiteratureLoadAttempt((attempt) => attempt + 1)
+    }
+  }
+
   useEffect(() => {
     if (status === 'idle') void loadTags()
-    void Promise.all([loadSkills(), loadConnectors(), loadSpecialists()])
-  }, [loadConnectors, loadSkills, loadSpecialists, loadTags, status])
+  }, [loadTags, status])
 
   useEffect(() => {
     let active = true
-    if (!literatureResourceIdsKey || !window.api?.literature) {
+    if (!literatureResourceIdsKey) {
       return () => {
         active = false
       }
     }
-    void Promise.all(
-      literatureResourceIdsKey
-        .split('\n')
-        .map((resourceId) => window.api.literature.get(resourceId))
-    ).then(
-      (items) => {
-        if (!active) return
-        setLiteratureResourceCache({
-          key: literatureResourceIdsKey,
-          rows: items.flatMap((item): TagResourceRow[] => {
-            if (!item) return []
-            return [literatureResourceRow(item)]
+    void Promise.resolve()
+      .then(() =>
+        Promise.all(
+          literatureResourceIdsKey
+            .split('\n')
+            .map((resourceId) => window.api.literature.get(resourceId))
+        )
+      )
+      .then(
+        (items) => {
+          if (!active) return
+          setLiteratureResourceCache({
+            key: literatureResourceIdsKey,
+            attempt: literatureLoadAttempt,
+            rows: items.flatMap((item): TagResourceRow[] => {
+              if (!item) return []
+              return [literatureResourceRow(item)]
+            })
           })
-        })
-      },
-      () => {
-        if (active) setLiteratureResourceCache({ key: literatureResourceIdsKey, rows: [] })
-      }
-    )
+        },
+        () => {
+          if (active)
+            setLiteratureResourceCache({
+              key: literatureResourceIdsKey,
+              attempt: literatureLoadAttempt,
+              rows: [],
+              failed: true
+            })
+        }
+      )
     return () => {
       active = false
     }
-  }, [literatureResourceIdsKey])
+  }, [literatureResourceIdsKey, literatureLoadAttempt])
 
   useLayoutEffect(() => {
     if (resourceListRef.current) resourceListRef.current.scrollTop = scrollTop
@@ -425,9 +551,7 @@ const TagsList = ({
 
   const counts = new Map(tags.map((tag) => [tag.id, 0]))
   for (const assignment of assignments) {
-    if (resourcesByKey.has(`${assignment.resourceType}:${assignment.resourceId}`)) {
-      counts.set(assignment.tagId, (counts.get(assignment.tagId) ?? 0) + 1)
-    }
+    counts.set(assignment.tagId, (counts.get(assignment.tagId) ?? 0) + 1)
   }
   const filteredResources = selectedAssignments
     .map((assignment) => resourcesByKey.get(`${assignment.resourceType}:${assignment.resourceId}`))
@@ -452,6 +576,16 @@ const TagsList = ({
       resources: filteredResources.filter((resource) => resource.resourceType === resourceType)
     }))
     .filter(({ resources }) => resources.length > 0)
+  const visibleCatalogTypes = resourceTypes.filter(
+    (type) => typeFilter === 'all' || typeFilter === type
+  )
+  const catalogsReady = visibleCatalogTypes.every((type) => catalogLoads[type].status === 'ready')
+  const unavailableAssignmentCount = selectedAssignments.filter(
+    (assignment) =>
+      visibleCatalogTypes.includes(assignment.resourceType) &&
+      catalogLoads[assignment.resourceType].status === 'ready' &&
+      !resourcesByKey.has(`${assignment.resourceType}:${assignment.resourceId}`)
+  ).length
 
   const confirmDelete = async (): Promise<void> => {
     if (!deleting || deleteBusy) return
@@ -733,7 +867,12 @@ const TagsList = ({
                     <TagBadge tag={selectedTag} />
                     <span className="shrink-0 text-xs text-muted-foreground">
                       {t('{{count}} resources', {
-                        count: filteredResources.length,
+                        count: query.trim()
+                          ? filteredResources.length
+                          : selectedAssignments.filter(
+                              (assignment) =>
+                                typeFilter === 'all' || assignment.resourceType === typeFilter
+                            ).length,
                         defaultValue_one: '{{count}} resource'
                       })}
                     </span>
@@ -803,6 +942,37 @@ const TagsList = ({
                   <p role="alert" className="mb-3 text-xs text-destructive">
                     {assignmentError}
                   </p>
+                ) : null}
+                {visibleCatalogTypes.map((type) => {
+                  const catalog = catalogLoads[type]
+                  if (catalog.status === 'ready') return null
+                  return catalog.status === 'error' ? (
+                    <div key={type} role="alert" className="mb-4">
+                      <ErrorNotice
+                        title={t('Could not load {{type}}.', { type: resourceTypeLabel(t, type) })}
+                        description={t(
+                          'Tag assignments are loaded, but these resource details are unavailable.'
+                        )}
+                        primaryButton={{ label: t('Retry'), onClick: catalog.retry }}
+                      />
+                    </div>
+                  ) : (
+                    <p key={type} role="status" className="py-3 text-sm text-muted-foreground">
+                      {t('Loading {{type}}…', { type: resourceTypeLabel(t, type) })}
+                    </p>
+                  )
+                })}
+                {unavailableAssignmentCount > 0 ? (
+                  <div className="mb-4">
+                    <ErrorNotice
+                      role="status"
+                      title={t('{{count}} tagged resources are currently unavailable.', {
+                        count: unavailableAssignmentCount,
+                        defaultValue_one: '{{count}} tagged resource is currently unavailable.'
+                      })}
+                      description={t('Tag assignments are preserved.')}
+                    />
+                  </div>
                 ) : null}
                 {filteredResources.length > 0 ? (
                   <div data-slot="tag-resource-groups" className="divide-y divide-border">
@@ -898,11 +1068,11 @@ const TagsList = ({
                       )
                     })}
                   </div>
-                ) : (
+                ) : catalogsReady && unavailableAssignmentCount === 0 ? (
                   <p className="py-12 text-center text-sm text-muted-foreground">
                     {t('No resources match this Tag.')}
                   </p>
-                )}
+                ) : null}
               </>
             ) : (
               <p className="py-12 text-center text-sm text-muted-foreground">
@@ -1014,7 +1184,7 @@ const TagsPanel = ({
   if (view.kind === 'edit' && editTag) {
     return (
       <TagForm
-        key={`${editTag.id}:${editTag.updatedAt}`}
+        key={editTag.id}
         tag={editTag}
         onCancel={() => onNavigate({ kind: 'list', tagId: editTag.id })}
         onSaved={(tagId) => onNavigate({ kind: 'list', tagId })}

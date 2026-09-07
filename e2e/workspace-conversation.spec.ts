@@ -687,6 +687,33 @@ test('archives a completed session from its mobile sidebar actions', async ({ ap
   await page.getByRole('button', { name: 'Send message' }).click()
   await expect(page.getByText(AGENT_REPLY, { exact: true })).toBeVisible()
 
+  const advanceRevision = async (): Promise<void> => {
+    const session = await page.evaluate(async (title) => {
+      const session = (await window.api.sessions.loadAll()).sessions.find(
+        (candidate) => candidate.title === title
+      )
+      if (!session) throw new Error('Archive fixture Session was not persisted.')
+      return session
+    }, USER_MESSAGE)
+    await page.getByRole('menuitem', { name: 'Archive' }).evaluate((element, session) => {
+      // Queue another client's write immediately before the menu submits its captured version.
+      element.addEventListener(
+        'click',
+        () => {
+          void window.api.sessions.editDetails({
+            projectId: session.projectId!,
+            sessionId: session.id,
+            title: session.title,
+            description: `${session.description ?? ''} concurrent edit`,
+            expectedTitle: session.title,
+            expectedDescription: session.description ?? ''
+          })
+        },
+        { capture: true, once: true }
+      )
+    }, session)
+  }
+
   await page.setViewportSize({ width: 375, height: 900 })
   await page.getByRole('button', { name: 'Open navigation' }).click()
   await page.getByRole('button', { name: `Open actions for ${USER_MESSAGE}` }).click()
@@ -707,24 +734,24 @@ test('archives a completed session from its mobile sidebar actions', async ({ ap
   await exportDialog.getByRole('button', { name: 'Close' }).click()
   await expect(exportDialog).toBeHidden()
 
-  await page.getByRole('button', { name: 'Open navigation' }).click()
-  await page.getByRole('button', { name: `Open actions for ${USER_MESSAGE}` }).click()
-  const archive = page.getByRole('menuitem', { name: 'Archive' })
-  await expect(archive).toBeEnabled()
-  await archive.click()
-
   const undo = page.getByTestId('archive-undo-snackbar')
   const conflict = page.getByText(/Session revision conflict:/)
-  await expect(undo.or(conflict)).toBeVisible()
-  if (await conflict.isVisible()) {
-    // Terminal persistence can advance the whole-Session revision after the click. The stale
-    // command must remain rejected; only a new user action may use the refreshed authority.
-    await expect(undo).toBeHidden()
+  // Exercise two consecutive authority changes, not just one lucky retry. Each conflict
+  // must finish refreshing the projection before a fresh user action opens the menu again.
+  for (let attempt = 0; attempt < 3; attempt += 1) {
     await page.getByRole('button', { name: 'Open navigation' }).click()
     await page.getByRole('button', { name: `Open actions for ${USER_MESSAGE}` }).click()
-    await page.getByRole('menuitem', { name: 'Archive' }).click()
+    const archive = page.getByRole('menuitem', { name: 'Archive' })
+    await expect(archive).toBeEnabled()
+    if (attempt < 2) await advanceRevision()
+    await archive.click()
+    if (attempt < 2) {
+      await expect(conflict).toBeVisible()
+      await expect(undo).toBeHidden()
+    } else {
+      await expect(undo).toContainText('Archived session')
+    }
   }
-  await expect(page.getByTestId('archive-undo-snackbar')).toContainText('Archived session')
   await expect(page.getByRole('button', { name: `Open actions for ${USER_MESSAGE}` })).toBeHidden()
 })
 

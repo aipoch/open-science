@@ -4720,6 +4720,17 @@
     "Enter a complete proxy URL, for example http://127.0.0.1:1086.": "Geben Sie eine vollständige Proxy-URL ein, zum Beispiel http://127.0.0.1:1086.",
     "Automatic mirror selection": "Automatische Spiegelauswahl",
     "Automatic mirror selection · Custom CA bundle configured": "Automatische Spiegelauswahl · Benutzerdefiniertes CA-Bündel konfiguriert",
-    "Turning off a built-in domain removes automatic access. Exact hostnames in Allowed domains remain allowed.": "Das Deaktivieren einer integrierten Domain hebt den automatischen Zugriff auf. Exakte Hostnamen unter Erlaubte Domains bleiben erlaubt."
+    "Turning off a built-in domain removes automatic access. Exact hostnames in Allowed domains remain allowed.": "Das Deaktivieren einer integrierten Domain hebt den automatischen Zugriff auf. Exakte Hostnamen unter Erlaubte Domains bleiben erlaubt.",
+    "Could not load {{type}}.": "{{type}} konnten nicht geladen werden.",
+    "Loading {{type}}…": "{{type}} werden geladen…",
+    "Tag assignments are loaded, but these resource details are unavailable.": "Die Tag-Zuordnungen wurden geladen, aber die Details dieser Ressourcen sind nicht verfügbar.",
+    "Replace your draft with the latest values.": "Ihren Entwurf durch die neuesten Werte ersetzen.",
+    "Your draft is still below. Choose how to handle the latest version before saving.": "Ihr Entwurf bleibt unten erhalten. Wählen Sie vor dem Speichern, wie Sie mit der neuesten Version umgehen möchten.",
+    "Continue editing draft": "Entwurf weiter bearbeiten",
+    "Tag version updated": "Tag-Version aktualisiert",
+    "Not saved yet. Saving later will replace the latest version.": "Noch nicht gespeichert. Späteres Speichern ersetzt die neueste Version.",
+    "Tag assignments are preserved.": "Die Tag-Zuordnungen bleiben erhalten.",
+    "{{count}} tagged resources are currently unavailable._other": "{{count}} getaggte Ressourcen sind derzeit nicht verfügbar.",
+    "{{count}} tagged resources are currently unavailable._one": "{{count}} getaggte Ressource ist derzeit nicht verfügbar."
   }
 }

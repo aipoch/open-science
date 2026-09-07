@@ -20,6 +20,211 @@ beforeEach(() => {
 })
 
 describe('tag store', () => {
+  it('removes failed pending intent without losing a newer loaded assignment', async () => {
+    let reject!: (error: Error) => void
+    const confirmed = {
+      tagId: 'tag-favorite',
+      resourceType: 'catalog.skill' as const,
+      resourceId: 'confirmed',
+      createdAt: 2
+    }
+    setTagsApi({
+      setAssignment: vi.fn(
+        () =>
+          new Promise<TagSnapshot>((_, fail) => {
+            reject = fail
+          })
+      ),
+      snapshot: vi
+        .fn()
+        .mockResolvedValueOnce({ ...favoriteSnapshot(2), assignments: [confirmed] })
+        .mockRejectedValueOnce(new Error('offline'))
+    })
+    useTagStore.setState({ ...favoriteSnapshot(1), status: 'ready' })
+    const pending = useTagStore
+      .getState()
+      .setAssignment({ ...confirmed, resourceId: 'pending', assigned: true })
+    const failed = expect(pending).rejects.toThrow('write failed')
+    await useTagStore.getState().load()
+    expect(useTagStore.getState().assignments.map((item) => item.resourceId)).toEqual([
+      'confirmed',
+      'pending'
+    ])
+    reject(new Error('write failed'))
+    await failed
+    expect(useTagStore.getState()).toMatchObject({ revision: 2, assignments: [confirmed] })
+  })
+
+  it.each(['success', 'failure'] as const)(
+    'does not revive older same-resource intent after a newer success (%s)',
+    async (outcome) => {
+      let finish!: (snapshot: TagSnapshot) => void
+      let reject!: (error: Error) => void
+      setTagsApi({
+        setAssignment: vi
+          .fn()
+          .mockImplementationOnce(
+            () =>
+              new Promise<TagSnapshot>((resolve, fail) => {
+                finish = resolve
+                reject = fail
+              })
+          )
+          .mockResolvedValueOnce(favoriteSnapshot(3)),
+        snapshot: vi.fn().mockRejectedValue(new Error('offline'))
+      })
+      useTagStore.setState({ ...favoriteSnapshot(1), status: 'ready' })
+      const reference = {
+        tagId: 'tag-favorite',
+        resourceType: 'catalog.skill' as const,
+        resourceId: 'analysis'
+      }
+      const older = useTagStore.getState().setAssignment({ ...reference, assigned: true })
+      const finished = outcome === 'failure' ? expect(older).rejects.toThrow('write failed') : older
+      await useTagStore.getState().setAssignment({ ...reference, assigned: false })
+      expect(useTagStore.getState().assignments).toEqual([])
+      if (outcome === 'failure') reject(new Error('write failed'))
+      else finish({ ...favoriteSnapshot(2), assignments: [{ ...reference, createdAt: 2 }] })
+      await finished
+      expect(useTagStore.getState()).toMatchObject({ revision: 3, assignments: [] })
+    }
+  )
+
+  it.each([false, true])(
+    'preserves newer pending assignment intent after older success (same resource: %s)',
+    async (sameResource) => {
+      const finish: Array<(snapshot: TagSnapshot) => void> = []
+      setTagsApi({
+        setAssignment: vi.fn(() => new Promise<TagSnapshot>((resolve) => finish.push(resolve)))
+      })
+      useTagStore.setState({ ...favoriteSnapshot(1), status: 'ready' })
+      const first = {
+        tagId: 'tag-favorite',
+        resourceType: 'catalog.skill' as const,
+        resourceId: 'analysis',
+        createdAt: 2
+      }
+      const second = { ...first, resourceId: sameResource ? 'analysis' : 'other' }
+      const a = useTagStore.getState().setAssignment({ ...first, assigned: true })
+      const b = useTagStore.getState().setAssignment({ ...second, assigned: !sameResource })
+      finish[0]({ ...favoriteSnapshot(2), assignments: [first] })
+      await a
+      const visible = useTagStore.getState().assignments.map((item) => item.resourceId)
+      finish[1]({ ...favoriteSnapshot(3), assignments: sameResource ? [] : [first, second] })
+      await b
+      expect(visible).toEqual(sameResource ? [] : ['analysis', 'other'])
+    }
+  )
+
+  it.each([false, true])(
+    'rolls back only the failed relationship (same resource: %s)',
+    async (sameResource) => {
+      const reject: Array<(error: Error) => void> = []
+      setTagsApi({
+        snapshot: vi.fn().mockRejectedValue(new Error('read failed')),
+        setAssignment: vi.fn(
+          () =>
+            new Promise<TagSnapshot>((_, fail) => {
+              reject.push(fail)
+            })
+        )
+      })
+      useTagStore.setState({ ...favoriteSnapshot(1), status: 'ready' })
+      const reference = {
+        tagId: 'tag-favorite',
+        resourceType: 'catalog.skill' as const,
+        resourceId: 'analysis'
+      }
+      const first = useTagStore.getState().setAssignment({ ...reference, assigned: true })
+      const firstFailed = expect(first).rejects.toThrow('first failed')
+      const second = useTagStore.getState().setAssignment({
+        ...reference,
+        resourceId: sameResource ? 'analysis' : 'other',
+        assigned: true
+      })
+      const secondFailed = expect(second).rejects.toThrow('second failed')
+      reject[0]!(new Error('first failed'))
+      await firstFailed
+      expect(useTagStore.getState().assignments.map((item) => item.resourceId)).toEqual([
+        sameResource ? 'analysis' : 'other'
+      ])
+      reject[1]!(new Error('second failed'))
+      await secondFailed
+      expect(useTagStore.getState().assignments).toEqual([])
+    }
+  )
+  it('keeps a newer confirmed assignment when an older write and recovery read fail', async () => {
+    let rejectOlder!: (error: Error) => void
+    const pending = new Promise<TagSnapshot>((_, reject) => {
+      rejectOlder = reject
+    })
+    const confirmed = {
+      tagId: 'tag-favorite',
+      resourceType: 'catalog.skill' as const,
+      resourceId: 'confirmed',
+      createdAt: 2
+    }
+    setTagsApi({
+      snapshot: vi.fn().mockRejectedValue(new Error('read failed')),
+      setAssignment: vi
+        .fn()
+        .mockReturnValueOnce(pending)
+        .mockResolvedValueOnce({
+          ...favoriteSnapshot(2),
+          assignments: [confirmed]
+        })
+    })
+    useTagStore.setState({ ...favoriteSnapshot(1), status: 'ready' })
+    const older = useTagStore
+      .getState()
+      .setAssignment({ ...confirmed, resourceId: 'older', assigned: true })
+    const failed = expect(older).rejects.toThrow('write failed')
+    await useTagStore.getState().setAssignment({ ...confirmed, assigned: true })
+    rejectOlder(new Error('write failed'))
+    await failed
+    expect(useTagStore.getState()).toMatchObject({
+      revision: 2,
+      assignments: [confirmed],
+      status: 'error'
+    })
+  })
+
+  it('keeps a confirmed rename when an older reorder and recovery read fail', async () => {
+    let rejectReorder!: (error: Error) => void
+    const pending = new Promise<TagSnapshot>((_, reject) => {
+      rejectReorder = reject
+    })
+    const tag = {
+      id: 'research',
+      name: 'Research',
+      iconKey: 'tag' as const,
+      colorKey: 'blue' as const,
+      createdAt: 1,
+      updatedAt: 1
+    }
+    const confirmed = {
+      ...favoriteSnapshot(2),
+      tags: [...favoriteSnapshot().tags, { ...tag, name: 'Confirmed', updatedAt: 2 }]
+    }
+    setTagsApi({
+      snapshot: vi
+        .fn()
+        .mockResolvedValueOnce(confirmed)
+        .mockRejectedValueOnce(new Error('read failed')),
+      reorder: vi.fn().mockReturnValue(pending)
+    })
+    useTagStore.setState({
+      ...favoriteSnapshot(1),
+      tags: [...favoriteSnapshot().tags, tag],
+      status: 'ready'
+    })
+    const reorder = useTagStore.getState().reorder({ tagIds: [tag.id] })
+    const failed = expect(reorder).rejects.toThrow('write failed')
+    await useTagStore.getState().load()
+    rejectReorder(new Error('write failed'))
+    await failed
+    expect(useTagStore.getState()).toMatchObject({ ...confirmed, status: 'error' })
+  })
   it('preserves browser scroll when restoring the currently selected Tag', () => {
     useTagStore.setState({ browserSelectedId: 'tag-favorite', browserScrollTop: 240 })
 
@@ -262,10 +467,12 @@ describe('tag store', () => {
       resourceId: 'newer-skill',
       assigned: true
     })
-    expect(useTagStore.getState().assignments).toEqual(committed.assignments)
+    const pendingResourceIds = useTagStore.getState().assignments.map((item) => item.resourceId)
     older.reject(new Error('older mutation failed'))
     await rejected
 
+    // An unrelated success must keep the older request visible until it settles.
+    expect(pendingResourceIds).toEqual(['newer-skill', 'older-skill'])
     expect(snapshot).toHaveBeenCalledOnce()
     expect(useTagStore.getState()).toMatchObject({
       revision: 2,

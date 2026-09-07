@@ -51,6 +51,15 @@ describe('LiteratureFullTextLookup', () => {
     })
   })
   afterEach(cleanup)
+  it('uses a single error surface when full-text search fails', async () => {
+    fullText.mockRejectedValue(new Error('offline'))
+    render(<LiteratureFullTextLookup {...props} />)
+    const alert = await screen.findByRole('alert')
+    const surface = within(alert).getByRole('heading').closest('section')!
+    expect(surface.classList.contains('border')).toBe(true)
+    expect(alert.classList.contains('border')).toBe(false)
+  })
+
   it('configures Unpaywall inline using shared contact email while preserving the NCBI key', async () => {
     fullText.mockResolvedValue({
       mode: 'search',
