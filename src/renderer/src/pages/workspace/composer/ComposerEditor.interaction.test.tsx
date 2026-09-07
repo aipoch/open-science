@@ -324,6 +324,31 @@ describe('ComposerEditor mention input safety', () => {
     await flushProjectFiles()
   }
 
+  it.each([
+    { key: 'Enter', query: '@', outputFirst: true },
+    { key: 'Tab', query: '@', outputFirst: true },
+    { key: 'Enter', query: '@seq', outputFirst: true },
+    { key: 'Enter', query: '@', outputFirst: false }
+  ])(
+    'inserts the hovered upload with $key for $query (output first: $outputFirst)',
+    async ({ key, query, outputFirst }) => {
+      window.api.projectFiles.listFiles = vi.fn().mockResolvedValue({
+        items: outputFirst ? [pickerProjectFiles[1], pickerProjectFiles[0]] : pickerProjectFiles,
+        totalCount: 2
+      })
+      renderEditor()
+      await typeQuery(query)
+      const upload = Array.from(
+        document.body.querySelectorAll<HTMLElement>('[role="option"]')
+      ).find((option) => option.textContent?.includes('sequence.csv'))!
+      act(() => upload.dispatchEvent(new MouseEvent('mouseover', { bubbles: true })))
+      expect(upload.getAttribute('aria-selected')).toBe('true')
+      dispatchKey(editor(), key)
+      await flushProjectFiles()
+      expect(editor().querySelector('[data-mention-type]')?.textContent).toBe('@sequence.csv')
+    }
+  )
+
   it.each(['/lit', '@seq', '#'])(
     'preserves %s while Enter confirms IME composition',
     async (query) => {
