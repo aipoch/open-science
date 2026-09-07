@@ -200,6 +200,7 @@
           "src/renderer/src/pages/workspace/WorkspacePage.image-staging.test.tsx",
           "src/renderer/src/pages/workspace/WorkspacePage.pending-switch.test.tsx",
           "src/renderer/src/pages/workspace/WorkspacePage.preview-panel-resize.test.tsx",
+          "src/renderer/src/pages/workspace/preview-draft-lifecycle.test.tsx",
           "src/renderer/src/pages/workspace/WorkspacePage.send-gate.test.tsx",
           "src/renderer/src/pages/workspace/WorkspacePage.specialist-barrier.test.tsx",
           "src/renderer/src/pages/workspace/ComposerMessageQueue.interaction.test.tsx",

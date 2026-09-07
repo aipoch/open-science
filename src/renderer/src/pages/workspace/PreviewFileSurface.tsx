@@ -1758,8 +1758,8 @@ const PreviewFileSurface = forwardRef<PreviewFileSurfaceHandle, PreviewFileSurfa
           onConfirm={() => {
             const action = pendingLeaveAction
             setPendingLeaveAction(undefined)
-            discardEdit()
-            if (action) previewLeaveGuards.runApproved(leaveGuardScope, action)
+            // A deferred restore may have become obsolete while the confirmation was open.
+            if (!action || previewLeaveGuards.runApproved(leaveGuardScope, action)) discardEdit()
           }}
         />
       </ActionMenuProvider>
