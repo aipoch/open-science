@@ -134,7 +134,7 @@ const retryableFileBinding = (
   pendingKeys?: ReadonlySet<string>
 ): ActionMenuBinding<PreviewItem> => ({
   disabled: (item) =>
-    pendingKeys?.has(getPreviewTabActionRetryKey(command, item, deps.activeProjectId)),
+    pendingKeys?.has(getPreviewTabActionRetryKey(command, item, deps.activeProjectId)) ?? false,
   execute: async (item) => {
     const retry = async (): Promise<void> => {
       await runPreviewTabAction(command, item, deps)
