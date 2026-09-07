@@ -1,4 +1,9 @@
-import type { SwitchToPowerShellResult, UseWsl2BashResult } from '../../../shared/wsl-setup'
+import type {
+  SwitchToPowerShellResult,
+  UseWsl2BashResult,
+  WslSetupSnapshot,
+  WslSelection
+} from '../../../shared/wsl-setup'
 import type { LocalShellRuntimeMutation } from '../local-shell-runtime-mutation'
 
 type LocalShellRuntimeWorkflowWrite<Result> = Readonly<{
@@ -35,6 +40,31 @@ class LocalShellSettingsWorkflows {
 
   async useWsl2Bash(): Promise<UseWsl2BashResult> {
     return this.enqueueSwitch(() => this.switchRuntime(() => this.settings.useWsl2Bash()))
+  }
+
+  async fallbackAfterWslProbe(
+    snapshot: WslSetupSnapshot,
+    readCurrent: () => Promise<{
+      localShellRuntime?: 'powershell' | 'wsl2-bash'
+      activatedWslSelection?: WslSelection
+    }>
+  ): Promise<boolean> {
+    // Only a completed inventory establishes that the active distro was removed. A failed
+    // candidate probe or transient command failure says nothing about the active profile.
+    if (
+      snapshot.errorCode !== 'wsl_distro_not_found' &&
+      snapshot.errorCode !== 'wsl_distro_missing' &&
+      snapshot.errorCode !== 'wsl_not_installed'
+    )
+      return false
+    return this.enqueueSwitch(async () => {
+      const current = await readCurrent()
+      if (current.localShellRuntime !== 'wsl2-bash') return false
+      const active = current.activatedWslSelection
+      if (active && snapshot.distros.some((distro) => distro.name === active.distro)) return false
+      await this.switchRuntime(() => this.settings.switchLocalShellToPowerShell())
+      return true
+    })
   }
 
   private async switchRuntime<Result>(

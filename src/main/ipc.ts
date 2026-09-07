@@ -313,7 +313,8 @@ import { WslSetupOwner } from './wsl/wsl-setup-owner'
 import { FileWslSetupOperationJournal } from './wsl/wsl-setup-operation-journal'
 import { initializeWsl2BashPreview, wsl2BashPreviewStatus } from './wsl/wsl2-preview-gate'
 import { runPackagedWsl2RestartCertification } from './wsl/wsl2-packaged-restart-certification'
-import { resolveConfiguredShellRuntimeBinding } from './notebook/configured-shell-runtime'
+import { resolveAvailableShellRuntimeBinding } from './notebook/configured-shell-runtime'
+import type { WslSetupStatus } from '../shared/wsl-setup'
 import { probeWindowsVolume } from './wsl/windows-volume-probe'
 import { SettingsSnapshotCommitOwner } from './settings/settings-snapshot-commit-owner'
 import type { SettingsDocumentStore } from './settings/document-store'
@@ -574,6 +575,7 @@ const createApplicationModules = async (
     resourcesPath: process.resourcesPath
   })
   const settingsInstallCoordinator = new SettingsInstallCoordinator()
+  const wslRuntimeReconciliation: { current?: (status: WslSetupStatus) => void } = {}
   const wslSetup = new WslSetupOwner({
     // Managed workspaces, handoff data, and caches live below this local NTFS mount root. The
     // execution adapter will still validate each invocation's concrete authorized paths.
@@ -590,8 +592,26 @@ const createApplicationModules = async (
     writeSelection: (selection) => settingsRepository.setWslSelection(selection),
     installCoordinator: settingsInstallCoordinator,
     operationJournal: new FileWslSetupOperationJournal(resolveConfigRoot()),
-    onStatusChanged: (status) => applicationEvents.publish('settings:wsl-setup-changed', status)
+    onStatusChanged: (status) => {
+      applicationEvents.publish('settings:wsl-setup-changed', status)
+      wslRuntimeReconciliation.current?.(status)
+    }
   })
+  const getAvailableShellRuntimeBinding = async (): Promise<
+    Awaited<ReturnType<typeof resolveAvailableShellRuntimeBinding>>
+  > =>
+    resolveAvailableShellRuntimeBinding(
+      await settingsRepository.getSettings(),
+      async (selection) => {
+        if (!wsl2BashPreviewStatus().available) return false
+        const snapshot = await wslSetup.probe(selection)
+        return (
+          snapshot.state === 'ready' &&
+          snapshot.selection?.distro === selection.distro &&
+          snapshot.selection?.user === selection.user
+        )
+      }
+    )
   const networkProxyRuntime = new NetworkProxyRuntime({
     setProxy: (config) => session.defaultSession.setProxy(config)
   })
@@ -2493,8 +2513,7 @@ const createApplicationModules = async (
       permissionGrantRegistry,
       specialistService,
       sessionPersistenceCoordinator,
-      getShellRuntimeBinding: async () =>
-        resolveConfiguredShellRuntimeBinding(await settingsRepository.getSettings())
+      getShellRuntimeBinding: getAvailableShellRuntimeBinding
     },
     notebookRpcServer: requireNotebookRpcServer,
     readSession: ({ projectId, sessionId }) => sessionRepository.loadSession(projectId, sessionId),
@@ -3103,8 +3122,7 @@ const createApplicationModules = async (
       managedFileVersions: managedFileVersionService,
       uploadRepository,
       notebookRpcServer,
-      getShellRuntimeBinding: async () =>
-        resolveConfiguredShellRuntimeBinding(await settingsRepository.getSettings()),
+      getShellRuntimeBinding: getAvailableShellRuntimeBinding,
       peekNotebookHandoffContext: (sessionId) => notebookService.peekHandoffContext(sessionId),
       authorizeSkillImportReferencedUploads: (projectId, sessionId, paths) =>
         conversationSkillImporter.authorizeReferencedUploads(projectId, sessionId, paths),
@@ -3785,6 +3803,23 @@ const createApplicationModules = async (
     },
     appearance: { applyAppIconVariant: onAppIconVariantChanged ?? (() => undefined) }
   })
+  wslRuntimeReconciliation.current = (status) => {
+    if (!status.snapshot || status.operation.state === 'running') return
+    void settingsWorkflows.localShell
+      .fallbackAfterWslProbe(status.snapshot, async () => {
+        // Discard an observation superseded while the serialized Shell switch was queued.
+        if (wslSetup.getStatus().revision !== status.revision) return {}
+        return settingsRepository.getSettings()
+      })
+      .then(async (changed) => {
+        if (changed) {
+          await settingsSnapshotCommits.currentSnapshotAfter(Promise.resolve())
+          await wslSetup.probe()
+        }
+      })
+      .catch((error) => createLogger('wsl-setup').warn('PowerShell fallback failed', { error }))
+  }
+  wslRuntimeReconciliation.current(wslSetup.getStatus())
   declareElectronAdapter('settings', () =>
     registerSettingsIpcHandlers({
       service: settingsService,

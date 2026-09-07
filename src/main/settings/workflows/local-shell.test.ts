@@ -291,3 +291,61 @@ describe('LocalShellSettingsWorkflows', () => {
     expect(settings.restoreLocalShellRuntimePreference).toHaveBeenCalledWith(receipt)
   })
 })
+
+it('falls back and refreshes live capabilities after the active distro is unregistered', async () => {
+  const settings = {
+    switchLocalShellToPowerShell: vi.fn(async () => ({
+      result: powerShellResult,
+      mutation: mutation(1, 'powershell', 'wsl2-bash')
+    })),
+    useWsl2Bash: vi.fn(),
+    restoreLocalShellRuntimePreference: vi.fn()
+  }
+  const requestShellRuntimeRefresh = vi.fn(async () => {})
+  const workflows = new LocalShellSettingsWorkflows(settings, { requestShellRuntimeRefresh })
+  await expect(
+    workflows.fallbackAfterWslProbe(
+      {
+        state: 'distro-required',
+        distros: [],
+        errorCode: 'wsl_distro_missing',
+        operationReference: 'removed'
+      },
+      async () => ({ localShellRuntime: 'wsl2-bash', activatedWslSelection: wslResult.selection })
+    )
+  ).resolves.toBe(true)
+  expect(settings.switchLocalShellToPowerShell).toHaveBeenCalledOnce()
+  expect(requestShellRuntimeRefresh).toHaveBeenCalledOnce()
+})
+
+it.each(['candidate-missing', 'transient-failure', 'already-powershell'] as const)(
+  'does not switch the active runtime for %s',
+  async (scenario) => {
+    const settings = {
+      switchLocalShellToPowerShell: vi.fn(),
+      useWsl2Bash: vi.fn(),
+      restoreLocalShellRuntimePreference: vi.fn()
+    }
+    const requestShellRuntimeRefresh = vi.fn()
+    const workflows = new LocalShellSettingsWorkflows(settings, { requestShellRuntimeRefresh })
+    await expect(
+      workflows.fallbackAfterWslProbe(
+        {
+          state: 'failed',
+          operationReference: 'probe',
+          errorCode: scenario === 'transient-failure' ? 'wsl_probe_failed' : 'wsl_distro_not_found',
+          distros:
+            scenario === 'candidate-missing'
+              ? [{ name: wslResult.selection.distro, version: 2, isDefault: true }]
+              : []
+        },
+        async () => ({
+          localShellRuntime: scenario === 'already-powershell' ? 'powershell' : 'wsl2-bash',
+          activatedWslSelection: wslResult.selection
+        })
+      )
+    ).resolves.toBe(false)
+    expect(settings.switchLocalShellToPowerShell).not.toHaveBeenCalled()
+    expect(requestShellRuntimeRefresh).not.toHaveBeenCalled()
+  }
+)

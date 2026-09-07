@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto'
 
 import type { ShellRuntimeBinding } from '../../shared/notebook'
+import type { WslSelection } from '../../shared/wsl-setup'
 import type { StoredSettings } from '../settings/types'
 import { captureShellRuntimeBinding, defaultShellRuntimeBinding } from './shell-runtime'
 
@@ -35,3 +36,21 @@ const resolveConfiguredShellRuntimeBinding = (
 }
 
 export { resolveConfiguredShellRuntimeBinding }
+
+export const resolveAvailableShellRuntimeBinding = async (
+  settings: ConfiguredShellSettings,
+  isWslReady: (selection: WslSelection) => Promise<boolean>,
+  platform: NodeJS.Platform = process.platform
+): Promise<ShellRuntimeBinding> => {
+  if (platform === 'win32' && settings.localShellRuntime === 'wsl2-bash') {
+    try {
+      if (settings.activatedWslSelection && (await isWslReady(settings.activatedWslSelection))) {
+        return resolveConfiguredShellRuntimeBinding(settings, platform)
+      }
+    } catch {
+      // An unavailable distro must not prevent a new Session from obtaining a host Shell.
+    }
+    return defaultShellRuntimeBinding(platform)
+  }
+  return resolveConfiguredShellRuntimeBinding(settings, platform)
+}
