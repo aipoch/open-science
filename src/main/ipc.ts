@@ -85,6 +85,7 @@ import { LiteraturePdfImporter } from './literature/pdf-importer'
 import { LiteratureCitationFormatter } from './literature/citation-formatter'
 import { LiteratureCitationDocument } from './literature/citation-document'
 import { LiteratureCitationStyleLibrary } from './literature/citation-style-library'
+import { LiteratureReferenceResolver } from './literature/reference-resolver'
 import { LiteratureMetadataEnricher } from './literature/metadata-enricher'
 import { LiteratureFullTextFinder } from './literature/full-text-finder'
 import { LiteratureBatchJobs } from './literature/batch-jobs'
@@ -1551,6 +1552,7 @@ const createApplicationModules = async (
     literatureCatalog,
     literatureCitationFormatter
   )
+  const literatureReferenceResolver = new LiteratureReferenceResolver(netFetchStandard)
   const literatureMetadataEnricher = new LiteratureMetadataEnricher(
     literatureCatalog,
     netFetchStandard
@@ -4191,6 +4193,10 @@ const createApplicationModules = async (
           styles: await literatureCitationStyles.list(),
           ...(changedStyleId ? { changedStyleId } : {})
         }
+      },
+      lookupMetadata: async (doi) => {
+        const [resolved] = await literatureReferenceResolver.resolve(['doi:' + doi])
+        return resolved.item
       },
       completeMetadata: (request) => literatureMetadataEnricher.complete(request),
       fullText: (request) => literatureFullTextFinder.run(request),

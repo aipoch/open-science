@@ -82,6 +82,7 @@ export const WEB_INVOKE_CHANNELS = {
   'literature.importPdf': 'literature:import-pdf',
   'literature.importRecords': 'literature:import-records',
   'literature.jobs': 'literature:jobs',
+  'literature.lookupMetadata': 'literature:lookup-metadata',
   'literature.search': 'literature:search',
   'literature.transact': 'literature:transact',
   'localFs.getRoots': 'local-fs:get-roots',

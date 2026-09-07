@@ -1585,7 +1585,7 @@
     "Length limit reached": "已达到长度限制",
     "Let the agent detect attached .zip and .skill packages and ask before importing them.": "让智能体识别附加的 .zip 与 .skill 包，并在导入前询问你。",
     "Lets Open Science install packages into this environment. Installs go to your own environment, not the app-managed storage.": "允许 Open Science 向该环境安装软件包。安装会写入你自己的环境，而不是应用托管的存储空间。",
-    "Library": "库",
+    "Library": "文献库",
     "Literature": "文献",
     "Accept": "接受",
     "Abstract": "摘要",

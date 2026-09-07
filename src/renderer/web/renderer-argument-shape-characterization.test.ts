@@ -193,6 +193,16 @@ afterEach(() => {
 })
 
 describe('renderer argument-shape characterization', () => {
+  it('exposes the read-only DOI lookup with identical arguments on Electron and Web', async () => {
+    const args = ['10.1007/s11914-026-00956-3']
+    const expected = { channel: 'literature:lookup-metadata', args }
+    electronMocks.invoke.mockResolvedValueOnce({ ok: true, result: null })
+    await expect(invokeElectron(electronApi, 'literature.lookupMetadata', args)).resolves.toEqual(
+      expected
+    )
+    await expect(invokeWeb(webApi, 'literature.lookupMetadata', args)).resolves.toEqual(expected)
+  })
+
   it('loads the complete local Web callable surface from the real bootstrap', () => {
     const expectedPaths = [
       ...Object.entries(WEB_INVOKE_CHANNELS)

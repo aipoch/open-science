@@ -205,6 +205,7 @@ describe('application command composition', () => {
       'literature:import-pdf',
       'literature:import-records',
       'literature:jobs',
+      'literature:lookup-metadata',
       'literature:search',
       'literature:transact',
       'memory:clear-all',

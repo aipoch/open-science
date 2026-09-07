@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type {
   LiteratureCatalogSearchPage,
+  LiteratureCatalogSearchRequest,
   LiteratureInboxCandidateView,
   LiteratureItemInput,
   LiteratureItemView
@@ -25,12 +26,17 @@ if (!Element.prototype.hasPointerCapture) {
   Element.prototype.releasePointerCapture = (): void => undefined
 }
 
-const { extractLiteraturePdfDraft, filePreviewRenderCount } = vi.hoisted(() => ({
-  extractLiteraturePdfDraft: vi.fn(),
-  filePreviewRenderCount: { value: 0 }
-}))
+const { extractLiteraturePdfDraft, completeLiteraturePdfDraft, filePreviewRenderCount } =
+  vi.hoisted(() => ({
+    extractLiteraturePdfDraft: vi.fn(),
+    completeLiteraturePdfDraft: vi.fn(),
+    filePreviewRenderCount: { value: 0 }
+  }))
 
-vi.mock('./literature-pdf-metadata', () => ({ extractLiteraturePdfDraft }))
+vi.mock('./literature-pdf-metadata', () => ({
+  extractLiteraturePdfDraft,
+  completeLiteraturePdfDraft
+}))
 
 vi.mock('../workspace/FilePreviewDialog', () => ({
   FilePreviewDialog: ({
@@ -299,6 +305,7 @@ describe('LiteratureLibraryPage', () => {
           : {})
       })
     )
+    completeLiteraturePdfDraft.mockImplementation(async (draft: LiteratureItemInput) => draft)
     extractLiteraturePdfDraft.mockImplementation((_file: File, fallback: LiteratureItemInput) =>
       Promise.resolve(fallback)
     )
@@ -345,6 +352,7 @@ describe('LiteratureLibraryPage', () => {
         platform: 'darwin',
         saveBlobFile,
         literature: {
+          lookupMetadata: vi.fn(async () => libraryItem.item),
           jobs: vi.fn(async () => ({ jobs: [], summaries: [] })),
           search,
           transact,
@@ -512,7 +520,7 @@ describe('LiteratureLibraryPage', () => {
     fireEvent.click(within(nav).getByRole('button', { name: 'All references' }))
     expect(await screen.findByText('No references found')).not.toBeNull()
     const libraryRequests = search.mock.calls.filter(
-      ([request]) => request.scope === 'library'
+      ([request]) => request.scope === 'library' && request.limit !== 1
     ).length
     fireEvent.click(within(nav).getByRole('button', { name: 'Duplicates' }))
     fireEvent.click(await screen.findByRole('button', { name: 'Review duplicates' }))
@@ -546,9 +554,9 @@ describe('LiteratureLibraryPage', () => {
     expect(within(nav).getByLabelText('0 duplicate groups')).not.toBeNull()
     fireEvent.click(within(nav).getByRole('button', { name: 'All references' }))
     await waitFor(() =>
-      expect(search.mock.calls.filter(([request]) => request.scope === 'library')).toHaveLength(
-        libraryRequests + 1
-      )
+      expect(
+        search.mock.calls.filter(([request]) => request.scope === 'library' && request.limit !== 1)
+      ).toHaveLength(libraryRequests + 1)
     )
   })
 
@@ -614,15 +622,15 @@ describe('LiteratureLibraryPage', () => {
     fireEvent.click(screen.getByRole('button', { name: 'All references' }))
     const row = await screen.findByLabelText('Select Reference 0')
     const libraryRequests = search.mock.calls.filter(
-      ([request]) => request.scope === 'library'
+      ([request]) => request.scope === 'library' && request.limit !== 1
     ).length
     fireEvent.click(screen.getByRole('button', { name: 'Duplicates' }))
     expect(document.body.contains(row)).toBe(true)
     fireEvent.click(screen.getByRole('button', { name: 'All references' }))
     expect(screen.getByLabelText('Select Reference 0')).toBe(row)
-    expect(search.mock.calls.filter(([request]) => request.scope === 'library')).toHaveLength(
-      libraryRequests
-    )
+    expect(
+      search.mock.calls.filter(([request]) => request.scope === 'library' && request.limit !== 1)
+    ).toHaveLength(libraryRequests)
   })
 
   it('shows detection errors with retry instead of reporting no duplicates', async () => {
@@ -2784,6 +2792,15 @@ describe('LiteratureLibraryPage', () => {
   })
 
   it('creates a manual reference directly in the Library', async () => {
+    let total = 0
+    search.mockImplementation(async (request: LiteratureCatalogSearchRequest) => ({
+      entries: [],
+      totalCount: request.scope === 'library' ? total : 0
+    }))
+    transact.mockImplementationOnce(async () => {
+      total = 1
+      return { kind: 'item', id: libraryItem.id, state: 'created' }
+    })
     const createdItem: LiteratureItemView = {
       ...libraryItem,
       item: { ...libraryItem.item, title: 'Manual paper', creators: [], identifiers: [] }
@@ -2792,6 +2809,16 @@ describe('LiteratureLibraryPage', () => {
 
     render(<LiteratureLibraryPage />)
     fireEvent.click(screen.getByRole('button', { name: 'All references' }))
+    const countButton = screen.getByRole('button', { name: 'All references' })
+    await within(countButton).findByText('0')
+    fireEvent.click(screen.getByRole('button', { name: 'Duplicates' }))
+    fireEvent.click(countButton)
+    fireEvent.change(screen.getByLabelText('Search references'), {
+      target: { value: 'query' }
+    })
+    expect(
+      search.mock.calls.filter(([request]) => request.scope === 'library' && request.limit === 1)
+    ).toHaveLength(1)
     await openMenu(screen.getByRole('button', { name: 'Add' }))
     fireEvent.click(screen.getByRole('menuitem', { name: 'Add reference' }))
 
@@ -2811,6 +2838,10 @@ describe('LiteratureLibraryPage', () => {
     )
     await waitFor(() => expect(get).toHaveBeenCalledWith(libraryItem.id))
     expect(await screen.findByRole('heading', { name: 'Manual paper' })).not.toBeNull()
+    await within(countButton).findByText('1')
+    expect(
+      search.mock.calls.filter(([request]) => request.scope === 'library' && request.limit === 1)
+    ).toHaveLength(2)
   })
 
   it('links a manually created reference to the current Project', async () => {
@@ -3450,6 +3481,52 @@ describe('LiteratureLibraryPage', () => {
       'Richard J Gilbertson'
     )
     expect((screen.getByLabelText('DOI') as HTMLInputElement).value).toBe('10.1234/extracted')
+  })
+
+  it('waits for remote PDF metadata and ignores completion from a closed import', async () => {
+    let finishOld!: (draft: LiteratureItemInput) => void
+    let finishCurrent!: (draft: LiteratureItemInput) => void
+    completeLiteraturePdfDraft
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            finishOld = resolve
+          })
+      )
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            finishCurrent = resolve
+          })
+      )
+    render(<LiteratureLibraryPage />)
+    fireEvent.click(screen.getByRole('button', { name: 'All references' }))
+    const upload = (name: string): void => {
+      fireEvent.change(screen.getByLabelText('Import PDF'), {
+        target: { files: [new File(['%PDF-1.7'], name, { type: 'application/pdf' })] }
+      })
+    }
+    upload('old.pdf')
+    await waitFor(() => expect(completeLiteraturePdfDraft).toHaveBeenCalledTimes(1))
+    expect(screen.queryByLabelText('Title')).toBeNull()
+    fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Close' }))
+    upload('current.pdf')
+    await waitFor(() => expect(completeLiteraturePdfDraft).toHaveBeenCalledTimes(2))
+    await act(async () => finishOld({ ...libraryItem.item, title: 'Obsolete result' }))
+    expect(screen.queryByLabelText('Title')).toBeNull()
+    expect(screen.getByRole('status').textContent).toContain('Reading…')
+    await act(async () => finishCurrent({ ...libraryItem.item, title: 'Resolved Crossref title' }))
+    expect((screen.getByLabelText('Title') as HTMLInputElement).value).toBe(
+      'Resolved Crossref title'
+    )
+    fireEvent.change(screen.getByLabelText('Title'), { target: { value: 'User reviewed title' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+    await waitFor(() =>
+      expect(transact).toHaveBeenCalledWith({
+        kind: 'create-item',
+        item: expect.objectContaining({ title: 'User reviewed title' })
+      })
+    )
   })
 
   it('falls back to the PDF filename when local metadata cannot be read', async () => {
@@ -4125,7 +4202,9 @@ describe('LiteratureLibraryPage', () => {
     scroll.scrollTop = 240
     fireEvent.click(select)
     expect(screen.queryByRole('button', { name: 'Background tasks' })).toBeNull()
-    const listRequests = search.mock.calls.filter(([request]) => request.scope === 'library').length
+    const listRequests = search.mock.calls.filter(
+      ([request]) => request.scope === 'library' && request.limit !== 1
+    ).length
     get.mockResolvedValue({
       ...libraryItem,
       item: { ...libraryItem.item, title: 'Updated while reading' },
@@ -4144,9 +4223,9 @@ describe('LiteratureLibraryPage', () => {
       (screen.getByRole('checkbox', { name: 'Select Updated while reading' }) as HTMLInputElement)
         .checked
     ).toBe(true)
-    expect(search.mock.calls.filter(([request]) => request.scope === 'library')).toHaveLength(
-      listRequests
-    )
+    expect(
+      search.mock.calls.filter(([request]) => request.scope === 'library' && request.limit !== 1)
+    ).toHaveLength(listRequests)
   })
 
   it('pages filtered ordered results and selects only the current page', async () => {
