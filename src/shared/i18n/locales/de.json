@@ -4740,6 +4740,27 @@
     "{{count}} tagged resources are currently unavailable._other": "{{count}} getaggte Ressourcen sind derzeit nicht verfügbar.",
     "{{count}} tagged resources are currently unavailable._one": "{{count}} getaggte Ressource ist derzeit nicht verfügbar.",
     "Access authorization has expired. Reopen the Web link from Open Science on the host computer, or return to the remote access entry page to pair again.": "Die Zugriffsberechtigung ist abgelaufen. Öffnen Sie den Web-Link erneut in Open Science auf dem Hostcomputer oder kehren Sie zur Einstiegsseite für den Fernzugriff zurück, um die Kopplung zu wiederholen.",
-    "The operation result could not be confirmed. It may still be running. Reconnect and check its status before trying again.": "Das Ergebnis des Vorgangs konnte nicht bestätigt werden. Er wird möglicherweise noch ausgeführt. Stellen Sie die Verbindung wieder her und prüfen Sie seinen Status, bevor Sie es erneut versuchen."
+    "The operation result could not be confirmed. It may still be running. Reconnect and check its status before trying again.": "Das Ergebnis des Vorgangs konnte nicht bestätigt werden. Er wird möglicherweise noch ausgeführt. Stellen Sie die Verbindung wieder her und prüfen Sie seinen Status, bevor Sie es erneut versuchen.",
+    "Any call": "Beliebiger Aufruf",
+    "Specific input": "Bestimmte Eingabe",
+    "Command group": "Befehlsgruppe",
+    "Session: {{name}}": "Sitzung: {{name}}",
+    "Approved {{date}}": "Freigegeben am {{date}}",
+    "Command details unavailable for this permission": "Befehlsdetails für diese Berechtigung sind nicht verfügbar",
+    "Blocked in Connectors; this permission is currently inactive": "In Konnektoren blockiert; diese Berechtigung ist derzeit inaktiv",
+    "Allowed by Connector policy even without this permission": "Auch ohne diese Berechtigung durch die Konnektor-Richtlinie erlaubt",
+    "Permission could not be restored: Undo is no longer available": "Berechtigung konnte nicht wiederhergestellt werden: Rückgängig ist nicht mehr verfügbar",
+    "Git: working tree status": "Git: Status des Arbeitsverzeichnisses",
+    "Git: changes": "Git: Änderungen",
+    "Git: commit history": "Git: Commit-Verlauf",
+    "Git: object details": "Git: Objektdetails",
+    "Git: stage changes": "Git: Änderungen vormerken",
+    "Git: create commits": "Git: Commits erstellen",
+    "npm: run tests": "npm: Tests ausführen",
+    "npm: run scripts": "npm: Skripte ausführen",
+    "Python commands": "Python-Befehle",
+    "Python 3 commands": "Python-3-Befehle",
+    "Node.js commands": "Node.js-Befehle",
+    "R scripts": "R-Skripte"
   }
 }

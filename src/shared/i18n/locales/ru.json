@@ -5035,6 +5035,27 @@
     "{{count}} tagged resources are currently unavailable._other": "{{count}} ресурса с тегом сейчас недоступны.",
     "{{count}} tagged resources are currently unavailable._one": "{{count}} ресурс с тегом сейчас недоступен.",
     "Access authorization has expired. Reopen the Web link from Open Science on the host computer, or return to the remote access entry page to pair again.": "Срок действия разрешения на доступ истёк. Снова откройте веб-ссылку из Open Science на главном компьютере или вернитесь на страницу удалённого доступа для повторного сопряжения.",
-    "The operation result could not be confirmed. It may still be running. Reconnect and check its status before trying again.": "Не удалось подтвердить результат операции. Возможно, она ещё выполняется. Подключитесь снова и проверьте её состояние перед повторной попыткой."
+    "The operation result could not be confirmed. It may still be running. Reconnect and check its status before trying again.": "Не удалось подтвердить результат операции. Возможно, она ещё выполняется. Подключитесь снова и проверьте её состояние перед повторной попыткой.",
+    "Any call": "Любой вызов",
+    "Specific input": "Определённые входные данные",
+    "Command group": "Группа команд",
+    "Session: {{name}}": "Сеанс: {{name}}",
+    "Approved {{date}}": "Утверждено {{date}}",
+    "Command details unavailable for this permission": "Сведения о командах для этого разрешения недоступны",
+    "Blocked in Connectors; this permission is currently inactive": "Заблокировано в Коннекторах; это разрешение сейчас неактивно",
+    "Allowed by Connector policy even without this permission": "Разрешено политикой Коннектора даже без этого разрешения",
+    "Permission could not be restored: Undo is no longer available": "Не удалось восстановить разрешение: отмена больше недоступна",
+    "Git: working tree status": "Git: состояние рабочего дерева",
+    "Git: changes": "Git: различия",
+    "Git: commit history": "Git: история коммитов",
+    "Git: object details": "Git: сведения об объектах",
+    "Git: stage changes": "Git: индексировать изменения",
+    "Git: create commits": "Git: создавать коммиты",
+    "npm: run tests": "npm: запуск тестов",
+    "npm: run scripts": "npm: запуск скриптов",
+    "Python commands": "Команды Python",
+    "Python 3 commands": "Команды Python 3",
+    "Node.js commands": "Команды Node.js",
+    "R scripts": "Скрипты R"
   }
 }

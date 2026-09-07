@@ -975,6 +975,20 @@ colors communicate a successful or failed probe/migration result.
 
 #### Connectors panel
 
+- Remembered permission rows identify Connector tools by the current Connector display name,
+  public server ID, and exact tool name. The name opens the existing Connector Settings route in
+  active, policy-covered, and blocked states. Revoke accessible names also include the scope.
+- Command-group grants may retain a reviewed `approvalSummary` for an exact known prefix. It is
+  display metadata and never participates in authorization. Raw commands, paths, arguments, and
+  qualifier digests remain outside the permission-list IPC projection. Historical and unsupported
+  groups explicitly show that command details are unavailable, with creation time when present;
+  they are not silently backfilled, revoked, or reapproved.
+- Permission scope prefixes, qualifier categories, policy explanations, tooltips, and accessible
+  names are localized in the renderer; Connector/tool identities and user-authored names remain
+  literal. The Restore defaults button derives its completed appearance from the latest missing
+  count. Permission revoke resolves slow metadata before committing so response construction does
+  not spend the Registry-owned Undo window; an unavailable Undo reports that no restore occurred.
+
 - Local MCP arguments use one multiline text field. Editing replaces the argument list with one element per line, preserving spaces and blank lines; an empty field clears the list. Until the field is edited, preserve the original array, including empty values and embedded line breaks. Explain the replacement semantics when saved arguments contain embedded line breaks. Omitted arguments retain the stored array while the transport stays on stdio, including redacted historical values; credential availability restrictions remain in force. Template import/export preserves literal arrays, and the command preview quotes each element to show its boundary.
 - Tool permission controls in a bundled Connector detail remain disabled until the current tool permission save settles. Failed saves restore interactivity and retain the existing inline error feedback.
 - Credentials distinguish a pending list read, a failed read, an empty result and a deleted entry. Failed reads retain saved rows and use the shared ErrorNotice with Retry. All credential reads, mutation snapshots and compensating refreshes use one renderer coordinator; overlapping mutations finish with a fresh authoritative list.

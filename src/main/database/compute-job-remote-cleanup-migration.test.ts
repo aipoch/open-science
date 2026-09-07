@@ -73,10 +73,11 @@ describe('Compute Job remote cleanup migration', () => {
         '0028_database_numeric_and_null_constraints',
         '0029_compute_host_execution_mode',
         '0030_literature_foundation',
-        '0031_project_archive_revision'
+        '0031_project_archive_revision',
+        '0032_permission_approval_summary'
       ],
       from: '0025_managed_file_version_foundation',
-      to: '0031_project_archive_revision'
+      to: '0032_permission_approval_summary'
     })
     await expect(
       client.$queryRawUnsafe<Array<{ remoteCleanupDisposition: string }>>(

@@ -4586,6 +4586,27 @@
     "Tag assignments are preserved.": "標籤關聯已保留。",
     "{{count}} tagged resources are currently unavailable._other": "{{count}} 個已關聯資源暫時無法使用。",
     "Access authorization has expired. Reopen the Web link from Open Science on the host computer, or return to the remote access entry page to pair again.": "存取授權已失效。請從主機上的 Open Science 重新開啟 Web 連結，或返回遠端存取入口頁面重新配對。",
-    "The operation result could not be confirmed. It may still be running. Reconnect and check its status before trying again.": "無法確認操作結果。操作可能仍在進行。請重新連線並檢查其狀態，再決定是否重試。"
+    "The operation result could not be confirmed. It may still be running. Reconnect and check its status before trying again.": "無法確認操作結果。操作可能仍在進行。請重新連線並檢查其狀態，再決定是否重試。",
+    "Any call": "任何呼叫",
+    "Specific input": "特定輸入",
+    "Command group": "命令群組",
+    "Session: {{name}}": "工作階段：{{name}}",
+    "Approved {{date}}": "核准於 {{date}}",
+    "Command details unavailable for this permission": "此權限的命令詳細資訊無法使用",
+    "Blocked in Connectors; this permission is currently inactive": "已在連接器中封鎖；此權限目前無效",
+    "Allowed by Connector policy even without this permission": "即使沒有此權限，連接器原則仍允許呼叫",
+    "Permission could not be restored: Undo is no longer available": "無法還原權限：復原功能已無法使用",
+    "Git: working tree status": "Git：工作目錄狀態",
+    "Git: changes": "Git：變更差異",
+    "Git: commit history": "Git：提交歷程",
+    "Git: object details": "Git：物件詳細資訊",
+    "Git: stage changes": "Git：暫存變更",
+    "Git: create commits": "Git：建立提交",
+    "npm: run tests": "npm：執行測試",
+    "npm: run scripts": "npm：執行指令碼",
+    "Python commands": "Python 命令",
+    "Python 3 commands": "Python 3 命令",
+    "Node.js commands": "Node.js 命令",
+    "R scripts": "R 指令碼"
   }
 }

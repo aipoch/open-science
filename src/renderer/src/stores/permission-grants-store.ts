@@ -190,10 +190,18 @@ const withoutPendingRevocations = (snapshot: PermissionGrantSnapshot): Permissio
 }
 
 const applyAuthoritativeSnapshot = (
-  state: PermissionGrantSnapshot,
+  state: PermissionGrantsStore,
   incoming: PermissionGrantSnapshot
-): PermissionGrantSnapshot =>
-  withoutPendingRevocations(incoming.version < state.version ? snapshotFromState(state) : incoming)
+): PermissionGrantSnapshot & Partial<Pick<PermissionGrantsStore, 'restoreDefaultsState'>> => ({
+  ...withoutPendingRevocations(
+    incoming.version < state.version ? snapshotFromState(state) : incoming
+  ),
+  ...(incoming.version >= state.version &&
+  (incoming.missingDefaultGlobalGrantCount ?? 0) > 0 &&
+  state.restoreDefaultsState === 'success'
+    ? { restoreDefaultsState: 'idle' as const }
+    : {})
+})
 
 const allUndoItems = (state: Pick<PermissionGrantsStore, 'undo' | 'undoQueue'>): PermissionUndo[] =>
   [state.undo, ...state.undoQueue].filter((item): item is PermissionUndo => Boolean(item))
@@ -385,6 +393,27 @@ const usePermissionGrantsStore = create<PermissionGrantsStore>((set, get) => ({
     set({ isRestoring: true, error: undefined })
     try {
       const result = await window.api.permissions.restore({ undoToken: undo.token })
+      if (result.restoredCount === 0 && result.conflicts.length === 0) {
+        set((state) => ({
+          ...applyAuthoritativeSnapshot(state, mutationState(result)),
+          ...nextUndoState(
+            allUndoItems(state).map((item) =>
+              item.token === undo.token
+                ? {
+                    ...item,
+                    expiresAt: Date.now() + 5_000,
+                    canRestore: false,
+                    messageKey: 'Permission could not be restored: Undo is no longer available',
+                    messageParams: {},
+                    translatedMessageParams: []
+                  }
+                : item
+            )
+          ),
+          isRestoring: false
+        }))
+        return
+      }
       const targetUnavailable = result.conflicts.filter(
         (conflict) => conflict.reason === 'target-unavailable'
       ).length

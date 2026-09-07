@@ -4902,6 +4902,27 @@
     "{{count}} tagged resources are currently unavailable._other": "{{count}} recursos etiquetados no están disponibles actualmente.",
     "{{count}} tagged resources are currently unavailable._one": "{{count}} recurso etiquetado no está disponible actualmente.",
     "Access authorization has expired. Reopen the Web link from Open Science on the host computer, or return to the remote access entry page to pair again.": "La autorización de acceso ha caducado. Vuelva a abrir el enlace Web desde Open Science en el equipo anfitrión o regrese a la página de acceso remoto para volver a emparejar.",
-    "The operation result could not be confirmed. It may still be running. Reconnect and check its status before trying again.": "No se ha podido confirmar el resultado de la operación. Es posible que siga en curso. Vuelva a conectarse y compruebe su estado antes de intentarlo de nuevo."
+    "The operation result could not be confirmed. It may still be running. Reconnect and check its status before trying again.": "No se ha podido confirmar el resultado de la operación. Es posible que siga en curso. Vuelva a conectarse y compruebe su estado antes de intentarlo de nuevo.",
+    "Any call": "Cualquier llamada",
+    "Specific input": "Entrada específica",
+    "Command group": "Grupo de comandos",
+    "Session: {{name}}": "Sesión: {{name}}",
+    "Approved {{date}}": "Aprobado el {{date}}",
+    "Command details unavailable for this permission": "Los detalles de los comandos de este permiso no están disponibles",
+    "Blocked in Connectors; this permission is currently inactive": "Bloqueado en Conectores; este permiso está inactivo",
+    "Allowed by Connector policy even without this permission": "Permitido por la política del Conector incluso sin este permiso",
+    "Permission could not be restored: Undo is no longer available": "No se pudo restaurar el permiso: ya no se puede deshacer",
+    "Git: working tree status": "Git: estado del árbol de trabajo",
+    "Git: changes": "Git: diferencias",
+    "Git: commit history": "Git: historial de commits",
+    "Git: object details": "Git: detalles de objetos",
+    "Git: stage changes": "Git: preparar cambios",
+    "Git: create commits": "Git: crear commits",
+    "npm: run tests": "npm: ejecutar pruebas",
+    "npm: run scripts": "npm: ejecutar scripts",
+    "Python commands": "Comandos de Python",
+    "Python 3 commands": "Comandos de Python 3",
+    "Node.js commands": "Comandos de Node.js",
+    "R scripts": "Scripts de R"
   }
 }
