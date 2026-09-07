@@ -39,6 +39,11 @@ export const uploadSpecialistZip = async (
 ): Promise<SpecialistPackageCandidatePreview> => {
   const transferId = crypto.randomUUID()
   const request = { transferId }
+  const abortTransfer = (): void => {
+    void window.api.specialist.abortPackageUpload(request).catch(() => undefined)
+  }
+  // Cancel server staging even while a chunk response is still pending.
+  signal.addEventListener('abort', abortTransfer, { once: true })
   try {
     await uploadFileChunks(
       file,
@@ -56,7 +61,10 @@ export const uploadSpecialistZip = async (
     }
     return preview
   } catch (error) {
+    // Retry cleanup after pending begin/preview operations have settled.
     await window.api.specialist.abortPackageUpload(request).catch(() => undefined)
     throw error
+  } finally {
+    signal.removeEventListener('abort', abortTransfer)
   }
 }

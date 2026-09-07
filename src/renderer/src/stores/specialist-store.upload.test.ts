@@ -5,6 +5,57 @@ import { useSpecialistStore } from './specialist-store'
 
 afterEach(() => vi.restoreAllMocks())
 
+it.each(['append', 'status'])(
+  'aborts the transfer while a %s response is pending',
+  async (pendingStep) => {
+    let rejectPending!: (error: Error) => void
+    const pending = new Promise<never>((_, reject) => {
+      rejectPending = reject
+    })
+    const appendTransfer = vi.fn(() =>
+      pendingStep === 'append' ? pending : Promise.reject(new Error('Lost append response'))
+    )
+    const getTransferStatus = vi.fn(() => pending)
+    const abortPackageUpload = vi.fn().mockResolvedValue(undefined)
+    const previewPackageUpload = vi.fn()
+    window.api = {
+      specialist: {
+        beginPackageUpload: vi.fn(async (request) => ({
+          ...request,
+          receivedBytes: 0,
+          totalBytes: request.size
+        })),
+        previewPackageUpload,
+        abortPackageUpload,
+        cancelPackage: vi.fn(),
+        installPackage: vi.fn()
+      },
+      uploads: { appendTransfer, getTransferStatus }
+    } as unknown as Window['api']
+    vi.spyOn(HTMLInputElement.prototype, 'click').mockImplementation(function (
+      this: HTMLInputElement
+    ) {
+      Object.defineProperty(this, 'files', { value: [new File(['zip bytes'], 'research.zip')] })
+      this.dispatchEvent(new Event('change'))
+    })
+    useSpecialistStore.setState({ integrity: { status: 'ok' }, packagePreview: undefined })
+    const selection = useSpecialistStore.getState().selectPackage()
+    try {
+      await vi.waitFor(() =>
+        expect(pendingStep === 'append' ? appendTransfer : getTransferStatus).toHaveBeenCalledOnce()
+      )
+      await useSpecialistStore.getState().cancelPackage()
+      expect(abortPackageUpload).toHaveBeenCalledWith({
+        transferId: vi.mocked(window.api.specialist.beginPackageUpload).mock.calls[0][0].transferId
+      })
+      expect(previewPackageUpload).not.toHaveBeenCalled()
+    } finally {
+      rejectPending(new Error('Request disconnected'))
+      await selection
+    }
+  }
+)
+
 it('rejects an unavailable import before opening the ZIP chooser', async () => {
   window.api = {} as Window['api']
   const click = vi.spyOn(HTMLInputElement.prototype, 'click').mockImplementation(function (
