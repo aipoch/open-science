@@ -4654,6 +4654,8 @@
     "Other comparisons are running. Wait for them to finish, then retry.": "다른 비교가 실행 중입니다. 완료될 때까지 기다린 후 다시 시도하세요.",
     "Version storage is unavailable. Check that the storage location is accessible, then retry.": "버전 저장소를 사용할 수 없습니다. 저장 위치에 접근할 수 있는지 확인한 후 다시 시도하세요.",
     "This comparison could not be completed. Return to the version preview to check the file.": "비교를 완료하지 못했습니다. 버전 미리보기로 돌아가 파일을 확인하세요.",
-    "View version": "버전 보기"
+    "View version": "버전 보기",
+    "Shorten the title to 80 characters or fewer before saving.": "저장하기 전에 제목을 80자 이하로 줄이세요.",
+    "Shorten the description to 1000 characters or fewer before saving.": "저장하기 전에 설명을 1000자 이하로 줄이세요."
   }
 }

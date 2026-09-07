@@ -4656,6 +4656,8 @@
     "Other comparisons are running. Wait for them to finish, then retry.": "其他比較正在進行。請等待完成後重試。",
     "Version storage is unavailable. Check that the storage location is accessible, then retry.": "版本儲存空間無法使用。請確認儲存位置可以存取後重試。",
     "This comparison could not be completed. Return to the version preview to check the file.": "無法完成此次比較。請返回版本預覽檢查檔案。",
-    "View version": "查看版本"
+    "View version": "查看版本",
+    "Shorten the title to 80 characters or fewer before saving.": "請將標題縮短至 80 個字元以內再儲存。",
+    "Shorten the description to 1000 characters or fewer before saving.": "請將描述縮短至 1000 個字元以內再儲存。"
   }
 }

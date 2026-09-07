@@ -5105,6 +5105,8 @@
     "Other comparisons are running. Wait for them to finish, then retry.": "Выполняются другие сравнения. Дождитесь их завершения и повторите попытку.",
     "Version storage is unavailable. Check that the storage location is accessible, then retry.": "Хранилище версий недоступно. Проверьте доступность места хранения и повторите попытку.",
     "This comparison could not be completed. Return to the version preview to check the file.": "Не удалось завершить сравнение. Вернитесь к предпросмотру версии, чтобы проверить файл.",
-    "View version": "Открыть версию"
+    "View version": "Открыть версию",
+    "Shorten the title to 80 characters or fewer before saving.": "Перед сохранением сократите название до 80 символов или меньше.",
+    "Shorten the description to 1000 characters or fewer before saving.": "Перед сохранением сократите описание до 1000 символов или меньше."
   }
 }

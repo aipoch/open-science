@@ -4972,6 +4972,8 @@
     "Other comparisons are running. Wait for them to finish, then retry.": "D’autres comparaisons sont en cours. Attendez leur fin, puis réessayez.",
     "Version storage is unavailable. Check that the storage location is accessible, then retry.": "Le stockage des versions est indisponible. Vérifiez que son emplacement est accessible, puis réessayez.",
     "This comparison could not be completed. Return to the version preview to check the file.": "Cette comparaison n’a pas pu aboutir. Revenez à l’aperçu de la version pour vérifier le fichier.",
-    "View version": "Voir la version"
+    "View version": "Voir la version",
+    "Shorten the title to 80 characters or fewer before saving.": "Raccourcissez le titre à 80 caractères maximum avant d’enregistrer.",
+    "Shorten the description to 1000 characters or fewer before saving.": "Raccourcissez la description à 1000 caractères maximum avant d’enregistrer."
   }
 }

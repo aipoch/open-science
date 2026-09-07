@@ -3555,7 +3555,7 @@ const createApplicationModules = async (
               signal: request.signal,
               outputLimitBytes: 8_192
             })
-            return { output: result.text, usage: result.usage }
+            return { output: result.text, usage: result.usage, stopReason: result.stopReason }
           }
         },
         lifecycle: {

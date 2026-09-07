@@ -4656,6 +4656,8 @@
     "Other comparisons are running. Wait for them to finish, then retry.": "他の比較を実行中です。完了してから再試行してください。",
     "Version storage is unavailable. Check that the storage location is accessible, then retry.": "バージョンの保存先を利用できません。保存先にアクセスできることを確認してから再試行してください。",
     "This comparison could not be completed. Return to the version preview to check the file.": "比較を完了できませんでした。バージョンのプレビューに戻ってファイルを確認してください。",
-    "View version": "バージョンを表示"
+    "View version": "バージョンを表示",
+    "Shorten the title to 80 characters or fewer before saving.": "保存する前にタイトルを80文字以内に短くしてください。",
+    "Shorten the description to 1000 characters or fewer before saving.": "保存する前に説明を1000文字以内に短くしてください。"
   }
 }
