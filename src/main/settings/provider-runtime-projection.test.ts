@@ -15,6 +15,39 @@ const { ProviderRuntimeProjectionOwner } = await import('./provider-runtime-proj
 const { encryptKey } = await import('./crypto')
 
 describe('ProviderRuntimeProjectionOwner', () => {
+  it.each(['claude-code', 'opencode', 'codex'] as const)(
+    'resolves an omitted model from the changing provider default for %s',
+    (frameworkId) => {
+      const owner = new ProviderRuntimeProjectionOwner()
+      const provider: StoredProvider = {
+        id: 'anthropic',
+        type: 'official',
+        vendorId: 'anthropic',
+        name: 'Anthropic',
+        model: 'claude-opus-4-6',
+        fetchedModels: ['claude-sonnet-4-6', 'claude-opus-4-6']
+      }
+      const framework = getAgentFramework(frameworkId)
+      expect(
+        owner.resolveRuntimeTarget(provider, { kind: 'configured' }, framework).effectiveModel
+      ).toBe('claude-opus-4-6')
+      const changed = { ...provider, model: 'claude-sonnet-4-6' }
+      expect(
+        owner.resolveRuntimeTarget(changed, { kind: 'configured' }, framework).effectiveModel
+      ).toBe('claude-sonnet-4-6')
+      expect(
+        owner.resolveRuntimeTarget(
+          changed,
+          {
+            kind: 'configured',
+            requestedModel: 'claude-opus-4-6'
+          },
+          framework
+        ).effectiveModel
+      ).toBe('claude-opus-4-6')
+    }
+  )
+
   it('fails closed when a required model is outside the provider catalog', () => {
     const owner = new ProviderRuntimeProjectionOwner()
     const provider: StoredProvider = {

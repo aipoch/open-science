@@ -8,6 +8,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { AcpRuntimeEvent } from '../../shared/acp'
 import { ComputeHostPreferenceValidationError } from '../../shared/compute'
 import type { Project } from '../../shared/projects'
+import { resolveProviderEffectiveModel } from '../../shared/provider-reasoning-effort'
 import type { SettingsSnapshot } from '../../shared/settings'
 import {
   materializeSessionConversationGraph,
@@ -224,6 +225,69 @@ const createRunner = (overrides: TaskRunnerOverrides = {}): TaskRunner => {
   })
 }
 describe('TaskRunner', () => {
+  it.each([
+    ['claude-sonnet-4-6', 'claude-opus-4-6'],
+    ['claude-opus-4-6', 'claude-sonnet-4-6']
+  ])('keeps provider-default intent independent of catalog order %j', async (...models) => {
+    const providerSettings: SettingsSnapshot = {
+      ...configuredSettings,
+      activeModel: 'claude-opus-4-6',
+      providers: [
+        {
+          ...configuredSettings.providers[0],
+          type: 'official',
+          vendorId: 'anthropic',
+          model: 'claude-opus-4-6',
+          models
+        }
+      ]
+    }
+    expect(resolveProviderEffectiveModel(providerSettings.providers[0], undefined)).toBe(
+      'claude-opus-4-6'
+    )
+    let current: PersistedChatSession = {
+      ...session,
+      agentConfiguration: {
+        providerId: 'provider-1',
+        model: 'claude-sonnet-4-6',
+        reasoningEffort: 'high' as const
+      }
+    }
+    const updateConfiguration = vi.fn(async (value: PersistedChatSession) => {
+      current = value
+      return value
+    })
+    const update = vi.fn(
+      async (request: Parameters<NonNullable<TaskProjectPort['update']>>[0]) => ({
+        ...project,
+        sessionDefaults: request.sessionDefaults
+      })
+    )
+    const runner = createRunner({
+      settings: { get: async () => providerSettings },
+      sessions: { list: async () => [current], updateConfiguration },
+      projects: { list: async () => [project], create: async () => project, update }
+    })
+    const result = await runner.updateSessionConfiguration(session.id, {
+      expectedRevision: 0,
+      agentConfiguration: { model: null }
+    })
+    expect.soft(result.persisted.agentConfiguration).toEqual({
+      providerId: 'provider-1',
+      reasoningEffort: 'high'
+    })
+    const defaults = await runner.updateProjectSessionDefaults(project.id, {
+      expectedUpdatedAt: 1,
+      patch: {
+        agentConfiguration: { providerId: 'provider-1', model: null, reasoningEffort: 'high' }
+      }
+    })
+    expect(defaults.configured.agentConfiguration).toEqual({
+      providerId: 'provider-1',
+      reasoningEffort: 'high'
+    })
+  })
+
   it('updates an idle Session configuration atomically with revision and availability checks', async () => {
     let current: PersistedChatSession = {
       ...session,

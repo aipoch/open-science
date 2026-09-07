@@ -638,7 +638,8 @@ const validateTaskAgentConfiguration = (
     taskModelCatalog(settings),
     configuration.providerId,
     configuration.model,
-    configuration.reasoningEffort
+    configuration.reasoningEffort,
+    settings.providers
   )
   if (!resolved) {
     throw new TaskRunnerError(
@@ -654,6 +655,7 @@ const effectiveTaskAgentConfiguration = (
   settings: SettingsSnapshot
 ): SessionAgentConfiguration | undefined => {
   const resolution = resolveSessionAgentConfiguration({
+    providers: settings.providers,
     session,
     catalog: taskModelCatalog(settings),
     activeProviderId: settings.activeProviderId,

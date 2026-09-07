@@ -134,3 +134,13 @@ console.log(cancelled.status) // cancelled
 
 The client discovers the local daemon and reads its authentication token from the Open Science config
 directory. Tokens are sent in request headers and are never included in normal command output.
+
+### Automation new-session defaults
+
+`project session-defaults show|update` manages defaults for new Sessions created through the
+Task CLI/API. Explicit run options override these defaults. Existing Sessions and desktop New
+conversation drafts are not changed.
+
+`--provider-default-model` keeps following the provider-owned default instead of pinning the
+first model in its catalog. An explicit `--model` stays fixed. If a saved selection becomes
+unavailable, choose a replacement explicitly or wait for it to become available again.
