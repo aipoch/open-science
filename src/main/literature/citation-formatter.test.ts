@@ -115,6 +115,28 @@ describe('LiteratureCitationFormatter', () => {
     await expect(formatter.exportReferences(references, 'ris')).resolves.toContain('TY  - JOUR')
   })
 
+  it('keeps duplicate keys observable to the complete export owner instead of silently renaming them', async () => {
+    const formatter = new LiteratureCitationFormatter()
+    const content = await formatter.exportReferences(
+      [
+        { id: 'first', item: { ...reference, citationKey: 'SameKey' } },
+        { id: 'second', item: { ...reference, title: 'Another paper', citationKey: 'SameKey' } }
+      ],
+      'bibtex'
+    )
+    expect(content.match(/@article\{SameKey,/gu)).toHaveLength(2)
+    expect(content).not.toContain('@article{SameKeya,')
+    await expect(
+      formatter.exportReferences(
+        [
+          { id: 'first', item: { ...reference, citationKey: 'SameKey' } },
+          { id: 'second', item: { ...reference, citationKey: 'SameKey' } }
+        ],
+        'ris'
+      )
+    ).resolves.toContain('TY  - JOUR')
+  })
+
   it('isolates an invalid stored custom style from formatting, export, and record import', async () => {
     const root = await mkdtemp(join(tmpdir(), 'open-science-invalid-csl-'))
     try {

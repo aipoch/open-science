@@ -2661,12 +2661,22 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
     setError(undefined)
     try {
       const chunks: string[] = []
+      const citationKeys = new Set<string>()
       for (let offset = 0; offset < itemIds.length; offset += LITERATURE_BATCH_COMMAND_SIZE) {
         const result = await window.api.literature.formatReferences({
           itemIds: itemIds.slice(offset, offset + LITERATURE_BATCH_COMMAND_SIZE),
           styleId: citationStyleRef.current,
           locale: citationLocale
         })
+        if (format === 'bibtex') {
+          // These headers come from our BibTeX exporter, whose keys are validated before emission.
+          for (const match of result.exports.bibtex.matchAll(/^@[a-z]+\{([^,\r\n]+),/gimu)) {
+            const key = match[1]!
+            if (citationKeys.has(key))
+              throw new Error('Selected Literature Items have duplicate citation keys.')
+            citationKeys.add(key)
+          }
+        }
         chunks.push(result.exports[format].trim())
       }
       const content = `${chunks.filter(Boolean).join('\n\n')}\n`
