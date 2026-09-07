@@ -382,6 +382,8 @@
     "Remove annotation": "移除标注",
     "Sent annotations": "已发送的标注",
     "Show annotation source": "显示标注来源",
+    "Image not retained: session image budget reached.": "图片未保留：已达到会话图片容量上限。",
+    "The exact annotation location could not be found.": "无法找到标注的准确位置。",
     "Source: {{source}}": "来源：{{source}}",
     "PDF area": "PDF 区域",
     "PDF quote": "PDF 引文",

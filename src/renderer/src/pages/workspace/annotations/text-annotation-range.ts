@@ -1,4 +1,4 @@
-import type { PdfTextSelector } from '../../../../../shared/annotations'
+import type { PdfTextSelector, TextAnnotationAnchor } from '../../../../../shared/annotations'
 
 const collectSurfaceTextNodes = (surface: HTMLElement): Text[] => {
   const walker = document.createTreeWalker(surface, NodeFilter.SHOW_TEXT)
@@ -85,12 +85,63 @@ const quoteOccurrenceForRange = (surface: HTMLElement, quote: string, range: Ran
   }
 }
 
-type TextAnnotationRangeTarget = Readonly<{ id: string; quote: string }>
+type TextAnnotationRangeTarget = Readonly<{
+  id: string
+  quote: string
+  anchor?: TextAnnotationAnchor
+}>
 
 const rangeBelongsToSurface = (range: Range, surface: HTMLElement): boolean => {
   const ancestor = range.commonAncestorContainer
   const contained = ancestor.nodeType === Node.TEXT_NODE ? ancestor.parentNode : ancestor
   return contained !== null && surface.contains(contained)
+}
+
+const textAnnotationAnchorForRange = (
+  surface: HTMLElement,
+  range: Range
+): TextAnnotationAnchor | undefined => {
+  const nodes = collectSurfaceTextNodes(surface)
+  const text = concatenatedText(nodes)
+  const rawStart = rangeStartInSurfaceText(nodes, range)
+  const rawQuote = range.toString()
+  const quote = rawQuote.trim()
+  if (rawStart === undefined || !quote) return undefined
+  const start = rawStart + rawQuote.indexOf(quote)
+  const end = start + quote.length
+  if (text.slice(start, end) !== quote) return undefined
+  const prefix = text.slice(Math.max(0, start - PDF_TEXT_CONTEXT_LENGTH), start)
+  const suffix = text.slice(end, end + PDF_TEXT_CONTEXT_LENGTH)
+  return { position: { start, end }, ...(prefix ? { prefix } : {}), ...(suffix ? { suffix } : {}) }
+}
+
+const resolveTextAnnotationRange = (
+  surface: HTMLElement,
+  annotation: TextAnnotationRangeTarget
+): Range | undefined => {
+  const text = concatenatedText(collectSurfaceTextNodes(surface))
+  const { quote, anchor } = annotation
+  if (!quote) return undefined
+  const matches: { start: number; occurrence: number }[] = []
+  for (
+    let start = text.indexOf(quote);
+    start >= 0;
+    start = text.indexOf(quote, start + quote.length)
+  ) {
+    matches.push({ start, occurrence: matches.length })
+  }
+  const contextual = anchor
+    ? matches.filter(
+        ({ start }) =>
+          (anchor.prefix === undefined || text.slice(0, start).endsWith(anchor.prefix)) &&
+          (anchor.suffix === undefined ||
+            text.slice(start + quote.length).startsWith(anchor.suffix))
+      )
+    : []
+  const match =
+    (anchor && contextual.find(({ start }) => start === anchor.position.start)) ||
+    (contextual.length === 1 ? contextual[0] : matches.length === 1 ? matches[0] : undefined)
+  return match ? rangeForTextOccurrence(surface, quote, match.occurrence) : undefined
 }
 
 const reconcileTextAnnotationRanges = (
@@ -99,15 +150,12 @@ const reconcileTextAnnotationRanges = (
   existing: ReadonlyMap<string, Range>
 ): Map<string, Range> => {
   const next = new Map<string, Range>()
-  const occurrenceByQuote = new Map<string, number>()
   for (const annotation of annotations) {
-    const occurrence = occurrenceByQuote.get(annotation.quote) ?? 0
-    occurrenceByQuote.set(annotation.quote, occurrence + 1)
     const exact = existing.get(annotation.id)
     const range =
       exact && rangeBelongsToSurface(exact, surface) && exact.toString() === annotation.quote
         ? exact
-        : rangeForTextOccurrence(surface, annotation.quote, occurrence)
+        : resolveTextAnnotationRange(surface, annotation)
     if (range) next.set(annotation.id, range)
   }
   return next
@@ -220,6 +268,7 @@ const pdfTextSelectorForRange = (
 
 export {
   pdfTextSelectorForRange,
+  textAnnotationAnchorForRange,
   quoteOccurrenceForRange,
   rangeForTextOccurrence,
   reconcileTextAnnotationRanges,

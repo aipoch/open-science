@@ -476,6 +476,8 @@
     "Remove annotation": "Eliminar anotación",
     "Sent annotations": "Anotaciones enviadas",
     "Show annotation source": "Mostrar origen de la anotación",
+    "Image not retained: session image budget reached.": "Imagen no conservada: se alcanzó el límite de imágenes de la sesión.",
+    "The exact annotation location could not be found.": "No se pudo encontrar la ubicación exacta de la anotación.",
     "Source: {{source}}": "Origen: {{source}}",
     "PDF area": "Área de PDF",
     "PDF quote": "Cita de PDF",

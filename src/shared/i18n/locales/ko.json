@@ -382,6 +382,8 @@
     "Remove annotation": "주석 제거",
     "Sent annotations": "전송된 주석",
     "Show annotation source": "주석 원본 표시",
+    "Image not retained: session image budget reached.": "세션 이미지 용량 한도에 도달하여 이미지가 보존되지 않았습니다.",
+    "The exact annotation location could not be found.": "주석의 정확한 위치를 찾을 수 없습니다.",
     "Source: {{source}}": "출처: {{source}}",
     "PDF area": "PDF 영역",
     "PDF quote": "PDF 인용문",

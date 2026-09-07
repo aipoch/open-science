@@ -355,6 +355,8 @@
     "Remove annotation": "Anmerkung entfernen",
     "Sent annotations": "Gesendete Anmerkungen",
     "Show annotation source": "Quelle der Anmerkung anzeigen",
+    "Image not retained: session image budget reached.": "Bild nicht gespeichert: Das Bildbudget der Sitzung ist ausgeschöpft.",
+    "The exact annotation location could not be found.": "Die genaue Position der Anmerkung konnte nicht gefunden werden.",
     "Source: {{source}}": "Quelle: {{source}}",
     "Text quote": "Textzitat",
     "The annotation note is too long.": "Die Notiz zur Anmerkung ist zu lang.",

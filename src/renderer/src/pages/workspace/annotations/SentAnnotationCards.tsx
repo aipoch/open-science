@@ -35,7 +35,7 @@ type SentAnnotationCardView =
       content: string
       source: string
       note?: string
-      image: AcpMessageImage
+      image?: AcpMessageImage
     }>
 
 type SentAnnotationCardsProps = Readonly<{
@@ -129,12 +129,20 @@ const SentAnnotationCard = ({
             </span>
           </div>
           {region ? (
-            <span className="mt-2 grid grid-cols-[5rem_minmax(0,1fr)] gap-2">
-              <img
-                src={`data:${card.image.mimeType};base64,${card.image.data}`}
-                alt=""
-                className="h-14 w-20 rounded-md border border-border/70 bg-muted object-cover"
-              />
+            <span
+              className={`mt-2 ${card.image ? 'grid grid-cols-[5rem_minmax(0,1fr)] gap-2' : 'block space-y-1'}`}
+            >
+              {card.image ? (
+                <img
+                  src={`data:${card.image.mimeType};base64,${card.image.data}`}
+                  alt=""
+                  className="h-14 w-20 rounded-md border border-border/70 bg-muted object-cover"
+                />
+              ) : (
+                <span className="block text-xs text-muted-foreground">
+                  {t('Image not retained: session image budget reached.')}
+                </span>
+              )}
               <span className="line-clamp-3 self-center whitespace-pre-wrap break-words text-xs leading-5 text-foreground/90">
                 {card.content}
               </span>
@@ -175,11 +183,8 @@ const SentAnnotationCard = ({
     )
   }
   const imagePoint = card.kind === 'image-point'
-  return (
-    <article
-      data-side-chat-annotation-card={placement === 'message' ? undefined : 'true'}
-      className="rounded-lg border border-border/70 bg-background/70 p-2"
-    >
+  const content = (
+    <>
       <div className="flex items-center gap-1 text-xs font-semibold">
         {imagePoint ? (
           <MapPin className="size-3" aria-hidden="true" />
@@ -209,6 +214,25 @@ const SentAnnotationCard = ({
         </div>
       ) : null}
       {card.note ? <div className="mt-1 text-xs">{card.note}</div> : null}
+    </>
+  )
+  return (
+    <article
+      data-side-chat-annotation-card={placement === 'message' ? undefined : 'true'}
+      className="rounded-lg border border-border/70 bg-background/70"
+    >
+      {onActivate ? (
+        <button
+          type="button"
+          aria-label={t('Show annotation source')}
+          className="block w-full rounded-lg p-2 text-left transition-colors hover:bg-muted/70 focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50"
+          onClick={() => onActivate(card.id)}
+        >
+          {content}
+        </button>
+      ) : (
+        <div className="p-2">{content}</div>
+      )}
     </article>
   )
 }

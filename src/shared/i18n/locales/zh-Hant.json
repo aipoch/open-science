@@ -382,6 +382,8 @@
     "Remove annotation": "移除標註",
     "Sent annotations": "已傳送的標註",
     "Show annotation source": "顯示標註來源",
+    "Image not retained: session image budget reached.": "圖片未保留：已達到工作階段圖片容量上限。",
+    "The exact annotation location could not be found.": "無法找到標註的確切位置。",
     "Source: {{source}}": "來源：{{source}}",
     "PDF area": "PDF 區域",
     "PDF quote": "PDF 引文",

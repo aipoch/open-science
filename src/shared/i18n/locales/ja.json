@@ -382,6 +382,8 @@
     "Remove annotation": "注釈を削除",
     "Sent annotations": "送信済みの注釈",
     "Show annotation source": "注釈の参照元を表示",
+    "Image not retained: session image budget reached.": "セッションの画像容量の上限に達したため、画像は保存されていません。",
+    "The exact annotation location could not be found.": "注釈の正確な位置が見つかりませんでした。",
     "Source: {{source}}": "出典：{{source}}",
     "PDF area": "PDF 領域",
     "PDF quote": "PDF 引用",
