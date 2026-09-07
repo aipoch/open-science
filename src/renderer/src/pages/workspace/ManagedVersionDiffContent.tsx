@@ -172,7 +172,7 @@ const ManagedVersionDiffContent = memo(
     const endsWithNewline = (line: typeof lastBefore): boolean =>
       line !== undefined &&
       line.kind !== 'omitted' &&
-      /[\r\n]$/u.test(line.segments.map((segment) => segment.text).join(''))
+      /\n$/u.test(line.segments.map((segment) => segment.text).join(''))
     const trailingNewlineChanged = endsWithNewline(lastBefore) !== endsWithNewline(lastAfter)
 
     return (

@@ -56,6 +56,28 @@ describe('ManagedVersionDiffContent', () => {
     }
   )
 
+  it.each([true, false])(
+    'keeps a bare trailing carriage return distinct from a newline (added: %s)',
+    async (added) => {
+      const lines = await new ManagedTextDiffTaskRunner().run({
+        requestId: `bare-carriage-return-${added}`,
+        before: added ? 'line' : 'line\r',
+        after: added ? 'line\r' : 'line'
+      })
+      await act(async () =>
+        root.render(
+          <ManagedVersionDiffContent
+            result={{ baseVersionId: 'v1', selectedVersionId: 'v2', lines }}
+            format="text"
+            name="script.py"
+          />
+        )
+      )
+      expect(container.textContent).toContain('Carriage return (CR)')
+      expect(container.textContent).not.toMatch(/Newline at end of file/u)
+    }
+  )
+
   it.each([true, false])('explains a trailing newline change (added: %s)', async (added) => {
     const lines = await new ManagedTextDiffTaskRunner().run({
       requestId: `ending-${added}`,
