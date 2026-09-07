@@ -472,6 +472,27 @@ export class ComputeJobRepository {
     return rows.map(this.toJob)
   }
 
+  async findProjectOverview(projectId: string, since: Date): Promise<ComputeJob[]> {
+    const client = await this.getClient()
+    const rows = await client.computeJob.findMany({
+      where: {
+        projectId,
+        OR: [
+          { status: { in: ['queued', 'submitted', 'running'] } },
+          { operations: { some: { kind: 'cancel', phase: 'active' } } },
+          {
+            status: { in: ['success', 'failed', 'timeout', 'error'] },
+            OR: [{ finishedAt: { gte: since } }, { finishedAt: null, createdAt: { gte: since } }]
+          }
+        ]
+      },
+      include: { operations: { where: { kind: 'cancel' } } },
+      orderBy: { createdAt: 'desc' },
+      take: 200
+    })
+    return rows.map(this.toJob)
+  }
+
   // Checks if a provider has any non-terminal jobs (used by delete guard on ComputeHost).
   async hasActiveJobsForProvider(providerId: string): Promise<boolean> {
     const client = await this.getClient()

@@ -4771,7 +4771,13 @@ describe('workspace agent message sending', () => {
       undefined,
       undefined,
       undefined,
-      expect.objectContaining({ promptMessageId: expect.any(String) }),
+      expect.objectContaining({
+        rootFrameId: 'root-frame-transport-session-1',
+        agentFrameId: 'root-frame-transport-session-1',
+        messageBranchId: 'message-branch-transport-session-1',
+        runtimeSegmentId: 'runtime-segment-transport-session-1',
+        promptMessageId: expect.any(String)
+      }),
       false,
       undefined,
       true

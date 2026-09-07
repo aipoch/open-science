@@ -881,10 +881,17 @@ describe('ComputeJobWorkflowOwner.getJobStatus', () => {
     const status = await service.getJobStatus('job-42')
     expect(status.job_id).toBe('job-42')
     expect(status.status).toBe('success')
+    expect(status.result_final).toBe(false)
     expect(status.exit_code).toBe(0)
     expect(status.stdout_tail).toBe('hi\n')
     expect(status.remote_workdir).toBe('~/.openscience/jobs/job-42')
     expect(status.harvest_error).toBe('harvest pending: authentication_failed')
+
+    job.harvested_at = 3
+    await expect(service.getJobStatus('job-42')).resolves.toMatchObject({
+      status: 'success',
+      result_final: true
+    })
 
     await expect(
       service.getJobStatus('job-42', {
@@ -1392,6 +1399,7 @@ describe('ComputeJobWorkflowOwner.getJobResult', () => {
     const service = makeServiceWithStorageRoot(job, tmpDir)
     const result = await service.getJobResult('job-result-1')
     expect(result.status).toBe('running')
+    expect(result.result_final).toBe(false)
     expect(result.featured_files).toEqual([])
     expect(result.hidden_files).toEqual([])
     expect(result.output_files).toEqual([])
@@ -1422,6 +1430,7 @@ describe('ComputeJobWorkflowOwner.getJobResult', () => {
     const service = makeServiceWithStorageRoot(job, tmpDir)
     const result = await service.getJobResult('job-result-1')
     expect(result.status).toBe('success')
+    expect(result.result_final).toBe(false)
     expect(result.featured_files).toEqual([])
     expect(result.output_files).toEqual([])
     expect(result.harvest_error).toBe('harvest pending: host_unreachable')
@@ -1439,6 +1448,7 @@ describe('ComputeJobWorkflowOwner.getJobResult', () => {
     const result = await service.getJobResult('job-result-1')
 
     expect(result.status).toBe('success')
+    expect(result.result_final).toBe(true)
     expect(result.exit_code).toBe(0)
     expect(result.local_output_root).toBe(join(tmpDir, 'notebooks', 'proj-1', 'sess-1'))
     expect(result.featured_files).toContain('hpc/job-result-1/featured/out.result')

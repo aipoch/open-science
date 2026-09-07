@@ -30,11 +30,29 @@ import {
 import { registerApplicationCommandElectronAdapter } from './application-command-electron-adapter'
 import type { ApplicationInvocation } from './application-command-router'
 import { createApplicationEventModule, type ApplicationEventSource } from './application-events'
+import type { JobSummary } from '../shared/compute'
 import { TagRepository } from './tags/repository'
 import { TagResourceCatalog } from './tags/resource-catalog'
 import { TagService } from './tags/service'
 import { MemoryRepository } from './memory/repository'
 import { MemoryService } from './memory/service'
+import { BackgroundResultDeliveryRepository } from './background-result-delivery/repository'
+import { BackgroundResultDeliveryOwner } from './background-result-delivery/owner'
+import { ComputeJobResultDeliveryAdapter } from './background-result-delivery/compute-adapter'
+import { NotebookRunResultDeliveryAdapter } from './background-result-delivery/notebook-adapter'
+import { registerBackgroundResultDeliveryIpcHandlers } from './background-result-delivery/ipc'
+import {
+  resolveBackgroundResultSources,
+  type ResolvedBackgroundResultSource
+} from './background-result-delivery/source-resolver'
+import {
+  buildAgentResultContinuationPrompt,
+  hasSavedAgentResultContinuation
+} from './background-result-delivery/continuation'
+import type {
+  BackgroundResultDelivery,
+  ProjectBackgroundActivityChangedEvent
+} from '../shared/background-result-delivery'
 import {
   LIFECYCLE_CHANNELS,
   MAIN_DELEGATED_WORK_LIFECYCLE_CLIENT_ID,
@@ -70,7 +88,7 @@ import {
 import { ArtifactProvenanceRepository } from './artifacts/provenance-repository'
 import { ProvenanceMessageSnapshotRepository } from './artifacts/provenance-message-snapshot'
 import { ArtifactRunRegistry } from './artifacts/run-registry'
-import { createComputeIpcModule } from './compute/ipc'
+import { broadcastJobUpdated, createComputeIpcModule, toJobSummary } from './compute/ipc'
 import { createComputeArtifactResolver } from './compute/compute-service'
 import { bindComputeApprovalSessionLifecycle } from './compute/approval-session-lifecycle'
 import type { ComputeJobOwnerLiveness } from './compute/job-deletion-owner'
@@ -762,6 +780,207 @@ const createApplicationModules = async (
   const runtimeRef: { current: ReturnType<typeof createAcpRuntime> | undefined } = {
     current: undefined
   }
+  const backgroundResultDeliveryRepository = new BackgroundResultDeliveryRepository(() =>
+    getProjectDbClient(resolveConfigRoot())
+  )
+  let markNotebookResultAuthorityReady!: () => void
+  let markComputeResultAuthorityReady!: () => void
+  const notebookResultAuthorityReady = new Promise<void>((resolve) => {
+    markNotebookResultAuthorityReady = resolve
+  })
+  const computeResultAuthorityReady = new Promise<void>((resolve) => {
+    markComputeResultAuthorityReady = resolve
+  })
+  const resolveDeliverySources = (
+    deliveries: readonly BackgroundResultDelivery[]
+  ): Promise<ResolvedBackgroundResultSource[]> =>
+    resolveBackgroundResultSources(deliveries, {
+      loadNotebookRuns: async (group) => {
+        const state = await notebookCommands.state({
+          projectId: group.projectId,
+          sessionId: group.sessionId,
+          workspaceCwd: '',
+          runIds: group.sources.map(({ sourceId }) => sourceId)
+        })
+        return state.runs
+      },
+      loadComputeJobs: async (sources) =>
+        new Map(
+          (
+            await Promise.all(
+              sources.map(async ({ sourceId }) => {
+                const job = await jobRepository.get(sourceId)
+                if (!job) return undefined
+                const host = await hostRepository.get(job.provider_id).catch(() => null)
+                return [
+                  sourceId,
+                  await toJobSummary(job, host?.displayName ?? job.provider_id, resolveDataRoot())
+                ] as const
+              })
+            )
+          ).filter((entry): entry is readonly [string, JobSummary] => entry !== undefined)
+        )
+    })
+  const backgroundResultDelivery: BackgroundResultDeliveryOwner = await modules.add(
+    {
+      repository: backgroundResultDeliveryRepository,
+      resolveSources: resolveDeliverySources,
+      waitForAuthoritiesReady: () =>
+        Promise.all([notebookResultAuthorityReady, computeResultAuthorityReady]).then(
+          () => undefined
+        ),
+      loadSessionCatalog: async () => {
+        const catalog = await sessionRepository.loadAllWithDiagnostics({ mode: 'read-only' })
+        return {
+          complete: catalog.isComplete,
+          sessions: catalog.result.sessions.map(({ projectId, id }) => ({
+            projectId,
+            sessionId: id
+          }))
+        }
+      },
+      sendContinuation: (request: {
+        sessionId: string
+        text: string
+        deliveryIds: readonly string[]
+        continuationMessageId: string
+      }) => {
+        let settleAdmitted!: () => void
+        let rejectAdmission!: (error: unknown) => void
+        let admissionSettled = false
+        const admitted = new Promise<void>((resolve, reject) => {
+          settleAdmitted = () => {
+            if (admissionSettled) return
+            admissionSettled = true
+            resolve()
+          }
+          rejectAdmission = (error) => {
+            if (admissionSettled) return
+            admissionSettled = true
+            reject(error)
+          }
+        })
+        const result = (async () => {
+          try {
+            const runtime = runtimeRef.current
+            if (!runtime) throw new Error('Agent runtime is unavailable for result delivery.')
+            const projectId = await sessionPersistenceCoordinator.sessionProjectId(
+              request.sessionId
+            )
+            if (!projectId) throw new Error('Background result delivery Session is unavailable.')
+            let session = await sessionPersistenceCoordinator.loadSessionForContinuation(
+              projectId,
+              request.sessionId
+            )
+            const agentTarget = await resolveSessionAgentTarget(session)
+            if (
+              agentTarget &&
+              shouldPersistSessionAgentConfiguration(session.agentConfiguration, agentTarget)
+            ) {
+              session = await sessionPersistenceCoordinator.saveSession({
+                ...session,
+                agentConfiguration: toSessionAgentConfiguration(agentTarget)
+              })
+            }
+            if (!runtime.hasLiveSession(session.projectId, session.id) || agentTarget) {
+              await runtime.resumeSession({
+                sessionId: session.id,
+                cwd: session.cwd,
+                projectId: session.projectId,
+                ...(session.permissionProfile
+                  ? { permissionProfile: session.permissionProfile }
+                  : {}),
+                memoryEnabled: session.memoryEnabled !== false,
+                ...(session.agentFrameworkId
+                  ? { previousFrameworkId: session.agentFrameworkId }
+                  : {}),
+                ...(session.agentBackendId ? { previousBackendId: session.agentBackendId } : {}),
+                ...(session.specialistId ? { specialistId: session.specialistId } : {}),
+                ...(session.specialistBindingPending === true
+                  ? { specialistBindingPending: true }
+                  : {}),
+                ...(session.providerSessionId
+                  ? { providerSessionId: session.providerSessionId }
+                  : {}),
+                ...(session.providerContinuityToken
+                  ? { providerContinuityToken: session.providerContinuityToken }
+                  : {}),
+                ...(agentTarget ? { agentTarget } : {})
+              })
+            }
+            const response = await runtime.sendApplicationPrompt(
+              buildAgentResultContinuationPrompt(session, {
+                sessionId: request.sessionId,
+                text: request.text,
+                continuationMessageId: request.continuationMessageId
+              }),
+              {
+                kind: 'application',
+                feature: 'background-results',
+                purpose: 'agent-result-delivery',
+                deliveryKey: `agent-result-delivery:${request.continuationMessageId}`,
+                deliveryIds: [...request.deliveryIds]
+              },
+              undefined,
+              (prompt) => {
+                void prompt.then(settleAdmitted, rejectAdmission)
+                setImmediate(settleAdmitted)
+              }
+            )
+            settleAdmitted()
+            return {
+              stopReason: response.stopReason,
+              continuationMessageId: request.continuationMessageId
+            }
+          } catch (error) {
+            rejectAdmission(error)
+            throw error
+          }
+        })()
+        return { admitted, result }
+      },
+      isContinuationSaved: async (request: {
+        sessionId: string
+        continuationMessageId: string
+        deliveryIds: readonly string[]
+      }) => {
+        const projectId = await sessionPersistenceCoordinator.sessionProjectId(request.sessionId)
+        if (!projectId) return false
+        const saved = await sessionPersistenceCoordinator.loadSessionForContinuation(
+          projectId,
+          request.sessionId
+        )
+        const messages = [...(saved.conversationGraph?.messages ?? []), ...saved.messages]
+        return hasSavedAgentResultContinuation(messages, request)
+      },
+      canStartSessionTurn: (sessionId: string) => {
+        const runtime = runtimeRef.current
+        return runtime ? !runtime.getState().promptInFlightSessionIds.includes(sessionId) : false
+      },
+      onChanged: (event: ProjectBackgroundActivityChangedEvent) =>
+        applicationEvents.publish('background-result-delivery:changed', event)
+    },
+    (options) => {
+      const owner = new BackgroundResultDeliveryOwner(options)
+      return {
+        name: 'background-result-delivery',
+        capability: owner,
+        dispose: () => owner.dispose()
+      }
+    }
+  )
+  const computeJobResultDelivery = new ComputeJobResultDeliveryAdapter({
+    register: (source) => backgroundResultDelivery.register(source),
+    enqueue: (source) => backgroundResultDelivery.enqueue(source),
+    acknowledgeObserved: (source) => backgroundResultDelivery.acknowledgeObserved(source),
+    listWaiting: () => backgroundResultDeliveryRepository.listWaiting('compute-job'),
+    hasDeliveryPath: (sourceKind, sourceId) =>
+      backgroundResultDeliveryRepository.hasDeliveryPath(sourceKind, sourceId)
+  })
+  const notebookRunResultDelivery = new NotebookRunResultDeliveryAdapter({
+    listWaiting: () => backgroundResultDeliveryRepository.listWaiting('local-run'),
+    enqueue: (source) => backgroundResultDelivery.enqueue(source)
+  })
   const userSkillCatalogObserverRef: { current: UserSkillCatalogObserver | undefined } = {
     current: undefined
   }
@@ -1205,6 +1424,7 @@ const createApplicationModules = async (
         })
       },
       restoreProjectDeletion: async (projectId) => {
+        await backgroundResultDelivery.prepareProjectDeletion(projectId)
         archiveCoordinator.restoreProjectDeletion(projectId)
         notebookService.beginProjectDeletion(projectId)
         reviewerProjectRuntime.restoreProjectDeletion(projectId)
@@ -1216,6 +1436,7 @@ const createApplicationModules = async (
         await owner.completeProjectDeletion(projectId)
         await notebookService.deleteProjectFileEvidence(projectId)
         await notebookService.deleteProjectInputs(projectId)
+        await backgroundResultDelivery.commitProjectDeletion(projectId)
       },
       completeProjectDeletion: (projectId) => {
         archiveCoordinator.releaseProjectDeletion(projectId)
@@ -1227,6 +1448,7 @@ const createApplicationModules = async (
         notebookService.releaseProjectDeletion(projectId)
         reviewerProjectRuntime.releaseProjectDeletion(projectId)
         sideChatOwnerRef.current?.restoreProject(projectId)
+        backgroundResultDelivery.abortProjectDeletion(projectId)
         await computeJobDeletionPort.abortProjectJobDeletion(projectId)
       }
     },
@@ -1477,6 +1699,11 @@ const createApplicationModules = async (
       translate,
       helperModuleCatalog: settingsService.registeredHelperCatalog(),
       processSandbox: notebookNetworkSandbox,
+      onBackgroundRunTerminal: (source) =>
+        backgroundResultDelivery.enqueue(source).then(() => undefined),
+      onBackgroundRunAdmitted: (source) =>
+        backgroundResultDelivery.register(source).then(() => undefined),
+      onBackgroundRunObserved: (source) => backgroundResultDelivery.acknowledgeObserved(source),
       events: applicationEvents,
       disposeTimeoutMs: QUIT_SHUTDOWN_BUDGET_MS,
       isBackendTeardownOwned: () => backendTeardownOwnedByCoordinator
@@ -2030,7 +2257,8 @@ const createApplicationModules = async (
         }
       }
     },
-    sessionLimitPersistence
+    sessionLimitPersistence,
+    computeJobResultDelivery
   )
   surfaceAdapters = beforeAcpAdapters
   const {
@@ -2100,7 +2328,26 @@ const createApplicationModules = async (
   const dataRoot = resolveDataRoot()
   // The Notebook RPC receives only this Session-admitted facade, never the unrestricted service
   // used by Settings and internal runtimes.
-  const agentComputeService = new AgentComputeService(computeService, hostsRegistry)
+  const agentComputeService = new AgentComputeService(computeService, hostsRegistry, {
+    onFinalJobObserved: async (_context, _providerId, snapshot) => {
+      const job = await jobRepository.get(snapshot.job_id)
+      if (!job) return 'pending'
+      const host = await hostRepository.get(job.provider_id).catch(() => null)
+      const summary = await toJobSummary(job, host?.displayName ?? job.provider_id, dataRoot)
+      return computeJobResultDelivery.observeResult({
+        ...summary,
+        status: snapshot.status,
+        cancellation_status: snapshot.cancellation_status,
+        exit_code: snapshot.exit_code,
+        stdout_tail: snapshot.stdout_tail,
+        stderr_tail: snapshot.stderr_tail,
+        remote_workdir: snapshot.remote_workdir,
+        harvest_error: snapshot.harvest_error,
+        ...('featured_files' in snapshot ? { featured_files: snapshot.featured_files } : {}),
+        ...('left_on_remote' in snapshot ? { left_on_remote: snapshot.left_on_remote } : {})
+      })
+    }
+  })
   // host.agents control-plane SDK (issue 02/05): read Specialist/catalog surface plus the durable
   // immediate-handoff lifecycle. The catalog adapter delegates to the authoritative
   // SettingsService + SpecialistService; switch() reuses the SAME SessionBindingService and durable
@@ -2846,6 +3093,14 @@ const createApplicationModules = async (
   )
   surfaceAdapters = afterAcpAdapters
   runtimeRef.current = runtime
+  void backgroundResultDelivery
+    .recover()
+    .catch((error) =>
+      createLogger('background-result-delivery').warn(
+        'Background result delivery recovery failed',
+        diagnosticErrorFields(error)
+      )
+    )
   composition.phase('acp-runtime')
   runtime.setSessionResumeObserver(async (request) => {
     if (request.specialistBindingPending !== true) return
@@ -2969,7 +3224,26 @@ const createApplicationModules = async (
       storageRoot: dataRoot
     },
     (dependencies) => {
-      const jobPoller = createComputeJobRuntime(dependencies)
+      const jobPoller = createComputeJobRuntime(dependencies, {
+        broadcast: (summary) => {
+          void (async () => {
+            let owned = false
+            try {
+              await computeJobResultDelivery.observeNotification(summary)
+              owned = await computeJobResultDelivery.hasDeliveryPath(summary.job_id)
+            } catch (error) {
+              createLogger('agent-result-delivery').warn(
+                'Compute Job result delivery observation failed',
+                diagnosticErrorFields(error)
+              )
+              return
+            }
+            broadcastJobUpdated(
+              owned ? { ...summary, result_delivery_path: 'agent-result-delivery' } : summary
+            )
+          })()
+        }
+      })
       return {
         name: 'compute-job-runtime',
         capability: undefined,
@@ -3016,6 +3290,24 @@ const createApplicationModules = async (
               'Compute Job file-evidence startup reconciliation failed closed.',
               diagnosticErrorFields(error)
             )
+          }
+          try {
+            await computeJobResultDelivery.takeOver(
+              await computeIpcModule.handlers.jobsList({ nonTerminal: true })
+            )
+            await computeJobResultDelivery.recoverWaiting(async (jobId) => {
+              const job = await jobRepository.get(jobId)
+              if (!job) return undefined
+              const host = await hostRepository.get(job.provider_id).catch(() => null)
+              return toJobSummary(job, host?.displayName ?? job.provider_id, dataRoot)
+            })
+          } catch (error) {
+            createLogger('agent-result-delivery').warn(
+              'Compute Job result delivery recovery failed; Compute lifecycle will continue',
+              diagnosticErrorFields(error)
+            )
+          } finally {
+            markComputeResultAuthorityReady()
           }
           await jobPoller.start()
         },
@@ -3471,6 +3763,11 @@ const createApplicationModules = async (
     })
   )
   declareElectronAdapter('notebook', () => registerNotebookIpcHandlers(notebookCommands))
+  declareElectronAdapter('background-result-delivery', () =>
+    registerBackgroundResultDeliveryIpcHandlers(backgroundResultDeliveryRepository, {
+      resolveSources: resolveDeliverySources
+    })
+  )
   // Wire session deletion to the binding store so stale in-memory bindings do not accumulate.
   // The renderer calls sessions:delete-session (via sessionPersistenceBackend) and acp:delete-session
   // separately; both paths should clear the binding. Override the backend deleteSession callback here
@@ -3780,10 +4077,28 @@ const createApplicationModules = async (
   // create, on-demand materialize, install) can await it and never race recovery's cleanup/delete.
   // Fire-and-forget so a slow/failed recovery never blocks IPC registration; the barrier itself is what
   // actually orders the prefix work.
-  void runDataRootStartupRecovery(() => notebookService.recoverInterruptedOperations(), {
-    reportFailure: (error) =>
-      notebookStartupLog.error('operation recovery failed', errorLogFields(error))
-  })
+  void runDataRootStartupRecovery(
+    async () => {
+      try {
+        await notebookService.recoverInterruptedOperations()
+        await notebookRunResultDelivery.recoverWaiting(async (request) => {
+          const state = await notebookCommands.state({
+            projectId: request.projectId,
+            sessionId: request.sessionId,
+            workspaceCwd: '',
+            runIds: [request.runId]
+          })
+          return state.runs.find((run) => run.runId === request.runId)
+        })
+      } finally {
+        markNotebookResultAuthorityReady()
+      }
+    },
+    {
+      reportFailure: (error) =>
+        notebookStartupLog.error('operation recovery failed', errorLogFields(error))
+    }
+  )
   const waitForRecovery = (): Promise<void> => notebookService.ensureRecovered()
   // Lets UI provision/repair refuse when recovery left the default env's prefix blocked (an
   // unknown-liveness orphan may still be writing it) — throws with an actionable message.
@@ -3936,6 +4251,7 @@ const createApplicationModules = async (
   })
   const sessionDeletionOwner = new SessionDeletionOwner({
     runtime,
+    backgroundResults: backgroundResultDelivery,
     persistence: {
       deleteSession: (request) =>
         withDataRootWrite(() =>

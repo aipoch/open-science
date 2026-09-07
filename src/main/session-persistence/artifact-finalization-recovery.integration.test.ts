@@ -12,7 +12,10 @@ vi.mock('electron', () => ({
   shell: { openPath: vi.fn() }
 }))
 
-import { createLinearConversationGraph } from '../../shared/conversation-graph'
+import {
+  createLinearConversationGraph,
+  rebindConversationGraphSessionId
+} from '../../shared/conversation-graph'
 import {
   ARTIFACT_FINALIZATION_INVALID_PROOF,
   type ReconcilePendingArtifactsRequest
@@ -585,6 +588,37 @@ describe('artifact finalization startup recovery', () => {
     await expect(coordinator.retryArtifactFinalization(request)).rejects.toThrow(
       'Native Artifact finalization remains unresolved.'
     )
+  })
+
+  it('repairs a provisional root before recovering its pending Version', async () => {
+    const compatibility = new ArtifactRepository(storageRoot)
+    const { provenance, version } = await prepareRecovery(compatibility)
+    const persisted = await sessions.loadSession(PROJECT_ID, SESSION_ID)
+    if (!persisted?.conversationGraph) throw new Error('Recovery fixture Session graph is missing.')
+    await sessions.saveSession({
+      ...persisted,
+      conversationGraph: rebindConversationGraphSessionId(
+        persisted.conversationGraph,
+        SESSION_ID,
+        'pending-session-123-1'
+      )
+    })
+    const coordinator = new SessionPersistenceCoordinator(
+      sessions,
+      files,
+      undefined,
+      undefined,
+      undefined,
+      provenance
+    )
+
+    const loaded = await coordinator.loadAll()
+
+    expect(loaded.sessions[0].conversationGraph?.rootFrameId).toBe(`root-frame-${SESSION_ID}`)
+    expect(loaded.sessions[0].messages[1].artifactIds).toEqual([version.versionId])
+    await expect(
+      client.artifactVersion.findUniqueOrThrow({ where: { id: version.versionId } })
+    ).resolves.toMatchObject({ state: 'finalized', messageId: 'message-1' })
   })
 
   it('replays an explicitly requested finalized Version that is already linked', async () => {

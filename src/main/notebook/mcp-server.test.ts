@@ -1,3 +1,7 @@
+import { mkdtemp, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+
 import { Client as ModelContextProtocolClient } from '@modelcontextprotocol/sdk/client/index.js'
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js'
 import { describe, expect, it, vi } from 'vitest'
@@ -41,6 +45,8 @@ import {
   callNotebookRpc,
   buildNotebookToolContent,
   compactNotebookExecutionResult,
+  compactBackgroundRunReceipt,
+  compactBackgroundRunResult,
   compactNotebookStateResult,
   compactManagePackagesResult,
   compactInspectPackagesResult,
@@ -56,6 +62,13 @@ import {
   resolveNotebookRpcFetch,
   serializeNotebookToolResult
 } from './mcp-server'
+import { NotebookLocalRpcServer } from './local-rpc-server'
+import { NotebookRunRepository } from './repository'
+import {
+  NotebookRuntimeService,
+  type NotebookExecutionRequest,
+  type NotebookExecutionResult
+} from './runtime-service'
 
 const tokenizer = new Tiktoken(cl100kBase)
 
@@ -315,6 +328,7 @@ describe('notebook MCP server config', () => {
     expect(NOTEBOOK_RPC_TOOLS.map((tool) => tool.name)).toEqual([
       'ask_user_question',
       'notebook_execute',
+      'background_run',
       'repl_execute',
       'bash_execute',
       'request_network_access',
@@ -626,6 +640,38 @@ describe('ask_user_question tool', () => {
 describe('notebook_execute tool', () => {
   const tool = NOTEBOOK_RPC_TOOLS.find((entry) => entry.name === 'notebook_execute')
 
+  it('accepts an explicit background mode and documents its durable receipt lifecycle', () => {
+    const schema = z.object(tool?.inputSchema ?? {})
+
+    expect(schema.parse({ code: 'long_running()', background: true })).toEqual({
+      code: 'long_running()',
+      background: true
+    })
+    expect(schema.parse({ code: 'foreground()', background: false })).toEqual({
+      code: 'foreground()',
+      background: false
+    })
+    expect(tool?.description).toMatch(/save the returned runId/i)
+    expect(tool?.description).toContain('dependency-point query guidance')
+    expect(tool?.description).toContain('explicitly cancel')
+    const receipt = {
+      runId: 'run-1',
+      executionType: 'python-notebook-run',
+      projectId: 'project-1',
+      sessionId: 'session-1',
+      status: 'queued',
+      acceptedAt: 123,
+      lifecycleScope: 'app-process',
+      submissionIdentity: 'submission-1'
+    }
+    expect(tool?.mapResult?.(receipt, { background: true })).toEqual({
+      ...receipt,
+      nextAction: expect.stringMatching(
+        /Save runId.*exact runId.*non-blocking snapshot.*never scan Run history.*followUpDelivery.*suppressed.*follow-up Turn/
+      )
+    })
+  })
+
   it('accepts an optional language enum defaulting to python when omitted', () => {
     expect(tool).toBeDefined()
     const schema = z.object(tool?.inputSchema ?? {})
@@ -751,7 +797,7 @@ describe('notebook_execute tool', () => {
 
   it.each([
     ['execute', true],
-    ['executeControl', false],
+    ['executeControl', true],
     ['executeShell', true],
     ['managePackages', true],
     ['manageEnvironments', true],
@@ -878,10 +924,210 @@ describe('notebook_execute tool', () => {
   )
 })
 
+describe('background_run tool', () => {
+  const tool = NOTEBOOK_RPC_TOOLS.find((entry) => entry.name === 'background_run')
+
+  it('queries ambiguous submissions and idempotently cancels by Run identity', () => {
+    expect(tool?.method).toBe('getBackgroundRun')
+    const schema = z.object(tool?.inputSchema ?? {})
+    expect(schema.parse({ action: 'query', submissionIdentity: 'submission-1' })).toEqual({
+      action: 'query',
+      submissionIdentity: 'submission-1'
+    })
+    expect(schema.parse({ action: 'cancel', runId: 'run-1' })).toEqual({
+      action: 'cancel',
+      runId: 'run-1'
+    })
+    expect(() => schema.parse({ action: 'retry', runId: 'run-1' })).toThrow()
+    expect(tool?.description).toMatch(/query a saved runId.*non-blocking/i)
+    expect(tool?.description).toMatch(/non-blocking snapshot/i)
+    expect(tool?.description).toMatch(/never scan Run history/i)
+    expect(tool?.description).not.toMatch(/once|never.*poll|do not poll/i)
+    expect(tool?.description).toContain('followUpDelivery:"suppressed"')
+    expect(tool?.description).toContain('"committed"')
+    expect(tool?.description).toContain('follow-up Turn')
+    expect(tool?.description).toMatch(/submissionIdentity.*recovers only a missing receipt/i)
+  })
+
+  it('preserves the durable receipt internally and flattens compact query output', () => {
+    const receipt = {
+      runId: 'run-1',
+      executionType: 'python-notebook-run',
+      projectId: 'project-1',
+      sessionId: 'session-1',
+      status: 'completed',
+      acceptedAt: 123,
+      lifecycleScope: 'app-process',
+      submissionIdentity: 'submission-1'
+    }
+    expect(compactBackgroundRunReceipt(receipt)).toEqual(receipt)
+    const result = compactBackgroundRunResult({
+      receipt,
+      followUpDelivery: 'suppressed',
+      run: {
+        runId: 'run-1',
+        status: 'completed',
+        text: { stdout: 'x'.repeat(30_000), stderr: '', traceback: '' },
+        outputs: []
+      }
+    })
+    expect(result).toMatchObject({
+      runId: 'run-1',
+      status: 'completed',
+      truncated: true,
+      followUpDelivery: 'suppressed'
+    })
+    expect(Object.keys(result as object).sort()).toEqual(
+      ['runId', 'status', 'stdout', 'truncated', 'note', 'followUpDelivery'].sort()
+    )
+  })
+
+  it('returns compact terminal Shell output, working files, and file evidence', () => {
+    const result = compactBackgroundRunResult({
+      receipt: {
+        runId: 'shell-run-1',
+        executionType: 'shell-command',
+        projectId: 'project-1',
+        sessionId: 'session-1',
+        status: 'failed',
+        acceptedAt: 123,
+        lifecycleScope: 'app-process',
+        submissionIdentity: 'shell-submission-1',
+        shellConcurrency: { limit: 2, slot: 1 }
+      },
+      run: {
+        runId: 'shell-run-1',
+        kernelKind: 'bash',
+        status: 'failed',
+        exitCode: 7,
+        text: { stdout: 'partial', stderr: 'failed', traceback: '' },
+        workingFiles: [
+          {
+            relativePath: 'data/output.csv',
+            kind: 'other',
+            size: 12,
+            createdByRunId: 'shell-run-1'
+          }
+        ],
+        fileEvidence: {
+          schemaVersion: 1,
+          activityId: 'shell-run-1',
+          activityKind: 'notebook-run',
+          state: 'available',
+          evidenceId: 'evidence-1',
+          checksum: 'a'.repeat(64),
+          storageKey: 'evidence/shell-run-1.json',
+          scientificOutputCount: 1,
+          initialViewState: 'complete',
+          managedRootsFinalState: 'complete',
+          scientificOutputAnalysis: 'complete',
+          fileReads: 'partial',
+          externalPaths: 'unavailable',
+          writerAttribution: 'complete',
+          reasonCodes: ['file-reads-not-observed']
+        }
+      }
+    })
+
+    expect(result).toMatchObject({
+      shellConcurrency: { limit: 2, slot: 1 },
+      kernelKind: 'bash',
+      status: 'failed',
+      exitCode: 7,
+      stdout: 'partial',
+      stderr: 'failed',
+      workingFiles: [{ relativePath: 'data/output.csv' }],
+      fileEvidence: {
+        activityId: 'shell-run-1',
+        state: 'available',
+        evidenceId: 'evidence-1'
+      }
+    })
+  })
+
+  it.each(['pending', 'suppressed', 'committed'])(
+    'preserves %s delivery state in query and cancel responses',
+    (followUpDelivery) => {
+      const status = followUpDelivery === 'pending' ? 'running' : 'completed'
+      for (const action of ['query', 'cancel']) {
+        expect(
+          tool?.mapResult?.(
+            {
+              receipt: { runId: 'run-1', status, projectId: 'project-1' },
+              run: { runId: 'run-1', status, kernelKind: 'python' },
+              followUpDelivery
+            },
+            { action, runId: 'run-1' }
+          )
+        ).toEqual({
+          runId: 'run-1',
+          status,
+          kernelKind: 'python',
+          followUpDelivery
+        })
+      }
+    }
+  )
+
+  it('compacts background REPL errors like foreground errors without changing stored output', () => {
+    const message = 'Error: connector failed'
+    const traceback = [message, '    at <repl>:1:7', '    at run (node:vm:117:7)'].join('\n')
+    const run = {
+      runId: 'repl-1',
+      kernelKind: 'repl',
+      status: 'failed',
+      text: { stdout: '', stderr: '', traceback },
+      outputs: [{ type: 'error', message, traceback }]
+    }
+    const replTool = NOTEBOOK_RPC_TOOLS.find((entry) => entry.name === 'repl_execute')
+    const result = tool?.mapResult?.({ receipt: {}, run }, { action: 'query', runId: 'repl-1' })
+    expect(result).toEqual(replTool?.mapResult?.(run, {}))
+    expect(result).toMatchObject({ traceback: message, outputs: [{ type: 'error', message }] })
+    expect(JSON.stringify(result)).not.toContain('node:vm')
+    expect(run.text.traceback).toBe(traceback)
+    expect(run.outputs[0].traceback).toBe(traceback)
+  })
+
+  it('preserves background Python traceback frames', () => {
+    const traceback =
+      'Traceback (most recent call last):\n  File "analysis.py", line 2\nValueError: boom'
+    expect(
+      compactBackgroundRunResult({
+        receipt: {},
+        run: { runId: 'python-1', kernelKind: 'python', status: 'failed', text: { traceback } }
+      })
+    ).toMatchObject({ traceback })
+  })
+
+  it('preserves the structured recovery envelope through the MCP RPC client', async () => {
+    const detail = {
+      code: 'BACKGROUND_RUN_NOT_FOUND',
+      stage: 'query',
+      retryable: true,
+      hint: 'Query before resubmitting.',
+      submissionIdentity: 'submission-1'
+    }
+    await expect(
+      callNotebookRpc(
+        {
+          endpoint: 'http://127.0.0.1:4567',
+          token: 'secret-token',
+          projectId: 'default-project',
+          sessionId: 'session-1',
+          workspaceCwd: '/workspace'
+        },
+        'getBackgroundRun',
+        { submissionIdentity: 'submission-1' },
+        async () => ({ ok: false, status: 500, json: async () => ({ error: detail }) }) as Response
+      )
+    ).rejects.toThrow(JSON.stringify(detail))
+  })
+})
+
 describe('repl_execute tool', () => {
   const tool = NOTEBOOK_RPC_TOOLS.find((entry) => entry.name === 'repl_execute')
 
-  it('registers repl_execute backed by the executeControl RPC method with a code/timeoutMs schema', () => {
+  it('registers repl_execute with optional background admission and foreground-compatible defaults', () => {
     expect(tool).toBeDefined()
     expect(tool?.method).toBe('executeControl')
 
@@ -894,9 +1140,50 @@ describe('repl_execute tool', () => {
       code: 'return 1',
       timeoutMs: 5000
     })
+    expect(schema.parse({ code: 'await longWork()', background: true })).toEqual({
+      code: 'await longWork()',
+      background: true,
+      timeoutMs: 1_815_000
+    })
     expect(() => schema.parse({})).toThrow()
     // The control-plane repl takes no language/cellId — it is distinct from notebook_execute.
-    expect(Object.keys(tool?.inputSchema ?? {})).toEqual(['code', 'timeoutMs'])
+    expect(Object.keys(tool?.inputSchema ?? {})).toEqual(['code', 'background', 'timeoutMs'])
+    expect(tool?.description).toMatch(/background:true/u)
+    expect(tool?.description).toMatch(/background-safe/iu)
+    expect(tool?.description).toMatch(
+      /host\.mcp.*host\.compute.*host\.llm.*host\.delegate.*host\.viewImage/u
+    )
+    expect(tool?.description).toMatch(/host\.agents\.switch.*unsafe/u)
+  })
+
+  it('maps background REPL execution to the shared compact receipt', () => {
+    expect(
+      tool?.mapResult?.(
+        {
+          runId: 'run-repl-1',
+          executionType: 'javascript-repl',
+          projectId: 'project-1',
+          sessionId: 'session-1',
+          status: 'queued',
+          acceptedAt: 100,
+          lifecycleScope: 'app-process',
+          submissionIdentity: 'submission-repl-1'
+        },
+        { background: true }
+      )
+    ).toEqual({
+      runId: 'run-repl-1',
+      executionType: 'javascript-repl',
+      projectId: 'project-1',
+      sessionId: 'session-1',
+      status: 'queued',
+      acceptedAt: 100,
+      lifecycleScope: 'app-process',
+      submissionIdentity: 'submission-repl-1',
+      nextAction: expect.stringMatching(
+        /Save runId.*exact runId.*non-blocking snapshot.*never scan Run history.*followUpDelivery.*suppressed.*follow-up Turn/
+      )
+    })
   })
 
   it('returns compact text followed by ordered transient MCP image blocks without embedding Base64', () => {
@@ -1036,12 +1323,193 @@ describe('repl_execute tool', () => {
       globalThis.fetch = originalFetch
     }
   })
+
+  it('preserves durable admission, retry, and Stop through the real Agent-facing MCP tool', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'open-science-repl-mcp-durable-'))
+    const repository = new NotebookRunRepository(root)
+    let announceDispatch!: () => void
+    const dispatched = new Promise<void>((resolve) => {
+      announceDispatch = resolve
+    })
+    let finishExecution!: (result: NotebookExecutionResult) => void
+    const execution = new Promise<NotebookExecutionResult>((resolve) => {
+      finishExecution = resolve
+    })
+    let announceStopDispatch!: () => void
+    const stopDispatched = new Promise<void>((resolve) => {
+      announceStopDispatch = resolve
+    })
+    const execute = vi.fn(async (request: NotebookExecutionRequest) => {
+      if (request.code === 'await never()') {
+        announceStopDispatch()
+        return new Promise<NotebookExecutionResult>((resolve) => {
+          request.signal?.addEventListener(
+            'abort',
+            () =>
+              resolve({
+                status: 'cancelled',
+                kernelDispatched: true,
+                stdout: '',
+                stderr: 'REPL stopped; the persistent namespace was terminated.',
+                traceback: '',
+                cwdAfter: root,
+                outputs: []
+              }),
+            { once: true }
+          )
+        })
+      }
+      announceDispatch()
+      return execution
+    })
+    const service = new NotebookRuntimeService({
+      configRoot: root,
+      dataRoot: root,
+      projectId: 'default-project',
+      repository,
+      executorFactory: () => ({
+        execute,
+        shutdown: async () => ({ reaped: true })
+      })
+    })
+    const rpcServer = new NotebookLocalRpcServer(service)
+    const completeControlInvocation = vi.fn(async () => [
+      { data: Buffer.from('stable image').toString('base64'), mimeType: 'image/png' as const }
+    ])
+    service.setMcpRpcConnectionResolver(async () => ({
+      endpoint: 'http://127.0.0.1:1/x',
+      token: 'control-token',
+      completeControlInvocation,
+      discardControlInvocation: vi.fn()
+    }))
+    const setTurn = (promptMessageId: string): void =>
+      rpcServer.setArtifactTurnBinding('session-1', {
+        ownerExecutionId: `execution-${promptMessageId}`,
+        projectId: 'default-project',
+        provenanceContext: {
+          rootFrameId: 'root-frame-session-1',
+          agentFrameId: 'root-frame-session-1',
+          messageBranchId: 'branch-1',
+          runtimeSegmentId: 'runtime-1',
+          promptMessageId
+        }
+      })
+    setTurn('prompt-1')
+    rpcServer.authorizeExecution({
+      sessionId: 'session-1',
+      toolCallId: 'tool-repl-1',
+      promptMessageId: 'prompt-1',
+      method: 'executeControl',
+      rawInput: { code: 'return globalThis.answer' }
+    })
+    const connection = await rpcServer.issueSessionConnection(
+      'session-1',
+      'default-project',
+      'root-frame-session-1'
+    )
+    const mcpServer = createNotebookMcpServer({
+      endpoint: connection.endpoint,
+      socketPath: connection.socketPath,
+      token: connection.token,
+      projectId: 'default-project',
+      sessionId: 'session-1',
+      workspaceCwd: root
+    })
+    const client = new ModelContextProtocolClient({
+      name: 'repl-durability-test',
+      version: '1.0.0'
+    })
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair()
+    await mcpServer.connect(serverTransport)
+    await client.connect(clientTransport)
+
+    try {
+      const call = client.callTool({
+        name: 'repl_execute',
+        arguments: { code: 'return globalThis.answer' }
+      })
+      await dispatched
+      await expect(repository.findExisting('default-project', 'session-1')).resolves.toMatchObject({
+        runs: [expect.objectContaining({ kernelKind: 'repl', status: 'running' })]
+      })
+
+      finishExecution({
+        status: 'completed',
+        stdout: '42',
+        stderr: '',
+        traceback: '',
+        cwdAfter: root,
+        outputs: []
+      })
+      const firstResult = await call
+      expect(firstResult).toMatchObject({
+        content: expect.arrayContaining([
+          expect.objectContaining({ type: 'text', text: expect.stringContaining('42') })
+        ])
+      })
+      expect(firstResult.content).toContainEqual({
+        type: 'image',
+        data: Buffer.from('stable image').toString('base64'),
+        mimeType: 'image/png'
+      })
+      const retryResult = await client.callTool({
+        name: 'repl_execute',
+        arguments: { code: 'return globalThis.answer' }
+      })
+      expect(retryResult.content).toEqual(firstResult.content)
+      expect(execute).toHaveBeenCalledOnce()
+      expect(completeControlInvocation).toHaveBeenCalledOnce()
+      await expect(repository.findExisting('default-project', 'session-1')).resolves.toMatchObject({
+        runs: [expect.objectContaining({ kernelKind: 'repl', status: 'completed' })]
+      })
+
+      setTurn('prompt-2')
+      rpcServer.authorizeExecution({
+        sessionId: 'session-1',
+        toolCallId: 'tool-repl-stop',
+        promptMessageId: 'prompt-2',
+        method: 'executeControl',
+        rawInput: { code: 'await never()' }
+      })
+      const stop = new AbortController()
+      const stoppedCall = client.callTool(
+        { name: 'repl_execute', arguments: { code: 'await never()' } },
+        undefined,
+        { signal: stop.signal }
+      )
+      await stopDispatched
+      stop.abort(new Error('Stop requested'))
+      await expect(stoppedCall).rejects.toThrow()
+      await vi.waitFor(async () => {
+        const document = await repository.findExisting('default-project', 'session-1')
+        expect(document?.runs.at(-1)).toMatchObject({
+          kernelKind: 'repl',
+          status: 'cancelled',
+          kernelDispatched: true
+        })
+      })
+    } finally {
+      finishExecution({
+        status: 'cancelled',
+        stdout: '',
+        stderr: '',
+        traceback: '',
+        cwdAfter: root,
+        outputs: []
+      })
+      await client.close()
+      await mcpServer.close()
+      await service.shutdownAll()
+      await rpcServer.close()
+      await rm(root, { recursive: true, force: true })
+    }
+  })
 })
 
 describe('bash_execute tool', () => {
   const tool = NOTEBOOK_RPC_TOOLS.find((entry) => entry.name === 'bash_execute')
 
-  it('registers bash_execute backed by the executeShell RPC method with a command/timeoutMs schema', () => {
+  it('supports foreground compatibility and durable background Shell receipts', () => {
     expect(tool).toBeDefined()
     expect(tool?.method).toBe('executeShell')
 
@@ -1051,8 +1519,31 @@ describe('bash_execute tool', () => {
       command: 'echo hi',
       timeoutMs: 5000
     })
+    expect(schema.parse({ command: 'sleep 30', background: true })).toEqual({
+      command: 'sleep 30',
+      background: true
+    })
     expect(() => schema.parse({})).toThrow()
-    expect(Object.keys(tool?.inputSchema ?? {})).toEqual(['command', 'timeoutMs'])
+    expect(Object.keys(tool?.inputSchema ?? {})).toEqual(['command', 'background', 'timeoutMs'])
+    expect(tool?.description).toContain('explicitly cancel')
+    expect(tool?.description).toContain('nohup')
+
+    const receipt = {
+      runId: 'shell-run-1',
+      executionType: 'shell-command',
+      projectId: 'project-1',
+      sessionId: 'session-1',
+      status: 'queued',
+      acceptedAt: 123,
+      lifecycleScope: 'app-process',
+      submissionIdentity: 'shell-submission-1'
+    }
+    expect(tool?.mapResult?.(receipt, { background: true })).toEqual({
+      ...receipt,
+      nextAction: expect.stringMatching(
+        /Save runId.*exact runId.*non-blocking snapshot.*never scan Run history.*followUpDelivery.*suppressed.*follow-up Turn/
+      )
+    })
   })
 
   it('describes the stateless per-call shell distinctly from the persistent kernels', () => {
@@ -1790,11 +2281,25 @@ describe('compactNotebookExecutionResult', () => {
   })
 
   it('applies the compact projection and global budget to every execution tool', () => {
-    for (const name of ['notebook_execute', 'bash_execute']) {
-      const tool = NOTEBOOK_RPC_TOOLS.find((entry) => entry.name === name)
-      expect(tool?.mapResult).toBe(compactNotebookExecutionResult)
-      expect(tool?.resultLimitChars).toBe(NOTEBOOK_MCP_EXECUTION_RESULT_LIMIT)
-    }
+    const notebookTool = NOTEBOOK_RPC_TOOLS.find((entry) => entry.name === 'notebook_execute')
+    expect(notebookTool?.mapResult?.(runSummary({ stdout: 'ok' }), {})).toEqual(
+      compactNotebookExecutionResult(runSummary({ stdout: 'ok' }))
+    )
+    expect(notebookTool?.resultLimitChars).toBe(NOTEBOOK_MCP_EXECUTION_RESULT_LIMIT)
+    const bashTool = NOTEBOOK_RPC_TOOLS.find((entry) => entry.name === 'bash_execute')
+    expect(
+      bashTool?.mapResult?.(
+        { runId: 'run-1', status: 'completed', text: { stdout: 'ok', stderr: '' } },
+        { command: 'echo ok' }
+      )
+    ).toEqual(
+      compactNotebookExecutionResult({
+        runId: 'run-1',
+        status: 'completed',
+        text: { stdout: 'ok', stderr: '' }
+      })
+    )
+    expect(bashTool?.resultLimitChars).toBe(NOTEBOOK_MCP_EXECUTION_RESULT_LIMIT)
     const replTool = NOTEBOOK_RPC_TOOLS.find((entry) => entry.name === 'repl_execute')
     expect(replTool?.mapResult).not.toBe(compactNotebookExecutionResult)
     expect(replTool?.resultLimitChars).toBe(NOTEBOOK_MCP_EXECUTION_RESULT_LIMIT)

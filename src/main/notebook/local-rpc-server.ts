@@ -9,7 +9,10 @@ import {
 } from '../../shared/compute'
 import type { HostLineageGraph, HostLineageVersion } from '../../shared/host-lineage'
 import { isCurrentInFlight } from '../../shared/in-flight-promise'
-import type { NotebookRunProvenanceContext } from '../../shared/notebook'
+import {
+  NotebookBackgroundRunError,
+  type NotebookRunProvenanceContext
+} from '../../shared/notebook'
 import type { HostArtifactCatalogItem } from '../../shared/project-files'
 import {
   createArtifactVersionLocator,
@@ -428,6 +431,25 @@ const parseRpcParams = <Result>(parse: () => Result): Result => {
   }
 }
 
+class BackgroundHostMethodUnsafeError extends RpcHttpError {
+  readonly detail: Readonly<{
+    code: 'BACKGROUND_HOST_METHOD_UNSAFE'
+    method: string
+    retryable: false
+    hint: string
+  }>
+
+  constructor(method: string) {
+    super(409, `${method} is not safe for background REPL execution.`)
+    this.detail = {
+      code: 'BACKGROUND_HOST_METHOD_UNSAFE',
+      method,
+      retryable: false,
+      hint: 'Run this Host SDK operation in foreground repl_execute.'
+    }
+  }
+}
+
 const ARTIFACT_RPC_METHODS = new Set<ArtifactRpcMethod>([
   'artifactReserveWrite',
   'artifactReleaseWrite',
@@ -537,6 +559,7 @@ const notebookExecutionInputFingerprint = (
             ? 'python'
             : null,
         method === 'execute' && typeof input?.cellId === 'string' ? input.cellId : null,
+        input?.background === true,
         kernelSkillIds,
         artifactVersionInputs
       ])
@@ -615,6 +638,13 @@ class NotebookLocalRpcServer {
   private readonly executionAuthorizations = new Map<
     string,
     Map<NotebookExecutionRpcMethod, NotebookExecutionAuthorization | 'ambiguous'>
+  >()
+  // Retains claimed durable execution authorizations for the active prompt so a lost HTTP response
+  // can retry the exact request with the same submission identity. Each execution lifecycle remains
+  // a separate owner; a newly authorized call takes precedence and turn/session teardown clears both.
+  private readonly claimedDurableExecutionAuthorizations = new Map<
+    string,
+    Map<NotebookExecutionRpcMethod, NotebookExecutionAuthorization>
   >()
   private readonly consumedExecutionToolCalls = new Map<string, Set<string>>()
   private readonly computeSubmissionInvocations = new Map<
@@ -783,6 +813,7 @@ class NotebookLocalRpcServer {
     this.sessionRpcTokens.clear()
     this.skillImportRpcTokens.clear()
     this.executionAuthorizations.clear()
+    this.claimedDurableExecutionAuthorizations.clear()
     this.consumedExecutionToolCalls.clear()
     this.computeSubmissionInvocations.clear()
 
@@ -966,6 +997,7 @@ class NotebookLocalRpcServer {
       this.cancelCodeWriteProducers(ownedSessionId)
       this.sessionSpecialists.delete(ownedSessionId)
       this.executionAuthorizations.delete(ownedSessionId)
+      this.claimedDurableExecutionAuthorizations.delete(ownedSessionId)
       this.consumedExecutionToolCalls.delete(ownedSessionId)
       this.computeSubmissionInvocations.delete(ownedSessionId)
     }
@@ -1039,7 +1071,17 @@ class NotebookLocalRpcServer {
     const authorization = byMethod?.get(method)
     byMethod?.delete(method)
     if (byMethod?.size === 0) this.executionAuthorizations.delete(sessionId)
-    if (!authorization || authorization === 'ambiguous') return undefined
+    if (!authorization) {
+      const claimed = this.claimedDurableExecutionAuthorizations.get(sessionId)?.get(method)
+      const activePrompt =
+        this.activeArtifactTurnBindings.get(sessionId)?.provenanceContext.promptMessageId
+      return claimed &&
+        claimed.promptMessageId === activePrompt &&
+        notebookExecutionInputFingerprint(method, params) === claimed.inputFingerprint
+        ? claimed.executionInvocationId
+        : undefined
+    }
+    if (authorization === 'ambiguous') return undefined
     const consumed = this.consumedExecutionToolCalls.get(sessionId) ?? new Set<string>()
     consumed.add(authorization.toolCallId)
     this.consumedExecutionToolCalls.set(sessionId, consumed)
@@ -1050,6 +1092,11 @@ class NotebookLocalRpcServer {
     ) {
       return undefined
     }
+    const claimed =
+      this.claimedDurableExecutionAuthorizations.get(sessionId) ??
+      new Map<NotebookExecutionRpcMethod, NotebookExecutionAuthorization>()
+    claimed.set(method, authorization)
+    this.claimedDurableExecutionAuthorizations.set(sessionId, claimed)
     return authorization.executionInvocationId
   }
 
@@ -1383,6 +1430,7 @@ class NotebookLocalRpcServer {
     ) {
       this.cancelCodeWriteProducers(sessionId)
       this.executionAuthorizations.delete(sessionId)
+      this.claimedDurableExecutionAuthorizations.delete(sessionId)
       this.consumedExecutionToolCalls.delete(sessionId)
     }
     this.activeArtifactTurnBindings.set(sessionId, binding)
@@ -1409,6 +1457,7 @@ class NotebookLocalRpcServer {
     this.cancelCodeWriteProducers(sessionId)
     this.activeArtifactTurnBindings.delete(sessionId)
     this.executionAuthorizations.delete(sessionId)
+    this.claimedDurableExecutionAuthorizations.delete(sessionId)
     this.consumedExecutionToolCalls.delete(sessionId)
   }
 
@@ -1706,6 +1755,17 @@ class NotebookLocalRpcServer {
             }
             await checkMemoryAccess()
           }
+          if (sessionBinding.activeControlInvocation?.executionMode === 'background') {
+            if (method === 'requestUserInput') {
+              throw new BackgroundHostMethodUnsafeError('host.requestUserInput')
+            }
+            if (method === 'agentsCall' && params.op === 'switch') {
+              throw new BackgroundHostMethodUnsafeError('host.agents.switch')
+            }
+            if (method === 'viewImageCall') {
+              throw new BackgroundHostMethodUnsafeError('host.viewImage')
+            }
+          }
           if (
             (method === 'artifactsCall' || method === 'lineageCall') &&
             !sessionBinding.isControl
@@ -1982,6 +2042,12 @@ class NotebookLocalRpcServer {
         ) {
           throw new RpcHttpError(403, 'Notebook RPC capability does not match active Agent Frame.')
         }
+        if (method === 'getBackgroundRun' || method === 'cancelBackgroundRun') {
+          resolvedParams = {
+            ...resolvedParams,
+            agentFrameId: authenticatedBinding.agentFrameId
+          }
+        }
       }
       if (
         authenticatedBinding &&
@@ -2025,16 +2091,22 @@ class NotebookLocalRpcServer {
       if (response.destroyed) return
       const message = error instanceof Error ? error.message : String(error)
       const serializedError =
-        error instanceof PlanCommandError
-          ? { code: error.code, message }
-          : error instanceof StructuredOutputError
-            ? {
-                code: error.code,
-                ...(error.keyword ? { keyword: error.keyword } : {}),
-                ...(error.instancePath !== undefined ? { instance_path: error.instancePath } : {}),
-                ...(error.property ? { property: error.property } : {})
-              }
-            : message
+        error instanceof NotebookBackgroundRunError
+          ? error.detail
+          : error instanceof BackgroundHostMethodUnsafeError
+            ? error.detail
+            : error instanceof PlanCommandError
+              ? { code: error.code, message }
+              : error instanceof StructuredOutputError
+                ? {
+                    code: error.code,
+                    ...(error.keyword ? { keyword: error.keyword } : {}),
+                    ...(error.instancePath !== undefined
+                      ? { instance_path: error.instancePath }
+                      : {}),
+                    ...(error.property ? { property: error.property } : {})
+                  }
+                : message
 
       if (error instanceof ResourceBudgetExceededError) {
         closeRequestAfterResponse(request, response)
@@ -3028,8 +3100,15 @@ class NotebookLocalRpcServer {
       leases.add(lease)
       this.inputRunLeaseIds.set(lease, inputRunLeaseId)
       this.activeInputRunLeases.set(sessionId, leases)
+      let retainedForBackgroundRun = false
+      const closeLease = async (): Promise<void> => {
+        await lease.close()
+        leases.delete(lease)
+        this.inputRunLeaseIds.delete(lease)
+        if (leases.size === 0) this.activeInputRunLeases.delete(sessionId)
+      }
       try {
-        return await handler(
+        const result = await handler(
           {
             ...trustedParams,
             registeredInputFiles: lease.getRunInputFiles(),
@@ -3037,11 +3116,19 @@ class NotebookLocalRpcServer {
           },
           signal
         )
+        const backgroundRunId =
+          (method === 'execute' || method === 'executeControl' || method === 'executeShell') &&
+          params.background === true &&
+          isRecord(result)
+            ? result.runId
+            : undefined
+        if (typeof backgroundRunId === 'string') {
+          retainedForBackgroundRun = true
+          void this.service.waitForBackgroundRun(backgroundRunId).then(closeLease, closeLease)
+        }
+        return result
       } finally {
-        await lease.close()
-        leases.delete(lease)
-        this.inputRunLeaseIds.delete(lease)
-        if (leases.size === 0) this.activeInputRunLeases.delete(sessionId)
+        if (!retainedForBackgroundRun) await closeLease()
       }
     }
 

@@ -32,6 +32,7 @@ type NotebookRunTerminalResult = {
   cwdAfter?: string
   outputs: NotebookOutput[]
   truncated?: boolean
+  exitCode?: number | null
   workingFiles?: NotebookWorkingFile[]
   fileEvidence?: ExecutionFileEvidenceSummary
   environmentManifest?: NotebookEnvironmentManifest
@@ -49,8 +50,28 @@ type TerminalizeNotebookRunRequest<Result extends NotebookRunTerminalResult> = {
   settleLive?: (result: NotebookRunTerminalResult) => void
 }
 
+type AdmitNotebookRunRequest = {
+  session: NotebookRunTerminalizationSession
+  queuedRun: NotebookRunRecord
+  signal?: AbortSignal
+}
+
+type RunAdmittedNotebookRunRequest<Result extends NotebookRunTerminalResult> = Omit<
+  TerminalizeNotebookRunRequest<Result>,
+  'runningRun'
+> & { queuedRun: NotebookRunRecord; startLive?: (run: NotebookRunRecord) => void }
+
 type NotebookRunTerminalizationOwnerOptions = {
-  repository: Pick<NotebookRunRepository, 'appendRun' | 'updateRun'>
+  repository: Pick<
+    NotebookRunRepository,
+    | 'appendOrGetRun'
+    | 'findRunBySubmission'
+    | 'transitionRun'
+    | 'commitTerminalRun'
+    | 'appendRun'
+    | 'updateRun'
+    | 'requestRunCancellation'
+  >
   notifyChanged: (session: NotebookRunTerminalizationSession) => void
   afterCommit?: (
     session: NotebookRunTerminalizationSession,
@@ -97,6 +118,8 @@ class NotebookRunTerminalizationOwner {
     Readonly<{
       session: NotebookRunTerminalizationSession
       run: NotebookRunRecord
+      durable: boolean
+      settleAfterRecovery?: () => void
     }>
   >()
   private readonly terminalRecoveryByLane = new Map<string, Promise<void>>()
@@ -111,6 +134,146 @@ class NotebookRunTerminalizationOwner {
       runId: `notebook-run-${this.now()}-${this.sequence}`,
       sequence: this.sequence
     }
+  }
+
+  async admit(
+    request: AdmitNotebookRunRequest
+  ): Promise<{ run: NotebookRunRecord; admitted: boolean }> {
+    if (request.queuedRun.status !== 'queued') {
+      throw new Error('Notebook Run admission requires queued status.')
+    }
+    await this.reconcilePending(request.session)
+    const admission = await this.options.repository.appendOrGetRun({
+      projectId: request.session.projectId,
+      sessionId: request.session.sessionId,
+      lane: request.session.lane,
+      run: request.queuedRun,
+      signal: request.signal
+    })
+    if (admission.admitted) this.options.notifyChanged(request.session)
+    return { run: admission.run, admitted: admission.admitted }
+  }
+
+  async findSubmission(
+    session: NotebookRunTerminalizationSession,
+    submissionIdentity: string
+  ): Promise<NotebookRunRecord | undefined> {
+    await this.reconcilePending(session)
+    return this.options.repository.findRunBySubmission(
+      session.projectId,
+      session.sessionId,
+      session.lane,
+      submissionIdentity
+    )
+  }
+
+  async runAdmitted<Result extends NotebookRunTerminalResult>(
+    request: RunAdmittedNotebookRunRequest<Result>
+  ): Promise<{ run: NotebookRunRecord; result?: Result; dispatched: boolean }> {
+    const runningRun: NotebookRunRecord = {
+      ...request.queuedRun,
+      status: 'running',
+      startedAt: this.now()
+    }
+    const claimed = await this.options.repository.transitionRun({
+      projectId: request.session.projectId,
+      sessionId: request.session.sessionId,
+      lane: request.session.lane,
+      expectedStatus: 'queued',
+      run: runningRun
+    })
+    if (!claimed.transitioned) return { run: claimed.run, dispatched: false }
+    this.options.notifyChanged(request.session)
+    request.startLive?.(claimed.run)
+
+    let liveResult: NotebookRunTerminalResult | undefined
+    let terminalRecorded = false
+    const settleLive = (): void => {
+      if (liveResult) request.settleLive?.(liveResult)
+    }
+    try {
+      let result: Result
+      try {
+        result = await request.invoke(async () => undefined)
+      } catch (error) {
+        liveResult = {
+          status: 'interrupted',
+          stdout: '',
+          stderr: errorMessage(error),
+          traceback: '',
+          cwdAfter: runningRun.cwdBefore,
+          outputs: [],
+          ...(runningRun.kernelKind === 'bash' ? { exitCode: null } : {})
+        }
+        await this.commitOrRememberTerminalRun(
+          request.session,
+          this.buildTerminalRun(runningRun, liveResult, 'execution-error'),
+          true,
+          settleLive
+        )
+        terminalRecorded = true
+        throw error
+      }
+      liveResult = result
+      const run = await this.commitOrRememberTerminalRun(
+        request.session,
+        this.buildTerminalRun(runningRun, result),
+        true,
+        settleLive
+      )
+      terminalRecorded = true
+      return { run, result, dispatched: true }
+    } finally {
+      try {
+        if (terminalRecorded) settleLive()
+      } finally {
+        if (terminalRecorded) this.options.notifyChanged(request.session)
+      }
+    }
+  }
+
+  async cancelQueued(
+    session: NotebookRunTerminalizationSession,
+    queuedRun: NotebookRunRecord,
+    reason: unknown
+  ): Promise<NotebookRunRecord> {
+    const message = errorMessage(reason)
+    const cancelled = this.buildTerminalRun(queuedRun, {
+      status: 'cancelled',
+      stdout: '',
+      stderr: message,
+      traceback: '',
+      cwdAfter: queuedRun.cwdBefore,
+      outputs: [],
+      kernelDispatched: false,
+      ...(queuedRun.kernelKind === 'bash' ? { exitCode: null } : {})
+    })
+    const result = await this.options.repository.transitionRun({
+      projectId: session.projectId,
+      sessionId: session.sessionId,
+      lane: session.lane,
+      expectedStatus: 'queued',
+      run: cancelled
+    })
+    if (result.transitioned) this.options.notifyChanged(session)
+    return result.run
+  }
+
+  async requestCancellation(
+    session: NotebookRunTerminalizationSession,
+    run: NotebookRunRecord,
+    reason: unknown
+  ): Promise<NotebookRunRecord> {
+    const requested = await this.options.repository.requestRunCancellation({
+      projectId: session.projectId,
+      sessionId: session.sessionId,
+      lane: session.lane,
+      run,
+      requestedAt: this.now(),
+      reason: errorMessage(reason)
+    })
+    this.options.notifyChanged(session)
+    return requested
   }
 
   async run<Result extends NotebookRunTerminalResult>(
@@ -197,11 +360,15 @@ class NotebookRunTerminalizationOwner {
 
     const recovery = (async () => {
       for (const [pendingKey, candidate] of pending) {
-        await this.commitTerminalRun(candidate.session, candidate.run)
+        await this.commitTerminalRun(candidate.session, candidate.run, candidate.durable)
         if (this.pendingTerminalRuns.get(pendingKey) === candidate) {
           this.pendingTerminalRuns.delete(pendingKey)
         }
-        this.options.notifyChanged(candidate.session)
+        try {
+          candidate.settleAfterRecovery?.()
+        } finally {
+          this.options.notifyChanged(candidate.session)
+        }
       }
     })().finally(() => {
       if (this.terminalRecoveryByLane.get(laneKey) === recovery) {
@@ -240,6 +407,7 @@ class NotebookRunTerminalizationOwner {
       workingFiles: limitedResult.workingFiles ?? [],
       fileEvidence: limitedResult.fileEvidence ?? unavailableFileEvidence(runningRun.runId),
       ...(limitedResult.truncated ? { truncated: true } : {}),
+      ...(limitedResult.exitCode !== undefined ? { exitCode: limitedResult.exitCode } : {}),
       environmentCapture,
       ...(limitedResult.kernelDispatched !== undefined
         ? { kernelDispatched: limitedResult.kernelDispatched }
@@ -261,14 +429,25 @@ class NotebookRunTerminalizationOwner {
 
   private async commitTerminalRun(
     session: NotebookRunTerminalizationSession,
-    terminalRun: NotebookRunRecord
+    terminalRun: NotebookRunRecord,
+    durable = false
   ): Promise<NotebookRunRecord> {
-    const document = await this.options.repository.updateRun({
-      projectId: session.projectId,
-      sessionId: session.sessionId,
-      lane: session.lane,
-      run: terminalRun
-    })
+    const document = durable
+      ? (
+          await this.options.repository.commitTerminalRun({
+            projectId: session.projectId,
+            sessionId: session.sessionId,
+            lane: session.lane,
+            expectedStatus: 'running',
+            run: terminalRun
+          })
+        ).document
+      : await this.options.repository.updateRun({
+          projectId: session.projectId,
+          sessionId: session.sessionId,
+          lane: session.lane,
+          run: terminalRun
+        })
     const run = document.runs.find((candidate) => candidate.runId === terminalRun.runId)
 
     if (!run) {
@@ -282,14 +461,18 @@ class NotebookRunTerminalizationOwner {
 
   private async commitOrRememberTerminalRun(
     session: NotebookRunTerminalizationSession,
-    terminalRun: NotebookRunRecord
+    terminalRun: NotebookRunRecord,
+    durable = false,
+    settleAfterRecovery?: () => void
   ): Promise<NotebookRunRecord> {
     try {
-      return await this.commitTerminalRun(session, terminalRun)
+      return await this.commitTerminalRun(session, terminalRun, durable)
     } catch (error) {
       this.pendingTerminalRuns.set(`${notebookLaneKey(session.lane)}:${terminalRun.runId}`, {
         session,
-        run: terminalRun
+        run: terminalRun,
+        durable,
+        ...(settleAfterRecovery ? { settleAfterRecovery } : {})
       })
       throw error
     }

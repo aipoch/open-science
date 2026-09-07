@@ -379,6 +379,7 @@ describe('pull request change classification', () => {
     ['storage', 'src/main/storage/ipc.ts'],
     ['session persistence', 'src/main/session-persistence/ipc.ts'],
     ['notebook shell process', 'src/main/notebook/shell-process.ts'],
+    ['notebook shell ownership', 'src/main/notebook/shell-process-ownership.ts'],
     ['file save', 'src/main/file-save.ts'],
     ['specialist repository', 'src/main/specialist/repository.ts'],
     ['notebook runtime settings', 'src/main/settings/notebook-runtime-settings.ts'],

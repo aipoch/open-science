@@ -21,6 +21,7 @@ import { type ChatSession, type SessionStore, useSessionStore } from '@/stores/s
 import { NotebookPreview } from '../NotebookPreview'
 import type { NotebookPreviewItem } from '../NotebookPreview'
 import { ProjectFilesView } from '../ProjectFilesView'
+import { ProjectComputeInbox } from '../ProjectComputeInbox'
 import { SessionReviewerPanel } from '../SessionReviewerPanel'
 import { SubagentPreview } from '../SubagentReleaseSurfaces'
 import { respondToSessionPlan } from '../session-plan/respond-to-session-plan'
@@ -314,6 +315,10 @@ export const PreviewToolContent = ({
   // Remount the Files tool per project so its transient dialog cannot outlive the project it opened.
   if (item.toolKind === 'files') {
     return <ProjectFilesView key={activeProjectId ?? 'no-active-project'} />
+  }
+
+  if (item.toolKind === 'compute') {
+    return <ProjectComputeInbox key={activeProjectId ?? 'no-active-project'} />
   }
 
   if (item.toolKind === 'reviewer') {

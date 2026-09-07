@@ -11,12 +11,15 @@ import {
   notebookAppendCodeCellCommand,
   notebookApplicationCommands,
   notebookBeginCodeCellCommand,
+  notebookCancelBackgroundRunCommand,
   notebookExecuteCommand,
   notebookExportIpynbAllCommand,
   notebookExportIpynbCommand,
   notebookAbortCodeCellCommand,
   notebookFinishCodeCellCommand,
+  notebookGetBackgroundRunCommand,
   notebookInspectNamespaceCommand,
+  notebookProjectActivityCommand,
   notebookReadInputPreviewCommand,
   notebookReferenceCommand,
   notebookRestartCommand,
@@ -74,12 +77,13 @@ const invocation = <Args extends readonly unknown[]>(
 })
 
 describe('Notebook application commands', () => {
-  it('owns exactly the 18 renderer-callable Notebook and Environment commands', () => {
+  it('owns exactly the 21 renderer-callable Notebook and Environment commands', () => {
     expect([
       ...notebookApplicationCommands.commands,
       ...notebookEnvironmentApplicationCommands.commands
     ]).toEqual([
       expect.objectContaining({ name: 'notebook:state' }),
+      expect.objectContaining({ name: 'notebook:project-activity' }),
       expect.objectContaining({ name: 'notebook:inspect-namespace' }),
       expect.objectContaining({ name: 'notebook:reference' }),
       expect.objectContaining({ name: 'notebook:begin-code-cell' }),
@@ -88,6 +92,8 @@ describe('Notebook application commands', () => {
       expect.objectContaining({ name: 'notebook:finish-code-cell' }),
       expect.objectContaining({ name: 'notebook:run-cell' }),
       expect.objectContaining({ name: 'notebook:execute' }),
+      expect.objectContaining({ name: 'notebook:background-run' }),
+      expect.objectContaining({ name: 'notebook:cancel-background-run' }),
       expect.objectContaining({ name: 'notebook:export-ipynb' }),
       expect.objectContaining({ name: 'notebook:export-ipynb-all' }),
       expect.objectContaining({ name: 'notebook:restart' }),
@@ -103,6 +109,7 @@ describe('Notebook application commands', () => {
   it('routes Notebook commands through the owner workflows and input-preview port', async () => {
     const workflowMethods = [
       'state',
+      'projectActivity',
       'inspectNamespace',
       'reference',
       'beginCodeCell',
@@ -111,6 +118,8 @@ describe('Notebook application commands', () => {
       'finishCodeCell',
       'runCell',
       'execute',
+      'getBackgroundRun',
+      'cancelBackgroundRun',
       'exportIpynb',
       'exportIpynbAll',
       'restart',
@@ -133,6 +142,7 @@ describe('Notebook application commands', () => {
     const session = { sessionId: 'session-1', workspaceCwd: '/workspace' }
     const cases = [
       [notebookStateCommand, [session], 'state'],
+      [notebookProjectActivityCommand, [{ projectId: 'project-1' }], 'projectActivity'],
       [
         notebookInspectNamespaceCommand,
         [{ ...session, language: 'python', environment: 'default-python' }],
@@ -157,6 +167,8 @@ describe('Notebook application commands', () => {
       ],
       [notebookRunCellCommand, [{ ...session, cellId: 'cell-1' }], 'runCell'],
       [notebookExecuteCommand, [{ ...session, code: 'print(1)' }], 'execute'],
+      [notebookGetBackgroundRunCommand, [{ ...session, runId: 'run-1' }], 'getBackgroundRun'],
+      [notebookCancelBackgroundRunCommand, [{ ...session, runId: 'run-1' }], 'cancelBackgroundRun'],
       [notebookExportIpynbCommand, [{ ...session, kernel: 'python' }], 'exportIpynb'],
       [notebookExportIpynbAllCommand, [session], 'exportIpynbAll'],
       [notebookRestartCommand, [session], 'restart'],

@@ -1,3 +1,4 @@
+import type { AgentResultFollowUpDelivery } from '../../shared/background-result-delivery'
 import type {
   AgentComputeHostSummary,
   ComputeHost,
@@ -10,7 +11,10 @@ import type {
 } from '../../shared/compute'
 import { ComputeHostUnavailableError, computeHostSummary } from '../../shared/compute'
 import type { DownloadDest, LocalFile } from '../../shared/remote-fs'
+import { createLogger } from '../logger'
 import type { ComputeService } from './compute-service'
+
+const log = createLogger('compute:agent')
 
 type SessionComputeHostRegistry = Readonly<{
   getEnabled(sessionId: string): string[]
@@ -21,6 +25,14 @@ type AgentComputeContext = Readonly<{
   sessionId: string
   projectId: string
   producerRunId?: string
+}>
+
+type AgentComputeLifecycle = Readonly<{
+  onFinalJobObserved?: (
+    context: AgentComputeContext,
+    providerId: string,
+    snapshot: JobStatusResult | JobResult
+  ) => Promise<AgentResultFollowUpDelivery>
 }>
 
 type RawComputeService = Pick<
@@ -44,7 +56,8 @@ type RawComputeService = Pick<
 export class AgentComputeService {
   constructor(
     private readonly compute: RawComputeService,
-    private readonly registry: SessionComputeHostRegistry
+    private readonly registry: SessionComputeHostRegistry,
+    private readonly lifecycle: AgentComputeLifecycle = {}
   ) {}
 
   private enabledIds(sessionId: string): string[] {
@@ -58,6 +71,29 @@ export class AgentComputeService {
     if (!configured.some((host) => host.providerId === providerId)) {
       throw new ComputeHostUnavailableError()
     }
+  }
+
+  private async observeJobRead(
+    context: AgentComputeContext,
+    providerId: string,
+    jobId: string,
+    operation: 'status' | 'result',
+    snapshot: JobStatusResult | JobResult
+  ): Promise<AgentResultFollowUpDelivery> {
+    log.info('Agent queried Compute Job snapshot', {
+      sessionId: context.sessionId,
+      jobId,
+      operation,
+      status: snapshot.status,
+      resultFinal: snapshot.result_final
+    })
+    if (operation !== 'result' || !snapshot.result_final || !this.lifecycle.onFinalJobObserved) {
+      return 'pending'
+    }
+    // `result_final` belongs to this exact full-result response. status() deliberately remains a
+    // readiness projection because it omits harvested file lists and cannot prove that the Agent
+    // received the complete result that automatic delivery would carry.
+    return this.lifecycle.onFinalJobObserved(context, providerId, snapshot)
   }
 
   async list(sessionId: string): Promise<ComputeHost[]> {
@@ -164,7 +200,9 @@ export class AgentComputeService {
     jobId: string
   ): Promise<JobStatusResult> {
     await this.requireEnabled(context.sessionId, providerId)
-    return this.compute.getJobStatus(jobId, { ...context, providerId })
+    const status = await this.compute.getJobStatus(jobId, { ...context, providerId })
+    await this.observeJobRead(context, providerId, jobId, 'status', status)
+    return { ...status, follow_up_delivery: 'pending' }
   }
 
   async getJobResult(
@@ -173,7 +211,9 @@ export class AgentComputeService {
     jobId: string
   ): Promise<JobResult> {
     await this.requireEnabled(context.sessionId, providerId)
-    return this.compute.getJobResult(jobId, { ...context, providerId })
+    const result = await this.compute.getJobResult(jobId, { ...context, providerId })
+    const followUpDelivery = await this.observeJobRead(context, providerId, jobId, 'result', result)
+    return { ...result, follow_up_delivery: followUpDelivery }
   }
 
   async cancelJob(
@@ -196,4 +236,9 @@ export class AgentComputeService {
   }
 }
 
-export type { AgentComputeContext, RawComputeService, SessionComputeHostRegistry }
+export type {
+  AgentComputeContext,
+  AgentComputeLifecycle,
+  RawComputeService,
+  SessionComputeHostRegistry
+}

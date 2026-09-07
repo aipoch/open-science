@@ -1,5 +1,6 @@
 import type { ChildProcess } from 'node:child_process'
-import { mkdtemp, rm } from 'node:fs/promises'
+import { randomUUID } from 'node:crypto'
+import { mkdtemp, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -299,6 +300,43 @@ describe('notebook shell process behavior', () => {
         exitCode: null,
         cancelled: true
       })
+    })
+
+    it('does not settle cancellation until the complete POSIX process group is gone', async () => {
+      const root = await mkdtemp(join(tmpdir(), 'shell-cancel-tree-'))
+      const marker = randomUUID()
+      const pidPath = join(root, `.shell-cancel-${marker}.pid`)
+      const controller = new AbortController()
+      const quote = (value: string): string => `'${value.replaceAll("'", `'\\''`)}'`
+      try {
+        const execution = runShellCommand({
+          command: `${quote(process.execPath)} -e ${quote('setTimeout(() => {}, 30_000)')} & child=$!; printf '%s' "$child" > ${quote(pidPath)}; wait "$child"`,
+          cwd: root,
+          handoffDir: root,
+          runtimeRoot: join(root, 'runtime'),
+          sessionId: 'session-1',
+          projectId: 'project-1',
+          platform: 'linux',
+          timeoutMs: 30_000,
+          signal: controller.signal
+        })
+        let descendantPid: number | undefined
+        await vi.waitFor(
+          async () => {
+            descendantPid = Number((await readFile(pidPath, 'utf8')).trim())
+            expect(descendantPid).toBeGreaterThan(0)
+          },
+          { timeout: 5_000 }
+        )
+
+        controller.abort()
+        await expect(execution).resolves.toMatchObject({ cancelled: true, exitCode: null })
+        expect(() => process.kill(descendantPid!, 0)).toThrow(
+          expect.objectContaining({ code: 'ESRCH' })
+        )
+      } finally {
+        await rm(root, { recursive: true, force: true })
+      }
     })
   })
 })

@@ -266,6 +266,17 @@ describe('createJobAnalysisTrigger — immediate send', () => {
 })
 
 describe('createJobAnalysisTrigger — idempotency', () => {
+  it('leaves Jobs owned by main Agent Result Delivery on their single authoritative path', async () => {
+    const deps = createDeps()
+    const trigger = createJobAnalysisTrigger(deps)
+
+    trigger.onJobDone(makeJob({ result_delivery_path: 'agent-result-delivery' }))
+    await Promise.resolve()
+
+    expect(deps.sendPrompt).not.toHaveBeenCalled()
+    expect(deps.transitionAnalysis).not.toHaveBeenCalled()
+  })
+
   it('skips jobs where notification_consumed_at is already set', async () => {
     const deps = createDeps()
     const trigger = createJobAnalysisTrigger(deps)

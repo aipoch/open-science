@@ -19,7 +19,7 @@ import {
 } from '../notebook/working-file-observer'
 import type { ComputeApprovalBroker } from './compute-approval-broker'
 import type { ComputeConnectionBrokerAcquirer } from './connection-broker'
-import { projectJobStatus } from './compute-job-status'
+import { isComputeJobResultFinal, projectJobStatus } from './compute-job-status'
 import type { ConcurrencyManager, SessionStatus } from './concurrency-manager'
 import { validateComputeEnvironmentName } from './compute-environment'
 import { parseSlurmSchedulerJobId } from './remote-job-handle'
@@ -644,6 +644,7 @@ const jobResultWithFiles = (
   status: job.status,
   ...(job.error_code ? { error_code: job.error_code } : {}),
   ...(job.last_poll_error ? { last_poll_error: job.last_poll_error } : {}),
+  result_final: isComputeJobResultFinal(job),
   cancellation_status: job.cancellation_status,
   exit_code: job.exit_code,
   ...(localOutputRoot ? { local_output_root: localOutputRoot } : {}),

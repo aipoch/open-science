@@ -177,7 +177,11 @@ import type {
   NotebookLanguage,
   NotebookNamespaceRequest,
   NotebookNamespaceSnapshot,
+  NotebookProjectActivity,
+  NotebookProjectActivityRequest,
   NotebookRestartRequest,
+  NotebookBackgroundRunLookupRequest,
+  NotebookBackgroundRunResult,
   NotebookRunSummary,
   NotebookSessionReference,
   NotebookSessionRequest,
@@ -186,6 +190,13 @@ import type {
   RunNotebookCellRequest
 } from './notebook'
 import type { ProvisionProgress, ProvisionStatus } from './notebook-env'
+import type {
+  BackgroundResultDeliveryProjectRequest,
+  BackgroundResultDeliverySessionRequest,
+  ProjectBackgroundActivity,
+  ProjectBackgroundActivityChangedEvent,
+  SessionBackgroundResultActivity
+} from './background-result-delivery'
 import type {
   DiscoveredInterpreter,
   EnvPackage,
@@ -747,6 +758,15 @@ export type RendererApiFromContract<
 }
 
 export const RENDERER_API_CONTRACT = Object.freeze({
+  'backgroundResultDelivery.getSessionActivity': callable<
+    (request: BackgroundResultDeliverySessionRequest) => Promise<SessionBackgroundResultActivity>
+  >()('background-result-delivery', ['background-result-delivery:session-activity', ELECTRON]),
+  'backgroundResultDelivery.getProjectActivity': callable<
+    (request: BackgroundResultDeliveryProjectRequest) => Promise<ProjectBackgroundActivity>
+  >()('background-result-delivery', ['background-result-delivery:project-activity', ELECTRON]),
+  'backgroundResultDelivery.onChanged': callable<
+    (listener: AcpListener<ProjectBackgroundActivityChangedEvent>) => RemoveListener
+  >()('background-result-delivery', ['background-result-delivery:changed', ELECTRON_EVENT]),
   'acp.cancel': callable<(request: AcpCancelPromptRequest) => Promise<AcpStateCommandResponse>>()(
     'acp',
     ['acp:cancel']
@@ -1228,6 +1248,15 @@ export const RENDERER_API_CONTRACT = Object.freeze({
   'notebook.execute': callable<
     (request: ExecuteNotebookCodeRequest) => Promise<NotebookRunSummary>
   >()('notebook', ['notebook:execute']),
+  'notebook.getBackgroundRun': callable<
+    (request: NotebookBackgroundRunLookupRequest) => Promise<NotebookBackgroundRunResult>
+  >()('notebook', ['notebook:background-run']),
+  'notebook.getProjectActivity': callable<
+    (request: NotebookProjectActivityRequest) => Promise<NotebookProjectActivity>
+  >()('notebook', ['notebook:project-activity']),
+  'notebook.cancelBackgroundRun': callable<
+    (request: NotebookBackgroundRunLookupRequest) => Promise<NotebookBackgroundRunResult>
+  >()('notebook', ['notebook:cancel-background-run']),
   'notebook.exportIpynb': callable<
     (request: ExportNotebookKernelRequest) => Promise<ExportNotebookResult>
   >()('notebook', ['notebook:export-ipynb', LOCAL]),

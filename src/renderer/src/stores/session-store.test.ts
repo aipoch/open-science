@@ -3556,6 +3556,36 @@ describe('session store', () => {
         ]
       })
     ])
+    expect(useSessionStore.getState().sessions[0].conversationGraph).toMatchObject({
+      rootFrameId: 'root-frame-transport-session-1',
+      activeFrameId: 'root-frame-transport-session-1',
+      frames: [
+        {
+          id: 'root-frame-transport-session-1',
+          activeBranchId: 'message-branch-transport-session-1'
+        }
+      ],
+      branches: [
+        {
+          id: 'message-branch-transport-session-1',
+          agentFrameId: 'root-frame-transport-session-1'
+        }
+      ],
+      messages: [
+        {
+          id: pending?.messageId,
+          agentFrameId: 'root-frame-transport-session-1',
+          introducedOnBranchId: 'message-branch-transport-session-1',
+          runtimeSegmentId: 'runtime-segment-transport-session-1'
+        }
+      ],
+      runtimeSegments: [
+        {
+          id: 'runtime-segment-transport-session-1',
+          agentFrameId: 'root-frame-transport-session-1'
+        }
+      ]
+    })
   })
 
   it('appends follow-up user messages to the same session and restarts the run', () => {
@@ -5698,6 +5728,10 @@ describe('session store', () => {
     })
     expect(persisted).not.toHaveProperty('isPending')
     expect(persisted).not.toHaveProperty('delegationPolicyAuthorityPending')
+    expect(persisted.conversationGraph).toMatchObject({
+      rootFrameId: 'root-frame-transport-session-1',
+      activeFrameId: 'root-frame-transport-session-1'
+    })
   })
 
   it('keeps a staged upload path until the main process publishes its immutable Version', () => {
@@ -6386,6 +6420,7 @@ describe('session store public contract', () => {
       'src/renderer/src/pages/workspace/EditSessionDialog.tsx',
       'src/renderer/src/pages/workspace/NotebookPreview.tsx',
       'src/renderer/src/pages/workspace/PreviewFileSurface.tsx',
+      'src/renderer/src/pages/workspace/ProjectComputeInbox.tsx',
       'src/renderer/src/pages/workspace/SessionNotebookDialog.tsx',
       'src/renderer/src/pages/workspace/SubagentReleaseSurfaces.tsx',
       'src/renderer/src/pages/workspace/WorkspaceActivityIcon.tsx',

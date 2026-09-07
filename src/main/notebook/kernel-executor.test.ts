@@ -1,6 +1,16 @@
 import { spawnSync, type ChildProcessWithoutNullStreams } from 'node:child_process'
 import { existsSync, realpathSync } from 'node:fs'
-import { chmod, mkdir, mkdtemp, readFile, rm, stat, symlink, writeFile } from 'node:fs/promises'
+import {
+  chmod,
+  mkdir,
+  mkdtemp,
+  readFile,
+  readdir,
+  rm,
+  stat,
+  symlink,
+  writeFile
+} from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve, win32 } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -26,6 +36,7 @@ import type { NotebookExecutionRequest, NotebookExecutionResult } from './runtim
 import { NotebookHelperModuleHost } from './helper-module-host'
 import { NotebookNetworkSandboxOwner } from './network-sandbox-owner'
 import { DEFAULT_NOTEBOOK_NETWORK_SETTINGS } from '../../shared/notebook-network'
+import { KernelProcessLifecycleOwner } from './kernel-process-lifecycle'
 
 // -- TimeoutController: pure state machine, driven with fake timers + a signal recorder. ------------
 
@@ -218,6 +229,15 @@ const gate = python3 ? describe : describe.skip
 const posixGate = describe.skipIf(process.platform === 'win32' || !python3)
 const rExecutable = ['/usr/local/bin/R', '/opt/homebrew/bin/R'].find(existsSync)
 const rScriptExecutable = ['/usr/local/bin/Rscript', '/opt/homebrew/bin/Rscript'].find(existsSync)
+
+const processIsAlive = (pid: number): boolean => {
+  try {
+    process.kill(pid, 0)
+    return true
+  } catch {
+    return false
+  }
+}
 
 // Symlinks an env's python interpreter to the system python3 under a runtime root, so the strict
 // resolver (env interpreter only -- no system-PATH fallback) finds it and spawns the fake loop.
@@ -1038,6 +1058,102 @@ gate('NotebookKernelExecutor (fake loop)', () => {
     } finally {
       await executor.shutdown()
     }
+  })
+
+  it('durably binds the OS process to its lane and Kernel epoch until shutdown reaps it', async () => {
+    cwdDir = await makeDefaultEnvCwd('os-kernel-durable-owner-')
+    const owner = new KernelProcessLifecycleOwner({
+      storageRoot: cwdDir,
+      ownerInstanceId: 'test-owner'
+    })
+    await owner.ensureReady()
+    const executor = new NotebookKernelExecutor({
+      pythonLoopPath: FIXTURE,
+      platform: process.platform,
+      processLifecycle: owner,
+      laneKey: '["project-1","session-1","root",null,null]'
+    })
+    const ledger = join(cwdDir, 'runtime', 'kernel-processes')
+    try {
+      await executor.execute({
+        ...baseRequest(cwdDir),
+        code: 'owned',
+        kernelEpochId: 'epoch-owned'
+      })
+      const [entry] = await readdir(ledger)
+      expect(JSON.parse(await readFile(join(ledger, entry!), 'utf8'))).toMatchObject({
+        ownerInstanceId: 'test-owner',
+        kernelEpochId: 'epoch-owned',
+        laneKey: '["project-1","session-1","root",null,null]',
+        processKey: 'python:default-python',
+        pid: expect.any(Number),
+        ownerToken: expect.any(String)
+      })
+    } finally {
+      await executor.shutdown()
+    }
+    expect(await readdir(ledger)).toEqual([])
+  })
+
+  posixGate('reaps the persistent kernel process group when its loop leader crashes', () => {
+    it('releases durable ownership before respawning the crashed lane', async () => {
+      cwdDir = await makeDefaultEnvCwd('os-kernel-crash-owner-')
+      const owner = new KernelProcessLifecycleOwner({ storageRoot: cwdDir })
+      await owner.ensureReady()
+      const descendantPidPath = join(cwdDir, 'descendant.pid')
+      const executor = new NotebookKernelExecutor({
+        pythonLoopPath: FIXTURE,
+        processLifecycle: owner,
+        laneKey: '["project-1","session-1","root",null,null]'
+      })
+      try {
+        await expect(
+          executor.execute({
+            ...baseRequest(cwdDir),
+            code: `__SPAWN_DESCENDANT_AND_CRASH__:${descendantPidPath}`,
+            kernelEpochId: 'epoch-crashed'
+          })
+        ).resolves.toMatchObject({ status: 'failed' })
+
+        await expect(
+          executor.execute({
+            ...baseRequest(cwdDir),
+            code: 'replacement',
+            kernelEpochId: 'epoch-replacement'
+          })
+        ).resolves.toMatchObject({ status: 'completed' })
+      } finally {
+        await executor.shutdown()
+      }
+    })
+
+    it('does not leave a descendant writer alive after the leader exits', async () => {
+      cwdDir = await makeDefaultEnvCwd('os-kernel-crash-tree-')
+      const descendantPidPath = join(cwdDir, 'descendant.pid')
+      const executor = makeExecutor()
+      let descendantPid: number | undefined
+      try {
+        await expect(
+          executor.execute({
+            ...baseRequest(cwdDir),
+            code: `__SPAWN_DESCENDANT_AND_CRASH__:${descendantPidPath}`
+          })
+        ).resolves.toMatchObject({ status: 'failed' })
+        descendantPid = Number(await readFile(descendantPidPath, 'utf8'))
+        await vi.waitFor(() => expect(processIsAlive(descendantPid as number)).toBe(false), {
+          timeout: 5_000
+        })
+      } finally {
+        if (descendantPid && processIsAlive(descendantPid)) {
+          try {
+            process.kill(descendantPid, 'SIGKILL')
+          } catch {
+            // The process may have exited between the probe and cleanup.
+          }
+        }
+        await executor.shutdown()
+      }
+    }, 15_000)
   })
 
   it('replaces the kernel when the runtime changes (managed -> external), never reusing the old process', async () => {
@@ -3347,6 +3463,14 @@ type PendingTeardownsInternals = {
 }
 
 describe('NotebookKernelExecutor shutdown reaping', () => {
+  it('refuses to restart while an earlier persistent process tree remains unreaped', async () => {
+    const executor = new NotebookKernelExecutor({ pythonLoopPath: FIXTURE })
+    const internals = executor as unknown as PendingTeardownsInternals
+    internals.pendingTeardowns.set('python:default-python', Promise.resolve({ reaped: false }))
+
+    await expect(executor.restart()).rejects.toThrow('persistent process tree was not reaped')
+  })
+
   it('awaits an outstanding pending teardown and reports reaped:false while its tree is still dying', async () => {
     // A hard-timeout/idle drop moved its tree kill into pendingTeardowns and removed the proc from the
     // map, so shutdown()'s per-proc loop never sees it. shutdown() must still await that teardown: the

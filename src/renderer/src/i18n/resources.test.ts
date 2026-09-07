@@ -809,11 +809,11 @@ describe('dynamic counted lookup translations', () => {
       '5 шагов',
       '1.5 шага'
     ])
-    expect([1, 2, 5, 1.5].map((count) => instance.t('{{count}} jobs', { count }))).toEqual([
-      '1 задание',
-      '2 задания',
-      '5 заданий',
-      '1.5 задания'
+    expect([1, 2, 5, 1.5].map((count) => instance.t('{{count}} tasks', { count }))).toEqual([
+      '1 задача',
+      '2 задачи',
+      '5 задач',
+      '1.5 задачи'
     ])
     expect([1, 2, 5, 1.5].map((count) => instance.t('{{count}} subagents', { count }))).toEqual([
       '1 субагент',
@@ -1475,8 +1475,6 @@ describe('mandatory product glossary', () => {
       runningSubagents: de.renderer['{{count}} subagents, {{running}} running_other'],
       allowedThisSessionOne: de.renderer['{{count}} allowed this session_one'],
       allowedThisSessionOther: de.renderer['{{count}} allowed this session_other'],
-      remoteOne: de.renderer['REMOTE · {{count}}_one'],
-      remoteOther: de.renderer['REMOTE · {{count}}_other'],
       revokedConflicts:
         de.renderer[
           'Revoked {{count}} permissions; {{conflictCount}} changed before it could be revoked_other'
@@ -1487,8 +1485,6 @@ describe('mandatory product glossary', () => {
       runningSubagents: '{{count}} Unteragenten, davon {{running}} aktiv',
       allowedThisSessionOne: 'In dieser Sitzung zugelassen: {{count}}',
       allowedThisSessionOther: 'In dieser Sitzung zugelassen: {{count}}',
-      remoteOne: 'REMOTE · {{count}}',
-      remoteOther: 'REMOTE · {{count}}',
       revokedConflicts:
         '{{count}} Berechtigungen widerrufen · Vor dem Widerruf anderweitig geändert: {{conflictCount}}'
     })
@@ -3716,7 +3712,7 @@ describe('Korean binding terminology', () => {
       '2단계 인증은 6자리 코드를 사용합니다. 코드가 여기에 표시된 요청과 일치할 때만 새 원격 세션을 승인하세요.'
     ],
     ['Library', '라이브러리'],
-    ['{{count}} jobs_other', '작업 {{count}}개'],
+    ['{{count}} tasks_other', '작업 {{count}}개'],
     ['{{count}} repl_other', 'REPL {{count}}개'],
     ['{{count}} steps_other', '{{count}}단계'],
     ['{{count}} calls_other', '호출 {{count}}회'],

@@ -32,6 +32,8 @@ const MAX_RUNTIME_RESULTS = 40
 const MAX_ENVIRONMENT_RESULTS = 30
 const HOST_SDK_DISCOVERY_GUIDANCE =
   "Host SDK discovery in `repl_execute`: `await host.help()` is the role-aware catalog with field descriptions; query only needed topics. Main/root agents may call `await host.help('delegate')`; do not prefetch all topics. Delegate agents should use the same catalog; unavailable root-only topics remain visible."
+const LOCAL_BACKGROUND_RUN_RECEIPT_GUIDANCE =
+  'Save runId. Query background_run with action:"query" and the exact runId when relevant. It is a non-blocking snapshot; never scan Run history. followUpDelivery:"suppressed" means the query prevented fallback; "committed" means fallback crossed the dispatch fence. Unread results arrive in a follow-up Turn.'
 
 // Scoped prompt addendum that only applies when the agent is given notebook tools. Keep equivalent
 // guidance concise because this prompt and the complete Notebook MCP schema share a 3,500-token cap.
@@ -75,6 +77,10 @@ type NotebookMcpServerConfigRequest = Omit<NotebookMcpEnvironment, 'memoryTools'
 
 const executeToolSchema = {
   code: z.string(),
+  background: z
+    .boolean()
+    .optional()
+    .describe('Return after durable admission; keep this Python/R Run active in the Session.'),
   cellId: z.string().min(1).optional(),
   language: z.enum(['python', 'r']).optional(),
   kernelSkillIds: z
@@ -90,12 +96,28 @@ const executeToolSchema = {
 
 const replExecuteToolSchema = {
   code: z.string(),
+  background: z
+    .boolean()
+    .optional()
+    .describe(
+      'Return after durable admission; keep this JavaScript REPL Run active in the Session.'
+    ),
   timeoutMs: z.number().int().positive().default(NOTEBOOK_REPL_DEFAULT_TIMEOUT_MS)
 }
 
 const bashExecuteToolSchema = {
   command: z.string(),
+  background: z
+    .boolean()
+    .optional()
+    .describe('Return after durable admission; keep this Shell Command active in the Session.'),
   timeoutMs: z.number().int().positive().optional()
+}
+
+const backgroundRunToolSchema = {
+  action: z.enum(['query', 'cancel']),
+  runId: z.string().min(1).optional(),
+  submissionIdentity: z.string().min(1).optional()
 }
 
 const requestNetworkAccessToolSchema = {
@@ -211,6 +233,7 @@ const REPL_EXECUTE_DOC = [
   'Only this kernel supports temporary tool-less inference (`await host.llm(prompt)` or bounded prompt batches), connectors (`await host.mcp(server, method, args)`), remote compute (`host.compute`), and Specialist management (`host.agents`). Discover other namespaces with `host.help()`.',
   'Load Remote Compute (SSH) (`remote-compute-ssh`) for jobs. Compute Environment Setup (`compute-env-setup`) prepares named environment setup/repair instructions for users or administrators to execute.',
   HOST_SDK_DISCOVERY_GUIDANCE,
+  'Use foreground when reasoning needs the result now; use background:true only for longer independent work. Background-safe calls include host.mcp, host.compute, host.llm, host.delegate, and read-only Host SDK operations. host.viewImage, host.agents.switch, and live user input are unsafe in background execution because their results require the live foreground response. Save the returned runId; do not poll frequently. A Turn end or MCP disconnect does not cancel an accepted background Run; cancel it explicitly with background_run. If a Host SDK operation reports BACKGROUND_HOST_METHOD_UNSAFE, continue in foreground.',
   'Globals persist; trailing expressions return results for Agent inspection. Defaults allow the Host SDK maximum 30-minute bounded wait; timeoutMs overrides. To hand off large data from the REPL to Python/R, write under process.env.OPEN_SCIENCE_HANDOFF_DIR; Python/R reads the same OPEN_SCIENCE_HANDOFF_DIR path. Use notebook_execute for analysis.'
 ].join('\n')
 
@@ -237,8 +260,10 @@ const buildShellExecuteDoc = (platform: NodeJS.Platform = process.platform): str
     ...(platformContract ? [platformContract] : []),
     `Stateless: each call is a fresh process, so cwd, variables, jobs, and functions do not persist. It starts in the data-kernel workspace and shares the handoff directory exposed as ${handoffVariable}; do not resolve handoff relative to cwd.`,
     exitCodeContract,
+    'Use foreground when reasoning needs the result now; use background:true for a longer independent command. Turn end or MCP disconnect does not stop an accepted background Run; explicitly cancel with background_run.',
+    'Background commands must stay application-managed. Do not use &, nohup, setsid, disown, Start-Process, Start-Job, or equivalent detached-process mechanisms; use background:true instead.',
     'Do NOT copy a generated notebook output into the workspace with this tool. For a final chart, image, report, CSV, or other user-facing file, call `write_artifact_file` with the same relative filename you saved with (it resolves against the notebook session data dir); it copies the file safely on every platform.',
-    'Use only for one-off command inspection. Run Python/R with notebook_execute, JavaScript with repl_execute, and installs with manage_packages; never execute analysis scripts, inline code, or installers here.'
+    'Use only for one managed command. Run Python/R with notebook_execute, JavaScript with repl_execute, and installs with manage_packages; never execute analysis scripts, inline code, or installers here.'
   ].join('\n')
 }
 
@@ -251,7 +276,7 @@ type RpcRequest = {
 
 type RpcResponse = {
   result?: unknown
-  error?: string
+  error?: unknown
 }
 
 type NotebookToolSchema = Record<string, z.ZodTypeAny>
@@ -261,6 +286,7 @@ type NotebookRpcToolDefinition = {
   title: string
   description: string
   method: string
+  resolveMethod?: (input: unknown) => string
   inputSchema: NotebookToolSchema
   outputSchema?: z.ZodTypeAny
   // Optional projection of the raw RPC result before it is serialized for the agent. Used to keep
@@ -275,9 +301,9 @@ type NotebookToolContent =
   { type: 'text'; text: string } | { type: 'image'; data: string; mimeType: string }
 
 const notebookRpcSignal = (
-  method: string,
+  _method: string,
   signal: AbortSignal | undefined
-): AbortSignal | undefined => (method === 'executeControl' ? undefined : signal)
+): AbortSignal | undefined => signal
 
 // Creates the ACP MCP-server declaration that launches this app bundle in notebook stdio mode.
 const createNotebookMcpServerConfig = (request: NotebookMcpServerConfigRequest): McpServerStdio => {
@@ -376,7 +402,13 @@ const callNotebookRpc = async (
   const payload = (await response.json()) as RpcResponse
 
   if (!response.ok || payload.error) {
-    throw new Error(payload.error ?? `Notebook RPC failed with status ${response.status}`)
+    throw new Error(
+      payload.error === undefined
+        ? `Notebook RPC failed with status ${response.status}`
+        : typeof payload.error === 'string'
+          ? payload.error
+          : JSON.stringify(payload.error)
+    )
   }
 
   return payload.result
@@ -552,6 +584,32 @@ const compactArtifacts = (value: unknown): unknown[] => {
   })
 }
 
+const compactFileEvidence = (value: unknown): Record<string, unknown> | undefined => {
+  const record = asRecord(value)
+  if (!record) return undefined
+  return {
+    ...pickDefined(record, [
+      'schemaVersion',
+      'activityId',
+      'activityKind',
+      'state',
+      'evidenceId',
+      'checksum',
+      'storageKey',
+      'relationCount',
+      'generationCount',
+      'scientificOutputCount',
+      'initialViewState',
+      'managedRootsFinalState',
+      'scientificOutputAnalysis',
+      'fileReads',
+      'externalPaths',
+      'writerAttribution'
+    ]),
+    ...(Array.isArray(record.reasonCodes) ? { reasonCodes: record.reasonCodes.slice(0, 32) } : {})
+  }
+}
+
 const compactExecutionOutputs = (
   value: unknown,
   canonicalTraceback: string
@@ -652,6 +710,7 @@ const compactNotebookExecutionResult = (raw: unknown, input: unknown = {}): unkn
   const compactOutputs = compactExecutionOutputs(record.outputs, stream('traceback'))
   const workingFiles = compactWorkingFiles(record.workingFiles)
   const artifacts = compactArtifacts(record.artifacts)
+  const fileEvidence = compactFileEvidence(record.fileEvidence)
   const staleness = compactStaleness(record.staleness, EXECUTION_STALENESS_LIMITS)
   const filesOmitted =
     (Array.isArray(record.workingFiles) && record.workingFiles.length > workingFiles.length) ||
@@ -722,6 +781,7 @@ const compactNotebookExecutionResult = (raw: unknown, input: unknown = {}): unkn
     ...(compactOutputs.omitted > 0 ? { omittedOutputCount: compactOutputs.omitted } : {}),
     ...(workingFiles.length ? { workingFiles } : {}),
     ...(artifacts.length ? { artifacts } : {}),
+    ...(fileEvidence ? { fileEvidence } : {}),
     ...(record.cwdBefore !== record.cwdAfter && record.cwdAfter !== undefined
       ? { cwdAfter: record.cwdAfter }
       : {}),
@@ -734,6 +794,50 @@ const compactNotebookExecutionResult = (raw: unknown, input: unknown = {}): unkn
               : 'Notebook output was truncated during capture.'
             : 'Agent-facing result shortened; full output remains in the notebook preview.'
         }
+      : {})
+  }
+}
+
+const compactBackgroundRunReceipt = (raw: unknown): unknown => {
+  const receipt = asRecord(raw)
+  return receipt
+    ? pickDefined(receipt, [
+        'runId',
+        'executionType',
+        'projectId',
+        'sessionId',
+        'status',
+        'acceptedAt',
+        'lifecycleScope',
+        'submissionIdentity',
+        'shellConcurrency'
+      ])
+    : raw
+}
+
+const compactBackgroundRunSubmissionReceipt = (raw: unknown): unknown => {
+  const receipt = compactBackgroundRunReceipt(raw)
+  const receiptRecord = asRecord(receipt)
+  return receiptRecord
+    ? { ...receiptRecord, nextAction: LOCAL_BACKGROUND_RUN_RECEIPT_GUIDANCE }
+    : receipt
+}
+
+const compactBackgroundRunResult = (raw: unknown): unknown => {
+  const result = asRecord(raw)
+  if (!result) return raw
+  const receipt = asRecord(result.receipt)
+  const run = asRecord(result.run)
+  const compactRun =
+    run?.kernelKind === 'repl'
+      ? compactReplExecutionResult(result.run)
+      : compactNotebookExecutionResult(result.run)
+  // Keep the durable receipt internal; queries already carry the Run identity and scope.
+  return {
+    ...asRecord(compactRun),
+    ...(receipt ? pickDefined(receipt, ['shellConcurrency']) : {}),
+    ...(typeof result.followUpDelivery === 'string'
+      ? { followUpDelivery: result.followUpDelivery }
       : {})
   }
 }
@@ -1018,11 +1122,12 @@ const registerNotebookRpcTool = (
       heartbeat?.unref()
 
       try {
+        const rpcMethod = definition.resolveMethod?.(input) ?? definition.method
         const raw = await callNotebookRpc(
           environment,
-          definition.method,
+          rpcMethod,
           rpcInput,
-          resolveNotebookRpcFetch(definition.method),
+          resolveNotebookRpcFetch(rpcMethod),
           extra.signal
         )
         const rejected =
@@ -1314,13 +1419,32 @@ const NOTEBOOK_RPC_TOOLS: NotebookRpcToolDefinition[] = [
   {
     name: 'notebook_execute',
     title: 'Execute notebook code',
-    description:
+    description: [
       "artifactVersionInputs: this Run's provenance inputs (Version IDs). Use runId as producerRunId.",
+      'Use foreground when reasoning needs the result now; use background:true for longer independent work.',
+      'Save the returned runId; follow its dependency-point query guidance.',
+      'Turn end or MCP disconnect does not stop an accepted background Run; explicitly cancel with background_run.'
+    ].join(' '),
     method: 'execute',
     inputSchema: executeToolSchema,
-    mapResult: compactNotebookExecutionResult,
+    mapResult: (raw, input) =>
+      asRecord(input)?.background === true
+        ? compactBackgroundRunSubmissionReceipt(raw)
+        : compactNotebookExecutionResult(raw, input),
     resultLimitChars: NOTEBOOK_MCP_EXECUTION_RESULT_LIMIT,
     progressMessage: 'Notebook execution is still running.'
+  },
+  {
+    name: 'background_run',
+    title: 'Query or cancel a local background Run',
+    description:
+      'Query a saved runId as a non-blocking snapshot; never scan Run history. followUpDelivery:"suppressed" means query won; "committed" means fallback crossed dispatch. Unread results may arrive in a follow-up Turn. submissionIdentity recovers only a missing receipt. Cancel is idempotent for active Runs.',
+    method: 'getBackgroundRun',
+    resolveMethod: (input) =>
+      asRecord(input)?.action === 'cancel' ? 'cancelBackgroundRun' : 'getBackgroundRun',
+    inputSchema: backgroundRunToolSchema,
+    mapResult: compactBackgroundRunResult,
+    resultLimitChars: NOTEBOOK_MCP_EXECUTION_RESULT_LIMIT
   },
   {
     name: 'repl_execute',
@@ -1328,7 +1452,10 @@ const NOTEBOOK_RPC_TOOLS: NotebookRpcToolDefinition[] = [
     description: REPL_EXECUTE_DOC,
     method: 'executeControl',
     inputSchema: replExecuteToolSchema,
-    mapResult: compactReplExecutionResult,
+    mapResult: (raw, input) =>
+      asRecord(input)?.background === true
+        ? compactBackgroundRunSubmissionReceipt(raw)
+        : compactReplExecutionResult(raw),
     includeViewImages: true,
     resultLimitChars: NOTEBOOK_MCP_EXECUTION_RESULT_LIMIT,
     progressMessage: 'Control-plane REPL execution is still running.'
@@ -1339,7 +1466,10 @@ const NOTEBOOK_RPC_TOOLS: NotebookRpcToolDefinition[] = [
     description: BASH_EXECUTE_DOC,
     method: 'executeShell',
     inputSchema: bashExecuteToolSchema,
-    mapResult: compactNotebookExecutionResult,
+    mapResult: (raw, input) =>
+      asRecord(input)?.background === true
+        ? compactBackgroundRunSubmissionReceipt(raw)
+        : compactNotebookExecutionResult(raw),
     resultLimitChars: NOTEBOOK_MCP_EXECUTION_RESULT_LIMIT
   },
   {
@@ -1526,6 +1656,8 @@ export {
   callNotebookRpc,
   resolveNotebookRpcFetch,
   compactNotebookExecutionResult,
+  compactBackgroundRunReceipt,
+  compactBackgroundRunResult,
   compactNotebookStateResult,
   compactManagePackagesResult,
   compactInspectPackagesResult,
