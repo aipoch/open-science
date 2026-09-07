@@ -95,7 +95,7 @@ const useTranscriptWindow = (
   const wasPinnedToEnd =
     stateMatchesScope && state.followEnd !== false && state.end === state.itemCount
   const retainedWindowSize = Math.max(
-    wasPinnedToEnd ? TRANSCRIPT_WINDOW_SIZE : 0,
+    TRANSCRIPT_WINDOW_SIZE,
     state.end - state.start
   )
   const retainedStart =

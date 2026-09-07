@@ -4290,6 +4290,39 @@ describe('WorkspaceMessageScroller artifact click behavior', () => {
     expect(scrollToEndMock).not.toHaveBeenCalled()
   })
 
+  it('keeps new replies mounted within a short reading window', async () => {
+    const { WorkspaceMessageScroller } = await import('./WorkspaceMessageScroller')
+    root = createRoot(container)
+    const messages = [createMessage({})]
+    const render = async (): Promise<void> => {
+      await act(async () =>
+        root.render(
+          <WorkspaceMessageScroller
+            activeSession={createSession({ status: 'idle', messages: [...messages] })}
+            onSendEditedMessage={vi.fn()}
+          />
+        )
+      )
+    }
+    await render()
+    const viewport = container.querySelector<HTMLDivElement>(
+      '[data-testid="message-scroller-viewport"]'
+    )!
+    Object.defineProperties(viewport, {
+      clientHeight: { configurable: true, value: 800 },
+      scrollHeight: { configurable: true, value: 2000 },
+      scrollTop: { configurable: true, writable: true, value: 600 }
+    })
+    await act(async () => viewport.dispatchEvent(new Event('scroll', { bubbles: true })))
+    const original = container.querySelector('[data-message-id]')
+    scrollToEndMock.mockClear()
+    messages.push(createMessage({ id: 'ordinary-append', createdAt: 1710000000001 }))
+    await render()
+    expect(container.querySelector('[data-message-id="ordinary-append"]')).not.toBeNull()
+    expect(original?.isConnected).toBe(true)
+    expect(scrollToEndMock).not.toHaveBeenCalled()
+  })
+
   it('mounts the latest window before the end button measures its scroll target', async () => {
     const { WorkspaceMessageScroller } = await import('./WorkspaceMessageScroller')
     const messages = Array.from({ length: 240 }, (_, index) =>
