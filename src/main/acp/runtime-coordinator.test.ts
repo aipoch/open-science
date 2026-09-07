@@ -3344,6 +3344,60 @@ describe('AcpRuntimeCoordinator', () => {
     }
   )
 
+  it.each(['project-a', 'project-b'])(
+    'scopes unpublished session creation retirement to %s',
+    async (changedProjectId) => {
+      const creation = createDeferred<void>()
+      const created: ReturnType<typeof createFakeRuntime>[] = []
+      const coordinator = new AcpRuntimeCoordinator((callbacks) => {
+        const fake = createFakeRuntime({
+          frameworkId: 'claude-code',
+          sessionIds: [`session-${created.length}`],
+          callbacks
+        })
+        const createSession =
+          fake.createSession.getMockImplementation() as AcpRuntime['createSession']
+        fake.createSession.mockImplementation(async (request) => {
+          await creation.promise
+          return createSession(request)
+        })
+        created.push(fake)
+        return fake.runtime
+      })
+      const pending = coordinator.createSession({ projectId: 'project-a' })
+      await vi.waitFor(() => expect(created[0].createSession).toHaveBeenCalledOnce())
+      await coordinator.requestProjectAgentContextReload(changedProjectId)
+      creation.resolve()
+      const session = await pending
+      const prompt = coordinator.sendPrompt({
+        sessionId: session.sessionId,
+        text: 'Use current project context'
+      })
+      if (changedProjectId === 'project-a') {
+        expect.soft(created[0].requestRetirement).toHaveBeenCalledOnce()
+        await expect(prompt).rejects.toThrow('resume')
+      } else {
+        expect(created[0].requestRetirement).not.toHaveBeenCalled()
+        await expect(prompt).resolves.toMatchObject({ stopReason: 'end_turn' })
+      }
+    }
+  )
+
+  it('removes failed session creations from project-context retirement', async () => {
+    const created: ReturnType<typeof createFakeRuntime>[] = []
+    const coordinator = new AcpRuntimeCoordinator((callbacks) => {
+      const fake = createFakeRuntime({ frameworkId: 'claude-code', sessionIds: [], callbacks })
+      fake.createSession.mockRejectedValue(new Error('creation failed'))
+      created.push(fake)
+      return fake.runtime
+    })
+    await expect(coordinator.createSession({ projectId: 'project-a' })).rejects.toThrow(
+      'creation failed'
+    )
+    await coordinator.requestProjectAgentContextReload('project-a')
+    expect(created[0].requestRetirement).not.toHaveBeenCalled()
+  })
+
   it('publishes prompt ownership only from the runtime that currently owns the session', async () => {
     const retirement = createDeferred<void>()
     const created: ReturnType<typeof createFakeRuntime>[] = []

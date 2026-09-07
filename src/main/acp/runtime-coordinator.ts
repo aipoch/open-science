@@ -174,6 +174,7 @@ class AcpRuntimeCoordinator {
   ) => Promise<void>
   private promptAdmissionClosedForQuit = false
   private providerShutdownStartedForQuit = false
+  private readonly pendingSessionCreations = new Set<{ runtime: AcpRuntime; projectId?: string }>()
   private readonly pendingSessionAdoptions = new Map<
     string,
     { runtime: AcpRuntime; projectId?: string }
@@ -554,12 +555,16 @@ class AcpRuntimeCoordinator {
   async createSession(request: AcpCreateSessionRequest = {}): Promise<AcpCreateSessionResponse> {
     await this.waitForInitialization()
     const runtime = this.runtimeForTarget(request.agentTarget)
+    const pending = { runtime, projectId: request.projectId }
+    this.pendingSessionCreations.add(pending)
     let response: AcpCreateSessionResponse
     try {
       response = await runtime.createSession(request)
     } catch (error) {
       await this.retireUnusedTargetedRuntime(runtime)
       throw error
+    } finally {
+      this.pendingSessionCreations.delete(pending)
     }
     this.sessionRuntimes.set(response.sessionId, runtime)
     this.lastRuntime = runtime
@@ -1442,6 +1447,9 @@ class AcpRuntimeCoordinator {
     for (const pending of this.pendingSessionAdoptions.values()) {
       if (pending.projectId === projectId) affected.add(pending.runtime)
     }
+    for (const pending of this.pendingSessionCreations) {
+      if (pending.projectId === projectId) affected.add(pending.runtime)
+    }
     await this.retireRuntimeGenerations(affected)
   }
 
@@ -2064,6 +2072,7 @@ class AcpRuntimeCoordinator {
     this.retiredRuntimes.clear()
     this.targetedRuntimes.clear()
     this.sessionRuntimes.clear()
+    this.pendingSessionCreations.clear()
     this.pendingSessionAdoptions.clear()
     this.pendingResumeReconciliations.clear()
     for (const pending of this.pendingSessionDrains.values()) pending.resolve()
