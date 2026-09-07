@@ -1894,14 +1894,9 @@ const areSessionsEqualForTranscript = (
   if (Object.is(previous, next)) return true
   if (!previous || !next) return false
 
-  // WorkspacePage mirrors reviewer activity into this transient operation gate. It changes the
-  // ChatSession object identity but is not rendered by the transcript, so compare every other field.
-  const previousKeys = Object.keys(previous).filter(
-    (key) => key !== 'branchSwitchBlocked'
-  ) as Array<keyof ChatSession>
-  const nextKeys = Object.keys(next).filter((key) => key !== 'branchSwitchBlocked') as Array<
-    keyof ChatSession
-  >
+  // Branch-switch blocking is visible in revision controls even when the transcript is unchanged.
+  const previousKeys = Object.keys(previous) as Array<keyof ChatSession>
+  const nextKeys = Object.keys(next) as Array<keyof ChatSession>
 
   return (
     previousKeys.length === nextKeys.length &&

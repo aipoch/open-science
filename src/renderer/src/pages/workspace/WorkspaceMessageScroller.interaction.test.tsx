@@ -4250,11 +4250,15 @@ describe('WorkspaceMessageScroller artifact click behavior', () => {
     expect(running.status).toBe('running')
     const branchId = running.conversationGraph!.frames[0].activeBranchId
     useSessionStore.setState({ sessions: [{ ...running, activeRun: undefined, ...blocked }] })
+    const onSendEditedMessage = vi.fn()
     const Parent = (): React.JSX.Element => {
       const activeSession = useSessionStore((state) => state.sessions[0])
       return (
         <WorkspaceMessageEditStateProvider canEditMessage={true}>
-          <WorkspaceMessageScroller activeSession={activeSession} onSendEditedMessage={vi.fn()} />
+          <WorkspaceMessageScroller
+            activeSession={activeSession}
+            onSendEditedMessage={onSendEditedMessage}
+          />
         </WorkspaceMessageEditStateProvider>
       )
     }
@@ -4288,6 +4292,13 @@ describe('WorkspaceMessageScroller artifact click behavior', () => {
         }))
       }))
     })
+    expect(previous().disabled).toBe(false)
+    await act(async () => useSessionStore.getState().setBranchSwitchBlocked('session-1', true))
+    expect(previous().disabled).toBe(true)
+    expect(
+      container.querySelector<HTMLButtonElement>('[aria-label="Edit message"]')?.disabled
+    ).toBe(false)
+    await act(async () => useSessionStore.getState().setBranchSwitchBlocked('session-1', false))
     expect(previous().disabled).toBe(false)
     await act(async () => previous().click())
     expect(useSessionStore.getState().sessions[0].messages[0].content).toBe('Original prompt')
