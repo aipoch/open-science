@@ -825,6 +825,9 @@ export const createSessionPersistenceOwner = <State extends SessionStoreData>(
       if (mode === 'archive-authority') {
         const projected = archive
         if (projected === current) return state
+        // A metadata refresh must not echo a clean snapshot back as a new local write.
+        // Keep dirty snapshots unmarked so their pending content is still persisted.
+        if (isExternallyHydratedSession(current)) markExternallyHydratedSession(projected, session)
         return {
           sessions: state.sessions.map((candidate) =>
             candidate === current ? projected : candidate

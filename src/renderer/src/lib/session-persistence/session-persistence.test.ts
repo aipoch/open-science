@@ -1066,6 +1066,76 @@ describe('renderer session persistence bridge', () => {
     )
   })
 
+  it('does not invalidate a fresh archive action by saving the conflict refresh back', async () => {
+    let durable = createPersistedSession({ revision: 1 })
+    useSessionStore.getState().upsertPersistedSession(durable)
+    const api = createApi({
+      loadOne: vi.fn(async () => durable),
+      saveSession: vi.fn(async (session) => {
+        durable = { ...session, revision: (durable.revision ?? 0) + 1 }
+        return durable
+      })
+    })
+    const updateArchive = vi.fn(async (request: { expectedRevision: number }) => {
+      if (request.expectedRevision !== durable.revision) {
+        throw new SessionRevisionConflictError(request.expectedRevision, durable.revision ?? 0)
+      }
+      durable = { ...durable, revision: durable.revision + 1, archivedAt: 10 }
+      return durable
+    })
+    vi.stubGlobal('window', { api: { sessions: { ...api, updateArchive } } })
+    const save = createStoreSaver(api, useSessionStore.getState())
+    const request = { projectId: durable.projectId, sessionId: durable.id, archived: true }
+    try {
+      // Another client's edit makes the first menu snapshot stale.
+      durable = { ...durable, revision: 2 }
+      await expect(
+        useSessionStore.getState().updateSessionArchive({ ...request, expectedRevision: 1 })
+      ).rejects.toThrow('Session revision conflict')
+
+      // A newly opened menu captures the refreshed revision. Let the persistence subscriber
+      // drain while it is open, as happens on a slower desktop before the user clicks Archive.
+      const fresh = useSessionStore.getState().sessions[0]
+      await save(useSessionStore.getState())
+      await expect(
+        useSessionStore.getState().updateSessionArchive({
+          ...request,
+          expectedRevision: fresh.revision ?? 0
+        })
+      ).resolves.toMatchObject({ archivedAt: 10 })
+      expect(api.saveSession).not.toHaveBeenCalled()
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  })
+
+  it('still saves local content when archive authority refreshes before the saver drains', async () => {
+    const durable = createPersistedSession({ revision: 1 })
+    useSessionStore.getState().upsertPersistedSession(durable)
+    const api = createApi()
+    const save = createStoreSaver(api, useSessionStore.getState())
+    const source = useSessionStore.getState().sessions[0]
+    useSessionStore.getState().appendUserMessage({
+      sessionId: durable.id,
+      content: 'Keep this unsaved message',
+      cwd: durable.cwd,
+      projectId: durable.projectId
+    })
+    useSessionStore.getState().applyDurableSessionProjection({
+      source,
+      session: { ...durable, revision: 2 },
+      mode: 'archive-authority'
+    })
+    await save(useSessionStore.getState())
+
+    expect(api.saveSession).toHaveBeenCalledOnce()
+    expect(api.saveSession).toHaveBeenCalledWith(
+      expect.objectContaining({
+        messages: [expect.objectContaining({ content: 'Keep this unsaved message' })]
+      })
+    )
+  })
+
   it('does not echo an externally hydrated session back to persistence', async () => {
     const api = createApi()
     const save = createStoreSaver(api)
