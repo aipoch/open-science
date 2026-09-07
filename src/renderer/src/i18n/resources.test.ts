@@ -1732,31 +1732,26 @@ describe('mandatory product glossary', () => {
     expect(readme).toContain(
       'Nach Abschluss eines Jobs startet die App automatisch eine Analyseinteraktion; eine eigene Polling-Schleife ist nicht erforderlich.'
     )
-    expect(readme).toContain('Schätzungen pro Kategorie')
-    expect(readme).toContain('projektbezogene Frame-Lesezugriffe')
-    expect(readme).toContain('verfeinerte Zeilen in der Sitzungssidebar')
-    expect(readme).toContain('interaktionsbezogenem Lesezugriff')
-    expect(readme).toContain('Sitzungsnummern in der globalen Suche')
-    expect(readme).toContain('Tastaturkürzel für eine neue Konversation')
-    expect(readme).toContain('Schlüssel- oder Passwortauthentifizierung')
     const rootPackage = JSON.parse(
       readFileSync(join(__dirname, '..', '..', '..', '..', 'package.json'), 'utf8')
     ) as { version: string }
     // The banner assertion tracks the repo version instead of a hardcoded bump target.
     expect(readme).toContain(`Open Science v${rootPackage.version} veröffentlicht`)
+    expect(readme).toContain('30-Tage-Aktivitäts-Heatmap')
+    expect(readme).toContain('10 GB')
+    expect(readme).toContain('22 hervorgehobenen')
+    expect(readme).toContain('24 integrierten')
+    expect(readme).toContain('64 integrierte Fähigkeitssymbole')
+    expect(readme).toContain('GPT-6 Astra')
+    expect(readme).toContain('Claude Fable 5.1')
+    expect(readme).toContain('SSH')
+    expect(readme).toContain('Slurm')
+    expect(readme).toContain('Konfigurationsimport/-export')
+    expect(readme).toContain('bearbeitbaren Sitzungsdetails')
+    expect(readme).toContain('Quellenvorschau')
     expect(readme).toContain('CodeBuddy')
     expect(readme).toContain('Text-, Bild- und PDF-Anmerkungen')
-    expect(readme).toContain('persistente Agentenerinnerungen')
-    expect(readme).toContain('Vorschlägen für Variablennamen des laufenden Kernels')
-    expect(readme).toContain('provenienzbewusste Workflows für Abbildungen')
-    expect(readme).toContain('abgeschirmte Quellenvorschauen')
-    expect(readme).toContain('Live-Variablenansicht')
-    expect(readme).toContain('Schließen anderer Tabs')
     expect(readme).toContain('OpenCode Go und OpenCode Zen')
-    expect(readme).toContain('automatisch erzeugte und bearbeitbare Sitzungsdetails')
-    expect(readme).toContain('Rückgängigmachen und Wiederholen von Entwurfsänderungen')
-    expect(readme).toContain('Nutzungsdetails pro Modellaufruf')
-    expect(readme).toContain('Import und Export standardmäßiger MCP-Client-Konfigurationen')
   })
 
   const chosenGenericTerms = {
