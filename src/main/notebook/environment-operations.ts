@@ -243,11 +243,12 @@ export class NotebookEnvironmentOperations {
   async revokeRuntime(
     language: NotebookLanguage,
     runtimeId: string,
-    options: { force?: boolean } = {}
+    options: { force?: boolean; waitForDrain?: boolean } = {}
   ): Promise<void> {
     // A pending selection can enter or leave this runtime. Match after the lane's earlier binding
     // writes settle, rather than omitting a not-yet-published selection from revocation.
     const targetSessions = Array.from(this.options.sessions())
+    const drains: Promise<void>[] = []
     await this.options.bindings.runWrites(
       targetSessions.map((session) => notebookLaneKey(session.lane)),
       async () => {
@@ -289,13 +290,19 @@ export class NotebookEnvironmentOperations {
                 ...errorLogFields(error),
                 environment
               })
+              if (options.waitForDrain) throw error
             }
           })
           this.revocationDrains.add(drain)
-          void drain.finally(() => this.revocationDrains.delete(drain))
+          drains.push(drain)
+          void drain.then(
+            () => this.revocationDrains.delete(drain),
+            () => this.revocationDrains.delete(drain)
+          )
         }
       }
     )
+    if (options.waitForDrain) await Promise.all(drains)
   }
 
   waitForRevocationDrains(): Promise<void> {

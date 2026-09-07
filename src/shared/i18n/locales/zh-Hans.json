@@ -4699,6 +4699,12 @@
     "File reference {{number}}: {{title}}": "文件中的第 {{number}} 篇文献：{{title}}",
     "Check author names. Original text is kept in Extra.": "请核对作者姓名。原文已保留在附加信息中。",
     "Preferred for {{scheme}}": "{{scheme}} 首选值",
-    "All identifiers are kept. Preferred values come from the kept reference when available.": "所有标识符均会保留。如有可用值，将优先采用保留文献中的首选值。"
+    "All identifiers are kept. Preferred values come from the kept reference when available.": "所有标识符均会保留。如有可用值，将优先采用保留文献中的首选值。",
+    "R access verified": "R 访问权限已验证",
+    "R access removed": "R 访问权限已移除",
+    "Could not update R access.": "无法更新 R 访问权限。",
+    "Allow the sandbox to list names in this R installation's parent folders. Other file contents remain protected. Administrator approval may be required.": "允许沙箱列出此 R 安装目录的父文件夹中的名称。其他文件的内容仍受保护。可能需要管理员批准。",
+    "Authorize and verify": "授权并验证",
+    "Remove R access": "移除 R 访问权限"
   }
 }

@@ -186,6 +186,27 @@ const click = async (el: Element | null): Promise<void> => {
 }
 
 describe('RuntimesPanel', () => {
+  it.each([false, true])(
+    'verifies only the selected R and does not confirm cancelled authorization (%s)',
+    async (cancelled) => {
+      Object.assign(window.api, { platform: 'win32' })
+      getEnablement.mockResolvedValue({
+        enabled: { [rEnvs[0].envId]: true },
+        installAuthorized: {}
+      })
+      const authorize = vi.fn(async () => ({ cancelled }))
+      Object.assign(window.api.runtime, { setSandboxAccess: authorize })
+      await render()
+      const button = Array.from(container.querySelectorAll('button')).find(
+        (element) => element.textContent === 'Authorize and verify'
+      )
+      expect(button).toBeDefined()
+      expect(container.textContent).toContain('Other file contents remain protected.')
+      await click(button!)
+      expect(authorize).toHaveBeenCalledWith('r', rEnvs[0].envId, true)
+      expect(container.textContent?.includes('R access verified')).toBe(!cancelled)
+    }
+  )
   it('shows the network protection entry only when Settings provides its route', async () => {
     const onOpenNetworkProtection = vi.fn()
     ;(window.api as unknown as { settings: unknown }).settings = {

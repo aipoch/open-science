@@ -207,6 +207,7 @@ describe('renderer contract catalog', () => {
       'runtime.registerInterpreter',
       'runtime.setEnvironmentEnabled',
       'runtime.setInstallAuthorized',
+      'runtime.setSandboxAccess',
       'runtime.unregisterInterpreter',
       'storage.commitAndRelaunch',
       'storage.discardMigratedCopy',

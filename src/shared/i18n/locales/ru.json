@@ -5145,6 +5145,12 @@
     "File reference {{number}}: {{title}}": "Источник {{number}} в файле: {{title}}",
     "Check author names. Original text is kept in Extra.": "Проверьте имена авторов. Исходный текст сохранён в дополнительных сведениях.",
     "Preferred for {{scheme}}": "Предпочтительный для {{scheme}}",
-    "All identifiers are kept. Preferred values come from the kept reference when available.": "Все идентификаторы сохраняются. Предпочтительные значения берутся из сохраняемого источника, если они доступны."
+    "All identifiers are kept. Preferred values come from the kept reference when available.": "Все идентификаторы сохраняются. Предпочтительные значения берутся из сохраняемого источника, если они доступны.",
+    "R access verified": "Доступ R проверен",
+    "R access removed": "Доступ R удалён",
+    "Could not update R access.": "Не удалось обновить доступ R.",
+    "Allow the sandbox to list names in this R installation's parent folders. Other file contents remain protected. Administrator approval may be required.": "Разрешить песочнице перечислять имена в родительских папках этой установки R. Содержимое других файлов останется защищённым. Может потребоваться разрешение администратора.",
+    "Authorize and verify": "Разрешить и проверить",
+    "Remove R access": "Удалить доступ R"
   }
 }

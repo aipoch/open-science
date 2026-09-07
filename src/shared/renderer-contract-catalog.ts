@@ -1603,6 +1603,13 @@ export const RENDERER_API_CONTRACT = Object.freeze({
   'runtime.registerInterpreter': callable<
     (language: NotebookLanguage, path: string) => Promise<string[]>
   >()('runtime', ['runtime:register-interpreter', LOCAL, RUNTIME_INTERPRETER]),
+  'runtime.setSandboxAccess': callable<
+    (
+      language: NotebookLanguage,
+      envId: string,
+      authorized: boolean
+    ) => Promise<{ cancelled: boolean }>
+  >()('runtime', ['runtime:set-sandbox-access', LOCAL, RUNTIME_INSTALL_AUTH]),
   'runtime.setAgentEnvironmentCreationEnabled': callable<
     (request: { enabled: boolean }) => Promise<boolean>
   >()('runtime', ['runtime:set-agent-environment-creation-enabled', LOCAL]),

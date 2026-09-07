@@ -8,6 +8,9 @@ use serde::{Deserialize, Serialize};
 #[cfg(windows)]
 mod wfp;
 
+#[cfg(windows)]
+mod directory_access;
+
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct LaunchSpec {
@@ -213,7 +216,7 @@ mod windows_host {
 
     const PROFILE_PREFIX: &str = "Aipoch.OpenScience.Notebook";
     const PROCESS_SYNCHRONIZE: PROCESS_ACCESS_RIGHTS = PROCESS_ACCESS_RIGHTS(0x0010_0000);
-    const RECEIPT_SCHEMA: u32 = 4;
+    const RECEIPT_SCHEMA: u32 = 5;
     const ACL_LEASE_SCHEMA: u32 = 2;
     const ACL_STATE_SCHEMA: u32 = 1;
     const OPERATION_MUTEX: &str = "Local\\Aipoch.OpenScience.Notebook.Resources";
@@ -230,6 +233,77 @@ mod windows_host {
         gateway_port: u16,
         wfp_sublayer_key: String,
         wfp_filter_keys: Vec<String>,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        runtime_directory_access: Vec<RuntimeDirectoryAccess>,
+    }
+
+    #[derive(Clone, Debug, Deserialize, Serialize)]
+    #[serde(rename_all = "camelCase")]
+    struct RuntimeDirectoryAccess {
+        executable: String,
+        selected_executable: String,
+        directories: Vec<String>,
+    }
+
+    fn runtime_path_matches(executable: &str, entry: &RuntimeDirectoryAccess) -> bool {
+        paths_equal(executable, Path::new(&entry.selected_executable))
+            || paths_equal(executable, Path::new(&entry.executable))
+    }
+
+    fn runtime_directories(record: &OwnershipRecord) -> BTreeSet<String> {
+        record
+            .runtime_directory_access
+            .iter()
+            .flat_map(|entry| entry.directories.iter().cloned())
+            .collect()
+    }
+
+    fn r_installation_directories(executable: &Path) -> Result<Vec<String>> {
+        if !executable.is_absolute()
+            || !executable
+                .file_name()
+                .is_some_and(|name| name.to_string_lossy().eq_ignore_ascii_case("Rscript.exe"))
+        {
+            bail!("Select an absolute Rscript.exe path");
+        }
+        let directory = executable
+            .parent()
+            .context("Rscript has no parent directory")?;
+        let bin = if directory
+            .file_name()
+            .is_some_and(|name| name.to_string_lossy().eq_ignore_ascii_case("x64"))
+        {
+            directory.parent().context("Rscript has no bin directory")?
+        } else {
+            directory
+        };
+        if !bin
+            .file_name()
+            .is_some_and(|name| name.to_string_lossy().eq_ignore_ascii_case("bin"))
+        {
+            bail!("Rscript is not in an R installation bin directory");
+        }
+        let home = bin.parent().context("R installation has no home")?;
+        let mut directories = home
+            .ancestors()
+            .skip(1)
+            .map(|path| path.to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+        directories.reverse();
+        Ok(directories)
+    }
+
+    fn validate_runtime_directory_access(record: &OwnershipRecord) -> Result<()> {
+        let mut paths = BTreeSet::new();
+        for entry in &record.runtime_directory_access {
+            if !Path::new(&entry.selected_executable).is_absolute()
+                || !paths.insert(entry.executable.to_lowercase())
+                || entry.directories != r_installation_directories(Path::new(&entry.executable))?
+            {
+                bail!("Runtime directory ownership does not match its selected interpreter");
+            }
+        }
+        Ok(())
     }
 
     #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -324,7 +398,7 @@ mod windows_host {
         let expected_name = format!("{PROFILE_PREFIX}.{}", record.ownership_token);
         let expected_sid = sid_text(profile_sid(&record.profile_name)?.0)?;
         let descriptor = wfp_descriptor(record);
-        if record.schema_version != RECEIPT_SCHEMA
+        if ![4, RECEIPT_SCHEMA].contains(&record.schema_version)
             || record.installation_id != installation_id
             || record.profile_name != expected_name
             || record.profile_sid != expected_sid
@@ -333,6 +407,10 @@ mod windows_host {
             || wfp::validate_keys(&descriptor).is_err()
         {
             bail!("AppContainer ownership record does not match this installation");
+        }
+        validate_runtime_directory_access(record)?;
+        if record.schema_version == 4 && !record.runtime_directory_access.is_empty() {
+            bail!("Legacy ownership cannot contain runtime directory grants");
         }
         Ok(())
     }
@@ -715,7 +793,7 @@ mod windows_host {
                 }
             };
             let creating = OwnershipRecord {
-                schema_version: RECEIPT_SCHEMA,
+                schema_version: 4,
                 installation_id: installation_id.to_owned(),
                 state: OwnershipState::Creating,
                 profile_name,
@@ -726,6 +804,7 @@ mod windows_host {
                 wfp_filter_keys: (0..3)
                     .map(|_| new_resource_key())
                     .collect::<Result<Vec<_>>>()?,
+                runtime_directory_access: Vec::new(),
             };
             write_new_record(&journal_path(&ownership_root), &creating)?;
             record = Some(creating);
@@ -740,6 +819,154 @@ mod windows_host {
             record = Some(creating);
         }
         record.context("ownership record disappeared during setup")?;
+        Ok(())
+    }
+
+    pub fn prepare_runtime_access(
+        installation_id: &str,
+        requested_root: &str,
+        executable: &str,
+        remove: bool,
+    ) -> Result<()> {
+        let _lock = OperationLock::acquire(installation_id)?;
+        let root = ownership_directory(installation_id, requested_root)?;
+        if journal_path(&root).exists() {
+            bail!("Complete the pending protected-mode repair before changing runtime permissions");
+        }
+        let previous = ownership_record(installation_id, &root)?
+            .context("Enable protected mode before authorizing an R runtime")?;
+        if previous.state != OwnershipState::Owned {
+            bail!("Protected-mode setup is incomplete");
+        }
+        let mut record = previous.clone();
+        if remove {
+            record
+                .runtime_directory_access
+                .retain(|entry| !runtime_path_matches(executable, entry));
+        } else {
+            if !Path::new(executable).is_absolute() {
+                bail!("Select an absolute R interpreter path");
+            }
+            let selected_executable = executable.to_owned();
+            let canonical =
+                fs::canonicalize(executable).context("resolve selected R interpreter")?;
+            let canonical = canonical.to_string_lossy();
+            let executable = canonical
+                .strip_prefix(r"\\?\")
+                .unwrap_or(&canonical)
+                .to_owned();
+            let path = Path::new(&executable);
+            if !matches!(path.components().next(), Some(std::path::Component::Prefix(prefix)) if matches!(prefix.kind(), std::path::Prefix::Disk(_)))
+            {
+                bail!("R runtime authorization requires a local drive path");
+            }
+            let directories = r_installation_directories(path)?;
+            let bin = path.parent().context("Rscript parent is missing")?;
+            let home = if bin
+                .file_name()
+                .is_some_and(|name| name.to_string_lossy().eq_ignore_ascii_case("x64"))
+            {
+                bin.parent().and_then(Path::parent)
+            } else {
+                bin.parent()
+            }
+            .context("R installation home is missing")?;
+            if !home.join("etc").is_dir() || !home.join("library").is_dir() {
+                bail!("Selected R installation is incomplete");
+            }
+            record
+                .runtime_directory_access
+                .retain(|entry| !paths_equal(&executable, Path::new(&entry.executable)));
+            record
+                .runtime_directory_access
+                .push(RuntimeDirectoryAccess {
+                    executable,
+                    selected_executable,
+                    directories,
+                });
+            for directory in
+                runtime_directories(&record).difference(&runtime_directories(&previous))
+            {
+                if super::directory_access::is_granted(directory, &record.profile_sid)? {
+                    bail!("Unowned directory permission exists; preserving {directory}");
+                }
+            }
+        }
+        record.schema_version = if record.runtime_directory_access.is_empty() {
+            4
+        } else {
+            RECEIPT_SCHEMA
+        };
+        record.state = OwnershipState::Creating;
+        replace_journal(&root, &record)
+    }
+
+    pub fn runtime_access_status(
+        installation_id: &str,
+        requested_root: &str,
+        executable: &str,
+    ) -> Result<()> {
+        let _lock = OperationLock::acquire(installation_id)?;
+        let root = ownership_directory(installation_id, requested_root)?;
+        let mut authorized = false;
+        let mut registered = false;
+        if let Some(record) = ownership_record(installation_id, &root)? {
+            if record.state == OwnershipState::Owned {
+                if let Some(entry) = record
+                    .runtime_directory_access
+                    .iter()
+                    .find(|entry| runtime_path_matches(executable, entry))
+                {
+                    registered = true;
+                    authorized = true;
+                    for path in &entry.directories {
+                        if !Path::new(path).is_dir()
+                            || !super::directory_access::is_granted(path, &record.profile_sid)?
+                        {
+                            authorized = false;
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+        println!(
+            "{}",
+            serde_json::json!({ "authorized": authorized, "registered": registered })
+        );
+        Ok(())
+    }
+
+    fn reconcile_runtime_directories(
+        record: &OwnershipRecord,
+        previous: Option<&OwnershipRecord>,
+    ) -> Result<()> {
+        let desired = runtime_directories(record);
+        let previous = previous.map(runtime_directories).unwrap_or_default();
+        for directory in &desired {
+            super::directory_access::update(directory, &record.profile_sid, true, true)?;
+        }
+        for directory in previous.difference(&desired) {
+            if Path::new(directory).exists() {
+                super::directory_access::update(directory, &record.profile_sid, false, true)?;
+            }
+        }
+        Ok(())
+    }
+
+    fn rollback_runtime_directories(
+        record: &OwnershipRecord,
+        previous: Option<&OwnershipRecord>,
+    ) -> Result<()> {
+        let previous_directories = previous.map(runtime_directories).unwrap_or_default();
+        for directory in runtime_directories(record).difference(&previous_directories) {
+            if Path::new(directory).exists() {
+                super::directory_access::update(directory, &record.profile_sid, false, true)?;
+            }
+        }
+        for directory in previous_directories {
+            super::directory_access::update(&directory, &record.profile_sid, true, true)?;
+        }
         Ok(())
     }
 
@@ -759,6 +986,15 @@ mod windows_host {
                 || receipt.ownership_token != journal.ownership_token
             {
                 bail!("AppContainer ownership records disagree; preserving resources");
+            }
+            for path in runtime_directories(&journal).difference(&runtime_directories(&receipt)) {
+                if Path::new(path).exists()
+                    && super::directory_access::is_granted(path, &journal.profile_sid)?
+                {
+                    bail!(
+                        "Runtime directory setup is partially applied; complete repair before cancellation"
+                    );
+                }
             }
         } else {
             let sid = profile_sid(&journal.profile_name)?;
@@ -807,6 +1043,7 @@ mod windows_host {
         let install_result = (|| -> Result<()> {
             wfp::install(&wfp_descriptor(&record), sid.0)?;
             add_loopback(sid.0)?;
+            reconcile_runtime_directories(&record, previous.as_ref())?;
             let mut owned = record.clone();
             owned.state = OwnershipState::Owned;
             commit_receipt(&ownership_root, &owned)?;
@@ -814,6 +1051,7 @@ mod windows_host {
         })();
         if let Err(error) = install_result {
             let rollback = (|| -> Result<()> {
+                rollback_runtime_directories(&record, previous.as_ref())?;
                 if !loopback_was_present {
                     remove_loopback(sid.0)?;
                 }
@@ -888,6 +1126,16 @@ mod windows_host {
         };
         let sid = profile_sid(&record.profile_name)?;
         stop_profile_processes(sid.0)?;
+        let mut directories = runtime_directories(&record);
+        if let Some(previous) = read_record(&receipt_path(&ownership_root))? {
+            validate_record(&previous, installation_id)?;
+            directories.extend(runtime_directories(&previous));
+        }
+        for path in directories {
+            if Path::new(&path).exists() {
+                super::directory_access::update(&path, &record.profile_sid, false, true)?;
+            }
+        }
         wfp::remove(&wfp_descriptor(&record))?;
         if let Err(error) = remove_loopback(sid.0) {
             return match wfp::install(&wfp_descriptor(&record), sid.0) {
@@ -1964,6 +2212,32 @@ mod windows_host {
         }
 
         #[test]
+        fn directory_listing_preserves_children_and_removes_only_owned_permissions() {
+            let root = unique_test_root("directory-listing");
+            let child = root.join("child");
+            fs::create_dir_all(&child).unwrap();
+            let path = root.to_string_lossy();
+            let child_path = child.to_string_lossy();
+            let original = capture_acl_snapshot(&path).unwrap();
+            let child_original = capture_acl_snapshot(&child_path).unwrap();
+            let capability = CommandCapability::new(format!(
+                "open-science.test.{}",
+                new_resource_key().unwrap()
+            ))
+            .unwrap();
+            let identity = sid_text(capability.sid()).unwrap();
+            super::super::directory_access::update(&path, &identity, true, false).unwrap();
+            assert_eq!(capture_acl_snapshot(&child_path).unwrap(), child_original);
+            assert_ne!(capture_acl_snapshot(&path).unwrap(), original);
+            assert!(super::super::directory_access::update(&path, &identity, true, false).is_err());
+            super::super::directory_access::update(&path, &identity, true, true).unwrap();
+            super::super::directory_access::update(&path, &identity, false, true).unwrap();
+            super::super::directory_access::update(&path, &identity, false, true).unwrap();
+            assert_eq!(capture_acl_snapshot(&path).unwrap(), original);
+            fs::remove_dir_all(&root).unwrap();
+        }
+
+        #[test]
         fn prepare_setup_does_not_create_profile_before_elevation() {
             let installation_id = "fedcba9876543210fedcba98";
             let parent = unique_test_root("prepare-setup");
@@ -1978,6 +2252,56 @@ mod windows_host {
             fs::remove_dir_all(&parent).unwrap();
 
             assert!(!exists);
+        }
+
+        #[test]
+        fn selected_r_access_upgrades_legacy_journal_and_cancellation_preserves_receipt() {
+            let installation_id = "fedcba9876543210fedcba98";
+            let parent = unique_test_root("legacy-runtime-access");
+            let root = parent.join(installation_id);
+            let request_root = root.to_string_lossy();
+            prepare_setup(installation_id, &request_root).unwrap();
+            let mut record = read_record(&journal_path(&root)).unwrap().unwrap();
+            record.schema_version = 4;
+            record.state = OwnershipState::Owned;
+            write_new_record(&receipt_path(&root), &record).unwrap();
+            fs::remove_file(journal_path(&root)).unwrap();
+            let home = parent.join("R");
+            fs::create_dir_all(home.join("bin/x64")).unwrap();
+            fs::create_dir_all(home.join("etc")).unwrap();
+            fs::create_dir_all(home.join("library")).unwrap();
+            let executable = home.join("bin/x64/Rscript.exe");
+            fs::write(&executable, b"test fixture; never executed").unwrap();
+            prepare_runtime_access(
+                installation_id,
+                &request_root,
+                &executable.to_string_lossy(),
+                false,
+            )
+            .unwrap();
+            let pending = read_record(&journal_path(&root)).unwrap().unwrap();
+            assert_eq!(pending.schema_version, 5);
+            assert_eq!(pending.runtime_directory_access.len(), 1);
+            let entry = &pending.runtime_directory_access[0];
+            assert_eq!(
+                entry.directories,
+                r_installation_directories(&executable).unwrap()
+            );
+            assert!(
+                !entry
+                    .directories
+                    .contains(&home.to_string_lossy().into_owned())
+            );
+            cancel_setup(installation_id, &request_root).unwrap();
+            assert_eq!(
+                read_record(&receipt_path(&root))
+                    .unwrap()
+                    .unwrap()
+                    .schema_version,
+                4
+            );
+            assert!(!journal_path(&root).exists());
+            fs::remove_dir_all(&parent).unwrap();
         }
 
         #[test]
@@ -2166,6 +2490,33 @@ fn run() -> Result<i32> {
                 bail!("unexpected prepare-setup argument");
             }
             windows_host::prepare_setup(&installation_id, &ownership_root)?;
+            Ok(0)
+        }
+        Some(
+            command @ ("prepare-runtime-access"
+            | "prepare-remove-runtime-access"
+            | "runtime-access-status"),
+        ) => {
+            let installation_id = args.next().context("missing installation identity")?;
+            let ownership_root = args.next().context("missing ownership root")?;
+            let executable = args.next().context("missing selected R interpreter")?;
+            if args.next().is_some() {
+                bail!("unexpected runtime-access argument");
+            }
+            if command == "runtime-access-status" {
+                windows_host::runtime_access_status(
+                    &installation_id,
+                    &ownership_root,
+                    &executable,
+                )?;
+            } else {
+                windows_host::prepare_runtime_access(
+                    &installation_id,
+                    &ownership_root,
+                    &executable,
+                    command == "prepare-remove-runtime-access",
+                )?;
+            }
             Ok(0)
         }
         Some("cancel-setup") => {

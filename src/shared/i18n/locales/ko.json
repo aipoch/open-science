@@ -4697,6 +4697,12 @@
     "File reference {{number}}: {{title}}": "파일의 문헌 {{number}}: {{title}}",
     "Check author names. Original text is kept in Extra.": "저자 이름을 확인하세요. 원문은 추가 정보에 보존됩니다.",
     "Preferred for {{scheme}}": "{{scheme}}의 기본값",
-    "All identifiers are kept. Preferred values come from the kept reference when available.": "모든 식별자가 유지됩니다. 유지할 문헌에 기본값이 있으면 해당 값을 사용합니다."
+    "All identifiers are kept. Preferred values come from the kept reference when available.": "모든 식별자가 유지됩니다. 유지할 문헌에 기본값이 있으면 해당 값을 사용합니다.",
+    "R access verified": "R 접근 권한을 검증했습니다",
+    "R access removed": "R 접근 권한을 제거했습니다",
+    "Could not update R access.": "R 접근 권한을 업데이트할 수 없습니다.",
+    "Allow the sandbox to list names in this R installation's parent folders. Other file contents remain protected. Administrator approval may be required.": "샌드박스가 이 R 설치 경로의 상위 폴더에 있는 이름을 나열하도록 허용합니다. 다른 파일의 내용은 계속 보호됩니다. 관리자 승인이 필요할 수 있습니다.",
+    "Authorize and verify": "허용 및 검증",
+    "Remove R access": "R 접근 권한 제거"
   }
 }

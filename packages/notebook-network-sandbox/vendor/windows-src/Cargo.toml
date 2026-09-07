@@ -23,6 +23,7 @@ windows = { version = "0.62.2", features = [
   "Win32_Security",
   "Win32_Security_Authorization",
   "Win32_Security_Isolation",
+  "Win32_Storage_FileSystem",
   "Win32_System_Com",
   "Win32_System_Diagnostics",
   "Win32_System_Diagnostics_ToolHelp",

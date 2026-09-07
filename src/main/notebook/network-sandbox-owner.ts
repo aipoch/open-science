@@ -1,4 +1,6 @@
 import { NotebookNetworkSandbox } from '@aipoch/notebook-network-sandbox'
+import { execFile } from 'node:child_process'
+import { promisify } from 'node:util'
 import { existsSync } from 'node:fs'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { homedir, tmpdir } from 'node:os'
@@ -30,6 +32,9 @@ import {
   type NotebookTrustBundleStatus
 } from './trust-bundle'
 import type { GrantedLocalRoot } from '../../shared/local-fs'
+import { kernelExecutableReadRoot } from './kernel-executor'
+import { windowsCondaPrefixForR } from './environment-discovery'
+import { condaActivatedPath } from './runtime-paths'
 
 export type NotebookNetworkDecision = 'deny' | 'allowOnce' | 'alwaysAllow' | 'unavailable'
 
@@ -470,6 +475,61 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
     } catch (error) {
       operation.fail(error)
       throw error
+    }
+  }
+
+  async setWindowsRuntimeAccess(
+    executable: string,
+    authorized: boolean
+  ): Promise<{ cancelled: boolean }> {
+    const result = await this.getOrCreateSandbox().setWindowsRuntimeAccess(executable, authorized)
+    if (result.cancelled || !authorized) return result
+    if ((await this.status()).kind !== 'ready')
+      throw new Error('Enable protected mode before verifying R access.')
+    const cwd = await mkdtemp(join(tmpdir(), 'open-science-r-access-'))
+    let invocation: NotebookSandboxedSpawn | undefined
+    let endExecution: (() => void) | undefined
+    try {
+      const prefix = windowsCondaPrefixForR(executable, this.platform)
+      const env = {
+        ...process.env,
+        ...(prefix ? { PATH: condaActivatedPath(prefix, process.env.PATH, this.platform) } : {})
+      }
+      invocation = await this.wrap({
+        executable,
+        args: [
+          '--vanilla',
+          '-e',
+          'stopifnot(requireNamespace("jsonlite", quietly=TRUE)); normalizePath(.libPaths(), mustWork=TRUE); cat("OPEN_SCIENCE_R_ACCESS_OK")'
+        ],
+        cwd,
+        env,
+        commandText: 'Verify selected R runtime',
+        runtime: 'r',
+        sessionId: 'runtime-access-check',
+        projectId: 'runtime-access-check',
+        filesystem: {
+          readOnlyRoots: [kernelExecutableReadRoot(executable, 'r', this.platform)],
+          readWriteRoots: [cwd],
+          deniedReadRoots: [],
+          deniedWriteRoots: []
+        }
+      })
+      endExecution = invocation.beginExecution?.()
+      const { stdout } = await promisify(execFile)(invocation.executable, [...invocation.args], {
+        cwd,
+        env: invocation.env,
+        timeout: 20_000,
+        windowsHide: true,
+        maxBuffer: 1024 * 1024
+      })
+      if (!stdout.includes('OPEN_SCIENCE_R_ACCESS_OK'))
+        throw new Error('R runtime verification did not complete.')
+      return result
+    } finally {
+      endExecution?.()
+      invocation?.cleanup()
+      await rm(cwd, { recursive: true, force: true })
     }
   }
 

@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto'
 import {
   NotebookNetworkRuntime,
   installWindows,
+  setWindowsRuntimeAccess,
   removeWindows,
   statusForPlatform,
   type SandboxDependencyCheck,
@@ -212,6 +213,16 @@ class NotebookNetworkSandbox {
     const result = await installWindows(config)
     if (!result.cancelled && this.#initialized) await this.#backend.refreshWindowsProtection()
     return { cancelled: result.cancelled === true }
+  }
+
+  async setWindowsRuntimeAccess(
+    executable: string,
+    authorized: boolean
+  ): Promise<{ cancelled: boolean }> {
+    if (process.platform !== 'win32')
+      throw new Error('R runtime access is only available on Windows.')
+    if (this.#initializing) await this.#initializing
+    return setWindowsRuntimeAccess(createRuntimeConfig(this.#options), executable, authorized)
   }
 
   async removeWindows(): Promise<{ cancelled: boolean }> {

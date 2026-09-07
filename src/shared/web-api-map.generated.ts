@@ -179,6 +179,7 @@ export const WEB_INVOKE_CHANNELS = {
   'runtime.setAgentEnvironmentCreationEnabled': 'runtime:set-agent-environment-creation-enabled',
   'runtime.setEnvironmentEnabled': 'runtime:set-environment-enabled',
   'runtime.setInstallAuthorized': 'runtime:set-install-authorized',
+  'runtime.setSandboxAccess': 'runtime:set-sandbox-access',
   'runtime.unregisterInterpreter': 'runtime:unregister-interpreter',
   saveBlobFile: 'file:save-blob',
   saveManagedFile: 'file:save-managed',

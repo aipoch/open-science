@@ -3,6 +3,7 @@ import type { EnvPackage, RuntimeEnablement, RuntimeUsage } from '../../shared/n
 import {
   defaultDiscoveryDeps,
   discoverInterpreters,
+  rscriptFor,
   type DiscoveredInterpreter
 } from './environment-discovery'
 import { listEnvPackages } from './package-listing'
@@ -46,6 +47,10 @@ type RuntimeWorkflowDeps = {
   // production defaults to listEnvPackages against the real env.
   listPackages?: (env: DiscoveredInterpreter) => Promise<EnvPackage[]>
   micromambaRunner?: Pick<MicromambaRunner, 'resolve'>
+  setWindowsRuntimeAccess?: (
+    executable: string,
+    authorized: boolean
+  ) => Promise<{ cancelled: boolean }>
 }
 
 type RuntimeWorkflows = {
@@ -74,6 +79,11 @@ type RuntimeWorkflows = {
     authorized: boolean
   }): Promise<RuntimeEnablement>
   register(request: { language: NotebookLanguage; path: string }): Promise<string[]>
+  setSandboxAccess(request: {
+    language: NotebookLanguage
+    envId: string
+    authorized: boolean
+  }): Promise<{ cancelled: boolean }>
   unregister(request: { language: NotebookLanguage; path: string }): Promise<string[]>
 }
 
@@ -114,6 +124,17 @@ const createRuntimeWorkflows = (deps: RuntimeWorkflowDeps): RuntimeWorkflows => 
   }
 
   return {
+    setSandboxAccess: async (request) => {
+      if (request.language !== 'r' || !deps.setWindowsRuntimeAccess)
+        throw new Error('Selected-runtime sandbox access is only available for Windows R.')
+      const env = (await discoverLanguageEnvs('r')).find(
+        (candidate) => candidate.envId === request.envId
+      )
+      if (!env || env.provenance !== 'user-own')
+        throw new Error('Select a discovered external R runtime.')
+      if (!request.authorized) await deps.onRuntimeDisabled?.('r', env.envId)
+      return deps.setWindowsRuntimeAccess(rscriptFor(env.interpreterPath), request.authorized)
+    },
     listEnvironments: async () => {
       // Discovery expects a synchronous manual-path lookup, so snapshot both persisted catalogs first.
       const [manualPython, manualR] = await Promise.all([
@@ -196,6 +217,21 @@ const createRuntimeWorkflows = (deps: RuntimeWorkflowDeps): RuntimeWorkflows => 
       // back, preventing a failed drain from silently re-enabling the runtime for new work.
       if (!request.enabled) {
         await deps.onRuntimeDisabled?.(request.language, request.envId, request.force)
+        if (request.language === 'r' && deps.setWindowsRuntimeAccess) {
+          const env = (await discoverLanguageEnvs('r')).find(
+            (candidate) => candidate.envId === request.envId
+          )
+          if (env?.provenance === 'user-own') {
+            const result = await deps.setWindowsRuntimeAccess(
+              rscriptFor(env.interpreterPath),
+              false
+            )
+            if (result.cancelled)
+              throw new Error(
+                'R was disabled, but permission removal was cancelled. Retry removing its sandbox access.'
+              )
+          }
+        }
       }
       return next
     },
@@ -211,6 +247,15 @@ const createRuntimeWorkflows = (deps: RuntimeWorkflowDeps): RuntimeWorkflows => 
       return result
     },
     unregister: async (request) => {
+      if (request.language === 'r' && deps.setWindowsRuntimeAccess) {
+        const env = (await discoverLanguageEnvs('r')).find(
+          (candidate) => candidate.interpreterPath === request.path
+        )
+        if (env) await deps.onRuntimeDisabled?.('r', env.envId)
+        const result = await deps.setWindowsRuntimeAccess(rscriptFor(request.path), false)
+        if (result.cancelled)
+          throw new Error('R permission removal was cancelled; the interpreter remains registered.')
+      }
       const result = await deps.settingsService.removeManualInterpreter(
         request.language,
         request.path

@@ -4699,6 +4699,12 @@
     "File reference {{number}}: {{title}}": "檔案中的第 {{number}} 篇文獻：{{title}}",
     "Check author names. Original text is kept in Extra.": "請核對作者姓名。原文已保留於額外資訊中。",
     "Preferred for {{scheme}}": "{{scheme}} 首選值",
-    "All identifiers are kept. Preferred values come from the kept reference when available.": "所有識別碼都會保留。如有可用值，將優先採用保留文獻中的首選值。"
+    "All identifiers are kept. Preferred values come from the kept reference when available.": "所有識別碼都會保留。如有可用值，將優先採用保留文獻中的首選值。",
+    "R access verified": "R 存取權限已驗證",
+    "R access removed": "R 存取權限已移除",
+    "Could not update R access.": "無法更新 R 存取權限。",
+    "Allow the sandbox to list names in this R installation's parent folders. Other file contents remain protected. Administrator approval may be required.": "允許沙箱列出此 R 安裝目錄的父資料夾中的名稱。其他檔案的內容仍受保護。可能需要管理員核准。",
+    "Authorize and verify": "授權並驗證",
+    "Remove R access": "移除 R 存取權限"
   }
 }
