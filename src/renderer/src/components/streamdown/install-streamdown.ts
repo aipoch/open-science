@@ -13,6 +13,7 @@ import {
 } from './dom-selectors'
 import { resolveLanguageIconPath } from './language-icons'
 import { installMermaidHeightAnimation } from './mermaid-height-animation'
+import { installMermaidViewToggle } from './mermaid-view-toggle'
 
 const saveBlobFile = (request: SaveBlobFileRequest): Promise<SaveBlobFileResult> =>
   window.api.saveBlobFile(request)
@@ -810,7 +811,8 @@ const installStreamdown = (): (() => void) => {
       installFullscreenDialogAdapter(),
       installTableActions(),
       installTableFullscreenFix(),
-      installCodeLanguageBadges()
+      installCodeLanguageBadges(),
+      installMermaidViewToggle()
     )
   }
 
