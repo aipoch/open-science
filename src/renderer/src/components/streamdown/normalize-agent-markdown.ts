@@ -1,16 +1,35 @@
 import { createCodeFenceTracker } from './code-fence'
 
-const quoteAxisListItems = (raw: string): string =>
-  raw
-    .split(',')
+const quoteAxisListItems = (raw: string): string => {
+  const items: string[] = []
+  let start = 0
+  let quote = ''
+  for (let index = 0; index < raw.length; index += 1) {
+    const char = raw[index]
+    if (quote) {
+      if (char === '\\') index += 1
+      else if (char === quote) quote = ''
+    } else if (char === '"' || char === "'") {
+      // Embedded quotes in an unquoted label are ambiguous; preserve the source.
+      if (raw.slice(start, index).trim()) return raw
+      quote = char
+    } else if (char === ',') {
+      items.push(raw.slice(start, index))
+      start = index + 1
+    }
+  }
+  if (quote) return raw
+  items.push(raw.slice(start))
+  return items
     .map((item) => item.trim())
     .filter(Boolean)
     .map((item) => {
       if (item.startsWith('"') || item.startsWith("'")) return item
       if (/^-?\d+(\.\d+)?$/.test(item)) return item
-      return `"${item.replace(/^["']|["']$/g, '')}"`
+      return `"${item}"`
     })
     .join(', ')
+}
 
 const normalizeXychartLine = (line: string): string[] => {
   const titleAndXAxis = line.match(/^\s*"([^"]+)"\s+x-axis\s+\[(.+)\]\s*$/i)
@@ -48,7 +67,7 @@ const normalizeMermaidBlocks = (markdown: string): string =>
   )
 
 /** GitHub-style alerts: > [!NOTE] → styled aside (ChatGPT/Cursor/Claude docs style). */
-const normalizeGfmAlerts = (markdown: string): string =>
+const replaceGfmAlerts = (markdown: string): string =>
   markdown.replace(
     /^>\s*\[!([A-Z]+)\]\s*\r?\n((?:>\s?.+\r?\n?)+)/gim,
     (_match, type: string, body: string) => {
@@ -61,6 +80,26 @@ const normalizeGfmAlerts = (markdown: string): string =>
       return `<aside data-agent-alert="${type.toLowerCase()}">\n\n${content}\n\n</aside>\n\n`
     }
   )
+
+// Transform only prose spans. Fence lines and bodies retain their original bytes, including
+// incomplete streaming fences and CRLF line endings.
+const normalizeGfmAlerts = (markdown: string): string => {
+  const tracker = createCodeFenceTracker()
+  let proseStart = 0
+  let output = ''
+  for (const match of markdown.matchAll(/[^\n]*(?:\n|$)/g)) {
+    const line = match[0]
+    if (!line) continue
+    const wasOpen = tracker.isOpen()
+    const isOpen = tracker.feed(line.replace(/\r?\n$/, ''))
+    if (!wasOpen && isOpen) output += replaceGfmAlerts(markdown.slice(proseStart, match.index))
+    if (wasOpen || isOpen) {
+      output += line
+      proseStart = match.index + line.length
+    }
+  }
+  return output + replaceGfmAlerts(markdown.slice(proseStart))
+}
 
 /** Normalize agent markdown before Streamdown parses it. */
 const normalizeAgentMarkdown = (markdown: string): string =>

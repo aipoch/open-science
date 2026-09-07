@@ -224,3 +224,57 @@ describe('createAgentMarkdownNormalizer', () => {
     expect(incremental(grown)).toBe(normalizeAgentMarkdown(grown))
   })
 })
+
+describe('fenced alert source fidelity', () => {
+  it.each(['```', '````', '~~~', '~~~~'])(
+    'preserves literal alerts in %s fences throughout streaming',
+    (fence) => {
+      const source = `${fence}markdown\n> [!NOTE]\n> This is literal example source.\n\n> [!TIP]\n> Still literal.\n${fence}\n`
+      const normalize = createAgentMarkdownNormalizer()
+      for (let end = 1; end <= source.length; end += 1) {
+        expect(normalize(source.slice(0, end))).toBe(source.slice(0, end))
+      }
+      const outside = '> [!NOTE]\n> Actual alert.'
+      expect(normalize(source + '\n' + outside)).toBe(source + '\n' + normalizeGfmAlerts(outside))
+    }
+  )
+})
+
+it.each(['```', '````', '~~~', '~~~~'])(
+  'preserves fenced alerts during full normalization with %s',
+  (fence) => {
+    const source = `${fence}markdown\n> [!NOTE]\n> This is literal example source.\n${fence}\n`
+    expect(normalizeAgentMarkdown(source)).toBe(source)
+  }
+)
+
+it.each([
+  ['````', '```', '`````'],
+  ['~~~~', '~~~', '~~~~~'],
+  ['```', '~~~', '```']
+])('keeps alerts literal past a non-closing %s fence marker', (opener, inner, closer) => {
+  const code = `${opener}markdown\n${inner}\n> [!NOTE]\n> Literal.\n${closer}\n`
+  const input = '> [!TIP]\n> Before.\n\n' + code + '\n> [!NOTE]\n> After.'
+  const expected =
+    normalizeGfmAlerts('> [!TIP]\n> Before.\n\n') +
+    code +
+    '\n' +
+    normalizeGfmAlerts('> [!NOTE]\n> After.')
+  expect(normalizeAgentMarkdown(input)).toBe(expected)
+  const incremental = createAgentMarkdownNormalizer()
+  for (let end = 1; end <= input.length; end += 1) {
+    expect(incremental(input.slice(0, end))).toBe(normalizeAgentMarkdown(input.slice(0, end)))
+  }
+})
+
+it('preserves CRLF source inside an unclosed Python fence', () => {
+  const input = '```python\r\nexample = """\r\n> [!NOTE]\r\n> Literal.\r\n"""'
+  expect(normalizeAgentMarkdown(input)).toBe(input)
+})
+
+it('leaves ambiguous axis quoting unchanged', () => {
+  for (const labels of ['"Control, untreated, Treatment', 'Control"untreated, Treatment']) {
+    const input = `xychart-beta\n x-axis [${labels}]`
+    expect(normalizeMermaidChart(input)).toBe(input)
+  }
+})
