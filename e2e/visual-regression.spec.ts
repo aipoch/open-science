@@ -200,7 +200,8 @@ test('keeps core desktop surfaces visually stable', async ({ app }) => {
   await projectDialog.getByLabel('Name').fill('Visual baseline project')
   await projectDialog.getByRole('button', { name: 'Create project' }).click()
   await expect(page.getByRole('heading', { name: 'New conversation' })).toBeVisible()
-  await expectStableScreenshot(page, 'workspace-empty.png')
+  // macOS runner text/icon rasterization differs slightly from the local baseline (about 0.21%).
+  await expectStableScreenshot(page, 'workspace-empty.png', 0.003)
 
   await page.getByRole('button', { name: 'Settings', exact: true }).click()
   const settings = page.getByRole('dialog', { name: 'Settings' })
