@@ -1,3 +1,4 @@
+import { permissionApprovalSummaryMigration } from './migrations/0032-permission-approval-summary'
 import { projectArchiveRevisionMigration } from './migrations/0031-project-archive-revision'
 import { createHash } from 'node:crypto'
 import { access, rename, rm } from 'node:fs/promises'
@@ -685,6 +686,17 @@ const MIGRATION_MANIFEST = [
       projectArchiveRevisionMigration.statements,
       projectArchiveRevisionMigration.verifiers,
       projectArchiveRevisionMigration.operations
+    ),
+    backupOnApply: 'required',
+    backupRetention: 'retain'
+  },
+  {
+    ...permissionApprovalSummaryMigration,
+    checksum: checksumMigrationPayload(
+      permissionApprovalSummaryMigration.id,
+      permissionApprovalSummaryMigration.statements,
+      permissionApprovalSummaryMigration.verifiers,
+      permissionApprovalSummaryMigration.operations
     ),
     backupOnApply: 'required',
     backupRetention: 'retain'

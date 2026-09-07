@@ -1,9 +1,27 @@
 // @vitest-environment jsdom
+import { mkdtemp, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import type { PermissionGrantSnapshot } from '../../../../shared/permission-grants'
+import type {
+  PermissionGrantRecord,
+  PermissionGrantSnapshot
+} from '../../../../shared/permission-grants'
+import { projectPermissionGrantSnapshot } from '../../../../main/permission-grants/catalog'
+import { createPermissionGrantRegistry } from '../../../../main/permission-grants/registry'
+import {
+  createProjectDbClient,
+  migrateApplicationDatabase
+} from '../../../../main/projects/prisma-client'
+import { DEFAULT_GLOBAL_PERMISSION_CAPABILITIES } from '../../../../main/permission-grants/defaults'
+import {
+  capabilityFromLegacyCategory,
+  commandPrefixPermissionCategory
+} from '../../../../main/permission-grants/capability'
+import { i18next } from '@/i18n'
 import { usePermissionGrantsStore } from '@/stores/permission-grants-store'
 import { useSettingsStore } from '@/stores/settings-store'
 import { PermissionsPanel } from './PermissionsPanel'
@@ -63,10 +81,11 @@ beforeEach(() => {
   )
 })
 
-afterEach(() => {
+afterEach(async () => {
   act(() => root.unmount())
   container.remove()
   document.body.innerHTML = ''
+  await i18next.changeLanguage('en')
 })
 
 const setPermissionApi = (api: Partial<Window['api']['permissions']>): void => {
@@ -77,6 +96,219 @@ const setPermissionApi = (api: Partial<Window['api']['permissions']>): void => {
 }
 
 describe('PermissionsPanel', () => {
+  it('PG01 distinguishes active same-name tools and opens each owning Connector', async () => {
+    const servers = [
+      { id: 'chemistry', name: 'chemistry-tools', displayName: 'Chemistry lab', enabled: true },
+      { id: 'biology', name: 'biology-tools', displayName: 'Biology lab', enabled: true }
+    ]
+    const records: PermissionGrantRecord[] = servers.map((server) => ({
+      id: `grant-${server.id}`,
+      revision: 1,
+      capability: { kind: 'mcp_tool', key: `mcp:${server.id}/search` },
+      scope: { kind: 'global' }
+    }))
+    const projected = projectPermissionGrantSnapshot(records, {
+      connectorPolicy: {
+        customMcpServers: servers,
+        askToolIds: servers.map((server) => `${server.name}/search`)
+      }
+    })
+    expect(projected.grants.map((grant) => grant.effectiveState)).toEqual(['active', 'active'])
+    const onOpenConnector = vi.fn()
+    setPermissionApi({ list: vi.fn().mockResolvedValue(projected) })
+    await act(async () => root.render(<PermissionsPanel onOpenConnector={onOpenConnector} />))
+
+    const rows = Array.from(container.querySelectorAll<HTMLElement>('[data-slot="permission-row"]'))
+    expect(rows).toHaveLength(2)
+    for (const record of records) expect(container.textContent).not.toContain(record.id)
+    expect.soft(new Set(rows.map((row) => row.textContent)).size).toBe(2)
+    const revokeNames = rows.map((row) =>
+      row.querySelector('[aria-label^="Revoke "]')?.getAttribute('aria-label')
+    )
+    expect.soft(new Set(revokeNames).size).toBe(2)
+    for (const [index, server] of servers.entries()) {
+      const row = rows[index]
+      expect.soft(row.textContent).toContain(server.displayName)
+      const details = Array.from(row.querySelectorAll<HTMLButtonElement>('button')).find(
+        (button) => !button.getAttribute('aria-label')?.startsWith('Revoke ')
+      )
+      expect.soft(details).toBeDefined()
+      await act(async () => details?.click())
+      expect.soft(onOpenConnector).toHaveBeenCalledWith(server.id)
+    }
+  })
+
+  it('PG01 distinguishes real command groups without exposing their digests', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'permission-row-'))
+    const client = createProjectDbClient(directory)
+    try {
+      await migrateApplicationDatabase(client)
+      const registry = await createPermissionGrantRegistry({
+        getClient: async () => client,
+        now: () => new Date('2026-09-07T00:00:00Z')
+      })
+      const records: PermissionGrantRecord[] = []
+      for (const prefix of [
+        ['git', 'status'],
+        ['git', 'diff']
+      ]) {
+        const capability = capabilityFromLegacyCategory(commandPrefixPermissionCategory(prefix)!)!
+        records.push(await registry.remember({ capability, scope: { kind: 'global' } }))
+      }
+      const projected = projectPermissionGrantSnapshot(records)
+      expect(records[0].capability).not.toEqual(records[1].capability)
+      expect(JSON.stringify(projected)).not.toContain('sha256')
+      setPermissionApi({ list: vi.fn().mockResolvedValue(projected) })
+      await act(async () => root.render(<PermissionsPanel />))
+
+      const rows = Array.from(
+        container.querySelectorAll<HTMLElement>('[data-slot="permission-row"]')
+      )
+      expect(rows).toHaveLength(2)
+      expect.soft(new Set(rows.map((row) => row.textContent)).size).toBe(2)
+      expect
+        .soft(
+          new Set(
+            rows.map((row) =>
+              row.querySelector('[aria-label^="Revoke "]')?.getAttribute('aria-label')
+            )
+          ).size
+        )
+        .toBe(2)
+      expect(rows.map((row) => row.textContent).join(' ')).toContain('Git: working tree status')
+      expect(rows.map((row) => row.textContent).join(' ')).toContain('Git: changes')
+      for (const record of records) expect(container.textContent).not.toContain(record.id)
+      expect(projected.grants.map((grant) => grant.approvalSummary)).toEqual([
+        'Git: working tree status',
+        'Git: changes'
+      ])
+    } finally {
+      await client.$disconnect()
+      await rm(directory, { recursive: true, force: true })
+    }
+  })
+
+  it('PG03 offers Restore defaults again after revoking a restored default', async () => {
+    const records: PermissionGrantRecord[] = DEFAULT_GLOBAL_PERMISSION_CAPABILITIES.map(
+      (capability, index) => ({
+        id: `default-${index}`,
+        revision: 1,
+        capability,
+        scope: { kind: 'global' }
+      })
+    )
+    const missing = projectPermissionGrantSnapshot(
+      records.slice(1),
+      {},
+      { version: 1, incompleteStores: [] }
+    )
+    const complete = projectPermissionGrantSnapshot(
+      records,
+      {},
+      { version: 2, incompleteStores: [] }
+    )
+    const missingAgain = { ...missing, version: 3 }
+    setPermissionApi({
+      list: vi.fn().mockResolvedValue(missing),
+      restoreDefaults: vi.fn().mockResolvedValue({ ...complete, restoredCount: 1 }),
+      revoke: vi.fn().mockResolvedValue({
+        ...missingAgain,
+        conflicts: [],
+        receipt: { undoToken: 'pg03', expiresAt: Date.now() + 8000, revokedCount: 1 }
+      })
+    })
+    await act(async () => root.render(<PermissionsPanel />))
+    const restore = container.querySelector<HTMLButtonElement>('[aria-label="Restore defaults"]')
+    expect(restore).not.toBeNull()
+    await act(async () => restore!.click())
+    expect(
+      container.querySelector<HTMLButtonElement>('[aria-label="Defaults restored"]')?.disabled
+    ).toBe(true)
+    const revoke = container.querySelector<HTMLButtonElement>(
+      `[aria-label^="Revoke ${complete.grants[0].capabilityLabel}"]`
+    )
+    expect(revoke).not.toBeNull()
+    await act(async () => revoke!.click())
+
+    expect(usePermissionGrantsStore.getState().missingDefaultGlobalGrantCount).toBe(1)
+    expect.soft(container.querySelector('[aria-label="Defaults restored"]')).toBeNull()
+    const restoreAgain = container.querySelector<HTMLButtonElement>(
+      '[aria-label="Restore defaults"]'
+    )
+    expect(restoreAgain).not.toBeNull()
+    expect(restoreAgain!.disabled).toBe(false)
+  })
+
+  it('keeps historical command groups explicit without claiming to know their commands', async () => {
+    const projected = projectPermissionGrantSnapshot([
+      {
+        id: 'historical',
+        revision: 1,
+        createdAt: Date.UTC(2026, 8, 7),
+        capability: capabilityFromLegacyCategory(
+          commandPrefixPermissionCategory(['git', 'status'])!
+        )!,
+        scope: { kind: 'global' }
+      }
+    ])
+    setPermissionApi({ list: vi.fn().mockResolvedValue(projected) })
+    await act(async () => root.render(<PermissionsPanel />))
+    const row = container.querySelector('[data-slot="permission-row"]')!
+    expect(row.textContent).toContain('Command details unavailable for this permission')
+    expect(row.textContent).toContain('Approved ')
+    expect(row.textContent).not.toContain('Git: working tree status')
+    expect(row.textContent).not.toContain('historical')
+  })
+
+  it.each(['zh-Hans', 'zh-Hant'] as const)(
+    'PG04 localizes projected row details in %s while preserving user names',
+    async (locale) => {
+      const projected = projectPermissionGrantSnapshot(
+        [
+          {
+            id: 'localized',
+            revision: 1,
+            capability: {
+              kind: 'mcp_tool',
+              key: 'mcp:chemistry/search',
+              qualifier: { mode: 'any' }
+            },
+            scope: { kind: 'project', projectId: 'research' }
+          }
+        ],
+        {
+          projects: new Map([['research', '研究项目']]),
+          connectorPolicy: {
+            customMcpServers: [
+              {
+                id: 'chemistry',
+                name: 'chemistry-tools',
+                displayName: 'Chemistry lab',
+                enabled: true
+              }
+            ]
+          }
+        }
+      )
+      await i18next.changeLanguage(locale)
+      setPermissionApi({ list: vi.fn().mockResolvedValue(projected) })
+      await act(async () => root.render(<PermissionsPanel onOpenConnector={vi.fn()} />))
+
+      const row = container.querySelector<HTMLElement>('[data-slot="permission-row"]')!
+      expect(row).not.toBeNull()
+      expect(row.textContent).toContain('研究项目')
+      expect
+        .soft(row.textContent)
+        .toContain(locale === 'zh-Hans' ? '项目：研究项目' : '專案：研究项目')
+      expect.soft(row.textContent).not.toContain('Any call')
+      expect.soft(row.textContent).not.toContain('Project:')
+      expect
+        .soft(row.textContent)
+        .not.toContain('Allowed by Connector policy even without this permission')
+      expect.soft(row.querySelector('[title]')?.getAttribute('title')).not.toContain('Project:')
+    }
+  )
+
   it('separates the new-conversation default from remembered permissions', async () => {
     setPermissionApi({
       list: vi.fn().mockResolvedValue({
@@ -272,7 +504,9 @@ describe('PermissionsPanel', () => {
     expect(document.body.textContent).toContain('python')
     expect(document.body.textContent).toContain('any call')
     expect(document.body.textContent).toContain('Project: Example project')
-    expect(document.body.querySelector('[aria-label="Revoke python"]')).not.toBeNull()
+    expect(
+      document.body.querySelector('[aria-label="Revoke python · Project: Example project"]')
+    ).not.toBeNull()
     expect(document.body.querySelector('h3')?.className).toContain('text-base')
     const permissionRow = document.body.querySelector<HTMLElement>('[data-slot="permission-row"]')
     expect(permissionRow?.className).toContain('min-h-11')
@@ -293,7 +527,9 @@ describe('PermissionsPanel', () => {
     expect(document.body.textContent).toContain('Shell')
     expect(document.body.textContent).toContain('Session: Analyze samples')
     expect(document.body.textContent).toContain('Also allowed for this project')
-    expect(document.body.querySelector('[aria-label="Revoke Shell"]')).not.toBeNull()
+    expect(
+      document.body.querySelector('[aria-label="Revoke Shell · Session: Analyze samples"]')
+    ).not.toBeNull()
   })
 
   it('opens the owning session from a session scope chip', async () => {
@@ -326,7 +562,9 @@ describe('PermissionsPanel', () => {
     await act(async () => root.render(<PermissionsPanel />))
 
     await act(async () => {
-      document.body.querySelector<HTMLButtonElement>('[aria-label="Revoke Shell"]')?.click()
+      document.body
+        .querySelector<HTMLButtonElement>('[aria-label="Revoke Shell · Session: Analyze samples"]')
+        ?.click()
     })
 
     expect(revoke).toHaveBeenCalledWith({ grants: [{ id: 'grant-1', revision: 1 }] })
@@ -345,12 +583,16 @@ describe('PermissionsPanel', () => {
     await act(async () => root.render(<PermissionsPanel />))
 
     await act(async () => {
-      document.body.querySelector<HTMLButtonElement>('[aria-label="Revoke Shell"]')?.click()
+      document.body
+        .querySelector<HTMLButtonElement>('[aria-label="Revoke Shell · Session: Analyze samples"]')
+        ?.click()
     })
 
     expect(document.body.querySelector('[role="alert"]')?.textContent).toContain('database locked')
     expect(document.body.textContent).toContain('Shell')
-    expect(document.body.querySelector('[aria-label="Revoke Shell"]')).not.toBeNull()
+    expect(
+      document.body.querySelector('[aria-label="Revoke Shell · Session: Analyze samples"]')
+    ).not.toBeNull()
   })
 
   it('shows Connector policy coverage and links to the owning Connector', async () => {
@@ -402,7 +644,9 @@ describe('PermissionsPanel', () => {
       document.body.querySelector<HTMLButtonElement>('[aria-label*="Revoke all"]')?.disabled
     ).toBe(true)
     expect(
-      document.body.querySelector<HTMLButtonElement>('[aria-label="Revoke Shell"]')?.disabled
+      document.body.querySelector<HTMLButtonElement>(
+        '[aria-label="Revoke Shell · Session: Analyze samples"]'
+      )?.disabled
     ).toBeFalsy()
   })
 })

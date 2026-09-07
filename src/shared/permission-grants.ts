@@ -30,6 +30,7 @@ export type PermissionGrantRecord = {
   capability: PermissionCapability
   scope: PermissionGrantScope
   createdAt?: number
+  approvalSummary?: string
   revision: number
 }
 
@@ -80,6 +81,7 @@ export type PermissionGrantMutationConflict = {
 export type PermissionGrantMutationResult = {
   grants: PermissionGrantRecord[]
   receipt?: PermissionGrantUndoReceipt
+  restoredCount?: number
   conflicts: PermissionGrantMutationConflict[]
 }
 
@@ -102,12 +104,17 @@ export type PermissionGrantView = {
   capabilityKind: PermissionCapabilityKind
   capabilityLabel: string
   qualifierLabel?: string
+  qualifierKind?: 'any' | 'exact' | 'category' | 'command_group'
+  approvalSummary?: string
   scopeKind: PermissionGrantScope['kind']
   scopeLabel: string
+  // null means the current host could not resolve the user-authored name.
+  scopeName?: string | null
   // A broader matching grant that remains effective after this exact row is revoked.
   coveredBy?: 'global' | 'project'
   effectiveState?: 'active' | 'covered_by_policy' | 'blocked_by_policy'
   policyHint?: string
+  connectorDisplayName?: string
   connectorServerId?: string
   connectorToolName?: string
   projectId?: string
@@ -143,6 +150,7 @@ export type PermissionGrantUndoExtendRequest = {
 
 export type PermissionGrantMutationView = PermissionGrantSnapshot & {
   receipt?: PermissionGrantUndoReceipt
+  restoredCount?: number
   conflicts: PermissionGrantMutationConflict[]
 }
 

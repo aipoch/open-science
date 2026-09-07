@@ -41,6 +41,35 @@ beforeEach(() => {
 })
 
 describe('permission grants store', () => {
+  it('reports an unavailable Undo instead of silently treating a zero restore as success', async () => {
+    usePermissionGrantsStore.setState({
+      undo: {
+        token: 'expired-in-main',
+        expiresAt: Date.now() + 8000,
+        messageKey: 'Revoked permission'
+      }
+    })
+    setPermissionApi({
+      restore: vi.fn().mockResolvedValue({
+        ...snapshot,
+        version: 2,
+        grants: [],
+        counts: { all: 0, global: 0, project: 0, session: 0 },
+        conflicts: [],
+        restoredCount: 0
+      })
+    })
+    await usePermissionGrantsStore.getState().restore()
+    expect(usePermissionGrantsStore.getState()).toMatchObject({
+      isRestoring: false,
+      grants: [],
+      undo: {
+        canRestore: false,
+        messageKey: 'Permission could not be restored: Undo is no longer available'
+      }
+    })
+  })
+
   it('reuses a snapshot for 60 seconds and supports an event-driven forced refresh', async () => {
     const list = vi.fn().mockResolvedValue(snapshot)
     setPermissionApi({ list })

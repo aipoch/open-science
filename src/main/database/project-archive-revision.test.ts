@@ -33,11 +33,13 @@ describe('Project archive revision', () => {
     // Reconstruct the immediately preceding released schema and ledger, including real row data.
     await client.$executeRawUnsafe('ALTER TABLE "Project" DROP COLUMN "archiveRevision"')
     await client.$executeRawUnsafe(
-      'DELETE FROM "_open_science_migrations" WHERE id = \'0031_project_archive_revision\''
+      'DELETE FROM "_open_science_migrations" WHERE id >= \'0031_project_archive_revision\''
     )
     await expect(
       migrateApplicationDatabase(client, { databasePath: join(root, 'open-science.db') })
-    ).resolves.toMatchObject({ applied: ['0031_project_archive_revision'] })
+    ).resolves.toMatchObject({
+      applied: ['0031_project_archive_revision', '0032_permission_approval_summary']
+    })
     expect(
       await client.$queryRawUnsafe(
         'SELECT "id", "archivedAt", "updatedAt" FROM "Project" ORDER BY "id"'

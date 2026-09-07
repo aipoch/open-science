@@ -126,7 +126,33 @@ const createPermissionGrantProjectionController = (
     request: PermissionGrantRevokeRequest
   ): Promise<PermissionGrantMutationView> => {
     validateRevokeRequest(request)
-    return mutationSnapshot(await options.registry.revoke(request))
+    // Resolve display metadata before committing the revoke: no storage I/O may consume the
+    // user-visible receipt window after the Registry creates it.
+    let preparedVersion: number
+    let metadata: Awaited<ReturnType<typeof names>>
+    do {
+      preparedVersion = version
+      metadata = await names()
+    } while (preparedVersion !== version)
+    const result = await options.registry.revoke(request)
+    // Another mutation or metadata invalidation during the commit makes these names uncertain.
+    // Return the current cache with honest missing details; the changed event refreshes metadata.
+    const expectedVersion = preparedVersion + (result.receipt ? 1 : 0)
+    if (version !== expectedVersion) {
+      metadata = {
+        projects: new Map(),
+        sessions: new Map(),
+        incompleteStores: ['projects', 'sessions', 'connector_policy']
+      }
+    }
+    return projectPermissionGrantMutation(
+      { ...result, grants: options.registry.listCached() },
+      metadata,
+      {
+        version,
+        incompleteStores: metadata.incompleteStores
+      }
+    )
   }
   const extendUndo = async (
     request: PermissionGrantUndoExtendRequest
