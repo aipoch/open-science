@@ -37,7 +37,7 @@ const fileAnnotationSource = (
 
 const publishAnnotationReveal = (annotation: Annotation): void => {
   pendingRevealId = annotation.id
-  pendingRevealAnnotation = annotation.kind === 'pdf' ? annotation : undefined
+  pendingRevealAnnotation = annotation
   document.dispatchEvent(new CustomEvent(REVEAL_PREPARE_EVENT, { detail: annotation }))
   document.dispatchEvent(new CustomEvent(REVEAL_EVENT, { detail: annotation.id }))
 }
@@ -78,6 +78,11 @@ const managedAnnotationIdentity = (
 ): ManagedProjectFileAnnotationIdentity | null | undefined => {
   if (source.kind === 'project-file') {
     return resolveManagedProjectFileAnnotationIdentity(source)
+  }
+  if (source.kind === 'literature-attachment-version') {
+    return parseLiteratureAttachmentVersionReference(source.path) === source.versionId
+      ? undefined
+      : null
   }
   if (source.kind === 'artifact-version') {
     const artifact = parseArtifactVersionLocator(source.path)

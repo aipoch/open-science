@@ -9,13 +9,19 @@ import type {
 } from '../../../../../shared/annotations'
 import { isBackwardSelection } from './annotation-trigger-anchor'
 import { createAnnotationId } from './annotation-id'
-import { revealTextAnnotationRange, subscribeAnnotationReveal } from './annotation-reveal'
+import {
+  revealTextAnnotationRange,
+  subscribeAnnotationReveal,
+  subscribeAnnotationRevealPreparation,
+  retryPendingAnnotationReveal
+} from './annotation-reveal'
 import {
   AnnotationDraftEditor,
   AnnotationMarkers,
   type AnnotationControl
 } from './TextAnnotationEditors'
 import {
+  textAnnotationAnchorForRange,
   quoteOccurrenceForRange,
   reconcileTextAnnotationRanges,
   retargetTextAnnotationRange
@@ -84,6 +90,7 @@ const TextAnnotationSurface = ({
   const selectionRef = useRef(selection)
   const [open, setOpen] = useState(false)
   const [note, setNote] = useState('')
+  const [revealUnavailable, setRevealUnavailable] = useState(false)
   const [annotationControls, setAnnotationControls] = useState<readonly AnnotationControl[]>([])
   const [hoveredAnnotationId, setHoveredAnnotationId] = useState<string>()
   const matchingAnnotations = useMemo(
@@ -189,19 +196,41 @@ const TextAnnotationSurface = ({
     return () => document.removeEventListener('pointerdown', onPointerDown, true)
   }, [clearDraft])
 
-  useEffect(
-    () =>
-      // The composer card reveals a quote by id; only the surface owning that
-      // annotation's range answers.
-      subscribeAnnotationReveal((annotationId) => {
-        if (!ownedHighlightIds.current.has(annotationId)) return false
-        const range = draftHighlightRanges.get(annotationId)
-        if (!range) return false
-        revealTextAnnotationRange(range)
-        return true
-      }),
-    []
-  )
+  useLayoutEffect(() => {
+    let prepared: TextAnnotation | undefined
+    const stopPreparation = subscribeAnnotationRevealPreparation((annotation) => {
+      prepared =
+        annotation.kind === 'text' && sourcesMatch(annotation.source, source)
+          ? annotation
+          : undefined
+      setRevealUnavailable(false)
+    })
+    const stopReveal = subscribeAnnotationReveal((id) => {
+      const annotation =
+        matchingAnnotations.find((entry) => entry.id === id) ??
+        (prepared?.id === id ? prepared : undefined)
+      const content = contentRef.current
+      if (!annotation || !content) return false
+      const range = reconcileTextAnnotationRanges(
+        content,
+        [annotation],
+        new Map(
+          Array.from(ownedHighlightIds.current).flatMap((id) => {
+            const range = draftHighlightRanges.get(id)
+            return range ? [[id, range] as const] : []
+          })
+        )
+      ).get(id)
+      setRevealUnavailable(!range)
+      if (!range) return false
+      revealTextAnnotationRange(range)
+      return true
+    })
+    return () => {
+      stopPreparation()
+      stopReveal()
+    }
+  }, [matchingAnnotations, source])
 
   const reconcileAnnotationHighlights = useCallback((): void => {
     const existing = new Map<string, Range>()
@@ -225,6 +254,7 @@ const TextAnnotationSurface = ({
       return
     }
     measureAnnotationControls()
+    retryPendingAnnotationReveal()
   }, [matchingAnnotations, measureAnnotationControls])
 
   useLayoutEffect(() => {
@@ -327,6 +357,7 @@ const TextAnnotationSurface = ({
       kind: 'text',
       target: 'agent',
       quote: selection.quote,
+      anchor: textAnnotationAnchorForRange(contentRef.current!, selection.range),
       ...(note.trim() ? { note: note.trim() } : {}),
       source
     }
@@ -365,6 +396,11 @@ const TextAnnotationSurface = ({
       <div ref={contentRef} className="contents">
         {children}
       </div>
+      {revealUnavailable ? (
+        <p role="status" className="text-xs text-muted-foreground">
+          {t('The exact annotation location could not be found.')}
+        </p>
+      ) : null}
       <AnnotationMarkers
         controls={annotationControls}
         hoveredAnnotationId={hoveredAnnotationId}

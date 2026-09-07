@@ -14,7 +14,9 @@ import { parseUploadVersionReference } from '../../../../../shared/uploads'
 import type { PreviewFileRendererProps } from './preview-types'
 import {
   revealTextAnnotationRange,
-  subscribeAnnotationReveal
+  subscribeAnnotationReveal,
+  subscribeAnnotationRevealPreparation,
+  retryPendingAnnotationReveal
 } from '../annotations/annotation-reveal'
 import { isBackwardSelection } from '../annotations/annotation-trigger-anchor'
 import { createAnnotationId } from '../annotations/annotation-id'
@@ -26,6 +28,7 @@ import {
 import type { AnnotationTriggerAction } from '../annotations/AnnotationTrigger'
 import {
   pdfTextSelectorForRange,
+  textAnnotationAnchorForRange,
   quoteOccurrenceForRange,
   reconcileTextAnnotationRanges,
   retargetTextAnnotationRange
@@ -274,6 +277,7 @@ export const PreviewTextAnnotationSurface = ({
   const selectionRef = useRef(selection)
   const [open, setOpen] = useState(false)
   const [note, setNote] = useState('')
+  const [revealUnavailable, setRevealUnavailable] = useState(false)
   const [copied, setCopied] = useState(false)
   const [annotationControls, setAnnotationControls] = useState<readonly AnnotationControl[]>([])
   const [hoveredAnnotationId, setHoveredAnnotationId] = useState<string>()
@@ -368,14 +372,12 @@ export const PreviewTextAnnotationSurface = ({
     }
     ownedRanges.current = reconcileTextAnnotationRanges(
       content,
-      matchingAnnotations.map((annotation) => ({
-        id: annotation.id,
-        quote: annotation.quote
-      })),
+      matchingAnnotations,
       ownedRanges.current
     )
     for (const range of ownedRanges.current.values()) highlight.add(range)
     measureAnnotationControls()
+    retryPendingAnnotationReveal()
   }, [matchingAnnotations, measureAnnotationControls])
 
   useLayoutEffect(() => {
@@ -528,18 +530,36 @@ export const PreviewTextAnnotationSurface = ({
     return () => document.removeEventListener('pointerdown', onPointerDown, true)
   }, [clearDraft])
 
-  useEffect(
-    () =>
-      // The composer card reveals a quote by id; only the surface owning that
-      // annotation's range answers.
-      subscribeAnnotationReveal((annotationId) => {
-        const range = ownedRanges.current.get(annotationId)
-        if (!range) return false
-        revealTextAnnotationRange(range)
-        return true
-      }),
-    []
-  )
+  useLayoutEffect(() => {
+    let prepared: TextAnnotation | undefined
+    const stopPreparation = subscribeAnnotationRevealPreparation((annotation) => {
+      prepared =
+        annotation.kind === 'text' &&
+        belongsToPreview(annotation, item, sourcePageNumber, annotationVersionId)
+          ? annotation
+          : undefined
+      setRevealUnavailable(false)
+    })
+    const stopReveal = subscribeAnnotationReveal((id) => {
+      if (annotationVersionPending) return false
+      const annotation =
+        matchingAnnotations.find((entry) => entry.id === id) ??
+        (prepared?.id === id ? prepared : undefined)
+      const content = contentRef.current
+      if (!annotation || !content) return false
+      const range = reconcileTextAnnotationRanges(content, [annotation], ownedRanges.current).get(
+        id
+      )
+      setRevealUnavailable(!range)
+      if (!range) return false
+      revealTextAnnotationRange(range)
+      return true
+    })
+    return () => {
+      stopPreparation()
+      stopReveal()
+    }
+  }, [matchingAnnotations, item, sourcePageNumber, annotationVersionId, annotationVersionPending])
 
   const add = (noteValue = note): void => {
     if (
@@ -575,6 +595,7 @@ export const PreviewTextAnnotationSurface = ({
           kind: 'text',
           target: 'agent',
           quote: selection.quote,
+          anchor: textAnnotationAnchorForRange(contentRef.current!, selection.range),
           ...(noteValue.trim() ? { note: noteValue.trim() } : {}),
           source: source!
         }
@@ -681,6 +702,11 @@ export const PreviewTextAnnotationSurface = ({
       <div ref={contentRef} className="contents">
         {children}
       </div>
+      {revealUnavailable ? (
+        <p role="status" className="text-xs text-muted-foreground">
+          {t('The exact annotation location could not be found.')}
+        </p>
+      ) : null}
       <AnnotationMarkers
         controls={annotationControls}
         hoveredAnnotationId={hoveredAnnotationId}

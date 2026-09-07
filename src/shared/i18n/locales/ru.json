@@ -397,6 +397,8 @@
     "Remove annotation": "Удалить аннотацию",
     "Sent annotations": "Отправленные аннотации",
     "Show annotation source": "Показать источник аннотации",
+    "Image not retained: session image budget reached.": "Изображение не сохранено: достигнут лимит изображений сеанса.",
+    "The exact annotation location could not be found.": "Не удалось найти точное положение аннотации.",
     "Source: {{source}}": "Источник: {{source}}",
     "PDF area": "Область PDF",
     "PDF quote": "Цитата из PDF",

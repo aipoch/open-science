@@ -3304,12 +3304,16 @@ describe('notebook runtime service', () => {
     it('queues overlapping shell calls in the same Session until the active command finishes', async () => {
       const root = await createStorageRoot()
       const entered: string[] = []
+      const firstStarted = createDeferred<void>()
+      const secondStarted = createDeferred<void>()
       const releases = new Map<string, () => void>()
       const execute = vi.fn<NotebookShellProcess['execute']>(
         ({ command }) =>
           new Promise((resolve) => {
             entered.push(command)
             releases.set(command, () => resolve({ stdout: command, stderr: '', exitCode: 0 }))
+            if (command === 'first') firstStarted.resolve(undefined)
+            if (command === 'second') secondStarted.resolve(undefined)
           })
       )
       const service = new NotebookRuntimeService({
@@ -3347,30 +3351,22 @@ describe('notebook runtime service', () => {
         provenanceContext: childContext
       })
 
-      await vi.waitFor(async () => {
-        const state = await service.state({
-          sessionId: 'session-1',
-          workspaceCwd: root
-        })
-        expect(state.runs).toHaveLength(2)
-      })
-      const queuedState = await service.state({
-        sessionId: 'session-1',
-        workspaceCwd: root
-      })
-      const queuedRun = queuedState.runs.at(-1)
-      if (queuedRun?.status !== 'queued') {
-        await vi.waitFor(() => expect(entered).toHaveLength(2))
-        for (const release of releases.values()) release()
-        await Promise.allSettled([first, second])
-      }
-      await vi.waitFor(() => expect(entered).toEqual(['first']))
-      expect(entered).toEqual(['first'])
-      expect(queuedRun).toMatchObject({ script: 'second', status: 'queued' })
-
       try {
+        // Filesystem preparation can exceed waitFor's default 1s under CI coverage.
+        // Observe process admission directly before checking the second call is still queued.
+        await firstStarted.promise
+        await vi.waitFor(
+          async () => {
+            const state = await service.state({ sessionId: 'session-1', workspaceCwd: root })
+            expect(state.runs).toHaveLength(2)
+            expect(state.runs.at(-1)).toMatchObject({ script: 'second', status: 'queued' })
+          },
+          { timeout: 10_000 }
+        )
+        expect(entered).toEqual(['first'])
         releases.get('first')?.()
-        await vi.waitFor(() => expect(entered).toEqual(['first', 'second']))
+        await secondStarted.promise
+        expect(entered).toEqual(['first', 'second'])
         releases.get('second')?.()
 
         await expect(Promise.all([first, second])).resolves.toEqual([
@@ -3378,6 +3374,11 @@ describe('notebook runtime service', () => {
           { stdout: 'second', stderr: '', exitCode: 0 }
         ])
       } finally {
+        execute.mockImplementation(async ({ command }) => ({
+          stdout: command,
+          stderr: '',
+          exitCode: 0
+        }))
         for (const release of releases.values()) release()
         await Promise.allSettled([first, second])
       }

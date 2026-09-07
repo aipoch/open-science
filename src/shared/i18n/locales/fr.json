@@ -392,6 +392,8 @@
     "Remove annotation": "Supprimer l’annotation",
     "Sent annotations": "Annotations envoyées",
     "Show annotation source": "Afficher la source de l’annotation",
+    "Image not retained: session image budget reached.": "Image non conservée : la limite des images de la session est atteinte.",
+    "The exact annotation location could not be found.": "La position exacte de l’annotation est introuvable.",
     "Source: {{source}}": "Source : {{source}}",
     "PDF area": "Zone PDF",
     "PDF quote": "Citation PDF",

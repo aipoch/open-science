@@ -2719,6 +2719,7 @@ describe('workspace agent message sending', () => {
     await vi.waitFor(() => expect(sendPrompt).toHaveBeenCalledOnce())
     expect(sendPrompt.mock.calls[0]?.[1]).toContain('[Annotations]')
     expect(sendPrompt.mock.calls[0]?.[1]).toContain('The confidence intervals overlap.')
+    expect(sendPrompt.mock.calls[0]?.[1]).toContain(JSON.stringify(annotation.source))
     expect(useSessionStore.getState().sessions[0].messages[0]).toMatchObject({
       role: 'user',
       content: '',
@@ -2726,55 +2727,62 @@ describe('workspace agent message sending', () => {
     })
   })
 
-  it('dispatches a PDF region Evidence screenshot as current visual context', async () => {
-    const sendPrompt = vi.fn().mockResolvedValue(createSnapshot(['transport-session-1']))
-    const runtime = {
-      state: createSnapshot(['transport-session-1']),
-      createSession: vi.fn(),
-      resumeSession: vi.fn(),
-      resetSessionContext: vi.fn(),
-      sendPrompt
-    }
-    const annotation = {
-      id: 'pdf-region-1',
-      kind: 'pdf' as const,
-      target: 'agent' as const,
-      source: {
-        kind: 'upload-version' as const,
-        projectId: 'project-1',
-        sessionId: 'transport-session-1',
-        versionId: 'version-1',
-        name: 'paper.pdf',
-        path: 'upload-version:project-1/transport-session-1/version-1',
-        checksum: 'a'.repeat(64)
-      },
-      selector: {
-        kind: 'region' as const,
-        pageNumber: 2,
-        rect: { x: 0.1, y: 0.2, width: 0.4, height: 0.3 },
-        pageRotation: 0,
-        image: { mimeType: 'image/png' as const, data: 'AQID', byteLength: 3 }
+  it.each([true, false])(
+    'dispatches PDF region evidence with bitmap retained=%s',
+    async (withBitmap) => {
+      const sendPrompt = vi.fn().mockResolvedValue(createSnapshot(['transport-session-1']))
+      const runtime = {
+        state: createSnapshot(['transport-session-1']),
+        createSession: vi.fn(),
+        resumeSession: vi.fn(),
+        resetSessionContext: vi.fn(),
+        sendPrompt
       }
+      const annotation = {
+        id: 'pdf-region-1',
+        kind: 'pdf' as const,
+        target: 'agent' as const,
+        source: {
+          kind: 'upload-version' as const,
+          projectId: 'project-1',
+          sessionId: 'transport-session-1',
+          versionId: 'version-1',
+          name: 'paper.pdf',
+          path: 'upload-version:project-1/transport-session-1/version-1',
+          checksum: 'a'.repeat(64)
+        },
+        selector: {
+          kind: 'region' as const,
+          pageNumber: 2,
+          rect: { x: 0.1, y: 0.2, width: 0.4, height: 0.3 },
+          pageRotation: 0,
+          ...(withBitmap
+            ? { image: { mimeType: 'image/png' as const, data: 'AQID', byteLength: 3 } }
+            : { imageOmissionReason: 'session-budget' as const })
+        }
+      }
+
+      await sendWorkspaceMessage(runtime, {
+        sessionId: 'transport-session-1',
+        text: 'Explain this figure.',
+        annotations: [annotation],
+        cwd: '/workspace/project',
+        projectId: 'project-1',
+        supportsImageInput: withBitmap
+      })
+
+      await vi.waitFor(() => expect(sendPrompt).toHaveBeenCalledOnce())
+      expect(sendPrompt.mock.calls[0]?.[1]).toContain('"type":"pdf-region"')
+      expect(sendPrompt.mock.calls[0]?.[1]).not.toContain('AQID')
+      expect(sendPrompt.mock.calls[0]?.[7]).toBeUndefined()
+      expect(sendPrompt.mock.calls[0]?.[14]).toEqual(
+        withBitmap ? [{ mimeType: 'image/png', data: 'AQID', byteLength: 3 }] : undefined
+      )
+      if (!withBitmap)
+        expect(sendPrompt.mock.calls[0]?.[1]).toContain('"imageOmissionReason":"session-budget"')
+      expect(useSessionStore.getState().sessions[0].messages[0]?.annotations).toEqual([annotation])
     }
-
-    await sendWorkspaceMessage(runtime, {
-      sessionId: 'transport-session-1',
-      text: 'Explain this figure.',
-      annotations: [annotation],
-      cwd: '/workspace/project',
-      projectId: 'project-1',
-      supportsImageInput: true
-    })
-
-    await vi.waitFor(() => expect(sendPrompt).toHaveBeenCalledOnce())
-    expect(sendPrompt.mock.calls[0]?.[1]).toContain('"type":"pdf-region"')
-    expect(sendPrompt.mock.calls[0]?.[1]).not.toContain('AQID')
-    expect(sendPrompt.mock.calls[0]?.[7]).toBeUndefined()
-    expect(sendPrompt.mock.calls[0]?.[14]).toEqual([
-      { mimeType: 'image/png', data: 'AQID', byteLength: 3 }
-    ])
-    expect(useSessionStore.getState().sessions[0].messages[0]?.annotations).toEqual([annotation])
-  })
+  )
 
   it('rejects PDF region Evidence before mutation when no visual model is available', async () => {
     const sendPrompt = vi.fn()
@@ -11564,7 +11572,7 @@ describe('edit resend reply streaming', () => {
       annotations: [annotation]
     })
     expect(runtime.sendPrompt.mock.calls[0]?.[1]).toContain(
-      '"type":"quote","content":"Quoted evidence","instruction":"Updated note"'
+      '"type":"quote","content":"Quoted evidence","source":{"kind":"agent-message","sessionId":"session-1","messageId":"agent-1"},"instruction":"Updated note"'
     )
   })
 

@@ -77,6 +77,7 @@ describe('LiteratureFullTextLookup', () => {
     expect(await screen.findByText('Configured')).not.toBeNull()
     expect(saveEmail).toHaveBeenCalledWith({ contactEmail: 'research@lab.org' })
     expect(screen.queryByLabelText('Contact email')).toBeNull()
+    // Credential UI can update before the lookup effect starts the new search.
     await waitFor(() => expect(fullText).toHaveBeenCalledTimes(2))
     fireEvent.click(screen.getByRole('button', { name: 'Edit' }))
     fireEvent.click(screen.getByRole('button', { name: 'Remove email' }))
@@ -184,7 +185,7 @@ describe('LiteratureFullTextLookup', () => {
     expect(validate).toHaveBeenCalledWith({ apiKey: 'test-key' })
     expect(save).toHaveBeenCalledWith({ apiKey: 'test-key' })
     expect(screen.queryByLabelText('OpenAlex API key')).toBeNull()
-    expect(fullText).toHaveBeenCalledTimes(2)
+    await waitFor(() => expect(fullText).toHaveBeenCalledTimes(2))
   })
 
   it('keeps a rejected key editable and does not save or restart the search', async () => {
