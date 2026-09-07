@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import { readFile } from 'node:fs/promises'
 import { createRequire } from 'node:module'
 import { join } from 'node:path'
@@ -21,6 +22,13 @@ import {
 } from './citation-style-library'
 
 const require = createRequire(import.meta.url)
+
+// Keep imported keys and the established LaTeX fallback stable across export paths.
+const citationKey = (id: string, item: LiteratureItemInput): string => {
+  const stored = item.citationKey?.trim()
+  if (stored && /^[A-Za-z0-9][A-Za-z0-9_:.+-]{0,127}$/u.test(stored)) return stored
+  return id
+}
 
 type CitationOutputFormat = 'bibtex' | 'ris'
 type FormattedReference = Readonly<{ itemId: string; reference: string; inText: string }>
@@ -227,7 +235,8 @@ class LiteratureCitationFormatter {
   async formatReferences(
     references: readonly CitationReference[],
     style: LiteratureCitationStyle,
-    locale: LiteratureCitationLocale
+    locale: LiteratureCitationLocale,
+    output: 'plain' | 'html' = 'plain'
   ): Promise<FormattedReference[]> {
     const engine = await this.engine()
     const result = JSON.parse(
@@ -236,7 +245,7 @@ class LiteratureCitationFormatter {
         style,
         locale,
         false,
-        'plain',
+        output,
         false
       )
     ) as unknown
@@ -265,8 +274,21 @@ class LiteratureCitationFormatter {
     format: CitationOutputFormat
   ): Promise<string> {
     const engine = await this.engine()
-    const input = JSON.stringify(references.map(({ id, item }) => toCslItem(id, item)))
-    return format === 'bibtex' ? engine.exportBibtex(input) : engine.exportRis(input)
+    if (format === 'ris') {
+      return engine.exportRis(JSON.stringify(references.map(({ id, item }) => toCslItem(id, item))))
+    }
+    // The engine silently renames duplicate IDs in a batch. Export records independently so the
+    // complete-output owner (Library export or LaTeX bundle) can reject collisions without renaming.
+    return references
+      .map(({ id, item }) => {
+        const fallback = /^[A-Za-z0-9][A-Za-z0-9_:.+-]{0,127}$/u.test(id)
+          ? id
+          : `os${createHash('sha256').update(id).digest('hex').slice(0, 12)}`
+        return engine
+          .exportBibtex(JSON.stringify(toCslItem(citationKey(fallback, item), item)))
+          .trim()
+      })
+      .join('\n\n')
   }
 
   async parseReferences(input: string): Promise<ParsedCitationRecords> {
@@ -301,7 +323,7 @@ class LiteratureCitationFormatter {
   }
 }
 
-export { LiteratureCitationFormatter }
+export { citationKey, LiteratureCitationFormatter }
 export type {
   CitationImportError,
   CitationOutputFormat,

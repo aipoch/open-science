@@ -21,6 +21,26 @@ const item = (overrides: Partial<LiteratureItemInput> = {}): LiteratureItemInput
 })
 
 describe('toCslItem', () => {
+  it.each([
+    ['2024-03-12', 2023, [2024, 3, 12]],
+    ['2024-3-12', undefined, [2024, 3, 12]],
+    ['2024-02', undefined, [2024, 2]],
+    ['2024', undefined, [2024]],
+    ['2024-02-29', undefined, [2024, 2, 29]],
+    ['2023-02-29', 2023, [2023]],
+    ['2024-13-01', 2024, [2024]],
+    ['2024-04-31', 2024, [2024]],
+    ['Spring 2024', 2024, [2024]],
+    ['', 2024, [2024]]
+  ])(
+    'projects explicit date precision for %s with year fallback %s',
+    (issuedText, issuedYear, parts) => {
+      expect(toCslItem('dated', item({ issuedText, issuedYear })).issued).toEqual({
+        'date-parts': [parts]
+      })
+    }
+  )
+
   it('normalizes identifiers before projecting citation metadata', () => {
     expect(
       toCslItem(

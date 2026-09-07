@@ -4223,6 +4223,50 @@ describe('LiteratureLibraryPage', () => {
     expect(new TextDecoder().decode(request.data)).toContain('@article{item-1')
   })
 
+  it.each([2, 201])(
+    'rejects duplicate BibTeX keys among %s entries before saving a file',
+    async (count) => {
+      const entries = Array.from({ length: count }, (_, index) => createLibraryItem(index + 1))
+      search.mockImplementation(
+        (request: { scope: string; projectId?: string; offset?: number; limit?: number }) =>
+          Promise.resolve(
+            request.scope === 'library' && request.projectId === 'project-1'
+              ? {
+                  entries: entries.slice(
+                    request.offset ?? 0,
+                    (request.offset ?? 0) + (request.limit ?? 100)
+                  ),
+                  totalCount: entries.length,
+                  nextOffset:
+                    (request.offset ?? 0) + (request.limit ?? 100) < entries.length
+                      ? (request.offset ?? 0) + (request.limit ?? 100)
+                      : undefined
+                }
+              : { entries: [] }
+          )
+      )
+      formatReferences.mockImplementation(async ({ itemIds }: { itemIds: string[] }) => ({
+        references: [],
+        exports: {
+          bibtex: itemIds
+            .map((id) => `@article{${id === `item-${count}` ? 'item-1' : id}, title={Paper}}`)
+            .join('\n'),
+          ris: 'TY  - JOUR\nER  -'
+        }
+      }))
+      useNavigationStore.setState({ pendingLiteratureProjectId: 'project-1' })
+      render(<LiteratureLibraryPage />)
+      await screen.findByRole('heading', { name: 'Retrieval research' })
+      await openMenu(screen.getByTitle('More actions'))
+      fireEvent.click(screen.getByRole('menuitem', { name: 'BibTeX' }))
+      await waitFor(() => expect(formatReferences).toHaveBeenCalledTimes(Math.ceil(count / 200)))
+      await waitFor(() =>
+        expect(screen.queryByText('References could not be exported.')).not.toBeNull()
+      )
+      expect(saveBlobFile).not.toHaveBeenCalled()
+    }
+  )
+
   it('exports every reference in the current Project', async () => {
     search.mockImplementation((request: { projectId?: string; scope: string; sortBy?: string }) =>
       Promise.resolve(

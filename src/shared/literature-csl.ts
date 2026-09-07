@@ -101,6 +101,29 @@ const creatorsFor = (
   return names.length > 0 ? names : undefined
 }
 
+const issuedDate = (item: LiteratureItemInput): CslDate | undefined => {
+  const match = /^(\d{4})(?:-(\d{1,2})(?:-(\d{1,2}))?)?$/u.exec(item.issuedText.trim())
+  if (match) {
+    const year = Number(match[1])
+    const month = match[2] ? Number(match[2]) : undefined
+    const day = match[3] ? Number(match[3]) : undefined
+    const leap = year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0)
+    const days = [31, leap ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
+    if (
+      year > 0 &&
+      (month === undefined || (month >= 1 && month <= 12)) &&
+      (day === undefined || (day >= 1 && day <= days[month! - 1]!))
+    ) {
+      return {
+        'date-parts': [
+          [year, ...(month === undefined ? [] : [month]), ...(day === undefined ? [] : [day])]
+        ]
+      }
+    }
+  }
+  return item.issuedYear === undefined ? undefined : { 'date-parts': [[item.issuedYear]] }
+}
+
 const accessedDate = (accessedAt: number | undefined): CslDate | undefined => {
   if (accessedAt === undefined) return undefined
   const date = new Date(accessedAt)
@@ -130,6 +153,7 @@ const toCslItem = (id: string, item: LiteratureItemInput): CslItem => {
   const editor = creatorsFor(item.creators, 'editor')
   const translator = creatorsFor(item.creators, 'translator')
   const accessed = accessedDate(item.accessedAt)
+  const issued = issuedDate(item)
   const DOI = identifierFor(item, 'doi')
   const ISBN = identifierFor(item, 'isbn')
   const ISSN = identifierFor(item, 'issn')
@@ -147,7 +171,7 @@ const toCslItem = (id: string, item: LiteratureItemInput): CslItem => {
     ...(author ? { author } : {}),
     ...(editor ? { editor } : {}),
     ...(translator ? { translator } : {}),
-    ...(item.issuedYear !== undefined ? { issued: { 'date-parts': [[item.issuedYear]] } } : {}),
+    ...(issued ? { issued } : {}),
     ...(accessed ? { accessed } : {}),
     ...(item.containerTitle ? { 'container-title': item.containerTitle } : {}),
     ...(item.shortTitle ? { 'title-short': item.shortTitle } : {}),
