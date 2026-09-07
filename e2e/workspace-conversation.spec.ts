@@ -678,7 +678,7 @@ test('shows the Electron failure reason when a source request fails', async ({ a
   await expect(sourceError).toContainText('ERR_CONNECTION_REFUSED (-102)')
 })
 
-test('archives a completed session from its mobile sidebar actions', async ({ app }) => {
+test('archives a completed session from its mobile sidebar actions', async ({ app }, testInfo) => {
   await app.completeOnboarding()
   const page = await app.configureFakeAgent()
   await createProject(page)
@@ -753,6 +753,10 @@ test('archives a completed session from its mobile sidebar actions', async ({ ap
     }
   }
   await expect(page.getByRole('button', { name: `Open actions for ${USER_MESSAGE}` })).toBeHidden()
+  await page.screenshot({
+    path: testInfo.outputPath('mobile-session-archived.png'),
+    animations: 'disabled'
+  })
 })
 
 test('identifies the Project before deleting a workspace Session', async ({ app }, testInfo) => {
