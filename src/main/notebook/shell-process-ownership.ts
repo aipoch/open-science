@@ -225,12 +225,13 @@ class ShellProcessOwnershipRegistry {
             closeSync(promotedDescriptor)
           }
           renameSync(temporary, path)
-        } finally {
+        } catch (error) {
           try {
             unlinkSync(temporary)
-          } catch (error) {
-            if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+          } catch {
+            // Preserve the promotion failure; the original launch receipt remains authoritative.
           }
+          throw error
         }
         let released = false
         return () => {
