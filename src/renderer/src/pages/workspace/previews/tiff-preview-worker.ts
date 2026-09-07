@@ -1,3 +1,4 @@
+import { TiffPageDecodeError } from './tiff-preview-types'
 import { decodeTiffPage, resizeDecodedTiffPage } from './tiff-preview'
 import type {
   TiffDecodeWorkerRequest,
@@ -27,6 +28,7 @@ self.addEventListener('message', (event: MessageEvent<TiffDecodeWorkerRequest>) 
     const response: TiffDecodeWorkerResponse = {
       type: 'error',
       requestId: request.requestId,
+      ...(error instanceof TiffPageDecodeError ? { pageCount: error.pageCount } : {}),
       message: error instanceof Error ? error.message : String(error)
     }
     self.postMessage(response)
