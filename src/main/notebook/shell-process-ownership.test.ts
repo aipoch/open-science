@@ -1,6 +1,7 @@
 import { spawn } from 'node:child_process'
 import { EventEmitter } from 'node:events'
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdtemp, readFile, rm } from 'node:fs/promises'
+import * as fs from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -9,6 +10,10 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { registerOwnedPosixProcessGroup } from '../process-tree'
 import { ShellProcessOwnershipRegistry } from './shell-process-ownership'
 import type { ChildProcess } from 'node:child_process'
+
+vi.mock('node:fs', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('node:fs')>())
+}))
 
 const roots: string[] = []
 const BOOT_A = '11111111-1111-4111-8111-111111111111'
@@ -104,6 +109,72 @@ describe('Shell process ownership receipt lifecycle', () => {
     })
     launch.abort()
     await expect(new ShellProcessOwnershipRegistry(root).recover()).resolves.toBeUndefined()
+  })
+
+  it.each([BOOT_A, BOOT_B, undefined, 'invalid-token'])(
+    'clears an interrupted launch only when a different valid boot proves it cannot survive: %s',
+    async (currentBoot) => {
+      const root = await mkdtemp(join(tmpdir(), 'shell-launch-reboot-'))
+      roots.push(root)
+      const registry = new ShellProcessOwnershipRegistry(root, { readBootToken: () => BOOT_A })
+      const launch = registry.beginLaunch({
+        runId: 'interrupted-launch',
+        projectId: 'project-1',
+        sessionId: 'session-1',
+        platform: 'linux'
+      })
+      const probe = vi.fn(() => true)
+      const terminate = vi.fn(async () => ({ reaped: true }))
+      const recovery = new ShellProcessOwnershipRegistry(root, {
+        readBootToken: () => currentBoot,
+        processExists: probe,
+        ownedTreeExists: probe,
+        terminateOwnedTree: terminate
+      })
+      if (currentBoot === BOOT_B) {
+        await recovery.recover()
+        await recovery.recover()
+        expect(recovery.hasReceipts()).toBe(false)
+      } else {
+        await expect(recovery.recover()).rejects.toMatchObject({
+          code: 'SHELL_PROCESS_RECOVERY_BLOCKED'
+        })
+        expect(recovery.hasReceipts()).toBe(true)
+      }
+      expect(probe).not.toHaveBeenCalled()
+      expect(terminate).not.toHaveBeenCalled()
+      launch.abort()
+    }
+  )
+
+  it('retains the intact launch intent when atomic receipt promotion fails', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'shell-promotion-failure-'))
+    roots.push(root)
+    const registry = new ShellProcessOwnershipRegistry(root, {
+      readBootToken: () => BOOT_A,
+      processStartIdentity: () => 'start-identity'
+    })
+    const path = join(root, 'shell-process-ownership', 'promotion-failure.json')
+    const launch = registry.beginLaunch({
+      runId: 'promotion-failure',
+      projectId: 'project-1',
+      sessionId: 'session-1',
+      platform: 'linux'
+    })
+    const before = await readFile(path, 'utf8')
+    const rename = vi.spyOn(fs, 'renameSync').mockImplementation(() => {
+      throw new Error('atomic rename failed')
+    })
+    try {
+      expect(() => launch.claim({ pid: 4242 } as ChildProcess, 'linux')).toThrow(
+        'atomic rename failed'
+      )
+      expect(await readFile(path, 'utf8')).toBe(before)
+      expect(JSON.parse(before)).toMatchObject({ state: 'launching', bootToken: BOOT_A })
+    } finally {
+      rename.mockRestore()
+      launch.abort()
+    }
   })
 
   it('preserves an unrelated process after positively proving PID reuse', async () => {

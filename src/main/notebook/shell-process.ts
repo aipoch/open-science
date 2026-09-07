@@ -369,16 +369,31 @@ const runShellCommand = (
           ? launchOwnership.claim(child, platform)
           : options.claimProcess?.(child, platform)
       } catch (error) {
-        launchOwnership?.abort()
-        void terminateProcessTree(child).finally(() => {
-          endSandboxExecution?.()
-          sandboxed?.cleanup()
-          resolve({
-            stdout: '',
-            stderr: error instanceof Error ? error.message : String(error),
-            exitCode: null
+        // spawn can emit its error asynchronously after the missing PID made claim fail.
+        child.once('error', () => undefined)
+        let reaped = false
+        // A failed spawn has no process to signal; a no-PID handle must never reach POSIX kill.
+        const termination =
+          child.pid === undefined ? Promise.resolve({ reaped: true }) : terminateProcessTree(child)
+        void termination
+          .then((result) => {
+            reaped = result.reaped
+            if (reaped) launchOwnership?.abort()
           })
-        })
+          .catch(() => {
+            // Retain the ownership receipt when cleanup cannot prove that the child tree is gone.
+          })
+          .finally(() => {
+            endSandboxExecution?.()
+            if (reaped) sandboxed?.cleanup()
+            const result: NotebookShellResult = {
+              stdout: '',
+              stderr: error instanceof Error ? error.message : String(error),
+              exitCode: null
+            }
+            if (!reaped) Object.defineProperty(result, 'ownedTreeReaped', { value: false })
+            resolve(result)
+          })
         return
       }
 
@@ -403,7 +418,7 @@ const runShellCommand = (
         endSandboxExecution?.()
         const normalized = normalizePowerShellStderr(result.stderr)
         const stderr = sandboxed ? sandboxed.annotateStderr(normalized) : normalized
-        sandboxed?.cleanup()
+        if (ownedTreeReaped) sandboxed?.cleanup()
         const completed = { ...result, stderr }
         if (!ownedTreeReaped) {
           // Keep cleanup evidence runtime-private and out of the exact legacy foreground payload.

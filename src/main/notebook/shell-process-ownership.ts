@@ -2,11 +2,11 @@ import { spawnSync, type ChildProcess } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import {
   closeSync,
-  ftruncateSync,
   fsyncSync,
   mkdirSync,
   openSync,
   readdirSync,
+  renameSync,
   unlinkSync,
   writeSync
 } from 'node:fs'
@@ -34,6 +34,7 @@ type ShellProcessOwnershipRecord = Readonly<{
 type ShellProcessLaunchIntent = Readonly<{
   version: 1
   state: 'launching'
+  bootToken?: string
   runId: string
   projectId: string
   sessionId: string
@@ -137,16 +138,12 @@ class ShellProcessOwnershipRegistry {
     metadata: { runId: string; projectId: string; sessionId: string; platform: NodeJS.Platform }
   ): () => void {
     const launch = this.beginLaunch(metadata)
-    try {
-      return launch.claim(child, metadata.platform)
-    } catch (error) {
-      launch.abort()
-      throw error
-    }
+    // Once a child exists, only its caller can prove it was reaped before removing the receipt.
+    return launch.claim(child, metadata.platform)
   }
 
-  // Persist uncertain ownership before spawn. The same fsynced receipt is promoted in place once
-  // the child exposes its immutable start identity, eliminating the unjournaled spawn→claim gap.
+  // Persist uncertain ownership before spawn, then atomically replace it with the child's identity.
+  // A failed promotion must leave the original launch intent intact for fail-closed recovery.
   beginLaunch(metadata: {
     runId: string
     projectId: string
@@ -160,9 +157,14 @@ class ShellProcessOwnershipRegistry {
     mkdirSync(this.directory, { recursive: true })
     const path = this.path(metadata.runId)
     const descriptor = openSync(path, 'wx', 0o600)
+    const bootToken =
+      (metadata.platform ?? process.platform) === 'linux'
+        ? (this.options.readBootToken ?? readBootToken)()
+        : undefined
     const intent: ShellProcessLaunchIntent = {
       version: 1,
       state: 'launching',
+      ...(bootToken ? { bootToken } : {}),
       runId: metadata.runId,
       projectId: metadata.projectId,
       sessionId: metadata.sessionId,
@@ -181,12 +183,7 @@ class ShellProcessOwnershipRegistry {
       }
       throw error
     }
-    let closed = false
-    const close = (): void => {
-      if (closed) return
-      closed = true
-      closeSync(descriptor)
-    }
+    closeSync(descriptor)
     const remove = (): void => {
       try {
         unlinkSync(path)
@@ -218,10 +215,23 @@ class ShellProcessOwnershipRegistry {
               throw new Error('Shell process launch identity could not be confirmed.')
             })()
         }
-        ftruncateSync(descriptor, 0)
-        writeSync(descriptor, `${JSON.stringify(record)}\n`, 0, 'utf8')
-        fsyncSync(descriptor)
-        close()
+        const temporary = `${path}.${randomUUID()}.tmp`
+        const promotedDescriptor = openSync(temporary, 'wx', 0o600)
+        try {
+          try {
+            writeSync(promotedDescriptor, `${JSON.stringify(record)}\n`, undefined, 'utf8')
+            fsyncSync(promotedDescriptor)
+          } finally {
+            closeSync(promotedDescriptor)
+          }
+          renameSync(temporary, path)
+        } finally {
+          try {
+            unlinkSync(temporary)
+          } catch (error) {
+            if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+          }
+        }
         let released = false
         return () => {
           if (released) return
@@ -229,10 +239,7 @@ class ShellProcessOwnershipRegistry {
           remove()
         }
       },
-      abort: () => {
-        close()
-        remove()
-      }
+      abort: remove
     }
   }
 
@@ -254,8 +261,15 @@ class ShellProcessOwnershipRegistry {
         parsed.state === 'launching' &&
         typeof parsed.runId === 'string'
       ) {
-        // The app died between spawn and immutable identity capture. We cannot safely infer a PID;
-        // retain the receipt and fence all new local admission until explicit recovery is possible.
+        if (
+          bootTokenProvesReboot(parsed.bootToken, (this.options.readBootToken ?? readBootToken)())
+        ) {
+          // No child from the recorded Linux boot can survive. Do not probe or signal any PID.
+          await unlink(path)
+          continue
+        }
+        // The app died between spawn and immutable identity capture. Without proof of a reboot,
+        // retain the receipt and fence admission rather than infer ownership of an unknown process.
         throw new ShellProcessRecoveryBlockedError(parsed.runId)
       }
       if (

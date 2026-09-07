@@ -1,5 +1,7 @@
 import type { ChildProcess } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
+import * as processTree from '../process-tree'
+import { ShellProcessOwnershipRegistry } from './shell-process-ownership'
 import { mkdtemp, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -195,6 +197,98 @@ describe('notebook shell process behavior', () => {
     afterEach(async () => {
       await rm(runtimeRoot, { recursive: true, force: true })
     })
+
+    it('settles a missing executable without an unhandled asynchronous spawn error', async () => {
+      const registry = new ShellProcessOwnershipRegistry(runtimeRoot)
+      const cleanup = vi.fn()
+      const result = await runShellCommand({
+        command: 'unused',
+        cwd: process.cwd(),
+        handoffDir: process.cwd(),
+        runtimeRoot,
+        sessionId: 'session-1',
+        projectId: 'project-1',
+        prepareProcessOwnership: () =>
+          registry.beginLaunch({
+            runId: 'missing-executable',
+            projectId: 'project-1',
+            sessionId: 'session-1'
+          }),
+        processSandbox: {
+          wrap: async (invocation) => ({
+            executable: join(runtimeRoot, 'missing-executable'),
+            args: [],
+            env: invocation.env,
+            annotateStderr: (stderr) => stderr,
+            cleanup
+          })
+        }
+      })
+      expect(result.stderr).toContain('valid process identity')
+      expect(registry.hasReceipts()).toBe(false)
+      expect(cleanup).toHaveBeenCalledOnce()
+    })
+
+    it.each(['reaped', 'unreaped', 'rejected'] as const)(
+      'preserves launch evidence until failed-claim cleanup is confirmed: %s',
+      async (outcome) => {
+        const registry = new ShellProcessOwnershipRegistry(runtimeRoot, {
+          processStartIdentity: () => undefined
+        })
+        const launch = registry.beginLaunch({
+          runId: 'failed-claim',
+          projectId: 'project-1',
+          sessionId: 'session-1'
+        })
+        const abort = vi.fn(launch.abort)
+        const cleanup = vi.fn()
+        const endExecution = vi.fn()
+        const terminate = processTree.terminateProcessTree
+        const spy = vi
+          .spyOn(processTree, 'terminateProcessTree')
+          .mockImplementation(async (child) => {
+            expect(abort).not.toHaveBeenCalled()
+            expect(registry.hasReceipts()).toBe(true)
+            // Reap the real fixture even when simulating an unconfirmed termination result.
+            await terminate(child)
+            if (outcome === 'rejected') throw new Error('termination unavailable')
+            return { reaped: outcome === 'reaped' }
+          })
+        try {
+          const result = await runShellCommand({
+            command: 'sleep 30',
+            cwd: process.cwd(),
+            handoffDir: process.cwd(),
+            runtimeRoot,
+            sessionId: 'session-1',
+            projectId: 'project-1',
+            prepareProcessOwnership: () => ({ claim: launch.claim, abort }),
+            processSandbox: {
+              wrap: async (invocation) => ({
+                executable: invocation.executable,
+                args: invocation.args,
+                env: invocation.env,
+                annotateStderr: (stderr) => stderr,
+                beginExecution: () => endExecution,
+                cleanup
+              })
+            }
+          })
+          expect(result.stderr).toContain('identity could not be confirmed')
+          expect(abort).toHaveBeenCalledTimes(outcome === 'reaped' ? 1 : 0)
+          expect(registry.hasReceipts()).toBe(outcome !== 'reaped')
+          expect(cleanup).toHaveBeenCalledTimes(outcome === 'reaped' ? 1 : 0)
+          expect(endExecution).toHaveBeenCalledOnce()
+          expect(result).toHaveProperty(
+            outcome === 'reaped' ? 'exitCode' : 'ownedTreeReaped',
+            outcome === 'reaped' ? null : false
+          )
+        } finally {
+          spy.mockRestore()
+          launch.abort()
+        }
+      }
+    )
 
     const execute = (
       command: string,
