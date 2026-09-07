@@ -1521,6 +1521,91 @@ describe('ConversationPanel composer intake', () => {
     window.api = previousApi
   })
 
+  it('saves early elicitation edits when the correlated activity arrives later', async () => {
+    const fields = [
+      {
+        id: 'question_0',
+        label: 'Scope',
+        kind: 'single-select' as const,
+        options: [
+          { value: 'a', label: 'A' },
+          { value: 'b', label: 'B' }
+        ]
+      },
+      { id: 'question_0_custom', label: 'Other', kind: 'text' as const }
+    ]
+    const request = {
+      requestId: 'early-request',
+      sessionId: 'early-session',
+      toolCallId: 'early-activity',
+      message: 'Choose a scope',
+      fields
+    }
+    const session: ChatSession = {
+      id: request.sessionId,
+      projectId: 'project-a',
+      title: 'Early input',
+      cwd: '/workspace',
+      status: 'waiting-for-user',
+      messages: [],
+      activities: [],
+      createdAt: 1,
+      updatedAt: 1
+    }
+    useSessionStore.setState({ ...createInitialSessionState(), sessions: [session] })
+    const show = (): void =>
+      renderPanel({
+        view: { activeSession: useSessionStore.getState().sessions[0] },
+        elicitation: { requests: [request] }
+      })
+    show()
+    const textarea = container.querySelector<HTMLTextAreaElement>(
+      '[aria-label="Type your own answer"]'
+    )!
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!.call(
+        textarea,
+        'Written before activity'
+      )
+      textarea.dispatchEvent(new Event('input', { bubbles: true }))
+    })
+    expect(useSessionStore.getState().sessions[0].elicitationEditDrafts).toBeUndefined()
+    await act(async () =>
+      useSessionStore.setState({
+        sessions: [
+          {
+            ...session,
+            activities: [
+              {
+                id: request.toolCallId,
+                kind: 'tool',
+                title: 'AskUserQuestion',
+                status: 'in_progress',
+                eventIds: [],
+                sortIndex: 1,
+                createdAt: 1,
+                updatedAt: 1,
+                elicitation: { message: request.message, fields, state: 'pending' }
+              }
+            ]
+          }
+        ]
+      })
+    )
+    show()
+    expect(container.querySelector('textarea[aria-label="Type your own answer"]')).toBe(textarea)
+    expect(
+      useSessionStore.getState().sessions[0].elicitationEditDrafts?.[request.toolCallId]?.values
+        .question_0_custom
+    ).toBe('Written before activity')
+    await act(async () => root.unmount())
+    root = createRoot(container)
+    show()
+    expect(
+      container.querySelector<HTMLTextAreaElement>('[aria-label="Type your own answer"]')?.value
+    ).toBe('Written before activity')
+  })
+
   it('shows structured input in a content-bounded lane without notebook chrome', async () => {
     const fields = [
       {

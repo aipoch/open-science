@@ -1508,20 +1508,19 @@ const ConversationPanel = ({
                                   ]
                                 : undefined
                             }
-                            onEditDraftChange={(draft) => {
-                              if (
-                                !activeSession ||
-                                !pendingElicitationActivity ||
-                                !pendingElicitationRequest
-                              )
-                                return
-                              setElicitationEditDraft(
-                                activeSession.id,
-                                pendingElicitationActivity.id,
-                                pendingElicitationRequest.requestId,
-                                draft
-                              )
-                            }}
+                            onEditDraftChange={
+                              activeSession &&
+                              pendingElicitationActivity &&
+                              pendingElicitationRequest
+                                ? (draft) =>
+                                    setElicitationEditDraft(
+                                      activeSession.id,
+                                      pendingElicitationActivity.id,
+                                      pendingElicitationRequest.requestId,
+                                      draft
+                                    )
+                                : undefined
+                            }
                             onDraftChange={(answers: ElicitationAnswer[]) => {
                               if (!activeSession || !pendingElicitationActivity) return
                               setElicitationDraftAnswers(

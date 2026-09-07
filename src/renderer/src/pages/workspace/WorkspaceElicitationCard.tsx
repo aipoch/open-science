@@ -501,6 +501,9 @@ const WorkspaceElicitationCard = ({
 
   // Capture edits without confirming a question or emitting an Agent response. The callback can
   // change on store updates; only local input/navigation changes should publish another snapshot.
+  // Requests can render before their activity is available to own the draft. Publish the current
+  // local edits once that correlation arrives, without depending on the callback's identity.
+  const canSaveEditDraft = onEditDraftChange !== undefined
   const publishEditDraft = useEffectEvent(() => {
     if (request && choiceQuestions && elicitation.state === 'pending') {
       onEditDraftChange?.({
@@ -512,7 +515,7 @@ const WorkspaceElicitationCard = ({
   })
   useEffect(() => {
     publishEditDraft()
-  }, [values, activeChoiceIndex])
+  }, [values, activeChoiceIndex, canSaveEditDraft])
 
   const respond = async (response: ElicitationResponse): Promise<boolean> => {
     if (!onRespond || isSubmitting) return false
