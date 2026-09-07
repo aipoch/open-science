@@ -41,6 +41,16 @@ export const buildSaveAsSkillHistoryReplay = (
     : (session.activities ?? []).filter(
         (activity) => activity.promptMessageId && prompts.has(activity.promptMessageId)
       )
+  const promptOrder = new Map([...prompts.keys()].map((id, index) => [id, index]))
+  // Nested-delegation records can be appended long after their actual execution. Budget selection
+  // follows the active conversation timeline, not storage insertion order.
+  activities.sort(
+    (left, right) =>
+      promptOrder.get(left.promptMessageId!)! - promptOrder.get(right.promptMessageId!)! ||
+      left.createdAt - right.createdAt ||
+      left.sortIndex - right.sortIndex ||
+      (left.id < right.id ? -1 : left.id > right.id ? 1 : 0)
+  )
   const groups = new Map(
     (graph?.activityGroups ?? session.activityGroups ?? []).map((group) => [group.id, group.title])
   )

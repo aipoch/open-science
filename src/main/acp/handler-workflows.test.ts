@@ -388,65 +388,69 @@ describe('ACP Save as skill workflow', () => {
     }
   )
 
-  it('bounds large execution records and excludes activities outside the replayed branch', async () => {
-    const harness = createHarness((session) => {
-      session.conversationGraph = synchronizeActiveConversationActivities(
-        session.conversationGraph!,
-        Array.from({ length: 20 }, (_, index) => ({
-          id: `tool-${index}`,
-          kind: 'tool' as const,
-          title: 'Notebook validation',
-          providerToolName: 'mcp__notebook__execute',
-          promptMessageId: 'prompt-1',
-          status: 'completed' as const,
-          sortIndex: index,
-          eventIds: [],
-          rawInput: { code: '验证🧬'.repeat(2_000) },
-          rawOutput: { result: `validated-${index}` },
-          createdAt: 1,
+  it.each(['chronological', 'reversed'] as const)(
+    'bounds execution records stored in %s order and excludes other branches',
+    async (order) => {
+      const harness = createHarness((session) => {
+        session.conversationGraph = synchronizeActiveConversationActivities(
+          session.conversationGraph!,
+          Array.from({ length: 20 }, (_, index) => ({
+            id: `tool-${index}`,
+            kind: 'tool' as const,
+            title: 'Notebook validation',
+            providerToolName: 'mcp__notebook__execute',
+            promptMessageId: 'prompt-1',
+            status: 'completed' as const,
+            sortIndex: index,
+            eventIds: [],
+            rawInput: { code: '验证🧬'.repeat(2_000) },
+            rawOutput: { result: `validated-${index}` },
+            createdAt: 1,
+            updatedAt: 2
+          })),
+          []
+        )
+        const graph = session.conversationGraph
+        if (order === 'reversed') graph.activities.reverse()
+        const frame = graph.frames.find(({ id }) => id === graph.activeFrameId)!
+        graph.messages.push({
+          ...graph.messages[0],
+          id: 'off-branch-prompt',
+          content: 'Unrelated request',
+          introducedOnBranchId: 'off-branch',
+          revisionRootMessageId: 'off-branch-prompt',
+          parentMessageId: 'answer-1'
+        })
+        graph.branches.push({
+          id: 'off-branch',
+          agentFrameId: frame.id,
+          parentBranchId: frame.activeBranchId,
+          forkMessageId: 'answer-1',
+          headMessageId: 'off-branch-prompt',
+          createdAt: 2,
           updatedAt: 2
-        })),
-        []
-      )
-      const graph = session.conversationGraph
-      const frame = graph.frames.find(({ id }) => id === graph.activeFrameId)!
-      graph.messages.push({
-        ...graph.messages[0],
-        id: 'off-branch-prompt',
-        content: 'Unrelated request',
-        introducedOnBranchId: 'off-branch',
-        revisionRootMessageId: 'off-branch-prompt',
-        parentMessageId: 'answer-1'
+        })
+        graph.activities.push({
+          ...graph.activities[0],
+          id: 'off-branch-tool',
+          messageBranchId: 'off-branch',
+          promptMessageId: 'off-branch-prompt',
+          rawInput: { code: 'unrelated_branch_method' }
+        })
       })
-      graph.branches.push({
-        id: 'off-branch',
-        agentFrameId: frame.id,
-        parentBranchId: frame.activeBranchId,
-        forkMessageId: 'answer-1',
-        headMessageId: 'off-branch-prompt',
-        createdAt: 2,
-        updatedAt: 2
-      })
-      graph.activities.push({
-        ...graph.activities[0],
-        id: 'off-branch-tool',
-        messageBranchId: 'off-branch',
-        promptMessageId: 'off-branch-prompt',
-        rawInput: { code: 'unrelated_branch_method' }
-      })
-    })
-    const before = structuredClone(harness.session.conversationGraph)
-    await harness.workflows.saveAsSkill(harness.request)
-    const continuation = harness.startContinuation.mock.calls[0][0] as {
-      resumeFallback: { historyPreamble: string }
+      const before = structuredClone(harness.session.conversationGraph)
+      await harness.workflows.saveAsSkill(harness.request)
+      const continuation = harness.startContinuation.mock.calls[0][0] as {
+        resumeFallback: { historyPreamble: string }
+      }
+      const history = continuation.resumeFallback.historyPreamble
+      expect(history).toContain('validated-19')
+      expect(history).toContain('omitted for replay budget')
+      expect(history).not.toContain('unrelated_branch_method')
+      expect(estimateHistoryTokens(history)).toBeLessThanOrEqual(10_000)
+      expect(harness.session.conversationGraph).toEqual(before)
     }
-    const history = continuation.resumeFallback.historyPreamble
-    expect(history).toContain('validated-19')
-    expect(history).toContain('omitted for replay budget')
-    expect(history).not.toContain('unrelated_branch_method')
-    expect(estimateHistoryTokens(history)).toBeLessThanOrEqual(10_000)
-    expect(harness.session.conversationGraph).toEqual(before)
-  })
+  )
 
   it('dispatches through the Session admission already held by the workflow', async () => {
     const harness = createHarness()
