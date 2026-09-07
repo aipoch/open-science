@@ -4972,6 +4972,12 @@
     "Other comparisons are running. Wait for them to finish, then retry.": "D’autres comparaisons sont en cours. Attendez leur fin, puis réessayez.",
     "Version storage is unavailable. Check that the storage location is accessible, then retry.": "Le stockage des versions est indisponible. Vérifiez que son emplacement est accessible, puis réessayez.",
     "This comparison could not be completed. Return to the version preview to check the file.": "Cette comparaison n’a pas pu aboutir. Revenez à l’aperçu de la version pour vérifier le fichier.",
-    "View version": "Voir la version"
+    "View version": "Voir la version",
+    "Only the first record is previewed.": "Seul le premier enregistrement est affiché en aperçu.",
+    "No atoms found": "Aucun atome trouvé",
+    "Previewing model 1 of {{total}}.": "Aperçu du modèle 1 sur {{total}}.",
+    "Hydrogens are hidden; alternate locations use blank or A. Atom count refers to the displayed model.": "Les hydrogènes sont masqués ; les positions alternatives utilisent un espace ou A. Le nombre d’atomes correspond au modèle affiché.",
+    "Generating surface…": "Génération de la surface…",
+    "Surface could not be generated. Showing sticks.": "Impossible de générer la surface. Affichage en bâtonnets."
   }
 }

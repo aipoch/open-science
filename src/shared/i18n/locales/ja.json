@@ -4656,6 +4656,12 @@
     "Other comparisons are running. Wait for them to finish, then retry.": "他の比較を実行中です。完了してから再試行してください。",
     "Version storage is unavailable. Check that the storage location is accessible, then retry.": "バージョンの保存先を利用できません。保存先にアクセスできることを確認してから再試行してください。",
     "This comparison could not be completed. Return to the version preview to check the file.": "比較を完了できませんでした。バージョンのプレビューに戻ってファイルを確認してください。",
-    "View version": "バージョンを表示"
+    "View version": "バージョンを表示",
+    "Only the first record is previewed.": "最初のレコードのみプレビューしています。",
+    "No atoms found": "原子が見つかりません",
+    "Previewing model 1 of {{total}}.": "{{total}} 個中のモデル 1 をプレビューしています。",
+    "Hydrogens are hidden; alternate locations use blank or A. Atom count refers to the displayed model.": "水素原子は非表示です。代替位置は空白または A を使用します。原子数は表示中のモデルのものです。",
+    "Generating surface…": "表面を生成中…",
+    "Surface could not be generated. Showing sticks.": "表面を生成できませんでした。スティック表示に戻しました。"
   }
 }

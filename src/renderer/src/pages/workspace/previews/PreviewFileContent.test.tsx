@@ -36,12 +36,13 @@ const createViewer = vi.fn(() => ({
   clear: clearViewer
 }))
 
-vi.mock('3dmol', () => ({
-  createViewer,
-  SurfaceType: {
-    VDW: 'VDW'
-  }
-}))
+vi.mock('3dmol', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('3dmol')>()
+  addModel.mockImplementation((content: string, _format: string, options: object) => ({
+    selectedAtoms: () => actual.Parsers.pdb(content, options)[0] ?? []
+  }))
+  return { createViewer, SurfaceType: { VDW: 'VDW' } }
+})
 
 vi.mock('@/components/streamdown/code-highlighter-runtime', () => ({
   code: {
@@ -1067,7 +1068,8 @@ describe('PreviewFileContent', () => {
   })
 
   describe('PDB previews', () => {
-    beforeEach(() => {
+    beforeEach(async () => {
+      await import('3dmol')
       restorePdbLayoutMocks = installPdbLayoutMocks()
     })
 
@@ -1117,6 +1119,9 @@ describe('PreviewFileContent', () => {
       expect(container.textContent).toContain('Scroll to zoom')
       expect(createViewer).toHaveBeenCalledTimes(1)
       expect(addModel).toHaveBeenCalledWith(pdbContent, 'pdb', {
+        multimodel: false,
+        keepH: false,
+        altLoc: 'A',
         assignBonds: true,
         noComputeSecondaryStructure: false
       })
