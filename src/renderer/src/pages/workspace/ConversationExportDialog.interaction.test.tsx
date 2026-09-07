@@ -1,10 +1,24 @@
 // @vitest-environment jsdom
 import { act } from 'react'
+import { webcrypto } from 'node:crypto'
+import { waitFor } from '@testing-library/react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { ChatSession } from '@/stores/session-store'
 import { ConversationExportDialog } from './ConversationExportDialog'
+import {
+  saveSessionInOrder,
+  resetSessionPersistenceWriteFailuresForTests
+} from '@/lib/session-persistence/session-persistence'
+import { createConversationExportService } from '../../../../main/session-persistence/conversation-export'
+
+vi.mock('electron', () => ({
+  app: {},
+  BrowserWindow: vi.fn(),
+  dialog: {},
+  ipcMain: { handle: vi.fn() }
+}))
 
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
@@ -70,12 +84,15 @@ describe('ConversationExportDialog', () => {
     container = document.createElement('div')
     document.body.appendChild(container)
     root = createRoot(container)
+    vi.stubGlobal('crypto', webcrypto)
   })
 
   afterEach(() => {
     act(() => root.unmount())
     document.body.innerHTML = ''
     vi.restoreAllMocks()
+    vi.unstubAllGlobals()
+    resetSessionPersistenceWriteFailuresForTests()
   })
 
   it('defaults to the whole PDF export and omits a selection field', async () => {
@@ -103,13 +120,14 @@ describe('ConversationExportDialog', () => {
 
     await act(async () => {
       confirm?.click()
-      await Promise.resolve()
+      await waitFor(() => expect(onExport).toHaveBeenCalled())
     })
 
     expect(onExport).toHaveBeenCalledWith({
       projectId: 'project-1',
       sessionId: 'session-1',
-      format: 'pdf'
+      format: 'pdf',
+      expectedContentHash: expect.stringMatching(/^[a-f0-9]{64}$/)
     })
     expect(onClose).not.toHaveBeenCalled()
   })
@@ -147,7 +165,7 @@ describe('ConversationExportDialog', () => {
 
     await act(async () => {
       confirm?.click()
-      await Promise.resolve()
+      await waitFor(() => expect(onExport).toHaveBeenCalled())
     })
     expect(onClose).not.toHaveBeenCalled()
     expect(document.body.textContent).toContain('2 of 2 selected')
@@ -155,14 +173,152 @@ describe('ConversationExportDialog', () => {
       projectId: 'project-1',
       sessionId: 'session-1',
       format: 'markdown',
+      expectedContentHash: expect.stringMatching(/^[a-f0-9]{64}$/),
       selectedPromptMessageIds: ['prompt-1', 'prompt-2']
     })
 
     await act(async () => {
       confirm?.click()
-      await Promise.resolve()
+      await waitFor(() => expect(onClose).toHaveBeenCalledOnce())
     })
     expect(onClose).toHaveBeenCalledOnce()
+  })
+
+  it.each(['delayed', 'failed', 'changed after saving'] as const)(
+    'never exports an old saved answer when persistence is %s',
+    async (mode) => {
+      const session = createSession({ messages: createSession().messages.slice(0, 2) })
+      session.messages[1] = { ...session.messages[1], content: 'NEW answer reviewed in the dialog' }
+      let durable = {
+        ...session,
+        messages: session.messages.map((message) =>
+          message.role === 'agent' ? { ...message, content: 'Old saved answer' } : message
+        )
+      }
+      let release!: () => void
+      const blocked = new Promise<void>((resolve) => {
+        release = resolve
+      })
+      const saveSession = vi.fn(async (next: ChatSession) => {
+        await blocked
+        if (mode === 'failed') throw new Error('Disk is full')
+        durable =
+          mode === 'changed after saving'
+            ? {
+                ...next,
+                messages: next.messages.map((message) =>
+                  message.role === 'agent'
+                    ? { ...message, content: 'An answer from another writer' }
+                    : message
+                )
+              }
+            : next
+        return next
+      })
+      vi.stubGlobal('api', undefined)
+      Object.defineProperty(window, 'api', {
+        configurable: true,
+        value: { sessions: { saveSession } }
+      })
+      const pendingSave = saveSessionInOrder(session).catch(() => undefined)
+      const writeFile = vi.fn().mockResolvedValue(undefined)
+      const service = createConversationExportService({
+        loadSession: async () => durable,
+        isSessionActive: () => false,
+        showSaveDialog: async () => ({ canceled: false, filePath: '/in-memory/export.md' }),
+        getDownloadsPath: () => '/in-memory',
+        writeFile,
+        publishUserFile: async (path, write) => {
+          await write(path)
+        }
+      })
+      const onClose = vi.fn()
+      act(() =>
+        root.render(
+          <ConversationExportDialog
+            session={session}
+            currentSession={session}
+            onClose={onClose}
+            onExport={service.exportConversation}
+          />
+        )
+      )
+      act(() => findControl('radio', 'Selected')?.click())
+      expect(document.body.textContent).toContain('NEW answer reviewed in the dialog')
+      act(() => findControl('checkbox', 'Compare the papers')?.click())
+      act(() => findControl('radio', 'Markdown')?.click())
+      try {
+        await act(async () => {
+          document.body
+            .querySelector<HTMLButtonElement>('[data-testid="conversation-export-confirm"]')
+            ?.click()
+        })
+        await act(async () => {
+          release()
+          await pendingSave
+        })
+        await waitFor(() => {
+          const confirm = document.body.querySelector<HTMLButtonElement>(
+            '[data-testid="conversation-export-confirm"]'
+          )
+          expect(confirm?.disabled).toBe(false)
+        })
+        if (mode !== 'delayed') {
+          expect(writeFile).not.toHaveBeenCalled()
+          expect(document.body.querySelector('[role="alert"]')?.textContent).toContain(
+            mode === 'failed' ? 'Disk is full' : 'The conversation changed.'
+          )
+          expect(onClose).not.toHaveBeenCalled()
+        } else {
+          expect(writeFile).toHaveBeenCalledWith(
+            '/in-memory/export.md',
+            expect.stringContaining('NEW answer reviewed in the dialog')
+          )
+          expect(writeFile.mock.calls[0]?.[1]).not.toContain('Old saved answer')
+        }
+      } finally {
+        release()
+        await pendingSave
+      }
+    }
+  )
+
+  it('does not count removed turns when reopening the same conversation', async () => {
+    const session = createSession({ messages: createSession().messages.slice(0, 2) })
+    const onExport = vi.fn().mockResolvedValue({ saved: false })
+    const render = (snapshot: ChatSession | undefined): void => {
+      root.render(
+        <ConversationExportDialog
+          session={snapshot}
+          currentSession={snapshot}
+          onClose={vi.fn()}
+          onExport={onExport}
+        />
+      )
+    }
+    act(() => render(session))
+    act(() => findControl('radio', 'Selected')?.click())
+    act(() => findControl('checkbox', 'Compare the papers')?.click())
+    expect(document.body.textContent).toContain('1 of 1 selected')
+    act(() => render(undefined))
+    const replacement = createSession({
+      messages: session.messages.map((message) => ({ ...message, id: `${message.id}-new` }))
+    })
+    act(() => render(replacement))
+    act(() => findControl('radio', 'Selected')?.click())
+    expect(findControl('checkbox', 'Compare the papers')?.getAttribute('aria-checked')).toBe(
+      'false'
+    )
+    expect(document.body.textContent).toContain('0 of 1 selected')
+    expect(findControl('checkbox', 'Select all')?.getAttribute('aria-checked')).toBe('false')
+    const confirm = document.body.querySelector<HTMLButtonElement>(
+      '[data-testid="conversation-export-confirm"]'
+    )
+    expect(confirm?.disabled).toBe(true)
+    await act(async () => {
+      confirm?.click()
+    })
+    expect(onExport).not.toHaveBeenCalled()
   })
 
   it('keeps long message previews inside the vertical scroll surface', () => {
@@ -242,8 +398,8 @@ describe('ConversationExportDialog', () => {
     )
     await act(async () => {
       confirm?.click()
-      await Promise.resolve()
     })
+    await waitFor(() => expect(document.body.querySelector('[role="alert"]')).not.toBeNull())
     expect(document.body.querySelector('[role="alert"]')?.textContent).toContain('Disk is full')
 
     act(() => {

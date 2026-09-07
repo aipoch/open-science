@@ -1,5 +1,6 @@
 {
   "common": {
+    "The conversation changed. Close and reopen export to review it.": "会話が変更されました。内容を確認するには、エクスポートを閉じて再度開いてください。",
     "Approval needed": "承認が必要です",
     "Cancel": "キャンセル",
     "Stay": "アプリに留まる",
@@ -1262,7 +1263,6 @@
     "No response yet": "まだ応答はありません",
     "Attachments: {{total}}": "添付ファイル：{{total}}",
     "Wait for the conversation to finish before exporting it.": "会話が終了してからエクスポートしてください。",
-    "The conversation changed. Close and reopen export to review it.": "会話が変更されました。内容を確認するには、エクスポートを閉じて再度開いてください。",
     "Select content to export.": "エクスポートするコンテンツを選択してください。",
     "The entire conversation will be exported.": "会話全体をエクスポートします。",
     "Only selected content will be exported.": "選択したコンテンツのみをエクスポートします。",

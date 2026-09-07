@@ -615,6 +615,10 @@ describe('App startup routing', () => {
 
   it('keeps the remote-job analysis owner active while Home is presented', async () => {
     mocks.settings.isLoaded = true
+    // The durable claim can finish after the next timer turn on a busy CI worker.
+    mocks.compute.jobsTransitionAnalysis.mockImplementationOnce(
+      () => new Promise((resolve) => setTimeout(() => resolve([]), 50))
+    )
     mocks.sessions = [
       {
         id: 'session-1',

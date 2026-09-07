@@ -1,5 +1,6 @@
 {
   "common": {
+    "The conversation changed. Close and reopen export to review it.": "Диалог изменён. Закройте и снова откройте окно экспорта, чтобы проверить его.",
     "Approval needed": "Требуется разрешение",
     "Cancel": "Отмена",
     "Stay": "Остаться в приложении",
@@ -1314,7 +1315,6 @@
     "Response without text": "Ответ без текста",
     "No response yet": "Ответа пока нет",
     "Attachments: {{total}}": "Вложения: {{total}}",
-    "The conversation changed. Close and reopen export to review it.": "Диалог изменён. Закройте и снова откройте окно экспорта, чтобы проверить его.",
     "Wait for the conversation to finish before exporting it.": "Дождитесь завершения диалога перед экспортом.",
     "Select content to export.": "Выберите содержимое для экспорта.",
     "The entire conversation will be exported.": "Весь диалог будет экспортирован.",

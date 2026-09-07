@@ -1,5 +1,6 @@
 {
   "common": {
+    "The conversation changed. Close and reopen export to review it.": "对话已发生变化。请关闭并重新打开导出以检查内容。",
     "Approval needed": "需要批准",
     "Cancel": "取消",
     "Stay": "留在应用中",
@@ -1348,7 +1349,6 @@
     "No response yet": "暂无回复",
     "Attachments: {{total}}": "附件：{{total}}",
     "Wait for the conversation to finish before exporting it.": "请等待对话结束后再导出。",
-    "The conversation changed. Close and reopen export to review it.": "对话已发生变化。请关闭并重新打开导出以检查内容。",
     "Select content to export.": "请选择要导出的内容。",
     "The entire conversation will be exported.": "将导出整个对话。",
     "Only selected content will be exported.": "仅导出已选内容。",

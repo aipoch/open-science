@@ -1,5 +1,6 @@
 {
   "common": {
+    "The conversation changed. Close and reopen export to review it.": "Die Konversation wurde geändert. Schließen Sie den Export und öffnen Sie ihn erneut, um die aktuelle Fassung zu prüfen.",
     "Cancel": "Abbrechen",
     "Stay": "In der App bleiben",
     "Retry saving": "Speichern erneut versuchen",
@@ -1209,7 +1210,6 @@
     "No response yet": "Noch keine Antwort",
     "Attachments: {{total}}": "Anhänge: {{total}}",
     "Wait for the conversation to finish before exporting it.": "Warten Sie, bis die Konversation beendet ist, bevor Sie sie exportieren.",
-    "The conversation changed. Close and reopen export to review it.": "Die Konversation wurde geändert. Schließen Sie den Export und öffnen Sie ihn erneut, um die aktuelle Fassung zu prüfen.",
     "Select content to export.": "Wählen Sie den zu exportierenden Inhalt aus.",
     "The entire conversation will be exported.": "Die gesamte Konversation wird exportiert.",
     "Only selected content will be exported.": "Es werden nur ausgewählte Inhalte exportiert.",

@@ -1,4 +1,4 @@
-import { Marked, Renderer } from 'marked'
+import { Lexer, Marked, Renderer, Tokenizer, type Token } from 'marked'
 
 import {
   isHiddenControlMessage,
@@ -16,6 +16,8 @@ export type ExportConversationRequest = {
   sessionId: string
   format: ConversationExportFormat
   selectedPromptMessageIds?: string[]
+  // Preview-based callers bind the export to the content the user reviewed.
+  expectedContentHash?: string
 }
 
 export type ExportConversationResult = {
@@ -53,7 +55,7 @@ export type ConversationExportTurn = {
   messages: PersistedChatMessage[]
 }
 
-const THINK_BLOCK_PATTERN = /<think\b[^>]*>[\s\S]*?(?:<\/think\s*>|$)/gi
+const THINK_BLOCK_PATTERN = /^<think\b[^>]*>/i
 const UNSAFE_FILENAME_CHARACTERS = /[<>:"/\\|?*]+/g
 const RENDERER_AUTO_TITLE_PREFIX_LENGTH = 48
 const HEADLESS_AUTO_TITLE_MAX_LENGTH = 60
@@ -166,12 +168,116 @@ const getMessageAttachments = (
   return attachments
 }
 
-const normalizeExportMarkdown = (content: string): string =>
-  content.replace(/\n{3,}/g, '\n\n').trim()
+// Markdown containers remove quote/list prefixes before tokenizing their children. Map each
+// de-prefixed line back to its original line so code ranges preserve the source byte-for-byte.
+const exportCodeRanges = (content: string): Array<{ start: number; end: number }> => {
+  const ranges: Array<{ start: number; end: number }> = []
+  const mapLines = (text: string, raw: string, positions: number[]): number[] => {
+    const lines = raw.split('\n')
+    let rawOffset = 0
+    const textLines = text.split('\n')
+    return textLines.flatMap((line, index) => {
+      const original = lines[index] ?? ''
+      const column = original.lastIndexOf(line)
+      const mapped = Array.from(
+        { length: line.length },
+        (_, i) => positions[rawOffset + Math.max(column, 0) + i]
+      )
+      if (index < textLines.length - 1) mapped.push(positions[rawOffset + original.length])
+      rawOffset += original.length + 1
+      return mapped
+    })
+  }
+  const visit = (tokens: Token[], positions: number[]): void => {
+    let offset = 0
+    for (const token of tokens) {
+      const mapped = positions.slice(offset, offset + token.raw.length)
+      if (token.type === 'code' && mapped.length) {
+        ranges.push({ start: mapped[0], end: mapped[mapped.length - 1] + 1 })
+      } else if (token.type === 'blockquote') {
+        visit(token.tokens ?? [], mapLines(token.text, token.raw, mapped))
+      } else if (token.type === 'list') {
+        let itemOffset = 0
+        for (const item of token.items) {
+          const itemPositions = mapped.slice(itemOffset, itemOffset + item.raw.length)
+          visit(item.tokens, mapLines(item.text, item.raw, itemPositions))
+          itemOffset += item.raw.length
+        }
+      }
+      offset += token.raw.length
+    }
+  }
+  const positions: number[] = []
+  const normalized = content.replace(/\r\n|\r|[^\r]/g, (character, offset: number) => {
+    positions.push(offset)
+    return character.startsWith('\r') ? '\n' : character
+  })
+  visit(Lexer.lex(normalized), positions)
+  return ranges
+}
 
-// Removes provider-private reasoning blocks while preserving ordinary Markdown and HTML.
-export const sanitizeExportMarkdown = (content: string): string =>
-  normalizeExportMarkdown(content.replace(THINK_BLOCK_PATTERN, ''))
+// Reuse Markdown's code/escape tokenizers so literal tags cannot open a reasoning block.
+// Consume a real reasoning block in one step, including any code inside that private block.
+export const sanitizeExportMarkdown = (content: string): string => {
+  const tokenizer = new Tokenizer()
+  new Lexer({ tokenizer }) // Initializes the tokenizer's Markdown grammar.
+  const codeRanges = exportCodeRanges(content)
+  let rangeIndex = 0
+  const parts: { raw: string; code: boolean }[] = []
+  let offset = 0
+  while (offset < content.length) {
+    while (codeRanges[rangeIndex]?.end <= offset) rangeIndex += 1
+    const range = codeRanges[rangeIndex]
+    if (range && offset >= range.start) {
+      parts.push({ raw: content.slice(offset, range.end), code: true })
+      offset = range.end
+      continue
+    }
+    const remaining = content.slice(offset, range?.start)
+    const lineStart = offset === 0 || content[offset - 1] === '\n'
+    const code =
+      (lineStart && (tokenizer.fences(remaining) ?? tokenizer.code(remaining))) ||
+      tokenizer.codespan(remaining)
+    if (code) {
+      parts.push({ raw: code.raw, code: true })
+      offset += code.raw.length
+      continue
+    }
+    const thought = THINK_BLOCK_PATTERN.exec(content.slice(offset))
+    if (thought) {
+      // A closing tag inside a fenced example belongs to the example, not the outer block.
+      const closing = /<\/think\s*>/gi
+      closing.lastIndex = offset + thought[0].length
+      let end: RegExpExecArray | null
+      do {
+        end = closing.exec(content)
+      } while (end && codeRanges.some((code) => end!.index >= code.start && end!.index < code.end))
+      offset = end ? closing.lastIndex : content.length
+      continue
+    }
+    const raw =
+      tokenizer.escape(remaining)?.raw ?? /^[^`<\\\n]+/.exec(remaining)?.[0] ?? remaining[0]
+    const last = parts.at(-1)
+    if (last && !last.code) last.raw += raw
+    else parts.push({ raw, code: false })
+    offset += raw.length
+  }
+  if (parts[0] && !parts[0].code) parts[0].raw = parts[0].raw.trimStart()
+  const last = parts.at(-1)
+  if (last && !last.code) last.raw = last.raw.trimEnd()
+  return parts.map((part) => part.raw).join('')
+}
+
+// A precondition only: Main still renders its own durable Session, never renderer-supplied data.
+export const hashConversationExportContent = async (
+  session: PersistedChatSession
+): Promise<string> => {
+  const bytes = new TextEncoder().encode(
+    JSON.stringify(createConversationExportDocument(session, 0))
+  )
+  const digest = await globalThis.crypto.subtle.digest('SHA-256', bytes)
+  return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('')
+}
 
 export const sanitizeExportFilename = (title: string): string => {
   const sanitized = removeControlCharacters(title)
@@ -277,9 +383,7 @@ export const createConversationExportDocument = (
       role: message.role === 'agent' ? 'assistant' : 'user',
       createdAt: message.createdAt,
       markdown:
-        message.role === 'agent'
-          ? sanitizeExportMarkdown(message.content)
-          : normalizeExportMarkdown(message.content),
+        message.role === 'agent' ? sanitizeExportMarkdown(message.content) : message.content,
       attachments: getMessageAttachments(message, artifactsById),
       images: (message.images ?? []).map(({ mimeType, data }) => ({ mimeType, data }))
     }))

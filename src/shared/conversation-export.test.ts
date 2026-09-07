@@ -77,6 +77,69 @@ describe('conversation export projection', () => {
     expect(sanitizeExportMarkdown('before <think>unfinished private reasoning')).toBe('before')
   })
 
+  it.each(['user', 'agent'] as const)(
+    'preserves executable whitespace in %s code exports',
+    (role) => {
+      const session = createSession()
+      const code = '```python\nvalue = """first\n\n\nsecond"""\nassert value.count("\\n") == 3\n```'
+      session.messages = [{ ...session.messages[0], role, content: code }]
+      const document = createConversationExportDocument(session, 0)
+      expect(document.messages[0].markdown).toBe(code)
+      expect(renderConversationMarkdown(document)).toContain(code)
+      expect(renderConversationHtml(document)).toContain('first\n\n\nsecond')
+    }
+  )
+
+  it('preserves literal reasoning tags in code and the scientific conclusion after them', () => {
+    const content =
+      'The literal tag `<think>` begins the XML example.\n\nThe measured result is 42.'
+    const session = createSession()
+    session.messages = [{ ...session.messages[1], content }]
+    expect(createConversationExportDocument(session, 0).messages[0].markdown).toBe(content)
+  })
+
+  it.each([
+    '```xml\n<think>literal</think>\n```',
+    '~~~~xml\n<think>literal\n~~~~~',
+    '```xml\n<think>literal',
+    '    <think>literal</think>\n    second line',
+    'Use ``a `<think>` tag`` in the example.'
+  ])('preserves Markdown code tokens verbatim: %s', (code) => {
+    expect(sanitizeExportMarkdown(code)).toBe(code)
+  })
+
+  it.each([
+    '> ~~~xml\n> <think>literal</think>\n> ~~~',
+    '> ```xml\n> <think>literal</think>\n> ```',
+    '> > ~~~xml\n> > <think>literal</think>\n> > ~~~',
+    '- first\n- second\n\n  > ~~~xml\n  > <think>literal</think>\n  > ~~~',
+    '> ~~~xml\r\n> <think>literal</think>\r\n> ~~~',
+    '> ~~~xml\n> <think>literal',
+    '> 😀 example\n>\n> ~~~xml\n> <think>literal</think>\n> ~~~',
+    '- XML example:\n\n  ~~~xml\n  <think>literal</think>\n  ~~~'
+  ])('preserves literal reasoning tags in nested fenced code: %s', (content) => {
+    const session = createSession()
+    session.messages = [{ ...session.messages[1], content }]
+    expect(createConversationExportDocument(session, 0).messages[0].markdown).toBe(content)
+  })
+
+  it('filters reasoning around quoted code without changing the code source', () => {
+    const code = '> ~~~xml\n> <think>literal</think>\n> ~~~'
+    expect(
+      sanitizeExportMarkdown(`<think>private</think>\n\n${code}\n\n<think>private</think>`)
+    ).toBe(code)
+    expect(sanitizeExportMarkdown(`<think>private\n${code}\n</think>\n\nConclusion.`)).toBe(
+      'Conclusion.'
+    )
+    expect(sanitizeExportMarkdown(`> <think>private</think>\n>\n${code}`)).toBe(`> \n>\n${code}`)
+  })
+
+  it('still removes real reasoning that contains code', () => {
+    expect(
+      sanitizeExportMarkdown('<think>private\n```txt\nsecret\n```\n</think>\n\nConclusion.')
+    ).toBe('Conclusion.')
+  })
+
   it('projects only user-facing active messages and attachment names', () => {
     const document = createConversationExportDocument(createSession(), 1_710_000_003_000)
 
