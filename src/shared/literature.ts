@@ -57,6 +57,7 @@ const LITERATURE_IMPORT_WARNINGS = [
 const LITERATURE_METADATA_FIELDS = [
   'title',
   'authors',
+  'identifiers',
   'publicationDate',
   'year',
   'journal',
@@ -796,6 +797,7 @@ const literatureMetadataCompletionResultSchema = z
     filled: z.array(literatureMetadataValueSchema),
     conflicts: z.array(literatureMetadataConflictSchema),
     reviewToken: z.string().uuid().optional(),
+    reviewVersion: z.literal(1).optional(),
     source: literatureSourceInputSchema.optional()
   })
   .strict()

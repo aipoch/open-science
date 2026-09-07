@@ -2087,6 +2087,8 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
         return t('Title')
       case 'authors':
         return t('Authors')
+      case 'identifiers':
+        return t('Identifiers (★ primary)')
       case 'publicationDate':
         return t('Publication date')
       case 'year':

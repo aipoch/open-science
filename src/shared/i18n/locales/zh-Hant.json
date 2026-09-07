@@ -100,6 +100,8 @@
     "Import Connector configuration": "匯入連接器設定"
   },
   "renderer": {
+    "Identifiers (★ primary)": "識別碼（★ 主要識別碼）",
+    "Search again to refresh this older metadata review.": "請重新搜尋以更新這份舊的中繼資料審閱結果。",
     "Not answered": "未填寫",
     "Automatic contrast": "自動對比度",
     "Display range": "顯示範圍",

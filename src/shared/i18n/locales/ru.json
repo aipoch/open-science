@@ -103,6 +103,8 @@
     "Import Connector configuration": "Импорт конфигурации коннектора"
   },
   "renderer": {
+    "Identifiers (★ primary)": "Идентификаторы (★ основной)",
+    "Search again to refresh this older metadata review.": "Повторите поиск, чтобы обновить эти устаревшие данные для проверки.",
     "Not answered": "Нет ответа",
     "Automatic contrast": "Автоматическая контрастность",
     "Display range": "Диапазон отображения",

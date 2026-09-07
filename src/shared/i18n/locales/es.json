@@ -102,6 +102,8 @@
     "Import Connector configuration": "Importar configuración del conector"
   },
   "renderer": {
+    "Identifiers (★ primary)": "Identificadores (★ principal)",
+    "Search again to refresh this older metadata review.": "Busque de nuevo para actualizar esta revisión anterior de metadatos.",
     "Not answered": "Sin responder",
     "Automatic contrast": "Contraste automático",
     "Display range": "Rango de visualización",

@@ -101,6 +101,8 @@
     "Could not open the update installer: {{error}}": "Das Update-Installationsprogramm konnte nicht geöffnet werden: {{error}}"
   },
   "renderer": {
+    "Identifiers (★ primary)": "Identifikatoren (★ primär)",
+    "Search again to refresh this older metadata review.": "Suchen Sie erneut, um diese ältere Metadatenprüfung zu aktualisieren.",
     "Not answered": "Nicht beantwortet",
     "Automatic contrast": "Automatischer Kontrast",
     "Display range": "Anzeigebereich",

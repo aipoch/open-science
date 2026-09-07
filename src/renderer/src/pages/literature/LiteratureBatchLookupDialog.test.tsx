@@ -259,3 +259,27 @@ it('retries failed review saves without losing the selected source or applying a
     ]
   ])
 })
+
+it('retries the failed apply command instead of only refreshing the task', async () => {
+  job.state = 'review'
+  job.rows[0]!.status = 'ready'
+  let writable = false
+  jobs.mockImplementation(async (request) => {
+    if (request.action === 'apply' && !writable) throw new Error('checkpoint unavailable')
+    return { jobs: [structuredClone(job)] }
+  })
+  open(id)
+  await flush()
+  fireEvent.click(screen.getByRole('button', { name: 'Apply metadata (1)' }))
+  await act(async () => {})
+  const first = jobs.mock.calls.find(([request]) => request.action === 'apply')![0]
+  expect(screen.getByRole('alert')).toBeTruthy()
+  writable = true
+  fireEvent.click(screen.getByRole('button', { name: 'Retry' }))
+  await act(async () => {})
+  expect(jobs.mock.calls.filter(([request]) => request.action === 'apply')).toEqual([
+    [first],
+    [first]
+  ])
+  expect(screen.queryByRole('alert')).toBeNull()
+})
