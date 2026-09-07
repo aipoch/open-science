@@ -167,7 +167,8 @@ type PreviewWorkbenchStore = PreviewWorkbenchStoreData & {
   activateProject: (
     projectId: string,
     restored?: RestoredPreviewSlice,
-    skipGuard?: boolean
+    skipGuard?: boolean,
+    applyRestore?: (apply: () => boolean) => boolean
   ) => boolean
   reconcileFinalizedUploads: (uploads: UploadedAttachment[]) => void
   setPendingPdfContext: (projectId: string, selection: PendingPdfContext | undefined) => void
@@ -450,70 +451,123 @@ export const usePreviewWorkbenchStore = create<PreviewWorkbenchStore>((set, get)
   // Switches the visible preview slice to a project's own tabs, stashing the outgoing project's slice
   // so returning to it restores its tabs. `restored` replaces the durable subset with authoritative
   // persistence while retaining runtime-owned tool tabs.
-  activateProject: (projectId, restored, skipGuard = false) => {
-    const activate = (): true => {
-      set((state) => {
-        if (state.activeProjectId === projectId) {
-          if (!restored) return state
+  activateProject: (projectId, restored, skipGuard = false, applyRestore = (apply) => apply()) => {
+    const initial = get()
+    // Deferred restore callbacks must not overwrite a later tab action or another restore.
+    let expected = initial
+    const activate = (): boolean => {
+      const current = get()
+      if (
+        restored &&
+        (current.activeProjectId !== expected.activeProjectId ||
+          current.items !== expected.items ||
+          current.activeItemId !== expected.activeItemId ||
+          current.panelState !== expected.panelState ||
+          current.openRequestVersion !== expected.openRequestVersion ||
+          current.byProject[projectId] !== expected.byProject[projectId])
+      )
+        return false
+      return applyRestore(() => {
+        set((state) => {
+          if (state.activeProjectId === projectId) {
+            if (!restored) return state
 
-          const targetSlice = mergeRestoredPreviewSlice(
-            state,
-            restored,
-            projectId,
-            state.pendingPdfContextByProject[projectId]
-          )
-          const expandedToolItemId = targetSlice.items.some(
-            (item) => item.id === state.expandedToolItemId && !isDurablePreviewItem(item)
-          )
-            ? state.expandedToolItemId
-            : null
-
-          return {
-            ...targetSlice,
-            expandedToolItemId,
-            fileDialogItem: state.fileDialogItem
-          }
-        }
-
-        const byProject = { ...state.byProject }
-
-        if (state.activeProjectId) {
-          byProject[state.activeProjectId] = {
-            items: state.items,
-            activeItemId: state.activeItemId,
-            panelState: state.panelState,
-            openRequestVersion: state.openRequestVersion
-          }
-        }
-
-        const cachedSlice = byProject[projectId]
-        const targetSlice = restored
-          ? mergeRestoredPreviewSlice(
-              cachedSlice ?? createEmptyPreviewSlice(),
+            const targetSlice = mergeRestoredPreviewSlice(
+              state,
               restored,
               projectId,
               state.pendingPdfContextByProject[projectId]
             )
-          : (cachedSlice ?? createEmptyPreviewSlice())
+            const expandedToolItemId = targetSlice.items.some(
+              (item) => item.id === state.expandedToolItemId && !isDurablePreviewItem(item)
+            )
+              ? state.expandedToolItemId
+              : null
 
-        // The active slice lives at top level, never duplicated in the stash.
-        delete byProject[projectId]
+            return {
+              ...targetSlice,
+              expandedToolItemId,
+              fileDialogItem: state.fileDialogItem
+            }
+          }
 
-        // The expanded files surface is tied to the outgoing project's workbench layout.
-        return {
-          ...targetSlice,
-          panelState: targetSlice.items.length > 0 ? targetSlice.panelState : 'collapsed',
-          activeProjectId: projectId,
-          byProject,
-          expandedToolItemId: null,
-          fileDialogItem:
-            state.fileDialogItem?.projectId === projectId ? state.fileDialogItem : undefined
-        }
+          const byProject = { ...state.byProject }
+
+          if (state.activeProjectId) {
+            byProject[state.activeProjectId] = {
+              items: state.items,
+              activeItemId: state.activeItemId,
+              panelState: state.panelState,
+              openRequestVersion: state.openRequestVersion
+            }
+          }
+
+          const cachedSlice = byProject[projectId]
+          const targetSlice = restored
+            ? mergeRestoredPreviewSlice(
+                cachedSlice ?? createEmptyPreviewSlice(),
+                restored,
+                projectId,
+                state.pendingPdfContextByProject[projectId]
+              )
+            : (cachedSlice ?? createEmptyPreviewSlice())
+
+          // The active slice lives at top level, never duplicated in the stash.
+          delete byProject[projectId]
+
+          // The expanded files surface is tied to the outgoing project's workbench layout.
+          return {
+            ...targetSlice,
+            panelState: targetSlice.items.length > 0 ? targetSlice.panelState : 'collapsed',
+            activeProjectId: projectId,
+            byProject,
+            expandedToolItemId: null,
+            fileDialogItem:
+              state.fileDialogItem?.projectId === projectId ? state.fileDialogItem : undefined
+          }
+        })
+        return true
       })
-      return true
     }
-    return get().activeProjectId !== projectId && !skipGuard
-      ? previewLeaveGuards.request(activeWorkbenchGuardScope(get()), activate)
+    if (!skipGuard && initial.activeProjectId === projectId && restored) {
+      const target = mergeRestoredPreviewSlice(
+        initial,
+        restored,
+        projectId,
+        initial.pendingPdfContextByProject[projectId]
+      )
+      const currentFile = initial.items.find(
+        (item) => item.id === initial.activeItemId && item.type === 'file'
+      )
+      const nextFile = target.items.find((item) => item.id === initial.activeItemId)
+      const leavesFile =
+        currentFile?.type === 'file' &&
+        (target.activeItemId !== initial.activeItemId ||
+          target.panelState !== initial.panelState ||
+          nextFile?.type !== 'file' ||
+          nextFile.source !== currentFile.source ||
+          nextFile.managedFileId !== currentFile.managedFileId ||
+          nextFile.artifactId !== currentFile.artifactId ||
+          nextFile.selectedVersionId !== currentFile.selectedVersionId ||
+          (!currentFile.managedFileId && nextFile.path !== currentFile.path))
+      if (leavesFile && !previewLeaveGuards.request(activeWorkbenchGuardScope(initial), activate)) {
+        // Merge remote changes outside the dirty file without replacing its editor or selection.
+        applyRestore(() => {
+          set({
+            ...target,
+            items: [...target.items.filter((item) => item.id !== currentFile.id), currentFile],
+            activeItemId: initial.activeItemId,
+            panelState: initial.panelState
+          })
+          return true
+        })
+        expected = get()
+        return false
+      }
+      if (leavesFile) return true
+    }
+    return initial.activeProjectId !== projectId && !skipGuard
+      ? previewLeaveGuards.request(activeWorkbenchGuardScope(initial), activate)
       : activate()
   },
 

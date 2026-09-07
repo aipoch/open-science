@@ -40,6 +40,8 @@ import { usePdfContextAction } from './use-pdf-context-action'
 import { requestComposerFocus } from './composer-focus-events'
 
 type PreviewPanelProps = PreviewInteractionPort & {
+  children?: React.ReactNode
+  isMobile?: boolean
   panelRef: React.Ref<PanelImperativeHandle>
   defaultSize: string
   minSize: string
@@ -937,6 +939,8 @@ const PreviewPanelSurface = ({
 
 // Desktop right-side workbench: a tab strip over every previewed file, plus active content.
 const PreviewPanel = ({
+  children,
+  isMobile = false,
   panelRef,
   defaultSize,
   minSize,
@@ -952,7 +956,7 @@ const PreviewPanel = ({
     _panelId: string | number | undefined,
     previousPanelSize: PanelSize | undefined
   ): void => {
-    onResize(panelSize, previousPanelSize)
+    if (!isMobile) onResize(panelSize, previousPanelSize)
   }
 
   return (
@@ -961,18 +965,22 @@ const PreviewPanel = ({
       // The parent drives expand/collapse in response to store open requests and header toggles.
       panelRef={panelRef}
       defaultSize={defaultSize}
-      minSize={minSize}
+      minSize={isMobile ? '0%' : minSize}
+      maxSize={isMobile ? '0%' : undefined}
+      disabled={isMobile}
       collapsible
       collapsedSize="0%"
       onResize={handleResize}
     >
-      <PreviewPanelSurface
-        restoredPlanResponder={restoredPlanResponder}
-        onPdfContextError={onPdfContextError}
-        onLinkReadingContext={onLinkReadingContext}
-        onUnlinkReadingContext={onUnlinkReadingContext}
-        {...annotationPort}
-      />
+      {children ?? (
+        <PreviewPanelSurface
+          restoredPlanResponder={restoredPlanResponder}
+          onPdfContextError={onPdfContextError}
+          onLinkReadingContext={onLinkReadingContext}
+          onUnlinkReadingContext={onUnlinkReadingContext}
+          {...annotationPort}
+        />
+      )}
     </ResizablePanel>
   )
 }
