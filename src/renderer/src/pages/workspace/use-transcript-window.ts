@@ -94,10 +94,7 @@ const useTranscriptWindow = (
   const stateMatchesScope = state.scopeId === scopeId && state.itemCount > 0
   const wasPinnedToEnd =
     stateMatchesScope && state.followEnd !== false && state.end === state.itemCount
-  const retainedWindowSize = Math.max(
-    TRANSCRIPT_WINDOW_SIZE,
-    state.end - state.start
-  )
+  const retainedWindowSize = Math.max(TRANSCRIPT_WINDOW_SIZE, state.end - state.start)
   const retainedStart =
     stateMatchesScope && state.anchorId ? items.findIndex((item) => item.id === state.anchorId) : -1
   const start = finding
