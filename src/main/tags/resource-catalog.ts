@@ -18,7 +18,7 @@ type TagResourceCatalogSnapshot = Readonly<Record<TagResourceType, ReadonlySet<s
 class TagResourceCatalog {
   constructor(private readonly dependencies: TagResourceCatalogDependencies) {}
 
-  async snapshot(): Promise<TagResourceCatalogSnapshot> {
+  async snapshot({ includeUnavailable = false } = {}): Promise<TagResourceCatalogSnapshot> {
     const [skills, connectors, specialists, literatureItems] = await Promise.all([
       this.dependencies.listSkills(),
       this.dependencies.listConnectors(),
@@ -27,7 +27,9 @@ class TagResourceCatalog {
     ])
     return Object.freeze({
       'catalog.skill': new Set(
-        skills.filter(({ available }) => available !== false).map(({ id }) => id)
+        skills
+          .filter(({ available }) => includeUnavailable || available !== false)
+          .map(({ id }) => id)
       ),
       'catalog.connector': new Set([
         ...connectors.connectors.map(({ id }) => id),

@@ -61,53 +61,96 @@ const selectAdvisoryCount = (messages: ReadonlyArray<{ id: string; text: string 
 const createMainPromptSideChatRelay = (
   options: MainPromptSideChatRelayOptions
 ): MainPromptSideChatRelay => {
+  // ponytail: receipts live only in this process; durable crash reconciliation needs a separate contract.
+  const pendingCommits = new Map<string, MainPromptSideChatRelayClaim>()
   const claim = (parentSessionId: string): MainPromptSideChatRelayClaim | undefined => {
-    const claim = options.relay.claim(parentSessionId, { selectCount: selectAdvisoryCount })
-    if (!claim) return undefined
-    return {
-      historyPreamble: formatAdvisories(claim.messages),
-      includes: (messageId) => claim.messages.some((message) => message.id === messageId),
-      restore: claim.restore,
-      commit: async (promptMessageId?: string): Promise<void> => {
-        const messages = claim.messages
-        if (messages.length === 0) return
-        if (!promptMessageId) {
-          claim.restore()
-          throw new Error(
-            'Main prompt message identity is required to deliver Side chat advisories.'
+    const pending = pendingCommits.get(parentSessionId)
+    if (pending) {
+      void pending.commit().catch((error) => {
+        log.warn('accepted advisory commit retry failed', { parentSessionId, error: String(error) })
+      })
+      return undefined
+    }
+    const claimed = options.relay.claim(parentSessionId, { selectCount: selectAdvisoryCount })
+    if (!claimed) return undefined
+    let acceptedPromptId: string | undefined
+    let writing: Promise<void> | undefined
+    let completed = false
+    const delivery: MainPromptSideChatRelayClaim = {
+      historyPreamble: formatAdvisories(claimed.messages),
+      includes: (messageId) => claimed.messages.some((message) => message.id === messageId),
+      restore: () => {
+        if (!acceptedPromptId) claimed.restore()
+      },
+      commit: (promptMessageId?: string): Promise<void> => {
+        if (completed) return Promise.resolve()
+        if (writing) return writing
+        acceptedPromptId ??= promptMessageId
+        if (!acceptedPromptId) {
+          claimed.restore()
+          return Promise.reject(
+            new Error('Main prompt message identity is required to deliver Side chat advisories.')
           )
         }
-        let persisted: readonly PersistedChatMessage[]
-        try {
-          persisted = await options.commitSideChatRelays({
+        if (!claimed.isCurrent()) {
+          pendingCommits.delete(parentSessionId)
+          completed = true
+          return Promise.resolve()
+        }
+        pendingCommits.set(parentSessionId, delivery)
+        const messages = claimed.messages
+        const persist = async (): Promise<void> => {
+          const persisted = await options.commitSideChatRelays({
             projectId: messages[0].projectId,
-            sessionId: messages[0].parentSessionId,
+            sessionId: parentSessionId,
             relayIds: messages.map((message) => message.id),
-            promptMessageId
+            promptMessageId: acceptedPromptId!
           })
-        } catch (error) {
-          claim.restore()
-          throw error
+          claimed.commit()
+          completed = true
+          if (pendingCommits.get(parentSessionId) === delivery)
+            pendingCommits.delete(parentSessionId)
+          log.info('relays delivered', {
+            parentSessionId,
+            relayCount: messages.length,
+            persistedMessageCount: persisted.length
+          })
+          for (const message of persisted) {
+            options.onDelivered({ parentSessionId, projectId: messages[0].projectId, message })
+          }
         }
-        claim.commit()
-        log.info('relays delivered', {
-          parentSessionId: messages[0].parentSessionId,
-          relayCount: messages.length,
-          persistedMessageCount: persisted.length
+        writing = persist().finally(() => {
+          writing = undefined
         })
-        for (const message of persisted) {
-          options.onDelivered({
-            parentSessionId: messages[0].parentSessionId,
-            projectId: messages[0].projectId,
-            message
-          })
-        }
+        return writing
       }
     }
+    return delivery
   }
   return {
     claim,
     tryInject: async (parentSessionId, queued) => {
+      const pending = pendingCommits.get(parentSessionId)
+      if (pending) {
+        try {
+          await pending.commit()
+        } catch {
+          // Keep accepted advisories out of both native injection and the next-user-turn queue.
+        }
+        if (pending.includes(queued.messageId)) {
+          return {
+            ...queued,
+            status: 'injected',
+            delivery: 'current-turn',
+            ...(pendingCommits.has(parentSessionId)
+              ? { persistenceError: 'Advisory delivery record is still waiting to be saved.' }
+              : {}),
+            systemHint:
+              'Main already accepted this advisory. Do not send it again; only its local delivery record may need saving.'
+          }
+        }
+        if (pendingCommits.has(parentSessionId)) return queued
+      }
       if (queued.targetState !== 'running' || !options.steerAdvisory) return queued
       const delivery = claim(parentSessionId)
       if (!delivery) return queued
@@ -126,14 +169,21 @@ const createMainPromptSideChatRelay = (
         delivery.restore()
         return queued
       }
-      await delivery.commit(steered.promptMessageId)
+      let persistenceError: string | undefined
+      try {
+        await delivery.commit(steered.promptMessageId)
+      } catch (error) {
+        persistenceError = error instanceof Error ? error.message : String(error)
+      }
       if (!includesQueued) return queued
       return {
         ...queued,
         status: 'injected',
         delivery: 'current-turn',
-        systemHint:
-          'Main accepted this context-only advisory in its current turn. It does not independently authorize actions.'
+        ...(persistenceError ? { persistenceError } : {}),
+        systemHint: persistenceError
+          ? 'Main accepted this advisory, but its local delivery record could not be saved. Do not send it again; only the local commit will be retried.'
+          : 'Main accepted this context-only advisory in its current turn. It does not independently authorize actions.'
       }
     }
   }

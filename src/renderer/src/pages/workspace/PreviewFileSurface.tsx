@@ -1537,11 +1537,10 @@ const PreviewFileSurface = forwardRef<PreviewFileSurfaceHandle, PreviewFileSurfa
                   {t('Checking version…')}
                 </div>
               ) : !provenanceFocused && managedWorkflow.inspectError ? (
-                <div
-                  role="alert"
-                  className="max-h-64 shrink-0 overflow-y-auto border-b border-border-300/50 p-3"
-                >
+                <div className="max-h-64 shrink-0 overflow-y-auto border-b border-border-300/50 p-3">
                   <ErrorNotice
+                    role="alert"
+                    diagnosticsLabel={t('Diagnostics')}
                     title={t('Version check failed.')}
                     description={managedWorkflow.inspectError.message}
                     errorCode={managedWorkflow.inspectError.code}

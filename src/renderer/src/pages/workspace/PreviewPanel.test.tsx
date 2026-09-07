@@ -473,7 +473,10 @@ describe('PreviewPanel', () => {
     const alert = container.querySelector<HTMLElement>('[data-source-preview-error]')
     expect(alert?.textContent).toContain('Could not load this source')
     expect(alert?.textContent).toContain('This source does not allow embedded previews.')
-    expect(alert?.textContent).toContain('ERR_BLOCKED_BY_RESPONSE (-27)')
+    const diagnostics = alert!.querySelector('details')!
+    expect(diagnostics.open).toBe(false)
+    expect(diagnostics.textContent).toContain('ERR_BLOCKED_BY_RESPONSE (-27)')
+    expect(diagnostics.closest('[role="alert"]')).toBeNull()
     expect(container.querySelector('[data-source-preview-progress]')).toBeNull()
 
     const retryButton = Array.from(container.querySelectorAll<HTMLButtonElement>('button')).find(

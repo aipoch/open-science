@@ -328,6 +328,43 @@ test.describe('Workspace dividers', () => {
   })
 
   for (const side of ['left', 'right'] as const) {
+    test(`${side} divider ignores the bottom edge while a file preview is expanded`, async ({
+      app
+    }, testInfo) => {
+      const page = app.page
+      const handle = page.getByRole('separator', {
+        name: `Resize ${side} panel`,
+        includeHidden: true
+      })
+      const original = (await handle.boundingBox())!
+      await page.getByRole('button', { name: 'Open full screen preview of resize.txt' }).click()
+      const modal = page.getByRole('dialog', { name: 'Preview resize.txt' })
+      await expect(modal).toBeVisible()
+      const x = original.x + original.width / 2
+      const y = original.y + original.height - 2
+      await page.mouse.move(x, y)
+      await expect(handle).not.toHaveAttribute('data-separator', 'hover')
+      expect(
+        await page.locator('body').evaluate((element) => getComputedStyle(element).cursor)
+      ).not.toMatch(/resize/)
+      await page.screenshot({ path: testInfo.outputPath(`${side}-modal-isolation.png`) })
+      await page.mouse.down()
+      await page.mouse.move(x - 60, y, { steps: 5 })
+      await page.mouse.up()
+      expect((await handle.boundingBox())!.x).toBeCloseTo(original.x, 0)
+      // Releasing on the backdrop can dismiss the modal through its normal click behavior.
+      if (await modal.isVisible()) {
+        await modal.getByRole('button', { name: 'Close preview of resize.txt' }).click()
+      }
+      await expect(modal).toBeHidden()
+      await page.mouse.move(x, y)
+      await expect(handle).toHaveAttribute('data-separator', 'hover')
+      await page.mouse.down()
+      await page.mouse.move(x + (side === 'left' ? 60 : -60), y, { steps: 5 })
+      await page.mouse.up()
+      expect(Math.abs((await handle.boundingBox())!.x - original.x)).toBeGreaterThan(30)
+    })
+
     test(`${side} workspace divider responds to arrow keys after reopening`, async ({ app }) => {
       const page = app.page
       await page.emulateMedia({ reducedMotion: 'reduce' })
