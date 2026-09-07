@@ -22,6 +22,7 @@ import { DEFAULT_PERMISSION_PROFILE } from '../../../shared/permission-profiles'
 import {
   INTERRUPTED_SESSION_ERROR,
   SESSION_MANIFEST_VERSION,
+  normalizeSessionFile,
   type PersistedChatSession,
   type SessionPdfContext
 } from '../../../shared/session-persistence'
@@ -3515,78 +3516,89 @@ describe('session store', () => {
     expect(activeBranch?.headMessageId).toBeUndefined()
   })
 
-  it('binds a pending session to the runtime session id without rewriting the prompt', () => {
-    const pending = useSessionStore.getState().appendPendingUserMessage({
-      content: 'Help me inspect this notebook',
-      cwd: '/workspace/project',
-      delegationPolicy: 'deny'
-    })
-
-    const bound = useSessionStore.getState().bindPendingSession({
-      pendingSessionId: pending?.sessionId ?? '',
-      sessionId: 'transport-session-1',
-      cwd: '/workspace/project',
-      agentFrameworkId: 'codex',
-      agentBackendId: 'codex:codex-shared'
-    })
-
-    expect(bound).toEqual({
-      sessionId: 'transport-session-1',
-      messageId: pending?.messageId
-    })
-    expect(useSessionStore.getState().selectedSessionId).toBe('transport-session-1')
-    expect(useSessionStore.getState().sessions).toEqual([
-      expect.objectContaining({
-        id: 'transport-session-1',
-        isPending: false,
+  it.each([
+    ['claude-code', undefined],
+    ['opencode', undefined],
+    ['codex', 'codex-responses'],
+    ['codex', 'codex-bridge']
+  ] as const)(
+    'binds and restores a pending session with %s / %s without rewriting durable identities',
+    (agentFrameworkId, agentBackendId) => {
+      const pending = useSessionStore.getState().appendPendingUserMessage({
+        content: 'Help me inspect this notebook',
         cwd: '/workspace/project',
-        agentFrameworkId: 'codex',
-        agentBackendId: 'codex:codex-shared',
-        delegationPolicy: 'deny',
-        status: 'running',
-        activeRun: {
-          promptMessageId: pending?.messageId,
-          startedAt: Date.now()
-        },
+        delegationPolicy: 'deny'
+      })
+
+      const bound = useSessionStore.getState().bindPendingSession({
+        pendingSessionId: pending?.sessionId ?? '',
+        sessionId: 'transport-session-1',
+        cwd: '/workspace/project',
+        agentFrameworkId,
+        agentBackendId
+      })
+
+      expect(bound).toEqual({
+        sessionId: 'transport-session-1',
+        messageId: pending?.messageId
+      })
+      expect(useSessionStore.getState().selectedSessionId).toBe('transport-session-1')
+      expect(useSessionStore.getState().sessions).toEqual([
+        expect.objectContaining({
+          id: 'transport-session-1',
+          isPending: false,
+          cwd: '/workspace/project',
+          agentFrameworkId,
+          agentBackendId,
+          delegationPolicy: 'deny',
+          status: 'running',
+          activeRun: {
+            promptMessageId: pending?.messageId,
+            startedAt: Date.now()
+          },
+          messages: [
+            expect.objectContaining({
+              id: pending?.messageId,
+              content: 'Help me inspect this notebook'
+            })
+          ]
+        })
+      ])
+      expect(useSessionStore.getState().sessions[0].conversationGraph).toMatchObject({
+        rootFrameId: 'root-frame-transport-session-1',
+        activeFrameId: 'root-frame-transport-session-1',
+        frames: [
+          {
+            id: 'root-frame-transport-session-1',
+            activeBranchId: 'message-branch-transport-session-1'
+          }
+        ],
+        branches: [
+          {
+            id: 'message-branch-transport-session-1',
+            agentFrameId: 'root-frame-transport-session-1'
+          }
+        ],
         messages: [
-          expect.objectContaining({
+          {
             id: pending?.messageId,
-            content: 'Help me inspect this notebook'
-          })
+            agentFrameId: 'root-frame-transport-session-1',
+            introducedOnBranchId: 'message-branch-transport-session-1',
+            runtimeSegmentId: 'runtime-segment-transport-session-1'
+          }
+        ],
+        runtimeSegments: [
+          {
+            id: 'runtime-segment-transport-session-1',
+            agentFrameId: 'root-frame-transport-session-1'
+          }
         ]
       })
-    ])
-    expect(useSessionStore.getState().sessions[0].conversationGraph).toMatchObject({
-      rootFrameId: 'root-frame-transport-session-1',
-      activeFrameId: 'root-frame-transport-session-1',
-      frames: [
-        {
-          id: 'root-frame-transport-session-1',
-          activeBranchId: 'message-branch-transport-session-1'
-        }
-      ],
-      branches: [
-        {
-          id: 'message-branch-transport-session-1',
-          agentFrameId: 'root-frame-transport-session-1'
-        }
-      ],
-      messages: [
-        {
-          id: pending?.messageId,
-          agentFrameId: 'root-frame-transport-session-1',
-          introducedOnBranchId: 'message-branch-transport-session-1',
-          runtimeSegmentId: 'runtime-segment-transport-session-1'
-        }
-      ],
-      runtimeSegments: [
-        {
-          id: 'runtime-segment-transport-session-1',
-          agentFrameId: 'root-frame-transport-session-1'
-        }
-      ]
-    })
-  })
+      const persisted = toPersistedSession(useSessionStore.getState().sessions[0])
+      const restored = normalizeSessionFile(persisted, { preserveRuntimeState: true })
+      expect(restored?.conversationGraph).toEqual(persisted.conversationGraph)
+    }
+  )
 
   it('appends follow-up user messages to the same session and restarts the run', () => {
     const first = useSessionStore.getState().appendUserMessage({

@@ -169,7 +169,7 @@ export const installAppLifecycle = (
     outcome === 'conflict' || outcome === 'renderer-failed' ? outcome : undefined
   const rendererPersistenceNeedsConsent = (
     outcome: RendererSessionPersistenceFlushOutcome
-  ): boolean => outcome === 'timeout' || outcome === 'send-failed'
+  ): boolean => outcome === 'timeout' || outcome === 'send-failed' || outcome === 'renderer-failed'
   const shutdownTrigger = (): ApplicationShutdownTrigger => {
     try {
       return deps.shutdownTrigger?.() ?? currentApplicationShutdownTrigger()

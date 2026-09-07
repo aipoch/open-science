@@ -158,6 +158,7 @@ const ApplicationPresentationHost = (): React.JSX.Element => {
           : t('Conversation storage limit reached')
       }
       message={sessions.writeError}
+      onDismiss={sessions.dismissWriteWarning}
       onRetry={sessions.writeErrorRetryable ? sessions.retryWrites : undefined}
       onAction={
         sessions.writeErrorRetryable

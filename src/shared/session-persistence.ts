@@ -54,7 +54,6 @@ import {
   createLinearConversationGraph,
   materializeNestedDelegateActivities,
   projectConversationMessage,
-  rebindConversationGraphSessionId,
   resolveActiveConversationActivities,
   resolveActiveConversationMessages,
   synchronizeActiveConversationActivities,
@@ -4502,16 +4501,10 @@ const sanitizeSession = (
   }
 
   if (session.conversationGraph !== undefined) {
-    const sanitizedGraph = sanitizeConversationGraph(session.conversationGraph, options)
-    if (!sanitizedGraph) return undefined
-    const pendingRootFramePrefix = 'root-frame-pending-session-'
-    const graph = sanitizedGraph.rootFrameId.startsWith(pendingRootFramePrefix)
-      ? rebindConversationGraphSessionId(
-          sanitizedGraph,
-          sanitizedGraph.rootFrameId.slice('root-frame-'.length),
-          sanitized.id
-        )
-      : sanitizedGraph
+    // Persisted graph IDs are durable identities referenced by Artifact Versions and other stores.
+    // A historical pending-session prefix is not permission to rebind only the Session side.
+    const graph = sanitizeConversationGraph(session.conversationGraph, options)
+    if (!graph) return undefined
     const nestedDelegateActivities = projectActiveNestedDelegateActivities(graph)
     const activityIds = new Set((sanitized.activities ?? []).map(({ id }) => id))
     sanitized.conversationGraph = graph

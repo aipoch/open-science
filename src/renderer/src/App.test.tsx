@@ -118,6 +118,7 @@ const mocks = vi.hoisted(() => {
       persistenceBlockedSessionIds: [] as string[],
       reportSessionSizeLimit: vi.fn(),
       dismissLoadWarning: vi.fn(),
+      dismissWriteWarning: vi.fn(),
       startNewConversationAfterSizeLimit: vi.fn(),
       retryLoad: vi.fn(),
       retryWrites: vi.fn()
@@ -488,6 +489,7 @@ describe('App startup routing', () => {
     mocks.update.status.state = 'idle'
     mocks.update.closeDialog.mockClear()
     mocks.sessionPersistence.dismissLoadWarning.mockClear()
+    mocks.sessionPersistence.dismissWriteWarning.mockClear()
     mocks.sessionPersistence.startNewConversationAfterSizeLimit.mockClear()
     mocks.sessionPersistence.retryLoad.mockClear()
     mocks.sessionPersistence.retryWrites.mockClear()
@@ -1494,6 +1496,9 @@ describe('App startup routing', () => {
       'Open Science could not save the latest conversation changes. Retry before closing the app.'
     )
     expect(alert?.textContent).not.toContain('could not confirm')
+    expect(alert?.querySelector('[data-testid="session-persistence-dismiss"]')).not.toBeNull()
+    alert?.querySelector<HTMLButtonElement>('[data-testid="session-persistence-dismiss"]')?.click()
+    expect(mocks.sessionPersistence.dismissWriteWarning).toHaveBeenCalledOnce()
 
     container.querySelector<HTMLButtonElement>('[data-testid="session-persistence-retry"]')?.click()
     expect(mocks.sessionPersistence.retryWrites).toHaveBeenCalledOnce()
