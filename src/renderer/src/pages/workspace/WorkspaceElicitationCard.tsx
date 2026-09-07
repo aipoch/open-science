@@ -1,5 +1,14 @@
 /* Hallmark · pre-emit critique: P5 H5 E5 S5 R5 V4 */
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, type FormEvent } from 'react'
+import {
+  useId,
+  useEffectEvent,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type FormEvent
+} from 'react'
 import { useTranslation } from 'react-i18next'
 import {
   Bot,
@@ -30,6 +39,7 @@ import {
   type ElicitationValue,
   type PendingElicitationRequest
 } from '../../../../shared/acp'
+import type { ElicitationEditDraft } from '@/stores/session-store'
 import type { AnnotationPort } from './annotations/annotation-port'
 import { TextAnnotationSurface } from './annotations/TextAnnotationSurface'
 
@@ -92,10 +102,17 @@ const normalizeLocalDateTime = (value: string): string | undefined => {
   return date.toISOString()
 }
 
-const valueForSubmission = (field: ElicitationField, value: ElicitationValue): ElicitationValue =>
-  field.format === 'date-time' && typeof value === 'string'
-    ? (normalizeLocalDateTime(value) ?? value)
-    : value
+const valueForSubmission = (
+  field: ElicitationField,
+  value: ElicitationValue | undefined
+): ElicitationValue | undefined => {
+  if (value === '' || (Array.isArray(value) && value.length === 0)) return undefined
+  if (field.format !== 'date-time' || typeof value !== 'string') return value
+  const normalized = normalizeLocalDateTime(value)
+  if (!normalized) return value
+  const compact = normalized.replace('.000Z', 'Z')
+  return compact.length >= (field.minLength ?? 0) ? compact : normalized
+}
 
 const valueForTextInput = (
   field: ElicitationField,
@@ -115,10 +132,10 @@ const valueForTextInput = (
 }
 
 const hasValidValue = (field: ElicitationField, value: ElicitationValue | undefined): boolean => {
+  value = valueForSubmission(field, value)
   if (value === undefined) return !field.required
   if (field.required && typeof value === 'string' && value.trim().length === 0) return false
-  if (field.required && Array.isArray(value) && value.length === 0) return false
-  return isValidElicitationValue(field, valueForSubmission(field, value))
+  return isValidElicitationValue(field, value)
 }
 
 const submittedAnswers = (
@@ -126,10 +143,8 @@ const submittedAnswers = (
   values: Record<string, ElicitationValue | undefined>
 ): ElicitationAnswer[] =>
   fields.flatMap((field) => {
-    const value = values[field.id]
-    if (value === undefined || value === '' || (Array.isArray(value) && value.length === 0))
-      return []
-    return [{ fieldId: field.id, value: valueForSubmission(field, value) }]
+    const value = valueForSubmission(field, values[field.id])
+    return value === undefined ? [] : [{ fieldId: field.id, value }]
   })
 
 type WorkspaceElicitationCardProps = {
@@ -139,6 +154,8 @@ type WorkspaceElicitationCardProps = {
   embedded?: boolean
   onRespond?: (response: ElicitationResponse) => Promise<void>
   onDraftChange?: (answers: ElicitationAnswer[]) => void
+  editDraft?: ElicitationEditDraft
+  onEditDraftChange?: (draft: ElicitationEditDraft | undefined) => void
   annotationPort?: AnnotationPort
   annotationItemId?: string
   revealRequest?: Readonly<{ requestId: number; itemId: string; sectionId?: string }>
@@ -191,22 +208,31 @@ const WorkspaceElicitationCard = ({
   embedded = false,
   onRespond,
   onDraftChange,
+  editDraft,
+  onEditDraftChange,
   annotationPort,
   annotationItemId,
   revealRequest
 }: WorkspaceElicitationCardProps): React.JSX.Element => {
   const { t } = useTranslation()
+  const fieldStatusId = useId()
   const choiceQuestions = request ? resolveAgentUserChoiceQuestions(request.fields) : undefined
   const restoredValues = initialValues(
     request?.fields ?? [],
     elicitation.state === 'pending' ? (elicitation.draftAnswers ?? []) : []
   )
+  const restoredEdit =
+    elicitation.state === 'pending' && editDraft?.requestId === request?.requestId
+      ? editDraft
+      : undefined
   const [values, setValues] = useState<Record<string, ElicitationValue | undefined>>(
-    () => restoredValues
+    () => restoredEdit?.values ?? restoredValues
   )
   const [confirmedValues, setConfirmedValues] = useState(() => restoredValues)
-  const [activeChoiceIndex, setActiveChoiceIndex] = useState(() =>
-    choiceQuestions ? firstUnansweredQuestionIndex(choiceQuestions, restoredValues) : 0
+  const [activeChoiceIndex, setActiveChoiceIndex] = useState(
+    () =>
+      restoredEdit?.activeQuestionIndex ??
+      (choiceQuestions ? firstUnansweredQuestionIndex(choiceQuestions, restoredValues) : 0)
   )
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [error, setError] = useState<string>()
@@ -473,6 +499,21 @@ const WorkspaceElicitationCard = ({
     }
   }, [annotationItemId, elicitation.answers, elicitation.state, request, revealRequest])
 
+  // Capture edits without confirming a question or emitting an Agent response. The callback can
+  // change on store updates; only local input/navigation changes should publish another snapshot.
+  const publishEditDraft = useEffectEvent(() => {
+    if (request && choiceQuestions && elicitation.state === 'pending') {
+      onEditDraftChange?.({
+        requestId: request.requestId,
+        values,
+        activeQuestionIndex: activeChoiceIndex
+      })
+    }
+  })
+  useEffect(() => {
+    publishEditDraft()
+  }, [values, activeChoiceIndex])
+
   const respond = async (response: ElicitationResponse): Promise<boolean> => {
     if (!onRespond || isSubmitting) return false
     setError(undefined)
@@ -482,6 +523,7 @@ const WorkspaceElicitationCard = ({
         ...response,
         ...(request?.durable ? { request } : {})
       })
+      onEditDraftChange?.(undefined)
       return true
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : 'Could not submit the response.')
@@ -838,9 +880,9 @@ const WorkspaceElicitationCard = ({
       ) : elicitation.state === 'pending' && request ? (
         <form className="mt-3 space-y-4" onSubmit={handleSubmit}>
           <div className="space-y-4">
-            {request.fields.map((field) => {
+            {request.fields.map((field, fieldIndex) => {
               const value = values[field.id]
-              const setValue = (next: ElicitationValue): void =>
+              const setValue = (next: ElicitationValue | undefined): void =>
                 setValues((current) => ({ ...current, [field.id]: next }))
 
               if (field.kind === 'single-select') {
@@ -933,7 +975,7 @@ const WorkspaceElicitationCard = ({
 
               if (field.kind === 'boolean') {
                 return (
-                  <label key={field.id} className="flex items-center justify-between gap-3 text-sm">
+                  <div key={field.id} className="flex items-center justify-between gap-3 text-sm">
                     <span>
                       <span className="block font-medium">{field.label}</span>
                       {field.description ? (
@@ -942,12 +984,34 @@ const WorkspaceElicitationCard = ({
                         </span>
                       ) : null}
                     </span>
-                    <Switch
-                      checked={value === true}
-                      disabled={isSubmitting}
-                      onCheckedChange={(checked) => setValue(checked)}
-                    />
-                  </label>
+                    <div className="flex flex-wrap items-center justify-end gap-2">
+                      {!field.required ? (
+                        <span id={`${fieldStatusId}-${fieldIndex}`} className="text-text-100">
+                          {value === undefined ? t('Not answered') : value ? t('Yes') : t('No')}
+                        </span>
+                      ) : null}
+                      <Switch
+                        aria-label={field.label}
+                        aria-describedby={
+                          !field.required ? `${fieldStatusId}-${fieldIndex}` : undefined
+                        }
+                        checked={value === true}
+                        disabled={isSubmitting}
+                        onCheckedChange={(checked) => setValue(checked)}
+                      />
+                      {!field.required ? (
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          disabled={isSubmitting || value === undefined}
+                          onClick={() => setValue(undefined)}
+                        >
+                          {t('Clear selection')}
+                        </Button>
+                      ) : null}
+                    </div>
+                  </div>
                 )
               }
 
@@ -1009,7 +1073,11 @@ const WorkspaceElicitationCard = ({
                     <span className="block leading-5 text-text-100">{field.description}</span>
                   ) : null}
                   {inputType ? (
-                    <Input type={inputType} {...textProps} />
+                    <Input
+                      type={inputType}
+                      step={inputType === 'datetime-local' ? 'any' : undefined}
+                      {...textProps}
+                    />
                   ) : (
                     <Textarea {...textProps} />
                   )}

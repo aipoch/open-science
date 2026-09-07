@@ -102,6 +102,7 @@
     "Import Connector configuration": "Importar configuración del conector"
   },
   "renderer": {
+    "Not answered": "Sin responder",
     "Automatic contrast": "Contraste automático",
     "Display range": "Rango de visualización",
     "Your draft is preserved. Reload the current details, then merge them into your draft before saving.": "Se conserva su borrador. Vuelva a cargar los detalles actuales y combínelos con su borrador antes de guardar.",

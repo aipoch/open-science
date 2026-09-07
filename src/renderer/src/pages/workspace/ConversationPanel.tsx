@@ -622,6 +622,7 @@ const ConversationPanel = ({
     () => new Map<string, StopSubmissionState>()
   )
   const [messageQueueExpanded, setMessageQueueExpanded] = useState(false)
+  const setElicitationEditDraft = useSessionStore((state) => state.setElicitationEditDraft)
   const setElicitationDraftAnswers = useSessionStore((state) => state.setElicitationDraftAnswers)
   const fileInputRef = useRef<HTMLInputElement | null>(null)
   const globalSearchShortcut = window.api?.platform === 'darwin' ? '⌘K' : 'Ctrl+K'
@@ -1500,6 +1501,27 @@ const ConversationPanel = ({
                             request={pendingElicitationRequest}
                             embedded
                             onRespond={onRespondToElicitation}
+                            editDraft={
+                              pendingElicitationActivity
+                                ? activeSession?.elicitationEditDrafts?.[
+                                    pendingElicitationActivity.id
+                                  ]
+                                : undefined
+                            }
+                            onEditDraftChange={(draft) => {
+                              if (
+                                !activeSession ||
+                                !pendingElicitationActivity ||
+                                !pendingElicitationRequest
+                              )
+                                return
+                              setElicitationEditDraft(
+                                activeSession.id,
+                                pendingElicitationActivity.id,
+                                pendingElicitationRequest.requestId,
+                                draft
+                              )
+                            }}
                             onDraftChange={(answers: ElicitationAnswer[]) => {
                               if (!activeSession || !pendingElicitationActivity) return
                               setElicitationDraftAnswers(

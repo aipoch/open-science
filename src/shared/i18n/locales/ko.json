@@ -100,6 +100,7 @@
     "Import Connector configuration": "커넥터 구성 가져오기"
   },
   "renderer": {
+    "Not answered": "미응답",
     "Automatic contrast": "자동 대비",
     "Display range": "표시 범위",
     "Your draft is preserved. Reload the current details, then merge them into your draft before saving.": "초안이 보존됩니다. 현재 설명을 다시 불러온 후 초안에 병합하고 저장하세요.",

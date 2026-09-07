@@ -696,6 +696,11 @@ colors communicate a successful or failed probe/migration result.
 - Ask-User elicitation uses the same content-bounded bottom resize behavior. Key the resize shell to
   the elicitation request so a new question starts at its natural height instead of inheriting the
   previous question's manual height.
+- Optional boolean fields distinguish an unanswered value from explicit Yes/No beside the switch,
+  with Clear selection returning to unanswered. Empty optional text and multi-select values are
+  omitted consistently by validation and submission. Choice-question input and the current step
+  survive Session navigation in renderer memory; they remain separate from confirmed steps and
+  are cleared when the request settles. Unsubmitted edits are not persisted across app restarts.
 - Plan approval uses the same content-bounded bottom panel shell and single-border embedded surface.
   Its compact summary normally has no hidden overflow, so the top resize handle cannot stretch it
   into empty space. The card shows the Plan lifecycle, task summary, confidence, and inline revision

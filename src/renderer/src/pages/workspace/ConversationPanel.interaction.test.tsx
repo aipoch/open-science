@@ -17,7 +17,11 @@ import {
   createInitialPreviewWorkbenchState,
   usePreviewWorkbenchStore
 } from '@/stores/preview-workbench-store'
-import type { ChatSession } from '@/stores/session-store'
+import {
+  useSessionStore,
+  createInitialSessionState,
+  type ChatSession
+} from '@/stores/session-store'
 import type { ActivePlanProjection } from '../../../../shared/session-plan/contract'
 import type { DelegatedQuestionRequest } from '../../../../shared/session-persistence'
 import { VISION_MODEL_NOT_CONFIGURED_MESSAGE } from '../../../../shared/run-error-classification'
@@ -1517,7 +1521,7 @@ describe('ConversationPanel composer intake', () => {
     window.api = previousApi
   })
 
-  it('shows structured input in a content-bounded lane without notebook chrome', () => {
+  it('shows structured input in a content-bounded lane without notebook chrome', async () => {
     const fields = [
       {
         id: 'question_0',
@@ -1562,6 +1566,7 @@ describe('ConversationPanel composer intake', () => {
       updatedAt: 1
     }
 
+    useSessionStore.setState({ ...createInitialSessionState(), sessions: [activeSession] })
     mockAllJobs = [{ job_id: 'job-1', status: 'done', created_at: 1 }]
     renderPanel({
       view: {
@@ -1591,6 +1596,23 @@ describe('ConversationPanel composer intake', () => {
       }
     })
 
+    const ownAnswer = container.querySelector<HTMLTextAreaElement>(
+      '[aria-label="Type your own answer"]'
+    )!
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!.call(
+        ownAnswer,
+        'Research draft'
+      )
+      ownAnswer.dispatchEvent(new Event('input', { bubbles: true }))
+    })
+    expect(
+      useSessionStore.getState().sessions[0].elicitationEditDrafts?.['tool-ask-1']
+    ).toMatchObject({
+      requestId: 'elicitation-1',
+      activeQuestionIndex: 0,
+      values: { question_0_custom: 'Research draft' }
+    })
     const elicitationComposer = container.querySelector('[data-testid="elicitation-composer"]')
     expect(elicitationComposer).not.toBeNull()
     expect(elicitationComposer?.classList.contains('max-h-[min(70dvh,44rem)]')).toBe(true)

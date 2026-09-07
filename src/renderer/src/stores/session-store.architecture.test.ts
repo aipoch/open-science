@@ -125,6 +125,7 @@ const publicTypeExports = [
   'ChatMessageRole',
   'ChatMessageStatus',
   'ChatSession',
+  'ElicitationEditDraft',
   'SessionActionAvailability',
   'SessionActionDisabledReason',
   'SessionActionabilityFacts',
@@ -986,6 +987,7 @@ describe('Session Store architecture', () => {
       'setAgentStatus',
       'setAwaitingFirstAgentOutput',
       'setElicitationDraftAnswers',
+      'setElicitationEditDraft',
       'setElicitationPending',
       'setPermissionPending',
       'upsertToolActivity'
@@ -1048,7 +1050,11 @@ describe('Session Store architecture', () => {
           'src/renderer/src/stores/session-job-store.test.ts'
         ],
         contract: ['src/shared/session-persistence.test.ts'],
-        consumer: ['src/renderer/src/lib/acp/useWorkspaceAgentRuntime.test.ts']
+        consumer: [
+          'src/renderer/src/lib/acp/useWorkspaceAgentRuntime.test.ts',
+          'src/renderer/src/pages/workspace/WorkspaceElicitationCard.interaction.test.tsx',
+          'src/renderer/src/pages/workspace/ConversationPanel.interaction.test.tsx'
+        ]
       },
       capabilityOverlays: ['renderer_state'],
       fallbackCapability: 'renderer_view'

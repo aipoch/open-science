@@ -31,6 +31,7 @@ export {
   getExternallyHydratedSessionAuthority,
   isExternallyHydratedSession,
   toPersistedSession,
+  type ElicitationEditDraft,
   type ActiveRun,
   type ChatMessage,
   type ChatMessageRole,

@@ -100,6 +100,7 @@
     "Import Connector configuration": "コネクタ構成のインポート"
   },
   "renderer": {
+    "Not answered": "未回答",
     "Automatic contrast": "自動コントラスト",
     "Display range": "表示範囲",
     "Your draft is preserved. Reload the current details, then merge them into your draft before saving.": "下書きは保持されています。現在の説明を再読み込みし、下書きに統合してから保存してください。",
