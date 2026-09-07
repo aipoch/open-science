@@ -1,9 +1,9 @@
-import { resolve } from 'node:path'
+import { resolve, sep } from 'node:path'
 import ts from 'typescript'
 import { expect, it } from 'vitest'
 
 it('publishes the complete safe Connector and credential contracts', () => {
-  const path = resolve('packages/open-science/connector-contract.fixture.ts')
+  const path = resolve('packages/open-science/connector-contract.fixture.ts').split(sep).join('/')
   const source = `
     import type { OpenScienceClient } from './index'
     import type * as Shared from '../../src/shared/settings'
@@ -33,6 +33,7 @@ it('publishes the complete safe Connector and credential contracts', () => {
       ? ts.createSourceFile(path, source, languageVersion)
       : originalGetSourceFile(fileName, languageVersion, onError, shouldCreateNewSourceFile)
   const program = ts.createProgram([path], options, host)
+  expect(program.getSourceFile(path)).toBeDefined()
   const diagnostics = ts
     .getPreEmitDiagnostics(program)
     .filter((diagnostic) => diagnostic.file?.fileName === path)
