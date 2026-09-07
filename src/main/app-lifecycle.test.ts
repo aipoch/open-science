@@ -1053,6 +1053,65 @@ describe('installAppLifecycle', () => {
     expect(quit).toHaveBeenCalledTimes(1)
   })
 
+  it('restores the same tray-hidden main window on macOS activate', () => {
+    const h = setup({ platform: 'darwin' })
+    const original = h.windows[0]
+    h.trayHandlers?.onHide()
+    expect(original.visible).toBe(false)
+    expect(h.isMainWindowHidden()).toBe(true)
+
+    h.app.emit('activate')
+
+    expect.soft(original.visible).toBe(true)
+    expect.soft(original.focused).toBe(true)
+    expect.soft(h.isMainWindowHidden()).toBe(false)
+    expect(h.windows).toHaveLength(1)
+    expect(h.getMainWindow()).toBe(original)
+    // Control: the existing Show action already restores this exact window.
+    h.trayHandlers?.onShow()
+    expect(original.visible).toBe(true)
+    expect(original.focused).toBe(true)
+  })
+
+  it('restores a minimized main window on macOS activate', () => {
+    const h = setup({ platform: 'darwin' })
+    h.windows[0].minimized = true
+    h.windows[0].visible = false
+    h.app.emit('activate')
+    expect(h.windows).toHaveLength(1)
+    expect(h.windows[0]).toMatchObject({ minimized: false, visible: true, focused: true })
+  })
+
+  it('does not create a main window on activation before headless mode opens one', () => {
+    const h = setup({ platform: 'darwin', createInitialWindow: false })
+    h.app.emit('activate')
+    expect(h.windows).toHaveLength(0)
+    h.trayHandlers?.onShow()
+    h.trayHandlers?.onHide()
+    h.app.emit('activate')
+    expect(h.windows).toHaveLength(1)
+    expect(h.windows[0].visible).toBe(true)
+  })
+
+  it('does not reopen a destroyed window during committed shutdown', async () => {
+    let finishPreparation!: () => void
+    const h = setup({
+      platform: 'darwin',
+      shutdownTrigger: () => 'system',
+      prepareForQuit: () =>
+        new Promise<void>((resolve) => {
+          finishPreparation = resolve
+        })
+    })
+    h.app.emit('before-quit')
+    await flush()
+    h.windows[0].destroyed = true
+    h.app.emit('activate')
+    expect(h.windows).toHaveLength(1)
+    finishPreparation()
+    await flush()
+  })
+
   it('recreates a window on macOS activate when none are open', () => {
     const { app, windows } = setup({ platform: 'darwin' })
     windows[0].destroyed = true

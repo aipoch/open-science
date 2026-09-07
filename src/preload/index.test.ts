@@ -736,6 +736,7 @@ describe('preload bridge — public surface inventory', () => {
       'window.closeFind',
       'window.findInPage',
       'window.onCloseActivePane',
+      'window.onCloseConfirmDismiss',
       'window.onCloseConfirmRequest',
       'window.onFindInPageResult',
       'window.onHideWindowFind',
