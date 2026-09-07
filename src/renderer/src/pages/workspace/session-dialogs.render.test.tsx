@@ -207,6 +207,9 @@ describe('workspace session dialogs behavior wiring', () => {
     )
 
     expect(getTextContent(tree)).toContain('Dataset cleanup')
+    expect(getTextContent(tree)).toContain(
+      'Messages and execution evidence attached to those Artifacts will remain available in Provenance.'
+    )
     expect(getTextContent(tree)).toContain('Files in its working folder are not deleted.')
     expect(root.props.onOpenChange).toBeTypeOf('function')
     ;(root.props.onOpenChange as (open: boolean) => void)(false)

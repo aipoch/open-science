@@ -26,8 +26,8 @@ describe('EnvStatusBanner', () => {
           ui={{
             kind: 'preparing',
             scope: 'upgrade',
-            phase: 'install',
-            message: 'Updating…',
+            phase: 'upgrade',
+            event: { code: 'updating-default-packages' },
             progress: 0.6
           }}
         />
@@ -36,6 +36,9 @@ describe('EnvStatusBanner', () => {
     expect(container.querySelector('[data-testid="env-status-banner"]')?.textContent).toContain(
       'Updating'
     )
+    const banner = container.querySelector('[data-testid="env-status-banner"]')
+    expect(banner?.getAttribute('role')).toBe('status')
+    expect(banner?.getAttribute('aria-live')).toBe('polite')
   })
 
   it('shows the shared speed/ETA line during an upgrade pack download', () => {
@@ -45,8 +48,8 @@ describe('EnvStatusBanner', () => {
           ui={{
             kind: 'preparing',
             scope: 'upgrade',
-            phase: 'download',
-            message: 'Downloading…',
+            phase: 'fetch-python',
+            event: { code: 'downloading-python-runtime' },
             progress: 0.4,
             download: {
               phase: 'downloading',
@@ -73,8 +76,8 @@ describe('EnvStatusBanner', () => {
           ui={{
             kind: 'preparing',
             scope: 'upgrade',
-            phase: 'download',
-            message: 'Downloading…',
+            phase: 'fetch-python',
+            event: { code: 'downloading-python-runtime' },
             progress: 0.4,
             download: {
               phase: 'reconnecting',
@@ -105,6 +108,8 @@ describe('EnvStatusBanner', () => {
     )
     const banner = container.querySelector('[data-testid="env-status-banner"]')
     expect(banner?.textContent).toContain('offline')
+    expect(banner?.getAttribute('role')).toBe('alert')
+    expect(banner?.getAttribute('aria-live')).toBe('assertive')
     const button = container.querySelector(
       '[data-testid="env-status-banner-retry"]'
     ) as HTMLButtonElement
@@ -145,9 +150,7 @@ describe('EnvStatusBanner', () => {
   it('is hidden for a first-run python preparation (that is the onboarding/gate surface, not a banner)', () => {
     act(() =>
       root.render(
-        <EnvStatusBanner
-          ui={{ kind: 'preparing', scope: 'python', phase: '', message: '', progress: 0.2 }}
-        />
+        <EnvStatusBanner ui={{ kind: 'preparing', scope: 'python', phase: '', progress: 0.2 }} />
       )
     )
     expect(container.querySelector('[data-testid="env-status-banner"]')).toBeNull()
@@ -156,5 +159,26 @@ describe('EnvStatusBanner', () => {
   it('is hidden when ready', () => {
     act(() => root.render(<EnvStatusBanner ui={{ kind: 'ready' }} />))
     expect(container.querySelector('[data-testid="env-status-banner"]')).toBeNull()
+  })
+
+  it('announces when environment work becomes ready', () => {
+    act(() =>
+      root.render(
+        <EnvStatusBanner
+          ui={{
+            kind: 'preparing',
+            scope: 'upgrade',
+            phase: 'upgrade',
+            event: { code: 'updating-default-packages' },
+            progress: 0.8
+          }}
+        />
+      )
+    )
+    act(() => root.render(<EnvStatusBanner ui={{ kind: 'ready' }} />))
+
+    const completion = container.querySelector('[data-testid="env-status-ready-announcement"]')
+    expect(completion?.getAttribute('role')).toBe('status')
+    expect(completion?.textContent).toBe('Notebook environment ready')
   })
 })

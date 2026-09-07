@@ -313,4 +313,28 @@ describe('DatabaseStartupGate', () => {
     expect(issueLink.getAttribute('aria-disabled')).toBe('true')
     expect(issueLink.getAttribute('href')).toBeNull()
   })
+  it('shows storage recovery guidance for a retryable validation-query failure', () => {
+    render(
+      <DatabaseStartupGate>
+        <div>Business application</div>
+      </DatabaseStartupGate>
+    )
+    act(() =>
+      publish({
+        phase: 'blocked',
+        error: {
+          code: 'database_open_failed',
+          message: 'Open Science could not open its database.',
+          retryable: true
+        }
+      })
+    )
+    expect(screen.getByRole('button', { name: 'Retry' })).toBeTruthy()
+    expect(
+      screen.getByText(
+        'Quit other copies of Open Science, check free disk space and folder permissions, then retry.'
+      )
+    ).toBeTruthy()
+    expect(screen.queryByText(/Part of the stored data doesn't match/)).toBeNull()
+  })
 })

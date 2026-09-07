@@ -24,6 +24,26 @@ beforeEach(() => {
 })
 
 describe('project store', () => {
+  it('refreshes authoritative archive state after a rejected command without replaying it', async () => {
+    const current = createProject({ archiveRevision: 2 })
+    const updateArchive = vi
+      .fn()
+      .mockRejectedValue(new Error('Project archive state changed elsewhere.'))
+    const get = vi.fn().mockResolvedValue(current)
+    setProjectsApi({ updateArchive, get })
+    useProjectStore.setState({ projects: [createProject({ archiveRevision: 0 })] })
+    await expect(
+      useProjectStore.getState().updateProjectArchive({
+        id: current.id,
+        archived: true,
+        expectedArchiveRevision: 0
+      })
+    ).rejects.toThrow('changed elsewhere')
+    expect(get).toHaveBeenCalledWith(current.id)
+    expect(updateArchive).toHaveBeenCalledOnce()
+    expect(useProjectStore.getState().projects).toEqual([current])
+  })
+
   it('loads projects sorted most-recently-updated first', async () => {
     setProjectsApi({
       list: vi

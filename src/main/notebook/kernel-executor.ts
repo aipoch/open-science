@@ -20,7 +20,11 @@ import {
 } from './kernel-protocol'
 import { mapLoopOutputs, type MappedFigure } from './loop-output-mapper'
 import { protectManagedRuntimeWrites } from './managed-runtime-guard'
-import { buildNotebookKernelEnvironment, environmentPathRoots } from './process-environment'
+import {
+  buildManagedRuntimeProcessEnvironment,
+  buildNotebookKernelEnvironment,
+  environmentPathRoots
+} from './process-environment'
 import type { NotebookProcessSandbox } from './process-sandbox'
 import {
   notebookWorkloadCacheEnv,
@@ -837,7 +841,11 @@ class NotebookKernelExecutor implements NotebookExecutor {
       const managedBin =
         kind === 'r' ? rScriptBin(prefix, this.platform) : pythonBin(prefix, this.platform)
       command = request.resolvedInterpreter?.command ?? managedBin
-      args = [...(request.resolvedInterpreter?.args ?? []), loopPath]
+      args = [
+        ...(request.resolvedInterpreter?.args ?? []),
+        ...(kind === 'r' && !request.resolvedInterpreter ? ['--vanilla'] : []),
+        loopPath
+      ]
     }
 
     // The semantic guard rejects known installers before dispatch. This native layer makes the
@@ -990,6 +998,9 @@ class NotebookKernelExecutor implements NotebookExecutor {
       ...(kind === 'repl' && request.projectId
         ? { OPEN_SCIENCE_NOTEBOOK_PROJECT_ID: request.projectId }
         : {}),
+      ...(kind === 'repl' && request.workspaceCwd
+        ? { OPEN_SCIENCE_NOTEBOOK_WORKSPACE_CWD: request.workspaceCwd }
+        : {}),
       ...(kind === 'repl' ? { ELECTRON_RUN_AS_NODE: '1' } : {}),
       ...(rEnvPrefix ? { OPEN_SCIENCE_R_ENV_PREFIX: rEnvPrefix } : {})
     }
@@ -998,6 +1009,17 @@ class NotebookKernelExecutor implements NotebookExecutor {
     // requires Library\bin (BLAS/LAPACK and compiler runtimes), not just <prefix>\bin.
     if (rEnvPrefix) {
       env.PATH = condaActivatedPath(rEnvPrefix, process.env.PATH, this.platform)
+    }
+    if (kind !== 'repl' && !request.resolvedInterpreter) {
+      Object.assign(
+        env,
+        buildManagedRuntimeProcessEnvironment(request.runtimeRoot, {
+          language: kind,
+          prefix: rEnvPrefix,
+          platform: this.platform,
+          sourceEnv: env
+        })
+      )
     }
     return env
   }

@@ -24,14 +24,18 @@ describe('deriveProvisionUi', () => {
     const ui = deriveProvisionUi(
       status({ provisioning: true }),
       'python',
-      { phase: 'materialize', message: 'Preparing Python environment…', progress: 0.4 },
+      {
+        phase: 'fetch-python',
+        event: { code: 'preparing-packages', environment: 'default-python' },
+        progress: 0.4
+      },
       undefined
     )
     expect(ui).toEqual({
       kind: 'preparing',
       scope: 'python',
-      phase: 'materialize',
-      message: 'Preparing Python environment…',
+      phase: 'fetch-python',
+      event: { code: 'preparing-packages', environment: 'default-python' },
       progress: 0.4
     })
   })
@@ -43,17 +47,17 @@ describe('deriveProvisionUi', () => {
       undefined,
       undefined
     )
-    expect(ui).toEqual({ kind: 'preparing', scope: 'upgrade', phase: '', message: '', progress: 0 })
+    expect(ui).toEqual({ kind: 'preparing', scope: 'upgrade', phase: '', progress: 0 })
   })
 
   it('reports R preparation with progress message passthrough when scope is r', () => {
     const ui = deriveProvisionUi(
       status({ pythonReady: true, provisioning: true }),
       'r',
-      { phase: 'download', message: 'x', progress: 0.1 },
+      { phase: 'fetch-r', event: { code: 'downloading-r-runtime' }, progress: 0.1 },
       undefined
     )
-    expect(ui).toMatchObject({ kind: 'preparing', scope: 'r', message: 'x', progress: 0.1 })
+    expect(ui).toMatchObject({ kind: 'preparing', scope: 'r', progress: 0.1 })
   })
 
   it('uses the broadcast scope for automatic R provisioning', () => {
@@ -61,8 +65,8 @@ describe('deriveProvisionUi', () => {
       status({ pythonReady: true, provisioning: true }),
       undefined,
       {
-        phase: 'download',
-        message: 'Downloading managed r runtime',
+        phase: 'fetch-r',
+        event: { code: 'downloading-r-runtime' },
         progress: 0.4,
         scope: 'r',
         sessionId: 'session-a'
@@ -140,8 +144,8 @@ describe('notebookGated', () => {
       s,
       undefined,
       {
-        phase: 'download',
-        message: 'Downloading Python runtime',
+        phase: 'fetch-python',
+        event: { code: 'downloading-python-runtime' },
         progress: 0.2,
         scope: 'python',
         sessionId: 'session-a'
@@ -160,7 +164,7 @@ describe('notebookGated', () => {
       undefined,
       {
         phase: 'error',
-        message: 'Python download failed',
+        diagnostic: 'Python download failed',
         progress: 0,
         scope: 'python',
         sessionId: 'session-a'

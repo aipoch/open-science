@@ -385,7 +385,14 @@ class AcpPromptContentOwner {
           fileTextBudget,
           snapshots
         )
-        resolvedReferences.push(resolved.reference)
+        // Linked PDF context is read through the Literature MCP, so it must not also be
+        // registered as a Notebook artifact input.
+        if (
+          !('pdfContextDocumentId' in resolved.reference) ||
+          !resolved.reference.pdfContextDocumentId
+        ) {
+          resolvedReferences.push(resolved.reference)
+        }
         for (const block of resolved.blocks) {
           appendBlock(block, this.imageOverflowResourceLink(block, reference.name))
         }

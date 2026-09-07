@@ -111,6 +111,26 @@ describe('computePreflight', () => {
     expect(run({ settings }).activeProviderReady).toBe(false)
   })
 
+  it('is not provider-ready when only another model target was validated', () => {
+    const validatedForAnotherModel = {
+      ...customProvider,
+      lastValidatedTarget: { model: 'model-a', endpoint: 'anthropic' as const }
+    } as StoredProvider & {
+      lastValidatedTarget: { model: string; endpoint: 'anthropic' }
+    }
+    const settings = baseSettings({
+      providers: [validatedForAnotherModel],
+      activeModel: 'model-b'
+    })
+
+    expect(
+      run({
+        settings,
+        activeValidationTarget: { model: 'model-b', endpoint: 'anthropic' }
+      }).activeProviderReady
+    ).toBe(false)
+  })
+
   it('is not provider-ready when the latest validation failed after an earlier success', () => {
     const settings = baseSettings({
       providers: [

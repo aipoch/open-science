@@ -19,9 +19,10 @@ import type { ChatSession } from '@/stores/session-store'
 
 type DeleteSessionDialogProps = {
   session: ChatSession | undefined
+  projectName?: string
   canDelete: boolean
   isDeleting?: boolean
-  error?: 'runtime' | 'persistence'
+  error?: 'runtime' | 'persistence' | 'unknown'
   onCancel: () => void
   onConfirmDelete: () => void
 }
@@ -32,6 +33,7 @@ const deleteDialogConfirmButtonClassName =
 // Destructive deletion requires confirmation before the session is removed from memory.
 const DeleteSessionDialog = ({
   session,
+  projectName,
   canDelete,
   isDeleting = false,
   error,
@@ -40,6 +42,7 @@ const DeleteSessionDialog = ({
 }: DeleteSessionDialogProps): React.JSX.Element => {
   const { t } = useTranslation()
   const dialogSession = useRetainedDialogValue(session)
+  const dialogProjectName = useRetainedDialogValue(session ? (projectName ?? '') : undefined)
 
   return (
     <AlertDialog.Root
@@ -73,11 +76,18 @@ const DeleteSessionDialog = ({
             </Button>
           </div>
           <div className={dialogBodyClassName}>
-            <AlertDialog.Description className={dialogDescriptionClassName}>
-              {t(
-                'This will permanently delete "{{title}}". Artifacts created in this session will remain in the project. Files in its working folder are not deleted. This action cannot be undone.',
-                { title: dialogSession?.title ?? '' }
-              )}
+            <AlertDialog.Description asChild>
+              <div className={dialogDescriptionClassName}>
+                {dialogProjectName ? (
+                  <p className="mb-2 break-words font-medium">
+                    {t('Project: {{name}}', { name: dialogProjectName })}
+                  </p>
+                ) : null}
+                {t(
+                  'This will permanently delete "{{title}}". Artifacts created in this session will remain in the project. Messages and execution evidence attached to those Artifacts will remain available in Provenance. Files in its working folder are not deleted. This action cannot be undone.',
+                  { title: dialogSession?.title ?? '' }
+                )}
+              </div>
             </AlertDialog.Description>
             {isDeleting ? (
               <p className="mt-3 text-sm text-muted-foreground" role="status" aria-live="polite">
@@ -86,13 +96,15 @@ const DeleteSessionDialog = ({
             ) : null}
             {error ? (
               <p className="mt-3 text-sm text-destructive" role="alert">
-                {error === 'persistence'
-                  ? t(
-                      "The agent was stopped, but Open Science couldn't delete the saved Session. The Session, draft, and attachments were kept. Please try again."
-                    )
-                  : t(
-                      "Open Science couldn't stop the agent for this Session. The Session was not deleted. Please try again."
-                    )}
+                {error === 'unknown'
+                  ? t('Could not confirm the deletion result. Please try again.')
+                  : error === 'persistence'
+                    ? t(
+                        "The agent was stopped, but Open Science couldn't delete the saved Session. The Session, draft, and attachments were kept. Please try again."
+                      )
+                    : t(
+                        "Open Science couldn't stop the agent for this Session. The Session was not deleted. Please try again."
+                      )}
               </p>
             ) : null}
           </div>

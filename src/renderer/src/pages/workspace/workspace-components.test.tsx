@@ -128,7 +128,9 @@ describe('workspace page component boundaries', () => {
     expect(workspacePageSource).toContain('canEditDraft,')
     expect(workspacePageSource).toContain('if (!isSessionPersistenceReady) return')
     expect(workspaceSidebarSource).toContain('disabled={!canCreateConversation}')
-    expect(workspaceSidebarSource).toContain('disabled={!canMutateConversations}')
+    expect(workspaceSidebarSource).toMatch(
+      /createSessionActionBindings\(\{\s*canMutateConversations,/u
+    )
     expect(conversationPanelSource).toContain('disabled={!canEditDraft}')
   })
 

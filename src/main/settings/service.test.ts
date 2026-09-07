@@ -141,6 +141,7 @@ type ManagedInstallImpl = (options: {
   onEvent: (event: { kind: string; installId: string }) => void
   dataRoot: string
   registries?: string[]
+  signal?: AbortSignal
 }) => Promise<{
   result: { installId: string; ok: boolean; error?: string }
   resolvedPath?: string
@@ -204,7 +205,7 @@ const createService = (
   new SettingsService({
     repository,
     log: options.log ?? silentLog,
-    storageRoot,
+    configRoot: storageRoot,
     // Point at a non-existent user Claude dir so tests never read the real ~/.claude. The same
     // path is now used by claude-isolated skill-scanning; claude-default is gone.
     userClaudeDir: options.userClaudeDir ?? join(storageRoot, 'no-user-claude'),
@@ -726,6 +727,7 @@ describe('SettingsService: providers', () => {
         apiEndpoints: ['responses'],
         models: [
           'gpt-5.6-sol',
+          'gpt-6-astra',
           'gpt-5.6-terra',
           'gpt-5.6-luna',
           'gpt-5.5',
@@ -1964,6 +1966,28 @@ describe('SettingsService: preflight & spawn config', () => {
       agentReady: true,
       activeProviderReady: true
     })
+  })
+
+  it('closes the provider gate when the configured model leaves the catalog', async () => {
+    const service = createService()
+    await repository.setClaudeInfo({ resolvedPath: execPath, version: '2.1.0' })
+    const created = (
+      await service.upsertProvider({
+        type: 'official',
+        name: 'DeepSeek',
+        vendorId: 'deepseek',
+        key: 'k'
+      })
+    ).providers[0]
+    await service.setActiveProvider(created.id, 'deepseek-v4-pro')
+    const stored = (await repository.getSettings()).providers[0]
+    await repository.upsertProvider({
+      ...stored,
+      fetchedModels: ['replacement-model'],
+      lastValidatedAt: 1
+    })
+
+    await expect(service.getPreflight()).resolves.toMatchObject({ activeProviderReady: false })
   })
 
   it('closes the provider gate when the active shared Claude session is signed out', async () => {
@@ -3883,7 +3907,7 @@ describe('SettingsService: skills', () => {
   const createSkillService = async (): Promise<InstanceType<typeof SettingsService>> =>
     new SettingsService({
       repository,
-      storageRoot,
+      configRoot: storageRoot,
       skillRegistry: new SkillRegistry(await seedBundle())
     })
 
@@ -4008,6 +4032,7 @@ describe('SettingsService: skills', () => {
 
     skills = await service.updateSkill({
       id: 'personal-my-skill',
+      etag: detail.etag!,
       description: 'Edited.',
       body: '# Edited',
       metadata: detail.metadata
@@ -4115,6 +4140,7 @@ describe('SettingsService: skills', () => {
     // Editing keeps one file, drops one, and adds one.
     await service.updateSkill({
       id: 'personal-ref-skill-id',
+      etag: detail.etag!,
       description: 'd',
       body: '# body',
       references: [{ path: 'keep.py' }, { path: 'new.py', dataBase64: b64('new') }]
@@ -4202,7 +4228,7 @@ describe('SettingsService: skills', () => {
     )
     const service = new SettingsService({
       repository,
-      storageRoot,
+      configRoot: storageRoot,
       userClaudeDir,
       skillRegistry: new SkillRegistry(skillBundle)
     })
@@ -4285,7 +4311,7 @@ describe('SettingsService: skills', () => {
     await chmod(adapterPath, 0o755)
     const service = new SettingsService({
       repository,
-      storageRoot,
+      configRoot: storageRoot,
       skillRegistry: new SkillRegistry(await seedBundle()),
       codexDetectDeps: {
         env: { PATH: dirname(adapterPath) },
@@ -4393,7 +4419,7 @@ describe('SettingsService: skills', () => {
     )
     const service = new SettingsService({
       repository,
-      storageRoot,
+      configRoot: storageRoot,
       skillRegistry: new SkillRegistry(await seedBundle())
     })
     const empty = await repository.getSettings()
@@ -4426,7 +4452,7 @@ describe('SettingsService: skills', () => {
     await chmod(adapterPath, 0o755)
     const service = new SettingsService({
       repository,
-      storageRoot,
+      configRoot: storageRoot,
       skillRegistry: new SkillRegistry(await seedBundle()),
       codexDetectDeps: {
         env: {},
@@ -4513,7 +4539,7 @@ describe('SettingsService: skills', () => {
   it('uses the frontmatter name when nudging an imported skill', async () => {
     const service = new SettingsService({
       repository,
-      storageRoot,
+      configRoot: storageRoot,
       skillRegistry: new SkillRegistry(await seedBundle()),
       userSkills: {
         list: () =>
@@ -4542,7 +4568,7 @@ describe('SettingsService: skills', () => {
     const importFromGitHub = vi.fn().mockResolvedValue({ status: 'imported', id: 'imported-x' })
     const service = new SettingsService({
       repository,
-      storageRoot,
+      configRoot: storageRoot,
       skillRegistry: new SkillRegistry(await seedBundle()),
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       userSkills: { importFromGitHub, list: () => Promise.resolve([]) } as any
@@ -4563,7 +4589,7 @@ describe('SettingsService: skills', () => {
     const scanRepo = vi.fn().mockResolvedValue([])
     const service = new SettingsService({
       repository,
-      storageRoot,
+      configRoot: storageRoot,
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       userSkills: { scanRepo } as any
     })
@@ -4594,7 +4620,7 @@ describe('SettingsService: skills', () => {
     vi.stubGlobal('fetch', fetch)
     const service = new SettingsService({
       repository,
-      storageRoot,
+      configRoot: storageRoot,
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       userSkills: { scanRepo } as any
     })
@@ -4623,7 +4649,7 @@ describe('SettingsService: skills', () => {
     })
     const service = new SettingsService({
       repository,
-      storageRoot,
+      configRoot: storageRoot,
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       userSkills: { previewGitHubSkill } as any
     })
@@ -4638,6 +4664,93 @@ describe('SettingsService: skills', () => {
 })
 
 describe('installClaude (app-managed source)', () => {
+  it('drains authentication cleanup before reporting an installation disposal failure', async () => {
+    const { AgentRuntimeManager } = await import('./agent-runtime-manager')
+    const { ProviderAccountsModule } = await import('./provider-accounts')
+    const failure = new Error('Installer cleanup was not confirmed')
+    const authCleanup = Promise.withResolvers<void>()
+    const runtimeDispose = vi
+      .spyOn(AgentRuntimeManager.prototype, 'dispose')
+      .mockRejectedValue(failure)
+    const authDispose = vi
+      .spyOn(ProviderAccountsModule.prototype, 'dispose')
+      .mockReturnValue(authCleanup.promise)
+    try {
+      const service = createService()
+      let settled = false
+      const disposal = service.dispose().then(
+        () => {
+          settled = true
+          return undefined
+        },
+        (error: unknown) => {
+          settled = true
+          return error
+        }
+      )
+      await new Promise<void>((resolve) => setImmediate(resolve))
+      const waitedForAuthentication = !settled
+      authCleanup.resolve()
+      expect(await disposal).toBe(failure)
+      expect(waitedForAuthentication).toBe(true)
+    } finally {
+      authCleanup.resolve()
+      runtimeDispose.mockRestore()
+      authDispose.mockRestore()
+    }
+  })
+
+  it('reports an in-flight install until the installer settles', async () => {
+    let finishInstall!: (outcome: Awaited<ReturnType<ManagedInstallImpl>>) => void
+    const installOutcome = new Promise<Awaited<ReturnType<ManagedInstallImpl>>>((resolve) => {
+      finishInstall = resolve
+    })
+    const service = createService(undefined, {
+      installManagedClaudeImpl: () => installOutcome
+    })
+
+    const install = service.installClaude({ source: 'managed' }, () => undefined)
+    expect(service.hasActiveInstall()).toBe(true)
+    expect(service.getActiveInstallId()).toMatch(/^install-/)
+
+    finishInstall({ result: { installId: 'completed', ok: false } })
+    await install
+
+    expect(service.hasActiveInstall()).toBe(false)
+    expect(service.getActiveInstallId()).toBeUndefined()
+  })
+
+  it('aborts and drains an active runtime install during dispose', async () => {
+    const installStarted = Promise.withResolvers<void>()
+    const releaseCleanup = Promise.withResolvers<void>()
+    let installSignal: AbortSignal | undefined
+    const service = createService(undefined, {
+      installManagedClaudeImpl: async ({ installId, signal }) => {
+        installSignal = signal
+        installStarted.resolve()
+        await releaseCleanup.promise
+        return { result: { installId, ok: false, error: 'Installation cancelled.' } }
+      }
+    })
+    const install = service.installClaude({ source: 'managed' }, () => undefined)
+    await installStarted.promise
+
+    let disposed = false
+    const dispose = service.dispose().then(() => {
+      disposed = true
+    })
+    try {
+      await Promise.resolve()
+      expect(installSignal?.aborted).toBe(true)
+      expect(disposed).toBe(false)
+    } finally {
+      releaseCleanup.resolve()
+      await install
+      await dispose
+    }
+    expect(disposed).toBe(true)
+  })
+
   it('routes managed installs through the managed installer and persists the resolved path', async () => {
     const service = createService(undefined, {
       installManagedClaudeImpl: async ({ installId }) => ({
@@ -4842,7 +4955,7 @@ describe('checkEnvironment', () => {
     await repository.setClaudeInfo({ resolvedPath: execPath, version: '2.1.0' })
     const service = new SettingsService({
       repository,
-      storageRoot,
+      configRoot: storageRoot,
       detectDeps: {
         env: {},
         homePath: '/home',
@@ -4867,7 +4980,7 @@ describe('checkEnvironment', () => {
     await repository.setClaudeInfo({ resolvedPath: execPath, version: '2.1.0' })
     const service = new SettingsService({
       repository,
-      storageRoot,
+      configRoot: storageRoot,
       detectDeps: {
         env: { PATH: '/other-bin' },
         homePath: '/home',
@@ -4894,7 +5007,7 @@ describe('checkEnvironment', () => {
     await repository.setClaudeInfo({ resolvedPath: stale, version: '2.1.0' })
     const service = new SettingsService({
       repository,
-      storageRoot,
+      configRoot: storageRoot,
       detectDeps: {
         env: { PATH: '/found-bin' },
         homePath: '/home',
@@ -5240,19 +5353,19 @@ describe('SettingsService: reasoning effort', () => {
   it('uses the OpenAI and Anthropic registries for subscription models', async () => {
     const service = createService()
     const codex = (await service.upsertProvider({ type: 'codex-isolated' })).providers[0]
-    await service.setActiveProvider(codex.id, 'gpt-5.6-sol')
+    await service.setActiveProvider(codex.id, 'gpt-6-astra')
 
-    expect(await service.resolveActiveReasoningEffort('max')).toBe('ultra')
+    expect(await service.resolveActiveReasoningEffort('max')).toBe('max')
 
     const claude = (
       await service.upsertProvider({
         type: 'claude-shared',
-        model: 'claude-haiku-4-5-20251001'
+        model: 'claude-fable-5-1'
       })
     ).providers.find((provider) => provider.type === 'claude-shared')!
-    await service.setActiveProvider(claude.id, 'claude-haiku-4-5-20251001')
+    await service.setActiveProvider(claude.id, 'claude-fable-5-1')
 
-    expect(await service.resolveActiveReasoningEffort('max')).toBe('default')
+    expect(await service.resolveActiveReasoningEffort('max')).toBe('max')
   })
 
   it('does not guess an effort profile for an unpinned Codex subscription model', async () => {
@@ -5327,7 +5440,7 @@ describe('SettingsService: reasoning effort', () => {
     )
   })
 
-  it('uses one effective catalog model for both the backend and its effort profile', async () => {
+  it('fails closed before resolving effort when the configured model leaves the catalog', async () => {
     vi.stubEnv('OPEN_SCIENCE_AGENT_FRAMEWORK', 'opencode')
     await repository.setAgentFramework('opencode')
     const service = createService(undefined, {
@@ -5347,13 +5460,9 @@ describe('SettingsService: reasoning effort', () => {
     const stored = (await repository.getSettings()).providers[0]
     await repository.upsertProvider({ ...stored, fetchedModels: ['claude-opus-5'] })
 
-    const backend = await resolveActiveBackend(service)
-    const content = JSON.parse(backend.env?.OPENCODE_CONFIG_CONTENT ?? '{}')
-    const agentProviderId = opencodeTransportProviderId(provider.id, 'claude-opus-5')
-
-    expect(backend.sessionModel).toBe(`${agentProviderId}/claude-opus-5`)
-    expect(backend.sessionEffort).toBe('max')
-    expect(content.model).toBe(`${agentProviderId}/claude-opus-5`)
+    await expect(resolveActiveBackend(service)).rejects.toThrow(
+      'The configured model is no longer available from provider "Anthropic": "claude-haiku-4-5-20251001". Pick another model in Settings → Model.'
+    )
   })
 
   it('surfaces sessionEffort on the Claude backend too (the early-return path)', async () => {
@@ -5695,6 +5804,46 @@ describe('SettingsService: Subagent model', () => {
 })
 
 describe('SettingsService: Reviewer model', () => {
+  it('validates a compound Agent routing update against its target framework before committing', async () => {
+    const service = createService()
+    const created = await service.upsertProvider({
+      type: 'custom',
+      name: 'Routing gateway',
+      apiEndpoints: ['anthropic'],
+      baseUrl: 'https://routing.example/v1',
+      model: 'routing-model',
+      key: 'secret'
+    })
+    const provider = created.providers.find((candidate) => candidate.name === 'Routing gateway')!
+    const fixed = {
+      mode: 'fixed' as const,
+      providerId: provider.id,
+      model: 'routing-model',
+      reasoningEffort: 'high' as const
+    }
+
+    await expect(
+      service.setAgentRouting({
+        framework: 'claude-code',
+        reviewer: fixed,
+        subagent: fixed
+      })
+    ).resolves.toMatchObject({
+      agentFrameworkId: 'claude-code',
+      reviewerModel: fixed,
+      subagentModel: fixed
+    })
+
+    await expect(service.setAgentRouting({ framework: 'codex' })).rejects.toThrow(
+      'not available for the active Agent Framework'
+    )
+    await expect(service.getSettingsView()).resolves.toMatchObject({
+      agentFrameworkId: 'claude-code',
+      reviewerModel: fixed,
+      subagentModel: fixed
+    })
+  })
+
   it('atomically validates and saves a fixed Reviewer target', async () => {
     const service = createService()
     const created = await service.upsertProvider({
@@ -6242,7 +6391,7 @@ describe('SettingsService: listAgentHomeSkills framework routing', () => {
       .mockRejectedValue(new Error(`EACCES: ${join(hostSkillPath, 'SKILL.md')}`))
     const service = new SettingsService({
       repository,
-      storageRoot,
+      configRoot: storageRoot,
       userClaudeDir,
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       userSkills: { previewAgentHomeSkill } as any
@@ -6885,13 +7034,20 @@ describe('SettingsService: claude-isolated login + status coordination', () => {
   })
 
   it('discards an older probe when a newer setup-token login wins', async () => {
-    const finishProbes: Array<() => void> = []
-    const probe = vi.fn(
-      () =>
-        new Promise<void>((resolve) => {
-          finishProbes.push(resolve)
-        })
-    )
+    const olderProbeStarted = Promise.withResolvers<void>()
+    const newerProbeStarted = Promise.withResolvers<void>()
+    const finishOlderProbe = Promise.withResolvers<void>()
+    const finishNewerProbe = Promise.withResolvers<void>()
+    const probe = vi
+      .fn()
+      .mockImplementationOnce(() => {
+        olderProbeStarted.resolve()
+        return finishOlderProbe.promise
+      })
+      .mockImplementationOnce(() => {
+        newerProbeStarted.resolve()
+        return finishNewerProbe.promise
+      })
     const service = createService(undefined, { executeClaudeProbe: probe })
     const { encryptKey } = await import('./crypto.js')
     await repository.setClaudeInfo({ resolvedPath: '/bin/claude', version: '2.1.0' })
@@ -6902,20 +7058,30 @@ describe('SettingsService: claude-isolated login + status coordination', () => {
     })
 
     const olderLogin = service.loginIsolatedClaude('sk-ant-older')
-    await vi.waitFor(() => expect(probe).toHaveBeenCalledTimes(1))
-    const newerLogin = service.loginIsolatedClaude('sk-ant-newer')
-    await vi.waitFor(() => expect(probe).toHaveBeenCalledTimes(2))
+    let newerLogin: ReturnType<typeof service.loginIsolatedClaude> | undefined
+    try {
+      // Runtime preparation performs real filesystem work before entering the probe. Synchronize
+      // on that boundary instead of requiring it to finish within vi.waitFor's one-second default.
+      await olderProbeStarted.promise
+      newerLogin = service.loginIsolatedClaude('sk-ant-newer')
+      await newerProbeStarted.promise
+      expect(probe).toHaveBeenCalledTimes(2)
 
-    finishProbes[1]?.()
-    expect(await newerLogin).toMatchObject({ ok: true, applied: true })
-    finishProbes[0]?.()
-    expect(await olderLogin).toMatchObject({ ok: true, applied: false })
+      finishNewerProbe.resolve()
+      expect(await newerLogin).toMatchObject({ ok: true, applied: true })
+      finishOlderProbe.resolve()
+      expect(await olderLogin).toMatchObject({ ok: true, applied: false })
 
-    const stored = (await repository.getSettings()).providers.find(
-      (provider) => provider.id === 'builtin-claude-isolated'
-    )
-    expect(stored?.keyRef).toBe(encryptKey('sk-ant-newer'))
-    expect(stored?.lastValidatedAt).toBeGreaterThan(0)
+      const stored = (await repository.getSettings()).providers.find(
+        (provider) => provider.id === 'builtin-claude-isolated'
+      )
+      expect(stored?.keyRef).toBe(encryptKey('sk-ant-newer'))
+      expect(stored?.lastValidatedAt).toBeGreaterThan(0)
+    } finally {
+      finishOlderProbe.resolve()
+      finishNewerProbe.resolve()
+      await Promise.allSettled([olderLogin, newerLogin])
+    }
   })
 
   it('records expiresAt and a verified timestamp after a successful token probe', async () => {

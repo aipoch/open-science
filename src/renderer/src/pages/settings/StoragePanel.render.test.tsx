@@ -133,9 +133,9 @@ beforeEach(() => {
         .mockResolvedValue({ kind: 'move', dataRoot: '/mnt/data/OpenScience' }),
       setDataRootAndRelaunch: vi.fn().mockResolvedValue({ ok: true }),
       detectActive: vi.fn().mockResolvedValue([]),
-      migrate: vi.fn().mockResolvedValue({ ok: true }),
+      migrate: vi.fn().mockResolvedValue({ ok: true, cleanupPending: false }),
       cancelMigrate: vi.fn().mockResolvedValue(undefined),
-      commitAndRelaunch: vi.fn().mockResolvedValue({ ok: true }),
+      commitAndRelaunch: vi.fn().mockResolvedValue({ ok: true, cleanupPending: false }),
       discardMigratedCopy: vi.fn().mockResolvedValue({ ok: true }),
       onProgress: vi.fn(() => () => {})
     }

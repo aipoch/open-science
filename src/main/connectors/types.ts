@@ -36,7 +36,7 @@ export type ToolDescriptor = {
   // Code-only dispatch metadata. It is not part of the generated tool schema or persisted state.
   requiredCredential?: ConnectorCredentialId
   format?: 'json' | 'text'
-  // Per-attempt wall-clock deadline, including response-body streaming. Overrides the engine default.
+  // Whole-call deadline, including retries, waits and all requests in run(). Overrides the engine default.
   totalTimeoutMs?: number
   // Raw response-body budget. Overrides the engine default for tools with unusually small or large payloads.
   maxResponseBytes?: number

@@ -20,6 +20,7 @@ import {
 import { createInitialSettingsState, useSettingsStore } from '@/stores/settings-store'
 import { ComposerModelPicker } from './ComposerModelPicker'
 import { incompatibilityReason } from './composer-model-picker-utils'
+import * as providerRegistry from '../../../../shared/provider-registry'
 
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
@@ -74,6 +75,7 @@ afterEach(() => {
   act(() => root.unmount())
   container.remove()
   vi.restoreAllMocks()
+  void i18next.changeLanguage('en')
 })
 
 const provider = (overrides: Partial<ProviderView>): ProviderView => ({
@@ -189,6 +191,66 @@ const modelRowTrigger = (): HTMLElement | undefined =>
   subTriggers().find((el) => el.getAttribute('data-testid') === 'model-row')
 
 describe('ComposerModelPicker', () => {
+  it('localizes the unsupported badge in a mixed model catalog', async () => {
+    await i18next.changeLanguage('zh-Hans')
+    useSettingsStore.setState({
+      agentFrameworkId: 'opencode',
+      agentFrameworks: [
+        {
+          id: 'opencode',
+          displayName: 'OpenCode',
+          supportedApiTypes: ['anthropic', 'openai'],
+          supportsSkills: true
+        }
+      ],
+      providers: [
+        provider({
+          id: 'mixed',
+          type: 'official',
+          vendorId: 'opencode',
+          apiEndpoints: ['openai'],
+          models: ['kimi-k2.7-code', 'gpt-5.6-sol']
+        })
+      ],
+      activeProviderId: 'mixed',
+      activeModel: 'kimi-k2.7-code'
+    })
+    render()
+    await openMenu(container.querySelector('button')!)
+    await openSubmenu(modelRowTrigger()!)
+    const row = menuItems().find((item) =>
+      item.getAttribute('aria-label')?.includes('gpt-5.6-sol')
+    )!
+    expect(row.textContent).toContain('不支持')
+    expect(row.textContent).not.toContain('unsupported')
+    expect(row.getAttribute('aria-disabled')).toBe('true')
+    act(() => row.click())
+    expect(onChange).not.toHaveBeenCalled()
+  })
+
+  it('localizes the provider reason when every model is bridge-unsupported', async () => {
+    // The bundled catalog currently has no bridge exclusions. Control its existing policy boundary
+    // to exercise the picker branch without changing production state or the catalog model.
+    vi.spyOn(providerRegistry, 'isModelBridgeSupported').mockReturnValue(false)
+    await i18next.changeLanguage('zh-Hans')
+    useSettingsStore.setState({
+      ...codexFramework,
+      providers: [
+        provider({ id: 'gateway', name: 'Gateway', apiEndpoints: ['openai'], models: ['model-a'] })
+      ]
+    })
+    render()
+    await openMenu(container.querySelector('button')!)
+    await openSubmenu(modelRowTrigger()!)
+    const row = menuItems().find((item) => item.getAttribute('aria-disabled') === 'true')!
+    expect(row.getAttribute('aria-label')).toBe(
+      'Gateway 的所有模型均不支持通过 Codex Chat Completions 桥接使用。'
+    )
+    expect(row.title).toBe(row.getAttribute('aria-label'))
+    act(() => row.click())
+    expect(onChange).not.toHaveBeenCalled()
+  })
+
   it('renders nothing when there is a single selectable option', () => {
     useSettingsStore.setState({
       providers: [provider({ id: 'p1', models: ['only'], reasoningEffortPreset: 'unsupported' })]

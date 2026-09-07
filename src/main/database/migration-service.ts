@@ -1,3 +1,6 @@
+import { permissionApprovalSummaryMigration } from './migrations/0032-permission-approval-summary'
+import { computeJobHarvestRetryMigration } from './migrations/0033-compute-job-harvest-retry'
+import { projectArchiveRevisionMigration } from './migrations/0031-project-archive-revision'
 import { createHash } from 'node:crypto'
 import { access, rename, rm } from 'node:fs/promises'
 
@@ -47,10 +50,18 @@ import { memoryGlobalContentUniqueMigration } from './migrations/0022-memory-glo
 import { computeJobOperationMigration } from './migrations/0023-compute-job-operation'
 import { computeJobFileEvidenceMigration } from './migrations/0024-compute-job-file-evidence'
 import {
+  artifactLiteratureManifestReferenceRepairStatements,
+  literatureContentBlobBackfillStatements,
+  literatureFoundationMigration
+} from './migrations/0030-literature-foundation'
+import {
   managedFileVersionFoundationCurrentSchemaAdoptionStatements,
   managedFileVersionFoundationMigration
 } from './migrations/0025-managed-file-version-foundation'
 import { computeJobRemoteCleanupMigration } from './migrations/0026-compute-job-remote-cleanup'
+import { projectSessionDefaultsMigration } from './migrations/0027-project-session-defaults'
+import { numericAndNullConstraintsMigration } from './migrations/0028-database-numeric-and-null-constraints'
+import { computeHostExecutionModeMigration } from './migrations/0029-compute-host-execution-mode'
 import {
   applySqliteMigrationOperations,
   type SqliteMigrationOperation
@@ -96,6 +107,7 @@ type MigrationVerifierDescriptor =
       version: 1
       indexes: readonly { name: string; sql: string }[]
     }
+  | { kind: 'indexes-absent'; version: 1; names: readonly string[] }
   | { kind: 'foreign-key-integrity'; version: 1 }
   | { kind: 'managed-file-version-domain'; version: 1 }
   | {
@@ -125,6 +137,8 @@ const lengthPrefixedChecksumText = (value: string): string => {
 
 const serializeMigrationVerifier = (verifier: MigrationVerifierDescriptor): string => {
   switch (verifier.kind) {
+    case 'indexes-absent':
+      return `indexes-absent:v${verifier.version}:${verifier.names.map(lengthPrefixedChecksumText).join('')}`
     case 'runtime-schema-baseline':
       return `runtime-schema-baseline:v${verifier.version}:${verifier.contract
         .map(lengthPrefixedChecksumText)
@@ -347,6 +361,30 @@ const COMPUTE_JOB_REMOTE_CLEANUP_CHECKSUM = checksumMigrationPayload(
   computeJobRemoteCleanupMigration.verifiers,
   computeJobRemoteCleanupMigration.operations
 )
+const PROJECT_SESSION_DEFAULTS_CHECKSUM = checksumMigrationPayload(
+  projectSessionDefaultsMigration.id,
+  projectSessionDefaultsMigration.statements,
+  projectSessionDefaultsMigration.verifiers,
+  projectSessionDefaultsMigration.operations
+)
+const NUMERIC_AND_NULL_CONSTRAINTS_CHECKSUM = checksumMigrationPayload(
+  numericAndNullConstraintsMigration.id,
+  numericAndNullConstraintsMigration.statements,
+  numericAndNullConstraintsMigration.verifiers,
+  numericAndNullConstraintsMigration.operations
+)
+const COMPUTE_HOST_EXECUTION_MODE_CHECKSUM = checksumMigrationPayload(
+  computeHostExecutionModeMigration.id,
+  computeHostExecutionModeMigration.statements,
+  computeHostExecutionModeMigration.verifiers,
+  computeHostExecutionModeMigration.operations
+)
+const LITERATURE_FOUNDATION_CHECKSUM = checksumMigrationPayload(
+  literatureFoundationMigration.id,
+  literatureFoundationMigration.statements,
+  literatureFoundationMigration.verifiers,
+  literatureFoundationMigration.operations
+)
 const COMPUTE_JOB_SENSITIVE_DATA_ENCRYPTION_CHECKSUM = checksumMigrationPayload(
   computeJobSensitiveDataEncryptionMigration.id,
   computeJobSensitiveDataEncryptionMigration.statements,
@@ -442,6 +480,12 @@ const COMPUTE_JOB_OPERATION_ALLOWED_SUFFIX_CHECKS: AllowedSuffixCheckConstraints
         Object.fromEntries(constraints.map(({ name, expression }) => [name, expression]))
       ])
   )
+const NUMERIC_AND_NULL_ALLOWED_SUFFIX_CHECKS: AllowedSuffixCheckConstraints = Object.fromEntries(
+  numericAndNullConstraintsMigration.verifiers[0].tables.map(({ table, constraints }) => [
+    table,
+    Object.fromEntries(constraints.map(({ name, expression }) => [name, expression]))
+  ])
+)
 const mergeAllowedSuffixChecks = (
   ...contracts: readonly AllowedSuffixCheckConstraints[]
 ): AllowedSuffixCheckConstraints => {
@@ -610,6 +654,65 @@ const MIGRATION_MANIFEST = [
     checksum: COMPUTE_JOB_REMOTE_CLEANUP_CHECKSUM,
     backupOnApply: 'required',
     backupRetention: 'retain'
+  },
+  {
+    ...projectSessionDefaultsMigration,
+    checksum: PROJECT_SESSION_DEFAULTS_CHECKSUM,
+    backupOnApply: 'required',
+    backupRetention: 'retain'
+  },
+  {
+    ...numericAndNullConstraintsMigration,
+    checksum: NUMERIC_AND_NULL_CONSTRAINTS_CHECKSUM,
+    backupOnApply: 'required',
+    backupRetention: 'retain',
+    foreignKeysDuringApply: 'disabled'
+  },
+  {
+    ...computeHostExecutionModeMigration,
+    checksum: COMPUTE_HOST_EXECUTION_MODE_CHECKSUM,
+    backupOnApply: 'required',
+    backupRetention: 'retain'
+  },
+  {
+    ...literatureFoundationMigration,
+    checksum: LITERATURE_FOUNDATION_CHECKSUM,
+    backupOnApply: 'required',
+    backupRetention: 'retain'
+  },
+  {
+    ...projectArchiveRevisionMigration,
+    checksum: checksumMigrationPayload(
+      projectArchiveRevisionMigration.id,
+      projectArchiveRevisionMigration.statements,
+      projectArchiveRevisionMigration.verifiers,
+      projectArchiveRevisionMigration.operations
+    ),
+    backupOnApply: 'required',
+    backupRetention: 'retain'
+  },
+  {
+    ...permissionApprovalSummaryMigration,
+    checksum: checksumMigrationPayload(
+      permissionApprovalSummaryMigration.id,
+      permissionApprovalSummaryMigration.statements,
+      permissionApprovalSummaryMigration.verifiers,
+      permissionApprovalSummaryMigration.operations
+    ),
+    backupOnApply: 'required',
+    backupRetention: 'retain'
+  },
+  {
+    ...computeJobHarvestRetryMigration,
+    checksum: checksumMigrationPayload(
+      computeJobHarvestRetryMigration.id,
+      computeJobHarvestRetryMigration.statements,
+      computeJobHarvestRetryMigration.verifiers,
+      computeJobHarvestRetryMigration.operations
+    ),
+    backupOnApply: 'required',
+    backupRetention: 'retain',
+    foreignKeysDuringApply: 'disabled'
   }
 ] as const satisfies readonly MigrationManifestEntry[]
 // schema-locality: begin frozen-0001-repairs
@@ -860,15 +963,33 @@ const runMigrationVerifiers = async (
           const tableSql = rows[0]?.sql
           if (
             !tableSql ||
-            table.constraints.some(
-              ({ name, expression }) =>
-                !tableSql.includes(`CONSTRAINT "${name}" CHECK (${expression})`)
-            )
+            table.constraints.some(({ name, expression }) => {
+              const upgradedExpression = allowedSuffixChecks[table.table]?.[name]
+              return (
+                !tableSql.includes(`CONSTRAINT "${name}" CHECK (${expression})`) &&
+                !(
+                  upgradedExpression &&
+                  tableSql.includes(`CONSTRAINT "${name}" CHECK (${upgradedExpression})`)
+                )
+              )
+            })
           ) {
             throw new Error(
               `Migration verification found missing CHECK constraints in ${table.table}.`
             )
           }
+        }
+        break
+      }
+      case 'indexes-absent': {
+        for (const name of verifier.names) {
+          const rows = await migrationSqlExecutor.query<Array<{ name: string }>>(
+            client,
+            `SELECT "name" FROM "sqlite_schema" WHERE "type" = 'index' AND "name" = ?`,
+            name
+          )
+          if (rows.length > 0)
+            throw new Error(`Migration verification found unexpected index ${name}.`)
         }
         break
       }
@@ -948,21 +1069,59 @@ const runMigrationVerifiers = async (
   }
 }
 
-const verifyCurrentApplicationSchema = async (client: PrismaClient): Promise<void> => {
-  const memoryTriggerNames = MEMORY_AUXILIARY_SCHEMA_OBJECTS.flatMap(({ type, name }) =>
+const currentApplicationSchemaExtensions = {
+  tableNames: [
+    ...MEMORY_AUXILIARY_TABLE_NAMES,
+    'ComputeJobOperation',
+    'ContentBlob',
+    'LiteratureItem',
+    'LiteratureAttachment',
+    'LiteratureAttachmentVersion',
+    'LiteratureCreator',
+    'LiteratureItemCreator',
+    'LiteratureIdentifier',
+    'LiteratureInboxCandidate',
+    'LiteratureSourceRecord',
+    'LiteratureCollection',
+    'LiteratureCollectionItem',
+    'ProjectLiterature',
+    'ArtifactLiteratureManifest'
+  ],
+  indexNames: [
+    'ComputeJobOperation_jobId_kind_key',
+    'ComputeJobOperation_kind_phase_eligibleAt_createdAt_idx',
+    'ComputeJobOperation_kind_phase_claimExpiresAt_idx'
+  ],
+  triggerNames: MEMORY_AUXILIARY_SCHEMA_OBJECTS.flatMap(({ type, name }) =>
     type === 'trigger' ? [name] : []
   )
-  await verifyCurrentRuntimeSchema(client, {
-    tableNames: MEMORY_AUXILIARY_TABLE_NAMES,
-    triggerNames: memoryTriggerNames
-  })
-  await runMigrationVerifiers(client, agentMemoryProjectScopeMigration.verifiers)
-  await runMigrationVerifiers(client, sessionAuxiliaryTurnUsageMigration.verifiers)
+} as const
+
+const verifyCurrentApplicationSchema = async (client: PrismaClient): Promise<void> => {
+  await verifyCurrentRuntimeSchema(client, currentApplicationSchemaExtensions)
+  // The generated schema enforces the latest checks; frozen auxiliary verifiers also accept
+  // the exact stronger expressions from the immutable suffix.
+  await runMigrationVerifiers(
+    client,
+    agentMemoryProjectScopeMigration.verifiers,
+    NUMERIC_AND_NULL_ALLOWED_SUFFIX_CHECKS
+  )
+  await runMigrationVerifiers(
+    client,
+    sessionAuxiliaryTurnUsageMigration.verifiers,
+    NUMERIC_AND_NULL_ALLOWED_SUFFIX_CHECKS
+  )
   await runMigrationVerifiers(client, sessionUsageAttributionMigration.verifiers)
   await runMigrationVerifiers(client, computeJobAnalysisStateMigration.verifiers)
   await runMigrationVerifiers(client, computeJobAnalysisConstraintsMigration.verifiers)
   await runMigrationVerifiers(client, memoryGlobalContentUniqueMigration.verifiers)
+  await runMigrationVerifiers(
+    client,
+    computeJobOperationMigration.verifiers,
+    NUMERIC_AND_NULL_ALLOWED_SUFFIX_CHECKS
+  )
   await runMigrationVerifiers(client, computeJobFileEvidenceMigration.verifiers)
+  await runMigrationVerifiers(client, literatureFoundationMigration.verifiers)
 }
 
 const readLedger = async (client: PrismaClient): Promise<LedgerRow[]> => {
@@ -1303,31 +1462,25 @@ const classifyDatabaseFailure = (
   if (error instanceof DatabaseMigrationError) return error
 
   let engineCode = ''
-  let engineName = ''
   try {
     if ((typeof error === 'object' && error !== null) || typeof error === 'function') {
       const code = Reflect.get(error, 'code')
-      const name = Reflect.get(error, 'name')
       if (typeof code === 'string') engineCode = code
-      if (typeof name === 'string') engineName = name
     }
   } catch {
     // Classification remains fail-closed when a hostile error object cannot be inspected.
   }
-  const detail = `${error instanceof Error ? error.message : String(error)} ${engineCode} ${engineName}`
+  const detail = `${error instanceof Error ? error.message : String(error)} ${engineCode}`
   const transient =
-    /SQLITE_(?:BUSY|LOCKED|IOERR|FULL|READONLY)|database is locked|database or disk is full|attempt to write a readonly database|disk I\/O|EACCES|EPERM|permission denied/i.test(
+    /SQLITE_(?:BUSY|LOCKED|IOERR|FULL|READONLY|CANTOPEN)|database(?: table| schema)? is locked|unable to open (?:the )?database file|database or disk is full|attempt to write a readonly database|disk I\/O|EACCES|EPERM|permission denied/i.test(
       detail
     )
   const runtimeUnavailable =
-    /query engine|libquery_engine|PrismaClientInitializationError|dynamic librar|shared object|dlopen/i.test(
-      detail
-    )
+    /query engine|libquery_engine|dynamic librar|shared object|dlopen/i.test(detail)
   const validationFailure =
-    phase === 'validation' ||
-    (error instanceof DatabaseValidationError &&
-      error.data.kind === 'check-constraint-violation') ||
-    /classification blocked|unsupported value|unknown columns?|row-count mismatch|foreign-key violation|baseline verification/i.test(
+    (phase === 'validation' && !transient) ||
+    error instanceof DatabaseValidationError ||
+    /CHECK constraint failed|FOREIGN KEY constraint failed|classification blocked|unsupported value|unknown columns?|row-count mismatch|foreign-key violation|baseline verification/i.test(
       detail
     )
 
@@ -1349,7 +1502,7 @@ const classifyDatabaseFailure = (
       { cause: error }
     )
   }
-  if (phase === 'open') {
+  if (phase !== 'migration') {
     return new DatabaseMigrationError(
       'database_open_failed',
       'Open Science could not open its database.',
@@ -1480,13 +1633,15 @@ const applyManifestMigration = async (
   migration: MigrationManifestEntry,
   options: {
     repairVisionEvidenceReference?: boolean
+    repairLiteratureManifestReference?: boolean
   } = {}
 ): Promise<void> => {
   const preserveCurrentSchema = await hasCurrentManagedFileVersionFoundation(client)
   const canAdaptCurrentSchema =
     preserveCurrentSchema &&
     migration.id !== managedFileVersionFoundationMigration.id &&
-    migration.id < managedFileVersionFoundationMigration.id &&
+    (migration.id < managedFileVersionFoundationMigration.id ||
+      migration.id === numericAndNullConstraintsMigration.id) &&
     MIGRATION_MANIFEST.some(
       (candidate) => candidate.id === migration.id && candidate.checksum === migration.checksum
     )
@@ -1495,15 +1650,26 @@ const applyManifestMigration = async (
     ? await adaptMigrationOperationsForCurrentSchema(client, migration.operations ?? [])
     : { operations: migration.operations ?? [], currentTableNames: [] }
   const currentTableNames = new Set(adapted.currentTableNames)
+  // An unledgered current schema can already carry 0028's stronger CHECKs. Accept that exact
+  // immutable suffix while verifying older steps, so their ALTERs are not replayed over it.
+  const allowedCheckUpgrades =
+    migration.id < numericAndNullConstraintsMigration.id
+      ? NUMERIC_AND_NULL_ALLOWED_SUFFIX_CHECKS
+      : {}
   const verifyMigrationTarget = async (targetClient: PrismaClient): Promise<void> => {
     if (!canVerifyAsCurrentSchema) {
-      await runMigrationVerifiers(targetClient, migration.verifiers)
+      await runMigrationVerifiers(targetClient, migration.verifiers, allowedCheckUpgrades)
       return
     }
     await verifyCurrentRuntimeSchemaTables(targetClient, adapted.currentTableNames)
-    await runMigrationVerifiers(targetClient, migration.verifiers, {}, currentTableNames)
+    await runMigrationVerifiers(
+      targetClient,
+      migration.verifiers,
+      allowedCheckUpgrades,
+      currentTableNames
+    )
     if (migration.id === projectPreviewStateOwnerFkMigration.id) {
-      await runMigrationVerifiers(targetClient, migration.verifiers)
+      await runMigrationVerifiers(targetClient, migration.verifiers, allowedCheckUpgrades)
     }
   }
   const disableForeignKeys =
@@ -1523,8 +1689,11 @@ const applyManifestMigration = async (
       try {
         await verifyMigrationTarget(transactionClient)
         contractAlreadySatisfied = true
-      } catch {
-        // The migration statements below own bringing this schema suffix into compliance.
+      } catch (error) {
+        const failure = classifyDatabaseFailure(error, 'validation', migration.id)
+        // Only a contract mismatch calls for schema changes. A failed read must not cause
+        // non-idempotent ALTER statements to be replayed over an already compatible schema.
+        if (failure.code !== 'database_validation_failed') throw failure
       }
       if (
         contractAlreadySatisfied &&
@@ -1532,6 +1701,15 @@ const applyManifestMigration = async (
         migration.checksum === MANAGED_FILE_VERSION_FOUNDATION_CHECKSUM
       ) {
         for (const statement of managedFileVersionFoundationCurrentSchemaAdoptionStatements) {
+          await migrationSqlExecutor.execute(transaction, statement)
+        }
+      }
+      if (
+        contractAlreadySatisfied &&
+        migration.id === literatureFoundationMigration.id &&
+        migration.checksum === LITERATURE_FOUNDATION_CHECKSUM
+      ) {
+        for (const statement of literatureContentBlobBackfillStatements) {
           await migrationSqlExecutor.execute(transaction, statement)
         }
       }
@@ -1556,16 +1734,28 @@ const applyManifestMigration = async (
         // after UploadVersion so SQLite does not retain the temporary rename as its FK target.
         await applySqliteMigrationOperations(transactionClient, visionEvidenceMigration.operations)
       }
+      if (options.repairLiteratureManifestReference) {
+        const manifestTables = await migrationSqlExecutor.query<Array<{ name: string }>>(
+          transactionClient,
+          `SELECT "name" FROM "sqlite_schema"
+           WHERE "type" = 'table' AND "name" = 'ArtifactLiteratureManifest'`
+        )
+        if (manifestTables.length > 0) {
+          const manifestForeignKeys = await migrationSqlExecutor.query<Array<{ table: string }>>(
+            transactionClient,
+            `PRAGMA foreign_key_list("ArtifactLiteratureManifest")`
+          )
+          if (manifestForeignKeys.some((foreignKey) => foreignKey.table !== 'ArtifactVersion')) {
+            for (const statement of artifactLiteratureManifestReferenceRepairStatements) {
+              await migrationSqlExecutor.execute(transaction, statement)
+            }
+          }
+        }
+      }
       try {
         await verifyMigrationTarget(transactionClient)
       } catch (error) {
-        throw new DatabaseMigrationError(
-          'database_validation_failed',
-          'The existing database does not satisfy the required schema contract.',
-          false,
-          migration.id,
-          { cause: error }
-        )
+        throw classifyDatabaseFailure(error, 'validation', migration.id)
       }
       await insertLedgerRow(transactionClient, migration)
     })
@@ -1764,6 +1954,11 @@ const migrateApplicationDatabaseWithManifest = async (
       candidate.id === computeJobFileEvidenceMigration.id &&
       candidate.checksum === COMPUTE_JOB_FILE_EVIDENCE_CHECKSUM
   )
+  const adoptsLiteratureFoundation = manifest.some(
+    (candidate) =>
+      candidate.id === literatureFoundationMigration.id &&
+      candidate.checksum === LITERATURE_FOUNDATION_CHECKSUM
+  )
   const adoptedLegacy = appliedCount === 0 && hasExistingApplicationTables
   const allowedSuffixChecks = mergeAllowedSuffixChecks(
     adoptsDatabaseDomainConstraints ? DATABASE_DOMAIN_ALLOWED_SUFFIX_CHECKS : {},
@@ -1811,6 +2006,10 @@ const migrateApplicationDatabaseWithManifest = async (
     await ensureBackupBeforeMigration(migration)
     await applyManifestMigration(client, migration, {
       repairVisionEvidenceReference:
+        migration.id === managedFileVersionFoundationMigration.id &&
+        migration.checksum === MANAGED_FILE_VERSION_FOUNDATION_CHECKSUM,
+      repairLiteratureManifestReference:
+        adoptsLiteratureFoundation &&
         migration.id === managedFileVersionFoundationMigration.id &&
         migration.checksum === MANAGED_FILE_VERSION_FOUNDATION_CHECKSUM
     })

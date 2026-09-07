@@ -4,12 +4,13 @@ import { useTranslation } from 'react-i18next'
 
 import { Button } from '@/components/ui/button'
 import { Switch } from '@/components/ui/switch'
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { cn } from '@/lib/utils'
 
 type SettingsSectionProps = ComponentProps<'section'> & {
   title: string
   titleId?: string
+  headingAs?: 'h2' | 'h3'
   // Optional decorative glyph rendered just before the title (e.g. a language logo).
   icon?: ReactNode
   description?: ReactNode
@@ -24,6 +25,7 @@ type SettingsSectionProps = ComponentProps<'section'> & {
 const SettingsSection = ({
   title,
   titleId,
+  headingAs: Heading = 'h3',
   icon,
   description,
   action,
@@ -44,7 +46,7 @@ const SettingsSection = ({
       className={cn('flex flex-wrap items-start justify-between gap-3 sm:gap-4', headerClassName)}
     >
       <div className="min-w-0 flex-1">
-        <h3
+        <Heading
           id={titleId}
           className="flex min-w-0 items-center gap-2 break-words text-base font-semibold text-foreground"
         >
@@ -57,7 +59,7 @@ const SettingsSection = ({
             </span>
           ) : null}
           {title}
-        </h3>
+        </Heading>
         {description ? (
           <p className="mt-0.5 max-w-2xl break-words text-[13px] leading-5 text-muted-foreground">
             {description}
@@ -223,27 +225,25 @@ const SettingsIconAction = ({
   className,
   ...props
 }: SettingsIconActionProps): React.JSX.Element => (
-  <TooltipProvider delayDuration={200}>
-    <Tooltip>
-      <TooltipTrigger asChild>
-        <Button
-          type="button"
-          variant="ghost"
-          size="icon-sm"
-          aria-label={label}
-          className={cn(
-            'shrink-0 text-muted-foreground',
-            danger && 'hover:bg-destructive/10 hover:text-destructive',
-            className
-          )}
-          {...props}
-        >
-          <Icon className="size-3.5" strokeWidth={2} aria-hidden="true" />
-        </Button>
-      </TooltipTrigger>
-      <TooltipContent>{tooltip ?? label}</TooltipContent>
-    </Tooltip>
-  </TooltipProvider>
+  <Tooltip>
+    <TooltipTrigger asChild>
+      <Button
+        type="button"
+        variant="ghost"
+        size="icon-sm"
+        aria-label={label}
+        className={cn(
+          'shrink-0 text-muted-foreground',
+          danger && 'hover:bg-destructive/10 hover:text-destructive',
+          className
+        )}
+        {...props}
+      >
+        <Icon className="size-3.5" strokeWidth={2} aria-hidden="true" />
+      </Button>
+    </TooltipTrigger>
+    <TooltipContent>{tooltip ?? label}</TooltipContent>
+  </Tooltip>
 )
 
 export {

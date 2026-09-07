@@ -8,11 +8,13 @@ import type { Project } from '../../../shared/projects'
 import { recordLastOpenedProject } from '@/lib/last-opened-project'
 import { createInitialProjectState, useProjectStore } from './project-store'
 import { createInitialSessionState, useSessionStore } from './session-store'
-import { useNavigationStore } from './navigation-store'
+import { useNavigationStore, type PdfReadingDocument } from './navigation-store'
 import { previewLeaveGuards, workbenchPreviewGuardScope } from './preview-leave-guard'
 import {
   createInitialPreviewWorkbenchState,
-  usePreviewWorkbenchStore
+  pendingPdfContextSelections,
+  usePreviewWorkbenchStore,
+  type PreviewFileItem
 } from './preview-workbench-store'
 
 vi.mock('@/lib/last-opened-project', () => ({
@@ -61,14 +63,47 @@ beforeEach(() => {
     userNavigationRevision: 0,
     explicitNavigationRevision: 0,
     pendingCustomizePrefill: undefined,
+    pendingLiteratureReviewPrefill: undefined,
     pendingProjectCreation: false,
     pendingArtifactMention: undefined,
+    pendingLiteratureItemId: undefined,
+    pendingLiteratureProjectId: undefined,
+    pendingLiteratureCollectionId: undefined,
     artifactMentionAvailability: undefined
   })
   vi.mocked(recordLastOpenedProject).mockClear()
 })
 
 describe('navigation store', () => {
+  it.each(['library', 'item'] as const)(
+    'guards %s navigation until dirty preview leave is approved',
+    (target) => {
+      useNavigationStore.setState({ view: 'workspace', activeProjectId: 'project-a' })
+      usePreviewWorkbenchStore.setState({ activeProjectId: 'project-a', activeItemId: 'file-1' })
+      const guard = vi.fn(() => false)
+      previewLeaveGuards.register(workbenchPreviewGuardScope('project-a', 'file-1')!, guard)
+      const navigate = (): void =>
+        target === 'library'
+          ? useNavigationStore.getState().openLibrary('user')
+          : useNavigationStore.getState().openLiteratureItem('reference-1', 'user')
+
+      navigate()
+      expect(useNavigationStore.getState()).toMatchObject({
+        view: 'workspace',
+        pendingLiteratureItemId: undefined,
+        userNavigationRevision: 0
+      })
+      guard.mockReturnValue(true)
+      navigate()
+      expect(useNavigationStore.getState()).toMatchObject({
+        view: 'library',
+        pendingLiteratureItemId: target === 'item' ? 'reference-1' : undefined,
+        userNavigationRevision: 1
+      })
+      expect(guard).toHaveBeenCalledTimes(2)
+    }
+  )
+
   it('does not mutate navigation or Session selection when a dirty preview refuses project leave', () => {
     useSessionStore
       .getState()
@@ -361,10 +396,73 @@ describe('navigation store', () => {
   })
 
   it('returns to the home screen without losing session state', () => {
+    useSessionStore
+      .getState()
+      .hydrateSessions([createSession({})], { version: SESSION_MANIFEST_VERSION })
     useNavigationStore.getState().openSession('project-a', 'session-1', 'user')
     useNavigationStore.getState().goHome('user')
 
     expect(useNavigationStore.getState().view).toBe('home')
+    expect(useNavigationStore.getState().activeProjectId).toBeUndefined()
+    expect(useSessionStore.getState().selectedSessionId).toBe('session-1')
+  })
+
+  it('opens the user-level Literature Library without changing the active project', () => {
+    useNavigationStore.setState({
+      activeProjectId: 'project-a',
+      pendingLiteratureProjectId: 'project-b'
+    })
+
+    useNavigationStore.getState().openLibrary('user')
+
+    expect(useNavigationStore.getState().view).toBe('library')
+    expect(useNavigationStore.getState().activeProjectId).toBe('project-a')
+    expect(useNavigationStore.getState().pendingLiteratureProjectId).toBeUndefined()
+    expect(useNavigationStore.getState().userNavigationRevision).toBe(1)
+  })
+
+  it('routes a Project Literature view through a one-shot explicit scope', () => {
+    useNavigationStore.setState({ view: 'workspace', activeProjectId: 'project-a' })
+
+    const opened = useNavigationStore.getState().openProjectLiterature('project-a', 'user')
+
+    expect(opened).toBe(true)
+    expect(useNavigationStore.getState()).toMatchObject({
+      view: 'library',
+      activeProjectId: 'project-a',
+      pendingLiteratureProjectId: 'project-a',
+      userNavigationRevision: 1
+    })
+    expect(useNavigationStore.getState().consumeLiteratureProject()).toBe('project-a')
+    expect(useNavigationStore.getState().consumeLiteratureProject()).toBeUndefined()
+  })
+
+  it('routes a Collection Literature view through a one-shot explicit scope', () => {
+    useNavigationStore.setState({ view: 'workspace', activeProjectId: 'project-a' })
+
+    const opened = useNavigationStore.getState().openCollectionLiterature('collection-1', 'user')
+
+    expect(opened).toBe(true)
+    expect(useNavigationStore.getState()).toMatchObject({
+      view: 'library',
+      activeProjectId: 'project-a',
+      pendingLiteratureCollectionId: 'collection-1',
+      userNavigationRevision: 1
+    })
+    expect(useNavigationStore.getState().consumeLiteratureCollection()).toBe('collection-1')
+    expect(useNavigationStore.getState().consumeLiteratureCollection()).toBeUndefined()
+  })
+
+  it('routes to one Literature Item through a one-shot Library intent', () => {
+    useNavigationStore.getState().openLiteratureItem('item-1', 'user')
+
+    expect(useNavigationStore.getState()).toMatchObject({
+      view: 'library',
+      pendingLiteratureItemId: 'item-1',
+      userNavigationRevision: 1
+    })
+    expect(useNavigationStore.getState().consumeLiteratureItem()).toBe('item-1')
+    expect(useNavigationStore.getState().consumeLiteratureItem()).toBeUndefined()
   })
 
   it('routes a New Project request home as a one-shot intent', () => {
@@ -473,6 +571,157 @@ describe('navigation store customize conversation', () => {
       goal: 'skill',
       requestId: 1
     })
+  })
+})
+
+describe('navigation store PDF reading conversation', () => {
+  it('stages three distinct PDFs together, activates the first, and refuses a fourth before navigating', () => {
+    const documents: PdfReadingDocument[] = [1, 2, 3, 4].map((id) => ({
+      item: {
+        id: `literature:version-${id}`,
+        sessionId: 'literature-library',
+        title: `paper-${id}.pdf`,
+        name: `paper-${id}.pdf`,
+        type: 'file',
+        source: 'literature',
+        path: `literature-attachment-version:version-${id}`,
+        format: 'pdf',
+        mimeType: 'application/pdf',
+        size: 100
+      },
+      source: { sourceKind: 'literature-attachment-version', sourceVersionId: `version-${id}` }
+    }))
+    expect(useNavigationStore.getState().startPdfReadingConversations('project-a', documents)).toBe(
+      false
+    )
+    expect(usePreviewWorkbenchStore.getState().items).toEqual([])
+    expect(recordLastOpenedProject).not.toHaveBeenCalled()
+    expect(
+      useNavigationStore
+        .getState()
+        .startPdfReadingConversations('project-a', [documents[0], ...documents.slice(0, 3)])
+    ).toBe(true)
+    const preview = usePreviewWorkbenchStore.getState()
+    expect(preview.activeItemId).toBe(documents[0].item.id)
+    expect(preview.items).toHaveLength(3)
+    expect(
+      pendingPdfContextSelections(preview.pendingPdfContextByProject['project-a'])
+    ).toHaveLength(3)
+    expect(useSessionStore.getState().selectedSessionId).toBeUndefined()
+  })
+  it('opens a New Conversation draft with the Library PDF previewed and pending as Reading', () => {
+    const item: PreviewFileItem = {
+      id: 'literature:version-1',
+      sessionId: 'literature-library',
+      title: 'paper.pdf',
+      type: 'file',
+      source: 'literature',
+      path: 'literature-attachment-version:version-1',
+      format: 'pdf',
+      name: 'paper.pdf',
+      mimeType: 'application/pdf',
+      size: 100,
+      versionNumber: 1
+    }
+
+    const opened = useNavigationStore.getState().startPdfReadingConversation('project-a', item, {
+      sourceKind: 'literature-attachment-version',
+      sourceVersionId: 'version-1'
+    })
+
+    expect(opened).toBe(true)
+    expect(useNavigationStore.getState()).toMatchObject({
+      view: 'workspace',
+      activeProjectId: 'project-a'
+    })
+    expect(useSessionStore.getState().selectedSessionId).toBeUndefined()
+    expect(recordLastOpenedProject).toHaveBeenCalledWith('project-a')
+    expect(usePreviewWorkbenchStore.getState()).toMatchObject({
+      activeProjectId: 'project-a',
+      activeItemId: item.id,
+      panelState: 'open',
+      pendingPdfContextByProject: {
+        'project-a': {
+          kind: 'version',
+          sourceKind: 'literature-attachment-version',
+          sourceVersionId: 'version-1',
+          previewItemId: item.id
+        }
+      }
+    })
+    expect(usePreviewWorkbenchStore.getState().items).toContainEqual(
+      expect.objectContaining({
+        ...item,
+        projectId: 'project-a'
+      })
+    )
+  })
+
+  it('does not start Reading for an archived project', () => {
+    useProjectStore.setState({ projects: [{ ...createProject('project-a'), archivedAt: 2 }] })
+
+    const opened = useNavigationStore.getState().startPdfReadingConversation(
+      'project-a',
+      {
+        id: 'literature:version-1',
+        sessionId: 'literature-library',
+        title: 'paper.pdf',
+        type: 'file',
+        source: 'literature',
+        path: 'literature-attachment-version:version-1',
+        format: 'pdf',
+        name: 'paper.pdf',
+        mimeType: 'application/pdf',
+        size: 100,
+        versionNumber: 1
+      },
+      {
+        sourceKind: 'literature-attachment-version',
+        sourceVersionId: 'version-1'
+      }
+    )
+
+    expect(opened).toBe(false)
+    expect(useNavigationStore.getState()).toMatchObject({
+      view: 'home',
+      activeProjectId: undefined
+    })
+    expect(usePreviewWorkbenchStore.getState().items).toEqual([])
+    expect(recordLastOpenedProject).not.toHaveBeenCalled()
+  })
+})
+
+describe('navigation store Literature review conversation', () => {
+  it('opens an editable New Conversation with the selected Literature scope', () => {
+    useSessionStore.getState().hydrateSessions([createSession({})], {
+      version: SESSION_MANIFEST_VERSION
+    })
+    useSessionStore.getState().selectSession('session-1')
+
+    const opened = useNavigationStore
+      .getState()
+      .startLiteratureReviewConversation(
+        'project-a',
+        { type: 'literature-scope', scope: 'project' },
+        'Synthesize this literature into a concise review.'
+      )
+
+    expect(opened).toBe(true)
+    expect(useNavigationStore.getState()).toMatchObject({
+      view: 'workspace',
+      activeProjectId: 'project-a',
+      pendingLiteratureReviewPrefill: {
+        projectId: 'project-a',
+        scope: { type: 'literature-scope', scope: 'project' },
+        prompt: 'Synthesize this literature into a concise review.',
+        requestId: 1
+      }
+    })
+    expect(useSessionStore.getState().selectedSessionId).toBeUndefined()
+    expect(recordLastOpenedProject).toHaveBeenCalledWith('project-a')
+
+    useNavigationStore.getState().consumeLiteratureReviewPrefill()
+    expect(useNavigationStore.getState().pendingLiteratureReviewPrefill).toBeUndefined()
   })
 })
 

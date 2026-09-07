@@ -1285,6 +1285,14 @@ run <- base::local({
     for (name in c("bmp", "jpeg", "png", "tiff", "pdf", "postscript", "svg", "cairo_pdf", "cairo_ps")) {
       install_capture_binding_wrapper("grDevices", name, make_file_device_wrapper)
     }
+    # ggsave prefers ragg devices when available. Hook their load without preloading optional packages.
+    install_ragg_wrappers <- function(...) {
+      for (name in c("agg_png", "agg_jpeg", "agg_tiff")) {
+        install_capture_binding_wrapper("ragg", name, make_file_device_wrapper)
+      }
+    }
+    setHook(packageEvent("ragg", "onLoad"), install_ragg_wrappers)
+    if ("ragg" %in% loadedNamespaces()) install_ragg_wrappers()
   }
 
   install_capture_wrappers()

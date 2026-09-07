@@ -2,13 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { Button } from '@/components/ui/button'
-import {
-  CardContent,
-  CardDescription,
-  CardFooter,
-  CardHeader,
-  CardTitle
-} from '@/components/ui/card'
+import { CardContent, CardDescription, CardFooter, CardHeader } from '@/components/ui/card'
 import { Separator } from '@/components/ui/separator'
 import type {
   UpsertProviderRequest,
@@ -40,7 +34,8 @@ const isBrowserSignInProvider = (type: ProviderFormValue['type']): boolean =>
   type === 'xai-subscription'
 
 // Converts a form value into the upsert request the main process expects.
-const toUpsertRequest = (value: ProviderFormValue): UpsertProviderRequest => ({
+const toUpsertRequest = (value: ProviderFormValue, id?: string): UpsertProviderRequest => ({
+  ...(id ? { id, requireExisting: true } : {}),
   type: value.type,
   codexTransport: value.codexTransport,
   name: value.name,
@@ -62,6 +57,8 @@ type ProviderStepProps = {
   // validation, saving, and the isolated Codex sign-in flow.
   formValue: ProviderFormValue
   setFormValue: React.Dispatch<React.SetStateAction<ProviderFormValue>>
+  providerId?: string
+  onProviderSaved?: (id: string | undefined) => void
   onBack: () => void
   onAdvance: () => void
 }
@@ -71,6 +68,8 @@ type ProviderStepProps = {
 const ProviderStep = ({
   formValue,
   setFormValue,
+  providerId: savedProviderId,
+  onProviderSaved,
   onBack,
   onAdvance
 }: ProviderStepProps): React.JSX.Element => {
@@ -98,6 +97,16 @@ const ProviderStep = ({
   const cancelXaiOAuthLogin = useSettingsStore((state) => state.cancelXaiOAuthLogin)
 
   const [isSaving, setIsSaving] = useState(false)
+  const mounted = useRef(false)
+  useEffect(() => {
+    mounted.current = true
+    return () => {
+      mounted.current = false
+    }
+  }, [])
+  const advanceIfMounted = (): void => {
+    if (mounted.current) onAdvance()
+  }
   const [isClaudeSignInOpen, setIsClaudeSignInOpen] = useState(false)
   const [xaiSession, setXaiSession] = useState<XaiOAuthDeviceAuthorization>()
   const claudeProviderIdRef = useRef<string | undefined>(undefined)
@@ -152,7 +161,7 @@ const ProviderStep = ({
     })
   }, [agentFrameworkId, customApiEndpoint, setFormValue])
 
-  // Onboarding always creates a provider, so required fields must be filled before it can continue.
+  // Required fields must be filled before the draft can be tested.
   const formErrors = getProviderFormErrors(formValue)
 
   const handleClaudeTokenFallback = async (token: string): Promise<ValidateProviderResult> => {
@@ -178,7 +187,7 @@ const ProviderStep = ({
           await setActiveProvider(claudeProviderIdRef.current)
         }
         setIsClaudeSignInOpen(false)
-        onAdvance()
+        advanceIfMounted()
       }
 
       return result
@@ -219,10 +228,13 @@ const ProviderStep = ({
     ) {
       const label =
         agentFrameworks.find((framework) => framework.id === agentFrameworkId)?.displayName ??
-        'the selected agent'
+        t('The selected agent')
       setValidationOk(false)
       setValidationMessage(
-        `This provider isn't compatible with ${label}. Pick a provider whose API format ${label} supports, or change the agent framework.`
+        t(
+          "This provider isn't compatible with {{framework}}. Pick a provider whose API format {{framework}} supports, or change the agent framework.",
+          { framework: label }
+        )
       )
       return
     }
@@ -258,7 +270,7 @@ const ProviderStep = ({
 
         if (validation.ok) {
           if (providerId) await setActiveProvider(providerId)
-          onAdvance()
+          advanceIfMounted()
         }
         return
       }
@@ -297,7 +309,7 @@ const ProviderStep = ({
         if (validation.ok) {
           setIsClaudeSignInOpen(false)
           if (providerId) await setActiveProvider(providerId)
-          onAdvance()
+          advanceIfMounted()
         }
         return
       }
@@ -328,7 +340,7 @@ const ProviderStep = ({
 
         if (validation.ok) {
           if (providerId) await setActiveProvider(providerId)
-          onAdvance()
+          advanceIfMounted()
         }
         return
       }
@@ -357,12 +369,17 @@ const ProviderStep = ({
         setValidationMessage(describeValidation(validation, tSettings))
         if (validation.ok) {
           await setActiveProvider(providerId)
-          onAdvance()
+          advanceIfMounted()
         }
         return
       }
 
-      const { validation } = await saveAndActivateProvider(toUpsertRequest(providerValue))
+      const { providerId, validation } = await saveAndActivateProvider(
+        toUpsertRequest(providerValue, savedProviderId)
+      )
+      // Persistence survives Back even though this page's permission to navigate does not.
+      if (providerId) onProviderSaved?.(providerId)
+      if (!mounted.current) return
 
       // A validation superseded by a newer test (or a provider removed/edited mid-test) reports its
       // outcome but was not recorded; do not finish onboarding on a result the stored provider never
@@ -377,9 +394,13 @@ const ProviderStep = ({
       setValidationMessage(describeValidation(validation, tSettings))
 
       if (validation.ok) {
-        onAdvance()
+        advanceIfMounted()
       }
     } catch (error) {
+      if (error instanceof Error && error.message === 'Provider no longer exists.') {
+        onProviderSaved?.(undefined)
+      }
+      if (!mounted.current) return
       if (formValue.type === 'xai-subscription' && xaiLoginCancelledRef.current) return
       setValidationOk(false)
       setValidationMessage(
@@ -395,7 +416,9 @@ const ProviderStep = ({
   return (
     <>
       <CardHeader className="gap-1 rounded-t-lg px-6 py-5">
-        <CardTitle className="text-[15px] font-semibold">{t('Connect a model')}</CardTitle>
+        <h2 tabIndex={-1} className="text-[15px] font-semibold">
+          {t('Connect a model')}
+        </h2>
         <CardDescription className="text-xs leading-5">
           {t('Choose the provider Open Science should use for new research sessions.')}
         </CardDescription>
@@ -466,7 +489,14 @@ const ProviderStep = ({
             {t('Cancel sign-in')}
           </Button>
         ) : (
-          <Button type="button" variant="outline" onClick={onBack}>
+          <Button
+            type="button"
+            variant="outline"
+            onClick={() => {
+              mounted.current = false
+              onBack()
+            }}
+          >
             {t('Back', { context: 'step' })}
           </Button>
         )}

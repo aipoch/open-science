@@ -347,16 +347,14 @@ describe('runtime state ownership architecture', () => {
     expect(runtime).not.toContain('this.planService = base.planService')
     expect(runtime).not.toContain('private readonly planSessions')
     expect(runtime).toContain('composeAcpRuntimePlanWorkflow(options, base, session, {')
-    expect(runtime).toContain('continuations: this.planContinuationOwner')
+    expect(runtime).toContain('deliveries: this.planDeliveryOwner')
     expect(runtime).toContain('plan: this.sessionPlanWorkflow.prompt')
     expect(runtime).toContain('this.sessionPlanWorkflow.capturePromptCancellation(')
     expect(runtime).toContain('this.sessionPlanWorkflow.sessionDeleted(request.sessionId)')
     expect(runtime).toContain('return this.sessionPlanWorkflow.call(input)')
     expect(runtime).toContain('return this.sessionPlanWorkflow.projection(projectId, sessionId)')
     expect(runtime).toContain('const result = await this.sessionPlanWorkflow.respond(input)')
-    expect(runtime).toContain(
-      'this.scheduleQueuedPlanContinuation(input.projectId, input.sessionId)'
-    )
+    expect(runtime).toContain('this.scheduleQueuedPlanDelivery(input.projectId, input.sessionId)')
     expect(planComposition).toContain('const interactions = base.planInteractions')
     expect(planComposition).toContain('const service = base.planService')
     expect(planComposition).not.toMatch(/AcpRuntime\.prototype|from ['"]electron['"]/)

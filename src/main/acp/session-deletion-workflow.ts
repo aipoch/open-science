@@ -16,6 +16,15 @@ import type { AcpSessionUpdateProjector } from './session-update-projector'
 type SessionDeletedEvent = AcpRuntimeEventInput
 type OperationLease = <Result>(work: () => Promise<Result>) => Promise<Result>
 
+const DEFAULT_PROVIDER_DELETE_TIMEOUT_MS = 5_000
+
+class AcpProviderSessionDeletionTimeoutError extends Error {
+  constructor() {
+    super('ACP provider Session deletion timed out.')
+    this.name = 'AcpProviderSessionDeletionTimeoutError'
+  }
+}
+
 type AcpSessionDeletionWorkflowDependencies = Readonly<{
   registry: Pick<AcpSessionRegistry, 'beginDelete' | 'lookup' | 'detach'>
   withOperation: OperationLease
@@ -105,17 +114,49 @@ class AcpSessionDeletionWorkflow {
   private async deleteProviderSession(providerSessionId: string): Promise<void> {
     const connection = this.deps.currentConnection()
     if (connection && this.deps.supportsSessionDelete()) {
-      await connection.agent.request(acp.methods.agent.session.delete, {
-        sessionId: providerSessionId
-      })
+      await this.requestProviderDeletion(
+        connection,
+        acp.methods.agent.session.delete,
+        providerSessionId
+      )
     } else if (connection && this.deps.supportsSessionClose()) {
-      await connection.agent.request(acp.methods.agent.session.close, {
-        sessionId: providerSessionId
-      })
+      await this.requestProviderDeletion(
+        connection,
+        acp.methods.agent.session.close,
+        providerSessionId
+      )
     } else {
       await connection?.agent.notify(acp.methods.agent.session.cancel, {
         sessionId: providerSessionId
       })
+    }
+  }
+
+  private async requestProviderDeletion(
+    connection: ClientConnection,
+    method: typeof acp.methods.agent.session.delete | typeof acp.methods.agent.session.close,
+    providerSessionId: string
+  ): Promise<void> {
+    const cancellation = new AbortController()
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const timeout = new Promise<never>((_resolve, reject) => {
+      timer = setTimeout(() => {
+        const error = new AcpProviderSessionDeletionTimeoutError()
+        cancellation.abort(error)
+        reject(error)
+      }, DEFAULT_PROVIDER_DELETE_TIMEOUT_MS)
+    })
+    try {
+      await Promise.race([
+        connection.agent.request(
+          method,
+          { sessionId: providerSessionId },
+          { cancellationSignal: cancellation.signal }
+        ),
+        timeout
+      ])
+    } finally {
+      if (timer) clearTimeout(timer)
     }
   }
 

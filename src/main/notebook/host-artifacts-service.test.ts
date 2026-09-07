@@ -44,22 +44,22 @@ const harness = (
 ): {
   service: HostArtifactsService
   readHostArtifactCatalog: ReturnType<typeof vi.fn>
-  stageLatest: ReturnType<typeof vi.fn>
+  stageVersion: ReturnType<typeof vi.fn>
 } => {
   const readHostArtifactCatalog = vi.fn(async ({ versionId }: { versionId?: string }) =>
     versionId ? items.filter((item) => item.versionId === versionId) : items
   )
-  const stageLatest = vi.fn(async (request: { sourceKind: string }) =>
+  const stageVersion = vi.fn(async (request: { sourceKind: string }) =>
     request.sourceKind === 'artifact-version'
       ? '/managed-inputs/artifact.csv'
       : '/managed-inputs/upload.pdf'
   )
   return {
     service: new HostArtifactsService({ readHostArtifactCatalog } as HostArtifactCatalog, {
-      stageLatest
+      stageVersion
     }),
     readHostArtifactCatalog,
-    stageLatest
+    stageVersion
   }
 }
 
@@ -192,7 +192,7 @@ describe('HostArtifactsService', () => {
     const readHostArtifactCatalog: HostArtifactCatalog['readHostArtifactCatalog'] = async ({
       versionId
     }) => (versionId === historical.versionId ? [historical] : [latest])
-    const service = new HostArtifactsService({ readHostArtifactCatalog }, { stageLatest: vi.fn() })
+    const service = new HostArtifactsService({ readHostArtifactCatalog }, { stageVersion: vi.fn() })
 
     await expect(service.list({ frame_id: 'frame-a' }, context)).resolves.toMatchObject({
       count: 0,
@@ -253,7 +253,7 @@ describe('HostArtifactsService', () => {
     const catalog: HostArtifactCatalog = {
       readHostArtifactCatalog: vi.fn(async () => items)
     }
-    const service = new HostArtifactsService(catalog, { stageLatest: vi.fn() })
+    const service = new HostArtifactsService(catalog, { stageVersion: vi.fn() })
 
     const first = await service.list({ limit: 2 }, context)
     expect(first.artifacts.map((item) => item.id)).toEqual(['C', 'A'])
@@ -303,25 +303,27 @@ describe('HostArtifactsService', () => {
     )
   })
 
-  it('uses a historical Version id only to identify the logical file, then stages latest', async () => {
+  it('stages the exact requested Artifact or Upload Version', async () => {
     const h = harness()
 
     await expect(h.service.resolvePath('artifact-version-1', context)).resolves.toBe(
       '/managed-inputs/artifact.csv'
     )
-    expect(h.stageLatest).toHaveBeenCalledWith({
+    expect(h.stageVersion).toHaveBeenCalledWith({
       projectId: 'project-a',
       targetSessionId: 'calling-session',
       sourceKind: 'artifact-version',
+      inputFileVersionId: 'artifact-version-1',
       expectedSourceFileId: 'artifact-1'
     })
     await expect(h.service.resolvePath('upload-version-1', context)).resolves.toBe(
       '/managed-inputs/upload.pdf'
     )
-    expect(h.stageLatest).toHaveBeenCalledWith({
+    expect(h.stageVersion).toHaveBeenCalledWith({
       projectId: 'project-a',
       targetSessionId: 'calling-session',
       sourceKind: 'upload-version',
+      inputFileVersionId: 'upload-version-1',
       expectedSourceFileId: 'upload-1'
     })
   })
@@ -337,17 +339,17 @@ describe('HostArtifactsService', () => {
         throw new Error('Artifact Version id is ambiguous across generated Artifacts and Uploads.')
       })
     }
-    const ambiguous = new HostArtifactsService(ambiguousCatalog, { stageLatest: vi.fn() })
+    const ambiguous = new HostArtifactsService(ambiguousCatalog, { stageVersion: vi.fn() })
     await expect(ambiguous.resolvePath('collision', context)).rejects.toThrow('ambiguous')
 
     const corrupt = harness()
-    corrupt.stageLatest.mockRejectedValueOnce(new Error('checksum mismatch'))
+    corrupt.stageVersion.mockRejectedValueOnce(new Error('checksum mismatch'))
     await expect(corrupt.service.resolvePath('artifact-version-1', context)).rejects.toThrow(
       'checksum mismatch'
     )
 
     const relative = harness()
-    relative.stageLatest.mockResolvedValueOnce('relative.csv')
+    relative.stageVersion.mockResolvedValueOnce('relative.csv')
     await expect(relative.service.resolvePath('artifact-version-1', context)).rejects.toThrow(
       'relative path'
     )

@@ -1,5 +1,8 @@
 import type { DatabaseStartupState, StartupEnvironment } from '../../shared/database-startup'
+import { createLogger, errorLogFields } from '../logger'
 import { DatabaseMigrationError, type SchemaMigrationProgress } from './migration-service'
+
+const log = createLogger('database-startup-owner')
 
 type DatabaseStartupOwnerDeps = {
   reportBlocked: (error: DatabaseMigrationError) => void
@@ -35,7 +38,17 @@ const createDatabaseStartupOwner = (deps: DatabaseStartupOwnerDeps): DatabaseSta
 
   const publish = (next: DatabaseStartupState): void => {
     state = next
-    for (const listener of listeners) listener(state)
+    for (const listener of listeners) {
+      try {
+        listener(next)
+      } catch (error) {
+        try {
+          log.warn('database startup notification failed', errorLogFields(error))
+        } catch {
+          // Notification and diagnostic failures cannot change database readiness.
+        }
+      }
+    }
   }
 
   const runAttempt = (): Promise<DatabaseStartupState> => {

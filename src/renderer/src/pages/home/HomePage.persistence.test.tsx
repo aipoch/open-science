@@ -12,7 +12,6 @@ import { HomePage } from './HomePage'
 
 vi.mock('@/components/GitHubStarBadge', () => ({ GitHubStarBadge: () => null }))
 vi.mock('@/components/NetworkStatusIndicator', () => ({ NetworkStatusIndicator: () => null }))
-vi.mock('@/components/ThemeControls', () => ({ ThemePreferenceMenu: () => null }))
 vi.mock('@/components/UpdateCapsule', () => ({ UpdateCapsule: () => null }))
 vi.mock('./ProjectFormDialog', () => ({ ProjectFormDialog: () => null }))
 vi.mock('./DeleteProjectDialog', () => ({
@@ -219,7 +218,8 @@ describe('HomePage persistence recovery', () => {
       (button) => button.textContent?.trim() === 'Archive'
     )
     expect(archive?.disabled).toBe(true)
-    expect(archive?.title).toBe('Update Open Science before archiving this project.')
+    expect(archive?.title).toBe('')
+    expect(container.textContent).toContain('Update Open Science before archiving this project.')
   })
 
   it('maps a raced incomplete-catalog archive rejection to index repair guidance', async () => {
@@ -246,7 +246,7 @@ describe('HomePage persistence recovery', () => {
     expect(updateProjectArchive).toHaveBeenCalledWith({
       id: project.id,
       archived: true,
-      expectedArchivedAt: null
+      expectedArchiveRevision: 0
     })
     expect(container.querySelector('[role="alert"]')?.textContent).toBe(
       'Repair the project index before archiving.'

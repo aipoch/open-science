@@ -18,6 +18,7 @@ describe('ACP Runtime Prompt composition', () => {
         plan: {
           preflight: vi.fn(() => ({})),
           admit: vi.fn((_request, _interaction, plan) => plan),
+          providerAccepted: vi.fn(async () => undefined),
           beforeRelease: vi.fn(),
           afterRelease: vi.fn(async () => undefined)
         },

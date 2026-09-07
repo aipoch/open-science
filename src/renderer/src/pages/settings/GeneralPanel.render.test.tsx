@@ -398,6 +398,119 @@ describe('GeneralPanel close behavior', () => {
 })
 
 describe('GeneralPanel diagnostics', () => {
+  it('D04 distinguishes a missing file with a known path from a failed status request', async () => {
+    vi.mocked(window.api.logs.getStatus).mockResolvedValueOnce({
+      configured: true,
+      path: '/logs/main.log',
+      existing: false,
+      lastWriteSucceeded: null,
+      lastFailureCategory: null
+    })
+    await act(async () => root.render(<GeneralPanel />))
+    await flush()
+    const diagnostics = container.querySelector('[aria-label="Diagnostics"]')!
+    expect(diagnostics.textContent).toContain('Not available yet.')
+    expect(diagnostics.querySelector('[role="alert"]')).toBeNull()
+    expect(findButton(/^open$/i)?.disabled).toBe(true)
+  })
+
+  it.each([new Error('log status unavailable'), undefined])(
+    'D04 offers an inline retry after the initial log status request fails (%s)',
+    async (error) => {
+      const getStatus = vi.mocked(window.api.logs.getStatus)
+      getStatus.mockRejectedValueOnce(error)
+      await act(async () => root.render(<GeneralPanel />))
+      await flush()
+
+      const diagnostics = container.querySelector('[aria-label="Diagnostics"]')!
+      expect.soft(diagnostics.querySelector('[role="alert"]')).not.toBeNull()
+      const retry = Array.from(diagnostics.querySelectorAll('button')).find((button) =>
+        /retry|try again|check again|refresh/i.test(button.textContent ?? '')
+      )
+      expect(retry).toBeDefined()
+      expect(retry?.disabled).toBe(false)
+      await act(async () => retry?.click())
+      await flush()
+      expect(getStatus).toHaveBeenCalledTimes(2)
+      expect(diagnostics.querySelector('[role="alert"]')).toBeNull()
+      expect(findButton(/^open$/i)?.disabled).toBe(false)
+      expect(findButton(/^reveal$/i)?.disabled).toBe(false)
+    }
+  )
+
+  it('D04 refreshes on focus and ignores stale status responses', async () => {
+    const getStatus = vi.mocked(window.api.logs.getStatus)
+    type Status = Awaited<ReturnType<typeof window.api.logs.getStatus>>
+    let resolveOld!: (status: Status) => void
+    getStatus.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveOld = resolve
+        })
+    )
+    await act(async () => root.render(<GeneralPanel />))
+    expect(container.querySelector('[aria-label="Log file path"]')?.textContent).toBe('Loading…')
+
+    const failure: Status = {
+      configured: true,
+      path: '/logs/main.log',
+      existing: true,
+      lastWriteSucceeded: false,
+      lastFailureCategory: 'rotation'
+    }
+    getStatus.mockResolvedValueOnce(failure)
+    await act(async () => window.dispatchEvent(new Event('focus')))
+    await flush()
+    expect(getStatus).toHaveBeenCalledTimes(2)
+    expect(container.textContent).toContain('The log backups could not be rotated.')
+    await act(async () =>
+      resolveOld({ ...failure, lastWriteSucceeded: true, lastFailureCategory: null })
+    )
+    await flush()
+    expect(container.textContent).toContain('The log backups could not be rotated.')
+  })
+
+  it.each(['open', 'reveal'] as const)(
+    'D04 refreshes write failure and recovery after %s',
+    async (action) => {
+      const getStatus = vi.mocked(window.api.logs.getStatus)
+      const status = {
+        configured: true,
+        path: '/logs/main.log',
+        existing: true,
+        lastWriteSucceeded: true,
+        lastFailureCategory: null
+      }
+      getStatus.mockResolvedValueOnce(status)
+      await act(async () => root.render(<GeneralPanel />))
+      await flush()
+      getStatus.mockResolvedValueOnce({
+        ...status,
+        lastWriteSucceeded: false,
+        lastFailureCategory: 'append'
+      })
+      const button = findButton(new RegExp(`^${action}$`, 'i'))!
+      await act(async () => button.click())
+      await flush()
+      expect.soft(getStatus).toHaveBeenCalledTimes(2)
+      expect
+        .soft(
+          container.textContent?.includes(
+            'The app could not write to the log file during its most recent attempt.'
+          )
+        )
+        .toBe(true)
+
+      getStatus.mockResolvedValueOnce(status)
+      await act(async () => button.click())
+      await flush()
+      expect(getStatus).toHaveBeenCalledTimes(3)
+      expect(container.textContent).not.toContain(
+        'The app could not write to the log file during its most recent attempt.'
+      )
+    }
+  )
+
   it('shows a recent write failure without hiding an existing log file', async () => {
     const getStatus = (
       window as unknown as { api: { logs: { getStatus: ReturnType<typeof vi.fn> } } }

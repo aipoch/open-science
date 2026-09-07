@@ -1,9 +1,15 @@
 // @vitest-environment jsdom
-import { act } from 'react'
+import { act, useState } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { PreviewFileItem } from '@/stores/preview-workbench-store'
+import {
+  WEB_EVENT_CONNECTION_STATE_EVENT,
+  WEB_EVENTS_OPEN_EVENT,
+  WEB_EVENT_SURFACE_ATTRIBUTE
+} from '../../../../../shared/web-event-connection'
+import { PreviewRuntimeBoundary } from './preview-runtime'
 import { useManagedPreviewResource } from './useManagedPreviewResource'
 
 const firstItem: PreviewFileItem = {
@@ -74,6 +80,154 @@ describe('useManagedPreviewResource', () => {
   afterEach(async () => {
     await act(async () => root?.unmount())
     container.remove()
+  })
+
+  it('W01 reads from a fresh capability after replay while the preview stays mounted', async () => {
+    document.documentElement.setAttribute(WEB_EVENT_SURFACE_ATTRIBUTE, 'true')
+    const activeResources = new Set<string>()
+    let nextId = 0
+    vi.mocked(window.api.previewResources.acquire).mockImplementation(async () => {
+      const id = `resource-${++nextId}`
+      activeResources.add(id)
+      return { id, url: `/preview/${id}`, size: 3, mimeType: 'application/pdf', version: 1 }
+    })
+    vi.mocked(window.api.previewResources.readRange).mockImplementation(async ({ resourceId }) => {
+      if (!activeResources.has(resourceId))
+        throw new Error('Managed preview resource is unavailable.')
+      return { begin: 0, end: 3, total: 3, data: new Uint8Array([1, 2, 3]) }
+    })
+    const LazyReader = (): React.JSX.Element => {
+      const state = useManagedPreviewResource(firstItem)
+      const [result, setResult] = useState('')
+      return (
+        <>
+          <button
+            disabled={!state.resource}
+            onClick={() => {
+              if (!state.resource) return
+              void window.api.previewResources
+                .readRange({ resourceId: state.resource.id, begin: 0, end: 3 })
+                .then(
+                  (value) => setResult(Array.from(value.data).join(',')),
+                  (error) => setResult(error.message)
+                )
+            }}
+          >
+            Read next range
+          </button>
+          <output>{result}</output>
+        </>
+      )
+    }
+    const phase = (value: string): void => {
+      window.dispatchEvent(
+        new CustomEvent(WEB_EVENT_CONNECTION_STATE_EVENT, { detail: { phase: value } })
+      )
+    }
+    try {
+      root = createRoot(container)
+      await act(async () =>
+        root.render(
+          <PreviewRuntimeBoundary item={firstItem}>
+            <LazyReader />
+          </PreviewRuntimeBoundary>
+        )
+      )
+      await act(async () => {
+        phase('live')
+        window.dispatchEvent(new Event(WEB_EVENTS_OPEN_EVENT))
+      })
+      await act(async () => container.querySelector('button')?.click())
+      expect(container.querySelector('output')?.textContent).toBe('1,2,3')
+      // The HTTP/Socket owner contract revokes capabilities on the last idle socket close.
+      activeResources.clear()
+      await act(async () => phase('reconnecting'))
+      await act(async () => phase('replaying'))
+      await act(async () => {
+        phase('live')
+        window.dispatchEvent(new Event(WEB_EVENTS_OPEN_EVENT))
+      })
+      await act(async () => container.querySelector('button')?.click())
+      expect(window.api.previewResources.readRange).toHaveBeenCalledTimes(2)
+      expect(container.querySelector('output')?.textContent).toBe('1,2,3')
+    } finally {
+      document.documentElement.removeAttribute(WEB_EVENT_SURFACE_ATTRIBUTE)
+    }
+  })
+
+  it.each([false, true])('refreshes only after Web recovery (Web surface: %s)', async (web) => {
+    document.documentElement.toggleAttribute(WEB_EVENT_SURFACE_ATTRIBUTE, web)
+    if (web) document.documentElement.setAttribute(WEB_EVENT_SURFACE_ATTRIBUTE, 'true')
+    let id = 0
+    vi.mocked(window.api.previewResources.acquire).mockImplementation(async () => ({
+      id: `resource-${++id}`,
+      url: '/preview',
+      size: 3,
+      mimeType: 'application/pdf',
+      version: 1
+    }))
+    const phase = async (value: string): Promise<void> => {
+      await act(async () =>
+        window.dispatchEvent(
+          new CustomEvent(WEB_EVENT_CONNECTION_STATE_EVENT, { detail: { phase: value } })
+        )
+      )
+    }
+    try {
+      root = createRoot(container)
+      await act(async () => root.render(<Probe item={firstItem} />))
+      await phase('live')
+      await phase('live')
+      expect(window.api.previewResources.acquire).toHaveBeenCalledTimes(1)
+      for (let retry = 1; retry <= 2; retry += 1) {
+        await phase('reconnecting')
+        await phase('replaying')
+        expect(window.api.previewResources.acquire).toHaveBeenCalledTimes(web ? retry : 1)
+        await phase('live')
+        await phase('live')
+        expect(container.textContent).toBe(`resource-${web ? retry + 1 : 1}`)
+        expect(window.api.previewResources.acquire).toHaveBeenCalledTimes(web ? retry + 1 : 1)
+      }
+    } finally {
+      document.documentElement.removeAttribute(WEB_EVENT_SURFACE_ATTRIBUTE)
+    }
+  })
+
+  it('releases a late pre-recovery acquire without replacing the new resource', async () => {
+    document.documentElement.setAttribute(WEB_EVENT_SURFACE_ATTRIBUTE, 'true')
+    const late =
+      Promise.withResolvers<Awaited<ReturnType<Window['api']['previewResources']['acquire']>>>()
+    const resource = {
+      id: 'fresh',
+      url: '/preview/fresh',
+      size: 3,
+      mimeType: 'application/pdf',
+      version: 1
+    }
+    vi.mocked(window.api.previewResources.acquire)
+      .mockReturnValueOnce(late.promise)
+      .mockResolvedValueOnce(resource)
+    vi.mocked(window.api.previewResources.release).mockRejectedValue(
+      new Error('Transport disconnected')
+    )
+    try {
+      root = createRoot(container)
+      await act(async () => root.render(<Probe item={firstItem} />))
+      for (const phase of ['reconnecting', 'live']) {
+        await act(async () =>
+          window.dispatchEvent(
+            new CustomEvent(WEB_EVENT_CONNECTION_STATE_EVENT, { detail: { phase } })
+          )
+        )
+      }
+      expect(container.textContent).toBe('fresh')
+      await act(async () => late.resolve({ ...resource, id: 'obsolete' }))
+      expect(container.textContent).toBe('fresh')
+      expect(window.api.previewResources.release).toHaveBeenCalledWith({ resourceId: 'obsolete' })
+    } finally {
+      document.documentElement.removeAttribute(WEB_EVENT_SURFACE_ATTRIBUTE)
+      late.resolve({ ...resource, id: 'obsolete' })
+    }
   })
 
   it('acquires on mount and releases when the file changes or unmounts', async () => {
@@ -193,5 +347,86 @@ describe('useManagedPreviewResource', () => {
       fileId: 'artifact-1',
       maxBytes: 4096
     })
+  })
+
+  it.each(['artifact', 'upload'] as const)(
+    'returns an error without acquiring when a %s has no logical file identity',
+    async (source) => {
+      const item: PreviewFileItem = {
+        ...firstItem,
+        id: source === 'upload' ? 'upload:legacy-file' : 'legacy-artifact-version',
+        source,
+        path: '/managed/legacy-file.html',
+        name: 'legacy-file.html',
+        title: 'legacy-file.html',
+        format: 'html',
+        managedFileId: undefined,
+        ...(source === 'upload' ? { artifactId: 'artifact-from-wrong-source' } : {})
+      }
+      root = createRoot(container)
+
+      await act(async () => root.render(<Probe item={item} />))
+
+      expect(container.querySelector('div')?.dataset.state).toBe('error')
+      expect(window.api.previewResources.acquire).not.toHaveBeenCalled()
+    }
+  )
+
+  it('returns an error when capability acquisition rejects asynchronously', async () => {
+    vi.mocked(window.api.previewResources.acquire).mockRejectedValue(
+      new Error('Capability acquisition failed')
+    )
+    root = createRoot(container)
+
+    await act(async () => root.render(<Probe item={firstItem} />))
+
+    expect(container.querySelector('div')?.dataset.state).toBe('error')
+    expect(window.api.previewResources.acquire).toHaveBeenCalledTimes(1)
+  })
+
+  it('does not let a stale acquisition error replace the current resource', async () => {
+    let rejectFirstAcquire: ((reason: Error) => void) | undefined
+    vi.mocked(window.api.previewResources.acquire).mockImplementation((request) => {
+      if (request.source === 'artifact') {
+        return new Promise((_, reject) => {
+          rejectFirstAcquire = reject
+        })
+      }
+      return Promise.resolve({
+        id: 'current-resource',
+        url: 'open-science-preview://current-resource/second.pdf',
+        size: 20,
+        mimeType: 'application/pdf',
+        version: 1
+      })
+    })
+    root = createRoot(container)
+
+    await act(async () => root.render(<Probe item={firstItem} />))
+    await act(async () => root.render(<Probe item={secondItem} />))
+    expect(container.textContent).toBe('current-resource')
+
+    await act(async () => rejectFirstAcquire?.(new Error('Stale acquisition failed')))
+
+    expect(container.querySelector('div')?.dataset.state).toBe('ready')
+    expect(container.textContent).toBe('current-resource')
+  })
+
+  it('does not reacquire or release when stable identity props rerender', async () => {
+    vi.mocked(window.api.previewResources.acquire).mockResolvedValue({
+      id: 'stable-resource',
+      url: 'open-science-preview://stable-resource/first.pdf',
+      size: 12,
+      mimeType: 'application/pdf',
+      version: 1
+    })
+    root = createRoot(container)
+
+    await act(async () => root.render(<Probe item={firstItem} />))
+    await act(async () => root.render(<Probe item={{ ...firstItem }} />))
+
+    expect(window.api.previewResources.acquire).toHaveBeenCalledTimes(1)
+    expect(window.api.previewResources.release).not.toHaveBeenCalled()
+    expect(container.textContent).toBe('stable-resource')
   })
 })

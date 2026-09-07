@@ -108,6 +108,34 @@ const EXPECTED_MIGRATION_LEDGER = [
   {
     id: '0026_compute_job_remote_cleanup',
     checksum: 'c9c0dff928daa4eafe5b8910c4202ddba83f740e92cb243a4fa0dc8e323cba7b'
+  },
+  {
+    id: '0027_project_session_defaults',
+    checksum: 'af7f3740a6032de71789e25567ee6605f961ee0dea3b89df2b47f9a589e738c7'
+  },
+  {
+    id: '0028_database_numeric_and_null_constraints',
+    checksum: '7ee2e3ec746080d5e1bedcddaea5ded1b080d8bcbc8ec59ed4139ff8c5e5de4a'
+  },
+  {
+    id: '0029_compute_host_execution_mode',
+    checksum: 'cb99c71c85d5632a42a06a9de0659f67874a9e347af5ca0aa41925d27146c49d'
+  },
+  {
+    id: '0030_literature_foundation',
+    checksum: '0f432ea09aec2d7edbd9834a4f2c38dd6bc4870cd4ff01d4ea4899b3e66dc5e2'
+  },
+  {
+    id: '0031_project_archive_revision',
+    checksum: '77d0476e02c6993e54772e2a17908b62a6998c540c56d826a691fe358ac1093a'
+  },
+  {
+    id: '0032_permission_approval_summary',
+    checksum: '84b4035c8bd97ac41a7d08e630b6af9205cff6012e1ae02e5e9dbaaf25979c66'
+  },
+  {
+    id: '0033_compute_job_harvest_retry',
+    checksum: 'd248c3aeb6db69b95e1fc5706ebc01146b841bd3e5c5c2c5900312d3ba9e40e6'
   }
 ]
 const LEGACY_PROJECT_ID = 'package-smoke-legacy-project'

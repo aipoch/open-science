@@ -2,6 +2,7 @@ import {
   parsePlanDocumentV1,
   type ActivePlanProjection
 } from '../../../../../shared/session-plan/contract'
+import { isSessionSizeLimitError } from '../../../../../shared/session-persistence'
 import { useSessionStore } from '@/stores/session-store'
 
 type SessionPlanResponseTarget = Readonly<{
@@ -22,15 +23,9 @@ const PLAN_LIFECYCLES = new Set<ActivePlanProjection['lifecycle']>([
   'awaiting_approval',
   'approved',
   'in_progress',
-  'interrupted',
   'blocked',
   'completed',
   'rejected'
-])
-const PLAN_CONTINUATION_STATES = new Set<NonNullable<ActivePlanProjection['continuationState']>>([
-  'queued',
-  'continuing',
-  'interrupted'
 ])
 const PLAN_RUNTIME_STEP_STATUSES = new Set<ActivePlanProjection['stepStatuses'][string]['status']>([
   'in_progress',
@@ -105,11 +100,6 @@ const isActivePlanProjection = (value: unknown): value is ActivePlanProjection =
     !isNonNegativeSafeInteger(value.revision) ||
     !PLAN_APPROVALS.has(value.approval as ActivePlanProjection['approval']) ||
     !PLAN_LIFECYCLES.has(value.lifecycle as ActivePlanProjection['lifecycle']) ||
-    (value.continuationState !== undefined &&
-      !PLAN_CONTINUATION_STATES.has(
-        value.continuationState as NonNullable<ActivePlanProjection['continuationState']>
-      )) ||
-    typeof value.requiresExplicitContinuation !== 'boolean' ||
     !hasValidStepStatuses(value.stepStatuses) ||
     !hasValidStepStates(value.stepStates) ||
     !hasValidCounts(value.counts)
@@ -126,8 +116,7 @@ const isActivePlanProjection = (value: unknown): value is ActivePlanProjection =
 
 const projectionFromResponse = (result: unknown): ActivePlanProjection | undefined => {
   if (!isRecord(result)) return undefined
-  const projection = result.kind === 'feedback' ? result.continuationProjection : result.projection
-  return isActivePlanProjection(projection) ? projection : undefined
+  return isActivePlanProjection(result.projection) ? result.projection : undefined
 }
 
 const projectReturnedFeedbackMessage = (sessionId: string, result: unknown): boolean => {
@@ -174,7 +163,8 @@ const refreshSessionPlanProjection = async ({
 
 export const respondToSessionPlan = async (
   target: SessionPlanResponseTarget,
-  response: 'approved' | 'rejected' | { decision: 'approved' | 'rejected' } | { feedback: string }
+  response: 'approved' | 'rejected' | { decision: 'approved' | 'rejected' } | { feedback: string },
+  options: Readonly<{ onSessionSizeLimit?: (sessionId: string) => void }> = {}
 ): Promise<void> => {
   const payload = typeof response === 'string' ? { decision: response } : response
   let authoritativeProjection: ActivePlanProjection | undefined
@@ -190,7 +180,7 @@ export const respondToSessionPlan = async (
             decision: payload.decision
           }
     const result = await window.api.acp.respondPlan(request)
-    authoritativeProjection = projectionFromResponse(result)
+    authoritativeProjection = 'feedback' in payload ? undefined : projectionFromResponse(result)
     if (authoritativeProjection) {
       useSessionStore.getState().setActivePlanProjection(target.sessionId, authoritativeProjection)
     }
@@ -205,8 +195,8 @@ export const respondToSessionPlan = async (
         createdAt: Date.now()
       })
     }
-    if ('feedback' in payload) return
   } catch (error) {
+    if (isSessionSizeLimitError(error)) options.onSessionSizeLimit?.(target.sessionId)
     try {
       await refreshSessionPlanProjection(target)
     } catch {
@@ -214,5 +204,14 @@ export const respondToSessionPlan = async (
     }
     throw error
   }
-  await refreshSessionPlanProjection({ ...target, authoritativeProjection })
+  try {
+    await refreshSessionPlanProjection({ ...target, authoritativeProjection })
+  } catch (error) {
+    // A stale cached projection suppresses the existing recovery hook. Invalidate only
+    // the submitted version/revision, preserving a newer projection delivered meanwhile.
+    if ('feedback' in payload) {
+      useSessionStore.getState().invalidateActivePlanProjection(target.sessionId, target.projection)
+    }
+    console.warn('Plan response committed, but projection refresh failed.', error)
+  }
 }

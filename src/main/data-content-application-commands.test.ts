@@ -25,6 +25,7 @@ import {
   materializeSessionConversationGraph,
   SessionDetailsConflictError,
   SessionRevisionConflictError,
+  SessionSizeLimitError,
   type PersistedChatSession,
   type SessionDeletionResult
 } from '../shared/session-persistence'
@@ -98,6 +99,7 @@ const createDependencies = () => {
     readPreview: vi.fn(async () => ({ content: '', encoding: 'utf8', size: 0, truncated: false })),
     getLineage: vi.fn(async () => undefined),
     getVersionProvenance: vi.fn(),
+    getVersionLiterature: vi.fn(),
     getVersionExecution: vi.fn(),
     getVersionMessages: vi.fn(),
     getVersionReview: vi.fn(),
@@ -173,7 +175,11 @@ const createDependencies = () => {
     loadOne: vi.fn(),
     loadUsage: vi.fn(),
     saveSession: vi.fn(async () => ({ created: true, session })),
+    stageTaskCompletion: vi.fn(async () => session),
+    settleTaskCompletion: vi.fn(async () => session),
+    failTaskRun: vi.fn(async () => session),
     setDelegationPolicy: vi.fn(async () => session),
+    updateSessionConfiguration: vi.fn(async () => session),
     deleteSession: vi.fn(async (): Promise<SessionDeletionResult> => ({
       status: 'deleted',
       runtimeDetached: true
@@ -244,6 +250,7 @@ const WRAPPED_COMMAND_KEYS = [
   'projectCreate',
   'projectDelete',
   'projectUpdate',
+  'projectUpdateSessionDefaults',
   'sessionDelete',
   'sessionEditDetails',
   'sessionExportConversation',
@@ -255,7 +262,11 @@ const WRAPPED_COMMAND_KEYS = [
   'sessionLoadUsage',
   'sessionSaveManifest',
   'sessionSave',
+  'sessionStageTaskCompletion',
+  'sessionSettleTaskCompletion',
+  'sessionFailTaskRun',
   'sessionSetDelegationPolicy',
+  'sessionUpdateConfiguration',
   'sessionUnlinkPdfContext',
   'uploadStageLocalFile',
   'uploadStageLocalPath'
@@ -283,7 +294,7 @@ const dispatchCommand = (
 }
 
 describe('Data and content application commands', () => {
-  it('owns exactly the 58 current data and content invoke channels', () => {
+  it('owns exactly the current data and content invoke channels', () => {
     expect(registeredCommands()).toEqual(
       [
         'artifacts:finalize-run',
@@ -291,6 +302,7 @@ describe('Data and content application commands', () => {
         'artifacts:get-code-reconstruction',
         'artifacts:get-lineage',
         'artifacts:get-version-execution',
+        'artifacts:get-version-literature',
         'artifacts:get-version-messages',
         'artifacts:get-version-provenance',
         'artifacts:get-version-review',
@@ -319,6 +331,7 @@ describe('Data and content application commands', () => {
         'projects:list-deletion-cleanup',
         'projects:retry-deletion-cleanup',
         'projects:update',
+        'projects:update-session-defaults',
         'sessions:delete-session',
         'sessions:edit-details',
         'sessions:export-conversation',
@@ -332,7 +345,11 @@ describe('Data and content application commands', () => {
         'sessions:update-archive',
         'sessions:unlink-pdf-context',
         'sessions:save-session',
+        'sessions:stage-task-completion',
+        'sessions:settle-task-completion',
+        'sessions:fail-task-run',
         'sessions:set-delegation-policy',
+        'sessions:update-configuration',
         'uploads:abort-transfer',
         'uploads:append-transfer',
         'uploads:begin-transfer',
@@ -403,6 +420,11 @@ describe('Data and content application commands', () => {
         key: 'artifactGetVersionProvenance',
         args: [request('version-provenance')],
         owner: deps.artifacts.getVersionProvenance
+      },
+      {
+        key: 'artifactGetVersionLiterature',
+        args: [request('version-literature')],
+        owner: deps.artifacts.getVersionLiterature
       },
       {
         key: 'artifactGetVersionReview',
@@ -489,7 +511,7 @@ describe('Data and content application commands', () => {
       },
       {
         key: 'projectUpdateArchive',
-        args: [{ id: 'project-1', archived: true, expectedArchivedAt: null }],
+        args: [{ id: 'project-1', archived: true, expectedArchiveRevision: 0 }],
         owner: deps.projects.updateArchive
       },
       {
@@ -499,7 +521,7 @@ describe('Data and content application commands', () => {
             projectId: 'project-1',
             sessionId: 'session-1',
             archived: true,
-            expectedArchivedAt: null
+            expectedRevision: 0
           }
         ],
         owner: deps.sessions.updateArchive
@@ -860,7 +882,7 @@ describe('Data and content application commands', () => {
       },
       {
         command: 'projectUpdateArchive' as const,
-        args: [{ id: 'project-1', archived: true, expectedArchivedAt: null }]
+        args: [{ id: 'project-1', archived: true, expectedArchiveRevision: 0 }]
       },
       {
         command: 'projectUpdate' as const,
@@ -938,6 +960,176 @@ describe('Data and content application commands', () => {
       message: expect.stringContaining('expected 1, actual 2')
     })
     expect(deps.events.publish).not.toHaveBeenCalled()
+  })
+
+  it('preserves the Session size-limit code for every authority mutation', async () => {
+    type Dependencies = ReturnType<typeof createDependencies>
+    type MutationOwner =
+      | 'editDetails'
+      | 'linkPdfContext'
+      | 'unlinkPdfContext'
+      | 'updateArchive'
+      | 'saveSession'
+      | 'stageTaskCompletion'
+      | 'settleTaskCompletion'
+      | 'failTaskRun'
+      | 'setDelegationPolicy'
+      | 'updateSessionConfiguration'
+    type MutationCase = Readonly<{
+      label: string
+      command: DataContentCommandKey
+      owner: MutationOwner
+      args: (dependencies: Dependencies) => readonly unknown[]
+      caller?: CallerContext
+    }>
+    const taskCaller = createTaskCallerContext()
+    const cases: readonly MutationCase[] = [
+      {
+        label: 'details',
+        command: 'sessionEditDetails',
+        owner: 'editDetails',
+        args: () => [
+          {
+            projectId: 'project-1',
+            sessionId: 'session-1',
+            expectedTitle: 'Session',
+            expectedDescription: '',
+            title: 'Edited',
+            description: ''
+          }
+        ]
+      },
+      {
+        label: 'PDF link',
+        command: 'sessionLinkPdfContext',
+        owner: 'linkPdfContext',
+        args: () => [
+          {
+            projectId: 'project-1',
+            sessionId: 'session-1',
+            expectedRevision: 1,
+            sources: [
+              {
+                sourceKind: 'artifact-version',
+                sourceFileId: 'artifact-1',
+                sourceVersionId: 'version-1'
+              }
+            ]
+          }
+        ]
+      },
+      {
+        label: 'PDF unlink',
+        command: 'sessionUnlinkPdfContext',
+        owner: 'unlinkPdfContext',
+        args: () => [
+          {
+            projectId: 'project-1',
+            sessionId: 'session-1',
+            expectedRevision: 1,
+            bindingId: 'binding-1'
+          }
+        ]
+      },
+      {
+        label: 'archive',
+        command: 'sessionUpdateArchive',
+        owner: 'updateArchive',
+        args: () => [
+          {
+            projectId: 'project-1',
+            sessionId: 'session-1',
+            archived: true,
+            expectedRevision: 0
+          }
+        ]
+      },
+      {
+        label: 'save',
+        command: 'sessionSave',
+        owner: 'saveSession',
+        args: (dependencies) => [dependencies.session]
+      },
+      {
+        label: 'task completion staging',
+        command: 'sessionStageTaskCompletion',
+        owner: 'stageTaskCompletion',
+        args: () => [
+          {
+            projectId: 'project-1',
+            sessionId: 'session-1',
+            promptMessageId: 'message-1',
+            activities: [],
+            updatedAt: 2
+          }
+        ],
+        caller: taskCaller
+      },
+      {
+        label: 'task completion settlement',
+        command: 'sessionSettleTaskCompletion',
+        owner: 'settleTaskCompletion',
+        args: () => [
+          {
+            projectId: 'project-1',
+            sessionId: 'session-1',
+            promptMessageId: 'message-1',
+            taskRunCommitId: 'commit-1',
+            artifacts: [],
+            updatedAt: 2
+          }
+        ],
+        caller: taskCaller
+      },
+      {
+        label: 'task run failure',
+        command: 'sessionFailTaskRun',
+        owner: 'failTaskRun',
+        args: () => [
+          {
+            projectId: 'project-1',
+            sessionId: 'session-1',
+            promptMessageId: 'message-1',
+            taskRunCommitId: 'commit-1',
+            artifacts: [],
+            updatedAt: 2,
+            error: 'failed'
+          }
+        ],
+        caller: taskCaller
+      },
+      {
+        label: 'delegation policy',
+        command: 'sessionSetDelegationPolicy',
+        owner: 'setDelegationPolicy',
+        args: () => ['project-1', 'session-1', 'deny']
+      },
+      {
+        label: 'Task configuration',
+        command: 'sessionUpdateConfiguration',
+        owner: 'updateSessionConfiguration',
+        args: (dependencies) => [dependencies.session, 1],
+        caller: taskCaller
+      }
+    ]
+
+    for (const mutation of cases) {
+      const router = createApplicationCommandRouter()
+      const dependencies = createDependencies()
+      dependencies.sessions[mutation.owner].mockRejectedValueOnce(new SessionSizeLimitError())
+      registerDataContentApplicationCommands(router.registrar, dependencies.dependencies)
+
+      await expect(
+        dispatchCommand(router, mutation.command, mutation.args(dependencies), mutation.caller)
+          .result,
+        mutation.label
+      ).rejects.toMatchObject({
+        name: 'ApplicationCommandError',
+        code: 'session-size-limit',
+        message: expect.stringContaining('persistence limit')
+      })
+      expect(dependencies.events.publish, mutation.label).not.toHaveBeenCalled()
+    }
   })
 
   it('preserves the Session details conflict code across the application command boundary', async () => {
@@ -1061,6 +1253,98 @@ describe('Data and content application commands', () => {
     ).rejects.toMatchObject({ code: 'invalid-command-result' })
   })
 
+  it('allows only Task automation to atomically update authoritative Session configuration', async () => {
+    const router = createApplicationCommandRouter()
+    const deps = createDependencies()
+    registerDataContentApplicationCommands(router.registrar, deps.dependencies)
+    const configured = {
+      ...deps.session,
+      revision: 5,
+      memoryEnabled: false,
+      delegationPolicy: 'deny' as const,
+      enabledComputeHosts: ['ssh:alpha'],
+      selectedComputeHosts: ['ssh:alpha']
+    }
+    deps.sessions.updateSessionConfiguration.mockResolvedValueOnce(configured)
+
+    await expect(
+      router.dispatcher.invoke(
+        dataContentApplicationCommands.sessionUpdateConfiguration,
+        invocation([configured, 4] as const, createTaskCallerContext())
+      )
+    ).resolves.toEqual(configured)
+    expect(deps.sessions.updateSessionConfiguration).toHaveBeenCalledWith(configured, 4)
+    expect(deps.events.publish).toHaveBeenCalledWith('session:updated', {
+      session: configured,
+      originClientId: 'web:headless-task-api'
+    })
+
+    for (const rejectedCaller of [electronCaller, callerContext, remoteCaller]) {
+      await expect(
+        router.dispatcher.invoke(
+          dataContentApplicationCommands.sessionUpdateConfiguration,
+          invocation([configured, 5] as const, rejectedCaller)
+        )
+      ).rejects.toThrow(
+        'Channel only available from Task automation: sessions:update-configuration'
+      )
+    }
+    expect(deps.sessions.updateSessionConfiguration).toHaveBeenCalledOnce()
+  })
+
+  it('keeps Project Session defaults behind the Task-only validated command', async () => {
+    const router = createApplicationCommandRouter()
+    const deps = createDependencies()
+    registerDataContentApplicationCommands(router.registrar, deps.dependencies)
+    const request = {
+      id: deps.project.id,
+      expectedUpdatedAt: deps.project.updatedAt,
+      sessionDefaults: { memoryEnabled: false }
+    }
+
+    await expect(
+      router.dispatcher.invoke(
+        dataContentApplicationCommands.projectUpdate,
+        invocation([request] as const)
+      )
+    ).rejects.toThrow(
+      'Project Session defaults must be changed through the Task configuration API.'
+    )
+    await expect(
+      router.dispatcher.invoke(
+        dataContentApplicationCommands.projectUpdateSessionDefaults,
+        invocation([request] as const, callerContext)
+      )
+    ).rejects.toThrow(
+      'Channel only available from Task automation: projects:update-session-defaults'
+    )
+    await expect(
+      router.dispatcher.invoke(
+        dataContentApplicationCommands.projectUpdateSessionDefaults,
+        invocation([request] as const, createTaskCallerContext())
+      )
+    ).resolves.toBe(deps.project)
+    expect(deps.projects.update).toHaveBeenCalledOnce()
+    expect(deps.projects.update).toHaveBeenCalledWith(request)
+  })
+
+  it('preserves configuration revision conflicts across the Task command boundary', async () => {
+    const router = createApplicationCommandRouter()
+    const deps = createDependencies()
+    deps.sessions.updateSessionConfiguration.mockRejectedValueOnce(
+      new SessionRevisionConflictError(4, 5)
+    )
+    registerDataContentApplicationCommands(router.registrar, deps.dependencies)
+
+    await expect(
+      router.dispatcher.invoke(
+        dataContentApplicationCommands.sessionUpdateConfiguration,
+        invocation([{ ...deps.session, revision: 4 }, 4] as const, createTaskCallerContext())
+      )
+    ).rejects.toMatchObject({ code: 'session-revision-conflict' })
+    expect(deps.events.publish).not.toHaveBeenCalled()
+  })
+
   it('sanitizes the complete authoritative Session result instead of passing malformed fields', async () => {
     const router = createApplicationCommandRouter()
     const deps = createDependencies()
@@ -1109,7 +1393,7 @@ describe('Data and content application commands', () => {
             projectId: 'project-1',
             sessionId: 'session-1',
             archived: true,
-            expectedArchivedAt: null
+            expectedRevision: 0
           }
         ] as const)
       )
@@ -1182,7 +1466,7 @@ describe('Data and content application commands', () => {
           projectId: 'project-1',
           sessionId: 'session-1',
           archived: true,
-          expectedArchivedAt: null
+          expectedRevision: 0
         }
       ] as const)
     )
@@ -1257,7 +1541,7 @@ describe('Data and content application commands', () => {
           projectId: 'project-1',
           sessionId: 'session-1',
           archived: true,
-          expectedArchivedAt: null
+          expectedRevision: 0
         }
       ] as const)
     )
@@ -1415,7 +1699,7 @@ describe('Data and content application commands', () => {
         projectId: 'project-1',
         sessionId: 'session-1',
         archived: true,
-        expectedArchivedAt: null,
+        expectedRevision: 0,
         force: true
       },
       owner: 'updateArchive' as const
@@ -1427,7 +1711,7 @@ describe('Data and content application commands', () => {
         projectId: 'project-1',
         sessionId: 'session-1',
         archived: false,
-        expectedArchivedAt: Number.NaN
+        expectedRevision: Number.NaN
       },
       owner: 'updateArchive' as const
     },

@@ -34,8 +34,8 @@ import type { PlanDocumentProjection } from './plan-file-projection'
 
 type PlanSurfaceProps = Readonly<{ projection: ActivePlanProjection; stale?: boolean }>
 
-// Notice strip shared by every Plan preview surface: stale, pending, continuation, and snapshot
-// notices all render with the same chrome directly above the document body.
+// Notice strip shared by every Plan preview surface: stale, pending, and snapshot notices all
+// render with the same chrome directly above the document body.
 const PlanNoticeBanner = ({
   children
 }: Readonly<{ children: React.ReactNode }>): React.JSX.Element => (
@@ -45,8 +45,11 @@ const PlanNoticeBanner = ({
 )
 
 type RestoredPlanResponder = Readonly<{
-  sessionId: string
+  sessionId?: string
+  enabled: boolean
   respond: (response: { decision: 'approved' | 'rejected' }) => Promise<void>
+  canRespondToSession?: (sessionId: string) => boolean
+  onSessionSizeLimit?: (sessionId: string) => void
 }>
 
 const lifecycleLabel = (projection: ActivePlanProjection, t: TFunction): string => {
@@ -61,8 +64,6 @@ const lifecycleLabel = (projection: ActivePlanProjection, t: TFunction): string 
       return t('Plan rejected')
     case 'approved':
       return t('Plan approved')
-    case 'interrupted':
-      return t('Plan interrupted')
     default:
       return t('Plan in progress')
   }
@@ -112,6 +113,7 @@ const STEP_STATUS_PRESENTATION: Record<
 const WorkspacePlanCard = ({
   projection,
   stale = false,
+  enabled = true,
   embedded = false,
   className = '',
   onOpen,
@@ -124,12 +126,13 @@ const WorkspacePlanCard = ({
     onRespond: (decision: 'approved' | 'rejected') => Promise<void>
     onSubmitResponse?: (text: string) => Promise<void>
     onResolved?: () => void
+    enabled?: boolean
     embedded?: boolean
     className?: string
   }>): React.JSX.Element => {
   const { t } = useTranslation()
 
-  const decisionPending = projection.approval === 'pending' && !stale
+  const decisionPending = projection.approval === 'pending' && !stale && enabled
   const [responseText, setResponseText] = useState('')
   const [decisionBusy, setDecisionBusy] = useState(false)
   const [decisionError, setDecisionError] = useState<string>()
@@ -617,20 +620,6 @@ const PlanPreviewSurface = ({
       {stale ? (
         <PlanNoticeBanner>
           {t('⚠ This plan has been replaced by another plan and is no longer current.')}
-        </PlanNoticeBanner>
-      ) : null}
-      {!stale && projection.approval === 'pending' && !onRespond ? (
-        <PlanNoticeBanner>
-          {t(
-            'This Plan is still pending, but its original Agent interaction has ended. Send a normal message to let the Agent decide how to continue.'
-          )}
-        </PlanNoticeBanner>
-      ) : null}
-      {!stale && projection.requiresExplicitContinuation ? (
-        <PlanNoticeBanner>
-          {projection.approval === 'approved' && projection.continuationState === 'interrupted'
-            ? t('Plan approved, but execution was interrupted. Send a message to continue.')
-            : t('Plan execution is not active. Send a message to continue this approved Plan.')}
         </PlanNoticeBanner>
       ) : null}
       {planDocument ? (

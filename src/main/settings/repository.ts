@@ -5,7 +5,11 @@ import type {
   ClaudeSubscriptionProviderId,
   ClaudeInfo,
   ProjectFilesFilterPreference,
-  ReasoningEffort
+  ProviderDeletionScenarioModelHandling,
+  ReasoningEffort,
+  ValidateProviderResult,
+  ProviderValidationTarget,
+  SetAgentRoutingRequest
 } from '../../shared/settings'
 import {
   CLAUDE_ISOLATED_PROVIDER_ID,
@@ -39,6 +43,7 @@ import {
   type StoredProvider,
   type StoredSettings
 } from './types'
+import { buildProviderValidationPatch } from './provider-validation-state'
 import { sanitizePackageMirror } from './record-codec'
 import { sanitizeSettings } from './document-codec'
 import { SettingsDocumentStore } from './document-store'
@@ -146,6 +151,55 @@ class SettingsRepository {
     return applied
   }
 
+  // Check the live target and generation in the same serialized mutation as the field-only patch.
+  async updateProviderValidationIfTargetMatches(
+    id: string,
+    matches: (provider: StoredProvider, settings: StoredSettings) => boolean,
+    result: ValidateProviderResult,
+    target: ProviderValidationTarget | undefined
+  ): Promise<boolean> {
+    let applied = false
+    await this.mutate((settings) => {
+      const index = settings.providers.findIndex((provider) => provider.id === id)
+      const current = settings.providers[index]
+      if (!current || !matches(current, settings)) return settings
+      const providers = [...settings.providers]
+      providers[index] = { ...current, ...buildProviderValidationPatch(current, result, target) }
+      applied = true
+      return { ...settings, providers }
+    })
+    return applied
+  }
+
+  async updateXaiCredentialsIfKeyMatches(
+    expectedKeyRef: string | undefined,
+    patch: Pick<StoredProvider, 'keyRef' | 'accountEmail'>,
+    clearValidation: boolean,
+    isCurrent: () => boolean
+  ): Promise<boolean> {
+    let applied = false
+    await this.mutate((settings) => {
+      const index = settings.providers.findIndex((provider) => provider.type === 'xai-subscription')
+      const current = settings.providers[index]
+      if (!current || current.keyRef !== expectedKeyRef || !isCurrent()) return settings
+      const updated = {
+        ...current,
+        ...patch,
+        accountEmail: patch.accountEmail ?? current.accountEmail
+      }
+      if (clearValidation) {
+        delete updated.lastValidatedAt
+        delete updated.lastValidatedTarget
+        delete updated.lastValidationFailure
+      }
+      const providers = [...settings.providers]
+      providers[index] = updated
+      applied = true
+      return { ...settings, providers }
+    })
+    return applied
+  }
+
   async clearCodexIsolatedValidationIfExists(): Promise<boolean> {
     let applied = false
 
@@ -160,6 +214,7 @@ class SettingsRepository {
 
       const provider = { ...current }
       delete provider.lastValidatedAt
+      delete provider.lastValidatedTarget
       delete provider.lastValidationFailure
       const providers = [...settings.providers]
       providers[index] = provider
@@ -172,7 +227,8 @@ class SettingsRepository {
 
   async updateCodexIsolatedValidationIfIdentityMatches(
     expectedProvider: Pick<StoredProvider, 'id' | 'type' | 'codexAuthMode'>,
-    patch: Pick<StoredProvider, 'lastValidatedAt' | 'lastValidationFailure'>
+    patch: Pick<StoredProvider, 'lastValidatedAt' | 'lastValidationFailure'> &
+      Partial<Pick<StoredProvider, 'lastValidatedTarget'>>
   ): Promise<boolean> {
     let applied = false
 
@@ -220,7 +276,10 @@ class SettingsRepository {
   // first paste) it is created with the fixed id/name, mirroring codex's single subscription record.
   async upsertClaudeIsolatedProvider(
     patch: Partial<
-      Pick<StoredProvider, 'keyRef' | 'keyMask' | 'lastValidatedAt' | 'lastValidationFailure'>
+      Pick<
+        StoredProvider,
+        'keyRef' | 'keyMask' | 'lastValidatedAt' | 'lastValidatedTarget' | 'lastValidationFailure'
+      >
     >
   ): Promise<StoredSettings> {
     const identity = claudeIsolatedProviderIdentity()
@@ -274,7 +333,8 @@ class SettingsRepository {
   // replacement token as verified.
   async updateClaudeIsolatedValidationIfKeyMatches(
     expectedKeyRef: string | undefined,
-    patch: Pick<StoredProvider, 'expiresAt' | 'lastValidatedAt' | 'lastValidationFailure'>
+    patch: Pick<StoredProvider, 'expiresAt' | 'lastValidatedAt' | 'lastValidationFailure'> &
+      Partial<Pick<StoredProvider, 'lastValidatedTarget'>>
   ): Promise<boolean> {
     let applied = false
 
@@ -298,7 +358,8 @@ class SettingsRepository {
     expectedProvider: StoredProvider,
     expectedPreferredMode: ClaudeSubscriptionProviderId | undefined,
     expectedResolvedModel: string | undefined,
-    patch: Pick<StoredProvider, 'disconnectedAt' | 'lastValidatedAt' | 'lastValidationFailure'>
+    patch: Pick<StoredProvider, 'disconnectedAt' | 'lastValidatedAt' | 'lastValidationFailure'> &
+      Partial<Pick<StoredProvider, 'lastValidatedTarget'>>
   ): Promise<boolean> {
     let applied = false
 
@@ -336,17 +397,14 @@ class SettingsRepository {
   // Removes a provider and clears the active pointer (and model) when it referenced the removed one.
   // Claude's two fixed records are one collapsed provider in the UI, so deleting either id removes
   // the whole subscription group atomically, including its persisted display preference.
-  async deleteProvider(id: string): Promise<StoredSettings> {
+  async deleteProvider(
+    id: string,
+    scenarioModelHandling: ProviderDeletionScenarioModelHandling = 'preserve'
+  ): Promise<StoredSettings> {
     return this.mutate((settings) => {
       const deletingClaudeSubscription = isClaudeSubscriptionProviderId(id)
       const removedIds = new Set(
-        settings.providers
-          .filter(
-            (provider) =>
-              provider.id === id ||
-              (deletingClaudeSubscription && isClaudeSubscriptionProvider(provider.type))
-          )
-          .map((provider) => provider.id)
+        deletingClaudeSubscription ? [CLAUDE_SHARED_PROVIDER_ID, CLAUDE_ISOLATED_PROVIDER_ID] : [id]
       )
       const providers = settings.providers.filter((provider) => !removedIds.has(provider.id))
       const clearedActive =
@@ -354,13 +412,42 @@ class SettingsRepository {
       const activeProviderId = clearedActive ? undefined : settings.activeProviderId
       const activeModel = clearedActive ? undefined : settings.activeModel
 
-      return {
+      const next: StoredSettings = {
         ...settings,
         providers,
         activeProviderId,
         activeModel,
         ...(deletingClaudeSubscription ? { claudeSubscriptionProviderId: undefined } : {})
       }
+
+      if (scenarioModelHandling === 'inherit') {
+        if (
+          settings.subagentModel?.mode === 'fixed' &&
+          removedIds.has(settings.subagentModel.providerId)
+        ) {
+          next.subagentModel = { mode: 'inherit' }
+        }
+        if (
+          settings.reviewerModel?.mode === 'fixed' &&
+          removedIds.has(settings.reviewerModel.providerId)
+        ) {
+          next.reviewerModel = { mode: 'inherit' }
+        }
+        if (
+          settings.sessionDetailsModel?.mode === 'fixed' &&
+          removedIds.has(settings.sessionDetailsModel.providerId)
+        ) {
+          next.sessionDetailsModel = {
+            mode: 'inherit',
+            reasoningEffort: settings.sessionDetailsModel.reasoningEffort
+          }
+        }
+        if (settings.visionModel && removedIds.has(settings.visionModel.providerId)) {
+          delete next.visionModel
+        }
+      }
+
+      return next
     })
   }
 
@@ -415,6 +502,24 @@ class SettingsRepository {
 
   async setAgentFramework(id: AgentFrameworkId): Promise<StoredSettings> {
     return this.mutate((settings) => ({ ...settings, agentFrameworkId: id }))
+  }
+
+  async setAgentRouting(
+    request: SetAgentRoutingRequest,
+    validate: (candidate: StoredSettings) => StoredSettings
+  ): Promise<StoredSettings> {
+    return this.mutate((settings) =>
+      validate({
+        ...settings,
+        ...(request.framework !== undefined ? { agentFrameworkId: request.framework } : {}),
+        ...(request.reviewer !== undefined
+          ? { reviewerModel: structuredClone(request.reviewer) }
+          : {}),
+        ...(request.subagent !== undefined
+          ? { subagentModel: structuredClone(request.subagent) }
+          : {})
+      })
+    )
   }
 
   async setReasoningEffort(effort: ReasoningEffort): Promise<StoredSettings> {

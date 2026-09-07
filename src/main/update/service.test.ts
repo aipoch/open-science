@@ -49,6 +49,108 @@ const diagnosticRecords = (log: Logger): Record<string, unknown>[] =>
   )
 
 describe('UpdateService.check', () => {
+  it.each(['up-to-date', 'error'])(
+    'releases a waiting download after a check returns %s so a later offer can download',
+    async (outcome) => {
+      let releaseCheck!: () => void
+      const gate = new Promise<void>((resolve) => {
+        releaseCheck = resolve
+      })
+      const fetchImpl = vi.fn(async () => jsonResponse(manifest))
+      fetchImpl.mockImplementationOnce(async () => {
+        await gate
+        if (outcome === 'error') throw new Error('offline')
+        return jsonResponse({ ...manifest, version: '0.2.0' })
+      })
+      const promptSavePath = vi.fn(async () => null)
+      const service = new UpdateService({
+        fetchImpl,
+        platform: 'darwin',
+        arch: 'arm64',
+        currentVersion: '0.2.0',
+        manifestUrl: 'https://cdn/version.json',
+        broadcast: vi.fn(),
+        promptSavePath
+      })
+      const checking = service.check()
+      const downloading = service.download()
+      releaseCheck()
+      await checking
+      expect((await downloading).state).toBe(outcome)
+
+      await service.check()
+      await service.download()
+      expect(promptSavePath).toHaveBeenCalledTimes(1)
+    }
+  )
+
+  it('lets only a fresh retry select a target after cancelling a waiting download', async () => {
+    let releaseCheck!: () => void
+    const gate = new Promise<void>((resolve) => {
+      releaseCheck = resolve
+    })
+    const promptSavePath = vi.fn(async () => null)
+    const service = new UpdateService({
+      fetchImpl: async () => {
+        await gate
+        return jsonResponse(manifest)
+      },
+      platform: 'darwin',
+      arch: 'arm64',
+      currentVersion: '0.2.0',
+      manifestUrl: 'https://cdn/version.json',
+      broadcast: vi.fn(),
+      promptSavePath
+    })
+    const checking = service.check()
+    const first = service.download()
+    await service.cancel()
+    const retry = service.download()
+    const duplicate = service.download()
+    expect(promptSavePath).not.toHaveBeenCalled()
+    releaseCheck()
+    await Promise.all([checking, first, retry, duplicate])
+    expect(promptSavePath).toHaveBeenCalledTimes(1)
+  })
+
+  it.each(['1.1.0-nightly.abc1234', '1.1.0-nightly.123abcd'])(
+    'U05: offers the stable release to %s',
+    async (currentVersion) => {
+      const service = new UpdateService({
+        fetchImpl: async () => jsonResponse({ ...manifest, version: '1.1.0' }),
+        platform: 'darwin',
+        arch: 'arm64',
+        currentVersion,
+        broadcast: vi.fn()
+      })
+
+      expect(await service.check()).toMatchObject({ state: 'available', latest: '1.1.0' })
+    }
+  )
+
+  it('U04: exposes a missing platform artifact without starting any download side effects', async () => {
+    const fetchImpl = vi.fn(async () => jsonResponse(manifest))
+    const promptSavePath = vi.fn(async () => null)
+    const openExternal = vi.fn(async () => undefined)
+    const service = new UpdateService({
+      fetchImpl,
+      platform: 'darwin',
+      arch: 'x64',
+      currentVersion: '0.2.0',
+      broadcast: vi.fn(),
+      promptSavePath,
+      openExternal
+    })
+
+    const status = await service.check()
+    expect(status).toMatchObject({ state: 'available', applyKind: 'installer', latest: '0.3.0' })
+    expect(status.download).toBeUndefined()
+    expect(await service.download()).toBe(status)
+    expect(fetchImpl).toHaveBeenCalledTimes(1)
+    expect(promptSavePath).not.toHaveBeenCalled()
+    expect(openExternal).not.toHaveBeenCalled()
+  })
+
   it('records a completed manifest check without manifest payloads', async () => {
     const log = createLogSpy()
     const service = new UpdateService({
@@ -222,6 +324,56 @@ describe('UpdateService.download', () => {
       'mac-arm64': { url: 'https://statics.aipoch.com/releases/0.3.0/installer.dmg', size, sha256 }
     }
   })
+
+  it.each([false, true])(
+    'U01: cancel prevents a download waiting for check (nonInteractive=%s)',
+    async (nonInteractive) => {
+      dir = await mkdtemp(join(tmpdir(), 'svc-wait-cancel-'))
+      const target = join(dir, 'installer.dmg')
+      const body = Buffer.from('installer-bytes')
+      const pendingManifest = downloadManifest(
+        body.byteLength,
+        createHash('sha256').update(body).digest('hex')
+      )
+      let releaseCheck!: () => void
+      const checkGate = new Promise<void>((resolve) => {
+        releaseCheck = resolve
+      })
+      const installerFetch = vi.fn(async () => installerResponse(body))
+      const promptSavePath = vi.fn(async () => target)
+      const defaultDownloadPath = vi.fn(() => target)
+      const service = new UpdateService({
+        fetchImpl: async (input) => {
+          if (String(input).endsWith('version.json')) {
+            await checkGate
+            return jsonResponse(pendingManifest)
+          }
+          return installerFetch()
+        },
+        platform: 'darwin',
+        arch: 'arm64',
+        currentVersion: '0.2.0',
+        manifestUrl: 'https://statics.aipoch.com/version.json',
+        broadcast: vi.fn(),
+        promptSavePath,
+        defaultDownloadPath
+      })
+
+      const checking = service.check()
+      expect(service.getStatus().state).toBe('checking')
+      const downloading = service.download({ nonInteractive })
+      await service.cancel()
+      releaseCheck()
+      await checking
+      const result = await downloading
+
+      expect.soft(installerFetch).not.toHaveBeenCalled()
+      expect.soft(promptSavePath).not.toHaveBeenCalled()
+      expect.soft(defaultDownloadPath).not.toHaveBeenCalled()
+      expect.soft(existsSync(target)).toBe(false)
+      expect.soft(result.state).toBe('available')
+    }
+  )
 
   it('downloads to the path from promptSavePath, verifies, and reports ready', async () => {
     dir = await mkdtemp(join(tmpdir(), 'svc-'))

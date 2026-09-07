@@ -97,7 +97,7 @@ export const createLocalBundleAdapter =
         const entries = await validateAndSeedPack(root, packDir, lockPath, (done, total) => {
           onProgress({
             phase: `fetch-${spec.language}`,
-            message: `Verifying ${done}/${total} packages…`,
+            event: { code: 'verifying-packages', completed: done, total },
             progress: 0.1 + 0.3 * (done / total)
           })
         })

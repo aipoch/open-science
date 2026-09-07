@@ -5,6 +5,9 @@ const HARVEST_CONCURRENCY_LIMIT = 2
 const HARVEST_RETRY_BASE_MS = 60_000
 const HARVEST_RETRY_MAX_MS = 15 * 60_000
 
+/** A recoverable harvest failure whose message is safe to persist and display. */
+export class RetryableHarvestError extends Error {}
+
 export type HarvestFn = (job: ComputeJob, signal?: AbortSignal) => Promise<void>
 
 /**
@@ -12,10 +15,10 @@ export type HarvestFn = (job: ComputeJob, signal?: AbortSignal) => Promise<void>
  * schedule terminal jobs and wait for the scheduler to drain when its runtime is paused.
  */
 export class JobHarvestScheduler {
-  private readonly inFlightJobs = new Set<string>()
-  private readonly activeTasks = new Set<Promise<void>>()
+  private readonly inFlightJobs = new Map<string, Promise<void>>()
   private readonly retries = new Map<string, { attempts: number; retryAt: number }>()
-  private readonly queue: Array<{ job: ComputeJob; signal?: AbortSignal }> = []
+  private readonly queue: Array<{ job: ComputeJob; signal?: AbortSignal; complete: () => void }> =
+    []
   private availableSlots = HARVEST_CONCURRENCY_LIMIT
 
   constructor(
@@ -23,33 +26,42 @@ export class JobHarvestScheduler {
     private readonly now: () => number = Date.now
   ) {}
 
-  schedule(job: ComputeJob, signal?: AbortSignal): void {
-    if (signal?.aborted) return
+  schedule(job: ComputeJob, signal?: AbortSignal): Promise<void> {
+    if (signal?.aborted) return Promise.resolve()
+    const existing = this.inFlightJobs.get(job.job_id)
+    if (existing) return existing
     const retry = this.retries.get(job.job_id)
-    if (retry && retry.retryAt > this.now()) return
-    if (this.inFlightJobs.has(job.job_id)) return
+    if (retry && retry.retryAt > this.now()) return Promise.resolve()
 
-    this.inFlightJobs.add(job.job_id)
-    if (this.availableSlots > 0) this.run(job, signal)
-    else this.queue.push({ job, signal })
+    let complete!: () => void
+    const task = new Promise<void>((resolve) => {
+      complete = resolve
+    })
+    this.inFlightJobs.set(job.job_id, task)
+    if (this.availableSlots > 0) this.run(job, signal, complete)
+    else this.queue.push({ job, signal, complete })
+    return task
   }
 
   async waitForIdle(): Promise<void> {
-    while (this.activeTasks.size > 0) {
-      await Promise.allSettled([...this.activeTasks])
+    while (this.inFlightJobs.size > 0) {
+      await Promise.all([...this.inFlightJobs.values()])
     }
   }
 
-  private run(job: ComputeJob, signal?: AbortSignal): void {
+  private run(job: ComputeJob, signal: AbortSignal | undefined, complete: () => void): void {
     if (signal?.aborted) {
       this.inFlightJobs.delete(job.job_id)
+      complete()
       return
     }
     this.availableSlots--
     let retryableFailure = false
-    const task = this.harvest(job, signal)
+    void Promise.resolve()
+      .then(() => this.harvest(job, signal))
       .catch((error) => {
-        if (!(error instanceof ComputeConnectionError)) return
+        if (!(error instanceof ComputeConnectionError) && !(error instanceof RetryableHarvestError))
+          return
         retryableFailure = true
         const attempts = (this.retries.get(job.job_id)?.attempts ?? 0) + 1
         const delay = Math.min(HARVEST_RETRY_BASE_MS * 2 ** (attempts - 1), HARVEST_RETRY_MAX_MS)
@@ -58,19 +70,15 @@ export class JobHarvestScheduler {
       .finally(() => {
         if (!retryableFailure) this.retries.delete(job.job_id)
         this.inFlightJobs.delete(job.job_id)
+        complete()
         this.availableSlots++
         let next = this.queue.shift()
         while (next?.signal?.aborted) {
           this.inFlightJobs.delete(next.job.job_id)
+          next.complete()
           next = this.queue.shift()
         }
-        if (next) this.run(next.job, next.signal)
+        if (next) this.run(next.job, next.signal, next.complete)
       })
-
-    this.activeTasks.add(task)
-    void task.then(
-      () => this.activeTasks.delete(task),
-      () => this.activeTasks.delete(task)
-    )
   }
 }

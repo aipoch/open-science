@@ -6,13 +6,15 @@ import type {
   PersistedChatSession,
   SessionPdfBinding
 } from '../../shared/session-persistence'
-import type { NotebookRunInputFile } from '../../shared/notebook'
-import type { ImmutableInputAuthority } from '../immutable-input-authority'
 import { createLogger, errorLogFields } from '../logger'
-import type { SessionPersistenceCoordinator } from '../session-persistence/coordinator'
-import { extractPdfText } from '../uploads/attachment-media'
+import type { SessionCatalog } from '../session-persistence/coordinator'
+import { extractPdfText, MAX_AUTO_EXTRACT_PDF_BYTES } from '../uploads/attachment-media'
 import { LiteratureFullTextIndex, type LiteratureIndexChunk } from './full-text-index'
 import type { LiteratureReadDocumentRequest } from './mcp-server'
+import type {
+  ResolvedSessionPdfVersion,
+  SessionPdfSourceResolver
+} from './session-pdf-source-resolver'
 
 const log = createLogger('literature-reading-context')
 const EXTRACTOR_FINGERPRINT = createHash('sha256')
@@ -29,12 +31,8 @@ const CJK_CHARACTER = /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{S
 
 type LiteratureDocumentReaderOptions = Readonly<{
   storageRoot: string
-  inputs: Pick<ImmutableInputAuthority, 'resolveVersion'> & {
-    openContent?: ImmutableInputAuthority['openContent']
-    // Test-only compatibility for fixtures that predate immutable read leases.
-    resolveContent?: (input: NotebookRunInputFile) => Promise<string>
-  }
-  sessions: Pick<SessionPersistenceCoordinator, 'loadSessionForContinuation'>
+  sources: Pick<SessionPdfSourceResolver, 'resolveVersion'>
+  sessions: Pick<SessionCatalog, 'loadSessionForContinuation'>
 }>
 
 type ReadCurrentLiteratureRequest = Readonly<{
@@ -42,6 +40,16 @@ type ReadCurrentLiteratureRequest = Readonly<{
   sessionId: string
   promptMessageId: string
   input: LiteratureReadDocumentRequest
+}>
+
+type SearchLiteratureAttachmentRequest = Readonly<{
+  projectId: string
+  attachmentId: string
+  attachmentVersionId: string
+  filename: string
+  sizeBytes: number
+  checksum: string
+  query: string
 }>
 
 type ExtractedDocument = Readonly<{
@@ -194,6 +202,27 @@ class LiteratureDocumentReader {
     )
   }
 
+  async searchAttachment(request: SearchLiteratureAttachmentRequest): Promise<unknown> {
+    if (request.sizeBytes > MAX_AUTO_EXTRACT_PDF_BYTES) {
+      throw new Error(
+        `PDF_SIZE_LIMIT_EXCEEDED: PDF source is ${request.sizeBytes} bytes, exceeding the automatic extraction limit.`
+      )
+    }
+    const binding: SessionPdfBinding = {
+      version: 1,
+      bindingId: request.attachmentVersionId,
+      sourceKind: 'literature-attachment-version',
+      sourceFileId: request.attachmentId,
+      sourceVersionId: request.attachmentVersionId,
+      name: request.filename,
+      mimeType: 'application/pdf',
+      sizeBytes: request.sizeBytes,
+      checksum: request.checksum,
+      linkedAt: 0
+    }
+    return this.search([await this.resolveDocument(request.projectId, binding)], request.query)
+  }
+
   private async resolveCurrentContext(
     request: ReadCurrentLiteratureRequest
   ): Promise<MessagePdfContextSnapshot> {
@@ -240,10 +269,10 @@ class LiteratureDocumentReader {
     projectId: string,
     context: SessionPdfBinding
   ): Promise<ExtractedDocument> {
-    const input = await this.options.inputs.resolveVersion({
+    const input = await this.options.sources.resolveVersion({
       projectId,
       sourceKind: context.sourceKind,
-      inputFileVersionId: context.sourceVersionId,
+      sourceVersionId: context.sourceVersionId,
       expectedSourceFileId: context.sourceFileId
     })
     if (!input || input.checksum !== context.checksum) {
@@ -284,10 +313,12 @@ class LiteratureDocumentReader {
     }
   }
 
-  private async extract(input: NotebookRunInputFile): Promise<Omit<ExtractedDocument, 'context'>> {
+  private async extract(
+    input: ResolvedSessionPdfVersion
+  ): Promise<Omit<ExtractedDocument, 'context'>> {
     let extraction
-    if (this.options.inputs.openContent) {
-      const lease = await this.options.inputs.openContent(input)
+    if (input.openContent) {
+      const lease = await input.openContent()
       try {
         extraction = await extractPdfText(lease.path, undefined, {
           maxChars: MAX_EXTRACTED_CACHE_CHARS
@@ -297,11 +328,9 @@ class LiteratureDocumentReader {
         await lease.close()
       }
     } else {
-      const path = await this.options.inputs.resolveContent?.(input)
-      if (!path) throw new Error('Immutable input content reader is unavailable.')
       // Literature serves bounded batches and builds a local index, so it needs the complete
       // extracted text. The generic attachment route keeps its 1 MiB prompt-safety cap.
-      extraction = await extractPdfText(path, undefined, {
+      extraction = await extractPdfText(input.path, undefined, {
         maxChars: MAX_EXTRACTED_CACHE_CHARS
       })
     }
@@ -384,7 +413,7 @@ class LiteratureDocumentReader {
       }
     }
     const descriptors = [...descriptorByExtractionId.values()]
-    const fallbackResponse = (reason: 'empty-bm25' | 'bm25-error'): unknown => {
+    const fallbackResponse = (reason: 'empty-bm25' | 'bm25-error' | 'cjk-query'): unknown => {
       const passages = fallbackSearch(descriptors, query)
       log.info('Literature retrieval completed', {
         retrievalMode: 'fallback',
@@ -425,6 +454,9 @@ class LiteratureDocumentReader {
         })
       }
     }
+    // unicode61 cannot match concepts embedded in unsegmented CJK sentences. Route the
+    // entire query through lexical retrieval even when an English term would match FTS.
+    if (CJK_CHARACTER.test(query)) return fallbackResponse('cjk-query')
     let index: LiteratureFullTextIndex | undefined
     try {
       index = await LiteratureFullTextIndex.open(this.options.storageRoot)
@@ -515,4 +547,8 @@ class LiteratureDocumentReader {
 }
 
 export { LiteratureDocumentReader }
-export type { LiteratureDocumentReaderOptions, ReadCurrentLiteratureRequest }
+export type {
+  LiteratureDocumentReaderOptions,
+  ReadCurrentLiteratureRequest,
+  SearchLiteratureAttachmentRequest
+}

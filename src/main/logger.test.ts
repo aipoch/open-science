@@ -1,5 +1,5 @@
 import { readdirSync, readFileSync } from 'node:fs'
-import { mkdtemp, readFile, readdir, rm } from 'node:fs/promises'
+import { mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 
@@ -49,6 +49,195 @@ const productionTypeScriptFiles = (directory: string): string[] =>
   })
 
 describe('logger: main-process boundary', () => {
+  it.each(['object', 'JSON', 'Error.message', 'escaped JSON key'] as const)(
+    'D01 redacts compound credentials in %s at both output boundaries',
+    async (representation) => {
+      logDir = await mkdtemp(join(tmpdir(), 'os-logger-d01-'))
+      initLogger({ logDir, mirrorToConsole: true })
+      const mirror = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+      const credentials = {
+        OPENAI_API_KEY: 'fictional-d01-environment-7319',
+        providerApiKey: 'fictional-d01-left-7319"\\\nfictional-d01-right-7319',
+        provider: 'example-provider',
+        inputTokens: 21,
+        outputTokens: 8
+      }
+      const json = JSON.stringify(credentials)
+      const data =
+        representation === 'object'
+          ? credentials
+          : representation === 'JSON'
+            ? json
+            : representation === 'Error.message'
+              ? new Error(json)
+              : new Error(json.replace('providerApiKey', 'providerApi\\u004bey'))
+      createLogger('diagnostics').error('provider failed', data)
+      await flushLogs()
+
+      const file = await readFile(join(logDir, 'main.log'), 'utf8')
+      const consoleOutput = JSON.stringify(mirror.mock.calls)
+      for (const output of [file, consoleOutput]) {
+        for (const secret of [
+          'fictional-d01-environment-7319',
+          'fictional-d01-left-7319',
+          'fictional-d01-right-7319'
+        ]) {
+          expect.soft(output.includes(secret), `${representation} leaks ${secret}`).toBe(false)
+        }
+        expect(output).toContain('example-provider')
+        expect(output).toContain('inputTokens')
+        expect(output).toContain('21')
+        expect(output).toContain('outputTokens')
+      }
+      expect(JSON.parse(file)).toMatchObject({ level: 'error', scope: 'diagnostics' })
+    }
+  )
+
+  it('D02 stops expanding a shared DAG while retaining correlation fields', async () => {
+    logDir = await mkdtemp(join(tmpdir(), 'os-logger-d02-'))
+    initLogger({ logDir, runId: 'bounded-run', mirrorToConsole: false })
+    const read = vi.fn(() => 'kept')
+    const leaf = Object.defineProperty({}, 'detail', { enumerable: true, get: read })
+    const data = Array(30).fill(Array(30).fill(Array(30).fill(leaf)))
+    runWithDiagnosticCorrelation(() => createLogger('diagnostics').error('shared DAG', data))
+    await flushLogs()
+    expect.soft(read.mock.calls.length).toBeLessThanOrEqual(10000)
+    const file = await readFile(join(logDir, 'main.log'), 'utf8')
+    expect(JSON.parse(file)).toMatchObject({
+      scope: 'diagnostics',
+      msg: 'shared DAG',
+      runId: 'bounded-run',
+      correlationId: expect.any(String)
+    })
+    expect(file).toContain('truncated')
+  })
+
+  it('D02 budgets JSON escaping and UTF-8 bytes in the complete record', async () => {
+    logDir = await mkdtemp(join(tmpdir(), 'os-logger-d02-'))
+    initLogger({ logDir, mirrorToConsole: false })
+    createLogger('diagnostics').error('escaped content', Array(100).fill('\u0000中'.repeat(4000)))
+    await flushLogs()
+    const file = await readFile(join(logDir, 'main.log'), 'utf8')
+    expect(Buffer.byteLength(file)).toBeLessThanOrEqual(2 * 1024 * 1024)
+    expect(JSON.parse(file)).toMatchObject({ msg: 'escaped content' })
+  })
+
+  it('D02 rejects a record exceeding a custom file cap and recovers on the next small record', async () => {
+    logDir = await mkdtemp(join(tmpdir(), 'os-logger-d02-'))
+    initLogger({ logDir, maxBytes: 512, mirrorToConsole: false })
+    const log = createLogger('diagnostics')
+    log.error('too large', { detail: 'x'.repeat(1000) })
+    await flushLogs()
+    expect
+      .soft(await getLogFileStatus())
+      .toMatchObject({ lastWriteSucceeded: false, lastFailureCategory: 'append' })
+    log.error('recovered', { code: 'EIO' })
+    await flushLogs()
+    const file = await readFile(join(logDir, 'main.log'), 'utf8')
+    expect.soft(Buffer.byteLength(file)).toBeLessThanOrEqual(512)
+    expect(JSON.parse(file)).toMatchObject({ msg: 'recovered' })
+    await expect(getLogFileStatus()).resolves.toMatchObject({
+      lastWriteSucceeded: true,
+      lastFailureCategory: null
+    })
+  })
+
+  it.each(['array', 'object', 'shared references'] as const)(
+    'D02 bounds ordinary %s data before output and accepts the next error',
+    async (shape) => {
+      logDir = await mkdtemp(join(tmpdir(), 'os-logger-d02-'))
+      initLogger({ logDir, mirrorToConsole: true })
+      const mirror = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+      const value = 'x'.repeat(8000)
+      const shared = { detail: value }
+      const data =
+        shape === 'object'
+          ? Object.fromEntries(Array.from({ length: 800 }, (_, index) => [`field${index}`, value]))
+          : Array.from({ length: 800 }, () => (shape === 'array' ? value : shared))
+      const log = createLogger('diagnostics')
+      log.error('wide payload', data)
+      await flushLogs()
+      const file = await readFile(join(logDir, 'main.log'), 'utf8')
+      // A single normal record must fit the existing default file budget, including JSON framing.
+      expect.soft(Buffer.byteLength(file)).toBeLessThanOrEqual(5 * 1024 * 1024)
+      expect
+        .soft(Buffer.byteLength(JSON.stringify(mirror.mock.calls)))
+        .toBeLessThanOrEqual(5 * 1024 * 1024)
+      expect.soft(/truncat|omitted|more (?:items|keys)/i.test(file)).toBe(true)
+      expect(JSON.parse(file)).toMatchObject({
+        level: 'error',
+        scope: 'diagnostics',
+        msg: 'wide payload'
+      })
+
+      log.error('subsequent failure', { code: 'EIO' })
+      await flushLogs()
+      const current = await readFile(join(logDir, 'main.log'), 'utf8')
+      const records = current
+        .trim()
+        .split('\n')
+        .map((line) => JSON.parse(line))
+      expect(records.at(-1)).toMatchObject({ msg: 'subsequent failure', data: { code: 'EIO' } })
+      await expect(getLogFileStatus()).resolves.toMatchObject({
+        lastWriteSucceeded: true,
+        lastFailureCategory: null
+      })
+      for (const name of await readdir(logDir)) {
+        expect
+          .soft((await readFile(join(logDir, name))).byteLength)
+          .toBeLessThanOrEqual(5 * 1024 * 1024)
+      }
+    }
+  )
+
+  it.each([false, true])(
+    'D03 preserves retained backups and reports rotation failure (injected=%s)',
+    async (injectFailure) => {
+      logDir = await mkdtemp(join(tmpdir(), 'os-logger-d03-'))
+      const original = await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises')
+      const active = `${JSON.stringify({ msg: 'active diagnostic', detail: 'a'.repeat(350) })}\n`
+      const retained = `${JSON.stringify({ msg: 'retained diagnostic' })}\n`
+      await writeFile(join(logDir, 'main.log'), active)
+      await writeFile(join(logDir, 'main.1.log'), retained)
+      await writeFile(
+        join(logDir, 'main.2.log'),
+        `${JSON.stringify({ msg: 'expired diagnostic' })}\n`
+      )
+      initLogger({ logDir, maxBytes: 512, maxFiles: 3, mirrorToConsole: false })
+      renameFile.mockImplementation(async (source, destination) => {
+        if (injectFailure && source === join(logDir!, 'main.1.log')) {
+          throw Object.assign(new Error('injected retained-backup move failure'), {
+            code: 'EACCES'
+          })
+        }
+        return original.rename(source, destination)
+      })
+      try {
+        createLogger('diagnostics').error('rotation trigger', { detail: 'x'.repeat(150) })
+        await flushLogs()
+        if (injectFailure) {
+          expect.soft(await readFile(join(logDir, 'main.1.log'), 'utf8')).toBe(retained)
+          expect.soft(await readFile(join(logDir, 'main.log'), 'utf8')).toBe(active)
+          expect
+            .soft(await getLogFileStatus())
+            .toMatchObject({ lastWriteSucceeded: false, lastFailureCategory: 'rotation' })
+          renameFile.mockImplementation(original.rename)
+          createLogger('diagnostics').error('rotation recovered', { detail: 'x'.repeat(150) })
+          await flushLogs()
+        }
+        expect
+          .soft(await readFile(join(logDir, 'main.2.log'), 'utf8').catch(() => null))
+          .toBe(retained)
+        await expect(getLogFileStatus()).resolves.toMatchObject({
+          lastWriteSucceeded: true,
+          lastFailureCategory: null
+        })
+      } finally {
+        renameFile.mockImplementation(original.rename)
+      }
+    }
+  )
+
   it('keeps the central logger as the only production console adapter', () => {
     const directConsoleCalls = productionTypeScriptFiles(__dirname).flatMap((path) => {
       const source = readFileSync(path, 'utf8')
@@ -96,7 +285,7 @@ describe('logger: formatLine', () => {
     const line = formatLine('warn', 'x', 'circular', circular)
 
     expect(() => JSON.parse(line)).not.toThrow()
-    expect((JSON.parse(line) as { data: unknown }).data).toBe('[unserializable]')
+    expect((JSON.parse(line) as { data: unknown }).data).toEqual({ self: '[circular]' })
   })
 
   it('recursively redacts sensitive field variants while retaining token metrics', () => {
@@ -1423,7 +1612,7 @@ describe('logger: rotation (auto-cleanup)', () => {
     logDir = await mkdtemp(join(tmpdir(), 'os-logger-'))
 
     // Tiny cap so a handful of lines forces several rotations; keep the live file + 2 backups.
-    initLogger({ logDir, fileName: 'main.log', maxBytes: 120, maxFiles: 3, mirrorToConsole: false })
+    initLogger({ logDir, fileName: 'main.log', maxBytes: 512, maxFiles: 3, mirrorToConsole: false })
     const log = createLogger('test')
 
     for (let i = 0; i < 50; i += 1) {
@@ -1441,7 +1630,7 @@ describe('logger: rotation (auto-cleanup)', () => {
   it('keeps the live file when maxFiles is 1 (drop-and-restart)', async () => {
     logDir = await mkdtemp(join(tmpdir(), 'os-logger-'))
 
-    initLogger({ logDir, fileName: 'main.log', maxBytes: 120, maxFiles: 1, mirrorToConsole: false })
+    initLogger({ logDir, fileName: 'main.log', maxBytes: 512, maxFiles: 1, mirrorToConsole: false })
     const log = createLogger('test')
 
     for (let i = 0; i < 30; i += 1) {
@@ -1458,7 +1647,7 @@ describe('logger: rotation (auto-cleanup)', () => {
     logDir = await mkdtemp(join(tmpdir(), 'os-logger-'))
     const runId = 'rotation-failure-run'
     const firstLineBytes =
-      Buffer.byteLength(formatLine('info', 'test', 'seed', undefined, runId)) + 1
+      Buffer.byteLength(formatLine('info', 'test', 'blocked-1', undefined, runId)) + 1
 
     initLogger({
       logDir,

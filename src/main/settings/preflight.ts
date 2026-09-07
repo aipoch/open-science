@@ -1,6 +1,8 @@
 import {
   providerValidationFailed,
+  providerValidationSucceeded,
   type AgentFrameworkId,
+  type ProviderValidationTarget,
   type Preflight
 } from '../../shared/settings'
 import type { StoredProvider, StoredSettings } from './types'
@@ -24,6 +26,7 @@ export type PreflightInput = {
   // Whether the active provider can actually drive the selected framework (endpoint + provider-type
   // compatibility). Resolved by the caller, which has the vendor registry to derive official apiTypes.
   activeProviderCompatible: boolean
+  activeValidationTarget?: ProviderValidationTarget
 }
 
 // Applies the design's gating rules: the selected framework's binary must be present, and an active
@@ -37,7 +40,8 @@ const computePreflight = ({
   codexPathExists,
   agentFrameworkId,
   isProviderKeyUsable,
-  activeProviderCompatible
+  activeProviderCompatible,
+  activeValidationTarget
 }: PreflightInput): Preflight => {
   const claudeReady = Boolean(settings.claude?.resolvedPath) && claudePathExists
   const opencodeReady = Boolean(settings.opencodePath) && opencodePathExists
@@ -59,8 +63,10 @@ const computePreflight = ({
   // incompatible pair (e.g. OpenCode + a Codex-only provider) is never marked ready.
   const activeProviderReady = Boolean(
     activeProvider &&
-    activeProvider.lastValidatedAt !== undefined &&
-    !providerValidationFailed(activeProvider) &&
+    (activeValidationTarget
+      ? providerValidationSucceeded(activeProvider, activeValidationTarget)
+      : activeProvider.lastValidatedAt !== undefined &&
+        !providerValidationFailed(activeProvider)) &&
     isProviderKeyUsable(activeProvider) &&
     activeProviderCompatible
   )

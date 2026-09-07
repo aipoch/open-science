@@ -11,27 +11,22 @@ import {
   type SessionRuntimeContext,
   type UnlinkSessionPdfContextRequest
 } from '../../shared/session-persistence'
-import type { NotebookRunInputFile } from '../../shared/notebook'
-import type { ImmutableInputAuthority } from '../immutable-input-authority'
 import { createLogger, errorLogFields } from '../logger'
+import type {
+  ResolvedSessionPdfVersion,
+  SessionPdfSourceResolver
+} from '../literature/session-pdf-source-resolver'
 import { inspectPdfPageCount, MAX_AUTO_EXTRACT_PDF_BYTES } from '../uploads/attachment-media'
-import type { SessionPersistenceCoordinator } from './coordinator'
+import type { SessionRuntimeContextCommands } from './coordinator'
 
 const log = createLogger('literature-reading-context')
 
 type SessionPdfContextOwnerOptions = Readonly<{
-  inputs: Pick<ImmutableInputAuthority, 'resolveVersion'> & {
-    openContent?: ImmutableInputAuthority['openContent']
-    // Test-only compatibility for fixtures that predate immutable read leases.
-    resolveContent?: (input: NotebookRunInputFile) => Promise<string>
-  }
+  sources: Pick<SessionPdfSourceResolver, 'resolveVersion'>
   pendingUploads?: Readonly<{
     resolveContent: (request: { projectId: string; path: string }) => Promise<string>
   }>
-  sessions: Pick<
-    SessionPersistenceCoordinator,
-    'readSessionRuntimeContext' | 'patchSessionRuntimeContext'
-  >
+  sessions: SessionRuntimeContextCommands
 }>
 
 type SessionPdfContextLinkResult = Readonly<{
@@ -58,10 +53,10 @@ class SessionPdfContextOwner {
       const identity = `${source.sourceKind}:${source.sourceVersionId}`
       if (seen.has(identity)) continue
       seen.add(identity)
-      const input = await this.options.inputs.resolveVersion({
+      const input = await this.options.sources.resolveVersion({
         projectId: request.projectId,
         sourceKind: source.sourceKind,
-        inputFileVersionId: source.sourceVersionId,
+        sourceVersionId: source.sourceVersionId,
         expectedSourceFileId: source.sourceFileId
       })
       if (
@@ -121,10 +116,15 @@ class SessionPdfContextOwner {
     }
     if (
       request.sources.some(
-        ({ sourceKind }) => sourceKind !== 'artifact-version' && sourceKind !== 'upload-version'
+        ({ sourceKind }) =>
+          sourceKind !== 'artifact-version' &&
+          sourceKind !== 'upload-version' &&
+          sourceKind !== 'literature-attachment-version'
       )
     ) {
-      throw new Error('PDF context source must be an immutable Artifact or Upload Version.')
+      throw new Error(
+        'PDF context source must be an immutable Artifact, Upload, or Literature Attachment Version.'
+      )
     }
     const current = await this.options.sessions.readSessionRuntimeContext(
       request.projectId,
@@ -142,10 +142,10 @@ class SessionPdfContextOwner {
 
     const bindings: SessionPdfBinding[] = []
     for (const source of requestedSources) {
-      const input = await this.options.inputs.resolveVersion({
+      const input = await this.options.sources.resolveVersion({
         projectId: request.projectId,
         sourceKind: source.sourceKind,
-        inputFileVersionId: source.sourceVersionId,
+        sourceVersionId: source.sourceVersionId,
         expectedSourceFileId: source.sourceFileId
       })
       if (!input) throw new Error('PDF context Version is unavailable in this Project.')
@@ -162,19 +162,26 @@ class SessionPdfContextOwner {
         if (request.excludeSinglePage) continue
         throw new Error('Only multi-page PDF files can be linked to a Session.')
       }
-      bindings.push({
+      const binding = {
         version: 1,
         bindingId: randomUUID(),
-        sourceKind: input.sourceKind,
         sourceFileId: input.sourceFileId,
-        sourceVersionId: input.inputFileVersionId,
-        sourceSessionId: input.sourceSessionId,
+        sourceVersionId: input.sourceVersionId,
         name: input.filename,
         mimeType: 'application/pdf',
         sizeBytes: input.sizeBytes,
         checksum: input.checksum,
         linkedAt: Date.now()
-      })
+      } as const
+      if (input.sourceKind === 'literature-attachment-version') {
+        bindings.push({ ...binding, sourceKind: input.sourceKind })
+      } else {
+        bindings.push({
+          ...binding,
+          sourceKind: input.sourceKind,
+          sourceSessionId: input.sourceSessionId
+        })
+      }
     }
     if (bindings.length === 0) return { context: current, changed: false }
     if (currentBindings.length + bindings.length > MAX_SESSION_PDF_CONTEXTS) {
@@ -233,12 +240,12 @@ class SessionPdfContextOwner {
     return runtimeContext
   }
 
-  private pageCount(input: NotebookRunInputFile): Promise<number> {
+  private pageCount(input: ResolvedSessionPdfVersion): Promise<number> {
     const cached = this.pageCounts.get(input.checksum)
     if (cached) return cached
     const pending = (async () => {
-      if (this.options.inputs.openContent) {
-        const lease = await this.options.inputs.openContent(input)
+      if (input.openContent) {
+        const lease = await input.openContent()
         try {
           const pageCount = await inspectPdfPageCount(lease.path)
           await lease.verifyUnchanged()
@@ -247,9 +254,7 @@ class SessionPdfContextOwner {
           await lease.close()
         }
       }
-      const path = await this.options.inputs.resolveContent?.(input)
-      if (!path) throw new Error('Immutable input content reader is unavailable.')
-      return inspectPdfPageCount(path)
+      return inspectPdfPageCount(input.path)
     })().catch((error) => {
       this.pageCounts.delete(input.checksum)
       throw error

@@ -181,7 +181,12 @@ describe('module test impact commands', () => {
     )
 
     expect(plan.mode).toBe('selective')
-    expect(plan.modules).toEqual(['artifact_storage', 'artifact_provenance', 'session_persistence'])
+    expect(plan.modules).toEqual([
+      'artifact_storage',
+      'artifact_provenance',
+      'session_persistence',
+      'project_lifecycle'
+    ])
     expect(plan.testFiles).toContain('src/main/reviewer/ipc.test.ts')
     expect(plan.reasonChains).toContain('artifact_storage -> artifact_provenance')
   })
@@ -196,6 +201,7 @@ describe('module test impact commands', () => {
 
       expect([...plan.modules].sort()).toEqual([
         'artifact_provenance',
+        'project_lifecycle',
         'reviewer_orchestrator',
         'session_persistence',
         'workspace_page',
@@ -226,6 +232,7 @@ describe('module test impact commands', () => {
       [
         'artifact_provenance',
         'compute_service',
+        'project_lifecycle',
         'reviewer_orchestrator',
         'session_persistence',
         'settings_backend_resolution',
@@ -241,6 +248,7 @@ describe('module test impact commands', () => {
       [
         'artifact_provenance',
         'compute_service',
+        'project_lifecycle',
         'reviewer_orchestrator',
         'session_persistence',
         'settings_backend_resolution',
@@ -255,6 +263,7 @@ describe('module test impact commands', () => {
       'src/main/settings/provider-accounts.ts',
       [
         'artifact_provenance',
+        'project_lifecycle',
         'reviewer_orchestrator',
         'session_persistence',
         'settings_backend_resolution',
@@ -268,6 +277,7 @@ describe('module test impact commands', () => {
       'src/main/settings/responses-bridge.ts',
       [
         'artifact_provenance',
+        'project_lifecycle',
         'reviewer_orchestrator',
         'session_persistence',
         'settings_backend_resolution',
@@ -280,6 +290,7 @@ describe('module test impact commands', () => {
       'src/main/settings/responses-request-adapter.ts',
       [
         'artifact_provenance',
+        'project_lifecycle',
         'reviewer_orchestrator',
         'session_persistence',
         'settings_backend_resolution',
@@ -292,6 +303,7 @@ describe('module test impact commands', () => {
       'src/main/settings/responses-response-adapter.ts',
       [
         'artifact_provenance',
+        'project_lifecycle',
         'reviewer_orchestrator',
         'session_persistence',
         'settings_backend_resolution',
@@ -304,6 +316,7 @@ describe('module test impact commands', () => {
       'src/main/settings/responses-protocol-types.ts',
       [
         'artifact_provenance',
+        'project_lifecycle',
         'reviewer_orchestrator',
         'session_persistence',
         'settings_backend_resolution',

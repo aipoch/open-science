@@ -1,7 +1,7 @@
 import { FocusScope } from '@radix-ui/react-focus-scope'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Dialog } from 'radix-ui'
+import * as Dialog from '@/components/ui/dialog'
 
 import { dialogOverlayClassName, dialogPanelClassName } from '@/components/ui/dialog-chrome'
 import { STREAMDOWN_FULLSCREEN_SELECTOR } from '@/components/streamdown/dom-selectors'
@@ -16,6 +16,8 @@ type FilePreviewDialogProps = PreviewInteractionPort & {
   item: PreviewFileItem | undefined
   onClose: (skipGuard?: boolean) => void
   onItemChange?: (item: PreviewFileItem, skipGuard?: boolean) => void
+  allowReadingContext?: boolean
+  onReadWithAgent?: (item: PreviewFileItem) => void
   onPdfContextError?: (message: string | null) => void
 }
 
@@ -54,6 +56,8 @@ const FilePreviewDialog = ({
   item,
   onClose,
   onItemChange,
+  allowReadingContext = true,
+  onReadWithAgent,
   onPdfContextError,
   ...annotationPort
 }: FilePreviewDialogProps): React.JSX.Element | null => {
@@ -144,8 +148,11 @@ const FilePreviewDialog = ({
                   // The modal overlays the conversation panel, so a View in context navigation must
                   // also close the dialog for the switched session to become visible.
                   onViewInContextNavigate={onClose}
+                  allowReadingContext={allowReadingContext}
+                  onReadWithAgent={onReadWithAgent}
                   onPdfContextError={onPdfContextError}
                   tooltipClassName="z-[70]"
+                  actionMenuContentClassName="z-[70]"
                   leaveGuardScope={dialogPreviewGuardScope(dialogItem.projectId, dialogItem.id)}
                   retryResolutionEnabled={open}
                   {...annotationPort}

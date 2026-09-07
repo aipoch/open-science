@@ -702,6 +702,9 @@ export class RemoteSessionPairingManager {
       let changed = await this.commitStoredMutation((stored) => {
         const current = stored.trustedBrowsers.find((browser) => browser.id === id)
         if (!current || !safeHashEqual(current.tokenHash, tokenHash)) return undefined
+        if (this.pendingRevocations.has(id) || this.unclaimedTrustedBrowserCleanup.has(id)) {
+          return undefined
+        }
         const lastSeenAt = this.now()
         if (current.expiresAt <= lastSeenAt) {
           expired = true
@@ -719,6 +722,11 @@ export class RemoteSessionPairingManager {
             browser.id === id ? { ...browser, lastSeenAt } : browser
           )
         }
+      }).catch((error: unknown) => {
+        // Only the activity timestamp is best-effort. Expiry removal and every other
+        // authorization-changing write must retain their strict persistence semantics.
+        if (!authorized || expired) throw error
+        return false
       })
       if (authorizedExpiresAt !== undefined && authorizedExpiresAt <= this.now()) {
         authorized = false
@@ -729,7 +737,13 @@ export class RemoteSessionPairingManager {
       if (changed) this.options.onChanged()
       if (!authorized) return undefined
     }
-    return { kind: 'trusted', sessionId: id }
+    const access = { kind: 'trusted', sessionId: id } as const
+    const current = this.stored.trustedBrowsers.find((browser) => browser.id === id)
+    return current &&
+      safeHashEqual(current.tokenHash, tokenHash) &&
+      this.isSessionAccessCurrent(access)
+      ? access
+      : undefined
   }
 
   private commitStoredMutation(

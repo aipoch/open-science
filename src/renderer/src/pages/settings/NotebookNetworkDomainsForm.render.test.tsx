@@ -53,6 +53,58 @@ afterEach(() => {
 })
 
 describe('NotebookNetworkDomainsForm', () => {
+  it('does not discard domain edits when a pending save completes', async () => {
+    let finish!: (value: typeof DEFAULT_NOTEBOOK_NETWORK_SETTINGS) => void
+    const save = vi.fn(
+      () =>
+        new Promise<typeof DEFAULT_NOTEBOOK_NETWORK_SETTINGS>((resolve) => {
+          finish = resolve
+        })
+    )
+    useSettingsStore.setState({ setNotebookNetwork: save })
+    await act(async () => root.render(<NotebookNetworkDomainsForm />))
+    await act(async () => button('Save changes').click())
+    const input = container.querySelector<HTMLInputElement>('[aria-label="Domain hostname"]')!
+    if (!input.disabled) {
+      await typeInput(input, 'during-save.example.org')
+      await act(async () => button('Add').click())
+    }
+    const before = container.querySelector('[aria-label="Allowed domains"]')!.textContent
+    await act(async () => finish(DEFAULT_NOTEBOOK_NETWORK_SETTINGS))
+    expect(container.querySelector('[aria-label="Allowed domains"]')!.textContent).toBe(before)
+    expect(input.disabled).toBe(false)
+  })
+
+  it('disables every domain editor while saving and clears success after another edit', async () => {
+    let finish!: (value: typeof DEFAULT_NOTEBOOK_NETWORK_SETTINGS) => void
+    const saved = { ...DEFAULT_NOTEBOOK_NETWORK_SETTINGS, allowedDomains: ['existing.example.org'] }
+    useSettingsStore.setState({
+      notebookNetwork: saved,
+      setNotebookNetwork: vi.fn(
+        () =>
+          new Promise<typeof DEFAULT_NOTEBOOK_NETWORK_SETTINGS>((resolve) => {
+            finish = resolve
+          })
+      )
+    })
+    await act(async () => root.render(<NotebookNetworkDomainsForm />))
+    await typeInput(container.querySelector('input')!, 'next.example.org')
+    await act(async () => button('Save changes').click())
+    const controls = container.querySelectorAll<HTMLInputElement | HTMLButtonElement>(
+      '[aria-label="Open Science domains"] button, [aria-label="Allowed domains"] button, input'
+    )
+    expect
+      .soft(
+        [...controls]
+          .filter((control) => !control.disabled)
+          .map((control) => control.getAttribute('aria-label') ?? control.textContent)
+      )
+      .toEqual([])
+    await act(async () => finish(saved))
+    expect(container.querySelector('[role="status"]')).not.toBeNull()
+    await act(async () => button('Add').click())
+    expect(container.querySelector('[role="status"]')).toBeNull()
+  })
   it('locks package registries and validates, adds, removes, and saves custom domains', async () => {
     await act(async () => root.render(<NotebookNetworkDomainsForm />))
     await flush()

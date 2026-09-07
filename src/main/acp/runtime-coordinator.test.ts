@@ -94,9 +94,13 @@ const createFakeRuntime = (options: {
   beginProviderTurnObservation: ReturnType<typeof vi.fn>
   captureSessionModel: ReturnType<typeof vi.fn>
   setPermissionProfile: ReturnType<typeof vi.fn>
+  setMemoryEnabled: ReturnType<typeof vi.fn>
   respondToPermission: ReturnType<typeof vi.fn>
   requestUserInput: ReturnType<typeof vi.fn>
   disableLiteratureContext: ReturnType<typeof vi.fn>
+  callSessionPlan: ReturnType<typeof vi.fn>
+  getSessionPlanProjection: ReturnType<typeof vi.fn>
+  respondSessionPlan: ReturnType<typeof vi.fn>
   emitEvent: (event: AcpRuntimeEvent) => void
   emitPermission: (request: AcpPermissionRequest) => void
   emitState: (overrides: Partial<AcpStateSnapshot>) => void
@@ -166,6 +170,7 @@ const createFakeRuntime = (options: {
     appliedModel: `${sessionId}:applied`
   }))
   const setPermissionProfile = vi.fn(async () => snapshot)
+  const setMemoryEnabled = vi.fn()
   const respondToPermission = vi.fn((response: AcpPermissionResponse) => {
     options.callbacks.onPermissionSettled?.(
       response.requestId,
@@ -175,6 +180,9 @@ const createFakeRuntime = (options: {
   })
   const requestUserInput = vi.fn(async () => ({ action: 'answered', answer: 'Minimal' }))
   const disableLiteratureContext = vi.fn(async () => undefined)
+  const callSessionPlan = vi.fn(async () => ({ ok: true }))
+  const getSessionPlanProjection = vi.fn(async () => null)
+  const respondSessionPlan = vi.fn(async () => ({ changed: false }))
   const shutdown = vi.fn()
   const shutdownForQuit = vi.fn(async () => ({ reaped: true }))
   const shutdownForUpdateGate = vi.fn(async () => ({ reaped: true }))
@@ -301,9 +309,13 @@ const createFakeRuntime = (options: {
     beginProviderTurnObservation,
     captureSessionModel,
     setPermissionProfile,
+    setMemoryEnabled,
     respondToPermission,
     requestUserInput,
     disableLiteratureContext,
+    callSessionPlan,
+    getSessionPlanProjection,
+    respondSessionPlan,
     shutdown,
     shutdownForQuit,
     shutdownForUpdateGate
@@ -332,9 +344,13 @@ const createFakeRuntime = (options: {
     beginProviderTurnObservation,
     captureSessionModel,
     setPermissionProfile,
+    setMemoryEnabled,
     respondToPermission,
     requestUserInput,
     disableLiteratureContext,
+    callSessionPlan,
+    getSessionPlanProjection,
+    respondSessionPlan,
     emitEvent: (event) => {
       snapshot = {
         ...snapshot,
@@ -370,6 +386,34 @@ const createFakeRuntime = (options: {
 }
 
 describe('AcpRuntimeCoordinator', () => {
+  it('lazily recreates a runtime for cold Session Plan operations after retirement', async () => {
+    const created: ReturnType<typeof createFakeRuntime>[] = []
+    const coordinator = new AcpRuntimeCoordinator((callbacks) => {
+      const fake = createFakeRuntime({
+        frameworkId: 'claude-code',
+        sessionIds: [],
+        callbacks
+      })
+      created.push(fake)
+      return fake.runtime
+    })
+
+    created[0].emitRetired()
+
+    await coordinator.getSessionPlanProjection('project-1', 'session-1')
+    await coordinator.callSessionPlan({ sessionId: 'session-1' } as never)
+    await coordinator.respondSessionPlan({
+      projectId: 'project-1',
+      sessionId: 'session-1',
+      feedback: 'Revise the Plan.'
+    })
+
+    expect(created).toHaveLength(2)
+    expect(created[1].getSessionPlanProjection).toHaveBeenCalledWith('project-1', 'session-1')
+    expect(created[1].callSessionPlan).toHaveBeenCalledOnce()
+    expect(created[1].respondSessionPlan).toHaveBeenCalledOnce()
+  })
+
   it('forwards a Codex WebSocket fallback from a runtime to the application callback', () => {
     const onCodexWebSocketFallback = vi.fn()
     let runtimeCallbacks: AcpRuntimeCallbacks | undefined
@@ -389,6 +433,45 @@ describe('AcpRuntimeCoordinator', () => {
 
     expect(onCodexWebSocketFallback).toHaveBeenCalledOnce()
   })
+
+  it.each(['providerId', 'model', 'reasoningEffort', 'frameworkId'] as const)(
+    'Q03 refuses native follow-up when the captured %s differs from the bound runtime',
+    async (field) => {
+      const created: ReturnType<typeof createFakeRuntime>[] = []
+      const coordinator = new AcpRuntimeCoordinator((callbacks, _grants, target) => {
+        const fake = createFakeRuntime({
+          frameworkId: target?.frameworkId ?? 'claude-code',
+          sessionIds: [`session-${created.length}`],
+          callbacks
+        })
+        created.push(fake)
+        return fake.runtime
+      })
+      const target: AcpSessionAgentTarget = {
+        frameworkId: 'claude-code',
+        providerId: 'provider-a',
+        model: 'model-a',
+        reasoningEffort: 'high'
+      }
+      const session = await coordinator.createSession({ agentTarget: target })
+      const different = {
+        ...target,
+        [field]:
+          field === 'frameworkId' ? 'opencode' : field === 'reasoningEffort' ? 'low' : 'different'
+      } as AcpSessionAgentTarget
+      const request = {
+        sessionId: session.sessionId,
+        text: 'queued intent',
+        agentTarget: different
+      }
+      expect(await coordinator.steerFollowUp(request)).toMatchObject({ injected: false })
+      expect(created[1].steerFollowUp).not.toHaveBeenCalled()
+      expect(await coordinator.steerFollowUp({ ...request, agentTarget: target })).toMatchObject({
+        injected: true
+      })
+      expect(created[1].steerFollowUp).toHaveBeenCalledOnce()
+    }
+  )
 
   it('routes Sessions through runtimes keyed by their explicit agent target', async () => {
     const targets: Array<AcpSessionAgentTarget | undefined> = []
@@ -1039,6 +1122,7 @@ describe('AcpRuntimeCoordinator', () => {
       wakeMessages: vi.fn(async () => undefined),
       stopSession: vi.fn(async () => undefined),
       stopAll: vi.fn(async () => undefined),
+      shutdown: vi.fn(async () => undefined),
       deleteSession: vi.fn(async () => undefined),
       deleteProject: vi.fn(async () => undefined)
     }
@@ -1098,6 +1182,9 @@ describe('AcpRuntimeCoordinator', () => {
     })
     expect(delegated.setPermissionProfile).toHaveBeenCalledWith('session-1', 'ask')
 
+    coordinator.setMemoryEnabled('session-1', false)
+    expect(created[0].setMemoryEnabled).toHaveBeenCalledWith('session-1', false)
+
     await coordinator.cancelPrompt({ sessionId: 'session-1' })
     expect(delegated.stopSession).not.toHaveBeenCalled()
     expect(created[0].cancelPrompt).toHaveBeenCalledWith({ sessionId: 'session-1' })
@@ -1110,6 +1197,43 @@ describe('AcpRuntimeCoordinator', () => {
 
     await expect(coordinator.prepareForQuit()).resolves.toBe('completed')
     expect(delegated.stopAll).toHaveBeenCalledOnce()
+  })
+
+  it.each([
+    ['prepareForQuit', 'stopAll'],
+    ['disconnect', 'stopAll'],
+    ['shutdownForUpdateGate', 'stopAll'],
+    ['shutdownForQuit', 'shutdown'],
+    ['shutdown', 'shutdown']
+  ] as const)('uses delegated %s lifecycle with %s', async (operation, cleanup) => {
+    const delegated = {
+      pendingPermissions: () => [],
+      subscribe: () => () => undefined,
+      respondToPermission: async () => false,
+      setPermissionProfile: async () => undefined,
+      stopSession: async () => undefined,
+      stopAll: vi.fn(async () => undefined),
+      shutdown: vi.fn(async () => undefined),
+      deleteSession: async () => undefined,
+      deleteProject: async () => undefined
+    }
+    const coordinator = new AcpRuntimeCoordinator(
+      (callbacks) =>
+        createFakeRuntime({ frameworkId: 'codex', sessionIds: ['session-1'], callbacks }).runtime,
+      {},
+      '',
+      undefined,
+      undefined,
+      undefined,
+      {},
+      undefined,
+      delegated
+    )
+
+    await coordinator[operation]()
+
+    expect(delegated[cleanup]).toHaveBeenCalledOnce()
+    expect(delegated[cleanup === 'stopAll' ? 'shutdown' : 'stopAll']).not.toHaveBeenCalled()
   })
 
   it('fences only the active Conversation Turn and exposes a separate Subagent Stop scope', async () => {
@@ -1130,6 +1254,7 @@ describe('AcpRuntimeCoordinator', () => {
       stopActiveBranch,
       stopSession: vi.fn(async () => undefined),
       stopAll: vi.fn(async () => undefined),
+      shutdown: vi.fn(async () => undefined),
       deleteSession: vi.fn(async () => undefined),
       deleteProject: vi.fn(async () => undefined)
     }
@@ -1594,6 +1719,7 @@ describe('AcpRuntimeCoordinator', () => {
       setPermissionProfile: async () => undefined,
       stopSession: async () => undefined,
       stopAll: async () => undefined,
+      shutdown: async () => undefined,
       deleteSession: async () => undefined,
       deleteProject: async () => undefined,
       rootTurnStarted,
@@ -1676,6 +1802,7 @@ describe('AcpRuntimeCoordinator', () => {
         setPermissionProfile: async () => undefined,
         stopSession: async () => undefined,
         stopAll: async () => undefined,
+        shutdown: async () => undefined,
         deleteSession: async () => undefined,
         deleteProject: async () => undefined,
         rootTurnStarted,
@@ -2597,10 +2724,13 @@ describe('AcpRuntimeCoordinator', () => {
       messageId: 'message-steer-1'
     })
     expect(admittedSessionIds).toEqual([session.sessionId])
-    expect(createdRuntime.steerFollowUp).toHaveBeenCalledWith({
-      sessionId: session.sessionId,
-      text: 'focus on tests'
-    })
+    expect(createdRuntime.steerFollowUp).toHaveBeenCalledWith(
+      {
+        sessionId: session.sessionId,
+        text: 'focus on tests'
+      },
+      expect.any(Function)
+    )
   })
 
   it('refuses native follow-up when prompt admission rejects', async () => {
@@ -3847,6 +3977,7 @@ describe('AcpRuntimeCoordinator', () => {
       setPermissionProfile: async () => undefined,
       stopSession: async () => undefined,
       stopAll: async () => undefined,
+      shutdown: async () => undefined,
       deleteSession: vi.fn(() => delegatedDeletion.promise),
       deleteProject: async () => undefined
     }

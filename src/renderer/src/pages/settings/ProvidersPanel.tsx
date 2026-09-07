@@ -1,15 +1,31 @@
 import type { TFunction } from 'i18next'
 import { useEffect, useRef, useState } from 'react'
 import { Plus } from 'lucide-react'
+import { AlertDialog } from 'radix-ui'
 import { useTranslation } from 'react-i18next'
 
-import { useSettingsStore } from '@/stores/settings-store'
+import { Button } from '@/components/ui/button'
+import {
+  dialogBodyClassName,
+  dialogDescriptionClassName,
+  dialogFooterClassName,
+  dialogHeaderClassName,
+  dialogOverlayClassName,
+  dialogPanelClassName,
+  dialogTitleClassName
+} from '@/components/ui/dialog-chrome'
+import { selectFrameworkApiEndpoints, useSettingsStore } from '@/stores/settings-store'
 import type {
   ProviderView,
   ValidateProviderResult,
   XaiOAuthDeviceAuthorization
 } from '../../../../shared/settings'
-import { isCodexSubscriptionProvider } from '../../../../shared/settings'
+import {
+  CLAUDE_ISOLATED_PROVIDER_ID,
+  CLAUDE_SHARED_PROVIDER_ID,
+  isClaudeSubscriptionProvider,
+  isCodexSubscriptionProvider
+} from '../../../../shared/settings'
 import { DiagnosticDetails } from '@/components/diagnostic-details'
 import { errorDetail } from '@/lib/error-detail'
 import { ActiveModelSelect } from './ActiveModelSelect'
@@ -91,10 +107,16 @@ const ProvidersPanel = ({
   const { t } = useTranslation()
   const providers = useSettingsStore((state) => state.providers)
   const activeProviderId = useSettingsStore((state) => state.activeProviderId)
+  const activeModel = useSettingsStore((state) => state.activeModel)
   const claudeSubscriptionProviderId = useSettingsStore(
     (state) => state.claudeSubscriptionProviderId
   )
   const agentFrameworkId = useSettingsStore((state) => state.agentFrameworkId)
+  const frameworkEndpoints = useSettingsStore(selectFrameworkApiEndpoints)
+  const subagentModel = useSettingsStore((state) => state.subagentModel)
+  const reviewerModel = useSettingsStore((state) => state.reviewerModel)
+  const sessionDetailsModel = useSettingsStore((state) => state.sessionDetailsModel)
+  const visionModel = useSettingsStore((state) => state.visionModel)
   const deleteProvider = useSettingsStore((state) => state.deleteProvider)
   const saveProvider = useSettingsStore((state) => state.saveProvider)
   const validateProvider = useSettingsStore((state) => state.validateProvider)
@@ -130,6 +152,8 @@ const ProvidersPanel = ({
   const [isClaudeSignInOpen, setIsClaudeSignInOpen] = useState(false)
   const [xaiSession, setXaiSession] = useState<XaiOAuthDeviceAuthorization>()
   const [isXaiLoginPending, setIsXaiLoginPending] = useState(false)
+  const [providerPendingDeletion, setProviderPendingDeletion] = useState<ProviderView>()
+  const [providerDeletionPending, setProviderDeletionPending] = useState(false)
   const xaiLoginCancelledRef = useRef(false)
   // Guards the race between the two isolated sign-in paths. The browser flow (setup-token + its
   // localhost callback) and a manual paste both write the same provider token; whichever finishes
@@ -398,13 +422,58 @@ const ProvidersPanel = ({
     }
   }
 
-  const handleDelete = async (providerId: string): Promise<void> => {
+  const removedProviderIds = new Set(
+    providerPendingDeletion
+      ? isClaudeSubscriptionProvider(providerPendingDeletion.type)
+        ? [CLAUDE_SHARED_PROVIDER_ID, CLAUDE_ISOLATED_PROVIDER_ID]
+        : [providerPendingDeletion.id]
+      : []
+  )
+  const affectedScenarios = providerPendingDeletion
+    ? [
+        ...(subagentModel.mode === 'fixed' && removedProviderIds.has(subagentModel.providerId)
+          ? [{ id: 'subagent' as const, label: t('Subagent') }]
+          : []),
+        ...(reviewerModel.mode === 'fixed' && removedProviderIds.has(reviewerModel.providerId)
+          ? [{ id: 'reviewer' as const, label: t('Reviewer') }]
+          : []),
+        ...(sessionDetailsModel.mode === 'fixed' &&
+        removedProviderIds.has(sessionDetailsModel.providerId)
+          ? [{ id: 'session-details' as const, label: t('Session details') }]
+          : []),
+        ...(visionModel && removedProviderIds.has(visionModel.providerId)
+          ? [{ id: 'vision' as const, label: t('Vision') }]
+          : [])
+      ]
+    : []
+
+  const confirmProviderDeletion = async (
+    scenarioModelHandling: 'preserve' | 'inherit'
+  ): Promise<void> => {
+    if (!providerPendingDeletion) return
+    setProviderDeletionPending(true)
     setProviderTestError(undefined)
     try {
-      await deleteProvider(providerId)
+      await deleteProvider(providerPendingDeletion.id, scenarioModelHandling)
+      setProviderPendingDeletion(undefined)
     } catch (error) {
       setProviderTestError({ action: 'delete', detail: errorDetail(error) })
+      setProviderPendingDeletion(undefined)
+    } finally {
+      setProviderDeletionPending(false)
     }
+  }
+
+  const reassignAffectedScenario = (): void => {
+    const scenarioId = affectedScenarios[0]?.id
+    setProviderPendingDeletion(undefined)
+    if (!scenarioId) return
+    requestAnimationFrame(() => {
+      const row = document.querySelector<HTMLButtonElement>(`[data-scenario-model="${scenarioId}"]`)
+      if (row?.getAttribute('aria-expanded') === 'false') row.click()
+      row?.focus()
+      row?.scrollIntoView?.({ block: 'nearest' })
+    })
   }
 
   return (
@@ -446,10 +515,13 @@ const ProvidersPanel = ({
         <ProviderList
           providers={visibleProviders}
           activeProviderId={activeProviderId}
+          activeModel={activeModel}
+          agentFrameworkId={agentFrameworkId}
+          frameworkEndpoints={frameworkEndpoints}
           claudeSubscriptionProviderId={claudeSubscriptionProviderId}
           busyProviderId={busyProviderId}
           onEdit={onEditProvider}
-          onDelete={(provider) => void handleDelete(provider.id)}
+          onDelete={setProviderPendingDeletion}
           onTest={(provider) => void handleTest(provider)}
           isCodexLoginPending={isCodexLoginPending}
           onCancelCodexLogin={() => void cancelCodexLogin()}
@@ -515,6 +587,99 @@ const ProvidersPanel = ({
         error={providerTestError ? providerErrorCopy(providerTestError, t) : undefined}
         onCancel={handleCancelXaiLogin}
       />
+      <AlertDialog.Root
+        open={Boolean(providerPendingDeletion)}
+        onOpenChange={(open) => {
+          if (!open && !providerDeletionPending) setProviderPendingDeletion(undefined)
+        }}
+      >
+        <AlertDialog.Portal>
+          <AlertDialog.Overlay className={dialogOverlayClassName} />
+          <AlertDialog.Content
+            className={dialogPanelClassName('w-[min(520px,calc(100vw-2rem))] p-0')}
+          >
+            <div className={dialogHeaderClassName}>
+              <AlertDialog.Title className={dialogTitleClassName}>
+                {t('Delete {{provider}}?', { provider: providerPendingDeletion?.name ?? '' })}
+              </AlertDialog.Title>
+            </div>
+            <div className={dialogBodyClassName}>
+              <AlertDialog.Description asChild>
+                <div className={dialogDescriptionClassName}>
+                  {affectedScenarios.length > 0 ? (
+                    <>
+                      <p>{t('Deleting this provider affects these scenario models:')}</p>
+                      <ul className="mt-2 list-disc space-y-1 pl-5 text-foreground">
+                        {affectedScenarios.map((scenario) => (
+                          <li key={scenario.id}>{scenario.label}</li>
+                        ))}
+                      </ul>
+                      <p className="mt-3">
+                        {t(
+                          'Keep their saved selections as unavailable, or reset them to use the main model.'
+                        )}
+                      </p>
+                      {affectedScenarios.some((scenario) => scenario.id === 'vision') ? (
+                        <p className="mt-2">
+                          {t(
+                            'For Vision, using the main model disables the separate fallback model.'
+                          )}
+                        </p>
+                      ) : null}
+                    </>
+                  ) : (
+                    t('This provider will be removed from Open Science.')
+                  )}
+                </div>
+              </AlertDialog.Description>
+            </div>
+            <div className={`${dialogFooterClassName} flex-wrap`}>
+              <AlertDialog.Cancel asChild>
+                <Button type="button" variant="outline" disabled={providerDeletionPending}>
+                  {t('Cancel')}
+                </Button>
+              </AlertDialog.Cancel>
+              {affectedScenarios.length > 0 ? (
+                <>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    disabled={providerDeletionPending}
+                    onClick={reassignAffectedScenario}
+                  >
+                    {t('Reassign first')}
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="destructive"
+                    disabled={providerDeletionPending}
+                    onClick={() => void confirmProviderDeletion('preserve')}
+                  >
+                    {t('Keep unavailable')}
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="destructive"
+                    disabled={providerDeletionPending}
+                    onClick={() => void confirmProviderDeletion('inherit')}
+                  >
+                    {t('Use main model')}
+                  </Button>
+                </>
+              ) : (
+                <Button
+                  type="button"
+                  variant="destructive"
+                  disabled={providerDeletionPending}
+                  onClick={() => void confirmProviderDeletion('preserve')}
+                >
+                  {t('Delete')}
+                </Button>
+              )}
+            </div>
+          </AlertDialog.Content>
+        </AlertDialog.Portal>
+      </AlertDialog.Root>
     </div>
   )
 }

@@ -96,8 +96,13 @@ describe('ProvidersPanel: unexpected command failures', () => {
 
     const deleteButtons = document.body.querySelectorAll<HTMLButtonElement>('[aria-label="Delete"]')
     await act(async () => deleteButtons[1]?.click())
+    const dialog = document.body.querySelector('[role="alertdialog"]')
+    const confirmDelete = Array.from(dialog?.querySelectorAll('button') ?? []).find(
+      (button) => button.textContent?.trim() === 'Delete'
+    )
+    await act(async () => confirmDelete?.click())
 
-    expect(deleteProvider).toHaveBeenCalledWith('provider-2')
+    expect(deleteProvider).toHaveBeenCalledWith('provider-2', 'preserve')
     expect(container.querySelector('[role="alert"]')?.textContent).toBe(
       'Could not delete the provider.'
     )
@@ -148,6 +153,96 @@ describe('ProvidersPanel: unexpected command failures', () => {
     expect(container.querySelector('[role="alert"]')?.textContent).toBe(
       'Claude 令牌不得超过 16384 字节。'
     )
+  })
+})
+
+describe('ProvidersPanel: provider removal impact', () => {
+  it('previews every scenario model that will become unavailable before deleting its provider', async () => {
+    const deleteProvider = vi.fn().mockResolvedValue(undefined)
+    const removedProvider = {
+      id: 'removed-provider',
+      type: 'custom' as const,
+      name: 'Removed gateway',
+      models: ['removed-model'],
+      model: 'removed-model',
+      hasKey: true,
+      needsKey: false,
+      supportsImageInput: true
+    }
+    const activeProvider = {
+      ...removedProvider,
+      id: 'active-provider',
+      name: 'Active gateway',
+      models: ['active-model'],
+      model: 'active-model'
+    }
+    const fixed = {
+      mode: 'fixed' as const,
+      providerId: removedProvider.id,
+      model: removedProvider.model,
+      reasoningEffort: 'high' as const
+    }
+    useSettingsStore.setState({
+      ...useSettingsStore.getState(),
+      providers: [removedProvider, activeProvider],
+      activeProviderId: activeProvider.id,
+      activeModel: activeProvider.model,
+      subagentModel: fixed,
+      reviewerModel: fixed,
+      sessionDetailsModel: fixed,
+      visionModel: fixed,
+      deleteProvider: deleteProvider as never
+    })
+    render()
+
+    const deleteButtons = Array.from(
+      document.body.querySelectorAll<HTMLButtonElement>('[aria-label="Delete"]')
+    )
+    await act(async () => deleteButtons[0]?.click())
+
+    const dialog = document.body.querySelector('[role="alertdialog"]')
+    expect(dialog).not.toBeNull()
+    expect(dialog?.textContent).toContain('Subagent')
+    expect(dialog?.textContent).toContain('Reviewer')
+    expect(dialog?.textContent).toContain('Session details')
+    expect(dialog?.textContent).toContain('Vision')
+    expect(deleteProvider).not.toHaveBeenCalled()
+    expect(dialog?.textContent).toContain('Cancel')
+    expect(dialog?.textContent).toContain('Keep unavailable')
+    const reassignFirst = Array.from(dialog?.querySelectorAll('button') ?? []).find(
+      (button) => button.textContent?.trim() === 'Reassign first'
+    )
+
+    await act(async () => {
+      reassignFirst?.click()
+      await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()))
+    })
+
+    const subagentRow = document.body.querySelector<HTMLButtonElement>(
+      '[data-scenario-model="subagent"]'
+    )
+    expect(subagentRow?.getAttribute('aria-expanded')).toBe('true')
+    expect(document.activeElement).toBe(subagentRow)
+
+    await act(async () => deleteButtons[0]?.click())
+    const reopenedForPreserve = document.body.querySelector('[role="alertdialog"]')
+    const keepUnavailable = Array.from(reopenedForPreserve?.querySelectorAll('button') ?? []).find(
+      (button) => button.textContent?.trim() === 'Keep unavailable'
+    )
+
+    await act(async () => keepUnavailable?.click())
+
+    expect(deleteProvider).toHaveBeenCalledWith(removedProvider.id, 'preserve')
+
+    await act(async () => deleteButtons[0]?.click())
+    const reopenedDialog = document.body.querySelector('[role="alertdialog"]')
+    const useMainModel = Array.from(reopenedDialog?.querySelectorAll('button') ?? []).find(
+      (button) => button.textContent?.trim() === 'Use main model'
+    )
+
+    await act(async () => useMainModel?.click())
+
+    expect(deleteProvider).toHaveBeenNthCalledWith(2, removedProvider.id, 'inherit')
   })
 })
 

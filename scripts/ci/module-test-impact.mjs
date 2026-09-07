@@ -96,6 +96,11 @@ export function createAffectedTestPlan(changes, graph, manifest = defaultManifes
   const seeds = new Set()
   const reasons = []
   for (const change of changes) {
+    const pathPlan = classifyChanges([change])
+    if (pathPlan.lanes.includes('docs') && !pathPlan.bundles.includes('unit')) {
+      reasons.push(`${change.path} -> documentation lane -> no module tests`)
+      continue
+    }
     for (const path of [change.path, change.previousPath].filter(Boolean)) {
       const matchedModules = modulesForPath(manifest, path)
       if (matchedModules.length === 0) return fullPlan(`${path} -> unknown module owner -> full`)

@@ -15,6 +15,7 @@ import { useTranslation } from 'react-i18next'
 import {
   DETAILS_DOC_MAX_LENGTH,
   type ComputeAuthenticationErrorCode,
+  type ComputeExecutionMode,
   type ComputePasswordCapability
 } from '../../../../shared/compute'
 import { Badge } from '@/components/ui/badge'
@@ -31,6 +32,7 @@ import {
 } from './compute-runtime-recovery'
 import { SettingsSection } from './SettingsLayout'
 import { ComputeHostAuthenticationDetail } from './ComputeHostAuthenticationDetail'
+import { ComputeExecutionModeField } from './ComputeExecutionModeField'
 
 type ComputeHostDetailProps = {
   providerId: string
@@ -54,6 +56,7 @@ type DetailErrorKey =
   | 'Failed to restore scratch auto-detection.'
   | 'Must be an integer between 1 and 500.'
   | 'Failed to set concurrency limit.'
+  | 'Failed to set execution mode.'
 
 // Wraps a caught error: a real Error keeps its message, anything else falls back to the catalog.
 const failure = (err: unknown, key: DetailErrorKey): DetailError =>
@@ -84,6 +87,7 @@ export function ComputeHostDetail({
   const setScratch = useComputeStore((state) => state.setScratch)
   const clearScratch = useComputeStore((state) => state.clearScratch)
   const setConcurrency = useComputeStore((state) => state.setConcurrency)
+  const setExecutionMode = useComputeStore((state) => state.setExecutionMode)
   const openSettingsToComputeAuthentication = useSettingsStore(
     (state) => state.openSettingsToComputeAuthentication
   )
@@ -191,6 +195,12 @@ export function ComputeHostDetail({
   const [concurrencySaving, setConcurrencySaving] = useState(false)
   const [concurrencyError, setConcurrencyError] = useState<DetailError | undefined>(undefined)
 
+  // Execution mode editor state
+  const [isEditingExecutionMode, setIsEditingExecutionMode] = useState(false)
+  const [executionModeInput, setExecutionModeInput] = useState<ComputeExecutionMode>('direct_ssh')
+  const [executionModeSaving, setExecutionModeSaving] = useState(false)
+  const [executionModeError, setExecutionModeError] = useState<DetailError | undefined>(undefined)
+
   // Details expand/collapse state
   const [isDetailsExpanded, setIsDetailsExpanded] = useState(false)
   const [needsExpand, setNeedsExpand] = useState(false)
@@ -246,6 +256,11 @@ export function ComputeHostDetail({
     )
   }
 
+  const executionMode = host.executionMode ?? 'direct_ssh'
+  const schedulerDetected =
+    host.probeResult?.ok === true &&
+    host.probeResult.detectedScheduler != null &&
+    host.probeResult.detectedScheduler !== 'none'
   const probed = host.probeResult
   const credentialReady =
     host.authentication?.mode !== 'password' ||
@@ -355,6 +370,25 @@ export function ComputeHostDetail({
       setConcurrencyError(failure(err, 'Failed to set concurrency limit.'))
     } finally {
       setConcurrencySaving(false)
+    }
+  }
+
+  const handleExecutionModeEdit = (): void => {
+    setExecutionModeInput(executionMode)
+    setExecutionModeError(undefined)
+    setIsEditingExecutionMode(true)
+  }
+
+  const handleExecutionModeSave = async (): Promise<void> => {
+    setExecutionModeSaving(true)
+    setExecutionModeError(undefined)
+    try {
+      await setExecutionMode(providerId, executionModeInput)
+      setIsEditingExecutionMode(false)
+    } catch (err) {
+      setExecutionModeError(failure(err, 'Failed to set execution mode.'))
+    } finally {
+      setExecutionModeSaving(false)
     }
   }
 
@@ -478,7 +512,12 @@ export function ComputeHostDetail({
       {status === 'last_probe_ok' && probed ? (
         <SettingsSection
           className="mt-6 rounded-xl border border-border bg-card p-4"
-          title={t('Resources')}
+          title={schedulerDetected ? t('Login host resources') : t('Resources')}
+          description={
+            schedulerDetected
+              ? t('Reported by the SSH login host; Slurm job capacity depends on each allocation.')
+              : undefined
+          }
         >
           <div className="flex flex-wrap gap-3">
             {probed.cpus != null ? (
@@ -656,6 +695,95 @@ export function ComputeHostDetail({
               }
             />
           </div>
+        ) : null}
+      </SettingsSection>
+
+      <SettingsSection
+        className="mt-6"
+        title={t('Execution mode')}
+        description={
+          executionMode === 'slurm'
+            ? t(
+                'Submit and manage jobs through Slurm; command calls still run on the SSH login host.'
+              )
+            : t('Run jobs and command calls directly on the SSH login host.')
+        }
+        action={
+          !isEditingExecutionMode ? (
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="shrink-0"
+              onClick={handleExecutionModeEdit}
+            >
+              {t('Edit')}
+            </Button>
+          ) : null
+        }
+      >
+        {isEditingExecutionMode ? (
+          <div className="mt-3 flex flex-col gap-3">
+            <ComputeExecutionModeField
+              value={executionModeInput}
+              onChange={(mode) => {
+                setExecutionModeInput(mode)
+                setExecutionModeError(undefined)
+              }}
+              name="compute-detail-execution-mode"
+            />
+            <div className="flex justify-end gap-2">
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                disabled={executionModeSaving}
+                onClick={() => {
+                  setExecutionModeError(undefined)
+                  setIsEditingExecutionMode(false)
+                }}
+              >
+                {tCommon('Cancel')}
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                disabled={executionModeSaving || executionModeInput === executionMode}
+                aria-busy={executionModeSaving}
+                onClick={() => void handleExecutionModeSave()}
+              >
+                {executionModeSaving ? t('Saving…') : t('Save')}
+              </Button>
+            </div>
+          </div>
+        ) : (
+          <div className="mt-3 grid gap-2 text-sm sm:grid-cols-2">
+            <div>
+              <span className="text-muted-foreground">{t('Configured mode')}</span>
+              <p className="font-medium text-foreground">
+                {executionMode === 'slurm' ? t('Slurm') : t('Direct SSH')}
+              </p>
+            </div>
+            <div>
+              <span className="text-muted-foreground">{t('Detected scheduler')}</span>
+              <p className="font-medium text-foreground">
+                {!probed
+                  ? t('Not probed')
+                  : !probed.ok
+                    ? t('Probe failed')
+                    : probed.detectedScheduler && probed.detectedScheduler !== 'none'
+                      ? probed.detectedScheduler === 'slurm'
+                        ? t('Slurm')
+                        : probed.detectedScheduler.toUpperCase()
+                      : t('None detected')}
+              </p>
+            </div>
+          </div>
+        )}
+        {executionModeError ? (
+          <p role="alert" className="mt-2 text-xs text-destructive">
+            {errorText(executionModeError)}
+          </p>
         ) : null}
       </SettingsSection>
 

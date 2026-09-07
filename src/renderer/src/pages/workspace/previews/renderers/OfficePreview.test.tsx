@@ -13,6 +13,20 @@ import { PreviewRuntimeBoundary } from '../preview-runtime'
 import type { PreviewDownloadVersionContext } from '../preview-runtime-context'
 import { OfficePreviewRenderer } from './OfficePreview'
 
+const previewActionSpies = vi.hoisted(() => {
+  const openContextMenu = vi.fn()
+  return {
+    openContextMenu,
+    currentOpenContextMenu: openContextMenu,
+    registerFrame: vi.fn()
+  }
+})
+
+vi.mock('../../preview-actions/preview-action-hooks', () => ({
+  usePreviewActions: () => ({ openContextMenu: previewActionSpies.currentOpenContextMenu }),
+  useRegisterPreviewContextMenuFrame: previewActionSpies.registerFrame
+}))
+
 const OFFICE_PREVIEW_RUNTIME_ORIGIN = 'open-science-office-preview://runtime'
 
 const flushMicrotasks = async (): Promise<void> => {
@@ -86,6 +100,9 @@ describe('OfficePreviewRenderer', () => {
   }
 
   beforeEach(() => {
+    previewActionSpies.currentOpenContextMenu = previewActionSpies.openContextMenu
+    previewActionSpies.openContextMenu.mockClear()
+    previewActionSpies.registerFrame.mockClear()
     ;(
       globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }
     ).IS_REACT_ACT_ENVIRONMENT = true
@@ -181,6 +198,78 @@ describe('OfficePreviewRenderer', () => {
     expect(frame?.src).toBe(startedResult().runtimeUrl)
     expect(frame?.getAttribute('sandbox')).toBe('allow-scripts allow-same-origin')
     expect(frame?.getAttribute('referrerpolicy')).toBe('no-referrer')
+    expect(previewActionSpies.registerFrame).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        frameUrl: startedResult().runtimeUrl,
+        enabled: true,
+        frameRef: expect.objectContaining({ current: frame })
+      })
+    )
+  })
+
+  it('maps runtime context-menu coordinates through the iframe bounds', async () => {
+    await renderPreview()
+    const frame = container.querySelector<HTMLIFrameElement>('[data-office-preview-frame]')!
+    vi.spyOn(frame, 'getBoundingClientRect').mockReturnValue({
+      x: 100,
+      y: 50,
+      left: 100,
+      top: 50,
+      right: 600,
+      bottom: 450,
+      width: 500,
+      height: 400,
+      toJSON: () => undefined
+    })
+    await act(async () => {
+      frame.dispatchEvent(new Event('load'))
+      await flushMicrotasks()
+    })
+
+    window.dispatchEvent(
+      new MessageEvent('message', {
+        source: frame.contentWindow,
+        origin: OFFICE_PREVIEW_RUNTIME_ORIGIN,
+        data: {
+          channel: OFFICE_PREVIEW_FRAME_MESSAGE_CHANNEL,
+          version: OFFICE_PREVIEW_FRAME_MESSAGE_VERSION,
+          type: 'context-menu',
+          contextMenu: { sessionId: 'office-session-1', x: 17, y: 29 }
+        }
+      })
+    )
+
+    expect(previewActionSpies.openContextMenu).toHaveBeenCalledWith({ x: 117, y: 79 }, frame)
+  })
+
+  it('keeps the attached runtime when the preview menu callback changes', async () => {
+    await renderPreview()
+    const frame = container.querySelector<HTMLIFrameElement>('[data-office-preview-frame]')!
+    await act(async () => {
+      frame.dispatchEvent(new Event('load'))
+      await flushMicrotasks()
+    })
+    expect(attachFrame).toHaveBeenCalledOnce()
+
+    const latestOpenContextMenu = vi.fn()
+    previewActionSpies.currentOpenContextMenu = latestOpenContextMenu
+    await renderPreview()
+
+    window.dispatchEvent(
+      new MessageEvent('message', {
+        source: frame.contentWindow,
+        origin: OFFICE_PREVIEW_RUNTIME_ORIGIN,
+        data: {
+          channel: OFFICE_PREVIEW_FRAME_MESSAGE_CHANNEL,
+          version: OFFICE_PREVIEW_FRAME_MESSAGE_VERSION,
+          type: 'context-menu',
+          contextMenu: { sessionId: 'office-session-1', x: 17, y: 29 }
+        }
+      })
+    )
+
+    expect(attachFrame).toHaveBeenCalledOnce()
+    expect(latestOpenContextMenu).toHaveBeenCalledWith({ x: 17, y: 29 }, frame)
   })
 
   it('attaches on iframe load before relaying start and runtime state', async () => {

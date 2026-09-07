@@ -1,3 +1,4 @@
+import { ProvenanceIntegrityError } from '../../shared/provenance-read-result'
 import type { Prisma } from '@prisma/client'
 
 import type { ArtifactVersionEvidence } from '../../shared/artifact-provenance'
@@ -119,7 +120,9 @@ const validateArtifactCoreEvidence = (
     !environmentValid ||
     !inputsValid
   ) {
-    throw new Error(`Artifact Version core evidence metadata mismatch: ${version.id}`)
+    throw new ProvenanceIntegrityError(
+      `Artifact Version core evidence metadata mismatch: ${version.id}`
+    )
   }
 }
 

@@ -216,6 +216,8 @@ describe('Project-owned data catalog architecture', () => {
       'vision-evidence',
       'session-metadata-usage-history',
       'notification-inbox-history',
+      'literature-inbox-provenance',
+      'project-literature-links',
       'review-persistence',
       'project-deletion-intent',
       'managed-file-projection',
@@ -408,7 +410,7 @@ describe('Project-owned data catalog architecture', () => {
       ),
       [
         'this.permissionGrants?.prune',
-        'this.projects.get',
+        'this.projects.exists',
         'this.projects.delete',
         'this.permissionGrants?.finalizeOwnerDeletion',
         'this.reviews?.deleteReviewsForProject',

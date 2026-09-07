@@ -31,7 +31,7 @@ test('shows tool cards and indicators while the intent text is still pacing', as
 
   // The intent text is still mid-presentation (long text, live pacing).
   const transcriptText = (await conversation.textContent()) ?? ''
-  expect(transcriptText).not.toContain('Intent paragraph 19')
+  expect(transcriptText).not.toContain('Intent paragraph 29')
 
   // The tool indicator is visible while the tool runs.
   await expect(conversation.getByText('Interacting with tools')).toBeVisible()

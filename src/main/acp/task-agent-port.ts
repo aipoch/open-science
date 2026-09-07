@@ -17,6 +17,7 @@ type AcpTaskAgentRuntime = {
   getSnapshot(): { sessionIds: string[] }
   resumeSession(request: AcpResumeSessionRequest): Promise<AcpCreateSessionResponse>
   setPermissionProfile(request: AcpSetPermissionProfileRequest): Promise<unknown>
+  setMemoryEnabled(sessionId: string, enabled: boolean): void
   sendPrompt(request: AcpPromptRequest): Promise<unknown>
   sendPromptObserved(
     request: AcpPromptRequest,
@@ -63,12 +64,15 @@ const createAcpTaskAgentPort = (
       : operation(),
   listAttachedSessionIds: async () => [...runtime.getSnapshot().sessionIds],
   createSession: async (request) => {
-    const agentTarget = await resolveDefaultSessionAgentTarget?.()
+    const agentTarget = request.agentConfiguration
+      ? await resolveSessionAgentTarget?.({ agentConfiguration: request.agentConfiguration })
+      : await resolveDefaultSessionAgentTarget?.()
     const response = await createSessionWorkflow.create({
       projectId: request.projectId,
       permissionProfile: request.permissionProfile,
       ...(request.cwd ? { cwd: request.cwd } : {}),
       ...(request.specialistId ? { specialistId: request.specialistId } : {}),
+      ...(request.memoryEnabled !== undefined ? { memoryEnabled: request.memoryEnabled } : {}),
       ...(agentTarget ? { agentTarget } : {})
     })
     return {
@@ -103,6 +107,7 @@ const createAcpTaskAgentPort = (
   },
   setPermissionProfile: (sessionId, profile) =>
     runtime.setPermissionProfile({ sessionId, profile }).then(() => undefined),
+  setMemoryEnabled: async (sessionId, enabled) => runtime.setMemoryEnabled(sessionId, enabled),
   prompt: async (request, observer) => {
     const acpRequest = toAcpPromptRequest(request)
     const tracked = notifications?.trackPrompt(acpRequest)

@@ -62,6 +62,7 @@ const dependencies = (): ApplicationCommandCompositionDependencies =>
     compute: EMPTY_OWNER,
     permissionGrants: EMPTY_OWNER,
     tags: EMPTY_OWNER,
+    literature: EMPTY_OWNER,
     dataContent: EMPTY_OWNER,
     host: EMPTY_OWNER
   }) as ApplicationCommandCompositionDependencies
@@ -191,6 +192,21 @@ describe('application command composition', () => {
     const composition = createApplicationCommandComposition(dependencies())
 
     expect(composition.electron.commandNames()).toEqual([
+      'acp:discard-unavailable-plan',
+      'acp:respond-elicitation',
+      'acp:respond-permission',
+      'acp:respond-plan',
+      'literature:citation-styles',
+      'literature:complete-metadata',
+      'literature:format-document',
+      'literature:format-references',
+      'literature:full-text',
+      'literature:get',
+      'literature:import-pdf',
+      'literature:import-records',
+      'literature:jobs',
+      'literature:search',
+      'literature:transact',
       'memory:clear-all',
       'memory:create-category',
       'memory:create-entry',
@@ -214,6 +230,7 @@ describe('application command composition', () => {
       'sessions:link-pdf-context',
       'sessions:set-delegation-policy',
       'sessions:unlink-pdf-context',
+      'sessions:update-archive',
       'tags:create',
       'tags:delete',
       'tags:reorder',
@@ -272,16 +289,23 @@ describe('application command composition', () => {
     expect(composition.task.commandNames()).not.toContain('reviewer:abort-fix-loop')
   })
 
-  it('exposes only the fourteen Task commands and no transport-wide capability', async () => {
+  it('exposes only the twenty-one Task commands and no transport-wide capability', async () => {
     const composition = createApplicationCommandComposition(dependencies())
 
     expect(composition.task.commandNames()).toEqual([
       'projects:list',
       'projects:create',
       'projects:update',
+      'projects:update-session-defaults',
+      'settings:get-settings',
+      'settings:set-agent-routing',
       'sessions:load-all',
       'sessions:save-session',
+      'sessions:stage-task-completion',
+      'sessions:settle-task-completion',
+      'sessions:fail-task-run',
       'sessions:set-delegation-policy',
+      'sessions:update-configuration',
       'acp:get-plan-projection',
       'acp:respond-plan',
       'reviewer:abort',

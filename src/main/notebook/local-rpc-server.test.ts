@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto'
 import { once } from 'node:events'
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { request as httpRequest, type ClientRequest, type Server } from 'node:http'
 import { createConnection, type Socket } from 'node:net'
 import { tmpdir } from 'node:os'
@@ -11,6 +11,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { ABOUT_YOU_MEMORY_CATEGORY_ID } from '../../shared/memory'
 import type { NotebookRunInputFile, NotebookRunProvenanceContext } from '../../shared/notebook'
 import { PlanCommandError } from '../../shared/session-plan/contract'
+import { AcpSessionAggregate } from '../acp/session-aggregate'
 import { ArtifactTurnOwner } from '../acp/artifact-turn-owner'
 import { ArtifactRepository } from '../artifacts/repository'
 import { ArtifactRunRegistry } from '../artifacts/run-registry'
@@ -19,6 +20,10 @@ import { fetchLocalRpc } from '../local-rpc-transport'
 import { MemoryRepository } from '../memory/repository'
 import { MemoryService } from '../memory/service'
 import { createProjectDbClient } from '../projects/prisma-client'
+import {
+  acceptMissingDataRoot,
+  initializeDataRootWriteAvailability
+} from '../storage/migration-state'
 import { createNotebookArtifactSourceScopeProvider } from './artifact-source-scope'
 import { NotebookLocalRpcServer } from './local-rpc-server'
 import {
@@ -87,6 +92,7 @@ const artifactCapabilityBinding = {
 } as const
 
 afterEach(async () => {
+  initializeDataRootWriteAvailability(false)
   if (storageRoot) {
     await rm(storageRoot, { recursive: true, force: true })
     storageRoot = undefined
@@ -94,6 +100,138 @@ afterEach(async () => {
 })
 
 describe('notebook local RPC server', () => {
+  it('does not recreate a missing data root before empty-folder acceptance', async () => {
+    const parentRoot = await createStorageRoot()
+    const missingDataRoot = join(parentRoot, 'missing-data-root')
+    initializeDataRootWriteAvailability(true)
+    const service = new NotebookRuntimeService({
+      configRoot: parentRoot,
+      dataRoot: missingDataRoot,
+      projectId: 'default-project',
+      repository: new NotebookRunRepository(missingDataRoot)
+    })
+    const server = new NotebookLocalRpcServer(service, { transport: 'tcp' })
+    const connection = await server.issueSessionConnection(
+      'session-1',
+      'default-project',
+      'root-frame-session-1'
+    )
+    const response = fetchLocalRpc(
+      connection,
+      {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${connection.token}`,
+          'content-type': 'application/json'
+        },
+        body: JSON.stringify({
+          method: 'state',
+          params: { sessionId: 'session-1', workspaceCwd: '/workspace' }
+        })
+      },
+      'missing data root Notebook gate test'
+    )
+
+    try {
+      let recreated = false
+      for (let attempt = 0; attempt < 20 && !recreated; attempt += 1) {
+        recreated = await stat(missingDataRoot).then(
+          () => true,
+          () => false
+        )
+        if (!recreated) await new Promise((resolve) => setTimeout(resolve, 10))
+      }
+      expect(recreated).toBe(false)
+
+      await acceptMissingDataRoot()
+      await expect(response.then((result) => result.status)).resolves.toBe(200)
+    } finally {
+      await acceptMissingDataRoot()
+      await response.catch(() => undefined)
+      connection.release?.()
+      await server.close()
+      await service.dispose()
+    }
+  })
+
+  it.each(['turn-ended', 'connection-released', 'session-released', 'server-closed'])(
+    'releases unfinished producer code when %s',
+    async (end) => {
+      const root = await createStorageRoot()
+      const execute = vi.fn()
+      const service = new NotebookRuntimeService({
+        configRoot: root,
+        dataRoot: root,
+        projectId: 'default-project',
+        repository: new NotebookRunRepository(root),
+        executorFactory: () => ({ execute, shutdown: async () => ({ reaped: true }) })
+      })
+      const server = new NotebookLocalRpcServer(service, { transport: 'tcp' })
+      const request = { projectId: 'default-project', sessionId: 'session-1', workspaceCwd: root }
+      const connection = await server.issueSessionConnection(
+        'session-1',
+        'default-project',
+        'root-frame-session-1'
+      )
+      server.setArtifactTurnBinding('session-1', {
+        ownerExecutionId: 'turn-1',
+        projectId: 'default-project',
+        provenanceContext: {
+          rootFrameId: 'root-frame-session-1',
+          agentFrameId: 'root-frame-session-1',
+          messageBranchId: 'branch-1',
+          runtimeSegmentId: 'runtime-1',
+          promptMessageId: 'prompt-1'
+        }
+      })
+      try {
+        const response = await fetchLocalRpc(
+          connection,
+          {
+            method: 'POST',
+            headers: {
+              authorization: `Bearer ${connection.token}`,
+              'content-type': 'application/json'
+            },
+            body: JSON.stringify({
+              method: 'beginCodeCell',
+              params: { ...request, cellId: 'unfinished' }
+            })
+          },
+          'unfinished code test'
+        )
+        expect(response.status).toBe(200)
+        const { result } = (await response.json()) as {
+          result: { cellId: string; writeId: string }
+        }
+        await service.appendCodeCell({ ...request, ...result, delta: 'print("partial")' })
+        // A successful HTTP response ends normally; the stream must survive between requests.
+        expect((await service.state(request)).activeWrite?.writeId).toBe(result.writeId)
+        server.clearArtifactTurnBinding('session-1', 'stale-turn')
+        expect((await service.state(request)).activeWrite?.writeId).toBe(result.writeId)
+        if (end === 'turn-ended') server.clearArtifactTurnBinding('session-1', 'turn-1')
+        if (end === 'connection-released') connection.release?.()
+        if (end === 'session-released') server.releaseSessionCapabilities('session-1')
+        if (end === 'server-closed') await server.close()
+
+        await service.beginCodeCell(request)
+        await expect(
+          service.appendCodeCell({ ...request, ...result, delta: 'late' })
+        ).rejects.toThrow(/write lock/)
+        await expect(service.finishCodeCell({ ...request, ...result })).rejects.toThrow(
+          /write lock/
+        )
+        expect(
+          (await service.state(request)).cells.find((cell) => cell.id === result.cellId)?.code
+        ).toBe('')
+        expect(execute).not.toHaveBeenCalled()
+      } finally {
+        await server.close()
+        await service.shutdownSession(request.sessionId)
+      }
+    }
+  )
+
   it('canonicalizes caller-controlled notebook run sources to Agent authority', async () => {
     const beginCodeCell = vi.fn(async (request: unknown) => request)
     const runCell = vi.fn(async (request: unknown) => request)
@@ -136,7 +274,10 @@ describe('notebook local RPC server', () => {
         expect(response.status).toBe(200)
         await expect(response.json()).resolves.toMatchObject({ result: { source: 'agent' } })
       }
-      expect(beginCodeCell).toHaveBeenCalledWith(expect.objectContaining({ source: 'agent' }))
+      expect(beginCodeCell).toHaveBeenCalledWith(
+        expect.objectContaining({ source: 'agent' }),
+        expect.any(AbortSignal)
+      )
       expect(runCell).toHaveBeenCalledWith(
         expect.objectContaining({ source: 'agent' }),
         expect.any(AbortSignal)
@@ -210,7 +351,8 @@ describe('notebook local RPC server', () => {
           projectId: 'project-1',
           sessionId: 'trusted-session',
           agentId: 'specialist-1'
-        }
+        },
+        expect.any(Function)
       )
     } finally {
       control.release()
@@ -253,6 +395,45 @@ describe('notebook local RPC server', () => {
     }
   })
 
+  it('uses the current Session gate when Memory is enabled after capability issue', async () => {
+    let memoryEnabled = false
+    const memorySearch = vi.fn(async () => [])
+    const server = new NotebookLocalRpcServer({} as never, {
+      transport: 'tcp',
+      isMemoryEnabledForSession: async () => memoryEnabled,
+      memoryService: {
+        listCategoriesForAgent: vi.fn(async () => []),
+        searchForAgent: memorySearch,
+        rememberForAgent: vi.fn()
+      }
+    })
+    const connection = await server.issueSessionConnection(
+      'session-toggle',
+      'project-1',
+      'root-frame-session-toggle',
+      false
+    )
+    const request = (): Promise<Response> =>
+      fetch(connection.endpoint, {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${connection.token}`,
+          'content-type': 'application/json'
+        },
+        body: JSON.stringify({ method: 'memorySearch', params: { query: 'remembered' } })
+      })
+
+    try {
+      expect((await request()).status).toBe(403)
+      memoryEnabled = true
+      expect((await request()).status).toBe(200)
+      expect(memorySearch).toHaveBeenCalledOnce()
+    } finally {
+      connection.release?.()
+      await server.close()
+    }
+  })
+
   it('rejects Memory RPC when the current Main-owned Session gate is disabled', async () => {
     const memorySearch = vi.fn(async () => [])
     const server = new NotebookLocalRpcServer({} as never, {
@@ -285,6 +466,181 @@ describe('notebook local RPC server', () => {
     } finally {
       control.release()
       await server.close()
+    }
+  })
+
+  it.each(['disable', 'revoke', 'disable-enable', 'disconnect', 'provider-replace'] as const)(
+    'settles a queued Memory write after Session %s',
+    async (action) => {
+      const root = await createStorageRoot()
+      const client = createProjectDbClient(root)
+      const repository = new MemoryRepository(async () => client)
+      const service = new MemoryService(repository, { publish: vi.fn() })
+      const session = new AcpSessionAggregate('session-a')
+      const attachProvider = (sessionId: string): void => {
+        session.attach({
+          session: { sessionId } as never,
+          cwd: root,
+          projectId: 'project-a',
+          frameworkId: 'opencode',
+          permissionProfile: {
+            selectedProfile: 'ask',
+            effectiveProfile: 'ask',
+            currentModeId: 'default',
+            availableModeIds: ['default'],
+            fullAccessAvailable: false
+          },
+          memoryEnabled: true
+        })
+      }
+      attachProvider('provider-a')
+      const server = new NotebookLocalRpcServer({} as never, {
+        transport: 'tcp',
+        memoryService: service,
+        isMemoryEnabledForSession: () => session.snapshot().memoryEnabled,
+        sessionMemorySignal: () => session.memorySignal()
+      })
+      const controller = new AbortController()
+      const releaseQueue = createDeferred()
+      const snapshotStarted = createDeferred()
+      let control: Awaited<ReturnType<NotebookLocalRpcServer['issueControlConnection']>> | undefined
+      let pending: Promise<Response> | undefined
+      try {
+        await migrateApplicationDatabase(client)
+        await client.project.create({ data: { id: 'project-a', name: 'Project A' } })
+        await service.setEnabled({ enabled: true })
+        control = await server.issueControlConnection(
+          'session-a',
+          'project-a',
+          'root-frame-session-a'
+        )
+        const snapshot = repository.snapshot.bind(repository)
+        vi.spyOn(repository, 'snapshot').mockImplementationOnce(async () => {
+          snapshotStarted.resolve()
+          await releaseQueue.promise
+          return snapshot()
+        })
+        const blockedSnapshot = service.snapshot()
+        await snapshotStarted.promise
+        const queued = createDeferred()
+        let checkAccess!: () => Promise<void>
+        let queuedWrite!: ReturnType<MemoryService['rememberForAgent']>
+        const remember = service.rememberForAgent.bind(service)
+        vi.spyOn(service, 'rememberForAgent').mockImplementation((...args) => {
+          const result = remember(...args)
+          checkAccess = args[2]!
+          queuedWrite = result
+          void result.catch(() => undefined)
+          queued.resolve()
+          return result
+        })
+        const call = (signal?: AbortSignal): Promise<Response> =>
+          fetch(control!.endpoint, {
+            signal,
+            method: 'POST',
+            headers: {
+              authorization: `Bearer ${control!.token}`,
+              'content-type': 'application/json'
+            },
+            body: JSON.stringify({
+              method: 'memoryRemember',
+              params: {
+                content: 'Durable fact queued before authorization changed.',
+                analysis: {
+                  scope: 'project',
+                  durability: 'cross-session',
+                  evidence: 'project-observed',
+                  subject: 'Project fact',
+                  reason: 'Future sessions need this durable project fact.'
+                }
+              }
+            })
+          })
+        pending = call(controller.signal)
+        await queued.promise
+        if (action === 'disconnect') {
+          controller.abort()
+          await expect(pending).rejects.toThrow()
+          // Observe the real HTTP disconnect before unblocking SQLite, without guessing timing.
+          await vi.waitFor(async () => {
+            await expect(checkAccess()).rejects.toThrow()
+          })
+          const rejected = expect(queuedWrite).rejects.toThrow()
+          releaseQueue.resolve()
+          await blockedSnapshot
+          await rejected
+          expect(await client.memoryEntry.count()).toBe(0)
+          return
+        }
+        if (action === 'provider-replace') {
+          // ACP cleanup intentionally preserves the Notebook RuntimeSession's control capability.
+          session.detachProvider()
+          server.releaseSessionCapabilities('session-a')
+          attachProvider('provider-b')
+          releaseQueue.resolve()
+          await blockedSnapshot
+          const response = await pending
+          expect(response.status).toBe(200)
+          expect(await response.json()).toMatchObject({ result: { status: 'created' } })
+          const subsequent = await call()
+          expect(subsequent.status).toBe(200)
+          expect(await subsequent.json()).toMatchObject({ result: { status: 'existing' } })
+          expect(await client.memoryEntry.count()).toBe(1)
+          return
+        }
+        if (action === 'revoke') control.release()
+        else session.setMemoryEnabled(false)
+        const expectedStatus = action === 'revoke' ? 401 : 403
+        const subsequent = await call()
+        expect(subsequent.status).toBe(expectedStatus)
+        await subsequent.json()
+        expect(await client.memoryEntry.count()).toBe(0)
+        if (action === 'disable-enable') session.setMemoryEnabled(true)
+        releaseQueue.resolve()
+        await blockedSnapshot
+        const response = await pending
+        await response.json()
+        expect.soft(response.status).toBe(expectedStatus)
+        expect(await client.memoryEntry.count()).toBe(0)
+      } finally {
+        releaseQueue.resolve()
+        await pending?.catch(() => undefined)
+        control?.release()
+        await server.close()
+        await client.$disconnect()
+      }
+    }
+  )
+
+  it('returns forbidden for globally disabled Memory with a live Session', async () => {
+    const root = await createStorageRoot()
+    const client = createProjectDbClient(root)
+    await migrateApplicationDatabase(client)
+    const service = new MemoryService(new MemoryRepository(async () => client), {
+      publish: vi.fn()
+    })
+    const server = new NotebookLocalRpcServer({} as never, {
+      transport: 'tcp',
+      memoryService: service,
+      isMemoryEnabledForSession: () => true
+    })
+    const control = await server.issueControlConnection(
+      'session-a',
+      'project-a',
+      'root-frame-session-a'
+    )
+    try {
+      const response = await fetch(control.endpoint, {
+        method: 'POST',
+        headers: { authorization: `Bearer ${control.token}`, 'content-type': 'application/json' },
+        body: JSON.stringify({ method: 'memorySearch', params: { query: 'pH' } })
+      })
+      expect(response.status).toBe(403)
+      expect(await response.json()).toMatchObject({ error: 'Memory is turned off.' })
+    } finally {
+      control.release()
+      await server.close()
+      await client.$disconnect()
     }
   })
 
@@ -452,6 +808,29 @@ describe('notebook local RPC server', () => {
     }
   })
 
+  it('reports malformed authenticated JSON as a bad request', async () => {
+    const server = new NotebookLocalRpcServer({} as never, {
+      transport: 'tcp',
+      token: 'secret-token'
+    })
+    const connection = await server.ensureStarted()
+
+    try {
+      const response = await fetch(connection.endpoint, {
+        method: 'POST',
+        headers: {
+          authorization: 'Bearer secret-token',
+          'content-type': 'application/json'
+        },
+        body: '{'
+      })
+
+      expect(response.status).toBe(400)
+    } finally {
+      await server.close()
+    }
+  })
+
   it('rejects an authenticated request body above the local RPC budget', async () => {
     const server = new NotebookLocalRpcServer({} as never, {
       transport: 'tcp',
@@ -587,7 +966,7 @@ describe('notebook local RPC server', () => {
       )
       await expect(
         call({ source: { path: 'plot.png' }, options: {}, projectId: 'forged' })
-      ).resolves.toMatchObject({ status: 500 })
+      ).resolves.toMatchObject({ status: 400 })
       release()
       connection.release()
       expect(discard).toHaveBeenCalledWith('run-1')
@@ -724,7 +1103,7 @@ describe('notebook local RPC server', () => {
         'Notebook RPC request validation test'
       )
 
-      expect(response.status).toBe(500)
+      expect(response.status).toBe(400)
       await expect(response.json()).resolves.toEqual({
         error: expect.stringContaining('Invalid notebook RPC params for execute')
       })
@@ -1298,6 +1677,60 @@ describe('notebook local RPC server', () => {
         disconnect.abort()
         await expect(request).rejects.toMatchObject({ cause: expect.any(Error) })
         await vi.waitFor(() => expect(signal.aborted).toBe(true))
+      } finally {
+        pendingCall.resolve(undefined)
+        await server.close()
+      }
+    }
+  )
+
+  it.each([
+    ['managePackages', { language: 'python', packages: ['numpy'] }],
+    ['manageEnvironments', { action: 'create', language: 'python', name: 'analysis' }]
+  ] as const)(
+    'aborts an in-flight %s operation when its client disconnects',
+    async (method, methodParams) => {
+      const callStarted = createDeferred<AbortSignal | undefined>()
+      const pendingCall = createDeferred<unknown>()
+      const operation = vi.fn(async (_request: unknown, signal?: AbortSignal) => {
+        callStarted.resolve(signal)
+        return pendingCall.promise
+      })
+      const server = new NotebookLocalRpcServer({ [method]: operation } as never, {
+        transport: 'tcp'
+      })
+      const connection = await server.ensureStarted()
+      const disconnect = new AbortController()
+
+      try {
+        const request = fetchLocalRpc(
+          connection,
+          {
+            method: 'POST',
+            headers: {
+              authorization: `Bearer ${connection.token}`,
+              'content-type': 'application/json'
+            },
+            body: JSON.stringify({
+              method,
+              params: {
+                sessionId: 'session-1',
+                workspaceCwd: '/workspace',
+                ...methodParams
+              }
+            }),
+            signal: disconnect.signal
+          },
+          `Notebook ${method} RPC`
+        )
+        const signal = await callStarted.promise
+        expect(signal).toBeInstanceOf(AbortSignal)
+        expect(signal?.aborted).toBe(false)
+
+        disconnect.abort()
+
+        await expect(request).rejects.toMatchObject({ cause: expect.any(Error) })
+        await vi.waitFor(() => expect(signal?.aborted).toBe(true))
       } finally {
         pendingCall.resolve(undefined)
         await server.close()
@@ -2681,7 +3114,7 @@ describe('notebook local RPC server', () => {
         writeRequestChecksum: 'a'.repeat(64),
         filename: 'bypass.txt'
       })
-      expect(bypass.status).toBe(500)
+      expect(bypass.status).toBe(400)
       await expect(bypass.json()).resolves.toEqual({
         error: 'Artifact Version creation requires a write reservation.'
       })
@@ -3155,6 +3588,7 @@ describe('notebook local RPC server', () => {
       })
 
       expect(response.status).toBe(200)
+      expect(leasedInput.association).toBe('resolver-accessed')
       const document = JSON.parse(
         await readFile(join(root, 'notebooks', 'default-project', 'session-1', 'run.json'), 'utf8')
       ) as { runs: Array<Record<string, unknown>> }
@@ -3176,7 +3610,10 @@ describe('notebook local RPC server', () => {
         result: { inputFiles: Array<Record<string, unknown>> }
       }
       expect(payload.result.inputFiles).toEqual([
-        expect.objectContaining({ inputFileVersionId: 'upload-version-1' }),
+        expect.objectContaining({
+          inputFileVersionId: 'upload-version-1',
+          association: 'resolver-accessed'
+        }),
         expect.objectContaining({ inputFileVersionId: 'panel-a-v1' })
       ])
       expect(payload.result.inputFiles[0]).not.toHaveProperty('storageKey')

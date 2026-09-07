@@ -6,9 +6,13 @@ import {
   type UploadedAttachment
 } from '../../../../shared/uploads'
 import type { AgentFrameworkId, SessionAgentConfiguration } from '../../../../shared/settings'
-import type { DelegationPolicy } from '../../../../shared/session-persistence'
+import {
+  isSessionSizeLimitError,
+  type DelegationPolicy
+} from '../../../../shared/session-persistence'
 import {
   confirmPendingDelegationPolicyAuthority,
+  deleteSession,
   saveSessionInOrder
 } from '../session-persistence/session-persistence'
 import { usePreviewWorkbenchStore } from '../../stores/preview-workbench-store'
@@ -83,7 +87,8 @@ export const reconcileBranchedAttachments = async (
 
 export const branchWorkspaceSessionFromMessage = async (
   runtime: WorkspaceSessionBranchRuntime,
-  input: BranchWorkspaceSessionFromMessageIntent
+  input: BranchWorkspaceSessionFromMessageIntent,
+  onSessionSizeLimit?: (sessionId: string) => void
 ): Promise<BranchWorkspaceSessionFromMessageResult | undefined> => {
   const pending = useSessionStore.getState().branchInNewSession(input)
   if (!pending || pending.messageId) return undefined
@@ -109,6 +114,7 @@ export const branchWorkspaceSessionFromMessage = async (
     : []
 
   let createdSessionId: string | undefined
+  let persistenceAttempted = false
   try {
     await reconcileBranchedAttachments(
       input.sourceSessionId,
@@ -158,6 +164,7 @@ export const branchWorkspaceSessionFromMessage = async (
       .getState()
       .sessions.find((session) => session.id === sessionId)
     if (!boundSession) throw new Error('Branched Session could not be created.')
+    persistenceAttempted = true
     await confirmPendingDelegationPolicyAuthority(boundSession)
     if (pdfContextSources.length > 0) {
       if (!boundSession.projectId) throw new Error('PDF context requires a Project.')
@@ -185,10 +192,29 @@ export const branchWorkspaceSessionFromMessage = async (
     return { sessionId, messageId: input.sourceMessageId }
   } catch (error) {
     const failedSessionId = createdSessionId ?? pending.sessionId
-    useSessionStore.getState().deleteSession(failedSessionId)
-    if (createdSessionId && runtime.deleteSession) {
+    if (isSessionSizeLimitError(error)) {
+      onSessionSizeLimit?.(createdSessionId ?? input.sourceSessionId)
+    }
+    if (createdSessionId && persistenceAttempted) {
+      // The policy/PDF steps may already have saved the child. Use the existing terminal
+      // deletion owner, which removes runtime, JSON and file relations in order.
+      const result = await deleteSession({
+        projectId: pendingSession.projectId,
+        sessionId: createdSessionId
+      }).catch(() => undefined)
+      if (result?.status !== 'deleted') {
+        // Keep failed compensation visible so the user can retry deletion; never hide a saved child.
+        useSessionStore
+          .getState()
+          .failRun(failedSessionId, error instanceof Error ? error.message : String(error))
+        throw error
+      }
+    } else if (createdSessionId && runtime.deleteSession) {
       await runtime.deleteSession(createdSessionId).catch(() => undefined)
     }
+    useSessionStore.getState().deleteSession(failedSessionId)
+    if (failedSessionId !== pending.sessionId)
+      useSessionStore.getState().deleteSession(pending.sessionId)
     throw error
   }
 }

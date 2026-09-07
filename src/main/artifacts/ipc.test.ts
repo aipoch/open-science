@@ -1,6 +1,7 @@
 import { mkdtemp, realpath, rm } from 'node:fs/promises'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
+import { ProvenanceIntegrityError } from '../../shared/provenance-read-result'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import {
@@ -117,6 +118,30 @@ const createPreviewLease = (
 })
 
 describe('artifact IPC handlers', () => {
+  it.each([
+    { error: new Error('database busy'), kind: 'load-failed' },
+    { error: new ProvenanceIntegrityError('evidence checksum mismatch'), kind: 'integrity-failed' }
+  ])('preserves $kind across the registered provenance IPC endpoint', async ({ error, kind }) => {
+    storageRoot = await mkdtemp(join(tmpdir(), 'open-science-provenance-ipc-error-'))
+    const provenance = new ArtifactProvenanceRepository({ storageRoot, getClient: vi.fn() })
+    vi.spyOn(provenance, 'getVersionCore').mockRejectedValueOnce(error)
+    const handlers = createArtifactHandlers(
+      new ArtifactRepository(storageRoot),
+      new ArtifactRunRegistry(),
+      { provenance }
+    )
+    registerArtifactIpcHandlers(undefined, undefined, undefined, undefined, handlers)
+    const result = await ipcHandlers.get('artifacts:get-version-provenance')!(undefined, {
+      projectId: 'project-1',
+      appSessionId: 'session-1',
+      artifactId: 'artifact-1',
+      versionId: 'version-1'
+    })
+    expect(JSON.parse(JSON.stringify(result))).toEqual({
+      failure: { kind, message: error.message }
+    })
+  })
+
   const createFinalizedArtifact = (overrides: Partial<ArtifactFile> = {}): ArtifactFile => ({
     id: 'session-1:message-1:result.txt',
     projectId: 'default-project',
@@ -1056,6 +1081,7 @@ describe('artifact IPC handler registration', () => {
       'artifacts:get-code-reconstruction',
       'artifacts:get-lineage',
       'artifacts:get-version-execution',
+      'artifacts:get-version-literature',
       'artifacts:get-version-messages',
       'artifacts:get-version-provenance',
       'artifacts:get-version-review',
@@ -1114,6 +1140,7 @@ describe('artifact IPC handler registration', () => {
       readPreview: vi.fn(),
       getLineage: vi.fn(),
       getVersionProvenance: vi.fn(),
+      getVersionLiterature: vi.fn(),
       getVersionExecution: vi.fn(),
       getVersionMessages: vi.fn(),
       getVersionReview: vi.fn(),

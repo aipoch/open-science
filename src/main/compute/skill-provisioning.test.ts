@@ -10,18 +10,18 @@ import type { BundledSkill } from '../skills/registry'
 import { createComputeHandlers } from './ipc'
 import type { ComputeService } from './compute-service'
 import type { ComputeHostRepository } from './repository'
-import { COMPUTE_SKILL_DIRECTORY } from './skill-doc'
+import { COMPUTE_ENV_SETUP_SKILL_DIRECTORY, COMPUTE_SKILL_DIRECTORY } from './skill-doc'
 
 const roots: string[] = []
 
 afterEach(async () => {
   for (const root of roots.splice(0)) {
-    await chmod(join(root, 'config', 'skills', COMPUTE_SKILL_DIRECTORY), 0o755).catch(
-      () => undefined
-    )
-    await chmod(join(root, 'config', 'skills', COMPUTE_SKILL_DIRECTORY, 'SKILL.md'), 0o644).catch(
-      () => undefined
-    )
+    for (const directory of [COMPUTE_SKILL_DIRECTORY, COMPUTE_ENV_SETUP_SKILL_DIRECTORY]) {
+      await chmod(join(root, 'config', 'skills', directory), 0o755).catch(() => undefined)
+      await chmod(join(root, 'config', 'skills', directory, 'SKILL.md'), 0o644).catch(
+        () => undefined
+      )
+    }
     await rm(root, { recursive: true, force: true })
   }
 })
@@ -150,5 +150,44 @@ describe('SSH Compute Skill provisioning lifecycle', () => {
     expect(document).toContain('host.compute.listRegistered()')
     expect(document).not.toContain('ssh:lab-gpu')
     expect(document).not.toContain('ssh:biowulf')
+  })
+
+  it('materializes the bundled environment setup guidance as a separate static Skill', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'compute-env-skill-provisioning-'))
+    roots.push(root)
+    const configDir = join(root, 'config')
+    const sourceDir = join(root, 'bundled-compute-env-setup')
+    await mkdir(sourceDir, { recursive: true })
+    await writeFile(
+      join(sourceDir, 'SKILL.md'),
+      [
+        '---',
+        'name: compute-env-setup',
+        'description: Configure named remote environments.',
+        '---',
+        '',
+        'Use `host.compute.details()` and `compute.callCommand()`.'
+      ].join('\n'),
+      'utf8'
+    )
+
+    await new ClaudeCodeSkillMaterializer().sync(configDir, [
+      {
+        id: 'compute-env-setup',
+        name: 'compute-env-setup',
+        displayName: 'Compute Environment Setup',
+        description: 'Configure named remote environments.',
+        source: 'featured',
+        updatedAt: 'v1',
+        sourceDir
+      }
+    ])
+
+    const document = await readFile(
+      join(configDir, 'skills', COMPUTE_ENV_SETUP_SKILL_DIRECTORY, 'SKILL.md'),
+      'utf8'
+    )
+    expect(document).toContain('name: compute-env-setup')
+    expect(document).toContain('host.compute.details()')
   })
 })

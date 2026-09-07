@@ -372,6 +372,12 @@ export const validateConversationGraph = (graph: PersistedConversationGraph): vo
       throw new Error('Non-root Agent Frame is invalid.')
     }
     if (!frame.parentFrameId) throw new Error('Agent Frame is detached from root.')
+    if (
+      (frame.originBindingState === 'validated' && !frame.originMessageId) ||
+      (frame.originBindingState === 'legacy-unavailable' && frame.originMessageId)
+    ) {
+      throw new Error('Agent Frame origin Message is invalid.')
+    }
     const parent = frames.get(frame.parentFrameId)
     if (!parent) throw new Error('Agent Frame parent is missing.')
     const children = frameChildren.get(parent.id)
@@ -412,6 +418,7 @@ export const validateConversationGraph = (graph: PersistedConversationGraph): vo
 
   const messageChildren = new Map<string, PersistedMessageNode[]>()
   const messageRoots: PersistedMessageNode[] = []
+  const branchEntryMessages = new Map<string, PersistedMessageNode[]>()
   for (const message of graph.messages) {
     const introducedOnBranch = branches.get(message.introducedOnBranchId)
     if (!introducedOnBranch || introducedOnBranch.agentFrameId !== message.agentFrameId) {
@@ -438,6 +445,12 @@ export const validateConversationGraph = (graph: PersistedConversationGraph): vo
       else messageChildren.set(parent.id, [message])
     } else {
       messageRoots.push(message)
+    }
+    const parent = message.parentMessageId ? messages.get(message.parentMessageId) : undefined
+    if (!parent || parent.introducedOnBranchId !== message.introducedOnBranchId) {
+      const entries = branchEntryMessages.get(message.introducedOnBranchId)
+      if (entries) entries.push(message)
+      else branchEntryMessages.set(message.introducedOnBranchId, [message])
     }
   }
   const messageAncestry = indexTreeAncestry(messageRoots, messageChildren)
@@ -502,6 +515,31 @@ export const validateConversationGraph = (graph: PersistedConversationGraph): vo
         throw new Error('Message Branch Activity fork is not on its parent path.')
       }
     }
+    if (branch.supersededMessageId) {
+      const superseded = messages.get(branch.supersededMessageId)
+      if (
+        !parentBranch ||
+        !parentHead ||
+        !superseded ||
+        superseded.agentFrameId !== branch.agentFrameId ||
+        superseded.parentMessageId !== branch.forkMessageId ||
+        !isTreeAncestor(messageAncestry, superseded.id, parentHead.id)
+      ) {
+        throw new Error('Message revision chain is invalid.')
+      }
+      if (superseded.role === 'user' && branch.headMessageId !== branch.forkMessageId) {
+        const replacement = branchEntryMessages
+          .get(branch.id)
+          ?.find((message) => message.parentMessageId === branch.forkMessageId)
+        if (
+          !replacement ||
+          replacement.role !== 'user' ||
+          replacement.supersedesMessageId !== superseded.id
+        ) {
+          throw new Error('Message revision chain is invalid.')
+        }
+      }
+    }
     let current = head
     while (current && !reachableMessages.has(current.id)) {
       reachableMessages.add(current.id)
@@ -511,6 +549,73 @@ export const validateConversationGraph = (graph: PersistedConversationGraph): vo
   if (reachableMessages.size !== graph.messages.length) {
     const unreachable = graph.messages.find((message) => !reachableMessages.has(message.id))
     throw new Error(`Conversation Message is not reachable from any Branch: ${unreachable?.id}`)
+  }
+
+  for (const frame of graph.frames) {
+    if (frame.id === graph.rootFrameId || frame.originBindingState !== 'validated') continue
+    const origin = frame.originMessageId ? messages.get(frame.originMessageId) : undefined
+    if (!origin || origin.agentFrameId !== frame.parentFrameId) {
+      throw new Error('Agent Frame origin Message is invalid.')
+    }
+  }
+
+  let activeFrame = frames.get(graph.activeFrameId)!
+  while (activeFrame.parentFrameId) {
+    const parent = frames.get(activeFrame.parentFrameId)!
+    const origin = activeFrame.originMessageId
+      ? messages.get(activeFrame.originMessageId)
+      : undefined
+    const parentHead = branchHeads.get(parent.activeBranchId)
+    if (
+      activeFrame.originBindingState !== 'validated' ||
+      !origin ||
+      !parentHead ||
+      !isTreeAncestor(messageAncestry, origin.id, parentHead.id)
+    ) {
+      throw new Error('Active Agent Frame origin is not on its parent current Branch.')
+    }
+    activeFrame = parent
+  }
+
+  for (const message of graph.messages) {
+    if (message.responseToMessageId) {
+      const target = messages.get(message.responseToMessageId)
+      if (
+        !target ||
+        target.id === message.id ||
+        target.agentFrameId !== message.agentFrameId ||
+        !isTreeAncestor(messageAncestry, target.id, message.id) ||
+        (message.role === 'agent' && target.role !== 'user')
+      ) {
+        throw new Error('Message response target is invalid.')
+      }
+    }
+    if (message.revisionRootMessageId) {
+      const root = messages.get(message.revisionRootMessageId)
+      if (
+        message.role !== 'user' ||
+        !root ||
+        root.role !== 'user' ||
+        root.agentFrameId !== message.agentFrameId ||
+        (!message.supersedesMessageId && root.id !== message.id)
+      ) {
+        throw new Error('Message revision root is invalid.')
+      }
+    }
+    if (message.supersedesMessageId) {
+      const superseded = messages.get(message.supersedesMessageId)
+      const branch = branches.get(message.introducedOnBranchId)
+      if (
+        message.role !== 'user' ||
+        !superseded ||
+        superseded.role !== 'user' ||
+        superseded.agentFrameId !== message.agentFrameId ||
+        branch?.supersededMessageId !== superseded.id ||
+        message.revisionRootMessageId !== (superseded.revisionRootMessageId ?? superseded.id)
+      ) {
+        throw new Error('Message revision chain is invalid.')
+      }
+    }
   }
 
   for (const group of graph.activityGroups) {

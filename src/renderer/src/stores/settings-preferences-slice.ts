@@ -161,6 +161,20 @@ export const createSettingsPreferencesSlice = ({
   reconcileSnapshot,
   writeCoordinator
 }: SettingsPreferencesSliceOptions): SettingsPreferencesActions => {
+  const refreshAfterCommit = async (saved: Partial<SettingsPreferencesState>): Promise<void> => {
+    const refresh = getCommands().getSettings
+    if (refresh) {
+      try {
+        reconcileSnapshot(await refresh())
+        return
+      } catch (error) {
+        console.warn('Settings saved, but the settings refresh failed.', error)
+      }
+    }
+    // The command already persisted and applied this value. A failed read is not a failed save.
+    setState(saved)
+  }
+
   const runOptimisticWrite = async <Field extends OptimisticPreferenceField>(
     field: Field,
     key: OptimisticSettingsWriteKey,
@@ -363,18 +377,14 @@ export const createSettingsPreferencesSlice = ({
 
     setPackageMirror: async (mirror) => {
       const saved = await getCommands().setPackageMirror(mirror)
-      const refresh = getCommands().getSettings
-      if (refresh) reconcileSnapshot(await refresh())
-      else setState({ packageMirror: isMirrorConfigured(saved) ? saved : undefined })
+      await refreshAfterCommit({ packageMirror: isMirrorConfigured(saved) ? saved : undefined })
     },
 
     setNetworkProxy: async (networkProxy) => {
       const setNetworkProxy = getCommands().setNetworkProxy
       if (!setNetworkProxy) throw new Error('Network proxy settings are unavailable.')
       const saved = await setNetworkProxy(networkProxy)
-      const refresh = getCommands().getSettings
-      if (refresh) reconcileSnapshot(await refresh())
-      else setState({ networkProxy: saved })
+      await refreshAfterCommit({ networkProxy: saved })
     },
 
     setNotebookNetwork: async (notebookNetwork, baseAllowedDomains) => {
@@ -385,9 +395,7 @@ export const createSettingsPreferencesSlice = ({
         ...(baseAllowedDomains === undefined ? {} : { baseAllowedDomains })
       }
       const saved = await command(request)
-      const refresh = getCommands().getSettings
-      if (refresh) reconcileSnapshot(await refresh())
-      else setState({ notebookNetwork: saved })
+      await refreshAfterCommit({ notebookNetwork: saved })
       return saved
     }
   }

@@ -84,7 +84,7 @@ export const createProvenanceTestFixture = async (): Promise<{
       try {
         await client.$disconnect()
       } finally {
-        await rm(storageRoot, { recursive: true, force: true })
+        await rm(storageRoot, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 })
       }
     }
   }

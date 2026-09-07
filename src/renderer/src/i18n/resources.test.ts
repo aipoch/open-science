@@ -1426,10 +1426,7 @@ describe('mandatory product glossary', () => {
         de.renderer['Loaded {{loaded}} of {{total}} runs. Scroll up to load earlier history.'],
       producerRun: de.renderer['The Environment changed while the producer run was executing.'],
       runMark: de.renderer['{{state}} Run Mark'],
-      tokenCoverage:
-        de.renderer[
-          'Token totals are available for {{reported}} of {{count}} runs in this period._other'
-        ]
+      tokenCoverage: de.renderer['Only reported token usage is included.']
     }).toEqual({
       autoReview: 'Auto-Review',
       requestReview: 'Review anfordern',
@@ -1451,8 +1448,7 @@ describe('mandatory product glossary', () => {
         'Ausführungen: {{loaded}} von {{total}} geladen. Scrollen Sie nach oben, um den früheren Verlauf zu laden.',
       producerRun: 'Die Umgebung wurde geändert, während die erzeugende Ausführung lief.',
       runMark: '{{state}} Ausführungsmarkierung',
-      tokenCoverage:
-        'Token-Gesamtwerte sind für {{reported}} von {{count}} Ausführungen in diesem Zeitraum verfügbar.'
+      tokenCoverage: 'Es werden nur gemeldete Token-Nutzungsdaten berücksichtigt.'
     })
 
     const wrongReviewGender = Object.entries(de.renderer)
@@ -1591,7 +1587,6 @@ describe('mandatory product glossary', () => {
   it('keeps high-risk German storage, exit, credential, and theme actions unambiguous', () => {
     expect({
       about: de.renderer.About,
-      alwaysLight: de.renderer['Always light'],
       credential: de.renderer.Credential,
       custom: de.renderer.Custom,
       duplicate: de.renderer.Duplicate,
@@ -1619,7 +1614,6 @@ describe('mandatory product glossary', () => {
       volumes: de.renderer.Volumes
     }).toEqual({
       about: 'Über',
-      alwaysLight: 'Immer hell',
       credential: 'Anmeldeinformation',
       custom: 'Benutzerdefiniert',
       duplicate: 'Duplizieren',
@@ -2182,18 +2176,6 @@ describe('mandatory product glossary', () => {
     const actual = Object.fromEntries(Object.keys(expected).map((key) => [key, catalog('fr')[key]]))
 
     expect(actual).toEqual(expected)
-  })
-
-  it('uses an agreement-safe French token coverage ratio for every plural category', () => {
-    const expectedValue =
-      'Disponibilité des totaux de jetons pour cette période : {{reported}}/{{count}}.'
-    const keys = [
-      'Token totals are available for {{reported}} of {{count}} runs in this period._one',
-      'Token totals are available for {{reported}} of {{count}} runs in this period._other',
-      'Token totals are available for {{reported}} of {{count}} runs in this period._many'
-    ]
-
-    expect(keys.map((key) => catalog('fr')[key])).toEqual(keys.map(() => expectedValue))
   })
 
   it('does not use financial terms for French permission grants', () => {
@@ -2830,8 +2812,8 @@ describe('Russian catalog quality', () => {
       'Сохраняет файл как артефакт этого диалога.'
     ],
     [
-      'Remote access is off on the home computer. Re-enable a remote access mode in Open Science, then try again.',
-      'Удалённый доступ отключён на домашнем компьютере. Снова включите режим удалённого доступа в Open Science и повторите попытку.'
+      'Access authorization has expired. Reopen the Web link from Open Science on the host computer, or return to the remote access entry page to pair again.',
+      'Срок действия разрешения на доступ истёк. Снова откройте веб-ссылку из Open Science на главном компьютере или вернитесь на страницу удалённого доступа для повторного сопряжения.'
     ],
     [
       'That folder already contains Open Science data. Pick an empty folder, or use the default location.',
@@ -3291,7 +3273,6 @@ describe('Russian catalog quality', () => {
 describe('Japanese safety copy', () => {
   it.each([
     ['Allow globally', 'すべてのプロジェクトで許可'],
-    ['-y @modelcontextprotocol/server-memory', '-y @modelcontextprotocol/server-memory'],
     ['*.internal.example, 10.0.0.0/8', '*.internal.example, 10.0.0.0/8'],
     ['Approval applies to this call only.', '承認はこのツール呼び出しにのみ適用されます。'],
     ['This call only', 'このツール呼び出しのみ'],
@@ -3312,7 +3293,6 @@ describe('Korean safety copy', () => {
     ['Clear all session grants', '모든 세션 권한 지우기'],
     ['Grant folder…', '폴더 권한 부여…'],
     ['Grant this folder', '이 폴더에 권한 부여'],
-    ['-y @modelcontextprotocol/server-memory', '-y @modelcontextprotocol/server-memory'],
     ['*.internal.example, 10.0.0.0/8', '*.internal.example, 10.0.0.0/8'],
     ['Approval applies to this call only.', '승인은 이 호출에만 적용됩니다.'],
     ['This call only', '이 호출만'],
@@ -3640,8 +3620,11 @@ describe('Korean binding terminology', () => {
       const offenders = Object.entries(catalog('ko'))
         .filter(([key]) => {
           const sourceText = englishOf(key)
-            .replace(/<code>.*?<\/code>/g, '')
-            .replace(/\{\{\w+\}\}|<\/?\w+>|https?:\/\/\S+|\b[A-Za-z]:\\[\w.\\-]*(?<!\.)/g, '')
+            // Extract prose for glossary matching; this text is never rendered as HTML.
+            .split(
+              /<code>.*?<\/code>|\{\{\w+\}\}|<\/?\w+>|https?:\/\/\S+|\b[A-Za-z]:\\[\w.\\-]*(?<!\.)/g
+            )
+            .join(' ')
           return source.test(stripSource ? sourceText.replace(stripSource, '') : sourceText)
         })
         .filter(([, value]) => !value.includes(expected))
@@ -3815,7 +3798,6 @@ describe('Russian safety copy', () => {
 describe('French safety copy', () => {
   it.each([
     ['Allow globally', 'Autoriser pour tous les projets'],
-    ['-y @modelcontextprotocol/server-memory', '-y @modelcontextprotocol/server-memory'],
     ['*.internal.example, 10.0.0.0/8', '*.internal.example, 10.0.0.0/8'],
     ['Approval applies to this call only.', "L'autorisation s'applique uniquement à cet appel."],
     ['This call only', 'Pour cet appel uniquement'],
@@ -4892,21 +4874,25 @@ const isProse = (text: string): boolean => {
   if (!/[A-Za-z]{2}/.test(text)) return false
   // Units and bare measurements: 12px, 1.5 s.
   if (/^\d+(?:\.\d+)?\s*[a-z%]*$/.test(text)) return false
-  // A single lowercase token is an identifier or a fragment, not a sentence. Multi-word copy and
-  // anything that starts capitalised, numeric or quoted is fair game.
-  if (!/^[A-Z0-9“"']/.test(text) && !text.includes(' ')) return false
+  // Plain lowercase words can be UI copy (for example, unsupported). Exempt only explicit
+  // technical labels and identifier syntax, rather than every lowercase word.
+  if (text === 'abc') return false // Spreadsheet text-column type marker.
+  if (!/^[A-Z0-9“"']/.test(text) && !text.includes(' ') && !/^[a-z]+$/.test(text)) return false
   return true
 }
 
 type BareCopy = { text: string; line: number }
 
-const decodeJsxEntities = (text: string): string =>
-  text
-    .replaceAll('&apos;', "'")
-    .replaceAll('&quot;', '"')
-    .replaceAll('&amp;', '&')
-    .replaceAll('&lt;', '<')
-    .replaceAll('&gt;', '>')
+const decodeJsxEntities = (text: string): string => {
+  const entities: Record<string, string> = {
+    '&apos;': "'",
+    '&quot;': '"',
+    '&amp;': '&',
+    '&lt;': '<',
+    '&gt;': '>'
+  }
+  return text.replace(/&(?:apos|quot|amp|lt|gt);/g, (entity) => entities[entity])
+}
 
 const bareJsxAstText = (source: string): BareCopy[] => {
   const sourceFile = ts.createSourceFile(
@@ -5006,6 +4992,17 @@ const bareJsxExpressionValues = (source: string): BareCopy[] => {
     ts.ScriptKind.TSX
   )
   const found: BareCopy[] = []
+  // Reuse TypeScript's lexical binding so shadowed parameters and same-named local variables
+  // cannot borrow each other's copy. This program reads only the current source, not its imports.
+  const options: ts.CompilerOptions = { noLib: true, noResolve: true }
+  const program = ts.createProgram([sourceFile.fileName], options, {
+    ...ts.createCompilerHost(options),
+    getSourceFile: (name) => (name === sourceFile.fileName ? sourceFile : undefined),
+    fileExists: (name) => name === sourceFile.fileName,
+    readFile: () => undefined
+  })
+  const checker = program.getTypeChecker()
+  const visited = new Set<ts.Expression>()
 
   const record = (node: ts.Node, text: string): void => {
     const normalized = text.replace(/\s+/g, ' ').trim()
@@ -5017,6 +5014,21 @@ const bareJsxExpressionValues = (source: string): BareCopy[] => {
   }
 
   const inspect = (expression: ts.Expression): void => {
+    if (visited.has(expression)) return
+    visited.add(expression)
+    if (ts.isIdentifier(expression)) {
+      const declaration = checker.getSymbolAtLocation(expression)?.valueDeclaration
+      if (
+        declaration &&
+        ts.isVariableDeclaration(declaration) &&
+        ts.isIdentifier(declaration.name) &&
+        declaration.initializer &&
+        ts.isVariableDeclarationList(declaration.parent) &&
+        (declaration.parent.flags & ts.NodeFlags.Const) !== 0
+      )
+        inspect(declaration.initializer)
+      return
+    }
     if (
       ts.isParenthesizedExpression(expression) ||
       ts.isAsExpression(expression) ||
@@ -5079,7 +5091,15 @@ const NOT_TRANSLATABLE = new Set([
   'Remote.It',
   'Discord',
   'GitHub',
+  'PubMed',
+  'Crossref',
+  // A literal DOI example; translating its suffix would change the identifier.
+  '10.1000/example',
   'SKILL.md',
+  'claude setup-token',
+  'argocd',
+  'API_TOKEN=',
+  'Authorization: X-Api-Key:',
   'openid profile',
   'Python',
   'Enter',
@@ -5089,7 +5109,6 @@ const NOT_TRANSLATABLE = new Set([
   'Enter / Tab',
   // A placeholder showing literal CLI arguments. Translating it would suggest the user should type
   // words instead of flags.
-  '-y @modelcontextprotocol/server-memory',
   'KEY=value ANOTHER_KEY=value',
   'Authorization: Bearer <token> X-Api-Key: <key>',
   '# Instructions Step-by-step guidance for the agent…'
@@ -5112,7 +5131,10 @@ const CODE_LOOKALIKE = /^(?:default|case|return|break|const|let|await)\b/
 const KNOWN_BARE = new Set<string>()
 
 describe('bare copy', () => {
-  const components = SCAN_ROOTS.flatMap(sourceFiles).filter((path) => path.endsWith('.tsx'))
+  // Design-state fixtures are development-only; production renderer components remain scanned.
+  const components = SCAN_ROOTS.flatMap(sourceFiles).filter(
+    (path) => path.endsWith('.tsx') && !path.endsWith('.preview.tsx')
+  )
 
   const offenders = components.flatMap((path) => {
     const source = readFileSync(path, 'utf8')
@@ -5156,6 +5178,39 @@ describe('bare copy', () => {
 // over-eager match reports copy that is already handled. These pin the shapes that actually caused
 // trouble while the migration ran.
 describe('bare copy detection', () => {
+  it('finds lowercase user-facing words instead of treating every word as an identifier', () => {
+    expect(bareJsxAstText('<span>unsupported</span>')).toEqual([{ text: 'unsupported', line: 1 }])
+    expect(bareJsxExpressionValues("<span>{ready ? 'available' : 'unavailable'}</span>")).toEqual([
+      { text: 'available', line: 1 },
+      { text: 'unavailable', line: 1 }
+    ])
+  })
+
+  it('follows local const templates and conditional reasons into visible JSX', () => {
+    expect(
+      bareJsxExpressionValues(
+        'const label = `${rows} rows · ${columns} columns`; const reason = ready ? undefined : `No model from ${name} is supported.`; const view = <><span>{label}</span><button aria-label={reason} /></>'
+      )
+    ).toEqual([
+      { text: 'rows · columns', line: 1 },
+      { text: 'No model from is supported.', line: 1 }
+    ])
+  })
+
+  it('respects local binding scope and accepts translated templates and technical content', () => {
+    expect(
+      bareJsxExpressionValues(
+        "const label = 'Not rendered'; function View({ label }: Props) { return <span>{label}</span> }; const other = () => { const label = t('{{rows}} rows', { rows }); return <span>{label}</span> }"
+      )
+    ).toEqual([])
+    expect(bareJsxAstText('<span>abc</span><code>ssh-agent</code><span>12px</span>')).toEqual([])
+    expect(
+      bareJsxExpressionValues(
+        "const command = 'claude setup-token'; const view = <code>{command}</code>"
+      ).filter(({ text }) => !NOT_TRANSLATABLE.has(text))
+    ).toEqual([])
+  })
+
   it('finds text in an element', () => {
     expect(bareJsxText('<span>Needs repair</span>')).toEqual([{ text: 'Needs repair', line: 1 }])
   })

@@ -146,14 +146,15 @@ const createNotebookEnvironmentLifecycle = (
       (report) =>
         withDataRootWrite(async () => {
           if (deps.waitForRecovery) await deps.waitForRecovery()
-          if (deps.onRepairStarting) {
-            await deps.onRepairStarting(
-              parsedLanguage,
-              explicitRuntimeRepairTarget(parsedLanguage, runtimeIdentity)
-            )
-          }
           await provisioner.repair(parsedLanguage, report, {
             force: true,
+            onStarting: deps.onRepairStarting
+              ? () =>
+                  deps.onRepairStarting?.(
+                    parsedLanguage,
+                    explicitRuntimeRepairTarget(parsedLanguage, runtimeIdentity)
+                  )
+              : undefined,
             onVerified: () => deps.onRepairCompleted?.(parsedLanguage)
           })
         }),
@@ -191,7 +192,7 @@ const createNotebookEnvironmentLifecycle = (
       logStartupGateFailure(error)
       deps.projectProgress({
         phase: 'error',
-        message: `Environment preparation failed: ${(error as Error).message}`,
+        diagnostic: `Environment preparation failed: ${(error as Error).message}`,
         progress: 0
       })
     }

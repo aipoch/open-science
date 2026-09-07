@@ -3,7 +3,8 @@
 // level, and grants the current folder. The breadcrumb bar doubles as a path field (click its
 // empty area to type a path), and its leading drive crumb opens a drive/volume switcher.
 import { ChevronDown, CircleAlert, Folder, Home, Info, X } from 'lucide-react'
-import { Dialog, RadioGroup } from 'radix-ui'
+import { RadioGroup } from 'radix-ui'
+import * as Dialog from '@/components/ui/dialog'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 

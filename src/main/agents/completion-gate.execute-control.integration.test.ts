@@ -119,7 +119,7 @@ const createExecuteControlHarness = async (
     close: async () => {
       await service.shutdownAll()
       await server.close()
-      await rm(root, { recursive: true, force: true })
+      await rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 })
     }
   }
 }

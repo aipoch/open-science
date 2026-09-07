@@ -10,6 +10,7 @@ import {
   rm,
   rmdir,
   symlink,
+  utimes,
   writeFile
 } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -542,6 +543,85 @@ describe('NodeVersionFileOperator', () => {
       code: 'INTEGRITY_FAILED'
     })
     await invalidRangeLease.close()
+  })
+
+  it('does not hash the same unchanged immutable file again on a later open', async () => {
+    const module = await import('./version-file-operator')
+    cleanupRoot = await mkdtemp(join(tmpdir(), 'open-science-version-file-'))
+    let verifiedBytesRead = 0
+    let immutablePath = ''
+    const options: ConstructorParameters<typeof module.NodeVersionFileOperator>[0] = {
+      storageRoot: cleanupRoot,
+      fileSystem: {
+        open: async (...args) => {
+          const handle = await openFile(...args)
+          if (String(args[0]) !== immutablePath) return handle
+          return new Proxy(handle, {
+            get(target, property) {
+              if (property === 'read') {
+                return async (
+                  buffer: Uint8Array,
+                  offset: number,
+                  length: number,
+                  position: number
+                ) => {
+                  const result = await target.read(buffer, offset, length, position)
+                  verifiedBytesRead += result.bytesRead
+                  return result
+                }
+              }
+              const value = Reflect.get(target, property, target)
+              return typeof value === 'function' ? value.bind(target) : value
+            }
+          })
+        }
+      }
+    }
+    const operator = new module.NodeVersionFileOperator(options)
+    const planInput = {
+      operationId: 'operation-repeated-read',
+      scope: {
+        source: 'artifact' as const,
+        projectId: 'project-1',
+        sessionId: 'session-1',
+        logicalFileId: 'artifact-1'
+      },
+      logicalFilename: 'large.bin',
+      candidateIndex: 0
+    }
+    const plannedFile = operator.planImmutable(planInput)
+    immutablePath = join(cleanupRoot, ...plannedFile.storageRef.split('/'))
+    const content = Buffer.alloc(256 * 1024, 7)
+    const stored = await operator.publishImmutable({ ...planInput, plannedFile, content })
+    const fixedTime = new Date('2000-01-01T00:00:00.000Z')
+    await utimes(immutablePath, fixedTime, fixedTime)
+    verifiedBytesRead = 0
+
+    const firstLease = await operator.openImmutable(stored.storageRef, stored)
+    await firstLease.close()
+    const secondOperator = new module.NodeVersionFileOperator(options)
+    const secondLease = await secondOperator.openImmutable(stored.storageRef, stored)
+
+    expect(verifiedBytesRead).toBe(content.byteLength)
+
+    const auditLease = await secondOperator.openImmutable(stored.storageRef, stored, {
+      forceVerify: true
+    })
+    await auditLease.close()
+    expect(verifiedBytesRead).toBe(content.byteLength * 2)
+
+    await writeFile(immutablePath, Buffer.alloc(content.byteLength, 8))
+    await utimes(immutablePath, fixedTime, fixedTime)
+    await expect(secondLease.readRange(0, content.byteLength)).rejects.toMatchObject({
+      code: 'INTEGRITY_FAILED'
+    })
+    await secondLease.close()
+    expect(verifiedBytesRead).toBe(content.byteLength * 4)
+
+    await expect(secondOperator.openImmutable(stored.storageRef, stored)).rejects.toMatchObject({
+      code: 'INTEGRITY_FAILED'
+    })
+    expect(verifiedBytesRead).toBe(content.byteLength * 5)
   })
 
   it('removes a verified immutable file idempotently', async () => {

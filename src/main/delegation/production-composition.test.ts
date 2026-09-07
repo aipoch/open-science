@@ -1,9 +1,12 @@
+import { EventEmitter } from 'node:events'
 import { access, mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import type { ChildProcessWithoutNullStreams } from 'node:child_process'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
+import { installAppLifecycle, type AppLifecycleDeps } from '../app-lifecycle'
+import { clearApplicationShutdownTrigger } from '../application-shutdown-trigger'
 import {
   activateConversationBranch,
   createLinearConversationGraph,
@@ -810,6 +813,211 @@ describe('production delegated-work composition', () => {
     vi.useRealTimers()
   })
 
+  it.each([
+    ['codex', 'no-quit'],
+    ['codex', 'conflict'],
+    ['codex', 'renderer-failed'],
+    ['codex', 'timeout'],
+    ['codex', 'conflict-without-work'],
+    ['claude-code', 'conflict'],
+    ['opencode', 'conflict'],
+    ['codebuddy', 'conflict']
+  ] as const)(
+    'continues new delegated work exactly once after a cancelled quit: %s / %s',
+    async (frameworkId, finalSave) => {
+      vi.useFakeTimers()
+      clearApplicationShutdownTrigger()
+      root = await mkdtemp(join(tmpdir(), 'delegated-quit-abort-'))
+      const nextPromptId = 'root-message-after-quit'
+      const harness = await createCompositionHarness(
+        root,
+        frameworkId,
+        createDeterministicDelegateExecution(),
+        undefined,
+        { settlementContinuations: { dispatch: (request) => dispatch(request) } },
+        [{ rootMessageId: nextPromptId, toolInvocationId: 'delegate-after-quit', createdAt: 3 }]
+      )
+      const durable = harness.durable()
+      durable.conversationGraph!.messages.find(({ id }) => id === nextPromptId)!.runtimeSegmentId =
+        durable.conversationGraph!.runtimeSegments[0].id
+      harness.replaceDurable(durable)
+      const snapshot: AcpStateSnapshot = {
+        status: 'connected',
+        cwd: '/workspace',
+        sessionId: harness.session.id,
+        sessionIds: [harness.session.id],
+        events: [],
+        pendingPermissions: [],
+        permissionProfiles: {},
+        permissionGrants: {},
+        contextUsageBySession: {},
+        promptInFlight: false,
+        promptInFlightSessionIds: []
+      }
+      let callbacks!: AcpRuntimeCallbacks
+      let turn = 0
+      const receipts: Array<{ frameId: string; attemptId: string }> = []
+      const finish = async (
+        request: AcpPromptRequest,
+        promptAttemptId: string | undefined,
+        delegate: boolean
+      ): Promise<{ stopReason: 'end_turn' }> => {
+        const token = `turn-${++turn}`
+        callbacks.onPromptStarted?.(request.sessionId, token, promptAttemptId)
+        callbacks.onProviderPromptAccepted?.(request.sessionId, promptAttemptId)
+        try {
+          if (delegate) {
+            const receipt = await harness.composition.host.delegate(
+              {
+                ...harness.caller,
+                originMessageId: request.provenanceContext!.promptMessageId,
+                toolInvocationId: `delegate-${token}`
+              },
+              { task: 'Check the result', name: token },
+              { wait: false }
+            )
+            receipts.push(receipt.children[0])
+          }
+          return { stopReason: 'end_turn' }
+        } finally {
+          callbacks.onPromptEnded?.(request.sessionId, token)
+        }
+      }
+      const sendAppContinuation = vi.fn((request: AcpPromptRequest, attempt?: string) =>
+        finish(request, attempt, false)
+      )
+      const runtime = {
+        getState: () => snapshot,
+        getSnapshot: () => snapshot,
+        getActivePromptSessions: () => [],
+        getQuitBlockingPromptSessions: () => [],
+        sendPrompt: (request: AcpPromptRequest, attempt?: string) => finish(request, attempt, true),
+        sendAppContinuation,
+        shutdown: () => undefined
+      } as unknown as AcpRuntime
+      const coordinator = new AcpRuntimeCoordinator(
+        (runtimeCallbacks) => {
+          callbacks = runtimeCallbacks
+          return runtime
+        },
+        {},
+        '',
+        undefined,
+        undefined,
+        undefined,
+        {},
+        undefined,
+        harness.composition.root
+      )
+      const dispatch = createDelegationSettlementContinuationDispatch({
+        sendAppContinuationObserved: (request, accepted) =>
+          coordinator.sendAppContinuationObserved(request, accepted),
+        onPromptEnded: (sessionId, promptId) =>
+          harness.composition.root.settlementPromptEnded?.(sessionId, promptId)
+      })
+      const prompt = (promptMessageId: string): Promise<unknown> =>
+        coordinator.sendPrompt({
+          sessionId: harness.session.id,
+          text: 'Delegate a background check',
+          provenanceContext: { promptMessageId }
+        })
+      try {
+        if (finalSave !== 'no-quit') {
+          if (finalSave !== 'conflict-without-work') {
+            await prompt(harness.caller.originMessageId)
+            await expect.poll(() => harness.execution.controls()).toHaveLength(1)
+            harness.execution.control(receipts[0].attemptId).accept()
+          }
+          const app = Object.assign(new EventEmitter(), { exit: vi.fn() })
+          const window = Object.assign(new EventEmitter(), {
+            isDestroyed: () => false,
+            isMinimized: () => false,
+            isVisible: () => true,
+            show: vi.fn(),
+            restore: vi.fn(),
+            focus: vi.fn()
+          })
+          const flushSessionPersistence = vi
+            .fn()
+            .mockResolvedValueOnce('completed')
+            .mockResolvedValueOnce(finalSave === 'conflict-without-work' ? 'conflict' : finalSave)
+          const prepareForQuit = vi.fn(() => coordinator.prepareForQuit())
+          const abortQuitPreparation = vi.fn(() => coordinator.abortQuitPreparation())
+          const shutdownBackends = vi.fn(async () => undefined)
+          const confirmClose = vi.fn(async (variant: string) =>
+            variant === 'persistence-failed' ? ('cancel' as const) : ('quit' as const)
+          )
+          const quit = (): void => {
+            app.emit('before-quit', { preventDefault: vi.fn() })
+          }
+          installAppLifecycle({
+            app: app as unknown as AppLifecycleDeps['app'],
+            createMainWindow: () =>
+              window as unknown as ReturnType<AppLifecycleDeps['createMainWindow']>,
+            createTray: () => undefined,
+            shutdownBackends,
+            prepareForQuit,
+            holdSettingsInstallAdmission: () => () => undefined,
+            abortQuitPreparation,
+            getActiveSettingsInstallId: () => undefined,
+            flushSessionPersistence,
+            isMigrationInProgress: () => false,
+            quit,
+            countWindows: () => 1,
+            detectActiveSessions: () => [],
+            hasActiveReviewerWork: () => false,
+            createConfirmClose: () => confirmClose
+          })
+          quit()
+          await expect.poll(() => window.focus).toHaveBeenCalledOnce()
+          expect(flushSessionPersistence).toHaveBeenCalledTimes(2)
+          expect(prepareForQuit).toHaveBeenCalledOnce()
+          expect(abortQuitPreparation).toHaveBeenCalledOnce()
+          expect(shutdownBackends).not.toHaveBeenCalled()
+          expect(app.exit).not.toHaveBeenCalled()
+          if (finalSave === 'timeout')
+            expect(confirmClose).toHaveBeenCalledWith('persistence-failed', [])
+          if (receipts[0]) {
+            await expect(harness.composition.host.children(harness.caller)).resolves.toMatchObject([
+              { attemptId: receipts[0].attemptId, status: 'cancelled' }
+            ])
+            // A late completion from the cancelled execution must not resurrect its notification.
+            harness.execution.control(receipts[0].attemptId).complete('late old result')
+          }
+          await vi.advanceTimersByTimeAsync(200)
+          expect(sendAppContinuation).not.toHaveBeenCalled()
+        }
+        await prompt(nextPromptId)
+        await expect.poll(() => harness.execution.controls()).toHaveLength(receipts.length)
+        const child = receipts.at(-1)!
+        harness.execution.control(child.attemptId).accept()
+        harness.execution.control(child.attemptId).complete('new result')
+        await expect
+          .poll(
+            async () =>
+              (await harness.composition.host.children(harness.caller)).find(
+                ({ attemptId }) => attemptId === child.attemptId
+              )?.status
+          )
+          .toBe('completed')
+        await vi.advanceTimersByTimeAsync(100)
+        expect(
+          sendAppContinuation,
+          'After staying in the app, a new completed child must automatically resume its root turn.'
+        ).toHaveBeenCalledOnce()
+        expect(sendAppContinuation.mock.calls[0][0].text).toContain(child.attemptId)
+        expect(sendAppContinuation.mock.calls[0][0].provenanceContext?.promptMessageId).toBe(
+          nextPromptId
+        )
+        await vi.advanceTimersByTimeAsync(500)
+        expect(sendAppContinuation).toHaveBeenCalledOnce()
+      } finally {
+        await harness.composition.root.shutdown()
+        clearApplicationShutdownTrigger()
+      }
+    }
+  )
+
   it('runs same-turn collect and staggered settlement wakes through ACP admission and terminal callbacks', async () => {
     vi.useFakeTimers()
     root = await mkdtemp(join(tmpdir(), 'delegated-production-acp-settlement-chain-'))
@@ -1040,7 +1248,7 @@ describe('production delegated-work composition', () => {
     ])
   })
 
-  it.each(['branch', 'project', 'shutdown'] as const)(
+  it.each(['branch', 'project', 'stopAll', 'shutdown'] as const)(
     'cancels a pending settlement wake on %s invalidation',
     async (scope) => {
       vi.useFakeTimers()
@@ -1086,12 +1294,21 @@ describe('production delegated-work composition', () => {
       } else if (scope === 'project') {
         await harness.composition.root.deleteProject(harness.session.projectId)
       } else {
-        await harness.composition.root.stopAll()
+        await harness.composition.root[scope]()
       }
       await vi.advanceTimersByTimeAsync(200)
 
       expect(dispatch).not.toHaveBeenCalled()
       expect(vi.getTimerCount()).toBe(0)
+      if (scope === 'stopAll' || scope === 'shutdown') {
+        const nextLease = await harness.composition.root.rootTurnStarted?.({
+          sessionId: harness.session.id,
+          originatingPromptId: harness.caller.originMessageId
+        })
+        if (scope === 'shutdown') expect(nextLease).toBeUndefined()
+        else expect(nextLease).toEqual(expect.any(String))
+        await harness.composition.root.shutdown()
+      }
       vi.useRealTimers()
     }
   )
@@ -3491,5 +3708,107 @@ describe('production delegated-work composition', () => {
         .runtimeContext!.delegatedWork!.records.map((record) => record.attempts.at(-1)!.status)
     ).toEqual(['cancelled', 'cancelled'])
     expect(receipt.children).toHaveLength(2)
+  })
+})
+
+describe('reported production admission Stop regression', () => {
+  it.each(['claude-code', 'opencode', 'codex'] as const)(
+    'D01 production %s stops admission before a resolved model can launch',
+    async (frameworkId) => {
+      root = await mkdtemp(join(tmpdir(), 'delegated-stop-admission-'))
+      let release!: () => void
+      let entered!: () => void
+      const paused = new Promise<void>((resolve) => {
+        entered = resolve
+      })
+      const resume = new Promise<void>((resolve) => {
+        release = resolve
+      })
+      const harness = await createCompositionHarness(
+        root,
+        frameworkId,
+        undefined,
+        undefined,
+        {},
+        [],
+        async () => {
+          entered()
+          await resume
+          return testExecutionModel(frameworkId)
+        }
+      )
+      const admission = harness.composition.host
+        .delegate(harness.caller, { task: 'Late task', name: 'Late task' }, { wait: false })
+        .then(
+          (value) => ({ value }),
+          (error) => ({ error })
+        )
+      await paused
+      await harness.composition.root.stopSession(harness.session.id)
+      release()
+      const result = await admission
+      if ('value' in result) await expect.poll(() => harness.execution.controls()).toHaveLength(1)
+      const controls = harness.execution.controls().length
+      await harness.composition.root.stopSession(harness.session.id)
+      expect.soft(result).toMatchObject({ error: { code: 'conflict' } })
+      expect(controls).toBe(0)
+    }
+  )
+
+  it('D01 stopping another active branch does not invalidate admission from the restored branch', async () => {
+    root = await mkdtemp(join(tmpdir(), 'delegated-stop-other-branch-'))
+    let release!: () => void
+    let entered!: () => void
+    const paused = new Promise<void>((resolve) => {
+      entered = resolve
+    })
+    const resume = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const harness = await createCompositionHarness(
+      root,
+      'codex',
+      undefined,
+      undefined,
+      {},
+      [],
+      async () => {
+        entered()
+        await resume
+        return testExecutionModel('codex')
+      }
+    )
+    const admission = harness.composition.host.delegate(
+      harness.caller,
+      { task: 'Original branch', name: 'Original' },
+      { wait: false }
+    )
+    await paused
+    const original = structuredClone(harness.durable())
+    const switched = structuredClone(original)
+    const forked = forkEditedConversationMessage(
+      switched.conversationGraph!,
+      harness.caller.originMessageId,
+      'other-root-branch',
+      50
+    )
+    const message = {
+      id: 'other-origin',
+      role: 'user' as const,
+      content: 'Other branch',
+      status: 'complete' as const,
+      eventIds: [],
+      createdAt: 50,
+      updatedAt: 50
+    }
+    switched.conversationGraph = synchronizeActiveConversationMessages(forked, [message], 50)
+    switched.messages = [message]
+    harness.replaceDurable(switched)
+    await harness.composition.root.stopActiveBranch!(harness.session.id)
+    harness.replaceDurable(original)
+    release()
+    await expect(admission).resolves.toMatchObject({ kind: 'receipts' })
+    await expect.poll(() => harness.execution.controls()).toHaveLength(1)
+    await harness.composition.root.stopSession(harness.session.id)
   })
 })

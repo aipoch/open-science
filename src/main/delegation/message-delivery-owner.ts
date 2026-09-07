@@ -24,7 +24,7 @@ import {
 
 type PreparedContinuation = Readonly<{
   start(): Readonly<{ accepted: Promise<DelegateMessageAcceptanceEvidence> }>
-  abort(): Promise<void>
+  abort(error?: unknown): Promise<void>
 }>
 
 type MessageDeliveryOwnerOptions = Readonly<{
@@ -455,20 +455,24 @@ export class ReliableMessageDeliveryOwner {
       disposition: 'continued'
     }
     const prepared = await this.options.prepareContinuation(caller, child, command)
-    const persisted = (await this.options.records.snapshot()).messageCommands.find(
-      ({ sourcePrincipal: principal, requestId: id }) =>
-        principal === sourcePrincipal && id === requestId
-    )
-    if (!persisted) {
-      await prepared.abort()
-      throw new DurableDelegatedWorkError(
-        'durability_failure',
-        'continuation message admission was not committed'
+    try {
+      const persisted = (await this.options.records.snapshot()).messageCommands.find(
+        ({ sourcePrincipal: principal, requestId: id }) =>
+          principal === sourcePrincipal && id === requestId
       )
+      if (!persisted) {
+        throw new DurableDelegatedWorkError(
+          'durability_failure',
+          'continuation message admission was not committed'
+        )
+      }
+      this.preparedContinuations.set(persisted.messageId, prepared)
+      this.wakeLane(persisted, caller.session)
+      return receiptOf(persisted)
+    } catch (error) {
+      await prepared.abort(error)
+      throw error
     }
-    this.preparedContinuations.set(persisted.messageId, prepared)
-    this.wakeLane(persisted, caller.session)
-    return receiptOf(persisted)
   }
 
   private wakeLane(command: DurableMessageCommand, session: SessionKey): void {

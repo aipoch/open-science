@@ -27,6 +27,7 @@ export type RendererFailureContext = (typeof RENDERER_FAILURE_CONTEXTS)[number]
 
 export const RENDERER_FAILURE_SURFACES = [
   'home',
+  'library',
   'workspace',
   'settings',
   'onboarding',

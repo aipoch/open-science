@@ -215,6 +215,9 @@ describe('JobDetailModal — detail view', () => {
     await act(async () => retry?.click())
 
     expect(container.textContent).toContain('Unable to cancel remote job.')
+    expect(container.querySelector('[role="alert"]')?.textContent).not.toContain(
+      'cancel unavailable'
+    )
     expect(jobsCancel).toHaveBeenCalledTimes(2)
   })
 

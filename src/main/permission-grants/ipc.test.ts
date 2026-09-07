@@ -54,6 +54,7 @@ describe('permission grant IPC', () => {
   it('shares one application-owned projection between IPC and application commands', async () => {
     const registry = {
       list: vi.fn().mockResolvedValue([]),
+      listCached: vi.fn().mockReturnValue([]),
       subscribe: vi.fn(() => vi.fn())
     } as unknown as PermissionGrantRegistry
     const owner = createPermissionGrantProjectionController({
@@ -160,6 +161,7 @@ describe('permission grant IPC', () => {
     let listener: (() => void) | undefined
     const registry = {
       list: vi.fn().mockResolvedValue([]),
+      listCached: vi.fn().mockReturnValue([]),
       remember: vi.fn(),
       revoke: vi.fn().mockResolvedValue({ grants: [], conflicts: [] }),
       extendUndo: vi.fn().mockResolvedValue({

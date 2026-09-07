@@ -347,10 +347,7 @@ describe('Session Plan MCP server', () => {
         createdAt: 123
       },
       planRevision: 9,
-      continuationCommandId: 'private-continuation-command',
-      continuationProjection: {
-        document: { task_summary: 'private-feedback-summary' }
-      }
+      deliveryCommandId: 'private-delivery-receipt'
     })
     await withPlanMcpClient(
       'plan-feedback-receipt-test',
@@ -383,8 +380,7 @@ describe('Session Plan MCP server', () => {
         })
         expect(text).not.toContain('private-interaction-id')
         expect(text).not.toContain('private-message-id')
-        expect(text).not.toContain('private-continuation-command')
-        expect(text).not.toContain('private-feedback-summary')
+        expect(text).not.toContain('private-delivery-receipt')
       }
     )
   })

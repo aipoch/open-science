@@ -8,6 +8,7 @@ import type { PersistedChatSession } from '../../shared/session-persistence'
 import { DEFAULT_AGENT_FRAMEWORK_ID, getAgentFramework } from '../agent-framework'
 import type { AgentBackendResolver, ExplicitAgentBackendTarget } from './backend-resolver'
 import type { ProviderAccountsModule } from './provider-accounts'
+import { providerRuntimeValidationTarget } from './provider-validation-state'
 import type { SettingsRepository } from './repository'
 import type { StoredSettings } from './types'
 
@@ -56,6 +57,11 @@ class SessionDetailsModelOwner {
         { kind: 'required', model: candidate.model },
         framework
       )
+      if (providerValidationFailed(provider, providerRuntimeValidationTarget(target, framework))) {
+        throw new Error(
+          'The selected Session details model is no longer available. Refresh the model catalog.'
+        )
+      }
       if (
         !target.frameworkCompatible ||
         (framework.id === 'codex' && !target.modelBridgeSupported)
@@ -95,6 +101,9 @@ class SessionDetailsModelOwner {
       { kind: 'required', model },
       framework
     )
+    if (providerValidationFailed(provider, providerRuntimeValidationTarget(target, framework))) {
+      throw new Error('The Session details model provider is unavailable.')
+    }
     if (!target.frameworkCompatible || (framework.id === 'codex' && !target.modelBridgeSupported)) {
       throw new Error('The Session details model is unavailable for its Agent Framework.')
     }

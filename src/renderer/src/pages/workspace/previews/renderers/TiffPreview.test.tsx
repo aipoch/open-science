@@ -238,14 +238,14 @@ describe('TiffPreviewContent', () => {
 
     await vi.waitFor(() => expect(container.textContent).toContain('Page 1 of 2'))
     expect(
-      container.querySelector<HTMLButtonElement>('[aria-label="Previous TIFF page"]')?.disabled
+      container.querySelector<HTMLButtonElement>('[aria-label="Previous page"]')?.disabled
     ).toBe(true)
-    expect(
-      container.querySelector<HTMLButtonElement>('[aria-label="Next TIFF page"]')?.disabled
-    ).toBe(false)
+    expect(container.querySelector<HTMLButtonElement>('[aria-label="Next page"]')?.disabled).toBe(
+      false
+    )
 
     await act(async () => {
-      container.querySelector<HTMLButtonElement>('[aria-label="Next TIFF page"]')?.click()
+      container.querySelector<HTMLButtonElement>('[aria-label="Next page"]')?.click()
     })
 
     await vi.waitFor(() => expect(container.textContent).toContain('Page 2 of 2'))
@@ -289,7 +289,7 @@ describe('TiffPreviewContent', () => {
 
     await vi.waitFor(() => expect(container.textContent).toContain('Page 1 of 2'))
     await act(async () => {
-      container.querySelector<HTMLButtonElement>('[aria-label="Next TIFF page"]')?.click()
+      container.querySelector<HTMLButtonElement>('[aria-label="Next page"]')?.click()
     })
 
     await vi.waitFor(() =>
@@ -299,7 +299,7 @@ describe('TiffPreviewContent', () => {
     expect(window.api.previewResources.release).not.toHaveBeenCalled()
 
     await act(async () => {
-      container.querySelector<HTMLButtonElement>('[aria-label="Previous TIFF page"]')?.click()
+      container.querySelector<HTMLButtonElement>('[aria-label="Previous page"]')?.click()
     })
 
     await vi.waitFor(() => expect(container.textContent).toContain('Page 1 of 2'))

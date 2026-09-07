@@ -50,6 +50,8 @@ vi.mock('./PreviewFileSurface', () => ({
   PreviewFileSurface: (props: {
     item: PreviewFileItem
     provenanceEntry?: string
+    tooltipClassName?: string
+    actionMenuContentClassName?: string
     retryResolutionEnabled?: boolean
   }) => {
     previewSurfaceSpy(props)
@@ -144,9 +146,10 @@ describe('FilePreviewDialog closing lifecycle', () => {
     )
 
     const onInteractOutside = contentSpy.mock.calls[0]?.[0].onInteractOutside as
-      ((event: { preventDefault: () => void }) => void) | undefined
+      | ((event: { preventDefault: () => void; detail: { originalEvent: Event } }) => void)
+      | undefined
     const preventDefault = vi.fn()
-    onInteractOutside?.({ preventDefault })
+    onInteractOutside?.({ preventDefault, detail: { originalEvent: new Event('pointerdown') } })
     expect(preventDefault).toHaveBeenCalledOnce()
   })
 
@@ -155,6 +158,17 @@ describe('FilePreviewDialog closing lifecycle', () => {
 
     expect(previewSurfaceSpy).toHaveBeenCalledWith(
       expect.objectContaining({ provenanceEntry: 'trailing' })
+    )
+  })
+
+  it('layers Preview action menus and tooltips above the dialog', () => {
+    act(() => root.render(<FilePreviewDialog item={item} onClose={vi.fn()} />))
+
+    expect(previewSurfaceSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        tooltipClassName: 'z-[70]',
+        actionMenuContentClassName: 'z-[70]'
+      })
     )
   })
 

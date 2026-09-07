@@ -21,6 +21,7 @@ import type { SettingsService } from '../service'
 
 type ConnectorSettingsWorkflowStore = Pick<
   SettingsService,
+  | 'getConnectors'
   | 'listConnectors'
   | 'listDeviceCredentials'
   | 'deviceCredentialConsumerIds'
@@ -63,6 +64,8 @@ type WorkflowResult<Method extends keyof ConnectorSettingsWorkflowStore> = Promi
 // Owns Connector mutation follow-up ordering, including the security barrier and derived projection.
 // Every safety-critical effect is required; unsupported hosts must inject an explicit no-op adapter.
 class ConnectorSettingsWorkflows {
+  private readonly pendingCredentialRefresh = new Map<string, CustomServerSecurityChangeGuard>()
+
   constructor(
     private readonly settings: ConnectorSettingsWorkflowStore,
     private readonly effects: ConnectorSettingsWorkflowEffects
@@ -91,7 +94,10 @@ class ConnectorSettingsWorkflows {
       request.secret === undefined
         ? await this.settings.updateDeviceCredential(request)
         : await this.settings.updateDeviceCredential(request, (consumers, mutation) =>
-            this.withDeviceCredentialConsumersBlocked(consumers, mutation)
+            this.withDeviceCredentialConsumersBlocked(consumers, async () => {
+              await this.settings.cancelDeviceCredentialAuthentication({ id: request.id })
+              return mutation()
+            })
           )
     return snapshot
   }
@@ -222,17 +228,38 @@ class ConnectorSettingsWorkflows {
   async retryCustomServer(
     request: AuthenticateCustomServerRequest
   ): WorkflowResult<'listConnectors'> {
+    const pending = [...this.pendingCredentialRefresh].filter(([id]) => id === request.id)
     await this.effects.resetCustomServerClient(request.id)
     this.effects.clearCustomServerFailure(request.id)
     this.effects.invalidatePermissionProjection()
     await this.refreshConnectorProjection()
+    await this.completeCredentialRefresh(pending)
     return this.settings.listConnectors()
   }
 
   async retryConnectorProjection(): WorkflowResult<'listConnectors'> {
+    const pending = [...this.pendingCredentialRefresh]
     this.effects.invalidatePermissionProjection()
     await this.refreshConnectorProjection()
+    await this.completeCredentialRefresh(pending)
     return this.settings.listConnectors()
+  }
+
+  private async completeCredentialRefresh(
+    pending: Array<[string, CustomServerSecurityChangeGuard]>,
+    consumers = pending.map(([id]) => id)
+  ): Promise<void> {
+    await Promise.all(consumers.map((id) => this.effects.resetCustomServerClient(id)))
+    if (pending.length === 0) return
+    const current = await this.settings.getConnectors()
+    for (const [id, guard] of pending) {
+      if (this.pendingCredentialRefresh.get(id) !== guard) continue
+      const server = current?.customMcpServers?.find((candidate) => candidate.id === id)
+      // commit only arms this generation; dispatch still checks the current fingerprint.
+      if (server) guard.commit(server)
+      else guard.rollback()
+      this.pendingCredentialRefresh.delete(id)
+    }
   }
 
   private async afterConnectorsChanged<Result>(mutation: () => Promise<Result>): Promise<Result> {
@@ -282,16 +309,26 @@ class ConnectorSettingsWorkflows {
       await resetConsumers()
       const result = await mutation()
       mutationCompleted = true
+      const pending: Array<[string, CustomServerSecurityChangeGuard]> = []
+      consumers.forEach((id, index) => {
+        const guard = guards[index]
+        if (guard) {
+          this.pendingCredentialRefresh.set(id, guard)
+          pending.push([id, guard])
+        }
+      })
       this.effects.invalidatePermissionProjection()
       await this.refreshConnectorProjection()
-      await resetConsumers()
-      for (const guard of guards) guard?.rollback()
+      await this.completeCredentialRefresh(pending, consumers)
       return result
     } catch (error) {
       if (!mutationCompleted) {
         for (const guard of guards) guard?.rollback()
+        throw error
       }
-      throw error
+      throw new Error(
+        'Credential changes were saved, but Connectors could not refresh. Retry from Settings > Connectors.'
+      )
     }
   }
 }

@@ -19,7 +19,8 @@ import {
 //
 // Logs self-clean: each file is capped at `maxBytes`; on overflow the file rotates (main.log ->
 // main.1.log -> ...) and the oldest beyond `maxFiles` is deleted. Total on-disk size is therefore
-// bounded (~maxBytes * maxFiles) no matter how heavily the app is used — no manual cleanup needed.
+// bounded (~maxBytes * maxFiles) for queued writes. Fatal synchronous writes have a documented
+// one-record exception below; logging requires no manual cleanup during normal operation.
 
 export type LogLevel = 'debug' | 'info' | 'warn' | 'error'
 
@@ -60,16 +61,6 @@ const runWithDiagnosticCorrelation = <Result>(operation: () => Result): Result =
   return diagnosticCorrelation.run(correlationId, operation)
 }
 
-// Turns arbitrary log payloads into JSON-safe values, unwrapping Errors (whose fields are non-enumerable)
-// so a stack trace actually lands in the log instead of `{}`.
-const toSerializable = (value: unknown): unknown => {
-  if (value instanceof Error) {
-    return { name: value.name, message: value.message, stack: value.stack }
-  }
-
-  return value
-}
-
 // Own-property keys carried by common runtime errors that a bare message+stack capture would drop:
 // JSON-RPC RequestErrors attach code + data (the provider/agent's real reason lives in data), and Node
 // system errors attach errno/syscall/path/code. Enumerated explicitly because they are non-enumerable
@@ -101,6 +92,8 @@ const MAX_TOTAL_NODES = 10000
 // Global bound on total emitted characters per sanitize call. The node budget bounds node COUNT; this
 // bounds total SIZE, since node-count × per-string-cap alone would still allow a very large line.
 const MAX_TOTAL_CHARS = 256 * 1024
+// Includes JSON escaping, structure, and the terminating newline.
+const MAX_RECORD_BYTES = 2 * 1024 * 1024
 
 // One mandatory policy for every logger sink. Callers may still pre-sanitize, but cannot opt out here.
 const OVERSIZED_TEXT_MARKER = '[redacted: oversized text]'
@@ -117,7 +110,7 @@ const CONTENT_BEARING_KEYS = new Set([
 // Mutable budget shared across one errorLogFields call: `nodes` bounds how many values are emitted,
 // `chars` bounds their combined length — together they bound both the count and the size of the output
 // regardless of reference sharing.
-type Budget = { nodes: number; chars: number }
+type Budget = { nodes: number; chars: number; redact?: boolean }
 
 // Per-field code-unit cap only (no global budget); used by the outer fallback where no budget is live.
 const truncate = (value: string): string =>
@@ -133,22 +126,25 @@ const redactLogText = (value: string): string => {
   return redactSensitiveText(value)
 }
 
-const stringifyLogRecord = (record: Record<string, unknown>): string =>
-  // JSON's replacer recursively covers every serializable descendant and prunes sensitive subtrees
-  // before they can reach the file or the console mirror.
-  JSON.stringify(record, (key, value: unknown) => {
-    if (key && (isSensitiveDiagnosticKey(key) || isContentBearingLogKey(key))) {
-      return REDACTED_MARKER
-    }
-    const serializable = toSerializable(value)
-    return typeof serializable === 'string' ? redactLogText(serializable) : serializable
-  })
+const stringifyLogRecord = (record: Record<string, unknown>): string => {
+  // Bound traversal before JSON.stringify and never invoke a payload's custom toJSON.
+  // Metadata precedes data, so wide payloads cannot consume its budget.
+  const safe = toLogSafe(record, new Set(), 0, {
+    nodes: MAX_TOTAL_NODES,
+    chars: MAX_TOTAL_CHARS,
+    redact: true
+  }) as Record<string, unknown>
+  const line = JSON.stringify(safe)
+  if (Buffer.byteLength(line, 'utf8') + 1 <= MAX_RECORD_BYTES) return line
+  return JSON.stringify({ ...safe, data: '[truncated: record byte limit]' })
+}
 
 // Applies the per-field cap AND the shared character budget to a string about to be emitted, charging
 // the budget for what it keeps. Once the global budget is spent, further strings collapse to a short
 // marker so the total line size stays bounded.
 const chargeString = (value: string, budget: Budget): string => {
   if (budget.chars <= 0) return '…[truncated]'
+  if (budget.redact) value = redactLogText(value)
   const capped = truncate(value)
   if (capped.length <= budget.chars) {
     budget.chars -= capped.length
@@ -237,7 +233,8 @@ const safeToString = (value: unknown, budget: Budget): string => {
 const toLogSafe = (value: unknown, seen: Set<object>, depth: number, budget: Budget): unknown => {
   // Charge one node per value visited so total output is bounded across the whole traversal — this is
   // what stops a shared DAG from expanding combinatorially even though each single path is capped.
-  if (budget.nodes <= 0) return '[truncated: budget exceeded]'
+  if (budget.nodes <= 0 || (budget.redact && budget.chars <= 0))
+    return '[truncated: budget exceeded]'
   budget.nodes -= 1
 
   const type = typeof value
@@ -269,7 +266,15 @@ const toLogSafe = (value: unknown, seen: Set<object>, depth: number, budget: Bud
     if (depth >= MAX_SANITIZE_DEPTH) return '[max depth]'
     seen.add(value as object)
     try {
-      if (value instanceof Error) return formatError(value, seen, depth, budget)
+      if (value instanceof Error) {
+        if (!budget.redact) return formatError(value, seen, depth, budget)
+        // Preserve the ordinary logger's Error shape; errorLogFields owns richer expansion.
+        const fields = nullProtoRecord()
+        for (const key of ['name', 'message', 'stack']) {
+          fields[key] = sanitizeSlot(safeRead(value, key), seen, depth + 1, undefined, budget)
+        }
+        return fields
+      }
       if (Array.isArray(value)) {
         // Build a fresh plain array by index rather than value.map: map respects Symbol.species (a
         // hijacked constructor could produce an object with a throwing toJSON) and a throwing index
@@ -289,7 +294,7 @@ const toLogSafe = (value: unknown, seen: Set<object>, depth: number, budget: Bud
         let index = 0
         let budgetHit = false
         for (; index < cap; index += 1) {
-          if (budget.nodes <= 0) {
+          if (budget.nodes <= 0 || (budget.redact && budget.chars <= 0)) {
             budgetHit = true
             break
           }
@@ -324,7 +329,7 @@ const toLogSafe = (value: unknown, seen: Set<object>, depth: number, budget: Bud
       let processed = 0
       let objBudgetHit = false
       for (; processed < limit; processed += 1) {
-        if (budget.nodes <= 0) {
+        if (budget.nodes <= 0 || (budget.redact && budget.chars <= 0)) {
           objBudgetHit = true
           break
         }
@@ -337,7 +342,15 @@ const toLogSafe = (value: unknown, seen: Set<object>, depth: number, budget: Bud
         }
         // Charge per slot (see the array note): a key whose read throws must still cost budget.
         budget.nodes -= 1
-        const raw = safeRead(value as object, keys[processed])
+        const sourceKey = keys[processed]
+        if (
+          budget.redact &&
+          (isSensitiveDiagnosticKey(sourceKey) || isContentBearingLogKey(sourceKey))
+        ) {
+          out[key] = REDACTED_MARKER
+          continue
+        }
+        const raw = safeRead(value as object, sourceKey)
         out[key] = raw === UNREADABLE ? UNREADABLE_MARKER : toLogSafe(raw, seen, depth + 1, budget)
       }
       // One marker counting all unprocessed keys (budget-skipped within the cap + beyond the cap).
@@ -489,9 +502,8 @@ const diagnosticErrorFields = (error: unknown): { errorCategory: string } => {
 }
 
 // Expands an unknown thrown value into a log-safe record for nesting inside a larger context object.
-// toSerializable only unwraps a *top-level* Error; an Error nested inside `{ error, ...ctx }` serializes
-// to `{}` because its fields are non-enumerable — losing the message, stack, and (worse) the code/data
-// that name the real cause. Spread the result into the log context so all of it survives:
+// The ordinary sink keeps an Error’s name/message/stack. Use this helper when code/data/cause
+// are needed as well. Spread the result into the log context so all of it survives:
 //   log.error('connect failed', { ...errorLogFields(err), framework })
 // The result is guaranteed acyclic and JSON-serializable, and this function never throws: every branch
 // runs through toLogSafe (which unwraps nested Errors, breaks any cycle, bounds depth, and guards every
@@ -604,7 +616,7 @@ const formatLine = (
 
   if (runId !== undefined) record.runId = runId
   if (correlationId !== undefined) record.correlationId = correlationId
-  if (data !== undefined) record.data = toSerializable(data)
+  if (data !== undefined) record.data = data
 
   try {
     return stringifyLogRecord(record)
@@ -643,7 +655,7 @@ const fileSize = async (path: string): Promise<number> => {
 }
 
 // Shifts the live file into backups, dropping any beyond `maxFiles`. Best-effort: a missing file at
-// any step is ignored so logging never fails because of rotation.
+// any step is ignored; other I/O errors stop the chain before an unmoved backup is overwritten.
 const rotate = async (logDir: string, fileName: string, maxFiles: number): Promise<boolean> => {
   const path = (name: string): string => join(logDir, name)
   const backups = Math.max(0, maxFiles - 1)
@@ -657,11 +669,13 @@ const rotate = async (logDir: string, fileName: string, maxFiles: number): Promi
   }
 
   // Delete the oldest backup, then shift each backup up one slot, then the live file becomes .1.
-  await rm(path(rotatedName(fileName, backups)), { force: true }).catch(() => undefined)
+  await rm(path(rotatedName(fileName, backups)), { force: true })
 
   for (let index = backups - 1; index >= 1; index -= 1) {
     await rename(path(rotatedName(fileName, index)), path(rotatedName(fileName, index + 1))).catch(
-      () => undefined
+      (error: unknown) => {
+        if (!isMissingFileError(error)) throw error
+      }
     )
   }
 
@@ -690,6 +704,13 @@ const appendLine = (line: string): void => {
         }
 
         const lineBytes = Buffer.byteLength(line, 'utf8') + 1 // include the newline
+
+        // Even an empty file must not accept a record larger than its configured cap.
+        if (lineBytes > maxBytes) {
+          lastWriteSucceeded = false
+          lastFailureCategory = 'append'
+          return
+        }
 
         // Rotate before writing when the next line would exceed the cap (but never rotate an empty file).
         if (currentBytes > 0 && currentBytes + lineBytes > maxBytes) {

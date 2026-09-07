@@ -90,7 +90,8 @@ describe('shared control interaction styling', () => {
     expect(content?.className).toContain('overscroll-contain')
     expect(item?.className).toContain('rounded-lg')
     expect(item?.className).toContain('data-[highlighted]:bg-muted')
-    expect(item?.className).toContain('motion-reduce:transition-none')
+    expect(item?.className).not.toContain('transition-colors')
+    expect(content?.className).toContain('rounded-[15px]')
   })
 
   it('matches select triggers and options to the same interaction contract', async () => {

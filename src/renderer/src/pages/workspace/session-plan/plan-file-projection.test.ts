@@ -29,15 +29,53 @@ describe('plan file projection resolution', () => {
     expect(resolved).toEqual({ projection: active, stale: false })
   })
 
-  it('reports the history entry as current when it is still the active plan', () => {
-    const shared = planTestProjection('version-1')
+  it('prefers updated active progress when history has the same version id', () => {
+    const historical = planTestProjection('version-1')
+    const active = {
+      ...historical,
+      revision: 7,
+      lifecycle: 'in_progress' as const,
+      stepStatuses: {
+        'Analyze the data': { status: 'in_progress' as const, updatedAt: 42 }
+      },
+      stepStates: { 'Analyze the data': { status: 'in_progress' as const } },
+      counts: { ...historical.counts, completed: 0, inProgress: 1 }
+    }
 
     const resolved = resolvePlanFileProjection(
-      { planHistoryProjections: [shared], activePlanProjection: shared },
+      { planHistoryProjections: [historical], activePlanProjection: active },
       'version-1'
     )
 
-    expect(resolved).toEqual({ projection: shared, stale: false })
+    expect(resolved).toEqual({ projection: active, stale: false })
+  })
+
+  it('marks a historical projection stale when runtime identifies a different current plan', () => {
+    const historical = planTestProjection('version-history')
+
+    const resolved = resolvePlanFileProjection(
+      {
+        planHistoryProjections: [historical],
+        runtimeContext: { plan: { artifactVersionId: 'version-current' } }
+      },
+      'version-history'
+    )
+
+    expect(resolved).toEqual({ projection: historical, stale: true })
+  })
+
+  it('keeps a historical projection current when it matches the runtime plan identity', () => {
+    const current = planTestProjection('version-current')
+
+    const resolved = resolvePlanFileProjection(
+      {
+        planHistoryProjections: [current],
+        runtimeContext: { plan: { artifactVersionId: 'version-current' } }
+      },
+      'version-current'
+    )
+
+    expect(resolved).toEqual({ projection: current, stale: false })
   })
 
   it('returns undefined when no projection matches or identity is missing', () => {

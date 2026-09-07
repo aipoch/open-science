@@ -19,6 +19,8 @@ import {
   type ChatSession
 } from '../../stores/session-store'
 import type { UploadedAttachment } from '../../../../shared/uploads'
+import { useNavigationStore, type PdfReadingDocument } from '../../stores/navigation-store'
+import { useProjectStore } from '../../stores/project-store'
 import {
   flushPreviewPersistence,
   toPersistedPreviewState,
@@ -298,6 +300,248 @@ describe('preview persistence projections', () => {
     })
   })
 
+  it('recovers managed identity from a persisted authoritative artifact id', () => {
+    const restored = toRestoredSlice({
+      version: PREVIEW_STATE_VERSION,
+      panelState: 'open',
+      items: [
+        {
+          id: 'legacy-artifact-version',
+          sessionId: 'session-1',
+          title: 'report.html',
+          source: 'artifact',
+          path: '/workspace/project/report.html',
+          format: 'html',
+          name: 'report.html',
+          artifactId: 'artifact-lineage-1'
+        }
+      ]
+    })
+
+    expect(restored.items?.[0]).toMatchObject({
+      artifactId: 'artifact-lineage-1',
+      managedFileId: 'artifact-lineage-1'
+    })
+  })
+
+  it('recovers managed identity from an exact hydrated Upload record', () => {
+    const upload = createUpload({ id: 'upload-authority' })
+    const restored = toRestoredSlice(
+      {
+        version: PREVIEW_STATE_VERSION,
+        panelState: 'open',
+        items: [
+          {
+            id: 'upload:upload-authority',
+            sessionId: '.pending',
+            title: 'data.csv',
+            source: 'upload',
+            path: '/workspace/uploads/.pending/data.csv',
+            format: 'csv',
+            name: 'data.csv'
+          }
+        ]
+      },
+      [createSession(upload)]
+    )
+
+    expect(restored.items?.[0]).toMatchObject({
+      sessionId: 'session-final',
+      managedFileId: 'upload-authority'
+    })
+  })
+
+  it('does not promote artifact identity into an unmatched Upload item', () => {
+    const session = createSession(createUpload({ id: 'different-upload' }), {
+      artifacts: [
+        {
+          id: 'upload:missing-upload',
+          artifactId: 'hydrated-artifact-lineage',
+          kind: 'managed-file',
+          path: '/workspace/uploads/session-final/data.csv',
+          name: 'data.csv'
+        }
+      ]
+    })
+    const restored = toRestoredSlice(
+      {
+        version: PREVIEW_STATE_VERSION,
+        panelState: 'open',
+        items: [
+          {
+            id: 'upload:missing-upload',
+            sessionId: 'session-final',
+            title: 'data.csv',
+            source: 'upload',
+            path: '/workspace/uploads/session-final/data.csv',
+            format: 'csv',
+            name: 'data.csv',
+            artifactId: 'persisted-artifact-lineage'
+          }
+        ]
+      },
+      [session]
+    )
+
+    expect(restored.items?.[0]).not.toHaveProperty('artifactId')
+    expect(restored.items?.[0]).not.toHaveProperty('managedFileId')
+  })
+
+  it('preserves a persisted Upload identity while discarding artifact metadata', () => {
+    const restored = toRestoredSlice({
+      version: PREVIEW_STATE_VERSION,
+      panelState: 'open',
+      items: [
+        {
+          id: 'upload:legacy-upload',
+          sessionId: 'session-final',
+          title: 'data.csv',
+          source: 'upload',
+          path: '/workspace/uploads/session-final/data.csv',
+          format: 'csv',
+          name: 'data.csv',
+          artifactId: 'artifact-from-wrong-source',
+          managedFileId: 'persisted-upload-authority'
+        }
+      ]
+    })
+
+    expect(restored.items?.[0]).toMatchObject({
+      managedFileId: 'persisted-upload-authority'
+    })
+    expect(restored.items?.[0]).not.toHaveProperty('artifactId')
+  })
+
+  it('recovers compatibility artifact identity from a persisted artifact id', () => {
+    const restored = toRestoredSlice({
+      version: PREVIEW_STATE_VERSION,
+      panelState: 'open',
+      items: [
+        {
+          id: 'legacy-artifact-version',
+          sessionId: 'session-final',
+          title: 'report.html',
+          path: '/workspace/project/report.html',
+          format: 'html',
+          name: 'report.html',
+          artifactId: 'persisted-artifact-lineage'
+        }
+      ]
+    })
+
+    expect(restored.items?.[0]).toMatchObject({
+      artifactId: 'persisted-artifact-lineage',
+      managedFileId: 'persisted-artifact-lineage'
+    })
+  })
+
+  it('recovers compatibility artifact identity from an exact hydrated Artifact record', () => {
+    const session = createSession(createUpload(), {
+      artifacts: [
+        {
+          id: 'legacy-artifact-version',
+          artifactId: 'hydrated-artifact-lineage',
+          kind: 'managed-file',
+          path: '/workspace/project/report.html',
+          name: 'report.html'
+        }
+      ]
+    })
+    const restored = toRestoredSlice(
+      {
+        version: PREVIEW_STATE_VERSION,
+        panelState: 'open',
+        items: [
+          {
+            id: 'legacy-artifact-version',
+            sessionId: 'session-final',
+            title: 'report.html',
+            path: '/workspace/project/report.html',
+            format: 'html',
+            name: 'report.html'
+          }
+        ]
+      },
+      [session]
+    )
+
+    expect(restored.items?.[0]).toMatchObject({
+      artifactId: 'hydrated-artifact-lineage',
+      managedFileId: 'hydrated-artifact-lineage'
+    })
+  })
+
+  it('recovers artifact identity only from an exact hydrated Artifact record', () => {
+    const session = createSession(createUpload(), {
+      artifacts: [
+        {
+          id: 'legacy-artifact-version',
+          artifactId: 'artifact-lineage-2',
+          kind: 'managed-file',
+          path: '/workspace/project/report.html',
+          name: 'report.html'
+        }
+      ]
+    })
+    const restored = toRestoredSlice(
+      {
+        version: PREVIEW_STATE_VERSION,
+        panelState: 'open',
+        items: [
+          {
+            id: 'legacy-artifact-version',
+            sessionId: 'session-final',
+            title: 'report.html',
+            source: 'artifact',
+            path: '/workspace/project/report.html',
+            format: 'html',
+            name: 'report.html'
+          }
+        ]
+      },
+      [session]
+    )
+
+    expect(restored.items?.[0]).toMatchObject({
+      artifactId: 'artifact-lineage-2',
+      managedFileId: 'artifact-lineage-2'
+    })
+  })
+
+  it('does not infer managed identity from a path or a compatibility item id', () => {
+    const session = createSession(createUpload(), {
+      artifacts: [
+        {
+          id: 'different-artifact-version',
+          artifactId: 'artifact-lineage-3',
+          kind: 'managed-file',
+          path: '/workspace/project/report.html',
+          name: 'report.html'
+        }
+      ]
+    })
+    const restored = toRestoredSlice(
+      {
+        version: PREVIEW_STATE_VERSION,
+        panelState: 'open',
+        items: [
+          {
+            id: 'legacy-artifact-version',
+            sessionId: 'session-final',
+            title: 'report.html',
+            path: '/workspace/project/report.html',
+            format: 'html',
+            name: 'report.html'
+          }
+        ]
+      },
+      [session]
+    )
+
+    expect(restored.items?.[0]).not.toHaveProperty('artifactId')
+    expect(restored.items?.[0]).not.toHaveProperty('managedFileId')
+  })
+
   it('re-evaluates persisted formats against current preview support', () => {
     const restored = toRestoredSlice({
       version: PREVIEW_STATE_VERSION,
@@ -448,6 +692,69 @@ describe('usePreviewPersistence per-project save/restore', () => {
     container.remove()
     vi.restoreAllMocks()
   })
+
+  it.each([1, 2, 3])(
+    'keeps %i Library Reading PDFs when Workspace hydrates older preview tabs',
+    async (count) => {
+      const projectId = `reading-hydration-${count}`
+      useProjectStore.setState({
+        projects: [
+          {
+            id: projectId,
+            name: 'Reading',
+            description: '',
+            isExample: false,
+            createdAt: 1,
+            updatedAt: 1
+          }
+        ]
+      })
+      const documents: PdfReadingDocument[] = Array.from({ length: count }, (_, index) => ({
+        item: {
+          id: `literature:version-${index}`,
+          type: 'file',
+          source: 'literature',
+          sessionId: 'literature-library',
+          path: `literature-attachment-version:version-${index}`,
+          title: `paper-${index}.pdf`,
+          name: `paper-${index}.pdf`,
+          format: 'pdf'
+        },
+        source: { sourceKind: 'literature-attachment-version', sourceVersionId: `version-${index}` }
+      }))
+      const oldState: PersistedPreviewState = {
+        version: PREVIEW_STATE_VERSION,
+        panelState: 'collapsed',
+        activeItemId: 'old-report',
+        items: [
+          {
+            id: 'old-report',
+            sessionId: 'old-session',
+            source: 'artifact',
+            title: 'old.docx',
+            name: 'old.docx',
+            path: '/old.docx',
+            format: 'word'
+          }
+        ]
+      }
+      const deferred = createDeferred<PreviewStateSnapshot | null>()
+      load.mockReturnValueOnce(deferred.promise)
+      expect(useNavigationStore.getState().startPdfReadingConversations(projectId, documents)).toBe(
+        true
+      )
+      await act(async () => root.render(<PersistenceHarness projectId={projectId} />))
+      await act(async () => deferred.resolve({ revision: 1, state: oldState }))
+      const preview = usePreviewWorkbenchStore.getState()
+      expect(preview.activeItemId).toBe(documents[0].item.id)
+      expect(preview.panelState).toBe('open')
+      expect(preview.items.map(({ id }) => id)).toEqual(
+        expect.arrayContaining(documents.map(({ item }) => item.id))
+      )
+      expect(preview.items.some(({ id }) => id === 'old-report')).toBe(true)
+      expect(useSessionStore.getState().selectedSessionId).toBeUndefined()
+    }
+  )
 
   it('loads the incoming project and activates it from restored persistence', async () => {
     const persisted: PersistedPreviewState = {

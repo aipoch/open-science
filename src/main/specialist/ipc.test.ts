@@ -673,6 +673,17 @@ describe('specialist session IPC', () => {
         specialistId: 'research-synth'
       })
     ).resolves.toMatchObject({ specialistId: 'research-synth', canExport: true })
+    await handlers.get(SPECIALIST_IPC.PREVIEW_EXPORT)?.(undefined, {
+      specialistId: 'research-synth',
+      includedSkillIds: []
+    })
+    expect(previewExport).toHaveBeenLastCalledWith('research-synth', [])
+    await expect(
+      handlers.get(SPECIALIST_IPC.PREVIEW_EXPORT)?.(undefined, {
+        specialistId: 'research-synth',
+        includedSkillIds: 'invalid'
+      })
+    ).rejects.toThrow('Invalid Specialist export preview.')
     const result = await handlers.get(SPECIALIST_IPC.EXPORT)?.(undefined, {
       specialistId: 'research-synth',
       expectedRevision: 3,

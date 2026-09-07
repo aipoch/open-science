@@ -44,6 +44,7 @@ const createDependencies = (
 
 afterEach(() => {
   vi.useRealTimers()
+  vi.restoreAllMocks()
 })
 
 describe('OfficePreviewSupervisor OOPIF sessions', () => {
@@ -281,6 +282,21 @@ describe('OfficePreviewSupervisor OOPIF sessions', () => {
       error: 'PREVIEW_PROCESS_CRASHED'
     })
     expect(dependencies.releaseResource).toHaveBeenCalledWith(7, 'resource-1')
+  })
+
+  it('clears the process-memory poll when the preview session closes', async () => {
+    vi.useFakeTimers()
+    const clearIntervalSpy = vi.spyOn(globalThis, 'clearInterval')
+    const dependencies = createDependencies({
+      getProcessMemoryUsageBytes: vi.fn().mockResolvedValue(1)
+    })
+    const supervisor = new OfficePreviewSupervisor(dependencies)
+
+    await supervisor.open(7, request)
+    await supervisor.attachFrame(7, 'session-1')
+    await supervisor.close(7, 'session-1')
+
+    expect(clearIntervalSpy).toHaveBeenCalled()
   })
 
   it('releases only the owning session and makes repeated closes idempotent', async () => {

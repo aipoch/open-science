@@ -32,6 +32,7 @@ type SandboxDependencyCheck = Readonly<{ warnings: string[]; errors: string[] }>
 
 type NetworkRuntimeConfig = Readonly<{
   allowedDomains: readonly string[]
+  askDomains?: readonly string[]
   deniedDomains: readonly string[]
   deniedDomainReasons?: Readonly<Record<string, string>>
   parentProxy?: Readonly<{ http?: string; https?: string; noProxy?: string }>
@@ -87,6 +88,7 @@ const parentSettings = (config: NetworkRuntimeConfig): ParentProxySettings | und
 const buildPolicy = (config: NetworkRuntimeConfig): DestinationPolicy =>
   new DestinationPolicy({
     allowedDomains: config.allowedDomains,
+    askDomains: config.askDomains,
     deniedDomains: config.deniedDomains,
     ...(config.deniedDomainReasons ? { deniedDomainReasons: config.deniedDomainReasons } : {})
   })

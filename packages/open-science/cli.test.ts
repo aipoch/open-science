@@ -34,6 +34,92 @@ describe('task CLI', () => {
     expect(() => parseCliArgs(['start', '--port', '0'])).toThrow('Invalid port: 0')
   })
 
+  it.each([
+    { argv: ['start', 'unexpected'], message: 'start accepts no arguments.' },
+    { argv: ['stop', 'unexpected'], message: 'stop accepts no arguments.' },
+    { argv: ['status', 'unexpected'], message: 'status accepts no arguments.' },
+    { argv: ['url', 'unexpected'], message: 'url accepts no arguments.' },
+    { argv: ['update', 'unexpected'], message: 'update accepts no arguments.' },
+    {
+      argv: ['codex', 'login', 'unexpected'],
+      message: 'codex login accepts no arguments.'
+    },
+    {
+      argv: ['rollback-to-0.7.3', 'unexpected'],
+      message: 'rollback-to-0.7.3 accepts no arguments.'
+    },
+    { argv: ['project', 'list', 'unexpected'], message: 'project list accepts no arguments.' },
+    {
+      argv: ['run', 'unexpected', '--project', 'project-1', '--prompt', 'Research this.'],
+      message: 'run accepts no arguments.'
+    },
+    { argv: ['run', 'status', 'run-1', 'run-2'], message: 'run status accepts one argument.' },
+    { argv: ['run', 'cancel', 'run-1', 'run-2'], message: 'run cancel accepts one argument.' },
+    {
+      argv: ['session', 'status', 'session-1', 'session-2'],
+      message: 'session status accepts one argument.'
+    },
+    {
+      argv: ['session', 'config', 'show', 'session-1', 'session-2'],
+      message: 'session config accepts two arguments.'
+    },
+    {
+      argv: ['session', 'config', 'update', 'session-1', 'session-2'],
+      message: 'session config accepts two arguments.'
+    },
+    {
+      argv: ['settings', 'agent-routing', 'show', 'unexpected'],
+      message: 'settings agent-routing accepts one argument.'
+    },
+    {
+      argv: ['settings', 'agent-routing', 'update', 'unexpected'],
+      message: 'settings agent-routing accepts one argument.'
+    },
+    {
+      argv: ['plan', 'show', 'session-1', 'session-2'],
+      message: 'plan show accepts one argument.'
+    },
+    {
+      argv: ['plan', 'approve', 'session-1', 'session-2'],
+      message: 'plan approve accepts one argument.'
+    },
+    {
+      argv: ['plan', 'reject', 'session-1', 'session-2'],
+      message: 'plan reject accepts one argument.'
+    },
+    {
+      argv: ['plan', 'revise', 'session-1', 'session-2'],
+      message: 'plan revise accepts one argument.'
+    },
+    {
+      argv: ['artifacts', 'list', 'session-1', 'session-2'],
+      message: 'artifacts list accepts one argument.'
+    },
+    {
+      argv: ['artifacts', 'download', 'artifact-1', 'artifact-2'],
+      message: 'artifacts download accepts one argument.'
+    }
+  ])('rejects unused positional arguments before dispatch', ({ argv, message }) => {
+    expect(() => parseCliArgs(argv)).toThrow(message)
+  })
+
+  it.each([
+    ['create', ['project', 'create', 'Systematic', 'review'], ['Systematic', 'review']],
+    ['update', ['project', 'update', 'Systematic', 'review'], ['Systematic', 'review']],
+    [
+      'session-defaults show',
+      ['project', 'session-defaults', 'show', 'Systematic', 'review'],
+      ['show', 'Systematic', 'review']
+    ],
+    [
+      'session-defaults update',
+      ['project', 'session-defaults', 'update', 'Systematic', 'review'],
+      ['update', 'Systematic', 'review']
+    ]
+  ])('preserves a multi-word Project name for project %s', (_label, argv, positionals) => {
+    expect(parseCliArgs(argv).positionals).toEqual(positionals)
+  })
+
   it('parses the first milestone run interface', () => {
     expect(
       parseCliArgs(['project', 'create', 'Research', '--agent-context', 'Always cite sources.'])
@@ -235,6 +321,174 @@ describe('task CLI', () => {
     )
   })
 
+  it('parses Session, Project-default, and Agent-routing configuration commands', () => {
+    expect(() => parseCliArgs(['run', '--provider', 'provider-1'])).toThrow(
+      '--provider requires --model or --provider-default-model.'
+    )
+    expect(
+      parseCliArgs([
+        'session',
+        'config',
+        'update',
+        'session-1',
+        '--revision',
+        '4',
+        '--provider',
+        'provider-1',
+        '--provider-default-model',
+        '--reasoning-effort',
+        'high',
+        '--no-memory',
+        '--enable-compute-host',
+        'ssh:alpha',
+        '--compute-host',
+        'ssh:alpha'
+      ])
+    ).toMatchObject({
+      command: 'session',
+      subcommand: 'config',
+      positionals: ['update', 'session-1'],
+      options: {
+        revision: 4,
+        provider: 'provider-1',
+        providerDefaultModel: true,
+        reasoningEffort: 'high',
+        memoryEnabled: false,
+        enabledComputeHosts: ['ssh:alpha'],
+        computeHosts: ['ssh:alpha']
+      }
+    })
+    expect(
+      parseCliArgs([
+        'project',
+        'session-defaults',
+        'update',
+        'Research',
+        '--clear-provider',
+        '--clear-specialist'
+      ])
+    ).toMatchObject({
+      command: 'project',
+      subcommand: 'session-defaults',
+      positionals: ['update', 'Research'],
+      options: { clearProvider: true, clearSpecialist: true }
+    })
+    expect(
+      parseCliArgs([
+        'settings',
+        'agent-routing',
+        'update',
+        '--framework',
+        'codex',
+        '--reviewer-inherit',
+        '--subagent-provider',
+        'provider-1',
+        '--subagent-model',
+        'model-1'
+      ])
+    ).toMatchObject({
+      command: 'settings',
+      subcommand: 'agent-routing',
+      positionals: ['update'],
+      options: {
+        framework: 'codex',
+        reviewerInherit: true,
+        subagentProvider: 'provider-1',
+        subagentModel: 'model-1'
+      }
+    })
+    expect(() =>
+      parseCliArgs([
+        'session',
+        'config',
+        'update',
+        'session-1',
+        '--revision',
+        '4',
+        '--clear-compute-hosts',
+        '--enable-compute-host',
+        'ssh:alpha'
+      ])
+    ).toThrow('Use only one of Compute Host selection options or --clear-compute-hosts.')
+    expect(() =>
+      parseCliArgs(['run', '--session', 'session-1', '--enable-compute-host', 'ssh:alpha'])
+    ).toThrow('--enable-compute-host cannot update an existing Session; use session config update.')
+    expect(() => parseCliArgs(['run', '--session', 'session-1', '--clear-compute-hosts'])).toThrow(
+      '--clear-compute-hosts cannot update an existing Session; use session config update.'
+    )
+  })
+
+  it('dispatches atomic configuration updates with their concurrency tokens', async () => {
+    const client = {
+      listProjects: vi.fn(listProjects),
+      getProjectSessionDefaults: vi.fn().mockResolvedValue({
+        projectId: 'project-1',
+        updatedAt: 10,
+        configured: { computeHosts: { enabled: [], selected: [] } }
+      }),
+      updateProjectSessionDefaults: vi.fn().mockResolvedValue({ projectId: 'project-1' }),
+      getSessionConfiguration: vi.fn().mockResolvedValue({
+        sessionId: 'session-1',
+        revision: 4,
+        persisted: { computeHosts: { enabled: ['ssh:alpha'], selected: [] } }
+      }),
+      updateSessionConfiguration: vi.fn().mockResolvedValue({ sessionId: 'session-1' }),
+      updateAgentRouting: vi.fn().mockResolvedValue({ configured: {} })
+    }
+    const deps = { connect: vi.fn().mockResolvedValue(client), log: vi.fn(), stdinIsTTY: true }
+
+    await runTaskCommand(
+      parseCliArgs([
+        'project',
+        'session-defaults',
+        'update',
+        'Research',
+        '--approval-profile',
+        'auto',
+        '--clear-memory'
+      ]),
+      deps
+    )
+    expect(client.updateProjectSessionDefaults).toHaveBeenCalledWith('project-1', {
+      expectedUpdatedAt: 10,
+      patch: { permissionProfile: 'auto', memoryEnabled: null }
+    })
+
+    await runTaskCommand(
+      parseCliArgs([
+        'session',
+        'config',
+        'update',
+        'session-1',
+        '--revision',
+        '4',
+        '--compute-host',
+        'ssh:alpha'
+      ]),
+      deps
+    )
+    expect(client.updateSessionConfiguration).toHaveBeenCalledWith('session-1', {
+      expectedRevision: 4,
+      computeHosts: { enabled: ['ssh:alpha'], selected: ['ssh:alpha'] }
+    })
+
+    await runTaskCommand(
+      parseCliArgs([
+        'settings',
+        'agent-routing',
+        'update',
+        '--framework',
+        'codex',
+        '--reviewer-inherit'
+      ]),
+      deps
+    )
+    expect(client.updateAgentRouting).toHaveBeenCalledWith({
+      framework: 'codex',
+      reviewer: { mode: 'inherit' }
+    })
+  })
+
   it('sends Compute hosts only when the repeatable flag is present and prints authority JSON', async () => {
     const authorityRun = {
       id: 'run-compute',
@@ -273,6 +527,37 @@ describe('task CLI', () => {
       computeHostIds: ['ssh:alpha', 'ssh:beta', 'ssh:alpha']
     })
     expect(JSON.parse(log.mock.calls[0][0]).preferredComputeHostIds).toEqual(['ssh:authority'])
+  })
+
+  it('clears inherited Compute Host access and selection for a new Session', async () => {
+    const client = {
+      listProjects,
+      startRun: vi
+        .fn()
+        .mockResolvedValue({ id: 'run-1', sessionId: 'session-1', status: 'running' })
+    }
+
+    await runTaskCommand(
+      {
+        command: 'run',
+        options: {
+          project: 'project-1',
+          prompt: 'Run locally.',
+          clearComputeHosts: true,
+          wait: false,
+          json: true,
+          jsonl: false
+        }
+      },
+      { connect: vi.fn().mockResolvedValue(client), log: vi.fn(), stdinIsTTY: true }
+    )
+
+    expect(client.startRun).toHaveBeenCalledWith({
+      project: 'project-1',
+      prompt: 'Run locally.',
+      enabledComputeHostIds: [],
+      computeHostIds: []
+    })
   })
 
   it('parses application update output and rejects positional arguments', () => {
@@ -1241,6 +1526,165 @@ describe('task CLI', () => {
     expect(client.cancelRun).not.toHaveBeenCalled()
   })
 
+  it('keeps the authoritative Run result when the event stream times out mid-run', async () => {
+    const streamFailure = Object.assign(
+      new Error('Open Science event stream timed out after 30000 milliseconds.'),
+      { code: 'timeout' }
+    )
+    const events = (): {
+      ready: Promise<void>
+      [Symbol.asyncIterator](): {
+        next(): Promise<IteratorResult<never>>
+      }
+    } => ({
+      ready: Promise.resolve(),
+      [Symbol.asyncIterator]() {
+        return {
+          next: () =>
+            new Promise<IteratorResult<never>>((_, reject) => {
+              setTimeout(() => reject(streamFailure), 5)
+            })
+        }
+      }
+    })
+    const client = {
+      listProjects,
+      events,
+      startRun: vi.fn().mockResolvedValue({
+        id: 'run-1',
+        sessionId: 'session-1',
+        status: 'running'
+      }),
+      waitForRun: vi.fn().mockImplementation(
+        () =>
+          new Promise((resolve) => {
+            setTimeout(
+              () =>
+                resolve({
+                  id: 'run-1',
+                  sessionId: 'session-1',
+                  status: 'completed',
+                  output: 'Done',
+                  artifacts: []
+                }),
+              15
+            )
+          })
+      )
+    }
+    const log = vi.fn()
+    const warn = vi.fn()
+    const setExitCode = vi.fn()
+
+    await runTaskCommand(
+      {
+        command: 'run',
+        options: {
+          project: 'project-1',
+          prompt: 'Research this.',
+          wait: true,
+          json: false,
+          jsonl: false
+        }
+      },
+      {
+        connect: vi.fn().mockResolvedValue(client),
+        stdinIsTTY: true,
+        log,
+        warn,
+        setExitCode
+      }
+    )
+
+    expect(client.waitForRun).toHaveBeenCalledWith('run-1')
+    expect(warn).toHaveBeenCalledWith(
+      'Run event stream stopped: Open Science event stream timed out after 30000 milliseconds. Final Run state will still be read from Open Science.'
+    )
+    expect(log).toHaveBeenCalledWith('Done')
+    expect(setExitCode).not.toHaveBeenCalled()
+  })
+
+  it('keeps the authoritative Run failure in JSONL when the event stream times out', async () => {
+    const streamFailure = Object.assign(
+      new Error('Open Science event stream timed out after 30000 milliseconds.'),
+      { code: 'timeout' }
+    )
+    const events = (): {
+      ready: Promise<void>
+      [Symbol.asyncIterator](): {
+        next(): Promise<IteratorResult<never>>
+      }
+    } => ({
+      ready: Promise.resolve(),
+      [Symbol.asyncIterator]() {
+        return {
+          next: () =>
+            new Promise<IteratorResult<never>>((_, reject) => {
+              setTimeout(() => reject(streamFailure), 5)
+            })
+        }
+      }
+    })
+    const client = {
+      listProjects,
+      events,
+      startRun: vi.fn().mockResolvedValue({
+        id: 'run-1',
+        sessionId: 'session-1',
+        status: 'running'
+      }),
+      waitForRun: vi.fn().mockImplementation(
+        () =>
+          new Promise((resolve) => {
+            setTimeout(
+              () =>
+                resolve({
+                  id: 'run-1',
+                  sessionId: 'session-1',
+                  status: 'failed',
+                  error: 'Provider failed',
+                  artifacts: []
+                }),
+              15
+            )
+          })
+      )
+    }
+    const log = vi.fn()
+    const warn = vi.fn()
+    const setExitCode = vi.fn()
+
+    await runTaskCommand(
+      {
+        command: 'run',
+        options: {
+          project: 'project-1',
+          prompt: 'Research this.',
+          wait: true,
+          json: false,
+          jsonl: true
+        }
+      },
+      {
+        connect: vi.fn().mockResolvedValue(client),
+        stdinIsTTY: true,
+        log,
+        warn,
+        setExitCode
+      }
+    )
+
+    expect(warn).toHaveBeenCalledWith(
+      'Run event stream stopped: Open Science event stream timed out after 30000 milliseconds. Final Run state will still be read from Open Science.'
+    )
+    expect(JSON.parse(log.mock.calls[0][0])).toMatchObject({
+      id: 'run-1',
+      status: 'failed',
+      error: 'Provider failed'
+    })
+    expect(setExitCode).toHaveBeenCalledWith(1)
+  })
+
   it('explicitly cancels the server run after a wait timeout and preserves the timeout error', async () => {
     const timeout = Object.assign(new Error('Timed out waiting for run run-1.'), {
       code: 'timeout'
@@ -1330,8 +1774,7 @@ describe('task CLI', () => {
       'notebook',
       'notebook-env',
       'reviewer',
-      'runtime',
-      'settings'
+      'runtime'
     ]) {
       await expect(runCli([command])).rejects.toThrow(`Unknown command: ${command}`)
     }

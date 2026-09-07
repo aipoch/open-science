@@ -74,11 +74,6 @@ const TERMINAL_RESULT_SCHEMA = {
 
 const DELEGATE_OBSERVATION_SCHEMA = {
   discriminator: { propertyName: 'status' },
-  oneOf: [RUNNING_OBSERVATION_SCHEMA, TERMINAL_RESULT_SCHEMA]
-} as const
-
-const DELEGATE_OUTCOME_OBSERVATION_SCHEMA = {
-  discriminator: { propertyName: 'status' },
   oneOf: [RUNNING_OBSERVATION_SCHEMA, AWAITING_USER_OBSERVATION_SCHEMA, TERMINAL_RESULT_SCHEMA]
 } as const
 
@@ -217,7 +212,7 @@ const DELEGATE_AGENT_CONTRACT = {
         optional: [],
         properties: {
           kind: { type: 'string', enum: ['observations'] },
-          children: { type: 'array', items: DELEGATE_OUTCOME_OBSERVATION_SCHEMA }
+          children: { type: 'array', items: DELEGATE_OBSERVATION_SCHEMA }
         }
       },
       {

@@ -51,9 +51,11 @@ const { createStorageCommandOwner } = await import('./command-owner')
 const { registerStorageIpcHandlers } = await import('./ipc')
 const {
   clearMigrationPending,
+  initializeDataRootWriteAvailability,
   installMigrationQuitGuard,
   isMigrationInProgress,
   isMigrationPending,
+  runDataRootStartupRecovery,
   waitForDataRootWriters,
   withDataRootWrite
 } = await import('./migration-state')
@@ -175,6 +177,7 @@ afterEach(async () => {
   initDataRoot(undefined)
   // migration-state is a module singleton; reset it so a pending write-gate can't leak between tests.
   clearMigrationPending()
+  initializeDataRootWriteAvailability(false)
   clearApplicationShutdownTrigger()
   await rm(currentParent, { recursive: true, force: true })
   await rm(targetParent, { recursive: true, force: true })
@@ -187,8 +190,14 @@ describe('storage IPC handlers', () => {
     const owner = createStorageCommandOwner(deps)
     registerStorageIpcHandlers(deps, owner)
 
-    await expect(invoke('storage:migrate', { parent: targetParent })).resolves.toEqual({ ok: true })
-    await expect(owner.commitAndRelaunch({ parent: targetParent })).resolves.toEqual({ ok: true })
+    await expect(invoke('storage:migrate', { parent: targetParent })).resolves.toEqual({
+      ok: true,
+      cleanupPending: false
+    })
+    await expect(owner.commitAndRelaunch({ parent: targetParent })).resolves.toEqual({
+      ok: true,
+      cleanupPending: false
+    })
 
     expect(deps.settingsService.setDataRoot).toHaveBeenCalledWith(target, {
       previousDataRoot: dataRoot
@@ -213,9 +222,15 @@ describe('storage IPC handlers', () => {
     const deps = fakeDeps({ cleanupRuntimeCache, cleanupJournal })
     const owner = createStorageCommandOwner(deps)
 
-    await expect(owner.migrate({ parent: targetParent })).resolves.toEqual({ ok: true })
+    await expect(owner.migrate({ parent: targetParent })).resolves.toEqual({
+      ok: true,
+      cleanupPending: false
+    })
     cleanupRuntimeCache.mockClear()
-    await expect(owner.commitAndRelaunch({ parent: targetParent })).resolves.toEqual({ ok: true })
+    await expect(owner.commitAndRelaunch({ parent: targetParent })).resolves.toEqual({
+      ok: true,
+      cleanupPending: true
+    })
 
     expect(cleanupRuntimeCache).not.toHaveBeenCalled()
     await expect(cleanupJournal.hasPending()).resolves.toBe(true)
@@ -270,7 +285,8 @@ describe('storage IPC handlers', () => {
       target
     })
     await expect(restartedOwner.commitAndRelaunch({ parent: targetParent })).resolves.toEqual({
-      ok: true
+      ok: true,
+      cleanupPending: false
     })
 
     expect(deps.settingsService.setDataRoot).toHaveBeenCalledWith(target, {
@@ -343,6 +359,7 @@ describe('storage IPC handlers', () => {
     registerStorageIpcHandlers(fakeDeps())
 
     for (const channel of [
+      'storage:accept-missing-data-root',
       'storage:get-status',
       'storage:get-info',
       'storage:reveal-app-storage',
@@ -694,6 +711,92 @@ describe('storage IPC handlers', () => {
     expect(info.dataRootMissing).toBe(true)
   })
 
+  it('get-info drains deferred startup recovery before reporting a reconnected root available', async () => {
+    initDataRoot(target)
+    initializeDataRootWriteAvailability(true)
+    const recovery = vi.fn<() => Promise<void>>().mockResolvedValue(undefined)
+    await runDataRootStartupRecovery(recovery)
+    const deps = fakeDeps({
+      settingsService: {
+        setDataRoot: vi.fn().mockResolvedValue(undefined),
+        dismissLegacyDataMovePrompt: vi.fn().mockResolvedValue(undefined),
+        getStoredSettings: vi.fn().mockResolvedValue({ dataRoot: target })
+      }
+    })
+    registerStorageIpcHandlers(deps)
+    await mkdir(target)
+
+    const info = (await invoke('storage:get-info')) as { dataRootMissing: boolean }
+
+    expect(recovery).toHaveBeenCalledOnce()
+    expect(info.dataRootMissing).toBe(false)
+  })
+
+  it('get-info keeps recovery visible and writers blocked when reconnect recovery fails', async () => {
+    initDataRoot(target)
+    initializeDataRootWriteAvailability(true)
+    const recovery = vi
+      .fn<() => Promise<void>>()
+      .mockRejectedValueOnce(new Error('reconnect recovery failed'))
+      .mockResolvedValue(undefined)
+    await runDataRootStartupRecovery(recovery)
+    const deps = fakeDeps({
+      settingsService: {
+        setDataRoot: vi.fn().mockResolvedValue(undefined),
+        dismissLegacyDataMovePrompt: vi.fn().mockResolvedValue(undefined),
+        getStoredSettings: vi.fn().mockResolvedValue({ dataRoot: target })
+      }
+    })
+    registerStorageIpcHandlers(deps)
+    await mkdir(target)
+    let writeStarted = false
+    const write = withDataRootWrite(async () => {
+      writeStarted = true
+    })
+
+    const blockedInfo = (await invoke('storage:get-info')) as { dataRootMissing: boolean }
+
+    expect(blockedInfo.dataRootMissing).toBe(true)
+    expect(writeStarted).toBe(false)
+
+    const info = (await invoke('storage:get-info')) as { dataRootMissing: boolean }
+    await write
+
+    expect(recovery).toHaveBeenCalledTimes(2)
+    expect(info.dataRootMissing).toBe(false)
+    expect(writeStarted).toBe(true)
+  })
+
+  it('accept-missing-data-root releases writers without replaying unavailable-root recovery', async () => {
+    initDataRoot(target)
+    initializeDataRootWriteAvailability(true)
+    const recovery = vi.fn<() => Promise<void>>().mockResolvedValue(undefined)
+    await runDataRootStartupRecovery(recovery)
+    const deps = fakeDeps({
+      settingsService: {
+        setDataRoot: vi.fn().mockResolvedValue(undefined),
+        dismissLegacyDataMovePrompt: vi.fn().mockResolvedValue(undefined),
+        getStoredSettings: vi.fn().mockResolvedValue({ dataRoot: target })
+      }
+    })
+    registerStorageIpcHandlers(deps)
+    let writeStarted = false
+    const write = withDataRootWrite(async () => {
+      writeStarted = true
+    })
+    await Promise.resolve()
+
+    expect(writeStarted).toBe(false)
+    await invoke('storage:accept-missing-data-root')
+    await write
+    const status = (await invoke('storage:get-status')) as { dataRootMissing: boolean }
+
+    expect(recovery).not.toHaveBeenCalled()
+    expect(writeStarted).toBe(true)
+    expect(status.dataRootMissing).toBe(false)
+    expect(existsSync(target)).toBe(false)
+  })
+
   it('detect-active maps agent, Side Chat, delegated, and notebook sources', async () => {
     const deps = fakeDeps({
       getActivePromptSessions: vi.fn().mockReturnValue([{ projectId: 'p', sessionId: 'agent-1' }]),
@@ -808,7 +911,8 @@ describe('storage IPC handlers', () => {
     registerStorageIpcHandlers(deps)
 
     await expect(invoke('storage:migrate', { parent: targetParent })).resolves.toEqual({
-      ok: true
+      ok: true,
+      cleanupPending: false
     })
     expect(deps.runtime.disconnect).toHaveBeenCalledTimes(1)
     // Phase 1 is copy-only: the pointer is not flipped and the app does not restart until the user
@@ -828,7 +932,10 @@ describe('storage IPC handlers', () => {
     })
     registerStorageIpcHandlers(deps)
 
-    await expect(invoke('storage:migrate', { parent: targetParent })).resolves.toEqual({ ok: true })
+    await expect(invoke('storage:migrate', { parent: targetParent })).resolves.toEqual({
+      ok: true,
+      cleanupPending: false
+    })
 
     expect(prepareDataRootHandoff).toHaveBeenCalledWith({ surface: 'electron-renderer' }, true)
   })
@@ -1069,7 +1176,10 @@ describe('storage IPC handlers', () => {
     const deps = fakeDeps({ micromambaRunner: runner, exportRuntimeLocks: exportLocks })
     registerStorageIpcHandlers(deps)
 
-    await expect(invoke('storage:migrate', { parent: targetParent })).resolves.toEqual({ ok: true })
+    await expect(invoke('storage:migrate', { parent: targetParent })).resolves.toEqual({
+      ok: true,
+      cleanupPending: false
+    })
 
     expect(runner.resolve).toHaveBeenCalledOnce()
     expect(exportLocks).toHaveBeenCalledWith(dataRoot, target, {
@@ -1084,12 +1194,16 @@ describe('storage IPC handlers', () => {
     const deps = fakeDeps({ logger })
     registerStorageIpcHandlers(deps)
 
-    await expect(invoke('storage:migrate', { parent: targetParent })).resolves.toEqual({ ok: true })
+    await expect(invoke('storage:migrate', { parent: targetParent })).resolves.toEqual({
+      ok: true,
+      cleanupPending: false
+    })
     const markerToken = (await readMigrationMarker(target))?.token
     expect(markerToken).toBeTruthy()
 
     await expect(invoke('storage:commit-and-relaunch', { parent: targetParent })).resolves.toEqual({
-      ok: true
+      ok: true,
+      cleanupPending: false
     })
 
     const completed = diagnosticRecords(logger).filter((record) => record.outcome === 'completed')
@@ -1308,7 +1422,7 @@ describe('storage IPC handlers', () => {
     expect(guardApp.quit).not.toHaveBeenCalled()
     finishPointerWrite?.()
 
-    await expect(commit).resolves.toEqual({ ok: true })
+    await expect(commit).resolves.toEqual({ ok: true, cleanupPending: false })
     await vi.waitFor(() => expect(guardApp.quit).toHaveBeenCalledOnce())
     expect(deps.relaunch).toHaveBeenCalledOnce()
     expect(isMigrationPending()).toBe(true)
@@ -1356,7 +1470,8 @@ describe('storage IPC handlers', () => {
     vi.mocked(deps.runtime.shutdownForQuit).mockClear()
 
     await expect(invoke('storage:commit-and-relaunch', { parent: targetParent })).resolves.toEqual({
-      ok: true
+      ok: true,
+      cleanupPending: false
     })
 
     expect(deps.runtime.shutdownForQuit).not.toHaveBeenCalled()
@@ -1436,7 +1551,8 @@ describe('storage IPC handlers', () => {
     await invoke('storage:migrate', { parent: targetParent })
 
     await expect(invoke('storage:commit-and-relaunch', { parent: targetParent })).resolves.toEqual({
-      ok: true
+      ok: true,
+      cleanupPending: false
     })
     expect(previousRoots).toEqual([dataRoot])
     expect(persisted).toEqual([target])
@@ -1529,7 +1645,10 @@ describe('storage IPC handlers', () => {
     registerStorageIpcHandlers(fakeDeps())
 
     expect(isMigrationPending()).toBe(false)
-    await expect(invoke('storage:migrate', { parent: targetParent })).resolves.toEqual({ ok: true })
+    await expect(invoke('storage:migrate', { parent: targetParent })).resolves.toEqual({
+      ok: true,
+      cleanupPending: false
+    })
     // The copy succeeded but nothing is committed yet, so the gate stays up.
     expect(isMigrationPending()).toBe(true)
   })
@@ -1538,7 +1657,10 @@ describe('storage IPC handlers', () => {
     initDataRoot(dataRoot)
     registerStorageIpcHandlers(fakeDeps())
 
-    await expect(invoke('storage:migrate', { parent: targetParent })).resolves.toEqual({ ok: true })
+    await expect(invoke('storage:migrate', { parent: targetParent })).resolves.toEqual({
+      ok: true,
+      cleanupPending: false
+    })
     const secondOutcome = await invoke('storage:migrate', { parent: currentParent })
 
     expect(secondOutcome).toEqual({
@@ -1576,7 +1698,8 @@ describe('storage IPC handlers', () => {
 
     try {
       await expect(invoke('storage:migrate', { parent: alternateParent })).resolves.toEqual({
-        ok: true
+        ok: true,
+        cleanupPending: false
       })
       expect(runDataRootMigration).toHaveBeenCalledOnce()
       await expect(cleanupJournal.hasPending()).resolves.toBe(true)
@@ -1702,7 +1825,7 @@ describe('storage IPC handlers', () => {
     })
 
     releaseDisconnect?.()
-    await expect(first).resolves.toEqual({ ok: true })
+    await expect(first).resolves.toEqual({ ok: true, cleanupPending: false })
   })
 
   it('rejects a pointer-only switch while a migration copy is in flight', async () => {

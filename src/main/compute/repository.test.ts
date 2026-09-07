@@ -51,6 +51,7 @@ describe('compute host repository', () => {
         id: 'host-1',
         providerId: 'ssh:biowulf',
         displayName: 'biowulf',
+        executionMode: 'direct_ssh',
         shape: 'direct_ssh',
         sshAlias: 'biowulf',
         sshOverrides: undefined,

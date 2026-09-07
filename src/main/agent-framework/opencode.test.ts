@@ -420,6 +420,8 @@ describe('opencodeFramework.prepareModelConfig', () => {
     ['minimax', 'MiniMax-M3', 'high', { thinking: { type: 'adaptive' } }],
     ['xiaomimimo', 'mimo-v2.5-pro', 'none', { thinking: { type: 'disabled' } }],
     ['xiaomimimo', 'mimo-v2.5-pro', 'high', { thinking: { type: 'enabled' } }],
+    ['apodex', 'apodex-1.1', 'none', {}],
+    ['apodex', 'apodex-1.1', 'high', {}],
     ['deepseek', 'deepseek-v4-pro', 'none', { thinking: { type: 'disabled' } }],
     [
       'deepseek',

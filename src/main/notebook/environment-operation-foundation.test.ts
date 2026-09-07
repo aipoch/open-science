@@ -101,11 +101,19 @@ describe('runLoggedRuntimeOperation', () => {
         'python',
         '/runtime',
         async (report) => {
-          report({ phase: 'fetch-python', message: `Retrying ${channel}`, progress: 0.1 })
-          report({ phase: 'fetch-python', message: 'Downloading 20%', progress: 0.2 })
           report({
             phase: 'fetch-python',
-            message: 'Reconnecting',
+            event: { code: 'retrying-short-cache', environment: channel },
+            progress: 0.1
+          })
+          report({
+            phase: 'fetch-python',
+            event: { code: 'downloading-python-runtime' },
+            progress: 0.2
+          })
+          report({
+            phase: 'fetch-python',
+            event: { code: 'downloading-python-runtime' },
             progress: 0.2,
             download: {
               phase: 'reconnecting',
@@ -116,7 +124,11 @@ describe('runLoggedRuntimeOperation', () => {
               attempt: 1
             }
           })
-          report({ phase: 'create-python', message: 'Creating Python', progress: 0.45 })
+          report({
+            phase: 'create-python',
+            event: { code: 'environment-create', environment: 'default-python' },
+            progress: 0.45
+          })
           throw failure
         },
         (progress) => projected.push(progress)
@@ -129,7 +141,7 @@ describe('runLoggedRuntimeOperation', () => {
       progress: 0,
       language: 'python'
     })
-    expect(projected.at(-1)?.message).not.toContain('basic-secret')
+    expect(projected.at(-1)?.diagnostic).not.toContain('basic-secret')
     expect(loggerSpies.info.mock.calls.map(([message]) => message)).toEqual([
       'runtime operation started',
       'runtime operation progress',

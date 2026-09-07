@@ -8,9 +8,11 @@ import {
 import type { PersistedUploadedAttachment } from './uploads'
 import type { FileReference } from './artifacts'
 import { sanitizeAnnotations, type Annotation } from './annotations'
+import { literatureItemInputSchema, type LiteratureItemInput } from './literature'
 import {
   MAX_ACP_MESSAGE_IMAGES_PER_MESSAGE,
   MAX_ACP_MESSAGE_IMAGE_BYTES_PER_MESSAGE,
+  MAX_ACP_RUNTIME_EVENTS,
   MAX_ACP_SESSION_IMAGE_BYTES,
   sanitizeAcpContextUsage,
   sanitizeAcpContextWindowSample,
@@ -39,10 +41,13 @@ import type { ResolvedReasoningEffort } from './reasoning-effort'
 import { sanitizeActivityGroupTitle } from './activity-groups'
 import { sanitizeElicitationProjection, type ElicitationProjection } from './elicitation'
 import {
+  derivePlanLifecycle,
+  MAX_PLAN_RUNTIME_CONTEXT_NODES,
   parsePlanDocumentV1,
   planStepTitles,
   projectPlanStepStates,
   type ActivePlanProjection,
+  type PlanDocumentV1,
   type PlanLifecycle
 } from './session-plan/contract'
 import {
@@ -119,19 +124,32 @@ export type SessionRuntimeContextOwner =
 
 export const MAX_SESSION_PDF_CONTEXTS = 3
 
-export type SessionPdfBinding = Readonly<{
+export type SessionPdfSourceKind =
+  'artifact-version' | 'upload-version' | 'literature-attachment-version'
+
+type SessionPdfBindingBase = Readonly<{
   version: 1
   bindingId: string
-  sourceKind: 'artifact-version' | 'upload-version'
   sourceFileId: string
   sourceVersionId: string
-  sourceSessionId: string
   name: string
   mimeType: 'application/pdf'
   sizeBytes: number
   checksum: string
   linkedAt: number
 }>
+
+export type SessionPdfBinding = SessionPdfBindingBase &
+  (
+    | Readonly<{
+        sourceKind: 'artifact-version' | 'upload-version'
+        sourceSessionId: string
+      }>
+    | Readonly<{
+        sourceKind: 'literature-attachment-version'
+        sourceSessionId?: never
+      }>
+  )
 
 export type SessionPdfContext = Readonly<{
   version: 1
@@ -151,7 +169,7 @@ export type MessagePdfContextSnapshot = SessionPdfContext &
 
 export type SessionPdfContextSource = Readonly<{
   sourceKind: SessionPdfBinding['sourceKind']
-  sourceFileId: string
+  sourceFileId?: string
   sourceVersionId: string
 }>
 
@@ -320,10 +338,12 @@ export type SessionDelegatedWorkRuntimeContext = Readonly<{
 
 export type SessionPlanApproval = 'pending' | 'approved' | 'rejected'
 export type SessionPlanStepStatus = 'in_progress' | 'completed' | 'blocked' | 'skipped'
-export type SessionPlanContinuation = Readonly<{
+export type SessionPlanDelivery = Readonly<{
   commandId: string
   kind: 'approved-plan' | 'rejected-plan' | 'review-feedback'
-  state: 'queued' | 'continuing' | 'interrupted'
+  // `delivering` is a durable claim before provider acceptance has been observed. `accepted`
+  // records that boundary so restart recovery can settle instead of replaying the wakeup.
+  state: 'queued' | 'delivering' | 'accepted' | 'interrupted'
   originatingPromptMessageId: string
   createdAt: number
 }>
@@ -331,6 +351,9 @@ export type SessionPlanRuntimeContext = Readonly<{
   artifactId: string
   artifactVersionId: string
   artifactChecksum: string
+  // Verified immutable copy used to reconstruct Plan review/context while the originating Agent
+  // turn is parked and its provenance Artifact Version is still awaiting publication.
+  document?: PlanDocumentV1
   // The user Message whose Conversation Turn generated this Plan. Older persisted Plans may omit it.
   originatingPromptMessageId?: string
   // Durable causal boundary recorded after the Plan Artifact is verified and before approval begins.
@@ -339,7 +362,9 @@ export type SessionPlanRuntimeContext = Readonly<{
   // A persisted user Message that asks the Agent to revise or interpret this still-pending Plan.
   // It is neutral review input, not an approval decision.
   reviewFeedbackMessageId?: string
-  continuation?: SessionPlanContinuation
+  // One-shot approval or review-feedback handoff receipt. This is delivery state, not an execution
+  // capability, and never determines whether the Plan is active or updateable.
+  delivery?: SessionPlanDelivery
   stepStatuses: Readonly<
     Record<
       string,
@@ -441,6 +466,25 @@ export const MAX_SESSION_REFERENCES_PER_MESSAGE = 5
 const MAX_SESSION_REFERENCE_ID_LENGTH = 512
 const MAX_SESSION_REFERENCE_TITLE_LENGTH = 4096
 
+// Immutable bibliographic snapshot captured when the user picks a Library item. The optional PDF
+// Version is only a Reading candidate; the reference itself remains useful without an attachment.
+export type LiteratureReference = {
+  type: 'literature'
+  itemId: string
+  metadataRevision: number
+  item: LiteratureItemInput
+  attachmentVersionId?: string
+}
+
+// A retrieval scope selected in the Composer. It carries no catalog records or file bytes; the Agent
+// uses it to page through search_library deliberately instead of treating a whole corpus as context.
+export type LiteratureScopeReference =
+  | { type: 'literature-scope'; scope: 'project' }
+  | { type: 'literature-scope'; scope: 'collection'; collectionId: string; name: string }
+
+const MAX_LITERATURE_SCOPE_ID_LENGTH = 512
+const MAX_LITERATURE_SCOPE_NAME_LENGTH = 4096
+
 // Ordered structural segments of a user message, letting the bubble re-render skill/artifact/session
 // mentions as styled pills instead of plain text. Structurally mirrors the renderer ComposerNode
 // (shared cannot import renderer code). Absent on older messages, which fall back to plain content.
@@ -448,6 +492,8 @@ export type MessagePart =
   | { type: 'text'; text: string }
   | { type: 'skill'; id: string; name: string }
   | ({ type: 'artifact' } & FileReference)
+  | LiteratureReference
+  | LiteratureScopeReference
   | SessionReference
 
 export const collectSessionReferences = (
@@ -518,6 +564,8 @@ export type PersistedChatMessage = {
   // A side-chat relay is durable context, but remains advisory rather than a direct user turn.
   relayedFrom?: { kind: 'side-chat'; direction: 'to-main' }
   // Whole-turn totals reported with the completed Agent response; absent for older sessions/providers.
+  // Copied history remains visible, but its execution belongs to the original Session.
+  usageOrigin?: Readonly<{ sessionId: string; messageId: string }>
   turnUsage?: AcpTurnTokenUsage
   // Exact per-inference usage; absent for older sessions/providers and whenever coverage is partial.
   modelCallUsage?: AcpModelCallUsage[]
@@ -542,6 +590,26 @@ export type PersistedChatMessage = {
   // Resume preserves this exact Message node; it never creates a replacement prompt.
   interrupted?: true
   updatedAt: number
+}
+
+// Runtime recovery can replay only its bounded suffix. Once a projection is terminal, older IDs no
+// longer provide supported duplicate-suppression coverage and must not grow the Session forever.
+export const retainRecentSessionEventIds = (eventIds: readonly string[]): string[] => {
+  if (eventIds.length <= MAX_ACP_RUNTIME_EVENTS) return [...eventIds]
+
+  const recent: string[] = []
+  const seen = new Set<string>()
+  for (
+    let index = eventIds.length - 1;
+    index >= 0 && recent.length < MAX_ACP_RUNTIME_EVENTS;
+    index--
+  ) {
+    const eventId = eventIds[index]
+    if (eventId === undefined || seen.has(eventId)) continue
+    seen.add(eventId)
+    recent.push(eventId)
+  }
+  return recent.reverse()
 }
 
 export const isHiddenControlMessage = (
@@ -777,8 +845,8 @@ export type PersistedChatSession = {
   // detached restored Session keeps it so the indicator survives an app restart.
   contextUsage?: AcpContextUsage
   runtimeContext?: SessionRuntimeContext
-  // Read-only UI history for branch-specific Plan discovery and exact-version previews. Main-owned
-  // execution authority remains exclusively in runtimeContext.plan.
+  // Read-only UI history for branch-specific Plan discovery and exact-version previews. The active
+  // mutable Plan remains exclusively in runtimeContext.plan.
   planHistoryProjections?: ActivePlanProjection[]
   messages: PersistedChatMessage[]
   // Session JSON v2 authority. Flat messages/activities remain an active-Branch compatibility view.
@@ -796,18 +864,50 @@ export type PersistedChatSession = {
   // either the full completed active Branch (for an interrupted control operation) or only history
   // before an interrupted prompt. The interrupted prompt itself is never replayed.
   pendingHistoryReplay?: PersistedPendingHistoryReplay
+  // The selected Branch has not yet been accepted by the provider. Resuming its old identity
+  // must reset that context before replaying the selected history, including after a restart.
+  branchContextResetRequired?: boolean
   error?: string
   // Whether a failed run's error is worth a GitHub issue. False for a recognized failure (a provider/
   // model error the agent relayed, or one of the app's own actionable reminders); true/absent for an
   // unknown ACP-layer failure. Resolved once when the run fails and persisted so the "Report error"
   // gate survives a reload. Absent on older files — treated as reportable (the prior behavior).
   errorReportable?: boolean
+  // Identifies the artifact runtime event that owns the current finalization error. Historical
+  // Sessions omit it and retain the conservative replay-clearing behavior.
+  artifactErrorEventIds?: string[]
   artifacts?: PersistedArtifact[]
   // Incremented only when finalized file metadata changes; text streaming leaves it untouched.
   filesRevision?: number
   createdAt: number
   updatedAt: number
 }
+
+export type StageTaskSessionCompletionRequest = Readonly<{
+  projectId: string
+  sessionId: string
+  promptMessageId: string
+  message?: PersistedChatMessage
+  activities: readonly PersistedToolActivity[]
+  clearPendingHistoryReplay?: true
+  updatedAt: number
+}>
+
+export type SettleTaskSessionCompletionRequest = Readonly<{
+  projectId: string
+  sessionId: string
+  promptMessageId: string
+  taskRunCommitId: string
+  messageId?: string
+  artifacts: readonly PersistedArtifact[]
+  updatedAt: number
+}>
+
+export type FailTaskSessionRunRequest = SettleTaskSessionCompletionRequest &
+  Readonly<{
+    error: string
+    errorReportable?: false
+  }>
 
 // SQLite-backed startup projection. It intentionally excludes messages, activities, runtime
 // context, and artifact payloads; those remain in Session JSON and load only when opened.
@@ -841,7 +941,6 @@ export type SessionUsageProjection = Readonly<{
       inputTokens: number
       cacheTokens: number
       outputTokens: number
-      rootRunUsage: boolean
     }>
   >
   totalArtifacts: number
@@ -868,8 +967,28 @@ export type SaveSessionOptions = {
   conflictRebaseFields?: SessionConflictRebaseField[]
 }
 
+export const MAX_PERSISTED_SESSION_BYTES = 256 * 1024 * 1024
+export const SESSION_SIZE_LIMIT_ERROR_CODE = 'session-size-limit' as const
 export const SESSION_REVISION_CONFLICT_ERROR_CODE = 'session-revision-conflict' as const
 export const SESSION_DETAILS_CONFLICT_ERROR_CODE = 'session-details-conflict' as const
+
+export class SessionSizeLimitError extends Error {
+  readonly code = SESSION_SIZE_LIMIT_ERROR_CODE
+
+  constructor(readonly maxBytes = MAX_PERSISTED_SESSION_BYTES) {
+    super(`Session exceeds the ${maxBytes} byte persistence limit.`)
+    this.name = 'SessionSizeLimitError'
+  }
+}
+
+export const isSessionSizeLimitError = (
+  error: unknown
+): error is Readonly<{ code: typeof SESSION_SIZE_LIMIT_ERROR_CODE }> =>
+  error instanceof SessionSizeLimitError ||
+  (typeof error === 'object' &&
+    error !== null &&
+    'code' in error &&
+    error.code === SESSION_SIZE_LIMIT_ERROR_CODE)
 
 export class SessionDetailsConflictError extends Error {
   readonly code = SESSION_DETAILS_CONFLICT_ERROR_CODE
@@ -915,6 +1034,26 @@ export const isSessionRevisionConflictError = (
     'code' in error &&
     error.code === SESSION_REVISION_CONFLICT_ERROR_CODE) ||
   (error instanceof Error && error.message.includes('Session revision conflict:'))
+
+export class SessionConfigurationBusyError extends Error {
+  readonly code = 'session-configuration-busy' as const
+
+  constructor(readonly sessionId: string) {
+    super(`Session has active work: ${sessionId}`)
+    this.name = 'SessionConfigurationBusyError'
+  }
+}
+
+export const isSessionConfigurationBusyError = (
+  error: unknown
+): error is Readonly<{ code: SessionConfigurationBusyError['code']; message: string }> =>
+  error instanceof SessionConfigurationBusyError ||
+  (typeof error === 'object' &&
+    error !== null &&
+    'code' in error &&
+    error.code === 'session-configuration-busy' &&
+    'message' in error &&
+    typeof error.message === 'string')
 
 // Restored interrupted sessions carry this error verbatim; the renderer keys its resume banner off it.
 export const INTERRUPTED_SESSION_ERROR = 'Session was interrupted before the app closed.'
@@ -1141,7 +1280,6 @@ const PLAN_LIFECYCLES = new Set<PlanLifecycle>([
   'awaiting_approval',
   'approved',
   'in_progress',
-  'interrupted',
   'blocked',
   'completed',
   'rejected'
@@ -1347,10 +1485,12 @@ const sanitizeSessionPlanRuntimeContext = (
           'artifactId',
           'artifactVersionId',
           'artifactChecksum',
+          'document',
           'originatingPromptMessageId',
           'materializedAt',
           'approval',
           'reviewFeedbackMessageId',
+          'delivery',
           'continuation',
           'stepStatuses'
         ].includes(field)
@@ -1362,6 +1502,14 @@ const sanitizeSessionPlanRuntimeContext = (
   const artifactId = asString(value.artifactId)
   const artifactVersionId = asString(value.artifactVersionId)
   const artifactChecksum = asString(value.artifactChecksum)
+  let document: PlanDocumentV1 | undefined
+  if (value.document !== undefined) {
+    try {
+      document = parsePlanDocumentV1(value.document)
+    } catch {
+      return undefined
+    }
+  }
   const originatingPromptMessageId =
     value.originatingPromptMessageId === undefined
       ? undefined
@@ -1413,34 +1561,35 @@ const sanitizeSessionPlanRuntimeContext = (
     })
   }
 
-  const rawContinuation = value.continuation
-  const continuation = (() => {
-    if (!isRecord(rawContinuation)) return undefined
+  const rawDelivery = Object.hasOwn(value, 'delivery') ? value.delivery : value.continuation
+  const delivery = (() => {
+    if (!isRecord(rawDelivery)) return undefined
     if (
-      Object.keys(rawContinuation).some(
+      Object.keys(rawDelivery).some(
         (field) =>
           !['commandId', 'kind', 'state', 'originatingPromptMessageId', 'createdAt'].includes(field)
       )
     ) {
       return undefined
     }
-    const commandId = asString(rawContinuation.commandId)
-    const continuationOriginatingPromptMessageId = asString(
-      rawContinuation.originatingPromptMessageId
-    )
-    const state: SessionPlanContinuation['state'] | undefined =
-      rawContinuation.state === 'queued' ||
-      rawContinuation.state === 'continuing' ||
-      rawContinuation.state === 'interrupted'
-        ? rawContinuation.state
+    const commandId = asString(rawDelivery.commandId)
+    const deliveryOriginatingPromptMessageId = asString(rawDelivery.originatingPromptMessageId)
+    const state: SessionPlanDelivery['state'] | undefined =
+      rawDelivery.state === 'queued' ||
+      rawDelivery.state === 'delivering' ||
+      rawDelivery.state === 'accepted' ||
+      rawDelivery.state === 'interrupted'
+        ? rawDelivery.state
+        : rawDelivery.state === 'continuing'
+          ? 'delivering'
+          : undefined
+    const kind: SessionPlanDelivery['kind'] | undefined =
+      rawDelivery.kind === 'approved-plan' ||
+      rawDelivery.kind === 'rejected-plan' ||
+      rawDelivery.kind === 'review-feedback'
+        ? rawDelivery.kind
         : undefined
-    const kind: SessionPlanContinuation['kind'] | undefined =
-      rawContinuation.kind === 'approved-plan' ||
-      rawContinuation.kind === 'rejected-plan' ||
-      rawContinuation.kind === 'review-feedback'
-        ? rawContinuation.kind
-        : undefined
-    const createdAt = asNumber(rawContinuation.createdAt)
+    const createdAt = asNumber(rawDelivery.createdAt)
     const kindMatchesApproval =
       (kind === 'approved-plan' && approval === 'approved') ||
       (kind === 'rejected-plan' && approval === 'rejected') ||
@@ -1452,8 +1601,8 @@ const sanitizeSessionPlanRuntimeContext = (
       !kind ||
       !state ||
       !commandId ||
-      !continuationOriginatingPromptMessageId ||
-      continuationOriginatingPromptMessageId !== expectedOriginatingMessageId ||
+      !deliveryOriginatingPromptMessageId ||
+      deliveryOriginatingPromptMessageId !== expectedOriginatingMessageId ||
       createdAt === undefined ||
       createdAt < 0
     ) {
@@ -1463,7 +1612,7 @@ const sanitizeSessionPlanRuntimeContext = (
       commandId,
       kind,
       state,
-      originatingPromptMessageId: continuationOriginatingPromptMessageId,
+      originatingPromptMessageId: deliveryOriginatingPromptMessageId,
       createdAt
     }
   })()
@@ -1472,11 +1621,12 @@ const sanitizeSessionPlanRuntimeContext = (
     artifactId,
     artifactVersionId,
     artifactChecksum,
+    ...(document ? { document } : {}),
     ...(originatingPromptMessageId ? { originatingPromptMessageId } : {}),
     ...(materializedAt !== undefined ? { materializedAt } : {}),
     approval,
     ...(reviewFeedbackMessageId ? { reviewFeedbackMessageId } : {}),
-    ...(continuation ? { continuation } : {}),
+    ...(delivery ? { delivery } : {}),
     stepStatuses
   }
 }
@@ -2247,16 +2397,18 @@ const sanitizeSessionPdfBinding = (value: unknown): SessionPdfBinding | undefine
   const sizeBytes = asNumber(value.sizeBytes)
   const checksum = asString(value.checksum)
   const linkedAt = asNumber(value.linkedAt)
+  const sourceSessionIdRequired =
+    sourceKind === 'artifact-version' || sourceKind === 'upload-version'
   if (
     !bindingId ||
     bindingId.length > 512 ||
-    (sourceKind !== 'artifact-version' && sourceKind !== 'upload-version') ||
+    (!sourceSessionIdRequired && sourceKind !== 'literature-attachment-version') ||
     !sourceFileId ||
     sourceFileId.length > 512 ||
     !sourceVersionId ||
     sourceVersionId.length > 512 ||
-    !sourceSessionId ||
-    sourceSessionId.length > 512 ||
+    (sourceSessionIdRequired && (!sourceSessionId || sourceSessionId.length > 512)) ||
+    (!sourceSessionIdRequired && sourceSessionId !== undefined) ||
     !name ||
     name.length > 4096 ||
     value.mimeType !== 'application/pdf' ||
@@ -2271,19 +2423,22 @@ const sanitizeSessionPdfBinding = (value: unknown): SessionPdfBinding | undefine
   ) {
     return undefined
   }
-  return {
-    version: 1,
+  const binding = {
+    version: 1 as const,
     bindingId,
-    sourceKind,
     sourceFileId,
     sourceVersionId,
-    sourceSessionId,
     name,
-    mimeType: 'application/pdf',
+    mimeType: 'application/pdf' as const,
     sizeBytes,
     checksum,
     linkedAt
   }
+  if (sourceKind === 'literature-attachment-version') {
+    return { ...binding, sourceKind }
+  }
+  if (!sourceSessionId) return undefined
+  return { ...binding, sourceKind, sourceSessionId }
 }
 
 export const sanitizeSessionPdfContext = (value: unknown): SessionPdfContext | undefined => {
@@ -2394,7 +2549,7 @@ const sanitizePermissionRequest = (value: unknown): AcpPermissionRequest | undef
   const requestId = boundedPermissionString(value.requestId)
   const sessionId = boundedPermissionString(value.sessionId)
   const toolCallId = boundedPermissionString(value.toolCallId)
-  const rawTitle = boundedPermissionString(value.title)
+  const rawTitle = asString(value.title)
   const title = rawTitle ? sanitizeToolDetailText(rawTitle) : undefined
   if (!requestId || !sessionId || !toolCallId || !title || !Array.isArray(value.options)) {
     return undefined
@@ -2455,8 +2610,9 @@ const sanitizePermissionRequest = (value: unknown): AcpPermissionRequest | undef
         return [{ path, ...(line === undefined ? {} : { line }) }]
       })
     : undefined
+  // rawInput is an optional UI preview. The full request fingerprint remains the replay boundary,
+  // so an oversized preview must not discard the permission wait itself.
   const rawInput = sanitizePermissionRawInput(value.rawInput)
-  if (value.rawInput !== undefined && rawInput === undefined) return undefined
   if (
     value.toolLocations !== undefined &&
     (!Array.isArray(value.toolLocations) ||
@@ -2569,7 +2725,10 @@ export const sanitizeSessionRuntimeContext = (
       owner === 'permission' ||
       owner === 'pdfContext'
     ) {
-      const sanitizedJson = sanitizeRuntimeContextValue(ownerValue, budget)
+      const sanitizedJson = sanitizeRuntimeContextValue(
+        ownerValue,
+        owner === 'plan' ? { remaining: MAX_PLAN_RUNTIME_CONTEXT_NODES } : budget
+      )
       if (sanitizedJson === undefined) return undefined
       if (owner === 'pdfContext') {
         const pdfContext = sanitizeSessionPdfContext(sanitizedJson)
@@ -2619,7 +2778,7 @@ export const sanitizeSessionRuntimeContext = (
 }
 
 // Historical projections are presentation-only snapshots. Rebuild all derived fields from the
-// validated Plan document and statuses so persisted JSON cannot manufacture execution authority or
+// validated Plan document and statuses so persisted JSON cannot manufacture lifecycle state or
 // inconsistent counters. A prompt binding is mandatory because unbound history cannot be isolated
 // safely across Message Branches.
 const sanitizeHistoricalPlanProjection = (
@@ -2632,15 +2791,14 @@ const sanitizeHistoricalPlanProjection = (
 
   const originatingPromptMessageId = asString(sanitizedJson.originatingPromptMessageId)
   const revision = asNumber(sanitizedJson.revision)
-  const lifecycle = asString(sanitizedJson.lifecycle) as PlanLifecycle | undefined
+  const lifecycle = asString(sanitizedJson.lifecycle)
   if (
     !originatingPromptMessageId ||
     revision === undefined ||
     !Number.isSafeInteger(revision) ||
     revision < 0 ||
     !lifecycle ||
-    !PLAN_LIFECYCLES.has(lifecycle) ||
-    typeof sanitizedJson.requiresExplicitContinuation !== 'boolean'
+    (!PLAN_LIFECYCLES.has(lifecycle as PlanLifecycle) && lifecycle !== 'interrupted')
   ) {
     return undefined
   }
@@ -2671,8 +2829,7 @@ const sanitizeHistoricalPlanProjection = (
       originatingPromptMessageId,
       revision,
       approval: runtimePlan.approval,
-      lifecycle,
-      requiresExplicitContinuation: sanitizedJson.requiresExplicitContinuation,
+      lifecycle: derivePlanLifecycle(document, runtimePlan.approval, runtimePlan.stepStatuses),
       document,
       stepStatuses: runtimePlan.stepStatuses,
       stepStates: projectPlanStepStates(document, runtimePlan.stepStatuses),
@@ -2938,9 +3095,8 @@ const normalizeSessionAfterRestore = (
       : session
   }
 
-  // An approved Plan is durable execution authority, but its provider interaction is not. Restore
-  // the Session as idle so the Plan projection can ask for an explicit continuation without also
-  // presenting a generic runtime failure or implying that execution restarted on its own.
+  // An approved Plan remains durable work context after its provider interaction ends. Restore the
+  // Session as idle without presenting a generic runtime failure or implying that work restarted.
   if (session.runtimeContext?.plan?.approval === 'approved') {
     return {
       ...session,
@@ -3256,6 +3412,42 @@ const sanitizeMessagePart = (part: unknown): MessagePart | undefined => {
 
       return sessionId && title ? { type: 'session', sessionId, title } : undefined
     }
+    case 'literature': {
+      const itemId = asString(part.itemId)
+      const metadataRevision = asNumber(part.metadataRevision)
+      const item = literatureItemInputSchema.safeParse(part.item)
+      const attachmentVersionId = asString(part.attachmentVersionId)
+
+      if (
+        !itemId ||
+        typeof metadataRevision !== 'number' ||
+        !Number.isInteger(metadataRevision) ||
+        metadataRevision < 1 ||
+        !item.success
+      ) {
+        return undefined
+      }
+      return {
+        type: 'literature',
+        itemId,
+        metadataRevision,
+        item: item.data,
+        ...(attachmentVersionId ? { attachmentVersionId } : {})
+      }
+    }
+    case 'literature-scope': {
+      const scope = asString(part.scope)
+      if (scope === 'project') return { type: 'literature-scope', scope }
+      if (scope !== 'collection') return undefined
+      const collectionId = asString(part.collectionId)
+      const name = asString(part.name)
+      return collectionId &&
+        collectionId.length <= MAX_LITERATURE_SCOPE_ID_LENGTH &&
+        name &&
+        name.length <= MAX_LITERATURE_SCOPE_NAME_LENGTH
+        ? { type: 'literature-scope', scope, collectionId, name }
+        : undefined
+    }
     case 'artifact': {
       const id = asString(part.id)
       const name = asString(part.name)
@@ -3281,7 +3473,9 @@ const sanitizeMessagePart = (part: unknown): MessagePart | undefined => {
       }
 
       const path = asString(part.path)
-      if (!path || (source !== 'upload' && source !== 'artifact')) return undefined
+      if (!path || (source !== 'upload' && source !== 'artifact' && source !== 'literature')) {
+        return undefined
+      }
 
       const sanitized: MessagePart = { type: 'artifact', id, name, path, source }
       const versionId = asString(part.versionId)
@@ -3298,6 +3492,11 @@ const sanitizeMessagePart = (part: unknown): MessagePart | undefined => {
       return undefined
   }
 }
+
+export const sanitizeMessageParts = (value: unknown): MessagePart[] =>
+  Array.isArray(value)
+    ? value.map(sanitizeMessagePart).filter((part): part is MessagePart => part !== undefined)
+    : []
 
 export const sanitizeSessionReferences = (value: unknown): SessionReference[] => {
   if (!Array.isArray(value)) return []
@@ -3359,13 +3558,25 @@ export function sanitizeSessionMessageImages(session: PersistedChatSession): Per
         totalBytes += image.byteLength
         return true
       })
-      const annotations = (message.annotations ?? []).filter((annotation) => {
-        if (annotation.kind !== 'pdf' || annotation.selector.kind !== 'region') return true
+      const annotations = (message.annotations ?? []).map((annotation) => {
+        if (
+          annotation.kind !== 'pdf' ||
+          annotation.selector.kind !== 'region' ||
+          !annotation.selector.image
+        )
+          return annotation
         if (totalBytes + annotation.selector.image.byteLength > MAX_ACP_SESSION_IMAGE_BYTES) {
-          return false
+          return {
+            ...annotation,
+            selector: {
+              ...annotation.selector,
+              image: undefined,
+              imageOmissionReason: 'session-budget' as const
+            }
+          }
         }
         totalBytes += annotation.selector.image.byteLength
-        return true
+        return annotation
       })
       return {
         ...message,
@@ -3556,9 +3767,7 @@ const sanitizeMessage = (
         )
         .filter((item): item is PersistedUploadedAttachment => !!item)
     : []
-  const parts = Array.isArray(message.parts)
-    ? message.parts.map(sanitizeMessagePart).filter((item): item is MessagePart => !!item)
-    : []
+  const parts = sanitizeMessageParts(message.parts)
   const annotations = role === 'user' ? sanitizeAnnotations(message.annotations) : []
   const pdfContext =
     role === 'user' ? sanitizeMessagePdfContextSnapshot(message.pdfContext) : undefined
@@ -3609,7 +3818,11 @@ const sanitizeMessage = (
   if (streamId) sanitized.streamId = streamId
   if (attribution) sanitized.attribution = attribution
   if (presentation) sanitized.presentation = presentation
-  if (responseToMessageId) sanitized.responseToMessageId = responseToMessageId
+  // Older application-routed user Messages could persist their own id as the response target.
+  // The edge carries no information, so canonicalize that known legacy shape on every read path.
+  if (responseToMessageId && (role !== 'user' || responseToMessageId !== id)) {
+    sanitized.responseToMessageId = responseToMessageId
+  }
   if (artifactIds.length > 0) sanitized.artifactIds = artifactIds
   if (delegatedTask) sanitized.delegatedTask = delegatedTask
   if (delegatedInputVersionIds.length > 0) {
@@ -3635,6 +3848,11 @@ const sanitizeMessage = (
     sanitized.relayedFrom = { kind: 'side-chat', direction: 'to-main' }
   }
   if (images) sanitized.images = images
+  if (isRecord(message.usageOrigin)) {
+    const sessionId = asString(message.usageOrigin.sessionId)
+    const messageId = asString(message.usageOrigin.messageId)
+    if (sessionId && messageId) sanitized.usageOrigin = { sessionId, messageId }
+  }
   if (turnUsage) sanitized.turnUsage = turnUsage
   if (hasMatchingModelCallTotals) sanitized.modelCallUsage = modelCallUsage
   if (contextWindowSamples.length > 0) sanitized.contextWindowSamples = contextWindowSamples
@@ -4165,9 +4383,14 @@ const sanitizeSession = (
   if (resumeRecovery) sanitized.resumeRecovery = resumeRecovery
   if (branchSource) sanitized.branchSource = branchSource
   if (pendingHistoryReplay) sanitized.pendingHistoryReplay = pendingHistoryReplay
+  if (session.branchContextResetRequired === true) sanitized.branchContextResetRequired = true
   if (error) sanitized.error = error
   // Only meaningful alongside an error; persisted only when explicitly false (absent = reportable).
   if (error && session.errorReportable === false) sanitized.errorReportable = false
+  const artifactErrorEventIds = [...new Set(asStringArray(session.artifactErrorEventIds))]
+  if (error?.startsWith('Generated file finalization') && artifactErrorEventIds.length > 0) {
+    sanitized.artifactErrorEventIds = artifactErrorEventIds
+  }
   if (agentFrameworkId && AGENT_FRAMEWORK_IDS.has(agentFrameworkId)) {
     sanitized.agentFrameworkId = agentFrameworkId
   }
@@ -4217,8 +4440,8 @@ const sanitizeSession = (
     sanitized.status === 'waiting-plan-approval' &&
     runtimeContext?.plan?.approval !== 'pending'
   ) {
-    // Approval waiting is meaningful only with restorable main-owned Plan authority. A corrupt or
-    // settled context must not leave the conversation permanently blocked with nothing to approve.
+    // Approval waiting is meaningful only with a restorable pending Plan. A corrupt or settled
+    // context must not leave the conversation permanently blocked with nothing to approve.
     sanitized.status = 'idle'
     sanitized.activeRun = undefined
   }
@@ -4386,9 +4609,27 @@ export type SessionFileDecodeResult =
 // Wraps a session in the on-disk envelope written per file.
 export const createSessionFile = (session: PersistedChatSession): PersistedSessionFile => {
   const materialized = materializeSessionConversationGraph(session)
+  const compactMessage = <Message extends PersistedChatMessage>(message: Message): Message =>
+    message.status === 'streaming'
+      ? message
+      : ({ ...message, eventIds: retainRecentSessionEventIds(message.eventIds) } as Message)
+  const compactActivity = <Activity extends PersistedToolActivity>(activity: Activity): Activity =>
+    activity.status === 'pending' || activity.status === 'in_progress'
+      ? activity
+      : ({ ...activity, eventIds: retainRecentSessionEventIds(activity.eventIds) } as Activity)
+  const compacted: MaterializedPersistedChatSession = {
+    ...materialized,
+    messages: materialized.messages.map(compactMessage),
+    activities: materialized.activities?.map(compactActivity),
+    conversationGraph: {
+      ...materialized.conversationGraph,
+      messages: materialized.conversationGraph.messages.map(compactMessage),
+      activities: materialized.conversationGraph.activities.map(compactActivity)
+    }
+  }
   return {
     version: SESSION_FILE_VERSION,
-    session: sanitizeSessionMessageImages(materialized)
+    session: sanitizeSessionMessageImages(compacted)
   }
 }
 
@@ -4534,6 +4775,12 @@ export type SessionLoadWarning =
       recovered: false
     }
   | {
+      kind: 'too-large'
+      projectId: string
+      fileName: string
+      recovered: false
+    }
+  | {
       kind: 'manifest-corrupt' | 'manifest-unreadable'
       fileName: string
       recovered: boolean
@@ -4572,13 +4819,22 @@ export type OpenSessionRecoveryFolderRequest = {
   projectId: string
 }
 
-const sessionPdfContextSourceSchema = z
-  .object({
-    sourceKind: z.enum(['artifact-version', 'upload-version']),
-    sourceFileId: z.string().min(1),
-    sourceVersionId: z.string().min(1)
-  })
-  .strict()
+const sessionPdfContextSourceSchema = z.union([
+  z
+    .object({
+      sourceKind: z.enum(['artifact-version', 'upload-version']),
+      sourceFileId: z.string().min(1),
+      sourceVersionId: z.string().min(1)
+    })
+    .strict(),
+  z
+    .object({
+      sourceKind: z.literal('literature-attachment-version'),
+      sourceFileId: z.string().min(1).optional(),
+      sourceVersionId: z.string().min(1)
+    })
+    .strict()
+])
 
 const pendingSessionPdfContextCandidateSchema = z
   .object({
@@ -4656,10 +4912,25 @@ export const editSessionDetailsRequestSchema = z.union([
 
 export type DeleteSessionRequest = z.infer<typeof deleteSessionRequestSchema>
 
+// Main-process deletion failures must preserve the irreversible JSON commit boundary. Only the
+// plain SessionDeletionResult is sent across IPC; this error and its cause stay in main.
+export class SessionDeletionCommittedError extends Error {
+  constructor(cause: unknown) {
+    super(cause instanceof Error ? cause.message : String(cause), { cause })
+    this.name = 'SessionDeletionCommittedError'
+  }
+}
+
 // zod v4 requires unique discriminator values, and both failure branches share status 'failed',
 // so this stays a plain union over the exact owner-produced shapes.
 export const sessionDeletionResultSchema = z.union([
-  z.object({ status: z.literal('deleted'), runtimeDetached: z.literal(true) }).strict(),
+  z
+    .object({
+      status: z.literal('deleted'),
+      runtimeDetached: z.literal(true),
+      cleanupPending: z.literal(true).optional()
+    })
+    .strict(),
   z
     .object({
       status: z.literal('failed'),
@@ -4683,7 +4954,7 @@ export const updateSessionArchiveRequestSchema = z
     projectId: z.string().min(1),
     sessionId: z.string().min(1),
     archived: z.boolean(),
-    expectedArchivedAt: z.number().int().positive().nullable()
+    expectedRevision: z.number().int().nonnegative()
   })
   .strict()
 
@@ -4705,6 +4976,20 @@ const saveSessionArgsCodec: RuntimeCodec<
     }
     const session = persistedChatSessionCodec.parse(value[0])
     return value.length === 1 ? [session] : [session, value[1] as SaveSessionOptions | undefined]
+  }
+})
+
+const updateSessionConfigurationArgsCodec: RuntimeCodec<
+  readonly [session: PersistedChatSession, expectedRevision: number]
+> = Object.freeze({
+  parse: (value) => {
+    if (!Array.isArray(value) || value.length !== 2) {
+      throw new Error('Invalid Session configuration update arguments.')
+    }
+    return [
+      persistedChatSessionCodec.parse(value[0]),
+      z.number().int().nonnegative().parse(value[1])
+    ]
   }
 })
 
@@ -4740,6 +5025,10 @@ export const sessionApplicationCommandContracts = Object.freeze({
     persistedChatSessionCodec
   ),
   save: defineApplicationCommandContract(saveSessionArgsCodec, persistedChatSessionCodec),
+  updateConfiguration: defineApplicationCommandContract(
+    updateSessionConfigurationArgsCodec,
+    persistedChatSessionCodec
+  ),
   editDetails: defineApplicationCommandContract(
     validationCodec(z.tuple([editSessionDetailsRequestSchema])),
     persistedChatSessionCodec

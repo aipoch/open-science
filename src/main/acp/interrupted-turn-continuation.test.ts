@@ -108,53 +108,61 @@ describe('continueInterruptedTurn', () => {
     ])
   })
 
-  it('rebuilds current PDF region Evidence from the interrupted user turn', async () => {
-    const durable = session([
-      message('prompt-1', 'user', 'Explain this figure', {
-        annotations: [
-          {
-            id: 'pdf-region-1',
-            kind: 'pdf',
-            target: 'agent',
-            source: {
-              kind: 'upload-version',
-              projectId: 'project-1',
-              sessionId: 'session-1',
-              versionId: 'version-1',
-              name: 'paper.pdf',
-              path: 'upload-version:project-1/session-1/version-1',
-              checksum: 'a'.repeat(64)
-            },
-            selector: {
-              kind: 'region',
-              pageNumber: 2,
-              rect: { x: 0.1, y: 0.2, width: 0.4, height: 0.3 },
-              pageRotation: 0,
-              image: { mimeType: 'image/png', data: 'AQID', byteLength: 3 }
+  it.each([true, false])(
+    'rebuilds PDF region evidence after interruption with bitmap retained=%s',
+    async (withBitmap) => {
+      const durable = session([
+        message('prompt-1', 'user', 'Explain this figure', {
+          annotations: [
+            {
+              id: 'pdf-region-1',
+              kind: 'pdf',
+              target: 'agent',
+              source: {
+                kind: 'upload-version',
+                projectId: 'project-1',
+                sessionId: 'session-1',
+                versionId: 'version-1',
+                name: 'paper.pdf',
+                path: 'upload-version:project-1/session-1/version-1',
+                checksum: 'a'.repeat(64)
+              },
+              selector: {
+                kind: 'region',
+                pageNumber: 2,
+                rect: { x: 0.1, y: 0.2, width: 0.4, height: 0.3 },
+                pageRotation: 0,
+                ...(withBitmap
+                  ? { image: { mimeType: 'image/png' as const, data: 'AQID', byteLength: 3 } }
+                  : { imageOmissionReason: 'session-budget' as const })
+              }
             }
-          }
-        ]
-      })
-    ])
-    const startContinuation = vi.fn<(request: AcpPromptRequest) => Promise<void>>(async () => {})
+          ]
+        })
+      ])
+      const startContinuation = vi.fn<(request: AcpPromptRequest) => Promise<void>>(async () => {})
 
-    await continueInterruptedTurn(
-      {
-        runtime: {
-          getState: vi.fn(() => snapshot()),
-          getLatestUserPrompt: vi.fn(() => undefined),
-          startContinuation
+      await continueInterruptedTurn(
+        {
+          runtime: {
+            getState: vi.fn(() => snapshot()),
+            getLatestUserPrompt: vi.fn(() => undefined),
+            startContinuation
+          },
+          loadSession: vi.fn(async () => durable)
         },
-        loadSession: vi.fn(async () => durable)
-      },
-      { sessionId: 'session-1', projectId: 'project-1', promptMessageId: 'prompt-1' }
-    )
+        { sessionId: 'session-1', projectId: 'project-1', promptMessageId: 'prompt-1' }
+      )
 
-    const request = startContinuation.mock.calls[0][0]
-    expect(request.text).toContain('"type":"pdf-region"')
-    expect(request.currentImages).toEqual([{ mimeType: 'image/png', data: 'AQID', byteLength: 3 }])
-    expect(request.historyImages).toBeUndefined()
-  })
+      const request = startContinuation.mock.calls[0][0]
+      expect(request.text).toContain('"type":"pdf-region"')
+      expect(request.currentImages).toEqual(
+        withBitmap ? [{ mimeType: 'image/png', data: 'AQID', byteLength: 3 }] : undefined
+      )
+      if (!withBitmap) expect(request.text).toContain('"imageOmissionReason":"session-budget"')
+      expect(request.historyImages).toBeUndefined()
+    }
+  )
 
   it('reconstructs the hidden Save as skill turn after restart', async () => {
     const durable = session([

@@ -301,7 +301,8 @@ const ComposerContextUsage = ({
           ) : (
             <div className="whitespace-nowrap text-muted-foreground tabular-nums">
               {hasKnownSize ? `${formatTokens(used)} / ${formatTokens(size)}` : formatTokens(used)}{' '}
-              tokens{percent !== undefined ? ` (${percent}%)` : ''}
+              {t('tokens')}
+              {percent !== undefined ? ` (${percent}%)` : ''}
             </div>
           )}
           {showCompactAction ? (

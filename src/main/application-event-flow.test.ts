@@ -28,8 +28,8 @@ beforeEach(() => {
 describe('application event flow', () => {
   it('delivers notebook environment progress once to Electron and Web renderers', () => {
     const progress: ProvisionProgress = {
-      phase: 'download',
-      message: 'Downloading Python runtime',
+      phase: 'fetch-python',
+      event: { code: 'downloading-python-runtime' },
       progress: 0.42,
       operationId: 'operation-1',
       scope: 'python',

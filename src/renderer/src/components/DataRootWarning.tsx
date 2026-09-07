@@ -16,7 +16,7 @@ const DataRootWarning = (): React.JSX.Element => {
       className="flex items-start gap-2 rounded-lg border border-session-waiting/40 bg-session-waiting/10 px-3 py-2 text-xs text-session-waiting"
     >
       <TriangleAlert className="mt-px size-3.5 shrink-0" aria-hidden="true" />
-      <span>
+      <span className="text-text-000">
         {t(
           "{{appName}} manages this folder. Don't move, rename, or delete files inside it — doing so can break your projects and history.",
           { appName: APP.name }

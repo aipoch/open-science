@@ -113,12 +113,19 @@ export type OfficePreviewHostMessage = {
   start: OfficePreviewRuntimeStart
 }
 
-export type OfficePreviewRuntimeMessage = {
-  channel: typeof OFFICE_PREVIEW_FRAME_MESSAGE_CHANNEL
-  version: typeof OFFICE_PREVIEW_FRAME_MESSAGE_VERSION
-  type: 'state'
-  state: OfficePreviewRuntimeState
-}
+export type OfficePreviewRuntimeMessage =
+  | {
+      channel: typeof OFFICE_PREVIEW_FRAME_MESSAGE_CHANNEL
+      version: typeof OFFICE_PREVIEW_FRAME_MESSAGE_VERSION
+      type: 'state'
+      state: OfficePreviewRuntimeState
+    }
+  | {
+      channel: typeof OFFICE_PREVIEW_FRAME_MESSAGE_CHANNEL
+      version: typeof OFFICE_PREVIEW_FRAME_MESSAGE_VERSION
+      type: 'context-menu'
+      contextMenu: { sessionId: string; x: number; y: number }
+    }
 
 const OFFICE_PREVIEW_PHASES = new Set<OfficePreviewPhase>([
   'starting',
@@ -216,6 +223,20 @@ export const isOfficePreviewRuntimeMessage = (
   ) {
     return false
   }
-  if (message.type !== 'state' || !('state' in message)) return false
-  return isOfficePreviewRuntimeState(message.state)
+  if (message.type === 'state' && 'state' in message) {
+    return isOfficePreviewRuntimeState(message.state)
+  }
+  if (message.type === 'context-menu' && 'contextMenu' in message) {
+    const contextMenu = message.contextMenu as
+      { sessionId?: unknown; x?: unknown; y?: unknown } | undefined
+    return (
+      contextMenu !== undefined &&
+      isNonEmptyString(contextMenu.sessionId) &&
+      typeof contextMenu.x === 'number' &&
+      Number.isFinite(contextMenu.x) &&
+      typeof contextMenu.y === 'number' &&
+      Number.isFinite(contextMenu.y)
+    )
+  }
+  return false
 }

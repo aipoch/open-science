@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import { ArrowLeft, ExternalLink, ShieldAlert, TriangleAlert, X } from 'lucide-react'
-import { Dialog } from 'radix-ui'
+import * as Dialog from '@/components/ui/dialog'
 import { useTranslation } from 'react-i18next'
 
 import type { JobSummary } from '../../../shared/compute'
@@ -84,7 +84,7 @@ function SessionJobsList({
                     />
                   </div>
                 </div>
-                <span className="shrink-0 text-[12px] text-muted-foreground">
+                <span className="shrink-0 min-w-[6ch] text-right text-[12px] tabular-nums text-muted-foreground">
                   {isRunning ? elapsedStr : ''}
                 </span>
               </button>
@@ -277,13 +277,14 @@ function JobDetailView({ job, onBack, onOpenFileBrowser }: JobDetailViewProps): 
 
       {latestJob.needs_attention ? (
         <div
-          role="alert"
           data-testid="job-integrity-diagnostic"
           className="flex justify-center border-b border-border p-5"
         >
           <ErrorNotice
             icon={ShieldAlert}
             tone="red"
+            role="alert"
+            diagnosticsLabel={t('Diagnostics')}
             title={t('Saved remote job data needs attention')}
             description={t(
               'This job remains visible, but automatic result analysis is paused because its saved state is incompatible.'
@@ -409,7 +410,9 @@ function MetaRow({ label, value, isLink, onLinkClick }: MetaRowProps): React.JSX
           <ExternalLink size={11} className="shrink-0" aria-hidden="true" />
         </button>
       ) : (
-        <span className="text-[12.5px] text-secondary-foreground truncate">{value}</span>
+        <span className="text-[12.5px] tabular-nums text-secondary-foreground truncate">
+          {value}
+        </span>
       )}
     </div>
   )

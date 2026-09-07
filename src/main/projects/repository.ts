@@ -8,6 +8,7 @@ import type {
   UpdateProjectRequest
 } from '../../shared/projects'
 import { PROJECT_NAME_MAX_LENGTH } from '../../shared/projects'
+import { projectSessionDefaultsSchema } from '../../shared/session-configuration'
 import { MEMORY_SETTINGS_ID } from '../../shared/memory'
 import { migrationSqlExecutor } from '../database/migration-sql-executor'
 
@@ -28,6 +29,39 @@ type ProjectClient = Pick<
 
 type ProjectDeletionResult = Readonly<{ memoryRevision: number }>
 
+const decodeProjectSessionDefaults = (value: string | null): Project['sessionDefaults'] => {
+  try {
+    const decoded: unknown = JSON.parse(value ?? '{}')
+    if (typeof decoded !== 'object' || decoded === null || Array.isArray(decoded)) {
+      return { permissionProfile: 'ask', delegationPolicy: 'deny' }
+    }
+    const source = decoded as Record<string, unknown>
+    const defaults = Object.fromEntries(
+      Object.entries(projectSessionDefaultsSchema.shape).flatMap(([key, schema]) => {
+        const field = schema.safeParse(source[key])
+        return field.success && field.data !== undefined ? [[key, field.data]] : []
+      })
+    )
+    if (
+      source.permissionProfile !== undefined &&
+      !projectSessionDefaultsSchema.shape.permissionProfile.safeParse(source.permissionProfile)
+        .success
+    ) {
+      defaults.permissionProfile = 'ask'
+    }
+    if (
+      source.delegationPolicy !== undefined &&
+      !projectSessionDefaultsSchema.shape.delegationPolicy.safeParse(source.delegationPolicy)
+        .success
+    ) {
+      defaults.delegationPolicy = 'deny'
+    }
+    return projectSessionDefaultsSchema.parse(defaults)
+  } catch {
+    return { permissionProfile: 'ask', delegationPolicy: 'deny' }
+  }
+}
+
 // Normalizes Prisma rows into the epoch-ms shape shared with the renderer.
 const toProject = (row: PrismaProject): Project => ({
   id: row.id,
@@ -35,9 +69,11 @@ const toProject = (row: PrismaProject): Project => ({
   description: row.description,
   // An empty Agent Context is omitted on the wire, matching the optional shared schema field.
   ...(row.agentContext ? { agentContext: row.agentContext } : {}),
+  sessionDefaults: decodeProjectSessionDefaults(row.sessionDefaults),
   isExample: row.isExample,
   ...(row.pinned ? { pinned: true } : {}),
   ...(row.archivedAt ? { archivedAt: row.archivedAt.getTime() } : {}),
+  archiveRevision: row.archiveRevision,
   createdAt: row.createdAt.getTime(),
   updatedAt: row.updatedAt.getTime()
 })
@@ -53,12 +89,16 @@ class ProjectRepository {
   // Lists projects most-recently-updated first for the home screen.
   async list(): Promise<Project[]> {
     const client = await this.getClient()
+    const deletionIntents = await client.projectDeletionIntent.findMany({
+      select: { projectId: true }
+    })
     const rows = await client.project.findMany({
       where: { deletedAt: null },
       orderBy: { updatedAt: 'desc' }
     })
+    const deletingProjectIds = new Set(deletionIntents.map(({ projectId }) => projectId))
 
-    return rows.map(toProject)
+    return rows.filter(({ id }) => !deletingProjectIds.has(id)).map(toProject)
   }
 
   // Returns a single project or null when it no longer exists.
@@ -67,6 +107,15 @@ class ProjectRepository {
     const row = await client.project.findUnique({ where: { id } })
 
     return row && row.deletedAt === null ? toProject(row) : null
+  }
+
+  async exists(id: string): Promise<boolean> {
+    const client = await this.getClient()
+    const row = await client.project.findUnique({
+      where: { id },
+      select: { deletedAt: true }
+    })
+    return row?.deletedAt === null
   }
 
   // Creates a project; rejects blank names before touching the database.
@@ -96,6 +145,7 @@ class ProjectRepository {
       name?: string
       description?: string
       agentContext?: string
+      sessionDefaults?: string
       pinned?: boolean
       updatedAt?: Date
     } = {}
@@ -118,6 +168,12 @@ class ProjectRepository {
       data.agentContext = request.agentContext.trim()
     }
 
+    if (request.sessionDefaults !== undefined) {
+      data.sessionDefaults = JSON.stringify(
+        projectSessionDefaultsSchema.parse(request.sessionDefaults)
+      )
+    }
+
     if (!Number.isSafeInteger(request.expectedUpdatedAt) || request.expectedUpdatedAt <= 0) {
       throw new Error('Project update timestamp is invalid.')
     }
@@ -128,7 +184,8 @@ class ProjectRepository {
       request.pinned !== undefined &&
       request.name === undefined &&
       request.description === undefined &&
-      request.agentContext === undefined
+      request.agentContext === undefined &&
+      request.sessionDefaults === undefined
     ) {
       // Prisma's @updatedAt automation also runs for administrative changes. Updating only the pin
       // column in SQL avoids both a fake activity bump and a read/write race that could restore an
@@ -174,7 +231,10 @@ class ProjectRepository {
   // forge or clear visibility state. The compare-and-set condition also makes Undo safe across
   // windows without changing the research activity timestamp.
   async updateArchive(request: UpdateProjectArchiveRequest, archivedAt: number): Promise<Project> {
-    if (!Number.isSafeInteger(request.expectedArchivedAt) && request.expectedArchivedAt !== null) {
+    if (
+      !Number.isSafeInteger(request.expectedArchiveRevision) ||
+      request.expectedArchiveRevision < 0
+    ) {
       throw new Error('Project archive state is invalid.')
     }
     if (!Number.isSafeInteger(archivedAt) || archivedAt <= 0) {
@@ -182,15 +242,15 @@ class ProjectRepository {
     }
 
     const client = await this.getClient()
-    const expectedArchivedAt = request.expectedArchivedAt
     // Prisma's @updatedAt automation also runs for administrative changes. Updating only the archive
-    // column in SQL preserves the activity timestamp without reading and later restoring a stale value.
+    // columns in SQL preserves the activity timestamp without reading and later restoring a stale value.
     const updated = await client.$executeRaw`
       UPDATE "Project"
-      SET "archivedAt" = ${request.archived ? new Date(archivedAt) : null}
+      SET "archivedAt" = ${request.archived ? new Date(archivedAt) : null},
+          "archiveRevision" = "archiveRevision" + 1
       WHERE "id" = ${request.id}
         AND "deletedAt" IS NULL
-        AND "archivedAt" IS ${expectedArchivedAt === null ? null : new Date(expectedArchivedAt)}
+        AND "archiveRevision" = ${request.expectedArchiveRevision}
     `
     if (updated !== 1) {
       const current = await client.project.findUnique({ where: { id: request.id } })

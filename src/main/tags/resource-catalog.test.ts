@@ -13,7 +13,8 @@ describe('TagResourceCatalog', () => {
           { id: 'conflicting-skill', available: false }
         ]),
       listConnectors: vi.fn().mockResolvedValue({ connectors: [], customServers: [] }),
-      listSpecialists: vi.fn().mockResolvedValue([])
+      listSpecialists: vi.fn().mockResolvedValue([]),
+      listLiteratureItems: vi.fn().mockResolvedValue([])
     })
 
     const snapshot = await catalog.snapshot()

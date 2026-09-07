@@ -1,6 +1,8 @@
+import { ProjectFilesReconciliationError } from '../project-files/repository'
 import type { ProjectFileSource, ProjectFilesChangedEvent } from '../../shared/project-files'
 import type { ReconcilePendingArtifactsRequest } from '../../shared/artifacts'
 import {
+  SessionDeletionCommittedError,
   type DelegationPolicy,
   type LoadAllSessionsResult,
   type PersistedChatMessage,
@@ -9,6 +11,9 @@ import {
   type PersistedSideChatRelay,
   type SaveSessionOptions,
   type SaveSessionManifestRequest,
+  type FailTaskSessionRunRequest,
+  type SettleTaskSessionCompletionRequest,
+  type StageTaskSessionCompletionRequest,
   type UpdateSessionArchiveRequest,
   type SessionRuntimeContext,
   type SessionLoadFailure,
@@ -140,7 +145,7 @@ type SessionFileIndex = {
   softDeleteProject(projectId: string): Promise<ManagedFileSoftDeleteToken>
   reconcileProjectSessions(projectId: string, sessions: PersistedChatSession[]): Promise<void>
   reconcileActiveSessions(sessions: PersistedChatSession[]): Promise<void>
-  markReconciliationIncomplete(): void
+  markReconciliationIncomplete(projectId?: string): void
 }
 
 type SessionProvenancePersistence = {
@@ -427,6 +432,7 @@ class SessionPersistenceCoordinator implements DelegatedWorkRecordCommands {
           } catch (error) {
             recoveryFailure ??= error
             recoveryFailureCount += 1
+            this.fileIndex.markReconciliationIncomplete(sessions[index].projectId)
             const sessionRecovery = startDiagnosticOperation(this.log, {
               operation: 'delegation-recovery',
               fields: { mode: 'startup' }
@@ -437,7 +443,6 @@ class SessionPersistenceCoordinator implements DelegatedWorkRecordCommands {
         }
         if (recoveryFailureCount > 0) {
           this.stateOwner.replaceMetadata(sessions, false)
-          this.fileIndex.markReconciliationIncomplete()
           result = {
             ...result,
             sessions,
@@ -498,7 +503,9 @@ class SessionPersistenceCoordinator implements DelegatedWorkRecordCommands {
 
       if (reconciliation.status === 'degraded') {
         this.stateOwner.markMetadataIncomplete()
-        this.fileIndex.markReconciliationIncomplete()
+        if (!(reconciliation.failure instanceof ProjectFilesReconciliationError)) {
+          this.fileIndex.markReconciliationIncomplete()
+        }
         operation.fail(reconciliation.failure, {
           status: 'degraded',
           hydrationAvailable: true,
@@ -578,6 +585,24 @@ class SessionPersistenceCoordinator implements DelegatedWorkRecordCommands {
   ): Promise<SessionRuntimeContext> {
     return this.operationScheduler.runSession(command.projectId, command.sessionId, () =>
       this.stateOwner.patchRuntimeContext(command)
+    )
+  }
+
+  stageTaskCompletion(command: StageTaskSessionCompletionRequest): Promise<PersistedChatSession> {
+    return this.operationScheduler.runSession(command.projectId, command.sessionId, () =>
+      this.stateOwner.stageTaskCompletion(command)
+    )
+  }
+
+  settleTaskCompletion(command: SettleTaskSessionCompletionRequest): Promise<PersistedChatSession> {
+    return this.operationScheduler.runSession(command.projectId, command.sessionId, () =>
+      this.stateOwner.settleTaskCompletion(command)
+    )
+  }
+
+  failTaskRun(command: FailTaskSessionRunRequest): Promise<PersistedChatSession> {
+    return this.operationScheduler.runSession(command.projectId, command.sessionId, () =>
+      this.stateOwner.failTaskRun(command)
     )
   }
 
@@ -693,7 +718,7 @@ class SessionPersistenceCoordinator implements DelegatedWorkRecordCommands {
   // cannot prove that an omitted Session is idle, so it is unsafe to hide the whole Project.
   assertProjectArchivable(
     projectId: string,
-    isRuntimeBusy: (sessionId: string) => boolean = () => false
+    isRuntimeBusy: (sessionId: string) => boolean | Promise<boolean> = () => false
   ): Promise<string[]> {
     return this.operationScheduler.runProject(projectId, () =>
       this.deletionOwner.assertProjectArchivable(projectId, isRuntimeBusy)
@@ -720,7 +745,7 @@ class SessionPersistenceCoordinator implements DelegatedWorkRecordCommands {
   // never allows a stale renderer projection to alter archive state.
   updateArchive(
     request: UpdateSessionArchiveRequest,
-    isRuntimeBusy: () => boolean = () => false
+    isRuntimeBusy: () => boolean | Promise<boolean> = () => false
   ): Promise<PersistedChatSession> {
     return this.operationScheduler.runSession(request.projectId, request.sessionId, () =>
       this.deletionOwner.updateArchive(request, isRuntimeBusy)
@@ -768,6 +793,16 @@ class SessionPersistenceCoordinator implements DelegatedWorkRecordCommands {
     return this.operationScheduler.runSession(projectId, sessionId, () =>
       this.stateOwner.setDelegationPolicy(projectId, sessionId, policy)
     )
+  }
+
+  updateSessionConfiguration(
+    session: PersistedChatSession,
+    expectedRevision: number
+  ): Promise<PersistedChatSession> {
+    return this.operationScheduler.runSession(session.projectId, session.id, async () => {
+      await assertSessionIdentityOwnership(this.repository, this.stateOwner, session)
+      return this.stateOwner.updateSessionConfiguration(session, expectedRevision)
+    })
   }
 
   setSessionComputeConcurrencyLimit(
@@ -904,7 +939,7 @@ class SessionPersistenceCoordinator implements DelegatedWorkRecordCommands {
           }
         } catch {
           // Unknown durable state is treated as committed: retain the in-memory tombstone and intent.
-          this.fileIndex.markReconciliationIncomplete()
+          this.fileIndex.markReconciliationIncomplete(projectId)
         }
         throw error
       }
@@ -993,31 +1028,41 @@ class SessionPersistenceCoordinator implements DelegatedWorkRecordCommands {
       async () => {
         const key = sessionKey(projectId, sessionId)
         this.deletedSessions.add(key)
-        try {
-          const receiptKind = await this.deletionOwner.deleteSession(projectId, sessionId)
-          if (
-            this.stateOwner.metadataSnapshot().isComplete &&
-            (await this.deletionOwner.reconcileProjectSessionDeletion(
-              projectId,
-              sessionId,
-              receiptKind
-            ))
-          ) {
-            return undefined
-          }
-          return receiptKind
-        } catch (error) {
-          try {
-            const authority = await this.repository.loadSessionWithDiagnostics(projectId, sessionId)
-            if (authority.status === 'found') this.deletedSessions.delete(key)
-          } catch {
-            // Authority cannot be proven live, so retain the tombstone fail-closed.
-          }
-          throw error
+        const deletion = await this.deletionOwner
+          .deleteSession(projectId, sessionId)
+          .catch(async (error: unknown) => {
+            try {
+              const authority = await this.repository.loadSessionWithDiagnostics(
+                projectId,
+                sessionId
+              )
+              if (authority.status === 'found') this.deletedSessions.delete(key)
+            } catch {
+              // Authority cannot be proven live, so retain the tombstone fail-closed.
+            }
+            throw error
+          })
+        const reconciled =
+          this.stateOwner.metadataSnapshot().isComplete &&
+          (await this.deletionOwner
+            .reconcileProjectSessionDeletion(projectId, sessionId, deletion.receiptKind)
+            .catch((error: unknown) => {
+              throw new SessionDeletionCommittedError(error)
+            }))
+        if (reconciled) {
+          if (deletion.cleanupError) throw deletion.cleanupError
+          return undefined
         }
+        return deletion
       },
-      (receiptKind) =>
-        this.deletionOwner.reconcileSessionDeletion(projectId, sessionId, receiptKind)
+      async ({ receiptKind, cleanupError }) => {
+        await this.deletionOwner
+          .reconcileSessionDeletion(projectId, sessionId, receiptKind)
+          .catch((error: unknown) => {
+            throw new SessionDeletionCommittedError(error)
+          })
+        if (cleanupError) throw cleanupError
+      }
     )
   }
 
@@ -1052,15 +1097,43 @@ class SessionPersistenceCoordinator implements DelegatedWorkRecordCommands {
 }
 const sessionKey = (projectId: string, sessionId: string): string => `${projectId}:${sessionId}`
 
+type SessionCatalog = Pick<
+  SessionPersistenceCoordinator,
+  'containsMessageOnActiveBranch' | 'loadSessionForContinuation' | 'sessionProjectId'
+>
+type SessionMutation = Pick<SessionPersistenceCoordinator, 'appendUserMessageToInteraction'>
+type SessionRuntimeContextCommands = Pick<
+  SessionPersistenceCoordinator,
+  'readSessionRuntimeContext' | 'patchSessionRuntimeContext'
+>
+type SessionDeletion = Pick<
+  SessionPersistenceCoordinator,
+  | 'assertProjectArchivable'
+  | 'assertSessionAvailable'
+  | 'completeProjectSessionDeletion'
+  | 'deleteProjectSessions'
+  | 'deleteSession'
+  | 'getProjectSessionDeletionState'
+  | 'listLegacyProjectSessionTombstones'
+  | 'markCommittedProjectSessionsPrepared'
+  | 'setSessionDeletionHandlers'
+  | 'updateArchive'
+>
+
 export { SessionPersistenceCoordinator, SessionRuntimeContextRevisionConflictError }
 export type {
   ComputeJobDeletionParticipant,
+  DelegatedWorkRecordCommands,
   PatchSessionRuntimeContextCommand,
   ProjectSessionDeletionResult,
+  SessionCatalog,
+  SessionDeletion,
   SessionDeletionHandlers,
   SessionFileIndex,
   SessionMetadata,
   SessionMetadataSnapshot,
+  SessionMutation,
   SessionMutationRepository,
-  SessionProvenancePersistence
+  SessionProvenancePersistence,
+  SessionRuntimeContextCommands
 }

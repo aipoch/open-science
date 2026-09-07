@@ -11,7 +11,13 @@ import type { PersistedChatSession } from '../../shared/session-persistence'
 import { ImmutableInputAuthority } from '../immutable-input-authority'
 import { ManagedFileVersionService } from '../managed-file-versions/service'
 import { createFrameNotebookLane } from '../notebook/lane-identity'
+import { getNotebookSessionRoot } from '../notebook/repository'
 import { NotebookRuntimeService, type NotebookExecutionResult } from '../notebook/runtime-service'
+import {
+  beginComputeJobFileEvidence,
+  publishComputeJobFileEvidence,
+  settleComputeJobFileEvidence
+} from '../notebook/working-file-observer'
 import { createPngBytes } from './artifact-test-fixtures'
 import * as provenanceModule from './provenance-repository'
 import { ArtifactProvenanceRepository } from './provenance-repository'
@@ -68,6 +74,8 @@ const PUBLIC_METHODS = [
   'finalizeRun',
   'activateFinalizedRun',
   'listRunVersions',
+  'recordLiteratureSearch',
+  'recordLiteraturePdfRead',
   'prepareProjectReconciliation',
   'reconcileSession',
   'getLineage',
@@ -75,6 +83,7 @@ const PUBLIC_METHODS = [
   'getReviewerVersionTrace',
   'resolveVersionDescriptors',
   'getVersionCore',
+  'getVersionLiterature',
   'readDependencyRelations',
   'getVersionExecution',
   'getVersionMessages',
@@ -93,6 +102,10 @@ type ExactMethodInventory = [PublicMethod] extends [ListedMethod]
     : false
   : false
 const exactMethodInventory: ExactMethodInventory = true
+
+// Hosted Windows runners rebuild the application schema under disk contention.
+// The Windows full-test workflow default is 60s; write-identity suites finish later without hanging.
+const WINDOWS_SQLITE_TEST_TIMEOUT_MS = 120_000
 
 describe('artifact provenance public write contract', () => {
   it('captures constructor, method, and runtime value exports without private placement', async () => {
@@ -162,26 +175,30 @@ describe('artifact provenance allocation and write identity', () => {
     }
   })
 
-  it('returns the original immutable Version for an exact operation retry and rejects reuse', async () => {
-    const { client, repository, stagePng } = await fixture()
-    const request = createArtifactVersionRequest({
-      writeOperationId: 'stable-operation',
-      writeRequestChecksum: '3'.repeat(64)
-    })
-    await stagePng('original bytes')
-    const first = await repository.createVersion(request)
-    await stagePng('changed pending bytes')
+  it(
+    'returns the original immutable Version for an exact operation retry and rejects reuse',
+    async () => {
+      const { client, repository, stagePng } = await fixture()
+      const request = createArtifactVersionRequest({
+        writeOperationId: 'stable-operation',
+        writeRequestChecksum: '3'.repeat(64)
+      })
+      await stagePng('original bytes')
+      const first = await repository.createVersion(request)
+      await stagePng('changed pending bytes')
 
-    const retried = await repository.createVersion(request)
+      const retried = await repository.createVersion(request)
 
-    expect(retried).toMatchObject({ versionId: first.versionId, versionNumber: 1 })
-    await expect(readFile(retried.path)).resolves.toEqual(createPngBytes('original bytes'))
-    await expect(client.artifactVersion.count()).resolves.toBe(1)
-    await expect(
-      repository.createVersion({ ...request, writeRequestChecksum: '4'.repeat(64) })
-    ).rejects.toThrow(/write operation.*different request/i)
-    await expect(client.artifactVersion.count()).resolves.toBe(1)
-  })
+      expect(retried).toMatchObject({ versionId: first.versionId, versionNumber: 1 })
+      await expect(readFile(retried.path)).resolves.toEqual(createPngBytes('original bytes'))
+      await expect(client.artifactVersion.count()).resolves.toBe(1)
+      await expect(
+        repository.createVersion({ ...request, writeRequestChecksum: '4'.repeat(64) })
+      ).rejects.toThrow(/write operation.*different request/i)
+      await expect(client.artifactVersion.count()).resolves.toBe(1)
+    },
+    WINDOWS_SQLITE_TEST_TIMEOUT_MS
+  )
 
   it('diffs a generated text Version against its published or same-run predecessor', async () => {
     const value = await fixture()
@@ -271,11 +288,16 @@ describe('artifact provenance allocation and write identity', () => {
         ...context,
         messageId: assistant.id
       }
-      await repository.finalizeRun(request)
-      if (activate) await repository.activateFinalizedRun(request)
+      const finalized = await repository.finalizeRun(request)
+      expect(finalized.every((artifact) => artifact.isPublished === false)).toBe(true)
+      if (activate) {
+        const published = await repository.activateFinalizedRun(request)
+        expect(published.every((artifact) => artifact.isPublished === true)).toBe(true)
+      }
     }
 
     const first = await writeVersion('artifact-run-public', 'write-markdown-1', '# First\n')
+    expect(first.isPublished).toBe(false)
     await finishRun('artifact-run-public', [first.versionId], true)
 
     const hidden = await writeVersion('artifact-run-hidden', 'write-markdown-2', '# Hidden\n')
@@ -660,6 +682,178 @@ describe('artifact provenance producer and source validation', () => {
         versionId: version.versionId
       })
     ).resolves.toMatchObject({ execution: { producerRunId: 'ancestor-producer-run' } })
+  })
+
+  it('publishes a harvested Compute output from a later turn using its exact producer Run', async () => {
+    const value = await fixture()
+    const producerRunId = 'compute-submission-run'
+    const jobId = 'compute-job-cross-turn'
+    await appendNotebookRun(value, {
+      runId: producerRunId,
+      filename: 'submission-marker.png',
+      payload: 'submission marker',
+      ownsSource: false,
+      provenanceContext: {
+        messageBranchId: 'branch-parent',
+        runtimeSegmentId: 'runtime-segment-parent',
+        promptMessageId: 'prompt-parent'
+      }
+    })
+
+    const sessionRoot = getNotebookSessionRoot(value.storageRoot, 'project-1', 'session-1')
+    const sourcePath = join(sessionRoot, 'hpc', jobId, 'featured', 'results.bin')
+    const content = Buffer.from([0, 1, 2, 255, 10, 13])
+    await mkdir(dirname(sourcePath), { recursive: true })
+    await writeFile(sourcePath, content)
+    await beginComputeJobFileEvidence({
+      storageRoot: value.storageRoot,
+      projectId: 'project-1',
+      sessionId: 'session-1',
+      jobId,
+      producerRunId,
+      inputs: []
+    })
+    const fileEvidence = await publishComputeJobFileEvidence({
+      storageRoot: value.storageRoot,
+      projectId: 'project-1',
+      sessionId: 'session-1',
+      jobId,
+      producerRunId,
+      outputs: [
+        {
+          localPath: sourcePath,
+          relativePath: `hpc/${jobId}/featured/results.bin`
+        }
+      ]
+    })
+    await settleComputeJobFileEvidence({
+      storageRoot: value.storageRoot,
+      projectId: 'project-1',
+      sessionId: 'session-1',
+      jobId,
+      producerRunId,
+      fileEvidence
+    })
+    await value.client.computeJob.createMany({
+      data: Array.from({ length: 100 }, (_, index) => ({
+        id: `compute-job-noise-${String(index).padStart(3, '0')}`,
+        providerId: 'ssh:test',
+        shape: 'scheduler_cluster',
+        executionMode: 'slurm',
+        sessionId: 'session-1',
+        projectId: 'project-1',
+        status: 'success',
+        intent: 'unrelated output',
+        command: 'true',
+        commandHash: sha256('true'),
+        producerRunId
+      }))
+    })
+    await value.client.computeJob.create({
+      data: {
+        id: jobId,
+        providerId: 'ssh:test',
+        shape: 'scheduler_cluster',
+        executionMode: 'slurm',
+        sessionId: 'session-1',
+        projectId: 'project-1',
+        status: 'success',
+        intent: 'produce binary results',
+        command: 'generate-results',
+        commandHash: sha256('generate-results'),
+        producerRunId,
+        fileEvidence: JSON.stringify(fileEvidence),
+        harvestedAt: new Date()
+      }
+    })
+
+    await value.compatibilityRepository.writePendingFile(
+      {
+        projectId: 'project-1',
+        sessionId: 'artifact-session-1',
+        runId: 'artifact-run-1',
+        filename: 'results.bin',
+        source: { kind: 'localPath', path: sourcePath }
+      },
+      { allowedImportRoots: [sessionRoot] }
+    )
+    const sourceStat = await stat(sourcePath)
+    const currentTurn = {
+      messageBranchId: 'branch-current',
+      runtimeSegmentId: 'runtime-segment-current',
+      promptMessageId: 'prompt-current',
+      messageBranchAncestry: ['branch-parent', 'branch-current'],
+      messageAncestry: ['prompt-parent', 'prompt-current']
+    }
+    await expect(
+      value.repository.createVersion(
+        createArtifactVersionRequest({
+          writeOperationId: 'compute-output-without-owner',
+          notebookSessionId: 'session-1',
+          sourceKind: 'localPath',
+          sourceFileObservation: {
+            path: await realpath(sourcePath),
+            sizeBytes: sourceStat.size,
+            mtimeMs: sourceStat.mtimeMs
+          },
+          filename: 'results.bin',
+          contentType: 'application/octet-stream',
+          ...currentTurn
+        })
+      )
+    ).rejects.toThrow('Notebook source must have exactly one eligible Run owner.')
+
+    await value.client.computeJob.update({
+      where: { id: jobId },
+      data: { fileEvidence: JSON.stringify({ ...fileEvidence, checksum: '0'.repeat(64) }) }
+    })
+    await expect(
+      value.repository.createVersion(
+        createArtifactVersionRequest({
+          writeOperationId: 'compute-output-with-corrupt-evidence',
+          notebookSessionId: 'session-1',
+          producerRunId,
+          sourceKind: 'localPath',
+          sourceFileObservation: {
+            path: await realpath(sourcePath),
+            sizeBytes: sourceStat.size,
+            mtimeMs: sourceStat.mtimeMs
+          },
+          filename: 'results.bin',
+          contentType: 'application/octet-stream',
+          ...currentTurn
+        })
+      )
+    ).rejects.toThrow(`Producer source must have exactly one Run owner: ${producerRunId}`)
+    await value.client.computeJob.update({
+      where: { id: jobId },
+      data: { fileEvidence: JSON.stringify(fileEvidence) }
+    })
+
+    const version = await value.repository.createVersion(
+      createArtifactVersionRequest({
+        notebookSessionId: 'session-1',
+        producerRunId,
+        sourceKind: 'localPath',
+        sourceFileObservation: {
+          path: await realpath(sourcePath),
+          sizeBytes: sourceStat.size,
+          mtimeMs: sourceStat.mtimeMs
+        },
+        filename: 'results.bin',
+        contentType: 'application/octet-stream',
+        ...currentTurn
+      })
+    )
+
+    await expect(readFile(version.path)).resolves.toEqual(content)
+    const versionRow = requireAgentArtifactVersion(
+      await value.client.artifactVersion.findUniqueOrThrow({ where: { id: version.versionId } })
+    )
+    expect(JSON.parse(versionRow.evidenceJson)).toMatchObject({
+      producer: { producer_run_id: producerRunId },
+      compute_executions: expect.arrayContaining([expect.objectContaining({ activity_id: jobId })])
+    })
   })
 
   it('infers the exact source owner from an ancestor Branch when producerRunId is omitted', async () => {

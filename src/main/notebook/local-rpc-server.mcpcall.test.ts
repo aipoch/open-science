@@ -32,7 +32,7 @@ describe('mcpCall RPC', () => {
       body: JSON.stringify({ method: 'settingsCall', params: { workspaceCwd: process.cwd() } })
     })
 
-    expect(response.status).toBe(500)
+    expect(response.status).toBe(404)
     await expect(response.json()).resolves.toEqual({
       error: 'Unknown notebook RPC method: settingsCall'
     })
@@ -161,7 +161,7 @@ describe('mcpCall RPC', () => {
       })
     })
 
-    expect(response.status).toBe(500)
+    expect(response.status).toBe(400)
     await expect(response.json()).resolves.toEqual({
       error: 'mcpCall requires string server and method names.'
     })
@@ -422,6 +422,7 @@ describe('computeCall RPC', () => {
           provider_id: 'ssh:enabled',
           display_name: 'Enabled',
           shape: 'direct_ssh',
+          execution_mode: 'direct_ssh',
           status: 'not_probed',
           role: 'selected'
         }
@@ -554,7 +555,7 @@ describe('computeCall RPC', () => {
     expect(parsed.error_code).toBe('approval_denied')
   })
 
-  it('returns 500 for unknown op', async () => {
+  it('returns 400 for unknown op', async () => {
     const fakeCompute = { callCommand: async () => ({}) }
     server = new NotebookLocalRpcServer({ execute: async () => ({}) } as never, {
       transport: 'tcp',
@@ -566,7 +567,7 @@ describe('computeCall RPC', () => {
       headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
       body: JSON.stringify({ method: 'computeCall', params: { op: 'unknown_op' } })
     })
-    expect(res.status).toBe(500)
+    expect(res.status).toBe(400)
     const body = (await res.json()) as { error: string }
     expect(body.error).toMatch(/unknown computecall op/i)
   })
@@ -956,7 +957,7 @@ describe('computeCall RPC', () => {
     })
   })
 
-  it('returns 500 for unknown details mode', async () => {
+  it('returns 400 for unknown details mode', async () => {
     const fakeCompute = {
       callCommand: async () => ({}),
       list: async () => [],
@@ -977,7 +978,7 @@ describe('computeCall RPC', () => {
         params: { op: 'details', provider_id: 'ssh:biowulf', mode: 'zap' }
       })
     })
-    expect(res.status).toBe(500)
+    expect(res.status).toBe(400)
     const body = (await res.json()) as { error: string }
     expect(body.error).toMatch(/unknown details mode/i)
   })
@@ -1400,8 +1401,10 @@ describe('computeCall RPC', () => {
   it('routes computeCall op=job_result to getJobResult', async () => {
     const fakeResult = {
       job_id: 'job-42',
+      producer_run_id: 'notebook-run-42',
       status: 'success',
       exit_code: 0,
+      local_output_root: '/storage/notebooks/project-1/s-42',
       featured_files: ['hpc/job-42/featured/out.result'],
       hidden_files: [],
       output_files: ['hpc/job-42/featured/out.result'],
@@ -1441,6 +1444,8 @@ describe('computeCall RPC', () => {
     expect(res.status).toBe(200)
     const body = (await res.json()) as { result: typeof fakeResult }
     expect(body.result.job_id).toBe('job-42')
+    expect(body.result.producer_run_id).toBe('notebook-run-42')
+    expect(body.result.local_output_root).toBe('/storage/notebooks/project-1/s-42')
     expect(body.result.featured_files).toContain('hpc/job-42/featured/out.result')
     expect(body.result.output_files).toContain('hpc/job-42/featured/out.result')
   })

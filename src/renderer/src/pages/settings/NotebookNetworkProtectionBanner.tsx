@@ -30,7 +30,7 @@ type BannerPresentation = Readonly<{
   Icon: LucideIcon
   title: string
   description: string
-  tone: 'info' | 'warning' | 'failure' | 'neutral'
+  tone: 'warning' | 'failure' | 'neutral'
 }>
 
 const previewStatus = (
@@ -98,12 +98,13 @@ const NotebookNetworkProtectionBanner = ({
       case 'setupRequired':
         return {
           Icon: ShieldAlert,
-          title: t('Notebook network protection needs setup before notebooks can run.'),
+          title:
+            status.platform === 'win32'
+              ? t('Notebook network protection is not set up.')
+              : t('Notebook network protection needs setup before notebooks can run.'),
           description:
             status.platform === 'win32'
-              ? t(
-                  'Securely route Notebook Python, R, REPL, Bash, and package downloads through your approved domains. Until set up, Notebook continues using standard execution.'
-                )
+              ? t('Notebook continues using standard execution. No protected mode is active.')
               : t('Open Network settings to review the required setup.'),
           tone: 'warning'
         }
@@ -126,13 +127,12 @@ const NotebookNetworkProtectionBanner = ({
           Icon: LoaderCircle,
           title: t('Notebook network protection'),
           description: t('Checking…'),
-          tone: 'info'
+          tone: 'neutral'
         }
     }
   })()
 
   const toneClassName: Record<BannerPresentation['tone'], string> = {
-    info: 'border-status-info-foreground/25 bg-status-info-surface/45 dark:border-status-info-dark-foreground/25 dark:bg-status-info-dark-surface/25',
     warning:
       'border-status-warning-foreground/30 bg-status-warning-surface/45 dark:border-status-warning-dark-foreground/30 dark:bg-status-warning-dark-surface/25',
     failure:
@@ -141,7 +141,6 @@ const NotebookNetworkProtectionBanner = ({
   }
 
   const iconClassName: Record<BannerPresentation['tone'], string> = {
-    info: 'bg-status-info-surface text-status-info-foreground dark:bg-status-info-dark-surface dark:text-status-info-dark-foreground',
     warning:
       'bg-status-warning-surface text-status-warning-foreground dark:bg-status-warning-dark-surface dark:text-status-warning-dark-foreground',
     failure:

@@ -61,6 +61,23 @@ command fails without signalling the PID recorded in `web-service.json`; a stale
 reused by an unrelated process. The state file is retained for diagnosis and can be replaced by a
 later `open-science start`.
 
+Automatic discovery tries the development config directory before the production directory, skipping
+dead or unhealthy candidates until it finds a healthy service. An explicit `--config-root`,
+`OPEN_SCIENCE_CONFIG_ROOT`, or `OPEN_SCIENCE_STORAGE_ROOT` limits discovery to that directory. Live
+unhealthy records are retained; failed authentication never authorizes signalling a recorded PID.
+
+`open-science stop --json` prints exactly one result object on success:
+
+| `result`              | Meaning                                                            |
+| --------------------- | ------------------------------------------------------------------ |
+| `already-stopped`     | No live service record was found.                                  |
+| `daemon-stopped`      | The authenticated standalone daemon exited.                        |
+| `web-service-stopped` | The attached web service stopped; the desktop app remains running. |
+
+Among lifecycle commands, `status`, `stop`, and `update` support `--json`. `start` and `url` reject
+it; run `start --no-open` followed by `status --json` for machine-readable startup status. Errors
+with `--json` are reported on stderr as a JSON error object with a nonzero exit code.
+
 ## Application updates
 
 Check, download, and apply an Open Science application update without opening the browser or desktop
@@ -170,6 +187,7 @@ Update Project metadata or replace its Agent Context later using an ID or exact 
 
 ```bash
 open-science project update "Systematic review" \
+  --name "Evidence synthesis" \
   --description "Updated evidence review workspace" \
   --agent-context-file ./revised-agent-context.md \
   --json
@@ -177,10 +195,32 @@ open-science project update "Systematic review" \
 open-science project update <project-id> --clear-agent-context --json
 ```
 
-`--clear-agent-context` is explicit so an omitted option keeps the existing value. An update affects
+`--name` renames the Project and requires a non-empty value. `--clear-agent-context` is explicit so
+an omitted option keeps the existing value. An update affects
 newly created Sessions and provider Sessions that are set up again after the update. It does not
 rebuild an already attached Session. Project list, create, and update output reports only the boolean
 `hasAgentContext`; Agent Context contents are not returned through the public Task API or CLI output.
+
+### Project Session defaults
+
+Inspect or update the configuration copied into each newly created Session:
+
+```bash
+open-science project session-defaults show <project-id> --json
+open-science project session-defaults update <project-id> \
+  --provider anthropic --model claude-sonnet-4-5 --reasoning-effort high \
+  --approval-profile auto --auto-review --memory --delegation allow \
+  --enable-compute-host ssh:cluster-a --compute-host ssh:cluster-a --json
+```
+
+Updates use the Project's current `updatedAt` value as a compare-and-swap revision. They fail on a
+concurrent Project edit instead of overwriting it. Use the corresponding `--clear-*` option to
+remove an optional default, or `--clear-compute-hosts` to remove both enabled and selected Compute
+Hosts. Omitted options are preserved.
+
+The precedence for a new Session is explicit `run` options, then Project Session defaults, then
+application settings, then the provider-owned default. Defaults are snapshotted into the new
+Session; changing them never rewrites an existing Session.
 
 ## Run a task
 
@@ -201,12 +241,14 @@ open-science run --project <project-id> --prompt-file ./task.md \
   --compute-host ssh:cluster-a --compute-host ssh:cluster-b --wait --json
 ```
 
-On a new Session, the explicit list enables and selects those hosts. With `--session`, an explicit
-list replaces the selected target pool and enables any newly named hosts without disabling other
-Available hosts. Omitting every `--compute-host` preserves both access and selection. The CLI does
-not provide a clear-selection flag; SDK and Task API callers can explicitly send an empty
-`computeHostIds` array to clear Selected while preserving Enabled hosts. JSON output uses the
-server's compatibility-named
+On a new Session, `--enable-compute-host` adds Available hosts, `--compute-host` enables and selects
+its explicit list, and `--clear-compute-hosts` overrides Project defaults with empty Enabled and
+Selected lists. With `--session`, `--compute-host` replaces the selected target pool and enables any
+newly named hosts without disabling other Available hosts. Existing-Session runs reject
+`--enable-compute-host` and `--clear-compute-hosts`; use `session config update` for those access
+changes. Omitting every Compute Host option preserves both access and selection. SDK and Task API
+callers can explicitly send an empty `computeHostIds` array to clear Selected while preserving
+Enabled hosts. JSON output uses the server's compatibility-named
 `preferredComputeHostIds` authority result, not a copy inferred from the command line.
 
 When the selection is non-empty, the agent is instructed to run tool-backed task work on one of
@@ -264,7 +306,7 @@ The default approval profile is `ask`. Unattended workflows must explicitly use
 
 ### Execution controls
 
-The run command exposes four provider-neutral controls:
+The run command exposes five provider-neutral controls:
 
 ```bash
 open-science run \
@@ -272,6 +314,7 @@ open-science run \
   --prompt-file ./task.md \
   --plan-first \
   --auto-review \
+  --memory \
   --specialist literature-reviewer \
   --delegation deny \
   --wait \
@@ -284,6 +327,8 @@ open-science run \
 - `--auto-review` and `--no-auto-review` update the Session automatic-review setting. When enabled, a
   successful turn starts the existing reviewer workflow before the Run becomes terminal; the Run
   `review` property reports whether it started and its final lifecycle/outcome.
+- `--memory` and `--no-memory` update the Session Memory setting. When enabled, the Session uses the
+  agent's persistent project-scoped memory; the two flags are mutually exclusive.
 - `--specialist` accepts a Specialist UUID or stable Profile name. It binds only a new Session. An
   existing Session cannot be rebound, and a presentation `displayName` is not an identifier.
 - `--delegation allow|deny` updates whether the Session may create new delegated children. `deny`
@@ -303,21 +348,77 @@ open-science plan revise <session-id> --feedback "Split the validation step" --j
 ```
 
 Version/revision matching prevents a stale automation client from deciding a newer Plan. Approval
-continues the parked Run; feedback asks the live Plan interaction for a revision.
+persists the exact decision and triggers a one-time Agent wakeup; feedback asks the live Plan
+interaction for a revision.
+
+## Session configuration
+
+Read the persisted and effective configuration, including referenced provider, model, Specialist,
+and Compute Host availability:
+
+```bash
+open-science session config show <session-id> --json
+```
+
+Update an idle Session with the revision returned by `show`:
+
+```bash
+open-science session config update <session-id> --revision 7 \
+  --provider openai --provider-default-model --reasoning-effort medium \
+  --approval-profile ask --no-auto-review --memory --delegation deny \
+  --clear-compute-hosts --json
+```
+
+The Main provider, model, and reasoning effort are one compound configuration. A provider change
+must therefore include either `--model` or `--provider-default-model`. An update affects future
+turns only and is rejected while root-agent, subagent, or Notebook work is active. Reviewer work
+does not block the update. Stale revisions fail with `session_revision_conflict`; invalid or
+unavailable references fail with `invalid_configuration`.
+
+## Agent routing settings
+
+Inspect or atomically update the global Agent framework plus Reviewer and Subagent model routing:
+
+```bash
+open-science settings agent-routing show --json
+open-science settings agent-routing update --framework codex \
+  --reviewer-provider openai --reviewer-model gpt-5 \
+  --subagent-inherit --json
+```
+
+Use `--reviewer-inherit` or `--subagent-inherit` to follow the applicable Main model. Fixed routes
+require both provider and model; reasoning effort is optional. The command validates all three
+settings against the target framework before saving them together. It returns identifiers and
+availability only, never provider credentials.
+
+A framework change applies to new Sessions and future Reviewer work. Existing idle Sessions migrate
+lazily on their next turn, replaying their visible transcript when a fresh provider Session is
+needed. In-flight Main, Reviewer, and Subagent work remains pinned to the runtime generation and
+model snapshot admitted at its start. Reviewer and Subagent route changes affect only future work.
 
 ### Session persistence and compatibility
 
-The controls use the Session JSON authority; they do not add a Prisma/SQLite migration:
+Session configuration continues to use the Session JSON authority; it does not add a Session
+schema migration:
 
 - Session JSON stores `delegationPolicy` with values `allow` or `deny`. Historical Session files
   that omit it, and malformed values, restore as `allow`.
 - autoReviewEnabled and specialistId already existed and are reused. Historical
   autoReviewEnabled omissions remain disabled; an omitted specialistId remains Main Agent.
-- Plan artifacts/approval/continuation continue under runtimeContext.plan; delegated attempts,
-  messages, and questions continue under runtimeContext.delegatedWork.
+- Plan artifacts, persisted approval, active context, and delivery receipts remain under
+  runtimeContext.plan. The originating Conversation Turn remains the Plan owner; related later
+  ordinary or application Attempts on the same durable Message Branch receive it as active context
+  without taking ownership. Delegated attempts, messages, and questions remain under
+  runtimeContext.delegatedWork.
 
-No Session or Run status enum is added. Existing waiting-plan-approval remains the durable Session
-status, while a public Run remains running and carries an attention discriminant.
+Project Session defaults add one `sessionDefaults` JSON-text column to the Project table. Existing
+rows migrate to `{}` and therefore retain prior behavior. Agent routing reuses the existing Settings
+JSON fields.
+
+No persistent Session status enum value is added. Existing waiting-plan-approval remains the
+durable Session status, while a public Run remains running and carries an attention discriminant.
+Plan delivery receipts may persist `accepted` after the provider boundary so restart recovery can
+settle that one-shot wakeup without replaying it.
 
 ## Machine-readable output
 

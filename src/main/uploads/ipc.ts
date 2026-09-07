@@ -16,14 +16,14 @@ import type {
 } from '../../shared/uploads'
 import { DEFAULT_UPLOAD_PROJECT_ID, STANDALONE_UPLOAD_SESSION_ID } from '../../shared/uploads'
 import { getProjectDbClient } from '../projects/prisma-client'
-import { resolveDataRoot, resolveStorageRoot } from '../storage-root'
+import { resolveConfigRoot, resolveDataRoot } from '../storage-root'
 import type { UploadCommandOwner } from './command-owner'
 import { UploadRepository } from './repository'
 
 // Uploads are data-class: they follow the configurable data root (defaults to the config root).
 const createDefaultUploadRepository = (): UploadRepository =>
   new UploadRepository(resolveDataRoot(), {
-    getClient: () => getProjectDbClient(resolveStorageRoot())
+    getClient: () => getProjectDbClient(resolveConfigRoot())
   })
 
 // Registers the small upload IPC surface used by the renderer composer and preview panel.

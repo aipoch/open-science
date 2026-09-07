@@ -14,6 +14,7 @@ import { useProjectStore } from '@/stores/project-store'
 import type { ChatSession } from '@/stores/session-store'
 import { useSessionStore } from '@/stores/session-store'
 import type { Project } from '../../../../shared/projects'
+import { sessionRevision } from '../../../../shared/session-persistence'
 
 export type ArchivedView = { kind: 'list' } | { kind: 'project'; projectId: string }
 
@@ -51,7 +52,7 @@ const ArchivedPanel = ({
   const [panelError, setPanelError] = useState<string | undefined>()
   const [projectDeleteError, setProjectDeleteError] = useState<string | undefined>()
   const [sessionDeleteError, setSessionDeleteError] = useState<
-    'runtime' | 'persistence' | undefined
+    'runtime' | 'persistence' | 'unknown' | undefined
   >()
 
   const archivedProjects = useMemo(
@@ -95,7 +96,7 @@ const ArchivedPanel = ({
     void updateProjectArchive({
       id: project.id,
       archived: false,
-      expectedArchivedAt: project.archivedAt
+      expectedArchiveRevision: project.archiveRevision ?? 0
     })
       .then(() => onNavigate({ kind: 'list' }))
       .catch((restoreError: unknown) =>
@@ -114,7 +115,7 @@ const ArchivedPanel = ({
       projectId: session.projectId,
       sessionId: session.id,
       archived: false,
-      expectedArchivedAt: session.archivedAt
+      expectedRevision: sessionRevision(session)
     })
       .catch((restoreError: unknown) =>
         setPanelError(describeError(restoreError, t('Could not restore session.')))
@@ -140,12 +141,12 @@ const ArchivedPanel = ({
           setSessionDeleteError(result.reason)
           return
         }
+        if (result.cleanupPending)
+          setPanelError(t('The Session was deleted, but some cleanup could not be completed.'))
         useArchiveUndoStore.getState().dismissSession(session.id)
         setSessionToDelete(undefined)
       })
-      .catch((deleteError: unknown) =>
-        setPanelError(describeError(deleteError, t('Could not delete session.')))
-      )
+      .catch(() => setSessionDeleteError('unknown'))
       .finally(() => finishOperation(key))
   }
 
@@ -188,6 +189,11 @@ const ArchivedPanel = ({
     <div key={session.id} className="flex items-center gap-3 rounded-lg border border-border p-3">
       <div className="min-w-0 flex-1">
         <p className="truncate text-sm font-medium text-foreground">{session.title}</p>
+        <p className="mt-0.5 break-words text-xs text-muted-foreground">
+          {t('Project: {{name}}', {
+            name: projects.find((project) => project.id === session.projectId)?.name ?? ''
+          })}
+        </p>
         <p className="mt-0.5 text-xs text-muted-foreground">
           {session.archivedAt === undefined
             ? t('Hidden because its project is archived.')
@@ -360,6 +366,7 @@ const ArchivedPanel = ({
       />
       <DeleteSessionDialog
         session={sessionToDelete}
+        projectName={projects.find((project) => project.id === sessionToDelete?.projectId)?.name}
         canDelete={canDeleteProjects}
         isDeleting={busyKeys.has(`session:${sessionToDelete?.id}`)}
         error={sessionDeleteError}

@@ -47,6 +47,7 @@ const NotebookStep = ({ onBack }: NotebookStepProps): React.JSX.Element => {
         {/* Reuse the complete Settings surface so discovery, interpreter controls, language logos,
             managed setup, progress, recovery, and cancellation stay identical in both places. */}
         <RuntimesPanel
+          headingAs="h2"
           title={t('Notebook runtime (optional)')}
           description={t(
             'Notebooks run in an app-managed Python environment by default. You can change any of this later in Settings → Runtimes.'

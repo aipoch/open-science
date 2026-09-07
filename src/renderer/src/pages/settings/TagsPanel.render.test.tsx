@@ -32,6 +32,8 @@ beforeEach(() => {
   root = createRoot(container)
   useSettingsStore.setState({
     ...createInitialSettingsState(),
+    skillsLoaded: true,
+    connectorsLoaded: true,
     skills: [
       {
         id: 'analysis',
@@ -67,9 +69,321 @@ afterEach(() => {
   act(() => root.unmount())
   container.remove()
   Reflect.deleteProperty(document, 'elementFromPoint')
+  Reflect.deleteProperty(window, 'api')
 })
 
 describe('TagsPanel', () => {
+  it.each([false, true])(
+    'preserves an editing draft on external updates (content change: %s)',
+    async (contentChanged) => {
+      const tag = {
+        id: 'tag-research',
+        name: 'Research',
+        iconKey: 'book-open' as const,
+        colorKey: 'purple' as const,
+        createdAt: 2,
+        updatedAt: 2
+      }
+      const update = vi.fn().mockResolvedValue(undefined)
+      useTagStore.setState({ tags: [tag], update })
+      await act(async () => {
+        root.render(
+          <TagsPanel
+            view={{ kind: 'edit', tagId: tag.id }}
+            onNavigate={vi.fn()}
+            onOpenResource={vi.fn()}
+          />
+        )
+      })
+      const name = container.querySelector<HTMLInputElement>('#tag-form-name')!
+      act(() => {
+        Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(
+          name,
+          'Unsaved important draft'
+        )
+        name.dispatchEvent(new Event('input', { bubbles: true }))
+      })
+      act(() =>
+        useTagStore.setState({
+          revision: 2,
+          tags: [{ ...tag, updatedAt: 3, ...(contentChanged ? { name: 'Remote' } : {}) }]
+        })
+      )
+      expect(container.querySelector('#tag-form-name')).toBe(name)
+      expect(name.value).toBe('Unsaved important draft')
+      expect(container.querySelector('[role="alert"]')?.textContent).toContain(
+        'Tag version updated'
+      )
+      const alert = container.querySelector('[role="alert"]')!
+      expect(alert.querySelector('button')).toBeNull()
+      expect(alert.textContent).not.toContain('Latest saved version')
+      const notice = alert.closest('section')!
+      expect(notice.textContent).toContain('Latest saved version')
+      expect(notice.textContent).toContain(contentChanged ? 'Remote' : 'Research')
+      await act(async () => container.querySelector<HTMLFormElement>('form')!.requestSubmit())
+      expect(update).not.toHaveBeenCalled()
+      const keep = Array.from(container.querySelectorAll('button')).find(
+        (button) => button.textContent === 'Continue editing draft'
+      )!
+      act(() => keep.click())
+      expect(update).not.toHaveBeenCalled()
+      expect(name.value).toBe('Unsaved important draft')
+      await act(async () => container.querySelector<HTMLFormElement>('form')!.requestSubmit())
+      expect(update).toHaveBeenCalledWith({
+        id: tag.id,
+        iconKey: tag.iconKey,
+        colorKey: tag.colorKey,
+        expectedUpdatedAt: 3,
+        name: 'Unsaved important draft'
+      })
+      act(() =>
+        useTagStore.setState({
+          tags: [{ ...tag, name: 'Latest', iconKey: 'star', colorKey: 'red', updatedAt: 4 }]
+        })
+      )
+      const latestSummary = container.querySelector('[role="alert"]')!.closest('section')!
+      expect(latestSummary.textContent).toContain('Latest')
+      expect(latestSummary.textContent).toContain('Icon: Star')
+      expect(latestSummary.textContent).toContain('Color: Red')
+      expect(name.value).toBe('Unsaved important draft')
+      const reload = Array.from(container.querySelectorAll('button')).find(
+        (button) => button.textContent === 'Load latest version'
+      )!
+      act(() => reload.click())
+      expect(name.value).toBe('Latest')
+      expect(container.querySelector('[aria-label="Star"][aria-pressed="true"]')).not.toBeNull()
+      expect(container.querySelector('[aria-label="Red"][aria-pressed="true"]')).not.toBeNull()
+      expect(container.querySelector('[role="alert"]')).toBeNull()
+    }
+  )
+
+  it('explains an unavailable assignment without reporting an empty Tag, and recovers with the catalog', async () => {
+    useSpecialistStore.setState({ isLoaded: true, loadError: undefined })
+    useSettingsStore.setState((state) => ({
+      skills: state.skills.map((skill) => ({ ...skill, available: false }))
+    }))
+    await act(async () =>
+      root.render(
+        <TagsPanel view={{ kind: 'list' }} onNavigate={vi.fn()} onOpenResource={vi.fn()} />
+      )
+    )
+    expect(useTagStore.getState().assignments).toHaveLength(1)
+    expect(container.querySelector('[data-slot="tag-list-count"]')?.textContent).toBe('1')
+    expect(container.querySelector('[data-slot="tag-resource-row"]')).toBeNull()
+    expect(container.textContent).not.toContain('No resources match this Tag.')
+    const notice = container.querySelector('[role="status"]')!
+    expect(notice.textContent).toContain('1 tagged resource is currently unavailable.')
+    expect(notice.textContent).toContain('Tag assignments are preserved.')
+    expect(notice.closest('section')!.querySelector('button')).toBeNull()
+
+    act(() => useTagStore.getState().setBrowserTypeFilter('catalog.connector'))
+    expect(container.querySelector('[role="status"]')).toBeNull()
+    expect(container.textContent).toContain('No resources match this Tag.')
+
+    act(() => useTagStore.getState().setBrowserTypeFilter('all'))
+    act(() =>
+      useSettingsStore.setState((state) => ({
+        skills: state.skills.map((skill) => ({ ...skill, available: true }))
+      }))
+    )
+    expect(container.querySelector('[role="status"]')).toBeNull()
+    expect(container.querySelector('[data-slot="tag-resource-row"]')?.textContent).toContain(
+      'Analysis'
+    )
+    expect(useTagStore.getState().assignments).toHaveLength(1)
+  })
+
+  it('keeps available resources visible alongside unresolved assignments', async () => {
+    useSpecialistStore.setState({ isLoaded: true, loadError: undefined })
+    useTagStore.setState((state) => ({
+      assignments: [
+        ...state.assignments,
+        {
+          tagId: 'tag-favorite',
+          resourceType: 'catalog.skill',
+          resourceId: 'unavailable',
+          createdAt: 2
+        }
+      ]
+    }))
+    await act(async () =>
+      root.render(
+        <TagsPanel view={{ kind: 'list' }} onNavigate={vi.fn()} onOpenResource={vi.fn()} />
+      )
+    )
+    expect(container.querySelector('[data-slot="tag-list-count"]')?.textContent).toBe('2')
+    expect(container.querySelector('[role="status"]')?.textContent).toContain(
+      '1 tagged resource is currently unavailable.'
+    )
+    expect(container.querySelector('[data-slot="tag-resource-row"]')?.textContent).toContain(
+      'Analysis'
+    )
+    expect(container.textContent).not.toContain('No resources match this Tag.')
+  })
+
+  it.each(['catalog.skill', 'catalog.connector', 'catalog.specialist', 'literature.item'] as const)(
+    'shows pending and failed %s independently of loaded resources',
+    async (type) => {
+      let reject!: (error: Error) => void
+      const load = vi.fn(
+        () =>
+          new Promise<void>((_, fail) => {
+            reject = fail
+          })
+      )
+      if (type === 'catalog.skill')
+        useSettingsStore.setState({ skillsLoaded: false, loadSkills: load })
+      if (type === 'catalog.connector')
+        useSettingsStore.setState({ connectorsLoaded: false, loadConnectors: load })
+      if (type === 'catalog.specialist') useSpecialistStore.setState({ isLoaded: false, load })
+      if (type === 'literature.item')
+        Object.defineProperty(window, 'api', {
+          configurable: true,
+          value: { literature: { get: load } }
+        })
+      useTagStore.setState((state) => ({
+        assignments: [
+          ...state.assignments,
+          {
+            tagId: 'tag-favorite',
+            resourceType: type,
+            resourceId: 'pending-resource',
+            createdAt: 2
+          }
+        ]
+      }))
+      await act(async () =>
+        root.render(
+          <TagsPanel view={{ kind: 'list' }} onNavigate={vi.fn()} onOpenResource={vi.fn()} />
+        )
+      )
+      expect(container.querySelector('[role="status"]')).not.toBeNull()
+      expect(container.querySelector('[role="status"]')?.textContent).toContain('Loading')
+      expect(container.querySelector('[data-slot="tag-list-count"]')?.textContent).toBe('2')
+      expect(container.querySelector('[data-slot="tag-resource-row"]')?.textContent).toContain(
+        'Analysis'
+      )
+      await act(async () => reject(new Error('catalog failed')))
+      expect(container.querySelector('[role="alert"]')).not.toBeNull()
+      expect(container.querySelector('[data-slot="tag-resource-row"]')?.textContent).toContain(
+        'Analysis'
+      )
+      expect(container.textContent).not.toContain('No resources match this Tag.')
+      if (type === 'literature.item') {
+        load.mockResolvedValueOnce(undefined)
+        const retry = Array.from(container.querySelectorAll('button')).find(
+          (b) => b.textContent === 'Retry'
+        )!
+        await act(async () => retry.click())
+        expect(load).toHaveBeenCalledTimes(2)
+        expect(container.querySelector('[role="alert"]')).toBeNull()
+      }
+    }
+  )
+
+  it('shows a catalog failure and preserves assignment counts until a successful retry', async () => {
+    const load = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('catalog unavailable'))
+      .mockImplementationOnce(async () => {
+        useSpecialistStore.setState({ isLoaded: true, loadError: undefined })
+      })
+    useSettingsStore.setState({ skillsLoaded: true, connectorsLoaded: true })
+    useSpecialistStore.setState({
+      items: [],
+      isLoaded: false,
+      loadError: 'catalog unavailable',
+      load
+    })
+    useTagStore.setState({
+      assignments: [
+        {
+          tagId: 'tag-favorite',
+          resourceType: 'catalog.specialist',
+          resourceId: 'expert',
+          createdAt: 1
+        }
+      ]
+    })
+    await act(async () => {
+      root.render(
+        <TagsPanel view={{ kind: 'list' }} onNavigate={vi.fn()} onOpenResource={vi.fn()} />
+      )
+    })
+    expect(container.querySelector('[data-slot="tag-list-count"]')?.textContent).toBe('1')
+    expect(container.querySelector('[role="alert"]')?.textContent).toContain('Specialists')
+    expect(container.textContent).not.toContain('No resources match this Tag.')
+    const retry = Array.from(container.querySelectorAll('button')).find(
+      (button) => button.textContent === 'Retry'
+    )!
+    expect(retry).toBeDefined()
+    await act(async () => retry.click())
+    expect(load).toHaveBeenCalledTimes(2)
+    expect(container.querySelector('[role="alert"]')).toBeNull()
+  })
+  it('includes tagged Literature references in Settings Tags', async () => {
+    useTagStore.setState({
+      assignments: [
+        {
+          tagId: 'tag-favorite',
+          resourceType: 'literature.item',
+          resourceId: 'literature-1',
+          createdAt: 1
+        }
+      ]
+    })
+    Object.defineProperty(window, 'api', {
+      configurable: true,
+      value: {
+        literature: {
+          get: vi.fn().mockResolvedValue({
+            id: 'literature-1',
+            item: {
+              itemType: 'journalArticle',
+              title: 'Corrective Retrieval Augmented Generation',
+              abstract: '',
+              issuedText: '2024',
+              issuedYear: 2024,
+              containerTitle: 'arXiv',
+              shortTitle: '',
+              language: 'en',
+              rights: '',
+              url: '',
+              extra: '',
+              typeFields: {},
+              creators: [],
+              identifiers: []
+            },
+            attachments: [],
+            projectIds: [],
+            collectionIds: [],
+            metadataRevision: 1,
+            createdAt: 1,
+            updatedAt: 1
+          })
+        }
+      } as unknown as Window['api']
+    })
+    const onOpenResource = vi.fn()
+
+    await act(async () => {
+      root.render(
+        <TagsPanel view={{ kind: 'list' }} onNavigate={vi.fn()} onOpenResource={onOpenResource} />
+      )
+    })
+
+    expect(container.textContent).toContain('References (1)')
+    expect(container.textContent).toContain('Corrective Retrieval Augmented Generation')
+    const reference = Array.from(
+      container.querySelectorAll<HTMLButtonElement>('[data-slot="tag-resource-row"]')
+    ).find((button) => button.textContent?.includes('Corrective Retrieval'))
+    act(() => reference?.click())
+    expect(onOpenResource).not.toHaveBeenCalled()
+    expect(document.body.querySelector('[role="dialog"]')).not.toBeNull()
+    expect(document.body.textContent).toContain('Corrective Retrieval Augmented Generation')
+    expect(document.body.textContent).toContain('Publication metadata')
+  })
+
   it('aggregates tagged resources and opens their owning Settings detail', async () => {
     const onOpenResource = vi.fn()
     await act(async () => {

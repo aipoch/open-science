@@ -69,6 +69,7 @@
       "testFiles": {
         "owner": [
           "src/renderer/src/stores/session-store.test.ts",
+          "src/renderer/src/stores/session-store.archive-order.test.ts",
           "src/renderer/src/stores/session-store.architecture.test.ts",
           "src/renderer/src/stores/session-job-store.test.ts"
         ],
@@ -349,6 +350,7 @@
           "src/main/compute/compute-host-profile-owner.test.ts",
           "src/main/compute/compute-job-workflow-owner.test.ts",
           "src/main/compute/compute-job-cancellation-owner.integration.test.ts",
+          "src/main/compute/job-recovery-regressions.integration.test.ts",
           "src/main/compute/compute-remote-operation-owner.test.ts",
           "src/main/compute/session-cache-owner.test.ts",
           "src/main/compute/session-enabled-hosts-owner.test.ts",
@@ -421,7 +423,9 @@
           "src/main/skills/user-skill-compatibility-index.test.ts",
           "src/main/skills/user-skill-repository.architecture.test.ts",
           "src/main/skills/user-skill-repository.atomic.test.ts",
-          "src/main/skills/user-skill-repository.test.ts"
+          "src/main/skills/user-skill-repository.test.ts",
+          "src/main/skills/user-skill-integrity.regression.test.ts",
+          "src/main/skills/materializer-integrity.regression.test.ts"
         ],
         "contract": [
           "src/main/skills/host-skills-service.test.ts",
@@ -439,7 +443,9 @@
           "src/main/specialist/package/service.test.ts",
           "src/preload/index.test.ts",
           "src/renderer/src/pages/settings/SkillsPanel.render.test.tsx",
-          "src/renderer/src/stores/settings-skills-slice.test.ts"
+          "src/renderer/src/stores/settings-skills-slice.test.ts",
+          "src/renderer/src/pages/settings/SkillUploadView.render.test.tsx",
+          "src/renderer/src/pages/settings/SkillEditLoader.render.test.tsx"
         ]
       },
       "capabilityOverlays": ["windows_sensitive"],
@@ -721,10 +727,13 @@
           "src/main/uploads/active-transfer-owner.test.ts",
           "src/main/uploads/repository.test.ts",
           "src/main/uploads/repository.characterization.test.ts",
+          "src/main/uploads/publication-lifecycle.integration.test.ts",
           "src/main/uploads/repository.architecture.test.ts"
         ],
         "contract": ["src/main/uploads/ipc.test.ts", "src/main/uploads/command-owner.test.ts"],
         "consumer": [
+          "src/main/acp/runtime.test.ts",
+          "src/main/session-persistence/coordinator.test.ts",
           "src/main/session-persistence/deletion-integration.test.ts",
           "src/main/acp/file-reference-resolver.test.ts",
           "src/main/acp/prompt-content-owner.test.ts",
@@ -761,6 +770,7 @@
     },
     "artifact_provenance": {
       "ownerPaths": [
+        "src/main/artifacts/compute-output-evidence.ts",
         "src/main/artifacts/provenance-canonical.ts",
         "src/main/artifacts/provenance-content-status.ts",
         "src/main/artifacts/provenance-core-evidence.ts",
@@ -788,6 +798,7 @@
         "owner": [
           "src/main/artifacts/provenance-dependency-read.test.ts",
           "src/main/artifacts/provenance-lifecycle-contract.test.ts",
+          "src/main/artifacts/provenance-message-snapshot-durability.test.ts",
           "src/main/artifacts/provenance-message-snapshot.test.ts",
           "src/main/artifacts/provenance-repository.architecture.test.ts",
           "src/main/artifacts/provenance-repository.test.ts",
@@ -815,7 +826,8 @@
           "src/renderer/src/lib/acp/workspace-events.test.ts",
           "src/renderer/src/pages/workspace/ArtifactProvenancePanel.render.test.tsx",
           "src/renderer/src/pages/workspace/PreviewFileSurface.test.tsx",
-          "src/renderer/src/pages/workspace/WorkspaceMessageScroller.interaction.test.tsx"
+          "src/renderer/src/pages/workspace/WorkspaceMessageScroller.interaction.test.tsx",
+          "src/renderer/src/pages/workspace/artifact-publication-preview.integration.test.tsx"
         ]
       },
       "capabilityOverlays": ["windows_sensitive"],
@@ -837,7 +849,7 @@
         "src/main/session-persistence/state-owner.ts"
       ],
       "interfacePaths": ["src/main/session-persistence/coordinator.ts"],
-      "consumerModules": [],
+      "consumerModules": ["project_lifecycle"],
       "testFiles": {
         "owner": [
           "src/main/session-persistence/coordinator.architecture.test.ts",
@@ -846,7 +858,8 @@
         ],
         "contract": [
           "src/shared/session-persistence.test.ts",
-          "src/main/session-persistence/coordinator-contract.test.ts"
+          "src/main/session-persistence/coordinator-contract.test.ts",
+          "src/main/session-persistence/ipc.test.ts"
         ],
         "consumer": [
           "src/main/delegation/durable-delegated-work.test.ts",
@@ -915,6 +928,63 @@
       },
       "capabilityOverlays": ["i18n_catalog"],
       "fallbackCapability": "renderer_view"
+    },
+    "project_lifecycle": {
+      "ownerPaths": [
+        "src/main/projects/deletion-coordinator.ts",
+        "src/main/projects/ipc.ts",
+        "src/main/projects/preview-repository.ts",
+        "src/main/projects/project-owned-data.catalog.ts",
+        "src/main/projects/project-runtime-quiescence-owner.ts",
+        "src/main/projects/repository.ts"
+      ],
+      "interfacePaths": [
+        "src/main/projects/deletion-coordinator.ts",
+        "src/main/projects/ipc.ts",
+        "src/main/projects/preview-repository.ts",
+        "src/main/projects/project-runtime-quiescence-owner.ts",
+        "src/main/projects/repository.ts"
+      ],
+      "consumerModules": [],
+      "testFiles": {
+        "owner": [
+          "src/main/projects/deletion-coordinator.test.ts",
+          "src/main/projects/preview-repository.test.ts",
+          "src/main/projects/project-owned-data.catalog.architecture.test.ts",
+          "src/main/projects/project-runtime-quiescence-owner.test.ts",
+          "src/main/projects/repository.test.ts"
+        ],
+        "contract": [
+          "src/main/projects/ipc.test.ts",
+          "src/main/data-content-application-commands.test.ts",
+          "src/main/application-command-composition.test.ts",
+          "src/main/application-command-wiring.test.ts",
+          "src/shared/renderer-contract-catalog.test.ts",
+          "src/shared/renderer-surface-matrix.test.ts",
+          "src/preload/index.test.ts",
+          "src/renderer/web/api-installer.test.ts"
+        ],
+        "consumer": [
+          "src/main/acp/runtime-coordinator.test.ts",
+          "src/main/archive/coordinator.test.ts",
+          "src/main/compute/job-deletion-owner.test.ts",
+          "src/main/compute/job-deletion-runtime-drain.test.ts",
+          "src/main/compute/job-deletion-runtime-isolation.test.ts",
+          "src/main/database/application-database.integration.test.ts",
+          "src/main/local-fs/granted-roots-repository.test.ts",
+          "src/main/permission-grants/registry.test.ts",
+          "src/main/session-persistence/deletion-integration.test.ts",
+          "src/main/session-persistence/ipc.test.ts",
+          "src/main/session-persistence/projection.test.ts",
+          "src/main/side-chat/runtime-owner.test.ts",
+          "src/main/storage/normalize-legacy-paths.test.ts",
+          "src/renderer/src/stores/project-store.test.ts",
+          "src/renderer/src/pages/home/HomePage.persistence.test.tsx",
+          "src/renderer/src/pages/home/HomePage.render.test.tsx"
+        ]
+      },
+      "capabilityOverlays": ["windows_sensitive"],
+      "fallbackCapability": "main_runtime"
     }
   }
 }

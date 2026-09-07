@@ -14,6 +14,7 @@ import {
 import type { RendererFailureContext } from '../../../../shared/diagnostics'
 import {
   ConversationGraphMaterializationError,
+  isSessionSizeLimitError,
   isSessionRevisionConflictError,
   sessionRevision,
   type DeleteSessionRequest,
@@ -36,7 +37,11 @@ import {
   toPersistedSession,
   useSessionStore
 } from '../../stores/session-store'
-import type { ChatSession, SessionHydrationSelection } from '../../stores/session-store'
+import type {
+  ChatSession,
+  SessionHydrationSelection,
+  StreamingMessageContentByMessageId
+} from '../../stores/session-store'
 import { projectRendererFailure } from '../../renderer-diagnostics'
 
 type SessionPersistenceApi = {
@@ -87,7 +92,7 @@ const deleteSession = (request: DeleteSessionRequest): Promise<SessionDeletionRe
 const toPersistedSessionForAuthorityMaterialization = (
   session: ChatSession
 ): PersistedChatSession => {
-  const persisted = toPersistedSession(session)
+  const persisted = toPersistedSession(session, useSessionStore.getState().streamingMessages)
   return session.delegationPolicyAuthorityPending
     ? { ...persisted, delegationPolicy: 'allow' }
     : persisted
@@ -114,7 +119,8 @@ type OrderedSessionPersistence = Pick<SessionPersistenceApi, 'saveSession' | 'sa
   saveLatestSession: (
     target: string,
     task: LatestSessionSaveTask,
-    options?: SaveSessionOptions
+    options?: SaveSessionOptions,
+    streaming?: boolean
   ) => Promise<PersistedChatSession>
   saveSessionWithRecovery: (
     session: PersistedChatSession,
@@ -151,6 +157,7 @@ const conflictRebaseFieldChanged = (
 const MAIN_OWNED_SESSION_FIELDS = new Set<keyof PersistedChatSession>([
   'revision',
   'runtimeContext',
+  'planHistoryProjections',
   'archivedAt',
   'branchSource',
   'delegationPolicy',
@@ -609,15 +616,21 @@ const mergeSaveSessionOptions = (
 }
 
 const LATEST_SESSION_SAVE_INTERVAL_MS = 500
+// While a turn is streaming, intermediate flushes only bound crash loss and the terminal commit
+// still flushes at the normal cadence, so relax the intermediate cadence: each flush serializes
+// the whole (growing) Session and must not run at the streaming tick rate.
+const STREAMING_SESSION_SAVE_INTERVAL_MS = 2_000
 
 type PendingLatestSessionSave = {
   target: string
   task: LatestSessionSaveTask
   options: SaveSessionOptions | undefined
   generation: number
+  streaming?: boolean
   promise?: Promise<PersistedChatSession>
   bypassCadence?: boolean
   releaseCadence?: () => void
+  recheckCadence?: () => void
 }
 
 class SessionPersistenceGenerationChangedError extends Error {
@@ -645,17 +658,29 @@ const createOrderedSessionPersistence = (
   const waitForLatestSessionSaveCadence = async (
     entry: PendingLatestSessionSave
   ): Promise<void> => {
-    const waitMs = latestSessionSaveStartedAt + LATEST_SESSION_SAVE_INTERVAL_MS - performance.now()
-    if (waitMs > 0 && !entry.bypassCadence) {
-      await new Promise<void>((resolve) => {
-        const timeout = setTimeout(resolve, waitMs)
+    // A terminal save may downgrade an in-flight wait from the relaxed streaming cadence back to
+    // the normal one; loop so the wait re-arms instead of sleeping out the streaming interval.
+    for (;;) {
+      const intervalMs = entry.streaming
+        ? STREAMING_SESSION_SAVE_INTERVAL_MS
+        : LATEST_SESSION_SAVE_INTERVAL_MS
+      const waitMs = latestSessionSaveStartedAt + intervalMs - performance.now()
+      if (waitMs <= 0 || entry.bypassCadence) break
+      const recheck = await new Promise<boolean>((resolve) => {
+        const timeout = setTimeout(() => resolve(false), waitMs)
         entry.releaseCadence = () => {
           clearTimeout(timeout)
-          resolve()
+          resolve(false)
+        }
+        entry.recheckCadence = () => {
+          clearTimeout(timeout)
+          resolve(true)
         }
       })
+      entry.releaseCadence = undefined
+      entry.recheckCadence = undefined
+      if (!recheck) break
     }
-    entry.releaseCadence = undefined
     if (entry.generation === hydrationGeneration) latestSessionSaveStartedAt = performance.now()
   }
 
@@ -732,12 +757,19 @@ const createOrderedSessionPersistence = (
   const saveLatestSession = (
     target: string,
     task: LatestSessionSaveTask,
-    options?: SaveSessionOptions
+    options?: SaveSessionOptions,
+    streaming?: boolean
   ): Promise<PersistedChatSession> => {
     const pending = pendingLatestByTarget.get(target)
     if (pending?.promise) {
       pending.task = task
       pending.options = mergeSaveSessionOptions(pending.options, options)
+      if (pending.streaming && !streaming) {
+        // The turn ended: flush the terminal snapshot at the normal cadence instead of waiting
+        // out the relaxed streaming interval.
+        pending.streaming = false
+        pending.recheckCadence?.()
+      }
       return pending.promise
     }
 
@@ -745,6 +777,7 @@ const createOrderedSessionPersistence = (
       target,
       task,
       options,
+      streaming,
       generation: hydrationGeneration
     }
     const runTask = async (): Promise<PersistedChatSession> => {
@@ -1092,6 +1125,7 @@ const reconcilePendingArtifacts = async (api: ArtifactReconcileApi): Promise<voi
 type SessionStoreSnapshot = {
   sessions: ChatSession[]
   selectedSessionId: string | undefined
+  streamingMessages?: StreamingMessageContentByMessageId
 }
 
 type SessionCatalogRecovery =
@@ -1107,6 +1141,10 @@ type SessionCatalogRecovery =
   | {
       kind: 'unsupported-version'
       affectedFileCount: number
+    }
+  | {
+      kind: 'oversized-authority'
+      affectedFiles: Array<{ projectId: string; fileName: string }>
     }
   | { kind: 'project-deletion-recovery' }
 
@@ -1128,6 +1166,13 @@ const deriveSessionCatalogRecovery = (
     return {
       kind: 'unsupported-version',
       affectedFileCount: unsupportedVersionWarnings.length
+    }
+  }
+  const oversizedWarnings = sessionWarnings.filter((warning) => warning.kind === 'too-large')
+  if (oversizedWarnings.length > 0) {
+    return {
+      kind: 'oversized-authority',
+      affectedFiles: oversizedWarnings.map(({ projectId, fileName }) => ({ projectId, fileName }))
     }
   }
   if (diagnostics.isComplete === false) {
@@ -1168,7 +1213,11 @@ type SessionPersistenceState = {
   loadError: string | undefined
   loadWarning: string | undefined
   writeError: string | undefined
+  writeErrorRetryable: boolean
+  persistenceBlockedSessionIds: readonly string[]
+  reportSessionSizeLimit: (sessionId: string) => void
   dismissLoadWarning: () => void
+  startNewConversationAfterSizeLimit: () => void
   retryLoad: () => void
   retryWrites: () => void
 }
@@ -1268,6 +1317,8 @@ const SAFE_SESSION_WRITE_ERROR =
   'Open Science could not save the latest conversation changes. Retry before closing the app.'
 const SESSION_REVISION_CONFLICT_WRITE_ERROR =
   'This conversation changed in another window. Your local changes were not saved. Retry to reload the latest version before closing the app.'
+const SESSION_SIZE_LIMIT_WRITE_ERROR =
+  'This conversation exceeded the 256 MiB storage limit. Its current run was stopped. Start a new conversation to keep working. Changes after the last successful save are not durable.'
 
 // Hydrates the in-memory session store from the per-session files loaded by the main process.
 const loadPersistedSessions = async (
@@ -1350,6 +1401,7 @@ const createStoreSaver = (
 ): StoreSaver => {
   let previousSessions = initial.sessions
   let previousSelection = initial.selectedSessionId
+  let previousStreamingMessages = initial.streamingMessages ?? {}
   const acknowledgedRevisions = new Map(
     initial.sessions
       .filter((session) => session.contentLoaded !== false)
@@ -1391,6 +1443,25 @@ const createStoreSaver = (
     const nextSessions = state.sessions
     const previousById = indexById(previousSessions)
     const nextById = indexById(nextSessions)
+    // Pure text-growth ticks keep Session identity stable and only advance the streaming slice, so
+    // the slice diff must also mark a Session dirty or in-flight text would never reach disk until
+    // the next identity-changing event.
+    const nextStreamingMessages = state.streamingMessages ?? {}
+    const streamingSessionIds = new Set<string>()
+    for (const entry of Object.values(nextStreamingMessages)) {
+      streamingSessionIds.add(entry.sessionId)
+    }
+    const streamingDirtySessionIds = new Set<string>()
+    if (nextStreamingMessages !== previousStreamingMessages) {
+      for (const [messageId, entry] of Object.entries(nextStreamingMessages)) {
+        if (previousStreamingMessages[messageId] !== entry) {
+          streamingDirtySessionIds.add(entry.sessionId)
+        }
+      }
+      for (const [messageId, entry] of Object.entries(previousStreamingMessages)) {
+        if (!(messageId in nextStreamingMessages)) streamingDirtySessionIds.add(entry.sessionId)
+      }
+    }
     const tasks: Array<{
       target: string
       run: () => Promise<unknown>
@@ -1475,9 +1546,18 @@ const createStoreSaver = (
 
       const hasUnsavedLocalTitle =
         session.unsavedTitle === true && Boolean(authority && session.title !== authority.title)
+      const hasUnsavedContextReset =
+        Boolean(session.branchContextResetRequired) !==
+        Boolean(authority?.branchContextResetRequired)
       if (
-        (previousById.get(session.id) !== session || isForced) &&
-        (isForced || !isExternallyHydratedSession(session) || hasUnsavedLocalTitle) &&
+        (previousById.get(session.id) !== session ||
+          isForced ||
+          streamingDirtySessionIds.has(session.id)) &&
+        (isForced ||
+          streamingDirtySessionIds.has(session.id) ||
+          !isExternallyHydratedSession(session) ||
+          hasUnsavedLocalTitle ||
+          hasUnsavedContextReset) &&
         !hasStagedUploads(session) &&
         // A terminal graph-integrity failure keeps the renderer responsive, but the flat projection
         // is no longer proven to match the immutable Branch graph. Preserve the last durable copy.
@@ -1518,7 +1598,7 @@ const createStoreSaver = (
           run: isForced
             ? async () => {
                 const persisted = observePersistencePhase('session-serialize', () =>
-                  toPersistedSession(session)
+                  toPersistedSession(session, nextStreamingMessages)
                 )
                 persisted.revision =
                   acknowledgedRevisions.get(session.id) ?? sessionRevision(persisted)
@@ -1554,7 +1634,7 @@ const createStoreSaver = (
                   target,
                   async (coalescedOptions) => {
                     const persisted = observePersistencePhase('session-serialize', () =>
-                      toPersistedSession(session)
+                      toPersistedSession(session, nextStreamingMessages)
                     )
                     persisted.revision =
                       acknowledgedRevisions.get(session.id) ?? sessionRevision(persisted)
@@ -1589,7 +1669,10 @@ const createStoreSaver = (
                     )
                     return durableSession
                   },
-                  saveOptions
+                  saveOptions,
+                  // In-flight turns flush intermediate snapshots at the relaxed streaming cadence;
+                  // the terminal commit (streaming slice empty again) reverts to the normal one.
+                  streamingSessionIds.has(session.id)
                 )
         })
       }
@@ -1624,6 +1707,7 @@ const createStoreSaver = (
 
     previousSessions = nextSessions
     previousSelection = state.selectedSessionId
+    previousStreamingMessages = nextStreamingMessages
 
     const scheduledTasks = tasks.map(({ target, run, failureContext }) => {
       // Invoke every task now so it takes its place in the shared persistence queue at snapshot time.
@@ -1662,14 +1746,62 @@ const useSessionPersistence = (): SessionPersistenceState => {
   const [loadError, setLoadError] = useState<string | undefined>(undefined)
   const [loadWarning, setLoadWarning] = useState<string | undefined>(undefined)
   const [writeError, setWriteError] = useState<string | undefined>(undefined)
+  const [writeErrorRetryable, setWriteErrorRetryable] = useState(true)
+  const [persistenceBlockedSessionIds, setPersistenceBlockedSessionIds] = useState<
+    readonly string[]
+  >([])
   const [loadAttempt, setLoadAttempt] = useState(0)
   const retrySelection = useRef<SessionHydrationSelection | undefined>(undefined)
   const failedWriteTargets = useRef(new Set<string>())
   const failedConflictRebaseFields = useRef(new Map<string, SessionConflictRebaseField[]>())
   const revisionConflictTargets = useRef(new Set<string>())
+  const sizeLimitTargets = useRef(new Set<string>())
   const retryManifestWritePending = useRef(false)
   const saverRef = useRef<StoreSaver | undefined>(undefined)
+  const presentOutstandingWriteFailures = useCallback((): void => {
+    if (revisionConflictTargets.current.size > 0) {
+      setWriteError(translateRef.current(SESSION_REVISION_CONFLICT_WRITE_ERROR))
+      setWriteErrorRetryable(true)
+      return
+    }
+    if ([...failedWriteTargets.current].some((target) => !sizeLimitTargets.current.has(target))) {
+      setWriteError(SAFE_SESSION_WRITE_ERROR)
+      setWriteErrorRetryable(true)
+      return
+    }
+    if (sizeLimitTargets.current.size > 0) {
+      setWriteError(translateRef.current(SESSION_SIZE_LIMIT_WRITE_ERROR))
+      setWriteErrorRetryable(false)
+      return
+    }
+    setWriteError(undefined)
+    setWriteErrorRetryable(true)
+  }, [])
+  const reportSessionSizeLimit = useCallback(
+    (sessionId: string): void => {
+      const target = `session:${sessionId}`
+      failedWriteTargets.current.add(target)
+      sizeLimitTargets.current.add(target)
+      setPersistenceBlockedSessionIds(
+        [...sizeLimitTargets.current].map((candidate) => candidate.slice('session:'.length))
+      )
+      presentOutstandingWriteFailures()
+    },
+    [presentOutstandingWriteFailures]
+  )
   const dismissLoadWarning = useCallback(() => setLoadWarning(undefined), [])
+  const startNewConversationAfterSizeLimit = useCallback(() => {
+    for (const target of sizeLimitTargets.current) {
+      failedWriteTargets.current.delete(target)
+      failedConflictRebaseFields.current.delete(target)
+      revisionConflictTargets.current.delete(target)
+      unresolvedSessionRevisionConflictTargets.delete(target)
+      liveSessionPersistence.clearWriteFailure(target)
+    }
+    useSessionStore.getState().clearSelection()
+    setWriteError(undefined)
+    setWriteErrorRetryable(true)
+  }, [])
   const retryLoad = useCallback(() => {
     // A partial snapshot remains interactive. Keep the session the user chose from that snapshot so
     // a successful retry cannot replay the older on-disk manifest over their live navigation.
@@ -1685,6 +1817,9 @@ const useSessionPersistence = (): SessionPersistenceState => {
     setLoadError(undefined)
     setLoadWarning(undefined)
     setWriteError(undefined)
+    setWriteErrorRetryable(true)
+    sizeLimitTargets.current.clear()
+    setPersistenceBlockedSessionIds([])
     retryManifestWritePending.current = false
     setLoadAttempt((attempt) => attempt + 1)
   }, [isHydrated])
@@ -1702,18 +1837,26 @@ const useSessionPersistence = (): SessionPersistenceState => {
       state.sessions,
       failedConflictRebaseFields.current,
       revisionConflictTargets.current,
-      unresolvedSessionRevisionConflictTargets
+      unresolvedSessionRevisionConflictTargets,
+      sizeLimitTargets.current
+    )
+    setPersistenceBlockedSessionIds(
+      [...sizeLimitTargets.current]
+        .filter((target) => target.startsWith('session:'))
+        .map((target) => target.slice('session:'.length))
     )
     if (failedWriteTargets.current.size === 0) {
-      setWriteError(undefined)
+      presentOutstandingWriteFailures()
       return
     }
 
     void saver(state, {
-      forceTargets: new Set(failedWriteTargets.current),
+      forceTargets: new Set(
+        [...failedWriteTargets.current].filter((target) => !sizeLimitTargets.current.has(target))
+      ),
       conflictRebaseFieldsByTarget: new Map(failedConflictRebaseFields.current)
     }).catch(reportPersistenceError)
-  }, [retryLoad])
+  }, [presentOutstandingWriteFailures, retryLoad])
 
   useEffect(() => {
     let isMounted = true
@@ -1722,6 +1865,7 @@ const useSessionPersistence = (): SessionPersistenceState => {
     saverRef.current = undefined
     failedWriteTargets.current.clear()
     failedConflictRebaseFields.current.clear()
+    sizeLimitTargets.current.clear()
 
     // Loads before subscribing so the initial empty store cannot overwrite disk state.
     const startPersistence = async (): Promise<void> => {
@@ -1814,6 +1958,14 @@ const useSessionPersistence = (): SessionPersistenceState => {
           onFailure: (target, _error, context) => {
             if (!isMounted) return
             failedWriteTargets.current.add(target)
+            if (isSessionSizeLimitError(_error) && target.startsWith('session:')) {
+              sizeLimitTargets.current.add(target)
+              setPersistenceBlockedSessionIds(
+                [...sizeLimitTargets.current].map((candidate) => candidate.slice('session:'.length))
+              )
+              presentOutstandingWriteFailures()
+              return
+            }
             if (isSessionRevisionConflictError(_error)) {
               revisionConflictTargets.current.add(target)
               unresolvedSessionRevisionConflictTargets.add(target)
@@ -1825,10 +1977,12 @@ const useSessionPersistence = (): SessionPersistenceState => {
                 unresolvedSessionRevisionConflictTargets
               )
               if (!failedWriteTargets.current.has(target)) {
-                if (failedWriteTargets.current.size === 0) setWriteError(undefined)
+                if (failedWriteTargets.current.size === 0) {
+                  presentOutstandingWriteFailures()
+                }
                 return
               }
-              setWriteError(translateRef.current(SESSION_REVISION_CONFLICT_WRITE_ERROR))
+              presentOutstandingWriteFailures()
               return
             }
             const conflictRebaseFields = context.conflictRebaseFields
@@ -1850,23 +2004,30 @@ const useSessionPersistence = (): SessionPersistenceState => {
             // A queued save can lose a race with an authoritative deletion. Its tombstone rejection
             // must not resurrect a retry target for a Session that no longer exists in the store.
             if (!failedWriteTargets.current.has(target)) {
-              if (failedWriteTargets.current.size === 0) setWriteError(undefined)
+              if (failedWriteTargets.current.size === 0) {
+                presentOutstandingWriteFailures()
+              }
               return
             }
-            setWriteError(SAFE_SESSION_WRITE_ERROR)
+            presentOutstandingWriteFailures()
           },
           onSuccess: (target) => {
             if (!isMounted) return
-            failedWriteTargets.current.delete(target)
+            const removedFailedTarget = failedWriteTargets.current.delete(target)
             failedConflictRebaseFields.current.delete(target)
             revisionConflictTargets.current.delete(target)
             unresolvedSessionRevisionConflictTargets.delete(target)
+            if (sizeLimitTargets.current.delete(target)) {
+              setPersistenceBlockedSessionIds(
+                [...sizeLimitTargets.current].map((candidate) => candidate.slice('session:'.length))
+              )
+            }
             if (target === 'manifest' && retryManifestWritePending.current) {
               retryManifestWritePending.current = false
               setIsReady(true)
               startPendingArtifactReconciliation()
             }
-            if (failedWriteTargets.current.size === 0) setWriteError(undefined)
+            if (removedFailedTarget) presentOutstandingWriteFailures()
           }
         },
         liveSessionPersistence
@@ -1876,14 +2037,25 @@ const useSessionPersistence = (): SessionPersistenceState => {
       const loadingSessionContent = new Set<string>()
 
       unsubscribe = useSessionStore.subscribe((state) => {
+        const failedTargetCount = failedWriteTargets.current.size
+        const sizeLimitTargetCount = sizeLimitTargets.current.size
         pruneRemovedSessionWriteTargets(
           failedWriteTargets.current,
           state.sessions,
           failedConflictRebaseFields.current,
           revisionConflictTargets.current,
-          unresolvedSessionRevisionConflictTargets
+          unresolvedSessionRevisionConflictTargets,
+          sizeLimitTargets.current
         )
-        if (failedWriteTargets.current.size === 0) setWriteError(undefined)
+        setPersistenceBlockedSessionIds(
+          [...sizeLimitTargets.current].map((target) => target.slice('session:'.length))
+        )
+        if (
+          failedWriteTargets.current.size !== failedTargetCount ||
+          sizeLimitTargets.current.size !== sizeLimitTargetCount
+        ) {
+          presentOutstandingWriteFailures()
+        }
         const selected = state.sessions.find(
           (session) => session.id === state.selectedSessionId && session.contentLoaded === false
         )
@@ -1932,7 +2104,7 @@ const useSessionPersistence = (): SessionPersistenceState => {
       if (saverRef.current === activeSaver) saverRef.current = undefined
       unsubscribe?.()
     }
-  }, [loadAttempt])
+  }, [loadAttempt, presentOutstandingWriteFailures])
 
   return {
     isHydrated,
@@ -1944,7 +2116,11 @@ const useSessionPersistence = (): SessionPersistenceState => {
     loadError,
     loadWarning,
     writeError,
+    writeErrorRetryable,
+    persistenceBlockedSessionIds,
+    reportSessionSizeLimit,
     dismissLoadWarning,
+    startNewConversationAfterSizeLimit,
     retryLoad,
     retryWrites
   }

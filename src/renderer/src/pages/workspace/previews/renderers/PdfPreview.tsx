@@ -41,6 +41,11 @@ import { createManagedPdfLoadingTask } from '../managed-pdf-document'
 import { pdfjsLib } from '../pdfjs'
 import { isUnavailableFileError } from '../preview-errors'
 import { createPreviewResourceKey } from '../preview-resource-key'
+import { usePreviewResourceGeneration } from '../usePreviewResourceGeneration'
+import {
+  WEB_EVENT_CONNECTION_STATE_EVENT,
+  type WebEventConnectionState
+} from '../../../../../../shared/web-event-connection'
 import { createManagedPreviewRequest } from '../preview-file-reader'
 import type { PreviewFileRendererProps } from '../preview-types'
 import { PreviewTextAnnotationSurface } from '../PreviewTextAnnotationSurface'
@@ -1130,6 +1135,8 @@ export const PdfPreviewContent = ({
     size,
     mtimeMs
   })
+  const generation = usePreviewResourceGeneration()
+  const resourceRequestKey = `${requestKey}:${generation}`
   const scrollRef = useRef<HTMLDivElement | null>(null)
   const panGestureRef = useRef<PdfPanGesture | undefined>(undefined)
   const viewportAnchorRef = useRef<PdfViewportAnchor | undefined>(undefined)
@@ -1213,6 +1220,19 @@ export const PdfPreviewContent = ({
       viewportY: anchorTop - viewport.top
     }
   }, [])
+
+  useEffect(() => {
+    const onConnectionState = (event: Event): void => {
+      if ((event as CustomEvent<WebEventConnectionState>).detail.phase === 'reconnecting') {
+        captureViewportAnchor()
+      }
+    }
+    window.addEventListener(WEB_EVENT_CONNECTION_STATE_EVENT, onConnectionState)
+    return () => window.removeEventListener(WEB_EVENT_CONNECTION_STATE_EVENT, onConnectionState)
+  }, [captureViewportAnchor])
+  useLayoutEffect(() => {
+    searchTextCacheRef.current.clear()
+  }, [generation])
 
   const updateZoom = useCallback(
     (resolve: (current: number) => number): void => {
@@ -1343,10 +1363,10 @@ export const PdfPreviewContent = ({
           return
         }
 
-        setDocumentState({ requestKey, status: 'ready', document })
+        setDocumentState({ requestKey: resourceRequestKey, status: 'ready', document })
       } catch (error: unknown) {
         if (!isUnavailableFileError(error)) console.error('Failed to load PDF preview', error)
-        if (!canceled) setDocumentState({ requestKey, status: 'error', error })
+        if (!canceled) setDocumentState({ requestKey: resourceRequestKey, status: 'error', error })
         await dispose()
       }
     })()
@@ -1355,9 +1375,19 @@ export const PdfPreviewContent = ({
       canceled = true
       if (resourceId) void dispose()
     }
-  }, [managedFileId, mimeType, path, projectId, requestKey, selectedVersionId, sessionId, source])
+  }, [
+    managedFileId,
+    mimeType,
+    path,
+    projectId,
+    resourceRequestKey,
+    selectedVersionId,
+    sessionId,
+    source
+  ])
 
-  const currentDocumentState = documentState?.requestKey === requestKey ? documentState : null
+  const currentDocumentState =
+    documentState?.requestKey === resourceRequestKey ? documentState : null
   const hasError = currentDocumentState?.status === 'error'
   const document = currentDocumentState?.status === 'ready' ? currentDocumentState.document : null
   const pageCount = document?.numPages ?? 0
@@ -1466,7 +1496,7 @@ export const PdfPreviewContent = ({
   useLayoutEffect(() => {
     const anchor = viewportAnchorRef.current
     const scroll = scrollRef.current
-    if (!anchor || !scroll) return
+    if (!anchor || !scroll || !document) return
     viewportAnchorRef.current = undefined
     const page = scroll.querySelector<HTMLElement>(`[data-page-number="${anchor.pageNumber}"]`)
     if (!page) return
@@ -1474,7 +1504,7 @@ export const PdfPreviewContent = ({
     const bounds = page.getBoundingClientRect()
     scroll.scrollLeft += bounds.left + anchor.x * bounds.width - viewport.left - anchor.viewportX
     scroll.scrollTop += bounds.top + anchor.y * bounds.height - viewport.top - anchor.viewportY
-  }, [fitWidth, zoom])
+  }, [document, fitWidth, zoom])
 
   useEffect(() => {
     if (!document) return
@@ -1827,7 +1857,7 @@ export const PdfPreviewRenderer = (props: PreviewFileRendererProps): React.JSX.E
       ? {
           kind: binding.sourceKind,
           projectId: props.item.projectId,
-          sessionId: binding.sourceSessionId,
+          ...(binding.sourceSessionId ? { sessionId: binding.sourceSessionId } : {}),
           versionId: binding.sourceVersionId,
           name: binding.name,
           path: props.item.path,

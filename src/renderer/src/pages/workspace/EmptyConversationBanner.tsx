@@ -20,7 +20,7 @@ const EmptyConversationBanner = (): React.JSX.Element => {
         <h2 className="text-balance text-lg font-normal text-text-000 md:text-xl">
           {t('What will you research in Open Science?')}
         </h2>
-        <p className="text-xs text-text-300">
+        <p className="text-xs text-text-100">
           {t('Discover, share, and collaborate on research that matters')}
         </p>
       </div>

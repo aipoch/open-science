@@ -25,9 +25,9 @@ export type ClaudeDetectDeps = {
   // Resolves whether a candidate file exists and is executable.
   isExecutable: (path: string) => Promise<boolean>
   // Runs `<path> --version` and returns the trimmed version string, or undefined on failure.
-  getVersion: (path: string) => Promise<string | undefined>
+  getVersion: (path: string, signal?: AbortSignal) => Promise<string | undefined>
   // Extra bin directories to probe (e.g. `npm prefix -g`); resolved lazily and tolerant of failure.
-  resolveNpmBinDirs: () => Promise<string[]>
+  resolveNpmBinDirs: (signal?: AbortSignal) => Promise<string[]>
   // Extra fixed directories to probe (e.g. the app-managed install dir), searched after PATH/home.
   extraDirs?: string[]
   // Maps a detected path to what the ACP agent will actually spawn (on win32 a `claude.cmd` shim is
@@ -66,10 +66,19 @@ const wellKnownDirs = (platform: NodeJS.Platform, env: NodeJS.ProcessEnv): strin
 }
 
 // Builds the ordered list of directories to search for the claude binary.
-const collectCandidateDirs = async (deps: ClaudeDetectDeps): Promise<string[]> => {
+const collectCandidateDirs = async (
+  deps: ClaudeDetectDeps,
+  signal?: AbortSignal
+): Promise<string[]> => {
   const p = pathFor(deps.platform)
   const pathDirs = (deps.env.PATH ?? '').split(p.delimiter).filter((dir) => dir.length > 0)
-  const npmBinDirs = await deps.resolveNpmBinDirs().catch(() => [])
+  let npmBinDirs: string[] = []
+  try {
+    npmBinDirs = await deps.resolveNpmBinDirs(signal)
+  } catch {
+    signal?.throwIfAborted()
+  }
+  signal?.throwIfAborted()
   const localBin = p.join(deps.homePath, '.local', 'bin')
 
   // De-duplicate while preserving first-seen order so the first real hit wins.
@@ -97,10 +106,12 @@ const isUnspawnableShim = (target: string, platform: NodeJS.Platform): boolean =
 // Probes each candidate directory × filename, returning the first executable whose `--version`
 // succeeds and that the ACP agent can actually spawn.
 const detectClaude = async (
-  deps: ClaudeDetectDeps = createDefaultDetectDeps()
+  deps: ClaudeDetectDeps = createDefaultDetectDeps(),
+  signal?: AbortSignal
 ): Promise<ClaudeDetectResult> => {
   const p = pathFor(deps.platform)
-  const candidateDirs = await collectCandidateDirs(deps)
+  signal?.throwIfAborted()
+  const candidateDirs = await collectCandidateDirs(deps, signal)
   const binaryNames = claudeBinaryNames(deps.platform)
   const resolveSpawnTarget = deps.resolveSpawnTarget ?? ((candidate: string) => candidate)
 
@@ -108,9 +119,12 @@ const detectClaude = async (
     for (const name of binaryNames) {
       const candidate = p.join(dir, name)
 
-      if (!(await deps.isExecutable(candidate))) continue
+      const executable = await deps.isExecutable(candidate)
+      signal?.throwIfAborted()
+      if (!executable) continue
 
-      const version = await deps.getVersion(candidate)
+      const version = await deps.getVersion(candidate, signal)
+      signal?.throwIfAborted()
 
       // A path that exists but cannot report a version is not a usable claude; keep searching.
       if (version === undefined) continue
@@ -154,19 +168,21 @@ const parseVersion = (output: string): string | undefined => {
 // the shell with the path quoted to survive spaces; native `.exe`/Unix binaries run without a shell.
 const runClaudeVersion =
   (platform: NodeJS.Platform) =>
-  async (path: string): Promise<string | undefined> => {
+  async (path: string, signal?: AbortSignal): Promise<string | undefined> => {
     try {
       const { stdout } =
         platform === 'win32'
           ? await execFileAsync(`"${path}"`, ['--version'], {
               timeout: 10_000,
               shell: true,
-              windowsHide: true
+              windowsHide: true,
+              signal
             })
-          : await execFileAsync(path, ['--version'], { timeout: 10_000 })
+          : await execFileAsync(path, ['--version'], { timeout: 10_000, signal })
 
       return parseVersion(stdout)
     } catch {
+      signal?.throwIfAborted()
       return undefined
     }
   }
@@ -174,29 +190,34 @@ const runClaudeVersion =
 // Resolves the npm global bin directory if npm is present. PATH is augmented with common node
 // locations so a GUI-launched app can still locate npm. On Windows npm is a `.cmd` shim (needs a
 // shell) and places global binaries directly in the prefix; Unix nests them under `<prefix>/bin`.
-const resolveNpmBinDirs = (platform: NodeJS.Platform) => async (): Promise<string[]> => {
-  try {
-    const { stdout } =
-      platform === 'win32'
-        ? await execFileAsync('npm', ['prefix', '-g'], {
-            timeout: 10_000,
-            shell: true,
-            windowsHide: true,
-            env: augmentedPathEnv()
-          })
-        : await execFileAsync('npm', ['prefix', '-g'], {
-            timeout: 10_000,
-            env: augmentedPathEnv()
-          })
-    const prefix = stdout.trim()
+const resolveNpmBinDirs =
+  (platform: NodeJS.Platform) =>
+  async (signal?: AbortSignal): Promise<string[]> => {
+    try {
+      const { stdout } =
+        platform === 'win32'
+          ? await execFileAsync('npm', ['prefix', '-g'], {
+              timeout: 10_000,
+              shell: true,
+              windowsHide: true,
+              env: augmentedPathEnv(),
+              signal
+            })
+          : await execFileAsync('npm', ['prefix', '-g'], {
+              timeout: 10_000,
+              env: augmentedPathEnv(),
+              signal
+            })
+      const prefix = stdout.trim()
 
-    if (!prefix) return []
+      if (!prefix) return []
 
-    return platform === 'win32' ? [prefix] : [pathFor(platform).join(prefix, 'bin')]
-  } catch {
-    return []
+      return platform === 'win32' ? [prefix] : [pathFor(platform).join(prefix, 'bin')]
+    } catch {
+      signal?.throwIfAborted()
+      return []
+    }
   }
-}
 
 // Production dependency bundle wired to real fs/child_process for the current host platform.
 const createDefaultDetectDeps = (): ClaudeDetectDeps => {

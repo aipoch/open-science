@@ -148,32 +148,22 @@ describe('workspace tool activity details', () => {
     expect(JSON.stringify(details)).not.toContain('binding-secret-id')
   })
 
-  it('keeps a CJK retrieval query out of the Literature presentation', () => {
-    const activity = createActivity({
-      providerToolName: 'mcp__open-science-literature__read_document',
-      rawInput: {
-        documentId: 'binding-secret-id',
-        query: '梳理这篇论文的核心贡献'
-      }
-    })
-
-    const details = buildToolActivityDetails(activity)
-
-    expect(details).toMatchObject({
-      displayName: 'Reading',
-      subtitle: undefined,
-      sections: [
-        {
-          kind: 'literature',
-          summary: {
-            action: 'search',
-            documentCount: 1
-          }
-        }
-      ]
-    })
-    expect(JSON.stringify(details)).not.toContain('梳理这篇论文的核心贡献')
-  })
+  it.each(['DNA repair', '修复机制', '修復機制', 'DNA 修复机制', 'DNA修復の仕組み'])(
+    'preserves the original Literature query "%s" in the tool card summary',
+    (query) => {
+      const details = buildToolActivityDetails(
+        createActivity({
+          providerToolName: 'mcp__open-science-literature__read_document',
+          rawInput: { documentIds: ['binding-secret-id'], query }
+        })
+      )
+      expect(details).toMatchObject({
+        displayName: 'Reading',
+        sections: [{ kind: 'literature', summary: { action: 'search', query, documentCount: 1 } }]
+      })
+      expect(JSON.stringify(details)).not.toContain('binding-secret-id')
+    }
+  )
 
   it('uses the shared Literature presentation block when OpenCode truncates the full result', () => {
     const activity = createActivity({
@@ -306,6 +296,421 @@ describe('workspace tool activity details', () => {
       }
     })
     expect(JSON.stringify(details)).not.toContain('cursor')
+  })
+
+  it('projects a framework-neutral Library search without raw record payloads', () => {
+    const activity = createActivity({
+      title: 'open_science_library_search_library',
+      rawInput: { query: 'corrective retrieval', scope: 'collection', offset: 20 },
+      toolContent: [
+        {
+          type: 'content',
+          content: {
+            type: 'text',
+            text: JSON.stringify({
+              openScienceLiteraturePresentation: {
+                libraryAction: 'search',
+                libraryScope: 'collection',
+                itemTitles: ['Corrective Retrieval Augmented Generation'],
+                resultCount: 5,
+                totalCount: 27,
+                offset: 20,
+                limit: 5,
+                nextOffset: 25,
+                hasMore: true
+              }
+            })
+          }
+        },
+        {
+          type: 'content',
+          content: { type: 'text', text: '{"items":[{"id":"private-item-id"}]}' }
+        }
+      ]
+    })
+
+    const details = buildToolActivityDetails(activity)
+
+    expect(details).toMatchObject({
+      displayName: 'Literature library',
+      subtitle: 'corrective retrieval',
+      sections: [
+        {
+          kind: 'literature',
+          summary: {
+            action: 'search',
+            query: 'corrective retrieval',
+            libraryScope: 'collection',
+            itemTitles: ['Corrective Retrieval Augmented Generation'],
+            itemCount: 27,
+            resultCount: 5,
+            totalCount: 27,
+            resultStart: 21,
+            resultEnd: 25,
+            hasMore: true
+          }
+        }
+      ]
+    })
+    expect(JSON.stringify(details)).not.toContain('private-item-id')
+  })
+
+  it('falls back to compact structured search results when presentation metadata is unavailable', () => {
+    const activity = createActivity({
+      providerToolName: 'mcp__open-science-library__search_library',
+      rawInput: { scope: 'project', offset: 20, limit: 20 },
+      rawOutput: {
+        structuredContent: {
+          items: [
+            { id: 'private-item-1', title: 'Paper 21' },
+            { id: 'private-item-2', title: 'Paper 22' }
+          ],
+          totalCount: 54,
+          nextOffset: 40,
+          hasMore: true
+        }
+      }
+    })
+
+    const details = buildToolActivityDetails(activity)
+
+    expect(details).toMatchObject({
+      displayName: 'Literature library',
+      sections: [
+        {
+          kind: 'literature',
+          summary: {
+            action: 'search',
+            libraryScope: 'project',
+            itemTitles: ['Paper 21', 'Paper 22'],
+            resultCount: 2,
+            totalCount: 54,
+            resultStart: 21,
+            resultEnd: 22,
+            hasMore: true
+          }
+        }
+      ]
+    })
+    expect(JSON.stringify(details)).not.toContain('private-item-1')
+  })
+
+  it.each([
+    'mcp__open-science-library__search_library',
+    'mcp__open_science_library__search_library',
+    'open_science_library_search_library',
+    'mcp.open-science-library.search_library',
+    'open-science-library/search_library'
+  ])('keeps search ranges for %s when ACP text accompanies a raw result', (providerToolName) => {
+    const details = buildToolActivityDetails(
+      createActivity({
+        providerToolName,
+        rawInput: { arguments: JSON.stringify({ offset: 40, limit: 20, scope: 'library' }) },
+        toolContent: [{ type: 'content', content: { type: 'text', text: 'Search completed' } }],
+        rawOutput: {
+          result: JSON.stringify({
+            structuredContent: {
+              items: [{ id: 'private-id', title: 'Paper 41' }],
+              totalCount: 41,
+              hasMore: false
+            }
+          })
+        }
+      })
+    )
+    expect(details).toMatchObject({
+      sections: [
+        {
+          kind: 'literature',
+          summary: {
+            libraryScope: 'library',
+            resultStart: 41,
+            resultEnd: 41,
+            totalCount: 41,
+            itemTitles: ['Paper 41'],
+            hasMore: false
+          }
+        }
+      ]
+    })
+    expect(JSON.stringify(details)).not.toContain('private-id')
+  })
+
+  it('does not invent a first-page range when a framework omits input and offset', () => {
+    const details = buildToolActivityDetails(
+      createActivity({
+        providerToolName: 'mcp__open-science-library__search_library',
+        rawOutput: { items: [{ title: 'A paper' }], totalCount: 50 }
+      })
+    )
+    expect(details).toMatchObject({
+      sections: [{ kind: 'literature', summary: { resultCount: 1, totalCount: 50 } }]
+    })
+    expect(JSON.stringify(details)).not.toContain('resultStart')
+    expect(JSON.stringify(details)).not.toContain('requestedStart')
+  })
+
+  it('uses the actual abstract batch size and titles without requiring a presentation block', () => {
+    const details = buildToolActivityDetails(
+      createActivity({
+        providerToolName: 'mcp.open-science-library.read_library_abstract',
+        rawInput: JSON.stringify({ itemIds: ['private-1', 'private-2', 'missing'] }),
+        rawOutput: JSON.stringify([
+          {
+            type: 'text',
+            text: JSON.stringify({
+              items: [
+                { itemId: 'private-1', title: 'First paper', abstract: 'private full text' },
+                { itemId: 'private-2', title: 'Second paper', abstract: 'private full text' }
+              ],
+              missingItemIds: ['missing']
+            })
+          }
+        ])
+      })
+    )
+    expect(details).toMatchObject({
+      sections: [
+        {
+          kind: 'literature',
+          summary: {
+            action: 'read',
+            itemCount: 2,
+            itemTitles: ['First paper', 'Second paper']
+          }
+        }
+      ]
+    })
+    expect(JSON.stringify(details)).not.toContain('private-')
+    expect(JSON.stringify(details)).not.toContain('private full text')
+  })
+
+  it('retains PDF page ranges from raw structured results alongside ACP status text', () => {
+    const details = buildToolActivityDetails(
+      createActivity({
+        providerToolName: 'open_science_library_read_library_pdf',
+        rawInput: { itemId: 'private-id', query: 'outcome' },
+        toolContent: [{ type: 'content', content: { type: 'text', text: 'Read completed' } }],
+        rawOutput: {
+          structuredContent: {
+            document: { name: 'study.pdf' },
+            passages: [
+              { pageStart: 7, pageEnd: 8 },
+              { pageStart: 10, pageEnd: 10 }
+            ]
+          }
+        }
+      })
+    )
+    expect(details).toMatchObject({
+      sections: [
+        {
+          kind: 'literature',
+          summary: {
+            action: 'read',
+            documentNames: ['study.pdf'],
+            passageCount: 2,
+            pageStart: 7,
+            pageEnd: 10
+          }
+        }
+      ]
+    })
+  })
+
+  it('projects format_references as a semantic Literature card instead of raw JSON', () => {
+    const activity = createActivity({
+      providerToolName: 'mcp__open-science-library__format_references',
+      rawInput: { itemIds: ['private-item-1', 'private-item-2'], styleId: 'apa', locale: 'en-US' },
+      rawOutput: {
+        structuredContent: {
+          references: [
+            { itemId: 'private-item-1', reference: 'Reference one', inText: '(One, 2025)' },
+            { itemId: 'private-item-2', reference: 'Reference two', inText: '(Two, 2026)' }
+          ]
+        }
+      }
+    })
+
+    const details = buildToolActivityDetails(activity)
+
+    expect(details).toMatchObject({
+      displayName: 'Literature library',
+      sections: [
+        {
+          kind: 'literature',
+          summary: {
+            action: 'format',
+            itemCount: 2,
+            styleId: 'apa',
+            locale: 'en-US'
+          }
+        }
+      ]
+    })
+    expect(JSON.stringify(details)).not.toContain('private-item-1')
+    expect(JSON.stringify(details)).not.toContain('Reference one')
+  })
+
+  it('summarizes Library Inbox saves from the small presentation block', () => {
+    const activity = createActivity({
+      providerToolName: 'mcp__open-science-library__save_to_inbox',
+      rawInput: {
+        candidates: [
+          {
+            item: { title: 'Paper A' },
+            source: { provider: 'openalex', rawMetadata: { private: true } }
+          }
+        ]
+      },
+      toolContent: [
+        {
+          type: 'content',
+          content: {
+            type: 'text',
+            text: JSON.stringify({
+              openScienceLiteraturePresentation: {
+                libraryAction: 'save',
+                itemTitles: ['Paper A'],
+                candidateCount: 1,
+                savedCount: 1
+              }
+            })
+          }
+        }
+      ]
+    })
+
+    const details = buildToolActivityDetails(activity)
+
+    expect(details).toMatchObject({
+      displayName: 'Literature library',
+      subtitle: 'Paper A',
+      sections: [
+        {
+          kind: 'literature',
+          summary: {
+            action: 'save',
+            itemTitles: ['Paper A'],
+            itemCount: 1,
+            savedCount: 1
+          }
+        }
+      ]
+    })
+    expect(JSON.stringify(details)).not.toContain('rawMetadata')
+  })
+
+  it('summarizes a full Library abstract read without exposing its payload', () => {
+    const activity = createActivity({
+      providerToolName: 'mcp__open-science-library__read_library_abstract',
+      rawInput: { itemId: 'item-1', scope: 'project' },
+      toolContent: [
+        {
+          type: 'content',
+          content: {
+            type: 'text',
+            text: JSON.stringify({
+              openScienceLiteraturePresentation: {
+                libraryAction: 'read',
+                libraryScope: 'project',
+                itemTitles: ['Paper with a long abstract'],
+                resultCount: 1
+              }
+            })
+          }
+        },
+        {
+          type: 'content',
+          content: { type: 'text', text: '{"abstract":"private full abstract"}' }
+        }
+      ]
+    })
+
+    const details = buildToolActivityDetails(activity)
+
+    expect(details).toMatchObject({
+      displayName: 'Literature library',
+      subtitle: 'Paper with a long abstract',
+      sections: [
+        {
+          kind: 'literature',
+          summary: {
+            action: 'read',
+            libraryScope: 'project',
+            itemTitles: ['Paper with a long abstract'],
+            itemCount: 1
+          }
+        }
+      ]
+    })
+    expect(JSON.stringify(details)).not.toContain('private full abstract')
+  })
+
+  it('shows page-level Library PDF evidence as a distinct read', () => {
+    const activity = createActivity({
+      providerToolName: 'mcp__open-science-library__read_library_pdf',
+      rawInput: { itemId: 'item-1', query: 'primary outcome', scope: 'project' },
+      toolContent: [
+        {
+          type: 'content',
+          content: {
+            type: 'text',
+            text: JSON.stringify({
+              openScienceLiteraturePresentation: {
+                libraryAction: 'read',
+                libraryScope: 'project',
+                itemTitles: ['Evidence paper'],
+                documentNames: ['evidence.pdf'],
+                retrievalMode: 'bm25',
+                passageCount: 2,
+                pageStart: 7,
+                pageEnd: 9
+              }
+            })
+          }
+        }
+      ]
+    })
+
+    expect(buildToolActivityDetails(activity)).toMatchObject({
+      displayName: 'Literature library',
+      subtitle: 'primary outcome',
+      sections: [
+        {
+          kind: 'literature',
+          summary: {
+            action: 'read',
+            query: 'primary outcome',
+            libraryScope: 'project',
+            itemTitles: ['Evidence paper'],
+            documentNames: ['evidence.pdf'],
+            documentCount: 1,
+            retrievalMode: 'bm25',
+            passageCount: 2,
+            pageStart: 7,
+            pageEnd: 9
+          }
+        }
+      ]
+    })
+  })
+
+  it.each([
+    'mcp__open-science-library__search_library',
+    'mcp__open_science_library__search_library',
+    'open_science_library_search_library',
+    'mcp.open-science-library.search_library',
+    'open-science-library/search_library'
+  ])('normalizes Library search identity %s', (identity) => {
+    expect(
+      buildToolActivityDetails(
+        createActivity({ providerToolName: identity, rawInput: { query: 'CRAG' } })
+      )
+    ).toMatchObject({
+      displayName: 'Literature library',
+      sections: [{ kind: 'literature', summary: { action: 'search', query: 'CRAG' } }]
+    })
   })
 
   it('extracts the renderable SKILL.md document from a load_skill output', () => {
@@ -1099,16 +1504,16 @@ describe('workspace tool activity details', () => {
     const section = details?.sections[0]
 
     expect(section).toMatchObject({
-      kind: 'code',
-      label: 'Tool output image',
-      language: 'json'
-    })
-    if (section?.kind !== 'code') throw new Error('Expected an artifact summary.')
-    expect(JSON.parse(section.text)).toEqual({
-      file: 'report.png',
-      type: 'image/png',
-      size: '2 KB',
-      path: '/files/report.png'
+      kind: 'summary',
+      summary: {
+        title: 'Tool output image',
+        subtitle: 'report.png',
+        fields: [
+          { label: 'Type', value: 'image/png' },
+          { label: 'Size', value: '2 KB' },
+          { label: 'Path', value: '/files/report.png', expandable: true }
+        ]
+      }
     })
   })
 
@@ -1149,11 +1554,10 @@ describe('workspace tool activity details', () => {
 
     const section = details?.sections[0]
 
-    expect(section?.kind).toBe('code')
-    expect(section?.kind === 'code' && section.text).toContain('report.csv')
-    expect(section?.kind === 'code' && section.text).toContain('/files/report.csv')
-    // The raw file content must never be dumped into the transcript.
-    expect(section?.kind === 'code' && section.text).not.toContain('a,b')
+    expect(section?.kind).toBe('summary')
+    expect(JSON.stringify(section)).toContain('report.csv')
+    expect(JSON.stringify(section)).toContain('/files/report.csv')
+    expect(JSON.stringify(section)).not.toContain('a,b')
   })
 
   it('matches the artifact-write tool by name even when MCP-namespaced', () => {
@@ -1166,7 +1570,7 @@ describe('workspace tool activity details', () => {
 
     expect(details?.displayName).toBe('Write file')
     expect(details?.subtitle).toBe('data.csv')
-    expect(details?.sections[0]?.kind === 'code' && details.sections[0].text).not.toContain('a,b')
+    expect(JSON.stringify(details?.sections)).not.toContain('a,b')
   })
 
   it('does not classify artifact-file lookalikes as managed writes', () => {
@@ -1219,16 +1623,12 @@ describe('workspace tool activity details', () => {
     expect(details?.displayName).toBe('Write file')
     expect(details?.subtitle).toBe('sin.png')
     expect(details?.metaLabel).toBe('41 KB')
-    expect(details?.sections.map((section) => 'label' in section && section.label)).toEqual([
-      'Tool output image'
-    ])
-    expect(details?.sections[0]?.kind === 'code' && details.sections[0].text).toContain('sin.png')
-    expect(details?.sections[0]?.kind === 'code' && details.sections[0].text).not.toContain(
-      'artifact_id'
-    )
-    expect(details?.sections[0]?.kind === 'code' && details.sections[0].text).not.toContain(
-      'structuredContent'
-    )
+    expect(details?.sections[0]).toMatchObject({
+      kind: 'summary',
+      summary: { title: 'Tool output image', subtitle: 'sin.png' }
+    })
+    expect(JSON.stringify(details?.sections)).not.toContain('artifact_id')
+    expect(JSON.stringify(details?.sections)).not.toContain('structuredContent')
   })
 
   it('renders a WebFetch with its URL, prompt, and fetched result', () => {

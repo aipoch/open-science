@@ -6,10 +6,13 @@ import { resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 
 const DEFAULT_RESULT_PATH = 'test-results/accessibility/accessibility-summary.json'
-const EXPECTED_TESTS = 5
+const EXPECTED_TESTS = 11
 export const EXPECTED_ACCESSIBILITY_SURFACES = [
   'Onboarding',
   'Home',
+  'Home (narrow)',
+  'Onboarding step focus',
+  'Go-to locations (open)',
   'New project dialog',
   'Workspace',
   'Settings',
@@ -19,7 +22,13 @@ export const EXPECTED_ACCESSIBILITY_SURFACES = [
   'Long conversation (dark)',
   'Artifact provenance',
   'Compute settings (narrow, dark)',
-  'Conversation recovery warning'
+  'Conversation recovery warning',
+  'Home (375px, light)',
+  'Home (375px, dark)',
+  'Home (767px, light)',
+  'Home (767px, dark)',
+  'Reported text (light)',
+  'Reported text (dark)'
 ]
 
 export function readAccessibilityResult(path) {
@@ -83,7 +92,8 @@ export function runAccessibilityE2e(environment = process.env) {
     {
       env: {
         ...environment,
-        ACCESSIBILITY_ADVISORY: '1',
+        // Collect every surface before the reporter fails the run for findings.
+        ACCESSIBILITY_COLLECT_ALL: '1',
         ACCESSIBILITY_RESULT_PATH: resultPath
       },
       stdio: 'inherit'
@@ -92,10 +102,10 @@ export function runAccessibilityE2e(environment = process.env) {
 
   if (run.error) throw run.error
   const result = readAccessibilityResult(resultPath)
-  if (run.status !== 0 && result.status !== 'infra-failure') {
-    throw new Error('Playwright failed after publishing a non-infrastructure accessibility result.')
+  if (run.status !== 0 && result.status === 'passed') {
+    throw new Error('Playwright failed after publishing a passing accessibility result.')
   }
-  return result.status === 'infra-failure' ? 1 : 0
+  return result.status === 'passed' && run.status === 0 ? 0 : 1
 }
 
 if (import.meta.url === pathToFileURL(process.argv[1]).href) {

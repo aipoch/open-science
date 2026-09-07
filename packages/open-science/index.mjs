@@ -203,6 +203,21 @@ export class OpenScienceClient {
     })
   }
 
+  getProjectSessionDefaults(projectId, options) {
+    return this.request(
+      `/api/v1/projects/${encodeURIComponent(projectId)}/session-defaults`,
+      options
+    )
+  }
+
+  updateProjectSessionDefaults(projectId, request, options) {
+    return this.request(`/api/v1/projects/${encodeURIComponent(projectId)}/session-defaults`, {
+      ...options,
+      method: 'PATCH',
+      body: request
+    })
+  }
+
   listSessions(projectId, options) {
     const query = projectId ? `?project=${encodeURIComponent(projectId)}` : ''
     return this.request(`/api/v1/sessions${query}`, options)
@@ -210,6 +225,30 @@ export class OpenScienceClient {
 
   getSession(sessionId, options) {
     return this.request(`/api/v1/sessions/${encodeURIComponent(sessionId)}`, options)
+  }
+
+  getSessionConfiguration(sessionId, options) {
+    return this.request(`/api/v1/sessions/${encodeURIComponent(sessionId)}/config`, options)
+  }
+
+  updateSessionConfiguration(sessionId, request, options) {
+    return this.request(`/api/v1/sessions/${encodeURIComponent(sessionId)}/config`, {
+      ...options,
+      method: 'PATCH',
+      body: request
+    })
+  }
+
+  getAgentRouting(options) {
+    return this.request('/api/v1/settings/agent-routing', options)
+  }
+
+  updateAgentRouting(request, options) {
+    return this.request('/api/v1/settings/agent-routing', {
+      ...options,
+      method: 'PATCH',
+      body: request
+    })
   }
 
   getSessionPlan(sessionId, options) {
@@ -595,8 +634,32 @@ export const connectToOpenScience = async ({
   requestTimeoutMs,
   signal
 } = {}) => {
-  const state = await findServiceState({ override: configRoot, env })
-  if (!state) {
+  let client
+  let lastError
+  await findServiceState({
+    override: configRoot,
+    env,
+    accept: async (state) => {
+      signal?.throwIfAborted()
+      try {
+        const candidate = new OpenScienceClient({
+          baseUrl: `http://127.0.0.1:${state.port}`,
+          token: await readWebToken(state.configRoot),
+          fetch,
+          requestTimeoutMs
+        })
+        await candidate.health({ signal })
+        client = candidate
+        return true
+      } catch (error) {
+        signal?.throwIfAborted()
+        lastError = error
+        return false
+      }
+    }
+  })
+  if (!client) {
+    if (lastError) throw lastError
     throw new OpenScienceApiError(
       'Open Science is not running. Start it with "open-science start".',
       {
@@ -604,13 +667,5 @@ export const connectToOpenScience = async ({
       }
     )
   }
-  const token = await readWebToken(state.configRoot)
-  const client = new OpenScienceClient({
-    baseUrl: `http://127.0.0.1:${state.port}`,
-    token,
-    fetch,
-    requestTimeoutMs
-  })
-  await client.health({ signal })
   return client
 }

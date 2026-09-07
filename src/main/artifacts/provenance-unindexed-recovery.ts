@@ -8,6 +8,7 @@ import { canonicalJson, sha256, type CanonicalJson } from './provenance-canonica
 import { normalizeArtifactFilename as normalizeFilename } from './provenance-version-writer'
 import { resolveStorageKey, storageKey } from './provenance-storage'
 import { ArtifactCompatibilityScanIncompleteError, type ArtifactRepository } from './repository'
+import { contentBlobIdForVersion, registerContentBlob } from '../storage/content-blob-registry'
 
 const SAFE_SEGMENT_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]*$/
 const SHA256_PATTERN = /^[a-f0-9]{64}$/
@@ -386,6 +387,27 @@ class ArtifactProvenanceUnindexedRecovery {
           }
         })
       }
+      const contentStorageKey = storageKey(
+        'artifacts',
+        input.projectId,
+        input.appSessionId,
+        '.provenance',
+        input.artifactId,
+        'versions',
+        input.versionId,
+        'content'
+      )
+      const contentBlobId = contentBlobIdForVersion('artifact-version', input.versionId)
+      await registerContentBlob(transaction, {
+        id: contentBlobId,
+        storageKey: contentStorageKey,
+        checksum,
+        sizeBytes: BigInt(sizeBytes!),
+        contentType: stringValue(evidence.content_type),
+        state: 'available',
+        createdAt: new Date(createdAtValue),
+        verifiedAt: new Date()
+      })
       await transaction.artifactVersion.create({
         data: {
           id: input.versionId,
@@ -404,16 +426,7 @@ class ArtifactProvenanceUnindexedRecovery {
           messageId: snapshot?.terminalMessageId,
           messageSnapshotId: snapshot?.id,
           state: snapshot ? 'finalized' : 'pending',
-          contentStorageKey: storageKey(
-            'artifacts',
-            input.projectId,
-            input.appSessionId,
-            '.provenance',
-            input.artifactId,
-            'versions',
-            input.versionId,
-            'content'
-          ),
+          contentStorageKey,
           evidenceStorageKey: storageKey(
             'artifacts',
             input.projectId,
@@ -427,6 +440,7 @@ class ArtifactProvenanceUnindexedRecovery {
           contentType: stringValue(evidence.content_type),
           sizeBytes: BigInt(sizeBytes!),
           checksum,
+          contentBlobId,
           evidenceJson,
           evidenceChecksum: sha256(evidenceJson),
           evidenceSchemaVersion: 1,

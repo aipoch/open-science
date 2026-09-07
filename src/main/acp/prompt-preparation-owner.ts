@@ -25,6 +25,7 @@ import type { SessionCapabilityPolicy } from './session-capability-owner'
 import { codeBuddySkillRuntimeRoot, type TurnSkillHandle } from './turn-skill-owner'
 import type { AcpProviderModelCallUsage } from './provider-turn-adapter'
 import { buildSessionReferencePrompt } from './session-reference-prompt'
+import { buildLiteratureReferencePrompt } from './literature-reference-prompt'
 
 const log = createLogger('acp-prompt-preparation-owner')
 type SelectBridgeSkills = NonNullable<ResolvedAgentBackend['responsesBridgeLease']>['selectSkills']
@@ -317,6 +318,7 @@ class AcpPromptPreparationOwner {
         promptPrefix,
         recalledMemory,
         buildSessionReferencePrompt(input.request.referencedSessions),
+        buildLiteratureReferencePrompt(input.request.parts),
         skillPreparation.text
       ]
         .filter((segment): segment is string => Boolean(segment))

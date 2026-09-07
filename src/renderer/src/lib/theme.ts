@@ -71,3 +71,5 @@ export const subscribeSystemTheme = (onChange: (theme: Theme) => void): (() => v
   media.addEventListener('change', listener)
   return () => media.removeEventListener('change', listener)
 }
+
+export { STORAGE_KEY as THEME_STORAGE_KEY }

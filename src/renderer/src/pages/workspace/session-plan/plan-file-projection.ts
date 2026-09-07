@@ -8,9 +8,12 @@ import { planStepTitles } from '../../../../../shared/session-plan/contract'
 
 // The resolution only consults a Session's Plan projections, so the narrow pick keeps the seam
 // testable without constructing a whole ChatSession.
-export type PlanProjectionSource = Pick<
-  ChatSession,
-  'planHistoryProjections' | 'activePlanProjection'
+export type PlanProjectionSource = Readonly<
+  Pick<ChatSession, 'planHistoryProjections' | 'activePlanProjection'> & {
+    runtimeContext?: Readonly<{
+      plan?: Readonly<{ artifactVersionId: string }>
+    }>
+  }
 >
 
 // The projection fields the Plan document body renders. Narrower than ActivePlanProjection so a
@@ -25,22 +28,28 @@ export type PlanFileProjectionResolution = Readonly<{
   stale: boolean
 }>
 
-// Mirrors the projection lookup the in-chat Plan tool preview performs: an exact Artifact Version
-// match against the persisted plan history, with the active projection as fallback.
+// Mirrors the projection lookup the in-chat Plan tool preview performs: prefer the active
+// projection when it matches the exact Artifact Version because it carries the latest runtime
+// progress, then fall back to the persisted plan history for older versions.
 export const resolvePlanFileProjection = (
   session: PlanProjectionSource | undefined,
   artifactVersionId: string | undefined
 ): PlanFileProjectionResolution | undefined => {
   if (!session || !artifactVersionId) return undefined
   const active = session.activePlanProjection
+  const currentArtifactVersionId =
+    active?.artifactVersionId ?? session.runtimeContext?.plan?.artifactVersionId
   const projection =
+    (active?.artifactVersionId === artifactVersionId ? active : undefined) ??
     session.planHistoryProjections?.find(
       (candidate) => candidate.artifactVersionId === artifactVersionId
-    ) ?? (active?.artifactVersionId === artifactVersionId ? active : undefined)
+    )
   if (!projection) return undefined
   return {
     projection,
-    stale: Boolean(active && active.artifactVersionId !== projection.artifactVersionId)
+    stale: Boolean(
+      currentArtifactVersionId && currentArtifactVersionId !== projection.artifactVersionId
+    )
   }
 }
 

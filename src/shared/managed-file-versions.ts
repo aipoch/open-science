@@ -68,6 +68,11 @@ type ManagedFileVersionInspectResult = {
   headVersionId: string
   selectedVersionId: string
   versions: ManagedFileVersionDescriptor[]
+  nextCursor?: string
+  selectedVersion?: ManagedFileVersionDescriptor
+  headVersion?: ManagedFileVersionDescriptor
+  previousVersion?: ManagedFileVersionDescriptor
+  nextVersion?: ManagedFileVersionDescriptor
   canEdit: boolean
   canDiff: boolean
   unavailableReason?: ManagedTextEditUnavailableReason | 'PROJECT_NOT_WRITABLE' | 'FILE_DELETED'
@@ -90,6 +95,7 @@ type ManagedFileVersionErrorCode =
   | 'VERSION_CONFLICT'
   | 'INVALID_REQUEST'
   | 'OPERATION_REUSED'
+  | 'OPERATION_FAILED'
   | 'STORAGE_COLLISION'
   | 'DIFF_BASE_NOT_FOUND'
   | 'DIFF_INPUT_LIMIT_EXCEEDED'
@@ -106,7 +112,10 @@ type ManagedFileVersionErrorShape = {
 type ManagedFileVersionIpcResult<Value> =
   { ok: true; value: Value } | { ok: false; error: ManagedFileVersionErrorShape }
 
-type ManagedFileVersionInspectRequest = ManagedFileIdentity & { versionId?: string }
+type ManagedFileVersionInspectRequest = ManagedFileIdentity & {
+  versionId?: string
+  cursor?: string
+}
 type ManagedFileVersionDiffRequest = ManagedFileIdentity & { versionId: string; requestId: string }
 type ManagedFileVersionCancelDiffRequest = { requestId: string }
 

@@ -34,6 +34,29 @@ describe('Office preview frame messages', () => {
     ).toBe(false)
   })
 
+  it('accepts finite runtime context-menu coordinates and rejects malformed points', () => {
+    const message = {
+      channel: 'open-science-office-preview',
+      version: 1,
+      type: 'context-menu',
+      contextMenu: { sessionId: 'session-1', x: 12, y: 24 }
+    }
+
+    expect(isOfficePreviewRuntimeMessage(message)).toBe(true)
+    expect(
+      isOfficePreviewRuntimeMessage({
+        ...message,
+        contextMenu: { ...message.contextMenu, x: Number.NaN }
+      })
+    ).toBe(false)
+    expect(
+      isOfficePreviewRuntimeMessage({
+        ...message,
+        contextMenu: { ...message.contextMenu, sessionId: '' }
+      })
+    ).toBe(false)
+  })
+
   it('accepts only complete host start messages', () => {
     const start = {
       sessionId: 'session-1',

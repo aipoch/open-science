@@ -1,5 +1,5 @@
 import { posix, win32 } from 'node:path'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 
 import {
   collectCandidateDirs,
@@ -39,6 +39,20 @@ describe('claude-detect', () => {
     const result = await detectClaude(createDeps({ '/usr/local/bin/claude': '2.1.0' }))
 
     expect(result).toEqual({ found: true, path: '/usr/local/bin/claude', version: '2.1.0' })
+  })
+
+  it('passes cancellation through npm discovery and version probing', async () => {
+    const controller = new AbortController()
+    const resolveNpmBinDirs = vi.fn().mockResolvedValue([])
+    const getVersion = vi.fn().mockResolvedValue('2.1.0')
+
+    await detectClaude(
+      createDeps({ '/usr/local/bin/claude': '2.1.0' }, { resolveNpmBinDirs, getVersion }),
+      controller.signal
+    )
+
+    expect(resolveNpmBinDirs).toHaveBeenCalledWith(controller.signal)
+    expect(getVersion).toHaveBeenCalledWith('/usr/local/bin/claude', controller.signal)
   })
 
   it('falls back to ~/.local/bin and npm bin dirs when PATH misses', async () => {

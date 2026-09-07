@@ -1,21 +1,20 @@
-import type { AcpPermissionResponse } from '../../shared/acp'
+import type { AcpPermissionRequest, AcpPermissionResponse } from '../../shared/acp'
 import {
   sanitizeSessionPermissionRuntimeContext,
   type PersistedChatSession,
   type SessionPermissionRuntimeContext,
   type SessionRuntimeContext
 } from '../../shared/session-persistence'
-import type { SessionPersistenceCoordinator } from '../session-persistence/coordinator'
+import type {
+  SessionCatalog,
+  SessionMutation,
+  SessionRuntimeContextCommands
+} from '../session-persistence/coordinator'
 import type { DurablePermissionWaitCandidate } from './permission-broker'
 
-type PermissionWaitSessions = Pick<
-  SessionPersistenceCoordinator,
-  | 'readSessionRuntimeContext'
-  | 'patchSessionRuntimeContext'
-  | 'containsMessageOnActiveBranch'
-  | 'loadSessionForContinuation'
-> &
-  Partial<Pick<SessionPersistenceCoordinator, 'sessionProjectId'>>
+type PermissionWaitSessions = SessionRuntimeContextCommands &
+  Pick<SessionCatalog, 'containsMessageOnActiveBranch' | 'loadSessionForContinuation'> &
+  Partial<Pick<SessionCatalog, 'sessionProjectId'> & SessionMutation>
 
 type RestoredPermissionDecision = Readonly<{
   permission: SessionPermissionRuntimeContext
@@ -30,6 +29,35 @@ const isRevisionConflict = (error: unknown): boolean =>
   error !== null &&
   'code' in error &&
   error.code === 'revision-conflict'
+
+const LITERATURE_SAVE_PERMISSION_IDENTITY = 'open-science-library/save_to_inbox'
+const MAX_PERMISSION_PREVIEW_TITLE_CHARS = 512
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === 'object' && value !== null && !Array.isArray(value)
+
+// Durable permission state needs a human-readable preview, not a second copy of every abstract and
+// author. The original request remains live for execution and its full fingerprint is persisted.
+const requestForPersistence = (request: AcpPermissionRequest): AcpPermissionRequest => {
+  if (request.mcpIdentity !== LITERATURE_SAVE_PERMISSION_IDENTITY || !isRecord(request.rawInput)) {
+    return request
+  }
+  const input = isRecord(request.rawInput.arguments) ? request.rawInput.arguments : request.rawInput
+  if (!Array.isArray(input.candidates)) return request
+
+  return {
+    ...request,
+    rawInput: {
+      candidates: input.candidates.slice(0, 10).flatMap((candidate) => {
+        if (!isRecord(candidate) || !isRecord(candidate.item)) return []
+        const title = candidate.item.title
+        return typeof title === 'string' && title.trim()
+          ? [{ item: { title: title.trim().slice(0, MAX_PERMISSION_PREVIEW_TITLE_CHARS) } }]
+          : []
+      })
+    }
+  }
+}
 
 class AcpPermissionWaitOwner {
   constructor(
@@ -51,7 +79,7 @@ class AcpPermissionWaitOwner {
 
     const permission = sanitizeSessionPermissionRuntimeContext({
       state: 'pending',
-      request: candidate.request,
+      request: requestForPersistence(candidate.request),
       originatingPromptMessageId: candidate.promptMessageId,
       fingerprint: candidate.fingerprint,
       categoryKey: candidate.categoryKey,

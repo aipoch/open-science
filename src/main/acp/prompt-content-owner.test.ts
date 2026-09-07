@@ -6,6 +6,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { MAX_ACP_MESSAGE_IMAGE_BYTES } from '../../shared/acp'
+import { createLiteratureAttachmentVersionReference } from '../../shared/literature'
 import { createUploadVersionReference, type UploadedAttachment } from '../../shared/uploads'
 import { estimateHistoryTokens } from '../../shared/history-preamble'
 import { extractPdfText, MAX_AUTO_PROCESS_IMAGE_BYTES } from '../uploads/attachment-media'
@@ -194,10 +195,11 @@ describe('AcpPromptContentOwner', () => {
         currentUploads: [],
         references: [
           {
-            id: 'artifact-1',
+            id: 'literature-attachment-1',
+            sourceFileId: 'literature-attachment-1',
             name: 'paper.pdf',
-            source: 'artifact',
-            path: 'artifact-version:project-1/source-session/artifact-1/version-1',
+            source: 'literature',
+            path: createLiteratureAttachmentVersionReference('version-1'),
             versionId: 'version-1',
             mimeType: 'application/pdf',
             pdfContextDocumentId: 'binding-1',
@@ -212,7 +214,7 @@ describe('AcpPromptContentOwner', () => {
 
     try {
       const prepared = await prepare('总结一下整篇论文的核心贡献。')
-      await prepare('这个方法有哪些局限？')
+      const auto = await prepare('这个方法有哪些局限？')
       const overall = await prepare("Analyze this paper's overall results and contributions.")
 
       expect(vi.mocked(extractPdfText).mock.calls.slice(extractionCallStart)).toEqual([])
@@ -227,6 +229,7 @@ describe('AcpPromptContentOwner', () => {
         type: 'text',
         text: expect.stringContaining('`read_document`')
       })
+      expect(auto.turnInputs).toBeUndefined()
       expect(
         contentBlocks(overall.content).find(
           (block) => block.type === 'text' && block.text.includes('route":"literature-mcp')

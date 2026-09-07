@@ -4,6 +4,15 @@ import { describe, expect, it } from 'vitest'
 import { ProviderKindIcon } from './provider-icons'
 
 describe('ProviderKindIcon', () => {
+  it('renders the bundled Apodex provider logo', () => {
+    const html = renderToStaticMarkup(<ProviderKindIcon kindKey="official:apodex" />)
+
+    expect(html).toContain('<img')
+    expect(html).toContain('%3ctitle%3eApodex%3c/title%3e')
+    expect(html).toContain('%23437DC4')
+    expect(html).not.toContain('text-muted-foreground')
+  })
+
   it.each(['official:opencode-go', 'official:opencode'])(
     'reuses the OpenCode logo for %s',
     (kindKey) => {

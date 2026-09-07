@@ -43,12 +43,16 @@ describe('ArchiveCoordinator', () => {
     coordinator.setMarkReadSessions(markRead)
 
     await expect(
-      coordinator.updateProjectArchive({ id: project.id, archived: true, expectedArchivedAt: null })
+      coordinator.updateProjectArchive({
+        id: project.id,
+        archived: true,
+        expectedArchiveRevision: 0
+      })
     ).resolves.toMatchObject({ archivedAt: 50 })
 
     expect(sessions.assertProjectArchivable).toHaveBeenCalledWith(project.id, expect.any(Function))
     expect(projects.updateArchive).toHaveBeenCalledWith(
-      { id: project.id, archived: true, expectedArchivedAt: null },
+      { id: project.id, archived: true, expectedArchiveRevision: 0 },
       expect.any(Number)
     )
     expect(markRead).toHaveBeenCalledWith([session.id])
@@ -56,7 +60,7 @@ describe('ArchiveCoordinator', () => {
 
   it('rejects an archive request whose compare-and-set value is stale', async () => {
     const projects = {
-      get: vi.fn().mockResolvedValue({ ...project, archivedAt: 40 }),
+      get: vi.fn().mockResolvedValue({ ...project, archivedAt: 40, archiveRevision: 1 }),
       updateArchive: vi.fn()
     }
     const sessions = {
@@ -72,7 +76,11 @@ describe('ArchiveCoordinator', () => {
     })
 
     await expect(
-      coordinator.updateProjectArchive({ id: project.id, archived: false, expectedArchivedAt: 39 })
+      coordinator.updateProjectArchive({
+        id: project.id,
+        archived: false,
+        expectedArchiveRevision: 0
+      })
     ).rejects.toThrow('Project archive state changed elsewhere.')
 
     expect(projects.updateArchive).not.toHaveBeenCalled()
@@ -80,7 +88,7 @@ describe('ArchiveCoordinator', () => {
 
   it('does not restore a session while its project remains archived', async () => {
     const projects = {
-      get: vi.fn().mockResolvedValue({ ...project, archivedAt: 40 }),
+      get: vi.fn().mockResolvedValue({ ...project, archivedAt: 40, archiveRevision: 1 }),
       updateArchive: vi.fn()
     }
     const sessions = {
@@ -100,7 +108,7 @@ describe('ArchiveCoordinator', () => {
         projectId: project.id,
         sessionId: session.id,
         archived: false,
-        expectedArchivedAt: 40
+        expectedRevision: 0
       })
     ).rejects.toThrow('Restore this archived Project before continuing.')
 
@@ -167,7 +175,7 @@ describe('ArchiveCoordinator', () => {
       projectId: project.id,
       sessionId: session.id,
       archived: true,
-      expectedArchivedAt: null
+      expectedRevision: 0
     })
     await Promise.resolve()
     expect(sessions.updateArchive).not.toHaveBeenCalled()
@@ -205,7 +213,7 @@ describe('ArchiveCoordinator', () => {
         projectId: project.id,
         sessionId: session.id,
         archived: true,
-        expectedArchivedAt: null
+        expectedRevision: 0
       })
     ).rejects.toThrow('Finish or stop this session before archiving.')
 
@@ -230,7 +238,11 @@ describe('ArchiveCoordinator', () => {
     })
 
     await expect(
-      coordinator.updateProjectArchive({ id: project.id, archived: true, expectedArchivedAt: null })
+      coordinator.updateProjectArchive({
+        id: project.id,
+        archived: true,
+        expectedArchiveRevision: 0
+      })
     ).rejects.toThrow('Finish or stop active sessions before archiving this project.')
 
     expect(sessions.assertProjectArchivable).not.toHaveBeenCalled()
@@ -255,7 +267,11 @@ describe('ArchiveCoordinator', () => {
     })
 
     await expect(
-      coordinator.updateProjectArchive({ id: project.id, archived: true, expectedArchivedAt: null })
+      coordinator.updateProjectArchive({
+        id: project.id,
+        archived: true,
+        expectedArchiveRevision: 0
+      })
     ).resolves.toMatchObject({ archivedAt: 40 })
 
     expect(projects.updateArchive).toHaveBeenCalledOnce()
@@ -263,7 +279,7 @@ describe('ArchiveCoordinator', () => {
 
   it('resolves a fresh live session owner before archive admission', async () => {
     const projects = {
-      get: vi.fn().mockResolvedValue({ ...project, archivedAt: 40 }),
+      get: vi.fn().mockResolvedValue({ ...project, archivedAt: 40, archiveRevision: 1 }),
       updateArchive: vi.fn()
     }
     const sessions = {
@@ -412,6 +428,39 @@ describe('ArchiveCoordinator', () => {
     await expect(coordinator.assertProjectAvailable(project.id)).resolves.toBeUndefined()
   })
 
+  it('keeps an unrelated Project available while deletion quiescence is in flight', async () => {
+    const deletionGate = createDeferred<void>()
+    const projects = {
+      get: vi.fn(async (projectId: string) => ({ ...project, id: projectId })),
+      updateArchive: vi.fn()
+    }
+    const sessions = {
+      assertProjectArchivable: vi.fn(),
+      assertSessionAvailable: vi.fn(),
+      updateArchive: vi.fn(),
+      sessionProjectId: vi.fn()
+    }
+    const coordinator = new ArchiveCoordinator(projects, sessions, {
+      isSessionBusy: vi.fn(),
+      isProjectBusy: vi.fn(),
+      liveSessionProjectId: vi.fn()
+    })
+    const quiesce = vi.fn(() => deletionGate.promise)
+
+    const deletion = coordinator.withProjectDeletion(project.id, quiesce)
+    await vi.waitFor(() => expect(quiesce).toHaveBeenCalledOnce())
+
+    const unrelatedOperation = vi.fn().mockResolvedValue('available')
+    const unrelated = coordinator.withProjectAvailable('project-2', unrelatedOperation)
+    await flushMicrotasks()
+    const wasAdmittedDuringDeletion = unrelatedOperation.mock.calls.length === 1
+
+    deletionGate.resolve(undefined)
+    await expect(deletion).resolves.toBeUndefined()
+    await expect(unrelated).resolves.toBe('available')
+    expect(wasAdmittedDuringDeletion).toBe(true)
+  })
+
   it('releases admission after prompt dispatch starts without awaiting prompt completion', async () => {
     const prompt = createDeferred<string>()
     const projects = {
@@ -515,4 +564,10 @@ const createDeferred = <Value>(): {
     resolve = promiseResolve
   })
   return { promise, resolve }
+}
+
+const flushMicrotasks = async (): Promise<void> => {
+  await Promise.resolve()
+  await Promise.resolve()
+  await Promise.resolve()
 }

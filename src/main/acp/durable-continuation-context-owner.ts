@@ -18,19 +18,17 @@ import {
   sanitizeSessionReferences,
   type PersistedChatSession
 } from '../../shared/session-persistence'
-import type { SessionPersistenceCoordinator } from '../session-persistence/coordinator'
+import type { SessionCatalog, SessionMutation } from '../session-persistence/coordinator'
 import { validateElicitationAnswers } from './elicitation-owner'
 
-type DurableContinuationSessions = Pick<
-  SessionPersistenceCoordinator,
-  'loadSessionForContinuation'
-> &
-  Partial<Pick<SessionPersistenceCoordinator, 'appendUserMessageToInteraction'>>
+type DurableContinuationSessions = Pick<SessionCatalog, 'loadSessionForContinuation'> &
+  Partial<SessionMutation>
 
 type DurableContinuationPreparation = Readonly<{
   provenanceContext: NonNullable<AcpPromptRequest['provenanceContext']>
   memoryEnabled: boolean
   referencedSessions?: AcpPromptRequest['referencedSessions']
+  parts?: AcpPromptRequest['parts']
   historyReplay?: SessionHistoryReplay
 }>
 
@@ -39,6 +37,7 @@ type DurableElicitationContinuationPreparation = Readonly<{
   provenanceContext?: DurableContinuationPreparation['provenanceContext']
   memoryEnabled?: boolean
   referencedSessions?: DurableContinuationPreparation['referencedSessions']
+  parts?: DurableContinuationPreparation['parts']
   historyReplay?: SessionHistoryReplay
 }>
 
@@ -357,6 +356,7 @@ class AcpDurableContinuationContextOwner {
       provenanceContext: getActiveConversationContext(graph, promptMessageId),
       memoryEnabled: session.memoryEnabled !== false,
       ...(referencedSessions.length > 0 ? { referencedSessions } : {}),
+      ...(prompt.parts?.length ? { parts: prompt.parts } : {}),
       ...(replay
         ? {
             historyReplay: buildSessionHistoryReplay(

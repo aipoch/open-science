@@ -17,10 +17,8 @@ describe('isMirrorConfigured', () => {
 })
 
 describe('mirrorStatusText', () => {
-  it('shows the default public-hosts message when unconfigured', () => {
-    expect(mirrorStatusText(undefined, t)).toBe(
-      'Not configured — packages come from the public hosts (conda.anaconda.org, pypi.org)'
-    )
+  it('describes automatic selection when unconfigured', () => {
+    expect(mirrorStatusText(undefined, t)).toBe('Automatic mirror selection')
   })
   it('summarizes the configured hosts when set', () => {
     expect(
@@ -29,12 +27,12 @@ describe('mirrorStatusText', () => {
   })
   it('reports a trust-only configuration without inventing a package host', () => {
     expect(mirrorStatusText({ caBundle: '/certs/complete.pem' }, t)).toBe(
-      'Custom CA bundle configured'
+      'Automatic mirror selection · Custom CA bundle configured'
     )
   })
   it('translates the sentence but keeps the host values verbatim', () => {
     const zh = i18next.getFixedT('zh-Hans')
-    expect(mirrorStatusText(undefined, zh)).toContain('未配置')
+    expect(mirrorStatusText(undefined, zh)).toContain('自动选择镜像')
     expect(mirrorStatusText({ condaChannel: 'https://c' }, zh)).toBe('正在从 https://c 获取软件包')
   })
 })

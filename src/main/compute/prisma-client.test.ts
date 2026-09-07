@@ -17,7 +17,7 @@ afterEach(async () => {
   disconnect = undefined
 
   if (storageRoot) {
-    await rm(storageRoot, { recursive: true, force: true })
+    await rm(storageRoot, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 })
     storageRoot = undefined
   }
 })

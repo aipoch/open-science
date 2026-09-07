@@ -52,7 +52,6 @@ const MAX_SECTION_TITLE_CHARS = 1_024
 const MAX_QUERY_TERMS = 16
 const MAX_SEARCH_RESULTS = 20
 const SEARCH_CANDIDATE_MULTIPLIER = 3
-const MIN_RELATIVE_BM25_SCORE = 0.25
 const MAX_RESULT_OVERLAP_RATIO = 0.5
 const INDEX_IDLE_RETENTION = '-1 day'
 const INDEX_ACCESS_FLUSH_INTERVAL_MS = 60 * 60 * 1000
@@ -421,12 +420,11 @@ class LiteratureFullTextIndex {
           rows[0]?.rank ?? 0
         )
       )
-      const qualified = candidates.filter(
-        ({ relativeScore }, index) => index === 0 || relativeScore >= MIN_RELATIVE_BM25_SCORE
-      )
+      // BM25 statistics cover the shared index, so relative scores must not exclude
+      // matching evidence merely because unselected documents were indexed or removed.
       const results: LiteratureSearchResult[] = []
       let overlapFilteredCount = 0
-      for (const candidate of qualified) {
+      for (const candidate of candidates) {
         const overlapsSelected = results.some(
           (selected) => resultOverlapRatio(candidate, selected) >= MAX_RESULT_OVERLAP_RATIO
         )
@@ -443,8 +441,6 @@ class LiteratureFullTextIndex {
         limit,
         candidateLimit,
         candidateCount: candidates.length,
-        relativeScoreThreshold: MIN_RELATIVE_BM25_SCORE,
-        qualityFilteredCount: candidates.length - qualified.length,
         overlapFilteredCount,
         bestRank: candidates[0]?.rank ?? null,
         lowestReturnedRelativeScore: results.at(-1)?.relativeScore ?? null,

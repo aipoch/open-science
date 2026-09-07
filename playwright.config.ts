@@ -9,6 +9,9 @@ export default defineConfig({
   snapshotPathTemplate: '{testDir}/{testFilePath}-snapshots/{arg}-darwin{ext}',
   fullyParallel: false,
   workers: 1,
+  // Keep Windows Electron journeys from sharing a desktop, including when CI raises the global
+  // worker budget. The unnamed project preserves existing test IDs and test-level sharding.
+  projects: process.platform === 'win32' ? [{ workers: 1 }] : undefined,
   retries: process.env.CI ? 1 : 0,
   timeout: 120_000,
   expect: {

@@ -75,7 +75,7 @@ describe('SessionPlanInteractionOwner', () => {
     ).toBe(false)
   })
 
-  it('invalidates Agent decision authority on Plan replacement and exact interaction release', () => {
+  it('invalidates Agent decision correlation on Plan replacement and exact interaction release', () => {
     const owner = new SessionPlanInteractionOwner()
     owner.authorizeAgentDecision({
       sessionId: 'session-1',
@@ -117,8 +117,20 @@ describe('SessionPlanInteractionOwner', () => {
         code: 'approval-already-pending'
       })
     )
-    expect(owner.resolveApproval('session-1', { decision: 'approved' })).toBe(true)
-    expect(owner.resolveApproval('session-1', { decision: 'rejected' })).toBe(false)
+    expect(
+      owner.resolveApproval(
+        'session-1',
+        { decision: 'approved' },
+        owner.approvalTokenFor('session-1')
+      )
+    ).toBe(true)
+    expect(
+      owner.resolveApproval(
+        'session-1',
+        { decision: 'rejected' },
+        owner.approvalTokenFor('session-1')
+      )
+    ).toBe(false)
     await expect(approval).resolves.toEqual({ decision: 'approved' })
   })
 
@@ -142,7 +154,11 @@ describe('SessionPlanInteractionOwner', () => {
     )
     const approval = owner.parkReservedApproval('session-1', 'interaction-1')
     expect(owner.approvalInteractionIdFor('session-1')).toBe('interaction-1')
-    owner.resolveApproval('session-1', { decision: 'approved' })
+    owner.resolveApproval(
+      'session-1',
+      { decision: 'approved' },
+      owner.approvalTokenFor('session-1')
+    )
     await expect(approval).resolves.toEqual({ decision: 'approved' })
   })
 
@@ -175,16 +191,6 @@ describe('SessionPlanInteractionOwner', () => {
       artifactVersionId: 'version-1',
       interactionId: 'interaction-1'
     })
-    owner.bindExecution({
-      sessionId: 'session-1',
-      artifactVersionId: 'version-1',
-      interactionSequence: 7
-    })
-    owner.bindExecution({
-      sessionId: 'session-2',
-      artifactVersionId: 'version-2',
-      interactionSequence: 8
-    })
     const approval = owner.parkApproval('session-1', 'interaction-1')
     const rejected = expect(approval).rejects.toThrow('interaction was deleted')
 
@@ -192,29 +198,7 @@ describe('SessionPlanInteractionOwner', () => {
 
     await rejected
     expect(owner.interactionIdFor('session-1', 'version-1')).toBeUndefined()
-    expect(owner.executionBindingFor('session-1')).toBeUndefined()
     expect(owner.rejectApproval('session-1', 'duplicate cleanup')).toBe(false)
-    expect(owner.executionBindingFor('session-2')).toEqual({
-      artifactVersionId: 'version-2',
-      interactionSequence: 8
-    })
-  })
-
-  it('does not release a successor execution through a stale interaction sequence', () => {
-    const owner = new SessionPlanInteractionOwner()
-    owner.bindExecution({
-      sessionId: 'session-1',
-      artifactVersionId: 'version-2',
-      interactionSequence: 8
-    })
-
-    expect(owner.releaseExecution('session-1', 7)).toBe(false)
-    expect(owner.executionBindingFor('session-1')).toEqual({
-      artifactVersionId: 'version-2',
-      interactionSequence: 8
-    })
-    expect(owner.releaseExecution('session-1', 8)).toBe(true)
-    expect(owner.executionBindingFor('session-1')).toBeUndefined()
   })
 
   it('clears every Session when a generation disconnects', async () => {
@@ -223,11 +207,6 @@ describe('SessionPlanInteractionOwner', () => {
       sessionId: 'session-1',
       artifactVersionId: 'version-1',
       interactionId: 'interaction-1'
-    })
-    owner.bindExecution({
-      sessionId: 'session-2',
-      artifactVersionId: 'version-2',
-      interactionSequence: 2
     })
     const first = owner.parkApproval('session-1', 'interaction-1').catch((error) => error)
     const second = owner.parkApproval('session-2', 'interaction-2').catch((error) => error)
@@ -241,6 +220,5 @@ describe('SessionPlanInteractionOwner', () => {
       message: 'The Session Plan interaction was disconnected.'
     })
     expect(owner.interactionIdFor('session-1', 'version-1')).toBeUndefined()
-    expect(owner.executionBindingFor('session-2')).toBeUndefined()
   })
 })

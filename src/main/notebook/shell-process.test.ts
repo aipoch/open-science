@@ -1,7 +1,9 @@
 import type { ChildProcess } from 'node:child_process'
+import { mkdtemp, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import {
   buildShellEnv,
@@ -185,6 +187,14 @@ describe('notebook shell process behavior', () => {
   })
 
   describe.runIf(process.platform !== 'win32')('process results', () => {
+    let runtimeRoot: string
+    beforeEach(async () => {
+      runtimeRoot = await mkdtemp(join(tmpdir(), 'open-science-shell-process-'))
+    })
+    afterEach(async () => {
+      await rm(runtimeRoot, { recursive: true, force: true })
+    })
+
     const execute = (
       command: string,
       timeoutMs = 5_000,
@@ -194,7 +204,7 @@ describe('notebook shell process behavior', () => {
         command,
         cwd: process.cwd(),
         handoffDir: process.cwd(),
-        runtimeRoot: join(process.cwd(), '.open-science-test-runtime'),
+        runtimeRoot,
         sessionId: 'session-1',
         projectId: 'project-1',
         platform: 'linux',
@@ -211,7 +221,6 @@ describe('notebook shell process behavior', () => {
     })
 
     it('wraps Notebook Bash with the shared process sandbox', async () => {
-      const runtimeRoot = join(process.cwd(), '.open-science-test-runtime')
       const inputRoot = join(process.cwd(), '.open-science-test-inputs')
       const cleanup = vi.fn()
       const endExecution = vi.fn()

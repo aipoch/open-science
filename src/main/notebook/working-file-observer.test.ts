@@ -72,6 +72,34 @@ afterEach(async () => {
 })
 
 describe('working-file evidence', () => {
+  it('reports unclassified data and handoff changes without observing other workspace directories', async () => {
+    const { sessionRoot, dataRoot } = await createRoots()
+    const paths = [
+      'data/raw/input.csv',
+      'data/processed/result.csv',
+      'handoff/transfer.csv',
+      'cache/cached.csv',
+      'scripts/analysis.py',
+      'work/intermediate.csv',
+      'outputs/result.csv'
+    ]
+    for (const path of paths) {
+      await mkdir(join(sessionRoot, ...path.split('/').slice(0, -1)), { recursive: true })
+    }
+    const observation = await startWorkingFileObservation(
+      { dataRoot, notebookSessionRoot: sessionRoot },
+      { watchDirectory: watcherUnavailable }
+    )
+    for (const path of paths) await writeFile(join(sessionRoot, ...path.split('/')), 'content')
+
+    const { workingFiles } = await observation.finish()
+    expect(workingFiles.map(({ relativePath, kind }) => ({ relativePath, kind }))).toEqual([
+      { relativePath: 'data/processed/result.csv', kind: 'other' },
+      { relativePath: 'data/raw/input.csv', kind: 'other' },
+      { relativePath: 'handoff/transfer.csv', kind: 'other' }
+    ])
+  })
+
   it('normalizes persisted paths across operating systems', () => {
     expect(
       toPortableNotebookRelativePath(
@@ -427,6 +455,7 @@ describe('working-file evidence', () => {
         {
           path: resolve(output),
           relativePath: 'data/result.csv',
+          kind: 'other',
           change: 'created',
           generationId: 'generation-1',
           checksum

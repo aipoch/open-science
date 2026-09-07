@@ -286,6 +286,60 @@ describe('Provenance Message snapshots', () => {
     > & { schemaVersion: number }
     expect(snapshotPayload.schemaVersion).toBe(3)
 
+    await rm(snapshotPath)
+    await snapshots.reconcileSessionDeletions([session])
+    await expect(readFile(snapshotPath, 'utf8')).resolves.toBe(
+      `${JSON.stringify(snapshotPayload, null, 2)}\n`
+    )
+
+    const startupCorruptPayload = structuredClone(snapshotPayload) as typeof snapshotPayload & {
+      messages: Array<Record<string, unknown>>
+    }
+    startupCorruptPayload.messages[0] = {
+      ...startupCorruptPayload.messages[0],
+      content: 'corrupt before startup recovery'
+    }
+    await writeFile(snapshotPath, `${JSON.stringify(startupCorruptPayload, null, 2)}\n`, 'utf8')
+    await snapshots.reconcileSessionDeletions([session])
+    await expect(readFile(snapshotPath, 'utf8')).resolves.toBe(
+      `${JSON.stringify(snapshotPayload, null, 2)}\n`
+    )
+
+    const changedSession = structuredClone(session)
+    const changedMessage = changedSession.conversationGraph?.messages.find(
+      (message) => message.id === 'message-1'
+    )
+    if (!changedMessage || !changedSession.conversationGraph) {
+      throw new Error('Expected the Artifact-owning Message in the changed Session graph.')
+    }
+    changedMessage.content = 'changed after snapshot publication'
+    changedSession.messages = changedSession.conversationGraph.messages.map(
+      projectConversationMessage
+    )
+    await rm(snapshotPath)
+    await snapshots.reconcileSessionDeletions([changedSession])
+    await expect(readFile(snapshotPath, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' })
+    await expect(
+      client.artifactMessageSnapshot.findUniqueOrThrow({ where: { id: row.messageSnapshot!.id } })
+    ).resolves.toMatchObject({ state: 'ready', checksum: row.messageSnapshot!.checksum })
+    await snapshots.reconcileSessionDeletions([session])
+    await expect(readFile(snapshotPath, 'utf8')).resolves.toBe(
+      `${JSON.stringify(snapshotPayload, null, 2)}\n`
+    )
+
+    // A checksumless legacy row has no immutable witness. Missing bytes must remain unavailable
+    // instead of being reconstructed from mutable Session state.
+    await client.artifactMessageSnapshot.update({
+      where: { id: row.messageSnapshot!.id },
+      data: { checksum: '' }
+    })
+    await rm(snapshotPath)
+    await snapshots.reconcileSessionDeletions([changedSession])
+    await expect(readFile(snapshotPath, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' })
+    await expect(
+      client.artifactMessageSnapshot.findUniqueOrThrow({ where: { id: row.messageSnapshot!.id } })
+    ).resolves.toMatchObject({ state: 'ready', checksum: '' })
+
     // Previously captured v2 snapshots remain readable; they simply have no process timeline.
     const legacyPayload: Record<string, unknown> = { ...snapshotPayload, schemaVersion: 2 }
     delete legacyPayload.activities
@@ -647,7 +701,11 @@ describe('Provenance Message snapshots', () => {
     await client.fileOriginSession.create({
       data: { projectId: 'project-1', sessionId: 'session-1' }
     })
-    const createStagingSnapshot = async (id: string, corruptChecksum = false): Promise<void> => {
+    const createStagingSnapshot = async (
+      id: string,
+      corruptChecksum = false,
+      stagingFileOnly = false
+    ): Promise<void> => {
       const storageKey = `artifacts/project-1/session-1/.provenance/message-snapshots/${id}.json`
       const terminalMessageId = `message-${id}`
       const payload = {
@@ -670,7 +728,13 @@ describe('Provenance Message snapshots', () => {
         activityGroups: []
       }
       const serialized = `${JSON.stringify(payload, null, 2)}\n`
-      const path = join(storageRoot!, ...storageKey.split('/'))
+      const path = stagingFileOnly
+        ? join(
+            storageRoot!,
+            'artifacts/project-1/session-1/.provenance/.staging/messages',
+            `${id}.json`
+          )
+        : join(storageRoot!, ...storageKey.split('/'))
       await mkdir(dirname(path), { recursive: true })
       await writeFile(path, serialized, 'utf8')
       await client.artifactMessageSnapshot.create({
@@ -692,20 +756,149 @@ describe('Provenance Message snapshots', () => {
       })
     }
     await createStagingSnapshot('snapshot-valid-1')
+    await createStagingSnapshot('snapshot-staging-file-1', false, true)
     await createStagingSnapshot('snapshot-corrupt-1', true)
+    let failDurability = true
+    const syncedDirectories: string[] = []
     const snapshots = new ProvenanceMessageSnapshotRepository({
       storageRoot,
-      getClient: () => Promise.resolve(client)
+      getClient: () => Promise.resolve(client),
+      durability: {
+        syncFile: async () => {
+          if (failDurability) throw Object.assign(new Error('storage unavailable'), { code: 'EIO' })
+        },
+        syncDirectory: async (path) => {
+          syncedDirectories.push(path)
+        }
+      }
     })
 
     await snapshots.reconcileSessionDeletions([])
 
     await expect(
       client.artifactMessageSnapshot.findUniqueOrThrow({ where: { id: 'snapshot-valid-1' } })
-    ).resolves.toMatchObject({ state: 'ready' })
+    ).resolves.toMatchObject({ state: 'staging' })
+    await expect(
+      client.artifactMessageSnapshot.findUniqueOrThrow({
+        where: { id: 'snapshot-staging-file-1' }
+      })
+    ).resolves.toMatchObject({ state: 'staging' })
     await expect(
       client.artifactMessageSnapshot.findUnique({ where: { id: 'snapshot-corrupt-1' } })
     ).resolves.toBeNull()
+
+    failDurability = false
+    await snapshots.reconcileSessionDeletions([])
+
+    await expect(
+      client.artifactMessageSnapshot.findUniqueOrThrow({ where: { id: 'snapshot-valid-1' } })
+    ).resolves.toMatchObject({ state: 'ready' })
+    await expect(
+      client.artifactMessageSnapshot.findUniqueOrThrow({
+        where: { id: 'snapshot-staging-file-1' }
+      })
+    ).resolves.toMatchObject({ state: 'ready' })
+    await expect(
+      readFile(
+        join(
+          storageRoot,
+          'artifacts/project-1/session-1/.provenance/message-snapshots/snapshot-staging-file-1.json'
+        ),
+        'utf8'
+      )
+    ).resolves.toContain('snapshot-staging-file-1')
+    const stagingDirectory = join(
+      storageRoot,
+      'artifacts/project-1/session-1/.provenance/.staging/messages'
+    )
+    expect(syncedDirectories.filter((path) => path === stagingDirectory)).toHaveLength(2)
+    expect(syncedDirectories).toContain(storageRoot)
+  })
+
+  it('does not promote staged bytes replaced after their initial validation', async () => {
+    storageRoot = await mkdtemp(join(tmpdir(), 'open-science-provenance-staging-race-'))
+    const client = createProjectDbClient(storageRoot)
+    disconnect = () => client.$disconnect()
+    await migrateApplicationDatabase(client)
+    await client.fileOriginSession.create({
+      data: { projectId: 'project-1', sessionId: 'session-1' }
+    })
+    const id = 'snapshot-raced-1'
+    const storageKey = `artifacts/project-1/session-1/.provenance/message-snapshots/${id}.json`
+    const stagingPath = join(
+      storageRoot,
+      'artifacts/project-1/session-1/.provenance/.staging/messages',
+      `${id}.json`
+    )
+    const payload = {
+      schemaVersion: 3,
+      snapshotId: id,
+      rootFrameId: 'root-frame-1',
+      agentFrameId: 'agent-frame-1',
+      messageBranchId: 'branch-1',
+      terminalMessageId: 'message-1',
+      createdAt: '2026-07-27T12:00:00.000Z',
+      messages: [{ id: 'message-1', role: 'agent', content: 'original', createdAt: 1 }],
+      activities: [],
+      activityGroups: []
+    }
+    const serialized = `${JSON.stringify(payload, null, 2)}\n`
+    await mkdir(dirname(stagingPath), { recursive: true })
+    await writeFile(stagingPath, serialized, 'utf8')
+    await client.artifactMessageSnapshot.create({
+      data: {
+        id,
+        projectId: 'project-1',
+        sessionId: 'session-1',
+        rootFrameId: 'root-frame-1',
+        agentFrameId: 'agent-frame-1',
+        messageBranchId: 'branch-1',
+        terminalMessageId: 'message-1',
+        state: 'staging',
+        storageKey,
+        checksum: createHash('sha256').update(serialized).digest('hex'),
+        messageCount: 1
+      }
+    })
+    const snapshots = new ProvenanceMessageSnapshotRepository({
+      storageRoot,
+      getClient: () => Promise.resolve(client),
+      durability: {
+        syncFile: async (path) => {
+          await writeFile(path, 'replaced after validation', 'utf8')
+        },
+        syncDirectory: async () => undefined
+      }
+    })
+
+    await snapshots.reconcileSessionDeletions([])
+
+    await expect(
+      client.artifactMessageSnapshot.findUniqueOrThrow({ where: { id } })
+    ).resolves.toMatchObject({ state: 'staging' })
+  })
+
+  it('reconciles a large active Session catalog without exceeding SQLite query limits', async () => {
+    storageRoot = await mkdtemp(join(tmpdir(), 'open-science-provenance-session-batches-'))
+    const client = createProjectDbClient(storageRoot)
+    disconnect = () => client.$disconnect()
+    await migrateApplicationDatabase(client)
+    const snapshots = new ProvenanceMessageSnapshotRepository({
+      storageRoot,
+      getClient: () => Promise.resolve(client)
+    })
+    const sessions: PersistedChatSession[] = Array.from({ length: 20_001 }, (_, index) => ({
+      id: `session-${index}`,
+      projectId: `project-${index}`,
+      title: `Session ${index}`,
+      cwd: '/workspace',
+      status: 'idle',
+      messages: [],
+      createdAt: 1,
+      updatedAt: 1
+    }))
+
+    await expect(snapshots.reconcileSessionDeletions(sessions)).resolves.toBeUndefined()
   })
 
   it('republishes a staging Review scope snapshot before Session deletion reconciliation', async () => {

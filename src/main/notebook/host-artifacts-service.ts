@@ -256,7 +256,7 @@ const matchesContentType = (actual: string | undefined, requested: string): bool
 class HostArtifactsService {
   constructor(
     private readonly catalog: HostArtifactCatalog,
-    private readonly inputAuthority: Pick<ImmutableInputAuthority, 'stageLatest'>
+    private readonly inputAuthority: Pick<ImmutableInputAuthority, 'stageVersion'>
   ) {}
 
   async list(options: unknown, context: HostArtifactReadContext): Promise<HostArtifactsResult> {
@@ -348,10 +348,11 @@ class HostArtifactsService {
     if (!item)
       throw new Error(`Artifact Version not found in the current Project: ${versionIdValue}`)
 
-    const path = await this.inputAuthority.stageLatest({
+    const path = await this.inputAuthority.stageVersion({
       projectId: context.projectId,
       targetSessionId: context.sessionId,
       sourceKind: item.source === 'artifact' ? 'artifact-version' : 'upload-version',
+      inputFileVersionId: versionIdValue,
       expectedSourceFileId: item.sourceFileId
     })
     if (!isAbsolute(path)) throw new Error('Notebook input stager returned a relative path.')

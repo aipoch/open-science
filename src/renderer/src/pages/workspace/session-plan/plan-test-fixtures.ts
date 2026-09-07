@@ -30,7 +30,6 @@ export const planTestProjection = (artifactVersionId: string): ActivePlanProject
   revision: 1,
   approval: 'approved',
   lifecycle: 'approved',
-  requiresExplicitContinuation: false,
   document: planTestDocument,
   stepStatuses: {},
   stepStates: { 'Analyze the data': { status: 'completed' } },

@@ -52,6 +52,11 @@ const notebookAppendCodeCellCommand = defineApplicationCommand<
   WorkflowArgs<'appendCodeCell'>,
   WorkflowResult<'appendCodeCell'>
 >('notebook:append-code-cell')
+const notebookAbortCodeCellCommand = defineApplicationCommand<
+  'notebook:abort-code-cell',
+  WorkflowArgs<'abortCodeCell'>,
+  WorkflowResult<'abortCodeCell'>
+>('notebook:abort-code-cell')
 const notebookFinishCodeCellCommand = defineApplicationCommand<
   'notebook:finish-code-cell',
   WorkflowArgs<'finishCodeCell'>,
@@ -99,6 +104,7 @@ const notebookApplicationCommands = defineApplicationCommandGroup('notebook', [
   notebookReferenceCommand,
   notebookBeginCodeCellCommand,
   notebookAppendCodeCellCommand,
+  notebookAbortCodeCellCommand,
   notebookFinishCodeCellCommand,
   notebookRunCellCommand,
   notebookExecuteCommand,
@@ -124,6 +130,8 @@ const installNotebookApplicationCommands = (
         dependencies.workflows.beginCodeCell(invocation.args[0]),
       'notebook:append-code-cell': (invocation) =>
         dependencies.workflows.appendCodeCell(invocation.args[0]),
+      'notebook:abort-code-cell': (invocation) =>
+        dependencies.workflows.abortCodeCell(invocation.args[0]),
       'notebook:finish-code-cell': (invocation) =>
         dependencies.workflows.finishCodeCell(invocation.args[0]),
       'notebook:run-cell': (invocation) => dependencies.workflows.runCell(invocation.args[0]),
@@ -156,6 +164,7 @@ export {
   notebookExecuteCommand,
   notebookExportIpynbAllCommand,
   notebookExportIpynbCommand,
+  notebookAbortCodeCellCommand,
   notebookFinishCodeCellCommand,
   notebookInspectNamespaceCommand,
   notebookReadInputPreviewCommand,

@@ -13,14 +13,14 @@ const PROJECT_DB_FILE = 'open-science.db'
 // SQLite PRAGMAs used by migrations are connection-scoped. Keeping a single connection also avoids
 // unnecessary SQLITE_BUSY contention for the local application database.
 const PROJECT_DB_CONNECTION_LIMIT = 1
-const projectDatabasePath = (storageRoot: string): string =>
-  join(storageRoot, PROJECT_DB_FILE).replace(/\\/g, '/')
+const projectDatabasePath = (configRoot: string): string =>
+  join(configRoot, PROJECT_DB_FILE).replace(/\\/g, '/')
 
-// Builds a client bound to the SQLite file under the given storage root. Not a singleton, so tests can
+// Builds a client bound to the SQLite file under the given config root. Not a singleton, so tests can
 // point separate clients at temp directories. Backslashes are normalized so the file: URL is valid on
 // Windows (Prisma's SQLite connector expects forward slashes).
-const createProjectDbClient = (storageRoot: string): PrismaClient => {
-  const dbPath = projectDatabasePath(storageRoot)
+const createProjectDbClient = (configRoot: string): PrismaClient => {
+  const dbPath = projectDatabasePath(configRoot)
 
   return new PrismaClient({
     datasources: {
@@ -33,7 +33,7 @@ let clientPromise: Promise<PrismaClient> | undefined
 
 // Production singleton: ensures the storage directory exists and resolves only after schema verification.
 const getProjectDbClient = (
-  storageRoot: string,
+  configRoot: string,
   migrationOptions: SchemaMigrationOptions = {}
 ): Promise<PrismaClient> => {
   if (!clientPromise) {
@@ -41,11 +41,11 @@ const getProjectDbClient = (
       let client: PrismaClient | undefined
 
       try {
-        await mkdir(storageRoot, { recursive: true })
-        client = createProjectDbClient(storageRoot)
+        await mkdir(configRoot, { recursive: true })
+        client = createProjectDbClient(configRoot)
         await migrateApplicationDatabase(client, {
           ...migrationOptions,
-          databasePath: projectDatabasePath(storageRoot)
+          databasePath: projectDatabasePath(configRoot)
         })
       } catch (error) {
         await client?.$disconnect().catch(() => undefined)

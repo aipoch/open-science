@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import type { BrowserWindowConstructorOptions } from 'electron'
 
 import {
   CLOSE_ACTIVE_PANE_CHANNEL,
@@ -12,6 +13,7 @@ import {
   type KeyChordInput
 } from '../shared/window-controls'
 import { SOURCE_PREVIEW_RELEASE_CHANNEL } from '../shared/source-preview'
+import { PREVIEW_CONTEXT_MENU_REQUESTED_CHANNEL } from '../shared/preview-context-menu'
 
 // Hoisted so the electron mock and the test body share the same spies.
 const {
@@ -102,6 +104,7 @@ type CloseEvent = { preventDefault: () => void; defaultPrevented: boolean }
 // currentWindow and lastWindow both point at the latest window; two describe blocks, one shared fake.
 let currentWindow: FakeBrowserWindow | undefined
 let lastWindow: FakeBrowserWindow | undefined
+let lastWindowOptions: BrowserWindowConstructorOptions | undefined
 let loadRendererDocument = (): Promise<void> => Promise.resolve()
 
 class FakeBrowserWindow {
@@ -124,7 +127,11 @@ class FakeBrowserWindow {
     on: (event: string, handler: WebContentsHandler): void => {
       this.webContentsHandlers.set(event, handler)
     },
+    removeListener: (event: string, handler: WebContentsHandler): void => {
+      if (this.webContentsHandlers.get(event) === handler) this.webContentsHandlers.delete(event)
+    },
     send: (...args: unknown[]): void => this.sendMock(...args),
+    getZoomFactor: (): number => 1,
     getURL: (): string => 'file:///app/index.html',
     mainFrame: this.mainFrame,
     session: {
@@ -199,7 +206,8 @@ vi.mock('electron', () => ({
   // isPackaged=true skips the dev title-suffix branch, keeping the fake focused on the open + close handlers.
   app: { isPackaged: true, getAppPath: () => '/app' },
   BrowserWindow: class {
-    constructor() {
+    constructor(options: BrowserWindowConstructorOptions) {
+      lastWindowOptions = options
       currentWindow = new FakeBrowserWindow()
       lastWindow = currentWindow
       return currentWindow as unknown as object
@@ -281,6 +289,23 @@ describe('window presentation', () => {
     expect(window.showMock).toHaveBeenCalledOnce()
   })
 
+  it.each([
+    ['linux', false],
+    ['darwin', true],
+    ['win32', true]
+  ] as const)('sets %s menu auto-hide to %s', (platformName, autoHideMenuBar) => {
+    const platform = Object.getOwnPropertyDescriptor(process, 'platform')
+    Object.defineProperty(process, 'platform', { value: platformName })
+
+    try {
+      createMainWindow()
+    } finally {
+      Object.defineProperty(process, 'platform', platform!)
+    }
+
+    expect(lastWindowOptions?.autoHideMenuBar).toBe(autoHideMenuBar)
+  })
+
   it('gives the find overlay a dedicated least-privilege preload', () => {
     createMainWindow()
 
@@ -301,6 +326,43 @@ describe('window presentation', () => {
     }
 
     expect(headersReceivedHandler).toBeUndefined()
+  })
+
+  it('forwards trusted preview frame context menus only while the window is alive', async () => {
+    createMainWindow()
+    const window = lastWindow!
+    const contextMenuHandler = window.webContentsHandlers.get('context-menu')
+    const frame = {
+      url: 'open-science-preview://resource-1/report.html',
+      parent: window.mainFrame,
+      detached: false,
+      isDestroyed: () => false,
+      executeJavaScript: async () => false
+    }
+
+    contextMenuHandler?.(
+      {},
+      {
+        x: 12,
+        y: 24,
+        frame,
+        isEditable: false,
+        formControlType: 'none'
+      }
+    )
+
+    await vi.waitFor(() =>
+      expect(window.sendMock).toHaveBeenCalledWith(PREVIEW_CONTEXT_MENU_REQUESTED_CHANNEL, {
+        x: 12,
+        y: 24,
+        frameUrl: 'open-science-preview://resource-1/report.html'
+      })
+    )
+
+    for (const closedHandler of window.handlers.get('closed') ?? []) {
+      closedHandler({ preventDefault: vi.fn(), defaultPrevented: false })
+    }
+    expect(window.webContentsHandlers.has('context-menu')).toBe(false)
   })
 })
 

@@ -16,7 +16,7 @@ import {
   utimes,
   writeFile
 } from 'node:fs/promises'
-import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path'
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { pipeline } from 'node:stream/promises'
 
 import type { MigrationProgress, MigrationResult } from '../../shared/storage'
@@ -51,7 +51,7 @@ class AbsoluteInternalSymlinkError extends Error {
 
 const isPathInsideOrEqual = (parent: string, candidate: string): boolean => {
   const rel = relative(parent, candidate)
-  return rel === '' || (!rel.startsWith('..') && !isAbsolute(rel))
+  return rel === '' || (rel !== '..' && !rel.startsWith(`..${sep}`) && !isAbsolute(rel))
 }
 
 const exists = async (path: string): Promise<boolean> => {
@@ -65,7 +65,8 @@ const exists = async (path: string): Promise<boolean> => {
 
 const canonicalizeExistingPathPrefix = async (input: string): Promise<string> => {
   const resolvedInput = resolve(input)
-  let candidate = resolvedInput
+  // Preserve symlink/.. ordering until realpath resolves it using filesystem semantics.
+  let candidate = isAbsolute(input) ? input : resolvedInput
   while (true) {
     try {
       const canonicalCandidate = resolve(await realpath(candidate))
@@ -73,6 +74,13 @@ const canonicalizeExistingPathPrefix = async (input: string): Promise<string> =>
     } catch (error) {
       const code = (error as NodeJS.ErrnoException).code
       if (code !== 'ENOENT' && code !== 'ENOTDIR') throw error
+      const entry = await lstat(candidate).catch((statError: NodeJS.ErrnoException) => {
+        if (statError.code === 'ENOENT' || statError.code === 'ENOTDIR') return undefined
+        throw statError
+      })
+      // A dangling intermediate link has an unproven referent; do not erase it by falling
+      // back to its parent and accidentally certify an internal path.
+      if (entry?.isSymbolicLink()) throw error
       const parent = dirname(candidate)
       if (parent === candidate) return resolvedInput
       candidate = parent
@@ -297,7 +305,28 @@ export const validateMigrationSourceLinks = async (
       for (const rel of entries.symlinks) {
         const sourceLink = join(srcDir, rel)
         const linkTarget = await readlink(sourceLink)
-        if (!isAbsolute(linkTarget)) continue
+        if (!isAbsolute(linkTarget)) {
+          const normalizedTarget = resolve(dirname(sourceLink), linkTarget)
+          const canonicalTarget = await canonicalizeExistingPathPrefix(
+            `${dirname(sourceLink)}${sep}${linkTarget}`
+          )
+          // Link text survives the copy, but its referent only moves with it when both the
+          // lexical path and its resolved target belong to this migration's actual path set.
+          if (
+            !dirs.some((path) =>
+              isPathInsideOrEqual(join(normalizedSourceRoot, path), normalizedTarget)
+            ) ||
+            !dirs.some((path) =>
+              isPathInsideOrEqual(join(canonicalSourceRoot, path), canonicalTarget)
+            )
+          ) {
+            return {
+              ok: false,
+              error: `Can't move your data: "${join(dir, rel)}" is a relative symbolic link whose target is outside the data being moved. Change or remove this link, then try again.`
+            }
+          }
+          continue
+        }
         const normalizedTarget = resolve(linkTarget)
         if (
           isPathInsideOrEqual(normalizedSourceRoot, normalizedTarget) ||

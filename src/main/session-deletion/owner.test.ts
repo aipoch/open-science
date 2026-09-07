@@ -1,7 +1,10 @@
 import { describe, expect, it, vi } from 'vitest'
 
 import type { AcpStateSnapshot } from '../../shared/acp'
-import type { DeleteSessionRequest } from '../../shared/session-persistence'
+import {
+  SessionDeletionCommittedError,
+  type DeleteSessionRequest
+} from '../../shared/session-persistence'
 import { SessionDeletionOwner } from './owner'
 
 const snapshot = (sessionIds: string[]): AcpStateSnapshot =>
@@ -32,7 +35,13 @@ const createOwner = (
     persistence: { deleteSession: deletePersisted },
     log
   })
-  return { owner, deleteRuntime, liveSessionProjectId, deletePersisted, log }
+  return {
+    owner,
+    deleteRuntime,
+    liveSessionProjectId,
+    deletePersisted,
+    log
+  }
 }
 
 describe('SessionDeletionOwner', () => {
@@ -85,6 +94,33 @@ describe('SessionDeletionOwner', () => {
     )
   })
 
+  it('leaves timeout ownership to runtime so pre-delete cleanup can finish safely', async () => {
+    vi.useFakeTimers()
+    try {
+      let finishRuntime: ((value: AcpStateSnapshot) => void) | undefined
+      const runtimeDeletion = new Promise<AcpStateSnapshot>((resolve) => {
+        finishRuntime = resolve
+      })
+      const { owner, deletePersisted } = createOwner({
+        deleteRuntime: vi.fn(() => runtimeDeletion)
+      })
+
+      const deletion = owner.delete(request)
+      await vi.advanceTimersByTimeAsync(5_000)
+
+      await expect(
+        Promise.race([deletion, Promise.resolve('still-pending' as const)])
+      ).resolves.toBe('still-pending')
+      expect(deletePersisted).not.toHaveBeenCalled()
+
+      finishRuntime?.(snapshot([]))
+      await expect(deletion).resolves.toEqual({ status: 'deleted', runtimeDetached: true })
+      expect(deletePersisted).toHaveBeenCalledOnce()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('does not delete persistence while runtime state still contains the Session', async () => {
     const { owner, deletePersisted } = createOwner({
       deleteRuntime: vi.fn().mockResolvedValue(snapshot(['session-1']))
@@ -107,6 +143,19 @@ describe('SessionDeletionOwner', () => {
       status: 'failed',
       reason: 'persistence',
       runtimeDetached: true
+    })
+  })
+
+  it('reports committed persistence errors as deleted with unfinished cleanup', async () => {
+    const { owner } = createOwner({
+      deletePersisted: vi
+        .fn()
+        .mockRejectedValue(new SessionDeletionCommittedError(new Error('database locked')))
+    })
+    await expect(owner.delete(request)).resolves.toEqual({
+      status: 'deleted',
+      runtimeDetached: true,
+      cleanupPending: true
     })
   })
 

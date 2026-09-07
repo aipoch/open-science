@@ -7,8 +7,7 @@ import {
   CardContent,
   CardDescription,
   CardFooter,
-  CardHeader,
-  CardTitle
+  CardHeader
 } from '@/components/ui/card'
 import { Separator } from '@/components/ui/separator'
 import { cn } from '@/lib/utils'
@@ -17,29 +16,38 @@ import { EnvironmentSetupCard } from './EnvironmentSetupCard'
 
 type EnvironmentStepProps = {
   onContinue: () => void
+  isSelectingAgent?: boolean
 }
 
 // First step: confirm the host meets the core requirements (system, storage, secure storage,
 // network). The agent runtime is set up on the next step.
-const EnvironmentStep = ({ onContinue }: EnvironmentStepProps): React.JSX.Element => {
+const EnvironmentStep = ({
+  onContinue,
+  isSelectingAgent = false
+}: EnvironmentStepProps): React.JSX.Element => {
   const { t } = useTranslation()
   const environmentCheck = useSettingsStore((state) => state.environmentCheck)
   const environmentCheckError = useSettingsStore((state) => state.environmentCheckError)
   const isCheckingEnvironment = useSettingsStore((state) => state.isCheckingEnvironment)
   const checkEnvironment = useSettingsStore((state) => state.checkEnvironment)
+  const agentFrameworkId = useSettingsStore((state) => state.agentFrameworkId)
 
   // environmentCheck.ready covers the agent runtime too, so it can't gate this host-only step.
   // When the agent is the only gap the main process reports canAutoInstall — which by definition
   // means every host check passed.
   const hostReady =
     !isCheckingEnvironment &&
+    !isSelectingAgent &&
     environmentCheck !== undefined &&
+    environmentCheck.agentFrameworkId === agentFrameworkId &&
     (environmentCheck.ready === true || environmentCheck.canAutoInstall === true)
 
   return (
     <>
       <CardHeader className="gap-1 rounded-t-lg px-6 py-5">
-        <CardTitle className="text-[15px] font-semibold">{t('Prepare environment')}</CardTitle>
+        <h2 tabIndex={-1} className="text-[15px] font-semibold">
+          {t('Prepare environment')}
+        </h2>
         {/* Re-check lives on the title row (the setup card's own intro row is hidden via hideIntro),
             so the step header and the checklist read as one surface. */}
         <CardAction>
@@ -48,7 +56,7 @@ const EnvironmentStep = ({ onContinue }: EnvironmentStepProps): React.JSX.Elemen
             variant="outline"
             size="sm"
             onClick={() => void checkEnvironment()}
-            disabled={isCheckingEnvironment}
+            disabled={isCheckingEnvironment || isSelectingAgent}
           >
             <RefreshCw className={cn(isCheckingEnvironment && 'animate-spin')} aria-hidden="true" />
             {isCheckingEnvironment ? t('Checking…') : t('Check again')}

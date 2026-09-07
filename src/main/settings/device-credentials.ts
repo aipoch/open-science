@@ -200,8 +200,8 @@ export class DeviceCredentialStore {
   private readonly filePath: string
   private operation = Promise.resolve()
 
-  constructor(storageRoot: string) {
-    this.filePath = join(storageRoot, 'credentials.json')
+  constructor(configRoot: string) {
+    this.filePath = join(configRoot, 'credentials.json')
   }
 
   async list(): Promise<StoredDeviceCredential[]> {
@@ -262,7 +262,7 @@ export class DeviceCredentialStore {
       const existing = document.credentials.find(({ id }) => id === request.id)
       if (!existing) throw new Error(`Unknown credential: ${request.id}`)
       if (request.secret !== undefined && existing.kind === 'oauth') {
-        throw new Error('OAuth credentials are replaced by signing in again')
+        validateOAuthRegistration(existing.oauth, true)
       }
       const displayName = request.displayName?.trim() ?? existing.displayName
       if (!displayName) throw new Error('Credential name is required')
@@ -272,8 +272,10 @@ export class DeviceCredentialStore {
       const updated: StoredDeviceCredential = {
         ...existing,
         displayName,
-        ...(existing.kind !== 'oauth' && request.secret !== undefined
-          ? { secretRef: encryptKey(request.secret.trim()) }
+        ...(request.secret !== undefined
+          ? existing.kind === 'oauth'
+            ? { clientSecretRef: encryptKey(request.secret.trim()) }
+            : { secretRef: encryptKey(request.secret.trim()) }
           : {}),
         updatedAt: Date.now()
       }
@@ -357,11 +359,13 @@ export class DeviceCredentialStore {
   ): DeviceCredentialView {
     const oauthState =
       credential.kind === 'oauth' ? this.decryptState(credential.stateRef) : undefined
+    const needsClientSecret =
+      credential.kind === 'oauth' &&
+      credential.clientSecretRef !== undefined &&
+      tryDecryptKey(credential.clientSecretRef) === undefined
     const needsSecret =
       credential.kind === 'oauth'
-        ? (credential.clientSecretRef !== undefined &&
-            tryDecryptKey(credential.clientSecretRef) === undefined) ||
-          (credential.stateRef !== undefined && oauthState === undefined)
+        ? needsClientSecret || (credential.stateRef !== undefined && oauthState === undefined)
         : tryDecryptKey(credential.secretRef) === undefined
     return {
       id: credential.id,
@@ -379,7 +383,8 @@ export class DeviceCredentialStore {
             resourceUri: credential.resourceUri,
             transport: credential.transport,
             oauth: credential.oauth,
-            hasClientSecret: credential.clientSecretRef !== undefined
+            hasClientSecret: credential.clientSecretRef !== undefined,
+            needsClientSecret
           }
         : {}),
       consumerCount: consumers.length,

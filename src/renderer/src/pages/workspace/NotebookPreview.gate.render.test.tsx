@@ -66,17 +66,41 @@ beforeEach(() => {
   root = createRoot(container)
 })
 
-afterEach(() => {
+afterEach(async () => {
   act(() => root.unmount())
   container.remove()
+  await i18next.changeLanguage('en')
 })
 
 describe('EnvProvisionOverlay', () => {
+  it('localizes main-process progress copy instead of rendering IPC English', async () => {
+    await act(async () => i18next.changeLanguage('zh-Hans'))
+    const ui = deriveProvisionUi(
+      { pythonReady: false, rReady: false, version: 3, provisioning: true },
+      'python',
+      {
+        phase: 'fetch-python',
+        event: { code: 'preparing-packages', environment: 'default-python' },
+        progress: 0.1
+      },
+      undefined
+    )
+
+    act(() => root.render(<EnvProvisionOverlay ui={ui} />))
+
+    expect(container.textContent).toContain('正在准备 default-python 软件包…')
+    expect(container.textContent).not.toContain('Preparing default-python packages…')
+  })
+
   it('shows the python preparation message and progress', () => {
     const ui = deriveProvisionUi(
       { pythonReady: false, rReady: false, version: 3, provisioning: true },
       'python',
-      { phase: 'materialize', message: 'Preparing Python environment…', progress: 0.5 },
+      {
+        phase: 'create-python',
+        event: { code: 'environment-create', environment: 'default-python' },
+        progress: 0.5
+      },
       undefined
     )
     act(() => root.render(<EnvProvisionOverlay ui={ui} />))
@@ -86,6 +110,28 @@ describe('EnvProvisionOverlay', () => {
     expect(progressBar?.className).toContain('transition-transform')
     expect(progressBar?.className).toContain('motion-reduce:transition-none')
     expect(progressBar?.className).not.toContain('transition-all')
+  })
+
+  it('announces preparation progress with progressbar semantics', () => {
+    const ui = deriveProvisionUi(
+      { pythonReady: false, rReady: false, version: 3, provisioning: true },
+      'python',
+      {
+        phase: 'create-python',
+        event: { code: 'environment-create', environment: 'default-python' },
+        progress: 0.5
+      },
+      undefined
+    )
+    act(() => root.render(<EnvProvisionOverlay ui={ui} />))
+
+    const gate = container.querySelector('[data-testid="notebook-env-gate"]')
+    expect(gate?.getAttribute('role')).toBe('status')
+    expect(gate?.getAttribute('aria-live')).toBe('polite')
+    const progressBar = gate?.querySelector('[role="progressbar"]')
+    expect(progressBar?.getAttribute('aria-valuemin')).toBe('0')
+    expect(progressBar?.getAttribute('aria-valuemax')).toBe('100')
+    expect(progressBar?.getAttribute('aria-valuenow')).toBe('50')
   })
 
   it('renders a retry affordance in the error state', () => {
@@ -104,6 +150,13 @@ describe('EnvProvisionOverlay', () => {
     expect(button).not.toBeNull()
     act(() => button.dispatchEvent(new MouseEvent('click', { bubbles: true })))
     expect(retried).toBe(1)
+  })
+
+  it('announces setup failures assertively', () => {
+    act(() => root.render(<EnvProvisionOverlay ui={{ kind: 'error', message: 'offline' }} />))
+    const gate = container.querySelector('[data-testid="notebook-env-gate"]')
+    expect(gate?.getAttribute('role')).toBe('alert')
+    expect(gate?.getAttribute('aria-live')).toBe('assertive')
   })
 
   it('renders nothing when ready', () => {
@@ -193,8 +246,8 @@ describe('NotebookPreview env gate (mounted)', () => {
         preparingStatus,
         undefined,
         {
-          phase: 'download',
-          message: 'Downloading managed python runtime',
+          phase: 'fetch-python',
+          event: { code: 'downloading-python-runtime' },
           progress: 0.25,
           scope: 'python',
           sessionId: 'session-2'
@@ -216,8 +269,8 @@ describe('NotebookPreview env gate (mounted)', () => {
       provisioning: false
     }
     const failedProgress = {
-      phase: 'error',
-      message: 'Python download failed',
+      phase: 'error' as const,
+      diagnostic: 'Python download failed',
       progress: 0,
       scope: 'python' as const
     }
@@ -227,7 +280,7 @@ describe('NotebookPreview env gate (mounted)', () => {
         failedStatus,
         undefined,
         { ...failedProgress, sessionId: 'session-2' },
-        failedProgress.message
+        failedProgress.diagnostic
       )
     })
 
@@ -240,7 +293,7 @@ describe('NotebookPreview env gate (mounted)', () => {
           failedStatus,
           undefined,
           { ...failedProgress, sessionId: 'session-1' },
-          failedProgress.message
+          failedProgress.diagnostic
         )
       })
     })
@@ -1207,6 +1260,69 @@ describe('NotebookPreview per-kernel tabs', () => {
     )
     expect(userCell?.textContent).toContain('you')
     expect(userCell?.textContent).toContain('r')
+  })
+
+  it('lets the user cancel code reception and resume input without running partial code', async () => {
+    const activeWrite = {
+      cellId: 'unfinished',
+      writeId: 'write-1',
+      source: 'agent' as const,
+      startedAt: 1
+    }
+    await mountWithRuns([makeRun({ runId: 'p1', kernelKind: 'python' })], [], {}, 'idle', {
+      activeWrite
+    })
+    const input = container.querySelector(
+      '[data-testid="kernel-terminal-input"]'
+    ) as HTMLTextAreaElement
+    expect(input.disabled).toBe(true)
+    const state = vi.mocked(window.api.notebook.state)
+    const idleState = { ...(await state.mock.results[0]?.value), activeWrite: undefined }
+    const abort = vi.fn(async () => {
+      state.mockResolvedValue(idleState)
+      return { sessionId: 'session-1', cellId: 'unfinished', code: '', status: 'idle' }
+    })
+    window.api.notebook.abortCodeCell = abort
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Cancel code reception' }))
+    })
+    expect(abort).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sessionId: 'session-1',
+        cellId: 'unfinished',
+        writeId: 'write-1'
+      })
+    )
+    expect(input.disabled).toBe(false)
+    expect(window.api.notebook.execute).not.toHaveBeenCalled()
+  })
+
+  it('keeps cancellation failures visible after refreshing the active write', async () => {
+    await mountWithRuns([makeRun({ runId: 'p1', kernelKind: 'python' })], [], {}, 'idle', {
+      activeWrite: {
+        cellId: 'unfinished',
+        writeId: 'write-1',
+        source: 'agent',
+        startedAt: 1
+      }
+    })
+    const state = vi.mocked(window.api.notebook.state)
+    state.mockClear()
+    window.api.notebook.abortCodeCell = vi.fn().mockRejectedValue(new Error('Cancellation failed'))
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Cancel code reception' }))
+    })
+
+    expect(state).toHaveBeenCalledOnce()
+    expect(container.textContent).toContain('Cancellation failed')
+    expect(
+      (screen.getByRole('button', { name: 'Cancel code reception' }) as HTMLButtonElement).disabled
+    ).toBe(false)
+    expect(
+      (container.querySelector('[data-testid="kernel-terminal-input"]') as HTMLTextAreaElement)
+        .disabled
+    ).toBe(true)
   })
 
   it('queues idle terminal input until a background refresh confirms it is safe', async () => {

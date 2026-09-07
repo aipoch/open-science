@@ -23,8 +23,8 @@ export type OpencodeDetectDeps = {
   homePath: string
   platform: NodeJS.Platform
   isExecutable: (path: string) => Promise<boolean>
-  getVersion: (path: string) => Promise<string | undefined>
-  resolveNpmBinDirs: () => Promise<string[]>
+  getVersion: (path: string, signal?: AbortSignal) => Promise<string | undefined>
+  resolveNpmBinDirs: (signal?: AbortSignal) => Promise<string[]>
   // Extra fixed directories to probe (e.g. the app-managed install dir), searched after PATH/home.
   extraDirs?: string[]
 }
@@ -53,10 +53,19 @@ const wellKnownDirs = (platform: NodeJS.Platform, env: NodeJS.ProcessEnv): strin
 }
 
 // Builds the ordered list of directories to search for the opencode binary.
-const collectCandidateDirs = async (deps: OpencodeDetectDeps): Promise<string[]> => {
+const collectCandidateDirs = async (
+  deps: OpencodeDetectDeps,
+  signal?: AbortSignal
+): Promise<string[]> => {
   const p = pathFor(deps.platform)
   const pathDirs = (deps.env.PATH ?? '').split(p.delimiter).filter((dir) => dir.length > 0)
-  const npmBinDirs = await deps.resolveNpmBinDirs().catch(() => [])
+  let npmBinDirs: string[] = []
+  try {
+    npmBinDirs = await deps.resolveNpmBinDirs(signal)
+  } catch {
+    signal?.throwIfAborted()
+  }
+  signal?.throwIfAborted()
 
   // De-duplicate while preserving first-seen order so the first real hit wins.
   return Array.from(
@@ -74,19 +83,24 @@ const collectCandidateDirs = async (deps: OpencodeDetectDeps): Promise<string[]>
 // Probes each candidate directory × filename, returning the first executable whose `--version`
 // succeeds. Returns undefined when opencode is not installed anywhere we look.
 const detectOpencode = async (
-  deps: OpencodeDetectDeps = createDefaultDetectDeps()
+  deps: OpencodeDetectDeps = createDefaultDetectDeps(),
+  signal?: AbortSignal
 ): Promise<OpencodeDetectResult | undefined> => {
   const p = pathFor(deps.platform)
-  const candidateDirs = await collectCandidateDirs(deps)
+  signal?.throwIfAborted()
+  const candidateDirs = await collectCandidateDirs(deps, signal)
   const binaryNames = opencodeBinaryNames(deps.platform)
 
   for (const dir of candidateDirs) {
     for (const name of binaryNames) {
       const candidate = p.join(dir, name)
 
-      if (!(await deps.isExecutable(candidate))) continue
+      const executable = await deps.isExecutable(candidate)
+      signal?.throwIfAborted()
+      if (!executable) continue
 
-      const version = await deps.getVersion(candidate)
+      const version = await deps.getVersion(candidate, signal)
+      signal?.throwIfAborted()
 
       // A path that exists but cannot report a version is not a usable opencode; keep searching.
       if (version === undefined) continue
@@ -125,7 +139,7 @@ const parseVersion = (output: string): string | undefined => {
 // without a shell. Short timeout so a hung binary can't stall detection.
 const runOpencodeVersion =
   (platform: NodeJS.Platform) =>
-  async (path: string): Promise<string | undefined> => {
+  async (path: string, signal?: AbortSignal): Promise<string | undefined> => {
     try {
       const { stdout } =
         platform === 'win32'
@@ -133,45 +147,53 @@ const runOpencodeVersion =
               timeout: 5000,
               shell: true,
               windowsHide: true,
-              env: augmentedPathEnv(process.env)
+              env: augmentedPathEnv(process.env),
+              signal
             })
           : await execFileAsync(path, ['--version'], {
               timeout: 5000,
               windowsHide: true,
-              env: augmentedPathEnv(process.env)
+              env: augmentedPathEnv(process.env),
+              signal
             })
 
       return parseVersion(stdout)
     } catch {
+      signal?.throwIfAborted()
       return undefined
     }
   }
 
 // Resolves the npm global bin directory if npm is present. On Windows npm is a `.cmd` shim (needs a
 // shell) and places global binaries directly in the prefix; Unix nests them under `<prefix>/bin`.
-const resolveNpmBinDirs = (platform: NodeJS.Platform) => async (): Promise<string[]> => {
-  try {
-    const { stdout } =
-      platform === 'win32'
-        ? await execFileAsync('npm', ['prefix', '-g'], {
-            timeout: 10_000,
-            shell: true,
-            windowsHide: true,
-            env: augmentedPathEnv()
-          })
-        : await execFileAsync('npm', ['prefix', '-g'], {
-            timeout: 10_000,
-            env: augmentedPathEnv()
-          })
-    const prefix = stdout.trim()
+const resolveNpmBinDirs =
+  (platform: NodeJS.Platform) =>
+  async (signal?: AbortSignal): Promise<string[]> => {
+    try {
+      const { stdout } =
+        platform === 'win32'
+          ? await execFileAsync('npm', ['prefix', '-g'], {
+              timeout: 10_000,
+              shell: true,
+              windowsHide: true,
+              env: augmentedPathEnv(),
+              signal
+            })
+          : await execFileAsync('npm', ['prefix', '-g'], {
+              timeout: 10_000,
+              env: augmentedPathEnv(),
+              signal
+            })
+      const prefix = stdout.trim()
 
-    if (!prefix) return []
+      if (!prefix) return []
 
-    return platform === 'win32' ? [prefix] : [pathFor(platform).join(prefix, 'bin')]
-  } catch {
-    return []
+      return platform === 'win32' ? [prefix] : [pathFor(platform).join(prefix, 'bin')]
+    } catch {
+      signal?.throwIfAborted()
+      return []
+    }
   }
-}
 
 // Production dependency bundle wired to real fs/child_process for the current host platform.
 const createDefaultDetectDeps = (): OpencodeDetectDeps => {

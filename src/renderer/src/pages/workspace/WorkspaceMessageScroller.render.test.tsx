@@ -466,7 +466,6 @@ const createPlanAuthoritySession = (
     revision: 1,
     approval: 'pending',
     lifecycle: 'awaiting_approval',
-    requiresExplicitContinuation: false,
     document: planDocument,
     stepStatuses: {},
     stepStates: { 'Inspect sources': { status: 'not_started' } },

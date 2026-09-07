@@ -50,12 +50,33 @@ const dependencyBlock = compact(
 
 describe('production application command wiring', () => {
   it('restores durable deletion barriers before managed file version recovery', () => {
-    expect(
-      ipcSource.indexOf('await projectDeletionCoordinator.restorePendingDeletionBarriers()')
-    ).toBeLessThan(ipcSource.indexOf('managedFileVersionService.recoverPendingWrites()'))
+    const deletionBarrierRestore = ipcSource.indexOf(
+      'projectDeletionCoordinator.restorePendingDeletionBarriers()'
+    )
+    const managedFileRecovery = ipcSource.indexOf(
+      'managedFileVersionService.recoverPendingWrites()'
+    )
+    expect(deletionBarrierRestore).toBeGreaterThan(-1)
+    expect(managedFileRecovery).toBeGreaterThan(deletionBarrierRestore)
+    expect(ipcSource).toMatch(
+      /runDataRootStartupRecovery\(\s*\(\)\s*=>\s*projectDeletionCoordinator\.restorePendingDeletionBarriers\(\)\s*\)/
+    )
     expect(ipcSource).toMatch(
       /withDataRootWrite\(\(\)\s*=>\s*managedFileVersionService\.recoverPendingWrites\(\)\)/
     )
+  })
+
+  it('defers legacy data-path normalization behind data-root startup recovery', () => {
+    const normalizationBlock = compact(
+      between(
+        ipcSource,
+        'if (!storedSettings.pathsNormalizedAt)',
+        '// Share one repository and registry so runtime artifact claims and renderer finalization meet.'
+      )
+    )
+
+    expect(normalizationBlock).toContain('await runDataRootStartupRecovery(')
+    expect(normalizationBlock).toContain('await normalizeLegacyDataPaths({')
   })
 
   it('does not block application startup on managed file content integrity scanning', () => {
@@ -256,7 +277,7 @@ describe('production application command wiring', () => {
     expect(occurrences(ipcSource, 'applicationCommands')).toBe(2)
     expect(indexSource).toContain('applicationCommands,')
     expect(startup).toContain('applicationCommands,')
-    expect(startup).toContain('taskControls, computePreferences }')
+    expect(startup).toContain('taskControls, computePreferences, detectActiveSessions }')
     expect(compact(ipcSource)).toContain(
       "computePreferences: Pick<SessionEnabledComputeHostsOwner, 'withReservation' | 'set'>"
     )
@@ -269,7 +290,7 @@ describe('production application command wiring', () => {
       "Pick<ApplicationCommandComposition, 'localWeb' | 'remoteWeb' | 'task'>"
     )
     expect(compact(webServiceSource)).toContain(
-      '{ commands: applicationCommands.task, agent: taskAgent, controls: taskControls, computePreferences }'
+      '{ commands: applicationCommands.task, agent: taskAgent, controls: taskControls, computePreferences, detectActiveSessions }'
     )
     expect(webServiceSource).toContain('localWeb: applicationCommands.localWeb')
     expect(webServiceSource).toContain('remoteWeb: applicationCommands.remoteWeb')

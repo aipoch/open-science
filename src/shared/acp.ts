@@ -909,21 +909,6 @@ export type AcpPromptRequest = {
   memoryEnabled?: boolean
   // Closed, application-owned behavior requested for this Conversation Turn only.
   turnIntent?: 'plan-first'
-  // Explicit, immutable identity for a Plan-bound interaction. Main validates it before admitting
-  // the prompt. An already-approved continuation grants execution authority; pending recovery
-  // actions are handled below and never infer authority from ordinary message text.
-  planContinuation?: {
-    projectId: string
-    artifactVersionId: string
-    expectedRevision: number
-    // A restored pending Plan starts a fresh interaction. Main either commits the explicit card
-    // decision after activation or exposes pending context for feedback without granting authority.
-    // Missing means an already-approved Plan continuation.
-    pendingAction?: 'review' | 'approve' | 'reject'
-    // A rejected Plan continuation is settled but deliberately carries no execution authority.
-    // Runtime admission keeps this mutually exclusive with pendingAction.
-    settledAction?: 'rejected'
-  }
   // An application-owned continuation retains the originating user request but must not create a
   // second visible user-message event. It is never accepted from renderer IPC.
   continuation?: {
@@ -947,6 +932,9 @@ export type AcpPromptRequest = {
   // Sessions explicitly picked via composer `#` mentions. Titles are display snapshots; Main and
   // Host capabilities resolve ownership and content from the globally unique Session id.
   referencedSessions?: SessionReference[]
+  // Ordered immutable composer segments. Main uses application-owned Literature snapshots from
+  // this list to prepare provider-neutral citation context and persists the same parts on history.
+  parts?: MessagePart[]
   // Transcript of prior turns injected only into the content sent to the agent (never the user-facing
   // message), so a freshly-adopted session after a framework switch keeps conversational continuity.
   historyPreamble?: string
@@ -968,6 +956,7 @@ export type AcpPromptRequest = {
 }
 
 export type AcpSteerFollowUpRequest = {
+  agentTarget?: AcpSessionAgentTarget
   sessionId: string
   text: string
   attachments?: UploadedAttachment[]

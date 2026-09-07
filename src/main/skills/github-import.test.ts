@@ -686,17 +686,18 @@ describe('fetchSkillFiles', () => {
     ).rejects.toThrow(/nesting exceeds/)
   })
 
-  it('rejects a directory with more files than the count limit', async () => {
-    // 300 files exceeds the structural cap (SKILL_IMPORT_LIMITS.maxFiles is 256).
-    const many = Object.fromEntries(
-      Array.from({ length: 300 }, (_, i) => [`f${i}.txt`, 'x'])
-    ) as Record<string, string>
+  it('downloads a large directory within the request budget', async () => {
+    // Asset-heavy Skills can legitimately exceed the old 256-file structural cap.
+    const many = {
+      'SKILL.md': '# Large Skill',
+      ...Object.fromEntries(Array.from({ length: 299 }, (_, i) => [`f${i}.txt`, 'x']))
+    }
     await expect(
       fetchSkillFiles(
         { owner: 'acme', repo: 'skills', ref: 'main', path: 'pack/foo' },
         fakeFetch(many)
       )
-    ).rejects.toThrow(/too many files/)
+    ).resolves.toHaveLength(300)
   })
 
   it('percent-encodes path segments in the contents URL', async () => {

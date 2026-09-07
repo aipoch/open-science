@@ -194,7 +194,7 @@ describe('ParserEngine declarative path', () => {
     await expect(engine.call(desc, {}, {})).rejects.toMatchObject({
       name: 'ConnectorRequestTimeoutError',
       message:
-        "Connector request exceeded the 25ms total deadline after 1 attempt for https://x.test/data. This is the Connector's own deadline; increasing an outer execution timeout will not extend it. Do not retry solely with a longer timeout."
+        "Connector call exceeded the 25ms total deadline for c/t. This is the Connector's own deadline; increasing an outer execution timeout will not extend it. Do not retry solely with a longer timeout."
     })
     expect(fetchImpl).toHaveBeenCalledOnce()
   })
@@ -362,18 +362,29 @@ describe('ParserEngine declarative path', () => {
     expect(fetchImpl).toHaveBeenCalledOnce()
   })
 
-  it('exposes the caller signal to run-style descriptors', async () => {
+  it('propagates caller cancellation through the run-style context signal', async () => {
     const engine = new ParserEngine({ fetchImpl: vi.fn() })
     const cancellation = new AbortController()
+    let observed: AbortSignal | undefined
     const desc: ToolDescriptor = {
       id: 't',
       connector: 'c',
       description: '',
       input: {},
-      run: async (ctx) => ctx.signal
+      run: async (ctx) => {
+        observed = ctx.signal
+        return new Promise((_, reject) => {
+          ctx.signal?.addEventListener('abort', () => reject(ctx.signal?.reason), { once: true })
+        })
+      }
     }
-
-    await expect(engine.call(desc, {}, {}, cancellation.signal)).resolves.toBe(cancellation.signal)
+    const result = engine.call(desc, {}, {}, cancellation.signal)
+    expect(observed).toBeInstanceOf(AbortSignal)
+    expect(observed?.aborted).toBe(false)
+    const reason = new Error('user cancelled')
+    cancellation.abort(reason)
+    await expect(result).rejects.toBe(reason)
+    expect(observed?.reason).toBe(reason)
   })
 
   it('does not retry a client error (4xx other than 429)', async () => {
@@ -445,4 +456,257 @@ describe('ParserEngine declarative path', () => {
     expect(message).not.toContain('SECRET')
     expect(message).toContain('HTTP 401')
   })
+})
+
+describe('ParserEngine request lifecycle regressions', () => {
+  const descriptor: ToolDescriptor = {
+    id: 'lifecycle',
+    connector: 'test',
+    description: '',
+    input: {},
+    url: () => 'https://x.test/data',
+    parse: (raw) => raw,
+    format: 'text'
+  }
+
+  it.each([400, 429, 503])('F02 cancels every unfinished HTTP %i body', async (status) => {
+    const cancellations: ReturnType<typeof vi.fn>[] = []
+    const fetchImpl = vi.fn(async () => {
+      const cancel = vi.fn()
+      cancellations.push(cancel)
+      return new Response(
+        new ReadableStream({
+          start(controller) {
+            controller.enqueue(new Uint8Array(1024 * 1024))
+          },
+          cancel
+        }),
+        { status }
+      )
+    })
+    const engine = new ParserEngine({ fetchImpl, retryBackoffMs: 0 })
+    await expect(engine.call(descriptor, {}, {})).rejects.toThrow(`HTTP ${status}`)
+    expect(fetchImpl).toHaveBeenCalledTimes(status === 400 ? 1 : 3)
+    for (const cancel of cancellations) expect(cancel).toHaveBeenCalledOnce()
+  })
+
+  it('F03 includes retry backoff in the call deadline', async () => {
+    vi.useFakeTimers()
+    try {
+      const fetchImpl = vi.fn(async () => new Response(null, { status: 503 }))
+      const engine = new ParserEngine({ fetchImpl, totalTimeoutMs: 30, retryBackoffMs: 40 })
+      const result = engine.call(descriptor, {}, {}).catch((error: unknown) => error)
+      await vi.advanceTimersByTimeAsync(30)
+      expect(await Promise.race([result, Promise.resolve('still pending')])).toMatchObject({
+        name: 'ConnectorRequestTimeoutError',
+        message: expect.stringContaining('30ms total deadline')
+      })
+      expect(fetchImpl).toHaveBeenCalledOnce()
+      await vi.runAllTimersAsync()
+      await result
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('F03 stops waiting for a run descriptor that ignores cancellation', async () => {
+    vi.useFakeTimers()
+    try {
+      const result = new ParserEngine({ totalTimeoutMs: 30 })
+        .call(
+          {
+            ...descriptor,
+            run: async () => new Promise(() => {})
+          },
+          {},
+          {}
+        )
+        .catch((error: unknown) => error)
+      await vi.advanceTimersByTimeAsync(30)
+      expect(await Promise.race([result, Promise.resolve('still pending')])).toMatchObject({
+        name: 'ConnectorRequestTimeoutError'
+      })
+      expect(vi.getTimerCount()).toBe(0)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('F03 shares the call deadline across sequential fetches', async () => {
+    vi.useFakeTimers()
+    try {
+      const fetchImpl = vi.fn(async (_url: string | URL | Request, init?: RequestInit) => {
+        await new Promise<void>((resolve, reject) => {
+          const timer = setTimeout(resolve, 20)
+          init?.signal?.addEventListener(
+            'abort',
+            () => {
+              clearTimeout(timer)
+              reject(init.signal?.reason)
+            },
+            { once: true }
+          )
+        })
+        return new Response('ok')
+      })
+      const engine = new ParserEngine({ fetchImpl, totalTimeoutMs: 30 })
+      const result = engine
+        .call(
+          {
+            ...descriptor,
+            run: async (ctx) => {
+              await ctx.fetchText('https://x.test/one')
+              return ctx.fetchText('https://x.test/two')
+            }
+          },
+          {},
+          {}
+        )
+        .catch((error: unknown) => error)
+      await vi.advanceTimersByTimeAsync(40)
+      expect(await result).toMatchObject({ name: 'ConnectorRequestTimeoutError' })
+      expect(fetchImpl).toHaveBeenCalledTimes(2)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it.each(['60', 'Sat, 05 Sep 2026 00:01:00 GMT'])(
+    'F04 does not retry before Retry-After %s',
+    async (retryAfter) => {
+      vi.useFakeTimers()
+      vi.setSystemTime(new Date('2026-09-05T00:00:00Z'))
+      try {
+        const fetchImpl = vi
+          .fn()
+          .mockResolvedValueOnce(
+            new Response(null, { status: 429, headers: { 'Retry-After': retryAfter } })
+          )
+          .mockResolvedValueOnce(new Response('ok'))
+        const result = new ParserEngine({ fetchImpl }).call(descriptor, {}, {})
+        await vi.advanceTimersByTimeAsync(59_999)
+        expect(fetchImpl).toHaveBeenCalledOnce()
+        await vi.advanceTimersByTimeAsync(1)
+        await expect(result).resolves.toBe('ok')
+        expect(fetchImpl).toHaveBeenCalledTimes(2)
+      } finally {
+        vi.useRealTimers()
+      }
+    }
+  )
+
+  it('F04 returns HTTP status and retry time when the call budget cannot fit Retry-After', async () => {
+    vi.useFakeTimers()
+    try {
+      const fetchImpl = vi.fn(
+        async () =>
+          new Response(null, {
+            status: 429,
+            headers: { 'Retry-After': '60' }
+          })
+      )
+      const result = new ParserEngine({ fetchImpl, totalTimeoutMs: 30_000 })
+        .call(descriptor, {}, {})
+        .catch((error: unknown) => error)
+      await vi.runAllTimersAsync()
+      expect(await result).toMatchObject({
+        message: expect.stringMatching(/HTTP 429.*Retry after 60s/)
+      })
+      expect(fetchImpl).toHaveBeenCalledOnce()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+})
+
+describe('ParserEngine body cleanup edge cases', () => {
+  const descriptor: ToolDescriptor = {
+    id: 'cleanup',
+    connector: 'test',
+    description: '',
+    input: {},
+    url: () => 'https://x.test/data',
+    parse: (raw) => raw,
+    format: 'text'
+  }
+
+  it.each(['reject', 'pending'])(
+    'F02 preserves HTTP failure when cancellation is %s',
+    async (mode) => {
+      const cancel = vi.fn(() =>
+        mode === 'reject' ? Promise.reject(new Error('cancel failed')) : new Promise<void>(() => {})
+      )
+      const response = new Response(new ReadableStream({ cancel }), { status: 400 })
+      const engine = new ParserEngine({ fetchImpl: vi.fn().mockResolvedValue(response) })
+      await expect(engine.call(descriptor, {}, {})).rejects.toThrow('HTTP 400')
+      expect(cancel).toHaveBeenCalledOnce()
+    }
+  )
+
+  it('F02 cancels the remainder of an oversized successful body', async () => {
+    const cancel = vi.fn()
+    const response = new Response(
+      new ReadableStream({
+        start(controller) {
+          controller.enqueue(new Uint8Array(10))
+        },
+        cancel
+      })
+    )
+    const engine = new ParserEngine({
+      fetchImpl: vi.fn().mockResolvedValue(response),
+      maxResponseBytes: 5
+    })
+    await expect(engine.call(descriptor, {}, {})).rejects.toMatchObject({
+      name: 'ConnectorResponseTooLargeError'
+    })
+    expect(cancel).toHaveBeenCalledOnce()
+    expect(response.body?.locked).toBe(false)
+  })
+
+  it('F02 attempts cleanup after a body read fails without hiding the error', async () => {
+    const error = new Error('stream read failed')
+    const response = new Response(
+      new ReadableStream({
+        pull(controller) {
+          controller.error(error)
+        }
+      })
+    )
+    const cancel = vi.spyOn(response.body!, 'cancel')
+    const engine = new ParserEngine({ fetchImpl: vi.fn().mockResolvedValue(response), retries: 0 })
+    await expect(engine.call(descriptor, {}, {})).rejects.toBe(error)
+    expect(cancel).toHaveBeenCalledOnce()
+    expect(response.body?.locked).toBe(false)
+  })
+
+  it.each(['user', 'idle', 'total'])(
+    'F02 cancels a stalled body on %s cancellation',
+    async (mode) => {
+      vi.useFakeTimers()
+      try {
+        const cancel = vi.fn()
+        const response = new Response(new ReadableStream({ cancel }))
+        const caller = new AbortController()
+        const engine = new ParserEngine({
+          fetchImpl: vi.fn().mockResolvedValue(response),
+          timeoutMs: mode === 'idle' ? 10 : 100,
+          totalTimeoutMs: mode === 'total' ? 10 : 100
+        })
+        const result = engine
+          .call(descriptor, {}, {}, caller.signal)
+          .catch((error: unknown) => error)
+        await vi.advanceTimersByTimeAsync(0)
+        if (mode === 'user') caller.abort()
+        await vi.advanceTimersByTimeAsync(10)
+        expect(await Promise.race([result, Promise.resolve('still pending')])).toMatchObject({
+          name: mode === 'user' ? 'AbortError' : 'ConnectorRequestTimeoutError'
+        })
+        expect(cancel).toHaveBeenCalledOnce()
+        expect(response.body?.locked).toBe(false)
+      } finally {
+        vi.useRealTimers()
+      }
+    }
+  )
 })

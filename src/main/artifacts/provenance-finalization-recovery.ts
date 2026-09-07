@@ -56,12 +56,13 @@ type ArtifactProvenanceFinalizationRecoveryOptions = {
   >
 }
 
-// Resolves the one agent message produced by the prepared prompt turn. It deliberately considers
-// only messages before the next user prompt on the declared Branch and Runtime Segment; choosing a
-// latest message (or accepting multiple candidates) could attach a crashed run to a later turn.
+// Prefer a complete durable claim on the declared Branch and Runtime Segment over the prompt-window
+// heuristic: an in-turn user feedback Message can separate commentary from the real output owner.
+// Only an entirely unclaimed run may fall back to a single Message before the next user prompt.
 const inferDurableFinalizationMessageId = (
   session: PersistedChatSession,
-  context: PreparedArtifactFinalizationContext
+  context: PreparedArtifactFinalizationContext,
+  versionIds: readonly string[]
 ): string | undefined => {
   const graph = materializeSessionConversationGraph(session).conversationGraph!
   if (graph.rootFrameId !== context.rootFrameId) return undefined
@@ -80,19 +81,38 @@ const inferDurableFinalizationMessageId = (
     .slice(promptIndex + 1)
     .findIndex((message) => message.role === 'user')
   const turnEnd = followingUserOffset < 0 ? path.length : promptIndex + 1 + followingUserOffset
-  const candidates = path
-    .slice(promptIndex + 1, turnEnd)
-    .filter(
-      (message) =>
-        message.role === 'agent' &&
-        message.agentFrameId === context.agentFrameId &&
-        message.introducedOnBranchId === context.messageBranchId &&
-        message.runtimeSegmentId === context.runtimeSegmentId
-    )
-  if (candidates.length !== 1) return undefined
+  const ownsRunOutput = (message: (typeof path)[number]): boolean =>
+    message.role === 'agent' &&
+    message.agentFrameId === context.agentFrameId &&
+    message.introducedOnBranchId === context.messageBranchId &&
+    message.runtimeSegmentId === context.runtimeSegmentId
+  const claimedMessageIds = new Set(
+    [...session.messages, ...(session.conversationGraph?.messages ?? [])]
+      .filter((candidate) => candidate.artifactIds?.some((id) => versionIds.includes(id)))
+      .map((candidate) => candidate.id)
+  )
+  let message: (typeof path)[number] | undefined
+  if (claimedMessageIds.size > 0) {
+    // Even a partial or competing claim blocks heuristic fallback. Otherwise an unrelated single
+    // commentary Message could permanently acquire a Version already attached to its real owner.
+    if (claimedMessageIds.size !== 1) return undefined
+    message = path
+      .slice(promptIndex + 1)
+      .find((candidate) => ownsRunOutput(candidate) && claimedMessageIds.has(candidate.id))
+    if (
+      !message ||
+      !versionIds.every((id) => isArtifactLinkedToDurableMessage(session, message!.id, id))
+    ) {
+      return undefined
+    }
+  } else {
+    const turnCandidates = path.slice(promptIndex + 1, turnEnd).filter(ownsRunOutput)
+    if (turnCandidates.length !== 1) return undefined
+    message = turnCandidates[0]
+  }
 
-  validateDurableMessageOwnership(session, { ...context, messageId: candidates[0].id })
-  return candidates[0].id
+  validateDurableMessageOwnership(session, { ...context, messageId: message.id })
+  return message.id
 }
 
 // Require Session metadata and every persisted owner projection to carry ArtifactFile.id.
@@ -249,7 +269,12 @@ class ArtifactProvenanceFinalizationRecovery {
       let proof: { messageId: string } | undefined
       try {
         const messageId =
-          marker.messageId ?? inferDurableFinalizationMessageId(durableSession, markerContext)
+          marker.messageId ??
+          inferDurableFinalizationMessageId(
+            durableSession,
+            markerContext,
+            runVersions.map((version) => version.id)
+          )
         if (messageId) {
           validateDurableMessageOwnership(durableSession, {
             ...markerContext,
@@ -313,7 +338,7 @@ class ArtifactProvenanceFinalizationRecovery {
         artifactVersionIds: markerVersionIds,
         provenanceContext: markerContext
       })
-      await this.options.messageFinalizer.activateFinalizedRunWithDurableSession(
+      finalized = await this.options.messageFinalizer.activateFinalizedRunWithDurableSession(
         finalizationRequest,
         durableSession
       )

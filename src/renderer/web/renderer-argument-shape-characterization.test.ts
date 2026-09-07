@@ -151,6 +151,7 @@ beforeEach(async () => {
         return new Response(
           JSON.stringify({
             platform: 'test',
+            webCallerLocation: 'local',
             versions: { electron: '1', chrome: '1', node: '1' },
             rpcProtocolVersion: WEB_RPC_PROTOCOL_VERSION,
             rpcChannels: WEB_RPC_ALLOWED_CHANNELS,
@@ -388,9 +389,11 @@ describe('renderer argument-shape characterization', () => {
 
   it('keeps projectFiles.searchArtifacts request forwarding equivalent', async () => {
     const request = {
-      projectId: 'project-1',
-      query: 'analysis',
-      limit: 24
+      primaryProjectIds: ['project-1', 'project-2'],
+      otherProjectIds: [],
+      filenameContains: 'analysis',
+      primaryLimit: 8,
+      otherLimit: 0
     }
     const electron = await invokeElectron(electronApi, 'projectFiles.searchArtifacts', [request])
     const web = await invokeWeb(webApi, 'projectFiles.searchArtifacts', [request])

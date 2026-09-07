@@ -321,7 +321,7 @@ const LocalListing = ({
           {t('Empty folder')}
         </div>
       ) : (
-        <ul role="listbox" aria-label={t('Directory contents')}>
+        <ul aria-label={t('Directory contents')}>
           {state.entries.map((entry) => (
             <li key={entry.name} className="border-b border-border-300/40 last:border-b-0">
               <button
@@ -339,10 +339,10 @@ const LocalListing = ({
                   )}
                   <span className="truncate">{entry.name}</span>
                 </span>
-                <span className="text-right text-xs text-muted-foreground">
+                <span className="text-right text-xs tabular-nums text-muted-foreground">
                   {entry.isDirectory ? '—' : formatSize(entry.size)}
                 </span>
-                <span className="text-right text-xs text-muted-foreground">
+                <span className="text-right text-xs tabular-nums text-muted-foreground">
                   {relativeTime(entry.mtimeMs)}
                 </span>
               </button>

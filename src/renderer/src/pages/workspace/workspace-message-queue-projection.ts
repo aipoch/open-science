@@ -102,7 +102,39 @@ const editQueuedItem = (
   if (!queue) return
   const item = queue.items.find((candidate) => candidate.id === itemId)
   if (!item?.snapshot || queueItemIsBusy(item)) return
-  if (!optionsRef.current.composer.restoreQueuedDraft(item.snapshot)) {
+  const {
+    kind,
+    sessionId,
+    agentFrameId,
+    messageBranchId,
+    permissionProfile,
+    agentConfiguration,
+    specialistId,
+    agentFrameworkId,
+    agentBackendId,
+    projectId,
+    cwd,
+    revisionMessageId
+  } = item
+  if (
+    !optionsRef.current.composer.restoreQueuedDraft({
+      ...item.snapshot,
+      queuedEdit: {
+        kind,
+        sessionId,
+        agentFrameId,
+        messageBranchId,
+        permissionProfile,
+        agentConfiguration,
+        specialistId,
+        agentFrameworkId,
+        agentBackendId,
+        projectId,
+        cwd,
+        revisionMessageId
+      }
+    })
+  ) {
     owner.replaceItem(queue.sessionId, itemId, {
       phase: 'error',
       error: { kind: 'edit' },

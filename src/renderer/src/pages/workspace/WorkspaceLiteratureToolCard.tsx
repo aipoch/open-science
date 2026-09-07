@@ -1,6 +1,8 @@
-/* Hallmark · pre-emit critique: P5 H5 E5 S5 R5 V4 */
-import { BookOpenText, Search } from 'lucide-react'
+/* Hallmark · pre-emit critique: P5 H5 E5 S5 R5 V5 */
+import { BookOpenText, ExternalLink, FileText, Inbox, Search } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
+
+import { useNavigationStore } from '@/stores/navigation-store'
 
 import type { LiteratureToolSummary } from './literature-tool-presentation'
 import { ExtensionPreservingFileName } from './ExtensionPreservingFileName'
@@ -11,30 +13,107 @@ const WorkspaceLiteratureToolCard = ({
   summary: LiteratureToolSummary
 }): React.JSX.Element => {
   const { t } = useTranslation()
-  const Icon = summary.action === 'search' ? Search : BookOpenText
-  const title = summary.action === 'search' ? t('Search') : t('Read')
+  const isLibrary = summary.libraryScope !== undefined
+  const canOpenInbox = summary.action === 'save' && summary.savedCount !== undefined
+  const Icon =
+    summary.action === 'save'
+      ? Inbox
+      : summary.action === 'search'
+        ? Search
+        : summary.action === 'format'
+          ? FileText
+          : BookOpenText
+  const title =
+    summary.action === 'save'
+      ? t('Save')
+      : summary.action === 'search'
+        ? t('Search')
+        : summary.action === 'format'
+          ? t('Format')
+          : t('Read')
+  const subtitle = isLibrary
+    ? summary.action === 'format'
+      ? [summary.styleId?.toUpperCase(), summary.locale].filter(Boolean).join(' · ') ||
+        t('Citation')
+      : summary.action === 'save'
+        ? t('Inbox')
+        : summary.libraryScope === 'project'
+          ? t('This project')
+          : summary.libraryScope === 'collection'
+            ? t('Collections')
+            : summary.libraryScope === 'items'
+              ? t('Selected references')
+              : t('All references')
+    : t('Linked PDFs')
   const pageLabel =
     summary.pageStart && summary.pageEnd
       ? summary.pageStart === summary.pageEnd
         ? t('Page {{page}}', { page: summary.pageStart })
         : t('Pages {{start}}–{{end}}', { start: summary.pageStart, end: summary.pageEnd })
       : undefined
+  const searchRangeLabel =
+    summary.resultStart !== undefined && summary.resultEnd !== undefined
+      ? summary.totalCount !== undefined
+        ? t('Results {{start}}–{{end}} of {{total}}', {
+            start: summary.resultStart,
+            end: summary.resultEnd,
+            total: summary.totalCount
+          })
+        : t('Results {{start}}–{{end}}', { start: summary.resultStart, end: summary.resultEnd })
+      : summary.resultCount === 0 || summary.totalCount !== undefined
+        ? t('{{count}} results', {
+            count: summary.resultCount === 0 ? 0 : summary.totalCount,
+            defaultValue_one: '{{count}} result'
+          })
+        : summary.requestedStart !== undefined
+          ? summary.requestedEnd !== undefined
+            ? t('Requested results {{start}}–{{end}}', {
+                start: summary.requestedStart,
+                end: summary.requestedEnd
+              })
+            : t('Starting at result {{start}}', { start: summary.requestedStart })
+          : undefined
 
-  return (
-    <section
-      data-testid="literature-tool-card"
-      aria-label={t('Reading')}
-      className="flex min-w-0 flex-col gap-2.5 rounded-lg border border-border-200 bg-bg-000 p-3"
-    >
-      <div className="flex min-w-0 items-center gap-2">
+  const content = (
+    <>
+      <div className="flex min-w-0 flex-wrap items-center gap-2">
         <span className="inline-flex size-7 shrink-0 items-center justify-center rounded-md bg-primary/10 text-primary">
           <Icon className="size-3.5" aria-hidden="true" />
         </span>
-        <div className="min-w-0 flex-1">
+        <div className="min-w-0 flex-1 basis-28">
           <div className="text-[13px] font-medium text-text-000">{title}</div>
-          <div className="truncate text-[11px] text-text-300">{t('Linked PDFs')}</div>
+          <div className="truncate text-[11px] text-text-300">{subtitle}</div>
         </div>
-        <div className="flex shrink-0 flex-wrap justify-end gap-1">
+        <div className="flex max-w-full shrink-0 flex-wrap justify-end gap-1">
+          {isLibrary && summary.action === 'search' && searchRangeLabel ? (
+            <span className="rounded-md bg-primary/10 px-1.5 py-0.5 text-[10px] font-medium tabular-nums text-primary">
+              {searchRangeLabel}
+            </span>
+          ) : null}
+          {isLibrary && summary.action === 'save' && summary.itemCount !== undefined ? (
+            <span className="rounded-md bg-bg-200 px-1.5 py-0.5 text-[10px] tabular-nums text-text-200">
+              {t('{{count}} references', {
+                count: summary.savedCount ?? summary.itemCount,
+                defaultValue_one: '{{count}} reference'
+              })}
+            </span>
+          ) : null}
+          {isLibrary &&
+          (summary.action === 'format' || summary.action === 'read') &&
+          summary.itemCount !== undefined ? (
+            <span className="rounded-md bg-primary/10 px-1.5 py-0.5 text-[10px] font-medium tabular-nums text-primary">
+              {t('{{count}} references', {
+                count: summary.itemCount,
+                defaultValue_one: '{{count}} reference'
+              })}
+            </span>
+          ) : null}
+          {canOpenInbox ? (
+            <span className="inline-flex items-center gap-1 text-[11px] font-medium text-primary">
+              {t('Open')}
+              <ExternalLink className="size-3" aria-hidden="true" />
+            </span>
+          ) : null}
           {summary.retrievalMode === 'bm25' ? (
             <span className="rounded-md bg-bg-200 px-1.5 py-0.5 text-[10px] font-medium text-text-200">
               {t('BM25')}
@@ -51,7 +130,8 @@ const WorkspaceLiteratureToolCard = ({
                 defaultValue_one: '{{count}} passage'
               })}
             </span>
-          ) : pageLabel ? (
+          ) : null}
+          {pageLabel ? (
             <span className="rounded-md bg-bg-200 px-1.5 py-0.5 text-[10px] tabular-nums text-text-200">
               {pageLabel}
             </span>
@@ -70,6 +150,10 @@ const WorkspaceLiteratureToolCard = ({
         </div>
       ) : null}
 
+      {isLibrary && summary.action === 'search' && summary.hasMore ? (
+        <div className="text-[11px] text-text-300">{t('More results are available')}</div>
+      ) : null}
+
       {summary.documentNames.length > 0 ? (
         <div className="flex min-w-0 items-center gap-2 text-[11px] text-text-300">
           <span className="shrink-0">{t('Sources')}</span>
@@ -83,6 +167,12 @@ const WorkspaceLiteratureToolCard = ({
             ))}
           </span>
         </div>
+      ) : summary.itemTitles && summary.itemTitles.length > 0 ? (
+        <div className="flex min-w-0 items-center gap-2 text-[11px] text-text-300">
+          <span className="shrink-0">{t('Sources')}</span>
+          <span aria-hidden="true">·</span>
+          <span className="min-w-0 truncate text-text-100">{summary.itemTitles.join(' · ')}</span>
+        </div>
       ) : summary.documentCount > 0 ? (
         <div className="text-[11px] tabular-nums text-text-300">
           {t('{{count}} linked PDFs', {
@@ -92,14 +182,38 @@ const WorkspaceLiteratureToolCard = ({
         </div>
       ) : null}
 
-      {summary.hasMore ? (
-        <div className="text-[11px] text-text-300">{t('More pages are available')}</div>
+      {summary.hasMore && !(isLibrary && summary.action === 'search') ? (
+        <div className="text-[11px] text-text-300">
+          {isLibrary ? t('More results are available') : t('More pages are available')}
+        </div>
       ) : null}
       {summary.error ? (
         <div className="rounded-md bg-destructive/10 px-2.5 py-2 text-[11px] text-destructive">
           {summary.error}
         </div>
       ) : null}
+    </>
+  )
+
+  const className =
+    'flex min-w-0 flex-col gap-2.5 rounded-lg border border-border-200 bg-bg-000 p-3 text-left'
+
+  return canOpenInbox ? (
+    <button
+      type="button"
+      data-testid="literature-tool-card"
+      className={`${className} cursor-pointer transition-colors hover:border-primary/40 hover:bg-bg-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40`}
+      onClick={() => useNavigationStore.getState().openLibrary('user')}
+    >
+      {content}
+    </button>
+  ) : (
+    <section
+      data-testid="literature-tool-card"
+      aria-label={isLibrary ? t('Literature library') : t('Reading')}
+      className={className}
+    >
+      {content}
     </section>
   )
 }

@@ -1,6 +1,11 @@
 import { describe, expect, it, vi } from 'vitest'
 
-import { claudeCodeFramework, codexFramework, opencodeFramework } from '../agent-framework'
+import {
+  claudeCodeFramework,
+  codeBuddyFramework,
+  codexFramework,
+  opencodeFramework
+} from '../agent-framework'
 import type { AgentMcpHttpHost } from './mcp-http-host'
 import {
   AcpSessionCapabilityOwner,
@@ -33,88 +38,68 @@ const createOwner = (
 
 describe('ACP session capability owner', () => {
   it.each([
-    { globalEnabled: true, sessionEnabled: true, expected: '1' },
-    { globalEnabled: true, sessionEnabled: false, expected: '0' },
-    { globalEnabled: false, sessionEnabled: true, expected: '0' },
-    { globalEnabled: false, sessionEnabled: false, expected: '0' }
-  ])(
-    'enables Memory tools only when global=$globalEnabled and session=$sessionEnabled',
-    async ({ globalEnabled, sessionEnabled, expected }) => {
-      const getRpcConnection = vi.fn(async () => ({
-        endpoint: 'http://127.0.0.1:1',
-        token: 'notebook'
+    [claudeCodeFramework, 'open-science-library'],
+    [codexFramework, 'open-science-library'],
+    [codeBuddyFramework, 'open-science-library'],
+    [opencodeFramework, 'open_science_library']
+  ] as const)(
+    'always mounts the Literature Library for a primary %s Session',
+    async (framework, modelFacingName) => {
+      const registerLiteratureLibrary = vi.fn()
+      const handlerFor = vi.fn(() => ({
+        searchLibrary: vi.fn(async () => ({ items: [], totalCount: 0, hasMore: false })),
+        readAbstract: vi.fn(async () => undefined),
+        readPdf: vi.fn(async () => undefined),
+        saveToInbox: vi.fn(async () => ({ results: [] }))
       }))
+      const host = {
+        ensureStarted: vi.fn(async () => ({ endpoint: 'http://127.0.0.1:5', token: 'host' })),
+        registerLiteratureLibrary,
+        urlFor: vi.fn(
+          (kind: string, routingId: string) => `http://127.0.0.1:5/${kind}/${routingId}`
+        ),
+        unregister: vi.fn(),
+        clear: vi.fn(),
+        close: vi.fn()
+      } as unknown as AgentMcpHttpHost
       const owner = createOwner({
         artifacts: undefined,
+        notebook: undefined,
         skillImport: undefined,
-        notebook: {
-          projectId: 'project',
-          mcpEntryPath: '/app/main.js',
-          isMemoryEnabled: async () => globalEnabled,
-          getRpcConnection
-        }
+        library: { handlerFor },
+        mcpHttpHost: host
       })
 
       const provision = await owner.provision({
         stableAppSessionId: 'session-1',
-        framework: opencodeFramework,
+        framework,
         nativeMcpEnabled: true,
         bridgeMcpAliasesEnabled: false,
         policy: CURRENT_PRIMARY_SESSION_CAPABILITY_POLICY,
         sessionCwd: '/workspace',
-        projectId: 'project',
-        memoryEnabled: sessionEnabled
+        projectId: 'project-1'
       })
-      const notebook = provision.mcpServers.find(
-        (server) => server.name === 'open_science_notebook'
-      )
 
-      expect(notebook && 'env' in notebook ? notebook.env : []).toContainEqual({
-        name: 'OPEN_SCIENCE_NOTEBOOK_MEMORY_TOOLS',
-        value: expected
+      expect(provision.descriptor).toMatchObject({
+        capabilities: ['literature-library'],
+        canonicalMcpServerNames: ['open-science-library'],
+        modelFacingMcpServerNames: [modelFacingName]
       })
-      expect(getRpcConnection).toHaveBeenCalledWith(
-        expect.objectContaining({ memoryTools: expected === '1' })
+      expect(provision.mcpServers).toEqual([
+        expect.objectContaining({ type: 'http', name: modelFacingName })
+      ])
+      expect(handlerFor).toHaveBeenCalledWith('session-1', 'project-1', '/workspace')
+      expect(registerLiteratureLibrary).toHaveBeenCalledWith(
+        'session-1',
+        expect.objectContaining({
+          searchLibrary: expect.any(Function),
+          readAbstract: expect.any(Function),
+          readPdf: expect.any(Function),
+          saveToInbox: expect.any(Function)
+        })
       )
     }
   )
-
-  it('fails closed without blocking capability provisioning when the global Memory gate cannot be read', async () => {
-    const getRpcConnection = vi.fn(async () => ({
-      endpoint: 'http://127.0.0.1:1',
-      token: 'notebook'
-    }))
-    const owner = createOwner({
-      artifacts: undefined,
-      skillImport: undefined,
-      notebook: {
-        projectId: 'project',
-        mcpEntryPath: '/app/main.js',
-        isMemoryEnabled: async () => {
-          throw new Error('settings unavailable')
-        },
-        getRpcConnection
-      }
-    })
-
-    const provision = await owner.provision({
-      stableAppSessionId: 'session-1',
-      framework: opencodeFramework,
-      nativeMcpEnabled: true,
-      bridgeMcpAliasesEnabled: false,
-      policy: CURRENT_PRIMARY_SESSION_CAPABILITY_POLICY,
-      sessionCwd: '/workspace',
-      projectId: 'project',
-      memoryEnabled: true
-    })
-    const notebook = provision.mcpServers.find((server) => server.name === 'open_science_notebook')
-
-    expect(notebook && 'env' in notebook ? notebook.env : []).toContainEqual({
-      name: 'OPEN_SCIENCE_NOTEBOOK_MEMORY_TOOLS',
-      value: '0'
-    })
-    expect(getRpcConnection).toHaveBeenCalledWith(expect.objectContaining({ memoryTools: false }))
-  })
 
   it('marks delegated Notebook MCP processes as ineligible for memory tools', async () => {
     const owner = createOwner({
@@ -1155,7 +1140,8 @@ describe('ACP session capability owner', () => {
         bridgeMcpAliasesEnabled,
         policy: CURRENT_PRIMARY_SESSION_CAPABILITY_POLICY,
         sessionCwd: '/workspace',
-        projectId: 'project'
+        projectId: 'project',
+        memoryEnabled: false
       })
 
       expect(built.descriptor.controlRpcMethods).toEqual(
@@ -1182,6 +1168,11 @@ describe('ACP session capability owner', () => {
       expect(built.descriptor.transport).toBe('stdio')
       expect(built.descriptor.modelFacingMcpServerNames).toContain(artifactServerName)
       expect(built.descriptor.modelFacingMcpServerNames).toContain(notebookServerName)
+      const notebook = built.mcpServers.find((server) => server.name === notebookServerName)
+      expect(notebook && 'env' in notebook ? notebook.env : []).toContainEqual({
+        name: 'OPEN_SCIENCE_NOTEBOOK_MEMORY_TOOLS',
+        value: '1'
+      })
     }
   )
 

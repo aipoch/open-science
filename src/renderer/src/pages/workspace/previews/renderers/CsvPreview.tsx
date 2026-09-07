@@ -12,7 +12,7 @@ const VISIBLE_COLUMNS = 24
 const parseCsvRows = (
   content: string,
   extension: string
-): { rows: string[][]; errors: string[] } => {
+): { rows: string[][]; errors: string[]; rowTruncated: boolean } => {
   const parsed = parse<string[]>(content, {
     delimiter: extension === 'tsv' ? '\t' : '',
     skipEmptyLines: true,
@@ -21,7 +21,8 @@ const parseCsvRows = (
 
   return {
     rows: parsed.data.filter((row): row is string[] => Array.isArray(row)),
-    errors: parsed.errors.map((error) => error.message)
+    errors: parsed.errors.map((error) => error.message),
+    rowTruncated: parsed.meta.truncated
   }
 }
 
@@ -41,26 +42,40 @@ export const CsvPreviewRenderer = ({ item }: PreviewFileRendererProps): React.JS
     )
   }
 
-  const { rows, errors } = parseCsvRows(state.preview.content, getFileExtension(item.name))
+  const { rows, errors, rowTruncated } = parseCsvRows(
+    state.preview.content,
+    getFileExtension(item.name)
+  )
+  // CSV does not reliably identify headers. Preserve the first-row convention and disclose it.
   const headers = rows[0] ?? []
   const dataRows = rows.slice(1, VISIBLE_ROWS + 1)
   const visibleHeaders = headers.slice(0, VISIBLE_COLUMNS)
   const hiddenColumnCount = Math.max(headers.length - visibleHeaders.length, 0)
-  const rowCountLabel = `${Math.max(rows.length - 1, 0)}${state.preview.truncated ? '+' : ''} rows · ${
-    headers.length
-  } columns`
+  const totalKnown = !state.preview.truncated && !rowTruncated
 
   return (
     <div className="flex size-full flex-col overflow-hidden bg-bg-10">
-      <div className="flex shrink-0 items-center justify-between gap-3 border-b border-border-300 bg-bg-000 px-3 py-2 text-[12px] text-text-300">
-        <span>{rowCountLabel}</span>
+      <div className="flex shrink-0 flex-wrap items-center justify-between gap-3 border-b border-border-300 bg-bg-000 px-3 py-2 text-[12px] text-text-300">
+        {totalKnown ? (
+          <span>
+            {t('{{rows}} rows · {{columns}} columns', {
+              rows: dataRows.length,
+              columns: headers.length
+            })}
+          </span>
+        ) : null}
         <span className="shrink-0">
           {t('Showing {{rows}} rows · {{columns}} columns', {
             rows: dataRows.length,
             columns: visibleHeaders.length
           })}
         </span>
-        {errors[0] ? <span className="text-danger-000"> · {errors[0]}</span> : null}
+        {errors[0] ? (
+          <span className="text-danger-000">
+            {' '}
+            · {t('CSV parsing encountered a problem. The preview may be incomplete.')}
+          </span>
+        ) : null}
       </div>
       <div className="min-h-0 flex-1 overflow-auto">
         <table className="min-w-full border-separate border-spacing-0 text-left text-[12px]">
@@ -105,12 +120,17 @@ export const CsvPreviewRenderer = ({ item }: PreviewFileRendererProps): React.JS
           </tbody>
         </table>
       </div>
-      {hiddenColumnCount > 0 ? (
+      {headers.length > 0 ? (
         <div className="shrink-0 border-t border-border-300 bg-bg-000 px-3 py-2 text-[12px] text-text-300">
-          {t('{{count}} more columns hidden in this preview', {
-            count: hiddenColumnCount,
-            defaultValue_one: '{{count}} more column hidden in this preview'
-          })}
+          <div>{t('First row is used as column headers')}</div>
+          {hiddenColumnCount > 0 ? (
+            <div>
+              {t('{{count}} more columns hidden in this preview', {
+                count: hiddenColumnCount,
+                defaultValue_one: '{{count}} more column hidden in this preview'
+              })}
+            </div>
+          ) : null}
         </div>
       ) : null}
     </div>

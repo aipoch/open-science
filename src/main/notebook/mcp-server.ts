@@ -207,10 +207,11 @@ const SWITCH_RUNTIME_DOC = [
 const REPL_EXECUTE_DOC = [
   'Run JavaScript in the persistent control-plane REPL, separate from notebook_execute Python/R data kernels.',
   "This is a CommonJS REPL: load Node modules with `require('node:fs')`, not dynamic `import()`.",
-  'Use `await host.capabilities()` to feature-gate optional host namespaces; load the `self-awareness` Skill for its boolean contract and current capability map.',
-  'Only this kernel can call temporary tool-less inference (`await host.llm(prompt)` or a bounded prompt batch), connectors (`await host.mcp(server, method, args)`), remote compute (`host.compute`; load its skill for the API), Specialist management (`host.agents`), and other optional namespaces reported by `host.capabilities()` and `host.help()`.',
+  'Gate optional namespaces with `await host.capabilities()`; `self-awareness` documents its boolean contract and capability map.',
+  'Only this kernel supports temporary tool-less inference (`await host.llm(prompt)` or bounded prompt batches), connectors (`await host.mcp(server, method, args)`), remote compute (`host.compute`), and Specialist management (`host.agents`). Discover other namespaces with `host.help()`.',
+  'Load Remote Compute (SSH) (`remote-compute-ssh`) for jobs. Compute Environment Setup (`compute-env-setup`) prepares named environment setup/repair instructions for users or administrators to execute.',
   HOST_SDK_DISCOVERY_GUIDANCE,
-  'Globals persist and a trailing expression is returned. Return results directly when they are for Agent inspection. The default execution deadline covers the Host SDK maximum 30-minute bounded wait; an explicit timeoutMs still overrides it. To hand off large data from the REPL to Python/R, write it under process.env.OPEN_SCIENCE_HANDOFF_DIR; Python/R reads the same OPEN_SCIENCE_HANDOFF_DIR path. Use notebook_execute for analysis code.'
+  'Globals persist; trailing expressions return results for Agent inspection. Defaults allow the Host SDK maximum 30-minute bounded wait; timeoutMs overrides. To hand off large data from the REPL to Python/R, write under process.env.OPEN_SCIENCE_HANDOFF_DIR; Python/R reads the same OPEN_SCIENCE_HANDOFF_DIR path. Use notebook_execute for analysis.'
 ].join('\n')
 
 // Stateless shell contract, embedded as the bash_execute description so the agent always sees it.
@@ -388,7 +389,9 @@ const resolveNotebookRpcFetch = (method: string): typeof fetchLocalRpc =>
   method === 'execute' ||
   method === 'executeControl' ||
   method === 'executeShell' ||
-  method === 'requestNetworkAccess'
+  method === 'requestNetworkAccess' ||
+  method === 'managePackages' ||
+  method === 'manageEnvironments'
     ? fetchLongLivedLocalRpc
     : fetchLocalRpc
 
@@ -1421,7 +1424,8 @@ const NOTEBOOK_RPC_TOOLS: NotebookRpcToolDefinition[] = [
     method: 'managePackages',
     inputSchema: managePackagesToolSchema,
     mapResult: compactManagePackagesResult,
-    resultLimitChars: NOTEBOOK_MCP_CONTROL_RESULT_LIMIT
+    resultLimitChars: NOTEBOOK_MCP_CONTROL_RESULT_LIMIT,
+    progressMessage: 'Package operation is still running.'
   },
   {
     name: 'manage_environments',
@@ -1430,7 +1434,8 @@ const NOTEBOOK_RPC_TOOLS: NotebookRpcToolDefinition[] = [
     method: 'manageEnvironments',
     inputSchema: manageEnvironmentsToolSchema,
     mapResult: compactManageEnvironmentsResult,
-    resultLimitChars: NOTEBOOK_MCP_CONTROL_RESULT_LIMIT
+    resultLimitChars: NOTEBOOK_MCP_CONTROL_RESULT_LIMIT,
+    progressMessage: 'Environment operation is still running.'
   },
   {
     name: 'list_memory_categories',

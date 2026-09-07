@@ -77,6 +77,7 @@ process.exit(0)
           'e2e/runtime-performance.spec.ts',
           '--workers=1',
           '--repeat-each=1',
+          '--retries=0',
           '--reporter=list'
         ]
       ])

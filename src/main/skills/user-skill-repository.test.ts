@@ -520,7 +520,7 @@ describe('UserSkillRepository', () => {
       name: 'foo',
       source: 'imported',
       license: 'MIT',
-      compatibility: expect.stringMatching(/^sha256-tree-v2:/)
+      compatibility: expect.stringMatching(/^sha256-tree-v3:/)
     })
   })
 
@@ -787,6 +787,32 @@ describe('UserSkillRepository', () => {
     // After importing, the same bundle previews as already imported.
     await repo.importFromZip(zip)
     expect((await repo.previewZip(zip)).previews[0].alreadyImported).toBe(true)
+  })
+
+  it('previews a three-level wrapped ppt-master-scale Skill bundle', async () => {
+    const repo = new UserSkillRepository(await makeStorage())
+    // ppt-master v6.2.0 contains 12,941 files. Keep a small synthetic fixture at the same structural
+    // scale so the real release remains importable without checking a third-party archive into Git.
+    const zip = buildZip([
+      {
+        path: 'ppt-master/skills/ppt-master/SKILL.md',
+        content: Buffer.from('---\nname: ppt-master\ndescription: d\n---\nbody')
+      },
+      ...Array.from({ length: 12_940 }, (_, index) => ({
+        path: `ppt-master/skills/ppt-master/templates/icons/icon-${index}.svg`,
+        content: Buffer.alloc(0)
+      }))
+    ])
+
+    const { previews } = await repo.previewZip(zip)
+
+    expect(previews).toEqual([
+      expect.objectContaining({
+        name: 'ppt-master',
+        subPath: 'ppt-master/skills/ppt-master'
+      })
+    ])
+    expect(previews[0].files).toHaveLength(12_941)
   })
 
   it('bounds cumulative preview content without making later bundle skills unimportable', async () => {
@@ -1579,7 +1605,7 @@ describe('UserSkillRepository', () => {
     expect((await restarted.previewZip(zip)).previews[0].alreadyImported).toBe(true)
   })
 
-  it('marks scanned candidates already imported by URL or by same name', async () => {
+  it('does not mark same-named candidates from another repository as imported', async () => {
     const repo = new UserSkillRepository(await makeStorage())
     const skillMd = ['---', 'name: Foo', 'description: An imported skill.', '---', 'body'].join(
       '\n'
@@ -1609,8 +1635,8 @@ describe('UserSkillRepository', () => {
 
     const scanned = await repo.scanRepo('other/repo', treeFetch)
     const byName = Object.fromEntries(scanned.map((skill) => [skill.name, skill.alreadyImported]))
-    // "foo" is a different repo (different URL) but the same folder name -> flagged by name.
-    expect(byName).toEqual({ foo: true, bar: false })
+    // A directory name collision is not a matching source identity.
+    expect(byName).toEqual({ foo: false, bar: false })
   })
 
   it('writes frontmatter that the reader can parse back', async () => {

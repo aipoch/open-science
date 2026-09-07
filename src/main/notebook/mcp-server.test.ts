@@ -753,6 +753,8 @@ describe('notebook_execute tool', () => {
     ['execute', true],
     ['executeControl', false],
     ['executeShell', true],
+    ['managePackages', true],
+    ['manageEnvironments', true],
     ['state', true]
   ] as const)(
     'forwards MCP cancellation for %s only when the RPC consumes it',
@@ -780,81 +782,100 @@ describe('notebook_execute tool', () => {
     }
   )
 
-  it('uses the unbounded transport for long-running kernel execution', () => {
+  it('uses the unbounded transport for long-running execution and environment mutations', () => {
     expect(resolveNotebookRpcFetch('execute').name).toBe('fetchLongLivedLocalRpc')
     expect(resolveNotebookRpcFetch('executeControl').name).toBe('fetchLongLivedLocalRpc')
     expect(resolveNotebookRpcFetch('executeShell').name).toBe('fetchLongLivedLocalRpc')
+    expect(resolveNotebookRpcFetch('managePackages').name).toBe('fetchLongLivedLocalRpc')
+    expect(resolveNotebookRpcFetch('manageEnvironments').name).toBe('fetchLongLivedLocalRpc')
     expect(resolveNotebookRpcFetch('state').name).toBe('fetchLocalRpc')
   })
 
   it.each([
-    ['notebook_execute', 'Notebook execution is still running.'],
-    ['repl_execute', 'Control-plane REPL execution is still running.']
-  ])('keeps a long-running %s call alive with MCP progress', async (toolName, progressMessage) => {
-    const environment = {
-      endpoint: 'http://127.0.0.1:4567',
-      token: 'secret-token',
-      projectId: 'default-project',
-      sessionId: 'session-1',
-      workspaceCwd: '/workspace'
-    }
-    const server = createNotebookMcpServer(environment)
-    const client = new ModelContextProtocolClient({ name: 'notebook-test', version: '1.0.0' })
-    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair()
-    await server.connect(serverTransport)
-    await client.connect(clientTransport)
+    [
+      'notebook_execute',
+      { code: 'long_running_analysis()' },
+      'Notebook execution is still running.'
+    ],
+    [
+      'repl_execute',
+      { code: 'long_running_analysis()' },
+      'Control-plane REPL execution is still running.'
+    ],
+    [
+      'manage_packages',
+      { language: 'python', packages: ['numpy'] },
+      'Package operation is still running.'
+    ],
+    [
+      'manage_environments',
+      { action: 'create', language: 'python', name: 'analysis' },
+      'Environment operation is still running.'
+    ]
+  ])(
+    'keeps a long-running %s call alive with MCP progress',
+    async (toolName, args, progressMessage) => {
+      const environment = {
+        endpoint: 'http://127.0.0.1:4567',
+        token: 'secret-token',
+        projectId: 'default-project',
+        sessionId: 'session-1',
+        workspaceCwd: '/workspace'
+      }
+      const server = createNotebookMcpServer(environment)
+      const client = new ModelContextProtocolClient({ name: 'notebook-test', version: '1.0.0' })
+      const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair()
+      await server.connect(serverTransport)
+      await client.connect(clientTransport)
 
-    const originalFetch = globalThis.fetch
-    let finishRpc: ((response: Response) => void) | undefined
-    globalThis.fetch = vi.fn(
-      () =>
-        new Promise<Response>((resolve) => {
-          finishRpc = resolve
-        })
-    ) as typeof fetch
-    vi.useFakeTimers()
-    const progress: Array<{ progress: number; message?: string }> = []
-    let call: ReturnType<typeof client.callTool> | undefined
+      const originalFetch = globalThis.fetch
+      let finishRpc: ((response: Response) => void) | undefined
+      globalThis.fetch = vi.fn(
+        () =>
+          new Promise<Response>((resolve) => {
+            finishRpc = resolve
+          })
+      ) as typeof fetch
+      vi.useFakeTimers()
+      const progress: Array<{ progress: number; message?: string }> = []
+      let call: ReturnType<typeof client.callTool> | undefined
 
-    try {
-      call = client.callTool(
-        { name: toolName, arguments: { code: 'long_running_analysis()' } },
-        undefined,
-        {
+      try {
+        call = client.callTool({ name: toolName, arguments: args }, undefined, {
           onprogress: (update) => progress.push(update),
           timeout: 90_000,
           resetTimeoutOnProgress: true
-        }
-      )
-      await vi.advanceTimersByTimeAsync(30_000)
-
-      expect(progress).toEqual([
-        expect.objectContaining({
-          progress: 1,
-          message: progressMessage
         })
-      ])
+        await vi.advanceTimersByTimeAsync(30_000)
 
-      finishRpc?.({
-        ok: true,
-        json: async () => ({ result: { status: 'completed' } })
-      } as Response)
-      finishRpc = undefined
-      await call
-      await vi.advanceTimersByTimeAsync(30_000)
-      expect(progress).toHaveLength(1)
-    } finally {
-      finishRpc?.({
-        ok: true,
-        json: async () => ({ result: { status: 'completed' } })
-      } as Response)
-      await call?.catch(() => undefined)
-      vi.useRealTimers()
-      globalThis.fetch = originalFetch
-      await client.close()
-      await server.close()
+        expect(progress).toEqual([
+          expect.objectContaining({
+            progress: 1,
+            message: progressMessage
+          })
+        ])
+
+        finishRpc?.({
+          ok: true,
+          json: async () => ({ result: { status: 'completed' } })
+        } as Response)
+        finishRpc = undefined
+        await call
+        await vi.advanceTimersByTimeAsync(30_000)
+        expect(progress).toHaveLength(1)
+      } finally {
+        finishRpc?.({
+          ok: true,
+          json: async () => ({ result: { status: 'completed' } })
+        } as Response)
+        await call?.catch(() => undefined)
+        vi.useRealTimers()
+        globalThis.fetch = originalFetch
+        await client.close()
+        await server.close()
+      }
     }
-  })
+  )
 })
 
 describe('repl_execute tool', () => {
@@ -933,6 +954,8 @@ describe('repl_execute tool', () => {
     expect(tool?.description).toContain('host.mcp')
     // host.compute (remote compute) is only reachable here too, same as host.mcp.
     expect(tool?.description).toContain('host.compute')
+    expect(tool?.description).toContain('Remote Compute (SSH)')
+    expect(tool?.description).toContain('Compute Environment Setup')
     expect(tool?.description).toContain('host.agents')
     expect(tool?.description).toContain('host.help()')
     expect(tool?.description).not.toContain('host.skills')
@@ -1632,12 +1655,28 @@ describe('notebook control tool results', () => {
     expect(JSON.stringify(listedEnvironments)).not.toContain('internalPath')
   })
 
-  it('keeps failed bind/switch receipts explicit about the unchanged effective target', () => {
-    expect(
-      compactRuntimeBindingResult({
+  it.each([false, true])(
+    'keeps failed bind/switch receipts explicit when bindingChanged=%s',
+    (bindingChanged) => {
+      expect(
+        compactRuntimeBindingResult({
+          ok: false,
+          bindingChanged,
+          error: 'Binding persistence failed. The previous kernel has stopped.',
+          target: {
+            language: 'python',
+            selection: 'explicit-binding',
+            runtimeSource: 'managed',
+            environmentName: 'current-env',
+            runtimeId: '/runtime/envs/current-env/bin/python',
+            label: 'conda: current-env',
+            prefix: '/runtime/envs/current-env'
+          }
+        })
+      ).toEqual({
         ok: false,
-        bindingChanged: false,
-        error: '"analysis" is not an enabled python runtime.',
+        bindingChanged,
+        error: 'Binding persistence failed. The previous kernel has stopped.',
         target: {
           language: 'python',
           selection: 'explicit-binding',
@@ -1648,21 +1687,8 @@ describe('notebook control tool results', () => {
           prefix: '/runtime/envs/current-env'
         }
       })
-    ).toEqual({
-      ok: false,
-      bindingChanged: false,
-      error: '"analysis" is not an enabled python runtime.',
-      target: {
-        language: 'python',
-        selection: 'explicit-binding',
-        runtimeSource: 'managed',
-        environmentName: 'current-env',
-        runtimeId: '/runtime/envs/current-env/bin/python',
-        label: 'conda: current-env',
-        prefix: '/runtime/envs/current-env'
-      }
-    })
-  })
+    }
+  )
 })
 
 describe('manage_environments tool', () => {

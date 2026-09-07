@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
@@ -105,6 +105,119 @@ const base = {
 }
 
 describe('defaultSpawn (fail-closed spawn hooks)', () => {
+  it('does not spawn when the caller aborts while recording the spawn intent', async () => {
+    const controller = new AbortController()
+    let childSpawned = false
+    const pending = defaultSpawn(
+      process.execPath,
+      ['-e', 'setTimeout(() => {}, 15000)'],
+      undefined,
+      () => {
+        childSpawned = true
+      },
+      () => controller.abort(new DOMException('Request cancelled.', 'AbortError')),
+      undefined,
+      undefined,
+      { signal: controller.signal }
+    )
+
+    await expect(pending).rejects.toMatchObject({ name: 'AbortError' })
+    expect(childSpawned).toBe(false)
+  })
+
+  it('aborts a running installer only after its process tree is confirmed stopped', async () => {
+    const directory = mkdtempSync(join(tmpdir(), 'open-science-installer-abort-'))
+    const descendantPidPath = join(directory, 'descendant.pid')
+    const controller = new AbortController()
+    let rootPid: number | undefined
+    try {
+      const pending = defaultSpawn(
+        process.execPath,
+        [
+          '-e',
+          [
+            `const { spawn } = require('node:child_process');`,
+            `const { writeFileSync } = require('node:fs');`,
+            `const descendant = spawn(process.execPath, ['-e', 'setTimeout(() => {}, 15000)']);`,
+            // Keep the fixture parent alive to reap its child on POSIX. Otherwise simultaneous
+            // SIGTERM can orphan the child and make success depend on the runner's init reaping it.
+            // Ignoring the parent's signal also ensures killing only the parent cannot pass.
+            `process.on('SIGTERM', () => {});`,
+            `descendant.on('exit', () => process.exit(0));`,
+            `writeFileSync(process.env.DESCENDANT_PID_PATH, String(descendant.pid));`,
+            `setTimeout(() => {}, 15000);`
+          ].join('')
+        ],
+        { ...process.env, DESCENDANT_PID_PATH: descendantPidPath },
+        (pid) => {
+          rootPid = pid
+        },
+        undefined,
+        undefined,
+        undefined,
+        { signal: controller.signal }
+      )
+
+      await vi.waitFor(() => expect(existsSync(descendantPidPath)).toBe(true))
+      const descendantPid = Number(readFileSync(descendantPidPath, 'utf8'))
+      controller.abort(new DOMException('Request cancelled.', 'AbortError'))
+
+      await expect(pending).rejects.toMatchObject({ name: 'AbortError' })
+      expect(rootPid).toBeGreaterThan(0)
+      expect(() => process.kill(rootPid as number, 0)).toThrow()
+      expect(() => process.kill(descendantPid, 0)).toThrow()
+    } finally {
+      rmSync(directory, { recursive: true, force: true })
+    }
+  })
+
+  it('handles cancellation from the child-recording callback without losing the race', async () => {
+    const controller = new AbortController()
+    let childPid: number | undefined
+    const pending = defaultSpawn(
+      process.execPath,
+      ['-e', 'setTimeout(() => {}, 15000)'],
+      undefined,
+      (pid) => {
+        childPid = pid
+        controller.abort(new DOMException('Request cancelled.', 'AbortError'))
+      },
+      undefined,
+      undefined,
+      undefined,
+      { signal: controller.signal }
+    )
+
+    await expect(pending).rejects.toMatchObject({ name: 'AbortError' })
+    expect(childPid).toBeGreaterThan(0)
+    expect(() => process.kill(childPid as number, 0)).toThrow()
+  })
+
+  it('times out a running installer only after its process is confirmed stopped', async () => {
+    let childPid: number | undefined
+    const startedAt = Date.now()
+    const pending = defaultSpawn(
+      process.execPath,
+      ['-e', 'setTimeout(() => {}, 15000)'],
+      undefined,
+      (pid) => {
+        childPid = pid
+      },
+      undefined,
+      undefined,
+      undefined,
+      { timeoutMs: 50 }
+    )
+
+    await expect(pending).rejects.toMatchObject({
+      code: 'PACKAGE_OPERATION_TIMEOUT',
+      message: expect.stringContaining('timed out after 50ms')
+    })
+    expect(Date.now() - startedAt).toBeLessThan(10_000)
+    expect(childPid).toBeGreaterThan(0)
+    expect(() => process.kill(childPid as number, 0)).toThrow()
+  })
+
   it('calls onBeforeSpawn before spawning, and fails closed (no spawn) when it throws', async () => {
     const order: string[] = []
     await defaultSpawn(
@@ -295,6 +408,31 @@ describe('installPackages', () => {
     expect(seenPids).toContain(4321)
   })
 
+  it('forwards the caller signal and subprocess deadline to installer spawns', async () => {
+    const controller = new AbortController()
+    const seenOptions: unknown[] = []
+    const spawn: InstallSpawn = async (
+      _command,
+      _args,
+      _env,
+      _onChild,
+      _onBeforeSpawn,
+      _captureCondaJson,
+      _cwd,
+      options
+    ) => {
+      seenOptions.push(options)
+      return ok
+    }
+
+    await installPackages(
+      { language: 'python', packages: ['numpy'], usePip: true },
+      { spawn, ...base, signal: controller.signal, timeoutMs: 1234 }
+    )
+
+    expect(seenOptions).toContainEqual({ signal: controller.signal, timeoutMs: 1234 })
+  })
+
   it('routes python conda installs to micromamba with the resolved channel and default-python prefix', async () => {
     const { spawn, calls } = scriptedSpawn([ok])
     const result = await installPackages(
@@ -419,6 +557,7 @@ describe('installPackages', () => {
     const prefix = envPrefix(runtimeRoot('/root'), DEFAULT_PY_ENV)
     expect(calls[0][0]).toBe(pipBin(prefix))
     expect(calls[0][1]).toEqual(['install', '-i', 'https://mirror.test/simple', 'seaborn'])
+    expect(calls[0][2]?.PYTHONNOUSERSITE).toBe('1')
   })
 
   it('installs into an EXTERNAL interpreter via its own pip, never the app-managed prefix', async () => {
@@ -442,6 +581,7 @@ describe('installPackages', () => {
       'https://mirror.test/simple',
       'rich'
     ])
+    expect(calls[0][2]?.PYTHONNOUSERSITE).toBeUndefined()
     expect(result).toMatchObject({ ok: true, method: 'pip' })
   })
 
@@ -800,15 +940,16 @@ describe('installPackages', () => {
     const prefix = envPrefix(runtimeRoot('/root'), DEFAULT_R_ENV)
     const rLib = rLibraryDir(prefix)
     expect(calls[1][0]).toBe(rScriptBin(prefix))
-    expect(calls[1][1][0]).toBe('-e')
+    expect(calls[1][1].slice(0, 3)).toEqual(['--vanilla', '--slave', '-e'])
+    const rScript = calls[1][1][3]
     // The env R library is created and install is pinned to it via an explicit lib=, so a fronted
     // user library can never receive the package.
     // The code JSON-stringifies the lib path into the R script (so a Windows backslash path is escaped
     // correctly); mirror that here so the assertion holds on both POSIX and Windows.
-    expect(calls[1][1][1]).toContain(
+    expect(rScript).toContain(
       `dir.create(${JSON.stringify(rLib)}, recursive=TRUE, showWarnings=FALSE)`
     )
-    expect(calls[1][1][1]).toContain(
+    expect(rScript).toContain(
       `install.packages(c("someCranOnlyPkg"), lib=${JSON.stringify(rLib)}, repos="https://cran.mirror.test")`
     )
     expect(result).toMatchObject({
@@ -862,7 +1003,7 @@ describe('installPackages', () => {
     expect(result.attempts).toEqual([
       expect.objectContaining({
         installer: 'conda',
-        mutationRisk: 'unknown',
+        mutationRisk: 'none',
         reason: 'unknown'
       })
     ])
@@ -1008,6 +1149,15 @@ describe('installPackages', () => {
     })
   })
 
+  it('passes the workload cache to conda and its nested pip subprocesses', async () => {
+    const { spawn, calls } = scriptedSpawn([ok])
+    await installPackages({ language: 'python', packages: ['pandas'] }, { spawn, ...base })
+    const cacheRoot = join(runtimeRoot(base.storageRoot), 'cache', 'notebook')
+
+    expect(calls[0][2]?.PIP_CACHE_DIR).toBe(join(cacheRoot, 'pip'))
+    expect(calls[0][2]?.OPEN_SCIENCE_NOTEBOOK_CACHE_DIR).toBe(cacheRoot)
+  })
+
   it('does not set CA vars when no bundle is configured', async () => {
     const { spawn, calls } = scriptedSpawn([ok])
     await installPackages({ language: 'python', packages: ['numpy'] }, { spawn, ...base })
@@ -1040,7 +1190,8 @@ describe('installPackages', () => {
 
     const env = calls[0][2] ?? {}
     expect(env.CONDA_PKGS_DIRS).toBe('C:\\osp1234567890')
-    expect(env.MAMBA_ROOT_PREFIX).toBeUndefined()
+    expect(env.MAMBA_ROOT_PREFIX).toBe('/root/runtime')
+    expect(env.CONDA_ENVS_PATH).toBe('\\root\\runtime\\envs')
   })
 
   it('does not inject the package cache into a pip subprocess', async () => {
@@ -1579,9 +1730,9 @@ describe('installPackages uninstall', () => {
     // First a conda remove is attempted, then the CRAN remove.packages fallback.
     expect(calls[0][0]).toBe('/mm/bin/micromamba')
     expect(calls[1][0]).toBe(rScriptBin(prefix))
-    expect(calls[1][1][0]).toBe('-e')
+    expect(calls[1][1].slice(0, 3)).toEqual(['--vanilla', '--slave', '-e'])
     // Removal is pinned to the env's own R library via an explicit lib=, never .libPaths()[1].
-    expect(calls[1][1][1]).toContain(
+    expect(calls[1][1][3]).toContain(
       `remove.packages(c("someCranOnlyPkg"), lib=${JSON.stringify(rLib)})`
     )
     expect(result).toMatchObject({

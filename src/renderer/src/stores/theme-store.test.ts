@@ -97,3 +97,38 @@ describe('theme store', () => {
     expect(document.documentElement.classList.contains('dark')).toBe(false)
   })
 })
+
+// Mirrors the browser boundary: another tab writes storage before this tab receives its event.
+describe('G02 browser theme storage synchronization', () => {
+  it.each(['dark', 'system', 'invalid', null])(
+    'applies another tab’s %s choice and restores system following',
+    (value) => {
+      useThemeStore.getState().setPreference('light')
+      prefersDark = true
+      if (value === null) localStorage.removeItem('open-science-theme')
+      else localStorage.setItem('open-science-theme', value)
+      const write = vi.spyOn(localStorage, 'setItem')
+
+      window.dispatchEvent(
+        Object.defineProperty(
+          new StorageEvent('storage', {
+            key: 'open-science-theme',
+            newValue: value
+          }),
+          'storageArea',
+          { value: localStorage }
+        )
+      )
+
+      expect.soft(useThemeStore.getState()).toMatchObject({
+        preference: value === 'dark' ? 'dark' : 'system',
+        resolvedTheme: 'dark'
+      })
+      expect.soft(document.documentElement.classList.contains('dark')).toBe(true)
+      emitSystemChange(false)
+      expect.soft(useThemeStore.getState().resolvedTheme).toBe(value === 'dark' ? 'dark' : 'light')
+      expect(write).not.toHaveBeenCalled()
+      write.mockRestore()
+    }
+  )
+})

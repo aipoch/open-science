@@ -45,6 +45,10 @@ export const createInitialMemoryState = (): MemorySnapshot & {
 
 let loadSequence = 0
 
+// Match the repository's unique category name key.
+const categoryNameKey = (name: string): string =>
+  name.normalize('NFKC').trim().replace(/\s+/gu, ' ').toLowerCase()
+
 const stateFromSnapshot = (
   snapshot: MemorySnapshot,
   selectedCategoryId?: string,
@@ -70,11 +74,18 @@ const stateFromSnapshot = (
 }
 
 export const useMemoryStore = create<MemoryStore>((set, get) => {
+  const applySnapshot = (snapshot: MemorySnapshot): boolean => {
+    const state = get()
+    if (snapshot.revision < state.revision) return false
+    // Only an accepted snapshot can supersede pending loads.
+    loadSequence += 1
+    set(stateFromSnapshot(snapshot, state.selectedCategoryId, state.selectedProjectId))
+    return true
+  }
+
   const applyMutation = async (operation: () => Promise<MemorySnapshot>): Promise<void> => {
     try {
-      const snapshot = await operation()
-      loadSequence += 1
-      set(stateFromSnapshot(snapshot, get().selectedCategoryId, get().selectedProjectId))
+      applySnapshot(await operation())
     } catch (error) {
       set({ error: error instanceof Error ? error.message : 'memory' })
       throw error
@@ -96,11 +107,7 @@ export const useMemoryStore = create<MemoryStore>((set, get) => {
       try {
         const snapshot = await window.api.memory.snapshot()
         if (sequence !== loadSequence) return
-        if (snapshot.revision < get().revision) {
-          set({ status: 'ready' })
-          return
-        }
-        set(stateFromSnapshot(snapshot, get().selectedCategoryId, get().selectedProjectId))
+        if (!applySnapshot(snapshot)) set({ status: 'ready' })
       } catch {
         if (sequence !== loadSequence) return
         set({ status: 'error', error: 'load' })
@@ -108,15 +115,20 @@ export const useMemoryStore = create<MemoryStore>((set, get) => {
     },
     setEnabled: (enabled) => applyMutation(() => window.api.memory.setEnabled({ enabled })),
     createCategory: async (request) => {
-      const before = new Set(get().categories.map(({ id }) => id))
+      const requestedNameKey = categoryNameKey(request.name)
       let createdId = ''
       await applyMutation(async () => {
         const snapshot = await window.api.memory.createCategory(request)
-        createdId = snapshot.categories.find(({ id }) => !before.has(id))?.id ?? ''
+        createdId =
+          snapshot.categories.find(
+            (category) => 'name' in category && categoryNameKey(category.name) === requestedNameKey
+          )?.id ?? ''
         return snapshot
       })
       if (!createdId) throw new Error('Created memory category is missing.')
-      set({ selectedCategoryId: createdId, selectedProjectId: undefined })
+      if (get().categories.some(({ id }) => id === createdId)) {
+        set({ selectedCategoryId: createdId, selectedProjectId: undefined })
+      }
       return createdId
     },
     updateCategory: (request) => applyMutation(() => window.api.memory.updateCategory(request)),

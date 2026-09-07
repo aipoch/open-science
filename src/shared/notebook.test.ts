@@ -1,13 +1,20 @@
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, expectTypeOf } from 'vitest'
 import {
   notebookEnvironmentApplicationCommandContracts,
   parseNotebookLanguage,
   parseOptionalNotebookLanguage,
   type NotebookOutput,
+  type NotebookWorkingFile,
+  type NotebookWorkingFileKind,
   type NotebookCell
 } from './notebook'
 
 describe('shared notebook types', () => {
+  it('advertises only the unclassified working-file kind emitted by the runtime', () => {
+    expectTypeOf<NotebookWorkingFileKind>().toEqualTypeOf<'other'>()
+    expectTypeOf<NotebookWorkingFile['kind']>().toEqualTypeOf<'other'>()
+  })
+
   it('parses only python and r as NotebookLanguage', () => {
     expect(parseNotebookLanguage('python')).toBe('python')
     expect(parseNotebookLanguage('r')).toBe('r')

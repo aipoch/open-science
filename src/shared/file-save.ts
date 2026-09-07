@@ -21,7 +21,7 @@ type SaveManagedVersionFileRequest = {
 }
 
 type SavePathFileRequest = {
-  source: 'notebook-input' | 'local'
+  source: 'notebook-input' | 'literature' | 'local'
   path: string
   suggestedName: string
 }

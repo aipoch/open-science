@@ -121,9 +121,11 @@ describe('AcpSessionDeletionWorkflow', () => {
       sessionIds: ['app-a']
     })
 
-    expect(request).toHaveBeenCalledWith(acp.methods.agent.session.delete, {
-      sessionId: 'provider-b'
-    })
+    expect(request).toHaveBeenCalledWith(
+      acp.methods.agent.session.delete,
+      { sessionId: 'provider-b' },
+      { cancellationSignal: expect.objectContaining({ aborted: false }) }
+    )
     expect(notify).not.toHaveBeenCalled()
     expect(dispose).toHaveBeenCalledOnce()
     expect(registry.lookup('app-b')).toBeUndefined()
@@ -169,9 +171,11 @@ describe('AcpSessionDeletionWorkflow', () => {
     await workflow.delete('app-session')
 
     expect(request).toHaveBeenCalledOnce()
-    expect(request).toHaveBeenCalledWith(acp.methods.agent.session.close, {
-      sessionId: 'provider-session'
-    })
+    expect(request).toHaveBeenCalledWith(
+      acp.methods.agent.session.close,
+      { sessionId: 'provider-session' },
+      { cancellationSignal: expect.objectContaining({ aborted: false }) }
+    )
     expect(notify).not.toHaveBeenCalled()
   })
 
@@ -237,9 +241,11 @@ describe('AcpSessionDeletionWorkflow', () => {
     await expect(workflow.delete('app-session')).rejects.toBe(providerFailure)
 
     expect(request).toHaveBeenCalledOnce()
-    expect(request).toHaveBeenCalledWith(acp.methods.agent.session.delete, {
-      sessionId: 'provider-session'
-    })
+    expect(request).toHaveBeenCalledWith(
+      acp.methods.agent.session.delete,
+      { sessionId: 'provider-session' },
+      { cancellationSignal: expect.objectContaining({ aborted: false }) }
+    )
     expect(notify).not.toHaveBeenCalled()
     expect(dispose).not.toHaveBeenCalled()
     expect(registry.lookup('app-session')?.attachment?.providerSessionId).toBe('provider-session')
@@ -260,6 +266,50 @@ describe('AcpSessionDeletionWorkflow', () => {
     })
     expect(retry.collision).toBeUndefined()
     retry.reservation?.release()
+  })
+
+  it('times out only the provider request and retains every Session on a shared runtime', async () => {
+    vi.useFakeTimers()
+    try {
+      const registry = new AcpSessionRegistry()
+      const deletingDispose = vi.fn()
+      const siblingDispose = vi.fn()
+      publishSession(registry, 'app-deleting', 'provider-deleting', deletingDispose)
+      publishSession(registry, 'app-sibling', 'provider-sibling', siblingDispose)
+      const request = vi.fn(() => new Promise<never>(() => undefined))
+      const connection = {
+        agent: { request, notify: vi.fn(async () => undefined) }
+      } as unknown as ClientConnection
+      const workflow = new AcpSessionDeletionWorkflow(
+        dependencies(registry, connection, { delete: true, close: true })
+      )
+
+      const deleting = workflow.delete('app-deleting')
+      const deletionResult = deleting.then(
+        () => 'deleted' as const,
+        (error: unknown) => error
+      )
+      await vi.advanceTimersByTimeAsync(5_000)
+      const result = await Promise.race([deletionResult, Promise.resolve('still-pending' as const)])
+
+      expect(result).toMatchObject({
+        name: 'AcpProviderSessionDeletionTimeoutError',
+        message: 'ACP provider Session deletion timed out.'
+      })
+      expect(request).toHaveBeenCalledWith(
+        acp.methods.agent.session.delete,
+        { sessionId: 'provider-deleting' },
+        { cancellationSignal: expect.objectContaining({ aborted: true }) }
+      )
+      expect(registry.lookup('app-deleting')?.attachment?.providerSessionId).toBe(
+        'provider-deleting'
+      )
+      expect(registry.lookup('app-sibling')?.attachment?.providerSessionId).toBe('provider-sibling')
+      expect(deletingDispose).not.toHaveBeenCalled()
+      expect(siblingDispose).not.toHaveBeenCalled()
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('holds the deletion epoch while the operation lease waits behind a barrier', async () => {

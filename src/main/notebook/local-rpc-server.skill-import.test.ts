@@ -95,7 +95,7 @@ describe('NotebookLocalRpcServer Skill import bridge', () => {
         }
       })
     })
-    expect(mixedSourceResponse.status).toBe(500)
+    expect(mixedSourceResponse.status).toBe(400)
     expect(request).toHaveBeenCalledOnce()
   })
 

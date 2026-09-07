@@ -132,7 +132,8 @@ describe('WorkspacePage customize prefill', () => {
       activeProjectId: 'proj-1',
       userNavigationRevision: 0,
       explicitNavigationRevision: 0,
-      pendingCustomizePrefill: undefined
+      pendingCustomizePrefill: undefined,
+      pendingLiteratureReviewPrefill: undefined
     })
     useSessionStore.setState({
       ...createInitialSessionState(),
@@ -250,6 +251,38 @@ describe('WorkspacePage customize prefill', () => {
 
     // No pending prefill: the new-conversation composer stays empty.
     expect(conversationProps.composer.view.doc).toEqual({ nodes: [] })
+  })
+
+  it('prefills an editable Literature review draft without sending it', async () => {
+    useNavigationStore.setState({
+      pendingLiteratureReviewPrefill: {
+        projectId: 'proj-1',
+        scope: {
+          type: 'literature-scope',
+          scope: 'collection',
+          collectionId: 'collection-1',
+          name: 'TP53 evidence'
+        },
+        prompt: 'Synthesize this literature into a concise review.',
+        requestId: 1
+      }
+    })
+
+    await renderPage()
+
+    expect(conversationProps.composer.view.doc).toEqual({
+      nodes: [
+        {
+          type: 'literature-scope',
+          scope: 'collection',
+          collectionId: 'collection-1',
+          name: 'TP53 evidence'
+        },
+        { type: 'text', text: ' Synthesize this literature into a concise review.' }
+      ]
+    })
+    expect(useNavigationStore.getState().pendingLiteratureReviewPrefill).toBeUndefined()
+    expect(runtime.sendMessage).not.toHaveBeenCalled()
   })
 
   it('renders a selected session when an older preload omits plan projection hydration', async () => {

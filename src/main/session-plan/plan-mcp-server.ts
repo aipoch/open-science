@@ -56,7 +56,6 @@ const planLifecycleSchema = z.enum([
   'awaiting_approval',
   'approved',
   'in_progress',
-  'interrupted',
   'blocked',
   'completed',
   'rejected'
@@ -226,7 +225,7 @@ const createPlanMcpServer = (handler: PlanMcpHandler): ModelContextProtocolServe
     {
       title: 'Generate or decide Session Plan',
       description:
-        'Generation and decision use separate call shapes. For generation, submit one complete payload with all four top-level fields: task_summary, phases, desired_outputs, and feasibility. For a decision, submit only decision:"approved" or decision:"rejected". If validation fails, repair each reported path in the complete payload; never resend the same invalid arguments unchanged. Generation blocks until the user responds. Text responses always return as kind:feedback and remain ordinary user Messages; interpret the full meaning, then submit an unambiguous approval or rejection as a decision-only call, or revise and regenerate when changes are requested. Calling decision:"approved" also binds an already-approved interrupted Plan to the current user interaction. Never execute from message text alone. The legacy approval-only payload approve:true remains accepted.',
+        'Generation and decision use separate call shapes. For generation, submit one complete payload with all four top-level fields: task_summary, phases, desired_outputs, and feasibility. For a decision, submit only decision:"approved" or decision:"rejected". If validation fails, repair each reported path in the complete payload; never resend the same invalid arguments unchanged. Generation blocks until the user responds. Text responses always return as kind:feedback and remain ordinary user Messages; interpret the full meaning, then submit an unambiguous approval or rejection as a decision-only call, or revise and regenerate when changes are requested. An approved Plan remains active context on its durable Message Branch across later Attempts and context reconstruction. Never infer approval from message text alone. The legacy approval-only payload approve:true remains accepted.',
       inputSchema: generatePlanToolSchema
     },
     async ({ decision, approve, task_summary, phases, desired_outputs, feasibility }, extra) => {

@@ -21,10 +21,11 @@ import {
 } from 'streamdown'
 import 'katex/dist/katex.min.css'
 
-import { getMarkdownPluginNeeds } from './code-fence'
+import { createMarkdownPluginNeedsScanner } from './code-fence'
 import { AGENT_ALLOWED_TAGS, AGENT_CONTROLS } from './streamdown-config'
 import { LinkSafetyModal } from './LinkSafetyModal'
 import { SessionMessageLink } from './SessionMessageLink'
+import { createStreamingBlockquote } from './streaming-blockquote'
 import { StreamingBlock } from './StreamingBlock'
 import { createAgentMarkdownNormalizer } from './normalize-agent-markdown'
 import { useCodeHighlighter } from './use-code-highlighter'
@@ -130,7 +131,9 @@ const mermaidOptions = {
 }
 
 const useMarkdownPlugins = (content: string): PluginConfig => {
-  const needs = useMemo(() => getMarkdownPluginNeeds(content), [content])
+  // Append-only streaming rescans just the appended lines instead of the full message.
+  const [pluginNeedsScanner] = useState(() => createMarkdownPluginNeedsScanner())
+  const needs = useMemo(() => pluginNeedsScanner(content), [pluginNeedsScanner, content])
   const [optionalPlugins, setOptionalPlugins] = useState<PluginConfig>({})
   const code = useCodeHighlighter(needs.code)
 
@@ -228,13 +231,22 @@ const RichAgentMarkdown = memo(
     )
     const plugins = useMarkdownPlugins(renderedContent)
     const renderedComponents = useMemo(() => {
-      if (!sessionLinks && !components && !extension) return undefined
+      const merged =
+        !sessionLinks && !components && !extension
+          ? undefined
+          : {
+              ...(sessionLinks ? sessionLinkComponents : {}),
+              ...components,
+              ...extension?.components
+            }
+      // While streaming, hide quotes with no non-empty paragraph render-side instead of the old
+      // `blockquote:not(:has(p:not(:empty)))` rule, a style-recalc hotspot on each DOM commit.
+      if (!isAnimating) return merged
       return {
-        ...(sessionLinks ? sessionLinkComponents : {}),
-        ...components,
-        ...extension?.components
+        ...merged,
+        blockquote: createStreamingBlockquote(merged?.blockquote, merged?.p)
       }
-    }, [components, extension, sessionLinks])
+    }, [components, extension, sessionLinks, isAnimating])
 
     return (
       <div

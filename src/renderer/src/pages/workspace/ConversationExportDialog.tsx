@@ -1,7 +1,8 @@
 import { useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Check, Download, FileText, FileType2, LoaderCircle, Minus, X } from 'lucide-react'
-import { Checkbox, Dialog, RadioGroup } from 'radix-ui'
+import { Checkbox, RadioGroup } from 'radix-ui'
+import * as Dialog from '@/components/ui/dialog'
 
 import { Button } from '@/components/ui/button'
 import {

@@ -18,6 +18,7 @@ import {
   sanitizePlanHistoryProjections,
   sessionRevision,
   sanitizeToolActivity,
+  type PersistedArtifact,
   type PersistedActiveRun,
   type PersistedActivityGroup,
   type PersistedChatMessage,
@@ -73,10 +74,13 @@ export type ToolActivity = {
   createdAt: number
   updatedAt: number
 }
+export type ChatArtifact = PersistedArtifact & { isPublished?: boolean }
+
 export type ChatSession = Omit<
   PersistedChatSession,
-  'messages' | 'activities' | 'permissionProfile'
+  'messages' | 'activities' | 'permissionProfile' | 'artifacts'
 > & {
+  artifacts?: ChatArtifact[]
   permissionProfile?: PermissionProfileId
   messages: ChatMessage[]
   activities?: ToolActivity[]
@@ -96,7 +100,6 @@ export type ChatSession = Omit<
   agentPromptInFlight?: boolean
   // Transient provenance owner for responses emitted while an interrupted turn is resumed.
   activeRunRuntimeSegmentId?: string
-  branchContextResetRequired?: boolean
   specialistSwitchResetRequired?: boolean
   // Transient: a restored durable choice resumed into a fresh Agent context. Keep the request id
   // until its hidden continuation is accepted so a renderer/IPC retry replays the same history.
@@ -114,9 +117,25 @@ export type ChatSession = Omit<
   presentedActivityAt?: number
 }
 
+export type StreamingMessageContent = {
+  sessionId: string
+  // Full in-flight text (the base Message content plus every chunk appended since the Message
+  // last changed identity), held outside session.messages so pure text-growth ticks keep the
+  // Session object and messages array referentially stable.
+  content: string
+  // Full applied event id list (the base Message's eventIds plus in-flight ids) for replay dedup.
+  eventIds: string[]
+  updatedAt: number
+}
+
+// Keyed by message id. Agent message ids are deterministic per (session, stream, prompt), so the
+// key is known before the Message object exists and is unique across Sessions.
+export type StreamingMessageContentByMessageId = Record<string, StreamingMessageContent>
+
 export type SessionStoreData = {
   sessions: ChatSession[]
   selectedSessionId: string | undefined
+  streamingMessages: StreamingMessageContentByMessageId
 }
 
 export type SessionHydrationSelection = { sessionId: string | undefined }
@@ -132,6 +151,7 @@ export type ApplyDurableSessionProjectionInput = {
     | 'compute-host-access-authority'
     | 'delegated-authority'
     | 'session-details-authority'
+    | 'archive-authority'
 }
 
 export type SessionPersistenceActions = {
@@ -162,8 +182,89 @@ const markExternallyHydratedSession = (
 
 export const createInitialSessionState = (): SessionStoreData => ({
   sessions: [],
-  selectedSessionId: undefined
+  selectedSessionId: undefined,
+  streamingMessages: {}
 })
+
+// Activity timestamps include unsaved local edits. Only the durable revision orders archive state;
+// equal versioned snapshots are echoes. Legacy unversioned snapshots retain arrival-order behavior.
+const projectSessionMetadataAuthority = (
+  source: ChatSession,
+  incoming: PersistedChatSession
+): ChatSession => {
+  // A pending context reset survives metadata projections until this renderer performs it.
+  const current =
+    incoming.branchContextResetRequired && !source.branchContextResetRequired
+      ? { ...source, branchContextResetRequired: true }
+      : source
+  const currentRevision = sessionRevision(current)
+  const incomingRevision = sessionRevision(incoming)
+  if (
+    incomingRevision < currentRevision ||
+    (currentRevision > 0 && incomingRevision === currentRevision)
+  ) {
+    return current
+  }
+  if (current.archivedAt === incoming.archivedAt && currentRevision === incomingRevision)
+    return current
+  const projected = { ...current, revision: incomingRevision }
+  if (incoming.archivedAt === undefined) delete projected.archivedAt
+  else projected.archivedAt = incoming.archivedAt
+  return projected
+}
+
+// Folds one Session's in-flight streaming entries back into its Message objects. Terminal
+// projections (finish/interrupt/fail) call this first so the final Message content, event ids,
+// and conversation-graph sync observe the complete turn exactly as if chunks had been committed
+// to the Message directly.
+export const materializeStreamingMessageContent = (
+  session: ChatSession,
+  streamingMessages: StreamingMessageContentByMessageId
+): ChatSession => {
+  let messages: ChatMessage[] | undefined
+  for (let index = 0; index < session.messages.length; index += 1) {
+    const message = session.messages[index]
+    const entry = streamingMessages[message.id]
+    if (!entry) continue
+    if (!messages) messages = session.messages.slice()
+    messages[index] = {
+      ...message,
+      content: entry.content,
+      eventIds: entry.eventIds,
+      updatedAt: Math.max(message.updatedAt, entry.updatedAt)
+    }
+  }
+  return messages ? { ...session, messages } : session
+}
+
+export const removeStreamingMessageContentForSession = (
+  streamingMessages: StreamingMessageContentByMessageId,
+  sessionId: string
+): StreamingMessageContentByMessageId => {
+  const keys = Object.keys(streamingMessages).filter(
+    (key) => streamingMessages[key].sessionId === sessionId
+  )
+  if (keys.length === 0) return streamingMessages
+  const next = { ...streamingMessages }
+  for (const key of keys) delete next[key]
+  return next
+}
+
+// Drops a Session's entries whose Message no longer exists (edit/truncate/branch activation), so a
+// later turn that reuses the deterministic Message id cannot resurrect superseded text.
+export const pruneStreamingMessageContent = (
+  streamingMessages: StreamingMessageContentByMessageId,
+  sessionId: string,
+  retainedMessageIds: ReadonlySet<string>
+): StreamingMessageContentByMessageId => {
+  const keys = Object.keys(streamingMessages).filter(
+    (key) => streamingMessages[key].sessionId === sessionId && !retainedMessageIds.has(key)
+  )
+  if (keys.length === 0) return streamingMessages
+  const next = { ...streamingMessages }
+  for (const key of keys) delete next[key]
+  return next
+}
 
 export const stripTransientMessageState = (message: ChatMessage): PersistedChatMessage => {
   const { sortIndex, ...persistedMessage } = message
@@ -174,7 +275,12 @@ export const stripTransientMessageState = (message: ChatMessage): PersistedChatM
 }
 
 // Serializes one in-memory session into the durable per-file projection saved by the main process.
-export const toPersistedSession = (session: ChatSession): PersistedChatSession => {
+// In-flight streaming text is folded into its Message first so a flush mid-stream never loses
+// chunks that have not been committed to session.messages yet.
+export const toPersistedSession = (
+  session: ChatSession,
+  streamingMessages?: StreamingMessageContentByMessageId
+): PersistedChatSession => {
   if (session.contentLoaded === false) {
     throw new Error('Session content must be loaded before persistence.')
   }
@@ -197,7 +303,6 @@ export const toPersistedSession = (session: ChatSession): PersistedChatSession =
     awaitingFirstAgentOutput,
     agentPromptInFlight,
     activeRunRuntimeSegmentId,
-    branchContextResetRequired,
     specialistSwitchResetRequired,
     elicitationHistoryReplayRequestId,
     branchSwitchBlocked,
@@ -211,6 +316,7 @@ export const toPersistedSession = (session: ChatSession): PersistedChatSession =
     presentedActivityAt,
     planHistoryProjections,
     runtimeContext,
+    artifacts,
     messages,
     ...persistedSession
   } = session
@@ -225,7 +331,6 @@ export const toPersistedSession = (session: ChatSession): PersistedChatSession =
   void awaitingFirstAgentOutput
   void agentPromptInFlight
   void activeRunRuntimeSegmentId
-  void branchContextResetRequired
   void specialistSwitchResetRequired
   void elicitationHistoryReplayRequestId
   void branchSwitchBlocked
@@ -247,9 +352,31 @@ export const toPersistedSession = (session: ChatSession): PersistedChatSession =
     ?.map(sanitizeActivityGroup)
     .filter((group): group is PersistedActivityGroup => !!group)
 
+  const persistedMessages = streamingMessages
+    ? messages.map((message) => {
+        const entry = streamingMessages[message.id]
+        return entry && entry.sessionId === session.id
+          ? {
+              ...message,
+              content: entry.content,
+              eventIds: entry.eventIds,
+              updatedAt: Math.max(message.updatedAt, entry.updatedAt)
+            }
+          : message
+      })
+    : messages
+
   return materializeSessionConversationGraph({
+    ...(artifacts
+      ? {
+          artifacts: artifacts.map(({ isPublished, ...artifact }) => {
+            void isPublished
+            return artifact
+          })
+        }
+      : {}),
     ...persistedSession,
-    messages: messages.map(stripTransientMessageState),
+    messages: persistedMessages.map(stripTransientMessageState),
     ...(persistedPlanHistory ? { planHistoryProjections: persistedPlanHistory } : {}),
     ...(persistedActivities && persistedActivities.length > 0
       ? { activities: persistedActivities }
@@ -328,6 +455,42 @@ const matchesPersistedPlanProjection = (
   )
 }
 
+const projectRuntimePlanHistoryAuthority = (
+  incoming: Pick<PersistedChatSession, 'planHistoryProjections' | 'runtimeContext'>
+): ActivePlanProjection[] | undefined => {
+  const byArtifactVersionId = new Map<string, ActivePlanProjection>()
+  // Runtime lifecycle events carry a complete Main-owned Session projection. An omitted history is
+  // therefore an authoritative clear; genuinely older echoes are rejected by the revision guard.
+  for (const projection of incoming.planHistoryProjections ?? []) {
+    byArtifactVersionId.set(projection.artifactVersionId, projection)
+  }
+
+  const currentRuntimeArtifactVersionId = incoming.runtimeContext?.plan?.artifactVersionId
+  return sanitizePlanHistoryProjections(
+    [...byArtifactVersionId.values()].filter(
+      ({ artifactVersionId }) => artifactVersionId !== currentRuntimeArtifactVersionId
+    )
+  )
+}
+
+// A save acknowledgement contains durable descriptors only. Preserve a publication fact only for
+// the same immutable Version; a different Version must obtain its own authoritative descriptor.
+const retainArtifactPublication = (
+  artifacts: PersistedArtifact[] | undefined,
+  source: ChatSession
+): ChatArtifact[] | undefined => {
+  const currentById = new Map((source.artifacts ?? []).map((artifact) => [artifact.id, artifact]))
+  return artifacts?.map((artifact) => {
+    const current = currentById.get(artifact.id)
+    return current?.versionId &&
+      current.versionId === artifact.versionId &&
+      current.artifactId === artifact.artifactId &&
+      current.isPublished !== undefined
+      ? { ...artifact, isPublished: current.isPublished }
+      : artifact
+  })
+}
+
 const withTransientSessionState = (
   session: PersistedChatSession,
   source: ChatSession
@@ -336,6 +499,9 @@ const withTransientSessionState = (
   const hydrated = hydrateSession(session)
   return {
     ...hydrated,
+    ...(hydrated.artifacts
+      ? { artifacts: retainArtifactPublication(hydrated.artifacts, source) }
+      : {}),
     messages: hydrated.messages.map((message) => ({
       ...message,
       sortIndex: sourceMessages.get(message.id)?.sortIndex
@@ -348,7 +514,8 @@ const withTransientSessionState = (
     awaitingFirstAgentOutput: source.awaitingFirstAgentOutput,
     agentPromptInFlight: source.agentPromptInFlight,
     activeRunRuntimeSegmentId: source.activeRunRuntimeSegmentId,
-    branchContextResetRequired: source.branchContextResetRequired,
+    branchContextResetRequired:
+      source.branchContextResetRequired || hydrated.branchContextResetRequired,
     specialistSwitchResetRequired: source.specialistSwitchResetRequired,
     elicitationHistoryReplayRequestId: source.elicitationHistoryReplayRequestId,
     branchSwitchBlocked: source.branchSwitchBlocked,
@@ -400,10 +567,13 @@ const projectDelegationPolicyAuthority = (
   current: ChatSession,
   authority: PersistedChatSession
 ): ChatSession | undefined => {
-  if (sessionRevision(authority) < sessionRevision(current)) return undefined
+  const metadata = projectSessionMetadataAuthority(current, authority)
+  if (sessionRevision(authority) < sessionRevision(current)) {
+    return metadata === current ? undefined : metadata
+  }
 
   return {
-    ...current,
+    ...metadata,
     revision: sessionRevision(authority),
     delegationPolicy: normalizeDelegationPolicy(authority.delegationPolicy),
     delegationPolicyAuthorityPending: undefined,
@@ -442,7 +612,11 @@ export const createSessionPersistenceOwner = <State extends SessionStoreData>(
   hydrateSessions: (sessions, manifest, selection) => {
     const hydrated = [...sessions]
       .sort((left, right) => right.updatedAt - left.updatedAt)
-      .map(hydrateSession)
+      .map((session) => {
+        const hydrated = hydrateSession(session)
+        markExternallyHydratedSession(hydrated, session)
+        return hydrated
+      })
     const hasExplicitSelection = selection !== undefined
     const requestedSelection = hasExplicitSelection ? selection.sessionId : manifest?.lastSessionId
     const selectedSessionId = hydrated.some((session) => session.id === requestedSelection)
@@ -460,7 +634,10 @@ export const createSessionPersistenceOwner = <State extends SessionStoreData>(
       .sort((left, right) => right.updatedAt - left.updatedAt)
       .map((summary) => {
         const authority = selectedById.get(summary.id)
-        return authority ? hydrateSession(authority) : hydrateSessionSummary(summary)
+        if (!authority) return hydrateSessionSummary(summary)
+        const hydrated = hydrateSession(authority)
+        markExternallyHydratedSession(hydrated, authority)
+        return hydrated
       })
     const hasExplicitSelection = selection !== undefined
     const requestedSelection = hasExplicitSelection ? selection.sessionId : manifest?.lastSessionId
@@ -477,12 +654,14 @@ export const createSessionPersistenceOwner = <State extends SessionStoreData>(
       const existing = state.sessions.find((candidate) => candidate.id === session.id)
       if (existing?.contentLoaded === false) {
         const loaded = hydrateSession(session)
+        const archive = projectSessionMetadataAuthority(existing, session)
+        const incomingIsNewer = sessionRevision(session) > sessionRevision(existing)
         const hydrated: ChatSession = {
           ...loaded,
           number: existing.number ?? loaded.number,
-          title: existing.title,
-          pinned: existing.pinned,
-          archivedAt: existing.archivedAt,
+          title: !incomingIsNewer || existing.unsavedTitle ? existing.title : loaded.title,
+          pinned: incomingIsNewer ? loaded.pinned : existing.pinned,
+          archivedAt: archive.archivedAt,
           revision: Math.max(existing.revision ?? 0, loaded.revision ?? 0),
           filesRevision: Math.max(existing.filesRevision ?? 0, loaded.filesRevision ?? 0),
           updatedAt: Math.max(existing.updatedAt, loaded.updatedAt),
@@ -492,6 +671,11 @@ export const createSessionPersistenceOwner = <State extends SessionStoreData>(
         return {
           sessions: state.sessions.map((candidate) =>
             candidate.id === session.id ? hydrated : candidate
+          ),
+          streamingMessages: pruneStreamingMessageContent(
+            state.streamingMessages,
+            session.id,
+            new Set(hydrated.messages.map((message) => message.id))
           )
         } as Partial<State>
       }
@@ -512,7 +696,10 @@ export const createSessionPersistenceOwner = <State extends SessionStoreData>(
         const filesAdvanced = (session.filesRevision ?? 0) > (existing.filesRevision ?? 0)
         const fileIdentityMerge =
           sameTimestamp && (session.filesRevision ?? 0) === (existing.filesRevision ?? 0)
-        const archiveChanged = existing.archivedAt !== session.archivedAt
+        const archive = projectSessionMetadataAuthority(existing, session)
+        const metadataChanged =
+          existing.archivedAt !== archive.archivedAt ||
+          existing.branchContextResetRequired !== archive.branchContextResetRequired
         const flat = sameTimestamp
           ? mergeDurableUploadProjection(existing.messages, existing.messages, session.messages)
           : { messages: existing.messages, changed: false }
@@ -521,22 +708,19 @@ export const createSessionPersistenceOwner = <State extends SessionStoreData>(
           !runtimeIdentityMerge &&
           !filesAdvanced &&
           !fileIdentityMerge &&
-          !archiveChanged &&
+          !metadataChanged &&
           !flat.changed
         ) {
           return state
         }
-        const withoutPreviousArchive = { ...existing }
-        delete withoutPreviousArchive.archivedAt
         const artifactsById = new Map(
-          [...(existing.artifacts ?? []), ...(session.artifacts ?? [])].map((artifact) => [
-            artifact.id,
-            artifact
-          ])
+          [
+            ...(existing.artifacts ?? []),
+            ...(retainArtifactPublication(session.artifacts, existing) ?? [])
+          ].map((artifact) => [artifact.id, artifact])
         )
         const projected: ChatSession = {
-          ...withoutPreviousArchive,
-          ...(session.archivedAt === undefined ? {} : { archivedAt: session.archivedAt }),
+          ...archive,
           messages: flat.messages,
           ...(runtimeAdvanced || runtimeIdentityMerge
             ? mergePersistedRuntimeIdentityProjection(existing, session, {
@@ -591,6 +775,9 @@ export const createSessionPersistenceOwner = <State extends SessionStoreData>(
           : {}
       const hydratedWithTransientState = {
         ...hydratedSession,
+        archivedAt: existing
+          ? projectSessionMetadataAuthority(existing, session).archivedAt
+          : session.archivedAt,
         ...retainedPlanHistory,
         ...currentPlanProjection,
         ...unsavedLocalTitle
@@ -601,7 +788,14 @@ export const createSessionPersistenceOwner = <State extends SessionStoreData>(
         ...state.sessions.filter((candidate) => candidate.id !== session.id)
       ].sort((left, right) => right.updatedAt - left.updatedAt)
 
-      return { sessions: nextSessions } as Partial<State>
+      return {
+        sessions: nextSessions,
+        streamingMessages: pruneStreamingMessageContent(
+          state.streamingMessages,
+          session.id,
+          new Set(hydratedWithTransientState.messages.map((message) => message.id))
+        )
+      } as Partial<State>
     })
   },
 
@@ -609,10 +803,56 @@ export const createSessionPersistenceOwner = <State extends SessionStoreData>(
     set((state) => {
       const current = state.sessions.find((candidate) => candidate.id === session.id)
       if (!current) return state
+      let archive = projectSessionMetadataAuthority(current, session)
+      if (
+        (mode === 'merge-upload-identities' || mode === 'replace-persisted-if-current') &&
+        source.branchContextResetRequired &&
+        !current.branchContextResetRequired &&
+        archive.branchContextResetRequired
+      ) {
+        // This save predates the completed reset; its acknowledgement cannot undo that clear.
+        archive = { ...archive, branchContextResetRequired: undefined }
+      }
+
+      if (
+        (mode === 'permission-authority' || mode === 'runtime-context-authority') &&
+        current.runtimeContext?.revision !== undefined &&
+        session.runtimeContext?.revision !== undefined &&
+        session.runtimeContext.revision < current.runtimeContext.revision
+      ) {
+        if (archive === current) return state
+        markExternallyHydratedSession(archive, session)
+        return {
+          sessions: state.sessions.map((candidate) =>
+            candidate.id === session.id ? archive : candidate
+          )
+        } as Partial<State>
+      }
+
+      if (mode === 'archive-authority') {
+        const projected = archive
+        if (projected === current) return state
+        const previousAuthority = externallyHydratedSessionAuthorities.get(current)
+        if (previousAuthority) {
+          // Refreshing archive metadata is not a local edit. Preserve dirty sessions as dirty,
+          // and do not let a delayed receipt replace a newer persistence acknowledgement.
+          markExternallyHydratedSession(
+            projected,
+            sessionRevision(previousAuthority) > sessionRevision(session)
+              ? previousAuthority
+              : session
+          )
+        }
+        return {
+          sessions: state.sessions.map((candidate) =>
+            candidate === current ? projected : candidate
+          )
+        } as Partial<State>
+      }
 
       if (mode === 'compute-host-access-authority') {
         const projected: ChatSession = {
-          ...current,
+          ...archive,
           revision: Math.max(sessionRevision(current), sessionRevision(session)),
           enabledComputeHosts: session.enabledComputeHosts && [...session.enabledComputeHosts],
           selectedComputeHosts: session.selectedComputeHosts && [...session.selectedComputeHosts],
@@ -628,7 +868,7 @@ export const createSessionPersistenceOwner = <State extends SessionStoreData>(
       }
 
       if (mode === 'session-details-authority') {
-        const projected = sessionDetails.projectSessionDetailsAuthority(current, session)
+        const projected = sessionDetails.projectSessionDetailsAuthority(archive, session)
         markExternallyHydratedSession(projected, session)
         return {
           sessions: state.sessions.map((candidate) =>
@@ -638,15 +878,6 @@ export const createSessionPersistenceOwner = <State extends SessionStoreData>(
       }
 
       if (mode === 'permission-authority') {
-        const currentRevision = current.runtimeContext?.revision
-        const incomingRevision = session.runtimeContext?.revision
-        if (
-          currentRevision !== undefined &&
-          incomingRevision !== undefined &&
-          incomingRevision < currentRevision
-        )
-          return state
-
         const permissionPending = session.runtimeContext?.permission?.state === 'pending'
         const interactionState = {
           ...inferSessionInteractionState(current),
@@ -657,7 +888,7 @@ export const createSessionPersistenceOwner = <State extends SessionStoreData>(
           interactionState
         )
         const projected: ChatSession = {
-          ...current,
+          ...archive,
           revision: Math.max(sessionRevision(current), sessionRevision(session)),
           status,
           interactionState,
@@ -674,15 +905,7 @@ export const createSessionPersistenceOwner = <State extends SessionStoreData>(
       }
 
       if (mode === 'runtime-context-authority') {
-        const currentRevision = current.runtimeContext?.revision
         const incomingRevision = session.runtimeContext?.revision
-        if (
-          currentRevision !== undefined &&
-          incomingRevision !== undefined &&
-          incomingRevision < currentRevision
-        ) {
-          return state
-        }
 
         const activePlanProjection = matchesPersistedPlanProjection(
           current.activePlanProjection,
@@ -708,13 +931,14 @@ export const createSessionPersistenceOwner = <State extends SessionStoreData>(
               interactionState
             )
         const projected: ChatSession = {
-          ...current,
+          ...archive,
           ...mergeRuntimeConversationAuthority(current, session),
           revision: Math.max(sessionRevision(current), sessionRevision(session)),
           status,
           interactionState,
           runtimeContext: session.runtimeContext,
           activePlanProjection,
+          planHistoryProjections: projectRuntimePlanHistoryAuthority(session),
           updatedAt: Math.max(current.updatedAt, session.updatedAt)
         }
         markExternallyHydratedSession(projected, session)
@@ -728,7 +952,7 @@ export const createSessionPersistenceOwner = <State extends SessionStoreData>(
       if (mode === 'delegated-authority') {
         const authority = mergeDelegatedWorkAuthorityProjection(current, session)
         const projected: ChatSession = {
-          ...current,
+          ...archive,
           ...authority,
           revision: Math.max(sessionRevision(current), sessionRevision(session))
         }
@@ -761,6 +985,7 @@ export const createSessionPersistenceOwner = <State extends SessionStoreData>(
           !flat.changed &&
           !graph?.changed &&
           authorityProjected === current &&
+          archive === current &&
           sessionRevision(session) <= sessionRevision(current)
         )
           return state
@@ -800,7 +1025,7 @@ export const createSessionPersistenceOwner = <State extends SessionStoreData>(
           projected === merged &&
           sessionRevision(session) <= sessionRevision(current)
         ) {
-          const acknowledged = sessionDetails.withAcknowledgedUnsavedTitle(current, session)
+          const acknowledged = sessionDetails.withAcknowledgedUnsavedTitle(archive, session)
           if (acknowledged === current) return state
           markExternallyHydratedSession(acknowledged, session)
           return {
@@ -811,15 +1036,33 @@ export const createSessionPersistenceOwner = <State extends SessionStoreData>(
         }
       }
 
+      // A current save acknowledgement must not replace the dispatch's in-memory run owner.
+      // Source identity prevents an old receipt from reclaiming a rearmed Message, even when
+      // two attempts have the same timestamp. Changed durable run fields still take effect.
+      if (
+        current === source &&
+        current.activeRun &&
+        projected.activeRun?.promptMessageId === current.activeRun.promptMessageId &&
+        projected.activeRun.startedAt === current.activeRun.startedAt
+      ) {
+        projected = { ...projected, activeRun: current.activeRun }
+      }
+
       projected = sessionDetails.withAcknowledgedUnsavedTitle(
         {
           ...projected,
+          archivedAt: archive.archivedAt,
+          branchContextResetRequired: archive.branchContextResetRequired,
           // Whole-Session saves and continuation acknowledgements do not own Delegation policy.
           // Keep the last dedicated mutation result even when a later ordinary projection carries
           // a newer Session revision from unrelated running activity.
           delegationPolicy: current.delegationPolicy,
           delegationPolicyAuthorityPending: current.delegationPolicyAuthorityPending,
-          revision: Math.max(sessionRevision(projected), sessionRevision(session))
+          revision: Math.max(
+            sessionRevision(current),
+            sessionRevision(projected),
+            sessionRevision(session)
+          )
         },
         session
       )

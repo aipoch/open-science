@@ -89,6 +89,14 @@ const buildProviderEnv = (
 
   if (provider.model) env.ANTHROPIC_MODEL = provider.model
 
+  if (provider.vendorId === 'apodex') {
+    // Apodex requires a stable Claude Code prompt prefix for effective caching and serves only its
+    // own Mini model for Claude's background title/summary requests.
+    env.CLAUDE_CODE_ATTRIBUTION_HEADER = '0'
+    env.ANTHROPIC_DEFAULT_HAIKU_MODEL = 'apodex-1.1-mini'
+    env.ANTHROPIC_SMALL_FAST_MODEL = 'apodex-1.1-mini'
+  }
+
   if (provider.type === 'custom') {
     // The base URL is normalized so a user-supplied trailing `/v1` isn't doubled by the client's own
     // `/v1/messages` suffix (which would 404). Custom gateways authenticate with a bearer token.

@@ -102,6 +102,7 @@ const NotebookNetworkDomainsForm = (): React.JSX.Element => {
   }
 
   const toggleGroup = (id: OpenScienceDomainGroupId, enabled: boolean): void => {
+    setMessage(undefined)
     const disabled = new Set(draft.disabledOpenScienceDomainGroups)
     if (enabled) disabled.delete(id)
     else disabled.add(id)
@@ -109,6 +110,7 @@ const NotebookNetworkDomainsForm = (): React.JSX.Element => {
   }
 
   const toggleBuiltInDomain = (domain: string, enabled: boolean): void => {
+    setMessage(undefined)
     const disabled = new Set(draft.disabledOpenScienceDomains)
     if (enabled) disabled.delete(domain)
     else disabled.add(domain)
@@ -266,6 +268,11 @@ const NotebookNetworkDomainsForm = (): React.JSX.Element => {
         <h3 className="mb-1 text-sm font-semibold text-foreground">{t('Open Science domains')}</h3>
         <p className="mb-3 text-xs leading-relaxed text-muted-foreground">
           {t(
+            'Turning off a built-in domain removes automatic access. Exact hostnames in Allowed domains remain allowed.'
+          )}
+        </p>
+        <p className="mb-3 text-xs leading-relaxed text-muted-foreground">
+          {t(
             'Notebook Python, R, REPL, Bash, and package downloads use enabled scientific services and domains you add below. Protected execution blocks other outbound domains.'
           )}
         </p>
@@ -288,7 +295,7 @@ const NotebookNetworkDomainsForm = (): React.JSX.Element => {
                   </div>
                   <Switch
                     checked={groupEnabled}
-                    disabled={group.locked}
+                    disabled={isSaving || group.locked}
                     aria-label={t('Allow {{name}}', { name: t(GROUP_LABELS[group.id]) })}
                     onClick={(event) => event.stopPropagation()}
                     onCheckedChange={(checked) => toggleGroup(group.id, checked)}
@@ -300,7 +307,7 @@ const NotebookNetworkDomainsForm = (): React.JSX.Element => {
                       <code className="break-all text-foreground">{domain}</code>
                       <Switch
                         size="sm"
-                        disabled={!groupEnabled || group.locked}
+                        disabled={isSaving || !groupEnabled || group.locked}
                         checked={groupEnabled && !draft.disabledOpenScienceDomains.includes(domain)}
                         aria-label={t('Allow {{domain}}', { domain })}
                         onCheckedChange={(checked) => toggleBuiltInDomain(domain, checked)}
@@ -325,9 +332,13 @@ const NotebookNetworkDomainsForm = (): React.JSX.Element => {
           <div className="flex gap-2">
             <Input
               value={newDomain}
+              disabled={isSaving}
               aria-label={t('Domain hostname')}
               placeholder={DOMAIN_EXAMPLE}
-              onChange={(event) => setNewDomain(event.target.value)}
+              onChange={(event) => {
+                setNewDomain(event.target.value)
+                setMessage(undefined)
+              }}
               onKeyDown={(event) => {
                 if (event.key === 'Enter') {
                   event.preventDefault()
@@ -335,7 +346,12 @@ const NotebookNetworkDomainsForm = (): React.JSX.Element => {
                 }
               }}
             />
-            <Button type="button" variant="outline" onClick={addDomain} disabled={!newDomain}>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={addDomain}
+              disabled={isSaving || !newDomain}
+            >
               <Plus aria-hidden="true" />
               {t('Add')}
             </Button>
@@ -349,13 +365,15 @@ const NotebookNetworkDomainsForm = (): React.JSX.Element => {
                     type="button"
                     variant="ghost"
                     size="icon-sm"
+                    disabled={isSaving}
                     aria-label={t('Remove {{domain}}', { domain })}
-                    onClick={() =>
+                    onClick={() => {
+                      setMessage(undefined)
                       setDraft({
                         ...draft,
                         allowedDomains: draft.allowedDomains.filter((item) => item !== domain)
                       })
-                    }
+                    }}
                   >
                     <Trash2 aria-hidden="true" />
                   </Button>

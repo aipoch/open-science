@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest'
 import {
   createUploadVersionReference,
   formatUploadSizeLimit,
+  uploadApplicationCommandContracts,
   parseUploadVersionReference
 } from './uploads'
 
@@ -38,4 +39,34 @@ describe('upload Version references', () => {
       versionId: 'version-legacy'
     })
   })
+})
+
+describe('upload version numeric bounds', () => {
+  const attachment = {
+    id: 'upload',
+    sessionId: 'session',
+    name: 'empty.txt',
+    originalName: 'empty.txt',
+    path: 'uploads/empty.txt',
+    size: 0
+  }
+  it.each([-1, 0, 1.5])('rejects version number %s at finalization', (versionNumber) => {
+    expect(() =>
+      uploadApplicationCommandContracts.finalizeSession.args.parse([
+        { sessionId: 'session', attachments: [{ ...attachment, versionNumber }] }
+      ])
+    ).toThrow()
+  })
+  it.each([undefined, 1])(
+    'preserves empty and legacy attachments with version %s',
+    (versionNumber) => {
+      const request = {
+        sessionId: 'session',
+        attachments: [{ ...attachment, ...(versionNumber === undefined ? {} : { versionNumber }) }]
+      }
+      expect(uploadApplicationCommandContracts.finalizeSession.args.parse([request])).toEqual([
+        request
+      ])
+    }
+  )
 })

@@ -21,9 +21,9 @@ type MockStorageApi = {
 const installApi = (overrides: Partial<MockStorageApi> = {}): MockStorageApi => {
   const api: MockStorageApi = {
     detectActive: vi.fn().mockResolvedValue([]),
-    migrate: vi.fn().mockResolvedValue({ ok: true }),
+    migrate: vi.fn().mockResolvedValue({ ok: true, cleanupPending: false }),
     cancelMigrate: vi.fn().mockResolvedValue(undefined),
-    commitAndRelaunch: vi.fn().mockResolvedValue({ ok: true }),
+    commitAndRelaunch: vi.fn().mockResolvedValue({ ok: true, cleanupPending: false }),
     discardMigratedCopy: vi.fn().mockResolvedValue({ ok: true }),
     onProgress: vi.fn(() => () => {}),
     ...overrides
@@ -54,6 +54,77 @@ afterEach(() => {
 })
 
 describe('StorageMigrationModal', () => {
+  it('keeps a failed pointer switch distinct from a completed move requiring restart', async () => {
+    const api = installApi({
+      commitAndRelaunch: vi.fn().mockResolvedValue({
+        ok: false,
+        switchoverFailed: true,
+        error: 'Please try again; your current data is untouched.'
+      })
+    })
+    await act(async () => {
+      root.render(<StorageMigrationModal targetPath="/mnt/data" onClose={vi.fn()} />)
+    })
+    await act(async () => {
+      clickButton((button) => /restart now/i.test(button.textContent ?? ''))
+    })
+    expect(api.commitAndRelaunch).toHaveBeenCalledWith('/mnt/data')
+    expect(document.body.textContent).toContain('your current data is untouched')
+    expect(document.body.textContent).not.toContain('Data moved — please restart')
+    expect(document.body.querySelector('[role="dialog"] h2')?.textContent).toMatch(/failed/i)
+  })
+
+  it('forwards Escape to the owner after a failed move', async () => {
+    installApi({ migrate: vi.fn().mockResolvedValue({ ok: false, error: 'Copy failed' }) })
+    const onClose = vi.fn()
+    await act(async () => {
+      root.render(<StorageMigrationModal targetPath="/mnt/data" onClose={onClose} />)
+    })
+    expect(document.body.textContent).toContain('Move failed')
+    act(() => {
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+    })
+    expect(onClose).toHaveBeenCalledTimes(1)
+  })
+
+  it.each(['detecting', 'confirming', 'copying', 'copied', 'committing'])(
+    'ignores Escape while %s',
+    async (phase) => {
+      const pending = (): Promise<never> => new Promise(() => {})
+      installApi({
+        detectActive:
+          phase === 'detecting'
+            ? vi.fn(pending)
+            : vi
+                .fn()
+                .mockResolvedValue(
+                  phase === 'confirming'
+                    ? [{ projectId: 'project', sessionId: 'session', kind: 'agent' }]
+                    : []
+                ),
+        migrate:
+          phase === 'copying'
+            ? vi.fn(pending)
+            : vi.fn().mockResolvedValue({ ok: true, cleanupPending: false }),
+        commitAndRelaunch: vi.fn(pending)
+      })
+      const onClose = vi.fn()
+      await act(async () => {
+        root.render(<StorageMigrationModal targetPath="/mnt/data" onClose={onClose} />)
+      })
+      if (phase === 'committing') {
+        await act(async () => {
+          clickButton((button) => /restart now/i.test(button.textContent ?? ''))
+        })
+      }
+      expect(document.body.querySelector('[role="dialog"]')).not.toBeNull()
+      act(() => {
+        document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+      })
+      expect(onClose).not.toHaveBeenCalled()
+    }
+  )
+
   it('continues a covered migration while suppressing its presentation', async () => {
     const api = installApi()
 
@@ -172,7 +243,7 @@ describe('StorageMigrationModal', () => {
     expect(document.body.textContent).toMatch(/cleaning up/i)
 
     await act(async () => {
-      resolveMigrate?.({ ok: true })
+      resolveMigrate?.({ ok: true, cleanupPending: false })
       await Promise.resolve()
     })
 
@@ -191,7 +262,7 @@ describe('StorageMigrationModal', () => {
   it('Keep current location discards the copy and closes without committing', async () => {
     const onClose = vi.fn()
     const api = installApi({
-      migrate: vi.fn().mockResolvedValue({ ok: true })
+      migrate: vi.fn().mockResolvedValue({ ok: true, cleanupPending: false })
     })
 
     await act(async () => {
@@ -466,7 +537,7 @@ describe('StorageMigrationModal', () => {
     const api = installApi({
       migrate: vi.fn().mockResolvedValue({
         ok: false,
-        error: 'Data moved but the app could not restart automatically.',
+        error: 'Please try again; your current data is untouched.',
         switchoverFailed: true
       })
     })
@@ -482,9 +553,7 @@ describe('StorageMigrationModal', () => {
       await Promise.resolve()
     })
 
-    expect(document.body.textContent).toContain(
-      'Data moved but the app could not restart automatically.'
-    )
+    expect(document.body.textContent).toContain('Please try again; your current data is untouched.')
     expect(onClose).not.toHaveBeenCalled()
     expect(api.cancelMigrate).not.toHaveBeenCalled()
   })

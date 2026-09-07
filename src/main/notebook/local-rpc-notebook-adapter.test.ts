@@ -49,6 +49,7 @@ const request = {
 const requestByMethod = {
   beginCodeCell: request,
   appendCodeCell: { ...request, writeId: 'write-1', cellId: 'cell-1', delta: 'print(1)' },
+  abortCodeCell: { ...request, writeId: 'write-1', cellId: 'cell-1' },
   finishCodeCell: { ...request, writeId: 'write-1', cellId: 'cell-1' },
   runCell: { ...request, cellId: 'cell-1' },
   execute: {
@@ -80,6 +81,7 @@ describe('notebook local RPC adapter', () => {
     expect(NOTEBOOK_LOCAL_RPC_METHODS).toEqual([
       'beginCodeCell',
       'appendCodeCell',
+      'abortCodeCell',
       'finishCodeCell',
       'runCell',
       'execute',
@@ -96,7 +98,7 @@ describe('notebook local RPC adapter', () => {
       'bindRuntime',
       'switchRuntime'
     ])
-    expect(new Set(NOTEBOOK_LOCAL_RPC_METHODS).size).toBe(17)
+    expect(new Set(NOTEBOOK_LOCAL_RPC_METHODS).size).toBe(18)
 
     for (const method of [
       'listPackages',
@@ -166,14 +168,18 @@ describe('notebook local RPC adapter', () => {
     expect(runtimeRequest).not.toHaveProperty('kernelSkillIds')
   })
 
-  it.each(['bindRuntime', 'switchRuntime'] as const)(
-    'forwards the service-owned failure receipt for %s without deriving a target',
-    async (method) => {
+  it.each(
+    (['bindRuntime', 'switchRuntime'] as const).flatMap((method) =>
+      [false, true].map((bindingChanged) => ({ method, bindingChanged }))
+    )
+  )(
+    'forwards the $method failure receipt with bindingChanged=$bindingChanged',
+    async ({ method, bindingChanged }) => {
       const capability = createCapability()
       const failure = {
         ok: false,
-        bindingChanged: false,
-        error: '"analysis" is not an enabled python runtime.',
+        bindingChanged,
+        error: 'Binding persistence failed. The previous kernel has stopped.',
         target: { language: 'python', selection: 'unresolved' }
       }
       vi.mocked(capability[method]).mockResolvedValueOnce(failure)
@@ -239,6 +245,20 @@ describe('notebook local RPC adapter', () => {
 
     expect(capability.executeShell).toHaveBeenCalledWith(methodRequest, cancellation.signal)
   })
+
+  it.each(['managePackages', 'manageEnvironments'] as const)(
+    'forwards request cancellation to %s',
+    async (method) => {
+      const capability = createCapability()
+      const methodRequest = requestByMethod[method]
+      const handler = resolveNotebookLocalRpcHandler(capability, method, methodRequest)
+      const cancellation = new AbortController()
+
+      await handler(methodRequest, cancellation.signal)
+
+      expect(capability[method]).toHaveBeenCalledWith(methodRequest, cancellation.signal)
+    }
+  )
 
   it('validates common notebook routing fields before resolving a handler', () => {
     const capability = createCapability()

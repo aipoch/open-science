@@ -124,9 +124,11 @@ describe('xAI protocol projection', () => {
       sanitizeXaiResponsesRequest({
         prompt_cache_retention: '24h',
         safety_identifier: 'secret',
-        input: [{ external_web_access: true, content: null }]
+        external_web_access: true,
+        previous_response_id: null,
+        input: [{ role: 'user', content: 'hello' }]
       })
-    ).toEqual({ input: [{}] })
+    ).toEqual({ input: [{ role: 'user', content: 'hello' }] })
     expect(
       countAnthropicInputTokens({ messages: [{ role: 'user', content: 'hello world' }] })
     ).toBeGreaterThan(0)

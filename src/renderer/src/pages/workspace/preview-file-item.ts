@@ -263,8 +263,15 @@ export const resolveArtifactVersionDescriptor = (
   selectedVersionId: string | undefined
 ): ArtifactVersionDescriptor | undefined =>
   selectedVersionId === undefined
-    ? lineage.versions.at(-1)
-    : lineage.versions.find((version) => version.versionId === selectedVersionId)
+    ? (lineage.headVersion ?? lineage.versions.at(-1))
+    : [
+        lineage.selectedVersion,
+        lineage.headVersion,
+        lineage.basedOnVersion,
+        lineage.previousVersion,
+        lineage.nextVersion,
+        ...lineage.versions
+      ].find((version) => version?.versionId === selectedVersionId)
 
 // Converts a sent user upload into the same preview shape used by message attachment clicks.
 export const createPreviewFileItemFromUpload = (
@@ -298,16 +305,19 @@ export const createPreviewFileItemFromPdfContext = (
     throw new Error('Session PDF context must resolve to a managed file Version.')
   }
   const isArtifact = context.sourceKind === 'artifact-version'
+  const isLiterature = context.sourceKind === 'literature-attachment-version'
 
   return createPreviewFileItem({
-    id: isArtifact ? context.sourceFileId : `upload:${context.sourceFileId}`,
+    id: isArtifact
+      ? context.sourceFileId
+      : `${isLiterature ? 'literature' : 'upload'}:${context.sourceFileId}`,
     projectId,
-    sessionId: context.sourceSessionId,
+    sessionId: context.sourceSessionId ?? LITERATURE_PREVIEW_SESSION_ID,
     path: reference.path,
     name: context.name,
     mimeType: context.mimeType,
     size: context.sizeBytes,
-    source: isArtifact ? undefined : 'upload',
+    source: isArtifact ? undefined : isLiterature ? 'literature' : 'upload',
     artifactId: isArtifact ? context.sourceFileId : undefined,
     managedFileId: context.sourceFileId,
     selectedVersionId: context.sourceVersionId
@@ -318,6 +328,7 @@ export const createPreviewFileItemFromPdfContext = (
 // session, so they use a stable non-session key (mirrors the project-files tool's sentinel) — this
 // keeps them out of removeSessionItems cleanup when a real session is deleted.
 export const LOCAL_PREVIEW_SESSION_ID = '__local_files__'
+export const LITERATURE_PREVIEW_SESSION_ID = '__literature__'
 
 // Builds a preview tab for a local ("This computer") file. The path is an absolute filesystem
 // path; the id is namespaced by path so re-opening the same file re-activates its tab. sessionId
@@ -371,7 +382,8 @@ export const createPreviewFileItemFromMention = (
     path: part.path,
     name: part.name,
     mimeType: part.mimeType,
-    source: part.source === 'upload' ? 'upload' : undefined,
+    source:
+      part.source === 'upload' ? 'upload' : part.source === 'literature' ? 'literature' : undefined,
     artifactId,
     managedFileId
   })

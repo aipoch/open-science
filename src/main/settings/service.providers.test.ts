@@ -23,7 +23,7 @@ describe('SettingsService provider facade', () => {
   beforeEach(async () => {
     dir = await mkdtemp(join(tmpdir(), 'osci-service-providers-facade-'))
     repository = new SettingsRepository(dir)
-    service = new SettingsService({ repository, storageRoot: dir })
+    service = new SettingsService({ repository, configRoot: dir })
     return async () => {
       await rm(dir, { recursive: true, force: true })
     }
@@ -62,7 +62,7 @@ describe('SettingsService provider facade', () => {
     const now = vi.spyOn(Date, 'now').mockReturnValue(123)
     const facade = new SettingsService({
       repository,
-      storageRoot: dir,
+      configRoot: dir,
       installManagedClaudeImpl: async ({ installId }) => ({
         result: { installId, ok: false, error: 'expected test failure' }
       })

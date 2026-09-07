@@ -1,6 +1,7 @@
 import { z } from 'zod'
 
 import { defineApplicationCommandContract, validationCodec } from './application-command-contract'
+import { projectSessionDefaultsSchema } from './session-configuration'
 
 // Shared project types crossing the main <-> renderer IPC boundary.
 //
@@ -19,12 +20,15 @@ export const projectSchema = z
     // Agent Context. The DB column is NOT NULL DEFAULT ''. Capped because it is injected verbatim
     // into every agent session's system prompt.
     agentContext: z.string().max(16000).optional(),
+    sessionDefaults: projectSessionDefaultsSchema.optional(),
     isExample: z.boolean(),
     // Optional on the wire for compatibility with older persisted payloads; absence means unpinned.
     pinned: z.boolean().optional(),
     // An absent timestamp keeps the Project on active surfaces. Archive is reversible and does not
     // affect the Project's research activity ordering.
     archivedAt: z.number().finite().optional(),
+    // Missing only in older snapshots; current database reads always include this generation.
+    archiveRevision: z.number().int().nonnegative().optional(),
     createdAt: z.number().finite(),
     updatedAt: z.number().finite()
   })
@@ -45,6 +49,7 @@ export const updateProjectRequestSchema = z
     description: z.string().max(PROJECT_DESCRIPTION_MAX_LENGTH).optional(),
     expectedUpdatedAt: z.number().int().positive(),
     agentContext: z.string().max(16000).optional(),
+    sessionDefaults: projectSessionDefaultsSchema.optional(),
     pinned: z.boolean().optional()
   })
   .strict()
@@ -72,7 +77,7 @@ export const updateProjectArchiveRequestSchema = z
     archived: z.boolean(),
     // The last authoritative archive value prevents a stale renderer from restoring or archiving a
     // Project after another window has already changed it.
-    expectedArchivedAt: z.number().finite().nullable()
+    expectedArchiveRevision: z.number().int().nonnegative()
   })
   .strict()
 

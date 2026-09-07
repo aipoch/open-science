@@ -37,6 +37,52 @@ describe('Connector configuration templates', () => {
     })
   })
 
+  it.each([
+    ['no arguments', []],
+    ['spaces', ['  two words  ']],
+    ['empty values', ['', '']],
+    ['repeated flags', ['--label', 'first', '--label', 'second']],
+    ['line breaks', ['first\nsecond']]
+  ])('preserves literal argv through both template formats: %s', (_case, args) => {
+    const source: ConnectorTemplateSource = {
+      id: 'literal',
+      name: 'literal',
+      displayName: 'Literal',
+      transport: 'stdio',
+      command: 'node',
+      args
+    }
+    const exported = buildConnectorTemplateExport(source)
+    expect(exported.preview.ready).toBe(true)
+    for (const contents of [exported.contents, exported.mcpClientContents]) {
+      const parsed = parseConnectorTemplate(contents!)
+      expect(parsed.ready).toBe(true)
+      expect((parsed.definition ?? parsed.definitions?.[0])?.args).toEqual(args)
+    }
+  })
+
+  it.each([
+    ['not-an-array', 'connector-template.type'],
+    [[42], 'connector-template.type'],
+    [Array.from({ length: 129 }, () => 'value'), 'connector-template.too-many'],
+    [[' '.repeat(2_049)], 'connector-template.too-long'],
+    [['  --api-key=secret  '], 'connector-template.argument-secret']
+  ])('retains argv trust-boundary validation for %j', (args, code) => {
+    const parsed = parseConnectorTemplate(
+      JSON.stringify({
+        schema_version: 1,
+        kind: 'open-science.connector',
+        name: 'invalid-args',
+        display_name: 'Invalid args',
+        transport: 'stdio',
+        command: 'node',
+        args
+      })
+    )
+    expect(parsed.ready).toBe(false)
+    expect(parsed.diagnostics).toContainEqual(expect.objectContaining({ code }))
+  })
+
   it('imports multiple MCP client servers without importing credential values', () => {
     const preview = parseConnectorTemplate(
       JSON.stringify({

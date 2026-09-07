@@ -50,7 +50,7 @@ const buildDocument = (): NotebookRunDocument => ({
         {
           path: `${ROOT}/notebooks/default-project/session-1/data/processed.csv`,
           relativePath: 'data/processed.csv',
-          kind: 'processed-data',
+          kind: 'other',
           size: 123,
           mtimeMs: 200,
           createdByRunId: 'run-1'

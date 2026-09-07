@@ -23,6 +23,7 @@ import {
   resolveProviderReasoningEffortProfile
 } from '../../shared/provider-reasoning-effort'
 import type { ReasoningEffortProfile } from '../../shared/reasoning-effort'
+import { buildConfiguredModelUnavailableMessage } from '../../shared/run-error-classification'
 import type { AgentFrameworkId } from '../agent-framework'
 import { isOfficialOpenAiResponsesBase } from '../agent-framework/codex'
 import { hardenKeyMask, tryDecryptKey } from './crypto'
@@ -107,6 +108,7 @@ class ProviderRuntimeProjectionOwner {
       hasKey,
       needsKey,
       lastValidatedAt: provider.lastValidatedAt,
+      lastValidatedTarget: provider.lastValidatedTarget,
       lastValidationFailure: provider.lastValidationFailure,
       ...(provider.expiresAt !== undefined ? { expiresAt: provider.expiresAt } : {})
     }
@@ -125,6 +127,16 @@ class ProviderRuntimeProjectionOwner {
     framework: { id: AgentFrameworkId; supportedApiTypes: readonly ChatApiEndpoint[] }
   ): ProviderRuntimeTarget {
     const availableModels = this.availableModels(storedProvider)
+    if (
+      selection.kind === 'configured' &&
+      selection.requestedModel &&
+      availableModels.length > 0 &&
+      !availableModels.includes(selection.requestedModel)
+    ) {
+      throw new Error(
+        buildConfiguredModelUnavailableMessage(selection.requestedModel, storedProvider.name)
+      )
+    }
     if (
       selection.kind === 'required' &&
       availableModels.length > 0 &&

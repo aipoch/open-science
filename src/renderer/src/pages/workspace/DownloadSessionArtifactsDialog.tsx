@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Archive, Download, LoaderCircle, X } from 'lucide-react'
-import { Dialog } from 'radix-ui'
+import * as Dialog from '@/components/ui/dialog'
 
 import { Button } from '@/components/ui/button'
 import {
@@ -200,7 +200,10 @@ const DownloadSessionArtifactsDialog = ({
               </div>
               {status === 'ready' ? (
                 <span className="shrink-0 text-xs tabular-nums text-muted-foreground">
-                  {selectedArtifacts.length} of {artifacts.length} selected
+                  {t('{{selected}} of {{total}} selected', {
+                    selected: selectedArtifacts.length,
+                    total: artifacts.length
+                  })}
                 </span>
               ) : null}
             </div>

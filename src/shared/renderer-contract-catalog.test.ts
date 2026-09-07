@@ -253,7 +253,7 @@ describe('renderer contract catalog', () => {
     const compute = RENDERER_CONTRACT_CATALOG.filter(({ publicPath }) =>
       publicPath.startsWith('compute.')
     )
-    expect(compute).toHaveLength(37)
+    expect(compute).toHaveLength(38)
     expect(
       compute
         .filter(({ surfaceInstallation }) => surfaceInstallation.remoteWeb === 'rejecting-stub')
@@ -320,6 +320,28 @@ describe('renderer contract catalog', () => {
       activate: 'on-call',
       deactivateChannel: 'shortcut:window-find-unready',
       deactivate: 'on-dispose'
+    })
+  })
+
+  it('keeps preview frame context-menu requests on the Electron surface only', () => {
+    expect(
+      RENDERER_CONTRACT_CATALOG.find(
+        ({ publicPath }) => publicPath === 'previewContextMenu.onRequested'
+      )
+    ).toMatchObject({
+      kind: 'event',
+      channel: 'preview-context-menu:requested',
+      surfaceInstallation: {
+        electron: 'preload',
+        localWeb: 'unavailable',
+        remoteWeb: 'unavailable'
+      },
+      dispatchPolicy: {
+        electron: 'electron-ipc-subscription',
+        localWeb: 'none',
+        remoteWeb: 'none'
+      },
+      mapProjection: 'none'
     })
   })
 
@@ -399,6 +421,21 @@ describe('renderer contract catalog', () => {
 
   it('marks the runtime-validated command slice', () => {
     expect(paths(({ applicationCommand }) => applicationCommand === 'runtime-validated')).toEqual([
+      'acp.discardUnavailablePlan',
+      'acp.respondPlan',
+      'acp.respondToElicitation',
+      'acp.respondToPermission',
+      'literature.citationStyles',
+      'literature.completeMetadata',
+      'literature.formatDocument',
+      'literature.formatReferences',
+      'literature.fullText',
+      'literature.get',
+      'literature.importPdf',
+      'literature.importRecords',
+      'literature.jobs',
+      'literature.search',
+      'literature.transact',
       'memory.clearAll',
       'memory.createCategory',
       'memory.createEntry',
@@ -422,6 +459,7 @@ describe('renderer contract catalog', () => {
       'sessions.linkPdfContext',
       'sessions.setDelegationPolicy',
       'sessions.unlinkPdfContext',
+      'sessions.updateArchive',
       'tags.create',
       'tags.delete',
       'tags.reorder',
@@ -431,6 +469,21 @@ describe('renderer contract catalog', () => {
       'uploads.finalizeSession'
     ])
     expect(ELECTRON_APPLICATION_COMMAND_CHANNELS).toEqual([
+      'acp:discard-unavailable-plan',
+      'acp:respond-elicitation',
+      'acp:respond-permission',
+      'acp:respond-plan',
+      'literature:citation-styles',
+      'literature:complete-metadata',
+      'literature:format-document',
+      'literature:format-references',
+      'literature:full-text',
+      'literature:get',
+      'literature:import-pdf',
+      'literature:import-records',
+      'literature:jobs',
+      'literature:search',
+      'literature:transact',
       'memory:clear-all',
       'memory:create-category',
       'memory:create-entry',
@@ -454,6 +507,7 @@ describe('renderer contract catalog', () => {
       'sessions:link-pdf-context',
       'sessions:set-delegation-policy',
       'sessions:unlink-pdf-context',
+      'sessions:update-archive',
       'tags:create',
       'tags:delete',
       'tags:reorder',

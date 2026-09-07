@@ -64,7 +64,7 @@ const createProjectFilesHandlers = (
   },
   searchArtifacts: async (request) => {
     await recoveryBackend.waitForProjectOperations([
-      request.primaryProjectId,
+      ...request.primaryProjectIds,
       ...request.otherProjectIds
     ])
     return repository.searchArtifacts(request)

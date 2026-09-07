@@ -113,7 +113,7 @@ const uploadedAttachmentSchema = z
   .object({
     id: z.string(),
     versionId: z.string().optional(),
-    versionNumber: z.number().finite().optional(),
+    versionNumber: z.number().int().positive().optional(),
     sessionId: z.string(),
     name: z.string(),
     originalName: z.string(),
@@ -267,6 +267,8 @@ export const uploadApplicationCommandContracts = Object.freeze({
     validationCodec(finalizeUploadAttachmentsSchema)
   )
 })
+
+export { uploadedAttachmentSchema }
 
 // Chooses the user-facing name while tolerating older records that only have the safe filename.
 export const getUploadedAttachmentName = (

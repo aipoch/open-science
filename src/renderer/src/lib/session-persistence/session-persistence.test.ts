@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { SessionPersistenceStateOwner } from '../../../../main/session-persistence/state-owner'
 import { ARTIFACT_FINALIZATION_INVALID_PROOF } from '../../../../shared/artifacts'
 import {
   activateConversationBranch,
@@ -15,9 +16,11 @@ import {
   type PersistedChatSession,
   type SessionSummary
 } from '../../../../shared/session-persistence'
+import type { ActivePlanProjection } from '../../../../shared/session-plan/contract'
 import { toRuntimeUploadedAttachment } from '../../../../shared/uploads'
 import {
   createInitialSessionState,
+  getExternallyHydratedSessionAuthority,
   isExternallyHydratedSession,
   toPersistedSession,
   useSessionStore
@@ -48,6 +51,41 @@ const createPersistedSession = (
   createdAt: 1710000000000,
   updatedAt: 1710000000000,
   ...overrides
+})
+
+const createHistoricalPlan = (
+  artifactVersionId: string,
+  revision: number
+): ActivePlanProjection => ({
+  artifactId: `artifact-${artifactVersionId}`,
+  artifactVersionId,
+  artifactChecksum: 'b'.repeat(64),
+  originatingPromptMessageId: `prompt-${artifactVersionId}`,
+  revision,
+  approval: 'approved',
+  lifecycle: 'completed',
+  document: {
+    schema_version: 1,
+    task_summary: `Plan ${artifactVersionId}`,
+    phases: [
+      {
+        name: 'Execution',
+        delegations: [
+          {
+            name: 'Primary agent',
+            steps: [{ title: `Step ${artifactVersionId}`, description: 'Complete the work.' }]
+          }
+        ]
+      }
+    ],
+    desired_outputs: [],
+    feasibility: { confidence: 'high', rationale: 'Inputs are available.' }
+  },
+  stepStatuses: {
+    [`Step ${artifactVersionId}`]: { status: 'completed', updatedAt: revision }
+  },
+  stepStates: { [`Step ${artifactVersionId}`]: { status: 'completed' } },
+  counts: { phases: 1, delegations: 1, steps: 1, completed: 1, inProgress: 0 }
 })
 
 const createLoadResult = (
@@ -97,6 +135,25 @@ describe('deriveSessionCatalogRecovery', () => {
         { projectId: 'project-a', fileName: 'session-1.json' },
         { projectId: 'project-b', fileName: 'session-2.json' }
       ]
+    })
+  })
+
+  it('preserves oversized Session files as distinct recovery authority', () => {
+    expect(
+      deriveSessionCatalogRecovery({
+        isComplete: false,
+        warnings: [
+          {
+            kind: 'too-large',
+            projectId: 'project-a',
+            fileName: 'session-1.json',
+            recovered: false
+          }
+        ]
+      })
+    ).toEqual({
+      kind: 'oversized-authority',
+      affectedFiles: [{ projectId: 'project-a', fileName: 'session-1.json' }]
     })
   })
 })
@@ -941,6 +998,145 @@ describe('renderer session persistence bridge', () => {
     expect(observedSelections).toEqual([undefined])
   })
 
+  it('keeps a newer durable pin through lazy hydration and an unrelated title save', async () => {
+    const authority = createPersistedSession({
+      title: 'Remote title',
+      pinned: true,
+      archivedAt: 3,
+      revision: 2,
+      createdAt: 1,
+      updatedAt: 3
+    })
+    const write = vi.fn(async (candidate: PersistedChatSession, expectedRevision?: number) => ({
+      ...candidate,
+      revision: (expectedRevision ?? 0) + 1
+    }))
+    const main = new SessionPersistenceStateOwner({
+      repository: {
+        loadSessionWithDiagnostics: async () => ({ status: 'found', session: authority }),
+        saveSession: write
+      },
+      fileIndex: { syncSession: async () => [] },
+      assertMutable: () => undefined,
+      notifyFilesChanged: () => undefined,
+      notifyRuntimeContextSessionUpdated: () => undefined,
+      log: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() }
+    })
+    const saveSession = vi.fn<SessionPersistenceApi['saveSession']>((session, options) =>
+      main.saveSession(session, options)
+    )
+    useSessionStore.getState().hydrateSessionSummaries(
+      [
+        {
+          number: 1,
+          id: authority.id,
+          projectId: authority.projectId,
+          title: 'Old summary title',
+          status: 'idle',
+          presentedStatus: 'idle',
+          pinned: false,
+          revision: 1,
+          activeMessageCount: 0,
+          artifactCount: 0,
+          filesRevision: 0,
+          createdAt: authority.createdAt,
+          updatedAt: 2,
+          needsStartupRecovery: false
+        }
+      ],
+      undefined
+    )
+    const save = createStoreSaver(createApi({ saveSession }), useSessionStore.getState())
+
+    // This is the full-snapshot boundary used by another window's Session update event.
+    useSessionStore.getState().upsertPersistedSession(authority)
+    await save(useSessionStore.getState())
+    expect(saveSession).not.toHaveBeenCalled()
+    useSessionStore.getState().renameSession(authority.id, 'Local title edit')
+    await save(useSessionStore.getState())
+
+    expect(saveSession).toHaveBeenCalledOnce()
+    expect(saveSession.mock.calls[0][0].revision).toBe(2)
+    expect(write).toHaveBeenCalledOnce()
+    expect(write.mock.calls[0][1]).toBe(2)
+    const durable = await saveSession.mock.results[0].value
+    expect(durable.archivedAt).toBe(3)
+    expect(durable.title).toBe('Local title edit')
+    expect(durable.pinned, 'An unrelated title save must not undo the newer durable pin.').toBe(
+      true
+    )
+  })
+
+  it('does not invalidate a fresh archive action by saving the conflict refresh back', async () => {
+    let durable = createPersistedSession({ revision: 1 })
+    useSessionStore.getState().upsertPersistedSession(durable)
+    const api = createApi({
+      loadOne: vi.fn(async () => durable),
+      saveSession: vi.fn(async (session) => {
+        durable = { ...session, revision: (durable.revision ?? 0) + 1 }
+        return durable
+      })
+    })
+    const updateArchive = vi.fn(async (request: { expectedRevision: number }) => {
+      if (request.expectedRevision !== durable.revision) {
+        throw new SessionRevisionConflictError(request.expectedRevision, durable.revision ?? 0)
+      }
+      durable = { ...durable, revision: durable.revision + 1, archivedAt: 10 }
+      return durable
+    })
+    vi.stubGlobal('window', { api: { sessions: { ...api, updateArchive } } })
+    const save = createStoreSaver(api, useSessionStore.getState())
+    const request = { projectId: durable.projectId, sessionId: durable.id, archived: true }
+    try {
+      // Another client's edit makes the first menu snapshot stale.
+      durable = { ...durable, revision: 2 }
+      await expect(
+        useSessionStore.getState().updateSessionArchive({ ...request, expectedRevision: 1 })
+      ).rejects.toThrow('Session revision conflict')
+
+      // A newly opened menu captures the refreshed revision. Let the persistence subscriber
+      // drain while it is open, as happens on a slower desktop before the user clicks Archive.
+      const fresh = useSessionStore.getState().sessions[0]
+      await save(useSessionStore.getState())
+      await expect(
+        useSessionStore.getState().updateSessionArchive({
+          ...request,
+          expectedRevision: fresh.revision ?? 0
+        })
+      ).resolves.toMatchObject({ archivedAt: 10 })
+      expect(api.saveSession).not.toHaveBeenCalled()
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  })
+
+  it('still saves local content when archive authority refreshes before the saver drains', async () => {
+    const durable = createPersistedSession({ revision: 1 })
+    useSessionStore.getState().upsertPersistedSession(durable)
+    const api = createApi()
+    const save = createStoreSaver(api, useSessionStore.getState())
+    const source = useSessionStore.getState().sessions[0]
+    useSessionStore.getState().appendUserMessage({
+      sessionId: durable.id,
+      content: 'Keep this unsaved message',
+      cwd: durable.cwd,
+      projectId: durable.projectId
+    })
+    useSessionStore.getState().applyDurableSessionProjection({
+      source,
+      session: { ...durable, revision: 2 },
+      mode: 'archive-authority'
+    })
+    await save(useSessionStore.getState())
+
+    expect(api.saveSession).toHaveBeenCalledOnce()
+    expect(api.saveSession).toHaveBeenCalledWith(
+      expect.objectContaining({
+        messages: [expect.objectContaining({ content: 'Keep this unsaved message' })]
+      })
+    )
+  })
+
   it('does not echo an externally hydrated session back to persistence', async () => {
     const api = createApi()
     const save = createStoreSaver(api)
@@ -949,6 +1145,187 @@ describe('renderer session persistence bridge', () => {
     await save(useSessionStore.getState())
 
     expect(api.saveSession).not.toHaveBeenCalled()
+  })
+
+  it.each([undefined, 100])(
+    'does not echo archive authority (archivedAt=%s) back to persistence',
+    async (archivedAt) => {
+      const base = createPersistedSession({ revision: 42 })
+      useSessionStore.getState().hydrateSessions([base])
+      let durable = { ...base, revision: 43, archivedAt }
+      const api = createApi({
+        loadOne: vi.fn(async () => durable),
+        saveSession: vi.fn(async (submitted: PersistedChatSession) => {
+          if (submitted.revision !== durable.revision) {
+            throw new SessionRevisionConflictError(submitted.revision ?? 0, durable.revision)
+          }
+          durable = {
+            ...submitted,
+            revision: durable.revision + 1,
+            archivedAt: submitted.archivedAt
+          }
+          return durable
+        })
+      })
+      const save = createStoreSaver(api, useSessionStore.getState())
+      const source = useSessionStore.getState().sessions[0]
+
+      useSessionStore.getState().applyDurableSessionProjection({
+        source,
+        session: durable,
+        mode: 'archive-authority'
+      })
+      await save(useSessionStore.getState())
+
+      expect(
+        durable.revision,
+        'Refreshing archive authority must not create another revision'
+      ).toBe(43)
+      expect(api.saveSession).not.toHaveBeenCalled()
+      expect(useSessionStore.getState().sessions[0].revision).toBe(43)
+    }
+  )
+
+  it('still saves a local edit after refreshing archive authority', async () => {
+    const base = createPersistedSession({ revision: 42 })
+    useSessionStore.getState().hydrateSessions([base])
+    const api = createApi({ loadOne: vi.fn(async () => ({ ...base, revision: 43 })) })
+    const save = createStoreSaver(api, useSessionStore.getState())
+    useSessionStore.getState().renameSession(base.id, 'Local edit')
+    const source = useSessionStore.getState().sessions[0]
+    useSessionStore.getState().applyDurableSessionProjection({
+      source,
+      session: { ...base, revision: 43 },
+      mode: 'archive-authority'
+    })
+
+    expect(isExternallyHydratedSession(useSessionStore.getState().sessions[0])).toBe(false)
+    await save(useSessionStore.getState())
+    expect(api.saveSession).toHaveBeenCalledWith(expect.objectContaining({ title: 'Local edit' }), {
+      conflictRebaseFields: ['title']
+    })
+  })
+
+  it.each([false, true])(
+    'persists a pin-only edit after fallback hydration (refresh=%s)',
+    async (refresh) => {
+      const base = createPersistedSession({ revision: 42, pinned: false })
+      useSessionStore.getState().hydrateSessions([base])
+      const api = createApi()
+      const save = createStoreSaver(api, useSessionStore.getState())
+      const hydrated = useSessionStore.getState().sessions[0]
+      expect(isExternallyHydratedSession(hydrated)).toBe(true)
+
+      useSessionStore.getState().togglePinned(base.id)
+      if (refresh) {
+        useSessionStore.getState().applyDurableSessionProjection({
+          source: useSessionStore.getState().sessions[0],
+          session: { ...base, revision: 43 },
+          mode: 'archive-authority'
+        })
+      }
+      expect(useSessionStore.getState().sessions[0]).not.toBe(hydrated)
+      expect(isExternallyHydratedSession(useSessionStore.getState().sessions[0])).toBe(false)
+      await save(useSessionStore.getState())
+
+      expect(api.saveSession).toHaveBeenCalledOnce()
+      expect(api.saveSession).toHaveBeenCalledWith(expect.objectContaining({ pinned: true }), {
+        conflictRebaseFields: ['pinned']
+      })
+      const durable = await vi.mocked(api.saveSession).mock.results[0].value
+      useSessionStore.getState().hydrateSessions([durable])
+      expect(useSessionStore.getState().sessions[0].pinned).toBe(true)
+    }
+  )
+
+  it('does not echo archive refresh for the full session loaded with startup summaries', async () => {
+    const base = createPersistedSession({ revision: 42 })
+    useSessionStore.getState().hydrateSessionSummaries(
+      [
+        {
+          id: base.id,
+          projectId: base.projectId!,
+          title: base.title,
+          number: 1,
+          status: 'idle',
+          presentedStatus: 'idle',
+          revision: 42,
+          pinned: false,
+          activeMessageCount: 0,
+          artifactCount: 0,
+          filesRevision: 0,
+          createdAt: base.createdAt,
+          updatedAt: base.updatedAt,
+          needsStartupRecovery: false
+        }
+      ],
+      base
+    )
+    const api = createApi()
+    const save = createStoreSaver(api, useSessionStore.getState())
+    useSessionStore.getState().applyDurableSessionProjection({
+      source: useSessionStore.getState().sessions[0],
+      session: { ...base, revision: 43 },
+      mode: 'archive-authority'
+    })
+    await save(useSessionStore.getState())
+    expect(api.saveSession).not.toHaveBeenCalled()
+  })
+
+  it('still saves an unsaved title on an externally hydrated archive projection', async () => {
+    const base = createPersistedSession({ revision: 42 })
+    useSessionStore.getState().hydrateSessions([base])
+    const api = createApi()
+    const save = createStoreSaver(api, useSessionStore.getState())
+    useSessionStore.getState().renameSession(base.id, 'Local edit')
+    useSessionStore.getState().upsertPersistedSession({ ...base, revision: 43 })
+    const source = useSessionStore.getState().sessions[0]
+    expect(isExternallyHydratedSession(source)).toBe(true)
+    useSessionStore.getState().applyDurableSessionProjection({
+      source,
+      session: { ...base, revision: 44 },
+      mode: 'archive-authority'
+    })
+    await save(useSessionStore.getState())
+    expect(api.saveSession).toHaveBeenCalledWith(
+      expect.objectContaining({ title: 'Local edit', revision: 44 }),
+      { conflictRebaseFields: ['title'] }
+    )
+  })
+
+  it('retains newer authority while persisting a context reset from a delayed archive receipt', async () => {
+    const base = createPersistedSession({ revision: 43 })
+    useSessionStore.getState().hydrateSessions([base])
+    const api = createApi()
+    const save = createStoreSaver(api, useSessionStore.getState())
+    const source = useSessionStore.getState().sessions[0]
+    useSessionStore.getState().applyDurableSessionProjection({
+      source,
+      session: { ...base, revision: 42, archivedAt: 100, branchContextResetRequired: true },
+      mode: 'archive-authority'
+    })
+    const projected = useSessionStore.getState().sessions[0]
+    expect(projected.archivedAt).toBeUndefined()
+    expect(getExternallyHydratedSessionAuthority(projected)?.revision).toBe(43)
+    await save(useSessionStore.getState())
+    expect(api.saveSession).toHaveBeenCalledWith(
+      expect.objectContaining({ revision: 43, branchContextResetRequired: true })
+    )
+  })
+
+  it('honors a forced save after archive authority refresh', async () => {
+    const base = createPersistedSession({ revision: 42 })
+    useSessionStore.getState().hydrateSessions([base])
+    const api = createApi()
+    const save = createStoreSaver(api, useSessionStore.getState())
+    const source = useSessionStore.getState().sessions[0]
+    useSessionStore.getState().applyDurableSessionProjection({
+      source,
+      session: { ...base, revision: 43 },
+      mode: 'archive-authority'
+    })
+    await save(useSessionStore.getState(), { forceTargets: new Set(['session:session-1']) })
+    expect(api.saveSession).toHaveBeenCalledWith(expect.objectContaining({ revision: 43 }))
   })
 
   it('saves only the session whose reference changed', async () => {
@@ -969,6 +1346,60 @@ describe('renderer session persistence bridge', () => {
       expect.objectContaining({ id: 'session-1', projectId: 'project-a' })
     )
   })
+
+  it.each([false, true])(
+    'persists identity-stable streaming text after hydration=%s',
+    async (hydrate) => {
+      useSessionStore.getState().appendUserMessage({
+        sessionId: 'session-1',
+        content: 'Stream a response',
+        cwd: '/workspace/project',
+        projectId: 'project-a'
+      })
+      useSessionStore.getState().appendAgentMessageChunk({
+        sessionId: 'session-1',
+        streamId: 'assistant-1',
+        eventId: 'event-1',
+        content: 'Hello'
+      })
+      if (hydrate) {
+        useSessionStore
+          .getState()
+          .hydrateSessions([toPersistedSession(useSessionStore.getState().sessions[0])])
+      }
+      const api = createApi()
+      const save = createStoreSaver(api, useSessionStore.getState())
+
+      // Pure text-growth ticks hold the new text in the streaming slice only; the Session object,
+      // its messages array, and the saver's identity diff all stay unchanged.
+      useSessionStore.getState().appendAgentMessageChunk({
+        sessionId: 'session-1',
+        streamId: 'assistant-1',
+        eventId: 'event-2',
+        content: ' world'
+      })
+      const state = useSessionStore.getState()
+      expect(state.sessions[0].messages.at(-1)?.content).toBe('Hello')
+      await save(state)
+
+      expect(api.saveSession).toHaveBeenCalledTimes(1)
+      const persisted = vi.mocked(api.saveSession).mock.calls[0][0]
+      expect(persisted.messages.find((message) => message.role === 'agent')).toMatchObject({
+        content: 'Hello world',
+        eventIds: ['event-1', 'event-2']
+      })
+
+      // A crash after the turn ends must still find the complete terminal Message on disk.
+      useSessionStore.getState().finishRun('session-1')
+      await save(useSessionStore.getState())
+      const terminal = vi.mocked(api.saveSession).mock.calls.at(-1)![0]
+      expect(terminal.messages.find((message) => message.role === 'agent')).toMatchObject({
+        content: 'Hello world',
+        status: 'complete',
+        eventIds: ['event-1', 'event-2']
+      })
+    }
+  )
 
   it('reports only changed safe fields for stale-graph conflict rebasing', async () => {
     const persisted = materializeSessionConversationGraph(
@@ -1125,6 +1556,47 @@ describe('renderer session persistence bridge', () => {
     expect(useSessionStore.getState().sessions[0].conversationGraph?.messages).toEqual([
       expect.objectContaining(remoteMessage)
     ])
+  })
+
+  it('keeps latest Main-owned Plan history when rebasing a revision conflict', async () => {
+    const baseHistory = createHistoricalPlan('plan-a', 1)
+    const localHistory = createHistoricalPlan('renderer-plan', 2)
+    const mainHistory = createHistoricalPlan('plan-a', 3)
+    const base = createPersistedSession({ revision: 1, planHistoryProjections: [baseHistory] })
+    const latest = createPersistedSession({
+      ...base,
+      revision: 2,
+      planHistoryProjections: [mainHistory],
+      updatedAt: base.updatedAt + 1
+    })
+    const saveSession = vi
+      .fn<SessionPersistenceApi['saveSession']>()
+      .mockRejectedValueOnce(new SessionRevisionConflictError(1, 2))
+      .mockImplementationOnce(async (submitted) => ({ ...submitted, revision: 3 }))
+    const api = createApi({
+      loadOne: vi.fn().mockResolvedValue(latest),
+      saveSession
+    })
+    useSessionStore.getState().hydrateSessions([base])
+    const save = createStoreSaver(api, useSessionStore.getState())
+    useSessionStore.setState((state) => ({
+      sessions: state.sessions.map((session) => ({
+        ...session,
+        title: 'Local edit',
+        planHistoryProjections: [localHistory]
+      }))
+    }))
+
+    await expect(
+      save(useSessionStore.getState(), { forceTargets: new Set(['session:session-1']) })
+    ).resolves.toBeUndefined()
+
+    expect(saveSession).toHaveBeenCalledTimes(2)
+    expect(saveSession.mock.calls[1][0]).toMatchObject({
+      revision: 2,
+      title: 'Local edit',
+      planHistoryProjections: [mainHistory]
+    })
   })
 
   it('does not persist unbound pending sessions', async () => {
@@ -1619,6 +2091,54 @@ describe('renderer session persistence bridge', () => {
     } finally {
       await vi.runAllTimersAsync()
       await flushing
+      vi.useRealTimers()
+    }
+  })
+
+  it('relaxes the flush cadence while streaming and flushes the terminal commit promptly', async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(0)
+    try {
+      const api = createApi()
+      const save = createStoreSaver(api)
+      useSessionStore.getState().appendUserMessage({
+        sessionId: 'session-1',
+        content: 'Hi',
+        cwd: '/workspace/project',
+        projectId: 'project-a'
+      })
+      await save(useSessionStore.getState())
+      expect(api.saveSession).toHaveBeenCalledTimes(1)
+
+      const baseState = useSessionStore.getState()
+      const streamingState = (content: string, updatedAt: number): Parameters<typeof save>[0] => ({
+        sessions: baseState.sessions,
+        selectedSessionId: baseState.selectedSessionId,
+        streamingMessages: {
+          'message-1': { sessionId: 'session-1', content, eventIds: [], updatedAt }
+        }
+      })
+
+      void save(streamingState('chunk-1', 1))
+      await vi.advanceTimersByTimeAsync(300)
+      void save(streamingState('chunk-2', 2))
+      await vi.advanceTimersByTimeAsync(300)
+
+      // The relaxed streaming cadence (2s) has not elapsed; the normal 500ms cadence would have
+      // flushed by now.
+      expect(api.saveSession).toHaveBeenCalledTimes(1)
+
+      const terminalSave = save({
+        sessions: baseState.sessions,
+        selectedSessionId: baseState.selectedSessionId,
+        streamingMessages: {}
+      })
+      await vi.advanceTimersByTimeAsync(0)
+      await terminalSave
+
+      expect(api.saveSession).toHaveBeenCalledTimes(2)
+    } finally {
+      await vi.runAllTimersAsync()
       vi.useRealTimers()
     }
   })

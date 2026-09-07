@@ -85,8 +85,8 @@ class ManagedFileIndexRepository {
     return this.mutationOwner.reconcileProjectSessions(projectId, sessions)
   }
 
-  markReconciliationIncomplete(): void {
-    this.mutationOwner.markReconciliationIncomplete()
+  markReconciliationIncomplete(projectId?: string): void {
+    this.mutationOwner.markReconciliationIncomplete(projectId)
   }
 
   async getOverview(
@@ -135,6 +135,7 @@ const createManagedFileIndexRepository = (
   )
 
 export { createManagedFileIndexRepository, ManagedFileIndexRepository }
+export { ProjectFilesReconciliationError } from './mutation-owner'
 export type {
   ManagedFileSoftDeleteToken,
   ProjectFilesClient,

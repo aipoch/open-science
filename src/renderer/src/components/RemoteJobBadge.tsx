@@ -77,7 +77,7 @@ export const RemoteJobBadge = ({
               })}
             >
               <Zap size={11} />
-              <span>
+              <span className="tabular-nums">
                 {t('{{count}} running · {{elapsed}}', {
                   count: activeJobs.length,
                   elapsed: elapsedStr
@@ -95,7 +95,7 @@ export const RemoteJobBadge = ({
                   <Zap size={10} style={{ color: 'var(--session-waiting)', flexShrink: 0 }} />
                   <span className="text-[11px] opacity-70 shrink-0">{job.display_name}</span>
                   <span className="text-[11px] flex-1 truncate">{job.intent}</span>
-                  <span className="text-[11px] opacity-60 shrink-0 ml-1">
+                  <span className="text-[11px] opacity-60 shrink-0 ml-1 min-w-[6ch] text-right tabular-nums">
                     {formatDuration(jobElapsedMs(job, now))}
                   </span>
                 </div>

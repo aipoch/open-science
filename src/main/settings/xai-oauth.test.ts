@@ -19,7 +19,7 @@ describe('XaiOAuthController', () => {
       load: vi.fn(async () => stored),
       save: vi.fn(async (_expected, refreshToken, accountEmail) => {
         stored = { keyRef: 'encrypted', refreshToken, accountEmail }
-        return true
+        return stored.keyRef!
       }),
       clear: vi.fn(async () => {
         stored = {}
@@ -68,7 +68,13 @@ describe('XaiOAuthController', () => {
     await expect(controller.waitForLogin()).resolves.toEqual({
       accountEmail: 'researcher@example.com'
     })
-    expect(store.save).toHaveBeenCalledWith(undefined, 'refresh', 'researcher@example.com', true)
+    expect(store.save).toHaveBeenCalledWith(
+      undefined,
+      'refresh',
+      'researcher@example.com',
+      true,
+      expect.any(Function)
+    )
   })
 
   it('coalesces refreshes and saves a rotated refresh token', async () => {
@@ -91,7 +97,13 @@ describe('XaiOAuthController', () => {
       Promise.all([controller.getAccessToken(), controller.getAccessToken()])
     ).resolves.toEqual(['new-access', 'new-access'])
     expect(fetch).toHaveBeenCalledTimes(2)
-    expect(store.save).toHaveBeenCalledWith('old-ref', 'new-refresh')
+    expect(store.save).toHaveBeenCalledWith(
+      'old-ref',
+      'new-refresh',
+      undefined,
+      false,
+      expect.any(Function)
+    )
   })
 
   it('does not write a second force-refresh with a stale expected key ref after the first refresh settles', async () => {
@@ -99,7 +111,7 @@ describe('XaiOAuthController', () => {
     store.save = vi.fn(async (expectedKeyRef, refreshToken, accountEmail) => {
       if (stored.keyRef !== expectedKeyRef) return false
       stored = { keyRef: `ref-after-${refreshToken}`, refreshToken, accountEmail }
-      return true
+      return stored.keyRef!
     })
     const fetch = vi
       .fn()
@@ -128,8 +140,22 @@ describe('XaiOAuthController', () => {
     await expect(controller.getAccessToken(true)).resolves.toBe('access-2')
 
     expect(fetch).toHaveBeenCalledTimes(3)
-    expect(store.save).toHaveBeenNthCalledWith(1, 'ref-0', 'refresh-2')
-    expect(store.save).toHaveBeenNthCalledWith(2, 'ref-after-refresh-2', 'refresh-3')
+    expect(store.save).toHaveBeenNthCalledWith(
+      1,
+      'ref-0',
+      'refresh-2',
+      undefined,
+      false,
+      expect.any(Function)
+    )
+    expect(store.save).toHaveBeenNthCalledWith(
+      2,
+      'ref-after-refresh-2',
+      'refresh-3',
+      undefined,
+      false,
+      expect.any(Function)
+    )
     expect(store.save).not.toHaveBeenCalledWith('ref-0', 'refresh-3')
     expect(stored).toEqual({
       keyRef: 'ref-after-refresh-3',

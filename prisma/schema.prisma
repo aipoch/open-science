@@ -24,9 +24,11 @@ model Project {
   name             String
   description      String               @default("")
   agentContext     String               @default("")
+  sessionDefaults  String               @default("{}")
   isExample        Boolean              @default(false)
   pinned           Boolean              @default(false)
   archivedAt       DateTime?
+  archiveRevision  Int                  @default(0)
   deletedAt        DateTime?
   createdAt        DateTime             @default(now())
   updatedAt        DateTime             @updatedAt
@@ -35,6 +37,7 @@ model Project {
   visionEvidence   VisionEvidence[]
   sessions         Session[]
   memoryEntries    MemoryEntry[]
+  literatureItems  ProjectLiterature[]
 }
 
 // Monotonic allocator for the app-wide human-facing Session number. The row is never deleted when
@@ -197,6 +200,7 @@ model PermissionGrant {
   scopeKind      String
   projectId      String?
   sessionId      String?
+  approvalSummary String?
   fingerprint    String    @unique
   revision       Int       @default(1)
   createdAt      DateTime?
@@ -408,6 +412,250 @@ model UploadFile {
   @@index([projectId, sessionId])
 }
 
+// Immutable byte authority shared by uploads, generated Artifacts, and Literature attachments.
+// A blob may be referenced by multiple domain records; ownership and user-facing metadata remain
+// in those domain models rather than being folded into storage.
+model ContentBlob {
+  id                           String                        @id
+  checksum                     String
+  storageKey                   String                        @unique
+  sizeBytes                    BigInt
+  contentType                  String?
+  state                        String                        @default("staging")
+  createdAt                    DateTime                      @default(now())
+  verifiedAt                   DateTime?
+  literatureAttachmentVersions LiteratureAttachmentVersion[]
+  literatureInboxPdfs           LiteratureInboxPdf[]
+
+  @@index([checksum, sizeBytes])
+  @@index([state, createdAt])
+}
+
+// Mutable bibliographic identity. Item-specific fields that do not belong in the indexed core are
+// retained as validated JSON so Zotero-compatible imports can round-trip without a wide nullable table.
+model LiteratureItem {
+  id                      String                     @id @default(cuid())
+  itemType                String
+  title                   String
+  abstract                String                     @default("")
+  issuedText              String                     @default("")
+  issuedYear              Int?
+  containerTitle          String                     @default("")
+  shortTitle              String                     @default("")
+  language                String                     @default("")
+  rights                  String                     @default("")
+  url                     String                     @default("")
+  accessedAt              DateTime?
+  citationKey             String?
+  extra                   String                     @default("")
+  rating                  Int                        @default(0)
+  personalNote            String                     @default("")
+  typeFieldsJson          String                     @default("{}")
+  metadataRevision        Int                        @default(1)
+  createdAt               DateTime                   @default(now())
+  updatedAt               DateTime                   @updatedAt
+  deletedAt               DateTime?
+  mergedIntoItemId        String?
+  mergedInto              LiteratureItem?            @relation("LiteratureItemMerge", fields: [mergedIntoItemId], references: [id], onDelete: Restrict)
+  mergedItems             LiteratureItem[]           @relation("LiteratureItemMerge")
+  creators                LiteratureItemCreator[]
+  identifiers             LiteratureIdentifier[]
+  sourceRecords           LiteratureSourceRecord[]
+  collections             LiteratureCollectionItem[]
+  projects                ProjectLiterature[]
+  attachments             LiteratureAttachment[]
+  acceptedInboxCandidates LiteratureInboxCandidate[] @relation("AcceptedLiteratureItem")
+
+  @@index([deletedAt, updatedAt])
+  @@index([mergedIntoItemId])
+  @@index([itemType, issuedYear])
+  @@index([title])
+  @@index([citationKey])
+}
+
+// One logical file attached to a bibliographic Item. Attachment identity and ordering are mutable;
+// each Version below freezes the actual bytes and integrity metadata.
+model LiteratureAttachment {
+  id        String                        @id @default(cuid())
+  itemId    String
+  kind      String                        @default("fullText")
+  title     String                        @default("")
+  sortOrder Int                           @default(0)
+  createdAt DateTime                      @default(now())
+  updatedAt DateTime                      @updatedAt
+  item      LiteratureItem                @relation(fields: [itemId], references: [id], onDelete: Cascade)
+  versions  LiteratureAttachmentVersion[]
+
+  @@index([itemId, sortOrder])
+}
+
+model LiteratureAttachmentVersion {
+  id            String               @id @default(cuid())
+  attachmentId  String
+  contentBlobId String
+  versionNumber Int
+  filename      String
+  contentType   String
+  sizeBytes     BigInt
+  checksum      String
+  pageCount     Int?
+  createdAt     DateTime             @default(now())
+  attachment    LiteratureAttachment @relation(fields: [attachmentId], references: [id], onDelete: Cascade)
+  contentBlob   ContentBlob          @relation(fields: [contentBlobId], references: [id], onDelete: Restrict)
+
+  @@unique([attachmentId, versionNumber])
+  @@unique([attachmentId, checksum])
+  @@index([contentBlobId])
+}
+
+model LiteratureCreator {
+  id             String                  @id @default(cuid())
+  nameMode       String
+  givenName      String                  @default("")
+  familyName     String                  @default("")
+  literalName    String                  @default("")
+  normalizedName String
+  createdAt      DateTime                @default(now())
+  updatedAt      DateTime                @updatedAt
+  items          LiteratureItemCreator[]
+
+  @@index([normalizedName])
+}
+
+model LiteratureItemCreator {
+  itemId      String
+  creatorId   String
+  creatorType String
+  ordinal     Int
+  item        LiteratureItem    @relation(fields: [itemId], references: [id], onDelete: Cascade)
+  creator     LiteratureCreator @relation(fields: [creatorId], references: [id], onDelete: Restrict)
+
+  @@id([itemId, ordinal])
+  @@index([creatorId])
+  @@index([itemId, creatorType])
+}
+
+model LiteratureIdentifier {
+  id              String         @id @default(cuid())
+  itemId          String
+  scheme          String
+  rawValue        String
+  normalizedValue String
+  isPrimary       Boolean        @default(false)
+  createdAt       DateTime       @default(now())
+  item            LiteratureItem @relation(fields: [itemId], references: [id], onDelete: Cascade)
+
+  @@unique([itemId, scheme, normalizedValue])
+  @@index([scheme, normalizedValue])
+  @@index([itemId, isPrimary])
+}
+
+model LiteratureInboxCandidate {
+  id               String                   @id @default(cuid())
+  dedupeKey        String                   @unique
+  state            String                   @default("pending")
+  itemType         String
+  title            String
+  abstract         String                   @default("")
+  issuedYear       Int?
+  candidateJson    String
+  metadataChecksum String
+  origin           String
+  sourceProjectId  String?
+  sourceSessionId  String?
+  acceptedItemId   String?
+  settledAt        DateTime?
+  createdAt        DateTime                 @default(now())
+  updatedAt        DateTime                 @updatedAt
+  acceptedItem     LiteratureItem?          @relation("AcceptedLiteratureItem", fields: [acceptedItemId], references: [id], onDelete: Restrict)
+  sourceRecords    LiteratureSourceRecord[]
+  pdfs             LiteratureInboxPdf[]
+
+  @@index([state, createdAt])
+  @@index([sourceProjectId, sourceSessionId])
+  @@index([acceptedItemId])
+}
+
+// Agent-acquired PDFs stay in Inbox until their reference is accepted.
+model LiteratureInboxPdf {
+  id            String @id @default(cuid())
+  candidateId   String
+  contentBlobId String
+  filename      String
+  sizeBytes     BigInt
+  checksum      String
+  pageCount     Int
+  sourceUrl     String
+  createdAt     DateTime @default(now())
+  candidate     LiteratureInboxCandidate @relation(fields: [candidateId], references: [id], onDelete: Cascade)
+  contentBlob   ContentBlob @relation(fields: [contentBlobId], references: [id], onDelete: Restrict)
+
+  @@unique([candidateId, checksum])
+  @@index([contentBlobId])
+}
+
+model LiteratureSourceRecord {
+  id               String                    @id @default(cuid())
+  itemId           String?
+  inboxCandidateId String?
+  provider         String
+  externalId       String?
+  sourceUrl        String?
+  rawMetadataJson  String
+  metadataChecksum String
+  fetchedAt        DateTime                  @default(now())
+  item             LiteratureItem?           @relation(fields: [itemId], references: [id], onDelete: Cascade)
+  inboxCandidate   LiteratureInboxCandidate? @relation(fields: [inboxCandidateId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, externalId])
+  @@index([itemId, provider])
+  @@index([inboxCandidateId, provider])
+}
+
+model LiteratureCollection {
+  id          String                     @id @default(cuid())
+  name        String
+  nameKey     String
+  description String                     @default("")
+  parentId    String?
+  sortOrder   Int                        @default(0)
+  createdAt   DateTime                   @default(now())
+  updatedAt   DateTime                   @updatedAt
+  parent      LiteratureCollection?      @relation("LiteratureCollectionHierarchy", fields: [parentId], references: [id], onDelete: SetNull)
+  children    LiteratureCollection[]     @relation("LiteratureCollectionHierarchy")
+  items       LiteratureCollectionItem[]
+
+  // Root-name uniqueness uses a partial index in sqlite-check-constraints.json.
+  @@unique([parentId, nameKey])
+  @@index([parentId, sortOrder])
+}
+
+model LiteratureCollectionItem {
+  collectionId String
+  itemId       String
+  sortOrder    Int                  @default(0)
+  addedAt      DateTime             @default(now())
+  collection   LiteratureCollection @relation(fields: [collectionId], references: [id], onDelete: Cascade)
+  item         LiteratureItem       @relation(fields: [itemId], references: [id], onDelete: Cascade)
+
+  @@id([collectionId, itemId])
+  @@index([itemId])
+  @@index([collectionId, sortOrder])
+}
+
+model ProjectLiterature {
+  projectId String
+  itemId    String
+  source    String
+  addedAt   DateTime       @default(now())
+  project   Project        @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  item      LiteratureItem @relation(fields: [itemId], references: [id], onDelete: Cascade)
+
+  @@id([projectId, itemId])
+  @@index([itemId])
+  @@index([projectId, addedAt])
+}
+
 model UploadVersion {
   id                String                 @id
   uploadFileId      String
@@ -424,6 +672,9 @@ model UploadVersion {
   contentType       String?
   sizeBytes         BigInt
   checksum          String
+  // Application-enforced reference; adding a SQLite FK would require rebuilding the historical
+  // UploadVersion dependency graph. The registry validates identity in the publishing transaction.
+  contentBlobId     String?
   createdAt         DateTime?
   registeredAt      DateTime               @default(now())
   updatedAt         DateTime               @updatedAt
@@ -437,6 +688,7 @@ model UploadVersion {
   @@unique([uploadFileId, versionNumber])
   @@unique([uploadFileId, id])
   @@index([uploadFileId, state, registeredAt])
+  @@index([contentBlobId])
 }
 
 // Canonical, reusable image analysis. Session transcripts keep only their existing upload/image
@@ -489,16 +741,16 @@ model ArtifactMessageSnapshot {
 // One immutable generated Artifact save event. Evidence/content fields become immutable once the
 // staging row is published; finalize only advances state and message ownership.
 model ArtifactVersion {
-  id                             String                   @id
+  id                             String                      @id
   artifactId                     String
   versionNumber                  Int
   filename                       String
-  originKind                     String                   @default("agent_generated")
+  originKind                     String                      @default("agent_generated")
   basedOnVersionId               String?
   storageTag                     String?
   storedFilename                 String?
   artifactRunId                  String?
-  writeOperationId               String?                  @unique
+  writeOperationId               String?                     @unique
   writeRequestChecksum           String?
   rootFrameId                    String?
   agentFrameId                   String?
@@ -510,9 +762,12 @@ model ArtifactVersion {
   producerRunIndex               Int?
   messageId                      String?
   messageSnapshotId              String?
-  state                          String                   @default("staging")
+  // Application-enforced reference; adding a SQLite FK would require rebuilding the historical
+  // ArtifactVersion dependency graph. The registry validates identity in the publishing transaction.
+  contentBlobId                  String?
+  state                          String                      @default("staging")
   managedVisibleAt               DateTime?
-  contentStorageKey              String                   @unique
+  contentStorageKey              String                      @unique
   evidenceStorageKey             String?
   contentType                    String?
   sizeBytes                      BigInt
@@ -524,15 +779,16 @@ model ArtifactVersion {
   executionSnapshotChecksum      String?
   executionSnapshotStorageKey    String?
   executionSnapshotSchemaVersion Int?
-  createdAt                      DateTime                 @default(now())
-  updatedAt                      DateTime                 @updatedAt
-  artifact                       ArtifactLineage          @relation("ArtifactLineageVersions", fields: [artifactId], references: [id], onDelete: Cascade)
-  currentForLineage              ArtifactLineage?         @relation("ArtifactLineageCurrentVersion")
-  basedOnVersion                 ArtifactVersion?         @relation("ArtifactVersionDerivations", fields: [artifactId, basedOnVersionId], references: [artifactId, id], onDelete: Restrict)
-  derivedVersions                ArtifactVersion[]        @relation("ArtifactVersionDerivations")
-  messageSnapshot                ArtifactMessageSnapshot? @relation(fields: [messageSnapshotId], references: [id], onDelete: SetNull)
-  inputs                         ArtifactVersionInput[]   @relation("ProducedArtifactInputs")
-  sourceInputs                   ArtifactVersionInput[]   @relation("ArtifactVersionSourceInputs")
+  createdAt                      DateTime                    @default(now())
+  updatedAt                      DateTime                    @updatedAt
+  artifact                       ArtifactLineage             @relation("ArtifactLineageVersions", fields: [artifactId], references: [id], onDelete: Cascade)
+  currentForLineage              ArtifactLineage?            @relation("ArtifactLineageCurrentVersion")
+  basedOnVersion                 ArtifactVersion?            @relation("ArtifactVersionDerivations", fields: [artifactId, basedOnVersionId], references: [artifactId, id], onDelete: Restrict)
+  derivedVersions                ArtifactVersion[]           @relation("ArtifactVersionDerivations")
+  messageSnapshot                ArtifactMessageSnapshot?    @relation(fields: [messageSnapshotId], references: [id], onDelete: SetNull)
+  literatureManifest             ArtifactLiteratureManifest?
+  inputs                         ArtifactVersionInput[]      @relation("ProducedArtifactInputs")
+  sourceInputs                   ArtifactVersionInput[]      @relation("ArtifactVersionSourceInputs")
 
   @@unique([artifactId, versionNumber])
   @@unique([artifactId, id])
@@ -541,6 +797,20 @@ model ArtifactVersion {
   @@index([rootFrameId, agentFrameId, messageBranchId, promptMessageId])
   @@index([messageId])
   @@index([messageSnapshotId])
+  @@index([contentBlobId])
+}
+
+// Immutable bibliographic snapshots cited by one immutable Artifact Version. The canonical JSON
+// keeps citation order and locator semantics together while the checksum detects accidental drift.
+model ArtifactLiteratureManifest {
+  artifactVersionId String          @id
+  schemaVersion     Int             @default(1)
+  styleId           String
+  locale            String
+  manifestJson      String
+  checksum          String
+  createdAt         DateTime        @default(now())
+  artifactVersion   ArtifactVersion @relation(fields: [artifactVersionId], references: [id], onDelete: Cascade)
 }
 
 // Recovery journal for cross-resource text edit publication. Staging operations do not allocate a
@@ -645,6 +915,7 @@ model ComputeJob {
   id                       String                @id @default(cuid())
   providerId               String
   shape                    String
+  executionMode            String                @default("direct_ssh") // direct_ssh | slurm
   sessionId                String
   projectId                String
   status                   String                @default("submitted")
@@ -730,6 +1001,7 @@ model ComputeHost {
   providerId             String             @unique // "ssh:<alias>"
   displayName            String
   shape                  String             @default("direct_ssh") // direct_ssh | scheduler_cluster | bridge_runner
+  executionMode          String             @default("direct_ssh") // direct_ssh | slurm
   sshAlias               String
   sshOverrides           String? // JSON: { user?, port?, identityFile? } — never credentials
   authenticationMode     String             @default("ssh_config")

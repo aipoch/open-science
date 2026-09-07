@@ -31,10 +31,11 @@ type SqliteMigrationTable = {
 
 type SqliteRebuildTableSetOperation = {
   kind: 'rebuild-table-set'
-  version: 1
+  version: 1 | 2
   tables: readonly SqliteMigrationTable[]
   dropOrder: readonly string[]
   indexes: readonly string[]
+  triggers?: readonly string[]
 }
 
 type SqliteMigrationOperation = SqliteRebuildTableSetOperation
@@ -216,20 +217,32 @@ const applyRebuildTableSet = async (
     })
   }
 
+  // Version 1 is frozen for released migrations. Version 2 copies into replacement tables
+  // first, preserving inbound references without rebuilding unrelated child tables.
+  const replacementFirst = operation.version === 2
   for (const table of prepared) {
     await migrationSqlExecutor.execute(
       client,
-      `ALTER TABLE ${quoteIdentifier(table.tableName)} RENAME TO ${quoteIdentifier(table.backupTableName)}`
+      replacementFirst
+        ? table.targetDdl.replace(
+            `CREATE TABLE IF NOT EXISTS ${quoteIdentifier(table.tableName)}`,
+            `CREATE TABLE ${quoteIdentifier(table.backupTableName)}`
+          )
+        : `ALTER TABLE ${quoteIdentifier(table.tableName)} RENAME TO ${quoteIdentifier(table.backupTableName)}`
     )
   }
-  for (const table of prepared) await migrationSqlExecutor.execute(client, table.targetDdl)
+  if (!replacementFirst) {
+    for (const table of prepared) await migrationSqlExecutor.execute(client, table.targetDdl)
+  }
 
   for (const table of prepared) {
     const quotedColumns = table.copyColumns.map(quoteIdentifier).join(', ')
+    const sourceName = replacementFirst ? table.tableName : table.backupTableName
+    const targetName = replacementFirst ? table.backupTableName : table.tableName
     try {
       await migrationSqlExecutor.execute(
         client,
-        `INSERT INTO ${quoteIdentifier(table.tableName)} (${quotedColumns}) SELECT ${quotedColumns} FROM ${quoteIdentifier(table.backupTableName)}`
+        `INSERT INTO ${quoteIdentifier(targetName)} (${quotedColumns}) SELECT ${quotedColumns} FROM ${quoteIdentifier(sourceName)}`
       )
     } catch (error) {
       const detail = error instanceof Error ? error.message : String(error)
@@ -242,7 +255,7 @@ const applyRebuildTableSet = async (
         }
       )
     }
-    const targetRowCount = await countRows(client, table.tableName)
+    const targetRowCount = await countRows(client, targetName)
     if (targetRowCount !== table.sourceRowCount) {
       throw new DatabaseValidationError(
         `SQLite schema migration found a row-count mismatch for ${table.tableName}.`,
@@ -261,14 +274,23 @@ const applyRebuildTableSet = async (
     const table = preparedByName.get(tableName)!
     await migrationSqlExecutor.execute(
       client,
-      `DROP TABLE ${quoteIdentifier(table.backupTableName)}`
+      `DROP TABLE ${quoteIdentifier(replacementFirst ? table.tableName : table.backupTableName)}`
     )
+  }
+  if (replacementFirst) {
+    for (const table of prepared)
+      await migrationSqlExecutor.execute(
+        client,
+        `ALTER TABLE ${quoteIdentifier(table.backupTableName)} RENAME TO ${quoteIdentifier(table.tableName)}`
+      )
   }
   for (const table of prepared) {
     if (table.autoincrementSequence === undefined) continue
     await restoreAutoincrementSequence(client, table.tableName, table.autoincrementSequence)
   }
   for (const index of operation.indexes) await migrationSqlExecutor.execute(client, index)
+  for (const trigger of operation.triggers ?? [])
+    await migrationSqlExecutor.execute(client, trigger)
 
   const violations = await migrationSqlExecutor.query<SqliteForeignKeyViolationRow[]>(
     client,

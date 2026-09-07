@@ -24,7 +24,6 @@ const projection = (
   revision: 1,
   approval: 'approved',
   lifecycle: 'approved',
-  requiresExplicitContinuation: false,
   document: {
     schema_version: 1,
     task_summary: artifactVersionId,

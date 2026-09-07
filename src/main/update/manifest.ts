@@ -73,7 +73,7 @@ export const parseManifest = (data: unknown): UpdateManifest => {
     if (!DOWNLOAD_KEYS.has(key) || !isDownload(value)) {
       throw new Error(`Invalid download entry: ${key}`)
     }
-    downloads[key] = value
+    downloads[key] = { ...value, sha256: value.sha256.toLowerCase() }
   }
   return {
     version: data.version,

@@ -1,7 +1,8 @@
-import { readFile, writeFile } from 'node:fs/promises'
+import { readFile, writeFile, unlink } from 'node:fs/promises'
 import { basename, join, sep } from 'node:path'
 
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import { captureProvenanceRead } from '../../shared/provenance-read-result'
 
 import type {
   ArtifactVersionEvidence,
@@ -200,6 +201,62 @@ describe('artifact provenance durable lifecycle contract', () => {
     }
   )
 
+  it.each(['database', 'backfill-race', 'checksum', 'missing'] as const)(
+    'preserves the actionable message snapshot failure for %s',
+    async (failure) => {
+      const value = await fixture()
+      const session = durableSession(value.storageRoot)
+      const repository = new ArtifactProvenanceRepository({
+        ...value.repositoryOptions,
+        loadSession: async () => session
+      })
+      await value.stagePng('first bytes')
+      const version = await repository.createVersion(versionRequest(session))
+      await repository.finalizeRun(finalizationRequest(version.versionId, session))
+      const snapshots = new ProvenanceMessageSnapshotRepository({
+        storageRoot: value.storageRoot,
+        getClient: async () => value.client
+      })
+      await snapshots.captureFinalizedMessages(session)
+      const row = await value.client.artifactVersion.findUniqueOrThrow({
+        where: { id: version.versionId },
+        include: { messageSnapshot: true }
+      })
+      const snapshot = row.messageSnapshot!
+      const path = join(value.storageRoot, ...snapshot.storageKey.split('/'))
+      if (failure === 'checksum') await writeFile(path, '{"corrupt":true}')
+      else if (failure === 'missing') await unlink(path)
+      else {
+        await value.client.artifactMessageSnapshot.update({
+          where: { id: snapshot.id },
+          data: { checksum: '' }
+        })
+        const update = vi.spyOn(value.client.artifactMessageSnapshot, 'updateMany')
+        if (failure === 'database')
+          update.mockRejectedValueOnce(new Error('database temporarily unavailable'))
+        else update.mockResolvedValueOnce({ count: 0 })
+      }
+      const request = {
+        projectId: 'project-1',
+        appSessionId: 'session-1',
+        artifactId: version.artifactId,
+        versionId: version.versionId
+      }
+      expect(
+        await captureProvenanceRead(() => repository.getVersionMessages(request))
+      ).toMatchObject({
+        failure: {
+          kind: failure === 'checksum' || failure === 'missing' ? 'integrity-failed' : 'load-failed'
+        }
+      })
+      if (failure === 'database' || failure === 'backfill-race') {
+        await expect(repository.getVersionMessages(request)).resolves.toMatchObject({
+          messages: { state: 'available' }
+        })
+      }
+    }
+  )
+
   it('segments exact-Version projections and isolates reconstruction cache entries', async () => {
     const value = await fixture()
     const session = durableSession(value.storageRoot)
@@ -285,9 +342,9 @@ describe('artifact provenance durable lifecycle contract', () => {
     })
 
     await writeFile(snapshotPath, '{"corrupt":true}\n', 'utf8')
-    await expect(repository.getVersionMessages(firstIdentity)).resolves.toEqual({
-      messages: { state: 'unavailable', reason: 'message-snapshot-corrupt' }
-    })
+    await expect(repository.getVersionMessages(firstIdentity)).rejects.toThrow(
+      'Message snapshot checksum mismatch.'
+    )
 
     const coreRow = await value.client.artifactVersion.findUniqueOrThrow({
       where: { id: first.versionId }

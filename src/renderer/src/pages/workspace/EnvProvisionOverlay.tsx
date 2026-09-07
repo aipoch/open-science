@@ -1,6 +1,7 @@
 import { useTranslation } from 'react-i18next'
 import { DownloadProgressLine } from '@/components/DownloadProgressLine'
 import type { ProvisionUiState } from './provisioning-view'
+import { provisionProgressText } from './provision-progress-text'
 
 // Reusable provisioning progress surface. Rendered as a greyed overlay over the notebook pane, and
 // (compact) inside the onboarding step and the launch banner. Returns null when the env is ready.
@@ -23,20 +24,30 @@ const EnvProvisionOverlay = ({
         : ui.scope === 'upgrade'
           ? 'Updating the notebook environment…'
           : 'Preparing Python environment…'
+  const progressText = ui.kind === 'preparing' ? provisionProgressText(t, ui.event) : ''
 
   return (
     <div
       data-testid="notebook-env-gate"
+      role={ui.kind === 'error' ? 'alert' : 'status'}
+      aria-live={ui.kind === 'error' ? 'assertive' : 'polite'}
       className="absolute inset-0 z-20 flex flex-col items-center justify-center gap-3 bg-bg-000/80 p-6 text-center backdrop-blur-sm"
     >
       <p className="text-sm font-medium text-text-000">{t(title)}</p>
       {ui.kind === 'preparing' ? (
         <>
-          {ui.message ? <p className="text-xs text-text-300">{ui.message}</p> : null}
+          {progressText ? <p className="text-xs text-text-300">{progressText}</p> : null}
           {/* §3.1: the overall provision bar (fetch → verify → seed) and the download sub-line
               coexist — the download is one phase of provisioning, so the coarse bar stays visible
               for overall position while the detail line adds speed/ETA/resume during the fetch. */}
-          <div className="h-1.5 w-56 overflow-hidden rounded-full bg-bg-300">
+          <div
+            className="h-1.5 w-56 overflow-hidden rounded-full bg-bg-300"
+            role="progressbar"
+            aria-label={t('Environment setup progress')}
+            aria-valuemin={0}
+            aria-valuemax={100}
+            aria-valuenow={Math.round(ui.progress * 100)}
+          >
             <div
               className="h-full w-full origin-left bg-primary transition-transform duration-150 ease-out motion-reduce:transition-none"
               style={{ transform: `scaleX(${ui.progress})` }}

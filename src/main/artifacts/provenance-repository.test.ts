@@ -30,6 +30,7 @@ import {
 import { requireAgentArtifactVersion } from './provenance-version-kind'
 import { ArtifactProvenanceVersionWriter } from './provenance-version-writer'
 import { ArtifactRepository } from './repository'
+import { ContentRepository } from '../storage/content-repository'
 import { ArtifactWriteBudgetOwner } from './write-budget-owner'
 import {
   NodeVersionFileOperator,
@@ -58,6 +59,97 @@ afterEach(async () => {
 })
 
 describe('artifact provenance repository', () => {
+  it('pages lineage history while resolving an old selected Version independently', async () => {
+    storageRoot = await mkdtemp(join(tmpdir(), 'open-science-lineage-history-'))
+    const client = createProjectDbClient(storageRoot)
+    disconnect = () => client.$disconnect()
+    await migrateApplicationDatabase(client)
+    await client.fileOriginSession.create({
+      data: { projectId: 'project-1', sessionId: 'session-1' }
+    })
+    await client.artifactLineage.create({
+      data: {
+        id: 'history-file',
+        projectId: 'project-1',
+        sessionId: 'session-1',
+        filename: 'notes.md',
+        normalizedFilename: 'notes.md'
+      }
+    })
+    await client.artifactVersion.createMany({
+      data: Array.from({ length: 102 }, (_, index) => ({
+        id: `history-v${index + 1}`,
+        artifactId: 'history-file',
+        versionNumber: index + 1,
+        filename: 'notes.md',
+        originKind: 'legacy',
+        state: 'finalized',
+        contentStorageKey: `artifacts/project-1/session-1/history-file/v${index + 1}/content`,
+        sizeBytes: 0n,
+        checksum: 'a'.repeat(64)
+      }))
+    })
+    await client.artifactLineage.update({
+      where: { id: 'history-file' },
+      data: { currentVersionId: 'history-v102' }
+    })
+    const repository = new ArtifactProvenanceRepository({
+      storageRoot,
+      getClient: () => Promise.resolve(client)
+    })
+    const request = {
+      projectId: 'project-1',
+      appSessionId: 'session-1',
+      artifactId: 'history-file',
+      versionId: 'history-v1'
+    }
+    const manifestJson = JSON.stringify({
+      schemaVersion: 1,
+      styleId: 'apa',
+      locale: 'en-US',
+      references: [],
+      citations: []
+    })
+    await client.artifactLiteratureManifest.createMany({
+      data: ['history-v1', 'history-v102'].map((artifactVersionId) => ({
+        artifactVersionId,
+        schemaVersion: 1,
+        styleId: 'apa',
+        locale: 'en-US',
+        manifestJson,
+        checksum: createHash('sha256').update(manifestJson).digest('hex')
+      }))
+    })
+    const manifestReads = vi.spyOn(client.artifactLiteratureManifest, 'findMany')
+    const manifestCounts = vi.spyOn(client.artifactLiteratureManifest, 'count')
+    const first = await repository.getLineage(request)
+    expect(manifestReads).toHaveBeenCalledTimes(1)
+    expect(manifestCounts).not.toHaveBeenCalled()
+    expect(first?.selectedVersion?.hasLiterature).toBe(true)
+    expect(first?.headVersion?.hasLiterature).toBe(true)
+    expect(first?.nextVersion?.hasLiterature).toBe(false)
+    expect(first?.versions).toHaveLength(50)
+    expect(first?.selectedVersion?.versionId).toBe('history-v1')
+    expect(first?.headVersion?.versionId).toBe('history-v102')
+    const second = await repository.getLineage({ ...request, cursor: first!.nextCursor })
+    const last = await repository.getLineage({ ...request, cursor: second!.nextCursor })
+    expect(second?.versions).toHaveLength(50)
+    expect(last?.versions.map((version) => version.versionNumber)).toEqual([1, 2])
+    expect(last?.nextCursor).toBeUndefined()
+    expect(manifestReads).toHaveBeenCalledTimes(3)
+    expect(last?.versions.map((version) => version.hasLiterature)).toEqual([true, false])
+    expect(
+      new Set(
+        [...first!.versions, ...second!.versions, ...last!.versions].map(
+          (version) => version.versionId
+        )
+      ).size
+    ).toBe(102)
+    await expect(
+      repository.getLineage({ ...request, projectId: 'other-project' })
+    ).resolves.toBeUndefined()
+  })
+
   it('projects finalized user edits in lineage without inventing Agent provenance', async () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open-science-artifact-user-edit-lineage-'))
     const client = createProjectDbClient(storageRoot)
@@ -117,6 +209,15 @@ describe('artifact provenance repository', () => {
         createdAt: new Date('2026-08-14T00:00:00.000Z')
       }
     })
+    await client.artifactLiteratureManifest.create({
+      data: {
+        artifactVersionId: 'version-2',
+        styleId: 'apa',
+        locale: 'en-US',
+        manifestJson: '{}',
+        checksum: 'd'.repeat(64)
+      }
+    })
 
     await expect(
       repository.getLineage({
@@ -126,11 +227,12 @@ describe('artifact provenance repository', () => {
       })
     ).resolves.toMatchObject({
       versions: [
-        { versionId: 'version-1', originKind: 'legacy' },
+        { versionId: 'version-1', originKind: 'legacy', hasLiterature: false },
         {
           versionId: 'version-2',
           originKind: 'user_edit',
-          basedOnVersionId: 'version-1'
+          basedOnVersionId: 'version-1',
+          hasLiterature: true
         }
       ]
     })
@@ -164,7 +266,9 @@ describe('artifact provenance repository', () => {
     const contentStorageKey = 'artifacts/project-1/session-1/.provenance/versions/version-1/content'
     const contentPath = join(storageRoot, ...contentStorageKey.split('/'))
     await mkdir(dirname(contentPath), { recursive: true })
-    await writeFile(contentPath, 'artifact bytes')
+    const content = 'artifact bytes'
+    const contentChecksum = createHash('sha256').update(content).digest('hex')
+    await writeFile(contentPath, content)
     await client.fileOriginSession.create({
       data: { projectId: 'project-1', sessionId: 'session-1' }
     })
@@ -195,7 +299,7 @@ describe('artifact provenance repository', () => {
           'artifacts/project-1/session-1/.provenance/versions/version-1/evidence.json',
         evidenceSchemaVersion: 1,
         sizeBytes: BigInt(14),
-        checksum: 'a'.repeat(64),
+        checksum: contentChecksum,
         evidenceJson: '{}',
         evidenceChecksum: 'b'.repeat(64)
       }
@@ -728,6 +832,7 @@ describe('artifact provenance repository', () => {
       compatibilityRepository
     })
 
+    const content = Buffer.from([0, 255, 1, 254, 2, 253])
     const version = await repository.writeAppGeneratedVersion({
       projectId: 'project-1',
       appSessionId: 'session-1',
@@ -739,12 +844,13 @@ describe('artifact provenance repository', () => {
       runtimeSegmentId: 'runtime-segment-1',
       promptMessageId: 'prompt-1',
       agentName: 'OpenCode',
-      filename: 'caffeine.mol',
-      content: 'generated molecule bytes',
-      contentType: 'chemical/x-mdl-molfile'
+      filename: 'generated.bin',
+      content: content.toString('base64'),
+      encoding: 'base64',
+      contentType: 'application/octet-stream'
     })
 
-    await expect(readFile(version.path, 'utf8')).resolves.toBe('generated molecule bytes')
+    await expect(readFile(version.path)).resolves.toEqual(content)
     await expect(
       repository.listRunVersions({
         projectId: 'project-1',
@@ -4770,63 +4876,121 @@ describe('artifact provenance repository', () => {
     ])
   })
 
-  it('physically removes only the selected Project provenance graph and bytes', async () => {
-    storageRoot = await mkdtemp(join(tmpdir(), 'open-science-project-provenance-delete-'))
-    const client = createProjectDbClient(storageRoot)
-    disconnect = () => client.$disconnect()
-    await migrateApplicationDatabase(client)
-    const compatibilityRepository = new ArtifactRepository(storageRoot)
-    const repository = new ArtifactProvenanceRepository({
-      storageRoot,
-      getClient: () => Promise.resolve(client),
-      compatibilityRepository
-    })
+  it.each([false, true])(
+    'physically removes only the selected Project provenance graph and bytes (retry: %s)',
+    async (retrySweep) => {
+      storageRoot = await mkdtemp(join(tmpdir(), 'open-science-project-provenance-delete-'))
+      const client = createProjectDbClient(storageRoot)
+      disconnect = () => client.$disconnect()
+      await migrateApplicationDatabase(client)
+      const compatibilityRepository = new ArtifactRepository(storageRoot)
+      const repository = new ArtifactProvenanceRepository({
+        storageRoot,
+        getClient: () => Promise.resolve(client),
+        compatibilityRepository
+      })
 
-    const createProjectVersion = async (
-      projectId: string,
-      operation: string
-    ): Promise<ArtifactVersionFile> => {
-      await compatibilityRepository.writePendingFile({
-        projectId: projectId,
-        sessionId: `${projectId}-artifact-session`,
-        runId: `${projectId}-artifact-run`,
-        filename: 'sin.png',
-        source: createPngInlineSource(`${projectId} bytes`)
+      const createProjectVersion = async (
+        projectId: string,
+        operation: string
+      ): Promise<ArtifactVersionFile> => {
+        await compatibilityRepository.writePendingFile({
+          projectId: projectId,
+          sessionId: `${projectId}-artifact-session`,
+          runId: `${projectId}-artifact-run`,
+          filename: 'sin.png',
+          source: createPngInlineSource(`${projectId} bytes`)
+        })
+        return repository.createVersion({
+          projectId,
+          appSessionId: 'shared-session',
+          artifactStorageSessionId: `${projectId}-artifact-session`,
+          artifactRunId: `${projectId}-artifact-run`,
+          writeOperationId: operation,
+          writeRequestChecksum: operation.repeat(64).slice(0, 64),
+          rootFrameId: 'root-frame-1',
+          agentFrameId: 'agent-frame-1',
+          messageBranchId: 'branch-1',
+          runtimeSegmentId: 'runtime-segment-1',
+          promptMessageId: 'prompt-1',
+          filename: 'sin.png'
+        })
+      }
+      const deletedVersion = await createProjectVersion('project_1', 'a')
+      const survivingVersion = await createProjectVersion('project-2', 'b')
+      const content = new ContentRepository({
+        storageRoot,
+        getClient: () => Promise.resolve(client)
       })
-      return repository.createVersion({
-        projectId,
-        appSessionId: 'shared-session',
-        artifactStorageSessionId: `${projectId}-artifact-session`,
-        artifactRunId: `${projectId}-artifact-run`,
-        writeOperationId: operation,
-        writeRequestChecksum: operation.repeat(64).slice(0, 64),
-        rootFrameId: 'root-frame-1',
-        agentFrameId: 'agent-frame-1',
-        messageBranchId: 'branch-1',
-        runtimeSegmentId: 'runtime-segment-1',
-        promptMessageId: 'prompt-1',
-        filename: 'sin.png'
+      const unrelatedBlob = await content.publish({ sourcePath: survivingVersion.path })
+      // SQLite LIKE treats underscores as wildcards; this orphan belongs to another Project root.
+      const otherStorageKey = 'artifacts/project-1/orphan.txt'
+      await mkdir(dirname(join(storageRoot, otherStorageKey)), { recursive: true })
+      await writeFile(join(storageRoot, otherStorageKey), 'keep')
+      await client.contentBlob.create({
+        data: {
+          id: 'unrelated-project-orphan',
+          storageKey: otherStorageKey,
+          checksum: createHash('sha256').update('keep').digest('hex'),
+          sizeBytes: 4n,
+          state: 'available'
+        }
       })
+
+      if (retrySweep) {
+        const sweep = vi.spyOn(ContentRepository.prototype, 'sweep').mockResolvedValueOnce({
+          removedIds: [],
+          retainedIds: [],
+          failedIds: [`artifact-version:${deletedVersion.versionId}`]
+        })
+        try {
+          await expect(repository.deleteProjectProvenance('project_1')).rejects.toThrow(
+            'Project content cleanup failed'
+          )
+          expect(
+            await client.artifactVersion.count({ where: { id: deletedVersion.versionId } })
+          ).toBe(0)
+          expect(
+            await client.contentBlob.findUnique({
+              where: { id: `artifact-version:${deletedVersion.versionId}` }
+            })
+          ).not.toBeNull()
+        } finally {
+          sweep.mockRestore()
+        }
+      }
+
+      await repository.deleteProjectProvenance('project_1')
+      await expect(content.open(unrelatedBlob.id)).resolves.toMatchObject({ id: unrelatedBlob.id })
+      await expect(content.open('unrelated-project-orphan')).resolves.toMatchObject({
+        id: 'unrelated-project-orphan'
+      })
+
+      await expect(
+        client.artifactLineage.count({ where: { projectId: 'project_1' } })
+      ).resolves.toBe(0)
+      await expect(
+        client.fileOriginSession.count({ where: { projectId: 'project_1' } })
+      ).resolves.toBe(0)
+      await expect(readFile(deletedVersion.path)).rejects.toMatchObject({ code: 'ENOENT' })
+      await expect(
+        client.contentBlob.findUnique({
+          where: { id: `artifact-version:${deletedVersion.versionId}` }
+        })
+      ).resolves.toBeNull()
+      await expect(
+        client.contentBlob.findUnique({
+          where: { id: `artifact-version:${survivingVersion.versionId}` }
+        })
+      ).resolves.not.toBeNull()
+      await expect(readFile(survivingVersion.path)).resolves.toEqual(
+        createPngBytes('project-2 bytes')
+      )
+      await expect(
+        client.artifactLineage.count({ where: { projectId: 'project-2' } })
+      ).resolves.toBe(1)
     }
-    const deletedVersion = await createProjectVersion('project-1', 'a')
-    const survivingVersion = await createProjectVersion('project-2', 'b')
-
-    await repository.deleteProjectProvenance('project-1')
-
-    await expect(client.artifactLineage.count({ where: { projectId: 'project-1' } })).resolves.toBe(
-      0
-    )
-    await expect(
-      client.fileOriginSession.count({ where: { projectId: 'project-1' } })
-    ).resolves.toBe(0)
-    await expect(readFile(deletedVersion.path)).rejects.toMatchObject({ code: 'ENOENT' })
-    await expect(readFile(survivingVersion.path)).resolves.toEqual(
-      createPngBytes('project-2 bytes')
-    )
-    await expect(client.artifactLineage.count({ where: { projectId: 'project-2' } })).resolves.toBe(
-      1
-    )
-  })
+  )
 
   it('retains every Project Version and write journal when Version storage deletion fails', async () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open-science-version-operator-delete-retry-'))

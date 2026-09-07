@@ -2,8 +2,28 @@ import { describe, expect, it } from 'vitest'
 
 import { projectPermissionGrantSnapshot } from './catalog'
 import { DEFAULT_GLOBAL_PERMISSION_CAPABILITIES } from './defaults'
+import { capabilityFromLegacyCategory, commandPrefixPermissionCategory } from './capability'
 
 describe('permission grant renderer projection', () => {
+  it('does not export a provider-supplied or mismatched approval summary', () => {
+    const capability = capabilityFromLegacyCategory(
+      commandPrefixPermissionCategory(['git', 'status'])!
+    )!
+    for (const approvalSummary of ['token=secret', 'Git: changes']) {
+      const projected = projectPermissionGrantSnapshot([
+        {
+          id: 'summary',
+          revision: 1,
+          capability,
+          approvalSummary,
+          scope: { kind: 'global' }
+        }
+      ])
+      expect(projected.grants[0]).not.toHaveProperty('approvalSummary')
+      expect(JSON.stringify(projected)).not.toContain(approvalSummary)
+    }
+  })
+
   it('projects whether every default Global grant is present', () => {
     const records = DEFAULT_GLOBAL_PERMISSION_CAPABILITIES.map((capability, index) => ({
       id: `default-${index}`,

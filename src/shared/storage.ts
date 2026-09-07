@@ -83,7 +83,7 @@ export type MigrationProgress = {
 }
 export type MigrationResult = { ok: true } | { ok: false; error: string; cancelled?: boolean }
 export type MigrationOutcome =
-  | { ok: true; cleanupWarning?: string }
+  | { ok: true; cleanupPending: boolean }
   | { ok: false; error: string; cancelled?: boolean }
   | { ok: false; error: string; switchoverFailed: true }
 

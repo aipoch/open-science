@@ -16,6 +16,7 @@ import type { ProjectHandlers } from './projects/ipc'
 import type { SessionPersistenceHandlers } from './session-persistence/ipc'
 import type { ManagedPreviewOwnerRegistry } from './managed-preview-ipc'
 import { canMutateSessionDelegationPolicy } from './caller-context'
+import { preserveSessionSizeLimitCode } from './session-persistence/application-command-errors'
 
 import {
   ApplicationCommandError,
@@ -89,6 +90,15 @@ type PreviewApplicationCommandOwner = Readonly<{
 }>
 
 type SessionApplicationCommandOwner = Omit<SessionPersistenceHandlers, 'deleteSession'> & {
+  stageTaskCompletion(
+    request: SessionPersistence.StageTaskSessionCompletionRequest
+  ): Promise<SessionPersistence.PersistedChatSession>
+  settleTaskCompletion(
+    request: SessionPersistence.SettleTaskSessionCompletionRequest
+  ): Promise<SessionPersistence.PersistedChatSession>
+  failTaskRun(
+    request: SessionPersistence.FailTaskSessionRunRequest
+  ): Promise<SessionPersistence.PersistedChatSession>
   filterPdfContextCandidates(
     request: SessionPersistence.FilterSessionPdfContextCandidatesRequest
   ): Promise<SessionPersistence.FilterSessionPdfContextCandidatesResult>
@@ -100,6 +110,10 @@ type SessionApplicationCommandOwner = Omit<SessionPersistenceHandlers, 'deleteSe
   ): Promise<SessionPersistence.SessionRuntimeContext>
   editDetails(
     request: SessionPersistence.EditSessionDetailsRequest
+  ): Promise<SessionPersistence.PersistedChatSession>
+  updateSessionConfiguration(
+    session: SessionPersistence.PersistedChatSession,
+    expectedRevision: number
   ): Promise<SessionPersistence.PersistedChatSession>
   deleteSession(
     request: SessionPersistence.DeleteSessionRequest
@@ -188,6 +202,10 @@ const dataContentApplicationCommands = Object.freeze({
     'getCodeReconstruction'
   ),
   artifactGetLineage: artifactCommand('artifacts:get-lineage', 'getLineage'),
+  artifactGetVersionLiterature: artifactCommand(
+    'artifacts:get-version-literature',
+    'getVersionLiterature'
+  ),
   artifactGetVersionExecution: artifactCommand(
     'artifacts:get-version-execution',
     'getVersionExecution'
@@ -284,6 +302,11 @@ const dataContentApplicationCommands = Object.freeze({
     'update',
     Projects.projectApplicationCommandContracts.update
   ),
+  projectUpdateSessionDefaults: projectCommand(
+    'projects:update-session-defaults',
+    'update',
+    Projects.projectApplicationCommandContracts.update
+  ),
   sessionDelete: sessionCommand(
     'sessions:delete-session',
     'deleteSession',
@@ -335,6 +358,21 @@ const dataContentApplicationCommands = Object.freeze({
     ],
     SessionPersistence.PersistedChatSession
   >('sessions:save-session', SessionPersistence.sessionApplicationCommandContracts.save),
+  sessionStageTaskCompletion: defineApplicationCommand<
+    'sessions:stage-task-completion',
+    readonly [request: SessionPersistence.StageTaskSessionCompletionRequest],
+    SessionPersistence.PersistedChatSession
+  >('sessions:stage-task-completion'),
+  sessionSettleTaskCompletion: defineApplicationCommand<
+    'sessions:settle-task-completion',
+    readonly [request: SessionPersistence.SettleTaskSessionCompletionRequest],
+    SessionPersistence.PersistedChatSession
+  >('sessions:settle-task-completion'),
+  sessionFailTaskRun: defineApplicationCommand<
+    'sessions:fail-task-run',
+    readonly [request: SessionPersistence.FailTaskSessionRunRequest],
+    SessionPersistence.PersistedChatSession
+  >('sessions:fail-task-run'),
   sessionSetDelegationPolicy: defineApplicationCommand<
     'sessions:set-delegation-policy',
     readonly [projectId: string, sessionId: string, policy: SessionPersistence.DelegationPolicy],
@@ -342,6 +380,14 @@ const dataContentApplicationCommands = Object.freeze({
   >(
     'sessions:set-delegation-policy',
     SessionPersistence.sessionApplicationCommandContracts.setDelegationPolicy
+  ),
+  sessionUpdateConfiguration: defineApplicationCommand<
+    'sessions:update-configuration',
+    readonly [session: SessionPersistence.PersistedChatSession, expectedRevision: number],
+    SessionPersistence.PersistedChatSession
+  >(
+    'sessions:update-configuration',
+    SessionPersistence.sessionApplicationCommandContracts.updateConfiguration
   ),
   uploadAbortTransfer: uploadCommand('uploads:abort-transfer', 'abortTransfer'),
   uploadAppendTransfer: uploadCommand('uploads:append-transfer', 'appendTransfer'),
@@ -367,6 +413,7 @@ const dataContentApplicationCommandGroups = Object.freeze([
     dataContentApplicationCommands.artifactGetCodeReconstruction,
     dataContentApplicationCommands.artifactGetLineage,
     dataContentApplicationCommands.artifactGetVersionExecution,
+    dataContentApplicationCommands.artifactGetVersionLiterature,
     dataContentApplicationCommands.artifactGetVersionMessages,
     dataContentApplicationCommands.artifactGetVersionProvenance,
     dataContentApplicationCommands.artifactGetVersionReview,
@@ -404,7 +451,8 @@ const dataContentApplicationCommandGroups = Object.freeze([
     dataContentApplicationCommands.projectList,
     dataContentApplicationCommands.projectListDeletionCleanup,
     dataContentApplicationCommands.projectRetryDeletionCleanup,
-    dataContentApplicationCommands.projectUpdate
+    dataContentApplicationCommands.projectUpdate,
+    dataContentApplicationCommands.projectUpdateSessionDefaults
   ] as const),
   defineApplicationCommandGroup('sessions', [
     dataContentApplicationCommands.sessionDelete,
@@ -420,7 +468,11 @@ const dataContentApplicationCommandGroups = Object.freeze([
     dataContentApplicationCommands.sessionUpdateArchive,
     dataContentApplicationCommands.sessionUnlinkPdfContext,
     dataContentApplicationCommands.sessionSave,
-    dataContentApplicationCommands.sessionSetDelegationPolicy
+    dataContentApplicationCommands.sessionStageTaskCompletion,
+    dataContentApplicationCommands.sessionSettleTaskCompletion,
+    dataContentApplicationCommands.sessionFailTaskRun,
+    dataContentApplicationCommands.sessionSetDelegationPolicy,
+    dataContentApplicationCommands.sessionUpdateConfiguration
   ] as const),
   defineApplicationCommandGroup('uploads', [
     dataContentApplicationCommands.uploadAbortTransfer,
@@ -462,6 +514,15 @@ const assertSessionDelegationPolicyCaller = (
   const { callerContext } = invocation
   if (!canMutateSessionDelegationPolicy(callerContext)) {
     throw new Error(`Channel only available from current human or Task automation: ${name}`)
+  }
+}
+
+const assertTaskCaller = (
+  invocation: ApplicationInvocation<readonly unknown[]>,
+  name: string
+): void => {
+  if (invocation.callerContext.surface !== 'task') {
+    throw new Error(`Channel only available from Task automation: ${name}`)
   }
 }
 
@@ -517,6 +578,8 @@ const registerDataContentApplicationCommands = (
       'artifacts:get-code-reconstruction': ({ args }) =>
         dependencies.artifacts.getCodeReconstruction(args[0]),
       'artifacts:get-lineage': ({ args }) => dependencies.artifacts.getLineage(args[0]),
+      'artifacts:get-version-literature': ({ args }) =>
+        dependencies.artifacts.getVersionLiterature(args[0]),
       'artifacts:get-version-execution': ({ args }) =>
         dependencies.artifacts.getVersionExecution(args[0]),
       'artifacts:get-version-messages': ({ args }) =>
@@ -583,10 +646,29 @@ const registerDataContentApplicationCommands = (
         }),
       'projects:update': ({ args }) =>
         dependencies.withDataRootWrite(async () => {
+          if (args[0].sessionDefaults !== undefined) {
+            throw new Error(
+              'Project Session defaults must be changed through the Task configuration API.'
+            )
+          }
           const project = await dependencies.projects.update(args[0])
           publishLifecycle(dependencies.events, LIFECYCLE_CHANNELS.projectUpdated, project)
           return project
+        }),
+      'projects:update-session-defaults': (invocation) => {
+        assertTaskCaller(
+          invocation,
+          dataContentApplicationCommands.projectUpdateSessionDefaults.name
+        )
+        return dependencies.withDataRootWrite(async () => {
+          if (invocation.args[0].sessionDefaults === undefined) {
+            throw new Error('Project Session defaults are required.')
+          }
+          const project = await dependencies.projects.update(invocation.args[0])
+          publishLifecycle(dependencies.events, LIFECYCLE_CHANNELS.projectUpdated, project)
+          return project
         })
+      }
     })
     scope.registerGroup(dataContentApplicationCommandGroups[6], {
       'sessions:delete-session': async ({ args }) => {
@@ -597,25 +679,27 @@ const registerDataContentApplicationCommands = (
         return result
       },
       'sessions:edit-details': (invocation) => {
-        return dependencies.withDataRootWrite(async () => {
-          try {
-            return await dependencies.sessions.editDetails(invocation.args[0])
-          } catch (error) {
-            if (SessionPersistence.isSessionDetailsConflictError(error)) {
-              throw new ApplicationCommandError(
-                SessionPersistence.SESSION_DETAILS_CONFLICT_ERROR_CODE,
-                error instanceof Error ? error.message : 'Session details changed elsewhere.'
-              )
+        return dependencies.withDataRootWrite(() =>
+          preserveSessionSizeLimitCode(async () => {
+            try {
+              return await dependencies.sessions.editDetails(invocation.args[0])
+            } catch (error) {
+              if (SessionPersistence.isSessionDetailsConflictError(error)) {
+                throw new ApplicationCommandError(
+                  SessionPersistence.SESSION_DETAILS_CONFLICT_ERROR_CODE,
+                  error instanceof Error ? error.message : 'Session details changed elsewhere.'
+                )
+              }
+              if (SessionPersistence.isSessionRevisionConflictError(error)) {
+                throw new ApplicationCommandError(
+                  SessionPersistence.SESSION_REVISION_CONFLICT_ERROR_CODE,
+                  error instanceof Error ? error.message : 'Session revision conflict.'
+                )
+              }
+              throw error
             }
-            if (SessionPersistence.isSessionRevisionConflictError(error)) {
-              throw new ApplicationCommandError(
-                SessionPersistence.SESSION_REVISION_CONFLICT_ERROR_CODE,
-                error instanceof Error ? error.message : 'Session revision conflict.'
-              )
-            }
-            throw error
-          }
-        })
+          })
+        )
       },
       'sessions:export-conversation': (invocation) => {
         assertElectronCaller(
@@ -632,19 +716,21 @@ const registerDataContentApplicationCommands = (
         dependencies.withDataRootWrite(() => dependencies.sessions.loadAll()),
       'sessions:list': () => dependencies.withDataRootWrite(() => dependencies.sessions.list()),
       'sessions:link-pdf-context': (invocation) =>
-        dependencies.withDataRootWrite(async () => {
-          try {
-            return await dependencies.sessions.linkPdfContext(invocation.args[0])
-          } catch (error) {
-            if (SessionPersistence.isSessionRevisionConflictError(error)) {
-              throw new ApplicationCommandError(
-                SessionPersistence.SESSION_REVISION_CONFLICT_ERROR_CODE,
-                error instanceof Error ? error.message : 'Session revision conflict.'
-              )
+        dependencies.withDataRootWrite(() =>
+          preserveSessionSizeLimitCode(async () => {
+            try {
+              return await dependencies.sessions.linkPdfContext(invocation.args[0])
+            } catch (error) {
+              if (SessionPersistence.isSessionRevisionConflictError(error)) {
+                throw new ApplicationCommandError(
+                  SessionPersistence.SESSION_REVISION_CONFLICT_ERROR_CODE,
+                  error instanceof Error ? error.message : 'Session revision conflict.'
+                )
+              }
+              throw error
             }
-            throw error
-          }
-        }),
+          })
+        ),
       'sessions:load-one': ({ args }) =>
         dependencies.withDataRootWrite(() => dependencies.sessions.loadOne(args[0])),
       'sessions:load-usage': () =>
@@ -653,74 +739,155 @@ const registerDataContentApplicationCommands = (
         dependencies.withDataRootWrite(() => dependencies.sessions.saveManifest(args[0])),
       'sessions:update-archive': (invocation) => {
         const originClientId = invocation.callerContext.lifecycleClientId
-        return dependencies.withDataRootWrite(async () => {
-          const session = await dependencies.sessions.updateArchive(invocation.args[0])
-          publishLifecycle(dependencies.events, LIFECYCLE_CHANNELS.sessionUpdated, {
-            session,
-            originClientId
+        return dependencies.withDataRootWrite(() =>
+          preserveSessionSizeLimitCode(async () => {
+            const session = await dependencies.sessions.updateArchive(invocation.args[0])
+            publishLifecycle(dependencies.events, LIFECYCLE_CHANNELS.sessionUpdated, {
+              session,
+              originClientId
+            })
+            return session
           })
-          return session
-        })
+        )
       },
       'sessions:unlink-pdf-context': (invocation) =>
-        dependencies.withDataRootWrite(async () => {
-          try {
-            return await dependencies.sessions.unlinkPdfContext(invocation.args[0])
-          } catch (error) {
-            if (SessionPersistence.isSessionRevisionConflictError(error)) {
-              throw new ApplicationCommandError(
-                SessionPersistence.SESSION_REVISION_CONFLICT_ERROR_CODE,
-                error instanceof Error ? error.message : 'Session revision conflict.'
-              )
+        dependencies.withDataRootWrite(() =>
+          preserveSessionSizeLimitCode(async () => {
+            try {
+              return await dependencies.sessions.unlinkPdfContext(invocation.args[0])
+            } catch (error) {
+              if (SessionPersistence.isSessionRevisionConflictError(error)) {
+                throw new ApplicationCommandError(
+                  SessionPersistence.SESSION_REVISION_CONFLICT_ERROR_CODE,
+                  error instanceof Error ? error.message : 'Session revision conflict.'
+                )
+              }
+              throw error
             }
-            throw error
-          }
-        }),
+          })
+        ),
       'sessions:save-session': (invocation) => {
         const originClientId = invocation.callerContext.lifecycleClientId
-        return dependencies.withDataRootWrite(async () => {
-          let result: Awaited<ReturnType<SessionPersistenceHandlers['saveSession']>>
-          try {
-            result =
-              invocation.callerContext.surface === 'task'
-                ? await dependencies.sessions.saveSession(invocation.args[0], invocation.args[1], {
-                    taskRunCommit: true
-                  })
-                : await dependencies.sessions.saveSession(invocation.args[0], invocation.args[1])
-          } catch (error) {
-            if (SessionPersistence.isSessionRevisionConflictError(error)) {
-              throw new ApplicationCommandError(
-                SessionPersistence.SESSION_REVISION_CONFLICT_ERROR_CODE,
-                error instanceof Error ? error.message : 'Session revision conflict.'
-              )
+        return dependencies.withDataRootWrite(() =>
+          preserveSessionSizeLimitCode(async () => {
+            let result: Awaited<ReturnType<SessionPersistenceHandlers['saveSession']>>
+            try {
+              result =
+                invocation.callerContext.surface === 'task'
+                  ? await dependencies.sessions.saveSession(
+                      invocation.args[0],
+                      invocation.args[1],
+                      {
+                        taskRunCommit: true
+                      }
+                    )
+                  : await dependencies.sessions.saveSession(invocation.args[0], invocation.args[1])
+            } catch (error) {
+              if (SessionPersistence.isSessionRevisionConflictError(error)) {
+                throw new ApplicationCommandError(
+                  SessionPersistence.SESSION_REVISION_CONFLICT_ERROR_CODE,
+                  error instanceof Error ? error.message : 'Session revision conflict.'
+                )
+              }
+              throw error
             }
-            throw error
-          }
-          publishLifecycle(
-            dependencies.events,
-            result.created ? LIFECYCLE_CHANNELS.sessionCreated : LIFECYCLE_CHANNELS.sessionUpdated,
-            { session: result.session, originClientId }
-          )
-          return result.session
-        })
+            publishLifecycle(
+              dependencies.events,
+              result.created
+                ? LIFECYCLE_CHANNELS.sessionCreated
+                : LIFECYCLE_CHANNELS.sessionUpdated,
+              { session: result.session, originClientId }
+            )
+            return result.session
+          })
+        )
+      },
+      'sessions:stage-task-completion': (invocation) => {
+        const originClientId = invocation.callerContext.lifecycleClientId
+        return dependencies.withDataRootWrite(() =>
+          preserveSessionSizeLimitCode(async () => {
+            const session = await dependencies.sessions.stageTaskCompletion(invocation.args[0])
+            publishLifecycle(dependencies.events, LIFECYCLE_CHANNELS.sessionUpdated, {
+              session,
+              originClientId
+            })
+            return session
+          })
+        )
+      },
+      'sessions:settle-task-completion': (invocation) => {
+        const originClientId = invocation.callerContext.lifecycleClientId
+        return dependencies.withDataRootWrite(() =>
+          preserveSessionSizeLimitCode(async () => {
+            const session = await dependencies.sessions.settleTaskCompletion(invocation.args[0])
+            publishLifecycle(dependencies.events, LIFECYCLE_CHANNELS.sessionUpdated, {
+              session,
+              originClientId
+            })
+            return session
+          })
+        )
+      },
+      'sessions:fail-task-run': (invocation) => {
+        const originClientId = invocation.callerContext.lifecycleClientId
+        return dependencies.withDataRootWrite(() =>
+          preserveSessionSizeLimitCode(async () => {
+            const session = await dependencies.sessions.failTaskRun(invocation.args[0])
+            publishLifecycle(dependencies.events, LIFECYCLE_CHANNELS.sessionUpdated, {
+              session,
+              originClientId
+            })
+            return session
+          })
+        )
       },
       'sessions:set-delegation-policy': (invocation) => {
         assertSessionDelegationPolicyCaller(
           invocation,
           dataContentApplicationCommands.sessionSetDelegationPolicy.name
         )
-        return dependencies.withDataRootWrite(async () => {
-          const session = await dependencies.sessions.setDelegationPolicy(
-            invocation.args[0],
-            invocation.args[1],
-            invocation.args[2]
-          )
-          publishLifecycle(dependencies.events, LIFECYCLE_CHANNELS.sessionUpdated, {
-            session,
-            originClientId: MAIN_DELEGATION_POLICY_LIFECYCLE_CLIENT_ID
+        return dependencies.withDataRootWrite(() =>
+          preserveSessionSizeLimitCode(async () => {
+            const session = await dependencies.sessions.setDelegationPolicy(
+              invocation.args[0],
+              invocation.args[1],
+              invocation.args[2]
+            )
+            publishLifecycle(dependencies.events, LIFECYCLE_CHANNELS.sessionUpdated, {
+              session,
+              originClientId: MAIN_DELEGATION_POLICY_LIFECYCLE_CLIENT_ID
+            })
+            return session
           })
-          return session
-        })
+        )
+      },
+      'sessions:update-configuration': (invocation) => {
+        assertTaskCaller(invocation, dataContentApplicationCommands.sessionUpdateConfiguration.name)
+        const originClientId = invocation.callerContext.lifecycleClientId
+        return dependencies.withDataRootWrite(() =>
+          preserveSessionSizeLimitCode(async () => {
+            let session: SessionPersistence.PersistedChatSession
+            try {
+              session = await dependencies.sessions.updateSessionConfiguration(
+                invocation.args[0],
+                invocation.args[1]
+              )
+            } catch (error) {
+              if (SessionPersistence.isSessionRevisionConflictError(error)) {
+                throw new ApplicationCommandError(
+                  SessionPersistence.SESSION_REVISION_CONFLICT_ERROR_CODE,
+                  error instanceof Error ? error.message : 'Session revision conflict.'
+                )
+              }
+              throw error
+            }
+            publishLifecycle(dependencies.events, LIFECYCLE_CHANNELS.sessionUpdated, {
+              session,
+              originClientId
+            })
+            return session
+          })
+        )
       }
     })
     scope.registerGroup(dataContentApplicationCommandGroups[7], {

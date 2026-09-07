@@ -5,8 +5,7 @@ import type { ActivePlanProjection } from '../../../../../shared/session-plan/co
     (completed/blocked/rejected) hide the chip — the plan stays viewable via “View plan”. */
 const PLAN_PROGRESS_CHIP_LIFECYCLES: ReadonlySet<ActivePlanProjection['lifecycle']> = new Set([
   'approved',
-  'in_progress',
-  'interrupted'
+  'in_progress'
 ])
 
 export const isPlanProgressVisible = (projection: ActivePlanProjection): boolean =>

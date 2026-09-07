@@ -190,4 +190,89 @@ describe('MessageScrollerItem', () => {
 
     expect(viewport?.scrollTop).toBe(96)
   })
+
+  it('applies the bottom-follow correction synchronously when content resizes', async () => {
+    const resizeCallbacks = new Map<Element, ResizeObserverCallback>()
+    vi.stubGlobal(
+      'ResizeObserver',
+      class {
+        private readonly callback: ResizeObserverCallback
+
+        constructor(callback: ResizeObserverCallback) {
+          this.callback = callback
+        }
+
+        observe(target: Element): void {
+          resizeCallbacks.set(target, this.callback)
+        }
+
+        disconnect(): void {
+          /* no-op */
+        }
+      }
+    )
+
+    container = document.createElement('div')
+    document.body.appendChild(container)
+    root = createRoot(container)
+
+    await act(async () => {
+      root?.render(
+        <MessageScrollerProvider autoScroll>
+          <MessageScroller>
+            <MessageScrollerViewport>
+              <MessageScrollerContent>
+                <MessageScrollerItem messageId="streaming-message">
+                  Streaming message
+                </MessageScrollerItem>
+              </MessageScrollerContent>
+            </MessageScrollerViewport>
+          </MessageScroller>
+        </MessageScrollerProvider>
+      )
+    })
+
+    const viewport = container.querySelector<HTMLElement>('[data-slot="message-scroller-viewport"]')
+    const content = container.querySelector<HTMLElement>('[data-slot="message-scroller-content"]')
+    const item = container.querySelector<HTMLElement>('[data-message-id="streaming-message"]')
+    expect(viewport).not.toBeNull()
+    expect(content).not.toBeNull()
+    expect(item).not.toBeNull()
+
+    let contentHeight = 200
+    Object.defineProperties(viewport, {
+      clientHeight: { configurable: true, value: 100 },
+      scrollHeight: { configurable: true, get: () => contentHeight },
+      scrollTop: { configurable: true, writable: true, value: 100 },
+      getBoundingClientRect: {
+        configurable: true,
+        value: () => ({ top: 0, bottom: 100, height: 100 })
+      },
+      scrollTo: {
+        configurable: true,
+        value: ({ top }: ScrollToOptions) => {
+          if (typeof top === 'number' && viewport) viewport.scrollTop = top
+        }
+      }
+    })
+    Object.defineProperty(item, 'getBoundingClientRect', {
+      configurable: true,
+      value: () => ({
+        top: -(viewport?.scrollTop ?? 0),
+        bottom: contentHeight - (viewport?.scrollTop ?? 0),
+        height: contentHeight
+      })
+    })
+
+    await act(async () => viewport?.dispatchEvent(new Event('scroll', { bubbles: true })))
+
+    // A line wrap during streaming grows the content while pinned to the bottom. The follow
+    // correction must land in the same frame as the resize — waiting one rAF paints a stale frame.
+    contentHeight = 240
+    await act(async () => {
+      resizeCallbacks.get(content!)?.([], {} as ResizeObserver)
+    })
+
+    expect(viewport?.scrollTop).toBe(140)
+  })
 })

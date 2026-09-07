@@ -9,6 +9,7 @@ import {
 } from '../../../shared/settings'
 import type {
   AgentFrameworkId,
+  ProviderDeletionScenarioModelHandling,
   ProviderView,
   RefreshProviderModelsResult,
   SettingsSnapshot,
@@ -46,7 +47,10 @@ export type ProviderAuthActions = {
   refreshProviderModels: (providerId: string) => Promise<RefreshProviderModelsResult>
   setActiveProvider: (providerId: string, model?: string) => Promise<void>
   setAgentFramework: (id: AgentFrameworkId) => Promise<void>
-  deleteProvider: (providerId: string) => Promise<void>
+  deleteProvider: (
+    providerId: string,
+    scenarioModelHandling?: ProviderDeletionScenarioModelHandling
+  ) => Promise<void>
 }
 
 // This slice owns workflows only. Core remains the sole owner of the full Settings snapshot so
@@ -122,7 +126,8 @@ export const createProviderAuthSlice = <Store extends ProviderAuthHost>({
     const snapshot = await commands.upsertProvider(request)
 
     reconcileSnapshot(snapshot)
-    await refreshPreflight()
+    // The runtime slice exposes preflight failures separately; persistence has already committed.
+    void refreshPreflight().catch(() => undefined)
     return resolveUpsertedProviderId(request, before, snapshot.providers) ?? ''
   },
 
@@ -160,7 +165,7 @@ export const createProviderAuthSlice = <Store extends ProviderAuthHost>({
     const result = await commands.validateProvider(request)
     if (request.providerId) {
       reconcileSnapshot(await commands.getSettings())
-      await refreshPreflight()
+      void refreshPreflight().catch(() => undefined)
     }
     return result
   },
@@ -251,7 +256,12 @@ export const createProviderAuthSlice = <Store extends ProviderAuthHost>({
   refreshProviderModels: async (providerId) => {
     const commands = getCommands()
     const result = await commands.refreshProviderModels({ providerId })
-    if (result.ok) reconcileSnapshot(await commands.getSettings())
+    try {
+      reconcileSnapshot(await commands.getSettings())
+    } catch (error) {
+      // Keep the original refresh failure if best-effort reconciliation also fails.
+      if (result.ok) throw error
+    }
     return result
   },
 
@@ -297,8 +307,11 @@ export const createProviderAuthSlice = <Store extends ProviderAuthHost>({
     }
   },
 
-  deleteProvider: async (providerId) => {
-    const snapshot = await getCommands().deleteProvider({ id: providerId })
+  deleteProvider: async (providerId, scenarioModelHandling) => {
+    const snapshot = await getCommands().deleteProvider({
+      id: providerId,
+      ...(scenarioModelHandling ? { scenarioModelHandling } : {})
+    })
     reconcileSnapshot(snapshot)
     await refreshPreflight()
   }

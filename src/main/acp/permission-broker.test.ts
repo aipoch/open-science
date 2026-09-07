@@ -195,6 +195,154 @@ describe('ACP permission broker', () => {
     })
   })
 
+  it.each(['cancelForSession', 'cancelAllPending', 'abandonAllPending'] as const)(
+    'A01: %s cancels an allow-once response waiting for settleLive',
+    async (cancelMethod) => {
+      let publish!: (request: EmittedPermissionRequest) => void
+      const published = new Promise<EmittedPermissionRequest>((resolve) => {
+        publish = resolve
+      })
+      let enterSettlement!: () => void
+      const settlementEntered = new Promise<void>((resolve) => {
+        enterSettlement = resolve
+      })
+      let finishSettlement!: () => void
+      const settlement = new Promise<void>((resolve) => {
+        finishSettlement = resolve
+      })
+      const settleLive = vi.fn(() => {
+        enterSettlement()
+        return settlement
+      })
+      const onSettled = vi.fn()
+      const broker = new AcpPermissionBroker(publish, undefined, undefined, onSettled, {
+        persist: vi.fn(async () => true),
+        settleLive
+      })
+      const released = vi.fn()
+      const providerResponse = broker.requestPermission(createPermissionRequest(), {
+        profile: 'ask',
+        projectId: 'project-1',
+        promptMessageId: 'prompt-1'
+      })
+      void providerResponse.then(released)
+      const request = await published
+      expect(request.durable).toBe(true)
+      const queuedResponse = broker.requestPermission(createPermissionRequest(), {
+        profile: 'ask',
+        projectId: 'project-1',
+        promptMessageId: 'prompt-1'
+      })
+      const response = broker.respond({ requestId: request.requestId, optionId: 'allow-once' })
+      await settlementEntered
+      expect(released).not.toHaveBeenCalled()
+
+      for (let attempt = 0; attempt < 2; attempt += 1) {
+        if (cancelMethod === 'cancelForSession') broker.cancelForSession('session-1')
+        else broker[cancelMethod]()
+      }
+      await Promise.resolve()
+      expect.soft(released).toHaveBeenCalledWith({ outcome: { outcome: 'cancelled' } })
+      finishSettlement()
+      await response
+      await expect(queuedResponse).resolves.toEqual({ outcome: { outcome: 'cancelled' } })
+      const result = await providerResponse
+
+      expect(settleLive).toHaveBeenCalledOnce()
+      expect(released).toHaveBeenCalledOnce()
+      const requestSettlements = onSettled.mock.calls.filter(([id]) => id === request.requestId)
+      expect(requestSettlements.length).toBeLessThanOrEqual(1)
+      expect(broker.getPendingRequests()).toEqual([])
+      await expect(
+        broker.respond({ requestId: request.requestId, optionId: 'allow-once' })
+      ).resolves.toBe(false)
+      expect.soft(result).toEqual({ outcome: { outcome: 'cancelled' } })
+      expect
+        .soft(requestSettlements.map(([, state]) => state))
+        .toEqual(cancelMethod === 'abandonAllPending' ? [] : ['cancelled'])
+    }
+  )
+
+  it.each(['cancelForSession', 'cancelAllPending', 'abandonAllPending'] as const)(
+    'A01: a settlement failure after %s preserves a replacement session queue',
+    async (cancelMethod) => {
+      const emitted: EmittedPermissionRequest[] = []
+      let enterSettlement!: () => void
+      const settlementEntered = new Promise<void>((resolve) => {
+        enterSettlement = resolve
+      })
+      let failSettlement!: (error: Error) => void
+      const settlement = new Promise<void>((_, reject) => {
+        failSettlement = reject
+      })
+      const settleLive = vi
+        .fn(async (): Promise<void> => undefined)
+        .mockImplementationOnce(() => {
+          enterSettlement()
+          return settlement
+        })
+      const onSettled = vi.fn()
+      const persist = vi.fn(async () => true)
+      const broker = new AcpPermissionBroker(
+        (request) => emitted.push(request),
+        undefined,
+        undefined,
+        onSettled,
+        { persist, settleLive }
+      )
+      const policy = {
+        profile: 'ask' as const,
+        projectId: 'project-1',
+        promptMessageId: 'prompt-1'
+      }
+      const oldProvider = broker.requestPermission(createPermissionRequest(), policy)
+      await new Promise<void>((resolve) => setImmediate(resolve))
+      const oldRequest = emitted[0]
+      const oldResponse = broker.respond({
+        requestId: oldRequest.requestId,
+        optionId: 'allow-once'
+      })
+      const oldFailure = expect(oldResponse).rejects.toThrow(
+        'Permission decision could not be persisted'
+      )
+      await settlementEntered
+      if (cancelMethod === 'cancelForSession') broker.cancelForSession('session-1')
+      else broker[cancelMethod]()
+
+      const replacement = broker.requestPermission(createPermissionRequest(), policy)
+      const queued = broker.requestPermission(createPermissionRequest(), policy)
+      await new Promise<void>((resolve) => setImmediate(resolve))
+      expect(emitted).toHaveLength(cancelMethod === 'abandonAllPending' ? 2 : 1)
+      failSettlement(new Error('old disk write failed'))
+      await oldFailure
+      await expect(oldProvider).resolves.toEqual({ outcome: { outcome: 'cancelled' } })
+      expect
+        .soft(onSettled.mock.calls.map(([, state]) => state))
+        .toEqual(cancelMethod === 'abandonAllPending' ? [] : ['cancelled'])
+      await new Promise<void>((resolve) => setImmediate(resolve))
+      expect.soft(emitted).toHaveLength(2)
+
+      if (emitted[1])
+        await broker.respond({ requestId: emitted[1].requestId, optionId: 'allow-once' })
+      await expect
+        .soft(replacement)
+        .resolves.toEqual({ outcome: { outcome: 'selected', optionId: 'allow-once' } })
+      await new Promise<void>((resolve) => setImmediate(resolve))
+      expect.soft(emitted).toHaveLength(3)
+      if (emitted[2])
+        await broker.respond({ requestId: emitted[2].requestId, optionId: 'allow-once' })
+      await expect(queued).resolves.toEqual({
+        outcome: { outcome: 'selected', optionId: 'allow-once' }
+      })
+      expect(persist).toHaveBeenCalledTimes(3)
+      expect(settleLive).toHaveBeenCalledTimes(3)
+      expect(broker.getPendingRequests()).toEqual([])
+      await expect(
+        broker.respond({ requestId: oldRequest.requestId, optionId: 'allow-once' })
+      ).resolves.toBe(false)
+    }
+  )
+
   it('serializes durable permission requests for the same session', async () => {
     const emitted: EmittedPermissionRequest[] = []
     let activeRequestId: string | undefined

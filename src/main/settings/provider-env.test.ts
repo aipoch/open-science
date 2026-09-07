@@ -44,6 +44,25 @@ describe('provider-env', () => {
     expect(env.ANTHROPIC_BASE_URL).toBe('https://api.anthropic.com')
   })
 
+  it('configures Claude Code for Apodex prefix caching and background requests', () => {
+    const env = buildProviderEnv(
+      {
+        type: 'custom',
+        vendorId: 'apodex',
+        baseUrl: 'https://api.apodex.ai',
+        model: 'apodex-1.1',
+        key: 'test-token'
+      },
+      options
+    )
+
+    expect(env).toMatchObject({
+      CLAUDE_CODE_ATTRIBUTION_HEADER: '0',
+      ANTHROPIC_DEFAULT_HAIKU_MODEL: 'apodex-1.1-mini',
+      ANTHROPIC_SMALL_FAST_MODEL: 'apodex-1.1-mini'
+    })
+  })
+
   it('injects CLAUDE_CODE_OAUTH_TOKEN for a claude-isolated provider under the app config dir', () => {
     // claude-isolated authenticates a Claude subscription via a long-lived OAuth token (from
     // `claude setup-token`). The token is portable across config dirs, so isolation comes from the

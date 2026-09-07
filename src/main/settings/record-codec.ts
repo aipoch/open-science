@@ -3,6 +3,7 @@ import type {
   ClaudeInfo,
   ProviderType,
   ProviderValidationFailure,
+  ProviderValidationTarget,
   ValidationCategory
 } from '../../shared/settings'
 import { isCodexSubscriptionProvider } from '../../shared/settings'
@@ -116,7 +117,24 @@ const sanitizeValidationFailure = (value: unknown): ProviderValidationFailure | 
   const message = asString(value.message)
   if (status !== undefined) failure.status = status
   if (message) failure.message = message
+  const target = sanitizeValidationTarget(value.target)
+  if (target) failure.target = target
   return failure
+}
+
+const sanitizeValidationTarget = (value: unknown): ProviderValidationTarget | undefined => {
+  if (!isRecord(value)) return undefined
+  const model = asString(value.model)
+  const endpoint = asString(value.endpoint)
+  if (!model && endpoint !== 'anthropic' && endpoint !== 'openai' && endpoint !== 'responses') {
+    return undefined
+  }
+  return {
+    ...(model ? { model } : {}),
+    ...(endpoint === 'anthropic' || endpoint === 'openai' || endpoint === 'responses'
+      ? { endpoint }
+      : {})
+  }
 }
 
 // Rebuild one provider from known fields and durable credential references only.
@@ -163,6 +181,7 @@ export const sanitizeProvider = (value: unknown): StoredProvider | undefined => 
   const keyMask = asString(value.keyMask)
   const accountEmail = asString(value.accountEmail)
   const lastValidatedAt = asNumber(value.lastValidatedAt)
+  const lastValidatedTarget = sanitizeValidationTarget(value.lastValidatedTarget)
   const lastValidationFailure = sanitizeValidationFailure(value.lastValidationFailure)
   const expiresAt = asNumber(value.expiresAt)
   const disconnectedAt = asNumber(value.disconnectedAt)
@@ -227,6 +246,7 @@ export const sanitizeProvider = (value: unknown): StoredProvider | undefined => 
   if (keyMask) provider.keyMask = keyMask
   if (accountEmail && type === 'xai-subscription') provider.accountEmail = accountEmail
   if (lastValidatedAt !== undefined) provider.lastValidatedAt = lastValidatedAt
+  if (lastValidatedTarget) provider.lastValidatedTarget = lastValidatedTarget
   if (lastValidationFailure) provider.lastValidationFailure = lastValidationFailure
   if (expiresAt !== undefined) provider.expiresAt = expiresAt
   if (disconnectedAt !== undefined && type === 'claude-shared') {

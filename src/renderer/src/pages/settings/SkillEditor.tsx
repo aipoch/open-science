@@ -1,11 +1,16 @@
+import { TooltipProvider } from '@/components/ui/tooltip'
 /* Hallmark · pre-emit critique: P5 H5 E4 S5 R5 V4 */
 import type { TFunction } from 'i18next'
 import { AlertTriangle, ChevronDown, FileUp, Upload, X } from 'lucide-react'
-import { RadioGroup } from 'radix-ui'
+import { Dialog, RadioGroup } from 'radix-ui'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Trans, useTranslation } from 'react-i18next'
 
-import type { SkillPackageFileInfo, SkillReference } from '../../../../shared/settings'
+import type {
+  SkillDetailView,
+  SkillPackageFileInfo,
+  SkillReference
+} from '../../../../shared/settings'
 import { serializePersonalSkillDocument } from '../../../../shared/personal-skill-document'
 import {
   isSkillPackageBudgetedPath,
@@ -15,7 +20,17 @@ import { parseSkillDocument } from '../../../../shared/skill-frontmatter'
 import { ErrorNotice } from '@/components/error-notice'
 import { FileDropOverlay } from '@/components/FileDropOverlay'
 import { Button } from '@/components/ui/button'
+import { isSafeSkillReferenceName } from '../../../../shared/skill-reference-name'
 import { Input } from '@/components/ui/input'
+import {
+  dialogBodyClassName,
+  dialogDescriptionClassName,
+  dialogFooterClassName,
+  dialogHeaderClassName,
+  dialogOverlayClassName,
+  dialogPanelClassName,
+  dialogTitleClassName
+} from '@/components/ui/dialog-chrome'
 import { Textarea } from '@/components/ui/textarea'
 import { useFileDropZone } from '@/hooks/useFileDropZone'
 import { useSettingsStore } from '@/stores/settings-store'
@@ -24,6 +39,7 @@ import { SettingsIconAction, SettingsLoadNotice } from './SettingsLayout'
 type SkillEditorReference = SkillReference & { sizeBytes?: number }
 
 export type SkillDraft = {
+  etag?: string
   id?: string
   name: string
   description: string
@@ -349,6 +365,10 @@ const SkillEditor = ({ initial, onCancel, onSave }: SkillEditorProps): React.JSX
     if (addingReferences || files.length === 0) return
 
     setReferenceError(null)
+    if (files.some((file) => !isSafeSkillReferenceName(file.name))) {
+      setReferenceError(t('Use a safe filename without path separators or reserved characters.'))
+      return
+    }
     const selected = new Map<string, File>()
     for (const file of files) selected.set(file.name, file)
     const retained = references.filter((reference) => !selected.has(reference.path))
@@ -413,6 +433,7 @@ const SkillEditor = ({ initial, onCancel, onSave }: SkillEditorProps): React.JSX
     try {
       await onSave({
         id: initial.id,
+        etag: initial.etag,
         name: currentName,
         description: description.trim(),
         body: persistedBody,
@@ -429,281 +450,283 @@ const SkillEditor = ({ initial, onCancel, onSave }: SkillEditorProps): React.JSX
   }
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col">
-      <div className="min-h-0 flex-1 overflow-y-auto">
-        <div className="flex flex-col gap-4 p-5">
-          <label data-slot="settings-editor-field" className="grid min-w-0 gap-1.5">
-            <span className="text-sm font-medium text-foreground">{t('Name')}</span>
-            <Input
-              aria-label={t('Skill name')}
-              value={name}
-              onChange={isCreate ? (event) => setName(event.target.value) : undefined}
-              disabled={!isCreate}
-              aria-invalid={nameError ? true : undefined}
-              placeholder={t('e.g. changelog-style')}
-            />
-            {nameError ? <span className="text-xs text-danger-000">{nameError}</span> : null}
-          </label>
-          <label data-slot="settings-editor-field" className="grid min-w-0 gap-1.5">
-            <span className="text-sm font-medium text-foreground">{t('Description')}</span>
-            <Textarea
-              aria-label={t('Skill description')}
-              value={description}
-              onChange={(event) => setDescription(event.target.value)}
-              rows={2}
-              placeholder={t(
-                'One sentence — what does this skill teach the agent, and when does it apply?'
-              )}
-              className="resize-none text-sm"
-            />
-            <span className="text-xs text-muted-foreground">
-              {t('This is how the agent decides when to use the skill — be specific.')}
-            </span>
-          </label>
-          <div data-slot="settings-editor-field" className="grid min-w-0 gap-1.5">
-            <div className="flex items-start justify-between gap-3">
-              <div>
-                <p className="text-sm font-medium text-foreground">{t('Content')}</p>
-                <p className="mt-0.5 text-xs leading-5 text-muted-foreground">
-                  {t('Markdown shown to the agent when the skill is invoked.')}
-                </p>
-              </div>
-              <RadioGroup.Root
-                aria-label={t('Content mode')}
-                value={contentMode}
-                onValueChange={(value) => setContentMode(value as 'write' | 'upload')}
-                orientation="horizontal"
-                className="inline-flex shrink-0 items-center rounded-lg bg-muted p-0.5"
-              >
-                <RadioGroup.Item
-                  value="write"
-                  className={`inline-flex h-7 items-center rounded-md px-2.5 text-sm transition-colors motion-reduce:transition-none ${
-                    contentMode === 'write'
-                      ? 'bg-card font-medium text-foreground shadow-sm'
-                      : 'text-muted-foreground hover:text-foreground'
-                  }`}
-                >
-                  {t('Write')}
-                </RadioGroup.Item>
-                <RadioGroup.Item
-                  value="upload"
-                  className={`inline-flex h-7 items-center rounded-md px-2.5 text-sm transition-colors motion-reduce:transition-none ${
-                    contentMode === 'upload'
-                      ? 'bg-card font-medium text-foreground shadow-sm'
-                      : 'text-muted-foreground hover:text-foreground'
-                  }`}
-                >
-                  {t('Upload')}
-                </RadioGroup.Item>
-              </RadioGroup.Root>
-            </div>
-
-            {contentMode === 'write' ? (
-              <>
-                <Textarea
-                  aria-label={t('Skill body')}
-                  value={body}
-                  onChange={(event) => handleBodyChange(event.target.value)}
-                  onPaste={handleBodyPaste}
-                  rows={16}
-                  placeholder={'# Instructions\n\nStep-by-step guidance for the agent…'}
-                  className="min-h-64 resize-y font-mono text-[13px]"
-                />
-                <p className="mt-1.5 text-xs text-muted-foreground">
-                  <Trans
-                    i18nKey="Paste a full SKILL.md — if it has a <code>---</code> metadata block at the top, the fields above auto-fill."
-                    components={{ code: <code className="font-mono" /> }}
-                  />
-                </p>
-                {!frontmatterImportMode && metadataEntries.length > 0 ? (
-                  <div
-                    aria-label={t('Skill metadata')}
-                    className="mt-3 flex items-start justify-between gap-3 rounded-lg border border-border bg-muted/30 px-3 py-2"
-                  >
-                    <div className="min-w-0">
-                      <p className="text-xs font-medium text-foreground">{t('Saved metadata')}</p>
-                      <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted-foreground">
-                        {metadataEntries.map(([key, value]) => (
-                          <span key={key} className="break-all">
-                            {key}: {value}
-                          </span>
-                        ))}
-                      </div>
-                    </div>
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="sm"
-                      aria-label={t('Clear skill metadata')}
-                      onClick={() => setMetadata(undefined)}
-                    >
-                      {t('Clear')}
-                    </Button>
-                  </div>
-                ) : null}
-              </>
-            ) : (
-              <button
-                type="button"
-                onClick={uploadContent}
-                {...contentDrop.dropZoneProps}
-                className="relative flex w-full flex-col items-center gap-2 rounded-lg border border-dashed border-border px-6 py-8 text-center transition-colors motion-reduce:transition-none hover:bg-muted/50"
-              >
-                {contentDrop.isDragging ? (
-                  <FileDropOverlay label={t('Drop to upload')} className="rounded-lg" />
-                ) : null}
-                <Upload className="size-5 text-muted-foreground" aria-hidden="true" />
-                <span className="text-sm font-medium text-foreground">
-                  {t('Upload a SKILL.md or text file')}
-                </span>
-                <span className="text-xs text-muted-foreground">
-                  {t('Its contents fill the editor; switch back to Write to tweak.')}
-                </span>
-              </button>
-            )}
-            {contentImportError ? <SkillEditorAlert message={contentImportError} /> : null}
-          </div>
-
-          <div>
-            <button
-              type="button"
-              aria-expanded={advancedOpen}
-              aria-controls="skill-advanced-settings"
-              onClick={() => setAdvancedOpen((open) => !open)}
-              className="flex min-h-8 w-full items-center gap-2 rounded-lg py-1.5 text-left text-sm font-medium whitespace-nowrap text-foreground transition-colors duration-150 outline-none motion-reduce:transition-none hover:text-primary focus-visible:ring-3 focus-visible:ring-ring/50"
-            >
-              <ChevronDown
-                className={`size-4 shrink-0 text-muted-foreground transition-transform duration-150 motion-reduce:transition-none ${
-                  advancedOpen ? '' : '-rotate-90'
-                }`}
-                aria-hidden="true"
+    <TooltipProvider delayDuration={200}>
+      <div className="flex min-h-0 flex-1 flex-col">
+        <div className="min-h-0 flex-1 overflow-y-auto">
+          <div className="flex flex-col gap-4 p-5">
+            <label data-slot="settings-editor-field" className="grid min-w-0 gap-1.5">
+              <span className="text-sm font-medium text-foreground">{t('Name')}</span>
+              <Input
+                aria-label={t('Skill name')}
+                value={name}
+                onChange={isCreate ? (event) => setName(event.target.value) : undefined}
+                disabled={!isCreate}
+                aria-invalid={nameError ? true : undefined}
+                placeholder={t('e.g. changelog-style')}
               />
-              {t('Advanced settings')}
-            </button>
-
-            {advancedOpen ? (
-              <section id="skill-advanced-settings" className="mt-3">
+              {nameError ? <span className="text-xs text-danger-000">{nameError}</span> : null}
+            </label>
+            <label data-slot="settings-editor-field" className="grid min-w-0 gap-1.5">
+              <span className="text-sm font-medium text-foreground">{t('Description')}</span>
+              <Textarea
+                aria-label={t('Skill description')}
+                value={description}
+                onChange={(event) => setDescription(event.target.value)}
+                rows={2}
+                placeholder={t(
+                  'One sentence — what does this skill teach the agent, and when does it apply?'
+                )}
+                className="resize-none text-sm"
+              />
+              <span className="text-xs text-muted-foreground">
+                {t('This is how the agent decides when to use the skill — be specific.')}
+              </span>
+            </label>
+            <div data-slot="settings-editor-field" className="grid min-w-0 gap-1.5">
+              <div className="flex items-start justify-between gap-3">
                 <div>
-                  <h2 className="text-sm font-medium text-foreground">{t('References')}</h2>
+                  <p className="text-sm font-medium text-foreground">{t('Content')}</p>
                   <p className="mt-0.5 text-xs leading-5 text-muted-foreground">
-                    {t(
-                      'Supporting files (scripts, templates, data) the skill can read at runtime.'
-                    )}
+                    {t('Markdown shown to the agent when the skill is invoked.')}
                   </p>
                 </div>
-
-                <p
-                  aria-label={t('Skill package usage')}
-                  className="mt-2 text-xs text-muted-foreground"
+                <RadioGroup.Root
+                  aria-label={t('Content mode')}
+                  value={contentMode}
+                  onValueChange={(value) => setContentMode(value as 'write' | 'upload')}
+                  orientation="horizontal"
+                  className="inline-flex shrink-0 items-center rounded-lg bg-muted p-0.5"
                 >
-                  {t('References: {{count}} / {{limit}}; package: {{size}} / {{total}}', {
-                    count: references.length,
-                    limit: maxReferenceFiles,
-                    size: formatBytes(totalBytes, i18n.language),
-                    total: formatBytes(SKILL_IMPORT_LIMITS.maxTotalBytes, i18n.language)
-                  })}
-                </p>
-                {preservedPackageFiles.length > 0 ? (
-                  <div
-                    aria-label={t('Preserved package files')}
-                    className="mt-3 rounded-lg border border-border bg-muted/20 px-3 py-2"
+                  <RadioGroup.Item
+                    value="write"
+                    className={`inline-flex h-7 items-center rounded-md px-2.5 text-sm transition-colors motion-reduce:transition-none ${
+                      contentMode === 'write'
+                        ? 'bg-card font-medium text-foreground shadow-sm'
+                        : 'text-muted-foreground hover:text-foreground'
+                    }`}
                   >
-                    <p className="text-xs font-medium text-foreground">
-                      {t('Preserved package files')} ({preservedPackageFiles.length})
+                    {t('Write')}
+                  </RadioGroup.Item>
+                  <RadioGroup.Item
+                    value="upload"
+                    className={`inline-flex h-7 items-center rounded-md px-2.5 text-sm transition-colors motion-reduce:transition-none ${
+                      contentMode === 'upload'
+                        ? 'bg-card font-medium text-foreground shadow-sm'
+                        : 'text-muted-foreground hover:text-foreground'
+                    }`}
+                  >
+                    {t('Upload')}
+                  </RadioGroup.Item>
+                </RadioGroup.Root>
+              </div>
+
+              {contentMode === 'write' ? (
+                <>
+                  <Textarea
+                    aria-label={t('Skill body')}
+                    value={body}
+                    onChange={(event) => handleBodyChange(event.target.value)}
+                    onPaste={handleBodyPaste}
+                    rows={16}
+                    placeholder={'# Instructions\n\nStep-by-step guidance for the agent…'}
+                    className="min-h-64 resize-y font-mono text-[13px]"
+                  />
+                  <p className="mt-1.5 text-xs text-muted-foreground">
+                    <Trans
+                      i18nKey="Paste a full SKILL.md — if it has a <code>---</code> metadata block at the top, the fields above auto-fill."
+                      components={{ code: <code className="font-mono" /> }}
+                    />
+                  </p>
+                  {!frontmatterImportMode && metadataEntries.length > 0 ? (
+                    <div
+                      aria-label={t('Skill metadata')}
+                      className="mt-3 flex items-start justify-between gap-3 rounded-lg border border-border bg-muted/30 px-3 py-2"
+                    >
+                      <div className="min-w-0">
+                        <p className="text-xs font-medium text-foreground">{t('Saved metadata')}</p>
+                        <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted-foreground">
+                          {metadataEntries.map(([key, value]) => (
+                            <span key={key} className="break-all">
+                              {key}: {value}
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        aria-label={t('Clear skill metadata')}
+                        onClick={() => setMetadata(undefined)}
+                      >
+                        {t('Clear')}
+                      </Button>
+                    </div>
+                  ) : null}
+                </>
+              ) : (
+                <button
+                  type="button"
+                  onClick={uploadContent}
+                  {...contentDrop.dropZoneProps}
+                  className="relative flex w-full flex-col items-center gap-2 rounded-lg border border-dashed border-border px-6 py-8 text-center transition-colors motion-reduce:transition-none hover:bg-muted/50"
+                >
+                  {contentDrop.isDragging ? (
+                    <FileDropOverlay label={t('Drop to upload')} className="rounded-lg" />
+                  ) : null}
+                  <Upload className="size-5 text-muted-foreground" aria-hidden="true" />
+                  <span className="text-sm font-medium text-foreground">
+                    {t('Upload a SKILL.md or text file')}
+                  </span>
+                  <span className="text-xs text-muted-foreground">
+                    {t('Its contents fill the editor; switch back to Write to tweak.')}
+                  </span>
+                </button>
+              )}
+              {contentImportError ? <SkillEditorAlert message={contentImportError} /> : null}
+            </div>
+
+            <div>
+              <button
+                type="button"
+                aria-expanded={advancedOpen}
+                aria-controls="skill-advanced-settings"
+                onClick={() => setAdvancedOpen((open) => !open)}
+                className="flex min-h-8 w-full items-center gap-2 rounded-lg py-1.5 text-left text-sm font-medium whitespace-nowrap text-foreground transition-colors duration-150 outline-none motion-reduce:transition-none hover:text-primary focus-visible:ring-3 focus-visible:ring-ring/50"
+              >
+                <ChevronDown
+                  className={`size-4 shrink-0 text-muted-foreground transition-transform duration-150 motion-reduce:transition-none ${
+                    advancedOpen ? '' : '-rotate-90'
+                  }`}
+                  aria-hidden="true"
+                />
+                {t('Advanced settings')}
+              </button>
+
+              {advancedOpen ? (
+                <section id="skill-advanced-settings" className="mt-3">
+                  <div>
+                    <h2 className="text-sm font-medium text-foreground">{t('References')}</h2>
+                    <p className="mt-0.5 text-xs leading-5 text-muted-foreground">
+                      {t(
+                        'Supporting files (scripts, templates, data) the skill can read at runtime.'
+                      )}
                     </p>
-                    <p className="mt-0.5 text-xs text-muted-foreground">
-                      {t('These files stay unchanged when you save in the editor.')}
+                  </div>
+
+                  <p
+                    aria-label={t('Skill package usage')}
+                    className="mt-2 text-xs text-muted-foreground"
+                  >
+                    {t('References: {{count}} / {{limit}}; package: {{size}} / {{total}}', {
+                      count: references.length,
+                      limit: maxReferenceFiles,
+                      size: formatBytes(totalBytes, i18n.language),
+                      total: formatBytes(SKILL_IMPORT_LIMITS.maxTotalBytes, i18n.language)
+                    })}
+                  </p>
+                  {preservedPackageFiles.length > 0 ? (
+                    <div
+                      aria-label={t('Preserved package files')}
+                      className="mt-3 rounded-lg border border-border bg-muted/20 px-3 py-2"
+                    >
+                      <p className="text-xs font-medium text-foreground">
+                        {t('Preserved package files')} ({preservedPackageFiles.length})
+                      </p>
+                      <p className="mt-0.5 text-xs text-muted-foreground">
+                        {t('These files stay unchanged when you save in the editor.')}
+                      </p>
+                      <ul className="mt-1 max-h-36 divide-y divide-border overflow-y-auto">
+                        {preservedPackageFiles.map((file) => (
+                          <li key={file.path} className="flex items-center gap-2 py-1.5">
+                            <span className="min-w-0 flex-1 truncate font-mono text-xs text-foreground">
+                              {file.path}
+                            </span>
+                            <span className="shrink-0 text-xs text-muted-foreground">
+                              {formatBytes(file.sizeBytes, i18n.language)}
+                            </span>
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  ) : null}
+                  {referenceError ? <SkillEditorAlert message={referenceError} /> : null}
+                  {referenceProgress ? (
+                    <p aria-live="polite" className="mt-2 text-xs text-muted-foreground">
+                      {t('Reading reference files... {{completed}} / {{total}}', referenceProgress)}
                     </p>
-                    <ul className="mt-1 max-h-36 divide-y divide-border overflow-y-auto">
-                      {preservedPackageFiles.map((file) => (
-                        <li key={file.path} className="flex items-center gap-2 py-1.5">
+                  ) : null}
+
+                  <label
+                    {...referenceDrop.dropZoneProps}
+                    aria-busy={addingReferences}
+                    className="relative mt-3 flex cursor-pointer flex-col items-center gap-2 rounded-lg border border-dashed border-border px-6 py-6 text-center transition-colors motion-reduce:transition-none hover:bg-muted/50 focus-within:ring-3 focus-within:ring-ring/50"
+                  >
+                    {referenceDrop.isDragging ? (
+                      <FileDropOverlay label={t('Drop reference files')} className="rounded-lg" />
+                    ) : null}
+                    <input
+                      type="file"
+                      multiple
+                      aria-label={t('Add reference files')}
+                      disabled={addingReferences}
+                      className="sr-only"
+                      onChange={(event) => void addReferences(Array.from(event.target.files ?? []))}
+                    />
+                    <FileUp className="size-5 text-muted-foreground" aria-hidden="true" />
+                    <span className="text-sm font-medium text-foreground">
+                      {t('Drop reference files or click to browse')}
+                    </span>
+                    <span className="text-xs text-muted-foreground">
+                      <Trans
+                        i18nKey="Saved under <code>references/</code> in the skill."
+                        components={{ code: <code className="font-mono" /> }}
+                      />
+                    </span>
+                  </label>
+
+                  {references.length > 0 ? (
+                    <ul className="mt-3 flex flex-col divide-y divide-border">
+                      {references.map((ref) => (
+                        <li key={ref.path} className="flex items-center gap-2 py-2 text-sm">
                           <span className="min-w-0 flex-1 truncate font-mono text-xs text-foreground">
-                            {file.path}
+                            references/{ref.path}
                           </span>
                           <span className="shrink-0 text-xs text-muted-foreground">
-                            {formatBytes(file.sizeBytes, i18n.language)}
+                            {formatBytes(ref.sizeBytes ?? 0, i18n.language)}
                           </span>
+                          <SettingsIconAction
+                            label={`Remove ${ref.path}`}
+                            icon={X}
+                            onClick={() => {
+                              setReferences((prev) => prev.filter((item) => item.path !== ref.path))
+                              setReferenceError(null)
+                            }}
+                            className="size-6"
+                            danger
+                          />
                         </li>
                       ))}
                     </ul>
-                  </div>
-                ) : null}
-                {referenceError ? <SkillEditorAlert message={referenceError} /> : null}
-                {referenceProgress ? (
-                  <p aria-live="polite" className="mt-2 text-xs text-muted-foreground">
-                    {t('Reading reference files... {{completed}} / {{total}}', referenceProgress)}
-                  </p>
-                ) : null}
-
-                <label
-                  {...referenceDrop.dropZoneProps}
-                  aria-busy={addingReferences}
-                  className="relative mt-3 flex cursor-pointer flex-col items-center gap-2 rounded-lg border border-dashed border-border px-6 py-6 text-center transition-colors motion-reduce:transition-none hover:bg-muted/50 focus-within:ring-3 focus-within:ring-ring/50"
-                >
-                  {referenceDrop.isDragging ? (
-                    <FileDropOverlay label={t('Drop reference files')} className="rounded-lg" />
                   ) : null}
-                  <input
-                    type="file"
-                    multiple
-                    aria-label={t('Add reference files')}
-                    disabled={addingReferences}
-                    className="sr-only"
-                    onChange={(event) => void addReferences(Array.from(event.target.files ?? []))}
-                  />
-                  <FileUp className="size-5 text-muted-foreground" aria-hidden="true" />
-                  <span className="text-sm font-medium text-foreground">
-                    {t('Drop reference files or click to browse')}
-                  </span>
-                  <span className="text-xs text-muted-foreground">
-                    <Trans
-                      i18nKey="Saved under <code>references/</code> in the skill."
-                      components={{ code: <code className="font-mono" /> }}
-                    />
-                  </span>
-                </label>
-
-                {references.length > 0 ? (
-                  <ul className="mt-3 flex flex-col divide-y divide-border">
-                    {references.map((ref) => (
-                      <li key={ref.path} className="flex items-center gap-2 py-2 text-sm">
-                        <span className="min-w-0 flex-1 truncate font-mono text-xs text-foreground">
-                          references/{ref.path}
-                        </span>
-                        <span className="shrink-0 text-xs text-muted-foreground">
-                          {formatBytes(ref.sizeBytes ?? 0, i18n.language)}
-                        </span>
-                        <SettingsIconAction
-                          label={`Remove ${ref.path}`}
-                          icon={X}
-                          onClick={() => {
-                            setReferences((prev) => prev.filter((item) => item.path !== ref.path))
-                            setReferenceError(null)
-                          }}
-                          className="size-6"
-                          danger
-                        />
-                      </li>
-                    ))}
-                  </ul>
-                ) : null}
-              </section>
-            ) : null}
+                </section>
+              ) : null}
+            </div>
+            {budgetError ? <SkillEditorAlert message={budgetError} /> : null}
+            {saveError ? <SkillEditorAlert message={saveError} /> : null}
           </div>
-          {budgetError ? <SkillEditorAlert message={budgetError} /> : null}
-          {saveError ? <SkillEditorAlert message={saveError} /> : null}
+        </div>
+
+        <div className="flex shrink-0 items-center justify-end gap-2 bg-card px-5 py-3">
+          <Button type="button" variant="ghost" onClick={onCancel}>
+            {tCommon('Cancel')}
+          </Button>
+          <Button type="button" onClick={() => void handleSave()} disabled={!canSave}>
+            {saving ? t('Saving…') : initial.id ? t('Save') : t('Publish')}
+          </Button>
         </div>
       </div>
-
-      <div className="flex shrink-0 items-center justify-end gap-2 bg-card px-5 py-3">
-        <Button type="button" variant="ghost" onClick={onCancel}>
-          {tCommon('Cancel')}
-        </Button>
-        <Button type="button" onClick={() => void handleSave()} disabled={!canSave}>
-          {saving ? t('Saving…') : initial.id ? t('Save') : t('Publish')}
-        </Button>
-      </div>
-    </div>
+    </TooltipProvider>
   )
 }
 
@@ -712,11 +735,28 @@ type SkillEditLoaderProps = {
   onDone: () => void
 }
 
+const toSkillDraft = (detail: SkillDetailView): SkillDraft => ({
+  id: detail.id,
+  etag: detail.etag,
+  name: detail.name,
+  description: detail.description,
+  body: detail.body,
+  metadata: detail.metadata,
+  references: detail.references.map((reference) => ({
+    path: reference.path,
+    sizeBytes: reference.sizeBytes
+  })),
+  packageFiles: detail.packageFiles
+})
+
 // Loads an existing personal skill's content, then renders the editor pre-filled.
 const SkillEditLoader = ({ skillId, onDone }: SkillEditLoaderProps): React.JSX.Element => {
   const { t } = useTranslation()
   const updateSkill = useSettingsStore((state) => state.updateSkill)
   const [draft, setDraft] = useState<SkillDraft | null>(null)
+  const [conflict, setConflict] = useState<{ draft: SkillDraft; latest: SkillDraft } | null>(null)
+  const [resolving, setResolving] = useState(false)
+  const [conflictError, setConflictError] = useState<string | null>(null)
   const [loadState, setLoadState] = useState<'loading' | 'ready' | 'error' | 'not-found'>('loading')
   const loadRequestRef = useRef(0)
 
@@ -725,18 +765,11 @@ const SkillEditLoader = ({ skillId, onDone }: SkillEditLoaderProps): React.JSX.E
       void window.api.settings.getSkillDetail(skillId).then(
         (detail) => {
           if (loadRequestRef.current !== requestId) return
-          setDraft({
-            id: detail.id,
-            name: detail.name,
-            description: detail.description,
-            body: detail.body,
-            metadata: detail.metadata,
-            references: detail.references.map((ref) => ({
-              path: ref.path,
-              sizeBytes: ref.sizeBytes
-            })),
-            packageFiles: detail.packageFiles
-          })
+          if (!detail.etag) {
+            setLoadState('error')
+            return
+          }
+          setDraft(toSkillDraft(detail))
           setLoadState('ready')
         },
         (error) => {
@@ -788,21 +821,134 @@ const SkillEditLoader = ({ skillId, onDone }: SkillEditLoaderProps): React.JSX.E
     )
   }
 
+  const saveDraft = async (next: SkillDraft): Promise<void> => {
+    // Optional API preconditions preserve old clients; the editor never performs a blind write.
+    if (!next.etag) throw new Error(t('Open Science could not load this Skill.'))
+    try {
+      await updateSkill({
+        id: next.id ?? skillId,
+        etag: next.etag,
+        description: next.description,
+        body: next.body,
+        metadata: next.metadata,
+        references: next.references
+      })
+    } catch (error) {
+      if (!(error instanceof Error) || !error.message.includes('This Skill changed.')) throw error
+      const detail = await window.api.settings.getSkillDetail(skillId)
+      if (!detail.etag) throw new Error(t('Open Science could not load this Skill.'))
+      setConflict({ draft: next, latest: toSkillDraft(detail) })
+      setConflictError(null)
+      return
+    }
+    setConflict(null)
+    onDone()
+  }
+
+  const overwrite = async (): Promise<void> => {
+    if (!conflict || resolving) return
+    setResolving(true)
+    setConflictError(null)
+    try {
+      // Recheck the version that was reviewed; a later change needs another explicit decision.
+      await saveDraft({ ...conflict.draft, etag: conflict.latest.etag })
+    } catch (error) {
+      setConflictError(error instanceof Error ? error.message : t('Unable to save this skill.'))
+    } finally {
+      setResolving(false)
+    }
+  }
+
   return (
-    <SkillEditor
-      initial={draft}
-      onCancel={onDone}
-      onSave={async (next) => {
-        await updateSkill({
-          id: next.id ?? skillId,
-          description: next.description,
-          body: next.body,
-          metadata: next.metadata,
-          references: next.references
-        })
-        onDone()
-      }}
-    />
+    <>
+      <SkillEditor key={draft.etag} initial={draft} onCancel={onDone} onSave={saveDraft} />
+      <Dialog.Root
+        open={conflict !== null}
+        onOpenChange={(open) => {
+          if (!open && !resolving) setConflict(null)
+        }}
+      >
+        <Dialog.Portal>
+          <Dialog.Overlay className={dialogOverlayClassName} />
+          <Dialog.Content
+            className={dialogPanelClassName(
+              'flex max-h-[85vh] w-[min(900px,calc(100vw-2rem))] flex-col p-0'
+            )}
+            onEscapeKeyDown={(event) => {
+              if (resolving) event.preventDefault()
+            }}
+            onInteractOutside={(event) => event.preventDefault()}
+          >
+            <div className={dialogHeaderClassName}>
+              <div>
+                <Dialog.Title className={dialogTitleClassName}>
+                  {t('Review Skill changes')}
+                </Dialog.Title>
+                <Dialog.Description className={dialogDescriptionClassName}>
+                  {t('This Skill changed while you were editing. Your draft is preserved.')}
+                </Dialog.Description>
+              </div>
+            </div>
+            {conflict ? (
+              <div className={`${dialogBodyClassName} min-h-0 overflow-y-auto`}>
+                <div className="grid gap-4 md:grid-cols-2">
+                  {[
+                    { label: t('Your draft'), value: conflict.draft },
+                    { label: t('Latest version'), value: conflict.latest }
+                  ].map(({ label, value }) => (
+                    <section
+                      key={label}
+                      aria-label={label}
+                      className="min-w-0 rounded-lg border border-border p-3"
+                    >
+                      <h3 className="mb-3 text-sm font-medium">{label}</h3>
+                      <pre className="max-h-64 overflow-auto whitespace-pre-wrap break-words text-xs">
+                        {serializePersonalSkillDocument(value)}
+                      </pre>
+                      <h4 className="mb-1 mt-4 text-sm font-medium">{t('References')}</h4>
+                      {value.references?.length ? (
+                        <ul className="space-y-1 break-all font-mono text-xs">
+                          {value.references.map((reference) => (
+                            <li key={reference.path}>{reference.path}</li>
+                          ))}
+                        </ul>
+                      ) : (
+                        <p className="text-xs text-muted-foreground">{t('No reference files')}</p>
+                      )}
+                    </section>
+                  ))}
+                </div>
+                <p className="mt-4 text-sm text-muted-foreground">
+                  {t(
+                    'Loading the latest version discards your draft. Overwriting replaces the editable content and removes reference files absent from your draft.'
+                  )}
+                </p>
+                {conflictError ? <SkillEditorAlert message={conflictError} /> : null}
+              </div>
+            ) : null}
+            <div className={`${dialogFooterClassName} flex-wrap`}>
+              <Button variant="ghost" disabled={resolving} onClick={() => setConflict(null)}>
+                {t('Keep editing')}
+              </Button>
+              <Button
+                variant="outline"
+                disabled={resolving}
+                onClick={() => {
+                  if (!conflict) return
+                  setDraft(conflict.latest)
+                  setConflict(null)
+                }}
+              >
+                {t('Load latest version')}
+              </Button>
+              <Button disabled={resolving} onClick={() => void overwrite()}>
+                {resolving ? t('Saving…') : t('Overwrite with my draft')}
+              </Button>
+            </div>
+          </Dialog.Content>
+        </Dialog.Portal>
+      </Dialog.Root>
+    </>
   )
 }
 

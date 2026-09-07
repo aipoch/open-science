@@ -760,6 +760,18 @@ describe('RuntimesPanel', () => {
     expect(provision).not.toHaveBeenCalled()
   })
 
+  it('keeps the setup fallback visible before the first progress event', async () => {
+    await render()
+    act(() =>
+      useNotebookEnvStore.setState({
+        byLang: { r: { preparing: true } }
+      })
+    )
+
+    const rSection = container.querySelector('section[aria-label="R runtime"]')
+    expect(rSection?.textContent).toContain('Downloading managed runtime…')
+  })
+
   it('shows a determinate progress bar + Cancel in the app-managed setup card while downloading', async () => {
     await render()
     // R has no provisioned managed env, so its section shows the app-managed SETUP card (which carries
@@ -770,8 +782,8 @@ describe('RuntimesPanel', () => {
           r: {
             preparing: true,
             progress: {
-              phase: 'download',
-              message: 'Downloading managed R runtime (30%)',
+              phase: 'fetch-r',
+              event: { code: 'downloading-r-runtime' },
               progress: 0.3,
               language: 'r'
             }
@@ -782,7 +794,7 @@ describe('RuntimesPanel', () => {
     const bar = container.querySelector('[role="progressbar"]')
     expect(bar).not.toBeNull()
     expect(bar?.getAttribute('aria-valuenow')).toBe('30')
-    expect(container.textContent).toContain('Downloading managed R runtime (30%)')
+    expect(container.textContent).toContain('Downloading managed R runtime')
     // The download is cancelable, not a locked state.
     const cancelBtn = Array.from(container.querySelectorAll('button')).find((b) =>
       /^cancel$/i.test((b.textContent ?? '').trim())

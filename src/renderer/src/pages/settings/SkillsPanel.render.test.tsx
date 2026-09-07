@@ -899,6 +899,7 @@ describe('SkillsPanel (sub-views)', () => {
       settings: {
         getSkillDetail: vi.fn().mockResolvedValue({
           id: 'personal-mine',
+          etag: 'version',
           name: 'Mine',
           description: 'Custom',
           source: 'personal',
@@ -932,6 +933,7 @@ describe('SkillsPanel (sub-views)', () => {
 
     expect(useSettingsStore.getState().updateSkill).toHaveBeenCalledWith({
       id: 'personal-mine',
+      etag: 'version',
       description: 'Custom',
       body: '# Body',
       metadata: { author: 'Ada', license: 'MIT', category: 'research' },
@@ -944,6 +946,7 @@ describe('SkillsPanel (sub-views)', () => {
       settings: {
         getSkillDetail: vi.fn().mockResolvedValue({
           id: 'personal-mine',
+          etag: 'version',
           name: 'Mine',
           description: 'Custom',
           source: 'personal',
@@ -986,6 +989,7 @@ describe('SkillsPanel (sub-views)', () => {
 
     expect(useSettingsStore.getState().updateSkill).toHaveBeenCalledWith({
       id: 'personal-mine',
+      etag: 'version',
       description: 'Custom',
       body: '# New body',
       metadata: { author: 'Grace', tags: 'analysis, writing' },
@@ -998,6 +1002,7 @@ describe('SkillsPanel (sub-views)', () => {
       settings: {
         getSkillDetail: vi.fn().mockResolvedValue({
           id: 'personal-mine',
+          etag: 'version',
           name: 'Mine',
           description: 'Custom',
           source: 'personal',
@@ -1027,6 +1032,7 @@ describe('SkillsPanel (sub-views)', () => {
 
     expect(useSettingsStore.getState().updateSkill).toHaveBeenCalledWith({
       id: 'personal-mine',
+      etag: 'version',
       description: 'Custom',
       body: '# New body',
       metadata: { author: 'Ada', license: 'MIT' },
@@ -1039,6 +1045,7 @@ describe('SkillsPanel (sub-views)', () => {
       settings: {
         getSkillDetail: vi.fn().mockResolvedValue({
           id: 'personal-mine',
+          etag: 'version',
           name: 'Mine',
           description: 'Custom',
           source: 'personal',
@@ -1075,6 +1082,7 @@ describe('SkillsPanel (sub-views)', () => {
 
     expect(useSettingsStore.getState().updateSkill).toHaveBeenCalledWith({
       id: 'personal-mine',
+      etag: 'version',
       description: 'Custom',
       body: '# Plain replacement',
       metadata: { author: 'Old author', license: 'MIT' },
@@ -1087,6 +1095,7 @@ describe('SkillsPanel (sub-views)', () => {
       settings: {
         getSkillDetail: vi.fn().mockResolvedValue({
           id: 'personal-mine',
+          etag: 'version',
           name: 'Mine',
           description: 'Custom',
           source: 'personal',
@@ -1376,6 +1385,7 @@ describe('SkillsPanel (sub-views)', () => {
       settings: {
         getSkillDetail: vi.fn().mockResolvedValue({
           id: 'personal-mine',
+          etag: 'version',
           name: 'Mine',
           description: 'Custom',
           source: 'personal',
@@ -1403,7 +1413,7 @@ describe('SkillsPanel (sub-views)', () => {
 
     expect(
       document.body.querySelector('[aria-label="Skill package usage"]')?.textContent
-    ).toContain('References: 1 / 253')
+    ).toContain(`References: 1 / ${SKILL_IMPORT_LIMITS.maxFiles - 3}`)
     expect(document.body.textContent).toContain('references/guide.md')
     expect(document.body.textContent).toContain('references/guides/deep.md')
     expect(document.body.textContent).toContain('scripts/run.sh')
@@ -1418,6 +1428,7 @@ describe('SkillsPanel (sub-views)', () => {
       settings: {
         getSkillDetail: vi.fn().mockResolvedValue({
           id: 'personal-budgeted',
+          etag: 'version',
           name: 'budgeted',
           description: 'Custom',
           source: 'personal',
@@ -2347,4 +2358,42 @@ describe('SkillsPanel (sub-views)', () => {
     expect(document.body.textContent).toContain('Name exists')
     expect(useSettingsStore.getState().createSkill).not.toHaveBeenCalled()
   })
+})
+
+it('distinguishes a selected update from an already installed revision', async () => {
+  useSettingsStore.setState({
+    scanRepoSkills: vi.fn().mockResolvedValue({
+      skills: [
+        {
+          name: 'update-me',
+          path: 'update-me',
+          url: 'https://github.com/acme/skills/tree/pinned/update-me',
+          installedId: 'imported-update-me',
+          alreadyImported: false
+        },
+        {
+          name: 'current',
+          path: 'current',
+          url: 'https://github.com/acme/skills/tree/pinned/current',
+          installedId: 'imported-current',
+          alreadyImported: true
+        }
+      ]
+    })
+  })
+  act(() => root.render(<SkillsPanel view={{ kind: 'import' }} onNavigate={vi.fn()} />))
+  setValue('GitHub keyword or repository', 'acme/skills')
+  await act(async () => {
+    Array.from(document.body.querySelectorAll<HTMLButtonElement>('button'))
+      .find((button) => button.textContent?.trim() === 'Find skills')!
+      .click()
+  })
+  expect(document.body.textContent).toContain('Update available')
+  expect(
+    document.body.querySelector<HTMLInputElement>('[aria-label="Select update-me"]')?.checked
+  ).toBe(true)
+  expect(
+    document.body.querySelector<HTMLInputElement>('[aria-label="Select current"]')?.checked
+  ).toBe(false)
+  expect(document.body.textContent).toContain('Import selected (1)')
 })

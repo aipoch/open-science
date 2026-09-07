@@ -10,6 +10,13 @@ const { log } = vi.hoisted(() => ({
 
 vi.mock('../logger', () => ({ createLogger: () => log }))
 
+import type {
+  FailTaskSessionRunRequest,
+  PersistedChatSession,
+  SettleTaskSessionCompletionRequest,
+  StageTaskSessionCompletionRequest
+} from '../../shared/session-persistence'
+import type { SettingsSnapshot } from '../../shared/settings'
 import { ApplicationEventHub } from '../application-events'
 import type { ApplicationEventSource } from '../application-events'
 import type { ApplicationCommandComposition } from '../application-command-composition'
@@ -18,6 +25,24 @@ import { FileTaskRunJournal } from '../tasks/task-run-journal'
 import { createWebServiceController, type WebServiceControllerDeps } from './index'
 
 type StartOptions = Parameters<WebServiceControllerDeps['startServer']>[0]
+
+const taskSettings: SettingsSnapshot = {
+  claude: {},
+  opencode: {},
+  codebuddy: {},
+  codex: {},
+  claudeManaged: false,
+  opencodeManaged: false,
+  codebuddyManaged: false,
+  codexManaged: false,
+  providers: [],
+  agentFrameworkId: 'claude-code',
+  agentFrameworks: [],
+  reasoningEffort: 'default',
+  notificationsEnabled: true,
+  conversationSkillImportEnabled: true,
+  appIconVariant: 'light'
+}
 
 // Builds a controller over fully faked I/O so the idempotency + attached logic is exercised without
 // Electron, the network, or the filesystem. `startServer` echoes the requested port and records the
@@ -100,6 +125,64 @@ const makeController = (
 }
 
 describe('createWebServiceController', () => {
+  it('finishes publishing and can shut down before Task journal restoration completes', async () => {
+    let releaseSessionLoad: (() => void) | undefined
+    const sessionLoadGate = new Promise<void>((resolve) => {
+      releaseSessionLoad = resolve
+    })
+    const applicationCommands = {
+      localWeb: { commandNames: () => [], invoke: vi.fn() },
+      remoteWeb: { commandNames: () => [], rejectedCommandNames: () => [], invoke: vi.fn() },
+      task: {
+        commandNames: () => ['sessions:load-all'],
+        invoke: vi.fn(async (name: string) => {
+          if (name !== 'sessions:load-all') throw new Error(`Unexpected Task command: ${name}`)
+          await sessionLoadGate
+          return { sessions: [], manifest: { version: 1 } }
+        })
+      }
+    } satisfies Pick<ApplicationCommandComposition, 'localWeb' | 'remoteWeb' | 'task'>
+    const h = makeController(
+      {
+        createTaskRunJournal: () => ({
+          load: async () => [
+            {
+              id: 'run-interrupted',
+              sessionId: 'session-interrupted',
+              projectId: 'project-interrupted',
+              cwd: '/fake/root',
+              promptMessageId: 'prompt-interrupted',
+              status: 'running',
+              startedAt: 10,
+              artifacts: [],
+              preferredComputeHostIds: []
+            }
+          ],
+          replace: async () => undefined
+        })
+      },
+      vi.fn(),
+      applicationCommands
+    )
+
+    const startCompleted = vi.fn()
+    const start = h.controller.ensureStarted(44100, { attached: true })
+    void start.then(startCompleted)
+    try {
+      await vi.waitFor(() => expect(applicationCommands.task.invoke).toHaveBeenCalledOnce())
+      expect(h.startServer).toHaveBeenCalledOnce()
+      expect(h.writeState).toHaveBeenCalledOnce()
+      expect(startCompleted).toHaveBeenCalledOnce()
+
+      h.lastOptions().onShutdownRequest?.()
+      await vi.waitFor(() => expect(h.serverClose).toHaveBeenCalledOnce())
+    } finally {
+      releaseSessionLoad?.()
+      await start
+      await h.controller.dispose()
+    }
+  })
+
   it('passes the Session Compute preference authority to the Task façade', async () => {
     const project = {
       id: 'project-compute',
@@ -117,6 +200,7 @@ describe('createWebServiceController', () => {
         commandNames: () => [],
         invoke: vi.fn(async (name, invocation) => {
           if (name === 'projects:list') return [project]
+          if (name === 'settings:get-settings') return taskSettings
           if (name === 'sessions:load-all') return { sessions, manifest: { version: 1 } }
           if (name === 'sessions:save-session') {
             const durable = {
@@ -139,6 +223,7 @@ describe('createWebServiceController', () => {
         createSession: vi.fn(async () => ({ sessionId: 'session-compute' })),
         resumeSession: vi.fn(async (request) => ({ sessionId: request.sessionId })),
         setPermissionProfile: vi.fn(async () => undefined),
+        setMemoryEnabled: vi.fn(async () => undefined),
         cancelPrompt: vi.fn(async () => undefined),
         prompt: vi.fn(async () => undefined)
       },
@@ -320,6 +405,7 @@ describe('createWebServiceController', () => {
     const taskInvoke = vi.fn(async (name, invocation) => {
       callerSignals.push(invocation.callerLease.signal)
       if (name === 'projects:list') return [project]
+      if (name === 'settings:get-settings') return taskSettings
       if (name === 'sessions:load-all') return { sessions, manifest: { version: 1 } }
       if (name === 'sessions:save-session') {
         sessions.splice(0, sessions.length, invocation.args[0])
@@ -339,6 +425,7 @@ describe('createWebServiceController', () => {
         createSession: vi.fn(async () => ({ sessionId: 'session-created' })),
         resumeSession: vi.fn(async (request) => ({ sessionId: request.sessionId })),
         setPermissionProfile: vi.fn(async () => undefined),
+        setMemoryEnabled: vi.fn(async () => undefined),
         cancelPrompt: vi.fn(async () => undefined),
         prompt: vi.fn(async () => undefined)
       }
@@ -367,7 +454,7 @@ describe('createWebServiceController', () => {
       createdAt: 1,
       updatedAt: 1
     }
-    const sessions: unknown[] = []
+    const sessions: PersistedChatSession[] = []
     const applicationCommands = {
       localWeb: { commandNames: () => [], invoke: vi.fn() },
       remoteWeb: { commandNames: () => [], rejectedCommandNames: () => [], invoke: vi.fn() },
@@ -375,10 +462,49 @@ describe('createWebServiceController', () => {
         commandNames: () => [],
         invoke: vi.fn(async (name, invocation) => {
           if (name === 'projects:list') return [project]
+          if (name === 'settings:get-settings') return taskSettings
           if (name === 'sessions:load-all') return { sessions, manifest: { version: 1 } }
           if (name === 'sessions:save-session') {
-            sessions.splice(0, sessions.length, invocation.args[0])
-            return invocation.args[0]
+            const durable = invocation.args[0] as PersistedChatSession
+            sessions.splice(0, sessions.length, durable)
+            return durable
+          }
+          if (name === 'sessions:stage-task-completion') {
+            const request = invocation.args[0] as StageTaskSessionCompletionRequest
+            const current = sessions[0]
+            const durable = {
+              ...current,
+              messages: request.message ? [...current.messages, request.message] : current.messages,
+              activities: [...(current.activities ?? []), ...request.activities],
+              updatedAt: request.updatedAt
+            }
+            sessions.splice(0, sessions.length, durable)
+            return durable
+          }
+          if (name === 'sessions:settle-task-completion') {
+            const request = invocation.args[0] as SettleTaskSessionCompletionRequest
+            const durable = {
+              ...sessions[0],
+              status: 'idle' as const,
+              activeRun: undefined,
+              taskRunCommitId: request.taskRunCommitId,
+              updatedAt: request.updatedAt
+            }
+            sessions.splice(0, sessions.length, durable)
+            return durable
+          }
+          if (name === 'sessions:fail-task-run') {
+            const request = invocation.args[0] as FailTaskSessionRunRequest
+            const durable = {
+              ...sessions[0],
+              status: 'error' as const,
+              activeRun: undefined,
+              taskRunCommitId: request.taskRunCommitId,
+              error: request.error,
+              updatedAt: request.updatedAt
+            }
+            sessions.splice(0, sessions.length, durable)
+            return durable
           }
           throw new Error(`Unexpected Task command: ${name}`)
         })
@@ -390,6 +516,7 @@ describe('createWebServiceController', () => {
       createSession: vi.fn(async () => ({ sessionId: 'session-restart' })),
       resumeSession: vi.fn(async (request) => ({ sessionId: request.sessionId })),
       setPermissionProfile: vi.fn(async () => undefined),
+      setMemoryEnabled: vi.fn(async () => undefined),
       cancelPrompt: vi.fn(async () => undefined),
       prompt: vi.fn(async () => undefined)
     }
@@ -429,6 +556,7 @@ describe('createWebServiceController', () => {
       )
       controllers.push(second)
       await second.controller.ensureStarted(44101, { attached: false })
+      await second.lastOptions().waitUntilTasksReady?.()
 
       expect(second.lastOptions().tasks!.getRun(started.id)).toMatchObject({
         id: started.id,
@@ -466,6 +594,7 @@ describe('createWebServiceController', () => {
 
     try {
       await h.controller.ensureStarted(44100, { attached: false })
+      await h.lastOptions().waitUntilTasksReady?.()
       const tasks = h.lastOptions().tasks!
 
       expect(tasks.getRun('run-interrupted')).toMatchObject({

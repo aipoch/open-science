@@ -4,12 +4,18 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import { createRoot } from 'react-dom/client'
 import { act, Children, isValidElement, type ReactElement, type ReactNode } from 'react'
 import { Toolbox } from 'lucide-react'
+import {
+  resolveActionMenuEntries,
+  type ActionMenuSpec,
+  type ResolvedActionMenuEntry
+} from '@/components/action-menu/action-menu-model'
 import type { ChatSession } from '@/stores/session-store'
 import { useUpdateStore } from '@/stores/update-store'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { createI18nTestStub } from '../../../../../test/i18n-test-stub'
 import { clickRadixMenuItem, openRadixMenu } from '../settings/test-utils'
+import type { SessionActionId, SessionActionInvocation } from './session-action-menu'
 
 vi.mock('react-i18next', () => createI18nTestStub())
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
@@ -274,6 +280,27 @@ const collectElements = (node: ReactNode): ElementWithProps[] => {
   return elements
 }
 
+type SessionActionTargetProps = ActionMenuSpec<SessionActionId, SessionActionInvocation> & {
+  targetId: string
+  invocation: SessionActionInvocation
+}
+
+const getSessionActionTargetProps = (
+  tree: ReactNode,
+  sessionId: string
+): SessionActionTargetProps => {
+  const target = collectElements(tree).find(
+    (element) => element.props.targetId === `session:${sessionId}`
+  )
+  if (!target) throw new Error(`Session action target did not render: ${sessionId}`)
+  return target.props as unknown as SessionActionTargetProps
+}
+
+const resolveSessionTargetEntries = (
+  props: SessionActionTargetProps
+): readonly ResolvedActionMenuEntry<SessionActionId>[] =>
+  resolveActionMenuEntries(props, props.invocation)
+
 const getTextContent = (node: ReactNode): string => {
   if (typeof node === 'string' || typeof node === 'number') return String(node)
   if (!isValidElement(node)) return ''
@@ -289,6 +316,13 @@ beforeEach(() => {
     isDialogOpen: false
   })
 })
+
+const waitForPreviewDwell = async (): Promise<void> => {
+  await act(async () => {
+    if (vi.isFakeTimers()) await vi.advanceTimersByTimeAsync(310)
+    else await new Promise((resolve) => setTimeout(resolve, 310))
+  })
+}
 
 describe('WorkspaceSidebar accessible render', () => {
   it('keeps the sidebar card inset even on both sides', async () => {
@@ -328,15 +362,17 @@ describe('WorkspaceSidebar accessible render', () => {
     const desktopSessionButton = desktopContainer.querySelector('[data-slot="session-open-button"]')
     const mobileSessionButton = mobileContainer.querySelector('[data-slot="session-open-button"]')
 
-    expect(SESSION_HOVER_PREVIEW_DELAY_MS).toBe(0)
+    expect(SESSION_HOVER_PREVIEW_DELAY_MS).toBe(300)
     expect(SESSION_HOVER_PREVIEW_SKIP_DELAY_MS).toBe(300)
-    expect(desktopSessionButton?.closest('div.group')?.getAttribute('data-state')).toBe('closed')
+    expect(desktopSessionButton?.closest('div.group')?.getAttribute('data-session-preview')).toBe(
+      'closed'
+    )
     expect(desktopSessionButton?.closest('[title="Analysis session"]')).toBeNull()
     expect(mobileSessionButton?.closest('div.group')?.getAttribute('data-state')).toBeNull()
     expect(mobileSessionButton?.closest('[title="Analysis session"]')).not.toBeNull()
   })
 
-  it('opens pointer previews immediately and switches directly to the next Session', async () => {
+  it('delays the first pointer preview and switches directly to the next Session', async () => {
     vi.useFakeTimers()
     const {
       SESSION_HOVER_PREVIEW_ALIGN_OFFSET_PX,
@@ -377,11 +413,13 @@ describe('WorkspaceSidebar accessible render', () => {
       if (!first || !second) throw new Error('Session preview triggers did not render')
 
       await act(async () => pointerOver(first))
+      expect(firstPreviewRequest).not.toHaveBeenCalled()
+      await waitForPreviewDwell()
       expect(document.body.querySelector('[data-slot="session-hover-preview"]')?.textContent).toBe(
         'First SessionFirst Description'
       )
       const hoverRegion = document.body.querySelector<HTMLElement>(
-        '[data-slot="hovercard-content"]'
+        '[data-slot="session-preview-content"]'
       )
       expect(SESSION_HOVER_PREVIEW_ALIGN_OFFSET_PX).toBe(0)
       expect(hoverRegion?.classList).toContain('border-0')
@@ -403,7 +441,7 @@ describe('WorkspaceSidebar accessible render', () => {
     }
   })
 
-  it('closes a Session preview immediately after the pointer leaves its hover region', async () => {
+  it('closes a Session preview after a crossing grace when the pointer leaves its hover region', async () => {
     const { SessionHoverPreview, SessionHoverPreviewProvider } =
       await import('./SessionHoverPreview')
     const container = document.createElement('div')
@@ -426,10 +464,11 @@ describe('WorkspaceSidebar accessible render', () => {
       Object.defineProperty(pointerOver, 'pointerType', { value: 'mouse' })
 
       await act(async () => trigger.dispatchEvent(pointerOver))
+      await waitForPreviewDwell()
       expect(document.body.querySelector('[data-slot="session-hover-preview"]')).not.toBeNull()
 
       const hoverRegion = document.body.querySelector<HTMLElement>(
-        '[data-slot="hovercard-content"]'
+        '[data-slot="session-preview-content"]'
       )
       if (!hoverRegion) throw new Error('Session preview hover region did not render')
       const leaveTrigger = new MouseEvent('pointerout', {
@@ -447,6 +486,7 @@ describe('WorkspaceSidebar accessible render', () => {
       })
       Object.defineProperty(leaveHoverRegion, 'pointerType', { value: 'mouse' })
       await act(async () => hoverRegion.dispatchEvent(leaveHoverRegion))
+      await waitForPreviewDwell()
 
       expect(document.body.querySelector('[data-slot="session-hover-preview"]')).toBeNull()
     } finally {
@@ -501,6 +541,7 @@ describe('WorkspaceSidebar accessible render', () => {
       Object.defineProperty(pointerOver, 'pointerType', { value: 'mouse' })
 
       await act(async () => actionsTrigger.dispatchEvent(pointerOver))
+      await waitForPreviewDwell()
       expect(document.body.querySelector('[data-slot="session-hover-preview"]')).not.toBeNull()
 
       await act(async () =>
@@ -533,6 +574,199 @@ describe('WorkspaceSidebar accessible render', () => {
     }
   })
 
+  it('opens the shared actions for the right-clicked Session without activating it', async () => {
+    const { WorkspaceSidebar } = await import('./WorkspaceSidebar')
+    const sessions = [
+      createSession({ id: 'session-a', title: 'Active session', status: 'idle' }),
+      createSession({ id: 'session-b', title: 'Context target', status: 'idle' })
+    ]
+    const onOpenSession = vi.fn()
+    const onRenameSession = vi.fn()
+    const onTogglePin = vi.fn()
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const root = createRoot(container)
+
+    try {
+      await act(async () => {
+        root.render(
+          <WorkspaceSidebar
+            projectName="Example project"
+            sessions={sessions}
+            activeSessionId="session-a"
+            canCreateConversation
+            canMutateConversations
+            canDeleteConversations
+            onGoHome={vi.fn()}
+            onNewConversation={vi.fn()}
+            isFilesOpen={false}
+            onOpenFiles={vi.fn()}
+            onOpenSession={onOpenSession}
+            onRenameSession={onRenameSession}
+            canDownloadArtifacts
+            onDownloadArtifacts={vi.fn()}
+            onViewNotebook={vi.fn()}
+            onExportSession={vi.fn()}
+            onTogglePin={onTogglePin}
+            canArchiveSession={() => true}
+            onArchiveSession={vi.fn()}
+            onDeleteSession={vi.fn()}
+            onOpenSettings={vi.fn()}
+            onOpenProjectSettings={vi.fn()}
+            onNewProject={vi.fn()}
+          />
+        )
+      })
+
+      const targetButton = Array.from(
+        container.querySelectorAll<HTMLButtonElement>('[data-slot="session-open-button"]')
+      ).find((button) => button.textContent?.includes('Context target'))
+      const targetRow = targetButton?.closest<HTMLElement>('.group')
+      if (!targetRow) throw new Error('Context target row did not render')
+
+      const pointerOver = new MouseEvent('pointerover', { bubbles: true })
+      Object.defineProperty(pointerOver, 'pointerType', { value: 'mouse' })
+      await act(async () => targetRow.dispatchEvent(pointerOver))
+      await waitForPreviewDwell()
+      expect(document.body.querySelector('[data-slot="session-hover-preview"]')).not.toBeNull()
+
+      await act(async () => {
+        targetRow.dispatchEvent(
+          new MouseEvent('contextmenu', {
+            bubbles: true,
+            cancelable: true,
+            clientX: 41,
+            clientY: 83
+          })
+        )
+      })
+
+      const menu = document.body.querySelector<HTMLElement>('[data-testid="session-context-menu"]')
+      expect(menu).not.toBeNull()
+      expect(
+        Array.from(menu?.querySelectorAll<HTMLElement>('[data-action-id]') ?? []).map(
+          (item) => item.dataset.actionId
+        )
+      ).toEqual([
+        'toggle-pin',
+        'edit',
+        'download-artifacts',
+        'view-notebook',
+        'export',
+        'archive',
+        'delete'
+      ])
+      expect(document.body.querySelector('[data-slot="session-hover-preview"]')).toBeNull()
+      expect(onOpenSession).not.toHaveBeenCalled()
+
+      const edit = menu?.querySelector<HTMLElement>('[data-action-id="edit"]')
+      if (!edit) throw new Error('Edit action did not render')
+      await clickRadixMenuItem(edit)
+      expect(onRenameSession).toHaveBeenCalledWith(sessions[1])
+      expect(onOpenSession).not.toHaveBeenCalled()
+
+      openRadixMenu(
+        container.querySelector<HTMLButtonElement>('[aria-label="Open actions for Context target"]')
+      )
+      const dropdown = document.body.querySelector<HTMLElement>('[aria-label="Session actions"]')
+      expect(
+        Array.from(dropdown?.querySelectorAll<HTMLElement>('[data-action-id]') ?? []).map(
+          (item) => item.dataset.actionId
+        )
+      ).toEqual([
+        'toggle-pin',
+        'edit',
+        'download-artifacts',
+        'view-notebook',
+        'export',
+        'archive',
+        'delete'
+      ])
+      await clickRadixMenuItem(
+        dropdown?.querySelector<HTMLElement>('[data-action-id="toggle-pin"]')
+      )
+      expect(onTogglePin).toHaveBeenCalledWith(sessions[1])
+    } finally {
+      act(() => root.unmount())
+      container.remove()
+    }
+  })
+
+  it('applies Session hidden, disabled, and danger presentation to the right-click menu', async () => {
+    const { WorkspaceSidebar } = await import('./WorkspaceSidebar')
+    const session = createSession({ id: 'restricted', title: 'Restricted session', status: 'idle' })
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const root = createRoot(container)
+
+    try {
+      await act(async () => {
+        root.render(
+          <WorkspaceSidebar
+            projectName="Example project"
+            sessions={[session]}
+            activeSessionId={session.id}
+            canCreateConversation={false}
+            canMutateConversations={false}
+            canDeleteConversations={false}
+            onGoHome={vi.fn()}
+            onNewConversation={vi.fn()}
+            isFilesOpen={false}
+            onOpenFiles={vi.fn()}
+            onOpenSession={vi.fn()}
+            onRenameSession={vi.fn()}
+            canDownloadArtifacts={false}
+            onDownloadArtifacts={vi.fn()}
+            onViewNotebook={vi.fn()}
+            onTogglePin={vi.fn()}
+            onDeleteSession={vi.fn()}
+            onOpenSettings={vi.fn()}
+            onOpenProjectSettings={vi.fn()}
+            onNewProject={vi.fn()}
+          />
+        )
+      })
+
+      const target = container.querySelector<HTMLElement>('[data-session-id="restricted"]')
+      await act(async () => {
+        target?.dispatchEvent(
+          new MouseEvent('contextmenu', {
+            bubbles: true,
+            cancelable: true,
+            clientX: 20,
+            clientY: 30
+          })
+        )
+      })
+      const menu = document.body.querySelector<HTMLElement>('[data-testid="session-context-menu"]')
+      const actions = Array.from(menu?.querySelectorAll<HTMLElement>('[data-action-id]') ?? [])
+
+      expect(actions.map((item) => item.dataset.actionId)).toEqual([
+        'toggle-pin',
+        'edit',
+        'view-notebook',
+        'archive',
+        'delete'
+      ])
+      for (const actionId of ['toggle-pin', 'edit', 'archive', 'delete']) {
+        expect(
+          actions.find((item) => item.dataset.actionId === actionId)?.getAttribute('aria-disabled')
+        ).toBe('true')
+      }
+      expect(
+        actions
+          .find((item) => item.dataset.actionId === 'view-notebook')
+          ?.getAttribute('aria-disabled')
+      ).toBeNull()
+      expect(actions.find((item) => item.dataset.actionId === 'delete')?.className).toContain(
+        'text-danger-000'
+      )
+    } finally {
+      act(() => root.unmount())
+      container.remove()
+    }
+  })
+
   it('closes an active Session preview when its row is removed', async () => {
     vi.useFakeTimers()
     const { SessionHoverPreview, SessionHoverPreviewProvider } =
@@ -557,6 +791,7 @@ describe('WorkspaceSidebar accessible render', () => {
       Object.defineProperty(pointerOver, 'pointerType', { value: 'mouse' })
 
       await act(async () => trigger.dispatchEvent(pointerOver))
+      await waitForPreviewDwell()
       expect(document.body.querySelector('[data-slot="session-hover-preview"]')).not.toBeNull()
 
       await act(async () =>
@@ -639,6 +874,7 @@ describe('WorkspaceSidebar accessible render', () => {
       const pointerOver = new MouseEvent('pointerover', { bubbles: true })
       Object.defineProperty(pointerOver, 'pointerType', { value: 'mouse' })
       await act(async () => trigger.dispatchEvent(pointerOver))
+      await waitForPreviewDwell()
 
       const titleButton = document.body.querySelector<HTMLElement>(
         '[data-slot="session-hover-preview-title-button"]'
@@ -647,7 +883,7 @@ describe('WorkspaceSidebar accessible render', () => {
       await act(async () => titleButton.dispatchEvent(new MouseEvent('click', { bubbles: true })))
 
       const input = document.body.querySelector<HTMLInputElement>(
-        '[data-slot="hovercard-content"] [data-slot="input"]'
+        '[data-slot="session-preview-content"] [data-slot="input"]'
       )
       if (!input) throw new Error('Session preview title editor did not render')
       expect(input.value).toBe('Old title')
@@ -661,7 +897,7 @@ describe('WorkspaceSidebar accessible render', () => {
       expect(onRenameTitle).toHaveBeenCalledWith('Renamed title', 'Old title')
       expect(onRenameTitle).toHaveBeenCalledOnce()
       expect(
-        document.body.querySelector('[data-slot="hovercard-content"] [data-slot="input"]')
+        document.body.querySelector('[data-slot="session-preview-content"] [data-slot="input"]')
       ).toBeNull()
     } finally {
       act(() => root.unmount())
@@ -699,12 +935,13 @@ describe('WorkspaceSidebar accessible render', () => {
       const pointerOver = new MouseEvent('pointerover', { bubbles: true })
       Object.defineProperty(pointerOver, 'pointerType', { value: 'mouse' })
       await act(async () => trigger.dispatchEvent(pointerOver))
+      await waitForPreviewDwell()
       const titleButton = document.body.querySelector<HTMLElement>(
         '[data-slot="session-hover-preview-title-button"]'
       )
       await act(async () => titleButton?.dispatchEvent(new MouseEvent('click', { bubbles: true })))
       const input = document.body.querySelector<HTMLInputElement>(
-        '[data-slot="hovercard-content"] [data-slot="input"]'
+        '[data-slot="session-preview-content"] [data-slot="input"]'
       )
       if (!input) throw new Error('Session preview title editor did not render')
       input.value = 'My stale draft'
@@ -750,12 +987,13 @@ describe('WorkspaceSidebar accessible render', () => {
       const pointerOver = new MouseEvent('pointerover', { bubbles: true })
       Object.defineProperty(pointerOver, 'pointerType', { value: 'mouse' })
       await act(async () => trigger.dispatchEvent(pointerOver))
+      await waitForPreviewDwell()
       const titleButton = document.body.querySelector<HTMLElement>(
         '[data-slot="session-hover-preview-title-button"]'
       )
       await act(async () => titleButton?.dispatchEvent(new MouseEvent('click', { bubbles: true })))
       const input = document.body.querySelector<HTMLInputElement>(
-        '[data-slot="hovercard-content"] [data-slot="input"]'
+        '[data-slot="session-preview-content"] [data-slot="input"]'
       )
       if (!input) throw new Error('Session preview title editor did not render')
       input.value = 'Unsaved title'
@@ -769,7 +1007,7 @@ describe('WorkspaceSidebar accessible render', () => {
       })
 
       expect(
-        document.body.querySelector('[data-slot="hovercard-content"] [data-slot="input"]')
+        document.body.querySelector('[data-slot="session-preview-content"] [data-slot="input"]')
       ).toBeInstanceOf(HTMLInputElement)
       expect(document.body.querySelector('[role="alert"]')?.textContent).toBe(
         'Could not save session details.'
@@ -807,12 +1045,13 @@ describe('WorkspaceSidebar accessible render', () => {
       const pointerOver = new MouseEvent('pointerover', { bubbles: true })
       Object.defineProperty(pointerOver, 'pointerType', { value: 'mouse' })
       await act(async () => trigger.dispatchEvent(pointerOver))
+      await waitForPreviewDwell()
       const titleButton = document.body.querySelector<HTMLElement>(
         '[data-slot="session-hover-preview-title-button"]'
       )
       await act(async () => titleButton?.dispatchEvent(new MouseEvent('click', { bubbles: true })))
       const input = document.body.querySelector<HTMLInputElement>(
-        '[data-slot="hovercard-content"] [data-slot="input"]'
+        '[data-slot="session-preview-content"] [data-slot="input"]'
       )
       if (!input) throw new Error('Session preview title editor did not render')
       input.value = 'Unsaved title'
@@ -821,7 +1060,7 @@ describe('WorkspaceSidebar accessible render', () => {
       )
 
       expect(
-        document.body.querySelector('[data-slot="hovercard-content"] [data-slot="input"]')
+        document.body.querySelector('[data-slot="session-preview-content"] [data-slot="input"]')
       ).toBeInstanceOf(HTMLInputElement)
       expect(document.body.querySelector('[role="alert"]')).toBeNull()
     } finally {
@@ -857,6 +1096,7 @@ describe('WorkspaceSidebar accessible render', () => {
       const pointerOver = new MouseEvent('pointerover', { bubbles: true })
       Object.defineProperty(pointerOver, 'pointerType', { value: 'mouse' })
       await act(async () => trigger.dispatchEvent(pointerOver))
+      await waitForPreviewDwell()
       const titleButton = document.body.querySelector<HTMLElement>(
         '[data-slot="session-hover-preview-title-button"]'
       )
@@ -864,7 +1104,7 @@ describe('WorkspaceSidebar accessible render', () => {
       await act(async () => titleButton.dispatchEvent(new MouseEvent('click', { bubbles: true })))
 
       const input = document.body.querySelector<HTMLInputElement>(
-        '[data-slot="hovercard-content"] [data-slot="input"]'
+        '[data-slot="session-preview-content"] [data-slot="input"]'
       )
       if (!input) throw new Error('Session preview title editor did not render')
       input.value = 'Discarded title'
@@ -874,7 +1114,7 @@ describe('WorkspaceSidebar accessible render', () => {
 
       expect(onRenameTitle).not.toHaveBeenCalled()
       expect(
-        document.body.querySelector('[data-slot="hovercard-content"] [data-slot="input"]')
+        document.body.querySelector('[data-slot="session-preview-content"] [data-slot="input"]')
       ).toBeNull()
     } finally {
       act(() => root.unmount())
@@ -896,7 +1136,7 @@ describe('WorkspaceSidebar accessible render', () => {
       if (!titleButton) throw new Error('Session preview title button did not render')
       await act(async () => titleButton.dispatchEvent(new MouseEvent('click', { bubbles: true })))
       const input = document.body.querySelector<HTMLInputElement>(
-        '[data-slot="hovercard-content"] [data-slot="input"]'
+        '[data-slot="session-preview-content"] [data-slot="input"]'
       )
       if (!input) throw new Error('Session preview title editor did not render')
       return input
@@ -922,12 +1162,14 @@ describe('WorkspaceSidebar accessible render', () => {
       Object.defineProperty(pointerOver, 'pointerType', { value: 'mouse' })
 
       await act(async () => trigger.dispatchEvent(pointerOver))
+      await waitForPreviewDwell()
       const blankInput = await openEditor()
       blankInput.value = '   '
       await act(async () => blankInput.blur())
       expect(onRenameTitle).not.toHaveBeenCalled()
 
       await act(async () => trigger.dispatchEvent(pointerOver))
+      await waitForPreviewDwell()
       const committedInput = await openEditor()
       committedInput.value = 'Blurred rename'
       await act(async () => committedInput.blur())
@@ -948,7 +1190,9 @@ describe('WorkspaceSidebar accessible render', () => {
       <SessionHoverPreviewCard session={{ title: 'Editable title' }} canRename />
     )
 
-    expect(readOnly).toContain('<p class="truncate text-sm font-semibold leading-5">')
+    expect(readOnly).toContain(
+      '<p class="whitespace-pre-wrap break-words text-sm font-semibold leading-5">'
+    )
     expect(readOnly).not.toContain('session-hover-preview-title-button')
     expect(editable).toContain('data-slot="session-hover-preview-title-button"')
     expect(editable).toContain('aria-label="Rename session title"')
@@ -1019,7 +1263,7 @@ describe('WorkspaceSidebar accessible render', () => {
     }
   })
 
-  it('truncates long Session titles to one line and Descriptions to three lines', async () => {
+  it('wraps full Session titles and clamps Descriptions to three lines', async () => {
     const { SessionHoverPreviewCard } = await import('./SessionHoverPreview')
     const html = renderToStaticMarkup(
       <SessionHoverPreviewCard
@@ -1036,7 +1280,9 @@ describe('WorkspaceSidebar accessible render', () => {
     expect(html).toContain('data-slot="session-hover-preview"')
     expect(html).toContain('Complete analysis title')
     expect(html).toContain('Compare both cohorts.')
-    expect(html).toContain('class="truncate text-sm font-semibold leading-5"')
+    expect(html).toContain(
+      'class="whitespace-pre-wrap break-words text-sm font-semibold leading-5"'
+    )
     expect(html).toContain('text-xs leading-4')
     expect(html).not.toContain('text-[15px]')
     expect(html.match(/line-clamp-3/g)).toHaveLength(1)
@@ -1044,102 +1290,6 @@ describe('WorkspaceSidebar accessible render', () => {
     expect(withoutDescription).not.toContain('<p class="mt-2')
     expect(loading).toContain('aria-busy="true"')
     expect(loading).toContain('data-slot="session-hover-preview-description-loading"')
-  })
-
-  it('scrolls only an overflowing Session title and resets it on pointer leave', async () => {
-    const { SessionTitleMarquee } = await import('./SessionHoverPreview')
-    const container = document.createElement('div')
-    const root = createRoot(container)
-    const originalMatchMedia = window.matchMedia
-    window.matchMedia = vi.fn().mockReturnValue({ matches: false })
-
-    try {
-      await act(async () => {
-        root.render(
-          <button type="button">
-            <SessionTitleMarquee title="A title wider than the Session row" />
-          </button>
-        )
-      })
-      const viewport = container.querySelector<HTMLElement>('[data-slot="session-title-marquee"]')
-      const content = viewport?.firstElementChild as HTMLElement | null
-      const trigger = viewport?.closest('button')
-      const cancel = vi.fn()
-      const animate = vi.fn().mockReturnValue({ cancel } as unknown as Animation)
-      expect(viewport).not.toBeNull()
-      expect(content).not.toBeNull()
-      if (!viewport || !content) throw new Error('Session title marquee did not render')
-      Object.defineProperty(viewport, 'clientWidth', { configurable: true, value: 100 })
-      Object.defineProperty(content, 'scrollWidth', { configurable: true, value: 180 })
-      Object.defineProperty(content, 'animate', { configurable: true, value: animate })
-
-      await act(async () => {
-        trigger?.dispatchEvent(new MouseEvent('pointerenter'))
-      })
-      expect(animate).toHaveBeenCalledWith(
-        [{ transform: 'translateX(0)' }, { transform: 'translateX(-80px)' }],
-        expect.objectContaining({ delay: 300, duration: 2_800, fill: 'forwards' })
-      )
-
-      await act(async () => {
-        trigger?.dispatchEvent(new MouseEvent('pointerleave'))
-      })
-      expect(cancel).toHaveBeenCalledTimes(1)
-
-      animate.mockClear()
-      Object.defineProperty(content, 'scrollWidth', { configurable: true, value: 260 })
-      await act(async () => {
-        trigger?.dispatchEvent(new MouseEvent('pointerenter'))
-      })
-      expect(animate).toHaveBeenCalledWith(
-        [{ transform: 'translateX(0)' }, { transform: 'translateX(-160px)' }],
-        expect.objectContaining({ delay: 300, duration: 5_600, fill: 'forwards' })
-      )
-
-      animate.mockClear()
-      Object.defineProperty(content, 'scrollWidth', { configurable: true, value: 90 })
-      await act(async () => {
-        trigger?.dispatchEvent(new MouseEvent('pointerenter'))
-      })
-      expect(animate).not.toHaveBeenCalled()
-    } finally {
-      act(() => root.unmount())
-      window.matchMedia = originalMatchMedia
-    }
-  })
-
-  it('keeps overflowing Session titles still when reduced motion is requested', async () => {
-    const { SessionTitleMarquee } = await import('./SessionHoverPreview')
-    const container = document.createElement('div')
-    const root = createRoot(container)
-    const originalMatchMedia = window.matchMedia
-    window.matchMedia = vi.fn().mockReturnValue({ matches: true })
-
-    try {
-      await act(async () => {
-        root.render(
-          <button type="button">
-            <SessionTitleMarquee title="A title wider than the Session row" />
-          </button>
-        )
-      })
-      const viewport = container.querySelector<HTMLElement>('[data-slot="session-title-marquee"]')
-      const content = viewport?.firstElementChild as HTMLElement | null
-      const trigger = viewport?.closest('button')
-      const animate = vi.fn()
-      if (!viewport || !content) throw new Error('Session title marquee did not render')
-      Object.defineProperty(viewport, 'clientWidth', { configurable: true, value: 100 })
-      Object.defineProperty(content, 'scrollWidth', { configurable: true, value: 180 })
-      Object.defineProperty(content, 'animate', { configurable: true, value: animate })
-
-      await act(async () => {
-        trigger?.dispatchEvent(new MouseEvent('pointerenter'))
-      })
-      expect(animate).not.toHaveBeenCalled()
-    } finally {
-      act(() => root.unmount())
-      window.matchMedia = originalMatchMedia
-    }
   })
 
   it('docks the update action on the row above Settings', async () => {
@@ -1990,7 +2140,7 @@ describe('WorkspaceSidebar accessible render', () => {
     expect(html).toContain('aria-label="Open actions for Dataset cleanup"')
   })
 
-  it('labels session action content and raises its stacking only in mobile mode', async () => {
+  it('raises Session pointer actions above the mobile sidebar only in mobile mode', async () => {
     const { WorkspaceSidebarView } = await import('./WorkspaceSidebar')
     const session = createSession({ id: 'session-a', title: 'Notebook review' })
     const sharedProps = {
@@ -2018,22 +2168,22 @@ describe('WorkspaceSidebar accessible render', () => {
       onNewProject: vi.fn()
     }
 
-    const desktopMenu = collectElements(WorkspaceSidebarView(sharedProps)).find(
-      (element) => element.props['aria-label'] === 'Session actions'
+    const desktopProvider = collectElements(WorkspaceSidebarView(sharedProps)).find(
+      (element) => element.props.testId === 'session-context-menu'
     )
-    const mobileMenu = collectElements(
+    const mobileProvider = collectElements(
       WorkspaceSidebarView({
         ...sharedProps,
         mobileMode: true,
         isMobileOpen: true,
         onMobileClose: vi.fn()
       })
-    ).find((element) => element.props['aria-label'] === 'Session actions')
+    ).find((element) => element.props.testId === 'session-context-menu')
 
-    expect(desktopMenu).toBeDefined()
-    expect(String(desktopMenu?.props.className ?? '')).not.toContain('z-[80]')
-    expect(mobileMenu).toBeDefined()
-    expect(String(mobileMenu?.props.className ?? '')).toContain('z-[80]')
+    expect(desktopProvider).toBeDefined()
+    expect(desktopProvider?.props.contentClassName).toBeUndefined()
+    expect(mobileProvider).toBeDefined()
+    expect(mobileProvider?.props.contentClassName).toBe('z-[80]')
   })
 
   it('reveals session actions on interaction without keeping the selected row action visible', async () => {
@@ -2081,9 +2231,7 @@ describe('WorkspaceSidebar accessible render', () => {
       const completed = titleSpans.find((element) => element.textContent === completedTitle)
       const fade = container.querySelector<HTMLElement>('.bg-gradient-to-r')
 
-      expect(running?.classList).toContain('overflow-hidden')
-      expect(running?.classList).toContain('whitespace-nowrap')
-      expect(running?.classList).not.toContain('truncate')
+      expect(running?.classList).toContain('truncate')
       expect(running?.classList).toContain('font-semibold')
       expect(completed?.classList).not.toContain('font-semibold')
       expect(fade?.classList).toContain('w-12')
@@ -2144,48 +2292,36 @@ describe('WorkspaceSidebar accessible render', () => {
         element.props['data-slot'] === 'session-open-button' &&
         typeof element.props.onClick === 'function'
     )
-    const renameItems = elements.filter((element) => getTextContent(element).trim() === 'Edit…')
-    const downloadItems = elements.filter(
-      (element) => getTextContent(element).trim() === 'Download all artifacts'
-    )
-    const deleteItems = elements.filter((element) => getTextContent(element).trim() === 'Delete')
-    const archiveItems = elements.filter((element) => getTextContent(element).trim() === 'Archive')
-    const exportItems = elements.filter(
-      (element) => getTextContent(element).trim() === 'Export conversation…'
-    )
+    const firstTarget = getSessionActionTargetProps(tree, sessions[0].id)
+    const secondTarget = getSessionActionTargetProps(tree, sessions[1].id)
 
     expect(notebookButton?.props.onClick).toBeTypeOf('function')
     ;(notebookButton?.props.onClick as () => void)()
     expect(onOpenSession).toHaveBeenCalledWith('session-a')
 
-    expect(renameItems[1]?.props.onSelect).toBeTypeOf('function')
-    ;(renameItems[1]?.props.onSelect as () => void)()
+    await secondTarget.bindings.edit?.execute(secondTarget.invocation)
     expect(onRenameSession).toHaveBeenCalledWith(sessions[1])
 
-    expect(downloadItems[1]?.props.onSelect).toBeTypeOf('function')
-    ;(downloadItems[1]?.props.onSelect as () => void)()
+    await secondTarget.bindings['download-artifacts']?.execute(secondTarget.invocation)
     expect(onDownloadArtifacts).toHaveBeenCalledWith(sessions[1])
 
-    expect(exportItems[0]?.props.onSelect).toBeTypeOf('function')
-    ;(exportItems[0]?.props.onSelect as () => void)()
+    await firstTarget.bindings.export?.execute(firstTarget.invocation)
     expect(onExportSession).toHaveBeenCalledWith(sessions[0])
 
-    expect(exportItems[1]?.props.onSelect).toBeTypeOf('function')
-    ;(exportItems[1]?.props.onSelect as () => void)()
+    await secondTarget.bindings.export?.execute(secondTarget.invocation)
     expect(onExportSession).toHaveBeenCalledWith(sessions[1])
 
-    expect(archiveItems[1]?.props.onSelect).toBeTypeOf('function')
-    ;(archiveItems[1]?.props.onSelect as () => void)()
+    await secondTarget.bindings.archive?.execute(secondTarget.invocation)
     expect(onArchiveSession).toHaveBeenCalledWith(sessions[1])
 
-    expect(deleteItems[0]?.props.onSelect).toBeTypeOf('function')
-    ;(deleteItems[0]?.props.onSelect as () => void)()
+    await firstTarget.bindings.delete?.execute(firstTarget.invocation)
     expect(onDeleteSession).toHaveBeenCalledWith(sessions[0])
   })
 
-  it('renders Customize between New and Files and wires both entries', async () => {
+  it('renders Customize, Files, and Literature after New and wires their entries', async () => {
     const { WorkspaceSidebarView } = await import('./WorkspaceSidebar')
     const onOpenFiles = vi.fn()
+    const onOpenLiterature = vi.fn()
     const onOpenSettings = vi.fn()
     const tree = WorkspaceSidebarView({
       now: Date.now(),
@@ -2199,6 +2335,7 @@ describe('WorkspaceSidebar accessible render', () => {
       onNewConversation: vi.fn(),
       isFilesOpen: true,
       onOpenFiles,
+      onOpenLiterature,
       onOpenSession: vi.fn(),
       onRenameSession: vi.fn(),
       canDownloadArtifacts: true,
@@ -2217,10 +2354,12 @@ describe('WorkspaceSidebar accessible render', () => {
     const newButtonIndex = buttons.findIndex((button) => getTextContent(button).trim() === 'New')
     const customizeButton = buttons.find((button) => getTextContent(button).trim() === 'Customize')
     const filesButton = buttons.find((button) => getTextContent(button).trim() === 'Files')
+    const literatureButton = buttons.find((button) => getTextContent(button).trim() === 'Library')
 
     expect(newButtonIndex).toBeGreaterThanOrEqual(0)
     expect(buttons[newButtonIndex + 1]).toBe(customizeButton)
     expect(buttons[newButtonIndex + 2]).toBe(filesButton)
+    expect(buttons[newButtonIndex + 3]).toBe(literatureButton)
     expect(collectElements(customizeButton).some((element) => element.type === Toolbox)).toBe(true)
     expect(filesButton?.props['aria-controls']).toBe('right-panel')
     expect(filesButton?.props['aria-pressed']).toBe(true)
@@ -2232,6 +2371,10 @@ describe('WorkspaceSidebar accessible render', () => {
     expect(filesButton?.props.onClick).toBeTypeOf('function')
     ;(filesButton?.props.onClick as () => void)()
     expect(onOpenFiles).toHaveBeenCalledTimes(1)
+
+    expect(literatureButton?.props.onClick).toBeTypeOf('function')
+    ;(literatureButton?.props.onClick as () => void)()
+    expect(onOpenLiterature).toHaveBeenCalledTimes(1)
   })
 
   it('wires the View notebook menu item to the matching session', async () => {
@@ -2267,12 +2410,8 @@ describe('WorkspaceSidebar accessible render', () => {
       canDownloadProjectArtifacts: true,
       onDownloadProjectArtifacts: vi.fn()
     })
-    const viewNotebookItems = collectElements(tree).filter(
-      (element) => getTextContent(element).trim() === 'View notebook'
-    )
-
-    expect(viewNotebookItems[1]?.props.onSelect).toBeTypeOf('function')
-    ;(viewNotebookItems[1]?.props.onSelect as () => void)()
+    const target = getSessionActionTargetProps(tree, sessions[1].id)
+    await target.bindings['view-notebook']?.execute(target.invocation)
     expect(onViewNotebook).toHaveBeenCalledWith(sessions[1])
   })
 
@@ -2531,11 +2670,13 @@ describe('WorkspaceSidebar accessible render', () => {
         })
 
         const shortcutButtons = container.querySelectorAll<HTMLButtonElement>(
-          'button[aria-keyshortcuts]'
+          'button[aria-keyshortcuts*="+"]'
         )
         expect(shortcutButtons).toHaveLength(9)
         expect(shortcutButtons[0]?.textContent).toContain('Pinned target')
-        expect(shortcutButtons[0]?.getAttribute('aria-keyshortcuts')).toBe(ariaShortcut)
+        expect(shortcutButtons[0]?.getAttribute('aria-keyshortcuts')?.split(' ')).toContain(
+          ariaShortcut
+        )
 
         await act(async () => {
           window.dispatchEvent(
@@ -2616,18 +2757,23 @@ describe('WorkspaceSidebar accessible render', () => {
       canDownloadProjectArtifacts: true,
       onDownloadProjectArtifacts: vi.fn()
     })
-    const elements = collectElements(tree)
-    const pinItem = elements.find((element) => getTextContent(element).trim() === 'Pin')
-    const unpinItem = elements.find((element) => getTextContent(element).trim() === 'Unpin')
+    const unpinnedTarget = getSessionActionTargetProps(tree, sessions[0].id)
+    const pinnedTarget = getSessionActionTargetProps(tree, sessions[1].id)
+    const pinItem = resolveSessionTargetEntries(unpinnedTarget).find(
+      (entry) => entry.kind === 'action' && entry.action === 'toggle-pin'
+    )
+    const unpinItem = resolveSessionTargetEntries(pinnedTarget).find(
+      (entry) => entry.kind === 'action' && entry.action === 'toggle-pin'
+    )
 
     // The unpinned session-a shows "Pin"; the pinned session-b shows "Unpin".
-    expect(pinItem?.props.onSelect).toBeTypeOf('function')
-    ;(pinItem?.props.onSelect as () => void)()
+    expect(pinItem).toMatchObject({ labelKey: 'Pin' })
+    await unpinnedTarget.bindings['toggle-pin']?.execute(unpinnedTarget.invocation)
     expect(onTogglePin).toHaveBeenCalledWith(sessions[0])
 
     onTogglePin.mockClear()
-    expect(unpinItem?.props.onSelect).toBeTypeOf('function')
-    ;(unpinItem?.props.onSelect as () => void)()
+    expect(unpinItem).toMatchObject({ labelKey: 'Unpin' })
+    await pinnedTarget.bindings['toggle-pin']?.execute(pinnedTarget.invocation)
     expect(onTogglePin).toHaveBeenCalledWith(sessions[1])
   })
 
@@ -2659,14 +2805,17 @@ describe('WorkspaceSidebar accessible render', () => {
       canDownloadProjectArtifacts: true,
       onDownloadProjectArtifacts: vi.fn()
     })
-    const elements = collectElements(tree)
-    const pinItem = elements.find((element) => getTextContent(element).trim() === 'Pin')
-    const renameItem = elements.find((element) => getTextContent(element).trim() === 'Edit…')
-    const deleteItem = elements.find((element) => getTextContent(element).trim() === 'Delete')
+    const target = getSessionActionTargetProps(tree, session.id)
+    const entries = resolveSessionTargetEntries(target)
+    const pinItem = entries.find(
+      (entry) => entry.kind === 'action' && entry.action === 'toggle-pin'
+    )
+    const renameItem = entries.find((entry) => entry.kind === 'action' && entry.action === 'edit')
+    const deleteItem = entries.find((entry) => entry.kind === 'action' && entry.action === 'delete')
 
-    expect(pinItem?.props.disabled).toBe(true)
-    expect(renameItem?.props.disabled).toBe(true)
-    expect(deleteItem?.props.disabled).toBe(false)
+    expect(pinItem).toMatchObject({ disabled: true })
+    expect(renameItem).toMatchObject({ disabled: true })
+    expect(deleteItem).toMatchObject({ disabled: false })
   })
 
   it('disables conversation export for active, waiting, or empty sessions', async () => {
@@ -2716,19 +2865,19 @@ describe('WorkspaceSidebar accessible render', () => {
       canDownloadProjectArtifacts: true,
       onDownloadProjectArtifacts: vi.fn()
     })
-    const exportTriggers = collectElements(tree).filter(
-      (element) =>
-        getTextContent(element).trim() === 'Export conversation…' &&
-        typeof element.props.disabled === 'boolean'
-    )
+    const exportTriggers = ['running', 'waiting-user', 'waiting', 'waiting-plan', 'empty', 'ready']
+      .map((sessionId) => resolveSessionTargetEntries(getSessionActionTargetProps(tree, sessionId)))
+      .map((entries) =>
+        entries.find((entry) => entry.kind === 'action' && entry.action === 'export')
+      )
 
     expect(exportTriggers).toHaveLength(6)
-    expect(exportTriggers[0]?.props.disabled).toBe(true)
-    expect(exportTriggers[1]?.props.disabled).toBe(true)
-    expect(exportTriggers[2]?.props.disabled).toBe(true)
-    expect(exportTriggers[3]?.props.disabled).toBe(true)
-    expect(exportTriggers[4]?.props.disabled).toBe(true)
-    expect(exportTriggers[5]?.props.disabled).toBe(false)
+    expect(exportTriggers[0]).toMatchObject({ disabled: true })
+    expect(exportTriggers[1]).toMatchObject({ disabled: true })
+    expect(exportTriggers[2]).toMatchObject({ disabled: true })
+    expect(exportTriggers[3]).toMatchObject({ disabled: true })
+    expect(exportTriggers[4]).toMatchObject({ disabled: true })
+    expect(exportTriggers[5]).toMatchObject({ disabled: false })
   })
 
   it('hides conversation export when the runtime does not expose that capability', async () => {
@@ -2759,7 +2908,10 @@ describe('WorkspaceSidebar accessible render', () => {
       onDownloadProjectArtifacts: vi.fn()
     })
 
-    expect(getTextContent(tree)).not.toContain('Export conversation')
+    const entries = resolveSessionTargetEntries(getSessionActionTargetProps(tree, 'session-1'))
+    expect(entries.some((entry) => entry.kind === 'action' && entry.action === 'export')).toBe(
+      false
+    )
   })
 
   it('hides artifact downloads when the runtime does not provide the desktop save capability', async () => {
@@ -2791,10 +2943,9 @@ describe('WorkspaceSidebar accessible render', () => {
       onDownloadProjectArtifacts: vi.fn()
     })
 
-    const downloadItem = collectElements(tree).find(
-      (element) => getTextContent(element).trim() === 'Download all artifacts'
-    )
-
-    expect(downloadItem).toBeUndefined()
+    const entries = resolveSessionTargetEntries(getSessionActionTargetProps(tree, session.id))
+    expect(
+      entries.some((entry) => entry.kind === 'action' && entry.action === 'download-artifacts')
+    ).toBe(false)
   })
 })

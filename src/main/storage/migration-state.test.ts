@@ -9,13 +9,17 @@ vi.mock('electron', () => ({ dialog: { showMessageBoxSync: vi.fn() } }))
 
 const {
   acquireDataRootWriter,
+  acceptMissingDataRoot,
   beginMigration,
   clearMigrationPending,
   endMigration,
   endMigrationCopy,
+  initializeDataRootWriteAvailability,
   installMigrationQuitGuard,
   isMigrationInProgress,
   isMigrationPending,
+  reconcileDataRootWriteAvailability,
+  runDataRootStartupRecovery,
   waitForDataRootWriters,
   withDataRootWrite
 } = await import('./migration-state')
@@ -40,11 +44,98 @@ const makeApp = (): GuardApp & { fireBeforeQuit: () => { prevented: boolean } } 
 
 afterEach(() => {
   endMigration()
+  initializeDataRootWriteAvailability(false)
   clearApplicationShutdownTrigger()
   vi.clearAllMocks()
 })
 
 describe('migration-state', () => {
+  it('defers startup recovery and ordinary writes while the configured data root is missing', async () => {
+    initializeDataRootWriteAvailability(true)
+    const events: string[] = []
+
+    await runDataRootStartupRecovery(async () => {
+      events.push('recovery')
+    })
+    const write = withDataRootWrite(async () => {
+      events.push('write')
+    })
+    await Promise.resolve()
+
+    expect(events).toEqual([])
+
+    await reconcileDataRootWriteAvailability(false)
+    await write
+
+    expect(events).toEqual(['recovery', 'write'])
+  })
+
+  it('keeps writers blocked when reconnect recovery fails and retries the failed recovery', async () => {
+    initializeDataRootWriteAvailability(true)
+    const recovery = vi
+      .fn<() => Promise<void>>()
+      .mockRejectedValueOnce(new Error('recovery failed'))
+      .mockResolvedValue(undefined)
+    await runDataRootStartupRecovery(recovery)
+    let writeStarted = false
+    const write = withDataRootWrite(async () => {
+      writeStarted = true
+    })
+
+    await expect(reconcileDataRootWriteAvailability(false)).rejects.toThrow('recovery failed')
+    expect(writeStarted).toBe(false)
+
+    await reconcileDataRootWriteAvailability(false)
+    await write
+
+    expect(recovery).toHaveBeenCalledTimes(2)
+    expect(writeStarted).toBe(true)
+  })
+
+  it('reports deferred recovery failure without swallowing the gate rejection', async () => {
+    initializeDataRootWriteAvailability(true)
+    const recoveryError = new Error('deferred recovery failed')
+    const reportFailure = vi.fn()
+
+    await runDataRootStartupRecovery(() => Promise.reject(recoveryError), { reportFailure })
+
+    await expect(reconcileDataRootWriteAvailability(false)).rejects.toBe(recoveryError)
+    expect(reportFailure).toHaveBeenCalledWith(recoveryError)
+  })
+
+  it('reports present-root recovery failure while allowing startup to continue', async () => {
+    initializeDataRootWriteAvailability(false)
+    const recoveryError = new Error('startup recovery failed')
+    const reportFailure = vi.fn()
+
+    await expect(
+      runDataRootStartupRecovery(() => Promise.reject(recoveryError), { reportFailure })
+    ).resolves.toBeUndefined()
+    expect(reportFailure).toHaveBeenCalledWith(recoveryError)
+  })
+
+  it('accepts an empty root without replaying recovery from the unavailable tree', async () => {
+    initializeDataRootWriteAvailability(true)
+    const recovery = vi.fn<() => Promise<void>>()
+    await runDataRootStartupRecovery(recovery)
+
+    await acceptMissingDataRoot()
+    await expect(withDataRootWrite(async () => 'written')).resolves.toBe('written')
+
+    expect(recovery).not.toHaveBeenCalled()
+    await expect(reconcileDataRootWriteAvailability(true)).resolves.toBe(false)
+  })
+
+  it('rejects synchronous writer leases until the missing root is resolved', async () => {
+    initializeDataRootWriteAvailability(true)
+
+    expect(() => acquireDataRootWriter()).toThrow(/configured data folder is unavailable/i)
+
+    await acceptMissingDataRoot()
+    const release = acquireDataRootWriter()
+    release()
+  })
+
   it('tracks in-progress state via begin/end', () => {
     expect(isMigrationInProgress()).toBe(false)
     beginMigration()

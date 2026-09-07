@@ -1,15 +1,85 @@
 // @vitest-environment jsdom
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+
+import type { ProjectFileItem } from '../../../../shared/project-files'
 
 import { ReadingContextPicker } from './ReadingContextPicker'
 
 afterEach(() => {
+  cleanup()
   vi.unstubAllGlobals()
   document.body.replaceChildren()
 })
 
 describe('ReadingContextPicker', () => {
+  it('hides stale project PDFs and prevents selection while the next project loads', async () => {
+    const file = (projectId: string): ProjectFileItem => ({
+      id: projectId,
+      source: 'upload',
+      sourceFileId: `upload-${projectId}`,
+      sourceVersionId: `version-${projectId}`,
+      projectId,
+      sessionId: 'source-session',
+      name: `${projectId}-only.pdf`,
+      path: `${projectId}.pdf`,
+      mimeType: 'application/pdf',
+      size: 20,
+      sortAtMs: 1
+    })
+    const first = { items: [file('A')], totalCount: 1 }
+    const second = { items: [file('B')], totalCount: 1 }
+    let resolveSecond!: (value: typeof second) => void
+    const loadingSecond = new Promise<typeof second>((resolve) => {
+      resolveSecond = resolve
+    })
+    const listFiles = vi.fn().mockResolvedValueOnce(first).mockReturnValueOnce(loadingSecond)
+    vi.stubGlobal('api', {
+      projectFiles: { listFiles },
+      sessions: { filterPdfContextCandidates: vi.fn(async ({ sources }) => ({ sources })) }
+    })
+    const selectFirst = vi.fn().mockResolvedValue(undefined)
+    const selectSecond = vi.fn().mockRejectedValue(new Error('keep picker open'))
+    const picker = (projectId: string, onSelect: typeof selectFirst): React.JSX.Element => (
+      <ReadingContextPicker
+        projectId={projectId}
+        linkedSources={[]}
+        atLimit={false}
+        onSelect={onSelect}
+      >
+        <button type="button">Reading</button>
+      </ReadingContextPicker>
+    )
+    const view = render(picker('A', selectFirst))
+    fireEvent.click(screen.getByRole('button', { name: 'Reading' }))
+    await screen.findByRole('option', { name: 'A-only.pdf' })
+
+    view.rerender(picker('B', selectSecond))
+    await waitFor(() => expect(listFiles).toHaveBeenCalledTimes(2))
+    const stale = screen.queryByRole('option', { name: 'A-only.pdf' })
+    expect.soft(stale).toBeNull()
+    expect.soft(screen.queryByText('Checking PDFs…')).not.toBeNull()
+    if (stale)
+      await act(async () => {
+        fireEvent.click(stale)
+      })
+    expect.soft(selectSecond).not.toHaveBeenCalled()
+    expect(selectFirst).not.toHaveBeenCalled()
+
+    selectSecond.mockClear().mockResolvedValue(undefined)
+    await act(async () => {
+      resolveSecond(second)
+    })
+    fireEvent.click(await screen.findByRole('option', { name: 'B-only.pdf' }))
+    await waitFor(() =>
+      expect(selectSecond).toHaveBeenCalledWith({
+        sourceKind: 'upload-version',
+        sourceFileId: 'upload-B',
+        sourceVersionId: 'version-B'
+      })
+    )
+  })
+
   it('retries project PDF discovery after a transient load failure', async () => {
     const listFiles = vi
       .fn()
@@ -139,5 +209,115 @@ describe('ReadingContextPicker', () => {
         sourceVersionId: 'version-multi'
       })
     )
+  })
+
+  it('links an eligible PDF selected from the user Literature library', async () => {
+    const search = vi.fn().mockResolvedValue({
+      entries: [
+        {
+          id: 'literature-item-1',
+          item: {
+            itemType: 'journalArticle',
+            title: 'Corrective Retrieval Augmented Generation',
+            abstract: '',
+            issuedText: '2024',
+            issuedYear: 2024,
+            containerTitle: 'arXiv',
+            shortTitle: 'CRAG',
+            language: 'en',
+            rights: '',
+            url: '',
+            extra: '',
+            typeFields: {},
+            creators: [
+              {
+                nameMode: 'person',
+                givenName: 'Shi-Qi',
+                familyName: 'Yan',
+                creatorType: 'author'
+              }
+            ],
+            identifiers: []
+          },
+          attachments: [
+            {
+              id: 'attachment-1',
+              kind: 'fullText',
+              title: '',
+              sortOrder: 0,
+              versions: [
+                {
+                  id: 'literature-version-1',
+                  versionNumber: 1,
+                  filename: 'crag.pdf',
+                  contentType: 'application/pdf',
+                  sizeBytes: 629,
+                  checksum: 'a'.repeat(64),
+                  pageCount: 14,
+                  createdAt: 2
+                }
+              ],
+              createdAt: 2,
+              updatedAt: 2
+            }
+          ],
+          projectIds: ['project-1'],
+          collectionIds: [],
+          metadataRevision: 1,
+          createdAt: 1,
+          updatedAt: 2
+        }
+      ]
+    })
+    const literatureSource = {
+      sourceKind: 'literature-attachment-version' as const,
+      sourceVersionId: 'literature-version-1'
+    }
+    const filterPdfContextCandidates = vi.fn().mockResolvedValue({
+      sources: [literatureSource],
+      pendingAttachmentIds: []
+    })
+    const onSelect = vi.fn().mockResolvedValue(undefined)
+    vi.stubGlobal('api', {
+      projectFiles: { listFiles: vi.fn().mockResolvedValue({ items: [], totalCount: 0 }) },
+      literature: { search },
+      sessions: { filterPdfContextCandidates }
+    })
+
+    render(
+      <ReadingContextPicker
+        projectId="project-1"
+        linkedSources={[]}
+        atLimit={false}
+        onSelect={onSelect}
+      >
+        <button type="button">Reading</button>
+      </ReadingContextPicker>
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: 'Reading' }))
+
+    expect(
+      await screen.findByRole('option', { name: /Corrective Retrieval Augmented Generation/u })
+    ).not.toBeNull()
+    expect(search).toHaveBeenCalledWith({
+      scope: 'library',
+      projectId: 'project-1',
+      limit: 100
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Library' }))
+
+    const option = await screen.findByRole('option', {
+      name: /Corrective Retrieval Augmented Generation/u
+    })
+    expect(option.textContent).toContain('Yan, Shi-Qi · 2024')
+    expect(search).toHaveBeenCalledWith({ scope: 'library', limit: 100 })
+    expect(filterPdfContextCandidates).toHaveBeenCalledWith({
+      projectId: 'project-1',
+      sources: [literatureSource]
+    })
+
+    fireEvent.click(option)
+    await waitFor(() => expect(onSelect).toHaveBeenCalledWith(literatureSource))
   })
 })

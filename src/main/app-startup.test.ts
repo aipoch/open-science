@@ -3,6 +3,11 @@ import { EventEmitter } from 'node:events'
 import type { BrowserWindow } from 'electron'
 import { describe, expect, it, vi } from 'vitest'
 
+import { installAppLifecycle } from './app-lifecycle'
+import { composeApplicationRuntime } from './application-runtime'
+import { installDatabaseStartupQuitGuard } from './database/database-startup-ipc'
+import { createDatabaseStartupOwner } from './database/database-startup-owner'
+
 import {
   createSecondInstanceRelay,
   createStartupWindowCloseOptions,
@@ -24,6 +29,112 @@ const deferred = <T>(): {
     resolve
   }
 }
+
+describe('startup quit ownership handoff', () => {
+  it.each(['after verification', 'after first module', 'during last module'])(
+    'cleans every started owner when ordinary quit is requested %s',
+    async (checkpoint) => {
+      const reached = deferred<void>()
+      const resume = deferred<void>()
+      const pauseAt = async (stage: string): Promise<void> => {
+        if (stage !== checkpoint) return
+        reached.resolve()
+        await resume.promise
+      }
+      const owner = createDatabaseStartupOwner({
+        verifyDatabase: async () => {},
+        reportBlocked: vi.fn()
+      })
+      const app = Object.assign(new EventEmitter(), {
+        exit: vi.fn(),
+        quit: () => {
+          const event = {
+            defaultPrevented: false,
+            preventDefault: () => {
+              event.defaultPrevented = true
+            }
+          }
+          app.emit('before-quit', event)
+          if (!event.defaultPrevented) app.exit(0)
+          return event
+        }
+      })
+      const guard = installDatabaseStartupQuitGuard({ app: app as never, owner })
+      const disposers = [vi.fn(), vi.fn()]
+      const starts = [vi.fn(), vi.fn()]
+      const startup = orchestrateAppStartup({
+        acquireSingleInstanceLock: () => true,
+        quit: app.quit,
+        prepare: async () => {
+          await owner.start()
+          await pauseAt('after verification')
+          return composeApplicationRuntime(async (modules) => {
+            await modules.add({}, () => ({
+              capability: {},
+              start: starts[0],
+              dispose: disposers[0]
+            }))
+            await pauseAt('after first module')
+            await modules.add({}, () => ({
+              capability: {},
+              start: async () => {
+                starts[1]()
+                await pauseAt('during last module')
+              },
+              dispose: disposers[1]
+            }))
+            return {}
+          })
+        },
+        installMigrationQuitGuard: () => {},
+        installAppLifecycle: (runtime) => {
+          const lifecycle = installAppLifecycle({
+            app: app as never,
+            quit: app.quit,
+            createMainWindow: vi.fn(),
+            createInitialWindow: false,
+            createTray: () => undefined,
+            countWindows: () => 0,
+            isMigrationInProgress: () => false,
+            holdSettingsInstallAdmission: () => () => undefined,
+            getActiveSettingsInstallId: () => undefined,
+            detectActiveSessions: () => [],
+            hasActiveReviewerWork: () => false,
+            createConfirmClose: () => async () => 'quit',
+            prepareForQuit: async () => {},
+            abortQuitPreparation: () => {},
+            flushSessionPersistence: async () => {},
+            shutdownBackends: () => runtime.dispose()
+          })
+          return { onSecondInstance: () => {}, onSystemShutdown: lifecycle.onSystemShutdown }
+        },
+        markReady: () => {
+          owner.complete()
+          guard.release()
+        }
+      })
+
+      try {
+        await reached.promise
+        expect(owner.getState()).toEqual({ phase: 'starting' })
+        expect.soft(app.quit().defaultPrevented).toBe(true)
+        expect.soft(app.exit).not.toHaveBeenCalled()
+        resume.resolve()
+        await startup
+        await new Promise<void>((resolve) => setImmediate(resolve))
+        for (let index = 0; index < starts.length; index += 1) {
+          expect(starts[index]).toHaveBeenCalledOnce()
+          expect.soft(disposers[index]).toHaveBeenCalledOnce()
+        }
+        expect(app.exit).toHaveBeenCalledOnce()
+      } finally {
+        resume.resolve()
+        guard.dispose()
+        app.removeAllListeners()
+      }
+    }
+  )
+})
 
 describe('createSecondInstanceRelay', () => {
   it('records a signal that arrives before bind and drains it on bind, with its argv', () => {
@@ -414,6 +525,8 @@ describe('waitForStartupShell', () => {
     destroy: ReturnType<typeof vi.fn>
     emitWindow: (event: string) => void
     emitWebContents: (event: string, ...args: unknown[]) => void
+    windowListenerCount: (event: string) => number
+    webContentsListenerCount: (event: string) => number
     window: Pick<BrowserWindow, 'destroy' | 'once' | 'removeListener' | 'webContents'>
   } => {
     const windowEvents = new EventEmitter()
@@ -423,6 +536,8 @@ describe('waitForStartupShell', () => {
       destroy,
       emitWindow: (event) => windowEvents.emit(event),
       emitWebContents: (event, ...args) => webContentsEvents.emit(event, ...args),
+      windowListenerCount: (event) => windowEvents.listenerCount(event),
+      webContentsListenerCount: (event) => webContentsEvents.listenerCount(event),
       window: Object.assign(windowEvents, {
         destroy,
         webContents: webContentsEvents
@@ -474,5 +589,39 @@ describe('waitForStartupShell', () => {
 
     await vi.waitFor(() => expect(settled).toHaveBeenCalledOnce())
     expect(source.destroy).not.toHaveBeenCalled()
+  })
+
+  it('discards a silent startup window after a bounded wait', async () => {
+    vi.useFakeTimers()
+    try {
+      const source = makeWindow()
+      const settled = vi.fn()
+      const diagnostics = { phase: vi.fn() }
+      void waitForStartupShell(source.window, { diagnostics }).then(settled)
+
+      await vi.advanceTimersByTimeAsync(15_000)
+
+      expect(settled).toHaveBeenCalledOnce()
+      expect(source.destroy).toHaveBeenCalledOnce()
+      expect(diagnostics.phase).toHaveBeenCalledOnce()
+      expect(diagnostics.phase).toHaveBeenCalledWith('startup-shell-timeout', {
+        timeoutMs: 15_000
+      })
+      expect(source.windowListenerCount('ready-to-show')).toBe(0)
+      expect(source.windowListenerCount('closed')).toBe(0)
+      expect(source.webContentsListenerCount('did-fail-load')).toBe(0)
+      expect(source.webContentsListenerCount('render-process-gone')).toBe(0)
+
+      source.emitWindow('ready-to-show')
+      source.emitWindow('closed')
+      source.emitWebContents('did-fail-load', {}, -105, 'NAME_NOT_RESOLVED', 'file://index', true)
+      source.emitWebContents('render-process-gone', {}, { reason: 'crashed', exitCode: 1 })
+      await Promise.resolve()
+
+      expect(settled).toHaveBeenCalledOnce()
+      expect(source.destroy).toHaveBeenCalledOnce()
+    } finally {
+      vi.useRealTimers()
+    }
   })
 })

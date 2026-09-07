@@ -303,7 +303,6 @@ describe('useAcpRuntime payload construction', () => {
         undefined,
         undefined,
         undefined,
-        undefined,
         'plan-first'
       )
     })
@@ -400,7 +399,6 @@ describe('useAcpRuntime payload construction', () => {
         undefined,
         undefined,
         undefined,
-        undefined,
         false
       )
     })
@@ -455,7 +453,6 @@ describe('useAcpRuntime payload construction', () => {
         resumeFallback as never,
         undefined,
         true,
-        undefined,
         undefined,
         undefined,
         undefined,

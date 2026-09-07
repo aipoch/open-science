@@ -67,6 +67,7 @@ import { defaultOperationChildLiveness, readProcessStartToken } from './operatio
 import { sandboxedPackageSpawn } from './package-process-sandbox'
 import type { InstallRequest } from './package-manager'
 import type { NotebookProcessSandbox } from './process-sandbox'
+import { buildManagedRuntimeProcessEnvironment } from './process-environment'
 import {
   isChildUnconfirmedError,
   captureMicromamba,
@@ -112,6 +113,9 @@ export type FetchedBundle = {
 
 export type RuntimeRepairOptions = {
   force?: boolean
+  // Runs after queued cancellation is consumed, before acquiring the environment lock so active
+  // kernels can release their execution leases. Per-language cancellation is ignored afterward.
+  onStarting?: () => Promise<void> | void
   // Runs only after the rebuilt interpreter verifies, while the per-environment lock is still held.
   onVerified?: () => Promise<void> | void
 }
@@ -449,12 +453,13 @@ export class DefaultRuntimeProvisioner implements RuntimeProvisioner {
   private async runWithMaxPathRecovery(
     run: () => Promise<void>,
     onRecovery?: () => void,
-    cache: MicromambaCache = this.cache
+    cache: MicromambaCache = this.cache,
+    signal?: AbortSignal
   ): Promise<void> {
     try {
       await run()
     } catch (original) {
-      if (this.abort?.signal.aborted) throw original
+      if (signal?.aborted || this.abort?.signal.aborted) throw original
       const recovered = await withExclusiveCacheLocks(this.cacheLockKeys(cache), () =>
         Promise.resolve(
           recoverWindowsMaxPathPackage(original, this.cacheRoots(cache), {
@@ -488,7 +493,7 @@ export class DefaultRuntimeProvisioner implements RuntimeProvisioner {
     if (removed) {
       onProgress({
         phase: 'upgrade',
-        message: 'Removed a legacy package blocked by the Windows path limit.',
+        event: { code: 'legacy-package-removed' },
         progress: 0.05
       })
     }
@@ -556,7 +561,7 @@ export class DefaultRuntimeProvisioner implements RuntimeProvisioner {
       progress += (CREATE_CEIL - progress) * CREATE_TICK_GAIN
       onProgress({
         phase: `create-${spec.language}`,
-        message: `Creating ${spec.name} environment…`,
+        event: { code: 'environment-create', environment: spec.name },
         progress
       })
     }, CREATE_TICK_MS)
@@ -956,7 +961,7 @@ export class DefaultRuntimeProvisioner implements RuntimeProvisioner {
       this.markerPrefixDirectory(DEFAULT_PY_ENV)
     )
     this.cleanupLegacyDefaultPrefix(DEFAULT_PY_ENV)
-    onProgress({ phase: 'done', message: 'Python environment ready', progress: 1 })
+    onProgress({ phase: 'done', event: { code: 'python-ready' }, progress: 1 })
   }
 
   async provisionR(rawProgress: (p: ProvisionProgress) => void): Promise<void> {
@@ -984,7 +989,7 @@ export class DefaultRuntimeProvisioner implements RuntimeProvisioner {
       this.markerPrefixDirectory(DEFAULT_R_ENV)
     )
     this.cleanupLegacyDefaultPrefix(DEFAULT_R_ENV)
-    onProgress({ phase: 'done', message: 'R environment ready', progress: 1 })
+    onProgress({ phase: 'done', event: { code: 'r-ready' }, progress: 1 })
   }
 
   async upgradeIfNeeded(onProgress: (p: ProvisionProgress) => void): Promise<void> {
@@ -997,7 +1002,7 @@ export class DefaultRuntimeProvisioner implements RuntimeProvisioner {
       this.assertPrefixWritable(envPrefix(this.deps.root, DEFAULT_PY_ENV, this.platform))
       // Apply the exact published baseline to the existing env. `install --file --offline` preserves
       // extra user packages while avoiding a repodata solve for the platform-maintained floor.
-      onProgress({ phase: 'upgrade', message: 'Updating default packages…', progress: 0.1 })
+      onProgress({ phase: 'upgrade', event: { code: 'updating-default-packages' }, progress: 0.1 })
       // Hold the env lock around each additive `install --file` so it can't overlap a package install
       // into the same env. Per-env (python then R), matching the service's install-lock key.
       await this.withEnvPrefixLock(DEFAULT_PY_ENV, () =>
@@ -1009,7 +1014,7 @@ export class DefaultRuntimeProvisioner implements RuntimeProvisioner {
         rMaterialized(this.deps.root, this.platform) &&
         !this.deps.isPrefixBlocked?.(envPrefix(this.deps.root, DEFAULT_R_ENV, this.platform))
       ) {
-        onProgress({ phase: 'upgrade-r', message: 'Updating R packages…', progress: 0.6 })
+        onProgress({ phase: 'upgrade-r', event: { code: 'updating-r-packages' }, progress: 0.6 })
         await this.withEnvPrefixLock(DEFAULT_R_ENV, () => this.upgradeOrRebuildR(onProgress))
         writeRReadyMarker(
           this.deps.root,
@@ -1024,7 +1029,7 @@ export class DefaultRuntimeProvisioner implements RuntimeProvisioner {
         (this.deps.now ?? defaultNow)(),
         this.markerPrefixDirectory(DEFAULT_PY_ENV)
       )
-      onProgress({ phase: 'done', message: 'Default environments updated', progress: 1 })
+      onProgress({ phase: 'done', event: { code: 'default-environments-updated' }, progress: 1 })
     } finally {
       this.provisioning = false
     }
@@ -1042,16 +1047,20 @@ export class DefaultRuntimeProvisioner implements RuntimeProvisioner {
     // rebuild), so a package install into this env can't slip in between the rm and the rebuild and
     // write into a half-deleted prefix. The rebuild calls the LOCK-FREE do* variants (not the public
     // provision*), which would otherwise re-acquire this same exclusive lock and deadlock.
-    return this.withEnvPrefixLock(spec.name, async () => {
-      // runLanguage consumes a QUEUED cancel (beginLanguageRun throws) BEFORE the rm below, so
-      // cancelling a queued Reset never leaves a deleted-but-not-rebuilt env.
-      await this.runLanguage(lang, async () => {
-        // Mark this repair UNINTERRUPTIBLE before any destructive step: once we clear the quarantine
-        // and rm the prefix there is no safe stopping point — a per-language Cancel arriving mid-repair
-        // would abort the rebuild and leave a missing/half-built env with the block already cleared.
-        // (Global/quit cancel still works to handle app shutdown.)
-        this.uninterruptible.add(lang)
-        try {
+    // Consume queued cancellation before preparation can invalidate bindings or persist isolation.
+    return this.runLanguage(lang, async () => {
+      try {
+        if (opts?.onStarting) {
+          // Preparation invalidates bindings and stops kernels that may hold shared leases.
+          // It must precede the exclusive lease, and per-language cancellation is unsafe from here.
+          this.uninterruptible.add(lang)
+          await opts.onStarting()
+        }
+        await this.withEnvPrefixLock(spec.name, async () => {
+          // An unprepared repair can still be cancelled while waiting for another prefix writer.
+          // Check before any destructive work; global/quit cancellation also remains effective.
+          this.abort?.signal.throwIfAborted()
+          this.uninterruptible.add(lang)
           if (opts?.force) {
             // EXPLICIT user recovery: clear the quarantine (in-memory block + retained journal record +
             // sidecar) so the rebuild below — and its inner materialize — aren't refused by the block
@@ -1089,10 +1098,10 @@ export class DefaultRuntimeProvisioner implements RuntimeProvisioner {
             )
             throw error
           }
-        } finally {
-          this.uninterruptible.delete(lang)
-        }
-      })
+        })
+      } finally {
+        this.uninterruptible.delete(lang)
+      }
     })
   }
 
@@ -1183,7 +1192,11 @@ export class DefaultRuntimeProvisioner implements RuntimeProvisioner {
               return
             }
           }
-          onProgress({ phase: 'restore', message: `Restoring ${name}…`, progress: 0.5 })
+          onProgress({
+            phase: 'restore',
+            event: { code: 'restoring-environment', environment: name },
+            progress: 0.5
+          })
           try {
             // Journal the rebuild (child PID + prefix) so a crash mid-restore is recovered like a
             // materialize. The prefix cleanup + create both run INSIDE the wrapper (after begin
@@ -1248,7 +1261,7 @@ export class DefaultRuntimeProvisioner implements RuntimeProvisioner {
           }
         })
       }
-      onProgress({ phase: 'done', message: 'Runtime restored', progress: 1 })
+      onProgress({ phase: 'done', event: { code: 'runtime-restored' }, progress: 1 })
     } finally {
       this.provisioning = false
     }
@@ -1262,8 +1275,10 @@ export class DefaultRuntimeProvisioner implements RuntimeProvisioner {
     name: string,
     language: NotebookLanguage,
     packages: string[] = [],
-    request?: Pick<InstallRequest, 'projectId' | 'sessionId' | 'workspaceCwd'>
+    request?: Pick<InstallRequest, 'projectId' | 'sessionId' | 'workspaceCwd'>,
+    signal?: AbortSignal
   ): Promise<EnvironmentInfo> {
+    signal?.throwIfAborted()
     const flagLike = packages.find((pkg) => pkg.trim().startsWith('-'))
     if (flagLike) {
       throw new Error(
@@ -1290,6 +1305,7 @@ export class DefaultRuntimeProvisioner implements RuntimeProvisioner {
     // Named environments are the only online-solving path. Resolve/probe the channel here so normal
     // application startup and offline default-runtime provisioning never wait for mirror selection.
     const channel = await this.resolveChannel()
+    signal?.throwIfAborted()
     // Journal the create (child PID + prefix) so a crash mid-create is recovered like any other prefix
     // write: a survivor is killed and, if unconfirmed, the prefix is blocked so a later create/remove
     // can't race it. Take the shared pkgs cache lock (+ MAX_PATH recovery) for the whole prefix cleanup
@@ -1303,37 +1319,44 @@ export class DefaultRuntimeProvisioner implements RuntimeProvisioner {
       prefix,
       `create-${language}`,
       async (onBeforeSpawn, onChild, onCacheMaintenanceSettled) => {
+        signal?.throwIfAborted()
         await this.maintainCacheBeforeMutation(
           this.cache,
           onBeforeSpawn,
           onChild,
-          onCacheMaintenanceSettled
+          onCacheMaintenanceSettled,
+          signal
         )
-        await this.runWithMaxPathRecovery(() =>
-          withSharedCacheLocks(this.cacheLockKeys(this.cache), async () => {
-            // Clear a half-built prefix from an interrupted prior create (incl. conda-meta-but-no-
-            // interpreter) so micromamba doesn't abort on it.
-            this.clearIncompletePrefix(prefix, bin)
-            // NO abort signal: this.abort belongs to the currently-running default provision (python/r),
-            // and a named create runs on the RAW provisioner concurrently with the serialized default one
-            // (ipc.ts wires them separately). Passing this.abort here would let a cancel of the default env
-            // abort this unrelated named-env child. Named create has no per-language cancel path of its own.
-            await this.deps.runArgv(
-              createFromPackagesArgv(this.deps.mm, this.deps.root, prefix, [channel], pkgs),
-              undefined,
-              onChild,
-              onBeforeSpawn,
-              this.cache,
-              DEFAULT_MAX_CACHE_RELATIVE_PATH,
-              {
-                language,
-                packages,
-                ...request
-              }
-            )
-          })
+        await this.runWithMaxPathRecovery(
+          () =>
+            withSharedCacheLocks(this.cacheLockKeys(this.cache), async () => {
+              signal?.throwIfAborted()
+              // Clear a half-built prefix from an interrupted prior create (incl. conda-meta-but-no-
+              // interpreter) so micromamba doesn't abort on it.
+              this.clearIncompletePrefix(prefix, bin)
+              // Named creates use their own caller signal. Never substitute this.abort here: that controller
+              // belongs to a concurrently running default provision and would cross-cancel unrelated work.
+              await this.deps.runArgv(
+                createFromPackagesArgv(this.deps.mm, this.deps.root, prefix, [channel], pkgs),
+                signal,
+                onChild,
+                onBeforeSpawn,
+                this.cache,
+                DEFAULT_MAX_CACHE_RELATIVE_PATH,
+                {
+                  language,
+                  packages,
+                  ...request
+                }
+              )
+            }),
+          undefined,
+          this.cache,
+          signal
         )
         await this.deps.verify(bin, prefix)
+        signal?.throwIfAborted()
+        if (!this.deps.retainWorkingCache) return []
         const explicitLock = await this.deps.captureExplicitLock?.(prefix)
         return explicitLock
           ? [
@@ -1346,6 +1369,7 @@ export class DefaultRuntimeProvisioner implements RuntimeProvisioner {
       }
     )
     await this.deps.verify(bin, prefix)
+    signal?.throwIfAborted()
     return {
       name,
       language,
@@ -1532,7 +1556,11 @@ export class DefaultRuntimeProvisioner implements RuntimeProvisioner {
     if (existsSync(bin)) {
       try {
         await this.deps.verify(bin, prefix)
-        onProgress({ phase: `${spec.language}-ready`, message: `${spec.name} ready`, progress: 1 })
+        onProgress({
+          phase: `${spec.language}-ready`,
+          event: { code: 'environment-ready', environment: spec.name },
+          progress: 1
+        })
         return
       } catch {
         // A prior failed create can leave an interpreter file before the environment is runnable.
@@ -1543,7 +1571,7 @@ export class DefaultRuntimeProvisioner implements RuntimeProvisioner {
 
     onProgress({
       phase: `fetch-${spec.language}`,
-      message: `Preparing ${spec.name} packages…`,
+      event: { code: 'preparing-packages', environment: spec.name },
       progress: 0.1
     })
     const fetchCache = this.legacyCache
@@ -1561,7 +1589,7 @@ export class DefaultRuntimeProvisioner implements RuntimeProvisioner {
     }
     onProgress({
       phase: `create-${spec.language}`,
-      message: `Creating ${spec.name} environment…`,
+      event: { code: 'environment-create', environment: spec.name },
       progress: CREATE_FLOOR
     })
     // Select the cache scoped to this bundle (Windows budget) and clear any legacy over-budget URL
@@ -1629,7 +1657,7 @@ export class DefaultRuntimeProvisioner implements RuntimeProvisioner {
             () => {
               onProgress({
                 phase: `create-${spec.language}`,
-                message: `Retrying ${spec.name} with the short Windows package cache…`,
+                event: { code: 'retrying-short-cache', environment: spec.name },
                 progress: CREATE_FLOOR
               })
             },
@@ -1664,9 +1692,9 @@ export class DefaultRuntimeProvisioner implements RuntimeProvisioner {
           if (windowsAccessViolation) rmSync(prefix, { recursive: true, force: true })
           onProgress({
             phase: `create-${spec.language}`,
-            message: windowsAccessViolation
-              ? `Repairing ${spec.name} after a Windows runtime crash…`
-              : `Repairing ${spec.name} package cache…`,
+            event: windowsAccessViolation
+              ? { code: 'repairing-windows-crash', environment: spec.name }
+              : { code: 'repairing-package-cache', environment: spec.name },
             progress: CREATE_FLOOR
           })
           const reseeded = await this.deps.fetchBundle(
@@ -1697,11 +1725,15 @@ export class DefaultRuntimeProvisioner implements RuntimeProvisioner {
 
     onProgress({
       phase: `verify-${spec.language}`,
-      message: `Verifying ${spec.name} interpreter…`,
+      event: { code: 'verifying-interpreter', environment: spec.name },
       progress: 0.9
     })
     await this.deps.verify(bin, prefix)
-    onProgress({ phase: `${spec.language}-ready`, message: `${spec.name} ready`, progress: 0.97 })
+    onProgress({
+      phase: `${spec.language}-ready`,
+      event: { code: 'environment-ready', environment: spec.name },
+      progress: 0.97
+    })
   }
 }
 
@@ -1943,7 +1975,16 @@ export const createProductionProvisioner = (
           request: sandboxRequest,
           runtimeRoot: opts.root,
           storageRoot: dirname(opts.root)
-        })(selectedArgv[0]!, selectedArgv.slice(1), env, onChild, onBeforeSpawn)
+        })(
+          selectedArgv[0]!,
+          selectedArgv.slice(1),
+          env,
+          onChild,
+          onBeforeSpawn,
+          undefined,
+          undefined,
+          { signal }
+        )
         if (result.code !== 0) throw new Error(result.stderr || 'micromamba exited unsuccessfully')
         return
       }
@@ -1988,10 +2029,27 @@ export const createProductionProvisioner = (
             const selected = await runner.resolve()
             return captureMicromamba(
               [selected, '--no-rc', 'list', '--prefix', prefix, '--explicit', '--md5'],
-              caEnv
+              micromambaSpawnEnv(opts.root, opts.caBundle)
             )
           }),
-    verify: deps.verify ?? ((bin, prefix) => verifyExecutable(bin, { prefix, env: caEnv })),
+    verify:
+      deps.verify ??
+      ((bin, prefix) => {
+        const language: NotebookLanguage = ['r', 'r.exe'].includes(basename(bin).toLowerCase())
+          ? 'r'
+          : 'python'
+        return verifyExecutable(bin, {
+          prefix,
+          env: buildManagedRuntimeProcessEnvironment(opts.root, {
+            language,
+            prefix,
+            platform: opts.micromamba?.platform,
+            sourceEnv: { ...process.env, ...caEnv }
+          }),
+          platform: opts.micromamba?.platform,
+          completeEnv: true
+        })
+      }),
     isPrefixBlocked: opts.isPrefixBlocked,
     clearPrefixBlock: opts.clearPrefixBlock,
     clearRuntimeBlock: opts.clearRuntimeBlock,

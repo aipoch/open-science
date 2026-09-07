@@ -1,3 +1,11 @@
+import { useVersionHistoryPages } from './use-version-history-pages'
+import { VersionHistoryLoadButton } from './VersionHistoryLoadButton'
+import {
+  provenanceReadFailure,
+  unwrapProvenanceRead,
+  type ProvenanceReadFailure
+} from '../../../../shared/provenance-read-result'
+import { ProvenanceLoadNotice } from './ProvenanceLoadNotice'
 import { ChevronLeft, ChevronRight, Circle, Download, LoaderCircle, X } from 'lucide-react'
 import type { TFunction } from 'i18next'
 import { Fragment, useEffect, useMemo, useState } from 'react'
@@ -32,6 +40,7 @@ import type {
   ProvenanceMessage
 } from '../../../../shared/artifact-provenance'
 import { isArtifactNotebookProducer } from '../../../../shared/artifact-provenance'
+import type { ArtifactLiteratureManifest } from '../../../../shared/artifact-literature'
 import type {
   ArtifactCodeReconstruction,
   ArtifactCodeReconstructionState
@@ -50,17 +59,20 @@ import { WorkspaceContextCompactionActivityRow } from './WorkspaceContextCompact
 import { WorkspacePlanActivityRecord } from './WorkspacePlanActivityRecord'
 import { WorkspaceElicitationCard } from './WorkspaceElicitationCard'
 import { WorkspaceAssistantTurnCompletion, WorkspaceMessageItem } from './WorkspaceMessageItem'
+import { TooltipProvider } from '@/components/ui/tooltip'
 import { createWorkspaceConversationTimeline } from './workspace-conversation-timeline'
 import { useHorizontalScrollFade } from './use-horizontal-scroll-fade'
+import { ArtifactSourcesPanel } from './ArtifactSourcesPanel'
 
-type ProvenanceTab = 'code' | 'execution' | 'messages' | 'environment' | 'review'
+type ProvenanceTab = 'code' | 'sources' | 'execution' | 'messages' | 'environment' | 'review'
 type DeferredProvenanceTab = Extract<ProvenanceTab, 'execution' | 'messages' | 'review'>
 type DeferredSection =
   | Pick<ArtifactVersionProvenance, 'execution'>
   | Pick<ArtifactVersionProvenance, 'messages'>
   | Pick<ArtifactVersionProvenance, 'review'>
 type DeferredSectionResult =
-  { state: 'loaded'; section: DeferredSection } | { state: 'error'; message: string }
+  | { state: 'loaded'; section: DeferredSection }
+  | { state: 'error'; message: string; kind: ProvenanceReadFailure['kind'] }
 
 type CodeReconstructionPanelState =
   | { status: 'loading' }
@@ -77,6 +89,7 @@ type ArtifactProvenancePanelProps = {
   projectId: string
   onClose: () => void
   onVersionChange?: (item: PreviewFileItem) => boolean
+  initialTab?: ProvenanceTab
 }
 
 const tabs: Array<{ id: ProvenanceTab; label: string }> = [
@@ -86,6 +99,7 @@ const tabs: Array<{ id: ProvenanceTab; label: string }> = [
   { id: 'environment', label: 'Environment' },
   { id: 'review', label: 'Review' }
 ]
+const sourcesTab = { id: 'sources', label: 'Literature' } as const
 
 const tabActionBarClassName = 'flex items-center gap-3 border-b border-border-300/50 px-4 py-2'
 
@@ -363,134 +377,136 @@ const ProvenanceMessagesTimeline = ({
   )
 
   return (
-    <MessageScrollerProvider
-      key={`${sessionId}:${snapshot.items.at(-1)?.id ?? 'empty'}`}
-      autoScroll
-      defaultScrollPosition="last-anchor"
-      scrollPreviousItemPeek={64}
-    >
-      <MessageScroller className="min-h-0 bg-bg-000">
-        <MessageScrollerViewport aria-label={t('Provenance messages')}>
-          <MessageScrollerContent className="gap-0 px-4">
-            <div className="mx-auto w-full max-w-4xl pb-4">
-              {conversationItems.map((conversationItem) => {
-                if (conversationItem.type === 'message') {
-                  return (
-                    <WorkspaceMessageItem
-                      key={conversationItem.id}
-                      message={conversationItem.message}
-                      staticParts={projectedById.get(conversationItem.message.id)?.parts}
-                      onPreviewArtifact={ignoreArtifactPreview}
-                      onPreviewUploadAttachment={ignoreUploadPreview}
-                      onOpenSkillMention={ignoreSkillOpen}
-                      onPreviewMentionArtifact={ignoreMentionPreview}
-                      artifacts={[]}
-                      showUserActions={false}
-                      showAssistantFooter={conversationItem.message.role !== 'agent'}
-                      contentPaddingClassName="px-0 md:px-0"
-                    />
-                  )
-                }
+    <TooltipProvider key={sessionId} delayDuration={200} skipDelayDuration={300}>
+      <MessageScrollerProvider
+        key={`${sessionId}:${snapshot.items.at(-1)?.id ?? 'empty'}`}
+        autoScroll
+        defaultScrollPosition="last-anchor"
+        scrollPreviousItemPeek={64}
+      >
+        <MessageScroller className="min-h-0 bg-bg-000">
+          <MessageScrollerViewport aria-label={t('Provenance messages')}>
+            <MessageScrollerContent className="gap-0 px-4">
+              <div className="mx-auto w-full max-w-4xl pb-4">
+                {conversationItems.map((conversationItem) => {
+                  if (conversationItem.type === 'message') {
+                    return (
+                      <WorkspaceMessageItem
+                        key={conversationItem.id}
+                        message={conversationItem.message}
+                        staticParts={projectedById.get(conversationItem.message.id)?.parts}
+                        onPreviewArtifact={ignoreArtifactPreview}
+                        onPreviewUploadAttachment={ignoreUploadPreview}
+                        onOpenSkillMention={ignoreSkillOpen}
+                        onPreviewMentionArtifact={ignoreMentionPreview}
+                        artifacts={[]}
+                        showUserActions={false}
+                        showAssistantFooter={conversationItem.message.role !== 'agent'}
+                        contentPaddingClassName="px-0 md:px-0"
+                      />
+                    )
+                  }
 
-                if (conversationItem.type === 'turn-completion') {
-                  return (
-                    <MessageScrollerItem
-                      key={conversationItem.id}
-                      messageId={conversationItem.id}
-                      className="min-w-0"
-                    >
-                      <div className="pb-1">
-                        <WorkspaceAssistantTurnCompletion
-                          message={conversationItem.message}
-                          turnStartedAt={
-                            conversationItem.message.responseToMessageId
-                              ? messageCreatedAtById.get(
-                                  conversationItem.message.responseToMessageId
-                                )
-                              : undefined
-                          }
-                        />
-                      </div>
-                    </MessageScrollerItem>
-                  )
-                }
-
-                // Artifact provenance builds its immutable transcript from persisted messages and
-                // activities only, so no coordinator lifecycle or durable Subagent command rows
-                // are supplied here. Derived config-change dividers are render-time annotations,
-                // not provenance records, and are skipped as well.
-                if (
-                  conversationItem.type === 'handoff' ||
-                  conversationItem.type === 'subagent-message' ||
-                  conversationItem.type === 'session-config-change'
-                )
-                  return null
-
-                if (conversationItem.type === 'plan-activity') {
-                  return (
-                    <WorkspacePlanActivityRecord
-                      key={conversationItem.id}
-                      activity={conversationItem.activity}
-                      contentPaddingClassName="px-0 md:px-0"
-                    />
-                  )
-                }
-
-                if (conversationItem.type === 'compaction-activity') {
-                  return (
-                    <WorkspaceContextCompactionActivityRow
-                      key={conversationItem.id}
-                      activity={conversationItem.activity}
-                      contentPaddingClassName="px-0 md:px-0"
-                    />
-                  )
-                }
-
-                if (conversationItem.type === 'activity') {
-                  return (
-                    <MessageScrollerItem
-                      key={conversationItem.id}
-                      messageId={conversationItem.id}
-                      className="min-w-0"
-                    >
-                      <div className="py-3">
-                        {conversationItem.activity.elicitation ? (
-                          <WorkspaceElicitationCard
-                            elicitation={conversationItem.activity.elicitation}
+                  if (conversationItem.type === 'turn-completion') {
+                    return (
+                      <MessageScrollerItem
+                        key={conversationItem.id}
+                        messageId={conversationItem.id}
+                        className="min-w-0"
+                      >
+                        <div className="pb-1">
+                          <WorkspaceAssistantTurnCompletion
+                            message={conversationItem.message}
+                            turnStartedAt={
+                              conversationItem.message.responseToMessageId
+                                ? messageCreatedAtById.get(
+                                    conversationItem.message.responseToMessageId
+                                  )
+                                : undefined
+                            }
                           />
-                        ) : null}
-                      </div>
-                    </MessageScrollerItem>
-                  )
-                }
+                        </div>
+                      </MessageScrollerItem>
+                    )
+                  }
 
-                return (
-                  <WorkspaceActivityGroup
-                    key={conversationItem.id}
-                    group={conversationItem}
-                    isExpanded={!collapsedGroups.has(conversationItem.id)}
-                    onToggleGroup={(groupId) =>
-                      setCollapsedGroups((current) => {
-                        const next = new Set(current)
-                        if (next.has(groupId)) next.delete(groupId)
-                        else next.add(groupId)
-                        return next
-                      })
-                    }
-                    expansionOverrides={expandedRows}
-                    contentPaddingClassName="px-0 md:px-0"
-                    onToggleRow={(activityId, nextExpanded) =>
-                      setExpandedRows((current) => ({ ...current, [activityId]: nextExpanded }))
-                    }
-                  />
-                )
-              })}
-            </div>
-          </MessageScrollerContent>
-        </MessageScrollerViewport>
-        <MessageScrollerButton className="z-10 border-border-200 bg-bg-000 shadow-card hover:bg-bg-200 data-[direction=end]:bottom-3" />
-      </MessageScroller>
-    </MessageScrollerProvider>
+                  // Artifact provenance builds its immutable transcript from persisted messages and
+                  // activities only, so no coordinator lifecycle or durable Subagent command rows
+                  // are supplied here. Derived config-change dividers are render-time annotations,
+                  // not provenance records, and are skipped as well.
+                  if (
+                    conversationItem.type === 'handoff' ||
+                    conversationItem.type === 'subagent-message' ||
+                    conversationItem.type === 'session-config-change'
+                  )
+                    return null
+
+                  if (conversationItem.type === 'plan-activity') {
+                    return (
+                      <WorkspacePlanActivityRecord
+                        key={conversationItem.id}
+                        activity={conversationItem.activity}
+                        contentPaddingClassName="px-0 md:px-0"
+                      />
+                    )
+                  }
+
+                  if (conversationItem.type === 'compaction-activity') {
+                    return (
+                      <WorkspaceContextCompactionActivityRow
+                        key={conversationItem.id}
+                        activity={conversationItem.activity}
+                        contentPaddingClassName="px-0 md:px-0"
+                      />
+                    )
+                  }
+
+                  if (conversationItem.type === 'activity') {
+                    return (
+                      <MessageScrollerItem
+                        key={conversationItem.id}
+                        messageId={conversationItem.id}
+                        className="min-w-0"
+                      >
+                        <div className="py-3">
+                          {conversationItem.activity.elicitation ? (
+                            <WorkspaceElicitationCard
+                              elicitation={conversationItem.activity.elicitation}
+                            />
+                          ) : null}
+                        </div>
+                      </MessageScrollerItem>
+                    )
+                  }
+
+                  return (
+                    <WorkspaceActivityGroup
+                      key={conversationItem.id}
+                      group={conversationItem}
+                      isExpanded={!collapsedGroups.has(conversationItem.id)}
+                      onToggleGroup={(groupId) =>
+                        setCollapsedGroups((current) => {
+                          const next = new Set(current)
+                          if (next.has(groupId)) next.delete(groupId)
+                          else next.add(groupId)
+                          return next
+                        })
+                      }
+                      expansionOverrides={expandedRows}
+                      contentPaddingClassName="px-0 md:px-0"
+                      onToggleRow={(activityId, nextExpanded) =>
+                        setExpandedRows((current) => ({ ...current, [activityId]: nextExpanded }))
+                      }
+                    />
+                  )
+                })}
+              </div>
+            </MessageScrollerContent>
+          </MessageScrollerViewport>
+          <MessageScrollerButton className="z-10 border-border-200 bg-bg-000 shadow-card hover:bg-bg-200 data-[direction=end]:bottom-3" />
+        </MessageScroller>
+      </MessageScrollerProvider>
+    </TooltipProvider>
   )
 }
 
@@ -498,29 +514,39 @@ const ArtifactProvenancePanel = ({
   item,
   projectId,
   onClose,
-  onVersionChange
+  onVersionChange,
+  initialTab
 }: ArtifactProvenancePanelProps): React.JSX.Element => {
   const { t } = useTranslation()
   const formatDate = useDateTimeFormat()
   const tabScrollFadeRef = useHorizontalScrollFade<HTMLDivElement>()
   const lineageKey = `${projectId}:${item.sessionId}:${item.artifactId ?? ''}`
-  const lineageRequestKey = `${lineageKey}:${item.selectedVersionId ?? ''}`
-  const [lineageResult, setLineageResult] = useState<{
-    key: string
-    value?: ArtifactLineageProvenance
-    unavailable?: boolean
-    error?: string
-  }>()
   const [selectedVersion, setSelectedVersion] = useState<{
     artifactId: string
     versionId: string
   }>()
+  const requestedVersionId =
+    selectedVersion && selectedVersion.artifactId === item.artifactId
+      ? selectedVersion.versionId
+      : item.selectedVersionId
+  const lineageRequestKey = `${lineageKey}:${requestedVersionId ?? ''}`
+  const [lineageResult, setLineageResult] = useState<{
+    key: string
+    value?: ArtifactLineageProvenance
+    unavailable?: boolean
+    error?: ProvenanceReadFailure
+  }>()
   const [provenanceResult, setProvenanceResult] = useState<{
     key: string
     value?: ArtifactVersionProvenance
-    error?: string
+    error?: ProvenanceReadFailure
   }>()
-  const [activeTab, setActiveTab] = useState<ProvenanceTab>('code')
+  const [requestedTab, setActiveTab] = useState<ProvenanceTab | undefined>(initialTab)
+  const [literatureResult, setLiteratureResult] = useState<{
+    key: string
+    value?: ArtifactLiteratureManifest
+    error?: ProvenanceReadFailure
+  }>()
   const [deferredSectionResults, setDeferredSectionResults] = useState<
     Record<string, DeferredSectionResult>
   >({})
@@ -528,6 +554,8 @@ const ArtifactProvenancePanel = ({
     Record<string, CodeReconstructionPanelState>
   >({})
   const [reviewRevision, setReviewRevision] = useState(0)
+  const [lineageRetry, setLineageRetry] = useState(0)
+  const [coreRetry, setCoreRetry] = useState(0)
   const [showAllPackagesKey, setShowAllPackagesKey] = useState<string>()
   const [exportingNotebook, setExportingNotebook] = useState(false)
   const [notebookExportFailure, setNotebookExportFailure] = useState<{
@@ -538,13 +566,36 @@ const ArtifactProvenancePanel = ({
     key: string
     message: string
   }>()
-  const lineage = lineageResult?.key === lineageRequestKey ? lineageResult.value : undefined
+  const initialLineage = lineageResult?.key === lineageRequestKey ? lineageResult.value : undefined
+  const historyLineage = lineageResult?.key.startsWith(lineageKey + ':')
+    ? lineageResult.value
+    : undefined
+  const history = useVersionHistoryPages({
+    historyKey:
+      lineageKey +
+      ':' +
+      (historyLineage?.headVersion?.versionId ?? historyLineage?.versions.at(-1)?.versionId ?? ''),
+    initial: historyLineage,
+    loadPage: async (cursor) => {
+      const value = unwrapProvenanceRead(
+        await window.api.artifacts.getLineage({
+          projectId,
+          appSessionId: item.sessionId,
+          artifactId: item.artifactId!,
+          versionId: item.selectedVersionId,
+          cursor
+        })
+      )
+      if (!value) throw new Error('Artifact history is unavailable.')
+      return value
+    }
+  })
+  const lineage = useMemo(
+    () => (initialLineage ? { ...initialLineage, versions: history.versions } : undefined),
+    [initialLineage, history.versions]
+  )
   const lineageUnavailable =
     lineageResult?.key === lineageRequestKey && lineageResult.unavailable === true
-  const requestedVersionId =
-    selectedVersion && selectedVersion.artifactId === item.artifactId
-      ? selectedVersion.versionId
-      : item.selectedVersionId
   const selectedVersionDescriptor = lineage
     ? resolveArtifactVersionDescriptor(lineage, requestedVersionId)
     : undefined
@@ -552,13 +603,18 @@ const ArtifactProvenancePanel = ({
   const isUserEdit = selectedVersionDescriptor?.originKind === 'user_edit'
   const isLegacyVersion = selectedVersionDescriptor?.originKind === 'legacy'
   const basedOnVersionId = selectedVersionDescriptor?.basedOnVersionId ?? undefined
-  const basedOnVersionNumber = lineage?.versions.find(
-    (version) => version.versionId === basedOnVersionId
-  )?.versionNumber
+  const basedOnVersionNumber =
+    lineage?.versions.find((version) => version.versionId === basedOnVersionId)?.versionNumber ??
+    (lineage?.basedOnVersion?.versionId === basedOnVersionId
+      ? lineage?.basedOnVersion?.versionNumber
+      : undefined)
   const selectedVersionUnavailable = Boolean(lineage && requestedVersionId && !selectedVersionId)
   const provenanceKey = `${lineageKey}:${selectedVersionId ?? ''}`
   const coreProvenance =
     provenanceResult?.key === provenanceKey ? provenanceResult.value : undefined
+  const activeTab =
+    requestedTab ??
+    (selectedVersionDescriptor?.hasLiterature || coreProvenance?.literature ? 'sources' : 'code')
   const showAllPackages = showAllPackagesKey === provenanceKey
   const notebookExportError =
     notebookExportFailure?.key === provenanceKey ? notebookExportFailure.message : undefined
@@ -566,8 +622,14 @@ const ArtifactProvenancePanel = ({
     codeActionFailure?.key === provenanceKey ? codeActionFailure.message : undefined
   const codeReconstructionResult = codeReconstructionResults[provenanceKey]
   const error =
-    (selectedVersionUnavailable ? t('The selected Artifact version is unavailable.') : undefined) ??
+    (selectedVersionUnavailable
+      ? {
+          kind: 'load-failed' as const,
+          message: t('The selected Artifact version is unavailable.')
+        }
+      : undefined) ??
     (lineageResult?.key === lineageRequestKey ? lineageResult.error : undefined) ??
+    (literatureResult?.key === provenanceKey ? literatureResult.error : undefined) ??
     (provenanceResult?.key === provenanceKey ? provenanceResult.error : undefined)
 
   useEffect(() => {
@@ -582,7 +644,13 @@ const ArtifactProvenancePanel = ({
     let active = true
     if (!item.artifactId) return
     void window.api.artifacts
-      .getLineage({ projectId, appSessionId: item.sessionId, artifactId: item.artifactId })
+      .getLineage({
+        projectId,
+        appSessionId: item.sessionId,
+        artifactId: item.artifactId,
+        ...(requestedVersionId ? { versionId: requestedVersionId } : {})
+      })
+      .then(unwrapProvenanceRead)
       .then((value) => {
         if (!active) return
         setLineageResult({ key: lineageRequestKey, value, unavailable: value === undefined })
@@ -591,33 +659,7 @@ const ArtifactProvenancePanel = ({
         if (active) {
           setLineageResult({
             key: lineageRequestKey,
-            error: failure instanceof Error ? failure.message : String(failure)
-          })
-        }
-      })
-    return () => {
-      active = false
-    }
-  }, [item.artifactId, item.sessionId, lineageRequestKey, projectId])
-
-  useEffect(() => {
-    let active = true
-    if (!item.artifactId || !selectedVersionId || !lineage || isUserEdit || isLegacyVersion) return
-    void window.api.artifacts
-      .getVersionProvenance({
-        projectId,
-        appSessionId: item.sessionId,
-        artifactId: item.artifactId,
-        versionId: selectedVersionId
-      })
-      .then((value) => {
-        if (active) setProvenanceResult({ key: provenanceKey, value })
-      })
-      .catch((failure: unknown) => {
-        if (active) {
-          setProvenanceResult({
-            key: provenanceKey,
-            error: failure instanceof Error ? failure.message : String(failure)
+            error: provenanceReadFailure(failure)
           })
         }
       })
@@ -625,11 +667,47 @@ const ArtifactProvenancePanel = ({
       active = false
     }
   }, [
+    item.artifactId,
+    item.sessionId,
+    lineageRequestKey,
+    projectId,
+    lineageRetry,
+    requestedVersionId
+  ])
+
+  useEffect(() => {
+    let active = true
+    if (!item.artifactId || !selectedVersionId || !initialLineage || isUserEdit || isLegacyVersion)
+      return
+    void window.api.artifacts
+      .getVersionProvenance({
+        projectId,
+        appSessionId: item.sessionId,
+        artifactId: item.artifactId,
+        versionId: selectedVersionId
+      })
+      .then(unwrapProvenanceRead)
+      .then((value) => {
+        if (active) setProvenanceResult({ key: provenanceKey, value })
+      })
+      .catch((failure: unknown) => {
+        if (active) {
+          setProvenanceResult({
+            key: provenanceKey,
+            error: provenanceReadFailure(failure)
+          })
+        }
+      })
+    return () => {
+      active = false
+    }
+  }, [
+    coreRetry,
     isUserEdit,
     isLegacyVersion,
     item.artifactId,
     item.sessionId,
-    lineage,
+    initialLineage,
     projectId,
     provenanceKey,
     selectedVersionId
@@ -683,6 +761,43 @@ const ArtifactProvenancePanel = ({
     selectedVersionId
   ])
 
+  useEffect(() => {
+    if (!isUserEdit || !selectedVersionDescriptor?.hasLiterature || !selectedVersionId) return
+    let active = true
+    void window.api.artifacts
+      .getVersionLiterature({
+        projectId,
+        appSessionId: item.sessionId,
+        artifactId: item.artifactId!,
+        versionId: selectedVersionId
+      })
+      .then(
+        (value) => {
+          if (active) setLiteratureResult({ key: provenanceKey, value })
+        },
+        (failure: unknown) => {
+          if (active) {
+            setLiteratureResult({
+              key: provenanceKey,
+              error: provenanceReadFailure(failure)
+            })
+          }
+        }
+      )
+    return () => {
+      active = false
+    }
+  }, [
+    coreRetry,
+    isUserEdit,
+    item.artifactId,
+    item.sessionId,
+    projectId,
+    provenanceKey,
+    selectedVersionDescriptor?.hasLiterature,
+    selectedVersionId
+  ])
+
   const reviewReloadKey = activeTab === 'review' ? reviewRevision : 0
   const deferredTab = (
     activeTab === 'execution' || activeTab === 'messages' || activeTab === 'review'
@@ -703,6 +818,21 @@ const ArtifactProvenancePanel = ({
         : coreProvenance,
     [coreProvenance, deferredSectionResult]
   )
+  const literature = isUserEdit
+    ? literatureResult?.key === provenanceKey
+      ? literatureResult.value
+      : undefined
+    : provenance?.literature
+  const visibleTabs = isUserEdit
+    ? literature
+      ? [sourcesTab]
+      : []
+    : literature
+      ? [tabs[0]!, sourcesTab, ...tabs.slice(1)]
+      : tabs
+  useEffect(() => {
+    if (requestedTab === 'sources' && provenance && !provenance.literature) setActiveTab(undefined)
+  }, [requestedTab, provenance])
   const deferredTabLabel = deferredTab
     ? tabs.find((tab) => tab.id === deferredTab)?.label
     : undefined
@@ -733,6 +863,7 @@ const ArtifactProvenancePanel = ({
     if (!load) return
     const sectionKey = `${provenanceKey}:${activeTab}:${activeTab === 'review' ? reviewReloadKey : 0}`
     void load
+      .then((value) => unwrapProvenanceRead<DeferredSection>(value))
       .then((section) => {
         if (!active) return
         setDeferredSectionResults((current) => ({
@@ -746,7 +877,7 @@ const ArtifactProvenancePanel = ({
           ...current,
           [sectionKey]: {
             state: 'error',
-            message: failure instanceof Error ? failure.message : String(failure)
+            ...provenanceReadFailure(failure)
           }
         }))
       })
@@ -764,6 +895,30 @@ const ArtifactProvenancePanel = ({
     reviewReloadKey,
     selectedVersionId
   ])
+
+  const diagnosticsFor = (failure: ProvenanceReadFailure, section: string): string =>
+    JSON.stringify(
+      {
+        projectId,
+        sessionId: item.sessionId,
+        artifactId: item.artifactId,
+        versionId: selectedVersionId,
+        section,
+        ...failure
+      },
+      null,
+      2
+    )
+  const retryCore = (): void => {
+    if (lineageResult?.error) {
+      setLineageResult(undefined)
+      setLineageRetry((value) => value + 1)
+    } else {
+      setProvenanceResult(undefined)
+      setLiteratureResult(undefined)
+      setCoreRetry((value) => value + 1)
+    }
+  }
 
   const selectedIndex =
     lineage?.versions.findIndex((version) => version.versionId === selectedVersionId) ?? -1
@@ -869,7 +1024,7 @@ const ArtifactProvenancePanel = ({
 
   const selectVersion = (versionId: string): void => {
     if (!item.artifactId) return
-    const version = lineage?.versions.find((candidate) => candidate.versionId === versionId)
+    const version = lineage ? resolveArtifactVersionDescriptor(lineage, versionId) : undefined
     if (!version) return
 
     const nextItem = createPreviewFileItemForArtifactVersion({ item, version, projectId })
@@ -886,7 +1041,7 @@ const ArtifactProvenancePanel = ({
     setNotebookExportFailure(undefined)
     try {
       const baseName = item.name.replace(/\.[^.]+$/u, '') || 'artifact'
-      const versionNumber = lineage?.versions[selectedIndex]?.versionNumber ?? 1
+      const versionNumber = selectedVersionDescriptor?.versionNumber ?? 1
       for (const kernel of executionKernels) {
         const notebook = buildExecutionNotebook(rawExecutionRuns, kernel, {
           artifactId: item.artifactId,
@@ -930,7 +1085,7 @@ const ArtifactProvenancePanel = ({
         bytes.byteOffset + bytes.byteLength
       ) as ArrayBuffer
       const baseName = item.name.replace(/\.[^.]+$/u, '') || 'artifact'
-      const versionNumber = lineage?.versions[selectedIndex]?.versionNumber ?? 1
+      const versionNumber = selectedVersionDescriptor?.versionNumber ?? 1
       const format = scriptDownloadFormats[language]
       await window.api.saveBlobFile({
         suggestedName: `${baseName}-v${versionNumber}.${format.extension}`,
@@ -1011,6 +1166,31 @@ const ArtifactProvenancePanel = ({
   const generatedCode =
     codeReconstructionState?.state === 'cached' ? codeReconstructionState.value : undefined
 
+  const editSummary = isUserEdit ? (
+    <div className="space-y-1.5 text-xs text-text-300">
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+        <span>{t('Edited in Open Science')}</span>
+        {basedOnVersionId && basedOnVersionNumber !== undefined ? (
+          <button
+            type="button"
+            aria-label={t('Open source version v{{version}}', { version: basedOnVersionNumber })}
+            className="rounded text-primary underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            onClick={() => selectVersion(basedOnVersionId)}
+          >
+            {t('View source provenance · v{{version}}', { version: basedOnVersionNumber })}
+          </button>
+        ) : (
+          <span>{t('Based on an earlier immutable version.')}</span>
+        )}
+      </div>
+      <p>
+        {t(
+          'This edited version has no new agent execution. View the source version for its code, messages and execution evidence.'
+        )}
+      </p>
+    </div>
+  ) : undefined
+
   return (
     <div className="flex size-full min-h-0 flex-col bg-bg-000" data-testid="artifact-provenance">
       <div className="flex h-9 shrink-0 items-center gap-2 border-b border-border-300/60 px-2">
@@ -1019,27 +1199,35 @@ const ArtifactProvenancePanel = ({
           variant="ghost"
           size="icon-xs"
           aria-label={t('Previous Artifact version')}
-          disabled={selectedIndex <= 0}
+          disabled={selectedIndex <= 0 && !lineage?.previousVersion}
           onClick={() => {
-            const versionId = lineage?.versions[selectedIndex - 1]?.versionId
+            const versionId = (
+              selectedIndex > 0 ? lineage?.versions[selectedIndex - 1] : lineage?.previousVersion
+            )?.versionId
             if (versionId) selectVersion(versionId)
           }}
         >
           <ChevronLeft aria-hidden="true" />
         </Button>
         <span className="text-xs font-medium text-text-100">
-          {selectedIndex >= 0
-            ? `v${lineage?.versions[selectedIndex]?.versionNumber}`
-            : t('Version')}
+          {selectedVersionDescriptor ? `v${selectedVersionDescriptor.versionNumber}` : t('Version')}
         </span>
         <Button
           type="button"
           variant="ghost"
           size="icon-xs"
           aria-label={t('Next Artifact version')}
-          disabled={!lineage || selectedIndex < 0 || selectedIndex >= lineage.versions.length - 1}
+          disabled={
+            !lineage ||
+            ((selectedIndex < 0 || selectedIndex >= lineage.versions.length - 1) &&
+              !lineage.nextVersion)
+          }
           onClick={() => {
-            const versionId = lineage?.versions[selectedIndex + 1]?.versionId
+            const versionId = (
+              selectedIndex >= 0
+                ? (lineage?.versions[selectedIndex + 1] ?? lineage?.nextVersion)
+                : lineage?.nextVersion
+            )?.versionId
             if (versionId) selectVersion(versionId)
           }}
         >
@@ -1069,19 +1257,20 @@ const ArtifactProvenancePanel = ({
         </Button>
       </div>
 
-      {!isUserEdit && !isLegacyVersion ? (
+      <VersionHistoryLoadButton history={history} />
+      {(!isUserEdit || literature) && !isLegacyVersion ? (
         <div
           ref={tabScrollFadeRef}
           role="tablist"
           className="scroll-fade-x flex shrink-0 gap-1 overflow-x-auto border-b border-border-300/60 px-2 py-1"
         >
-          {tabs.map((tab) => (
+          {visibleTabs.map((tab) => (
             <button
               key={tab.id}
               type="button"
               role="tab"
-              aria-selected={activeTab === tab.id}
-              className={`rounded px-2 py-1 text-xs ${activeTab === tab.id ? 'bg-bg-300 text-text-000' : 'text-text-200 hover:text-text-100'}`}
+              aria-selected={isUserEdit || activeTab === tab.id}
+              className={`rounded px-2 py-1 text-xs ${isUserEdit || activeTab === tab.id ? 'bg-bg-300 text-text-000' : 'text-text-200 hover:text-text-100'}`}
               onClick={() => setActiveTab(tab.id)}
             >
               {t(tab.label)}
@@ -1091,32 +1280,25 @@ const ArtifactProvenancePanel = ({
       ) : null}
 
       <div className="min-h-0 flex-1 overflow-y-auto">
-        {error ? <p className="p-5 text-sm text-danger-000">{error}</p> : null}
+        {error ? (
+          <ProvenanceLoadNotice
+            key={provenanceKey + ':core'}
+            failure={error}
+            diagnostics={diagnosticsFor(error, lineageResult?.error ? 'lineage' : 'core')}
+            onRetry={
+              selectedVersionUnavailable || error.kind === 'integrity-failed'
+                ? undefined
+                : retryCore
+            }
+          />
+        ) : null}
         {!error && lineageUnavailable ? (
           <p className="p-5 text-sm text-text-300">
             {t('Provenance is not available for this legacy file.')}
           </p>
         ) : null}
-        {!error && isUserEdit ? (
-          <section className="p-5">
-            <h2 className="text-sm font-medium text-text-100">{t('Edited in Open Science')}</h2>
-            {basedOnVersionId && basedOnVersionNumber !== undefined ? (
-              <button
-                type="button"
-                aria-label={t('Open source version v{{version}}', {
-                  version: basedOnVersionNumber
-                })}
-                className="mt-1 text-sm text-primary hover:underline"
-                onClick={() => selectVersion(basedOnVersionId)}
-              >
-                {t('Based on v{{version}}', { version: basedOnVersionNumber })}
-              </button>
-            ) : (
-              <p className="mt-1 text-sm text-text-300">
-                {t('Based on an earlier immutable version.')}
-              </p>
-            )}
-          </section>
+        {!error && isUserEdit && !literature ? (
+          <section className="px-4 py-3">{editSummary}</section>
         ) : null}
         {!error && isLegacyVersion ? (
           <p className="p-5 text-sm text-text-300">
@@ -1125,6 +1307,14 @@ const ArtifactProvenancePanel = ({
         ) : null}
         {!error && !lineageUnavailable && !isUserEdit && !isLegacyVersion && !provenance ? (
           <div className="flex h-full items-center justify-center text-text-300">
+            <LoaderCircle className="size-4 animate-spin" aria-label={t('Loading Provenance')} />
+          </div>
+        ) : null}
+        {!error &&
+        isUserEdit &&
+        selectedVersionDescriptor?.hasLiterature &&
+        literatureResult?.key !== provenanceKey ? (
+          <div className="flex justify-center p-5 text-text-300">
             <LoaderCircle className="size-4 animate-spin" aria-label={t('Loading Provenance')} />
           </div>
         ) : null}
@@ -1138,16 +1328,39 @@ const ArtifactProvenancePanel = ({
           </div>
         ) : null}
         {provenance && deferredSectionResult?.state === 'error' ? (
-          <p className="p-5 text-sm text-danger-000">{deferredSectionResult.message}</p>
+          <ProvenanceLoadNotice
+            key={deferredSectionKey}
+            failure={deferredSectionResult}
+            diagnostics={diagnosticsFor(deferredSectionResult, activeTab)}
+            onRetry={
+              deferredSectionResult.kind === 'integrity-failed'
+                ? undefined
+                : () =>
+                    setDeferredSectionResults((current) => {
+                      const next = { ...current }
+                      if (deferredSectionKey) delete next[deferredSectionKey]
+                      return next
+                    })
+            }
+          />
         ) : null}
         {provenance && activeTab === 'code' ? (
           <section>
             {provenance.contentStatus.state === 'unavailable' ? (
-              <p className="border-b border-warning-100/50 bg-warning-100/10 px-4 py-2 text-xs text-warning-900">
-                {t('Artifact content is {{reason}}; captured provenance remains available.', {
-                  reason: provenance.contentStatus.reason
-                })}
-              </p>
+              <ProvenanceLoadNotice
+                key={provenanceKey + ':content'}
+                failure={{
+                  kind: 'integrity-failed',
+                  message: t(
+                    'Artifact content is {{reason}}; captured provenance remains available.',
+                    { reason: provenance.contentStatus.reason }
+                  )
+                }}
+                diagnostics={diagnosticsFor(
+                  { kind: 'integrity-failed', message: provenance.contentStatus.reason },
+                  'content'
+                )}
+              />
             ) : null}
             <div className={tabActionBarClassName}>
               {generatedCode ? (
@@ -1328,6 +1541,28 @@ const ArtifactProvenancePanel = ({
             ) : null}
           </section>
         ) : null}
+        {literature && (isUserEdit || activeTab === 'sources') ? (
+          <ArtifactSourcesPanel
+            key={selectedVersionId}
+            literature={literature}
+            versionSummary={editSummary}
+            formatContext={
+              item.artifactId &&
+              selectedVersionId &&
+              (lineage?.headVersion?.versionId ?? lineage?.versions.at(-1)?.versionId) &&
+              item.name.toLowerCase().endsWith('.docx')
+                ? {
+                    projectId,
+                    sessionId: item.sessionId,
+                    artifactId: item.artifactId,
+                    versionId: selectedVersionId,
+                    expectedHeadVersionId:
+                      lineage.headVersion?.versionId ?? lineage.versions.at(-1)!.versionId
+                  }
+                : undefined
+            }
+          />
+        ) : null}
         {provenance && activeTab === 'execution' && deferredSectionReady ? (
           executionRuns.length > 0 ? (
             <div>
@@ -1414,8 +1649,8 @@ const ArtifactProvenancePanel = ({
                   </dd>
                   <dt className="text-text-300">{t('Source')}</dt>
                   <dd className="text-text-100">
-                    {asString(environment.runtime_source) ?? 'unknown'} ·{' '}
-                    {asString(environment.kernel_kind) ?? 'unknown'}
+                    {asString(environment.runtime_source) ?? t('unknown')} ·{' '}
+                    {asString(environment.kernel_kind) ?? t('unknown')}
                   </dd>
                   <dt className="text-text-300">{t('Capture')}</dt>
                   <dd className="text-text-100">
@@ -1458,7 +1693,7 @@ const ArtifactProvenancePanel = ({
                             {asString(pkg.version) ?? '—'}
                           </td>
                           <td className="px-3 py-2 text-text-300">
-                            {asString(pkg.loaded_state) ?? 'unknown'}
+                            {asString(pkg.loaded_state) ?? t('unknown')}
                           </td>
                         </tr>
                       ))}
@@ -1574,7 +1809,7 @@ const ArtifactProvenancePanel = ({
                                         : '—'}
                                   </td>
                                   <td className="whitespace-normal break-words px-2 py-2 align-top text-text-300">
-                                    {asString(operation.result) ?? 'unknown'}
+                                    {asString(operation.result) ?? t('unknown')}
                                   </td>
                                 </tr>
                                 {hasPackageChanges ? (

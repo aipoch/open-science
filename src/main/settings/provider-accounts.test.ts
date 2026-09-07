@@ -12,6 +12,7 @@ import type { ResolvedProvider } from './provider-env'
 import type { StoredSettings } from './types'
 import { getAgentFramework } from '../agent-framework'
 import { codexSubscriptionStorageDir } from '../agent-framework/codex'
+import { buildConfiguredModelCatalog } from '../../shared/configured-model-catalog'
 
 vi.mock('electron', () => ({
   net: {
@@ -99,6 +100,7 @@ describe('ProviderAccountsModule', () => {
       waitForLogin: vi.fn(async () => ({ accountEmail: 'researcher@example.com' })),
       cancelLogin: vi.fn(),
       getAccessToken: vi.fn(async () => 'access-token'),
+      getAccessCredential: vi.fn(async () => ({ token: 'access-token' })),
       logout: vi.fn(async () => undefined)
     }
     runClaudeSubscriptionProbe = vi.fn(async (): Promise<ValidateProviderResult> => ({
@@ -556,7 +558,7 @@ describe('ProviderAccountsModule', () => {
 
     const target = module.resolveRuntimeTarget(
       stored,
-      { kind: 'configured', requestedModel: 'unavailable-model' },
+      { kind: 'configured', requestedModel: 'lab-model' },
       getAgentFramework('codex')
     )
 
@@ -652,6 +654,59 @@ describe('ProviderAccountsModule', () => {
     expect(stored.lastValidationFailure).toBeUndefined()
   })
 
+  it('keeps another model selectable after a model-specific validation failure', async () => {
+    await module.upsertProvider({
+      type: 'custom',
+      name: 'Lab gateway',
+      baseUrl: 'https://lab.example/v1',
+      model: 'model-a',
+      key: 'secret-key',
+      apiEndpoints: ['anthropic']
+    })
+    const providerId = (await repository.getSettings()).providers[0].id
+    vi.stubGlobal(
+      'fetch',
+      vi
+        .fn()
+        .mockResolvedValueOnce(
+          new Response(
+            JSON.stringify({
+              type: 'message',
+              role: 'assistant',
+              content: [{ type: 'text', text: 'pong' }],
+              usage: { input_tokens: 1, output_tokens: 1 }
+            }),
+            { status: 200 }
+          )
+        )
+        .mockResolvedValueOnce(new Response('', { status: 404 }))
+    )
+
+    await expect(module.validateProvider({ providerId, model: 'model-a' })).resolves.toMatchObject({
+      ok: true,
+      category: 'ok'
+    })
+
+    await expect(module.validateProvider({ providerId, model: 'model-b' })).resolves.toMatchObject({
+      ok: false,
+      category: 'model-not-found'
+    })
+
+    const stored = (await repository.getSettings()).providers[0]
+    expect(stored.lastValidatedAt).toBeTypeOf('number')
+    expect(stored.lastValidatedTarget).toEqual({ model: 'model-a', endpoint: 'anthropic' })
+    expect(stored.lastValidationFailure?.target).toEqual({
+      model: 'model-b',
+      endpoint: 'anthropic'
+    })
+    const catalog = buildConfiguredModelCatalog({
+      providers: [module.toProviderView(stored)],
+      frameworkId: 'claude-code',
+      frameworkEndpoints: ['anthropic']
+    })
+    expect(catalog.map((entry) => entry.model)).toEqual(['model-a'])
+  })
+
   it('coalesces shared Claude status reads and invalidates them across logout and login', async () => {
     await module.upsertProvider({ type: 'claude-shared' })
     const stored = (await repository.getSettings()).providers[0]
@@ -713,11 +768,11 @@ describe('ProviderAccountsModule', () => {
 
   it('does not apply an in-flight xAI validation after logout', async () => {
     await module.upsertProvider({ type: 'xai-subscription' })
-    const pendingToken = deferred<string>()
-    vi.mocked(xaiOAuth.getAccessToken).mockImplementationOnce(() => pendingToken.promise)
+    const pendingToken = deferred<{ token: string; keyRef?: string }>()
+    vi.mocked(xaiOAuth.getAccessCredential).mockImplementationOnce(() => pendingToken.promise)
 
     const pending = module.validateProvider({ providerId: 'builtin-xai-subscription' })
-    await vi.waitFor(() => expect(xaiOAuth.getAccessToken).toHaveBeenCalledOnce())
+    await vi.waitFor(() => expect(xaiOAuth.getAccessCredential).toHaveBeenCalledOnce())
     await module.logoutXaiOAuth()
     pendingToken.reject(new Error('Sign in to xAI (Grok) OAuth to continue.'))
 
@@ -765,6 +820,15 @@ describe('ProviderAccountsModule', () => {
 
     module.cancelClaudeLogin()
     expect(claudeSharedAuth.cancelLogin).toHaveBeenCalledOnce()
+  })
+
+  it('cancels every provider login when its application owner is disposed', async () => {
+    await module.dispose()
+
+    expect(codexAuth.cancelLogin).toHaveBeenCalledOnce()
+    expect(claudeIsolatedAuth.cancelLogin).toHaveBeenCalledOnce()
+    expect(claudeSharedAuth.cancelLogin).toHaveBeenCalledOnce()
+    expect(xaiOAuth.cancelLogin).toHaveBeenCalledOnce()
   })
 
   it('returns bounded failures for missing model catalogs and incompatible drafts', async () => {
@@ -836,7 +900,7 @@ describe('ProviderAccountsModule', () => {
     const edited = (await repository.getSettings()).providers[0]
     response.resolve(Response.json({ data: [{ id: 'deepseek-v5' }] }))
 
-    await expect(refresh).resolves.toMatchObject({ ok: true, models: ['deepseek-v5'] })
+    await expect(refresh).resolves.toMatchObject({ ok: false })
     await expect(repository.getSettings()).resolves.toMatchObject({
       providers: [
         expect.objectContaining({
@@ -892,6 +956,45 @@ describe('ProviderAccountsModule', () => {
     })
   })
 
+  it('refuses to resolve a configured model removed by a catalog refresh', async () => {
+    await module.upsertProvider({
+      type: 'official',
+      name: 'DeepSeek',
+      vendorId: 'deepseek',
+      key: 'key'
+    })
+    const providerId = (await repository.getSettings()).providers[0].id
+    await module.setActiveProvider(providerId, 'deepseek-v4-pro')
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(Response.json({ data: [{ id: 'replacement-model' }] }))
+    )
+
+    await expect(module.refreshProviderModels({ providerId })).resolves.toMatchObject({
+      ok: true,
+      models: ['replacement-model']
+    })
+    const settings = await repository.getSettings()
+    const provider = settings.providers[0]
+    expect(settings.activeModel).toBe('deepseek-v4-pro')
+
+    let outcome: string
+    try {
+      const target = module.resolveRuntimeTarget(
+        provider,
+        { kind: 'configured', requestedModel: settings.activeModel },
+        getAgentFramework('codex')
+      )
+      outcome = `resolved ${target.effectiveModel}`
+    } catch (error) {
+      outcome = error instanceof Error ? error.message : String(error)
+    }
+
+    expect(outcome).toBe(
+      'The configured model is no longer available from provider "DeepSeek": "deepseek-v4-pro". Pick another model in Settings → Model.'
+    )
+  })
+
   it('does not recreate a provider deleted while its model catalog refresh is pending', async () => {
     await module.upsertProvider({
       type: 'official',
@@ -915,7 +1018,7 @@ describe('ProviderAccountsModule', () => {
     await module.deleteProvider(providerId)
     response.resolve(Response.json({ data: [{ id: 'deepseek-v5' }] }))
 
-    await expect(refresh).resolves.toMatchObject({ ok: true, models: ['deepseek-v5'] })
+    await expect(refresh).resolves.toMatchObject({ ok: false })
     await expect(repository.getSettings()).resolves.toMatchObject({ providers: [] })
   })
 

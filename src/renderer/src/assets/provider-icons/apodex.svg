@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 510 510" role="img">
+  <title>Apodex</title>
+  <g transform="translate(49.5 232)" fill="none" stroke="#050608" stroke-width="27" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M0 219 229.743 0 411 219"/>
+    <path d="M0 219 112 22l22 27.5"/>
+    <path d="m172.5 98.5 94 120.5"/>
+  </g>
+  <path fill="#437DC4" d="M170 107.311c58.135 1.595 82.992 31.992 84.314 84.689 2.919-52.344 26.981-81.577 84.686-84.318-54.424-.182-85.031-25.827-84.314-84.682-1.543 58.608-31.005 85.294-84.686 84.311Z"/>
+</svg>

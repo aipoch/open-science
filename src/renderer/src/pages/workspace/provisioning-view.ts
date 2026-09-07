@@ -2,6 +2,7 @@ import type { DownloadProgress } from '../../../../shared/download-progress'
 import type {
   ProvisionOperationScope,
   ProvisionProgress,
+  ProvisionProgressEvent,
   ProvisionScope,
   ProvisionStatus
 } from '../../../../shared/notebook-env'
@@ -18,8 +19,8 @@ export type ProvisionUiState =
   | {
       kind: 'preparing'
       scope: PreparingScope
-      phase: string
-      message: string
+      phase: ProvisionProgress['phase'] | ''
+      event?: ProvisionProgressEvent
       progress: number
       sessionId?: string
       download?: DownloadProgress
@@ -45,7 +46,7 @@ export function deriveProvisionUi(
       kind: 'preparing',
       scope: resolvedScope,
       phase: progress?.phase ?? '',
-      message: progress?.message ?? '',
+      ...(progress?.event ? { event: progress.event } : {}),
       progress: progress?.progress ?? 0,
       ...(progress?.sessionId ? { sessionId: progress.sessionId } : {}),
       ...(progress?.download ? { download: progress.download } : {})

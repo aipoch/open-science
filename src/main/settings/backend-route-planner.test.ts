@@ -393,6 +393,47 @@ describe('BackendRoutePlanner provider candidates', () => {
     })
   })
 
+  it('registers the Apodex Mini model for Claude background requests', () => {
+    const provider = makeStoredProvider({
+      type: 'official',
+      vendorId: 'apodex',
+      apiEndpoints: ['anthropic', 'openai'],
+      baseUrl: 'https://api.apodex.ai',
+      model: 'apodex-1.1'
+    })
+    const target = makeTarget(provider, {
+      apiEndpoints: ['anthropic', 'openai'],
+      provider: {
+        type: 'custom',
+        vendorId: 'apodex',
+        apiEndpoints: ['anthropic', 'openai']
+      }
+    })
+
+    const plan = makePlanner().planBackend({
+      settings: { ...makeSettings(provider), agentFrameworkId: 'claude-code' },
+      frameworkId: 'claude-code',
+      target,
+      effortIntent: 'high',
+      conversationSkillImportEnabled: true
+    })
+
+    expect(plan.transport).toEqual({
+      kind: 'claude-anthropic',
+      targets: [
+        {
+          id: JSON.stringify([provider.id, provider.model]),
+          baseUrl: 'https://api.apodex.ai',
+          key: 'plain-provider-key',
+          model: 'apodex-1.1',
+          backgroundModel: 'apodex-1.1-mini',
+          useApiKeyHeader: true
+        }
+      ],
+      initialTargetId: JSON.stringify([provider.id, provider.model])
+    })
+  })
+
   it('filters model catalogs by route and preserves deduplicated effort slots', () => {
     const provider = makeStoredProvider()
     const active = makeTarget(provider, {

@@ -1,7 +1,10 @@
 import type { App, BrowserWindow, IpcMain } from 'electron'
 
 import { DATABASE_STARTUP_CHANNELS } from '../../shared/database-startup'
+import { createLogger, errorLogFields } from '../logger'
 import type { DatabaseStartupOwner } from './database-startup-owner'
+
+const log = createLogger('database-startup-ipc')
 
 type DatabaseStartupIpcDeps = {
   ipcMain: Pick<IpcMain, 'handle' | 'removeHandler'>
@@ -17,8 +20,16 @@ const registerDatabaseStartupIpc = (deps: DatabaseStartupIpcDeps): (() => void) 
 
   const unsubscribe = deps.owner.subscribe((state) => {
     for (const window of deps.getWindows()) {
-      if (!window.isDestroyed())
-        window.webContents.send(DATABASE_STARTUP_CHANNELS.stateChanged, state)
+      try {
+        if (!window.isDestroyed())
+          window.webContents.send(DATABASE_STARTUP_CHANNELS.stateChanged, state)
+      } catch (error) {
+        try {
+          log.warn('database startup window notification failed', errorLogFields(error))
+        } catch {
+          // Continue delivering to the remaining windows even if logging fails.
+        }
+      }
     }
   })
 
@@ -31,7 +42,7 @@ const registerDatabaseStartupIpc = (deps: DatabaseStartupIpcDeps): (() => void) 
 }
 
 type DatabaseStartupQuitGuardDeps = {
-  app: Pick<App, 'on' | 'removeListener'> & { quit: () => void }
+  app: Pick<App, 'on' | 'removeListener' | 'exit'> & { quit: () => void }
   owner: Pick<DatabaseStartupOwner, 'getState' | 'isMigrating' | 'whenAttemptSettled'>
 }
 
@@ -47,16 +58,32 @@ const installDatabaseStartupQuitGuard = (
   let pendingQuit = false
   let quitIssued = false
   let released = false
+  let disposed = false
+  let quitTimeout: ReturnType<typeof setTimeout> | undefined
+  const clearQuitTimeout = (): void => {
+    if (quitTimeout) clearTimeout(quitTimeout)
+    quitTimeout = undefined
+  }
   const maybeQuit = (): void => {
-    if (!pendingQuit || !attemptSettled || quitIssued) return
+    if (!pendingQuit || !attemptSettled || quitIssued || disposed) return
     // A blocked startup never installs the application lifecycle. A verified startup hands the quit
     // request to that lifecycle so every runtime owner created during composition is torn down normally.
-    if (!released && deps.owner.getState().phase !== 'blocked') return
+    if (!released && deps.owner.getState().phase !== 'blocked') {
+      // Bound only the post-verification handoff. Never interrupt a database migration for an
+      // ordinary quit; a stalled runtime cannot provide its cooperative disposer before completion.
+      quitTimeout ??= setTimeout(() => {
+        quitIssued = true
+        deps.app.exit(0)
+      }, 5_000)
+      return
+    }
     quitIssued = true
+    clearQuitTimeout()
     deps.app.quit()
   }
   const onBeforeQuit = (event: Electron.Event): void => {
-    if (!deps.owner.isMigrating()) return
+    const phase = deps.owner.getState().phase
+    if (!deps.owner.isMigrating() && phase !== 'starting' && phase !== 'ready') return
     event.preventDefault()
     if (pendingQuit) return
     pendingQuit = true
@@ -67,13 +94,16 @@ const installDatabaseStartupQuitGuard = (
   }
   deps.app.on('before-quit', onBeforeQuit)
   const dispose = (): void => {
+    disposed = true
+    clearQuitTimeout()
     deps.app.removeListener('before-quit', onBeforeQuit)
   }
   return {
     dispose,
     release: () => {
       released = true
-      dispose()
+      clearQuitTimeout()
+      deps.app.removeListener('before-quit', onBeforeQuit)
       maybeQuit()
     }
   }

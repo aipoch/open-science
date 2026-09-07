@@ -20,8 +20,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { createProjectDbClient, migrateApplicationDatabase } from '../projects/prisma-client'
 import { MANAGED_TEXT_EDIT_MAX_BYTES } from '../../shared/managed-file-versions'
-import { ManagedFileVersionError, ManagedFileVersionService } from './service'
+import {
+  ManagedFileVersionError,
+  ManagedFileVersionService,
+  type ManagedFileVersionSaveDerivedEditRequest
+} from './service'
 import { NodeVersionFileOperator, VersionFileOperatorError } from './version-file-operator'
+import { ArtifactProvenanceRepository } from '../artifacts/provenance-repository'
 
 const checksum = (bytes: Buffer): string => createHash('sha256').update(bytes).digest('hex')
 type SourceFixture = {
@@ -149,6 +154,98 @@ describe('ManagedFileVersionService (SQLite + filesystem)', () => {
   }
 
   it.each(['artifact', 'upload'] as const)(
+    'bounds the initial %s history response for a frequently edited file',
+    async (source) => {
+      const fixture = await createFixture(source)
+      const totalVersions = 202
+      const numbers = Array.from({ length: totalVersions - 2 }, (_, index) => index + 3)
+      const latestId = `${source}-v${totalVersions}`
+      const key = (number: number): string =>
+        `${source}s/project-1/session-1/${fixture.fileId}/versions/${source}-v${number}/content`
+      if (source === 'artifact') {
+        const template = await client.artifactVersion.findUniqueOrThrow({
+          where: { id: fixture.versionIds[1] }
+        })
+        await client.artifactVersion.createMany({
+          data: numbers.map((versionNumber) => ({
+            ...template,
+            id: `${source}-v${versionNumber}`,
+            versionNumber,
+            basedOnVersionId: `${source}-v${versionNumber - 1}`,
+            contentStorageKey: key(versionNumber)
+          }))
+        })
+        await client.artifactLineage.update({
+          where: { id: fixture.fileId },
+          data: { currentVersionId: latestId }
+        })
+      } else {
+        const template = await client.uploadVersion.findUniqueOrThrow({
+          where: { id: fixture.versionIds[1] }
+        })
+        await client.uploadVersion.createMany({
+          data: numbers.map((versionNumber) => ({
+            ...template,
+            id: `${source}-v${versionNumber}`,
+            versionNumber,
+            basedOnVersionId: `${source}-v${versionNumber - 1}`,
+            contentStorageKey: key(versionNumber)
+          }))
+        })
+        await client.uploadFile.update({
+          where: { id: fixture.fileId },
+          data: { currentVersionId: latestId }
+        })
+      }
+      // Only the selected head is read; older immutable content is not needed to list metadata.
+      const latestPath = join(storageRoot, ...key(totalVersions).split('/'))
+      await mkdir(dirname(latestPath), { recursive: true })
+      await writeFile(latestPath, 'second\n')
+      const service = new ManagedFileVersionService({
+        storageRoot,
+        getClient: () => Promise.resolve(client)
+      })
+      const result = await service.inspect({
+        source,
+        projectId: 'project-1',
+        fileId: fixture.fileId
+      })
+      expect(result.selectedVersionId).toBe(latestId)
+      expect(result.text).toBe('second\n')
+      expect(result.versions.some((version) => version.id === latestId)).toBe(true)
+      expect(result.versions).toHaveLength(50)
+      const versionIds = result.versions.map((version) => version.id)
+      let cursor = result.nextCursor
+      while (cursor) {
+        const page = await service.inspect({
+          source,
+          projectId: 'project-1',
+          fileId: fixture.fileId,
+          versionId: fixture.versionIds[0],
+          cursor
+        })
+        expect(page.versions.length).toBeLessThanOrEqual(50)
+        expect(page.selectedVersion?.id).toBe(fixture.versionIds[0])
+        expect(page.headVersion?.id).toBe(latestId)
+        expect(page.nextVersion?.id).toBe(fixture.versionIds[1])
+        expect(page.previousVersion).toBeUndefined()
+        versionIds.push(...page.versions.map((version) => version.id))
+        cursor = page.nextCursor
+      }
+      expect(versionIds).toHaveLength(totalVersions)
+      expect(new Set(versionIds).size).toBe(totalVersions)
+      await expect(
+        service.inspect({
+          source,
+          projectId: 'project-1',
+          fileId: fixture.fileId,
+          cursor: 'invalid'
+        })
+      ).rejects.toMatchObject({ code: 'INVALID_REQUEST' })
+    }
+  )
+
+  it.each(['artifact', 'upload'] as const)(
     'resolves the %s DB head by default and an explicit owned historical version exactly',
     async (source) => {
       const fixture = await createFixture(source)
@@ -273,7 +370,7 @@ describe('ManagedFileVersionService (SQLite + filesystem)', () => {
   )
 
   it.each(['artifact', 'upload'] as const)(
-    'restores all readable %s history when its Session is restored',
+    'keeps all %s history readable but immutable after its Session is deleted',
     async (source) => {
       const fixture = await createFixture(source)
       const service = new ManagedFileVersionService({
@@ -308,19 +405,38 @@ describe('ManagedFileVersionService (SQLite + filesystem)', () => {
         }
       })
 
-      await expect(service.openLatest(identity)).rejects.toMatchObject({ code: 'FILE_DELETED' })
-      await expect(readCurrentVersionId()).resolves.toBe(fixture.versionIds[1])
-
-      await client.fileOriginSession.update({
-        where: { projectId_sessionId: { projectId: 'project-1', sessionId: 'session-1' } },
-        data: { state: 'active', deletedAt: null, deletionOperationId: null }
-      })
-      const restored = await service.openVersion(identity, fixture.versionIds[0])
+      const latest = await service.openLatest(identity)
       try {
-        expect(restored.version.id).toBe(fixture.versionIds[0])
+        await expect(latest.readRange(0, latest.size)).resolves.toEqual(
+          new Uint8Array(Buffer.from('second\n'))
+        )
+        expect(latest.version.id).toBe(fixture.versionIds[1])
       } finally {
-        await restored.close()
+        await latest.close()
       }
+
+      const historical = await service.openVersion(identity, fixture.versionIds[0])
+      try {
+        expect(historical.version.id).toBe(fixture.versionIds[0])
+      } finally {
+        await historical.close()
+      }
+
+      await expect(service.inspect(identity)).resolves.toMatchObject({
+        headVersionId: fixture.versionIds[1],
+        selectedVersionId: fixture.versionIds[1],
+        canEdit: false,
+        unavailableReason: 'FILE_DELETED'
+      })
+      await expect(
+        service.saveTextEdit({
+          ...identity,
+          basedOnVersionId: fixture.versionIds[1],
+          expectedHeadVersionId: fixture.versionIds[1],
+          content: 'third\n',
+          operationId: `${source}-deleted-edit`
+        })
+      ).rejects.toMatchObject({ code: 'FILE_DELETED' })
       await expect(readCurrentVersionId()).resolves.toBe(fixture.versionIds[1])
     }
   )
@@ -373,6 +489,120 @@ describe('ManagedFileVersionService (SQLite + filesystem)', () => {
     })
     expect(operation.contentStorageKey).toBe(expectedPlan.storageRef)
     expect(operation.storedFilename).toBe(expectedPlan.storedFilename)
+  })
+
+  it('publishes a derived Artifact version with its updated Literature manifest', async () => {
+    const fixture = await createFixture('artifact')
+    const service = new ManagedFileVersionService({
+      storageRoot,
+      getClient: () => Promise.resolve(client)
+    })
+    const request: ManagedFileVersionSaveDerivedEditRequest = {
+      source: 'artifact',
+      projectId: 'project-1',
+      fileId: fixture.fileId,
+      basedOnVersionId: fixture.versionIds[1],
+      expectedHeadVersionId: fixture.versionIds[1],
+      operationId: 'citation-format-operation',
+      content: Buffer.from('formatted citation document'),
+      literature: {
+        schemaVersion: 1,
+        styleId: 'vancouver',
+        locale: 'en-US',
+        references: [
+          {
+            itemId: 'item-1',
+            metadataRevision: 1,
+            item: {
+              itemType: 'journalArticle',
+              title: 'A useful paper',
+              abstract: '',
+              issuedText: '2024',
+              issuedYear: 2024,
+              containerTitle: 'Journal of Tests',
+              shortTitle: '',
+              language: 'en',
+              rights: '',
+              url: '',
+              extra: '',
+              typeFields: {},
+              creators: [],
+              identifiers: []
+            }
+          }
+        ],
+        citations: [{ citationId: 'citation-1', itemId: 'item-1', metadataRevision: 1 }]
+      }
+    }
+    const result = await service.saveDerivedArtifactEdit(request)
+
+    expect(result.kind).toBe('created')
+    if (result.kind !== 'created') throw new Error('Expected a created version.')
+    const saved = await client.artifactVersion.findUniqueOrThrow({
+      where: { id: result.version.id },
+      include: { literatureManifest: true }
+    })
+    expect(saved).toMatchObject({
+      originKind: 'user_edit',
+      basedOnVersionId: fixture.versionIds[1],
+      literatureManifest: { styleId: 'vancouver', locale: 'en-US' }
+    })
+    expect(JSON.parse(saved.literatureManifest!.manifestJson)).toMatchObject({
+      styleId: 'vancouver',
+      references: [{ itemId: 'item-1' }]
+    })
+    await expect(service.saveDerivedArtifactEdit(request)).resolves.toMatchObject({
+      kind: 'created',
+      replayed: true,
+      version: { id: result.version.id }
+    })
+    await expect(
+      client.artifactLiteratureManifest.count({
+        where: { artifactVersion: { artifactId: fixture.fileId } }
+      })
+    ).resolves.toBe(1)
+
+    const provenance = new ArtifactProvenanceRepository({
+      storageRoot,
+      getClient: async () => client
+    })
+    const locator = {
+      projectId: 'project-1',
+      appSessionId: 'session-1',
+      artifactId: fixture.fileId,
+      versionId: result.version.id
+    }
+    const literature = await provenance.getVersionLiterature(locator)
+    expect(literature).toEqual(request.literature)
+    for (const field of ['projectId', 'appSessionId', 'artifactId', 'versionId'] as const) {
+      await expect(
+        provenance.getVersionLiterature({ ...locator, [field]: 'another-owner' })
+      ).rejects.toThrow('Artifact Version not found')
+    }
+    await expect(provenance.getVersionCore(locator)).rejects.toThrow('Artifact Version not found')
+
+    const nextLiterature = { ...literature!, styleId: 'apa' }
+    const next = await service.saveDerivedArtifactEdit({
+      ...request,
+      basedOnVersionId: result.version.id,
+      expectedHeadVersionId: result.version.id,
+      operationId: 'citation-format-again',
+      content: Buffer.from('reformatted citation document'),
+      literature: nextLiterature
+    })
+    if (next.kind !== 'created') throw new Error('Expected another created version.')
+    await expect(
+      provenance.getVersionLiterature({ ...locator, versionId: next.version.id })
+    ).resolves.toEqual(nextLiterature)
+    await expect(provenance.getVersionLiterature(locator)).resolves.toEqual(request.literature)
+
+    await client.artifactLiteratureManifest.update({
+      where: { artifactVersionId: next.version.id },
+      data: { checksum: '0'.repeat(64) }
+    })
+    await expect(
+      provenance.getVersionLiterature({ ...locator, versionId: next.version.id })
+    ).rejects.toThrow('Artifact Literature manifest is corrupt')
   })
 
   it('creates a Node version file operator by default without a platform capability gate', async () => {
@@ -1431,6 +1661,7 @@ describe('ManagedFileVersionService (SQLite + filesystem)', () => {
     const fixture = await createFixture('upload')
     const collidingPaths: string[] = []
     const versionFileOperator = new NodeVersionFileOperator({ storageRoot })
+    const publishImmutable = versionFileOperator.publishImmutable.bind(versionFileOperator)
     const service = new ManagedFileVersionService({
       storageRoot,
       getClient: () => Promise.resolve(client),
@@ -1451,17 +1682,16 @@ describe('ManagedFileVersionService (SQLite + filesystem)', () => {
       })
     })
 
-    await expect(
-      service.saveTextEdit({
-        source: 'upload',
-        projectId: 'project-1',
-        fileId: fixture.fileId,
-        basedOnVersionId: fixture.versionIds[1],
-        expectedHeadVersionId: fixture.versionIds[1],
-        content: 'never published\n',
-        operationId: 'exhausted-collision-operation'
-      })
-    ).rejects.toMatchObject({ code: 'STORAGE_COLLISION' })
+    const request = {
+      source: 'upload' as const,
+      projectId: 'project-1',
+      fileId: fixture.fileId,
+      basedOnVersionId: fixture.versionIds[1],
+      expectedHeadVersionId: fixture.versionIds[1],
+      content: 'never published\n',
+      operationId: 'exhausted-collision-operation'
+    }
+    await expect(service.saveTextEdit(request)).rejects.toMatchObject({ code: 'STORAGE_COLLISION' })
 
     expect(collidingPaths).toHaveLength(16)
     for (const collidingPath of collidingPaths) {
@@ -1472,6 +1702,53 @@ describe('ManagedFileVersionService (SQLite + filesystem)', () => {
         where: { operationId: 'exhausted-collision-operation' }
       })
     ).resolves.toMatchObject({ state: 'failed', errorCode: 'STORAGE_COLLISION' })
+
+    versionFileOperator.publishImmutable = publishImmutable
+    await expect(service.saveTextEdit(request)).rejects.toMatchObject({
+      code: 'OPERATION_FAILED'
+    })
+    await expect(
+      service.saveTextEdit({ ...request, operationId: 'fresh-operation-after-collision' })
+    ).resolves.toMatchObject({ kind: 'created', replayed: false, version: { versionNumber: 3 } })
+    expect(await client.uploadVersion.count()).toBe(3)
+  })
+
+  it('distinguishes a failed integrity operation from an uncertain save result', async () => {
+    const fixture = await createFixture('upload')
+    const request = {
+      source: 'upload' as const,
+      projectId: 'project-1',
+      fileId: fixture.fileId,
+      basedOnVersionId: fixture.versionIds[1],
+      expectedHeadVersionId: fixture.versionIds[1],
+      content: 'retry intact draft\n',
+      operationId: 'failed-integrity-operation'
+    }
+    const crashing = new ManagedFileVersionService({
+      storageRoot,
+      getClient: () => Promise.resolve(client),
+      testFaultAt: 'after-file-ready'
+    })
+    await expect(crashing.saveTextEdit(request)).rejects.toThrow('simulated managed version crash')
+    const operation = await client.managedFileVersionWriteOperation.findUniqueOrThrow({
+      where: { operationId: request.operationId }
+    })
+    await writeFile(join(storageRoot, ...operation.contentStorageKey.split('/')), 'corrupt bytes')
+    const service = new ManagedFileVersionService({
+      storageRoot,
+      getClient: () => Promise.resolve(client)
+    })
+    await expect(service.saveTextEdit(request)).rejects.toMatchObject({ code: 'INTEGRITY_FAILED' })
+    await expect(
+      client.managedFileVersionWriteOperation.findUniqueOrThrow({
+        where: { operationId: request.operationId }
+      })
+    ).resolves.toMatchObject({ state: 'failed', errorCode: 'CONTENT_INTEGRITY_FAILED' })
+    await expect(service.saveTextEdit(request)).rejects.toMatchObject({ code: 'OPERATION_FAILED' })
+    await expect(
+      service.saveTextEdit({ ...request, operationId: 'fresh-operation-after-integrity-failure' })
+    ).resolves.toMatchObject({ kind: 'created', replayed: false, version: { versionNumber: 3 } })
+    expect(await client.uploadVersion.count()).toBe(3)
   })
 
   it('never writes temporary or final bytes outside the storage root through a symlinked ancestor', async () => {
@@ -1602,6 +1879,17 @@ describe('ManagedFileVersionService (SQLite + filesystem)', () => {
       headVersionId: 'upload-v3',
       replayed: false
     })
+    // A lost response leaves the caller on its old baseline: only the original ID can replay it.
+    await expect(
+      service.saveTextEdit({ ...firstRequest, operationId: 'new-id-after-response-loss' })
+    ).resolves.toMatchObject({ kind: 'conflict', actualHead: { id: 'upload-v3' } })
+    await expect(service.saveTextEdit(firstRequest)).resolves.toMatchObject({
+      kind: 'created',
+      headVersionId: 'upload-v3',
+      replayed: true
+    })
+    expect(await client.uploadVersion.count()).toBe(3)
+
     await service.saveTextEdit({
       ...firstRequest,
       basedOnVersionId: 'upload-v3',
@@ -2845,12 +3133,18 @@ describe('ManagedFileVersionService (SQLite + filesystem)', () => {
       where: { id: fixture.versionIds[1] },
       data: { contentType: 'video/mp4' }
     })
+    const versionFileOperator = new NodeVersionFileOperator({ storageRoot })
+    const openImmutable = vi.spyOn(versionFileOperator, 'openImmutable')
     const service = new ManagedFileVersionService({
       storageRoot,
-      getClient: () => Promise.resolve(client)
+      getClient: () => Promise.resolve(client),
+      versionFileOperator
     })
 
     await expect(service.auditActiveVersionIntegrity()).resolves.toEqual([])
+    expect(openImmutable).toHaveBeenCalledWith(expect.any(String), expect.any(Object), {
+      forceVerify: true
+    })
   })
 
   describe('openUnpublishedVersion', () => {

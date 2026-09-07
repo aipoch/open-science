@@ -145,6 +145,28 @@ const literaturePermissionRequest: AcpPermissionRequest = {
   ]
 }
 
+const librarySavePermissionRequest: AcpPermissionRequest = {
+  requestId: 'library-save-1',
+  sessionId: 'session-1',
+  toolCallId: 'tool-library-save',
+  title: 'mcp__open-science-library__save_to_inbox',
+  providerToolName: 'mcp__open-science-library__save_to_inbox',
+  isMcp: true,
+  mcpIdentity: 'open-science-library/save_to_inbox',
+  rawInput: {
+    candidates: [
+      {
+        item: { title: 'Corrective Retrieval Augmented Generation' },
+        source: { provider: 'openalex', rawMetadata: { privateId: 'provider-secret' } }
+      }
+    ]
+  },
+  options: [
+    { optionId: 'allow-once', name: 'Allow once', kind: 'allow_once' },
+    { optionId: 'reject-once', name: 'Reject once', kind: 'reject_once' }
+  ]
+}
+
 const networkApprovalRequest: AcpPermissionRequest = {
   requestId: 'network-1',
   sessionId: 'session-1',
@@ -403,6 +425,23 @@ describe('PermissionApprovalControls', () => {
     expect(html).toContain('data-testid="literature-tool-card"')
     expect(html).not.toContain('mcp__open-science-literature__read_document')
     expect(html).not.toContain('336232f9-9914-4ef9-8590-b726a85253bd')
+    expect(html).not.toContain('permission-code-toggle')
+  })
+
+  it('summarizes a Library Inbox save without provider payloads', () => {
+    const html = renderToStaticMarkup(
+      <PermissionApprovalControls
+        requests={[librarySavePermissionRequest]}
+        onRespond={() => undefined}
+      />
+    )
+
+    expect(html).toContain('Save to Literature Inbox?')
+    expect(html).toContain('Corrective Retrieval Augmented Generation')
+    expect(html).toContain('1 reference')
+    expect(html).not.toContain('open-science-library')
+    expect(html).not.toContain('rawMetadata')
+    expect(html).not.toContain('provider-secret')
     expect(html).not.toContain('permission-code-toggle')
   })
 

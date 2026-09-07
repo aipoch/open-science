@@ -1,6 +1,8 @@
 import { expect } from '@playwright/test'
 import type { Locator, Page } from 'playwright'
+import { sendPrompt } from './certification/helpers'
 import { test } from './fixtures/electron-app'
+import { openGeneralSettings, setTheme } from './fixtures/settings-preferences'
 
 const expectVisibleTextButtonsToFit = async (page: Page): Promise<void> => {
   const clippedButtons = await page.locator('[data-slot="button"]:visible').evaluateAll((buttons) =>
@@ -34,36 +36,28 @@ const expectMemoryConfirmDialogChrome = async (
   )
 }
 
+const selectLanguage = async (page: Page, label: string): Promise<void> => {
+  const settings = await openGeneralSettings(page)
+  await settings.getByRole('combobox', { name: 'Interface language' }).click()
+  await page.getByRole('option', { name: label, exact: true }).click()
+  // The dialog name changes with the locale; use Escape rather than the old English close label.
+  await page.keyboard.press('Escape')
+  await expect(page.getByRole('dialog')).toBeHidden()
+}
+
 test('persists the selected theme after closing settings and relaunching', async ({ app }) => {
   let page = await app.completeOnboarding()
 
-  await page
-    .locator('button')
-    .filter({ has: page.locator('svg.lucide-languages') })
-    .click()
-  await page.getByRole('menuitem', { name: 'English', exact: true }).click()
-
-  await page.getByRole('button', { name: 'Model settings' }).click()
-  const settings = page.getByRole('dialog', { name: 'Settings' })
-  await settings
-    .getByRole('navigation', { name: 'Settings' })
-    .getByRole('button', {
-      name: 'General',
-      exact: true
-    })
-    .click()
-
-  const theme = settings.getByRole('radiogroup', { name: 'Theme' })
-  await theme.getByRole('radio', { name: 'Dark' }).click()
-  await expect(theme.getByRole('radio', { name: 'Dark' })).toBeChecked()
-  await expect(page.locator('html')).toHaveClass(/dark/)
-
-  await settings.getByRole('button', { name: 'Close settings' }).click()
-  await expect(page.getByRole('button', { name: 'Theme: Dark' })).toBeVisible()
+  await setTheme(page, 'Dark')
+  await expect(page.getByRole('button', { name: /^Theme:/ })).toHaveCount(0)
 
   page = await app.restart()
   await expect(page.locator('html')).toHaveClass(/dark/)
-  await expect(page.getByRole('button', { name: 'Theme: Dark' })).toBeVisible()
+  await expect(page.getByRole('button', { name: /^Theme:/ })).toHaveCount(0)
+  const settings = await openGeneralSettings(page)
+  await expect(
+    settings.getByRole('radiogroup', { name: 'Theme' }).getByRole('radio', { name: 'Dark' })
+  ).toBeChecked()
 })
 
 test('persists editable memory across an application restart', async ({ app }) => {
@@ -153,6 +147,7 @@ test('shows project-scoped memory and opens its project from Settings', async ({
   const createProject = page.getByRole('dialog', { name: 'New project' })
   await createProject.getByLabel('Name').fill(projectName)
   await createProject.getByRole('button', { name: 'Create project' }).click()
+  await expect(page.getByRole('heading', { name: 'New conversation' })).toBeVisible()
 
   await page.evaluate(async () => {
     const project = (await window.api.projects.list()).find(
@@ -219,9 +214,11 @@ test('injects recent auto-recall memory after reopen into an unrelated Agent tur
   const dialog = page.getByRole('dialog', { name: 'New project' })
   await dialog.getByLabel('Name').fill('Memory recall project')
   await dialog.getByRole('button', { name: 'Create project' }).click()
-  await page.getByRole('textbox', { name: 'Ask anything' }).fill('Verify automatic memory recall.')
-  await page.getByRole('button', { name: 'Send message' }).click()
-  await expect(page.getByText('Automatic memory recall reached the provider.')).toBeVisible()
+  await sendPrompt(
+    page,
+    'Verify automatic memory recall.',
+    'Automatic memory recall reached the provider.'
+  )
 })
 
 test('contains long memory lists and layers destructive confirmations above settings', async ({
@@ -325,11 +322,7 @@ test('contains long memory lists and layers destructive confirmations above sett
 test('persists Russian into the built main-process native quit dialog', async ({ app }) => {
   let page = await app.completeOnboarding()
 
-  await page
-    .locator('button')
-    .filter({ has: page.locator('svg.lucide-languages') })
-    .click()
-  await page.getByRole('menuitem', { name: 'Русский', exact: true }).click()
+  await selectLanguage(page, 'Русский')
   await expect(page.locator('html')).toHaveAttribute('lang', 'ru')
 
   await expect
@@ -356,11 +349,7 @@ test('persists Russian into the built main-process native quit dialog', async ({
 test('persists German into the built main-process native quit dialog', async ({ app }) => {
   let page = await app.completeOnboarding()
 
-  await page
-    .locator('button')
-    .filter({ has: page.locator('svg.lucide-languages') })
-    .click()
-  await page.getByRole('menuitem', { name: 'Deutsch', exact: true }).click()
+  await selectLanguage(page, 'Deutsch')
   await expect(page.locator('html')).toHaveAttribute('lang', 'de')
 
   const expectedDialog = {
@@ -382,6 +371,7 @@ const localizedSettingsCases = [
     language: 'Simplified Chinese',
     pickerLabel: '简体中文',
     locale: 'zh-Hans',
+    model: '模型',
     projects: '项目',
     modelSettings: '模型设置',
     settings: '设置',
@@ -400,6 +390,7 @@ const localizedSettingsCases = [
     language: 'Traditional Chinese',
     pickerLabel: '繁體中文',
     locale: 'zh-Hant',
+    model: '模型',
     projects: '專案',
     modelSettings: '模型設定',
     settings: '設定',
@@ -418,6 +409,7 @@ const localizedSettingsCases = [
     language: 'Japanese',
     pickerLabel: '日本語',
     locale: 'ja',
+    model: 'モデル',
     projects: 'プロジェクト',
     modelSettings: 'モデル設定',
     settings: '設定',
@@ -436,6 +428,7 @@ const localizedSettingsCases = [
     language: 'Korean',
     pickerLabel: '한국어',
     locale: 'ko',
+    model: '모델',
     projects: '프로젝트',
     modelSettings: '모델 설정',
     settings: '설정',
@@ -454,6 +447,7 @@ const localizedSettingsCases = [
     language: 'Russian',
     pickerLabel: 'Русский',
     locale: 'ru',
+    model: 'Модель',
     projects: 'Проекты',
     modelSettings: 'Настройки модели',
     settings: 'Настройки',
@@ -472,6 +466,7 @@ const localizedSettingsCases = [
     language: 'French',
     pickerLabel: 'Français',
     locale: 'fr',
+    model: 'Modèle',
     projects: 'Projets',
     modelSettings: 'Paramètres du modèle',
     settings: 'Paramètres',
@@ -490,6 +485,7 @@ const localizedSettingsCases = [
     language: 'Spanish',
     pickerLabel: 'Español',
     locale: 'es',
+    model: 'Modelo',
     projects: 'Proyectos',
     modelSettings: 'Configuración del modelo',
     settings: 'Configuración',
@@ -508,6 +504,7 @@ const localizedSettingsCases = [
     language: 'German',
     pickerLabel: 'Deutsch',
     locale: 'de',
+    model: 'Modell',
     projects: 'Projekte',
     modelSettings: 'Modelleinstellungen',
     settings: 'Einstellungen',
@@ -533,11 +530,7 @@ for (const localized of localizedSettingsCases) {
       let page = await app.completeOnboarding()
       await page.setViewportSize({ width: viewportWidth, height: 800 })
 
-      await page
-        .locator('button')
-        .filter({ has: page.locator('svg.lucide-languages') })
-        .click()
-      await page.getByRole('menuitem', { name: localized.pickerLabel, exact: true }).click()
+      await selectLanguage(page, localized.pickerLabel)
 
       await expect(page.locator('html')).toHaveAttribute('lang', localized.locale)
       await expect(page.getByRole('region', { name: localized.projects })).toBeVisible()
@@ -552,6 +545,11 @@ for (const localized of localizedSettingsCases) {
 
       await page.getByRole('button', { name: localized.modelSettings }).click()
       const settings = page.getByRole('dialog', { name: localized.settings })
+      const navigation = settings.getByRole('navigation', { name: localized.settings })
+      if (!(await navigation.isVisible())) {
+        await settings.getByRole('button', { name: localized.openNavigation }).click()
+      }
+      await navigation.getByRole('button', { name: localized.model, exact: true }).click()
       // Active model and Reasoning effort now share the Main model region; the effort control is
       // still a named radiogroup, but the parent region title is Main model.
       const mainModel = settings.getByRole('region', { name: localized.mainModel })
@@ -647,7 +645,6 @@ for (const localized of localizedSettingsCases) {
         .toBe(1)
       expect(await clippedPolicyLabels()).toEqual([])
 
-      const navigation = settings.getByRole('navigation', { name: localized.settings })
       if (!(await navigation.isVisible())) {
         await settings.getByRole('button', { name: localized.openNavigation }).click()
       }
@@ -677,3 +674,94 @@ for (const localized of localizedSettingsCases) {
     })
   }
 }
+
+test('preserves Memory drafts and shows externally saved values on conflict', async ({
+  app
+}, testInfo) => {
+  const page = await app.completeOnboarding()
+  await page.evaluate(async () => {
+    await window.api.locale.setPreference({ preference: 'en' })
+    await window.api.memory.createEntry({
+      categoryId: 'memory-category-about-you',
+      content: 'Original note'
+    })
+    await window.api.memory.createCategory({
+      name: 'Experiments',
+      guidance: 'Save reusable findings.',
+      autoRecall: true
+    })
+  })
+  await page.reload({ waitUntil: 'domcontentloaded' })
+  await page.getByRole('button', { name: 'Model settings' }).click()
+  const settings = page.getByRole('dialog', { name: 'Settings' })
+  await settings
+    .getByRole('navigation', { name: 'Settings' })
+    .getByRole('button', { name: 'Memory', exact: true })
+    .click()
+  await settings.getByText('Original note', { exact: true }).hover()
+  await settings.getByRole('button', { name: 'Edit note' }).click()
+  await settings
+    .getByRole('textbox', { name: 'Memory note' })
+    .fill('My draft: repeat the buffer experiment at pH 7.4.')
+  await page.evaluate(async () => {
+    const snapshot = await window.api.memory.snapshot()
+    const entry = snapshot.categories[0]!.entries[0]!
+    await window.api.memory.updateEntry({
+      id: entry.id,
+      expectedRevision: entry.revision,
+      content: 'Another window saved: use pH 6.8 for this buffer.'
+    })
+  })
+  await expect(settings.getByRole('region', { name: 'Latest saved version' })).toContainText(
+    'Another window saved: use pH 6.8'
+  )
+  await settings.getByRole('button', { name: 'Save', exact: true }).click()
+  await expect(settings.getByRole('alert')).toContainText(
+    'Memory note changed or no longer exists.'
+  )
+  await expect(settings.getByRole('textbox', { name: 'Memory note' })).toHaveValue(
+    'My draft: repeat the buffer experiment at pH 7.4.'
+  )
+  await page.screenshot({ path: testInfo.outputPath('memory-note-conflict.png') })
+  await settings.getByRole('button', { name: 'Cancel', exact: true }).click()
+  await settings.getByRole('button', { name: 'Experiments', exact: false }).click()
+  await settings.getByRole('button', { name: 'Category actions' }).click()
+  await page.getByRole('menuitem', { name: 'Edit', exact: true }).click()
+  await settings.getByRole('textbox', { name: 'Name', exact: true }).fill('My draft experiments')
+  await page.evaluate(async () => {
+    const snapshot = await window.api.memory.snapshot()
+    const category = snapshot.categories.find(
+      (item) => 'name' in item && item.name === 'Experiments'
+    )!
+    await window.api.memory.updateCategory({
+      id: category.id,
+      expectedRevision: category.revision,
+      name: 'Reviewed experiments',
+      guidance: 'Save only validated findings after peer review.',
+      autoRecall: false
+    })
+  })
+  await expect(settings.getByRole('region', { name: 'Latest saved version' })).toContainText(
+    'Reviewed experiments'
+  )
+  await settings.getByRole('button', { name: 'Save', exact: true }).click()
+  await expect(settings.getByRole('alert')).toContainText('Memory category changed.')
+  await expect(settings.getByRole('textbox', { name: 'Name', exact: true })).toHaveValue(
+    'My draft experiments'
+  )
+  await expect(settings.getByRole('switch', { name: 'Auto-recall' })).toBeChecked()
+  await expect(settings.getByRole('region', { name: 'Latest saved version' })).toContainText(
+    'Disabled'
+  )
+  await page.screenshot({ path: testInfo.outputPath('memory-category-conflict.png') })
+  const saved = await page.evaluate(() => window.api.memory.snapshot())
+  expect(saved.categories[0]!.entries[0]!.content).toBe(
+    'Another window saved: use pH 6.8 for this buffer.'
+  )
+  expect(
+    saved.categories.find((item) => 'name' in item && item.name === 'Reviewed experiments')
+  ).toMatchObject({
+    autoRecall: false,
+    guidance: 'Save only validated findings after peer review.'
+  })
+})

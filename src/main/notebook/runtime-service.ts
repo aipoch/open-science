@@ -5,6 +5,7 @@ import { join } from 'node:path'
 
 import type {
   NotebookCell,
+  AbortNotebookCodeCellRequest,
   AppendNotebookCodeCellRequest,
   BeginNotebookCodeCellRequest,
   ExecuteNotebookCodeRequest,
@@ -451,7 +452,8 @@ class NotebookRuntimeService {
       defaultProjectId,
       repository: this.repository,
       dependencyAnalyzer: this.dependencyAnalyzer,
-      findSession: (sessionId) => this.sessions.get(this.sessionLifecycle.rootLane(sessionId)),
+      findSession: (projectId, sessionId) =>
+        this.sessions.get(this.sessionLifecycle.rootLane(sessionId, projectId)),
       runtimeBindings: (session) => this.runtimeBindingOwner.snapshot(session),
       runtimeEnvironment: (session, language) => this.resolveRunEnv(session, language),
       isRestartRecommended: (processKey) =>
@@ -732,55 +734,62 @@ class NotebookRuntimeService {
   async bindRuntime(
     request: NotebookSessionRequest & { language: NotebookLanguage; runtimeId: string }
   ): Promise<RuntimeBindingOperationResult> {
-    return this.sessionLifecycle.runProjectOperation(request, () =>
-      this.runtimeBindingOwner.runWrite(
-        notebookLaneKey(this.sessionLifecycle.laneForRequest(request)),
-        async () => {
-          const session = await this.sessionLifecycle.ensure(request)
-          return this.runtimeBindingOwner.bind(
-            session,
-            request.language,
-            request.runtimeId,
-            async (binding) => {
-              if (binding.source !== 'external') return
-              const oldEnv = this.resolveRunEnv(session, request.language)
-              const processKey = dataProcessKey(request.language, oldEnv)
-              if (session.kernelStatus(processKey) === undefined) return
-              const kind = request.language === 'r' ? 'r' : 'python'
-              await session.terminateExecutor(kind, oldEnv)
-              await this.tearDownLanguageBinding(session, request.language, oldEnv)
-            }
-          )
-        }
-      )
-    )
+    return this.changeRuntimeBinding(request, 'bind')
   }
 
-  // notebook_switch_runtime: an EXPLICIT switch — tear down the old kernel + clear that language's
-  // state, then rebind. Refuses a disabled/unknown runtime (same MAIN-process gate as bind).
+  // An explicit switch stops the previous kernel before committing the new runtime selection.
   async switchRuntime(
     request: NotebookSessionRequest & { language: NotebookLanguage; runtimeId: string }
+  ): Promise<RuntimeBindingOperationResult> {
+    return this.changeRuntimeBinding(request, 'switch')
+  }
+
+  private async changeRuntimeBinding(
+    request: NotebookSessionRequest & { language: NotebookLanguage; runtimeId: string },
+    operation: 'bind' | 'switch'
   ): Promise<RuntimeBindingOperationResult> {
     return this.sessionLifecycle.runProjectOperation(request, () =>
       this.runtimeBindingOwner.runWrite(
         notebookLaneKey(this.sessionLifecycle.laneForRequest(request)),
         async () => {
           const session = await this.sessionLifecycle.ensure(request)
-          const result = await this.runtimeBindingOwner.switch(
-            session,
-            request.language,
-            request.runtimeId,
-            async () => {
-              // PHYSICALLY tear down the CURRENT runtime's kernel for this language BEFORE rebinding, so the
-              // new runtime starts fresh and two same-language interpreters never coexist.
-              const oldEnv = this.resolveRunEnv(session, request.language)
-              const kind = request.language === 'r' ? 'r' : 'python'
-              await session.terminateExecutor(kind, oldEnv)
-              await this.tearDownLanguageBinding(session, request.language, oldEnv)
-            }
-          )
-          if ('bound' in result) this.sessionLifecycle.notifyChanged(session)
-          return result
+          let kernelStopped = false
+          let bindingChanged = false
+          const stoppedDiagnostic =
+            ' The previous kernel has stopped; its variables are gone. The next execution starts a fresh kernel.'
+          const stopKernel = async (): Promise<void> => {
+            const oldEnv = this.resolveRunEnv(session, request.language)
+            const status = session.kernelStatus(dataProcessKey(request.language, oldEnv))
+            const kind = request.language === 'r' ? 'r' : 'python'
+            await session.terminateExecutor(kind, oldEnv)
+            kernelStopped = status !== undefined && status !== 'terminated'
+            await this.tearDownLanguageBinding(session, request.language, oldEnv)
+          }
+          try {
+            const result = await this.runtimeBindingOwner[operation](
+              session,
+              request.language,
+              request.runtimeId,
+              async (binding?: NotebookSessionRuntimeBinding) => {
+                if (operation === 'bind') {
+                  if (binding?.source !== 'external') return
+                  const env = this.resolveRunEnv(session, request.language)
+                  if (session.kernelStatus(dataProcessKey(request.language, env)) === undefined)
+                    return
+                }
+                await stopKernel()
+              }
+            )
+            bindingChanged = 'bound' in result || result.bindingChanged
+            return kernelStopped && 'error' in result
+              ? { ...result, error: result.error + stoppedDiagnostic }
+              : result
+          } catch (error) {
+            if (!kernelStopped) throw error
+            throw new Error(String(error) + stoppedDiagnostic, { cause: error })
+          } finally {
+            if (kernelStopped || bindingChanged) this.sessionLifecycle.notifyChanged(session)
+          }
         }
       )
     )
@@ -838,7 +847,10 @@ class NotebookRuntimeService {
   }
 
   // Starts an exclusive agent/user write stream into a cell and locks notebook editing.
-  async beginCodeCell(request: BeginNotebookCodeCellRequest): Promise<{
+  async beginCodeCell(
+    request: BeginNotebookCodeCellRequest,
+    signal?: AbortSignal
+  ): Promise<{
     sessionId: string
     cellId: string
     writeId: string
@@ -849,13 +861,16 @@ class NotebookRuntimeService {
       const cellId = request.cellId ?? `cell-${randomUUID()}`
       const writeId = `write-${randomUUID()}`
       const source = request.source ?? 'agent'
-      const cell = session.beginCellWrite({
-        cellId,
-        language: request.language ?? 'python',
-        writeId,
-        source,
-        startedAt: Date.now()
-      })
+      const cell = session.beginCellWrite(
+        {
+          cellId,
+          language: request.language,
+          writeId,
+          source,
+          startedAt: Date.now()
+        },
+        signal ? { signal, onAbort: () => this.sessionLifecycle.notifyChanged(session) } : undefined
+      )
 
       this.sessionLifecycle.notifyAvailable(session, source)
       this.sessionLifecycle.notifyChanged(session)
@@ -909,6 +924,21 @@ class NotebookRuntimeService {
     })
   }
 
+  // Explicit recovery uses the same lane lookup and exact write identity as append/finish.
+  async abortCodeCell(request: AbortNotebookCodeCellRequest): Promise<{
+    sessionId: string
+    cellId: string
+    code: string
+    status: NotebookCell['status']
+  }> {
+    return this.sessionLifecycle.runProjectOperation(request, async () => {
+      const session = await this.sessionLifecycle.ensure(request)
+      const cell = session.abortCellWrite(request.cellId, request.writeId)
+      this.sessionLifecycle.notifyChanged(session)
+      return { sessionId: session.sessionId, cellId: cell.id, code: cell.code, status: cell.status }
+    })
+  }
+
   // Compatibility facade: Session lookup and public summary projection stay here; lifecycle is owned.
   async runCell(
     request: RunNotebookCellRequest,
@@ -917,6 +947,9 @@ class NotebookRuntimeService {
   ): Promise<NotebookRunSummary> {
     return this.sessionLifecycle.runProjectOperation(request, async (deletionSignal) => {
       const session = await this.sessionLifecycle.ensure(request)
+      // Select the execution route only after an admitted binding transition has committed or
+      // reconciled its failure; the old interpreter must not restart during stop/persist.
+      await this.runtimeBindingOwner.waitForWrites(notebookLaneKey(session.lane))
       const { run, dependencyProjection } = await this.executionOwner.executeDataCell(
         session,
         request,
@@ -933,7 +966,7 @@ class NotebookRuntimeService {
     signal?: AbortSignal
   ): Promise<NotebookRunSummary> {
     assertNotebookCodeWithinLimit(request.code)
-    const begin = await this.beginCodeCell(request)
+    const begin = await this.beginCodeCell(request, signal)
 
     await this.appendCodeCell({
       ...request,
@@ -1036,6 +1069,9 @@ class NotebookRuntimeService {
       if (request.historyBefore && !isNotebookRunCursor(request.historyBefore))
         throw new Error('Notebook state history cursor is invalid.')
       const session = await this.sessionLifecycle.ensure(request)
+      // Project durable history only after the lane's binding commit settles, including reads
+      // that arrived just before shutdown closed session creation admission.
+      await this.runtimeBindingOwner.waitForWrites(notebookLaneKey(session.lane))
       await this.runTerminalization.reconcilePending(session)
       return this.sessionReadModel.state(
         session,
@@ -1104,6 +1140,14 @@ class NotebookRuntimeService {
       }
 
       const session = await this.sessionLifecycle.ensure(request)
+
+      if (!target) {
+        const write = session.snapshot().activeWrite
+        if (write) {
+          session.abortCellWrite(write.cellId, write.writeId)
+          this.sessionLifecycle.notifyChanged(session)
+        }
+      }
 
       if (target) {
         const { language, environment } = target
@@ -1232,8 +1276,8 @@ class NotebookRuntimeService {
   // the exclusive writer of the target ENV's lock, so it drains and blocks every in-flight run on that
   // env — a pip/conda/CRAN install can never overlap a cell mid-import (§5, G2/D5). Installs into
   // DIFFERENT envs proceed concurrently (the lock is keyed by resolved env name, not language).
-  async managePackages(request: InstallRequest): Promise<InstallResult> {
-    const manage = (): Promise<InstallResult> => this.packageOperations.manage(request)
+  async managePackages(request: InstallRequest, signal?: AbortSignal): Promise<InstallResult> {
+    const manage = (): Promise<InstallResult> => this.packageOperations.manage(request, signal)
     if (request.projectId === undefined && request.sessionId === undefined) return manage()
 
     // Project admission is keyed only by project identity. InstallRequest intentionally keeps the
@@ -1246,8 +1290,11 @@ class NotebookRuntimeService {
   // executor process bound to that env name (locked decision — the on-disk env can't be rm-rf'd out
   // from under a running kernel). Mutations return bounded operation receipts, and create returns on
   // completion (progress streaming is out of scope).
-  async manageEnvironments(request: ManageEnvironmentsRequest): Promise<ManageEnvironmentsResult> {
-    return this.environmentManagement.manage(request)
+  async manageEnvironments(
+    request: ManageEnvironmentsRequest,
+    signal?: AbortSignal
+  ): Promise<ManageEnvironmentsResult> {
+    return this.environmentManagement.manage(request, signal)
   }
 
   // Shuts down one session executor and removes its in-memory routing state.

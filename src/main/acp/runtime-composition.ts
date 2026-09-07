@@ -1,5 +1,8 @@
 import { homedir } from 'node:os'
 import type { ChildProcessWithoutNullStreams } from 'node:child_process'
+import { randomUUID } from 'node:crypto'
+import { readFile, stat } from 'node:fs/promises'
+import { basename, extname, join } from 'node:path'
 
 import { app } from 'electron'
 
@@ -20,9 +23,11 @@ import {
 import type { ArtifactProvenanceRepository } from '../artifacts/provenance-repository'
 import { ArtifactRepository } from '../artifacts/repository'
 import type { ArtifactRunRegistry } from '../artifacts/run-registry'
+import { resolveAllowedImportFilePath } from '../artifacts/storage-access'
 import type { GrantedLocalRootsRepository } from '../local-fs/granted-roots-repository'
 import { createLogger, errorLogFields } from '../logger'
 import { NotebookLocalRpcServer } from '../notebook/local-rpc-server'
+import { getNotebookSessionRoot } from '../notebook/repository'
 import type { NotebookHandoffContext } from '../notebook/runtime-service'
 import {
   runTaskNotificationInBackground,
@@ -41,10 +46,26 @@ import {
   buildSpecialistIdentityPrefix
 } from '../specialist/identity'
 import type { SpecialistService } from '../specialist/service'
-import { resolveConfigRoot, resolveDataRoot, resolveStorageRoot } from '../storage-root'
+import { resolveConfigRoot, resolveDataRoot } from '../storage-root'
 import type { UploadRepository } from '../uploads/repository'
-import type { SessionPersistenceCoordinator } from '../session-persistence/coordinator'
+import type {
+  SessionCatalog,
+  SessionMutation,
+  SessionRuntimeContextCommands
+} from '../session-persistence/coordinator'
 import type { LiteratureDocumentReader } from '../literature/document-reader'
+import type { LiteratureAttachmentAuthority } from '../literature/attachment-authority'
+import type { LiteratureCatalog } from '../literature/catalog'
+import { LiteratureReferenceResolver } from '../literature/reference-resolver'
+import { netFetchStandard } from '../skills/net-fetch'
+import { LiteratureCitationDocument } from '../literature/citation-document'
+import { LiteratureCitationFormatter } from '../literature/citation-formatter'
+import { LiteratureLatexBundle } from '../literature/latex-bundle'
+import {
+  LITERATURE_LIBRARY_SEARCH_DEFAULT_LIMIT,
+  type LiteratureLibraryScope
+} from '../literature/library-mcp-server'
+import type { LiteratureCatalogReceipt, LiteratureItemView } from '../../shared/literature'
 import type { NotebookRpcConnection } from '../notebook/mcp-server'
 import type { ResolvedAgentBackend } from '../agent-framework'
 import type { RootDelegatedWorkControl } from '../delegation/production-composition'
@@ -56,6 +77,8 @@ import { AcpRuntimeCoordinator } from './runtime-coordinator'
 import { composeAcpRuntimeSessionOwners } from './runtime-session-composition'
 
 const log = createLogger('acp')
+const MAX_LITERATURE_CANDIDATE_FILE_BYTES = 2 * 1024 * 1024
+const MAX_LITERATURE_CITATION_DOCUMENT_BYTES = 64 * 1024 * 1024
 
 // Builds the session-setup resolver for a project's Agent Context system-prompt append. The ACP
 // projectId carries the Project id; unknown ids (e.g. the DEFAULT_ARTIFACT_PROJECT_ID fallback
@@ -145,16 +168,14 @@ type AcpRuntimeCompositionOptions = AcpRuntimeArtifacts & {
   beforeSessionDelete?: (sessionId: string) => Promise<void>
   afterSessionDelete?: (sessionId: string, retained: boolean) => void
   specialistService?: SpecialistService
-  sessionPersistenceCoordinator?: Pick<
-    SessionPersistenceCoordinator,
-    | 'readSessionRuntimeContext'
-    | 'patchSessionRuntimeContext'
-    | 'appendUserMessageToInteraction'
-    | 'containsMessageOnActiveBranch'
-    | 'loadSessionForContinuation'
-    | 'sessionProjectId'
+  sessionPersistenceCoordinator?: SessionRuntimeContextCommands & SessionMutation & SessionCatalog
+  literatureReader?: Pick<LiteratureDocumentReader, 'readCurrent' | 'searchAttachment'>
+  literatureAttachments?: Pick<LiteratureAttachmentAuthority, 'resolveVersion'>
+  literatureCatalog?: Pick<LiteratureCatalog, 'getMany' | 'search' | 'transact'>
+  literaturePdfAcquisition?: Pick<
+    import('../literature/agent-pdf-acquisition').AgentPdfAcquisition,
+    'acquire'
   >
-  literatureReader?: Pick<LiteratureDocumentReader, 'readCurrent'>
   delegatedWork?: RootDelegatedWorkControl
   fixedBackend?: ResolvedAgentBackend
   runtimeCallbacks?: AcpRuntimeCallbacks
@@ -167,6 +188,29 @@ type AcpRuntimeCompositionOptions = AcpRuntimeArtifacts & {
   memory?: AcpRuntimeOptions['memory']
   auxiliaryUsage?: AcpRuntimeOptions['auxiliaryUsage']
 }
+
+const isLiteratureItemInScope = (
+  item: LiteratureItemView,
+  request: {
+    projectId: string
+    scope?: LiteratureLibraryScope
+    collectionId?: string
+  }
+): boolean => {
+  const scope = request.scope ?? 'project'
+  if (scope === 'project') return item.projectIds.includes(request.projectId)
+  if (scope === 'collection') {
+    return Boolean(request.collectionId && item.collectionIds.includes(request.collectionId))
+  }
+  // Library scopes are per-call query filters, not grants derived from a previous search.
+  // For `items`, the read's explicit itemId is the selection; no search-selection token exists.
+  // The separate Reading document tool enforces its Session PDF context in readCurrent.
+  return scope === 'library' || scope === 'items'
+}
+
+const isPdfAttachmentVersion = (version: { filename: string; contentType: string }): boolean =>
+  version.contentType.split(';', 1)[0]?.trim().toLowerCase() === 'application/pdf' ||
+  version.filename.toLowerCase().endsWith('.pdf')
 
 // Composes the compatibility façade while the coordinator remains the cross-generation Session owner.
 const createAcpRuntime = ({
@@ -200,6 +244,9 @@ const createAcpRuntime = ({
   specialistService,
   sessionPersistenceCoordinator,
   literatureReader,
+  literatureAttachments,
+  literatureCatalog,
+  literaturePdfAcquisition,
   delegatedWork,
   fixedBackend,
   runtimeCallbacks,
@@ -212,12 +259,22 @@ const createAcpRuntime = ({
   memory,
   auxiliaryUsage
 }: AcpRuntimeCompositionOptions): AcpRuntimeCoordinator => {
+  const literatureReferenceResolver = new LiteratureReferenceResolver(netFetchStandard)
+  const literatureCitationDocument = literatureCatalog
+    ? new LiteratureCitationDocument(literatureCatalog)
+    : undefined
+  const literatureLatexBundle = literatureCatalog
+    ? new LiteratureLatexBundle(literatureCatalog)
+    : undefined
+  const literatureCitationFormatter = literatureCatalog
+    ? new LiteratureCitationFormatter()
+    : undefined
   const configRoot = resolveConfigRoot()
   const dataRoot = resolveDataRoot()
   const defaultCwd = homedir()
   const runtimeCoordinatorRef: { current?: AcpRuntimeCoordinator } = {}
   // One lazily-shared repository for Agent Context lookups; getProjectDbClient caches the client.
-  const projectRepository = new ProjectRepository(() => getProjectDbClient(resolveStorageRoot()))
+  const projectRepository = new ProjectRepository(() => getProjectDbClient(resolveConfigRoot()))
   const eventBroadcast = createAcpRuntimeEventBroadcastCoalescer({
     publish: (events) => broadcastToRenderers('acp:event', events)
   })
@@ -321,7 +378,7 @@ const createAcpRuntime = ({
             : settingsService.resolveAgentBackend(await selection!, context)),
         ...(spawnAgent ? { spawnAgent } : {}),
         mcpHttpHost: new AgentMcpHttpHost(),
-        ...(literatureReader && sessionPersistenceCoordinator
+        ...(literatureReader && literatureAttachments && sessionPersistenceCoordinator
           ? {
               literature: {
                 isEnabled: async (appSessionId: string, projectId: string) => {
@@ -338,7 +395,229 @@ const createAcpRuntime = ({
                     return false
                   }
                 },
+                resolveAttachmentVersion: (versionId) =>
+                  literatureAttachments.resolveVersion(versionId),
                 readDocument: (request) => literatureReader.readCurrent(request)
+              }
+            }
+          : {}),
+        ...(literatureCatalog
+          ? {
+              literatureLibrary: {
+                ...(literaturePdfAcquisition
+                  ? {
+                      acquirePdf: async (request) =>
+                        literaturePdfAcquisition.acquire({
+                          candidate: request.candidate,
+                          pdfUrl: request.pdfUrl,
+                          origin: {
+                            kind: 'agent',
+                            projectId: request.projectId,
+                            sessionId: request.sessionId
+                          }
+                        })
+                    }
+                  : {}),
+                resolveSaveReferences: (references) =>
+                  literatureReferenceResolver.resolve(references),
+                readCandidateFile: async ({ projectId, sessionId, workspaceCwd, filename }) => {
+                  const notebookRoot = getNotebookSessionRoot(dataRoot, projectId, sessionId)
+                  const notebookDataDir = join(notebookRoot, 'data')
+                  const sourcePath = await resolveAllowedImportFilePath(
+                    filename,
+                    [notebookRoot, workspaceCwd],
+                    [notebookDataDir, workspaceCwd, notebookRoot]
+                  )
+                  if ((await stat(sourcePath)).size > MAX_LITERATURE_CANDIDATE_FILE_BYTES) {
+                    throw new Error('Literature candidate file exceeds the 2 MB limit.')
+                  }
+                  return readFile(sourcePath, 'utf8')
+                },
+                formatReferences: async ({ itemIds, styleId, locale }) => {
+                  const items = await literatureCatalog.getMany(itemIds)
+                  const itemsById = new Map(items.map((item) => [item.id, item]))
+                  const references = itemIds.map((itemId) => {
+                    const item = itemsById.get(itemId)
+                    if (!item) throw new Error(`Literature Item is unavailable: ${itemId}`)
+                    return { id: itemId, item: item.item }
+                  })
+                  return {
+                    references: await literatureCitationFormatter!.formatReferences(
+                      references,
+                      styleId,
+                      locale
+                    )
+                  }
+                },
+                formatCitationDocument: async ({
+                  projectId,
+                  sessionId,
+                  workspaceCwd,
+                  filename,
+                  styleId,
+                  locale
+                }) => {
+                  const notebookRoot = getNotebookSessionRoot(dataRoot, projectId, sessionId)
+                  const notebookDataDir = join(notebookRoot, 'data')
+                  const sourcePath = await resolveAllowedImportFilePath(
+                    filename,
+                    [notebookRoot, workspaceCwd],
+                    [notebookDataDir, workspaceCwd, notebookRoot]
+                  )
+                  if (extname(sourcePath).toLowerCase() !== '.docx') {
+                    throw new Error('Citation document must be a DOCX file.')
+                  }
+                  if ((await stat(sourcePath)).size > MAX_LITERATURE_CITATION_DOCUMENT_BYTES) {
+                    throw new Error('Citation document exceeds the 64 MB limit.')
+                  }
+                  const result = await literatureCitationDocument!.format({
+                    content: new Uint8Array(await readFile(sourcePath)),
+                    styleId,
+                    locale
+                  })
+                  const stem = basename(sourcePath, extname(sourcePath))
+                  const outputFilename = `${stem}.cited-${randomUUID().slice(0, 8)}.docx`
+                  return {
+                    filename: outputFilename,
+                    citationCount: result.citationCount,
+                    referenceCount: result.referenceCount,
+                    contentBase64: Buffer.from(result.content).toString('base64'),
+                    literature: result.sidecar.literature
+                  }
+                },
+                prepareLatexBundle: async ({ projectId, sessionId, workspaceCwd, filename }) => {
+                  const notebookRoot = getNotebookSessionRoot(dataRoot, projectId, sessionId)
+                  const notebookDataDir = join(notebookRoot, 'data')
+                  const sourcePath = await resolveAllowedImportFilePath(
+                    filename,
+                    [notebookRoot, workspaceCwd],
+                    [notebookDataDir, workspaceCwd, notebookRoot]
+                  )
+                  if (extname(sourcePath).toLowerCase() !== '.tex') {
+                    throw new Error('LaTeX source must be a .tex file.')
+                  }
+                  if ((await stat(sourcePath)).size > MAX_LITERATURE_CANDIDATE_FILE_BYTES) {
+                    throw new Error('LaTeX source exceeds the 2 MB limit.')
+                  }
+                  const result = await literatureLatexBundle!.prepare({
+                    content: await readFile(sourcePath, 'utf8'),
+                    sourceName: basename(sourcePath)
+                  })
+                  const stem = basename(sourcePath, extname(sourcePath))
+                  const outputFilename = `${stem}.latex-${randomUUID().slice(0, 8)}.zip`
+                  return {
+                    filename: outputFilename,
+                    citationCount: result.citationCount,
+                    referenceCount: result.referenceCount,
+                    contentBase64: Buffer.from(result.content).toString('base64'),
+                    literature: result.sidecar.literature
+                  }
+                },
+                searchLibrary: async (request) => {
+                  const scope = request.scope ?? 'project'
+                  const offset = request.offset ?? 0
+                  const limit = request.limit ?? LITERATURE_LIBRARY_SEARCH_DEFAULT_LIMIT
+                  if (scope === 'items') {
+                    const query = request.query?.trim().toLocaleLowerCase()
+                    const selected = (
+                      await literatureCatalog.getMany(request.itemIds ?? [])
+                    ).filter(
+                      ({ item }) =>
+                        !query || JSON.stringify(item).toLocaleLowerCase().includes(query)
+                    )
+                    const items = selected.slice(offset, offset + limit)
+                    const nextOffset = offset + items.length
+                    return {
+                      items,
+                      totalCount: selected.length,
+                      ...(nextOffset < selected.length ? { nextOffset } : {}),
+                      hasMore: nextOffset < selected.length
+                    }
+                  }
+                  const page = await literatureCatalog.search({
+                    scope: 'library',
+                    query: request.query,
+                    projectId: scope === 'project' ? request.projectId : undefined,
+                    collectionId: scope === 'collection' ? request.collectionId : undefined,
+                    offset,
+                    limit
+                  })
+                  const items = page.entries.filter(
+                    (entry): entry is LiteratureItemView => 'item' in entry
+                  )
+                  return {
+                    items,
+                    totalCount: page.totalCount ?? items.length,
+                    ...(page.nextOffset !== undefined ? { nextOffset: page.nextOffset } : {}),
+                    hasMore: page.nextOffset !== undefined
+                  }
+                },
+                readAbstract: async (request) => {
+                  const item = (await literatureCatalog.getMany([request.itemId]))[0]
+                  if (!item || !isLiteratureItemInScope(item, request)) return undefined
+                  return {
+                    itemId: item.id,
+                    metadataRevision: item.metadataRevision,
+                    title: item.item.title,
+                    abstract: item.item.abstract
+                  }
+                },
+                readPdf: async (request) => {
+                  const item = (await literatureCatalog.getMany([request.itemId]))[0]
+                  if (!item || !isLiteratureItemInScope(item, request)) return undefined
+                  if (!literatureReader) {
+                    throw new Error(
+                      'PDF_READER_UNAVAILABLE: Literature PDF reading is unavailable.'
+                    )
+                  }
+                  const selected = item.attachments
+                    .filter(
+                      (attachment) =>
+                        !request.attachmentId || attachment.id === request.attachmentId
+                    )
+                    .flatMap((attachment) =>
+                      attachment.versions
+                        .filter(isPdfAttachmentVersion)
+                        .map((version) => ({ attachment, version }))
+                    )[0]
+                  if (!selected) {
+                    throw new Error(
+                      'PDF_ATTACHMENT_NOT_FOUND: This Literature Item has no matching PDF attachment.'
+                    )
+                  }
+                  const evidence = await literatureReader.searchAttachment({
+                    projectId: request.projectId,
+                    attachmentId: selected.attachment.id,
+                    attachmentVersionId: selected.version.id,
+                    filename: selected.version.filename,
+                    sizeBytes: selected.version.sizeBytes,
+                    checksum: selected.version.checksum,
+                    query: request.query
+                  })
+                  return {
+                    itemTitle: item.item.title,
+                    evidence: evidence as Record<string, unknown>
+                  }
+                },
+                saveToInbox: async (request) => {
+                  const results: LiteratureCatalogReceipt[] = []
+                  for (const candidate of request.candidates) {
+                    results.push(
+                      await literatureCatalog.transact({
+                        kind: 'stage-candidate',
+                        candidate: {
+                          ...candidate,
+                          origin: {
+                            kind: 'agent',
+                            projectId: request.projectId,
+                            sessionId: request.sessionId
+                          }
+                        }
+                      })
+                    )
+                  }
+                  return { results }
+                }
               }
             }
           : {}),
@@ -384,7 +663,6 @@ const createAcpRuntime = ({
           projectId: DEFAULT_ARTIFACT_PROJECT_ID,
           mcpEntryPath,
           memoryTools: !delegatedNotebookConnection,
-          isMemoryEnabled: () => memory?.isEnabled?.() ?? Promise.resolve(false),
           getRpcConnection: ({ sessionId, projectId, memoryTools }) =>
             delegatedNotebookConnection
               ? Promise.resolve(delegatedNotebookConnection)

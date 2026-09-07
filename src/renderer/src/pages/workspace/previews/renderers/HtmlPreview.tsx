@@ -5,12 +5,13 @@ import { cn } from '@/lib/utils'
 import { MANAGED_PREVIEW_LOAD_ERROR } from '../../../../../../shared/preview-resources'
 
 import { PreviewErrorCard, PreviewLoadingContent } from '../PreviewFallback'
-import { createPreviewResourceKey } from '../preview-resource-key'
+import { usePreviewResourceKey } from '../usePreviewResourceGeneration'
 import type { PreviewFileRendererProps } from '../preview-types'
 import { useManagedPreviewResource } from '../useManagedPreviewResource'
 import { usePreviewFileContent } from '../usePreviewFileContent'
 import { PreviewTextAnnotationSurface } from '../PreviewTextAnnotationSurface'
 import { SourcePreviewContent } from './SourcePreview'
+import { useRegisterPreviewContextMenuFrame } from '../../preview-actions/preview-action-hooks'
 
 type HtmlPreviewMode = 'render' | 'source'
 
@@ -27,10 +28,16 @@ const HtmlSourceContent = ({
 }: PreviewFileRendererProps & { topContent: React.ReactNode }): React.JSX.Element => {
   const { t } = useTranslation()
   const state = usePreviewFileContent(item)
+  const renderStatus = (content: React.ReactNode): React.JSX.Element => (
+    <div className="flex size-full flex-col overflow-hidden bg-bg-10">
+      {topContent}
+      <div className="min-h-0 flex-1">{content}</div>
+    </div>
+  )
 
-  if (state.status === 'loading') return <PreviewLoadingContent />
+  if (state.status === 'loading') return renderStatus(<PreviewLoadingContent />)
   if (state.status === 'error' || state.preview.encoding !== 'utf8') {
-    return (
+    return renderStatus(
       <PreviewErrorCard
         name={item.name}
         error={state.status === 'error' ? state.error : undefined}
@@ -54,11 +61,19 @@ export const HtmlPreviewRenderer = (props: PreviewFileRendererProps): React.JSX.
   const { item } = props
   const { t } = useTranslation()
   const [mode, setMode] = useState<HtmlPreviewMode>('render')
-  const requestKey = createPreviewResourceKey(item)
+  const requestKey = usePreviewResourceKey(item)
   const [failedRequestKey, setFailedRequestKey] = useState<string | undefined>(undefined)
   const hasFailed = failedRequestKey === requestKey
   const iframeRef = useRef<HTMLIFrameElement | null>(null)
   const resourceState = useManagedPreviewResource(item, mode === 'render' && !hasFailed)
+  const renderedFrameUrl =
+    mode === 'render' && resourceState.status === 'ready' ? resourceState.resource.url : ''
+  useRegisterPreviewContextMenuFrame({
+    id: `html-preview:${requestKey}`,
+    frameUrl: renderedFrameUrl,
+    frameRef: iframeRef,
+    enabled: renderedFrameUrl !== ''
+  })
 
   useEffect(() => {
     if (resourceState.status !== 'ready') return

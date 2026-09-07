@@ -15,6 +15,14 @@ const TRANSLATABLE_MESSAGES = new Set([
 
 export const localizeCredentialError = (error: unknown, t: TFunction, fallback: string): string => {
   const detail = errorDetail(error)
+  if (
+    detail ===
+    'Credential changes were saved, but Connectors could not refresh. Retry from Settings > Connectors.'
+  ) {
+    return t(
+      'Credential changes were saved, but Connectors could not refresh. Retry from Settings > Connectors.'
+    )
+  }
   if (!detail) return t(fallback)
   if (/^Credential is used by:/u.test(detail)) {
     return t('Remove this credential from its Connectors first.')

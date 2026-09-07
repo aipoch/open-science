@@ -29,6 +29,7 @@ const archivedProjectNotice = (
   kind: 'project',
   projectId: id,
   archivedAt,
+  revision: 0,
   expiresAt: Date.now() + 8_000,
   messageKey: 'Archived project “{{name}}”.',
   messageParams: { name }
@@ -176,7 +177,7 @@ describe('PermissionUndoSnackbar', () => {
     expect(updateProjectArchive).toHaveBeenCalledWith({
       id: 'project-1',
       archived: false,
-      expectedArchivedAt: 10
+      expectedArchiveRevision: 0
     })
     expectSnackbarExiting(container, '[data-testid="archive-undo-snackbar"]')
   })
@@ -222,7 +223,7 @@ describe('PermissionUndoSnackbar', () => {
     expect(updateProjectArchive).toHaveBeenCalledWith({
       id: 'project-2',
       archived: false,
-      expectedArchivedAt: 20
+      expectedArchiveRevision: 0
     })
     expect(restore).not.toHaveBeenCalled()
   })

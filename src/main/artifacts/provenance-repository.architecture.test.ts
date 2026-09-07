@@ -29,6 +29,7 @@ import { describe, expect, it } from 'vitest'
 const productionFiles = [
   'provenance-canonical.ts',
   'provenance-content-status.ts',
+  'compute-output-evidence.ts',
   'provenance-core-evidence.ts',
   'provenance-dependency-reader.ts',
   'provenance-execution-evidence.ts',
@@ -218,6 +219,7 @@ describe('Artifact Provenance repository architecture', () => {
         'getVersionCore',
         'readDependencyRelations',
         'getVersionExecution',
+        'getVersionLiterature',
         'getVersionMessages',
         'getVersionProvenance',
         'getVersionReview',
@@ -225,6 +227,8 @@ describe('Artifact Provenance repository architecture', () => {
         'prepareProjectReconciliation',
         'readCodeReconstructionCache',
         'reconcileSession',
+        'recordLiteraturePdfRead',
+        'recordLiteratureSearch',
         'releaseAllWriteReservations',
         'releaseRunWriteReservations',
         'releaseWriteReservation',
@@ -238,7 +242,13 @@ describe('Artifact Provenance repository architecture', () => {
       ].sort()
     )
     expect(methods(facade, 'private')).toEqual(
-      ['resolveVersionDerivedPath', 'toArtifactVersionFile', 'toDescriptor'].sort()
+      [
+        'inspectVersionContent',
+        'openVersionContent',
+        'resolveVersionDerivedPath',
+        'toArtifactVersionFile',
+        'toDescriptor'
+      ].sort()
     )
   })
 
@@ -246,6 +256,7 @@ describe('Artifact Provenance repository architecture', () => {
     for (const owner of [
       'ArtifactProvenanceDependencyReader',
       'ArtifactProvenanceFinalizationRecovery',
+      'ArtifactLiteratureManifestOwner',
       'ArtifactProvenanceMessageFinalizer',
       'ArtifactProvenanceProducerCapture',
       'ArtifactProvenanceReadModel',
@@ -253,17 +264,20 @@ describe('Artifact Provenance repository architecture', () => {
       'ArtifactProvenanceStagingRecovery',
       'ArtifactProvenanceUnindexedRecovery',
       'ArtifactProvenanceVersionWriter',
-      'ArtifactWriteBudgetOwner'
+      'ArtifactWriteBudgetOwner',
+      'ContentRepository'
     ]) {
       expect(newExpressionSites(owner), owner).toEqual(['provenance-repository.ts:constructor'])
     }
     expect(fields(facade)).toEqual(
       [
         'compatibilityRepository',
+        'contentRepository',
         'createId',
         'durability',
         'dependencyReader',
         'finalizationRecovery',
+        'literatureManifestOwner',
         'messageFinalizer',
         'notebookRepository',
         'now',
@@ -401,6 +415,7 @@ describe('Artifact Provenance repository architecture', () => {
       [
         'src/main/artifacts/provenance-lifecycle-contract.test.ts',
         'src/main/artifacts/provenance-dependency-read.test.ts',
+        'src/main/artifacts/provenance-message-snapshot-durability.test.ts',
         'src/main/artifacts/provenance-message-snapshot.test.ts',
         'src/main/artifacts/provenance-repository.architecture.test.ts',
         'src/main/artifacts/provenance-repository.test.ts',
@@ -432,7 +447,8 @@ describe('Artifact Provenance repository architecture', () => {
         'src/renderer/src/lib/acp/workspace-events.test.ts',
         'src/renderer/src/pages/workspace/ArtifactProvenancePanel.render.test.tsx',
         'src/renderer/src/pages/workspace/PreviewFileSurface.test.tsx',
-        'src/renderer/src/pages/workspace/WorkspaceMessageScroller.interaction.test.tsx'
+        'src/renderer/src/pages/workspace/WorkspaceMessageScroller.interaction.test.tsx',
+        'src/renderer/src/pages/workspace/artifact-publication-preview.integration.test.tsx'
       ].sort()
     )
     expect(module.capabilityOverlays).toEqual(['windows_sensitive'])

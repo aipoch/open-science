@@ -25,11 +25,7 @@ const searchTerms = (value: string): string[] => {
   const normalized = normalizeSearchText(value)
   const words = normalized.split(/[^\p{L}\p{N}]+/u).filter(Boolean)
   if (words.length > 1) {
-    const uniqueWords = [...new Set(words)].filter(
-      (word) =>
-        Array.from(word).length >= 3 ||
-        Array.from(word).some((character) => (character.codePointAt(0) ?? 0) > 0x7f)
-    )
+    const uniqueWords = [...new Set(words)]
     if (uniqueWords.length <= MEMORY_SEARCH_TERM_LIMIT) return uniqueWords
     return Array.from(
       { length: MEMORY_SEARCH_TERM_LIMIT },
@@ -244,13 +240,17 @@ class MemoryService {
   }
 
   async listCategoriesForAgent(
-    context: MemoryAgentContext
+    context: MemoryAgentContext,
+    checkAccess?: () => Promise<void>
   ): Promise<
     Array<{ id: string; name: string; guidance: string; autoRecall: boolean; entryCount: number }>
   > {
     return this.enqueue(async () => {
+      await checkAccess?.()
       await this.requireEnabled()
+      await checkAccess?.()
       const snapshot = await this.repository.snapshot()
+      await checkAccess?.()
       return snapshot.categories.map((category) => {
         if ('systemKey' in category) {
           return {
@@ -278,26 +278,34 @@ class MemoryService {
 
   async searchForAgent(
     request: MemoryAgentSearchRequest,
-    context: MemoryAgentContext
+    context: MemoryAgentContext,
+    checkAccess?: () => Promise<void>
   ): Promise<MemoryAgentResult[]> {
     return this.enqueue(async () => {
+      await checkAccess?.()
       await this.requireEnabled()
-      return this.search(
+      await checkAccess?.()
+      const result = await this.search(
         request.query,
         request.limit,
         request.categoryIds,
         false,
         context.projectId
       )
+      await checkAccess?.()
+      return result
     })
   }
 
   async rememberForAgent(
     request: MemoryAgentRememberRequest,
-    context: MemoryAgentContext
+    context: MemoryAgentContext,
+    checkAccess?: () => Promise<void>
   ): Promise<MemoryAgentRememberResult> {
-    return this.enqueue(async () => {
+    const result = await this.enqueue(async () => {
+      await checkAccess?.()
       await this.requireEnabled()
+      await checkAccess?.()
       const rejectionKey = context.turnId
         ? JSON.stringify([context.sessionId, context.turnId, normalizeRememberPayload(request)])
         : undefined
@@ -308,7 +316,8 @@ class MemoryService {
       const saved = await this.repository.rememberEntry(
         request.categoryId,
         request.content,
-        context
+        context,
+        checkAccess
       )
       if (saved.status === 'rejected') {
         const rejection = {
@@ -325,6 +334,8 @@ class MemoryService {
       }
       return { status: saved.status, memory: toAgentResult(saved.candidate) }
     })
+    await checkAccess?.()
+    return result
   }
 
   async recallForPrompt(

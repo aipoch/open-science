@@ -14,7 +14,6 @@ const plan = (overrides: Partial<ActivePlanProjection> = {}): ActivePlanProjecti
   revision: 1,
   approval: 'approved',
   lifecycle: 'completed',
-  requiresExplicitContinuation: false,
   document: {
     schema_version: 1,
     task_summary: 'Produce a report',

@@ -61,6 +61,7 @@ import {
   runtimeRoot
 } from './runtime-paths'
 import { toErrorMessage } from '../error-message'
+import { buildManagedRuntimeProcessEnvironment } from './process-environment'
 
 export type InstallRequest = OptionalProjectIdScope & {
   language: NotebookLanguage
@@ -135,6 +136,10 @@ export type SpawnResult = {
   // user-facing log or persisted activity result.
   maxPathRecoveryEvidence?: string
 }
+export type InstallSpawnOptions = Readonly<{
+  signal?: AbortSignal
+  timeoutMs?: number
+}>
 export type InstallSpawn = (
   command: string,
   args: string[],
@@ -149,13 +154,20 @@ export type InstallSpawn = (
   // A sandbox wrapper replaces the original argv with its launcher argv. Preserve whether the
   // underlying installer requested structured conda JSON so recovery evidence remains complete.
   captureCondaJson?: boolean,
-  cwd?: string
+  cwd?: string,
+  options?: InstallSpawnOptions
 ) => Promise<SpawnResult>
+
+export const DEFAULT_PACKAGE_OPERATION_TIMEOUT_MS = 600_000
 
 // condaChannel/pypiIndex/cranMirror are resolved PackageMirror values (see shared/mirror.ts);
 // integration passes the effectiveMirror() output, this module stays mirror-shape agnostic.
 export type InstallDeps = {
   spawn: InstallSpawn
+  // Caller lifetime and the app-owned maximum duration for every subprocess in this package
+  // operation. The real spawn confirms the whole process tree stopped before rejecting either one.
+  signal?: AbortSignal
+  timeoutMs?: number
   micromamba?: string
   // Production injects the one process-wide prepared runner. The explicit string remains the
   // narrow test/override seam and wins when supplied.
@@ -969,8 +981,15 @@ export const defaultSpawn: InstallSpawn = (
   onChild,
   onBeforeSpawn,
   captureCondaJson,
-  cwd
+  cwd,
+  options
 ) => {
+  const signal = options?.signal
+  if (signal?.aborted) {
+    return Promise.reject(
+      signal.reason ?? new DOMException('Package operation cancelled.', 'AbortError')
+    )
+  }
   let condaJsonCapture: CondaJsonCapture | undefined
   try {
     if (captureCondaJson ?? args.includes('--json')) condaJsonCapture = createCondaJsonCapture()
@@ -995,9 +1014,22 @@ export const defaultSpawn: InstallSpawn = (
       })
       return
     }
+    // The synchronous intent hook can itself cancel its caller. Re-check before spawning so that
+    // cancellation at this boundary never launches an installer with no listener yet attached.
+    if (signal?.aborted) {
+      void discardCondaJsonCapture(condaJsonCapture).then(() => {
+        reject(signal.reason ?? new DOMException('Package operation cancelled.', 'AbortError'))
+      })
+      return
+    }
     let child: ReturnType<typeof nodeSpawn>
     try {
-      child = nodeSpawn(command, args, { stdio: ['ignore', 'pipe', 'pipe'], env, cwd })
+      child = nodeSpawn(command, args, {
+        stdio: ['ignore', 'pipe', 'pipe'],
+        env,
+        cwd,
+        windowsHide: true
+      })
     } catch (error) {
       void discardCondaJsonCapture(condaJsonCapture)
       resolve({
@@ -1048,6 +1080,13 @@ export const defaultSpawn: InstallSpawn = (
       else condaJsonCapture.stderrLimiter.end()
     }
     let settled = false
+    let termination: Promise<boolean> | undefined
+    let terminationReason: 'abort' | 'timeout' | undefined
+    const timeoutMs = options?.timeoutMs ?? DEFAULT_PACKAGE_OPERATION_TIMEOUT_MS
+    const cleanup = (): void => {
+      clearTimeout(timeout)
+      signal?.removeEventListener('abort', onAbort)
+    }
     const result = async (code: number): Promise<SpawnResult> => {
       const stdoutSnapshot = stdout.snapshot()
       const stderrSnapshot = stderr.snapshot()
@@ -1071,8 +1110,30 @@ export const defaultSpawn: InstallSpawn = (
     const settle = (code: number): void => {
       if (settled) return
       settled = true
-      void result(code).then(resolve)
+      cleanup()
+      void result(code).then(resolve, reject)
     }
+    const rejectOnce = (error: unknown): void => {
+      if (settled) return
+      settled = true
+      cleanup()
+      void discardCondaJsonCapture(condaJsonCapture).then(() => reject(error))
+    }
+    const terminate = (reason: 'abort' | 'timeout'): void => {
+      terminationReason ??= reason
+      termination ??= killAndConfirmExit(child)
+      void termination.then((confirmed) => {
+        if (!confirmed) {
+          rejectOnce(
+            new Error(
+              `${CHILD_UNCONFIRMED}: the package installer process tree could not be confirmed ` +
+                `stopped after ${terminationReason}; leaving the operation for recovery to block.`
+            )
+          )
+        }
+      })
+    }
+    const onAbort = (): void => terminate('abort')
     child.on('error', (error) => {
       stderr.push(String(error))
       if (condaJsonCapture) {
@@ -1081,9 +1142,50 @@ export const defaultSpawn: InstallSpawn = (
         condaJsonCapture.stdoutLimiter.end()
         condaJsonCapture.stderrLimiter.end()
       }
+      if (termination) {
+        void termination.then((confirmed) => {
+          if (!confirmed) return
+          if (terminationReason === 'abort') {
+            rejectOnce(
+              signal?.reason ?? new DOMException('Package operation cancelled.', 'AbortError')
+            )
+          } else {
+            rejectOnce(
+              Object.assign(new Error(`Package operation timed out after ${timeoutMs}ms.`), {
+                code: 'PACKAGE_OPERATION_TIMEOUT'
+              })
+            )
+          }
+        })
+        return
+      }
       settle(1)
     })
-    child.on('close', (code) => settle(code ?? 1))
+    child.on('close', (code) => {
+      if (!termination) {
+        settle(code ?? 1)
+        return
+      }
+      void termination.then((confirmed) => {
+        if (!confirmed) return
+        if (terminationReason === 'abort') {
+          rejectOnce(
+            signal?.reason ?? new DOMException('Package operation cancelled.', 'AbortError')
+          )
+          return
+        }
+        rejectOnce(
+          Object.assign(new Error(`Package operation timed out after ${timeoutMs}ms.`), {
+            code: 'PACKAGE_OPERATION_TIMEOUT'
+          })
+        )
+      })
+    })
+    signal?.addEventListener('abort', onAbort, { once: true })
+    const timeout = setTimeout(() => terminate('timeout'), timeoutMs)
+    timeout.unref?.()
+    // The signal can abort between the pre-spawn check and listener registration.
+    if (signal?.aborted) onAbort()
   })
 }
 
@@ -1169,12 +1271,29 @@ export async function installPackages(
   req: InstallRequest,
   deps: Partial<InstallDeps> = {}
 ): Promise<InstallResult> {
-  // Every install subprocess inherits the parent env plus the CA-bundle vars (no-op when unset), so a
-  // custom corporate CA is trusted by conda/pip/R. Wrapping here keeps every run() call site 2-arg.
+  // Start from the parent env plus the CA-bundle vars; managed runtimes sanitize host Python/R/user
+  // state below while external runtimes keep the caller environment. Wrapping here keeps every run()
+  // call site 2-arg.
   const baseSpawn = deps.spawn ?? defaultSpawn
-  const spawnEnv: NodeJS.ProcessEnv = { ...process.env, ...caBundleEnv(deps.caBundle) }
+  const spawnOptions: InstallSpawnOptions = {
+    signal: deps.signal,
+    timeoutMs: deps.timeoutMs
+  }
+  let spawnEnv: NodeJS.ProcessEnv = {
+    ...process.env,
+    ...caBundleEnv(deps.caBundle)
+  }
   const run: InstallSpawn = (command, args) =>
-    baseSpawn(command, args, spawnEnv, deps.onChild, deps.onBeforeSpawn)
+    baseSpawn(
+      command,
+      args,
+      spawnEnv,
+      deps.onChild,
+      deps.onBeforeSpawn,
+      undefined,
+      undefined,
+      spawnOptions
+    )
 
   if (req.packages.length === 0) {
     return { ok: false, needsRestart: false, log: '', error: 'No packages requested.' }
@@ -1222,9 +1341,23 @@ export async function installPackages(
     process.env.OPEN_SCIENCE_STORAGE_ROOT ??
     join(homedir(), PROD_SESSION_DIR_NAME)
   const root = runtimeRoot(storageRoot)
-  Object.assign(spawnEnv, notebookWorkloadCacheEnv(root))
+  const workloadCacheEnv = notebookWorkloadCacheEnv(root)
+  Object.assign(spawnEnv, workloadCacheEnv)
   const channels = condaInstallChannels(deps.condaChannel ?? DEFAULT_CONDA_CHANNEL, req.channels)
   const prefix = envPrefix(root, envName)
+  if (!deps.interpreter) {
+    const platform = deps.micromambaEnv?.platform ?? process.platform
+    spawnEnv = {
+      ...buildManagedRuntimeProcessEnvironment(root, {
+        language: req.language,
+        prefix,
+        platform,
+        sourceEnv: spawnEnv
+      }),
+      ...workloadCacheEnv,
+      ...caBundleEnv(deps.caBundle)
+    }
+  }
   // micromamba install/remove extract into and mutate the SHARED pkgs cache (<root>/runtime/pkgs), so
   // they must hold the shared cache lock — otherwise a concurrent corrupt-cache repair (which takes the
   // cache EXCLUSIVE and removes incomplete extractions) could delete a package dir mid-install. pip and
@@ -1236,12 +1369,24 @@ export async function installPackages(
     const cache = deps.micromambaEnv?.selectCache
       ? deps.micromambaEnv.selectCache(root, DEFAULT_MAX_CACHE_RELATIVE_PATH)
       : selectMicromambaCache(root, DEFAULT_MAX_CACHE_RELATIVE_PATH, deps.micromambaEnv)
-    const env = micromambaSpawnEnv(
-      root,
-      deps.caBundle,
-      { ...deps.micromambaEnv, selectCache: () => cache },
-      DEFAULT_MAX_CACHE_RELATIVE_PATH
-    )
+    const env = {
+      ...buildManagedRuntimeProcessEnvironment(root, {
+        language: req.language,
+        prefix,
+        platform: deps.micromambaEnv?.platform,
+        sourceEnv: {
+          ...micromambaSpawnEnv(
+            root,
+            deps.caBundle,
+            { ...deps.micromambaEnv, selectCache: () => cache },
+            DEFAULT_MAX_CACHE_RELATIVE_PATH
+          ),
+          ...workloadCacheEnv
+        }
+      }),
+      ...workloadCacheEnv,
+      ...caBundleEnv(deps.caBundle)
+    }
     condaContext = { cache, env }
     return condaContext
   }
@@ -1274,7 +1419,10 @@ export async function installPackages(
             CONDA_PKGS_DIRS: context.cache.path
           },
           deps.onChild,
-          deps.onBeforeSpawn
+          deps.onBeforeSpawn,
+          undefined,
+          undefined,
+          spawnOptions
         )
         if (result.code !== 0) {
           throw Object.assign(new Error('micromamba package cache maintenance failed'), {
@@ -1294,7 +1442,16 @@ export async function installPackages(
     const context = resolveCondaContext()
     await maintainCondaCache(command)
     return withSharedCacheLocks(condaCacheKeys(context.cache), () =>
-      baseSpawn(command, args, context.env)
+      baseSpawn(
+        command,
+        args,
+        context.env,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        spawnOptions
+      )
     )
   }
   const reportCondaArchives = (result: SpawnResult, workingRoot: string): void => {
@@ -1321,7 +1478,16 @@ export async function installPackages(
       // Thread onBeforeSpawn so the {spawning} intent sidecar is written BEFORE conda spawns, exactly as
       // the pip path does. Without it, a crash in the spawn→onChild window leaves no sidecar, and recovery
       // would misread that as "never spawned" and reconcile/retry under a possibly-live installer.
-      baseSpawn(command, args, context.env, deps.onChild, deps.onBeforeSpawn)
+      baseSpawn(
+        command,
+        args,
+        context.env,
+        deps.onChild,
+        deps.onBeforeSpawn,
+        undefined,
+        undefined,
+        spawnOptions
+      )
     )
     if (await stopAfterSpawn?.(result)) return result
     if (result.code === 0) {
@@ -1358,7 +1524,16 @@ export async function installPackages(
     const retry = await withSharedCacheLocks(cacheKeys, () =>
       // The MAX_PATH retry is a fresh spawn — re-arm the intent sidecar for it too, or the same
       // spawn→onChild crash window on the retry would be unrecoverable (no sidecar → misread as no child).
-      baseSpawn(command, args, context.env, deps.onChild, deps.onBeforeSpawn)
+      baseSpawn(
+        command,
+        args,
+        context.env,
+        deps.onChild,
+        deps.onBeforeSpawn,
+        undefined,
+        undefined,
+        spawnOptions
+      )
     )
     if (await stopAfterSpawn?.(retry)) {
       return {
@@ -1717,7 +1892,7 @@ export async function installPackages(
     const script =
       `dir.create(${JSON.stringify(rLib)}, recursive=TRUE, showWarnings=FALSE); ` +
       `install.packages(c(${vector}), lib=${JSON.stringify(rLib)}, repos=${JSON.stringify(cran)})`
-    const fallback = await run(rScriptBin(prefix), ['-e', script])
+    const fallback = await run(rScriptBin(prefix), ['--vanilla', '--slave', '-e', script])
     const ok = fallback.code === 0
     return {
       ok,
@@ -1753,7 +1928,11 @@ export async function installPackages(
   ])
   if (preflight.code !== 0) {
     const classification = classifyCondaFailure(preflight)
-    const condaAttempt = installerAttempt(0, 'conda', condaPkgs, preflight, classification)
+    // A dry-run cannot mutate the prefix. Keep its diagnostic classification for fallback admission.
+    const condaAttempt = installerAttempt(0, 'conda', condaPkgs, preflight, {
+      ...classification,
+      mutationRisk: 'none'
+    })
     if (condaFallbackIsAuthorized(classification)) {
       return cranFallback(preflight, condaAttempt)
     }
@@ -2051,7 +2230,7 @@ async function uninstallPackages(
     const vector = req.packages.map((pkg) => JSON.stringify(pkg)).join(', ')
     const rLib = envRLibrary(prefix)
     const script = `remove.packages(c(${vector}), lib=${JSON.stringify(rLib)})`
-    const fallback = await run(rScriptBin(prefix), ['-e', script])
+    const fallback = await run(rScriptBin(prefix), ['--vanilla', '--slave', '-e', script])
     const ok = fallback.code === 0
     return {
       ok,
@@ -2073,7 +2252,11 @@ async function uninstallPackages(
   ])
   if (preflight.code !== 0) {
     const classification = classifyCondaFailure(preflight)
-    const condaAttempt = installerAttempt(0, 'conda', condaPkgs, preflight, classification)
+    // A dry-run cannot mutate the prefix. Keep its diagnostic classification for fallback admission.
+    const condaAttempt = installerAttempt(0, 'conda', condaPkgs, preflight, {
+      ...classification,
+      mutationRisk: 'none'
+    })
     if (classification.reason === 'package-not-found' && classification.mutationRisk === 'none') {
       return cranRemoveFallback(preflight, condaAttempt)
     }

@@ -105,6 +105,8 @@ describe('session persistence startup', () => {
             : undefined
         }
         data-deletion-ready={String(persistence.canDeleteSessionsAndProjects)}
+        data-write-retryable={String(persistence.writeErrorRetryable)}
+        data-persistence-blocked={persistence.persistenceBlockedSessionIds.join(',')}
       >
         <span data-testid="load-error">{persistence.loadError ?? 'sessions available'}</span>
         <span data-testid="load-warning">{persistence.loadWarning ?? 'no load warnings'}</span>
@@ -114,6 +116,20 @@ describe('session persistence startup', () => {
         </button>
         <button type="button" data-testid="retry-writes" onClick={persistence.retryWrites}>
           Retry writes
+        </button>
+        <button
+          type="button"
+          data-testid="new-conversation-after-size-limit"
+          onClick={persistence.startNewConversationAfterSizeLimit}
+        >
+          New conversation
+        </button>
+        <button
+          type="button"
+          data-testid="report-plan-size-limit"
+          onClick={() => persistence.reportSessionSizeLimit('session-plan')}
+        >
+          Report Plan size limit
         </button>
         <button
           type="button"
@@ -331,6 +347,119 @@ describe('session persistence startup', () => {
       'changes saved'
     )
     await expect(flushSessionPersistence()).resolves.toBeUndefined()
+  })
+
+  it('classifies a Session size limit as non-retryable and blocks only that Session', async () => {
+    loadAll.mockReset().mockResolvedValue(emptyLoadResult())
+    saveSession.mockRejectedValue(
+      Object.assign(new Error('Session exceeds the persistence limit.'), {
+        code: 'session-size-limit'
+      })
+    )
+
+    await act(async () => root.render(<Probe />))
+    await act(async () => {
+      useSessionStore.getState().appendUserMessage({
+        sessionId: 'session-1',
+        content: 'Grow beyond the limit',
+        cwd: '/workspace/project',
+        projectId: 'project-a'
+      })
+      await Promise.resolve()
+    })
+
+    const probe = container.querySelector('div')
+    expect(probe?.dataset.writeRetryable).toBe('false')
+    expect(probe?.dataset.persistenceBlocked).toBe('session-1')
+    expect(container.querySelector('[data-testid="write-error"]')?.textContent).toContain(
+      'exceeded the 256 MiB storage limit'
+    )
+
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>('[data-testid="retry-writes"]')?.click()
+      await Promise.resolve()
+    })
+    expect(saveSession).toHaveBeenCalledOnce()
+
+    await act(async () => {
+      container
+        .querySelector<HTMLButtonElement>('[data-testid="new-conversation-after-size-limit"]')
+        ?.click()
+    })
+    expect(useSessionStore.getState().selectedSessionId).toBeUndefined()
+    expect(container.querySelector('[data-testid="write-error"]')?.textContent).toBe(
+      'changes saved'
+    )
+    expect(probe?.dataset.persistenceBlocked).toBe('session-1')
+    await expect(flushSessionPersistence()).resolves.toBeUndefined()
+  })
+
+  it('accepts an external Plan size-limit report into the shared recovery state', async () => {
+    loadAll.mockReset().mockResolvedValue(emptyLoadResult())
+    await act(async () => root.render(<Probe />))
+
+    await act(async () =>
+      container.querySelector<HTMLButtonElement>('[data-testid="report-plan-size-limit"]')?.click()
+    )
+
+    const probe = container.querySelector('div')
+    expect(probe?.dataset.persistenceBlocked).toBe('session-plan')
+    expect(probe?.dataset.writeRetryable).toBe('false')
+    expect(container.querySelector('[data-testid="write-error"]')?.textContent).toContain(
+      'exceeded the 256 MiB storage limit'
+    )
+  })
+
+  it('keeps an unrelated Session write failure retryable after a size-limit failure', async () => {
+    loadAll.mockReset().mockResolvedValue(emptyLoadResult())
+    let ordinaryWriteFails = true
+    saveSession.mockImplementation(async (session) => {
+      if (session.id === 'session-1') {
+        throw Object.assign(new Error('Session exceeds the persistence limit.'), {
+          code: 'session-size-limit'
+        })
+      }
+      if (ordinaryWriteFails) throw new Error('disk full')
+      return session
+    })
+
+    await act(async () => root.render(<Probe />))
+    await act(async () => {
+      useSessionStore.getState().appendUserMessage({
+        sessionId: 'session-1',
+        content: 'Oversized Session',
+        cwd: '/workspace/project',
+        projectId: 'project-a'
+      })
+      await Promise.resolve()
+    })
+    await act(async () => {
+      useSessionStore.getState().appendUserMessage({
+        sessionId: 'session-2',
+        content: 'Ordinary failed Session',
+        cwd: '/workspace/project',
+        projectId: 'project-a'
+      })
+      await Promise.resolve()
+    })
+
+    const probe = container.querySelector('div')
+    expect(probe?.dataset.persistenceBlocked).toBe('session-1')
+    expect(probe?.dataset.writeRetryable).toBe('true')
+    expect(container.querySelector('[data-testid="write-error"]')?.textContent).toBe(
+      'Open Science could not save the latest conversation changes. Retry before closing the app.'
+    )
+
+    ordinaryWriteFails = false
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>('[data-testid="retry-writes"]')?.click()
+      await Promise.resolve()
+    })
+
+    expect(probe?.dataset.writeRetryable).toBe('false')
+    expect(container.querySelector('[data-testid="write-error"]')?.textContent).toContain(
+      'exceeded the 256 MiB storage limit'
+    )
   })
 
   it('keeps a failed Session blocking flush when another Session saves successfully', async () => {

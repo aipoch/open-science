@@ -24,7 +24,7 @@ describe('SettingsService connector facade', () => {
   beforeEach(async () => {
     dir = await mkdtemp(join(tmpdir(), 'osci-svc-connectors-facade-'))
     repository = new SettingsRepository(dir)
-    service = new SettingsService({ repository, storageRoot: dir })
+    service = new SettingsService({ repository, configRoot: dir })
     return async () => {
       await rm(dir, { recursive: true, force: true })
     }
@@ -57,7 +57,7 @@ describe('SettingsService connector facade', () => {
       transport: 'streamable_http',
       oauth: { scopes: ['read'] }
     })
-    const credential = created.credentials[0]!
+    const credential = created.createdCredential
 
     expect(authenticate).not.toHaveBeenCalled()
     expect(credential.status).toBe('disconnected')

@@ -246,7 +246,7 @@ describe('NotebookNetworkSandbox', () => {
     const platform = Object.getOwnPropertyDescriptor(process, 'platform')
     Object.defineProperty(process, 'platform', { configurable: true, value: 'win32' })
     const sandbox = new NotebookNetworkSandbox(options())
-    vi.spyOn(sandbox, 'status').mockResolvedValue({
+    const initialStatus = vi.spyOn(sandbox, 'status').mockResolvedValueOnce({
       kind: 'setupRequired',
       platform: 'win32',
       reasons: ['Notebook AppContainer profile is not installed']
@@ -255,6 +255,17 @@ describe('NotebookNetworkSandbox', () => {
     try {
       await expect(sandbox.initialize()).resolves.toBeUndefined()
       expect(backend.initialize).toHaveBeenCalledOnce()
+      initialStatus.mockRestore()
+      backend.refreshWindowsProtection.mockResolvedValue({
+        warnings: [],
+        errors: ['Notebook AppContainer profile is not installed']
+      })
+
+      await expect(sandbox.status()).resolves.toEqual({
+        kind: 'setupRequired',
+        platform: 'win32',
+        reasons: ['Notebook AppContainer profile is not installed']
+      })
     } finally {
       await sandbox.dispose()
       if (platform) Object.defineProperty(process, 'platform', platform)

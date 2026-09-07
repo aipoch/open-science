@@ -208,7 +208,8 @@ const startFixLoopFakeAgent = (
         // In the real app, the session JSON is updated by the ACP runtime's handleSessionUpdate.
         // In tests, we update the shared session data here.
         const correctionMsgId = `correction-msg-${state.correctionCount}`
-        const auditorMsgId = `auditor-msg-${state.correctionCount}`
+        const auditorMsgId = sessionData.correctionPromptMessageId
+        if (!auditorMsgId) throw new Error('Correction prompt message id was not captured')
         const currentMsgs = sessionData.getSession().messages
         // Add: [Auditor] user message + agent correction response
         const updatedSession: PersistedChatSession = {

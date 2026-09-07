@@ -32,10 +32,6 @@ vi.mock('@/components/ui/resizable', () => ({
   ResizablePanel: ({ children }: PropsWithChildren): React.JSX.Element => <div>{children}</div>
 }))
 
-vi.mock('@/lib/utils', () => ({
-  cn: (...values: Array<string | false | undefined>) => values.filter(Boolean).join(' ')
-}))
-
 // Radix DropdownMenu calls pointer-capture APIs that jsdom does not implement.
 // Replace with a flat render so items are always visible in the DOM.
 vi.mock('@/components/ui/dropdown-menu', () => ({
@@ -212,7 +208,6 @@ const completedPlanProjection: ActivePlanProjection = {
   revision: 4,
   approval: 'approved',
   lifecycle: 'completed',
-  requiresExplicitContinuation: false,
   document: {
     schema_version: 1,
     task_summary: 'Analyze one dataset',
@@ -357,6 +352,36 @@ const delegatedQuestionSession = (): ChatSession => ({
 })
 
 describe('ConversationPanel annotation composer integration', () => {
+  it('Q01 identifies a restored historical revision and exposes the exit action', () => {
+    const cancelQueuedEdit = vi.fn()
+    renderPanel({
+      composer: {
+        view: {
+          queuedEdit: {
+            kind: 'user',
+            revisionMessageId: 'message-1',
+            sessionId: 'session-1',
+            projectId: 'project-1',
+            cwd: undefined,
+            agentFrameId: 'frame-1',
+            messageBranchId: 'branch-1',
+            permissionProfile: 'full',
+            agentConfiguration: { providerId: 'provider', model: 'model', reasoningEffort: 'high' },
+            specialistId: undefined
+          }
+        },
+        actions: { cancelQueuedEdit }
+      }
+    })
+    expect(container.textContent).toContain('Editing a historical revision')
+    const exit = Array.from(container.querySelectorAll('button')).find(
+      (button) => button.textContent === 'Exit queued editing'
+    )
+    expect(exit).toBeDefined()
+    act(() => exit!.click())
+    expect(cancelQueuedEdit).toHaveBeenCalledOnce()
+  })
+
   it('renders a compact annotation chip, reveals its source, returns focus on Esc, and removes it', async () => {
     const removeAnnotation = vi.fn()
     renderPanel({
@@ -507,7 +532,8 @@ const createPanelDefaults = (): PanelProps => ({
       submitMode: undefined,
       revise: true,
       resume: true,
-      branch: true
+      branch: true,
+      planResponse: true
     },
     actions: {
       submit: {
@@ -517,6 +543,7 @@ const createPanelDefaults = (): PanelProps => ({
       revise: vi.fn(),
       branch: vi.fn(),
       sideChat: { start: vi.fn() },
+      reportSessionSizeLimit: vi.fn(),
       resume: vi.fn().mockResolvedValue(undefined),
       cancel: vi.fn(),
       delete: vi.fn()
@@ -742,7 +769,7 @@ describe('ConversationPanel composer errors', () => {
     const alert = container.querySelector('[role="alert"]')
     expect(alert?.textContent).toContain('Annotation payload is too large.')
     expect(alert?.querySelector('section')).not.toBeNull()
-    expect(alert?.querySelector('.bg-status-failure-surface')).not.toBeNull()
+    expect(alert?.querySelector('.text-status-failure-foreground')).not.toBeNull()
     expect(alert?.className).not.toContain('bg-red-50')
   })
 
@@ -792,7 +819,15 @@ describe('ConversationPanel composer errors', () => {
     const retry = container.querySelector<HTMLButtonElement>(
       '[aria-label="Retry Artifact publication"]'
     )
+    const report = container.querySelector<HTMLButtonElement>('[aria-label="Report this error"]')
+    const error = Array.from(container.querySelectorAll('span')).find(
+      (element) => element.textContent === activeSession.error
+    )
     expect(retry).not.toBeNull()
+    expect(report).not.toBeNull()
+    expect(error?.parentElement?.classList.contains('flex-col')).toBe(true)
+    expect(retry?.parentElement?.classList.contains('flex-wrap')).toBe(true)
+    expect(retry?.parentElement?.classList.contains('self-end')).toBe(true)
     act(() => retry?.click())
     expect(request).toHaveBeenCalledOnce()
   })
@@ -3081,6 +3116,94 @@ describe('ConversationPanel composer intake', () => {
     expect(container.querySelector('[aria-label="Cancel Side chat response"]')).not.toBeNull()
   })
 
+  it('keeps earlier Side chat content visible when the user scrolls up during output', () => {
+    const sideChat = {
+      send: vi.fn(async () => true),
+      setDraft: vi.fn(),
+      cancel: vi.fn(),
+      close: vi.fn(),
+      view: {
+        generation: 1,
+        parentSessionId: 'session-existing',
+        projectId: 'project-a',
+        sideSessionId: 'side-scroll',
+        draft: '',
+        running: true,
+        entries: [
+          {
+            id: 'user-1',
+            kind: 'message' as const,
+            role: 'user' as const,
+            text: 'Explain this result'
+          }
+        ]
+      }
+    }
+    renderPanel({ sideChat })
+    const viewport = container.querySelector(
+      '[data-testid="side-chat-message-scroll"] [data-slot="scroll-area-viewport"]'
+    ) as HTMLDivElement
+    Object.defineProperties(viewport, {
+      scrollHeight: { configurable: true, value: 1200 },
+      clientHeight: { configurable: true, value: 300 }
+    })
+    viewport.scrollTop = 900
+    act(() => viewport.dispatchEvent(new Event('scroll', { bubbles: true })))
+    viewport.scrollTop = 200
+    act(() => viewport.dispatchEvent(new Event('scroll', { bubbles: true })))
+    renderPanel({
+      sideChat: {
+        ...sideChat,
+        view: {
+          ...sideChat.view,
+          entries: [
+            ...sideChat.view.entries,
+            {
+              id: 'assistant-1',
+              kind: 'message',
+              role: 'assistant',
+              text: 'More output while reading earlier content'
+            }
+          ]
+        }
+      }
+    })
+    expect(viewport.scrollTop).toBe(200)
+  })
+
+  it('translates Side chat tool completion while preserving the technical tool name', async () => {
+    const { i18next } = await import('../../i18n')
+    await act(async () => {
+      await i18next.changeLanguage('zh-Hans')
+    })
+    try {
+      renderPanel({
+        sideChat: {
+          send: vi.fn(async () => true),
+          setDraft: vi.fn(),
+          cancel: vi.fn(),
+          close: vi.fn(),
+          view: {
+            generation: 1,
+            parentSessionId: 'session-existing',
+            projectId: 'project-a',
+            sideSessionId: 'side-translated',
+            draft: '',
+            running: false,
+            entries: [{ id: 'tool-1', kind: 'tool', title: 'send_message', status: 'completed' }]
+          }
+        }
+      })
+      const panel = container.querySelector('[data-testid="side-chat-panel"]')!
+      expect(panel.textContent).toContain('send_message')
+      expect(panel.textContent).not.toContain('completed')
+    } finally {
+      await act(async () => {
+        await i18next.changeLanguage('en')
+      })
+    }
+  })
+
   it('presents complete user annotation text consistently and leaves invalid or assistant text raw', () => {
     const annotationText =
       'Compare these observations.\n\n[Annotations]\n' +
@@ -3207,6 +3330,7 @@ describe('ConversationPanel composer intake', () => {
           sideSessionId: 'side-1',
           draft: '',
           running: true,
+          persistenceError: 'Disk full',
           entries
         }
       }
@@ -3214,6 +3338,9 @@ describe('ConversationPanel composer intake', () => {
 
     expect(container.textContent).toContain('Historical answer')
     expect(container.textContent).not.toContain('Flow')
+    expect(container.querySelector('[role="alert"]')?.textContent).toContain(
+      'Could not save Side chat: Disk full'
+    )
     expect(container.querySelectorAll('.agent-markdown-streaming')).toHaveLength(1)
 
     await act(async () => vi.advanceTimersByTimeAsync(496))
@@ -3976,7 +4103,8 @@ describe('ConversationPanel + menu', () => {
 
     expect(respondToSessionPlanMock).toHaveBeenCalledWith(
       expect.objectContaining({ projectId: 'project-a', sessionId: 'session-plan-feedback' }),
-      { feedback: 'Split the analysis by cohort.' }
+      { feedback: 'Split the analysis by cohort.' },
+      { onSessionSizeLimit: expect.any(Function) }
     )
   })
 
@@ -4017,11 +4145,12 @@ describe('ConversationPanel + menu', () => {
 
     expect(respondToSessionPlanMock).toHaveBeenCalledWith(
       expect.objectContaining({ sessionId: 'session-plan-text-approval' }),
-      { feedback: 'Approved for execution' }
+      { feedback: 'Approved for execution' },
+      { onSessionSizeLimit: expect.any(Function) }
     )
   })
 
-  it('reopens an actionable Plan card after restart without reviving the expired interaction', async () => {
+  it('reopens an actionable Plan card for explicit feedback retry after an uncertain delivery', async () => {
     const onRespondToRestoredPlan = vi.fn().mockResolvedValue(undefined)
     const session: ChatSession = {
       id: 'session-orphaned-plan',
@@ -4029,6 +4158,26 @@ describe('ConversationPanel + menu', () => {
       title: 'Orphaned pending Plan',
       cwd: '/workspace',
       status: 'waiting-plan-approval',
+      runtimeContext: {
+        version: 1,
+        revision: 3,
+        plan: {
+          artifactId: completedPlanProjection.artifactId,
+          artifactVersionId: completedPlanProjection.artifactVersionId,
+          artifactChecksum: completedPlanProjection.artifactChecksum,
+          originatingPromptMessageId: 'interaction-1',
+          approval: 'pending',
+          stepStatuses: {},
+          reviewFeedbackMessageId: 'previous-feedback',
+          delivery: {
+            commandId: 'previous-delivery',
+            kind: 'review-feedback',
+            state: 'delivering',
+            originatingPromptMessageId: 'previous-feedback',
+            createdAt: 1
+          }
+        }
+      },
       messages: planOriginMessages(),
       createdAt: 1,
       updatedAt: 2,

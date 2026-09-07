@@ -21,6 +21,10 @@ describe('Plan command errors', () => {
   it('recognizes a live approval waiter conflict at the shared transport boundary', () => {
     expect(isPlanCommandErrorCode('approval-already-pending')).toBe(true)
   })
+
+  it('does not expose the removed continuation authority error', () => {
+    expect(isPlanCommandErrorCode('continuation-required')).toBe(false)
+  })
 })
 
 describe('protected Plan context', () => {
@@ -32,7 +36,6 @@ describe('protected Plan context', () => {
       revision: 8,
       approval: 'approved',
       lifecycle: 'blocked',
-      requiresExplicitContinuation: true,
       document: createPlanDocumentV1({
         task_summary: 'Analyze data',
         phases: [
@@ -77,7 +80,11 @@ describe('protected Plan context', () => {
         'task=Analyze data',
         '- Inspect exact input title: completed',
         '- Analyze: blocked — Input missing',
-        'Do not execute this Plan without interaction-bound authority from Open Science.',
+        'Use this approved Session Plan as durable work context. Real side effects remain subject to independent permissions.',
+        'The originating Conversation Turn retains ownership of the Plan; related later ordinary or application Attempts on the same durable Message Branch receive it only as active context.',
+        'The latest explicit user Message takes precedence over this Plan. Treat application Messages as contextual events and judge how they relate to the approved steps without letting them override user intent.',
+        'If it changes the goal, desired outputs, risks, or material scope, generate a replacement Plan revision and wait for approval before doing the changed work.',
+        'Routine execution details and progress updates within the approved scope do not require another approval.',
         '</open_science_protected_plan_context>'
       ].join('\n')
     )
@@ -302,6 +309,28 @@ describe('Plan document V1', () => {
 })
 
 describe('derived Plan lifecycle', () => {
+  it('keeps approved work in progress after its Attempt ends', () => {
+    const document = createPlanDocumentV1({
+      task_summary: 'Analyze data',
+      phases: [
+        {
+          name: 'Analysis',
+          delegations: [
+            {
+              name: 'Primary agent',
+              steps: [{ title: 'Analyze data', description: 'Produce the result.' }]
+            }
+          ]
+        }
+      ],
+      desired_outputs: [],
+      feasibility: { confidence: 'high', rationale: 'Inputs are available.' }
+    })
+
+    const statuses = { 'Analyze data': { status: 'in_progress' as const } }
+    expect(derivePlanLifecycle(document, 'approved', statuses)).toBe('in_progress')
+  })
+
   it('derives blocked once blocked work has no remaining active execution', () => {
     const document = createPlanDocumentV1({
       task_summary: 'Analyze data',

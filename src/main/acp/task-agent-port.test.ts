@@ -27,6 +27,7 @@ describe('ACP Task Agent port', () => {
       | 'createSession'
       | 'resumeSession'
       | 'setPermissionProfile'
+      | 'setMemoryEnabled'
       | 'prompt'
       | 'cancelPrompt'
     >()
@@ -49,6 +50,7 @@ describe('ACP Task Agent port', () => {
         contextReset: true
       })),
       setPermissionProfile: vi.fn(async () => undefined),
+      setMemoryEnabled: vi.fn(),
       sendPrompt: vi.fn(async () => undefined),
       sendPromptObserved: vi.fn(async () => undefined),
       cancelPrompt: vi.fn(async () => undefined)
@@ -125,6 +127,7 @@ describe('ACP Task Agent port', () => {
       contextReset: true
     })
     await port.setPermissionProfile('session-stable', 'full')
+    await port.setMemoryEnabled('session-stable', false)
     await port.prompt({
       sessionId: 'session-stable',
       promptMessageId: 'persisted-prompt',
@@ -176,6 +179,7 @@ describe('ACP Task Agent port', () => {
       sessionId: 'session-stable',
       profile: 'full'
     })
+    expect(runtime.setMemoryEnabled).toHaveBeenCalledWith('session-stable', false)
     expect(runtime.sendPrompt).toHaveBeenCalledWith({
       sessionId: 'session-stable',
       text: 'Continue the research.',
@@ -194,6 +198,7 @@ describe('ACP Task Agent port', () => {
       getSnapshot: vi.fn(() => ({ sessionIds: [] })),
       resumeSession: vi.fn(async () => ({ sessionId: 'session-legacy' })),
       setPermissionProfile: vi.fn(async () => undefined),
+      setMemoryEnabled: vi.fn(),
       sendPrompt: vi.fn(async () => undefined),
       sendPromptObserved: vi.fn(async () => undefined),
       cancelPrompt: vi.fn(async () => undefined)
@@ -255,6 +260,7 @@ describe('ACP Task Agent port', () => {
         getSnapshot: () => ({ sessionIds: [] }),
         resumeSession: vi.fn(),
         setPermissionProfile: vi.fn(),
+        setMemoryEnabled: vi.fn(),
         sendPrompt,
         sendPromptObserved: sendPrompt,
         cancelPrompt: vi.fn()
@@ -297,6 +303,7 @@ describe('ACP Task Agent port', () => {
         getSnapshot: () => ({ sessionIds: [] }),
         resumeSession: vi.fn(),
         setPermissionProfile: vi.fn(),
+        setMemoryEnabled: vi.fn(),
         sendPrompt,
         sendPromptObserved: sendPrompt,
         cancelPrompt: vi.fn()

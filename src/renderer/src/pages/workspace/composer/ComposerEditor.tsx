@@ -12,7 +12,11 @@ import { createPreviewFileItemFromLocal, LOCAL_PREVIEW_SESSION_ID } from '../pre
 import { createPreviewFileItemFromMention } from '../preview-file-item'
 import { createPreviewRequestScope } from '../previews/preview-file-reader'
 
-import { ArtifactMentionPopup, type PickedArtifact } from './ArtifactMentionPopup'
+import {
+  ArtifactMentionPopup,
+  type PickedArtifact,
+  type PickedMention
+} from './ArtifactMentionPopup'
 import {
   applyDocToDom,
   createPastedTextAnchor,
@@ -89,6 +93,22 @@ const nodesEqual = (a: ComposerNode[], b: ComposerNode[]): boolean => {
     }
     if (node.type === 'session' && other.type === 'session') {
       return node.sessionId === other.sessionId && node.title === other.title
+    }
+    if (node.type === 'literature' && other.type === 'literature') {
+      return (
+        node.itemId === other.itemId &&
+        node.metadataRevision === other.metadataRevision &&
+        node.attachmentVersionId === other.attachmentVersionId
+      )
+    }
+    if (node.type === 'literature-scope' && other.type === 'literature-scope') {
+      return (
+        node.scope === other.scope &&
+        (node.scope === 'project' ||
+          (other.scope === 'collection' &&
+            node.collectionId === other.collectionId &&
+            node.name === other.name))
+      )
     }
     if (node.type === 'pasted-text' && other.type === 'pasted-text') {
       return node.id === other.id && node.text === other.text
@@ -549,6 +569,16 @@ export const ComposerEditor = ({
       useNavigationStore.getState().openSessionById(sessionId, 'user')
       return
     }
+    const literatureChip = (event.target as HTMLElement).closest?.(
+      '[data-mention-type="literature"]'
+    ) as HTMLElement | null
+    if (root && literatureChip && root.contains(literatureChip)) {
+      const itemId = literatureChip.getAttribute('data-literature-item-id')
+      if (!itemId) return
+      event.preventDefault()
+      useNavigationStore.getState().openLiteratureItem(itemId, 'user')
+      return
+    }
     const chip = (event.target as HTMLElement).closest?.(
       '[data-mention-type="artifact"]'
     ) as HTMLElement | null
@@ -574,7 +604,12 @@ export const ComposerEditor = ({
       return
     }
 
-    if ((source !== 'upload' && source !== 'artifact') || !mentionPreviewContext) return
+    if (
+      (source !== 'upload' && source !== 'artifact' && source !== 'literature') ||
+      !mentionPreviewContext
+    ) {
+      return
+    }
     const path = chip.getAttribute('data-mention-path')
     if (!path) return
     event.preventDefault()
@@ -588,6 +623,12 @@ export const ComposerEditor = ({
       versionId: chip.getAttribute('data-mention-version-id') ?? undefined
     }
     const { sessionId, projectId } = mentionPreviewContext
+    if (source === 'literature') {
+      usePreviewWorkbenchStore
+        .getState()
+        .upsertAndActivateItem(createPreviewFileItemFromMention(part, '__literature__', projectId))
+      return
+    }
     void (async () => {
       const read =
         source === 'upload' ? window.api.uploads.readPreview : window.api.artifacts.readPreview
@@ -776,18 +817,24 @@ export const ComposerEditor = ({
   }
 
   // Replace the active `@query` token with an artifact chip, then close the popup.
-  const handleSelectArtifact = (ref: PickedArtifact): void => {
+  const handleSelectArtifact = (ref: PickedMention): void => {
     const root = editorRef.current
     undoCaretRef.current = root ? currentCaretPosition(root) : undefined
+    if ('type' in ref && (ref.type === 'literature' || ref.type === 'literature-scope')) {
+      artifactMention.replaceTokenWith(ref)
+      artifactMention.cancel()
+      return
+    }
+    const artifact = ref as PickedArtifact
     artifactMention.replaceTokenWith({
       type: 'artifact',
-      id: ref.id,
-      sourceFileId: ref.sourceFileId,
-      name: ref.name,
-      path: ref.path,
-      source: ref.source,
-      mimeType: ref.mimeType,
-      versionId: ref.versionId
+      id: artifact.id,
+      sourceFileId: artifact.sourceFileId,
+      name: artifact.name,
+      path: artifact.path,
+      source: artifact.source,
+      mimeType: artifact.mimeType,
+      versionId: artifact.versionId
     })
     artifactMention.cancel()
   }

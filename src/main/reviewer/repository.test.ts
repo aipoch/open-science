@@ -24,7 +24,7 @@ afterEach(async () => {
   client = undefined
 
   if (storageRoot) {
-    await rm(storageRoot, { recursive: true, force: true })
+    await rm(storageRoot, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 })
     storageRoot = undefined
   }
 })
@@ -80,7 +80,11 @@ const checks = (): NewCheck[] => [
   }
 ]
 
-describe('review repository (integration)', () => {
+// Hosted Windows runners rebuild the application schema under disk contention.
+// The Windows full-test workflow default is 60s; this suite finishes later without hanging.
+const WINDOWS_SQLITE_TEST_TIMEOUT_MS = 120_000
+
+describe('review repository (integration)', { timeout: WINDOWS_SQLITE_TEST_TIMEOUT_MS }, () => {
   it('round-trips a review with its unified checks by session', async () => {
     const repository = await createRepository()
 

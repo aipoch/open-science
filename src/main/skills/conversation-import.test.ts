@@ -362,6 +362,7 @@ describe('ConversationSkillImporter', () => {
     const client = createProjectDbClient(root)
     disconnects.push(() => client.$disconnect())
     await migrateApplicationDatabase(client)
+    await client.project.create({ data: { id: 'project-1', name: 'Project one' } })
     const uploads = new UploadRepository(root, { getClient: () => Promise.resolve(client) })
     const skills = new UserSkillRepository(root)
     const [staged] = await stageUploadFixtures(uploads, {
