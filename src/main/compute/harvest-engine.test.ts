@@ -1125,15 +1125,17 @@ describe('harvestJob — SSH enumeration failure', () => {
     const scp = makeScpRunner()
     const { repo: jobRepo, updates } = makeJobRepo(job)
 
-    await harvestJob(job, {
-      connectionBroker: brokerFromRunners(ssh, scp),
-      hostRepository: makeHostRepo(sampleHost()),
-      jobRepository: jobRepo,
-      storageRoot
-    })
+    await expect(
+      harvestJob(job, {
+        connectionBroker: brokerFromRunners(ssh, scp),
+        hostRepository: makeHostRepo(sampleHost()),
+        jobRepository: jobRepo,
+        storageRoot
+      })
+    ).rejects.toThrow('Remote file enumeration failed.')
 
     const finalUpdate = updates[0]!.data as Record<string, unknown>
-    expect(finalUpdate.harvestedAt).toBeInstanceOf(Date)
+    expect(finalUpdate.harvestedAt).toBeUndefined()
     expect(typeof finalUpdate.harvestError).toBe('string')
     expect((finalUpdate.harvestError as string).length).toBeGreaterThan(0)
     // No scp calls — we never got to download phase
@@ -1217,7 +1219,7 @@ describe('harvestJob — compute_done notification (issue 06)', () => {
     expect(summary.notified_at).toBeDefined()
   })
 
-  it('calls broadcast after harvest_failed outcome', async () => {
+  it('does not publish a final notification while enumeration is pending', async () => {
     const storageRoot = await mkTmp()
     const job = makeJob({ status: 'failed', exit_code: 1 })
 
@@ -1244,21 +1246,18 @@ describe('harvestJob — compute_done notification (issue 06)', () => {
 
     const broadcast = vi.fn()
 
-    await harvestJob(job, {
-      connectionBroker: brokerFromRunners(ssh, scp),
-      hostRepository: makeHostRepo(sampleHost()),
-      jobRepository: jobRepo,
-      storageRoot,
-      broadcast
-    })
+    await expect(
+      harvestJob(job, {
+        connectionBroker: brokerFromRunners(ssh, scp),
+        hostRepository: makeHostRepo(sampleHost()),
+        jobRepository: jobRepo,
+        storageRoot,
+        broadcast
+      })
+    ).rejects.toThrow('Remote file enumeration failed.')
 
-    // Broadcast still called despite harvest failure
-    expect(broadcast).toHaveBeenCalled()
-    const summary = broadcast.mock.calls[0][0]
-    expect(summary.notified_at).toBeDefined()
-    // Error path: featured_files are empty (no files were downloaded)
-    expect(summary.featured_files).toEqual([])
-    expect(summary.featured_file_count).toBe(0)
+    expect(broadcast).not.toHaveBeenCalled()
+    expect(jobRepo.claimNotification).not.toHaveBeenCalled()
   })
 
   it('does NOT call broadcast when broadcast is not wired', async () => {

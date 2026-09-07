@@ -215,7 +215,8 @@ describe('application database (integration)', () => {
         '0028_database_numeric_and_null_constraints',
         '0029_compute_host_execution_mode',
         '0030_literature_foundation',
-        '0031_project_archive_revision'
+        '0031_project_archive_revision',
+        '0032_compute_job_harvest_retry'
       ]
     })
 
@@ -1275,7 +1276,8 @@ describe('application database (integration)', () => {
         '0028_database_numeric_and_null_constraints',
         '0029_compute_host_execution_mode',
         '0030_literature_foundation',
-        '0031_project_archive_revision'
+        '0031_project_archive_revision',
+        '0032_compute_job_harvest_retry'
       ]
     })
 

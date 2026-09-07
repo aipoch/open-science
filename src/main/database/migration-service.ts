@@ -1,3 +1,4 @@
+import { computeJobHarvestRetryMigration } from './migrations/0032-compute-job-harvest-retry'
 import { projectArchiveRevisionMigration } from './migrations/0031-project-archive-revision'
 import { createHash } from 'node:crypto'
 import { access, rename, rm } from 'node:fs/promises'
@@ -688,6 +689,18 @@ const MIGRATION_MANIFEST = [
     ),
     backupOnApply: 'required',
     backupRetention: 'retain'
+  },
+  {
+    ...computeJobHarvestRetryMigration,
+    checksum: checksumMigrationPayload(
+      computeJobHarvestRetryMigration.id,
+      computeJobHarvestRetryMigration.statements,
+      computeJobHarvestRetryMigration.verifiers,
+      computeJobHarvestRetryMigration.operations
+    ),
+    backupOnApply: 'required',
+    backupRetention: 'retain',
+    foreignKeysDuringApply: 'disabled'
   }
 ] as const satisfies readonly MigrationManifestEntry[]
 // schema-locality: begin frozen-0001-repairs

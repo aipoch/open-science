@@ -149,7 +149,12 @@ export class ComputeJobLifecycle {
     updates: UpdateJobRequest
   ): Promise<ComputeJobTransitionResult> {
     const job = await this.repository.updateIfStatus(jobId, expectedStatuses, updates)
-    if (!job) return { kind: 'ignored' }
+    if (!job) {
+      if (updates.remoteHandle) {
+        await this.repository.recordCancellationHandle(jobId, updates.remoteHandle)
+      }
+      return { kind: 'ignored' }
+    }
     try {
       this.onApplied(job)
     } catch {

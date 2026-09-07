@@ -423,7 +423,7 @@
     {
       "tableName": "ComputeJob",
       "name": "ComputeJob_harvestPayload_check",
-      "expression": "(\"harvestError\" IS NULL AND \"leftOnRemote\" IS NULL) OR \"harvestedAt\" IS NOT NULL"
+      "expression": "\"leftOnRemote\" IS NULL OR \"harvestedAt\" IS NOT NULL"
     },
     {
       "tableName": "ComputeJob",

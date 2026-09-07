@@ -30,7 +30,7 @@ import {
   type ComputeJobRepository,
   UnencryptedComputeJobPersistenceApprovalRequiredError
 } from './job-repository'
-import { validateHarvestConfig } from './harvest-classifier'
+import { assertSafeInputDestination, validateHarvestConfig } from './harvest-classifier'
 import { hasLeadingSlurmDirective, SlurmDriverError, validateSlurmCommand } from './slurm-driver'
 import type { ComputeHostRepository } from './repository'
 import { GLOB_CHARS, SHELL_UNSAFE_CHARS } from './remote-path-security'
@@ -106,6 +106,7 @@ export const resolveInputs = async (
   const destinations = new Set<string>()
 
   const reserveDestination = (dstFilename: string): void => {
+    assertSafeInputDestination(dstFilename)
     if (destinations.has(dstFilename)) {
       throw new Error(`dst_filename must be unique within a Compute Job (got "${dstFilename}")`)
     }

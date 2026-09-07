@@ -350,6 +350,7 @@
           "src/main/compute/compute-host-profile-owner.test.ts",
           "src/main/compute/compute-job-workflow-owner.test.ts",
           "src/main/compute/compute-job-cancellation-owner.integration.test.ts",
+          "src/main/compute/job-recovery-regressions.integration.test.ts",
           "src/main/compute/compute-remote-operation-owner.test.ts",
           "src/main/compute/session-cache-owner.test.ts",
           "src/main/compute/session-enabled-hosts-owner.test.ts",
