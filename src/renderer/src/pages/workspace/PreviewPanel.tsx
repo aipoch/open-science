@@ -7,6 +7,8 @@ import { dialogOverlayClassName, dialogPanelClassName } from '@/components/ui/di
 import { ActionMenuProvider, ActionMenuTarget } from '@/components/action-menu'
 import { ResizablePanel } from '@/components/ui/resizable'
 import { cn } from '@/lib/utils'
+import { errorDetail } from '@/lib/error-detail'
+import { ErrorNotice } from '@/components/error-notice'
 import { useNavigationStore } from '@/stores/navigation-store'
 import type {
   PreviewFileItem,
@@ -23,6 +25,7 @@ import {
   createPreviewTabActionBindings,
   getPreviewTabActionRecipe,
   PREVIEW_TAB_ACTION_CATALOG,
+  PreviewTabActionError,
   type PreviewTabActionCommand,
   type PreviewTabActionContext,
   type PreviewTabActionDeps
@@ -34,6 +37,7 @@ import { PreviewToolContent } from './previews/PreviewToolContent'
 import type { RestoredPlanResponder } from './session-plan/SessionPlanSurfaces'
 import { useHorizontalScrollFade } from './use-horizontal-scroll-fade'
 import { usePdfContextAction } from './use-pdf-context-action'
+import { requestComposerFocus } from './composer-focus-events'
 
 type PreviewPanelProps = PreviewInteractionPort & {
   panelRef: React.Ref<PanelImperativeHandle>
@@ -90,14 +94,18 @@ const PREVIEW_TAB_EDGE_INSET = 8
 const PreviewTabActionTarget = ({
   item,
   tabCount,
+  retryPendingKeys,
   onPdfContextError,
+  onFileActionSuccess,
   onLinkReadingContext,
   onUnlinkReadingContext,
   children
 }: {
   item: PreviewItem
   tabCount: number
+  retryPendingKeys?: ReadonlySet<string>
   onPdfContextError?: (message: string | null) => void
+  onFileActionSuccess?: (command: PreviewTabActionCommand, item: PreviewItem) => void
   onLinkReadingContext?: PreviewInteractionPort['onLinkReadingContext']
   onUnlinkReadingContext?: PreviewInteractionPort['onUnlinkReadingContext']
   children: React.ReactElement
@@ -114,6 +122,8 @@ const PreviewTabActionTarget = ({
   )
   const context: PreviewTabActionContext = {
     tabCount,
+    retryPendingKeys,
+    pdfContextPending: pdfAction?.pending,
     ...(pdfAction && !pdfAction.disabled ? { pdfContext: pdfAction.state } : {})
   }
   const stageLocalPath = window.api.uploads?.stageLocalPath
@@ -134,10 +144,36 @@ const PreviewTabActionTarget = ({
     activeProjectId
   }
   const bindings = createPreviewTabActionBindings(context, deps)
-  const pdfContextBinding = bindings['toggle-pdf-context']
-  const focusAwareBindings = pdfContextBinding
+  const successAwareBindings = onFileActionSuccess
     ? {
         ...bindings,
+        download: {
+          ...bindings.download,
+          execute: async (invocation: PreviewItem) => {
+            await bindings.download?.execute(invocation)
+            onFileActionSuccess('download', invocation)
+          }
+        },
+        'copy-path': {
+          ...bindings['copy-path'],
+          execute: async (invocation: PreviewItem) => {
+            await bindings['copy-path']?.execute(invocation)
+            onFileActionSuccess('copy-path', invocation)
+          }
+        },
+        'save-as-artifact': {
+          ...bindings['save-as-artifact'],
+          execute: async (invocation: PreviewItem) => {
+            await bindings['save-as-artifact']?.execute(invocation)
+            onFileActionSuccess('save-as-artifact', invocation)
+          }
+        }
+      }
+    : bindings
+  const pdfContextBinding = successAwareBindings['toggle-pdf-context']
+  const focusAwareBindings = pdfContextBinding
+    ? {
+        ...successAwareBindings,
         'toggle-pdf-context': {
           ...pdfContextBinding,
           execute: (invocation: PreviewItem) => {
@@ -146,7 +182,7 @@ const PreviewTabActionTarget = ({
           }
         }
       }
-    : bindings
+    : successAwareBindings
 
   return (
     <ActionMenuTarget<PreviewTabActionCommand, PreviewItem>
@@ -165,7 +201,12 @@ const PreviewTabActionTarget = ({
         const composerFocusRequested = composerFocusRequestedRef.current
         composerFocusRequestedRef.current = false
         if (!composerFocusRequested) {
-          document.getElementById(getPreviewTabId(item.id))?.focus()
+          const activeId = usePreviewWorkbenchStore.getState().activeItemId
+          const target =
+            document.getElementById(getPreviewTabId(item.id)) ??
+            (activeId ? document.getElementById(getPreviewTabId(activeId)) : null)
+          if (target) target.focus()
+          else requestComposerFocus()
         }
       }}
       asChild
@@ -203,7 +244,9 @@ const PreviewTab = ({
   containerRef,
   tabRef,
   tabCount,
+  retryPendingKeys,
   onPdfContextError,
+  onFileActionSuccess,
   onLinkReadingContext,
   onUnlinkReadingContext,
   onActivate,
@@ -215,7 +258,9 @@ const PreviewTab = ({
   containerRef: (element: HTMLDivElement | null) => void
   tabRef: (element: HTMLButtonElement | null) => void
   tabCount: number
+  retryPendingKeys?: ReadonlySet<string>
   onPdfContextError?: (message: string | null) => void
+  onFileActionSuccess?: (command: PreviewTabActionCommand, item: PreviewItem) => void
   onLinkReadingContext?: PreviewInteractionPort['onLinkReadingContext']
   onUnlinkReadingContext?: PreviewInteractionPort['onUnlinkReadingContext']
   onActivate: (id: string) => void
@@ -237,7 +282,9 @@ const PreviewTab = ({
       <PreviewTabActionTarget
         item={tab}
         tabCount={tabCount}
+        retryPendingKeys={retryPendingKeys}
         onPdfContextError={onPdfContextError}
+        onFileActionSuccess={onFileActionSuccess}
         onLinkReadingContext={onLinkReadingContext}
         onUnlinkReadingContext={onUnlinkReadingContext}
       >
@@ -299,18 +346,22 @@ const PreviewTab = ({
 // Horizontal, scrollable strip of every file the user has asked to preview this session.
 const PreviewTabBar = ({
   tabs,
+  retryPendingKeys,
   activeItemId,
   onActivate,
   onClose,
   onPdfContextError,
+  onFileActionSuccess,
   onLinkReadingContext,
   onUnlinkReadingContext
 }: {
   tabs: PreviewItem[]
+  retryPendingKeys?: ReadonlySet<string>
   activeItemId: string | undefined
   onActivate: (id: string) => void
   onClose: (id: string) => boolean
   onPdfContextError?: (message: string | null) => void
+  onFileActionSuccess?: (command: PreviewTabActionCommand, item: PreviewItem) => void
   onLinkReadingContext?: PreviewInteractionPort['onLinkReadingContext']
   onUnlinkReadingContext?: PreviewInteractionPort['onUnlinkReadingContext']
 }): React.JSX.Element => {
@@ -407,7 +458,9 @@ const PreviewTabBar = ({
             tabRefs.current[index] = element
           }}
           tabCount={tabs.length}
+          retryPendingKeys={retryPendingKeys}
           onPdfContextError={onPdfContextError}
+          onFileActionSuccess={onFileActionSuccess}
           onLinkReadingContext={onLinkReadingContext}
           onUnlinkReadingContext={onUnlinkReadingContext}
           onActivate={onActivate}
@@ -675,6 +728,59 @@ const PreviewPanelSurface = ({
   onUnlinkReadingContext,
   ...annotationPort
 }: PreviewPanelSurfaceProps): React.JSX.Element => {
+  const { t } = useTranslation()
+  const activeProjectId = useNavigationStore((state) => state.activeProjectId)
+  const [actionFailure, setActionFailure] = useState<PreviewTabActionError>()
+  useEffect(() => setActionFailure(undefined), [activeProjectId])
+  const [retryPendingKeys, setRetryPendingKeys] = useState<ReadonlySet<string>>(() => new Set())
+  const retryPendingKeysRef = useRef(new Set<string>())
+  const clearActionFailure = (command: PreviewTabActionCommand, item: PreviewItem): void => {
+    setActionFailure((current) =>
+      current &&
+      current.projectId === activeProjectId &&
+      current.itemId === item.id &&
+      current.command === command
+        ? undefined
+        : current
+    )
+  }
+  const retryAction = async (): Promise<void> => {
+    if (
+      !actionFailure ||
+      retryPendingKeysRef.current.has(actionFailure.retryKey) ||
+      actionFailure.projectId !== useNavigationStore.getState().activeProjectId
+    )
+      return
+    retryPendingKeysRef.current.add(actionFailure.retryKey)
+    setRetryPendingKeys((current) => new Set(current).add(actionFailure.retryKey))
+    try {
+      await actionFailure.retry()
+      setActionFailure((current) => (current === actionFailure ? undefined : current))
+    } catch (error) {
+      setActionFailure((current) =>
+        current === actionFailure
+          ? new PreviewTabActionError(
+              actionFailure.command,
+              actionFailure.fileName,
+              actionFailure.retry,
+              error,
+              actionFailure.projectId,
+              actionFailure.itemId,
+              actionFailure.retryKey
+            )
+          : current
+      )
+    } finally {
+      retryPendingKeysRef.current.delete(actionFailure.retryKey)
+      setRetryPendingKeys((current) => {
+        if (!current.has(actionFailure.retryKey)) return current
+        const next = new Set(current)
+        next.delete(actionFailure.retryKey)
+        return next
+      })
+    }
+  }
+
   const items = usePreviewWorkbenchStore((state) => state.items)
   const activeItemId = usePreviewWorkbenchStore((state) => state.activeItemId)
   const panelState = usePreviewWorkbenchStore((state) => state.panelState)
@@ -695,7 +801,16 @@ const PreviewPanelSurface = ({
       : (activeItem?.id ?? 'empty')
 
   return (
-    <ActionMenuProvider testId="preview-tab-context-menu">
+    <ActionMenuProvider
+      testId="preview-tab-context-menu"
+      onActionError={(error) => {
+        if (error instanceof PreviewTabActionError) {
+          // An operation from a previous project can reject after its tabs have unmounted.
+          if (error.projectId === useNavigationStore.getState().activeProjectId)
+            setActionFailure(error)
+        } else console.error('Failed to execute preview tab action', error)
+      }}
+    >
       <aside
         id="right-panel"
         className={cn(
@@ -710,12 +825,40 @@ const PreviewPanelSurface = ({
           >
             <PreviewTabBar
               tabs={items}
+              retryPendingKeys={retryPendingKeys}
+              onFileActionSuccess={clearActionFailure}
               activeItemId={activeItemId}
               onActivate={activateItem}
               onClose={removeItem}
               onPdfContextError={onPdfContextError}
               onLinkReadingContext={onLinkReadingContext}
               onUnlinkReadingContext={onUnlinkReadingContext}
+            />
+          </div>
+        ) : null}
+        {actionFailure && actionFailure.projectId === activeProjectId ? (
+          <div
+            className="mx-2 my-2 max-h-[50%] shrink-0 overflow-y-auto"
+            data-testid="preview-tab-action-error"
+          >
+            <ErrorNotice
+              role="alert"
+              tone="amber"
+              title={
+                actionFailure.command === 'copy-path'
+                  ? t('Could not copy the file path.')
+                  : actionFailure.command === 'download'
+                    ? t('Could not download this file.')
+                    : t('Could not save this file as an artifact.')
+              }
+              description={actionFailure.fileName}
+              errorCode={errorDetail(actionFailure.cause)}
+              primaryButton={{
+                label: t('Retry'),
+                onClick: () => void retryAction(),
+                loading: retryPendingKeys.has(actionFailure.retryKey)
+              }}
+              secondaryButton={{ label: t('Close'), onClick: () => setActionFailure(undefined) }}
             />
           </div>
         ) : null}
