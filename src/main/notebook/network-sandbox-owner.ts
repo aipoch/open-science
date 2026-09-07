@@ -533,6 +533,10 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
     }
   }
 
+  get supportsWindowsRuntimeAccess(): boolean {
+    return this.platform === 'win32'
+  }
+
   async dispose(): Promise<void> {
     await this.initializePromise?.catch(() => undefined)
     try {

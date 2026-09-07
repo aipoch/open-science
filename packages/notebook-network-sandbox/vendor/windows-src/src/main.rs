@@ -2272,6 +2272,7 @@ mod windows_host {
             fs::create_dir_all(&first).unwrap();
             fs::create_dir_all(&second).unwrap();
             let snapshot = capture_acl_snapshot(&shared.to_string_lossy()).unwrap();
+            let second_snapshot = capture_acl_snapshot(&second.to_string_lossy()).unwrap();
             // Exercise the ACL reconciliation boundary on owned temporary directories. Full profile
             // setup and WFP removal require the elevated integration suite; no drive ACL is changed here.
             let entry = |leaf: &Path| RuntimeDirectoryAccess {
@@ -2317,6 +2318,43 @@ mod windows_host {
             );
 
             let missing = shared.join("z-missing");
+            reconcile_runtime_directories(&both, Some(&empty)).unwrap();
+            run_icacls(
+                &second.to_string_lossy(),
+                &["/grant:r", &format!("*{}:RX", empty.profile_sid), "/Q"],
+                "alter cleanup test grant",
+            )
+            .unwrap();
+            let changed_second = capture_acl_snapshot(&second.to_string_lossy()).unwrap();
+            assert!(reconcile_runtime_directories(&empty, Some(&both)).is_err());
+            assert!(
+                !super::super::directory_access::is_granted(
+                    &first.to_string_lossy(),
+                    &empty.profile_sid
+                )
+                .unwrap()
+            );
+            assert_eq!(
+                capture_acl_snapshot(&second.to_string_lossy()).unwrap(),
+                changed_second
+            );
+            restore_acl_snapshot(&second_snapshot).unwrap();
+            super::super::directory_access::update(
+                &second.to_string_lossy(),
+                &empty.profile_sid,
+                true,
+                true,
+            )
+            .unwrap();
+            reconcile_runtime_directories(&empty, Some(&both)).unwrap();
+            assert_eq!(
+                capture_acl_snapshot(&shared.to_string_lossy()).unwrap(),
+                snapshot
+            );
+            assert_eq!(
+                capture_acl_snapshot(&second.to_string_lossy()).unwrap(),
+                second_snapshot
+            );
             let mut interrupted = empty.clone();
             interrupted.runtime_directory_access = vec![entry(&first), entry(&missing)];
             assert!(reconcile_runtime_directories(&interrupted, Some(&empty)).is_err());

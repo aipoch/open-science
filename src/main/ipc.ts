@@ -3946,7 +3946,7 @@ const createApplicationModules = async (
   // (getRuntimeRoot(<dataRoot>)); read lazily so a data-root switch is reflected without re-register.
   const runtimeWorkflows = createRuntimeWorkflows({
     settingsService,
-    ...(process.platform === 'win32'
+    ...(notebookNetworkSandbox.supportsWindowsRuntimeAccess
       ? {
           setWindowsRuntimeAccess: (executable: string, authorized: boolean) =>
             notebookNetworkSandbox.setWindowsRuntimeAccess(executable, authorized)
@@ -3958,7 +3958,7 @@ const createApplicationModules = async (
     onRuntimeDisabled: (language, envId, force) =>
       notebookService.revokeRuntime(language, envId, {
         force,
-        waitForDrain: process.platform === 'win32' && language === 'r'
+        waitForDrain: notebookNetworkSandbox.supportsWindowsRuntimeAccess && language === 'r'
       }),
     // WS11: live-session usage of a runtime, for the disable-impact warning.
     describeRuntimeUsage: (language, envId) => notebookService.describeRuntimeUsage(language, envId)
