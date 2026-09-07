@@ -30,6 +30,7 @@ type FindSnapshot = {
   scrollTop: number
   anchor?: ReadingAnchor
   target?: ReadingAnchor
+  followEndReached?: boolean
   followEnd?: boolean
 }
 
@@ -247,6 +248,9 @@ const useTranscriptWindow = (
     if (snapshot && snapshot.window.scopeId === scopeId) {
       snapshot.target = undefined
       snapshot.followEnd = true
+      const viewport = viewportRef.current
+      snapshot.followEndReached =
+        !!viewport && viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight <= 0.5
     }
     readingAnchorRef.current = undefined
     pendingTargetRef.current = undefined
@@ -264,7 +268,15 @@ const useTranscriptWindow = (
     if (!viewport || presentationBarrierIndex >= 0) return
     const prefetchDistance = Math.max(64, viewport.clientHeight)
     readingAnchorRef.current = captureReadingAnchor(scopeId, viewport)
-    if (finding) return
+    if (finding) {
+      const snapshot = findRestoreRef.current
+      if (snapshot?.followEnd) {
+        const atEnd = viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight <= 0.5
+        if (atEnd) snapshot.followEndReached = true
+        else if (snapshot.followEndReached) snapshot.followEnd = false
+      }
+      return
+    }
     const following =
       end === items.length &&
       viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight <= 0.5

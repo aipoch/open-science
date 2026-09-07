@@ -4241,6 +4241,34 @@ describe('WorkspaceMessageScroller artifact click behavior', () => {
     }
   )
 
+  it('mounts only the tail when an initially empty session receives long history', async () => {
+    const { WorkspaceMessageScroller } = await import('./WorkspaceMessageScroller')
+    root = createRoot(container)
+    const render = async (messages: ChatMessage[]): Promise<void> => {
+      await act(async () =>
+        root.render(
+          <WorkspaceMessageScroller
+            activeSession={createSession({ status: 'idle', messages })}
+            onSendEditedMessage={vi.fn()}
+          />
+        )
+      )
+    }
+    await render([])
+    await render(
+      Array.from({ length: 240 }, (_, index) =>
+        createMessage({
+          id: `hydrated-${index}`,
+          content: `History ${index}`,
+          createdAt: 1710000000000 + index
+        })
+      )
+    )
+    expect(container.querySelectorAll('[data-message-id^="hydrated-"]')).toHaveLength(80)
+    expect(container.querySelector('[data-message-id="hydrated-0"]')).toBeNull()
+    expect(container.querySelector('[data-message-id="hydrated-239"]')).not.toBeNull()
+  })
+
   it('leaves ordinary transcript growth to the native scroller anchor policy', async () => {
     const { WorkspaceMessageScroller } = await import('./WorkspaceMessageScroller')
     root = createRoot(container)

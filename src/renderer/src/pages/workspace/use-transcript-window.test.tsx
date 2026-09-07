@@ -90,6 +90,39 @@ describe('useTranscriptWindow', () => {
     act(() => root.unmount())
   })
 
+  it('honors find scrolling after an explicit end selection settles', () => {
+    const root = createRoot(document.createElement('div'))
+    const viewport = document.createElement('div')
+    Object.defineProperties(viewport, {
+      clientHeight: { value: 800 },
+      scrollHeight: { value: 10000 }
+    })
+    viewport.getBoundingClientRect = () => ({ top: 100, bottom: 900 }) as DOMRect
+    const ref = { current: viewport }
+    let current!: ReturnType<typeof useTranscriptWindow>
+    const Harness = (): null => {
+      current = useTranscriptWindow('session', items, -1, ref)
+      return null
+    }
+    act(() => root.render(<Harness />))
+    act(() => current.revealAll())
+    act(() => current.followEnd())
+    act(() => current.revealAll())
+    viewport.scrollTop = 9200
+    act(() => current.expandAtScrollEdge(0))
+    const match = document.createElement('div')
+    match.dataset.messageId = 'message-1'
+    match.getBoundingClientRect = () => ({ top: 108, bottom: 208 }) as DOMRect
+    viewport.appendChild(match)
+    // Text find scrolls programmatically; no wheel or key event reaches the transcript viewport.
+    viewport.scrollTop = 500
+    act(() => current.expandAtScrollEdge(9200))
+    act(() => current.restoreWindow())
+    expect(current.isFollowingEnd).toBe(false)
+    expect(current.entries[0].item.id).toBe('message-1')
+    act(() => root.unmount())
+  })
+
   it('keeps a stable reading row through insertions, resumes following, and resets scope', () => {
     const container = document.createElement('div')
     const root = createRoot(container)
