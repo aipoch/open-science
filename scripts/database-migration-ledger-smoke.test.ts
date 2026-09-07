@@ -154,7 +154,9 @@ describe('packaged database migration ledger smoke', () => {
   it('adds automatic-analysis state without reclassifying historical Compute Jobs', async () => {
     const root = await mkdtemp(join(tmpdir(), 'open-science-ledger-job-analysis-'))
     const databasePath = join(root, 'open-science.db').replaceAll('\\', '/')
-    const client = new PrismaClient({ datasources: { db: { url: `file:${databasePath}?connection_limit=1` } } })
+    const client = new PrismaClient({
+      datasources: { db: { url: `file:${databasePath}?connection_limit=1` } }
+    })
 
     try {
       await migrateApplicationDatabase(client)
@@ -211,7 +213,9 @@ describe('packaged database migration ledger smoke', () => {
   it('blocks analysis constraints when a historical Compute Job has an invalid state', async () => {
     const root = await mkdtemp(join(tmpdir(), 'open-science-ledger-job-analysis-invalid-'))
     const databasePath = join(root, 'open-science.db').replaceAll('\\', '/')
-    const client = new PrismaClient({ datasources: { db: { url: `file:${databasePath}?connection_limit=1` } } })
+    const client = new PrismaClient({
+      datasources: { db: { url: `file:${databasePath}?connection_limit=1` } }
+    })
 
     try {
       await migrateApplicationDatabase(client)
@@ -245,7 +249,9 @@ describe('packaged database migration ledger smoke', () => {
   it('blocks the global Memory index without deleting duplicate historical entries', async () => {
     const root = await mkdtemp(join(tmpdir(), 'open-science-ledger-memory-duplicate-'))
     const databasePath = join(root, 'open-science.db').replaceAll('\\', '/')
-    const client = new PrismaClient({ datasources: { db: { url: `file:${databasePath}?connection_limit=1` } } })
+    const client = new PrismaClient({
+      datasources: { db: { url: `file:${databasePath}?connection_limit=1` } }
+    })
 
     try {
       await migrateApplicationDatabase(client)
@@ -287,7 +293,9 @@ describe('packaged database migration ledger smoke', () => {
   it('adds usage attribution columns without changing existing usage rows', async () => {
     const root = await mkdtemp(join(tmpdir(), 'open-science-ledger-usage-attribution-'))
     const databasePath = join(root, 'open-science.db').replaceAll('\\', '/')
-    const client = new PrismaClient({ datasources: { db: { url: `file:${databasePath}?connection_limit=1` } } })
+    const client = new PrismaClient({
+      datasources: { db: { url: `file:${databasePath}?connection_limit=1` } }
+    })
 
     try {
       await migrateApplicationDatabase(client)
@@ -393,7 +401,9 @@ describe('packaged database migration ledger smoke', () => {
   it('adds Review query indexes without changing existing Review or Finding rows', async () => {
     const root = await mkdtemp(join(tmpdir(), 'open-science-ledger-review-indexes-'))
     const databasePath = join(root, 'open-science.db').replaceAll('\\', '/')
-    const client = new PrismaClient({ datasources: { db: { url: `file:${databasePath}?connection_limit=1` } } })
+    const client = new PrismaClient({
+      datasources: { db: { url: `file:${databasePath}?connection_limit=1` } }
+    })
 
     try {
       await migrateApplicationDatabase(client)
@@ -485,7 +495,9 @@ describe('packaged database migration ledger smoke', () => {
     const root = await mkdtemp(join(tmpdir(), 'open-science-ledger-auth-persistence-'))
     await seedLegacyDatabase(root)
     const databasePath = join(root, 'open-science.db').replaceAll('\\', '/')
-    const client = new PrismaClient({ datasources: { db: { url: `file:${databasePath}?connection_limit=1` } } })
+    const client = new PrismaClient({
+      datasources: { db: { url: `file:${databasePath}?connection_limit=1` } }
+    })
 
     try {
       await migrateApplicationDatabase(client)
@@ -587,7 +599,9 @@ describe('packaged database migration ledger smoke', () => {
     try {
       await seedLegacyDatabase(root)
       const databasePath = join(root, 'open-science.db').replaceAll('\\', '/')
-      const client = new PrismaClient({ datasources: { db: { url: `file:${databasePath}?connection_limit=1` } } })
+      const client = new PrismaClient({
+        datasources: { db: { url: `file:${databasePath}?connection_limit=1` } }
+      })
       try {
         await expect(client.$queryRawUnsafe('SELECT "id" FROM "Project"')).resolves.toHaveLength(1)
         await expect(
@@ -608,7 +622,9 @@ describe('packaged database migration ledger smoke', () => {
     try {
       await seedLegacyDatabase(root)
       const databasePath = join(root, 'open-science.db').replaceAll('\\', '/')
-      const client = new PrismaClient({ datasources: { db: { url: `file:${databasePath}?connection_limit=1` } } })
+      const client = new PrismaClient({
+        datasources: { db: { url: `file:${databasePath}?connection_limit=1` } }
+      })
       try {
         await client.$executeRawUnsafe(
           `ALTER TABLE "Project" ADD COLUMN "agentContext" TEXT NOT NULL DEFAULT ''`

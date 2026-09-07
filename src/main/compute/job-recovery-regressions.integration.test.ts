@@ -344,6 +344,62 @@ describe('Compute Job recovery behavior', () => {
     }
   )
 
+  it('finishes harvest and makes notification ready when cancellation proves no launch occurred', async () => {
+    const job = await createJob('submitted')
+    await db.repositories.jobs.update(job.job_id, { submittedAt: new Date() })
+    await new ComputeJobCancellationOwner(db.repositories.operations, db.repositories.jobs).request(
+      job.job_id,
+      scope
+    )
+    const confirmed = deferred()
+    const run = vi.fn<ComputeConnectionLease['run']>(async (command) =>
+      command.includes('OPEN_SCIENCE_DISPATCH_RECOVERY_V1')
+        ? success('OPEN_SCIENCE_DISPATCH_RECOVERY_V1\nworkdir:0\nexit_code:\npid:\ncwd_match:0')
+        : { ...success(), exitCode: 1, stderr: 'No such file or directory' }
+    )
+    const runtime = createComputeJobRuntime(
+      {
+        computeService: {
+          handleJobUpdated: vi.fn(),
+          handleJobCancellationConfirmed: async () => confirmed.resolve(),
+          startQueueReconciliation: vi.fn(),
+          stopQueueReconciliation: vi.fn(async () => undefined)
+        },
+        hostRepository: hosts,
+        jobRepository: db.repositories.jobs,
+        operationRepository: db.repositories.operations,
+        connectionBroker: broker(run),
+        storageRoot: db.storageRoot
+      },
+      {
+        broadcast: vi.fn(),
+        createPoller: () => ({
+          start: () => undefined,
+          stop: async () => undefined,
+          pause: async () => undefined,
+          resume: () => undefined
+        })
+      }
+    )
+    await runtime.start()
+    try {
+      await confirmed.promise
+      const persisted = (await db.repositories.jobs.get(job.job_id))!
+      expect.soft(persisted.harvested_at).toBeTruthy()
+      expect.soft(persisted.harvest_error).toBeUndefined()
+      expect.soft(persisted.remote_cleanup_disposition).toBe('cleaned')
+      expect.soft(await db.repositories.jobs.findTerminalUnharvested()).toEqual([])
+      expect
+        .soft(
+          (await db.repositories.jobs.findNotificationReadyUnnotified()).map((row) => row.job_id)
+        )
+        .toContain(job.job_id)
+      expect(run).toHaveBeenCalledTimes(1)
+    } finally {
+      await runtime.stop()
+    }
+  })
+
   it('shares harvest execution between cancellation completion and the periodic scan', async () => {
     const job = await createJob('running')
     await db.repositories.jobs.update(job.job_id, {

@@ -188,7 +188,7 @@ class ComputeJobCancellationReaper {
           observation.kind === 'exited' ||
           observation.kind === 'vanished'
         ) {
-          await this.confirm(claim)
+          await this.confirm(claim, observation.kind === 'not_started')
           return
         }
       }
@@ -232,8 +232,11 @@ class ComputeJobCancellationReaper {
     )
   }
 
-  private async confirm(claim: ClaimedComputeJobOperation): Promise<void> {
-    if (await this.operations.fulfill(claim, this.now())) {
+  private async confirm(
+    claim: ClaimedComputeJobOperation,
+    remoteWorkdirAbsent = false
+  ): Promise<void> {
+    if (await this.operations.fulfill(claim, this.now(), remoteWorkdirAbsent)) {
       await this.onConfirmed?.(claim.jobId)
     }
   }
