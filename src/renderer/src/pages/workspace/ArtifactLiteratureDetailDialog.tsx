@@ -119,10 +119,11 @@ const ArtifactLiteratureDetailDialog = ({
     <Dialog.Root open={Boolean(reference)} onOpenChange={onOpenChange}>
       {item ? (
         <Dialog.Portal>
-          <Dialog.Overlay className={dialogOverlayClassName} />
+          {/* Artifact preview panels occupy layers 60/61; keep both child surfaces above them. */}
+          <Dialog.Overlay className={cn(dialogOverlayClassName, 'z-[65]')} />
           <Dialog.Content
             className={dialogPanelClassName(
-              'flex max-h-[85svh] w-[min(680px,calc(100vw-2rem))] flex-col p-0'
+              'z-[65] flex max-h-[85svh] w-[min(680px,calc(100vw-2rem))] flex-col p-0'
             )}
           >
             <div className={cn(dialogHeaderClassName, 'shrink-0 items-start')}>
