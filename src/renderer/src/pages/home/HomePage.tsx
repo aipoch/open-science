@@ -176,6 +176,7 @@ const HomePage = ({
 }: HomePageProps): React.JSX.Element => {
   const { t } = useTranslation()
   const projects = useProjectStore((state) => state.projects)
+  const isProjectsLoaded = useProjectStore((state) => state.isLoaded)
   const loadError = useProjectStore((state) => state.loadError)
   const loadProjects = useProjectStore((state) => state.loadProjects)
   const updateProject = useProjectStore((state) => state.updateProject)
@@ -912,6 +913,10 @@ const HomePage = ({
                   >
                     {isRetryingProjects ? t('Retrying...') : t('Retry')}
                   </Button>
+                </div>
+              ) : !isProjectsLoaded && projectSummaries.length === 0 ? (
+                <div role="status" className="px-4 py-10 text-center text-sm text-muted-foreground">
+                  {t('Loading…')}
                 </div>
               ) : projectSummaries.length === 0 ? (
                 <div className="rounded-2xl border border-dashed border-border-200/70 px-4 py-10 text-center text-sm text-muted-foreground">

@@ -1736,6 +1736,33 @@ describe('HomePage activity overview', () => {
     expect(recentRow?.textContent?.match(/Live analysis/g)).toHaveLength(1)
   })
 
+  it('shows loading until the first project list resolves, then shows the empty state', async () => {
+    let resolve!: (projects: Project[]) => void
+    window.api.projects = {
+      list: vi.fn(
+        () =>
+          new Promise<Project[]>((done) => {
+            resolve = done
+          })
+      )
+    } as never
+    const load = useProjectStore.getState().loadProjects()
+    await act(async () =>
+      root.render(
+        <HomePage canDeleteProjects hasCompleteSessionCatalog onOpenGlobalSearch={vi.fn()} />
+      )
+    )
+    const section = container.querySelector('[aria-label="Projects"]')!
+    expect.soft(section.textContent).not.toContain('No projects yet.')
+    expect.soft(section.querySelector('[role="status"]')?.textContent).toBe('Loading…')
+    await act(async () => {
+      resolve([])
+      await load
+    })
+    expect(section.textContent).toContain('No projects yet. Create one to get started.')
+    expect(section.querySelector('[role="status"]')).toBeNull()
+  })
+
   it('offers a Retry action when loading Projects fails', async () => {
     const loadProjects = vi.fn().mockResolvedValue(undefined)
     useProjectStore.setState({
