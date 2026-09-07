@@ -321,10 +321,6 @@ class AcpPromptContentOwner {
         this.setSessionInlineImageBytes(input, imageBudget.base64Bytes)
       }
 
-      for (const image of currentImages) {
-        appendBlock({ type: 'image', data: image.data, mimeType: image.mimeType })
-      }
-
       if (hasUploads) {
         if (!this.options.uploadRepository) throw new Error('Upload storage is not configured.')
 
@@ -360,7 +356,8 @@ class AcpPromptContentOwner {
           )
           promptUploads[index] = resolved.attachment
           for (const block of resolved.blocks) {
-            const appended = appendBlock(
+            const previousImageCount = imageSources.length
+            appendBlock(
               block,
               this.imageOverflowResourceLink(
                 block,
@@ -371,11 +368,16 @@ class AcpPromptContentOwner {
                 ? { kind: 'upload-version', uploadVersionId: resolved.attachment.versionId }
                 : undefined
             )
-            if (index < input.historyUploads.length && isImageBlock(block) && appended) {
-              historyImageCount += 1
+            if (index < input.historyUploads.length) {
+              historyImageCount += imageSources.length - previousImageCount
             }
           }
         }
+      }
+
+      // The relay classifies the historical image prefix, including upload resource links.
+      for (const image of currentImages) {
+        appendBlock({ type: 'image', data: image.data, mimeType: image.mimeType })
       }
 
       for (const reference of input.references) {
