@@ -498,19 +498,23 @@ const usePreviewModalSurface = ({
     surface?.focus()
 
     const handleKeyDown = (event: KeyboardEvent): void => {
+      if (event.defaultPrevented || event.isComposing) return
+      // A portal may restore focus here while handling this same event. Its original target
+      // still belongs to the upper layer, so do not close or trap focus in the layer below.
+      if (
+        !surface ||
+        !(event.target instanceof Node) ||
+        !surface.contains(event.target) ||
+        !surface.contains(document.activeElement)
+      ) {
+        return
+      }
       if (event.key === 'Escape') {
-        if (
-          surface &&
-          document.activeElement !== surface &&
-          !surface.contains(document.activeElement)
-        ) {
-          return
-        }
         event.preventDefault()
         onClose()
         return
       }
-      if (event.key !== 'Tab' || !surface) return
+      if (event.key !== 'Tab') return
 
       const focusable = Array.from(
         surface.querySelectorAll<HTMLElement>(PREVIEW_MODAL_FOCUSABLE_SELECTOR)
@@ -523,7 +527,10 @@ const usePreviewModalSurface = ({
 
       const first = focusable[0]
       const last = focusable.at(-1)
-      if (event.shiftKey && document.activeElement === first) {
+      if (
+        event.shiftKey &&
+        (document.activeElement === surface || document.activeElement === first)
+      ) {
         event.preventDefault()
         last?.focus()
       } else if (!event.shiftKey && document.activeElement === last) {
@@ -532,9 +539,9 @@ const usePreviewModalSurface = ({
       }
     }
 
-    document.addEventListener('keydown', handleKeyDown, true)
+    document.addEventListener('keydown', handleKeyDown)
     return () => {
-      document.removeEventListener('keydown', handleKeyDown, true)
+      document.removeEventListener('keydown', handleKeyDown)
       document.body.style.overflow = previousOverflow
       document.getElementById(getPreviewTabId(itemId))?.focus()
     }
@@ -573,7 +580,7 @@ const PreviewFilePanel = ({
 
   usePreviewModalSurface({
     isOpen: isFullScreenOpen,
-    onClose: () => closeFullScreen(true),
+    onClose: closeFullScreen,
     surfaceRef,
     itemId: item.id
   })
