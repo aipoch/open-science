@@ -272,8 +272,13 @@ test('keeps home actions and content inside compact viewports', async ({ app }) 
       .toBe(true)
     await expect(cards.first()).toHaveCSS('cursor', 'pointer')
 
-    const firstCardBox = await cards.first().boundingBox()
-    const secondCardBox = await cards.nth(1).boundingBox()
+    // Read both cards in one browser task so a responsive reflow cannot split the measurements.
+    const [firstCardBox, secondCardBox] = await cards.evaluateAll((elements) =>
+      elements.slice(0, 2).map((element) => {
+        const { x, y, width, height } = element.getBoundingClientRect()
+        return { x, y, width, height }
+      })
+    )
     expect(firstCardBox?.x).toBeCloseTo(expectedInset, 0)
     expect(firstCardBox?.width).toBeCloseTo(expectedCardWidth, 0)
     expect((firstCardBox?.x ?? 0) + (firstCardBox?.width ?? 0)).toBeLessThanOrEqual(

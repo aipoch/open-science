@@ -52,6 +52,7 @@ import { JobDetailModal } from '@/components/JobDetailModal'
 import { extractJobIdFromActivity } from '@/components/job-binding-utils'
 import { MessageScrollerItem } from '@/components/ui/message-scroller'
 import { Button } from '@/components/ui/button'
+import { TooltipProvider } from '@/components/ui/tooltip'
 import { ReviewerCard } from '@/components/ReviewerCard'
 import { WorkspaceActivityGroup } from './WorkspaceActivityGroup'
 import { WorkspaceContextCompactionActivityRow } from './WorkspaceContextCompactionActivityRow'
@@ -1268,7 +1269,11 @@ const WorkspaceMessageScrollerImpl = ({
   }
 
   return (
-    <>
+    <TooltipProvider
+      key={activeSession?.id ?? 'empty-conversation'}
+      delayDuration={200}
+      skipDelayDuration={300}
+    >
       <MessageScrollerProvider
         key={activeSession?.id ?? 'empty-conversation'}
         autoScroll
@@ -1846,7 +1851,7 @@ const WorkspaceMessageScrollerImpl = ({
           onClose={handleCloseModal}
         />
       )}
-    </>
+    </TooltipProvider>
   )
 }
 

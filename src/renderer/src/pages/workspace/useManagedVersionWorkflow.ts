@@ -83,10 +83,10 @@ const useManagedVersionWorkflow = ({
     error?: string
   }>({})
   const activeDiffRequestId = useRef<string | undefined>(undefined)
-  const source: 'upload' | 'artifact' = item.source === 'upload' ? 'upload' : 'artifact'
+  const source = item.source ?? 'artifact'
   const identity = useMemo(
     () =>
-      projectId && item.managedFileId
+      (source === 'artifact' || source === 'upload') && projectId && item.managedFileId
         ? { source, projectId, fileId: item.managedFileId }
         : undefined,
     [item.managedFileId, projectId, source]

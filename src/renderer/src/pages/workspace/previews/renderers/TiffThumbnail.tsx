@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from 'react'
 
 import type { PreviewFileSource } from '@/stores/preview-workbench-store'
 
-import { createPreviewResourceKey } from '../preview-resource-key'
+import { usePreviewResourceKey } from '../usePreviewResourceGeneration'
 import { tiffThumbnailScheduler } from '../tiff-thumbnail-scheduler'
 import {
   TIFF_THUMBNAIL_LIMITS,
@@ -143,7 +143,7 @@ const TiffThumbnail = ({
   enabled,
   fallback
 }: TiffThumbnailProps): React.JSX.Element => {
-  const requestKey = createPreviewResourceKey({
+  const requestKey = usePreviewResourceKey({
     projectId,
     sessionId,
     source,

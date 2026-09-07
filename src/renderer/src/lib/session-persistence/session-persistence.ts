@@ -1554,6 +1554,7 @@ const createStoreSaver = (
           isForced ||
           streamingDirtySessionIds.has(session.id)) &&
         (isForced ||
+          streamingDirtySessionIds.has(session.id) ||
           !isExternallyHydratedSession(session) ||
           hasUnsavedLocalTitle ||
           hasUnsavedContextReset) &&

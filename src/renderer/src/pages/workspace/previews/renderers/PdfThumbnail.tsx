@@ -1,3 +1,4 @@
+import { usePreviewResourceKey } from '../usePreviewResourceGeneration'
 import { useEffect, useState } from 'react'
 import { FileText } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
@@ -8,7 +9,6 @@ import type { PreviewFileSource } from '@/stores/preview-workbench-store'
 
 import { createManagedPdfLoadingTask } from '../managed-pdf-document'
 import { isUnavailableFileError } from '../preview-errors'
-import { createPreviewResourceKey } from '../preview-resource-key'
 import { createManagedPreviewRequest } from '../preview-file-reader'
 import { useNearViewport } from '../useNearViewport'
 
@@ -294,7 +294,7 @@ export const PdfThumbnail = ({
   renderWidth?: number
 }): React.JSX.Element => {
   const { t } = useTranslation()
-  const resourceKey = createPreviewResourceKey({
+  const resourceKey = usePreviewResourceKey({
     projectId,
     sessionId,
     source,

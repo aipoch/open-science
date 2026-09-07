@@ -200,6 +200,7 @@ model PermissionGrant {
   scopeKind      String
   projectId      String?
   sessionId      String?
+  approvalSummary String?
   fingerprint    String    @unique
   revision       Int       @default(1)
   createdAt      DateTime?

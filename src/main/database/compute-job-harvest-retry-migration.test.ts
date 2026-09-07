@@ -21,7 +21,7 @@ describe('Compute Job harvest retry migration', () => {
     client = createProjectDbClient(root)
     const prefix = MIGRATION_MANIFEST.slice(
       0,
-      MIGRATION_MANIFEST.findIndex((entry) => entry.id === '0031_project_archive_revision') + 1
+      MIGRATION_MANIFEST.findIndex((entry) => entry.id === '0032_permission_approval_summary') + 1
     )
     await client.$executeRawUnsafe('PRAGMA foreign_keys = OFF')
     for (const migration of prefix) {

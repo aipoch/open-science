@@ -147,6 +147,7 @@ const RUNTIME_SCHEMA_TABLE_DDLS = [
     "scopeKind" TEXT NOT NULL,
     "projectId" TEXT,
     "sessionId" TEXT,
+    "approvalSummary" TEXT,
     "fingerprint" TEXT NOT NULL,
     "revision" INTEGER NOT NULL DEFAULT 1,
     "createdAt" DATETIME,

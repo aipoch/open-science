@@ -91,10 +91,11 @@ describe('notification attention metadata migration', () => {
         '0029_compute_host_execution_mode',
         '0030_literature_foundation',
         '0031_project_archive_revision',
-        '0032_compute_job_harvest_retry'
+        '0032_permission_approval_summary',
+        '0033_compute_job_harvest_retry'
       ],
       from: '0006_database_domain_constraints',
-      to: '0032_compute_job_harvest_retry'
+      to: '0033_compute_job_harvest_retry'
     })
     await expect(
       access(`${databasePath}.before-0007_notification_attention_metadata.backup`)

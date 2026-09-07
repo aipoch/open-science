@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto'
+import { approvalSummaryFor } from './approval-summary'
 
 import type { Prisma, PrismaClient } from '@prisma/client'
 
@@ -30,6 +31,7 @@ type PermissionGrantRow = {
   projectId: string | null
   sessionId: string | null
   fingerprint: string
+  approvalSummary: string | null
   revision: number | bigint
   createdAt: Date | string | null
 }
@@ -155,6 +157,9 @@ const recordFromRow = (row: PermissionGrantRow): PermissionGrantRecord => ({
   capability: capabilityFromRow(row),
   scope: scopeFromRow(row),
   ...(row.createdAt ? { createdAt: new Date(row.createdAt).getTime() } : {}),
+  ...(row.approvalSummary && row.approvalSummary === approvalSummaryFor(capabilityFromRow(row))
+    ? { approvalSummary: row.approvalSummary }
+    : {}),
   revision: Number(row.revision)
 })
 
@@ -322,8 +327,8 @@ const createPermissionGrantRegistry = async (
           await transaction.$executeRawUnsafe(
             `INSERT OR IGNORE INTO "PermissionGrant" (
               "id", "capabilityKind", "capabilityKey", "qualifierMode", "qualifierValue",
-              "scopeKind", "projectId", "sessionId", "fingerprint", "revision", "createdAt"
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)`,
+              "scopeKind", "projectId", "sessionId", "fingerprint", "revision", "createdAt", "approvalSummary"
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)`,
             createId(),
             command.capability.kind,
             command.capability.key,
@@ -333,7 +338,8 @@ const createPermissionGrantRegistry = async (
             target.projectId,
             target.sessionId,
             fingerprint,
-            createdAt
+            createdAt,
+            approvalSummaryFor(command.capability) ?? null
           )
           const [persisted] = await transaction.$queryRawUnsafe<PermissionGrantRow[]>(
             'SELECT * FROM "PermissionGrant" WHERE "fingerprint" = ? LIMIT 1',
@@ -422,11 +428,11 @@ const createPermissionGrantRegistry = async (
       return runMutation(async () => {
         const receipt = receipts.get(command.undoToken)
         if (!receipt) {
-          return { grants: sortedRecords(records.values()), conflicts: [] }
+          return { grants: sortedRecords(records.values()), conflicts: [], restoredCount: 0 }
         }
         if (receipt.expiresAt <= now().getTime()) {
           receipts.delete(command.undoToken)
-          return { grants: sortedRecords(records.values()), conflicts: [] }
+          return { grants: sortedRecords(records.values()), conflicts: [], restoredCount: 0 }
         }
 
         const liveRows: PermissionGrantRow[] = []
@@ -447,8 +453,8 @@ const createPermissionGrantRegistry = async (
             await transaction.$executeRawUnsafe(
               `INSERT OR IGNORE INTO "PermissionGrant" (
                 "id", "capabilityKind", "capabilityKey", "qualifierMode", "qualifierValue",
-                "scopeKind", "projectId", "sessionId", "fingerprint", "revision", "createdAt"
-              ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                "scopeKind", "projectId", "sessionId", "fingerprint", "revision", "createdAt", "approvalSummary"
+              ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
               row.id,
               row.capabilityKind,
               row.capabilityKey,
@@ -459,7 +465,8 @@ const createPermissionGrantRegistry = async (
               row.sessionId,
               row.fingerprint,
               revision,
-              row.createdAt
+              row.createdAt,
+              row.approvalSummary
             )
             const [persisted] = await transaction.$queryRawUnsafe<PermissionGrantRow[]>(
               'SELECT * FROM "PermissionGrant" WHERE "fingerprint" = ? LIMIT 1',
@@ -473,7 +480,11 @@ const createPermissionGrantRegistry = async (
         receipts.delete(command.undoToken)
         for (const row of restoredRows) records.set(row.fingerprint, recordFromRow(row))
         if (restoredRows.length > 0) publish()
-        return { grants: sortedRecords(records.values()), conflicts }
+        return {
+          grants: sortedRecords(records.values()),
+          conflicts,
+          restoredCount: restoredRows.length
+        }
       })
     },
 
