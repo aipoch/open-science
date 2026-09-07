@@ -76,6 +76,29 @@ const findButtonByName = async (pattern: RegExp): Promise<HTMLButtonElement> => 
 }
 
 describe('CloseConfirmModal', () => {
+  it('keeps a long running-task list separate from the close actions', async () => {
+    render()
+    act(() =>
+      emit({
+        requestId: 'many-tasks',
+        variant: 'quit',
+        sessions: Array.from({ length: 35 }, (_, index) => ({
+          sessionId: `scroll-session-${index}`,
+          projectId: `scroll-project-${index}`,
+          kind: 'agent'
+        }))
+      })
+    )
+    const dialog = document.querySelector('[role="alertdialog"]')!
+    const viewport = dialog.querySelector('[data-slot="scroll-area-viewport"]')!
+    expect(viewport.querySelectorAll('li')).toHaveLength(35)
+    expect(viewport.textContent).toContain('scroll-session-34')
+    const cancel = await findButtonByName(/^Cancel$/)
+    expect(viewport.contains(cancel)).toBe(false)
+    act(() => cancel.click())
+    expect(sendResponse).toHaveBeenCalledWith({ requestId: 'many-tasks', choice: 'cancel' })
+  })
+
   it('retains a covered close request until its presentation becomes active', async () => {
     act(() => root.render(<CloseConfirmModal active={false} />))
     act(() => {

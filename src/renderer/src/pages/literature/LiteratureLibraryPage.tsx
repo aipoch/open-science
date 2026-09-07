@@ -56,6 +56,7 @@ import { ExternalTextLink } from '@/components/ExternalTextLink'
 import { ActionToast } from '@/components/ActionToast'
 import { LiteratureErrorNotice } from './LiteratureErrorNotice'
 import { Button } from '@/components/ui/button'
+import { ScrollArea } from '@/components/ui/scroll-area'
 import {
   dialogBodyClassName,
   dialogCancelButtonClassName,
@@ -5329,8 +5330,12 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
       >
         <Dialog.Portal>
           <Dialog.Overlay className={dialogOverlayClassName} />
-          <Dialog.Content className={dialogPanelClassName('w-[min(440px,calc(100vw-2rem))] p-0')}>
-            <div className={dialogHeaderClassName}>
+          <Dialog.Content
+            className={dialogPanelClassName(
+              'flex max-h-[calc(100svh-2rem)] w-[min(440px,calc(100vw-2rem))] flex-col p-0'
+            )}
+          >
+            <div className={cn(dialogHeaderClassName, 'shrink-0')}>
               <div>
                 <Dialog.Title className={dialogTitleClassName}>{t('Read with agent')}</Dialog.Title>
                 <Dialog.Description className={dialogDescriptionClassName}>
@@ -5349,87 +5354,89 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
                 </Button>
               </Dialog.Close>
             </div>
-            <div className={dialogBodyClassName}>
-              {readingProjectError ? (
-                <div className="mb-3">
-                  <p role="alert" className="text-sm text-danger-000">
-                    {readingProjectError}
-                  </p>
-                  {readingSelectionEntries ? (
-                    <Button
-                      className="mt-2"
-                      variant="outline"
-                      size="sm"
-                      disabled={Boolean(startingReadingProjectId)}
-                      onClick={() => {
-                        setPendingLiteratureReading(undefined)
-                        setReadingProjectError(undefined)
-                        setBatchReading({ entries: readingSelectionEntries })
-                      }}
-                    >
-                      {t('Back')}
-                    </Button>
-                  ) : null}
-                </div>
-              ) : null}
-              {projectsLoaded ? (
-                activeProjects.length > 0 ? (
-                  <div className="grid gap-2">
-                    {activeProjects.map((project) => (
+            <ScrollArea className="grid min-h-0 flex-1 [&>[data-slot=scroll-area-viewport]]:h-auto [&>[data-slot=scroll-area-viewport]]:min-h-0">
+              <div className={dialogBodyClassName}>
+                {readingProjectError ? (
+                  <div className="mb-3">
+                    <p role="alert" className="text-sm text-danger-000">
+                      {readingProjectError}
+                    </p>
+                    {readingSelectionEntries ? (
                       <Button
-                        key={project.id}
-                        type="button"
+                        className="mt-2"
                         variant="outline"
-                        className="justify-start"
+                        size="sm"
                         disabled={Boolean(startingReadingProjectId)}
-                        onClick={() => void startReadingInProject(project.id)}
+                        onClick={() => {
+                          setPendingLiteratureReading(undefined)
+                          setReadingProjectError(undefined)
+                          setBatchReading({ entries: readingSelectionEntries })
+                        }}
                       >
-                        {startingReadingProjectId === project.id ? (
-                          <LoaderCircle
-                            className="size-4 animate-spin motion-reduce:animate-none"
-                            aria-hidden="true"
-                          />
-                        ) : (
-                          <FolderOpen className="size-4" aria-hidden="true" />
-                        )}
-                        <span className="truncate">{project.name}</span>
+                        {t('Back')}
                       </Button>
-                    ))}
+                    ) : null}
                   </div>
-                ) : (
-                  <div className="flex flex-col items-start gap-3 rounded-lg border border-dashed border-border-300/80 bg-bg-100 p-4">
-                    <FolderPlus className="size-5 text-muted-foreground" aria-hidden="true" />
-                    <div>
-                      <h3 className="text-sm font-medium">{t('No projects yet')}</h3>
-                      <p className="mt-1 text-sm leading-relaxed text-muted-foreground">
-                        {pendingLiteratureReading && pendingLiteratureReading.length > 1
-                          ? t(
-                              'Create a project to keep these papers and their Reading session together.'
-                            )
-                          : t(
-                              'Create a project to keep this paper and its Reading session together.'
-                            )}
-                      </p>
+                ) : null}
+                {projectsLoaded ? (
+                  activeProjects.length > 0 ? (
+                    <div className="grid gap-2">
+                      {activeProjects.map((project) => (
+                        <Button
+                          key={project.id}
+                          type="button"
+                          variant="outline"
+                          className="min-w-0 justify-start"
+                          disabled={Boolean(startingReadingProjectId)}
+                          onClick={() => void startReadingInProject(project.id)}
+                        >
+                          {startingReadingProjectId === project.id ? (
+                            <LoaderCircle
+                              className="size-4 animate-spin motion-reduce:animate-none"
+                              aria-hidden="true"
+                            />
+                          ) : (
+                            <FolderOpen className="size-4" aria-hidden="true" />
+                          )}
+                          <span className="truncate">{project.name}</span>
+                        </Button>
+                      ))}
                     </div>
-                    <Button
-                      type="button"
-                      disabled={Boolean(startingReadingProjectId)}
-                      onClick={readingProjectFormDialog.openCreateDialog}
-                    >
-                      <FolderPlus className="size-4" aria-hidden="true" />
-                      {t('Create project')}
-                    </Button>
-                  </div>
-                )
-              ) : (
-                <p role="status" className="text-sm text-muted-foreground">
-                  {t('Loading…')}
-                </p>
-              )}
-            </div>
+                  ) : (
+                    <div className="flex flex-col items-start gap-3 rounded-lg border border-dashed border-border-300/80 bg-bg-100 p-4">
+                      <FolderPlus className="size-5 text-muted-foreground" aria-hidden="true" />
+                      <div>
+                        <h3 className="text-sm font-medium">{t('No projects yet')}</h3>
+                        <p className="mt-1 text-sm leading-relaxed text-muted-foreground">
+                          {pendingLiteratureReading && pendingLiteratureReading.length > 1
+                            ? t(
+                                'Create a project to keep these papers and their Reading session together.'
+                              )
+                            : t(
+                                'Create a project to keep this paper and its Reading session together.'
+                              )}
+                        </p>
+                      </div>
+                      <Button
+                        type="button"
+                        disabled={Boolean(startingReadingProjectId)}
+                        onClick={readingProjectFormDialog.openCreateDialog}
+                      >
+                        <FolderPlus className="size-4" aria-hidden="true" />
+                        {t('Create project')}
+                      </Button>
+                    </div>
+                  )
+                ) : (
+                  <p role="status" className="text-sm text-muted-foreground">
+                    {t('Loading…')}
+                  </p>
+                )}
+              </div>
+            </ScrollArea>
             {projectsLoaded && activeProjects.length > 0 ? (
               <div
-                className={`${dialogFooterClassName} flex-wrap items-center [&_button]:max-w-full [&_button]:whitespace-normal [&_button]:h-auto [&_button]:min-h-8 [&_button]:py-1`}
+                className={`${dialogFooterClassName} shrink-0 flex-wrap items-center [&_button]:max-w-full [&_button]:whitespace-normal [&_button]:h-auto [&_button]:min-h-8 [&_button]:py-1`}
               >
                 <Button
                   type="button"
