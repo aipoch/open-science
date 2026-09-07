@@ -254,15 +254,20 @@ export class NotebookEnvironmentOperations {
       async () => {
         for (const session of targetSessions) {
           if (!Array.from(this.options.sessions()).includes(session)) continue
-          const revocation = await this.options.bindings.revoke(
-            session,
-            language,
-            runtimeId,
-            () => {
-              const environment = runEnvironment(session, language)
-              return { environment, processKey: processKey(language, environment) }
-            }
-          )
+          let revocation = await this.options.bindings.revoke(session, language, runtimeId, () => {
+            const environment = runEnvironment(session, language)
+            return { environment, processKey: processKey(language, environment) }
+          })
+          // An unavailable binding prevents new work, but does not prove its old kernel exited.
+          // Permission removal must retry teardown after an earlier drain/termination failure.
+          if (
+            !revocation &&
+            options.waitForDrain &&
+            session.runtimeBinding(language)?.runtimeId === runtimeId
+          ) {
+            const environment = runEnvironment(session, language)
+            revocation = { environment, processKey: processKey(language, environment) }
+          }
           if (!revocation) continue
 
           const { environment, processKey: revokedProcessKey } = revocation

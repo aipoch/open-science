@@ -24,7 +24,11 @@ import type {
 } from './process-sandbox'
 import { startDiagnosticOperation } from '../diagnostics/operation'
 import { createLogger, diagnosticErrorFields, type Logger } from '../logger'
-import { environmentPathRoots, notebookTrustBundleEnvironment } from './process-environment'
+import {
+  buildNotebookKernelEnvironment,
+  environmentPathRoots,
+  notebookTrustBundleEnvironment
+} from './process-environment'
 import {
   notebookTrustBundleStatus,
   resolveNotebookTrustBundle,
@@ -492,7 +496,7 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
     try {
       const prefix = windowsCondaPrefixForR(executable, this.platform)
       const env = {
-        ...process.env,
+        ...buildNotebookKernelEnvironment(this.platform),
         ...(prefix ? { PATH: condaActivatedPath(prefix, process.env.PATH, this.platform) } : {})
       }
       invocation = await this.wrap({

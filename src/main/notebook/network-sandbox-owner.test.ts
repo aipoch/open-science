@@ -1,5 +1,5 @@
 import { existsSync } from 'node:fs'
-import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { rootCertificates } from 'node:tls'
@@ -20,6 +20,7 @@ const backend = vi.hoisted(() => ({
   status: vi.fn().mockResolvedValue({ kind: 'ready', warnings: [] }),
   installWindows: vi.fn().mockResolvedValue({ cancelled: false }),
   removeWindows: vi.fn().mockResolvedValue({ cancelled: false }),
+  setWindowsRuntimeAccess: vi.fn().mockResolvedValue({ cancelled: false }),
   dispose: vi.fn().mockResolvedValue(undefined)
 }))
 
@@ -32,6 +33,7 @@ vi.mock('@aipoch/notebook-network-sandbox', () => ({
     updateConfiguration = backend.updateConfiguration
     installWindows = backend.installWindows
     removeWindows = backend.removeWindows
+    setWindowsRuntimeAccess = backend.setWindowsRuntimeAccess
     dispose = backend.dispose
   }
 }))
@@ -96,6 +98,46 @@ afterEach(async () => {
 })
 
 describe('NotebookNetworkSandboxOwner', () => {
+  it('does not pass parent secrets or R startup overrides to the runtime verification child', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'os-r-verification-env-'))
+    fixtureDirectories.push(root)
+    const observation = join(root, 'child-environment.json')
+    vi.stubEnv('AWS_SECRET_ACCESS_KEY', 'test-only-parent-secret')
+    vi.stubEnv('R_HOME', 'test-only-parent-r-home')
+    const owner = new NotebookNetworkSandboxOwner({
+      resourceRoot: root,
+      getSettings: async () => DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
+      persistAlwaysAllow: vi.fn(),
+      requestDecision: vi.fn(),
+      platform: 'win32'
+    })
+    // Keep the existing sandbox adapter seam; a real child observes the environment supplied by
+    // the public authorization/verification operation without requiring R or administrator access.
+    backend.wrap.mockImplementationOnce(async (command: { env: NodeJS.ProcessEnv }) => ({
+      argv: [
+        process.execPath,
+        '-e',
+        `require('node:fs').writeFileSync(${JSON.stringify(observation)}, JSON.stringify({ secret: process.env.AWS_SECRET_ACCESS_KEY ?? null, rHome: process.env.R_HOME ?? null })); console.log('OPEN_SCIENCE_R_ACCESS_OK')`
+      ],
+      env: command.env,
+      annotateStderr: (stderr: string) => stderr,
+      resetNetworkConnections: backend.resetNetworkConnections,
+      cleanup: backend.cleanup
+    }))
+    try {
+      await expect(
+        owner.setWindowsRuntimeAccess('D:\\external-r\\bin\\Rscript.exe', true)
+      ).resolves.toEqual({ cancelled: false })
+      expect(JSON.parse(await readFile(observation, 'utf8'))).toEqual({
+        secret: null,
+        rHome: null
+      })
+    } finally {
+      vi.unstubAllEnvs()
+      await owner.dispose()
+    }
+  })
+
   it('quotes executable arguments without allowing shell interpolation', () => {
     expect(
       commandLine(

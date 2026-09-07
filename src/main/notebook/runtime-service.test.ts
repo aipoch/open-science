@@ -14070,6 +14070,38 @@ describe('v4 runtime bindings & agent tools', () => {
     await service.shutdownAll()
   })
 
+  it('retries failed R kernel termination before confirming synchronous runtime revocation', async () => {
+    const root = await createStorageRoot()
+    const terminate = vi
+      .fn<(_kind: 'python' | 'r' | 'repl', _env: string) => Promise<void>>()
+      .mockRejectedValueOnce(new Error('R process termination failed'))
+      .mockResolvedValue(undefined)
+    const service = bindingService(root, {
+      discovered: [userR],
+      enablement: { enabled: { [userR.envId]: true }, installAuthorized: {} },
+      terminate
+    })
+    try {
+      await service.bindRuntime({
+        sessionId: 's',
+        workspaceCwd: root,
+        language: 'r',
+        runtimeId: userR.envId
+      })
+      await service.execute({ sessionId: 's', workspaceCwd: root, code: '1', language: 'r' })
+
+      await expect(service.revokeRuntime('r', userR.envId, { waitForDrain: true })).rejects.toThrow(
+        'R process termination failed'
+      )
+      expect(terminate).toHaveBeenCalledTimes(1)
+
+      await service.revokeRuntime('r', userR.envId, { waitForDrain: true })
+      expect(terminate).toHaveBeenCalledTimes(2)
+    } finally {
+      await service.shutdownAll()
+    }
+  })
+
   it('waits for a deferred runtime-revocation drain before removing the Project lane', async () => {
     const root = await createStorageRoot()
     const terminationStarted = createDeferred<void>()
