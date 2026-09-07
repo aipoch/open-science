@@ -105,7 +105,8 @@ export class PreviewTabActionError extends Error {
     readonly command: PreviewTabActionCommand,
     readonly fileName: string,
     readonly retry: () => Promise<void>,
-    cause: unknown
+    cause: unknown,
+    readonly projectId: string | undefined
   ) {
     super('Preview tab action failed', { cause })
   }
@@ -122,7 +123,7 @@ const retryableFileBinding = (
     try {
       await retry()
     } catch (error) {
-      throw new PreviewTabActionError(command, item.title, retry, error)
+      throw new PreviewTabActionError(command, item.title, retry, error, deps.activeProjectId)
     }
   }
 })

@@ -686,13 +686,20 @@ const PreviewPanelSurface = ({
   ...annotationPort
 }: PreviewPanelSurfaceProps): React.JSX.Element => {
   const { t } = useTranslation()
+  const activeProjectId = useNavigationStore((state) => state.activeProjectId)
   const [actionFailure, setActionFailure] = useState<PreviewTabActionError>()
-  const [retryPending, setRetryPending] = useState(false)
-  const retryPendingRef = useRef(false)
+  useEffect(() => setActionFailure(undefined), [activeProjectId])
+  const [retryPending, setRetryPending] = useState<PreviewTabActionError>()
+  const retryPendingRef = useRef<PreviewTabActionError | undefined>(undefined)
   const retryAction = async (): Promise<void> => {
-    if (!actionFailure || retryPendingRef.current) return
-    retryPendingRef.current = true
-    setRetryPending(true)
+    if (
+      !actionFailure ||
+      retryPendingRef.current === actionFailure ||
+      actionFailure.projectId !== useNavigationStore.getState().activeProjectId
+    )
+      return
+    retryPendingRef.current = actionFailure
+    setRetryPending(actionFailure)
     try {
       await actionFailure.retry()
       setActionFailure((current) => (current === actionFailure ? undefined : current))
@@ -703,13 +710,14 @@ const PreviewPanelSurface = ({
               actionFailure.command,
               actionFailure.fileName,
               actionFailure.retry,
-              error
+              error,
+              actionFailure.projectId
             )
           : current
       )
     } finally {
-      retryPendingRef.current = false
-      setRetryPending(false)
+      if (retryPendingRef.current === actionFailure) retryPendingRef.current = undefined
+      setRetryPending((current) => (current === actionFailure ? undefined : current))
     }
   }
 
@@ -736,8 +744,11 @@ const PreviewPanelSurface = ({
     <ActionMenuProvider
       testId="preview-tab-context-menu"
       onActionError={(error) => {
-        if (error instanceof PreviewTabActionError) setActionFailure(error)
-        else console.error('Failed to execute preview tab action', error)
+        if (error instanceof PreviewTabActionError) {
+          // An operation from a previous project can reject after its tabs have unmounted.
+          if (error.projectId === useNavigationStore.getState().activeProjectId)
+            setActionFailure(error)
+        } else console.error('Failed to execute preview tab action', error)
       }}
     >
       <aside
@@ -763,7 +774,7 @@ const PreviewPanelSurface = ({
             />
           </div>
         ) : null}
-        {actionFailure ? (
+        {actionFailure && actionFailure.projectId === activeProjectId ? (
           <div
             className="mx-2 my-2 max-h-[50%] shrink-0 overflow-y-auto"
             data-testid="preview-tab-action-error"
@@ -783,7 +794,7 @@ const PreviewPanelSurface = ({
               primaryButton={{
                 label: t('Retry'),
                 onClick: () => void retryAction(),
-                loading: retryPending
+                loading: retryPending === actionFailure
               }}
               secondaryButton={{ label: t('Close'), onClick: () => setActionFailure(undefined) }}
             />

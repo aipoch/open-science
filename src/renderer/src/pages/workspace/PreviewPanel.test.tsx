@@ -1738,4 +1738,126 @@ describe('PreviewPanel', () => {
       composer.remove()
     }
   })
+  it.each([false, true])(
+    'discards a previous project action failure (late rejection: %s)',
+    async (late) => {
+      useNavigationStore.setState({ activeProjectId: 'project-a' })
+      usePreviewWorkbenchStore.getState().activateProject('project-a')
+      usePreviewWorkbenchStore.getState().upsertAndActivateItem(
+        createFileItem({
+          source: 'local',
+          projectId: 'project-a'
+        })
+      )
+      let reject!: (error: Error) => void
+      const save = vi.fn(
+        () =>
+          new Promise<never>((_, fail) => {
+            reject = fail
+          })
+      )
+      window.api.uploads.stageLocalPath = save
+      await renderPanel()
+      await openTabContextMenu(0)
+      await clickMenuCommand('save-as-artifact')
+      expect(save).toHaveBeenCalledWith(expect.objectContaining({ projectId: 'project-a' }))
+      const rejectSave = async (): Promise<void> => {
+        await act(async () => reject(new Error('Project A save failed')))
+      }
+      if (!late) {
+        await rejectSave()
+        expect(container.querySelector('[data-testid="preview-tab-action-error"]')).not.toBeNull()
+      }
+      await act(async () => {
+        useNavigationStore.setState({ activeProjectId: 'project-b' })
+        usePreviewWorkbenchStore.getState().activateProject('project-b')
+      })
+      if (late) await rejectSave()
+      expect(container.querySelector('[data-testid="preview-tab-action-error"]')).toBeNull()
+      await act(async () => {
+        useNavigationStore.setState({ activeProjectId: 'project-a' })
+        usePreviewWorkbenchStore.getState().activateProject('project-a')
+      })
+      expect(container.querySelector('[data-testid="preview-tab-action-error"]')).toBeNull()
+      expect(save).toHaveBeenCalledTimes(1)
+    }
+  )
+
+  it('rejects a stale retry click after navigation changes projects', async () => {
+    useNavigationStore.setState({ activeProjectId: 'project-a' })
+    usePreviewWorkbenchStore.getState().activateProject('project-a')
+    usePreviewWorkbenchStore.getState().upsertAndActivateItem(createFileItem({ source: 'local' }))
+    const save = vi.fn().mockRejectedValue(new Error('Project A save failed'))
+    window.api.uploads.stageLocalPath = save
+    await renderPanel()
+    await openTabContextMenu(0)
+    await clickMenuCommand('save-as-artifact')
+    const retry = container.querySelector<HTMLButtonElement>(
+      '[data-testid="preview-tab-action-error"] button'
+    )!
+    expect(retry).not.toBeNull()
+    await act(async () => {
+      useNavigationStore.setState({ activeProjectId: 'project-b' })
+      retry.click()
+    })
+    expect(save).toHaveBeenCalledTimes(1)
+  })
+  it('keeps retry progress scoped to the current project failure', async () => {
+    let finishA: (() => void) | undefined
+    let finishB: (() => void) | undefined
+    const save = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('Project A save failed'))
+      .mockImplementationOnce(
+        () =>
+          new Promise<void>((resolve) => {
+            finishA = resolve
+          })
+      )
+      .mockRejectedValueOnce(new Error('Project B save failed'))
+      .mockImplementationOnce(
+        () =>
+          new Promise<void>((resolve) => {
+            finishB = resolve
+          })
+      )
+    window.api.uploads.stageLocalPath = save
+    const openProject = (projectId: string): void => {
+      useNavigationStore.setState({ activeProjectId: projectId })
+      usePreviewWorkbenchStore.getState().activateProject(projectId)
+      usePreviewWorkbenchStore.getState().upsertAndActivateItem(
+        createFileItem({
+          source: 'local',
+          projectId,
+          id: projectId
+        })
+      )
+    }
+    const retryButton = (): HTMLButtonElement =>
+      container.querySelector<HTMLButtonElement>('[data-testid="preview-tab-action-error"] button')!
+    openProject('project-a')
+    await renderPanel()
+    try {
+      await openTabContextMenu(0)
+      await clickMenuCommand('save-as-artifact')
+      await act(async () => retryButton().click())
+      expect(save).toHaveBeenCalledTimes(2)
+      await act(async () => openProject('project-b'))
+      await openTabContextMenu(0)
+      await clickMenuCommand('save-as-artifact')
+      expect(save).toHaveBeenCalledTimes(3)
+      expect(retryButton().disabled).toBe(false)
+      await act(async () => retryButton().click())
+      expect(save).toHaveBeenCalledTimes(4)
+      await act(async () => finishA?.())
+      expect(retryButton().disabled).toBe(true)
+      await act(async () => finishB?.())
+      expect(container.querySelector('[data-testid="preview-tab-action-error"]')).toBeNull()
+    } finally {
+      await act(async () => {
+        finishA?.()
+        finishB?.()
+      })
+    }
+  })
 })
