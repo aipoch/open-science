@@ -1,6 +1,5 @@
+import { sessionUsageMessages, sessionUsageRuns } from '../../../../shared/session-usage'
 import {
-  isHiddenControlMessage,
-  isHumanUserMessage,
   type PersistedChatMessage,
   type PersistedChatSession,
   type SessionUsageProjection
@@ -37,7 +36,6 @@ type TokenUsageEvent = {
   inputTokens: number
   cacheTokens: number
   outputTokens: number
-  rootRunUsage: boolean
 }
 
 export type TokenUsageAnalytics = {
@@ -65,7 +63,6 @@ export type TokenUsageSummary = {
   newArtifacts: number
   totalRuns: number
   newRuns: number
-  reportedRuns: number
 }
 
 const finiteNonNegative = (value: number): number =>
@@ -185,18 +182,11 @@ export const buildTokenUsageAnalytics = (
       }
     }
 
-    const graph = session.conversationGraph
-    const messages: ReadonlyArray<{
-      message: PersistedChatMessage
-      isRootMessage: boolean
-    }> = graph
-      ? graph.messages.map((message) => ({
-          message,
-          isRootMessage: message.agentFrameId === graph.rootFrameId
-        }))
-      : session.messages.map((message) => ({ message, isRootMessage: true }))
+    const messages = sessionUsageMessages(session)
+    const runs = sessionUsageRuns(session, messages)
+    runsAt.push(...runs.map((run) => run.createdAt))
 
-    for (const { message, isRootMessage } of messages) {
+    for (const { message, inherited } of messages) {
       const associationTimestamp = message.completedAt ?? message.createdAt
       for (const artifactId of message.artifactIds ?? []) {
         const existingTimestamp = associatedArtifactCreatedAt.get(artifactId)
@@ -209,14 +199,7 @@ export const buildTokenUsageAnalytics = (
         }
       }
 
-      if (
-        isRootMessage &&
-        isHumanUserMessage(message) &&
-        !isHiddenControlMessage(message) &&
-        !message.delegatedCallerSource
-      ) {
-        runsAt.push(message.createdAt || session.createdAt)
-      }
+      if (inherited) continue
 
       if (message.role !== 'agent' || !message.turnUsage) continue
 
@@ -227,8 +210,7 @@ export const buildTokenUsageAnalytics = (
         timestamp: usageTimestamp(message),
         inputTokens,
         cacheTokens,
-        outputTokens,
-        rootRunUsage: isRootMessage
+        outputTokens
       })
     }
   }
@@ -299,8 +281,7 @@ export const selectTokenUsageSummary = (
           ).length,
     totalRuns: analytics.runsAt.filter((timestamp) => timestamp <= analytics.now).length,
     newRuns: analytics.runsAt.filter((timestamp) => isInPeriod(timestamp, start, analytics.now))
-      .length,
-    reportedRuns: usageEvents.filter((event) => event.rootRunUsage).length
+      .length
   }
 }
 

@@ -171,7 +171,7 @@ const WorkspaceRunMarks = ({
   }
 
   return createPortal(
-    <TooltipProvider delayDuration={RUN_MARK_HOVER_DELAY_MS} skipDelayDuration={0}>
+    <TooltipProvider delayDuration={RUN_MARK_HOVER_DELAY_MS} skipDelayDuration={300}>
       <nav
         aria-label={t('Run marks')}
         className="pointer-events-none fixed z-20 hidden w-6 -translate-y-1/2 md:block"

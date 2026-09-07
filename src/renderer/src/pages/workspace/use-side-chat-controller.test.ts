@@ -529,3 +529,305 @@ describe('Side chat renderer controller', () => {
     act(() => root.unmount())
   })
 })
+
+it('shows only one user message after a rejected follow-up is retried', async () => {
+  const snapshot = {
+    revision: 1,
+    chats: [
+      {
+        revision: 1,
+        parentSessionId: 'main-1',
+        projectId: 'project-1',
+        sideSessionId: 'side-1',
+        entries: [],
+        running: false
+      }
+    ]
+  }
+  const send = vi.fn(async () => undefined).mockRejectedValueOnce(new Error('Session file is busy'))
+  window.api = {
+    sideChat: {
+      list: vi.fn(async () => snapshot),
+      send,
+      onEvent: vi.fn(() => () => undefined),
+      onRelayDelivered: vi.fn(() => () => undefined)
+    }
+  } as unknown as Window['api']
+  const root = createRoot(document.createElement('div'))
+  let controller!: ReturnType<typeof useSideChatController>
+  const Harness = (): null => {
+    controller = useSideChatController({ sessionId: 'main-1', projectId: 'project-1' })
+    return null
+  }
+  try {
+    await act(async () =>
+      root.render(createElement(SideChatProvider, null, createElement(Harness)))
+    )
+    await act(async () => expect(await controller.send('Retry this exact question')).toBe(false))
+    await act(async () => expect(await controller.send('Retry this exact question')).toBe(true))
+    expect(
+      controller.view?.entries.filter(
+        (entry) =>
+          entry.kind === 'message' &&
+          entry.role === 'user' &&
+          entry.text === 'Retry this exact question'
+      )
+    ).toHaveLength(1)
+  } finally {
+    act(() => root.unmount())
+  }
+})
+
+it('localizes the restoration message in a non-English interface', async () => {
+  const { i18next } = await import('../../i18n')
+  await i18next.changeLanguage('zh-Hans')
+  const listed = deferred<{ revision: number; chats: [] }>()
+  window.api = {
+    sideChat: {
+      list: vi.fn(() => listed.promise),
+      onEvent: vi.fn(() => () => undefined),
+      onRelayDelivered: vi.fn(() => () => undefined)
+    }
+  } as unknown as Window['api']
+  const root = createRoot(document.createElement('div'))
+  let controller!: ReturnType<typeof useSideChatController>
+  const Harness = (): null => {
+    controller = useSideChatController({ sessionId: 'main-1', projectId: 'project-1' })
+    return null
+  }
+  try {
+    await act(async () =>
+      root.render(createElement(SideChatProvider, null, createElement(Harness)))
+    )
+    expect(controller.unavailableReason).toMatch(/[\u3400-\u9fff]/)
+  } finally {
+    await act(async () => {
+      listed.resolve({ revision: 1, chats: [] })
+      await listed.promise
+    })
+    act(() => root.unmount())
+    await i18next.changeLanguage('en')
+  }
+})
+
+it.each([
+  'restore-failed',
+  'closing',
+  'close-failed',
+  'connection-closed',
+  'interrupted-snapshot',
+  'cancelled-snapshot',
+  'electron-cancelled-snapshot'
+] as const)(
+  'localizes the owned %s notice while preserving diagnostic details',
+  async (scenario) => {
+    const { i18next } = await import('../../i18n')
+    await i18next.changeLanguage('zh-Hans')
+    const closed = deferred<void>()
+    let listener: ((event: never) => void) | undefined
+    const snapshot = {
+      revision: 1,
+      chats: [
+        {
+          revision: 1,
+          parentSessionId: 'main-1',
+          projectId: 'project-1',
+          sideSessionId: 'side-1',
+          entries: [],
+          running: false,
+          error:
+            scenario === 'cancelled-snapshot'
+              ? 'Side chat prompt cancelled.'
+              : scenario === 'electron-cancelled-snapshot'
+                ? "Error invoking remote method 'side-chat:send': Error: Side chat prompt cancelled."
+                : undefined,
+          ...(scenario === 'interrupted-snapshot'
+            ? {
+                notice: 'interrupted' as const
+              }
+            : {})
+        }
+      ]
+    }
+    window.api = {
+      sideChat: {
+        list: vi.fn(async () => {
+          if (scenario === 'restore-failed') throw new Error('diagnostic-detail')
+          return snapshot
+        }),
+        close: vi.fn(async () => {
+          if (scenario === 'close-failed') throw new Error('diagnostic-detail')
+          await closed.promise
+        }),
+        onEvent: vi.fn((callback) => {
+          listener = callback as never
+          return () => undefined
+        }),
+        onRelayDelivered: vi.fn(() => () => undefined)
+      }
+    } as unknown as Window['api']
+    const root = createRoot(document.createElement('div'))
+    let controller!: ReturnType<typeof useSideChatController>
+    const Harness = (): null => {
+      controller = useSideChatController({ sessionId: 'main-1', projectId: 'project-1' })
+      return null
+    }
+    try {
+      await act(async () =>
+        root.render(createElement(SideChatProvider, null, createElement(Harness)))
+      )
+      if (scenario === 'closing' || scenario === 'close-failed')
+        await act(async () => controller.close())
+      if (scenario === 'connection-closed')
+        act(() =>
+          listener?.({
+            revision: 2,
+            parentSessionId: 'main-1',
+            projectId: 'project-1',
+            sideSessionId: 'side-1',
+            event: { kind: 'closed', reason: 'connection-closed' }
+          } as never)
+        )
+      const notice = controller.unavailableReason ?? controller.view?.error
+      if (scenario === 'restore-failed' || scenario === 'close-failed')
+        expect(notice).toContain('diagnostic-detail')
+      expect(notice).toMatch(/[\u3400-\u9fff]/)
+    } finally {
+      await act(async () => {
+        closed.resolve()
+        await closed.promise
+      })
+      act(() => root.unmount())
+      await i18next.changeLanguage('en')
+    }
+  }
+)
+
+it('keeps an admitted follow-up when its IPC response fails', async () => {
+  const base = {
+    revision: 1,
+    parentSessionId: 'main-1',
+    projectId: 'project-1',
+    sideSessionId: 'side-1',
+    entries: [],
+    running: false
+  }
+  const list = vi.fn(async () => ({
+    revision: 2,
+    chats: [
+      {
+        ...base,
+        revision: 2,
+        running: true,
+        entries: [
+          {
+            id: 'user-authoritative',
+            kind: 'message' as const,
+            role: 'user' as const,
+            text: 'Already sent'
+          }
+        ]
+      }
+    ]
+  }))
+  list.mockResolvedValueOnce({ revision: 1, chats: [base] })
+  window.api = {
+    sideChat: {
+      list,
+      send: vi.fn(async () => {
+        throw new Error('Lost IPC response')
+      }),
+      onEvent: vi.fn(() => () => undefined),
+      onRelayDelivered: vi.fn(() => () => undefined)
+    }
+  } as unknown as Window['api']
+  const root = createRoot(document.createElement('div'))
+  let controller!: ReturnType<typeof useSideChatController>
+  const Harness = (): null => {
+    controller = useSideChatController({ sessionId: 'main-1', projectId: 'project-1' })
+    return null
+  }
+  try {
+    await act(async () =>
+      root.render(createElement(SideChatProvider, null, createElement(Harness)))
+    )
+    await act(async () => expect(await controller.send('Already sent')).toBe(true))
+    expect(controller.view).toMatchObject({
+      running: true,
+      entries: [{ id: 'user-authoritative', text: 'Already sent' }]
+    })
+  } finally {
+    act(() => root.unmount())
+  }
+})
+
+it('publishes save failure and recovery without replacing a pending follow-up or its running state', async () => {
+  const sent = deferred<void>()
+  let listener: ((event: never) => void) | undefined
+  window.api = {
+    sideChat: {
+      list: async () => ({
+        revision: 1,
+        chats: [
+          {
+            revision: 1,
+            parentSessionId: 'main-1',
+            projectId: 'project-1',
+            sideSessionId: 'side-1',
+            entries: [],
+            running: false
+          }
+        ]
+      }),
+      send: () => sent.promise,
+      onEvent: (callback: (event: never) => void) => {
+        listener = callback as never
+        return () => undefined
+      },
+      onRelayDelivered: () => () => undefined
+    }
+  } as unknown as Window['api']
+  const root = createRoot(document.createElement('div'))
+  let controller!: ReturnType<typeof useSideChatController>
+  const Harness = (): null => {
+    controller = useSideChatController({ sessionId: 'main-1', projectId: 'project-1' })
+    return null
+  }
+  try {
+    await act(async () =>
+      root.render(createElement(SideChatProvider, null, createElement(Harness)))
+    )
+    let sending!: Promise<boolean>
+    act(() => {
+      sending = controller.send('Pending follow-up')
+    })
+    const entries = controller.view!.entries
+    const envelope = { parentSessionId: 'main-1', projectId: 'project-1', sideSessionId: 'side-1' }
+    act(() =>
+      listener?.({
+        ...envelope,
+        revision: 2,
+        event: { kind: 'persistence', error: 'Disk full' }
+      } as never)
+    )
+    expect(controller.view).toMatchObject({ running: true, persistenceError: 'Disk full' })
+    expect(controller.view!.entries).toBe(entries)
+    act(() => listener?.({ ...envelope, revision: 3, event: { kind: 'persistence' } } as never))
+    expect(controller.view!.persistenceError).toBeUndefined()
+    expect(controller.view!.running).toBe(true)
+    act(() =>
+      listener?.({
+        ...envelope,
+        revision: 2,
+        event: { kind: 'persistence', error: 'Stale failure' }
+      } as never)
+    )
+    expect(controller.view!.persistenceError).toBeUndefined()
+    await act(async () => {
+      sent.resolve()
+      await sending
+    })
+  } finally {
+    act(() => root.unmount())
+  }
+})

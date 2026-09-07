@@ -10,7 +10,18 @@ import type { Project } from '../../shared/projects'
 import type { ReviewRunResult, ReviewWithChecks } from '../../shared/reviewer'
 import type { ActivePlanProjection, PlanResponseCommand } from '../../shared/session-plan/contract'
 import type { PersistedArtifact, PersistedChatSession } from '../../shared/session-persistence'
-import type { SettingsSnapshot } from '../../shared/settings'
+import type {
+  AddCustomServerRequest,
+  UpdateCustomServerRequest,
+  ConnectorsSnapshot,
+  ConnectorDetailView,
+  CustomServerView,
+  CreateDeviceCredentialRequest,
+  UpdateDeviceCredentialRequest,
+  DeviceCredentialsSnapshot,
+  CreateDeviceCredentialResult,
+  SettingsSnapshot
+} from '../../shared/settings'
 import type {
   AcquiredTaskArtifact,
   CreateTaskProjectRequest,
@@ -254,6 +265,98 @@ class HeadlessTaskApi {
     request: UpdateProjectSessionDefaultsRequest
   ): Promise<TaskProjectSessionDefaults> {
     return this.runner.updateProjectSessionDefaults(projectId, request)
+  }
+
+  async listConnectors(): Promise<ConnectorsSnapshot> {
+    return this.invoke('settings:list-connectors') as Promise<ConnectorsSnapshot>
+  }
+
+  async getConnector(id: string): Promise<ConnectorDetailView | CustomServerView> {
+    const snapshot = await this.listConnectors()
+    const custom = snapshot.customServers.find((item) => item.id === id)
+    if (custom) return custom
+    if (!snapshot.connectors.some((item) => item.id === id)) {
+      throw new TaskRunnerError('invalid_request', 'Unknown Connector ID.')
+    }
+    return this.invoke('settings:get-connector-detail', id) as Promise<ConnectorDetailView>
+  }
+
+  async setConnectorEnabled(id: string, enabled: boolean): Promise<ConnectorsSnapshot> {
+    this.requireLocalConnectorCaller()
+    if (typeof enabled !== 'boolean')
+      throw new TaskRunnerError('invalid_request', 'enabled must be a boolean.')
+    const snapshot = await this.listConnectors()
+    const custom = snapshot.customServers.some((item) => item.id === id)
+    if (!custom && !snapshot.connectors.some((item) => item.id === id)) {
+      throw new TaskRunnerError('invalid_request', 'Unknown Connector ID.')
+    }
+    return this.connectorOperation(
+      custom ? 'settings:set-custom-server-enabled' : 'settings:set-connector-enabled',
+      { id, enabled }
+    )
+  }
+
+  addConnector(request: AddCustomServerRequest): Promise<ConnectorsSnapshot> {
+    return this.connectorOperation('settings:add-custom-server', request)
+  }
+
+  updateConnector(
+    id: string,
+    request: Omit<UpdateCustomServerRequest, 'id'>
+  ): Promise<ConnectorsSnapshot> {
+    return this.connectorOperation('settings:update-custom-server', { ...request, id })
+  }
+
+  removeConnector(id: string): Promise<ConnectorsSnapshot> {
+    return this.connectorOperation('settings:remove-custom-server', { id })
+  }
+
+  testConnector(id: string): Promise<{ success: boolean; toolCount?: number; message: string }> {
+    return this.connectorOperation('settings:test-custom-server', { id })
+  }
+
+  listCredentials(): Promise<DeviceCredentialsSnapshot> {
+    return this.connectorOperation('settings:list-device-credentials')
+  }
+
+  createCredential(request: CreateDeviceCredentialRequest): Promise<CreateDeviceCredentialResult> {
+    return this.connectorOperation('settings:create-device-credential', request)
+  }
+
+  updateCredential(
+    id: string,
+    request: Omit<UpdateDeviceCredentialRequest, 'id'>
+  ): Promise<DeviceCredentialsSnapshot> {
+    return this.connectorOperation('settings:update-device-credential', { ...request, id })
+  }
+
+  private requireLocalConnectorCaller(): void {
+    if (this.currentCallerContext().location !== 'local') {
+      throw new TaskRunnerError(
+        'invalid_request',
+        'Connector and credential changes require a local connection.'
+      )
+    }
+  }
+
+  private async connectorOperation<Result>(channel: string, request?: unknown): Promise<Result> {
+    this.requireLocalConnectorCaller()
+    try {
+      return (await this.invoke(channel, ...(request === undefined ? [] : [request]))) as Result
+    } catch (error) {
+      // Provider errors can contain submitted credentials. Never forward their raw messages.
+      const message =
+        error instanceof Error &&
+        [
+          'Secure credential storage is unavailable. Unlock the system keychain and retry.',
+          'Credential changes were saved, but Connectors could not refresh. Retry from Settings > Connectors.'
+        ].includes(error.message)
+          ? error.message
+          : channel.includes('credential')
+            ? 'Credential operation failed. Check the input and system credential storage.'
+            : 'Connector operation failed. Check the ID, configuration, and credential bindings.'
+      throw new TaskRunnerError('invalid_configuration', message)
+    }
   }
 
   async getAgentRouting(): Promise<TaskAgentRouting> {

@@ -97,6 +97,24 @@ const pending = (runtimeRoot: string): ReturnType<RuntimeOperationJournal['pendi
   RuntimeOperationJournal.forPath(operationJournalPath(runtimeRoot)).pending()
 
 describe('NotebookPackageMutationOwner', () => {
+  it('passes caller cancellation to the package installer', async () => {
+    const installPackages = vi.fn().mockResolvedValue({
+      ok: true,
+      needsRestart: false,
+      log: 'installed',
+      method: 'conda'
+    })
+    const { owner, target } = ownerHarness({ installPackages })
+    const cancellation = new AbortController()
+
+    await owner.mutate({ target, mirror: {} }, cancellation.signal)
+
+    expect(installPackages).toHaveBeenCalledWith(
+      target.request,
+      expect.objectContaining({ signal: cancellation.signal })
+    )
+  })
+
   it('rechecks repair policy after acquiring the mutation lock', async () => {
     const refusal = {
       status: 'refused' as const,
@@ -252,6 +270,21 @@ describe('NotebookPackageMutationOwner', () => {
       'repair-complete'
     ])
     expect(options.runtimeRepair.quarantineProtectedIdentity).not.toHaveBeenCalled()
+  })
+
+  it('completes a managed conda install without retaining archive publication when no cache retainer exists', async () => {
+    const { owner, target, runtimeRoot } = ownerHarness({
+      installPackages: vi.fn(async (_request, deps) => {
+        deps?.onCondaArchiveAuthorizations?.(
+          [{ file: 'numpy-1.conda', algorithm: 'sha256', digest: 'a'.repeat(64) }],
+          '/managed-working-cache'
+        )
+        return { ok: true, needsRestart: false, log: 'installed', method: 'conda' as const }
+      })
+    })
+
+    await expect(owner.mutate({ target, mirror: {} })).resolves.toMatchObject({ ok: true })
+    expect(await pending(runtimeRoot)).toEqual([])
   })
 
   it('publishes a successful conda transaction before releasing its working cache', async () => {
@@ -675,6 +708,7 @@ describe('NotebookPackageMutationOwner', () => {
     await expect(owner.mutate({ target, mirror: {} })).rejects.toBe(childFailure)
 
     expect(options.blockUnconfirmedChild).toHaveBeenCalledWith(target)
+    expect(options.environmentStateTracker.refreshAfterPackageMutation).not.toHaveBeenCalled()
     expect(release).toHaveBeenCalledWith({
       archivePublications: [],
       completedOperationId: operationId,

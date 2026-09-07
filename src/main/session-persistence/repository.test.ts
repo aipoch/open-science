@@ -1,11 +1,13 @@
 import {
   mkdir,
   mkdtemp,
+  lstat,
   readFile,
   readdir,
   rename,
   rm,
   symlink,
+  truncate,
   utimes,
   writeFile
 } from 'node:fs/promises'
@@ -19,7 +21,13 @@ vi.mock('electron', () => ({
   app: { getPath: () => '/home/user', isPackaged: true }
 }))
 
-import type { PersistedChatSession, PersistedToolActivity } from '../../shared/session-persistence'
+import {
+  MAX_PERSISTED_SESSION_BYTES,
+  SESSION_SIZE_LIMIT_ERROR_CODE,
+  type PersistedChatSession,
+  type PersistedToolActivity
+} from '../../shared/session-persistence'
+import { DurableJsonReadLimitError } from '../storage/durable-json-file'
 import {
   DEV_SESSION_DIR_NAME,
   SessionRepository,
@@ -1271,6 +1279,176 @@ describe('session persistence repository (per-session files)', () => {
       readFile(join(root, 'sessions', session.projectId, `${session.id}.json`), 'utf8')
     ).resolves.toContain(session.id)
     expect(readSessionFile).toHaveBeenCalledOnce()
+  })
+
+  it('rejects an oversized Session before reading it into memory', async () => {
+    const root = await createStorageRoot()
+    const session = createSession()
+    await new SessionRepository(root).saveSession(session)
+    const filePath = join(root, 'sessions', session.projectId, `${session.id}.json`)
+    await truncate(filePath, MAX_PERSISTED_SESSION_BYTES + 1)
+    const readSessionFile = vi.fn(async () => JSON.stringify({ version: 2, session }))
+    const repository = new SessionRepository(root, { readSessionFile })
+
+    await expect(
+      repository.loadSessionWithDiagnostics(session.projectId, session.id, { mode: 'read-only' })
+    ).resolves.toEqual({ status: 'unreadable' })
+    await expect(repository.loadAllWithDiagnostics({ mode: 'read-only' })).resolves.toMatchObject({
+      isComplete: false,
+      warnings: [
+        {
+          kind: 'too-large',
+          projectId: session.projectId,
+          fileName: `${session.id}.json`,
+          recovered: false
+        }
+      ]
+    })
+    expect(readSessionFile).not.toHaveBeenCalled()
+    await expect(lstat(filePath)).resolves.toMatchObject({ size: MAX_PERSISTED_SESSION_BYTES + 1 })
+  })
+
+  it('classifies an oversized recovery temp when no primary Session exists', async () => {
+    const root = await createStorageRoot()
+    const projectDir = join(root, 'sessions', 'project-a')
+    await mkdir(projectDir, { recursive: true })
+    const maxSessionBytes = 4096
+    const temporaryPath = join(projectDir, 'session-1.json.1700000000000-1.tmp')
+    await writeFile(temporaryPath, '', 'utf8')
+    await truncate(temporaryPath, maxSessionBytes + 1)
+    const repository = new SessionRepository(root, { maxSessionBytes })
+
+    await expect(repository.loadAllWithDiagnostics({ mode: 'read-only' })).resolves.toMatchObject({
+      isComplete: false,
+      warnings: [
+        {
+          kind: 'too-large',
+          projectId: 'project-a',
+          fileName: 'session-1.json',
+          recovered: false
+        }
+      ]
+    })
+    await expect(lstat(temporaryPath)).resolves.toMatchObject({ size: maxSessionBytes + 1 })
+  })
+
+  it('rejects an oversized Session before publishing another durable file', async () => {
+    const root = await createStorageRoot()
+    const repository = new SessionRepository(root, { maxSessionBytes: 512 })
+
+    await expect(repository.saveSession(createSession())).rejects.toMatchObject({
+      code: SESSION_SIZE_LIMIT_ERROR_CODE
+    })
+    await expect(
+      readFile(join(root, 'sessions', 'project-a', 'session-1.json'), 'utf8')
+    ).rejects.toMatchObject({ code: 'ENOENT' })
+  })
+
+  it('rejects an oversized existing Session before migration backup reads', async () => {
+    const root = await createStorageRoot()
+    const session = createSession()
+    await new SessionRepository(root).saveSession(session)
+    const filePath = join(root, 'sessions', session.projectId, `${session.id}.json`)
+    const maxSessionBytes = 4096
+    await truncate(filePath, maxSessionBytes + 1)
+    const readSessionFile = vi
+      .fn()
+      .mockRejectedValue(new Error('must not read oversized authority'))
+    const repository = new SessionRepository(root, { maxSessionBytes, readSessionFile })
+
+    await expect(
+      repository.saveSession({
+        ...session,
+        runtimeContext: {
+          version: 1,
+          revision: 1,
+          delegatedWork: {
+            records: [
+              {
+                agentFrameId: 'child-frame',
+                attempts: [
+                  {
+                    id: 'attempt-1',
+                    initiatingTurnMessageId: 'message-1',
+                    status: 'cancelled',
+                    resolvedAgent: { kind: 'main' },
+                    runtimeSegmentIds: [],
+                    startedAt: 1710000000001,
+                    endedAt: 1710000000002,
+                    cancellationReason: 'main_agent_stop'
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      })
+    ).rejects.toMatchObject({ code: SESSION_SIZE_LIMIT_ERROR_CODE })
+    expect(readSessionFile).not.toHaveBeenCalled()
+    await expect(lstat(`${filePath}.pre-s2-backup`)).rejects.toMatchObject({ code: 'ENOENT' })
+  })
+
+  it('reports oversized existing authority before revision comparison', async () => {
+    const root = await createStorageRoot()
+    const session = await new SessionRepository(root).saveSession(createSession())
+    const filePath = join(root, 'sessions', session.projectId, `${session.id}.json`)
+    const maxSessionBytes = 4096
+    await truncate(filePath, maxSessionBytes + 1)
+    const repository = new SessionRepository(root, { maxSessionBytes })
+
+    await expect(repository.saveSession(session, session.revision)).rejects.toMatchObject({
+      code: SESSION_SIZE_LIMIT_ERROR_CODE
+    })
+    await expect(lstat(filePath)).resolves.toMatchObject({ size: maxSessionBytes + 1 })
+  })
+
+  it('keeps migration backup reads bounded after existing-authority admission', async () => {
+    const root = await createStorageRoot()
+    const session = createSession()
+    await new SessionRepository(root).saveSession(session)
+    const filePath = join(root, 'sessions', session.projectId, `${session.id}.json`)
+    const maxSessionBytes = 4096
+    const readSessionFile = vi.fn().mockRejectedValue(new Error('unbounded read must not run'))
+    const readSessionFileWithinLimit = vi
+      .fn()
+      .mockRejectedValue(new DurableJsonReadLimitError(`${session.id}.json`, maxSessionBytes))
+    const repository = new SessionRepository(root, {
+      maxSessionBytes,
+      readSessionFile,
+      readSessionFileWithinLimit
+    })
+
+    await expect(
+      repository.saveSession({
+        ...session,
+        runtimeContext: {
+          version: 1,
+          revision: 1,
+          delegatedWork: {
+            records: [
+              {
+                agentFrameId: 'child-frame',
+                attempts: [
+                  {
+                    id: 'attempt-1',
+                    initiatingTurnMessageId: 'message-1',
+                    status: 'cancelled',
+                    resolvedAgent: { kind: 'main' },
+                    runtimeSegmentIds: [],
+                    startedAt: 1710000000001,
+                    endedAt: 1710000000002,
+                    cancellationReason: 'main_agent_stop'
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      })
+    ).rejects.toMatchObject({ code: SESSION_SIZE_LIMIT_ERROR_CODE })
+    expect(readSessionFile).not.toHaveBeenCalled()
+    expect(readSessionFileWithinLimit).toHaveBeenCalledWith(filePath, maxSessionBytes)
+    await expect(lstat(`${filePath}.pre-s2-backup`)).rejects.toMatchObject({ code: 'ENOENT' })
   })
 
   it('keeps the scan incomplete when a listed Session disappears before it can be read', async () => {

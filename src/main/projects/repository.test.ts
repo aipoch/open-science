@@ -366,7 +366,7 @@ describe('project repository', () => {
 
     await expect(
       repository.updateArchive(
-        { id: 'project-1', archived: true, expectedArchivedAt: null },
+        { id: 'project-1', archived: true, expectedArchiveRevision: 0 },
         1710000000200
       )
     ).resolves.toMatchObject({ archivedAt: 1710000000200, updatedAt: 1710000000100 })

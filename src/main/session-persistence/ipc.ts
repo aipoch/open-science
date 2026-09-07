@@ -3,7 +3,10 @@ import { ipcMainHandle } from '../ipc-handler-registry'
 import type { ApplicationCommandOutcome } from '../../shared/application-command-contract'
 import { LIFECYCLE_CHANNELS } from '../../shared/lifecycle-events'
 import {
+  isSessionSizeLimitError,
   isSessionRevisionConflictError,
+  SESSION_SIZE_LIMIT_ERROR_CODE,
+  SessionDeletionCommittedError,
   SESSION_REVISION_CONFLICT_ERROR_CODE
 } from '../../shared/session-persistence'
 import type {
@@ -218,6 +221,33 @@ const createSessionPersistenceHandlers = (
     new MainMessageAttributionAuthority()
   )
 
+// Keeps production deletion finalizers testable without booting the Electron composition root.
+const withSessionDeletionCleanup =
+  (
+    deleteSession: SessionPersistenceBackend['deleteSession'],
+    cleanup: (projectId: string, sessionId: string) => unknown
+  ): SessionPersistenceBackend['deleteSession'] =>
+  async (projectId, sessionId) => {
+    let committedError: SessionDeletionCommittedError | undefined
+    try {
+      await deleteSession(projectId, sessionId)
+    } catch (error) {
+      if (!(error instanceof SessionDeletionCommittedError)) throw error
+      committedError = error
+    }
+    // A committed rejection must still run the next finalizer; an ordinary rejection must not.
+    try {
+      await cleanup(projectId, sessionId)
+    } catch (error) {
+      throw new SessionDeletionCommittedError(
+        committedError
+          ? new AggregateError([committedError, error], 'Session deletion cleanup failed.')
+          : error
+      )
+    }
+    if (committedError) throw committedError
+  }
+
 // Keeps the application-composition boundary injectable without exposing the rest of main-process
 // startup to tests. The coordinator owns admission; the wrapped backend owns the durable mutation.
 const coordinateSessionPersistenceWithProjectDeletions = (
@@ -324,15 +354,18 @@ const registerSessionPersistenceIpcHandlers = (
           return result.session
         })
       } catch (error) {
-        if (!isSessionRevisionConflictError(error)) throw error
+        if (!isSessionRevisionConflictError(error) && !isSessionSizeLimitError(error)) throw error
+        const sizeLimit = isSessionSizeLimitError(error)
         return Object.freeze({
           ok: false,
           error: Object.freeze({
-            code: SESSION_REVISION_CONFLICT_ERROR_CODE,
+            code: sizeLimit ? SESSION_SIZE_LIMIT_ERROR_CODE : SESSION_REVISION_CONFLICT_ERROR_CODE,
             message:
               error instanceof Error
                 ? error.message
-                : 'Session revision conflict. Reload and retry.'
+                : sizeLimit
+                  ? 'Session exceeds the persistence limit.'
+                  : 'Session revision conflict. Reload and retry.'
           })
         })
       }
@@ -340,14 +373,6 @@ const registerSessionPersistenceIpcHandlers = (
       return Object.freeze({ ok: true, result: durable })
     }
   )
-  ipcMainHandle('sessions:update-archive', async (event, request: UpdateSessionArchiveRequest) => {
-    const originClientId = getLifecycleClientId(event)
-    return withDataRootWrite(async () => {
-      const session = await handlers.updateArchive(request)
-      broadcastLifecycleEvent(LIFECYCLE_CHANNELS.sessionUpdated, { session, originClientId })
-      return session
-    })
-  })
   ipcMainHandle('sessions:save-manifest', (_event, request: SaveSessionManifestRequest) =>
     withDataRootWrite(() => handlers.saveManifest(request))
   )
@@ -369,7 +394,8 @@ export {
   loadSessionMetadataAfterProjectRecovery,
   loadSessionsAfterProjectRecovery,
   recoverProjectDeletionsForSessionRead,
-  registerSessionPersistenceIpcHandlers
+  registerSessionPersistenceIpcHandlers,
+  withSessionDeletionCleanup
 }
 export type {
   ProjectDeletionMutationCoordinator,

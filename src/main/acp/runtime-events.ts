@@ -350,6 +350,10 @@ const literaturePresentationText = (value: unknown): string | undefined => {
     typeof candidate === 'number' && Number.isSafeInteger(candidate) && candidate > 0
       ? candidate
       : undefined
+  const nonNegativeInteger = (candidate: unknown): number | undefined =>
+    typeof candidate === 'number' && Number.isSafeInteger(candidate) && candidate >= 0
+      ? candidate
+      : undefined
   const retrievalMode =
     source.retrievalMode === 'bm25' || source.retrievalMode === 'fallback'
       ? source.retrievalMode
@@ -358,13 +362,56 @@ const literaturePresentationText = (value: unknown): string | undefined => {
   const pageStart = positiveInteger(source.pageStart)
   const pageEnd = positiveInteger(source.pageEnd)
   const hasMore = typeof source.hasMore === 'boolean' ? source.hasMore : undefined
+  const libraryAction =
+    source.libraryAction === 'format' ||
+    source.libraryAction === 'read' ||
+    source.libraryAction === 'search' ||
+    source.libraryAction === 'save'
+      ? source.libraryAction
+      : undefined
+  const libraryScope =
+    source.libraryScope === 'library' ||
+    source.libraryScope === 'project' ||
+    source.libraryScope === 'collection' ||
+    source.libraryScope === 'items'
+      ? source.libraryScope
+      : undefined
+  const itemTitles = Array.isArray(source.itemTitles)
+    ? source.itemTitles
+        .filter(
+          (title): title is string =>
+            typeof title === 'string' &&
+            title.trim().length > 0 &&
+            title.length <= 512 &&
+            !containsControlCharacter(title)
+        )
+        .slice(0, 3)
+        .map((title) => title.trim())
+    : []
+  const resultCount = nonNegativeInteger(source.resultCount)
+  const totalCount = nonNegativeInteger(source.totalCount)
+  const offset = nonNegativeInteger(source.offset)
+  const limit = positiveInteger(source.limit)
+  const nextOffset = nonNegativeInteger(source.nextOffset)
+  const candidateCount = nonNegativeInteger(source.candidateCount)
+  const savedCount = nonNegativeInteger(source.savedCount)
   const presentation = {
     ...(retrievalMode ? { retrievalMode } : {}),
     ...(documentNames.length > 0 ? { documentNames } : {}),
     ...(passageCount ? { passageCount } : {}),
     ...(pageStart ? { pageStart } : {}),
     ...(pageEnd ? { pageEnd } : {}),
-    ...(hasMore !== undefined ? { hasMore } : {})
+    ...(hasMore !== undefined ? { hasMore } : {}),
+    ...(libraryAction ? { libraryAction } : {}),
+    ...(libraryScope ? { libraryScope } : {}),
+    ...(itemTitles.length > 0 ? { itemTitles } : {}),
+    ...(resultCount !== undefined ? { resultCount } : {}),
+    ...(totalCount !== undefined ? { totalCount } : {}),
+    ...(offset !== undefined ? { offset } : {}),
+    ...(limit !== undefined ? { limit } : {}),
+    ...(nextOffset !== undefined ? { nextOffset } : {}),
+    ...(candidateCount !== undefined ? { candidateCount } : {}),
+    ...(savedCount !== undefined ? { savedCount } : {})
   }
 
   return Object.keys(presentation).length > 0
@@ -381,6 +428,25 @@ const isLiteratureReadDocumentUpdate = (update: ToolCallUpdate): boolean =>
       .filter(Boolean)
       .join('/')
     return normalized.endsWith('open/science/literature/read/document')
+  })
+
+const isLiteratureLibraryUpdate = (update: ToolCallUpdate): boolean =>
+  [extractProviderToolName(update), trimProviderValue(update.title)].some((identity) => {
+    if (!identity) return false
+    const normalized = identity
+      .toLowerCase()
+      .split(/[^a-z0-9]+/u)
+      .filter(Boolean)
+      .join('/')
+    return [
+      'search/library',
+      'read/library/abstract',
+      'read/library/pdf',
+      'format/references',
+      'format/citation/document',
+      'prepare/latex/bundle',
+      'save/to/inbox'
+    ].some((tool) => normalized.endsWith(`open/science/library/${tool}`))
   })
 
 const literatureResultPresentationText = (value: unknown): string | undefined => {
@@ -436,13 +502,14 @@ const extractContentLiteraturePresentation = (
   update: ToolCallUpdate,
   content: ToolCallContent[] | undefined
 ): ToolCallContent | undefined => {
-  if (!isLiteratureReadDocumentUpdate(update)) return undefined
-
   for (const item of content ?? []) {
     if (item.type !== 'content' || item.content.type !== 'text') continue
+    const presentation = extractRawLiteraturePresentation(item.content.text)
+    if (presentation) return presentation
     const text =
-      literaturePresentationText(item.content.text) ??
-      literatureResultPresentationText(item.content.text)
+      isLiteratureReadDocumentUpdate(update) || isLiteratureLibraryUpdate(update)
+        ? literatureResultPresentationText(item.content.text)
+        : undefined
     if (text) return { type: 'content', content: { type: 'text', text } }
   }
 
@@ -452,15 +519,40 @@ const extractContentLiteraturePresentation = (
 // Native Responses and some MCP adapters expose successful tool content only through the raw
 // result envelope. Recover just the bounded Literature presentation block before the full passage
 // payload is dropped; document ids and passage bodies never enter runtime IPC or Session JSON.
-const extractRawLiteraturePresentation = (rawOutput: unknown): ToolCallContent | undefined => {
-  if (!isRecord(rawOutput) || !isRecord(rawOutput.result)) return undefined
-  const content = rawOutput.result.content
-  if (!Array.isArray(content)) return undefined
-
-  for (const item of content) {
-    if (!isRecord(item) || item.type !== 'text') continue
-    const text = literaturePresentationText(item.text)
+const extractRawLiteraturePresentation = (
+  rawOutput: unknown,
+  depth = 0
+): ToolCallContent | undefined => {
+  if (depth > 8) return undefined
+  if (typeof rawOutput === 'string') {
+    // Decode only bounded transport envelopes, before the generic payload cap truncates them.
+    if (rawOutput.length > 128_000) return undefined
+    try {
+      return extractRawLiteraturePresentation(JSON.parse(rawOutput), depth + 1)
+    } catch {
+      return undefined
+    }
+  }
+  if (!Array.isArray(rawOutput) && !isRecord(rawOutput)) return undefined
+  if (isRecord(rawOutput) && isRecord(rawOutput.openScienceLiteraturePresentation)) {
+    const text = literaturePresentationText(
+      JSON.stringify({
+        openScienceLiteraturePresentation: rawOutput.openScienceLiteraturePresentation
+      })
+    )
     if (text) return { type: 'content', content: { type: 'text', text } }
+  }
+  const nested = Array.isArray(rawOutput)
+    ? rawOutput
+    : [
+        rawOutput.result,
+        rawOutput.structuredContent,
+        rawOutput.content,
+        ...(rawOutput.type === 'text' ? [rawOutput.text] : [])
+      ]
+  for (const value of nested) {
+    const presentation = extractRawLiteraturePresentation(value, depth + 1)
+    if (presentation) return presentation
   }
 
   return undefined

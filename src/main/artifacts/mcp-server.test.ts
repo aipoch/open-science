@@ -1,7 +1,9 @@
 import { mkdir, mkdtemp, readFile, realpath, rm, stat, writeFile } from 'node:fs/promises'
+import { createHash } from 'node:crypto'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { strToU8, zipSync } from 'fflate'
 import { z } from 'zod'
 
 const { log } = vi.hoisted(() => ({
@@ -14,6 +16,7 @@ vi.mock('../logger', async (importOriginal) => ({
 }))
 
 import { createPngBytes, createPngInlineSource } from './artifact-test-fixtures'
+import { ARTIFACT_LITERATURE_SIDECAR_SUFFIX } from '../../shared/artifact-literature'
 import { ArtifactRepository } from './repository'
 import {
   createArtifactMcpEnvironmentFromProcess,
@@ -280,16 +283,18 @@ describe('artifact MCP server', () => {
     await expect(readFile(artifact.path, 'utf8')).resolves.toBe('<svg />')
   })
 
-  it('does not probe the session workspace when a notebook data dir is authoritative', async () => {
-    // A relative source has one resolution base. Falling through to another allowed root can import
-    // a stale same-named file that the Agent did not produce in the active Notebook workspace.
+  it('falls back to the session workspace for a relative localPath during a notebook turn', async () => {
+    // Native Agent file tools write into the session workspace even when Notebook is available in
+    // the same turn. A relative artifact path must therefore fall back there when the file is not in
+    // the Notebook data dir; requiring the Agent to rediscover and resend the absolute path wastes a
+    // tool call and can lead it to duplicate the whole file as inline content.
     const root = await createStorageRoot()
     const sessionRoot = join(root, 'notebook-session')
     const dataDir = join(sessionRoot, 'data')
     const workspace = join(root, 'workspace')
     await mkdir(dataDir, { recursive: true })
     await mkdir(workspace, { recursive: true })
-    await writeFile(join(workspace, 'plot.svg'), '<svg />', 'utf8')
+    await writeFile(join(workspace, 'review.md'), '# Review', 'utf8')
     const repository = new ArtifactRepository(root)
     const environment = {
       ...(await createEnvironment(root, {
@@ -300,12 +305,41 @@ describe('artifact MCP server', () => {
       allowedImportRoots: [workspace]
     }
 
-    await expect(
-      writeArtifactFileForCurrentRun(repository, environment, {
-        filename: 'plot.svg',
-        source: { kind: 'localPath', path: 'plot.svg' }
-      })
-    ).rejects.toThrow(/does not exist/i)
+    const artifact = await writeArtifactFileForCurrentRun(repository, environment, {
+      filename: 'review.md',
+      mimeType: 'text/markdown',
+      source: { kind: 'localPath', path: 'review.md' }
+    })
+
+    await expect(readFile(artifact.path, 'utf8')).resolves.toBe('# Review')
+  })
+
+  it('prefers the notebook data dir over a same-named session workspace file', async () => {
+    // The workspace fallback must not override a same-named file produced in the active Notebook.
+    const root = await createStorageRoot()
+    const sessionRoot = join(root, 'notebook-session')
+    const dataDir = join(sessionRoot, 'data')
+    const workspace = join(root, 'workspace')
+    await mkdir(dataDir, { recursive: true })
+    await mkdir(workspace, { recursive: true })
+    await writeFile(join(dataDir, 'plot.svg'), '<svg>notebook</svg>', 'utf8')
+    await writeFile(join(workspace, 'plot.svg'), '<svg>workspace</svg>', 'utf8')
+    const repository = new ArtifactRepository(root)
+    const environment = {
+      ...(await createEnvironment(root, {
+        runId: 'run-1',
+        notebookDataDir: dataDir,
+        notebookSessionRoot: sessionRoot
+      })),
+      allowedImportRoots: [workspace]
+    }
+
+    const artifact = await writeArtifactFileForCurrentRun(repository, environment, {
+      filename: 'plot.svg',
+      source: { kind: 'localPath', path: 'plot.svg' }
+    })
+
+    await expect(readFile(artifact.path, 'utf8')).resolves.toBe('<svg>notebook</svg>')
   })
 
   it('rejects an absolute path under the stale pre-start notebook alias root', async () => {
@@ -557,7 +591,12 @@ describe('artifact MCP server', () => {
         filename: 'sin.png',
         mimeType: 'image/png',
         source: createPngInlineSource('plot'),
-        producerRunId: 'notebook-run-17'
+        producerRunId: 'notebook-run-17',
+        literature: {
+          styleId: 'apa',
+          locale: 'en-US',
+          citations: [{ citationId: 'citation-1', itemId: 'item-1' }]
+        }
       },
       { requestId: 'rpc-request-42' }
     )
@@ -568,7 +607,12 @@ describe('artifact MCP server', () => {
         filename: 'sin.png',
         mimeType: 'image/png',
         source: createPngInlineSource('plot'),
-        producerRunId: 'notebook-run-17'
+        producerRunId: 'notebook-run-17',
+        literature: {
+          styleId: 'apa',
+          locale: 'en-US',
+          citations: [{ citationId: 'citation-1', itemId: 'item-1' }]
+        }
       },
       { requestId: 'rpc-request-42' }
     )
@@ -608,7 +652,12 @@ describe('artifact MCP server', () => {
       notebookSessionId: 'session-1',
       sourceKind: 'inline',
       filename: 'sin.png',
-      contentType: 'image/png'
+      contentType: 'image/png',
+      literature: {
+        styleId: 'apa',
+        locale: 'en-US',
+        citations: [{ citationId: 'citation-1', itemId: 'item-1' }]
+      }
     })
     const retryBody = bodies[3]!
     expect(retryBody.params.writeOperationId).toBe(body.params.writeOperationId)
@@ -631,6 +680,97 @@ describe('artifact MCP server', () => {
     expect(JSON.stringify(toWriteArtifactToolResult(result))).not.toContain(root)
     expect(JSON.stringify(toWriteArtifactToolResult(result))).not.toContain('checksum')
     expect(JSON.stringify(toWriteArtifactToolResult(result))).not.toContain('environment')
+  })
+
+  it('discovers checksum-bound citation metadata beside a prepared LaTeX ZIP', async () => {
+    const root = await createStorageRoot()
+    const workspace = join(root, 'workspace')
+    await mkdir(workspace)
+    const sourcePath = join(workspace, 'review.latex.zip')
+    const content = Buffer.from(
+      zipSync({
+        '[Content_Types].xml': strToU8('<Types/>'),
+        'word/document.xml': strToU8('<w:document/>')
+      })
+    )
+    await writeFile(sourcePath, content)
+    await writeFile(
+      `${sourcePath}${ARTIFACT_LITERATURE_SIDECAR_SUFFIX}`,
+      JSON.stringify({
+        schemaVersion: 1,
+        contentChecksum: createHash('sha256').update(content).digest('hex'),
+        literature: {
+          styleId: 'apa',
+          locale: 'en-US',
+          citations: [{ citationId: 'open-science-1', itemId: 'item-1' }]
+        }
+      })
+    )
+    const repository = new ArtifactRepository(root)
+    const environment = {
+      ...(await createEnvironment(root, {
+        artifactRunId: 'artifact-run-1',
+        appSessionId: 'session-1',
+        rootFrameId: 'root-frame-1',
+        agentFrameId: 'root-frame-1',
+        messageBranchId: 'branch-1',
+        runtimeSegmentId: 'runtime-1',
+        promptMessageId: 'message-user-1',
+        rpcCapabilityToken: 'run-capability'
+      })),
+      allowedImportRoots: [workspace],
+      rpcEndpoint: 'http://127.0.0.1:9000'
+    }
+    const requests: Array<{ method: string; params: Record<string, unknown> }> = []
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (_url: string, init: RequestInit) => {
+        const request = JSON.parse(String(init.body)) as {
+          method: string
+          params: Record<string, unknown>
+        }
+        requests.push(request)
+        const result =
+          request.method === 'artifactReplayVersion'
+            ? null
+            : request.method === 'artifactReserveWrite'
+              ? { id: 'reservation-1', fileBytes: content.length, expiresAt: Date.now() + 60_000 }
+              : {
+                  id: 'version-1',
+                  artifactId: 'artifact-1',
+                  versionId: 'version-1',
+                  versionNumber: 1,
+                  checksum: 'a'.repeat(64),
+                  createdAt: '2026-09-03T00:00:00.000Z',
+                  projectId: 'default-project',
+                  sessionId: 'session-1',
+                  runId: 'artifact-run-1',
+                  name: 'review.docx',
+                  path: join(root, 'immutable-content'),
+                  fileUrl: 'file:///immutable-content',
+                  size: content.length,
+                  mtimeMs: 1
+                }
+        return new Response(JSON.stringify({ result }), { status: 200 })
+      })
+    )
+
+    await writeArtifactFileForCurrentRun(repository, environment, {
+      filename: 'review.zip',
+      mimeType: 'application/zip',
+      source: { kind: 'localPath', path: sourcePath }
+    })
+
+    expect(requests.map(({ method }) => method)).toEqual([
+      'artifactReplayVersion',
+      'artifactReserveWrite',
+      'artifactCreateVersion'
+    ])
+    expect(requests[2]!.params.literature).toEqual({
+      styleId: 'apa',
+      locale: 'en-US',
+      citations: [{ citationId: 'open-science-1', itemId: 'item-1' }]
+    })
   })
 
   it('uses the execution handoff storage Session for a delegated durable write', async () => {

@@ -8,6 +8,7 @@ import { createInitialSettingsState, useSettingsStore } from '@/stores/settings-
 
 let container: HTMLDivElement
 let root: Root
+const loadSkills = useSettingsStore.getState().loadSkills
 
 const seedSkills = [
   {
@@ -42,6 +43,7 @@ const seedSkills = [
 beforeEach(() => {
   useSettingsStore.setState({
     ...createInitialSettingsState(),
+    loadSkills,
     skills: seedSkills
   })
   container = document.createElement('div')
@@ -53,6 +55,7 @@ afterEach(() => {
   act(() => root.unmount())
   container.remove()
   document.body.innerHTML = ''
+  vi.restoreAllMocks()
 })
 
 const options = (): HTMLElement[] =>
@@ -318,5 +321,64 @@ describe('SkillMentionPopup', () => {
     const marks = Array.from(document.body.querySelectorAll('mark'))
     expect(marks).toHaveLength(1)
     expect(marks[0].textContent?.toLowerCase()).toBe('lit')
+  })
+})
+
+describe('SkillMentionPopup catalog feedback', () => {
+  const renderPopup = (): void => {
+    act(() => root.render(<SkillMentionPopup query="" onSelect={vi.fn()} onClose={vi.fn()} />))
+  }
+
+  it('shows loading until the first catalog request settles', async () => {
+    useSettingsStore.setState({ skills: [], skillsLoaded: false })
+    let resolve!: () => void
+    vi.spyOn(useSettingsStore.getState(), 'loadSkills').mockImplementationOnce(
+      () =>
+        new Promise<void>((done) => {
+          resolve = done
+        })
+    )
+    renderPopup()
+    expect(document.body.textContent).toContain('Loading skills…')
+    expect(document.body.textContent).not.toContain('navigate')
+    await act(async () => {
+      useSettingsStore.setState({ skills: [], skillsLoaded: true })
+      resolve()
+    })
+    expect(document.body.textContent).toContain('No skills available')
+  })
+
+  it('shows a failed catalog request and retries successfully', async () => {
+    useSettingsStore.setState({ skills: [], skillsLoaded: false })
+    const load = vi
+      .spyOn(useSettingsStore.getState(), 'loadSkills')
+      .mockRejectedValueOnce(new Error('catalog unavailable'))
+      .mockImplementationOnce(async () => {
+        useSettingsStore.setState({ skills: seedSkills, skillsLoaded: true })
+      })
+    renderPopup()
+    await act(async () => {
+      await Promise.resolve()
+    })
+    expect(document.body.textContent).toContain('Could not load skills')
+    const retry = Array.from(document.body.querySelectorAll('button')).find(
+      (button) => button.textContent === 'Retry'
+    )
+    expect(retry).toBeDefined()
+    await act(async () => retry!.click())
+    expect(load).toHaveBeenCalledTimes(2)
+    expect(options()).toHaveLength(2)
+    expect(document.body.textContent).not.toContain('Could not load skills')
+  })
+
+  it('explains when every catalog skill is unavailable', () => {
+    useSettingsStore.setState({
+      skills: seedSkills.map((skill) => ({ ...skill, available: false })),
+      skillsLoaded: true
+    })
+    renderPopup()
+    expect(options()).toHaveLength(0)
+    expect(document.body.textContent).toContain('No skills available')
+    expect(document.body.textContent).not.toContain('navigate')
   })
 })

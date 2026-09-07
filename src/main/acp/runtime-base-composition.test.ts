@@ -1,13 +1,25 @@
 import { readFileSync } from 'node:fs'
-import { writeFile } from 'node:fs/promises'
-import { resolve } from 'node:path'
+import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join, resolve } from 'node:path'
 
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { ContextUsageTracker } from './context-usage-tracker'
 import { composeAcpRuntimeBaseOwners } from './runtime-base-composition'
+import { claudeCodeFramework } from '../agent-framework'
+import type { LiteratureLibraryMcpHandler } from '../literature/library-mcp-server'
+import type { AgentMcpHttpHost } from './mcp-http-host'
+import { CURRENT_PRIMARY_SESSION_CAPABILITY_POLICY } from './session-capability-owner'
 
 const projectRoot = resolve(__dirname, '../../..')
+const temporaryRoots: string[] = []
+
+afterEach(async () => {
+  await Promise.all(
+    temporaryRoots.splice(0).map((root) => rm(root, { recursive: true, force: true }))
+  )
+})
 
 describe('ACP Runtime base composition', () => {
   it('builds a fresh closed owner graph and preserves injected shared dependencies', () => {
@@ -172,6 +184,233 @@ describe('ACP Runtime base composition', () => {
         publishIdle
       })
     ).toThrow('ACP generation/connection effects are already bound.')
+  })
+
+  it('stamps the trusted Project and Session origin onto Agent literature discoveries', async () => {
+    const dataRoot = await mkdtemp(join(tmpdir(), 'open-science-literature-artifact-'))
+    temporaryRoots.push(dataRoot)
+    let handler: LiteratureLibraryMcpHandler | undefined
+    const host = {
+      ensureStarted: vi.fn(async () => ({ endpoint: 'http://127.0.0.1:5', token: 'host' })),
+      registerArtifact: vi.fn(),
+      registerLiteratureLibrary: vi.fn(
+        (_routingId: string, nextHandler: LiteratureLibraryMcpHandler) => {
+          handler = nextHandler
+        }
+      ),
+      urlFor: vi.fn((kind: string, routingId: string) => `http://127.0.0.1:5/${kind}/${routingId}`),
+      unregister: vi.fn(),
+      clear: vi.fn(),
+      close: vi.fn()
+    } as unknown as AgentMcpHttpHost
+    const searchLibrary = vi.fn(async () => ({ items: [], totalCount: 0, hasMore: false }))
+    const readAbstract = vi.fn(async () => undefined)
+    const readPdf = vi.fn(async () => ({ itemTitle: 'Paper', evidence: {} }))
+    const resolveSaveReferences = vi.fn(async () => [])
+    const formatReferences = vi.fn(async () => ({
+      references: [
+        {
+          itemId: 'item-1',
+          inText: '(Author, 2025)',
+          reference: 'Author, A. (2025). A cited paper.'
+        }
+      ]
+    }))
+    const formatCitationDocument = vi.fn(async () => ({
+      filename: 'review.cited.docx',
+      citationCount: 1,
+      referenceCount: 1,
+      contentBase64: Buffer.from('formatted docx').toString('base64'),
+      literature: {
+        styleId: 'apa',
+        locale: 'en-US',
+        citations: [{ citationId: 'citation-1', itemId: 'item-1' }]
+      }
+    }))
+    const prepareLatexBundle = vi.fn(async () => ({
+      filename: 'review.latex.zip',
+      citationCount: 1,
+      referenceCount: 1,
+      contentBase64: Buffer.from('latex zip').toString('base64'),
+      literature: {
+        styleId: 'apa',
+        locale: 'en-US',
+        citations: [{ citationId: 'citation-1', itemId: 'item-1' }]
+      }
+    }))
+    const saveToInbox = vi.fn(async () => ({ results: [] }))
+    const recordLiteratureSearch = vi.fn()
+    const recordLiteraturePdfRead = vi.fn()
+    const writeAppGeneratedVersion = vi.fn(async (request) => ({
+      id: `version-${request.filename}`,
+      name: request.filename,
+      path: `/managed/${request.filename}`,
+      fileUrl: `file:///managed/${request.filename}`,
+      mimeType: request.contentType,
+      size: 1,
+      mtimeMs: 1,
+      projectId: request.projectId,
+      sessionId: request.artifactStorageSessionId,
+      runId: request.artifactRunId,
+      versionId: `version-${request.filename}`
+    }))
+    const owners = composeAcpRuntimeBaseOwners({
+      appVersion: 'test',
+      defaultCwd: '/workspace',
+      mcpHttpHost: host,
+      artifacts: {
+        configRoot: '/config',
+        dataRoot,
+        projectId: 'project-1',
+        mcpEntryPath: '/mcp',
+        provenance: {
+          listRunVersions: vi.fn(async () => []),
+          writeAppGeneratedVersion,
+          recordLiteratureSearch,
+          recordLiteraturePdfRead
+        } as never
+      },
+      literatureLibrary: {
+        searchLibrary,
+        readAbstract,
+        readPdf,
+        resolveSaveReferences,
+        formatReferences,
+        formatCitationDocument,
+        prepareLatexBundle,
+        saveToInbox
+      }
+    })
+    const provision = await owners.sessionCapabilities.provision({
+      stableAppSessionId: 'session-1',
+      framework: claudeCodeFramework,
+      nativeMcpEnabled: true,
+      bridgeMcpAliasesEnabled: false,
+      policy: CURRENT_PRIMARY_SESSION_CAPABILITY_POLICY,
+      sessionCwd: '/workspace',
+      projectId: 'project-1'
+    })
+
+    expect(handler).toBeDefined()
+    const interaction = owners.sessionInteractions.claim({
+      sessionId: 'session-1',
+      kind: 'prompt',
+      promptMessageId: 'message-1'
+    })
+    const artifactTurn = await owners.artifactTurns!.openRootExecution({
+      executionId: interaction.turnToken,
+      appSessionId: 'session-1',
+      artifactStorageSessionId: 'session-1',
+      projectId: 'project-1',
+      agentName: 'Test Agent',
+      provenanceContext: {
+        rootFrameId: 'root-frame-1',
+        agentFrameId: 'agent-frame-1',
+        messageBranchId: 'branch-1',
+        runtimeSegmentId: 'segment-1',
+        promptMessageId: 'message-1'
+      }
+    })
+    await handler!.searchLibrary({ query: 'retrieval', scope: 'project', offset: 20 })
+    await handler!.readAbstract({ itemId: 'item-1', scope: 'project' })
+    await handler!.readPdf({ itemId: 'item-1', query: 'outcome', scope: 'project' })
+    await handler!.resolveSaveReferences?.(['pmid:35486828'])
+    await handler!.formatReferences?.({
+      itemIds: ['item-1'],
+      styleId: 'apa',
+      locale: 'en-US'
+    })
+    await handler!.formatCitationDocument?.({
+      filename: 'review.docx',
+      styleId: 'apa',
+      locale: 'en-US'
+    })
+    await handler!.prepareLatexBundle?.({ filename: 'review.tex' })
+    await handler!.saveToInbox({ candidates: [] })
+
+    expect(searchLibrary).toHaveBeenCalledWith({
+      query: 'retrieval',
+      scope: 'project',
+      offset: 20,
+      projectId: 'project-1'
+    })
+    expect(recordLiteratureSearch).toHaveBeenCalledWith({
+      projectId: 'project-1',
+      appSessionId: 'session-1',
+      promptMessageId: 'message-1',
+      query: 'retrieval',
+      scope: 'project',
+      offset: 20,
+      result: { items: [], totalCount: 0, hasMore: false }
+    })
+    expect(formatCitationDocument).toHaveBeenCalledWith({
+      projectId: 'project-1',
+      sessionId: 'session-1',
+      workspaceCwd: '/workspace',
+      filename: 'review.docx',
+      styleId: 'apa',
+      locale: 'en-US'
+    })
+    expect(prepareLatexBundle).toHaveBeenCalledWith({
+      projectId: 'project-1',
+      sessionId: 'session-1',
+      workspaceCwd: '/workspace',
+      filename: 'review.tex'
+    })
+    expect(readAbstract).toHaveBeenCalledWith({
+      itemId: 'item-1',
+      scope: 'project',
+      projectId: 'project-1'
+    })
+    expect(readPdf).toHaveBeenCalledWith({
+      itemId: 'item-1',
+      query: 'outcome',
+      scope: 'project',
+      projectId: 'project-1'
+    })
+    expect(recordLiteraturePdfRead).toHaveBeenCalledWith({
+      projectId: 'project-1',
+      appSessionId: 'session-1',
+      promptMessageId: 'message-1',
+      itemId: 'item-1'
+    })
+    expect(resolveSaveReferences).toHaveBeenCalledWith(['pmid:35486828'])
+    expect(formatReferences).toHaveBeenCalledWith({
+      projectId: 'project-1',
+      itemIds: ['item-1'],
+      styleId: 'apa',
+      locale: 'en-US'
+    })
+    expect(saveToInbox).toHaveBeenCalledWith({
+      candidates: [],
+      projectId: 'project-1',
+      sessionId: 'session-1'
+    })
+    expect(writeAppGeneratedVersion).toHaveBeenCalledTimes(2)
+    expect(writeAppGeneratedVersion).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({
+        filename: 'review.cited.docx',
+        content: Buffer.from('formatted docx').toString('base64'),
+        encoding: 'base64',
+        literature: expect.objectContaining({ styleId: 'apa' }),
+        producer: expect.objectContaining({
+          connectorId: 'open-science-library',
+          toolId: 'format_citation_document'
+        })
+      })
+    )
+    expect(writeAppGeneratedVersion).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({
+        filename: 'review.latex.zip',
+        encoding: 'base64',
+        producer: expect.objectContaining({ toolId: 'prepare_latex_bundle' })
+      })
+    )
+    await owners.artifactTurns!.dispose(artifactTurn)
+    owners.sessionInteractions.release(interaction)
+    provision.release({ ownsStableIdentity: true })
   })
 
   it('keeps the canonical composer outside Runtime and Electron dependencies outside the composer', () => {

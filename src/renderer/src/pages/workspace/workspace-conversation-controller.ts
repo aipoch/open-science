@@ -1,3 +1,4 @@
+import { i18next } from '@/i18n'
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 
 import type { PermissionProfileId } from '../../../../shared/permission-profiles'
@@ -67,7 +68,7 @@ type PlanProjectionRecoveryPorts = {
 type ConversationComposer = {
   view: Pick<
     WorkspaceComposerController['view'],
-    'doc' | 'annotations' | 'attachments' | 'transfers' | 'readingContext'
+    'doc' | 'annotations' | 'attachments' | 'transfers' | 'readingContext' | 'queuedEdit'
   >
   actions: Pick<WorkspaceComposerController['actions'], 'setError'>
   lifecycle: Pick<
@@ -98,6 +99,7 @@ type WorkspaceConversationControllerOptions = {
   activeSession: ChatSession | undefined
   projectId: string
   currentDraftKey: string
+  persistenceBlockedSessionIds: readonly string[]
   isPersistenceReady: boolean
   supportsImageInput: boolean | undefined
   agentConfiguration: SessionAgentConfiguration | undefined
@@ -125,6 +127,7 @@ type WorkspaceConversationControllerOptions = {
   abortFixLoop: (request: { projectId: string; appSessionId: string }) => Promise<unknown>
   getSession: (sessionId: string) => ChatSession | undefined
   subscribeSessionChanges: (listener: () => void) => () => void
+  onSessionSizeLimit: (sessionId: string) => void
   planProjectionRecovery?: PlanProjectionRecoveryPorts
 }
 
@@ -137,6 +140,7 @@ type WorkspaceConversationController = {
     revise: boolean
     resume: boolean
     branch: boolean
+    planResponse: boolean
   }
   actions: {
     submit: {
@@ -150,6 +154,7 @@ type WorkspaceConversationController = {
     ) => Promise<EditedMessageSendResult>
     branch: (messageId: string) => void
     sideChat: { start: () => void }
+    reportSessionSizeLimit: (sessionId: string) => void
     resume: () => Promise<void>
     cancel: () => Promise<void>
     delete: () => void
@@ -396,6 +401,8 @@ const useWorkspaceConversationController = (
       const current = optionsRef.current
       return current.session.lifecycle.canStartSend(sessionId)
     },
+    isPersistenceBlocked: (sessionId) =>
+      optionsRef.current.persistenceBlockedSessionIds.includes(sessionId),
     hasPendingPermissionRequest: options.hasPendingPermissionRequest,
     abortFixLoop: options.abortFixLoop,
     getSession: options.getSession,
@@ -430,7 +437,20 @@ const useWorkspaceConversationController = (
         composer.actions.setError(VISION_MODEL_NOT_CONFIGURED_MESSAGE)
         return
       }
-      if (queueDraft && activeSession) {
+      const restored = composer.view.queuedEdit
+      if (restored?.revisionMessageId && composer.view.attachments.length > 0) {
+        composer.actions.setError(
+          i18next.t('Remove attachments before submitting a historical revision.')
+        )
+        return
+      }
+      if (restored && mode !== 'continue') {
+        composer.actions.setError(
+          i18next.t('Exit queued editing before choosing another send mode.')
+        )
+        return
+      }
+      if ((queueDraft || restored) && activeSession) {
         const { hasPendingSwitch } = session.lifecycle.captureSendIntent(false)
         if (hasPendingSwitch) return
         const snapshot = composer.lifecycle.captureSend()
@@ -496,6 +516,7 @@ const useWorkspaceConversationController = (
             parts: docToMessageParts(snapshot.doc),
             pdfContext: snapshot.pdfContext,
             pdfReadingPosition: snapshot.pdfReadingPosition,
+            pdfReadingPositionSource: snapshot.pdfReadingPositionSource,
             pendingPdfContextAttachmentIds: snapshot.pendingPdfContextAttachmentIds,
             pendingPdfContextVersions: snapshot.pendingPdfContextVersions,
             cwd: activeSession?.cwd,
@@ -567,7 +588,9 @@ const useWorkspaceConversationController = (
     }
 
     const submitRestoredPlan = async (response: RestoredPlanResponse): Promise<void> => {
-      const { activeSession, agentConfigurationReady, runtime, sideChatOpen } = optionsRef.current
+      const { activeSession, agentConfigurationReady, isPersistenceReady, runtime, sideChatOpen } =
+        optionsRef.current
+      if (!isPersistenceReady) throw new Error('Session persistence is unavailable.')
       const session = activeSession ? optionsRef.current.getSession(activeSession.id) : undefined
       const plan = selectActiveBranchPlan(session)
       if (sideChatOpen || !session || session.activeRun || plan?.approval !== 'pending') {
@@ -579,7 +602,8 @@ const useWorkspaceConversationController = (
       await runtime.ensureSessionReady(session.id)
       await respondToSessionPlan(
         { projectId: session.projectId, sessionId: session.id, projection: plan },
-        response
+        response,
+        { onSessionSizeLimit: optionsRef.current.onSessionSizeLimit }
       )
     }
 
@@ -670,6 +694,7 @@ const useWorkspaceConversationController = (
             .catch((error: unknown) => current.composer.actions.setError(errorMessage(error)))
         }
       },
+      reportSessionSizeLimit: (sessionId): void => optionsRef.current.onSessionSizeLimit(sessionId),
       resume: async (): Promise<void> => {
         const current = optionsRef.current
         if (!current.isPersistenceReady || !current.activeSession || current.sideChatOpen) return
@@ -708,7 +733,8 @@ const useWorkspaceConversationController = (
       submitMode: submitImmediately ? 'send' : queueDraft ? 'queue' : undefined,
       revise: canRevise(options) || canQueueRevision(options),
       resume: options.isPersistenceReady && !options.sideChatOpen,
-      branch: !queueBlocksActiveSession && canBranch(options)
+      branch: !queueBlocksActiveSession && canBranch(options),
+      planResponse: options.isPersistenceReady
     },
     actions,
     queue: {

@@ -303,6 +303,8 @@ const SourceWebPreviewContent = ({
               <ErrorNotice
                 icon={Globe2}
                 tone="amber"
+                role="alert"
+                diagnosticsLabel={t('Diagnostics')}
                 title={t('Could not load this source')}
                 description={failureDescription}
                 errorCode={getFailureCode(loadState)}

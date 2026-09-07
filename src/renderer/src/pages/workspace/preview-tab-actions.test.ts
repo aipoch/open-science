@@ -237,14 +237,10 @@ describe('runPreviewTabAction', () => {
     })
   })
 
-  it('logs instead of throwing when a download fails', async () => {
-    const deps = createDeps({ saveManagedFile: vi.fn().mockRejectedValue(new Error('disk full')) })
-    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {})
-
-    runPreviewTabAction('download', createFileItem({}), deps)
-    await vi.waitFor(() => expect(consoleError).toHaveBeenCalled())
-
-    consoleError.mockRestore()
+  it('propagates a download rejection to the menu owner', async () => {
+    const failure = new Error('disk full')
+    const deps = createDeps({ saveManagedFile: vi.fn().mockRejectedValue(failure) })
+    await expect(runPreviewTabAction('download', createFileItem({}), deps)).rejects.toBe(failure)
   })
 
   it('copies a local file path to the clipboard', async () => {

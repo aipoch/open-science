@@ -174,6 +174,7 @@ class ClaudeCodeSkillMaterializer implements SkillMaterializer {
           await rm(stale, { recursive: true, force: true })
         } catch (error) {
           log.warn('failed to remove stale skill dir', { name, error })
+          throw error
         }
         delete versions[name]
       }

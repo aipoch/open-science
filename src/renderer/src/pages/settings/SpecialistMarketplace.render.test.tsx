@@ -996,4 +996,15 @@ describe('Specialist Marketplace settings', () => {
       )?.disabled
     ).toBe(true)
   })
+  it('shows the integrity repair notice instead of treating corrupt data as an empty Marketplace', async () => {
+    window.api.specialist.listMarketplace = vi
+      .fn()
+      .mockRejectedValue(new Error('MARKETPLACE_DOCUMENT_INTEGRITY: pending installations'))
+    await act(async () => {
+      root.render(<SpecialistMarketplace view={{ kind: 'marketplace' }} onNavigate={vi.fn()} />)
+    })
+    expect(document.body.textContent).toContain(
+      'Marketplace data needs repair. The original specialist-marketplace.json file has been preserved.'
+    )
+  })
 })

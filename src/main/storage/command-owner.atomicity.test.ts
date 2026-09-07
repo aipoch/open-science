@@ -7,7 +7,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 const electronHome = { path: '' }
 const fsFaults = vi.hoisted(() => ({
   failSecondSettingsRename: false,
-  settingsRenameCount: 0
+  settingsRenameCount: 0,
+  deniedScanPath: undefined as string | undefined
 }))
 
 vi.mock('node:fs/promises', async (importOriginal) => {
@@ -15,6 +16,12 @@ vi.mock('node:fs/promises', async (importOriginal) => {
 
   return {
     ...actual,
+    readdir: vi.fn(async (...args: Parameters<typeof actual.readdir>) => {
+      if (String(args[0]) === fsFaults.deniedScanPath) {
+        throw Object.assign(new Error('workspace scan denied'), { code: 'EACCES' })
+      }
+      return actual.readdir(...args)
+    }),
     rename: vi.fn(async (source, destination) => {
       if (String(destination).endsWith('settings.json')) {
         fsFaults.settingsRenameCount += 1
@@ -67,6 +74,7 @@ describe('storage command owner onboarding persistence', () => {
     targetDataRoot = join(targetParent, 'OpenScience')
     electronHome.path = currentParent
     initDataRoot(currentDataRoot)
+    fsFaults.deniedScanPath = undefined
     fsFaults.failSecondSettingsRename = false
     fsFaults.settingsRenameCount = 0
   })
@@ -75,6 +83,28 @@ describe('storage command owner onboarding persistence', () => {
     initDataRoot(undefined)
     await rm(currentParent, { recursive: true, force: true })
     await rm(targetParent, { recursive: true, force: true })
+  })
+
+  it('reports a restored root even when scanning a workspace fails with EACCES', async () => {
+    const workspace = join(currentDataRoot, 'workspaces', 'session')
+    await mkdir(workspace, { recursive: true })
+    fsFaults.deniedScanPath = workspace
+    const owner = createStorageCommandOwner({
+      runtime: { disconnect: vi.fn(), shutdownForQuit: vi.fn() },
+      notebook: { shutdownAll: vi.fn(), dispose: vi.fn(), getActiveNotebookSessions: () => [] },
+      getActivePromptSessions: () => [],
+      getActiveSideChatSessions: () => [],
+      getActiveDelegatedSessions: () => [],
+      hasActiveReviewerWork: () => false,
+      settingsService: {
+        setDataRoot: vi.fn(),
+        dismissLegacyDataMovePrompt: vi.fn(),
+        getStoredSettings: async () => ({ dataRoot: currentDataRoot })
+      }
+    })
+
+    await expect(owner.getStatus()).resolves.toMatchObject({ dataRootMissing: false })
+    await expect(owner.getInfo()).rejects.toMatchObject({ code: 'EACCES' })
   })
 
   it('commits the initial data root and onboarding completion together', async () => {

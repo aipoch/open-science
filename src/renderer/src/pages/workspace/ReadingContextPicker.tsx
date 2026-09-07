@@ -11,6 +11,7 @@ import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover
 import { ExtensionPreservingFileName } from './ExtensionPreservingFileName'
 import { fuzzyScore } from './composer/fuzzy-match'
 import { loadAllProjectFiles } from './composer/load-project-files'
+import { searchLiteraturePdfOptions } from './literature-pdf-options'
 
 type ReadingContextPickerProps = {
   projectId: string
@@ -21,7 +22,9 @@ type ReadingContextPickerProps = {
 }
 
 type EligiblePdf = {
-  file: ProjectFileItem
+  name: string
+  description?: string
+  origin: 'project' | 'library'
   source: SessionPdfContextSource
 }
 
@@ -43,25 +46,57 @@ const isPdfCandidate = (file: ProjectFileItem): boolean =>
 
 const inspectCandidates = async (
   projectId: string,
-  files: readonly ProjectFileItem[]
+  candidates: readonly EligiblePdf[]
 ): Promise<EligiblePdf[]> => {
   const byKey = new Map<string, EligiblePdf>()
-  for (const file of files) {
-    const source = isPdfCandidate(file) ? toSource(file) : undefined
-    if (source && !byKey.has(sourceKey(source))) byKey.set(sourceKey(source), { file, source })
+  for (const candidate of candidates) {
+    if (!byKey.has(sourceKey(candidate.source))) byKey.set(sourceKey(candidate.source), candidate)
   }
 
-  const candidates = [...byKey.values()]
+  const uniqueCandidates = [...byKey.values()]
   const eligible = new Set<string>()
-  for (let offset = 0; offset < candidates.length; offset += 100) {
-    const page = candidates.slice(offset, offset + 100)
+  for (let offset = 0; offset < uniqueCandidates.length; offset += 100) {
+    const page = uniqueCandidates.slice(offset, offset + 100)
     const result = await window.api.sessions.filterPdfContextCandidates({
       projectId,
       sources: page.map(({ source }) => source)
     })
     for (const source of result.sources) eligible.add(sourceKey(source))
   }
-  return candidates.filter(({ source }) => eligible.has(sourceKey(source)))
+  return uniqueCandidates.filter(({ source }) => eligible.has(sourceKey(source)))
+}
+
+const loadProjectPdfs = async (projectId: string): Promise<EligiblePdf[]> => {
+  const [files, literature] = await Promise.all([
+    loadAllProjectFiles(projectId),
+    searchLiteraturePdfOptions('', { projectId }).catch(() => [])
+  ])
+  const candidates = [
+    ...files.flatMap((file): EligiblePdf[] => {
+      const source = isPdfCandidate(file) ? toSource(file) : undefined
+      return source ? [{ name: file.name, origin: 'project', source }] : []
+    }),
+    ...literature.map((option): EligiblePdf => ({
+      name: option.name,
+      description: option.description,
+      origin: 'project',
+      source: option.source
+    }))
+  ]
+  return inspectCandidates(projectId, candidates)
+}
+
+const loadLibraryPdfs = async (projectId: string, query: string): Promise<EligiblePdf[]> => {
+  const options = await searchLiteraturePdfOptions(query)
+  return inspectCandidates(
+    projectId,
+    options.map((option) => ({
+      name: option.name,
+      description: option.description,
+      origin: 'library',
+      source: option.source
+    }))
+  )
 }
 
 export const ReadingContextPicker = ({
@@ -73,6 +108,7 @@ export const ReadingContextPicker = ({
 }: ReadingContextPickerProps): React.JSX.Element => {
   const { t } = useTranslation()
   const [open, setOpen] = useState(false)
+  const [source, setSource] = useState<'project' | 'library'>('project')
   const [query, setQuery] = useState('')
   const [pendingKey, setPendingKey] = useState<string>()
   const [loadRevision, setLoadRevision] = useState(0)
@@ -81,35 +117,52 @@ export const ReadingContextPicker = ({
     items: EligiblePdf[]
     status: 'idle' | 'loading' | 'loaded' | 'error'
   }>({ items: [], status: 'idle' })
+  const sourceQuery = source === 'library' ? query : ''
 
   useEffect(() => {
     if (!open || atLimit) return
     let cancelled = false
-    void loadAllProjectFiles(projectId)
-      .then((files) => inspectCandidates(projectId, files))
-      .then((items) => {
-        if (!cancelled) setResult({ projectId, items, status: 'loaded' })
-      })
-      .catch(() => {
-        if (!cancelled) setResult({ projectId, items: [], status: 'error' })
-      })
+    const timeout = window.setTimeout(
+      () => {
+        void (
+          source === 'project'
+            ? loadProjectPdfs(projectId)
+            : loadLibraryPdfs(projectId, sourceQuery)
+        ).then(
+          (items) => {
+            if (!cancelled) setResult({ projectId, items, status: 'loaded' })
+          },
+          () => {
+            if (!cancelled) setResult({ projectId, items: [], status: 'error' })
+          }
+        )
+      },
+      source === 'library' ? 120 : 0
+    )
     return () => {
       cancelled = true
+      window.clearTimeout(timeout)
     }
-  }, [atLimit, loadRevision, open, projectId])
+  }, [atLimit, loadRevision, open, projectId, source, sourceQuery])
 
+  const isCurrentProject = result.projectId === projectId
   const linked = useMemo(() => new Set(linkedSources.map(sourceKey)), [linkedSources])
   const items = useMemo(() => {
+    if (!isCurrentProject) return []
     const needle = query.trim()
     return result.items
       .filter(({ source }) => !linked.has(sourceKey(source)))
-      .map((item) => ({ item, match: needle ? fuzzyScore(needle, item.file.name) : undefined }))
+      .map((item) => ({
+        item,
+        match: needle && item.origin === 'project' ? fuzzyScore(needle, item.name) : undefined
+      }))
       .filter(({ match }) => match !== null)
       .sort((a, b) => (b.match?.score ?? 0) - (a.match?.score ?? 0))
       .map(({ item }) => item)
-  }, [linked, query, result.items])
+  }, [isCurrentProject, linked, query, result.items])
 
   const select = async (item: EligiblePdf): Promise<void> => {
+    if (!isCurrentProject || result.status !== 'loaded') return
     const key = sourceKey(item.source)
     setPendingKey(key)
     try {
@@ -130,9 +183,7 @@ export const ReadingContextPicker = ({
       onOpenChange={(nextOpen) => {
         setOpen(nextOpen)
         setResult(
-          nextOpen && !atLimit
-            ? { projectId, items: [], status: 'loading' }
-            : { items: [], status: 'idle' }
+          nextOpen && !atLimit ? { items: [], status: 'loading' } : { items: [], status: 'idle' }
         )
       }}
     >
@@ -144,23 +195,44 @@ export const ReadingContextPicker = ({
         className="w-80 rounded-xl border border-border-200 bg-bg-000 p-1.5 text-text-100 shadow-md"
       >
         {!atLimit ? (
-          <label className="mb-1 flex h-8 items-center gap-2 rounded-lg border border-border-200 bg-bg-100 px-2 focus-within:border-border-300 focus-within:ring-[3px] focus-within:ring-ring/30">
-            <Search className="size-3.5 shrink-0 text-text-300" aria-hidden="true" />
-            <input
-              autoFocus
-              value={query}
-              onChange={(event) => setQuery(event.target.value)}
-              placeholder={t('Search PDFs')}
-              aria-label={t('Search PDFs')}
-              className="min-w-0 flex-1 bg-transparent text-sm outline-none placeholder:text-text-400"
-            />
-          </label>
+          <>
+            <div className="mb-1 grid grid-cols-2 gap-0.5 rounded-lg bg-bg-100 p-0.5">
+              {(['project', 'library'] as const).map((candidateSource) => (
+                <button
+                  key={candidateSource}
+                  type="button"
+                  aria-pressed={source === candidateSource}
+                  onClick={() => {
+                    setSource(candidateSource)
+                    setResult({ items: [], status: 'loading' })
+                  }}
+                  className="h-7 rounded-md px-2 text-xs font-medium text-text-300 transition-colors hover:text-text-100 aria-pressed:bg-bg-000 aria-pressed:text-text-000 aria-pressed:shadow-sm"
+                >
+                  {candidateSource === 'project' ? t('Project') : t('Library')}
+                </button>
+              ))}
+            </div>
+            <label className="mb-1 flex h-8 items-center gap-2 rounded-lg border border-border-200 bg-bg-100 px-2 focus-within:border-border-300 focus-within:ring-[3px] focus-within:ring-ring/30">
+              <Search className="size-3.5 shrink-0 text-text-300" aria-hidden="true" />
+              <input
+                autoFocus
+                value={query}
+                onChange={(event) => {
+                  setQuery(event.target.value)
+                  if (source === 'library') setResult({ items: [], status: 'loading' })
+                }}
+                placeholder={t('Search PDFs')}
+                aria-label={t('Search PDFs')}
+                className="min-w-0 flex-1 bg-transparent text-sm outline-none placeholder:text-text-400"
+              />
+            </label>
+          </>
         ) : null}
         {atLimit ? (
           <p className="px-2 py-2 text-sm text-text-300">
             {t('A conversation can link up to 3 PDFs.')}
           </p>
-        ) : result.status === 'loading' || result.status === 'idle' ? (
+        ) : !isCurrentProject || result.status === 'loading' || result.status === 'idle' ? (
           <p role="status" className="flex items-center gap-2 px-2 py-2 text-sm text-text-300">
             <Loader2 className="size-4 animate-spin" aria-hidden="true" />
             {t('Checking PDFs…')}
@@ -170,11 +242,15 @@ export const ReadingContextPicker = ({
             <ErrorNotice
               icon={AlertTriangle}
               tone="amber"
-              title={t('Could not load project files')}
+              title={
+                source === 'project'
+                  ? t('Could not load project files')
+                  : t('Literature could not be loaded.')
+              }
               primaryButton={{
                 label: t('Retry'),
                 onClick: () => {
-                  setResult({ projectId, items: [], status: 'loading' })
+                  setResult({ items: [], status: 'loading' })
                   setLoadRevision((revision) => revision + 1)
                 }
               }}
@@ -206,10 +282,18 @@ export const ReadingContextPicker = ({
                     ) : (
                       <FileText className="size-4 shrink-0 text-text-300" aria-hidden="true" />
                     )}
-                    <ExtensionPreservingFileName
-                      name={item.file.name}
-                      className="min-w-0 flex-1 font-medium"
-                    />
+                    <span className="min-w-0 flex-1">
+                      {item.origin === 'project' ? (
+                        <ExtensionPreservingFileName name={item.name} className="font-medium" />
+                      ) : (
+                        <span className="block truncate font-medium">{item.name}</span>
+                      )}
+                      {item.description ? (
+                        <span className="block truncate text-xs text-text-300">
+                          {item.description}
+                        </span>
+                      ) : null}
+                    </span>
                   </button>
                 </li>
               )

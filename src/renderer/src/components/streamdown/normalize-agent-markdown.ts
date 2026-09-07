@@ -136,50 +136,68 @@ const widenPastMermaidOpener = (markdown: string, boundary: number): number => {
   return markdown.lastIndexOf('\n', opener - 1) + 1
 }
 
-// Returns an index into `markdown` where normalization can be split: no GFM-alert or mermaid
-// match can cross it. The base split point is the last blank-line block boundary (alert bodies
-// are consecutive non-empty `>` lines, so only a fence can span a blank line), widened to a
-// fixpoint for the two constructs that reach further: mermaid blocks and GFM alerts.
-const findNormalizationBoundary = (markdown: string): number => {
-  let boundary = 0
-  const fenceTracker = createCodeFenceTracker()
+// Incremental counterpart of the boundary scan for append-only streaming. The base split point
+// is the last blank-line block boundary (alert bodies are consecutive non-empty `>` lines, so
+// only a fence can span a blank line), widened to a fixpoint for the two constructs that reach
+// further: mermaid blocks and GFM alerts. The fence scan persists across calls and resumes at
+// the first line not yet fed to the tracker; only the per-call widening still walks the text.
+const createNormalizationBoundaryFinder = (): ((markdown: string) => number) => {
+  let cachedInput: string | null = null
+  let fenceTracker = createCodeFenceTracker()
   let fenceOpenerStart = -1
+  let boundary = 0
+  // Start of the first line not yet fed to the tracker. The trailing partial line is never fed:
+  // a later append can still complete it into a fence marker, and it is re-evaluated then.
+  let scanPosition = 0
 
-  let lineStart = 0
-  while (lineStart <= markdown.length) {
-    const newlineIndex = markdown.indexOf('\n', lineStart)
-    const lineEnd = newlineIndex === -1 ? markdown.length : newlineIndex
-    const line = markdown.slice(lineStart, lineEnd)
+  const reset = (): void => {
+    fenceTracker = createCodeFenceTracker()
+    fenceOpenerStart = -1
+    boundary = 0
+    scanPosition = 0
+  }
 
-    const fenceWasOpen = fenceTracker.isOpen()
-    const fenceIsOpen = fenceTracker.feed(line)
-    if (!fenceWasOpen && fenceIsOpen) {
-      fenceOpenerStart = lineStart
-    } else if (fenceWasOpen && !fenceIsOpen) {
-      fenceOpenerStart = -1
-    }
+  return (markdown: string): number => {
+    if (cachedInput === null || !markdown.startsWith(cachedInput)) reset()
 
-    if (line.trim() === '') {
-      // The zero-length segment after a trailing newline is not a real blank line: an alert
-      // header/body pair can still be split across it by a later append.
-      if (lineStart < markdown.length) {
-        boundary = fenceOpenerStart === -1 ? lineEnd + 1 : fenceOpenerStart
+    for (;;) {
+      const newlineIndex = markdown.indexOf('\n', scanPosition)
+      if (newlineIndex === -1) break
+      const line = markdown.slice(scanPosition, newlineIndex)
+
+      const fenceWasOpen = fenceTracker.isOpen()
+      const fenceIsOpen = fenceTracker.feed(line)
+      if (!fenceWasOpen && fenceIsOpen) {
+        fenceOpenerStart = scanPosition
+      } else if (fenceWasOpen && !fenceIsOpen) {
+        fenceOpenerStart = -1
       }
+
+      if (line.trim() === '') {
+        boundary = fenceOpenerStart === -1 ? newlineIndex + 1 : fenceOpenerStart
+      }
+
+      scanPosition = newlineIndex + 1
     }
 
-    if (newlineIndex === -1) break
-    lineStart = lineEnd + 1
-  }
+    // A whitespace-only trailing partial line still moves the base boundary to the end of input.
+    // A blank line never changes the fence tracker, so this can be scored without feeding it.
+    let baseBoundary = boundary
+    if (scanPosition < markdown.length && markdown.slice(scanPosition).trim() === '') {
+      baseBoundary = fenceOpenerStart === -1 ? markdown.length : fenceOpenerStart
+    }
+    baseBoundary = Math.min(baseBoundary, markdown.length)
 
-  boundary = Math.min(boundary, markdown.length)
+    cachedInput = markdown
 
-  let widened = boundary
-  while (widened > 0) {
-    const next = widenPastAlert(markdown, widenPastMermaidOpener(markdown, widened))
-    if (next === widened) return widened
-    widened = next
+    let widened = baseBoundary
+    while (widened > 0) {
+      const next = widenPastAlert(markdown, widenPastMermaidOpener(markdown, widened))
+      if (next === widened) return widened
+      widened = next
+    }
+    return widened
   }
-  return widened
 }
 
 /**
@@ -194,6 +212,7 @@ const createAgentMarkdownNormalizer = (): ((markdown: string) => string) => {
   let boundary = 0
   // Invariant: boundaryOutput === normalizeAgentMarkdown(cachedInput.slice(0, boundary)).
   let boundaryOutput = ''
+  const findBoundary = createNormalizationBoundaryFinder()
 
   return (markdown: string): string => {
     if (markdown === cachedInput) return cachedOutput
@@ -205,7 +224,7 @@ const createAgentMarkdownNormalizer = (): ((markdown: string) => string) => {
         ? normalizeAgentMarkdown(markdown)
         : boundaryOutput + normalizeAgentMarkdown(markdown.slice(appendFrom))
 
-    const nextBoundary = findNormalizationBoundary(markdown)
+    const nextBoundary = findBoundary(markdown)
     if (appendFrom !== -1 && nextBoundary >= appendFrom) {
       // Extend the cached prefix without re-normalizing it; both split points are safe.
       boundaryOutput =

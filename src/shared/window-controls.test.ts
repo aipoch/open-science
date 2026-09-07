@@ -104,6 +104,28 @@ describe('isFindInPageChord', () => {
 })
 
 describe('isWindowFindAppearance', () => {
+  it('accepts complete localization and rejects invalid renderer snapshots', () => {
+    const localization = {
+      lang: 'ja',
+      placeholder: '検索',
+      findText: '検索',
+      findInWindow: '検索',
+      previous: '前',
+      next: '次',
+      close: '閉じる'
+    }
+    const appearance = { theme: 'light', followsSystem: false, localization }
+    expect(isWindowFindAppearance(appearance)).toBe(true)
+    for (const invalid of [
+      null,
+      {},
+      { ...localization, lang: 'invalid' },
+      { ...localization, close: 1 }
+    ]) {
+      expect(isWindowFindAppearance({ ...appearance, localization: invalid })).toBe(false)
+    }
+  })
+
   it('accepts the typed light/dark appearance contract', () => {
     expect(isWindowFindAppearance({ theme: 'light', followsSystem: false })).toBe(true)
     expect(isWindowFindAppearance({ theme: 'dark', followsSystem: true })).toBe(true)

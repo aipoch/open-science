@@ -2,7 +2,8 @@ import { randomUUID } from 'node:crypto'
 import { mkdir, rm, rmdir, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 
-import type { ArtifactFile } from '../../shared/artifacts'
+import type { ArtifactFile, ArtifactWriteEncoding } from '../../shared/artifacts'
+import type { ArtifactLiteratureRequest } from '../../shared/artifact-literature'
 import type {
   AppGeneratedArtifactProducer,
   ArtifactRpcCapabilityBinding
@@ -40,9 +41,11 @@ type OpenExecutionArtifactTurnRequest = {
 type ArtifactTurnWriteInput = {
   filename: string
   content: string
+  encoding?: ArtifactWriteEncoding
   mimeType?: string
   kind?: 'plan'
   producer?: AppGeneratedArtifactProducer
+  literature?: ArtifactLiteratureRequest
 }
 
 type ArtifactTurnPublication = {
@@ -103,9 +106,11 @@ type ArtifactTurnProvenance = {
     agentName: string
     filename: string
     content: string
+    encoding?: ArtifactWriteEncoding
     contentType?: string
     kind?: 'plan'
     producer?: AppGeneratedArtifactProducer
+    literature?: ArtifactLiteratureRequest
   }) => Promise<ArtifactFile>
 }
 
@@ -352,9 +357,11 @@ class ArtifactTurnOwner {
           agentName: turn.agentName,
           filename: input.filename,
           content: input.content,
+          encoding: input.encoding,
           contentType: input.mimeType,
           kind: input.kind,
-          producer: input.producer
+          producer: input.producer,
+          literature: input.literature
         })
       : this.options.repository.writePendingFile({
           projectId: turn.projectId,
@@ -363,7 +370,7 @@ class ArtifactTurnOwner {
           filename: input.filename,
           mimeType: input.mimeType,
           kind: input.kind,
-          source: { kind: 'inline', content: input.content, encoding: 'utf8' }
+          source: { kind: 'inline', content: input.content, encoding: input.encoding ?? 'utf8' }
         })
 
     turn.inFlightAppWrites.add(write)

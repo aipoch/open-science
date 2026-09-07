@@ -3,13 +3,15 @@ import { act, type ReactNode } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { createLinearConversationGraph } from '../../shared/conversation-graph'
+
 const mocks = vi.hoisted(() => {
   // Captures the onOpenSession listener so tests can fire the notification nudge directly.
   const notificationNudgeBox: { current: (() => void) | undefined } = { current: undefined }
   const sideChatRelayBox: { current: ((event: unknown) => void) | undefined } = {
     current: undefined
   }
-  type NavigationState = { view: 'home' | 'workspace'; userNavigationRevision: number }
+  type NavigationState = { view: 'home' | 'library' | 'workspace'; userNavigationRevision: number }
   const navigationListeners = new Set<
     (state: NavigationState, previousState: NavigationState) => void
   >()
@@ -47,7 +49,11 @@ const mocks = vi.hoisted(() => {
       sessionId: input.sessionId ?? 'session-1',
       messageId: input.messageId ?? 'analysis-message'
     })),
-    navigation: { view: 'home' as 'home' | 'workspace', userNavigationRevision: 0 },
+    runtimeCancelRun: vi.fn(async () => undefined),
+    navigation: {
+      view: 'home' as 'home' | 'library' | 'workspace',
+      userNavigationRevision: 0
+    },
     sessions: [] as Array<{ id: string } & Record<string, unknown>>,
     appendRoutedUserMessage: vi.fn(),
     sideChatRelayBox,
@@ -99,12 +105,20 @@ const mocks = vi.hoisted(() => {
             kind: 'unsupported-version'
             affectedFileCount: number
           }
+        | {
+            kind: 'oversized-authority'
+            affectedFiles: Array<{ projectId: string; fileName: string }>
+          }
         | { kind: 'project-deletion-recovery' },
       canDeleteSessionsAndProjects: true,
       loadError: undefined as string | undefined,
       loadWarning: undefined as string | undefined,
       writeError: undefined as string | undefined,
+      writeErrorRetryable: true,
+      persistenceBlockedSessionIds: [] as string[],
+      reportSessionSizeLimit: vi.fn(),
       dismissLoadWarning: vi.fn(),
+      startNewConversationAfterSizeLimit: vi.fn(),
       retryLoad: vi.fn(),
       retryWrites: vi.fn()
     },
@@ -122,6 +136,7 @@ const mocks = vi.hoisted(() => {
     syncWindowFindAppearance: vi.fn(),
     syncUnreadTaskView: vi.fn(),
     globalSearch: { props: undefined as { open: boolean } | undefined },
+    literaturePage: { renderCount: 0 },
     homePage: { props: undefined as { onOpenGlobalSearch: () => void } | undefined },
     closeActiveModal: {
       handler: undefined as (() => 'handled' | 'close-preview' | 'close-base') | undefined
@@ -134,13 +149,22 @@ const mocks = vi.hoisted(() => {
       connectorApproval: undefined as { active?: boolean } | undefined,
       credentialRequest: undefined as { active?: boolean } | undefined,
       skillImportApproval: undefined as { active?: boolean } | undefined,
-      workspace: undefined as { isPreviewPresentationActive?: boolean } | undefined
+      workspace: undefined as
+        | {
+            isPreviewPresentationActive?: boolean
+            persistenceBlockedSessionIds?: readonly string[]
+            onSessionSizeLimit?: (sessionId: string) => void
+          }
+        | undefined
     }
   }
 })
 
 vi.mock('@/lib/session-persistence/session-persistence', () => ({
-  useSessionPersistence: () => mocks.sessionPersistence
+  useSessionPersistence: () => mocks.sessionPersistence,
+  loadPersistedSession: vi.fn(async () => undefined),
+  hydratePersistedSessionIfPresent: vi.fn(() => undefined),
+  flushSessionPersistence: vi.fn(async () => undefined)
 }))
 vi.mock('@/lib/deep-link', () => ({
   useDeepLinkNavigation: mocks.deepLinkNavigation
@@ -283,7 +307,8 @@ vi.mock('@/lib/acp/useWorkspaceAgentRuntime', () => ({
     promptInFlightSessionIds: [],
     sendPreparationInFlightSessionIds: [],
     saveAsSkillInFlightSessionIds: [],
-    sendMessage: mocks.runtimeSendMessage
+    sendMessage: mocks.runtimeSendMessage,
+    cancelRun: mocks.runtimeCancelRun
   })
 }))
 vi.mock('@/pages/home/HomePage', () => ({
@@ -304,6 +329,12 @@ vi.mock('@/pages/home/HomePage', () => ({
         data-has-complete-session-catalog={String(hasCompleteSessionCatalog)}
       />
     )
+  }
+}))
+vi.mock('@/pages/literature/LiteratureLibraryPage', () => ({
+  LiteratureLibraryPage: (): React.JSX.Element => {
+    mocks.literaturePage.renderCount += 1
+    return <div data-testid="literature-library-page" />
   }
 }))
 vi.mock('@/pages/onboarding/OnboardingWizard', () => ({
@@ -364,16 +395,24 @@ vi.mock('@/pages/workspace/EnvStatusBanner', () => ({
 vi.mock('@/pages/workspace/WorkspacePage', () => ({
   WorkspacePage: ({
     isSessionPersistenceReady,
+    persistenceBlockedSessionIds,
+    onSessionSizeLimit,
     canDeleteConversations,
     isPreviewPresentationActive
   }: {
     isSessionPersistenceReady: boolean
+    persistenceBlockedSessionIds?: readonly string[]
+    onSessionSizeLimit?: (sessionId: string) => void
     canDeleteConversations: boolean
     isPreviewPresentationActive?: boolean
   }): React.JSX.Element => (
     <div
       ref={() => {
-        mocks.presentationProps.workspace = { isPreviewPresentationActive }
+        mocks.presentationProps.workspace = {
+          isPreviewPresentationActive,
+          persistenceBlockedSessionIds,
+          onSessionSizeLimit
+        }
       }}
       data-testid="workspace-page"
       data-ready={String(isSessionPersistenceReady)}
@@ -430,6 +469,7 @@ describe('App startup routing', () => {
     mocks.compute.jobsMarkConsumed.mockClear()
     mocks.compute.jobsTransitionAnalysis.mockClear()
     mocks.runtimeSendMessage.mockClear()
+    mocks.runtimeCancelRun.mockReset().mockResolvedValue(undefined)
     mocks.navigation.view = 'home'
     mocks.startupView = 'app'
     mocks.sessionPersistence.isReady = true
@@ -441,10 +481,14 @@ describe('App startup routing', () => {
     mocks.sessionPersistence.loadError = undefined
     mocks.sessionPersistence.loadWarning = undefined
     mocks.sessionPersistence.writeError = undefined
+    mocks.sessionPersistence.writeErrorRetryable = true
+    mocks.sessionPersistence.persistenceBlockedSessionIds = []
+    mocks.sessionPersistence.reportSessionSizeLimit.mockClear()
     mocks.update.isDialogOpen = false
     mocks.update.status.state = 'idle'
     mocks.update.closeDialog.mockClear()
     mocks.sessionPersistence.dismissLoadWarning.mockClear()
+    mocks.sessionPersistence.startNewConversationAfterSizeLimit.mockClear()
     mocks.sessionPersistence.retryLoad.mockClear()
     mocks.sessionPersistence.retryWrites.mockClear()
     mocks.settings.pendingApprovals = []
@@ -524,6 +568,7 @@ describe('App startup routing', () => {
     mocks.sideChatRelayBox.current = undefined
     mocks.appendRoutedUserMessage.mockClear()
     mocks.globalSearch.props = undefined
+    mocks.literaturePage.renderCount = 0
     mocks.homePage.props = undefined
     mocks.closeActiveModal.handler = undefined
     mocks.sideChatParentSessionIds.clear()
@@ -570,6 +615,10 @@ describe('App startup routing', () => {
 
   it('keeps the remote-job analysis owner active while Home is presented', async () => {
     mocks.settings.isLoaded = true
+    // The durable claim can finish after the next timer turn on a busy CI worker.
+    mocks.compute.jobsTransitionAnalysis.mockImplementationOnce(
+      () => new Promise((resolve) => setTimeout(() => resolve([]), 50))
+    )
     mocks.sessions = [
       {
         id: 'session-1',
@@ -578,10 +627,12 @@ describe('App startup routing', () => {
         cwd: '/workspace/project-1',
         status: 'idle',
         messages: [],
-        conversationGraph: {
-          activeFrameId: 'frame-1',
-          frames: [{ id: 'frame-1', activeBranchId: 'branch-1' }]
-        },
+        conversationGraph: createLinearConversationGraph({
+          sessionId: 'session-1',
+          messages: [],
+          createdAt: 1,
+          updatedAt: 1
+        }),
         createdAt: 1,
         updatedAt: 1
       }
@@ -609,17 +660,21 @@ describe('App startup routing', () => {
     ])
 
     await render()
-    await act(async () => new Promise((resolve) => setTimeout(resolve, 0)))
+    // Recovery crosses asynchronous persistence and message-queue boundaries.
+    await act(async () => {
+      await vi.waitFor(() =>
+        expect(mocks.runtimeSendMessage).toHaveBeenCalledWith(
+          expect.objectContaining({
+            sessionId: 'session-1',
+            requireExistingSession: true,
+            attribution: expect.objectContaining({ feature: 'compute' })
+          })
+        )
+      )
+    })
 
     expect(container.querySelector('[data-testid="home-page"]')).not.toBeNull()
     expect(mocks.compute.jobsPendingNotification).toHaveBeenCalledWith({ allSessions: true })
-    expect(mocks.runtimeSendMessage).toHaveBeenCalledWith(
-      expect.objectContaining({
-        sessionId: 'session-1',
-        requireExistingSession: true,
-        attribution: expect.objectContaining({ feature: 'compute' })
-      })
-    )
   })
 
   it('opens Settings with Cmd/Ctrl+, after startup is interactive', async () => {
@@ -681,6 +736,22 @@ describe('App startup routing', () => {
       )
     })
     expect(document.querySelector('[data-testid="global-search"]')).toBeNull()
+  })
+
+  it('opens global search without rerendering the active Literature library page', async () => {
+    mocks.settings.isLoaded = true
+    mocks.navigation.view = 'library'
+    await render()
+
+    expect(mocks.literaturePage.renderCount).toBe(1)
+    await act(async () => {
+      window.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'k', metaKey: true, cancelable: true })
+      )
+    })
+
+    expect(mocks.globalSearch.props?.open).toBe(true)
+    expect(mocks.literaturePage.renderCount).toBe(1)
   })
 
   it('opens the same global search from the Home header action', async () => {
@@ -1400,6 +1471,50 @@ describe('App startup routing', () => {
     expect(mocks.sessionPersistence.retryWrites).toHaveBeenCalledOnce()
   })
 
+  it('offers a new conversation instead of retrying a Session size-limit failure', async () => {
+    mocks.settings.isLoaded = true
+    mocks.navigation.view = 'workspace'
+    mocks.sessionPersistence.writeError =
+      'This conversation exceeded the 256 MiB storage limit. Its current run was stopped. Start a new conversation to keep working. Changes after the last successful save are not durable.'
+    mocks.sessionPersistence.writeErrorRetryable = false
+    mocks.sessionPersistence.persistenceBlockedSessionIds = ['session-1']
+
+    await render()
+
+    const alert = container.querySelector('[data-testid="session-persistence-alert"]')
+    expect(alert?.textContent).toContain('Conversation storage limit reached')
+    expect(container.querySelector('[data-testid="session-persistence-retry"]')).toBeNull()
+
+    container
+      .querySelector<HTMLButtonElement>('[data-testid="session-persistence-action"]')
+      ?.click()
+    expect(mocks.sessionPersistence.startNewConversationAfterSizeLimit).toHaveBeenCalledOnce()
+    expect(mocks.presentationProps.workspace?.persistenceBlockedSessionIds).toEqual(['session-1'])
+    mocks.presentationProps.workspace?.onSessionSizeLimit?.('session-plan')
+    expect(mocks.sessionPersistence.reportSessionSizeLimit).toHaveBeenCalledWith('session-plan')
+  })
+
+  it('stops a persistence-blocked active run while the Home page is visible', async () => {
+    mocks.settings.isLoaded = true
+    mocks.navigation.view = 'home'
+    mocks.sessions = [
+      {
+        id: 'session-1',
+        status: 'running',
+        activeRun: { promptMessageId: 'message-1', startedAt: 1 }
+      }
+    ]
+    mocks.sessionPersistence.persistenceBlockedSessionIds = ['session-1']
+    mocks.runtimeCancelRun
+      .mockRejectedValueOnce(new Error('transient cancellation failure'))
+      .mockResolvedValueOnce(undefined)
+
+    await render()
+
+    await vi.waitFor(() => expect(mocks.runtimeCancelRun).toHaveBeenCalledTimes(2))
+    expect(container.querySelector('[data-testid="home-page"]')).toBeTruthy()
+  })
+
   it('keeps failed writes retryable while catalog recovery is visible', async () => {
     mocks.settings.isLoaded = true
     mocks.sessionPersistence.hasCompleteSessionCatalog = false
@@ -1590,6 +1705,28 @@ describe('App startup routing', () => {
     expect(container.querySelector('[data-testid="missing-root"]')?.textContent).toBe(
       '/Volumes/Science/OpenScience'
     )
+  })
+
+  it('exposes missing data-root recovery while saved conversations are still hydrating', async () => {
+    mocks.settings.isLoaded = true
+    mocks.sessionPersistence.isHydrated = false
+    mocks.sessionPersistence.isLoading = true
+    mocks.sessionPersistence.isReady = false
+    mocks.getStatus.mockResolvedValue({
+      dataRoot: '/Volumes/Science/OpenScience',
+      dataRootMissing: true,
+      legacyDataMovePrompt: false,
+      defaultParent: '/Users/example'
+    })
+
+    await render()
+
+    expect(container.querySelector('[data-testid="missing-root"]')?.textContent).toBe(
+      '/Volumes/Science/OpenScience'
+    )
+    expect(
+      container.querySelector('[data-testid="session-persistence-startup-loading"]')
+    ).toBeNull()
   })
 
   it('retains a notification target until recovery completes', async () => {

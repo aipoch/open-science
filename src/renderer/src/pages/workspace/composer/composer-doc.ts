@@ -9,6 +9,8 @@ import {
   MAX_SESSION_PDF_CONTEXTS,
   MAX_SESSION_REFERENCES_PER_MESSAGE,
   type MessagePart,
+  type LiteratureReference,
+  type LiteratureScopeReference,
   type SessionPdfContextSource,
   type SessionReference
 } from '../../../../../shared/session-persistence'
@@ -17,6 +19,8 @@ import {
 // a granted root id plus a relative path, reserving the future source without exposing an absolute path.
 export type ComposerArtifactNode = { type: 'artifact' } & FileReference
 export type ComposerSessionNode = SessionReference
+export type ComposerLiteratureNode = LiteratureReference
+export type ComposerLiteratureScopeNode = LiteratureScopeReference
 
 // Live-draft-only anchor for a long plain-text paste staged as an upload. The text stays beside its
 // logical insertion point so restoring never has to infer a caret offset. This node is filtered at
@@ -35,6 +39,8 @@ export type ComposerNode =
   | { type: 'text'; text: string }
   | { type: 'skill'; id: string; name: string }
   | ComposerArtifactNode
+  | ComposerLiteratureNode
+  | ComposerLiteratureScopeNode
   | ComposerSessionNode
   | ComposerPastedTextNode
 
@@ -62,6 +68,9 @@ const nodeToText = (node: ComposerNode): string => {
   if (node.type === 'text') return node.text
   if (node.type === 'skill') return `/${node.name}`
   if (node.type === 'session') return `#${node.title}`
+  if (node.type === 'literature') return `@${node.item.title}`
+  if (node.type === 'literature-scope')
+    return `@${node.scope === 'collection' ? node.name : 'Library'}`
   if (node.type === 'pasted-text') return ''
   if (node.source === 'linked-folder') return `@${node.relativePath}`
   return `@${node.name}`
@@ -235,21 +244,35 @@ export const docToArtifactRefs = (doc: ComposerDoc): FileReference[] => {
 export const docToPdfContextSources = (doc: ComposerDoc): SessionPdfContextSource[] => {
   const sources: SessionPdfContextSource[] = []
   const seen = new Set<string>()
-  for (const reference of docToArtifactRefs(doc)) {
-    if (
-      reference.source === 'linked-folder' ||
-      !reference.sourceFileId ||
-      !reference.versionId ||
-      (reference.mimeType?.split(';', 1)[0]?.trim().toLowerCase() !== 'application/pdf' &&
-        !reference.name.toLowerCase().endsWith('.pdf'))
+  for (const node of doc.nodes) {
+    let source: SessionPdfContextSource | undefined
+    if (node.type === 'literature' && node.attachmentVersionId) {
+      source = {
+        sourceKind: 'literature-attachment-version',
+        sourceVersionId: node.attachmentVersionId
+      }
+    } else if (
+      node.type === 'artifact' &&
+      node.source !== 'linked-folder' &&
+      node.versionId &&
+      (node.mimeType?.split(';', 1)[0]?.trim().toLowerCase() === 'application/pdf' ||
+        node.name.toLowerCase().endsWith('.pdf'))
     ) {
-      continue
+      if (node.source === 'literature') {
+        source = {
+          sourceKind: 'literature-attachment-version',
+          ...(node.sourceFileId ? { sourceFileId: node.sourceFileId } : {}),
+          sourceVersionId: node.versionId
+        }
+      } else if (node.sourceFileId) {
+        source = {
+          sourceKind: node.source === 'upload' ? 'upload-version' : 'artifact-version',
+          sourceFileId: node.sourceFileId,
+          sourceVersionId: node.versionId
+        }
+      }
     }
-    const source: SessionPdfContextSource = {
-      sourceKind: reference.source === 'upload' ? 'upload-version' : 'artifact-version',
-      sourceFileId: reference.sourceFileId,
-      sourceVersionId: reference.versionId
-    }
+    if (!source) continue
     const identity = `${source.sourceKind}:${source.sourceVersionId}`
     if (seen.has(identity)) continue
     seen.add(identity)
@@ -261,7 +284,13 @@ export const docToPdfContextSources = (doc: ComposerDoc): SessionPdfContextSourc
 
 // Count artifact chips, used to enforce the per-message mention cap.
 export const docArtifactCount = (doc: ComposerDoc): number =>
-  doc.nodes.reduce((total, node) => (node.type === 'artifact' ? total + 1 : total), 0)
+  doc.nodes.reduce(
+    (total, node) =>
+      node.type === 'artifact' || node.type === 'literature' || node.type === 'literature-scope'
+        ? total + 1
+        : total,
+    0
+  )
 
 export const docSessionCount = (doc: ComposerDoc): number =>
   doc.nodes.reduce((total, node) => (node.type === 'session' ? total + 1 : total), 0)
@@ -298,6 +327,8 @@ export const docFromMessageParts = (parts: MessagePart[]): ComposerDoc => {
     if (part.type === 'session') {
       return { type: 'session', sessionId: part.sessionId, title: part.title }
     }
+    if (part.type === 'literature') return part
+    if (part.type === 'literature-scope') return part
     if (part.source === 'linked-folder') {
       return {
         type: 'artifact',
@@ -331,10 +362,14 @@ export const docIsEmpty = (doc: ComposerDoc): boolean =>
 // Chip markers on the contenteditable spans.
 const SKILL_MENTION_TYPE = 'skill'
 const ARTIFACT_MENTION_TYPE = 'artifact'
+const LITERATURE_MENTION_TYPE = 'literature'
+const LITERATURE_SCOPE_MENTION_TYPE = 'literature-scope'
 const SESSION_MENTION_TYPE = 'session'
 const PASTED_TEXT_NODE_TYPE = 'pasted-text'
 export const PASTED_TEXT_CARET_MARKER = '\u2060'
 const pastedTextByAnchor = new WeakMap<HTMLElement, ComposerPastedTextNode>()
+const literatureByChip = new WeakMap<HTMLElement, ComposerLiteratureNode>()
+const literatureScopeByChip = new WeakMap<HTMLElement, ComposerLiteratureScopeNode>()
 const pastedTextCaretHosts = new WeakSet<Text>()
 
 export const isPastedTextCaretHost = (node: Node): node is Text =>
@@ -356,7 +391,8 @@ const artifactNodeFromEl = (el: HTMLElement): ComposerArtifactNode | null => {
   }
 
   const path = el.getAttribute('data-mention-path')
-  if (path === null || (source !== 'upload' && source !== 'artifact')) return null
+  if (path === null || (source !== 'upload' && source !== 'artifact' && source !== 'literature'))
+    return null
   const sourceFileId = el.getAttribute('data-mention-source-file-id') ?? undefined
   const versionId = el.getAttribute('data-mention-version-id') ?? undefined
   return {
@@ -402,6 +438,16 @@ export const domToDoc = (root: HTMLElement): ComposerDoc => {
       }
       if (mentionType === ARTIFACT_MENTION_TYPE) {
         const node = artifactNodeFromEl(el)
+        if (node) nodes.push(node)
+        continue
+      }
+      if (mentionType === LITERATURE_MENTION_TYPE) {
+        const node = literatureByChip.get(el)
+        if (node) nodes.push(node)
+        continue
+      }
+      if (mentionType === LITERATURE_SCOPE_MENTION_TYPE) {
+        const node = literatureScopeByChip.get(el)
         if (node) nodes.push(node)
         continue
       }
@@ -496,6 +542,33 @@ export const createArtifactChip = (node: ComposerArtifactNode): HTMLSpanElement 
   return span
 }
 
+export const createLiteratureChip = (node: ComposerLiteratureNode): HTMLSpanElement => {
+  const span = document.createElement('span')
+  span.setAttribute('contenteditable', 'false')
+  span.setAttribute('data-mention-type', LITERATURE_MENTION_TYPE)
+  span.setAttribute('data-literature-item-id', node.itemId)
+  span.className = `${ARTIFACT_CHIP_BASE_CLASS} cursor-pointer bg-mention-chip text-mention-chip-foreground`
+  const label = document.createElement('span')
+  label.className = 'min-w-0 truncate'
+  label.textContent = `@${node.item.title}`
+  span.append(label)
+  span.title = node.item.title
+  literatureByChip.set(span, node)
+  return span
+}
+
+export const createLiteratureScopeChip = (node: ComposerLiteratureScopeNode): HTMLSpanElement => {
+  const span = document.createElement('span')
+  const name = node.scope === 'collection' ? node.name : 'Library'
+  span.setAttribute('contenteditable', 'false')
+  span.setAttribute('data-mention-type', LITERATURE_SCOPE_MENTION_TYPE)
+  span.className = `${CHIP_BASE_CLASS} bg-accent text-accent-foreground`
+  span.textContent = `@${name}`
+  span.title = name
+  literatureScopeByChip.set(span, node)
+  return span
+}
+
 // Session chips are atomic navigation links. The full snapshot title stays in attributes/title while
 // the visible label truncates to a single line inside the composer.
 export const createSessionChip = (node: ComposerSessionNode): HTMLSpanElement => {
@@ -559,6 +632,8 @@ export const applyDocToDom = (root: HTMLElement, doc: ComposerDoc): void => {
     if (node.type === 'text') root.appendChild(document.createTextNode(node.text))
     else if (node.type === 'skill') root.appendChild(createSkillChip(node))
     else if (node.type === 'artifact') root.appendChild(createArtifactChip(node))
+    else if (node.type === 'literature') root.appendChild(createLiteratureChip(node))
+    else if (node.type === 'literature-scope') root.appendChild(createLiteratureScopeChip(node))
     else if (node.type === 'session') root.appendChild(createSessionChip(node))
     else root.appendChild(createPastedTextAnchor(node))
   }

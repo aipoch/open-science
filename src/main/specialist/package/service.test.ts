@@ -558,7 +558,7 @@ describe('SpecialistPackageService', () => {
       catalog: async () => catalog
     })
 
-    await expect(service.previewExport('draft-specialist')).resolves.toMatchObject({
+    await expect(service.previewExport('draft-specialist', [])).resolves.toMatchObject({
       canExport: false,
       diagnostics: [
         {

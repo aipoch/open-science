@@ -12,6 +12,8 @@ import {
   type SetStateAction
 } from 'react'
 
+import { useTranslation } from 'react-i18next'
+
 import { getAcpRuntimeEventText } from '../../../../shared/acp'
 import type { SideChatEntry, SideChatSnapshot } from '../../../../shared/side-chat'
 import type { ChatSession } from '@/stores/session-store'
@@ -27,6 +29,8 @@ type SideChatView = Readonly<{
   draft: string
   running: boolean
   error?: string
+  persistenceError?: string
+  notice?: SideChatSnapshot['notice']
 }>
 
 type SideChatController = Readonly<{
@@ -59,7 +63,10 @@ type SideChatRuntimeController = Readonly<{
 const SideChatContext = createContext<SideChatRuntimeController | undefined>(undefined)
 
 const errorText = (error: unknown): string =>
-  error instanceof Error ? error.message : String(error)
+  (error instanceof Error ? error.message : String(error)).replace(
+    /^Error invoking remote method 'side-chat:[^']+': (?:Error: )?/,
+    ''
+  )
 
 const hasMainConversation = (session: ChatSession | undefined): boolean =>
   Boolean(session?.messages.some((message) => message.role === 'user' && !message.relayedFrom))
@@ -68,6 +75,7 @@ const getLastSideChatUserEntryId = (entries: readonly SideChatEntry[]): string |
   entries.findLast((entry) => entry.kind === 'message' && entry.role === 'user')?.id
 
 const useOwnedSideChatRuntime = (): SideChatRuntimeController => {
+  const { t } = useTranslation()
   const [views, setViews] = useState<ReadonlyMap<string, SideChatView>>(() => new Map())
   const [hydrated, setHydrated] = useState(() => !window.api?.sideChat?.list)
   const [hydrationError, setHydrationError] = useState<string>()
@@ -111,7 +119,9 @@ const useOwnedSideChatRuntime = (): SideChatRuntimeController => {
         : current?.liveTurnUserEntryId,
       draft: current?.draft ?? '',
       running: snapshot.running,
-      error: snapshot.error
+      error: snapshot.error ? errorText(snapshot.error) : undefined,
+      persistenceError: snapshot.persistenceError,
+      notice: snapshot.notice
     }),
     []
   )
@@ -159,7 +169,7 @@ const useOwnedSideChatRuntime = (): SideChatRuntimeController => {
         },
         (error) => {
           if (hydrationGenerationRef.current !== generation) return
-          setHydrationError(`Could not restore Side chats: ${errorText(error)}`)
+          setHydrationError(errorText(error))
           setHydrated(false)
         }
       )
@@ -190,11 +200,20 @@ const useOwnedSideChatRuntime = (): SideChatRuntimeController => {
                   ...current,
                   revision,
                   running: false,
-                  error: 'Side chat connection ended. Send a Follow up to reconnect.'
+                  error: undefined,
+                  notice: 'connection-ended'
                 }
               : current
           )
         }
+        return
+      }
+      if (event.kind === 'persistence') {
+        update(envelope.parentSessionId, (current) =>
+          current?.sideSessionId === envelope.sideSessionId
+            ? { ...current, revision, persistenceError: event.error }
+            : current
+        )
         return
       }
       update(envelope.parentSessionId, (current) => {
@@ -268,7 +287,7 @@ const useOwnedSideChatRuntime = (): SideChatRuntimeController => {
       hydrationGenerationRef.current += 1
       removeListener()
     }
-  }, [hydrate, update])
+  }, [hydrate, update, viewFromSnapshot])
 
   const retryHydration = useCallback((): void => hydrate(false), [hydrate])
 
@@ -346,6 +365,7 @@ const useOwnedSideChatRuntime = (): SideChatRuntimeController => {
         ],
         liveTurnUserEntryId: userEntryId,
         running: true,
+        notice: undefined,
         error: undefined
       }
       update(parentSessionId, next)
@@ -353,15 +373,42 @@ const useOwnedSideChatRuntime = (): SideChatRuntimeController => {
         await window.api.sideChat.send({ sideSessionId: current.sideSessionId, text })
         return true
       } catch (error) {
-        update(parentSessionId, (latest) =>
-          latest?.generation === current.generation
-            ? { ...latest, running: false, error: errorText(error) }
-            : latest
-        )
-        return false
+        // A rejected IPC call may have lost the response after admission. Reconcile first;
+        // never infer delivery from identical text or delete provider-owned transcript entries.
+        const failedTurnId = viewsRef.current.get(parentSessionId)?.liveTurnUserEntryId
+        let snapshots: Awaited<ReturnType<Window['api']['sideChat']['list']>> | undefined
+        try {
+          snapshots = await window.api.sideChat.list?.()
+        } catch {
+          // Keep the visible transcript if its authority cannot be read.
+        }
+        let admitted = false
+        update(parentSessionId, (latest) => {
+          if (latest?.generation !== current.generation) return latest
+          if (latest.liveTurnUserEntryId !== failedTurnId) {
+            admitted = latest.running
+            return latest
+          }
+          const snapshot = snapshots?.chats.find(
+            (chat) => chat.sideSessionId === current.sideSessionId
+          )
+          const lastRevision = revisionByParentRef.current.get(parentSessionId) ?? 0
+          if (snapshot && snapshot.revision >= lastRevision) {
+            revisionByParentRef.current.set(parentSessionId, snapshot.revision)
+            admitted = snapshot.running
+            const restored = viewFromSnapshot(snapshot, latest)
+            return { ...restored, error: admitted ? restored.error : errorText(error) }
+          }
+          if (snapshot || (latest.liveTurnUserEntryId !== userEntryId && latest.running)) {
+            admitted = latest.running
+            return latest
+          }
+          return { ...latest, running: false, error: errorText(error) }
+        })
+        return admitted
       }
     },
-    [update]
+    [update, viewFromSnapshot]
   )
 
   const cancel = useCallback(
@@ -410,7 +457,7 @@ const useOwnedSideChatRuntime = (): SideChatRuntimeController => {
               latest ?? {
                 ...current,
                 running: false,
-                error: `Could not close Side chat: ${errorText(error)}`
+                error: t('Could not close Side chat: {{error}}', { error: errorText(error) })
               }
           )
         })
@@ -421,7 +468,7 @@ const useOwnedSideChatRuntime = (): SideChatRuntimeController => {
           setClosingParentSessionIds(next)
         })
     },
-    [update]
+    [t, update]
   )
 
   return useMemo<SideChatRuntimeController>(
@@ -458,15 +505,29 @@ const SideChatProvider = ({ children }: PropsWithChildren): ReactElement =>
 const useSideChatController = (
   parent: Readonly<{ sessionId: string; projectId: string }> | undefined
 ): SideChatController => {
+  const { t } = useTranslation()
   const runtime = useContext(SideChatContext)
   const candidate = parent ? runtime?.views.get(parent.sessionId) : undefined
-  const view = candidate?.projectId === parent?.projectId ? candidate : undefined
+  const owned = candidate?.projectId === parent?.projectId ? candidate : undefined
+  const view = owned
+    ? {
+        ...owned,
+        error:
+          owned.notice === 'interrupted'
+            ? t('Side chat was interrupted when the app closed. Send a Follow up to continue.')
+            : owned.notice === 'connection-ended'
+              ? t('Side chat connection ended. Send a Follow up to reconnect.')
+              : owned.error === 'Side chat prompt cancelled.'
+                ? t('Side chat prompt cancelled.')
+                : owned.error
+      }
+    : undefined
   const unavailableReason = runtime?.hydrationError
-    ? runtime.hydrationError
+    ? t('Could not restore Side chats: {{error}}', { error: runtime.hydrationError })
     : runtime && !runtime.hydrated
-      ? 'Restoring Side chats…'
+      ? t('Restoring Side chats…')
       : parent && runtime?.closingParentSessionIds.has(parent.sessionId)
-        ? 'Closing Side chat…'
+        ? t('Closing Side chat…')
         : undefined
 
   return {

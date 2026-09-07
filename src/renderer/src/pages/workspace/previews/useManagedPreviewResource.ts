@@ -3,7 +3,7 @@ import { useEffect, useState } from 'react'
 import type { ManagedPreviewResource } from '../../../../../shared/preview-resources'
 import type { PreviewFileItem } from '@/stores/preview-workbench-store'
 
-import { createPreviewResourceKey } from './preview-resource-key'
+import { usePreviewResourceKey } from './usePreviewResourceGeneration'
 import { createManagedPreviewRequest } from './preview-file-reader'
 
 type ManagedPreviewResourceState =
@@ -28,7 +28,7 @@ const useManagedPreviewResource = (
 ): ManagedPreviewResourceState => {
   const [result, setResult] = useState<ManagedPreviewResourceResult | null>(null)
   // File metadata invalidates a capability when the same path is replaced in place.
-  const requestKey = createPreviewResourceKey(item)
+  const requestKey = usePreviewResourceKey(item)
   const {
     source,
     path,
@@ -66,7 +66,9 @@ const useManagedPreviewResource = (
       .then((resource) => {
         // Release acquisitions that complete after the consumer was unmounted or disabled.
         if (disposed) {
-          void window.api.previewResources.release({ resourceId: resource.id })
+          void window.api.previewResources
+            .release({ resourceId: resource.id })
+            .catch(() => undefined)
           return
         }
 
@@ -87,7 +89,9 @@ const useManagedPreviewResource = (
       disposed = true
       // Releasing the capability lets the main process forget the path and future protocol access.
       if (acquiredResource) {
-        void window.api.previewResources.release({ resourceId: acquiredResource.id })
+        void window.api.previewResources
+          .release({ resourceId: acquiredResource.id })
+          .catch(() => undefined)
       }
       queueMicrotask(() => {
         setResult((currentResult) =>

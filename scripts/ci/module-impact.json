@@ -69,6 +69,7 @@
       "testFiles": {
         "owner": [
           "src/renderer/src/stores/session-store.test.ts",
+          "src/renderer/src/stores/session-store.archive-order.test.ts",
           "src/renderer/src/stores/session-store.architecture.test.ts",
           "src/renderer/src/stores/session-job-store.test.ts"
         ],
@@ -259,6 +260,7 @@
           "src/main/reviewer/orchestrator.start-contract.test.ts",
           "src/main/reviewer/fix-loop.test.ts",
           "src/main/reviewer/reviewer-fix-loop-owner.test.ts",
+          "src/main/reviewer/correction-context.test.ts",
           "src/main/reviewer/correction.test.ts"
         ],
         "contract": [
@@ -349,6 +351,7 @@
           "src/main/compute/compute-host-profile-owner.test.ts",
           "src/main/compute/compute-job-workflow-owner.test.ts",
           "src/main/compute/compute-job-cancellation-owner.integration.test.ts",
+          "src/main/compute/job-recovery-regressions.integration.test.ts",
           "src/main/compute/compute-remote-operation-owner.test.ts",
           "src/main/compute/session-cache-owner.test.ts",
           "src/main/compute/session-enabled-hosts-owner.test.ts",
@@ -421,7 +424,9 @@
           "src/main/skills/user-skill-compatibility-index.test.ts",
           "src/main/skills/user-skill-repository.architecture.test.ts",
           "src/main/skills/user-skill-repository.atomic.test.ts",
-          "src/main/skills/user-skill-repository.test.ts"
+          "src/main/skills/user-skill-repository.test.ts",
+          "src/main/skills/user-skill-integrity.regression.test.ts",
+          "src/main/skills/materializer-integrity.regression.test.ts"
         ],
         "contract": [
           "src/main/skills/host-skills-service.test.ts",
@@ -439,7 +444,9 @@
           "src/main/specialist/package/service.test.ts",
           "src/preload/index.test.ts",
           "src/renderer/src/pages/settings/SkillsPanel.render.test.tsx",
-          "src/renderer/src/stores/settings-skills-slice.test.ts"
+          "src/renderer/src/stores/settings-skills-slice.test.ts",
+          "src/renderer/src/pages/settings/SkillUploadView.render.test.tsx",
+          "src/renderer/src/pages/settings/SkillEditLoader.render.test.tsx"
         ]
       },
       "capabilityOverlays": ["windows_sensitive"],
@@ -721,10 +728,13 @@
           "src/main/uploads/active-transfer-owner.test.ts",
           "src/main/uploads/repository.test.ts",
           "src/main/uploads/repository.characterization.test.ts",
+          "src/main/uploads/publication-lifecycle.integration.test.ts",
           "src/main/uploads/repository.architecture.test.ts"
         ],
         "contract": ["src/main/uploads/ipc.test.ts", "src/main/uploads/command-owner.test.ts"],
         "consumer": [
+          "src/main/acp/runtime.test.ts",
+          "src/main/session-persistence/coordinator.test.ts",
           "src/main/session-persistence/deletion-integration.test.ts",
           "src/main/acp/file-reference-resolver.test.ts",
           "src/main/acp/prompt-content-owner.test.ts",
@@ -761,6 +771,7 @@
     },
     "artifact_provenance": {
       "ownerPaths": [
+        "src/main/artifacts/compute-output-evidence.ts",
         "src/main/artifacts/provenance-canonical.ts",
         "src/main/artifacts/provenance-content-status.ts",
         "src/main/artifacts/provenance-core-evidence.ts",
@@ -816,7 +827,8 @@
           "src/renderer/src/lib/acp/workspace-events.test.ts",
           "src/renderer/src/pages/workspace/ArtifactProvenancePanel.render.test.tsx",
           "src/renderer/src/pages/workspace/PreviewFileSurface.test.tsx",
-          "src/renderer/src/pages/workspace/WorkspaceMessageScroller.interaction.test.tsx"
+          "src/renderer/src/pages/workspace/WorkspaceMessageScroller.interaction.test.tsx",
+          "src/renderer/src/pages/workspace/artifact-publication-preview.integration.test.tsx"
         ]
       },
       "capabilityOverlays": ["windows_sensitive"],

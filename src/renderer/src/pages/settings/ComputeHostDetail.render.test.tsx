@@ -13,11 +13,18 @@ import { createInitialComputeState, useComputeStore } from '@/stores/compute-sto
 let container: HTMLDivElement
 let root: Root
 
+if (!Element.prototype.hasPointerCapture) {
+  Element.prototype.hasPointerCapture = (): boolean => false
+  Element.prototype.setPointerCapture = (): void => undefined
+  Element.prototype.releasePointerCapture = (): void => undefined
+}
+
 const host = (overrides: Partial<ComputeHost> = {}): ComputeHost => ({
   id: 'host-1',
   providerId: 'ssh:biowulf',
   displayName: 'biowulf',
   shape: 'direct_ssh',
+  executionMode: 'direct_ssh',
   sshAlias: 'biowulf',
   sshOverrides: undefined,
   scratchRoot: undefined,
@@ -78,6 +85,7 @@ beforeEach(() => {
     resetPassword: vi.fn(),
     setScratch: vi.fn(),
     setConcurrency: vi.fn(),
+    setExecutionMode: vi.fn(),
     changeAuthentication: vi.fn()
   }
   useComputeStore.setState(state)
@@ -119,7 +127,7 @@ describe('ComputeHostDetail', () => {
       sections.find((section) => section.querySelector('h3')?.textContent === title)
     const cardClasses = ['rounded-xl', 'border', 'bg-card', 'p-4']
 
-    expect(sectionNamed('Resources')?.classList.contains('bg-card')).toBe(true)
+    expect(sectionNamed('Login host resources')?.classList.contains('bg-card')).toBe(true)
     for (const title of ['Configuration', 'Details']) {
       const section = sectionNamed(title)
       expect(section).toBeDefined()
@@ -159,6 +167,87 @@ describe('ComputeHostDetail', () => {
     expect(
       authenticationSections[0]?.querySelector('[aria-label="Collapse configuration"]')
     ).toBeNull()
+  })
+
+  it('shows configured execution separately from scheduler detection and allows opting into Slurm', async () => {
+    const setExecutionMode = vi.fn(async () => undefined)
+    useComputeStore.setState({
+      hosts: [
+        host({
+          executionMode: 'direct_ssh',
+          probeResult: {
+            ok: true,
+            probedAt: '2026-08-18T00:00:00.000Z',
+            exitCode: 0,
+            errorTail: null,
+            detectedScheduler: 'slurm'
+          }
+        })
+      ],
+      isLoaded: true,
+      setExecutionMode
+    })
+
+    act(() => root.render(<ComputeHostDetail providerId="ssh:biowulf" />))
+
+    const executionSection = Array.from(
+      container.querySelectorAll<HTMLElement>('[data-slot="settings-section"]')
+    ).find((section) => section.querySelector('h3')?.textContent === 'Execution mode')
+    expect(executionSection?.textContent).toContain('Configured modeDirect SSH')
+    expect(executionSection?.textContent).toContain('Detected schedulerSlurm')
+
+    act(() => {
+      Array.from(executionSection?.querySelectorAll('button') ?? [])
+        .find((button) => button.textContent?.trim() === 'Edit')
+        ?.click()
+    })
+    act(() => {
+      const trigger = executionSection?.querySelector<HTMLButtonElement>(
+        '[aria-label="Execution mode"]'
+      )
+      trigger?.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true, button: 0 }))
+      trigger?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    })
+    act(() => {
+      const option = Array.from(
+        document.body.querySelectorAll<HTMLElement>('[role="option"]')
+      ).find((candidate) => candidate.textContent?.trim() === 'Slurm')
+      option?.dispatchEvent(new MouseEvent('pointerup', { bubbles: true, button: 0 }))
+      option?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    })
+    await act(async () => {
+      Array.from(executionSection?.querySelectorAll('button') ?? [])
+        .find((button) => button.textContent?.trim() === 'Save')
+        ?.click()
+    })
+
+    expect(setExecutionMode).toHaveBeenCalledWith('ssh:biowulf', 'slurm')
+  })
+
+  it('labels probed resources as login-host capacity when a scheduler is detected', () => {
+    useComputeStore.setState({
+      hosts: [
+        host({
+          executionMode: 'direct_ssh',
+          probeResult: {
+            ok: true,
+            probedAt: '2026-08-18T00:00:00.000Z',
+            exitCode: 0,
+            errorTail: null,
+            cpus: 16,
+            detectedScheduler: 'slurm'
+          }
+        })
+      ],
+      isLoaded: true
+    })
+
+    act(() => root.render(<ComputeHostDetail providerId="ssh:biowulf" />))
+
+    expect(container.textContent).toContain('Login host resources')
+    expect(container.textContent).toContain(
+      'Reported by the SSH login host; Slurm job capacity depends on each allocation.'
+    )
   })
 
   it('resets a password inline and clears the renderer-local secret after success', async () => {
@@ -1216,4 +1305,86 @@ describe('ComputeHostDetail', () => {
     expect(probeHost).toHaveBeenCalledWith('ssh:biowulf')
     expect(container.querySelector('[data-compute-authentication-alert]')).toBeNull()
   })
+})
+
+it.each([undefined, 2222])(
+  'saves an inherited SSH port when editing or clearing the override (%s)',
+  async (initialPort) => {
+    const changeAuthentication = vi.fn().mockResolvedValue(host())
+    useComputeStore.setState({
+      hosts: [
+        host({ sshOverrides: { user: 'before', ...(initialPort ? { port: initialPort } : {}) } })
+      ],
+      changeAuthentication
+    })
+    await act(async () => root.render(<ComputeHostDetail providerId="ssh:biowulf" />))
+    const section = Array.from(
+      container.querySelectorAll<HTMLElement>('[data-slot="settings-section"]')
+    ).find((section) => section.querySelector('h3')?.textContent === 'Configuration')!
+    act(() =>
+      Array.from(section.querySelectorAll('button'))
+        .find((button) => button.textContent?.trim() === 'Edit')!
+        .click()
+    )
+    const enter = (id: string, value: string): void => {
+      const input = container.querySelector<HTMLInputElement>(id)!
+      act(() => {
+        Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(
+          input,
+          value
+        )
+        input.dispatchEvent(new Event('input', { bubbles: true }))
+      })
+    }
+    enter('#compute-detail-username', 'after')
+    if (initialPort) enter('#compute-detail-port', '')
+    await act(async () =>
+      Array.from(section.querySelectorAll('button'))
+        .find((button) => button.textContent?.trim() === 'Test and save')!
+        .click()
+    )
+    expect(changeAuthentication).toHaveBeenCalledOnce()
+    expect(changeAuthentication.mock.calls[0][0].port).toBeUndefined()
+  }
+)
+
+it('keeps the draft and reloads a merge base after a details conflict', async () => {
+  stubDetailsGet('base')
+  const saveDetails = vi
+    .fn()
+    .mockRejectedValueOnce(new Error('details_conflict: old_text does not match'))
+  useComputeStore.setState({ hosts: [host({ detailsDoc: 'base' })], saveDetails })
+  await act(async () => root.render(<ComputeHostDetail providerId="ssh:biowulf" />))
+  const section = Array.from(
+    container.querySelectorAll<HTMLElement>('[data-slot="settings-section"]')
+  ).find((section) => section.querySelector('h3')?.textContent === 'Details')!
+  const click = async (text: string): Promise<void> => {
+    await act(async () =>
+      Array.from(section.querySelectorAll('button'))
+        .find((button) => button.textContent?.trim() === text)!
+        .click()
+    )
+  }
+  await click('Edit')
+  const draft = section.querySelector('textarea')!
+  act(() => {
+    Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!.call(
+      draft,
+      'my draft'
+    )
+    draft.dispatchEvent(new Event('input', { bubbles: true }))
+  })
+  await click('Save')
+  expect(draft.value).toBe('my draft')
+  stubDetailsGet('other writer')
+  expect(
+    Array.from(section.querySelectorAll('button')).some(
+      (button) => button.textContent?.trim() === 'Reload'
+    )
+  ).toBe(true)
+  await click('Reload')
+  expect(draft.value).toBe('my draft')
+  expect(section.textContent).toContain('other writer')
+  await click('Save')
+  expect(saveDetails).toHaveBeenLastCalledWith('ssh:biowulf', 'my draft', 'other writer')
 })

@@ -95,6 +95,7 @@ const options = (
     activeSession,
     projectId: 'project-a',
     currentDraftKey: 'session-a',
+    persistenceBlockedSessionIds: [],
     isPersistenceReady: true,
     supportsImageInput: true,
     agentConfiguration: {
@@ -181,6 +182,7 @@ const options = (
     abortFixLoop: vi.fn(() => Promise.resolve()),
     getSession: (sessionId) => (sessionId === 'session-a' ? session() : undefined),
     subscribeSessionChanges: () => () => undefined,
+    onSessionSizeLimit: vi.fn(),
     ...overrides
   }
 }
@@ -247,7 +249,12 @@ describe('workspace conversation controller', () => {
       version: 1,
       doc: { nodes: [] },
       annotations: [annotation],
-      attachments: []
+      attachments: [],
+      pdfReadingPosition: { pageNumber: 2, pageCount: 14 },
+      pdfReadingPositionSource: {
+        sourceKind: 'artifact-version' as const,
+        sourceVersionId: 'version-1'
+      }
     }))
     const hook = renderController(input)
     mounted.push(hook)
@@ -257,7 +264,12 @@ describe('workspace conversation controller', () => {
     await vi.waitFor(() => expect(input.runtime.sendMessage).toHaveBeenCalledOnce())
 
     expect(input.runtime.sendMessage).toHaveBeenCalledWith(
-      expect.objectContaining({ text: '', annotations: [annotation] })
+      expect.objectContaining({
+        text: '',
+        annotations: [annotation],
+        pdfReadingPosition: { pageNumber: 2, pageCount: 14 },
+        pdfReadingPositionSource: { sourceKind: 'artifact-version', sourceVersionId: 'version-1' }
+      })
     )
     expect(hook.result.current.optimisticMessage).toMatchObject({
       content: '',
@@ -615,7 +627,12 @@ describe('workspace conversation controller', () => {
     const respondPlan = vi.fn(async () => ({ changed: true }))
     Object.defineProperty(window, 'api', {
       configurable: true,
-      value: { acp: { respondPlan } }
+      value: {
+        acp: {
+          respondPlan,
+          getPlanProjection: vi.fn(async () => pendingPlan)
+        }
+      }
     })
     useSessionStore.setState({ sessions: [pendingSession] })
     const input = options({
@@ -629,6 +646,52 @@ describe('workspace conversation controller', () => {
     await expect(
       hook.result.current.actions.submit.restoredPlan({ decision: 'approved' })
     ).rejects.toThrow('The Session model is unavailable.')
+    expect(input.runtime.ensureSessionReady).not.toHaveBeenCalled()
+    expect(respondPlan).not.toHaveBeenCalled()
+  })
+
+  it('refuses a restored Plan response for a persistence-blocked Session', async () => {
+    const pendingPlan = {
+      artifactId: 'artifact-plan-a',
+      artifactVersionId: 'version-plan-a',
+      artifactChecksum: 'a'.repeat(64),
+      originatingPromptMessageId: 'message-user-a',
+      revision: 3,
+      approval: 'pending' as const,
+      lifecycle: 'awaiting_approval' as const,
+      requiresExplicitContinuation: false,
+      document: {
+        schema_version: 1 as const,
+        task_summary: 'Review the plan',
+        phases: [],
+        desired_outputs: [],
+        feasibility: { confidence: 'high' as const, rationale: 'Ready.' }
+      },
+      stepStatuses: {},
+      stepStates: {},
+      counts: { phases: 0, delegations: 0, steps: 0, completed: 0, inProgress: 0 }
+    }
+    const pendingSession = session({
+      status: 'waiting-plan-approval',
+      activePlanProjection: pendingPlan as never
+    })
+    const respondPlan = vi.fn(async () => ({ changed: true }))
+    Object.defineProperty(window, 'api', {
+      configurable: true,
+      value: { acp: { respondPlan } }
+    })
+    const input = options({
+      activeSession: pendingSession,
+      persistenceBlockedSessionIds: [pendingSession.id],
+      isPersistenceReady: false,
+      getSession: () => pendingSession
+    })
+    const hook = renderController(input)
+    mounted.push(hook)
+
+    await expect(
+      hook.result.current.actions.submit.restoredPlan({ decision: 'approved' })
+    ).rejects.toThrow('Session persistence is unavailable.')
     expect(input.runtime.ensureSessionReady).not.toHaveBeenCalled()
     expect(respondPlan).not.toHaveBeenCalled()
   })
@@ -822,6 +885,34 @@ describe('workspace conversation controller', () => {
     )
   })
 
+  it('keeps queued work deferred after a Session becomes persistence-blocked', async () => {
+    let queuedSession = runningSession()
+    const input = options({
+      activeSession: queuedSession,
+      promptInFlightSessionIds: [queuedSession.id],
+      getSession: () => queuedSession
+    })
+    const hook = renderController(input)
+    mounted.push(hook)
+
+    act(() => hook.result.current.actions.submit.draft({ forcedSkillIds: [] }))
+    queuedSession = { ...queuedSession, status: 'error' }
+    hook.rerender({
+      ...input,
+      activeSession: queuedSession,
+      promptInFlightSessionIds: [],
+      persistenceBlockedSessionIds: [queuedSession.id],
+      isPersistenceReady: false,
+      getSession: () => queuedSession
+    })
+
+    await act(async () => Promise.resolve())
+    expect(input.runtime.sendMessage).not.toHaveBeenCalled()
+    expect(hook.result.current.queue.items).toEqual([
+      expect.objectContaining({ text: 'hello', phase: 'queued' })
+    ])
+  })
+
   it('blocks immediate submit and revision while the queued head is being admitted', async () => {
     let currentSession = runningSession()
     let resolveAdmission!: (value: { sessionId: string; messageId: string }) => void
@@ -890,7 +981,7 @@ describe('workspace conversation controller', () => {
     await vi.waitFor(() =>
       expect(input.sideChat?.start).toHaveBeenCalledWith(
         'Compare these observations.\n\n[Annotations]\n' +
-          '{"items":[{"type":"quote","content":"The confidence intervals overlap.","instruction":"Explain this caveat."}]}'
+          '{"items":[{"type":"quote","content":"The confidence intervals overlap.","source":{"kind":"agent-message","sessionId":"session-a","messageId":"agent-message-a"},"instruction":"Explain this caveat."}]}'
       )
     )
 
@@ -917,7 +1008,7 @@ describe('workspace conversation controller', () => {
     await vi.waitFor(() =>
       expect(input.sideChat?.start).toHaveBeenCalledWith(
         '[Annotations]\n' +
-          '{"items":[{"type":"quote","content":"The confidence intervals overlap.","instruction":"Explain this caveat."}]}'
+          '{"items":[{"type":"quote","content":"The confidence intervals overlap.","source":{"kind":"agent-message","sessionId":"session-a","messageId":"agent-message-a"},"instruction":"Explain this caveat."}]}'
       )
     )
     expect(input.composer.lifecycle.clearDraft).toHaveBeenCalledWith('session-a', 3)

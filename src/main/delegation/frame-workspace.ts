@@ -121,7 +121,15 @@ const createProductionFrameWorkspace = (
       let resolved: ResolvedImmutableInput[] = []
       await mkdir(stagedInputs, { recursive: true })
       try {
-        resolved = await Promise.all(inputs.map((identity) => resolve(identity, session)))
+        // A lease may resolve after another input fails; wait for it before closing the batch.
+        const resolutions = await Promise.allSettled(
+          inputs.map((identity) => resolve(identity, session))
+        )
+        resolved = resolutions.flatMap((result) =>
+          result.status === 'fulfilled' ? [result.value] : []
+        )
+        const failed = resolutions.find((result) => result.status === 'rejected')
+        if (failed?.status === 'rejected') throw failed.reason
         const inputsDir = join(cwd, 'inputs')
         const alreadyPrepared = await stat(inputsDir)
           .then((entry) => entry.isDirectory())

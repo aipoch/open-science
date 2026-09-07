@@ -499,6 +499,7 @@ const hookKeys = [
   'resolveSessionRuntimeSelection'
 ] as const
 const sendIntentKeys = [
+  'expectedFrameworkId',
   'sessionId',
   'messageId',
   'branchSourceSessionId',
@@ -516,6 +517,7 @@ const sendIntentKeys = [
   'referencedArtifacts',
   'pdfContext',
   'pdfReadingPosition',
+  'pdfReadingPositionSource',
   'pendingPdfContextAttachmentIds',
   'pendingPdfContextVersions',
   'parts',
@@ -611,7 +613,8 @@ describe('workspace runtime architecture', () => {
       setPermissionProfile: 1,
       resumeSession: 1,
       respondToPermission: 1,
-      revokePermissionGrant: 1
+      revokePermissionGrant: 1,
+      steerFollowUp: 2
     })
     const effects = effectBodies(facadeFile)
     for (const responsibility of [

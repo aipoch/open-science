@@ -1,10 +1,15 @@
 import { createHash } from 'node:crypto'
-import { describe, expect, it, vi } from 'vitest'
+import { describe, expect, it, vi, type MockedFunction } from 'vitest'
 
-import type { SessionRuntimeContext } from '../../shared/session-persistence'
-import type { ActivePlanProjection } from '../../shared/session-plan/contract'
+import {
+  sanitizeSessionRuntimeContext,
+  type SessionRuntimeContext
+} from '../../shared/session-persistence'
+import type { ActivePlanProjection, PlanResponseIdentity } from '../../shared/session-plan/contract'
 import { PlanService, type PlanServiceDependencies } from './plan-service'
 import { SessionPlanInteractionOwner } from './session-plan-interaction-owner'
+import { composeAcpRuntimePlanWorkflow } from '../acp/runtime-plan-composition'
+import { AcpSessionInteractionOwner } from '../acp/session-interaction-owner'
 
 const content = {
   task_summary: 'Analyze one dataset',
@@ -202,6 +207,220 @@ const approveExecutionPlan = async (): Promise<
 }
 
 describe('PlanService', () => {
+  it.each(['EBUSY', 'EACCES'])(
+    'P05 retains the legacy plan after a temporary %s read failure and recovers on the next read',
+    async (code) => {
+      const fixture = setup()
+      const generated = await fixture.service.generate({
+        projectId: 'project-1',
+        sessionId: 'session-1',
+        executionId: 'execution-1',
+        interactionId: 'interaction-1',
+        content
+      })
+      const legacyPlan = { ...fixture.context().plan! }
+      delete legacyPlan.document
+      fixture.setContext({ ...fixture.context(), plan: legacyPlan })
+      const before = structuredClone(fixture.context())
+      vi.mocked(fixture.dependencies.patchRuntimeContext).mockClear()
+      vi.mocked(fixture.dependencies.readArtifactVersion)
+        .mockClear()
+        .mockRejectedValueOnce(Object.assign(new Error('temporary read failure'), { code }))
+
+      await fixture.service.getProjection('project-1', 'session-1').catch(() => undefined)
+      expect.soft(fixture.context()).toEqual(before)
+      expect.soft(fixture.dependencies.patchRuntimeContext).not.toHaveBeenCalled()
+      expect.soft(fixture.status()).toBe('waiting-plan-approval')
+      await expect(fixture.service.getProjection('project-1', 'session-1')).resolves.toEqual(
+        generated.projection
+      )
+      expect(fixture.dependencies.readArtifactVersion).toHaveBeenCalledTimes(2)
+    }
+  )
+
+  it.each([400, 661])(
+    'P06 completes an admitted %s-step plan through the persistence sanitizer',
+    async (stepCount) => {
+      const fixture = setup()
+      if (stepCount === 661) {
+        fixture.setContext({
+          version: 1,
+          revision: 0,
+          delegatedWork: { records: [], messageCommands: [] },
+          permission: {
+            state: 'pending',
+            request: {
+              requestId: 'permission-1',
+              sessionId: 'session-1',
+              toolCallId: 'tool-1',
+              title: 'Run tests',
+              options: [{ optionId: 'deny', name: 'Deny', kind: 'reject_once' }]
+            },
+            originatingPromptMessageId: 'interaction-1',
+            fingerprint: 'a'.repeat(64),
+            createdAt: 1
+          }
+        })
+      }
+      vi.mocked(fixture.dependencies.patchRuntimeContext).mockImplementation(
+        async ({ expectedRevision, plan, beforePersist }) => {
+          if (expectedRevision !== fixture.context().revision) throw new Error('revision conflict')
+          beforePersist?.()
+          const next = sanitizeSessionRuntimeContext({
+            ...fixture.context(),
+            revision: expectedRevision + 1,
+            plan
+          })
+          if (!next) throw new Error('Session runtime context patch is not JSON-safe.')
+          fixture.setContext(next)
+          return next
+        }
+      )
+      const steps = Array.from({ length: stepCount }, (_, index) => ({
+        title: `Step ${index + 1}`,
+        description: 'Produce the result.'
+      }))
+      const generated = await fixture.service.generate({
+        projectId: 'project-1',
+        sessionId: 'session-1',
+        executionId: 'execution-1',
+        interactionId: 'interaction-1',
+        content: {
+          ...content,
+          phases: [{ name: 'Analysis', delegations: [{ name: 'Primary agent', steps }] }]
+        }
+      })
+      const identity = {
+        projectId: 'project-1',
+        sessionId: 'session-1',
+        artifactVersionId: generated.projection.artifactVersionId
+      }
+      await fixture.service.respond({
+        ...identity,
+        expectedRevision: fixture.context().revision,
+        decision: 'approved'
+      })
+      let failure: unknown
+      let completed = 0
+      try {
+        for (const step of steps) {
+          await fixture.service.updateStepStatus({
+            ...identity,
+            expectedRevision: fixture.context().revision,
+            title: step.title,
+            status: 'in_progress'
+          })
+          await fixture.service.updateStepStatus({
+            ...identity,
+            expectedRevision: fixture.context().revision,
+            title: step.title,
+            status: 'completed',
+            ...(stepCount === 661 ? { notes: 'Verified result.' } : {})
+          })
+          completed += 1
+        }
+      } catch (error) {
+        failure = error
+      }
+      expect({ completed, failure }).toEqual({ completed: steps.length, failure: undefined })
+      await expect(fixture.service.getProjection('project-1', 'session-1')).resolves.toMatchObject({
+        lifecycle: 'completed'
+      })
+    }
+  )
+
+  it('P06 rejects an oversized plan before creating its Artifact', async () => {
+    const fixture = setup()
+    const oversized = {
+      ...content,
+      phases: [
+        {
+          name: 'Analysis',
+          delegations: [
+            {
+              name: 'Primary agent',
+              steps: Array.from({ length: 662 }, (_, index) => ({
+                title: `Step ${index}`,
+                description: 'Work.'
+              }))
+            }
+          ]
+        }
+      ]
+    }
+    await expect(
+      fixture.service.generate({
+        projectId: 'project-1',
+        sessionId: 'session-1',
+        executionId: 'execution-1',
+        interactionId: 'interaction-1',
+        content: oversized
+      })
+    ).rejects.toMatchObject({
+      code: 'invalid-plan',
+      message: expect.stringMatching(/too large.*split/i)
+    })
+    expect(fixture.dependencies.writeArtifactForExecution).not.toHaveBeenCalled()
+    expect(fixture.context()).not.toHaveProperty('plan')
+  })
+
+  it('keeps oversized artifact-only legacy Plans readable and rejectable', async () => {
+    const fixture = setup()
+    await fixture.service.generate({
+      projectId: 'project-1',
+      sessionId: 'session-1',
+      executionId: 'execution-1',
+      interactionId: 'interaction-1',
+      content
+    })
+    const document = {
+      schema_version: 1,
+      ...content,
+      phases: [
+        {
+          name: 'Analysis',
+          delegations: [
+            {
+              name: 'Primary agent',
+              steps: Array.from({ length: 662 }, (_, index) => ({
+                title: `Step ${index}`,
+                description: 'Work.'
+              }))
+            }
+          ]
+        }
+      ]
+    }
+    const bytes = JSON.stringify(document)
+    const checksum = createHash('sha256').update(bytes).digest('hex')
+    const legacy = { ...fixture.context().plan!, artifactChecksum: checksum }
+    delete legacy.document
+    fixture.setContext({ ...fixture.context(), plan: legacy })
+    vi.mocked(fixture.dependencies.readArtifactVersion).mockResolvedValue({
+      content: bytes,
+      checksum
+    })
+    const identity = {
+      projectId: 'project-1',
+      sessionId: 'session-1',
+      artifactVersionId: legacy.artifactVersionId,
+      expectedRevision: fixture.context().revision
+    }
+    await expect(fixture.service.getProjection('project-1', 'session-1')).resolves.toMatchObject({
+      counts: { steps: 662 }
+    })
+    await expect(
+      fixture.service.respond({ ...identity, decision: 'approved' })
+    ).rejects.toMatchObject({
+      code: 'invalid-plan',
+      message: expect.stringMatching(/too large.*split/i)
+    })
+    await expect(
+      fixture.service.respond({ ...identity, decision: 'rejected' })
+    ).resolves.toMatchObject({ projection: { approval: 'rejected' } })
+    expect(fixture.status()).toBe('idle')
+  })
+
   it('durably verifies a generated Plan before atomically activating it for the Session', async () => {
     const { service, dependencies, context, status } = setup()
 
@@ -1851,7 +2070,144 @@ describe('PlanService', () => {
     )
   })
 
-  it('drops an unreadable embedded Plan document instead of exposing corrupt state', async () => {
+  describe('explicit unavailable Plan recovery', () => {
+    const unavailable = async (): Promise<
+      PlanServiceHarness & {
+        read: MockedFunction<PlanServiceDependencies['readArtifactVersion']>
+        originalRead: PlanServiceDependencies['readArtifactVersion']
+        identity: PlanResponseIdentity
+      }
+    > => {
+      const fixture = setup()
+      const generated = await fixture.service.generate({
+        projectId: 'project-1',
+        sessionId: 'session-1',
+        executionId: 'execution-1',
+        interactionId: 'interaction-1',
+        content
+      })
+      const legacy = { ...fixture.context().plan! }
+      delete legacy.document
+      fixture.setContext({ ...fixture.context(), plan: legacy })
+      const read = vi.mocked(fixture.dependencies.readArtifactVersion)
+      const originalRead = read.getMockImplementation()!
+      read.mockRejectedValue(
+        Object.assign(new Error('artifact file does not exist'), { code: 'ENOENT' })
+      )
+      return {
+        ...fixture,
+        read,
+        originalRead,
+        identity: {
+          projectId: 'project-1',
+          sessionId: 'session-1',
+          artifactVersionId: generated.projection.artifactVersionId,
+          expectedRevision: fixture.context().revision
+        }
+      }
+    }
+
+    it('permits confirmed discard for a legacy Plan without origin provenance', async () => {
+      const fixture = await unavailable()
+      const legacy = { ...fixture.context().plan! }
+      delete legacy.originatingPromptMessageId
+      fixture.setContext({ ...fixture.context(), plan: legacy })
+      const containsMessageOnActiveBranch = vi.fn(async () => false)
+      const workflow = composeAcpRuntimePlanWorkflow(
+        { plan: { sessions: { containsMessageOnActiveBranch } } } as never,
+        {
+          planService: fixture.service,
+          planInteractions: fixture.interactions,
+          sessionInteractions: new AcpSessionInteractionOwner()
+        } as never,
+        { publication: { pushEvent: vi.fn() } } as never
+      )
+      const result = await workflow
+        .discardUnavailable(fixture.identity)
+        .catch((error: unknown) => error)
+      expect(result).toEqual({ revision: fixture.identity.expectedRevision + 1 })
+      expect(fixture.context().plan).toBeUndefined()
+      expect(containsMessageOnActiveBranch).not.toHaveBeenCalled()
+    })
+
+    it('preserves failed rejection evidence, then permits explicit discard', async () => {
+      const fixture = await unavailable()
+      const before = fixture.context()
+      await expect(
+        fixture.service.respond({ ...fixture.identity, decision: 'rejected' })
+      ).rejects.toMatchObject({ code: 'artifact-unavailable' })
+      expect(fixture.context()).toEqual(before)
+      await expect(fixture.service.discardUnavailable(fixture.identity)).resolves.toEqual({
+        revision: before.revision + 1
+      })
+      expect(fixture.context().plan).toBeUndefined()
+      expect(fixture.status()).toBe('idle')
+      expect(
+        fixture.interactions.interactionIdFor('session-1', fixture.identity.artifactVersionId)
+      ).toBeUndefined()
+      await expect(fixture.service.getProjection('project-1', 'session-1')).resolves.toBeNull()
+      expect(fixture.dependencies.persistUserMessage).not.toHaveBeenCalled()
+      expect(fixture.dependencies.writeArtifactForExecution).toHaveBeenCalledTimes(1)
+    })
+
+    it('refuses to discard a Plan whose read has recovered', async () => {
+      const fixture = await unavailable()
+      fixture.read.mockImplementation(fixture.originalRead)
+      const before = fixture.context()
+      await expect(fixture.service.discardUnavailable(fixture.identity)).rejects.toMatchObject({
+        code: 'invalid-plan'
+      })
+      expect(fixture.context()).toEqual(before)
+      await expect(fixture.service.getProjection('project-1', 'session-1')).resolves.toMatchObject({
+        approval: 'pending'
+      })
+    })
+
+    it.each([
+      'stale-version',
+      'stale-revision',
+      'read-race',
+      'storage-failure',
+      'revoked'
+    ] as const)('preserves Plan authority on %s during explicit discard', async (mode) => {
+      const fixture = await unavailable()
+      const identity = { ...fixture.identity }
+      if (mode === 'stale-version') identity.artifactVersionId = 'old-version'
+      if (mode === 'stale-revision') identity.expectedRevision -= 1
+      if (mode === 'read-race')
+        fixture.read.mockImplementation(async () => {
+          fixture.setContext({
+            ...fixture.context(),
+            revision: fixture.context().revision + 1,
+            plan: { ...fixture.context().plan!, artifactVersionId: 'replacement' }
+          })
+          throw new Error('old artifact disappeared')
+        })
+      if (mode === 'storage-failure')
+        vi.mocked(fixture.dependencies.patchRuntimeContext).mockRejectedValue(new Error('ENOSPC'))
+      const before = fixture.context()
+      await expect(
+        fixture.service.discardUnavailable({
+          ...identity,
+          beforePersist: () => {
+            if (mode === 'revoked') throw new Error('authorization revoked')
+          }
+        })
+      ).rejects.toBeInstanceOf(Error)
+      expect(fixture.context()).toEqual(
+        mode === 'read-race'
+          ? {
+              ...before,
+              revision: before.revision + 1,
+              plan: { ...before.plan, artifactVersionId: 'replacement' }
+            }
+          : before
+      )
+      expect(fixture.dependencies.onApprovalSettled).not.toHaveBeenCalled()
+    })
+  })
+
+  it('P05 preserves an unreadable embedded Plan document as recovery evidence', async () => {
     const { service, context, setContext, status } = setup()
     await service.generate({
       projectId: 'project-1',
@@ -1868,12 +2224,14 @@ describe('PlanService', () => {
       }
     })
 
-    await expect(service.getProjection('project-1', 'session-1')).resolves.toBeNull()
-    expect(context().plan).toBeUndefined()
-    expect(status()).toBe('idle')
+    await expect(service.getProjection('project-1', 'session-1')).rejects.toMatchObject({
+      code: 'artifact-unavailable'
+    })
+    expect(context().plan).toBeDefined()
+    expect(status()).toBe('waiting-plan-approval')
   })
 
-  it('drops a checksum-valid restored Plan when the embedded document structure is corrupt', async () => {
+  it('P05 preserves a checksum-valid restored Plan with a corrupt document', async () => {
     const { service, context, setContext, status } = setup()
     await service.generate({
       projectId: 'project-1',
@@ -1899,9 +2257,11 @@ describe('PlanService', () => {
       }
     })
 
-    await expect(service.getProjection('project-1', 'session-1')).resolves.toBeNull()
-    expect(context().plan).toBeUndefined()
-    expect(status()).toBe('idle')
+    await expect(service.getProjection('project-1', 'session-1')).rejects.toMatchObject({
+      code: 'artifact-unavailable'
+    })
+    expect(context().plan).toBeDefined()
+    expect(status()).toBe('waiting-plan-approval')
   })
 
   it('retains a verified restored Plan when unpublished provenance content is unavailable', async () => {

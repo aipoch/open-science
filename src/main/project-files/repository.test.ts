@@ -623,7 +623,7 @@ describe('ManagedFileIndexRepository', () => {
     })
     await expect(
       repository.searchArtifacts({
-        primaryProjectId: PROJECT_ID,
+        primaryProjectIds: [PROJECT_ID],
         otherProjectIds: [],
         filenameContains: 'sin.png',
         primaryLimit: 8,
@@ -2710,6 +2710,116 @@ describe('ManagedFileIndexRepository', () => {
     ).rejects.toThrow(/cursor.*search/i)
   })
 
+  it('pages one authoritative artifact collection across Projects with scope-bound cursors', async () => {
+    const names = ['alpha', 'beta', 'gamma', 'delta', 'epsilon', 'zeta']
+    for (const name of names) {
+      const path = join(storageRoot, 'artifacts', 'project-b', 'session-b', `${name}.png`)
+      await writeManagedFile(path, name)
+    }
+    await repository.syncSession(
+      createSession({
+        id: 'session-b',
+        projectId: 'project-b',
+        artifacts: names.map((name, index) => ({
+          id: name,
+          kind: 'managed-file' as const,
+          name: `sin-${name}.png`,
+          path: join(storageRoot, 'artifacts', 'project-b', 'session-b', `${name}.png`),
+          mtimeMs: 100 + Math.floor(index / 2)
+        }))
+      })
+    )
+    const request = {
+      primaryProjectIds: [PROJECT_ID, 'project-b'],
+      otherProjectIds: [],
+      filenameContains: 'sin',
+      primaryLimit: 2,
+      otherLimit: 0 as const
+    }
+    const first = await repository.searchArtifacts(request)
+    expect(first.primary.totalCount).toBe(6)
+    expect(first.primary.items).toHaveLength(2)
+    expect(first.primary.nextCursor).toBeDefined()
+    const second = await repository.searchArtifacts({
+      ...request,
+      primaryProjectIds: ['project-b', PROJECT_ID, 'project-b'],
+      primaryCursor: first.primary.nextCursor
+    })
+    const third = await repository.searchArtifacts({
+      ...request,
+      primaryCursor: second.primary.nextCursor
+    })
+    expect(third.primary.nextCursor).toBeUndefined()
+    expect(
+      [...first.primary.items, ...second.primary.items, ...third.primary.items]
+        .map((item) => item.name)
+        .sort()
+    ).toEqual(names.map((name) => `sin-${name}.png`).sort())
+    await expect(
+      repository.searchArtifacts({
+        ...request,
+        primaryProjectIds: [PROJECT_ID],
+        primaryCursor: first.primary.nextCursor
+      })
+    ).rejects.toThrow(/cursor/i)
+    await expect(
+      repository.searchArtifacts({
+        ...request,
+        filenameContains: 'cos',
+        primaryCursor: first.primary.nextCursor
+      })
+    ).rejects.toThrow(/cursor/i)
+    await expect(
+      repository.searchArtifacts({
+        ...request,
+        excludedSessionIds: ['session-b'],
+        primaryCursor: first.primary.nextCursor
+      })
+    ).rejects.toThrow(/cursor/i)
+    await expect(
+      repository.searchArtifacts({ ...request, excludedSessionIds: ['session-b'] })
+    ).resolves.toMatchObject({ primary: { totalCount: 0, items: [] }, other: [] })
+    const localPath = join(storageRoot, 'artifacts', PROJECT_ID, SESSION_ID, 'local.png')
+    await writeManagedFile(localPath, 'local')
+    await repository.syncSession(
+      createSession({
+        artifacts: [
+          {
+            id: 'local',
+            name: 'sin-local.png',
+            kind: 'managed-file',
+            path: localPath,
+            mtimeMs: 101
+          }
+        ]
+      })
+    )
+    const mergedNames: string[] = []
+    let cursor: string | undefined
+    for (let page = 0; page < 4; page++) {
+      const result = await repository.searchArtifacts({ ...request, primaryCursor: cursor })
+      expect(result.primary.totalCount).toBe(7)
+      mergedNames.push(...result.primary.items.map((item) => item.name))
+      cursor = result.primary.nextCursor
+    }
+    expect(cursor).toBeUndefined()
+    const unpaged = await repository.searchArtifacts({ ...request, primaryLimit: 100 })
+    expect(mergedNames).toEqual(unpaged.primary.items.map((item) => item.name))
+    expect(mergedNames.slice(0, 2).sort()).toEqual(['sin-epsilon.png', 'sin-zeta.png'])
+    expect(mergedNames.slice(2, 5).sort()).toEqual([
+      'sin-delta.png',
+      'sin-gamma.png',
+      'sin-local.png'
+    ])
+    expect(mergedNames.slice(5).sort()).toEqual(['sin-alpha.png', 'sin-beta.png'])
+    await expect(repository.searchArtifacts({ ...request, primaryProjectIds: [] })).rejects.toThrow(
+      /non-empty array/
+    )
+    await expect(
+      repository.searchArtifacts({ ...request, primaryProjectIds: [''] })
+    ).rejects.toThrow(/primaryProjectId/)
+  })
+
   it('searches generated artifacts with a primary cursor and bounded other-project results', async () => {
     const primaryFiles = [
       ['sin-old', 'sin-old.png', 100],
@@ -2802,7 +2912,7 @@ describe('ManagedFileIndexRepository', () => {
     )
 
     const first = await repository.searchArtifacts({
-      primaryProjectId: PROJECT_ID,
+      primaryProjectIds: [PROJECT_ID],
       otherProjectIds: ['project-b'],
       filenameContains: 'SIN',
       primaryLimit: 2,
@@ -2824,7 +2934,7 @@ describe('ManagedFileIndexRepository', () => {
 
     await expect(
       repository.searchArtifacts({
-        primaryProjectId: 'project-b',
+        primaryProjectIds: ['project-b'],
         otherProjectIds: [],
         filenameContains: 'SIN',
         primaryLimit: 2,
@@ -2835,7 +2945,7 @@ describe('ManagedFileIndexRepository', () => {
 
     await expect(
       repository.searchArtifacts({
-        primaryProjectId: PROJECT_ID,
+        primaryProjectIds: [PROJECT_ID],
         otherProjectIds: ['project-b'],
         primaryLimit: 2,
         otherLimit: 6
@@ -2844,7 +2954,7 @@ describe('ManagedFileIndexRepository', () => {
 
     await expect(
       repository.searchArtifacts({
-        primaryProjectId: PROJECT_ID,
+        primaryProjectIds: [PROJECT_ID],
         otherProjectIds: ['project-b'],
         filenameContains: 'sin',
         primaryLimit: 2,
@@ -2862,7 +2972,7 @@ describe('ManagedFileIndexRepository', () => {
 
     await expect(
       repository.searchArtifacts({
-        primaryProjectId: PROJECT_ID,
+        primaryProjectIds: [PROJECT_ID],
         otherProjectIds: ['project-b'],
         filenameContains: 'sin',
         excludedSessionIds: [SESSION_ID],
@@ -3114,7 +3224,7 @@ describe('ManagedFileIndexRepository', () => {
     })
     await expect(
       repository.searchArtifacts({
-        primaryProjectId: PROJECT_ID,
+        primaryProjectIds: [PROJECT_ID],
         otherProjectIds: [],
         filenameContains: 'result',
         primaryLimit: 10,

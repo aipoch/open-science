@@ -74,6 +74,7 @@ describe('Web RPC contract', () => {
       'compute.download',
       'compute.enabledHostsGet',
       'compute.enabledHostsSet',
+      'compute.executionModeSet',
       'compute.get',
       'compute.hostEnabledSet',
       'compute.hostSelectedSet',
@@ -114,6 +115,7 @@ describe('Web RPC contract', () => {
     const eventPaths = Object.keys(WEB_EVENT_CHANNELS)
 
     expect(invokePaths.filter((path) => path.startsWith('notebook.'))).toEqual([
+      'notebook.abortCodeCell',
       'notebook.appendCodeCell',
       'notebook.beginCodeCell',
       'notebook.execute',
@@ -193,6 +195,24 @@ describe('Web RPC contract', () => {
   })
 
   it('accepts the versioned CLI update capability in bootstrap data', () => {
+    expect(
+      webRpcBootstrapSchema.safeParse({
+        platform: 'test',
+        webCallerLocation: 'local',
+        versions: { electron: '1', chrome: '1', node: '1' },
+        rpcProtocolVersion: WEB_RPC_PROTOCOL_VERSION,
+        rpcCapabilities: [WEB_RPC_CAPABILITY_UPDATE_CLI_V1],
+        rpcChannels: [],
+        eventStream: {
+          protocolVersion: WEB_EVENT_STREAM_PROTOCOL_VERSION,
+          streamId: 'stream-1',
+          latestSequence: 0
+        }
+      }).success
+    ).toBe(true)
+  })
+
+  it('accepts bootstrap data from an older protocol-v1 Main without caller location', () => {
     expect(
       webRpcBootstrapSchema.safeParse({
         platform: 'test',

@@ -39,63 +39,162 @@ const createCodeFenceTracker = (): {
   }
 }
 
-const getMarkdownPluginNeeds = (markdown: string): MarkdownPluginNeeds => {
-  const tracker = createCodeFenceTracker()
-  let code = false
-  let fenceBlockquoteDepth = 0
-  let fenceListIndent = 0
-  let listBlockquoteDepth = 0
-  const listContentIndents: number[] = []
-
-  for (const rawLine of markdown.split('\n')) {
-    const wasOpen = tracker.isOpen()
-    let line = rawLine
-    let blockquoteDepth = 0
-    while (blockquoteDepth < (wasOpen ? fenceBlockquoteDepth : Number.POSITIVE_INFINITY)) {
-      const prefix = line.match(BLOCKQUOTE_PREFIX)?.[0]
-      if (!prefix) break
-      line = line.slice(prefix.length)
-      blockquoteDepth += 1
-    }
-
-    if (wasOpen && fenceListIndent > 0) {
-      const indentation = line.match(LEADING_WHITESPACE)?.[0].length ?? 0
-      if (indentation >= fenceListIndent) line = line.slice(fenceListIndent)
-    } else if (!wasOpen && line.trim()) {
-      if (blockquoteDepth !== listBlockquoteDepth) listContentIndents.length = 0
-
-      if (listContentIndents.length > 0) {
-        const indentation = line.match(LEADING_WHITESPACE)?.[0].length ?? 0
-        while ((listContentIndents.at(-1) ?? 0) > indentation) listContentIndents.pop()
-        line = line.slice(listContentIndents.at(-1) ?? 0)
-      }
-
-      let listIndent = listContentIndents.at(-1) ?? 0
-      for (let listMarker = line.match(LIST_MARKER)?.[0]; listMarker;) {
-        listIndent += listMarker.length
-        listContentIndents.push(listIndent)
-        listBlockquoteDepth = blockquoteDepth
-        line = line.slice(listMarker.length)
-        listMarker = line.match(LIST_MARKER)?.[0]
-      }
-    }
-
-    const isOpen = tracker.feed(line)
-    if (!wasOpen && isOpen) {
-      fenceBlockquoteDepth = blockquoteDepth
-      fenceListIndent = listContentIndents.at(-1) ?? 0
-    } else if (wasOpen && !isOpen) {
-      fenceListIndent = 0
-    }
-    if (wasOpen || !isOpen) continue
-
-    code = true
-    const language = line.replace(FENCE_LINE, '').trim().split(/\s+/, 1)[0]
-    if (language === 'mermaid') return { code: true, mermaid: true }
-  }
-
-  return { code, mermaid: false }
+// Explicit scan state for `getMarkdownPluginNeeds`, mirroring `createCodeFenceTracker`'s fence
+// rules plus the blockquote/list tracking the scan needs. Kept outside a closure so the
+// incremental scanner can persist it across calls and score the trailing partial line against a
+// throwaway copy.
+type PluginNeedsScanState = {
+  fenceOpen: boolean
+  fenceMarkerChar: string
+  fenceMarkerLength: number
+  fenceBlockquoteDepth: number
+  fenceListIndent: number
+  listBlockquoteDepth: number
+  listContentIndents: number[]
+  code: boolean
+  mermaid: boolean
 }
 
-export { FENCE_LINE, createCodeFenceTracker, getMarkdownPluginNeeds }
+const createPluginNeedsScanState = (): PluginNeedsScanState => ({
+  fenceOpen: false,
+  fenceMarkerChar: '',
+  fenceMarkerLength: 0,
+  fenceBlockquoteDepth: 0,
+  fenceListIndent: 0,
+  listBlockquoteDepth: 0,
+  listContentIndents: [],
+  code: false,
+  mermaid: false
+})
+
+// Same open/close rule as `createCodeFenceTracker.feed`.
+const feedScanFence = (state: PluginNeedsScanState, line: string): boolean => {
+  const fence = FENCE_LINE.exec(line)
+  if (fence) {
+    if (!state.fenceOpen) {
+      state.fenceOpen = true
+      state.fenceMarkerChar = fence[1][0]
+      state.fenceMarkerLength = fence[1].length
+    } else if (
+      fence[1][0] === state.fenceMarkerChar &&
+      fence[1].length >= state.fenceMarkerLength
+    ) {
+      state.fenceOpen = false
+    }
+  }
+  return state.fenceOpen
+}
+
+const scanPluginNeedsLine = (state: PluginNeedsScanState, rawLine: string): void => {
+  const wasOpen = state.fenceOpen
+  let line = rawLine
+  let blockquoteDepth = 0
+  while (blockquoteDepth < (wasOpen ? state.fenceBlockquoteDepth : Number.POSITIVE_INFINITY)) {
+    const prefix = line.match(BLOCKQUOTE_PREFIX)?.[0]
+    if (!prefix) break
+    line = line.slice(prefix.length)
+    blockquoteDepth += 1
+  }
+
+  if (wasOpen && state.fenceListIndent > 0) {
+    const indentation = line.match(LEADING_WHITESPACE)?.[0].length ?? 0
+    if (indentation >= state.fenceListIndent) line = line.slice(state.fenceListIndent)
+  } else if (!wasOpen && line.trim()) {
+    if (blockquoteDepth !== state.listBlockquoteDepth) state.listContentIndents.length = 0
+
+    if (state.listContentIndents.length > 0) {
+      const indentation = line.match(LEADING_WHITESPACE)?.[0].length ?? 0
+      while ((state.listContentIndents.at(-1) ?? 0) > indentation) state.listContentIndents.pop()
+      line = line.slice(state.listContentIndents.at(-1) ?? 0)
+    }
+
+    let listIndent = state.listContentIndents.at(-1) ?? 0
+    for (let listMarker = line.match(LIST_MARKER)?.[0]; listMarker;) {
+      listIndent += listMarker.length
+      state.listContentIndents.push(listIndent)
+      state.listBlockquoteDepth = blockquoteDepth
+      line = line.slice(listMarker.length)
+      listMarker = line.match(LIST_MARKER)?.[0]
+    }
+  }
+
+  const isOpen = feedScanFence(state, line)
+  if (!wasOpen && isOpen) {
+    state.fenceBlockquoteDepth = blockquoteDepth
+    state.fenceListIndent = state.listContentIndents.at(-1) ?? 0
+  } else if (wasOpen && !isOpen) {
+    state.fenceListIndent = 0
+  }
+  if (wasOpen || !isOpen) return
+
+  state.code = true
+  const language = line.replace(FENCE_LINE, '').trim().split(/\s+/, 1)[0]
+  if (language === 'mermaid') state.mermaid = true
+}
+
+const getMarkdownPluginNeeds = (markdown: string): MarkdownPluginNeeds => {
+  const state = createPluginNeedsScanState()
+
+  for (const rawLine of markdown.split('\n')) {
+    scanPluginNeedsLine(state, rawLine)
+    if (state.mermaid) return { code: true, mermaid: true }
+  }
+
+  return { code: state.code, mermaid: false }
+}
+
+// Incremental `getMarkdownPluginNeeds` for append-only streaming. Only newline-terminated lines
+// are committed to the persisted state, so a later append can re-evaluate the trailing partial
+// line (which may still complete into a fence marker); the partial line is scored per call
+// against a throwaway copy of the state. Detected needs are monotonic under append, so once
+// Mermaid is found no further scanning is needed. Non-append input resets the scan.
+const createMarkdownPluginNeedsScanner = (): ((markdown: string) => MarkdownPluginNeeds) => {
+  let cachedInput: string | null = null
+  let cachedNeeds: MarkdownPluginNeeds = { code: false, mermaid: false }
+  let state = createPluginNeedsScanState()
+  let scanPosition = 0
+
+  return (markdown: string): MarkdownPluginNeeds => {
+    if (markdown === cachedInput) return cachedNeeds
+    if (cachedInput === null || !markdown.startsWith(cachedInput)) {
+      state = createPluginNeedsScanState()
+      scanPosition = 0
+    }
+
+    if (!state.mermaid) {
+      for (;;) {
+        const newlineIndex = markdown.indexOf('\n', scanPosition)
+        if (newlineIndex === -1) break
+        scanPluginNeedsLine(state, markdown.slice(scanPosition, newlineIndex))
+        scanPosition = newlineIndex + 1
+        if (state.mermaid) break
+      }
+    }
+
+    let needs: MarkdownPluginNeeds
+    if (state.mermaid) {
+      needs = { code: true, mermaid: true }
+    } else if (scanPosition < markdown.length) {
+      const partialState: PluginNeedsScanState = {
+        ...state,
+        listContentIndents: [...state.listContentIndents]
+      }
+      scanPluginNeedsLine(partialState, markdown.slice(scanPosition))
+      needs = { code: partialState.code, mermaid: partialState.mermaid }
+    } else {
+      needs = { code: state.code, mermaid: false }
+    }
+
+    cachedInput = markdown
+    cachedNeeds = needs
+    return needs
+  }
+}
+
+export {
+  FENCE_LINE,
+  createCodeFenceTracker,
+  createMarkdownPluginNeedsScanner,
+  getMarkdownPluginNeeds
+}
 export type { MarkdownPluginNeeds }

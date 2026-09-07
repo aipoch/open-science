@@ -585,7 +585,10 @@ export class SpecialistPackageService {
     }
   }
 
-  async previewExport(specialistId: string): Promise<SpecialistExportPreview> {
+  async previewExport(
+    specialistId: string,
+    includedSkillIds?: readonly string[]
+  ): Promise<SpecialistExportPreview> {
     const [document, catalog] = await Promise.all([
       this.options.repository.getAll(),
       this.options.catalog()
@@ -621,7 +624,11 @@ export class SpecialistPackageService {
         }
       })
       .sort((left, right) => left.id.localeCompare(right.id))
-    const selectedSkills = skills
+    const selectedSkills = skills.map((skill) => ({
+      ...skill,
+      selected:
+        includedSkillIds === undefined ? skill.selected : includedSkillIds.includes(skill.id)
+    }))
     const connectorIds = effectiveSpecialistConnectorIds(specialist, catalog)
     const diagnostics: PackageDiagnostic[] = []
     if (selectedSkills.some((skill) => skill.kind === 'referenced')) {
@@ -648,15 +655,14 @@ export class SpecialistPackageService {
       })
     }
     diagnostics.push(...specialistExportProfileDiagnostics(specialist))
-    const includedSkillIds = selectedSkills
-      .filter((skill) => skill.selected)
-      .map((skill) => skill.id)
+    const selection =
+      includedSkillIds ?? selectedSkills.filter((skill) => skill.selected).map((skill) => skill.id)
     if (!diagnostics.some((item) => item.severity === 'error')) {
       try {
         await this.export({
           specialistId: specialist.id,
           expectedRevision: specialist.revision,
-          includedSkillIds
+          includedSkillIds: selection
         })
       } catch {
         diagnostics.push({
@@ -921,6 +927,13 @@ export class SpecialistPackageService {
         return { status: 'failed', code: 'protected-target' }
       }
       if (!liveValidation.plan) return { status: 'failed', code: 'candidate-not-installable' }
+      const sameIds = (left: readonly string[], right: readonly string[]): boolean =>
+        [...left].sort().join('\0') === [...right].sort().join('\0')
+      if (
+        !sameIds(candidate.plan.skillIds, liveValidation.plan.skillIds) ||
+        !sameIds(candidate.plan.connectorIds, liveValidation.plan.connectorIds)
+      )
+        return { status: 'failed', code: 'stale-candidate' }
       const liveConflicts = liveValidation.plan.skills.filter(
         (skill) => skill.disposition === 'conflict'
       )

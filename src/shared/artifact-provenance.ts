@@ -1,4 +1,5 @@
 import type { ArtifactFile, ArtifactSourceFileObservation, ArtifactWriteSource } from './artifacts'
+import type { ArtifactLiteratureManifest, ArtifactLiteratureRequest } from './artifact-literature'
 import type {
   NotebookInputAssociation,
   NotebookHelperModuleEvidence,
@@ -48,6 +49,7 @@ export type CreateArtifactVersionRequest = {
   resourceReservationId?: string
   resourceSizeBytes?: number
   resourceChecksum?: string
+  literature?: ArtifactLiteratureRequest
 }
 
 export type ReserveArtifactWriteRequest = {
@@ -183,6 +185,8 @@ export const parseArtifactVersionLocator = (value: string): ArtifactVersionIdent
 export type ArtifactVersionDescriptor = Omit<ArtifactVersionFile, 'path' | 'fileUrl'> & {
   state: 'pending' | 'finalized'
   messageId?: string
+  // Presence only: the full immutable manifest stays behind the Version provenance read.
+  hasLiterature?: boolean
   // Optional for renderer state written before managed text editing shipped. New native lineage
   // projections always classify the version so user edits are never presented as Agent output.
   originKind?: 'agent_generated' | 'user_edit' | 'legacy'
@@ -539,6 +543,7 @@ export type ArtifactVersionProvenance = {
   contentStatus:
     { state: 'available' } | { state: 'unavailable'; reason: 'missing' | 'checksum-mismatch' }
   evidence: ArtifactVersionEvidence
+  literature?: ArtifactLiteratureManifest
   execution?: ArtifactExecutionSnapshot
   messages:
     | {
@@ -568,7 +573,7 @@ export type ArtifactVersionProvenance = {
 
 export type ArtifactVersionCoreProvenance = Pick<
   ArtifactVersionProvenance,
-  'descriptor' | 'contentStatus' | 'evidence'
+  'descriptor' | 'contentStatus' | 'evidence' | 'literature'
 >
 
 export type ArtifactVersionExecutionProvenance = Pick<ArtifactVersionProvenance, 'execution'>

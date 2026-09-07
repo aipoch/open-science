@@ -63,6 +63,10 @@ describe('Remote Compute Skill document', () => {
       expect(doc).toContain(name)
     }
     expect(doc).toContain('job.job_id')
+    expect(doc).toContain('execution_mode')
+    expect(doc).toContain("status: 'queued' | 'submitted'")
+    expect(doc).toContain('scheduler_job_id?')
+    expect(doc).toContain('last_poll_error?')
     expect(doc).toContain('r.featured_files')
     expect(doc).not.toMatch(
       /\b(?:list_compute|call_command|submit_job|attach_job|set_concurrency_limit|login_shell|timeout_seconds|old_text|dst_filename|remote_path|max_file_mb|max_total_mb)\b/
@@ -73,6 +77,65 @@ describe('Remote Compute Skill document', () => {
     expect(doc).toContain("role === 'selected'")
     expect(doc).toContain('`last_probe_ok`, `probe_failed`, or `not_probed`')
     expect(doc).not.toContain('`connected`, `probe_failed`, or `not_probed`')
+  })
+
+  it('documents deterministic named environments and explicit Slurm execution', async () => {
+    const doc = await readFile(
+      join(__dirname, '..', '..', '..', 'resources', 'skills', 'remote-compute-ssh', 'SKILL.md'),
+      'utf8'
+    )
+
+    expect(doc).toContain('configured execution mode')
+    expect(doc).toContain('~/.openscience/environments/<name>.sh')
+    expect(doc).toContain('Compute Environment Setup')
+    expect(doc).toMatch(/prepare exact setup, repair, and removal instructions/)
+    expect(doc).toMatch(/user-managed activation after they apply the plan/)
+    expect(doc).not.toContain('Skill and create or repair it')
+    expect(doc).toContain('Do not call `sbatch`, `squeue`, or `scancel`')
+  })
+
+  it('ships the environment setup Skill with the public Host API contract', async () => {
+    const doc = await readFile(
+      join(__dirname, '..', '..', '..', 'resources', 'skills', 'compute-env-setup', 'SKILL.md'),
+      'utf8'
+    )
+
+    expect(doc).toContain('name: compute-env-setup')
+    expect(doc).toContain('host.compute.details')
+    expect(doc).toContain('compute.callCommand')
+    expect(doc).toContain('compute.submitJob')
+    expect(doc).toContain('configured for Slurm')
+    expect(doc).toContain('user-managed durable resources')
+    expect(doc).toContain('must not execute commands that create, replace, or remove')
+    expect(doc).toContain('do not submit that installation through Open Science')
+    expect(doc).not.toContain('Stage that file as a normal job input')
+    expect(doc).toMatch(/matching idempotent\s+removal command/)
+    expect(doc).toContain(
+      'Record only facts established by host documentation or an explicit check'
+    )
+    expect(doc).toContain('does not by itself prove that home')
+    expect(doc).toContain(
+      'do not infer `sudo`, package-manager, network, quota, or administrator permissions'
+    )
+    expect(doc).toContain("this witness's observations")
+    expect(doc).not.toMatch(/\b(?:compute_details|call_command|submit_job)\b/u)
+  })
+
+  it('documents the safe local input boundary for job submission', async () => {
+    const doc = await readFile(
+      join(__dirname, '..', '..', '..', 'resources', 'skills', 'remote-compute-ssh', 'SKILL.md'),
+      'utf8'
+    )
+
+    expect(doc).toContain('`src` is relative to the Agent Session workspace')
+    expect(doc).toMatch(/same workspace used by file\s+writing tools/)
+    expect(doc).toMatch(/Do not pass arbitrary absolute local\s+paths/)
+    expect(doc).toContain('`host.artifactPath(versionId)`')
+    expect(doc).toMatch(/registered Session\s+input/)
+    expect(doc).toContain('inside the Notebook Session')
+    expect(doc).toMatch(/separate from the\s+Agent Session workspace/)
+    expect(doc).toMatch(/do not\s+copy files between app-managed directories/)
+    expect(doc).not.toContain('host.files.stageExternalInput')
   })
 
   it('keeps bundled model-compute examples on the camelCase contract', async () => {

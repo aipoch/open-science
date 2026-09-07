@@ -1,14 +1,20 @@
 // @vitest-environment jsdom
-import { act, createElement } from 'react'
+import { act, createElement, StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import type { UploadedAttachment } from '../../../../shared/uploads'
 import type { TextAnnotation } from '../../../../shared/annotations'
-import type { SessionPdfContext } from '../../../../shared/session-persistence'
+import {
+  SessionSizeLimitError,
+  type SessionPdfContext
+} from '../../../../shared/session-persistence'
 import type { CustomizePrefillIntent } from '@/stores/navigation-store'
 import {
   createInitialPreviewWorkbenchState,
+  createPendingPdfContext,
+  pendingPdfContextSelections,
+  type PendingPdfContextSelection,
   usePreviewWorkbenchStore
 } from '@/stores/preview-workbench-store'
 
@@ -19,6 +25,7 @@ import {
   type ComposerDoc,
   type ComposerPastedTextNode
 } from './composer/composer-doc'
+import { WorkspaceComposerDraftsProvider } from './workspace-composer-drafts'
 import { useWorkspaceComposerController } from './workspace-composer-controller'
 import type { ComposerHistoryEntry } from './composer/composer-history'
 
@@ -79,19 +86,27 @@ type ControllerHook = {
     session: Parameters<typeof useWorkspaceComposerController>[0]['activeSession']
   ) => void
   setCustomizePrefill: (prefill: CustomizePrefillIntent) => void
+  remount: () => void
   unmount: () => void
 }
 
 const renderController = (
   uploadApi = uploads(),
-  loadSkills = vi.fn().mockResolvedValue(undefined),
+  loadSkills: Parameters<
+    typeof useWorkspaceComposerController
+  >[0]['historyPolicy']['loadSkills'] = vi.fn().mockResolvedValue(undefined),
   historyEntries: ComposerHistoryEntry[] = [],
   // Pass null to exercise the new-conversation draft (no active Session); undefined selects the
   // default Session.
   activeSession: Parameters<typeof useWorkspaceComposerController>[0]['activeSession'] | null = {
     id: 'session-a',
     projectId: 'project'
-  }
+  },
+  onSessionSizeLimit?: (sessionId: string) => void,
+  historyPolicy: Partial<
+    Parameters<typeof useWorkspaceComposerController>[0]['historyPolicy']
+  > = {},
+  strictMode = false
 ): ControllerHook => {
   let currentDraftKey = 'session-a'
   let selectedActiveSession = activeSession ?? undefined
@@ -118,16 +133,23 @@ const renderController = (
         specialistCatalogReady: true,
         specialistId: undefined,
         loadSkills,
-        loadSpecialists: vi.fn().mockResolvedValue(undefined)
+        loadSpecialists: vi.fn().mockResolvedValue(undefined),
+        ...historyPolicy
       },
       canStageAttachments: true,
       supportsImageInput: true,
-      uploads: uploadApi
+      uploads: uploadApi,
+      onSessionSizeLimit
     })
     return null
   }
-  const render = (): void => {
-    act(() => root.render(createElement(Harness)))
+  const render = (visible = true): void => {
+    const tree = createElement(
+      WorkspaceComposerDraftsProvider,
+      null,
+      visible ? createElement(Harness) : null
+    )
+    act(() => root.render(strictMode ? createElement(StrictMode, null, tree) : tree))
   }
   render()
   return {
@@ -146,6 +168,10 @@ const renderController = (
       currentDraftKey = 'new:project'
       render()
     },
+    remount: (): void => {
+      render(false)
+      render()
+    },
     unmount: (): void => act(() => root.unmount())
   }
 }
@@ -160,6 +186,225 @@ afterEach(() => {
 })
 
 describe('workspace composer controller', () => {
+  it('DF-01 retains both conversation drafts and annotations after route remount', () => {
+    const hook = renderController()
+    mounted.push(hook)
+    act(() => hook.result.current.actions.changeDoc(textDoc('A unsent')))
+    act(() => hook.result.current.actions.addAnnotation(annotation()))
+    hook.selectDraft('session-b')
+    act(() => hook.result.current.actions.changeDoc(textDoc('B unsent')))
+    hook.selectDraft('session-a')
+    expect(hook.result.current.view.doc).toEqual(textDoc('A unsent'))
+    hook.remount()
+    expect(hook.result.current.view.doc).toEqual(textDoc('A unsent'))
+    expect(hook.result.current.view.annotations).toEqual([annotation()])
+    hook.selectDraft('session-b')
+    expect(hook.result.current.view.doc).toEqual(textDoc('B unsent'))
+  })
+
+  it('retains drafts across repeated StrictMode route remounts and clears a sent draft', () => {
+    const hook = renderController(undefined, undefined, [], undefined, undefined, {}, true)
+    mounted.push(hook)
+    act(() => hook.result.current.actions.changeDoc(textDoc('strict draft')))
+    act(() => hook.result.current.actions.addAnnotation(annotation()))
+    hook.remount()
+    hook.remount()
+    expect(hook.result.current.view.doc).toEqual(textDoc('strict draft'))
+    expect(hook.result.current.view.annotations).toEqual([annotation()])
+    const snapshot = hook.result.current.lifecycle.captureSend()
+    act(() =>
+      expect(hook.result.current.lifecycle.clearDraft(snapshot.draftKey, snapshot.version)).toBe(
+        true
+      )
+    )
+    hook.remount()
+    expect(hook.result.current.view.doc).toEqual(emptyDoc)
+    expect(hook.result.current.view.annotations).toEqual([])
+  })
+
+  it('does not resurrect a deleted draft or its failed send after route remount', () => {
+    const hook = renderController()
+    mounted.push(hook)
+    act(() => hook.result.current.actions.changeDoc(textDoc('deleted draft')))
+    const snapshot = hook.result.current.lifecycle.captureSend()
+    expect(hook.result.current.lifecycle.beginSessionDeletion('session-a')).toBe(true)
+    act(() => hook.result.current.lifecycle.settleSessionDeletion('session-a', true))
+    hook.remount()
+    act(() => expect(hook.result.current.lifecycle.restoreFailedSend(snapshot)).toBe(false))
+    expect(hook.result.current.view.doc).toEqual(emptyDoc)
+  })
+
+  it('DF-01 parks the scratch rather than the browsed history item', () => {
+    const hook = renderController(uploads(), undefined, [
+      { id: 'recent', messageId: 'recent', doc: textDoc('history prompt') }
+    ])
+    mounted.push(hook)
+    act(() => hook.result.current.actions.changeDoc(textDoc('scratch before history')))
+    act(() => expect(hook.result.current.actions.navigateHistory('previous')).toBe(true))
+    hook.remount()
+    expect(hook.result.current.view.doc).toEqual(textDoc('scratch before history'))
+  })
+
+  it('DF-01 retains completed pending attachments and the draft version across remount', async () => {
+    const api = uploads(vi.fn().mockResolvedValue(pendingAttachment))
+    const hook = renderController(api)
+    mounted.push(hook)
+    act(() =>
+      hook.result.current.actions.stageFiles([
+        new File(['abc'], 'draft.txt', { type: 'text/plain' })
+      ])
+    )
+    await flushAsyncWork()
+    act(() => hook.result.current.actions.changeDoc(textDoc('unsent with file')))
+    const snapshot = hook.result.current.lifecycle.captureSend()
+    hook.remount()
+    expect(hook.result.current.view.attachments).toEqual([pendingAttachment])
+    expect(hook.result.current.lifecycle.captureSend().version).toBe(snapshot.version)
+    expect(api.deleteUpload).not.toHaveBeenCalled()
+  })
+
+  it('DF-01 retains unfinished pasted text as editable text after cancelling the route upload', async () => {
+    const pending = deferred<UploadedAttachment | null>()
+    const api = uploads(vi.fn(() => pending.promise))
+    const hook = renderController(api)
+    mounted.push(hook)
+    const node: ComposerPastedTextNode = {
+      type: 'pasted-text',
+      id: 'paste-remount',
+      text: 'long payload'
+    }
+    act(() => hook.result.current.actions.stagePastedText(pastedDoc(node), node))
+    await flushAsyncWork()
+    hook.remount()
+    expect(docToText(hook.result.current.view.doc)).toBe('before long payload after')
+    expect(hook.result.current.view.transfers).toEqual([])
+    expect(api.abortTransfer).toHaveBeenCalled()
+    await act(async () => pending.resolve(pendingAttachment))
+    await flushAsyncWork()
+    expect(hook.result.current.view.attachments).toEqual([])
+    expect(docToText(hook.result.current.view.doc)).toBe('before long payload after')
+  })
+
+  it.each(['skill', 'specialist'] as const)(
+    'DF-02 preserves the outgoing draft on %s customization',
+    (goal) => {
+      const hook = renderController()
+      mounted.push(hook)
+      act(() => hook.result.current.actions.changeDoc(textDoc('Session A unsent work')))
+      hook.setCustomizePrefill({ requestId: 1, projectId: 'project', goal })
+      expect(docToText(hook.result.current.view.doc)).not.toBe('Session A unsent work')
+      hook.selectDraft('session-a')
+      expect(hook.result.current.view.doc).toEqual(textDoc('Session A unsent work'))
+    }
+  )
+
+  it.each(['down', 'switch'] as const)(
+    'DF-03 retains the scratch and cursor when a skill history entry is loading (%s)',
+    (recovery) => {
+      const hook = renderController(
+        uploads(),
+        () => new Promise(() => {}),
+        [
+          { id: 'recent', messageId: 'recent', doc: textDoc('recent prompt') },
+          {
+            id: 'older',
+            messageId: 'older',
+            doc: { nodes: [{ type: 'skill', id: 'skill-a', name: 'Skill A' }] }
+          }
+        ],
+        undefined,
+        undefined,
+        { skillCatalogReady: false, refreshSkillCatalog: true }
+      )
+      mounted.push(hook)
+      act(() => hook.result.current.actions.changeDoc(textDoc('original scratch')))
+      act(() => expect(hook.result.current.actions.navigateHistory('previous')).toBe(true))
+      act(() => expect(hook.result.current.actions.navigateHistory('previous')).toBe(false))
+      expect(hook.result.current.view.historyStatus).toContain('loading')
+      expect(hook.result.current.view.doc).toEqual(textDoc('recent prompt'))
+      if (recovery === 'down') {
+        act(() => expect(hook.result.current.actions.navigateHistory('next')).toBe(true))
+      } else {
+        hook.selectDraft('session-b')
+        hook.selectDraft('session-a')
+      }
+      expect(hook.result.current.view.doc).toEqual(textDoc('original scratch'))
+    }
+  )
+
+  const pendingAttachment: UploadedAttachment = {
+    id: 'upload-df',
+    sessionId: '.pending',
+    name: 'draft.txt',
+    originalName: 'draft.txt',
+    path: '/uploads/.pending/draft.txt',
+    mimeType: 'text/plain',
+    size: 3
+  }
+
+  it.each(['active', 'background'] as const)(
+    'DF-04 keeps a pending attachment still referenced after a failed send conflict (%s)',
+    async (owner) => {
+      const api = uploads(vi.fn().mockResolvedValue(pendingAttachment))
+      const hook = renderController(api)
+      mounted.push(hook)
+      act(() =>
+        hook.result.current.actions.stageFiles([
+          new File(['abc'], 'draft.txt', { type: 'text/plain' })
+        ])
+      )
+      await flushAsyncWork()
+      act(() => hook.result.current.actions.addAnnotation(annotation()))
+      const snapshot = hook.result.current.lifecycle.captureSend()
+      act(() => hook.result.current.actions.changeDoc(textDoc('new draft')))
+      if (owner === 'background') hook.selectDraft('session-b')
+      act(() => expect(hook.result.current.lifecycle.restoreFailedSend(snapshot)).toBe(false))
+      if (owner === 'background') hook.selectDraft('session-a')
+      expect(hook.result.current.view.doc).toEqual(textDoc('new draft'))
+      expect(hook.result.current.view.attachments).toEqual([pendingAttachment])
+      expect(api.deleteUpload).not.toHaveBeenCalled()
+    }
+  )
+
+  it.each(['remove', 'cancel'] as const)(
+    'DF-05 preserves text undo and redo after attachment %s',
+    async (action) => {
+      const pending = deferred<UploadedAttachment | null>()
+      const api = uploads(
+        vi.fn(() => (action === 'remove' ? Promise.resolve(pendingAttachment) : pending.promise))
+      )
+      const hook = renderController(api)
+      mounted.push(hook)
+      act(() =>
+        hook.result.current.actions.stageFiles([
+          new File(['abc'], 'draft.txt', { type: 'text/plain' })
+        ])
+      )
+      await flushAsyncWork()
+      act(() => hook.result.current.actions.changeDoc(textDoc('original text')))
+      act(() => hook.result.current.actions.changeDoc(textDoc('edited text')))
+      act(() => {
+        if (action === 'remove')
+          hook.result.current.actions.removeAttachment(hook.result.current.view.attachments[0])
+        else hook.result.current.actions.cancelTransfer(hook.result.current.view.transfers[0])
+      })
+      await flushAsyncWork()
+      act(() => expect(hook.result.current.actions.undo()).toBe(true))
+      expect(hook.result.current.view.doc).toEqual(textDoc('original text'))
+      expect(hook.result.current.view.attachments).toEqual([])
+      expect(hook.result.current.view.transfers).toEqual([])
+      act(() => expect(hook.result.current.actions.redo()).toBe(true))
+      expect(hook.result.current.view.doc).toEqual(textDoc('edited text'))
+      expect(hook.result.current.view.attachments).toEqual([])
+      expect(hook.result.current.view.transfers).toEqual([])
+      if (action === 'cancel') {
+        await act(async () => pending.resolve(pendingAttachment))
+        await flushAsyncWork()
+        expect(hook.result.current.view.attachments).toEqual([])
+      }
+    }
+  )
+
   it('starts a Reading mutation for a newly selected Session after the previous Session settles', async () => {
     const sourceA = {
       sourceKind: 'upload-version' as const,
@@ -230,6 +475,101 @@ describe('workspace composer controller', () => {
       sources: [sourceB]
     })
   })
+
+  it.each(['empty session', 'linked session', 'another project', 'return to origin'] as const)(
+    'does not replay queued Reading into a later %s',
+    async (destination) => {
+      const sourceA = {
+        sourceKind: 'upload-version' as const,
+        sourceFileId: 'upload-a',
+        sourceVersionId: 'version-a'
+      }
+      const sourceB = {
+        sourceKind: 'upload-version' as const,
+        sourceFileId: 'upload-b',
+        sourceVersionId: 'version-b'
+      }
+      const bindingB = {
+        version: 1 as const,
+        bindingId: 'binding-b',
+        ...sourceB,
+        sourceFileId: 'upload-b',
+        sourceSessionId: 'source-session',
+        name: 'paper-b.pdf',
+        mimeType: 'application/pdf' as const,
+        sizeBytes: 42,
+        checksum: 'b'.repeat(64),
+        linkedAt: 1
+      }
+      const firstLink = deferred<{ version: 1; revision: number }>()
+      const linkPdfContext = vi
+        .fn()
+        .mockImplementationOnce(() => firstLink.promise)
+        .mockResolvedValueOnce({
+          version: 1,
+          revision: 1,
+          pdfContext: { version: 1, bindings: [bindingB] }
+        })
+      window.api = {
+        sessions: { linkPdfContext, unlinkPdfContext: vi.fn().mockResolvedValue({ revision: 1 }) }
+      } as unknown as Window['api']
+      const hook = renderController(uploads(), undefined, [], {
+        id: 'session-a',
+        projectId: 'project',
+        runtimeContext: { revision: 0 }
+      })
+      mounted.push(hook)
+
+      let linkA!: Promise<void>
+      act(() => {
+        linkA = hook.result.current.actions.linkReadingContext(sourceA)
+      })
+      act(() =>
+        hook.selectSession({
+          id: 'session-b',
+          projectId: 'project',
+          runtimeContext: { revision: 0 }
+        })
+      )
+      let linkB!: Promise<void>
+      act(() => {
+        linkB = hook.result.current.actions.linkReadingContext(sourceB)
+      })
+
+      hook.selectSession({
+        id: 'session-c',
+        projectId: destination === 'another project' ? 'project-c' : 'project',
+        runtimeContext: {
+          revision: 0,
+          ...(destination === 'linked session'
+            ? {
+                pdfContext: {
+                  version: 1 as const,
+                  bindings: [{ ...bindingB, bindingId: 'binding-c', sourceVersionId: 'version-c' }]
+                }
+              }
+            : {})
+        }
+      })
+
+      if (destination === 'return to origin') {
+        hook.selectSession({
+          id: 'session-b',
+          projectId: 'project',
+          runtimeContext: { revision: 0 }
+        })
+      }
+      await act(async () => {
+        firstLink.resolve({ version: 1, revision: 1 })
+        await Promise.all([linkA, linkB])
+      })
+
+      expect({
+        links: linkPdfContext.mock.calls.slice(1),
+        unlinks: vi.mocked(window.api.sessions.unlinkPdfContext).mock.calls
+      }).toEqual({ links: [], unlinks: [] })
+    }
+  )
 
   it('undoes and redoes Reading changes while coalescing rapid async mutations', async () => {
     const source = {
@@ -348,6 +688,39 @@ describe('workspace composer controller', () => {
     expect(hook.result.current.actions.undo()).toBe(false)
     await flushAsyncWork()
     expect(linkPdfContext).toHaveBeenCalledOnce()
+  })
+
+  it('reports a Reading context size failure through the Session recovery owner', async () => {
+    const source = {
+      sourceKind: 'upload-version' as const,
+      sourceFileId: 'upload-a',
+      sourceVersionId: 'version-a'
+    }
+    const linkPdfContext = vi.fn().mockRejectedValue(new SessionSizeLimitError())
+    const onSessionSizeLimit = vi.fn()
+    window.api = {
+      sessions: { linkPdfContext, unlinkPdfContext: vi.fn() }
+    } as unknown as Window['api']
+    const hook = renderController(
+      uploads(),
+      undefined,
+      [],
+      {
+        id: 'session-a',
+        projectId: 'project',
+        runtimeContext: { revision: 0 }
+      },
+      onSessionSizeLimit
+    )
+    mounted.push(hook)
+
+    await act(async () => {
+      await expect(hook.result.current.actions.linkReadingContext(source)).rejects.toThrow(
+        'persistence limit'
+      )
+    })
+
+    expect(onSessionSizeLimit).toHaveBeenCalledWith('session-a')
   })
 
   it('removes the Reading redo entry when a link fails after an in-flight undo', async () => {
@@ -544,6 +917,101 @@ describe('workspace composer controller', () => {
     expect(hook.result.current.view.transfers).toEqual([])
   })
 
+  it.each(['cancel', 'delete', 'unmount'] as const)(
+    'Q02 does not attach a file after %s while its claim response is pending',
+    async (action) => {
+      const claimed = deferred<void>()
+      const attachment: UploadedAttachment = {
+        id: 'upload-notes-1',
+        sessionId: '.pending',
+        name: 'research-notes.md',
+        originalName: 'research-notes.md',
+        path: '/uploads/.pending/research-notes.md',
+        mimeType: 'text/markdown',
+        size: 5
+      }
+      const uploadApi = uploads(vi.fn().mockResolvedValue(attachment))
+      uploadApi.claimLocalFile = vi.fn(() => claimed.promise)
+      const hook = renderController(uploadApi)
+      mounted.push(hook)
+      act(() =>
+        hook.result.current.actions.stageFiles([
+          new File(['notes'], 'research-notes.md', { type: 'text/markdown' })
+        ])
+      )
+      await flushAsyncWork()
+      expect(uploadApi.claimLocalFile).toHaveBeenCalledOnce()
+      const transfer = hook.result.current.view.transfers[0]
+      expect(transfer).toBeDefined()
+      if (action === 'cancel') act(() => hook.result.current.actions.cancelTransfer(transfer))
+      if (action === 'delete') {
+        act(() => {
+          hook.result.current.lifecycle.beginSessionDeletion('session-a')
+          hook.result.current.lifecycle.settleSessionDeletion('session-a', true)
+        })
+      }
+      if (action === 'unmount') {
+        mounted.splice(mounted.indexOf(hook), 1)
+        hook.unmount()
+      }
+      await flushAsyncWork()
+      if (action !== 'unmount') expect(hook.result.current.view.transfers).toEqual([])
+      expect(uploadApi.abortTransfer).toHaveBeenCalledWith({ transferId: transfer.transferId })
+
+      await act(async () => claimed.resolve())
+      await flushAsyncWork()
+
+      expect.soft(hook.result.current.view.attachments).toEqual([])
+      expect.soft(uploadApi.deleteUpload).toHaveBeenCalledWith({ path: attachment.path })
+      if (action !== 'unmount') expect(hook.result.current.view.transfers).toEqual([])
+    }
+  )
+
+  it.each(['switch', 'deletion-rollback'] as const)(
+    'Q02 retains a claimed attachment in its owning draft after %s',
+    async (action) => {
+      const claimed = deferred<void>()
+      const attachment: UploadedAttachment = {
+        id: 'notes',
+        sessionId: '.pending',
+        name: 'notes.txt',
+        originalName: 'notes.txt',
+        path: '/uploads/.pending/notes.txt',
+        mimeType: 'text/plain',
+        size: 5
+      }
+      const uploadApi = uploads(vi.fn().mockResolvedValue(attachment))
+      uploadApi.claimLocalFile = vi.fn(() => claimed.promise)
+      const hook = renderController(uploadApi)
+      mounted.push(hook)
+      act(() => hook.result.current.actions.stageFiles([new File(['notes'], 'notes.txt')]))
+      await flushAsyncWork()
+      expect(uploadApi.claimLocalFile).toHaveBeenCalledOnce()
+      if (action === 'switch') hook.selectDraft('session-b')
+      else
+        act(() => {
+          hook.result.current.lifecycle.beginSessionDeletion('session-a')
+        })
+      await act(async () => claimed.resolve())
+      await flushAsyncWork()
+      if (action === 'switch') {
+        expect(hook.result.current.view.attachments).toEqual([])
+        hook.selectDraft('session-a')
+      } else act(() => hook.result.current.lifecycle.settleSessionDeletion('session-a', false))
+      expect(hook.result.current.view.attachments).toEqual([attachment])
+      expect(uploadApi.deleteUpload).not.toHaveBeenCalled()
+      // Queue editing must retain the same attachment and annotations, without deleting its bytes.
+      act(() => hook.result.current.actions.addAnnotation(annotation()))
+      const snapshot = hook.result.current.lifecycle.captureSend()
+      expect(hook.result.current.lifecycle.restoreFailedSend(snapshot, true)).toBe(false)
+      act(() => hook.result.current.lifecycle.clearDraft(snapshot.draftKey, snapshot.version))
+      act(() => expect(hook.result.current.lifecycle.restoreFailedSend(snapshot, true)).toBe(true))
+      expect(hook.result.current.view.attachments).toEqual([attachment])
+      expect(hook.result.current.view.annotations).toEqual([annotation()])
+      expect(uploadApi.deleteUpload).not.toHaveBeenCalled()
+    }
+  )
+
   it('keeps a staged attachment unavailable when claiming its local writer fails', async () => {
     const uploadApi = uploads(
       vi.fn().mockResolvedValue({
@@ -578,6 +1046,154 @@ describe('workspace composer controller', () => {
     expect(uploadApi.abortTransfer).toHaveBeenCalledWith({ transferId: expect.any(String) })
   })
 
+  it('captures the viewed single-page PDF before send-time candidate filtering', () => {
+    const preview = usePreviewWorkbenchStore.getState()
+    preview.activateProject('project')
+    const selections: PendingPdfContextSelection[] = [1, 2].map((id) => ({
+      kind: 'version',
+      sourceKind: 'literature-attachment-version',
+      sourceVersionId: `version-${id}`,
+      previewItemId: `literature:version-${id}`
+    }))
+    for (const id of [1, 2])
+      preview.upsertItem({
+        id: `literature:version-${id}`,
+        projectId: 'project',
+        sessionId: 'literature-library',
+        type: 'file',
+        source: 'literature',
+        title: `paper-${id}.pdf`,
+        name: `paper-${id}.pdf`,
+        format: 'pdf',
+        path: `literature-attachment-version:version-${id}`,
+        mimeType: 'application/pdf',
+        size: 100
+      })
+    preview.setPendingPdfContext('project', createPendingPdfContext(selections))
+    // Workspace hydration must not remove the file identities backing this Reading draft.
+    preview.activateProject('project', { items: [], panelState: 'collapsed' })
+    const hook = renderController(uploads(), undefined, [], null)
+    mounted.push(hook)
+    act(() => {
+      hook.result.current.actions.openReadingContext(
+        'version:literature-attachment-version:version-1'
+      )
+      usePreviewWorkbenchStore
+        .getState()
+        .setPdfReadingPosition('version:literature-attachment-version:version-1', {
+          pageNumber: 1,
+          pageCount: 1
+        })
+    })
+    expect(hook.result.current.lifecycle.captureSend()).toMatchObject({
+      pendingPdfContextVersions: [
+        { sourceKind: 'literature-attachment-version', sourceVersionId: 'version-1' },
+        { sourceKind: 'literature-attachment-version', sourceVersionId: 'version-2' }
+      ],
+      pdfReadingPosition: { pageNumber: 1, pageCount: 1 },
+      pdfReadingPositionSource: {
+        sourceKind: 'literature-attachment-version',
+        sourceVersionId: 'version-1'
+      }
+    })
+  })
+
+  it('previews and removes individual PDFs from a three-document draft and sends the remaining sources', () => {
+    const preview = usePreviewWorkbenchStore.getState()
+    preview.activateProject('project')
+    const selections: PendingPdfContextSelection[] = [1, 2, 3].map((id) => ({
+      kind: 'version',
+      sourceKind: 'literature-attachment-version',
+      sourceVersionId: `version-${id}`,
+      previewItemId: `literature:version-${id}`
+    }))
+    for (const id of [1, 2, 3])
+      preview.upsertItem({
+        id: `literature:version-${id}`,
+        projectId: 'project',
+        sessionId: 'literature-library',
+        type: 'file',
+        source: 'literature',
+        title: `paper-${id}.pdf`,
+        name: `paper-${id}.pdf`,
+        format: 'pdf',
+        path: `literature-attachment-version:version-${id}`,
+        mimeType: 'application/pdf',
+        size: 100
+      })
+    preview.setPendingPdfContext('project', createPendingPdfContext(selections))
+    // Workspace hydration must not remove the file identities backing this Reading draft.
+    preview.activateProject('project', { items: [], panelState: 'collapsed' })
+    const hook = renderController(uploads(), undefined, [], null)
+    mounted.push(hook)
+    expect(hook.result.current.view.readingContext.bindings.map(({ name }) => name)).toEqual([
+      'paper-1.pdf',
+      'paper-2.pdf',
+      'paper-3.pdf'
+    ])
+    act(() =>
+      hook.result.current.actions.openReadingContext(
+        'version:literature-attachment-version:version-2'
+      )
+    )
+    expect(usePreviewWorkbenchStore.getState().activeItemId).toBe('literature:version-2')
+    act(() =>
+      hook.result.current.actions.unlinkReadingContext(
+        'version:literature-attachment-version:version-2'
+      )
+    )
+    expect(hook.result.current.view.readingContext.bindings.map(({ name }) => name)).toEqual([
+      'paper-1.pdf',
+      'paper-3.pdf'
+    ])
+    expect(
+      pendingPdfContextSelections(
+        usePreviewWorkbenchStore.getState().pendingPdfContextByProject.project
+      )
+    ).toHaveLength(2)
+    expect(hook.result.current.lifecycle.captureSend().pendingPdfContextVersions).toEqual([
+      { sourceKind: 'literature-attachment-version', sourceVersionId: 'version-1' },
+      { sourceKind: 'literature-attachment-version', sourceVersionId: 'version-3' }
+    ])
+    expect(
+      hook.result.current.lifecycle.captureSend(false).pendingPdfContextVersions
+    ).toBeUndefined()
+    act(() =>
+      hook.result.current.actions.changeDoc({
+        nodes: [
+          {
+            type: 'artifact',
+            id: 'literature:version-1',
+            name: 'paper-1.pdf',
+            source: 'literature',
+            path: 'literature-attachment-version:version-1',
+            mimeType: 'application/pdf',
+            versionId: 'version-1'
+          }
+        ]
+      })
+    )
+    expect(hook.result.current.lifecycle.captureSend().pendingPdfContextVersions).toHaveLength(2)
+    act(() => {
+      hook.result.current.actions.openReadingContext(
+        'version:literature-attachment-version:version-3'
+      )
+      usePreviewWorkbenchStore
+        .getState()
+        .setPdfReadingPosition('version:literature-attachment-version:version-3', {
+          pageNumber: 9,
+          pageCount: 12
+        })
+    })
+    expect(hook.result.current.lifecycle.captureSend()).toMatchObject({
+      pendingPdfContextVersions: [
+        { sourceVersionId: 'version-3' },
+        { sourceVersionId: 'version-1' }
+      ],
+      pdfReadingPosition: { pageNumber: 9, pageCount: 12 }
+    })
+  })
+
   it('captures the pending PDF viewport position on the first send', async () => {
     const stageLocalFile = vi.fn().mockResolvedValue({
       id: 'upload-pdf-1',
@@ -610,7 +1226,8 @@ describe('workspace composer controller', () => {
 
     expect(hook.result.current.lifecycle.captureSend()).toMatchObject({
       pendingPdfContextAttachmentIds: ['upload-pdf-1'],
-      pdfReadingPosition: { pageNumber: 7, pageCount: 14 }
+      pdfReadingPosition: { pageNumber: 7, pageCount: 14 },
+      pdfReadingPositionSource: { attachmentId: 'upload-pdf-1' }
     })
   })
 
@@ -2144,6 +2761,77 @@ describe('workspace composer controller', () => {
     act(() => hook.result.current.lifecycle.restoreFailedSend(superseded))
     expect(hook.result.current.view.doc).toEqual(textDoc('new intent'))
   })
+
+  it.each(['ordinary', 'revision'] as const)(
+    'Q01 preserves %s queue intent through editing, undo and draft switching',
+    (kind) => {
+      const hook = renderController()
+      mounted.push(hook)
+      const queued = hook.result.current.lifecycle.captureRevision(textDoc('Queued'), [
+        annotation()
+      ])
+      queued.queuedEdit = {
+        kind: 'user',
+        sessionId: 'session-a',
+        agentFrameId: 'root',
+        messageBranchId: 'branch-a',
+        permissionProfile: 'full',
+        specialistId: undefined,
+        projectId: 'project',
+        cwd: undefined,
+        agentConfiguration: { providerId: 'provider', model: 'model-b', reasoningEffort: 'high' },
+        ...(kind === 'revision' ? { revisionMessageId: 'historical-message' } : {})
+      }
+      act(() => expect(hook.result.current.lifecycle.restoreFailedSend(queued, true)).toBe(true))
+      act(() => hook.result.current.actions.changeDoc(textDoc('Changed')))
+      act(() => expect(hook.result.current.actions.undo()).toBe(true))
+      expect(hook.result.current.view.doc).toEqual(queued.doc)
+      act(() => expect(hook.result.current.actions.redo()).toBe(true))
+      hook.selectDraft('session-b')
+      expect(hook.result.current.view.queuedEdit).toBeUndefined()
+      hook.selectDraft('session-a')
+      const restored = hook.result.current.lifecycle.captureSend()
+      expect(restored).toMatchObject({
+        doc: textDoc('Changed'),
+        annotations: [annotation()],
+        attachments: [],
+        queuedEdit: queued.queuedEdit
+      })
+      act(() => hook.result.current.actions.cancelQueuedEdit?.())
+      expect(hook.result.current.view.queuedEdit).toBeUndefined()
+      expect(hook.result.current.view.doc).toEqual(textDoc('Changed'))
+      expect(hook.result.current.actions.undo()).toBe(false)
+    }
+  )
+
+  it.each(['text', 'annotation', 'mention'] as const)(
+    'Q01 rejects an occupied %s draft at equal and different versions',
+    (content) => {
+      const hook = renderController()
+      mounted.push(hook)
+      if (content === 'text')
+        act(() => hook.result.current.actions.changeDoc(textDoc('Independent')))
+      if (content === 'annotation')
+        act(() => hook.result.current.actions.addAnnotation(annotation()))
+      if (content === 'mention')
+        act(() =>
+          hook.result.current.actions.changeDoc({
+            nodes: [{ type: 'skill', id: 'skill', name: 'skill' }]
+          })
+        )
+      const before = hook.result.current.lifecycle.captureSend()
+      const revision = hook.result.current.lifecycle.captureRevision(textDoc('Revision'), [])
+      expect(revision.version).toBe(before.version)
+      expect(hook.result.current.lifecycle.restoreFailedSend(revision, true)).toBe(false)
+      expect(
+        hook.result.current.lifecycle.restoreFailedSend(
+          { ...revision, version: revision.version - 1 },
+          true
+        )
+      ).toBe(false)
+      expect(hook.result.current.lifecycle.captureSend()).toEqual(before)
+    }
+  )
 
   it('reports a queued-edit conflict without replacing the newer composer draft', () => {
     const hook = renderController()

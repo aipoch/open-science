@@ -1,7 +1,11 @@
 import { statSync } from 'node:fs'
-import { join } from 'node:path'
+import { join, posix, win32 } from 'node:path'
 
 import { PROD_SESSION_DIR_NAME } from '../session-persistence/paths'
+import {
+  buildManagedRuntimeProcessEnvironment,
+  sanitizeManagedRuntimeHostState
+} from './process-environment'
 import {
   DEFAULT_MAX_CACHE_RELATIVE_PATH,
   selectMicromambaCache,
@@ -154,18 +158,28 @@ export const micromambaSpawnEnv = (
 ): NodeJS.ProcessEnv => {
   const platform = deps.platform ?? process.platform
   const inherited = deps.env ?? process.env
-  if (platform !== 'win32') return { ...inherited, ...caBundleEnv(caBundle) }
-
-  const cleaned = Object.fromEntries(
-    Object.entries(inherited).filter(([key]) => !/^(CONDA|MAMBA)_/i.test(key))
-  )
   const selected = deps.selectCache
     ? deps.selectCache(root, maxCacheRelativePath)
     : selectMicromambaCache(root, maxCacheRelativePath, deps)
+  const platformPath = platform === 'win32' ? win32 : posix
+  const managedUserEnv = buildManagedRuntimeProcessEnvironment(root, {
+    platform,
+    sourceEnv: {}
+  })
+  // Keep every Micromamba discovery and state path beneath the app runtime. `--no-rc` prevents rc
+  // configuration, while these variables also prevent libmamba from probing the host's ~/.mamba
+  // package cache or registering the managed prefix in ~/.conda/environments.txt.
+  const cleaned = sanitizeManagedRuntimeHostState(
+    Object.fromEntries(Object.entries(inherited).filter(([key]) => !/^(CONDA|MAMBA)_/i.test(key))),
+    'all'
+  )
   return {
     ...cleaned,
     ...caBundleEnv(caBundle),
-    CONDA_PKGS_DIRS: selected.path
+    ...managedUserEnv,
+    MAMBA_ROOT_PREFIX: root,
+    CONDA_PKGS_DIRS: selected.path,
+    CONDA_ENVS_PATH: platformPath.join(root, 'envs')
   }
 }
 

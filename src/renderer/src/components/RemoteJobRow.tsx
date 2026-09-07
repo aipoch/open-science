@@ -72,9 +72,17 @@ export function RemoteJobRow({ job, onOpen }: RemoteJobRowProps): React.JSX.Elem
       <span className="flex-1 min-w-0 truncate text-[12px] text-secondary-foreground">
         {intentDisplay}
       </span>
-      <span className="text-[11px] shrink-0" style={{ color: 'var(--session-waiting)' }}>
+      <span
+        className="text-[11px] shrink-0 tabular-nums"
+        style={{ color: 'var(--session-waiting)' }}
+      >
         {statusLabel}
-        {showElapsed ? ` · ${elapsedStr}` : ''}
+        {showElapsed ? (
+          <>
+            {' · '}
+            <span className="inline-block min-w-[6ch] text-right">{elapsedStr}</span>
+          </>
+        ) : null}
       </span>
       <ChevronRight size={12} className="text-muted-foreground shrink-0" aria-hidden="true" />
     </button>

@@ -122,13 +122,25 @@ class DelegatedWorkProjectionOwner {
     }
   }
 
+  isAwaitingUser(snapshot: DurableSnapshot, child: DurableChild, attempt: DurableAttempt): boolean {
+    return snapshot.questionRequests.some(
+      (request) =>
+        request.sourceFrameId === child.frameId &&
+        request.sourceAttemptId === attempt.id &&
+        request.status === 'pending'
+    )
+  }
+
   async projectSnapshotObservation(
     snapshot: DurableSnapshot,
     child: DurableChild,
     attempt: DurableAttempt
   ): Promise<DurableDelegateObservation> {
-    const terminal = await this.projectSnapshotResult(snapshot, child, attempt)
-    if (terminal) return terminal
+    const awaitingUser = this.isAwaitingUser(snapshot, child, attempt)
+    if (!awaitingUser) {
+      const terminal = await this.projectSnapshotResult(snapshot, child, attempt)
+      if (terminal) return terminal
+    }
     return {
       frameId: child.frameId,
       attemptId: attempt.id,
@@ -137,7 +149,7 @@ class DelegatedWorkProjectionOwner {
         attempt.resolvedAgent.kind === 'specialist'
           ? attempt.resolvedAgent.displayName
           : 'Main Agent',
-      status: 'running'
+      status: awaitingUser ? 'awaiting_user' : 'running'
     }
   }
 

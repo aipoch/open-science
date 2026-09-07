@@ -410,12 +410,21 @@ class ConnectorSettingsModule {
     request: CreateDeviceCredentialRequest
   ): Promise<CreateDeviceCredentialResult> {
     if (!this.deviceCredentials) throw new Error('Device credentials are unavailable')
+    // Validate the other document before committing a secret. A later projection failure must
+    // still acknowledge the saved identity rather than invite a second create.
+    await this.repository.getSettings()
     const created = await this.deviceCredentials.create(request)
-    const snapshot = await this.listDeviceCredentials()
-    const createdCredential = snapshot.credentials.find(({ id }) => id === created.id)
-    if (!createdCredential)
-      throw new Error('Created credential is missing from the settings response')
-    return { ...snapshot, createdCredential }
+    const createdCredential = this.deviceCredentials.view(created)
+    try {
+      const snapshot = await this.listDeviceCredentials()
+      return {
+        ...snapshot,
+        createdCredential:
+          snapshot.credentials.find(({ id }) => id === created.id) ?? createdCredential
+      }
+    } catch {
+      return { createdCredential }
+    }
   }
 
   async updateDeviceCredential(
@@ -478,7 +487,7 @@ class ConnectorSettingsModule {
       transport: server.transport,
       ...(server.description ? { description: server.description } : {}),
       ...(server.command ? { command: server.command } : {}),
-      ...(server.args?.length ? { args: server.args } : {}),
+      ...(server.transport === 'stdio' ? { args: server.args ?? [] } : {}),
       ...(server.url ? { url: server.url } : {}),
       ...(server.envRefs || server.env
         ? { environmentNames: Object.keys(server.envRefs ?? server.env ?? {}) }
@@ -787,7 +796,7 @@ class ConnectorSettingsModule {
     return this.connectorsSnapshot()
   }
 
-  // Omitted env/headers retain their stored values. Security-sensitive changes acquire a guard
+  // Omitted args (while staying on stdio) and env/headers retain their stored values. Security-sensitive changes acquire a guard
   // before persistence, commit it after the durable write, and roll it back if that write fails.
   async updateCustomServer(
     request: UpdateCustomServerRequest,
@@ -956,6 +965,9 @@ class ConnectorSettingsModule {
     const sharedOAuthConnected = Boolean(sharedOAuth?.state?.tokens?.access_token)
     const sharedOAuthBindingChanged =
       existingSharedOAuthCredentialId !== nextSharedOAuthCredentialId
+    const nextArgs =
+      request.args ??
+      (request.transport === 'stdio' && existing.transport === 'stdio' ? existing.args : undefined)
     const merged: StoredCustomMcpServer = {
       id: existing.id,
       name: existing.name,
@@ -970,7 +982,7 @@ class ConnectorSettingsModule {
       ...(existing.trustedAt !== undefined ? { trustedAt: existing.trustedAt } : {}),
       ...(request.description?.trim() ? { description: request.description.trim() } : {}),
       ...(request.command?.trim() ? { command: request.command.trim() } : {}),
-      ...(request.args && request.args.length > 0 ? { args: request.args } : {}),
+      ...(nextArgs?.length ? { args: nextArgs } : {}),
       ...(envRefs && Object.keys(envRefs).length > 0 ? { envRefs } : {}),
       ...(legacyEnv && Object.keys(legacyEnv).length > 0 ? { env: legacyEnv } : {}),
       ...(request.url?.trim() ? { url: request.url.trim() } : {}),

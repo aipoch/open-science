@@ -117,8 +117,20 @@ describe('SessionPlanInteractionOwner', () => {
         code: 'approval-already-pending'
       })
     )
-    expect(owner.resolveApproval('session-1', { decision: 'approved' })).toBe(true)
-    expect(owner.resolveApproval('session-1', { decision: 'rejected' })).toBe(false)
+    expect(
+      owner.resolveApproval(
+        'session-1',
+        { decision: 'approved' },
+        owner.approvalTokenFor('session-1')
+      )
+    ).toBe(true)
+    expect(
+      owner.resolveApproval(
+        'session-1',
+        { decision: 'rejected' },
+        owner.approvalTokenFor('session-1')
+      )
+    ).toBe(false)
     await expect(approval).resolves.toEqual({ decision: 'approved' })
   })
 
@@ -142,7 +154,11 @@ describe('SessionPlanInteractionOwner', () => {
     )
     const approval = owner.parkReservedApproval('session-1', 'interaction-1')
     expect(owner.approvalInteractionIdFor('session-1')).toBe('interaction-1')
-    owner.resolveApproval('session-1', { decision: 'approved' })
+    owner.resolveApproval(
+      'session-1',
+      { decision: 'approved' },
+      owner.approvalTokenFor('session-1')
+    )
     await expect(approval).resolves.toEqual({ decision: 'approved' })
   })
 

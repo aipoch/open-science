@@ -141,6 +141,7 @@ type ManagedInstallImpl = (options: {
   onEvent: (event: { kind: string; installId: string }) => void
   dataRoot: string
   registries?: string[]
+  signal?: AbortSignal
 }) => Promise<{
   result: { installId: string; ok: boolean; error?: string }
   resolvedPath?: string
@@ -4031,6 +4032,7 @@ describe('SettingsService: skills', () => {
 
     skills = await service.updateSkill({
       id: 'personal-my-skill',
+      etag: detail.etag!,
       description: 'Edited.',
       body: '# Edited',
       metadata: detail.metadata
@@ -4138,6 +4140,7 @@ describe('SettingsService: skills', () => {
     // Editing keeps one file, drops one, and adds one.
     await service.updateSkill({
       id: 'personal-ref-skill-id',
+      etag: detail.etag!,
       description: 'd',
       body: '# body',
       references: [{ path: 'keep.py' }, { path: 'new.py', dataBase64: b64('new') }]
@@ -4661,6 +4664,93 @@ describe('SettingsService: skills', () => {
 })
 
 describe('installClaude (app-managed source)', () => {
+  it('drains authentication cleanup before reporting an installation disposal failure', async () => {
+    const { AgentRuntimeManager } = await import('./agent-runtime-manager')
+    const { ProviderAccountsModule } = await import('./provider-accounts')
+    const failure = new Error('Installer cleanup was not confirmed')
+    const authCleanup = Promise.withResolvers<void>()
+    const runtimeDispose = vi
+      .spyOn(AgentRuntimeManager.prototype, 'dispose')
+      .mockRejectedValue(failure)
+    const authDispose = vi
+      .spyOn(ProviderAccountsModule.prototype, 'dispose')
+      .mockReturnValue(authCleanup.promise)
+    try {
+      const service = createService()
+      let settled = false
+      const disposal = service.dispose().then(
+        () => {
+          settled = true
+          return undefined
+        },
+        (error: unknown) => {
+          settled = true
+          return error
+        }
+      )
+      await new Promise<void>((resolve) => setImmediate(resolve))
+      const waitedForAuthentication = !settled
+      authCleanup.resolve()
+      expect(await disposal).toBe(failure)
+      expect(waitedForAuthentication).toBe(true)
+    } finally {
+      authCleanup.resolve()
+      runtimeDispose.mockRestore()
+      authDispose.mockRestore()
+    }
+  })
+
+  it('reports an in-flight install until the installer settles', async () => {
+    let finishInstall!: (outcome: Awaited<ReturnType<ManagedInstallImpl>>) => void
+    const installOutcome = new Promise<Awaited<ReturnType<ManagedInstallImpl>>>((resolve) => {
+      finishInstall = resolve
+    })
+    const service = createService(undefined, {
+      installManagedClaudeImpl: () => installOutcome
+    })
+
+    const install = service.installClaude({ source: 'managed' }, () => undefined)
+    expect(service.hasActiveInstall()).toBe(true)
+    expect(service.getActiveInstallId()).toMatch(/^install-/)
+
+    finishInstall({ result: { installId: 'completed', ok: false } })
+    await install
+
+    expect(service.hasActiveInstall()).toBe(false)
+    expect(service.getActiveInstallId()).toBeUndefined()
+  })
+
+  it('aborts and drains an active runtime install during dispose', async () => {
+    const installStarted = Promise.withResolvers<void>()
+    const releaseCleanup = Promise.withResolvers<void>()
+    let installSignal: AbortSignal | undefined
+    const service = createService(undefined, {
+      installManagedClaudeImpl: async ({ installId, signal }) => {
+        installSignal = signal
+        installStarted.resolve()
+        await releaseCleanup.promise
+        return { result: { installId, ok: false, error: 'Installation cancelled.' } }
+      }
+    })
+    const install = service.installClaude({ source: 'managed' }, () => undefined)
+    await installStarted.promise
+
+    let disposed = false
+    const dispose = service.dispose().then(() => {
+      disposed = true
+    })
+    try {
+      await Promise.resolve()
+      expect(installSignal?.aborted).toBe(true)
+      expect(disposed).toBe(false)
+    } finally {
+      releaseCleanup.resolve()
+      await install
+      await dispose
+    }
+    expect(disposed).toBe(true)
+  })
+
   it('routes managed installs through the managed installer and persists the resolved path', async () => {
     const service = createService(undefined, {
       installManagedClaudeImpl: async ({ installId }) => ({
@@ -6944,13 +7034,20 @@ describe('SettingsService: claude-isolated login + status coordination', () => {
   })
 
   it('discards an older probe when a newer setup-token login wins', async () => {
-    const finishProbes: Array<() => void> = []
-    const probe = vi.fn(
-      () =>
-        new Promise<void>((resolve) => {
-          finishProbes.push(resolve)
-        })
-    )
+    const olderProbeStarted = Promise.withResolvers<void>()
+    const newerProbeStarted = Promise.withResolvers<void>()
+    const finishOlderProbe = Promise.withResolvers<void>()
+    const finishNewerProbe = Promise.withResolvers<void>()
+    const probe = vi
+      .fn()
+      .mockImplementationOnce(() => {
+        olderProbeStarted.resolve()
+        return finishOlderProbe.promise
+      })
+      .mockImplementationOnce(() => {
+        newerProbeStarted.resolve()
+        return finishNewerProbe.promise
+      })
     const service = createService(undefined, { executeClaudeProbe: probe })
     const { encryptKey } = await import('./crypto.js')
     await repository.setClaudeInfo({ resolvedPath: '/bin/claude', version: '2.1.0' })
@@ -6961,20 +7058,30 @@ describe('SettingsService: claude-isolated login + status coordination', () => {
     })
 
     const olderLogin = service.loginIsolatedClaude('sk-ant-older')
-    await vi.waitFor(() => expect(probe).toHaveBeenCalledTimes(1))
-    const newerLogin = service.loginIsolatedClaude('sk-ant-newer')
-    await vi.waitFor(() => expect(probe).toHaveBeenCalledTimes(2))
+    let newerLogin: ReturnType<typeof service.loginIsolatedClaude> | undefined
+    try {
+      // Runtime preparation performs real filesystem work before entering the probe. Synchronize
+      // on that boundary instead of requiring it to finish within vi.waitFor's one-second default.
+      await olderProbeStarted.promise
+      newerLogin = service.loginIsolatedClaude('sk-ant-newer')
+      await newerProbeStarted.promise
+      expect(probe).toHaveBeenCalledTimes(2)
 
-    finishProbes[1]?.()
-    expect(await newerLogin).toMatchObject({ ok: true, applied: true })
-    finishProbes[0]?.()
-    expect(await olderLogin).toMatchObject({ ok: true, applied: false })
+      finishNewerProbe.resolve()
+      expect(await newerLogin).toMatchObject({ ok: true, applied: true })
+      finishOlderProbe.resolve()
+      expect(await olderLogin).toMatchObject({ ok: true, applied: false })
 
-    const stored = (await repository.getSettings()).providers.find(
-      (provider) => provider.id === 'builtin-claude-isolated'
-    )
-    expect(stored?.keyRef).toBe(encryptKey('sk-ant-newer'))
-    expect(stored?.lastValidatedAt).toBeGreaterThan(0)
+      const stored = (await repository.getSettings()).providers.find(
+        (provider) => provider.id === 'builtin-claude-isolated'
+      )
+      expect(stored?.keyRef).toBe(encryptKey('sk-ant-newer'))
+      expect(stored?.lastValidatedAt).toBeGreaterThan(0)
+    } finally {
+      finishOlderProbe.resolve()
+      finishNewerProbe.resolve()
+      await Promise.allSettled([olderLogin, newerLogin])
+    }
   })
 
   it('records expiresAt and a verified timestamp after a successful token probe', async () => {

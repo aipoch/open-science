@@ -473,7 +473,10 @@ describe('PreviewPanel', () => {
     const alert = container.querySelector<HTMLElement>('[data-source-preview-error]')
     expect(alert?.textContent).toContain('Could not load this source')
     expect(alert?.textContent).toContain('This source does not allow embedded previews.')
-    expect(alert?.textContent).toContain('ERR_BLOCKED_BY_RESPONSE (-27)')
+    const diagnostics = alert!.querySelector('details')!
+    expect(diagnostics.open).toBe(false)
+    expect(diagnostics.textContent).toContain('ERR_BLOCKED_BY_RESPONSE (-27)')
+    expect(diagnostics.closest('[role="alert"]')).toBeNull()
     expect(container.querySelector('[data-source-preview-progress]')).toBeNull()
 
     const retryButton = Array.from(container.querySelectorAll<HTMLButtonElement>('button')).find(
@@ -697,7 +700,7 @@ describe('PreviewPanel', () => {
     })
     await act(async () => {
       dialog
-        ?.querySelector('[data-testid="preview-file-content-region"]')
+        ?.querySelector('[data-testid="preview-file-content-surface"]')
         ?.dispatchEvent(contextMenuEvent)
       await Promise.resolve()
     })
@@ -1304,6 +1307,80 @@ describe('PreviewPanel', () => {
     window.removeEventListener(FOCUS_COMPOSER_EVENT, focusListener)
   })
 
+  it('disables the PDF tab command while linking is pending', async () => {
+    let finish!: () => void
+    const linkPdfContext = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          finish = resolve
+        })
+    )
+    usePreviewWorkbenchStore.getState().activateProject('project-1')
+    window.api.sessions = {
+      linkPdfContext,
+      unlinkPdfContext: vi.fn()
+    } as unknown as Window['api']['sessions']
+    window.api.artifacts = {
+      getLineage: vi.fn().mockResolvedValue(undefined)
+    } as unknown as Window['api']['artifacts']
+    useSessionStore.setState({
+      sessions: [
+        {
+          id: 'session-1',
+          projectId: 'project-1',
+          title: 'Session',
+          cwd: '/workspace',
+          status: 'idle',
+          messages: [],
+          runtimeContext: { version: 1, revision: 1 },
+          createdAt: 1,
+          updatedAt: 1
+        } as ChatSession
+      ],
+      selectedSessionId: 'session-1'
+    })
+    const focusListener = vi.fn()
+    window.addEventListener(FOCUS_COMPOSER_EVENT, focusListener)
+    usePreviewWorkbenchStore.getState().upsertAndActivateItem(
+      createFileItem({
+        format: 'pdf',
+        title: 'paper.pdf',
+        name: 'paper.pdf',
+        artifactId: 'artifact-1',
+        selectedVersionId: 'version-1',
+        path: 'artifact-version:project-1/session-1/artifact-1/version-1'
+      })
+    )
+    await renderPanel()
+
+    await openTabContextMenu(0)
+    expect(menuCommands()[0]).toBe('toggle-pdf-context')
+    expect(
+      document.body.querySelector('[data-action-id="toggle-pdf-context"]')?.textContent
+    ).toContain('Read with agent')
+
+    await clickMenuCommand('toggle-pdf-context')
+
+    try {
+      expect(linkPdfContext).toHaveBeenCalledTimes(1)
+      await openTabContextMenu(0)
+      const command = document.body.querySelector('[data-action-id="toggle-pdf-context"]')
+      expect(command).not.toBeNull()
+      expect(command?.getAttribute('aria-disabled')).toBe('true')
+      await clickMenuCommand('toggle-pdf-context')
+      expect(linkPdfContext).toHaveBeenCalledTimes(1)
+    } finally {
+      await act(async () => finish())
+      window.removeEventListener(FOCUS_COMPOSER_EVENT, focusListener)
+    }
+    await openTabContextMenu(0)
+    expect(
+      document.body
+        .querySelector('[data-action-id="toggle-pdf-context"]')
+        ?.getAttribute('aria-disabled')
+    ).not.toBe('true')
+  })
+
   it('routes the PDF tab command through the Composer Reading history port when provided', async () => {
     const linkPdfContext = vi.fn()
     const onLinkReadingContext = vi.fn().mockResolvedValue(undefined)
@@ -1548,5 +1625,358 @@ describe('PreviewPanel', () => {
     expect(stageLocalPath).toHaveBeenCalledWith(
       expect.objectContaining({ name: 'notes.md', sourcePath: '/tmp/notes.md' })
     )
+  })
+  it.each([
+    ['download', 'Could not download this file.'],
+    ['copy-path', 'Could not copy the file path.'],
+    ['save-as-artifact', 'Could not save this file as an artifact.']
+  ])('shows a retryable failure for %s from an inactive tab', async (command, title) => {
+    const failure = new Error('File operation denied')
+    const rejectOperation = vi.fn().mockRejectedValue(failure)
+    const log = vi.spyOn(console, 'error').mockImplementation(() => {})
+    Object.assign(navigator, { clipboard: { writeText: rejectOperation } })
+    if (command === 'download') window.api.saveManagedFile = rejectOperation
+    if (command === 'save-as-artifact') window.api.uploads.stageLocalPath = rejectOperation
+    usePreviewWorkbenchStore.getState().upsertAndActivateItem(createFileItem({}))
+    usePreviewWorkbenchStore.getState().upsertItem(
+      createFileItem({
+        id: 'local-file',
+        source: 'local',
+        name: 'notes.png',
+        title: 'notes.png',
+        path: '/workspace/notes.png'
+      })
+    )
+    await renderPanel()
+    try {
+      await openTabContextMenu(1)
+      await clickMenuCommand(command)
+      expect(rejectOperation).toHaveBeenCalledTimes(1)
+      expect(usePreviewWorkbenchStore.getState().activeItemId).toBe('item-1')
+      expect(document.body.querySelector('[role="menu"]')).toBeNull()
+      const notice = container.querySelector('[data-testid="preview-tab-action-error"]')
+      expect(notice?.closest('[hidden]')).toBeNull()
+      expect(notice?.querySelector('[role="alert"]')?.textContent).toContain(title)
+      expect(document.body.textContent).toContain(title)
+      expect(document.body.textContent).toContain(failure.message)
+      const retry = Array.from(document.body.querySelectorAll('button')).find(
+        (button) => button.textContent === 'Try again' || button.textContent === 'Retry'
+      )
+      expect(retry).toBeDefined()
+      // Retry still targets the original file after its tab has been removed.
+      await act(async () => usePreviewWorkbenchStore.getState().removeItem('local-file'))
+      await act(async () => retry!.click())
+      expect(rejectOperation).toHaveBeenCalledTimes(2)
+      expect(document.body.textContent).toContain(title)
+      let finish!: () => void
+      rejectOperation.mockImplementation(
+        () =>
+          new Promise<void>((resolve) => {
+            finish = resolve
+          })
+      )
+      await act(async () => retry!.click())
+      expect(retry!.disabled).toBe(true)
+      await act(async () => retry!.click())
+      expect(rejectOperation).toHaveBeenCalledTimes(3)
+      const request = rejectOperation.mock.calls[2][0]
+      if (command === 'copy-path') expect(request).toBe('/workspace/notes.png')
+      else
+        expect(request).toEqual(
+          expect.objectContaining(
+            command === 'download'
+              ? { path: '/workspace/notes.png' }
+              : { sourcePath: '/workspace/notes.png' }
+          )
+        )
+      await act(async () => finish())
+      expect(document.body.textContent).not.toContain(title)
+    } finally {
+      log.mockRestore()
+    }
+  })
+
+  it.each(['download', 'copy-path', 'save-as-artifact'])(
+    'clears the failure after %s succeeds from the menu',
+    async (command) => {
+      const operation = vi.fn().mockRejectedValueOnce(new Error('File operation denied'))
+      Object.assign(navigator, { clipboard: { writeText: operation } })
+      if (command === 'download') window.api.saveManagedFile = operation
+      if (command === 'save-as-artifact') window.api.uploads.stageLocalPath = operation
+      usePreviewWorkbenchStore.getState().upsertAndActivateItem(createFileItem({ source: 'local' }))
+      await renderPanel()
+
+      await openTabContextMenu(0)
+      await clickMenuCommand(command)
+      expect(container.querySelector('[data-testid="preview-tab-action-error"]')).not.toBeNull()
+
+      operation.mockResolvedValue({ saved: true })
+      await openTabContextMenu(0)
+      await clickMenuCommand(command)
+      expect(operation).toHaveBeenCalledTimes(2)
+      expect(container.querySelector('[data-testid="preview-tab-action-error"]')).toBeNull()
+    }
+  )
+
+  it.each(['download', 'copy-path', 'save-as-artifact'])(
+    'disables the same menu command while %s is being retried',
+    async (command) => {
+      let finish!: () => void
+      const operation = vi
+        .fn()
+        .mockRejectedValueOnce(new Error('Permission denied'))
+        .mockImplementation(
+          () =>
+            new Promise<void>((resolve) => {
+              finish = resolve
+            })
+        )
+      Object.assign(navigator, { clipboard: { writeText: operation } })
+      if (command === 'download') window.api.saveManagedFile = operation
+      if (command === 'save-as-artifact') window.api.uploads.stageLocalPath = operation
+      usePreviewWorkbenchStore.getState().upsertAndActivateItem(createFileItem({ source: 'local' }))
+      await renderPanel()
+      await openTabContextMenu(0)
+      await clickMenuCommand(command)
+      const retry = container.querySelector<HTMLButtonElement>(
+        '[data-testid="preview-tab-action-error"] button:last-child'
+      )!
+      await act(async () => retry.click())
+      expect(operation).toHaveBeenCalledTimes(2)
+      try {
+        await openTabContextMenu(0)
+        const menuAction = document.body.querySelector(`[data-action-id="${command}"]`)
+        expect(menuAction?.getAttribute('aria-disabled')).toBe('true')
+        await clickMenuCommand(command)
+        expect(operation).toHaveBeenCalledTimes(2)
+      } finally {
+        await act(async () => finish())
+      }
+      await openTabContextMenu(0)
+      expect(
+        document.body.querySelector(`[data-action-id="${command}"]`)?.getAttribute('aria-disabled')
+      ).not.toBe('true')
+    }
+  )
+
+  it('focuses the remaining active tab after closing the focused tab from its menu', async () => {
+    await renderTwoFileTabs()
+    container.querySelector<HTMLButtonElement>('[role="tab"]')!.focus()
+    await openTabContextMenu(0)
+    await clickMenuCommand('close')
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0))
+    })
+    expect(usePreviewWorkbenchStore.getState().activeItemId).toBe('item-2')
+    const remaining = document.getElementById('preview-tab-item-2')
+    expect(remaining).not.toBeNull()
+    expect(document.activeElement).toBe(remaining)
+  })
+  it('keeps download cancellation silent', async () => {
+    vi.mocked(window.api.saveManagedFile).mockResolvedValue({ saved: false })
+    await renderTwoFileTabs()
+    await openTabContextMenu(0)
+    await clickMenuCommand('download')
+    expect(window.api.saveManagedFile).toHaveBeenCalledTimes(1)
+    expect(container.querySelector('[data-testid="preview-tab-action-error"]')).toBeNull()
+  })
+
+  it('hands focus to the composer after the last tab is closed from its menu', async () => {
+    const composer = document.createElement('textarea')
+    document.body.appendChild(composer)
+    const focusComposer = (): void => composer.focus()
+    window.addEventListener(FOCUS_COMPOSER_EVENT, focusComposer)
+    usePreviewWorkbenchStore.getState().upsertAndActivateItem(createFileItem({}))
+    await renderPanel()
+    try {
+      await openTabContextMenu(0)
+      await clickMenuCommand('close')
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 0))
+      })
+      expect(usePreviewWorkbenchStore.getState().items).toHaveLength(0)
+      expect(document.activeElement).toBe(composer)
+    } finally {
+      window.removeEventListener(FOCUS_COMPOSER_EVENT, focusComposer)
+      composer.remove()
+    }
+  })
+  it.each([false, true])(
+    'discards a previous project action failure (late rejection: %s)',
+    async (late) => {
+      useNavigationStore.setState({ activeProjectId: 'project-a' })
+      usePreviewWorkbenchStore.getState().activateProject('project-a')
+      usePreviewWorkbenchStore.getState().upsertAndActivateItem(
+        createFileItem({
+          source: 'local',
+          projectId: 'project-a'
+        })
+      )
+      let reject!: (error: Error) => void
+      const save = vi.fn(
+        () =>
+          new Promise<never>((_, fail) => {
+            reject = fail
+          })
+      )
+      window.api.uploads.stageLocalPath = save
+      await renderPanel()
+      await openTabContextMenu(0)
+      await clickMenuCommand('save-as-artifact')
+      expect(save).toHaveBeenCalledWith(expect.objectContaining({ projectId: 'project-a' }))
+      const rejectSave = async (): Promise<void> => {
+        await act(async () => reject(new Error('Project A save failed')))
+      }
+      if (!late) {
+        await rejectSave()
+        expect(container.querySelector('[data-testid="preview-tab-action-error"]')).not.toBeNull()
+      }
+      await act(async () => {
+        useNavigationStore.setState({ activeProjectId: 'project-b' })
+        usePreviewWorkbenchStore.getState().activateProject('project-b')
+      })
+      if (late) await rejectSave()
+      expect(container.querySelector('[data-testid="preview-tab-action-error"]')).toBeNull()
+      await act(async () => {
+        useNavigationStore.setState({ activeProjectId: 'project-a' })
+        usePreviewWorkbenchStore.getState().activateProject('project-a')
+      })
+      expect(container.querySelector('[data-testid="preview-tab-action-error"]')).toBeNull()
+      expect(save).toHaveBeenCalledTimes(1)
+    }
+  )
+
+  it('rejects a stale retry click after navigation changes projects', async () => {
+    useNavigationStore.setState({ activeProjectId: 'project-a' })
+    usePreviewWorkbenchStore.getState().activateProject('project-a')
+    usePreviewWorkbenchStore.getState().upsertAndActivateItem(createFileItem({ source: 'local' }))
+    const save = vi.fn().mockRejectedValue(new Error('Project A save failed'))
+    window.api.uploads.stageLocalPath = save
+    await renderPanel()
+    await openTabContextMenu(0)
+    await clickMenuCommand('save-as-artifact')
+    const retry = container.querySelector<HTMLButtonElement>(
+      '[data-testid="preview-tab-action-error"] button'
+    )!
+    expect(retry).not.toBeNull()
+    await act(async () => {
+      useNavigationStore.setState({ activeProjectId: 'project-b' })
+      retry.click()
+    })
+    expect(save).toHaveBeenCalledTimes(1)
+  })
+  it('keeps retry progress scoped to the current project failure', async () => {
+    let finishA: (() => void) | undefined
+    let finishB: (() => void) | undefined
+    const save = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('Project A save failed'))
+      .mockImplementationOnce(
+        () =>
+          new Promise<void>((resolve) => {
+            finishA = resolve
+          })
+      )
+      .mockRejectedValueOnce(new Error('Project B save failed'))
+      .mockImplementationOnce(
+        () =>
+          new Promise<void>((resolve) => {
+            finishB = resolve
+          })
+      )
+    window.api.uploads.stageLocalPath = save
+    const openProject = (projectId: string): void => {
+      useNavigationStore.setState({ activeProjectId: projectId })
+      usePreviewWorkbenchStore.getState().activateProject(projectId)
+      usePreviewWorkbenchStore.getState().upsertAndActivateItem(
+        createFileItem({
+          source: 'local',
+          projectId,
+          id: projectId
+        })
+      )
+    }
+    const retryButton = (): HTMLButtonElement =>
+      container.querySelector<HTMLButtonElement>('[data-testid="preview-tab-action-error"] button')!
+    openProject('project-a')
+    await renderPanel()
+    try {
+      await openTabContextMenu(0)
+      await clickMenuCommand('save-as-artifact')
+      await act(async () => retryButton().click())
+      expect(save).toHaveBeenCalledTimes(2)
+      await act(async () => openProject('project-b'))
+      await openTabContextMenu(0)
+      await clickMenuCommand('save-as-artifact')
+      expect(save).toHaveBeenCalledTimes(3)
+      expect(retryButton().disabled).toBe(false)
+      await act(async () => retryButton().click())
+      expect(save).toHaveBeenCalledTimes(4)
+      await act(async () => finishA?.())
+      expect(retryButton().disabled).toBe(true)
+      await act(async () => finishB?.())
+      expect(container.querySelector('[data-testid="preview-tab-action-error"]')).toBeNull()
+    } finally {
+      await act(async () => {
+        finishA?.()
+        finishB?.()
+      })
+    }
+  })
+
+  it('keeps each concurrent retry disabled in its tab menu', async () => {
+    let finishFirst!: () => void
+    let finishSecond!: () => void
+    const save = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('First save failed'))
+      .mockImplementationOnce(
+        () =>
+          new Promise<void>((resolve) => {
+            finishFirst = resolve
+          })
+      )
+      .mockRejectedValueOnce(new Error('Second save failed'))
+      .mockImplementationOnce(
+        () =>
+          new Promise<void>((resolve) => {
+            finishSecond = resolve
+          })
+      )
+    window.api.uploads.stageLocalPath = save
+    usePreviewWorkbenchStore.getState().upsertAndActivateItem(createFileItem({ source: 'local' }))
+    usePreviewWorkbenchStore.getState().upsertItem(
+      createFileItem({
+        id: 'second-local-file',
+        source: 'local',
+        name: 'second.txt',
+        title: 'second.txt',
+        path: '/workspace/second.txt'
+      })
+    )
+    await renderPanel()
+    const retryButton = (): HTMLButtonElement =>
+      container.querySelector<HTMLButtonElement>('[data-testid="preview-tab-action-error"] button')!
+
+    try {
+      await openTabContextMenu(0)
+      await clickMenuCommand('save-as-artifact')
+      await act(async () => retryButton().click())
+      await openTabContextMenu(1)
+      await clickMenuCommand('save-as-artifact')
+      await act(async () => retryButton().click())
+
+      await openTabContextMenu(0)
+      expect(
+        document.body
+          .querySelector('[data-action-id="save-as-artifact"]')
+          ?.getAttribute('aria-disabled')
+      ).toBe('true')
+    } finally {
+      await act(async () => {
+        finishFirst?.()
+        finishSecond?.()
+      })
+    }
   })
 })

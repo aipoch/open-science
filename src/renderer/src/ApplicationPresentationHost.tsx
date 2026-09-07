@@ -1,4 +1,5 @@
-import { useCallback, useRef } from 'react'
+import { WorkspaceComposerDraftsProvider } from './pages/workspace/workspace-composer-drafts'
+import { memo, useCallback, useRef } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { CloseConfirmModal } from '@/components/CloseConfirmModal'
@@ -9,6 +10,7 @@ import { ErrorNotice } from '@/components/error-notice'
 import { GlobalSearchDialog } from '@/components/global-search/GlobalSearchDialog'
 import { LegacyDataMoveDialog } from '@/components/LegacyDataMoveDialog'
 import { LifecycleToast } from '@/components/LifecycleToast'
+import { LanguageSaveToast } from '@/components/LanguageControls'
 import { NotificationLiveToast } from '@/components/NotificationLiveToast'
 import { OpenScienceLogoLoader } from '@/components/OpenScienceLogoLoader'
 import { PermissionUndoSnackbar } from '@/components/PermissionUndoSnackbar'
@@ -22,6 +24,7 @@ import { useApplicationStartup } from '@/hooks/useApplicationStartup'
 import { WorkspaceAgentRuntimeProvider } from '@/lib/acp/useWorkspaceAgentRuntime'
 import { WorkspaceComputeRecoveryBridge } from '@/lib/compute/WorkspaceComputeRecoveryBridge'
 import { HomePage } from '@/pages/home/HomePage'
+import { LiteratureLibraryPage } from '@/pages/literature/LiteratureLibraryPage'
 import { OnboardingWizard } from '@/pages/onboarding/OnboardingWizard'
 import { ComputeApprovalDialog } from '@/pages/settings/ComputeApprovalDialog'
 import { ConnectorApprovalDialog } from '@/pages/settings/ConnectorApprovalDialog'
@@ -34,6 +37,8 @@ import {
   WorkspaceMessageQueueProvider,
   WorkspaceMessageQueueRuntimeBridge
 } from '@/pages/workspace/workspace-message-queue-controller'
+
+const StableLiteratureLibraryPage = memo(LiteratureLibraryPage)
 
 const ApplicationPresentationHost = (): React.JSX.Element => {
   const { t } = useTranslation()
@@ -61,6 +66,7 @@ const ApplicationPresentationHost = (): React.JSX.Element => {
           className="flex min-h-svh items-center justify-center bg-background p-6 text-foreground"
         >
           <ErrorNotice
+            fullPage
             title={t('Settings could not be loaded')}
             description={startup.settings.loadError}
             primaryButton={{
@@ -99,6 +105,18 @@ const ApplicationPresentationHost = (): React.JSX.Element => {
     )
   }
 
+  // Session hydration may be waiting behind the missing-root write gate. Keep recovery reachable
+  // before the session-loading branch so reconnect/relocate/accept-empty can release that gate.
+  if (startup.storageRecovery.missingDataRoot !== undefined && !startup.sessions.isHydrated) {
+    return (
+      <DataRootMissingDialog
+        open
+        dataRoot={startup.storageRecovery.missingDataRoot}
+        onResolved={startup.storageRecovery.resolveMissingDataRoot}
+      />
+    )
+  }
+
   if (!sessions.isHydrated && sessions.isLoading) {
     return (
       <main
@@ -134,9 +152,21 @@ const ApplicationPresentationHost = (): React.JSX.Element => {
   const isBasePresentationActive = activePresentation === 'base' || activePresentation === 'preview'
   const writeErrorAlert = sessions.writeError ? (
     <SessionPersistenceAlert
-      title={t('Conversation storage needs attention')}
+      title={
+        sessions.writeErrorRetryable
+          ? t('Conversation storage needs attention')
+          : t('Conversation storage limit reached')
+      }
       message={sessions.writeError}
-      onRetry={sessions.retryWrites}
+      onRetry={sessions.writeErrorRetryable ? sessions.retryWrites : undefined}
+      onAction={
+        sessions.writeErrorRetryable
+          ? undefined
+          : () => {
+              sessions.startNewConversationAfterSizeLimit()
+            }
+      }
+      actionLabel={sessions.writeErrorRetryable ? undefined : t('New conversation')}
     />
   ) : null
   const quitPersistenceAlert = startup.quitPersistence.notice ? (
@@ -195,26 +225,34 @@ const ApplicationPresentationHost = (): React.JSX.Element => {
         {sessions.catalogRecovery.kind !== 'ready' && !startup.quitPersistence.notice
           ? writeErrorAlert
           : null}
-        <WorkspaceAgentRuntimeProvider>
-          <WorkspaceMessageQueueProvider>
-            <WorkspaceComputeRecoveryBridge enabled={sessions.isReady} />
-            <WorkspaceMessageQueueRuntimeBridge />
-            {events.navigation.view === 'home' ? (
-              <HomePage
-                canDeleteProjects={sessions.canDeleteSessionsAndProjects}
-                hasCompleteSessionCatalog={sessions.hasCompleteSessionCatalog}
-                catalogRecovery={sessions.catalogRecovery}
-                onOpenGlobalSearch={events.globalSearch.open}
+        <WorkspaceAgentRuntimeProvider onSessionSizeLimit={sessions.reportSessionSizeLimit}>
+          <WorkspaceComposerDraftsProvider>
+            <WorkspaceMessageQueueProvider>
+              <WorkspaceComputeRecoveryBridge enabled={sessions.isReady} />
+              <WorkspaceMessageQueueRuntimeBridge
+                persistenceBlockedSessionIds={sessions.persistenceBlockedSessionIds}
               />
-            ) : (
-              <WorkspacePage
-                isSessionPersistenceHydrated={sessions.isHydrated}
-                isSessionPersistenceReady={sessions.isReady}
-                canDeleteConversations={sessions.canDeleteSessionsAndProjects}
-                isPreviewPresentationActive={isBasePresentationActive}
-              />
-            )}
-          </WorkspaceMessageQueueProvider>
+              {events.navigation.view === 'home' ? (
+                <HomePage
+                  canDeleteProjects={sessions.canDeleteSessionsAndProjects}
+                  hasCompleteSessionCatalog={sessions.hasCompleteSessionCatalog}
+                  catalogRecovery={sessions.catalogRecovery}
+                  onOpenGlobalSearch={events.globalSearch.open}
+                />
+              ) : events.navigation.view === 'library' ? (
+                <StableLiteratureLibraryPage />
+              ) : (
+                <WorkspacePage
+                  isSessionPersistenceHydrated={sessions.isHydrated}
+                  isSessionPersistenceReady={sessions.isReady}
+                  persistenceBlockedSessionIds={sessions.persistenceBlockedSessionIds}
+                  onSessionSizeLimit={sessions.reportSessionSizeLimit}
+                  canDeleteConversations={sessions.canDeleteSessionsAndProjects}
+                  isPreviewPresentationActive={isBasePresentationActive}
+                />
+              )}
+            </WorkspaceMessageQueueProvider>
+          </WorkspaceComposerDraftsProvider>
         </WorkspaceAgentRuntimeProvider>
         <LifecycleToast
           notice={events.lifecycle.notice}
@@ -222,6 +260,7 @@ const ApplicationPresentationHost = (): React.JSX.Element => {
           onView={events.lifecycle.viewNotice}
         />
         <ConnectorAuthToast />
+        {isBasePresentationActive ? <LanguageSaveToast /> : null}
         <StorageCleanupToast />
         <NotificationLiveToast />
         <PermissionUndoSnackbar allowsArchiveShortcut={events.allowsArchiveUndoShortcut} />

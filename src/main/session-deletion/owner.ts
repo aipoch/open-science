@@ -1,5 +1,9 @@
 import type { AcpRuntimeState } from '../../shared/acp'
-import type { DeleteSessionRequest, SessionDeletionResult } from '../../shared/session-persistence'
+import {
+  SessionDeletionCommittedError,
+  type DeleteSessionRequest,
+  type SessionDeletionResult
+} from '../../shared/session-persistence'
 import { createLogger, diagnosticErrorFields, type Logger } from '../logger'
 
 type SessionDeletionRuntime = {
@@ -103,6 +107,9 @@ class SessionDeletionOwner {
         outcome: 'failed',
         ...diagnosticErrorFields(error)
       })
+      if (error instanceof SessionDeletionCommittedError) {
+        return { status: 'deleted', runtimeDetached: true, cleanupPending: true }
+      }
       return { status: 'failed', reason: 'persistence', runtimeDetached: true }
     }
 

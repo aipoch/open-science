@@ -203,7 +203,7 @@ describe('ConnectorSettingsModule', () => {
       kind: 'token',
       secret: 'shared-secret'
     })
-    const credential = credentials.credentials[0]!
+    const credential = credentials.createdCredential
 
     await addCustomServer({
       name: 'shared-static',
@@ -231,14 +231,14 @@ describe('ConnectorSettingsModule', () => {
         kind: 'api_key',
         secret: 'first-secret'
       })
-    ).credentials[0]!
+    ).createdCredential
     const second = (
       await service.createDeviceCredential({
         displayName: 'Second token',
         kind: 'api_key',
         secret: 'second-secret'
       })
-    ).credentials.find(({ displayName }) => displayName === 'Second token')!
+    ).createdCredential
     const added = await addCustomServer({
       name: 'rebind-static',
       transport: 'stdio',
@@ -307,7 +307,7 @@ describe('ConnectorSettingsModule', () => {
       kind: 'token',
       secret: 'shared-secret'
     })
-    const credential = credentials.credentials[0]!
+    const credential = credentials.createdCredential
     let releasePersist!: () => void
     let markPersistStarted!: () => void
     const persistStarted = new Promise<void>((resolve) => {
@@ -355,7 +355,7 @@ describe('ConnectorSettingsModule', () => {
         clientSecret: 'oauth-client-secret'
       }
     })
-    const credential = credentials.credentials[0]!
+    const credential = credentials.createdCredential
     await service.saveCustomServerOAuthState(`credential:${credential.id}`, {
       tokens: { access_token: 'initial-oauth-token', token_type: 'bearer' }
     })
@@ -446,7 +446,7 @@ describe('ConnectorSettingsModule', () => {
         transport: 'streamable_http',
         oauth: { scopes: ['read'] }
       })
-    ).credentials[0]!
+    ).createdCredential
     const added = await addCustomServer({
       name: 'existing-remote',
       transport: 'streamable_http',
@@ -488,7 +488,7 @@ describe('ConnectorSettingsModule', () => {
         transport: 'streamable_http',
         oauth: {}
       })
-    ).credentials[0]!
+    ).createdCredential
     const added = await addCustomServer({
       name: 'disconnected-remote',
       transport: 'streamable_http',
@@ -522,7 +522,7 @@ describe('ConnectorSettingsModule', () => {
           clientSecret: 'oauth-secret'
         }
       })
-    ).credentials[0]!
+    ).createdCredential
     await addCustomServer({
       name: 'unavailable-oauth-secret',
       transport: 'streamable_http',
@@ -552,7 +552,7 @@ describe('ConnectorSettingsModule', () => {
         transport: 'sse',
         oauth: {}
       })
-    ).credentials[0]!
+    ).createdCredential
 
     await expect(
       addCustomServer({
@@ -575,7 +575,7 @@ describe('ConnectorSettingsModule', () => {
         transport: 'streamable_http',
         oauth: {}
       })
-    ).credentials[0]!
+    ).createdCredential
     await credentialStore.saveOAuthState(credential.id, {
       tokens: { access_token: 'shared-token', token_type: 'bearer' }
     })
@@ -629,7 +629,7 @@ describe('ConnectorSettingsModule', () => {
           transport: 'streamable_http',
           oauth: {}
         })
-      ).credentials[0]!
+      ).createdCredential
       await credentialStore.saveOAuthState(credential.id, {
         tokens: { access_token: 'scoped-token', token_type: 'bearer' }
       })
@@ -674,7 +674,7 @@ describe('ConnectorSettingsModule', () => {
           redirectUri: 'http://127.0.0.1:8080/callback'
         }
       })
-    ).credentials[0]!
+    ).createdCredential
 
     await expect(
       addCustomServer({
@@ -701,7 +701,7 @@ describe('ConnectorSettingsModule', () => {
         transport: 'streamable_http',
         oauth: {}
       })
-    ).credentials[0]!
+    ).createdCredential
 
     await expect(
       addCustomServer({
@@ -724,7 +724,7 @@ describe('ConnectorSettingsModule', () => {
         transport: 'streamable_http',
         oauth: {}
       })
-    ).credentials[0]!
+    ).createdCredential
     const added = await addCustomServer({
       name: 'recover-missing-oauth',
       transport: 'streamable_http',
@@ -763,7 +763,7 @@ describe('ConnectorSettingsModule', () => {
         transport: 'streamable_http',
         oauth: {}
       })
-    ).credentials[0]!
+    ).createdCredential
     const added = await addCustomServer({
       name: 'missing-oauth',
       transport: 'streamable_http',
@@ -794,7 +794,7 @@ describe('ConnectorSettingsModule', () => {
         kind: 'token',
         secret: 'shared-secret'
       })
-    ).credentials[0]!
+    ).createdCredential
     await addCustomServer({
       name: 'unavailable-static',
       transport: 'streamable_http',
@@ -1817,6 +1817,33 @@ describe('ConnectorSettingsModule', () => {
     )
   })
 
+  it('exports an imported empty argv after saving and reopening the repository', async () => {
+    const imported = await service.previewCustomServerTemplateImport(
+      JSON.stringify({
+        schema_version: 1,
+        kind: 'open-science.connector',
+        name: 'empty-argv',
+        display_name: 'Empty argv',
+        transport: 'stdio',
+        command: 'node',
+        args: []
+      })
+    )
+    expect(imported.ready).toBe(true)
+    const definition = imported.definition!
+    const saved = await addCustomServer({
+      name: definition.name,
+      displayName: definition.displayName,
+      transport: definition.transport,
+      command: definition.command,
+      args: definition.args
+    })
+    const fresh = new ConnectorSettingsModule(new SettingsRepository(dir))
+    const exported = await fresh.buildCustomServerTemplateExport(saved.customServers[0].id)
+    expect(exported.preview.ready).toBe(true)
+    expect(JSON.parse(exported.contents!).args).toEqual([])
+  })
+
   it('exports only credential names and validates imports against installed connectors', async () => {
     const snapshot = await addHistoricalCustomServer({
       id: 'internal-export-id',
@@ -2451,6 +2478,37 @@ describe('ConnectorSettingsModule', () => {
     expect(storedJson).toContain('legacy-plaintext-secret')
   })
 
+  it('preserves unedited redacted historical argv without enabling its credentials', async () => {
+    const args = ['--token=historical-secret']
+    await repository.addCustomServer({
+      id: 'redacted-argv',
+      name: 'redacted-argv',
+      displayName: 'Redacted',
+      transport: 'stdio',
+      command: 'node',
+      args,
+      enabled: true
+    })
+    const view = (await service.listConnectors()).customServers[0]
+    expect(view.args).toBeUndefined()
+    await service.updateCustomServer({
+      id: view.id,
+      displayName: 'Renamed',
+      transport: 'stdio',
+      command: view.command
+    })
+    const fresh = new ConnectorSettingsModule(new SettingsRepository(dir))
+    expect((await fresh.getConnectors())?.customMcpServers?.[0].args).toEqual(args)
+    expect((await fresh.listConnectors()).customServers[0]).toMatchObject({
+      displayName: 'Renamed',
+      args: undefined,
+      availability: 'credential_unavailable'
+    })
+    await service.updateCustomServer({ id: view.id, transport: 'stdio', command: 'node', args: [] })
+    const cleared = new ConnectorSettingsModule(new SettingsRepository(dir))
+    expect((await cleared.getConnectors())?.customMcpServers?.[0].args ?? []).toEqual([])
+  })
+
   it('redacts credential-bearing OAuth URLs from historical custom-server views', async () => {
     await repository.addCustomServer({
       id: 'legacy-oauth-url-secret',
@@ -2611,6 +2669,37 @@ describe('ConnectorSettingsModule', () => {
 
     const stored = (await service.getConnectors())?.customMcpServers?.find((s) => s.id === id)
     expect(stored?.env).toEqual({ TOKEN: 'keep-me' })
+  })
+
+  it('persists removal of every argument through a fresh repository', async () => {
+    const added = await addCustomServer({
+      name: 'clear-args',
+      transport: 'stdio',
+      command: 'node',
+      args: ['old.js', '--old']
+    })
+    const id = added.customServers[0].id
+    await service.updateCustomServer({ id, transport: 'stdio', command: 'node', args: [] })
+    const fresh = new ConnectorSettingsModule(new SettingsRepository(dir))
+    const server = (await fresh.getConnectors())?.customMcpServers?.find((item) => item.id === id)
+    expect(server).toBeDefined()
+    expect(server?.args ?? []).toEqual([])
+  })
+
+  it('does not retain omitted stdio arguments when switching to a remote transport', async () => {
+    const added = await addCustomServer({
+      name: 'switch-args',
+      transport: 'stdio',
+      command: 'node',
+      args: ['server.js']
+    })
+    await service.updateCustomServer({
+      id: added.customServers[0].id,
+      transport: 'streamable_http',
+      url: 'https://mcp.example.test'
+    })
+    const fresh = new ConnectorSettingsModule(new SettingsRepository(dir))
+    expect((await fresh.getConnectors())?.customMcpServers?.[0].args).toBeUndefined()
   })
 
   it('invalidates remembered authority before persisting a security-sensitive server edit', async () => {

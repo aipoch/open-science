@@ -269,26 +269,27 @@ Settings views use named aliases for categorical data and host status. The alias
 resolve to the established Tailwind palette values, so semantic cleanup does not change the rendered
 colors.
 
-| Semantic role        | Tailwind classes                                                                                                                                                              | Usage                                          |
-| -------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------- |
-| Storage categories   | `bg-storage-artifacts`, `bg-storage-delegation`, `bg-storage-runtime`, `bg-storage-uploads`, `bg-storage-notebooks`, `bg-storage-execution-evidence`, `bg-storage-workspaces` | Disk-usage bar segments and legend swatches    |
-| Success surface      | `bg-status-success-surface`, `text-status-success-foreground`                                                                                                                 | Reachable Compute host icon and badge          |
-| Success accent       | `bg-status-success-accent/10`, `text-status-success-accent-foreground`                                                                                                        | Completed storage migration icon               |
-| Failure surface      | `bg-status-failure-surface`, `text-status-failure-foreground`                                                                                                                 | Failed Compute host icon and badge             |
-| Failure detail       | `border-status-failure-border`, `bg-status-failure-subtle/50`, `text-status-failure-accent`, `text-status-failure-strong`                                                     | Compute probe failure panel                    |
-| Info surface         | `bg-status-info-surface`, `text-status-info-foreground`                                                                                                                       | Informational notices (e.g. "update the app")  |
-| Warning surface      | `bg-status-warning-surface`, `text-status-warning-foreground`                                                                                                                 | Transient / retryable error notices            |
-| Dark status variants | `dark:*-status-success-dark-*`, `dark:*-status-failure-dark-*`, `dark:*-status-info-dark-*`, `dark:*-status-warning-dark-*`                                                   | Preserve the existing dark-mode status palette |
+| Semantic role        | Tailwind classes                                                                                                                                                                                    | Usage                                          |
+| -------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------- |
+| Storage categories   | `bg-storage-artifacts`, `bg-storage-compute`, `bg-storage-delegation`, `bg-storage-runtime`, `bg-storage-uploads`, `bg-storage-notebooks`, `bg-storage-execution-evidence`, `bg-storage-workspaces` | Disk-usage bar segments and legend swatches    |
+| Success surface      | `bg-status-success-surface`, `text-status-success-foreground`                                                                                                                                       | Reachable Compute host icon and badge          |
+| Success accent       | `bg-status-success-accent/10`, `text-status-success-accent-foreground`                                                                                                                              | Completed storage migration icon               |
+| Failure surface      | `bg-status-failure-surface`, `text-status-failure-foreground`                                                                                                                                       | Failed Compute host icon and badge             |
+| Failure detail       | `border-status-failure-border`, `bg-status-failure-subtle/50`, `text-status-failure-accent`, `text-status-failure-strong`                                                                           | Compute probe failure panel                    |
+| Info surface         | `bg-status-info-surface`, `text-status-info-foreground`                                                                                                                                             | Informational notices (e.g. "update the app")  |
+| Warning surface      | `bg-status-warning-surface`, `text-status-warning-foreground`                                                                                                                                       | Transient / retryable error notices            |
+| Dark status variants | `dark:*-status-success-dark-*`, `dark:*-status-failure-dark-*`, `dark:*-status-info-dark-*`, `dark:*-status-warning-dark-*`                                                                         | Preserve the existing dark-mode status palette |
 
 Do not use these tokens as general brand accents. Storage colors distinguish categories; status
 colors communicate a successful or failed probe/migration result.
 
 ### Named Layer Tokens
 
-| Token                     | Tailwind class    | Value | Usage                                                              |
-| ------------------------- | ----------------- | ----- | ------------------------------------------------------------------ |
-| `--z-index-markdown-menu` | `z-markdown-menu` | `200` | Streamdown Mermaid and table format menus above fullscreen content |
-| -----                     | --------------    | ----- | -----                                                              |
+| Token                     | Tailwind class    | Value | Usage                                                                |
+| ------------------------- | ----------------- | ----- | -------------------------------------------------------------------- |
+| `--z-index-modal`         | `z-modal`         | `50`  | Standard portaled modal layer (e.g. the notification center popover) |
+| `--z-index-toast`         | `z-toast`         | `70`  | Toasts and undo snackbars above the modal layer                      |
+| `--z-index-markdown-menu` | `z-markdown-menu` | `200` | Streamdown Mermaid and table format menus above fullscreen content   |
 
 ### Border Opacity
 
@@ -332,9 +333,10 @@ colors communicate a successful or failed probe/migration result.
 - Small buttons, tabs, and toolbar buttons: `rounded-md`, approximately `6px`.
 - Inputs, shared menu items, and navigation items: `rounded-lg`, `8px`.
 - Cards / viewer panels: `rounded-lg`; viewer radius is `8px`.
-- Dialog: `rounded-xl`, `12px`; shared DropdownMenu / Select content: `rounded-lg`, `8px`.
+- Dialog: `rounded-xl`, `12px`; shared DropdownMenu / Select content: `rounded-[15px]` around `8px` items with `6px` padding and a `1px` border.
 - Composer: `rounded-2xl`, `16px`.
 - Pills, drag handles, and status dots: `rounded-full`.
+- Nested corners follow the inset: outer radius approximately equals inner radius plus padding and border. For example, Notebook figure cards use `16px` around an `8px` image inset by `8px`; flush-clipped images inherit their container radius.
 
 ### Background and Elevation
 
@@ -369,10 +371,10 @@ colors communicate a successful or failed probe/migration result.
 
 ### Motion
 
-- Standard interaction: `transition-colors duration-150 motion-reduce:transition-none`.
+- Menu, option, and navigation hover highlights update immediately; do not animate their background or foreground colors.
 - Inline action reveal: `transition-opacity duration-150`, default `opacity-0`, then `opacity-100` on hover or focus-visible.
-- Workspace interactions use `transition-colors duration-200 ease-out`.
-- Session row action reveal uses `transition-[opacity,color,background-color] duration-200 ease-out`.
+- Keep purposeful transforms and dialog entry/exit motion, with reduced-motion support.
+- Session row action reveal uses `transition-opacity duration-200 ease-out`; its hover colors update immediately.
 - Dialog open: `data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=open]:zoom-in-95`.
 - Dialog close: `data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=closed]:zoom-out-95`.
 - Overlay: `fade-in-0 / fade-out-0`; the light scrim is `rgb(0 0 0 / 0.5)`.
@@ -395,6 +397,14 @@ colors communicate a successful or failed probe/migration result.
   recovery, legacy data move, update, compute approval, Connector approval, Skill import approval,
   global search, Settings, preview, then base content. A covered presentation stays requested and
   resumes when higher-priority work clears.
+- Archived Session rows and permanent-delete confirmations show the owning Project name so
+  identically named Sessions remain distinguishable. If the delete RPC rejects, the current modal
+  announces that the result could not be confirmed and offers Retry; it does not claim the Session
+  was kept or deleted until an authoritative result arrives.
+- Archive and restore compare a persisted generation, independently of the displayed archive date.
+  Project archive revisions advance on both transitions; Session commands use the existing Session
+  revision. A stale command refreshes the authoritative projection for an explicit retry and does
+  not replay itself. Archive operations preserve the research activity timestamp.
 - A successful Project or Session archive adds an eight-second app-root Undo receipt. The latest
   unexpired archive owns the visible shortcut hint and responds to `Cmd+Z` on macOS or `Ctrl+Z` on
   Windows/Linux; older receipts remain clickable. Text inputs, textareas, selects, ARIA textboxes,
@@ -462,7 +472,7 @@ colors communicate a successful or failed probe/migration result.
 ### DropdownMenu / Popover / Select
 
 - Use DropdownMenu for action menus, Popover for lightweight auxiliary layers, and Select for single-value selection.
-- `DropdownMenuContent`: `overscroll-contain rounded-lg border border-border bg-popover p-1.5 text-popover-foreground shadow-menu`; `shadow-menu` is `0 2px 8px rgb(0 0 0 / 0.08)`. Popovers may keep their domain-specific layout.
+- `DropdownMenuContent`: `overscroll-contain rounded-[15px] border border-border bg-popover p-1.5 text-popover-foreground shadow-menu`; `shadow-menu` is `0 2px 8px rgb(0 0 0 / 0.08)`. Popovers may keep their domain-specific layout.
 - Menu header / label: `px-2 pt-1 pb-0.5 text-xs text-muted-foreground`.
 - Item: `h-8 rounded-lg px-2 py-1.5 text-sm`.
 - Shared item hover / keyboard highlight: `bg-muted text-foreground`; disabled items are non-interactive at `opacity-50`.
@@ -501,11 +511,14 @@ colors communicate a successful or failed probe/migration result.
 - Holding `Cmd` on macOS or `Ctrl` on Windows/Linux reveals numbered shortcut pills beside the first nine Sessions in their current visual order. `Cmd+1`–`Cmd+9` or `Ctrl+1`–`Ctrl+9` opens the matching Session; modal dialogs and modified Alt/Shift chords retain priority.
 - Session row wrapper owns hover/active visuals only: `group mx-1.5 rounded-md px-2.5 py-1.5 text-sm text-text-000 hover:bg-bg-300 select-none`; active adds `bg-bg-300`.
 - Session title button is the row click target: `flex min-w-0 flex-1 cursor-pointer items-center gap-1.5 text-left`.
-- Session titles stay on one line and clip without an ellipsis. A right-edge gradient from transparent to the current row surface covers overflowing text and leaves the Session action trigger legible; it ends in `rail-card-bg` at rest and `bg-bg-300` on hovered or selected rows.
+- Session titles stay still on one line with an ellipsis; the preview wraps the complete title. A right-edge gradient from transparent to the current row surface covers overflowing text and leaves the Session action trigger legible; it ends in `rail-card-bg` at rest and `bg-bg-300` on hovered or selected rows.
 - In the `Active` group, running and user-waiting Session titles use `font-semibold`; recently completed idle Sessions keep the regular title weight.
 - Session status dots are decorative and `aria-hidden`; provide adjacent `sr-only` text such as `Session status: Running`.
 - Session groups appear in `Pinned`, `Active`, `Today`, `Yesterday`, `This week`, `Older` order and omit empty headings. Pinning has priority over every activity or date group. `Active` includes running and user-waiting Sessions plus idle Sessions for 15 minutes after their latest activity; selection and Side chat activity alone do not make a Session active. Date groups use the device's local calendar, with `This week` beginning Monday at 00:00, and refresh at local midnight.
 - Footer settings area uses a top fade `bg-gradient-to-t from-rail-card-bg to-rail-card-bg/0` and a `h-8 w-8` icon button.
+
+- Desktop Session previews wait 300ms on the first hover, then switch immediately within a browsing burst. Allow 300ms to cross into the card and reset the first-hover delay 300ms after closing. Load details only when the preview opens through the existing branch-aware owner.
+- Interactive Session previews use non-modal Popover, with explicit ArrowRight entry from the row to rename, Escape dismissal, and focus restoration. Tab retains natural row/action traversal. Finishing a keyboard rename returns focus to its title control; deliberate blur navigation keeps its chosen focus. Editing and pending saves protect the active Session against hover replacement; Enter/blur commits and Escape cancels through the existing rename flow.
 
 ### Message Center
 
@@ -552,6 +565,19 @@ colors communicate a successful or failed probe/migration result.
 - Error state: set `aria-invalid=true`, use shadcn's default invalid ring/border, and show a `text-destructive` description.
 
 ### Activity Stream
+
+- Notebook tool details use compact summary cards for runtime discovery, runtime binding/switching, restart,
+  and state inspection; Artifact writes show file name, type and size without loading file bytes.
+  Keep the existing tool-row disclosure and put raw Notebook input/output behind collapsed detail
+  disclosures. Runtime paths in Message summaries are expandable; approval cards show exact targets.
+  Show failures directly with bounded diagnostic previews and an explicit truncation notice. A
+  failed activity must not confirm a successful restart. State summaries show recent runs and mark
+  compacted history; full history remains in the Notebook preview.
+- Permission cards for these operations summarize the requested action and its impact before
+  execution. Restart approvals explain variable loss and retained history. Runtime switch approvals
+  explain that the selected language kernel loses its memory while other kernels are unaffected. Artifact approvals retain
+  source paths and inspectable request metadata while omitting inline content bytes. Keep existing
+  Allow/Deny options, scopes, correlation, and submission behavior unchanged.
 
 - Outer shell: `ScrollArea className="min-w-0 flex-1"`.
 - Message scroller surface uses `bg-bg-10` with a top fade `bg-gradient-to-b from-bg-10 to-bg-10/0`.
@@ -633,9 +659,13 @@ colors communicate a successful or failed probe/migration result.
   hairline separators rather than nested cards. Dragging over another row moves neighboring rows
   aside to preview whether the item will land before or after it. Each row also supports Arrow
   Up/Arrow Down keyboard reordering, Edit, Remove, and Send now. Edit moves an item back into an
-  unchanged empty composer. Send now promotes the item and first tries to inject it into the current
+  empty composer, including its annotations, attachments and unfinished transfers. Restored queue
+  edits retain their branch, authorization, model configuration and historical revision target in
+  renderer memory. The composer identifies queued editing; Exit queued editing keeps the content
+  as an ordinary draft. Submitting a restored edit reuses queue admission and dispatch. Send now promotes the item and first tries to inject it into the current
   run through the agent framework's native follow-up, without cancelling that run. While inject is in
-  flight, the row shows a sending state. If inject is unavailable or refused, Send now keeps the live
+  flight, the row shows a sending state. Native follow-up validates the captured target against the
+  bound runtime generation and rechecks the turn after asynchronous preparation. If inject is unavailable or refused, Send now keeps the live
   turn and sends the promoted item after that run finishes; the row returns to queued. Stop remains
   the explicit control for cancelling a live turn without sending a queued message. Branch, admission,
   cancellation, or edit failures keep
@@ -703,6 +733,8 @@ colors communicate a successful or failed probe/migration result.
 - Root: `min-h-svh bg-background text-foreground`.
 - Container: `mx-auto max-w-[1080px] px-8 py-7 pb-16`.
 - Header: `flex items-center justify-between`.
+- Language and theme preferences live in Settings > General > Appearance; omit their shortcuts
+  from the Home header. The Settings gear opens Settings directly.
 - Brand title: display `Open Science`, `text-[26px] leading-none font-medium`.
 - Global search: expose a `Search` ghost icon action in the header; it opens the same shared dialog as
   `Cmd/Ctrl+K` and does not maintain a second search state.
@@ -787,6 +819,10 @@ colors communicate a successful or failed probe/migration result.
 - Activity stream: `ScrollArea className="min-w-0 flex-1"`.
 - Composer: fixed to the bottom of the activity stream and constrained to `max-w-4xl`, with the composer text track aligned to the message content.
 - Right viewer area: `border-l border-border/20`.
+- Desktop side-panel dividers reveal a centered, full-height 2px `text-200` line on hover,
+  keyboard focus, and drag. Mouse resize targets extend 10px to either side of the divider;
+  collapsed dividers stay hidden and disabled. Keep the one-pixel layout footprint.
+  Arrow-key resizing must work on first opening and after collapsing and reopening either panel.
 - Right card: `m-2 rounded-lg bg-card shadow-sm`.
 - An open Notebook Variables view shares the Preview with the Notebook and manual kernel terminal
   when the Notebook surface is at least `55rem` wide, using a fixed 40% right column. Below that
@@ -798,7 +834,7 @@ colors communicate a successful or failed probe/migration result.
 
 #### Composer skill selector
 
-- The composer input is a `contenteditable` editor (`role="textbox" aria-multiline`), not a textarea, so it can hold inline non-editable mention chips. Its muted `text-text-300` placeholder is `Ask anything — / skills · @ files · # sessions · ⌘K search · ↑↓ history` on macOS and uses `Ctrl+K` on Windows/Linux. `/` selects a Skill, `@` selects an artifact file, and `#` selects an active Session (current Project first, then other active Projects). Session rows show timestamp before source Project and the SQLite-backed `#number` at the right. A pure numeric query matches Session-number prefixes and ranks an exact number first; other queries continue to match title or Project. Session chips persist only `{ type: 'session', sessionId, title }`: the title is a reference-time display snapshot, while navigation and Host reads resolve the globally unique `sessionId` dynamically.
+- The composer input is a `contenteditable` editor (`role="textbox" aria-multiline`), not a textarea, so it can hold inline non-editable mention chips. Its muted `text-text-300` placeholder is `Ask anything — / skills · @ files · # sessions · ⌘K search · ↑↓ history` on macOS and uses `Ctrl+K` on Windows/Linux. `/` selects a Skill, `@` selects an artifact file, an exact Library reference, the current Project's Library, or a Collection retrieval scope, and `#` selects an active Session (current Project first, then other active Projects). Retrieval scopes are visually separated from exact references and carry no catalog records or file bytes; `@Library` is Project-scoped in Workspace and instructs the Agent to page through only records associated with the trusted current Project. A global user-level Library search requires an explicit `scope: "library"` tool request, while exact composer references can be searched together with `scope: "items"` and their item ids. Every Library search card exposes its scope, query, page, result range, total count, and representative titles. A literature-review Artifact can additionally freeze the complete reviewed item/revision set, retrieval criteria, and app-owned capture time in its Literature manifest. Session rows show timestamp before source Project and the SQLite-backed `#number` at the right. A pure numeric query matches Session-number prefixes and ranks an exact number first; other queries continue to match title or Project. Session chips persist only `{ type: 'session', sessionId, title }`: the title is a reference-time display snapshot, while navigation and Host reads resolve the globally unique `sessionId` dynamically.
 - `ArrowUp` at the logical start recalls prompt history and `ArrowDown` moves toward the saved scratch draft. Existing Sessions use User Messages from the current visible Branch only; New Conversation uses the most recently active same-Project Sessions' visible opening prompts. Turns with top-level uploads are excluded, while structured Skill and explicit `@` chips are restored. Deleted or Specialist-disallowed Skills become plain `/<name>` text. Mention popups, IME composition, selections, modifier arrows, staged attachments, and normal multiline caret movement retain priority.
 - Composer undo and redo are application-managed across text, mention chips, long pasted text, and staged attachments. `Cmd+Z` / `Cmd+Shift+Z` on macOS and `Ctrl+Z` / `Ctrl+Shift+Z` on Windows and Linux move backward and forward through the current draft's bounded in-memory history. A new edit after undo discards the redo branch; send, clear, prompt-history replacement, customize prefill, and Session deletion clear both directions.
 - Typing `/` at a word boundary opens a **skill popup** above the input: `absolute bottom-full mb-1 z-50 bg-bg-000 border-0.5 border-border-200 rounded-xl shadow p-1.5 min-w-[320px] max-w-[440px] max-h-[min(45vh,18rem)]`. It is a `role="listbox"` of `role="option"` rows — name (`font-medium text-sm truncate`) + source badge (`text-[10px] px-1.5 py-0.5 rounded bg-accent text-accent-foreground`) + 2-line description (`text-xs text-text-300 line-clamp-2`); active row `bg-bg-200 !text-text-000`. Plain `Tab` and `Enter` both select the active option; modified `Shift+Tab` keeps normal backward focus navigation. A footer hint bar shows `↑↓ navigate · Enter / Tab select · Esc close`. The `@` artifact popup follows the same selection contract and leaves plain `Tab` untouched while no selectable result is available.
@@ -813,15 +849,18 @@ colors communicate a successful or failed probe/migration result.
 - Nav item: `h-8 w-full rounded-lg px-2 text-sm gap-2 hover:bg-muted`, with a `size-4` leading icon (`text-muted-foreground`) and a truncating label.
 - Active: `bg-muted text-foreground font-medium`; the neutral selection keeps deep green reserved for primary actions, focus, links, enabled switches, and success.
 - Content header: `h-12 border-b border-border px-3`, a space-between row. Left cluster: back / forward `size-7` icon buttons (`ArrowLeft` / `ArrowRight`, `disabled:opacity-40`), a `h-4 w-px bg-border` divider, then either a breadcrumb or a plain `h2 text-sm font-semibold` title. Right cluster: a maximize / restore `size-7` toggle (`Maximize2` / `Minimize2`) and a `size-7` close (`X`); both use `hover:bg-muted hover:text-foreground`.
-- Workspace navigation places a `ChartNoAxesCombined` **Usage** panel immediately above **General**. Electron and Web read the SQLite Session Usage projection without opening Session JSON. The renderer reuses that projection for 10 minutes across panel switches; reopening Usage after expiry reloads it, while the visible refresh action always reloads it on demand. If that projection cannot be loaded, the panel shows a retryable error instead of calculating potentially incomplete totals from the currently hydrated Sessions. The projection duplicates provider-reported per-turn Usage from authoritative Session JSON and is not a separately editable UI ledger. Summary periods use local calendar boundaries, while the full-width heatmap and **Daily token usage** Input / Cache / Output bars show the latest 30 local days without horizontal scrolling. The daily chart states its 30-day total and uses rounded 100% / 50% / 0 axis marks with compact `k` / `M` / `B` labels. Conversation graphs are authoritative over their flat active-Branch compatibility view, and all graph branches contribute actual incurred token cost. Token totals include only provider-reported `turnUsage`; when older Sessions or providers have no usage totals, the page shows reported-run coverage rather than estimating tokens. Total Session / Project / Run / Artifact values are cumulative through now, while New Session / Project / Run / Artifact values are scoped to the selected period and vertically paired with their corresponding totals. New Artifact records persist `createdAt`; historical records without it fall back to the timestamp of their first associated message. Archived Sessions and Projects remain included. Individually deleting a Session removes its Usage contribution, while deleting a Project retains that Project's metadata and the Usage facts of Sessions not previously deleted individually so historical Project and global totals remain cumulative.
+- Workspace navigation places a `ChartNoAxesCombined` **Usage** panel immediately above **General**. Electron and Web read the SQLite Session Usage projection without opening Session JSON. The renderer reuses that projection for 10 minutes across panel switches; reopening Usage after expiry reloads it, while the visible refresh action always reloads it on demand. If that projection cannot be loaded, the panel shows a retryable error instead of calculating potentially incomplete totals from the currently hydrated Sessions. The projection duplicates provider-reported per-turn Usage from authoritative Session JSON and is not a separately editable UI ledger. Summary periods use local calendar boundaries, while the full-width heatmap and **Daily token usage** Input / Cache / Output bars show the latest 30 local days without horizontal scrolling. The daily chart states its 30-day total and uses rounded 100% / 50% / 0 axis marks with compact `k` / `M` / `B` labels. Conversation graphs are authoritative over their flat active-Branch compatibility view, and all graph branches contribute actual incurred token cost. Token totals include reported conversation and auxiliary usage. A fixed note explains that only reported usage is included and that older Sessions or some providers may not report usage; the page does not estimate missing tokens or display a per-run coverage ratio. Total Session / Project / Run / Artifact values are cumulative through now, while New Session / Project / Run / Artifact values are scoped to the selected period and vertically paired with their corresponding totals. New Artifact records persist `createdAt`; historical records without it fall back to the timestamp of their first associated message. Archived Sessions and Projects remain included. Individually deleting a Session removes its Usage contribution, while deleting a Project retains that Project's metadata and the Usage facts of Sessions not previously deleted individually so historical Project and global totals remain cumulative.
 - Breadcrumb: a clickable root segment (`text-muted-foreground hover:text-foreground`), a muted `/` separator, and the truncated current page label in `text-foreground`, all at `text-sm font-semibold`.
 - Right content column uses `bg-card`; its content area scrolls independently (`min-h-0 flex-1 overflow-y-auto`). Panels pad with `p-5`, and maximize mode constrains inner content to `max-w-[880px]`.
 - First-level groups use `SettingsSection`: `text-base font-semibold` title, optional `text-[13px] leading-5 text-muted-foreground` description, and a hairline separator between groups. Do not wrap ordinary sections in cards.
 - General begins with **About**, keeping app identity, version/update controls, Help Center, and release history easy to find before the preference flow. The identity/update row uses `SettingsRow`; Help Center and Release notes are full-width, divided `ExternalTextLink` rows with inline lucide icons and a trailing `ArrowUpRight`. On devices with hover support, a fine primary pointer, and no coarse pointer, each resource title rests vertically centered while its supporting description is transparent; pointer hover or keyboard focus reveals the description and changes the leading icon from muted foreground to `primary`, using transform and opacity only. Touch and coarse-pointer surfaces keep the description visible, including hybrid devices that also report hover support and a fine primary pointer. Both resources open in the system browser through the shared external-link policy; Settings never embeds a documentation browser.
 - Preference label/control pairs use `SettingsRow`: a two-column grid with the label and optional description on the left and a stable `12rem` to `20rem` control column on the right. Create and edit forms use one consistent stacked field rhythm instead: a visible `text-sm font-medium` label above a full-width Input, Textarea, or Select, followed by helper or error text. Cards remain for repeated objects, install/status surfaces, paths, errors, and drop zones.
-- Runtimes uses a compact Workbench hierarchy: Recheck owns its last-checked timestamp directly below the button; a healthy Notebook network guard is a neutral status row while warning and failure states retain semantic status colours; environment-specific Packages and Reinstall actions share one card action row, with Reinstall kept secondary until recovery is blocked.
+- Theme and browser-local language preferences synchronize across same-origin tabs through storage events. Invalid or removed preferences return to System; desktop language remains owned by Main. Failed desktop language saves restore the confirmed language across the interface and cache, with a dismissible error at the visible language control; selecting a language retries the save. Late replies do not override newer choices.
+- The Windows/Linux app-icon picker translates built-in option labels, accessible names and descriptions. Preview loading shows progress, a retryable error or an explicit empty result. Missing capability hides the section; a missing current preview names the saved icon without changing its selection.
+- Runtimes uses a compact Workbench hierarchy: Recheck owns its last-checked timestamp directly below the button; a checking or healthy Notebook network guard is a neutral status row while warning and failure states retain semantic status colours; environment-specific Packages and Reinstall actions share one card action row, with Reinstall kept secondary until recovery is blocked.
 - Editor fields needed for the primary task stay visible. Optional or uncommon fields live under a borderless **Advanced settings** disclosure with `aria-expanded` / `aria-controls`; it is collapsed by default and opens initially when imported credentials must be entered or existing advanced values would otherwise be hidden. Do not wrap the disclosure in a card.
 - Form textareas use the shared `Textarea`; binary settings use the shared `Switch`.
+- Memory note and category drafts retain the object identity and revision captured when editing begins. External snapshots show a read-only **Latest saved version** alongside the unchanged draft. A conflicting save preserves the draft and reports the existing conflict error; Cancel and reopening the editor starts from the latest saved values. No automatic merging or overwriting is offered.
 - Network > Proxy is a breadcrumb-backed second-level form. It offers System (the historical default), Manual, and Direct modes; Manual uses a labeled proxy URL, optional bypass rules, blur/save validation, and explicit rejection of embedded credentials. System keeps per-request OS/PAC resolution inside Electron while new agent processes inherit only the proxy environment present when Open Science started; Manual supplies a fixed proxy to both stacks, and Direct clears proxy variables. Saving reports inline loading, error, or quiet success and explains that only new requests and processes adopt the change; live agents, notebook kernels, and installers are not restarted.
 - Select fields use `Select`, with a `32px` trigger height.
 - A visible Settings search or filter field owns the platform search shortcut: `Cmd+K` on macOS and `Ctrl+K` on Windows/Linux focus it without selecting or clearing its value. The topmost nested Settings dialog wins over a search behind it; hidden or disabled searches do not intercept the shortcut. Persistent list-toolbars show the shortcut as right-aligned keycaps inside the field, while transient searches such as runtime-package and Specialist capability filters expose the same behavior through `aria-keyshortcuts` without repeating the visual hint.
@@ -876,10 +915,22 @@ colors communicate a successful or failed probe/migration result.
   also removes its assignments before the deleted ID can be reused. Skill, Connector, and Specialist
   file formats are unchanged, and no pin, bookmark, Group, import/export, or cloud-sync data is
   migrated.
+- Temporary catalog unavailability, including a Skill identity conflict, preserves existing Tag
+  assignments. Reconciliation uses all existing resource IDs; adding assignments still requires an
+  available resource. No catalog or assignment storage format changes are needed.
+- A Tag editor keeps its draft and submission version when a newer snapshot arrives. A conflict
+  blocks saving until the user reloads the latest values or explicitly keeps the draft for another
+  save. That save still checks the acknowledged version. Reordering retains its existing timestamp
+  semantics and can therefore require confirmation without discarding the draft.
+- Resource catalog loading is tracked independently by type. Failed catalogs show a retry action,
+  available resource rows remain visible, and Tag totals and type totals count known assignments
+  even when metadata is missing. An incomplete catalog is not presented as an empty Tag.
 - Resource rows and detail/editor surfaces share the same searchable assignment menu. Creating a Tag
   from that menu assigns it immediately with the default visual; the Tags manager can then change its
   icon or color. Assignment changes update optimistically and reload the authoritative snapshot after
-  a failure. The Tags browser keeps its selected Tag, resource filter, query, and scroll position when
+  a failure. Rollback preserves newer authoritative revisions and other pending assignments; order
+  rollback only runs while the failed operation still owns the current Tag array. The Tags browser
+  keeps its selected Tag, resource filter, query, and scroll position when
   Settings history opens a resource and returns.
 
 #### Specialist-scoped resources and Marketplace
@@ -926,6 +977,27 @@ colors communicate a successful or failed probe/migration result.
 
 #### Connectors panel
 
+- Remembered permission rows identify Connector tools by the current Connector display name,
+  public server ID, and exact tool name. The name opens the existing Connector Settings route in
+  active, policy-covered, and blocked states. Revoke accessible names also include the scope.
+- Command-group grants may retain a reviewed `approvalSummary` for an exact known prefix. It is
+  display metadata and never participates in authorization. Raw commands, paths, arguments, and
+  qualifier digests remain outside the permission-list IPC projection. Historical and unsupported
+  groups explicitly show that command details are unavailable, with creation time when present;
+  they are not silently backfilled, revoked, or reapproved.
+- Permission scope prefixes, qualifier categories, policy explanations, tooltips, and accessible
+  names are localized in the renderer; Connector/tool identities and user-authored names remain
+  literal. The Restore defaults button derives its completed appearance from the latest missing
+  count. Permission revoke resolves slow metadata before committing so response construction does
+  not spend the Registry-owned Undo window; an unavailable Undo reports that no restore occurred.
+
+- Local MCP arguments use one multiline text field. Editing replaces the argument list with one element per line, preserving spaces and blank lines; an empty field clears the list. Until the field is edited, preserve the original array, including empty values and embedded line breaks. Explain the replacement semantics when saved arguments contain embedded line breaks. Omitted arguments retain the stored array while the transport stays on stdio, including redacted historical values; credential availability restrictions remain in force. Template import/export preserves literal arrays, and the command preview quotes each element to show its boundary.
+- Tool permission controls in a bundled Connector detail remain disabled until the current tool permission save settles. Failed saves restore interactivity and retain the existing inline error feedback.
+- Credentials distinguish a pending list read, a failed read, an empty result and a deleted entry. Failed reads retain saved rows and use the shared ErrorNotice with Retry. All credential reads, mutation snapshots and compensating refreshes use one renderer coordinator; overlapping mutations finish with a fresh authoritative list.
+- Existing pre-registered OAuth credentials expose a write-only replacement client-secret field. Replacement preserves the credential ID, Connector bindings and valid login state, uses OS-encrypted storage and retires affected clients before refreshing consumers. An unreadable client secret requires replacement before sign-in; unreadable login state requires sign-in. These recovery hints are derived, with no persisted status or schema change.
+- Credential creation acknowledges its saved ID even when the subsequent list projection fails. The editor remains on that saved identity and shows a retryable list error; Retry never creates another record. The creation result may omit its full list, which must not be treated as an empty or complete one-row snapshot.
+- A saved shared-credential change whose runtime refresh fails reports the completed save explicitly. Connector retries finish the affected in-memory security generation only after client reset and current-configuration validation; this adds no durable recovery state.
+
 - The single wrapping toolbar row contains source (`w-36`), agent (`w-48`), and Tag controls followed by a flex-1 search field; **Add connector** remains the final, far-right control. Search stays in this first row when space permits and wraps with the toolbar at narrow widths.
 - Bundled and custom rows retain the leading generic Connector glyph. The name and description open detail for bundled Connectors and edit for custom Connectors; the metadata line begins with Connector-specific status when present, then the shared actual-user avatar stack and Tag badges.
 - Trailing controls retain Connector-specific retry, configure, and sign-in actions, followed by Tag assignment, one `ChevronDown` action menu for custom Connectors, and the unlabeled Main switch. The custom menu orders Export, Edit, separator, Remove; removal continues to use the Specialist impact check and confirmation dialog.
@@ -934,12 +1006,31 @@ colors communicate a successful or failed probe/migration result.
 
 ## Error notices
 
-Use the shared `ErrorNotice` for error summaries. Keep the decorative flask mark compact (`size-10`),
-use one bounded column (`max-w-md`, `min-w-0`), and left-align headings, descriptions, codes, and help.
-Pair the status icon with the first text line. Long error text and identifiers must wrap inside the
-column. Group primary and secondary actions at the trailing edge with `flex-wrap` and a consistent
-small gap; wrap whole controls instead of splitting their labels. Preserve semantic status tones,
-disabled/loading behavior, and immediately visible keyboard focus.
+Preference-save and app-icon-preview failures use one line of small red text with an inline text
+action for dismiss or retry. Do not add a border, background, brand mark, or status icon. Keep the
+language rollback explanation available to screen readers.
+
+Use the shared `ErrorNotice` for error summaries. The default is a compact inline surface across
+Settings, workspace previews, conversations, and Literature: a neutral `bg-card` surface with a
+`border-border` outline, a small semantically colored status icon, 16px padding, and 14px copy.
+Place a single recovery action at the trailing edge, wrapping below the copy in narrow containers.
+Keep inline actions low emphasis so they do not compete with the page's primary task. Omit the
+flask and avoid a second border or background in wrappers. All copy and identifiers wrap.
+
+Conflicts can include owner-provided content and two described choices below the summary. Tag
+editors show the latest saved name, icon, and color without replacing the draft. Continue editing
+only acknowledges that version; a separate Save submits the draft. Loading the latest version
+replaces the draft. Each action's consequence is connected with `aria-describedby`.
+
+Callers translate all copy. Inline technical codes use a native, initially closed diagnostic
+disclosure with a caller-provided label; recovery actions remain available outside it. When using
+`role`, ErrorNotice announces only its summary, leaving diagnostics outside the live region.
+Preserve semantic tones, loading/disabled behavior, and visible keyboard focus.
+
+Only app startup blockers (database startup and initial settings loading) opt into `fullPage`:
+center the decorative flask (`size-18`) above a bounded `max-w-md` column, with larger status icons,
+16px headings, and trailing actions. This single presentation option replaces independent brand
+visibility and compactness switches; it does not introduce application state or persisted data.
 
 Provenance diagnostics share the summary's width below a divider. A disclosure button exposes its
 expanded state and controls the diagnostic region; the copy action belongs in that region's header
@@ -1006,3 +1097,11 @@ alert region excludes the diagnostic payload so opening it does not announce the
 - Reasoning or response explanations should use neutral wording, such as "the time the system spends preparing a response", and should avoid personified or brand-specific language.
 - Technical terms such as shadcn, Radix, Tailwind, token, class, hover, focus, and active may remain in English. User-facing interface copy should use a consistent language style within the same page.
 - Every icon button must provide a localizable `aria-label` and `Tooltip`; do not rely on the icon alone to communicate meaning.
+
+### Hover content and numeric stability
+
+- Mount one TooltipProvider per coherent toolbar, list, or action group. The first hint waits 200–300ms; subsequent hints within a 300ms skip window open immediately. Do not mount a new provider for every adjacent icon. Keep explicit longer explanatory delays and immediate chart inspection separate.
+- Text hints remain hoverable, dismissible with Escape, and bounded by the viewport. Long content gets internal scrolling. Preserve primary reference, attachment, and run-jump clicks.
+- CSL examples use a focusable preview button and a non-modal Popover: hover/focus discovers, click/tap pins, Escape/outside interaction dismisses, and internal scrolling preserves the panel. Show the complete style title, lazy-load and deduplicate per style, retain cached examples, and offer Retry after failure. The formatter's plain-text contract and content-addressed style identities stay unchanged.
+- Root canvas, body, and application root share the current theme background so exposed scrolling regions remain continuous; document canvases retain their own surface.
+- Use tabular digits for comparable numeric columns and changing counts/durations. Right-align numeric columns and reserve a minimum duration width where appropriate; retain existing formats and units.

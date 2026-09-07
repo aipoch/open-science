@@ -4,13 +4,14 @@
 // Catalog parity tests can't catch a component that never calls t(), and they can't catch zh-Hant
 // quietly falling back to zh-Hans, so both scripts are asserted separately. The About status line
 // is a switch over update states, so each interpolated branch is rendered rather than just one.
-import { act } from 'react'
+import { act } from '@testing-library/react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { i18next } from '@/i18n'
 import { useSettingsStore } from '@/stores/settings-store'
 import { useUpdateStore } from '@/stores/update-store'
+import { APP_ICON_VARIANT_INFOS } from '../../../../shared/settings'
 import { AppIconSection } from './AppIconSection'
 import { AppVersionSection } from './AppVersionSection'
 
@@ -115,7 +116,14 @@ describe('AppIconSection', () => {
   beforeEach(() => {
     useSettingsStore.setState({ appIconVariant: 'light' })
     ;(window as unknown as { api: unknown }).api = {
-      settings: { listAppIcons: vi.fn().mockResolvedValue([]) }
+      settings: {
+        listAppIcons: vi.fn().mockResolvedValue(
+          APP_ICON_VARIANT_INFOS.map((info) => ({
+            ...info,
+            previewDataUrl: 'data:image/png;base64,'
+          }))
+        )
+      }
     }
   })
 
@@ -137,8 +145,11 @@ describe('AppIconSection', () => {
     expect(container.textContent).not.toContain('资源管理器')
   })
 
-  it('labels the radiogroup from the catalog', () => {
+  it('labels the radiogroup from the catalog', async () => {
     render(<AppIconSection />)
+    await act(async () => {
+      await Promise.resolve()
+    })
     expect(container.querySelector('[role="radiogroup"]')?.getAttribute('aria-label')).toBe(
       'App icon'
     )

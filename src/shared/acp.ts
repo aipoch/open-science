@@ -932,6 +932,9 @@ export type AcpPromptRequest = {
   // Sessions explicitly picked via composer `#` mentions. Titles are display snapshots; Main and
   // Host capabilities resolve ownership and content from the globally unique Session id.
   referencedSessions?: SessionReference[]
+  // Ordered immutable composer segments. Main uses application-owned Literature snapshots from
+  // this list to prepare provider-neutral citation context and persists the same parts on history.
+  parts?: MessagePart[]
   // Transcript of prior turns injected only into the content sent to the agent (never the user-facing
   // message), so a freshly-adopted session after a framework switch keeps conversational continuity.
   historyPreamble?: string
@@ -953,6 +956,7 @@ export type AcpPromptRequest = {
 }
 
 export type AcpSteerFollowUpRequest = {
+  agentTarget?: AcpSessionAgentTarget
   sessionId: string
   text: string
   attachments?: UploadedAttachment[]

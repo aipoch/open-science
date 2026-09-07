@@ -344,6 +344,84 @@ describe('conversation export service', () => {
     expect(removeDirectory).toHaveBeenCalledWith('/tmp/open-science-conversation-export-test')
   })
 
+  it.each(['page loading', 'font readiness'])(
+    'bounds %s with the PDF generation deadline',
+    async (stage) => {
+      vi.useFakeTimers()
+      let release!: () => void
+      const blocked = new Promise<void>((resolve) => {
+        release = resolve
+      })
+      const dependency = stage === 'page loading' ? loadFile : executeJavaScript
+      dependency.mockReturnValue(blocked)
+      const outcome = vi.fn()
+      const promise = createService({
+        exportLimits: {
+          maxMessages: 10,
+          maxImageBase64Bytes: 1_000_000,
+          maxHtmlBytes: 1_000_000,
+          pdfPrintTimeoutMs: 20
+        }
+      })
+        .exportConversation({ projectId: 'project-1', sessionId: 'session-1', format: 'pdf' })
+        .then(outcome, outcome)
+      try {
+        await vi.advanceTimersByTimeAsync(120)
+        expect(dependency).toHaveBeenCalledOnce()
+        expect(outcome).toHaveBeenCalledWith(
+          expect.objectContaining({ message: expect.stringMatching(/timed out/i) })
+        )
+        expect(destroy).toHaveBeenCalledOnce()
+        expect(removeDirectory).toHaveBeenCalledOnce()
+        expect(printToPDF).not.toHaveBeenCalled()
+        release()
+        await vi.advanceTimersByTimeAsync(0)
+        expect(printToPDF).not.toHaveBeenCalled()
+      } finally {
+        release()
+        await promise
+        vi.useRealTimers()
+      }
+    }
+  )
+
+  it('reports a published PDF as saved even when temporary HTML cleanup fails', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'conversation-export-cleanup-'))
+    const destination = join(root, 'export.pdf')
+    createTempDirectory.mockResolvedValue(root)
+    showSaveDialog.mockResolvedValue({ canceled: false, filePath: destination })
+    const cleanupError = new Error('EBUSY: temporary HTML cleanup failed')
+    removeDirectory.mockRejectedValue(cleanupError)
+    try {
+      const outcome = await createService({ publishUserFile: productionPublishUserFile, writeFile })
+        .exportConversation({ projectId: 'project-1', sessionId: 'session-1', format: 'pdf' })
+        .catch((error: unknown) => error)
+      // A real file was published; only print rendering is substituted with deterministic bytes.
+      expect(await readFile(destination)).toEqual(Buffer.from('pdf'))
+      expect(outcome).toEqual({ saved: true, filePath: destination })
+    } finally {
+      await rm(root, { recursive: true, force: true })
+      vi.restoreAllMocks()
+    }
+  })
+
+  it('preserves the generation error when temporary cleanup also fails', async () => {
+    const failure = new Error('print failed')
+    printToPDF.mockRejectedValue(failure)
+    removeDirectory.mockRejectedValue(new Error('EBUSY'))
+    try {
+      await expect(
+        createService().exportConversation({
+          projectId: 'project-1',
+          sessionId: 'session-1',
+          format: 'pdf'
+        })
+      ).rejects.toBe(failure)
+    } finally {
+      vi.restoreAllMocks()
+    }
+  })
+
   it('destroys the print window when PDF generation fails', async () => {
     showSaveDialog.mockResolvedValue({ canceled: false, filePath: '/downloads/export.pdf' })
     printToPDF.mockRejectedValue(new Error('print failed'))

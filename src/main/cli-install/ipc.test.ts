@@ -85,10 +85,21 @@ describe('registerCliInstallIpcHandlers', () => {
     expect(launcher.uninstallCliLauncher).toHaveBeenCalledTimes(1)
   })
 
-  it('get-status returns a safe default instead of rejecting when the launcher throws', async () => {
-    launcher.getCliLauncherStatus.mockRejectedValue(new Error('fs blew up'))
-    const result = await handlers.get('cli:get-status')!()
-    expect(result).toEqual({ installed: false, target: '', onPath: false })
+  it('C03 rejects an unavailable status and returns the real status after retry', async () => {
+    const error = Object.assign(new Error('permission denied'), { code: 'EACCES' })
+    launcher.getCliLauncherStatus.mockRejectedValueOnce(error).mockResolvedValueOnce(INSTALLED)
+
+    await expect.soft(handlers.get('cli:get-status')!()).rejects.toBe(error)
+    await expect(handlers.get('cli:get-status')!()).resolves.toEqual(INSTALLED)
+    expect(launcher.getCliLauncherStatus).toHaveBeenCalledTimes(2)
+  })
+
+  it.each(['install', 'uninstall'] as const)('preserves %s failure propagation', async (action) => {
+    const error = Object.assign(new Error('permission denied'), { code: 'EACCES' })
+    launcher[
+      action === 'install' ? 'installCliLauncher' : 'uninstallCliLauncher'
+    ].mockRejectedValueOnce(error)
+    await expect(handlers.get(`cli:${action}`)!()).rejects.toBe(error)
   })
 
   it('reconciles an AppImage launcher through the owner and logs failures', async () => {

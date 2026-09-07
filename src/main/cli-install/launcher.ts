@@ -1,7 +1,7 @@
 import { spawnSync } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import { constants, type Stats } from 'node:fs'
-import { lstat, mkdir, open, rename, rm, type FileHandle } from 'node:fs/promises'
+import { link, lstat, mkdir, open, rename, rm, type FileHandle } from 'node:fs/promises'
 import { basename, join, posix } from 'node:path'
 
 import type { CliLauncherStatus } from '../../shared/cli'
@@ -153,8 +153,10 @@ const windowsShim = (env: CliLauncherEnv): string => {
     '@echo off',
     `rem ${MANAGED_LAUNCHER_HEADER_V1}`,
     'rem Edits are overwritten on reinstall.',
+    'setlocal EnableExtensions DisableDelayedExpansion',
     'set ELECTRON_RUN_AS_NODE=1',
     `${appPathLine}"${env.appExecPath}" "${env.cliEntryPath}" %*`,
+    'endlocal & exit /b %errorlevel%',
     ''
   ].join('\r\n')
 }
@@ -561,28 +563,43 @@ const replaceCliLauncher = async (
 }
 
 const tryCreateCliLauncher = async (plan: CliLauncherPlan): Promise<boolean> => {
-  let handle: FileHandle
+  if ((await statCliLauncher(plan.target)) !== undefined) return false
+  const temporaryPath = join(
+    plan.binDir,
+    `.${basename(plan.target)}.${process.pid}-${randomUUID()}.tmp`
+  )
+  let handle: FileHandle | undefined
+  let temporaryCreated = false
+  let created: Stats
   try {
     handle = await open(
-      plan.target,
+      temporaryPath,
       constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | (constants.O_NOFOLLOW ?? 0),
       plan.mode ?? 0o666
     )
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'EEXIST') return false
-    throw error
-  }
-
-  try {
+    temporaryCreated = true
     await writeCliLauncher(handle, plan)
-    const created = await handle.stat()
-    if (!(await isOpenCliLauncherCurrent(plan.target, created))) {
-      refuseUnmanagedCliLauncher(plan.target)
-    }
-    return true
-  } finally {
+    await handle.sync()
+    created = await handle.stat()
     await handle.close()
+    handle = undefined
+    // link publishes complete bytes only if target is absent; unlike rename, it cannot overwrite a
+    // concurrent user's file. Failure cleanup never unlinks the final pathname.
+    try {
+      await link(temporaryPath, plan.target)
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'EEXIST') return false
+      throw error
+    }
+  } finally {
+    await handle?.close().catch(() => undefined)
+    if (temporaryCreated) await rm(temporaryPath, { force: true }).catch(() => undefined)
   }
+  if (!(await isOpenCliLauncherCurrent(plan.target, created))) {
+    refuseUnmanagedCliLauncher(plan.target)
+  }
+  await defaultFileDurability.syncDirectory(plan.binDir)
+  return true
 }
 
 // Writes the launcher shim and, on Windows, ensures its dir is on the user PATH. Returns the resulting

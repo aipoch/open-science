@@ -196,8 +196,12 @@ const waitForTcpConnection = (socket: Socket): Promise<Socket> =>
     socket.once('error', failed)
   })
 
-const connectProxySocket = (url: URL, ca: readonly string[] | undefined): Promise<Socket> => {
-  const options = { host: url.hostname, port: defaultPort(url) }
+const connectProxySocket = (
+  url: URL,
+  ca: readonly string[] | undefined,
+  signal?: AbortSignal
+): Promise<Socket> => {
+  const options = { host: url.hostname, port: defaultPort(url), signal }
   if (url.protocol !== 'https:') return waitForTcpConnection(connectTcp(options))
   return new Promise((resolve, reject) => {
     const socket = connectTls({ ...options, ca: ca ? [...ca] : undefined })
@@ -228,9 +232,10 @@ const socks5Address = (address: string): Buffer => {
 const tunnelThroughSocks5 = async (
   proxyUrl: URL,
   address: string,
-  port: number
+  port: number,
+  signal?: AbortSignal
 ): Promise<Socket> => {
-  const socket = await connectProxySocket(proxyUrl, undefined)
+  const socket = await connectProxySocket(proxyUrl, undefined, signal)
   const reader = socketReader(socket, Buffer.alloc(0))
   try {
     socket.write(Buffer.from([5, 1, 0]))
@@ -262,12 +267,13 @@ const tunnelThroughSocks5 = async (
 const tunnelThroughSocks4 = async (
   proxyUrl: URL,
   address: string,
-  port: number
+  port: number,
+  signal?: AbortSignal
 ): Promise<Socket> => {
   if (isIP(address) !== 4) {
     throw new Error('Parent SOCKS4 proxy cannot route a non-IPv4 policy address.')
   }
-  const socket = await connectProxySocket(proxyUrl, undefined)
+  const socket = await connectProxySocket(proxyUrl, undefined, signal)
   const reader = socketReader(socket, Buffer.alloc(0))
   try {
     const portBytes = Buffer.alloc(2)
@@ -366,19 +372,25 @@ const tunnelThroughProxy = async (
   proxyUrl: URL,
   address: string,
   port: number,
-  ca: readonly string[] | undefined
+  ca: readonly string[] | undefined,
+  signal?: AbortSignal
 ): Promise<Socket> => {
-  if (proxyUrl.protocol === 'socks4:') return tunnelThroughSocks4(proxyUrl, address, port)
+  if (proxyUrl.protocol === 'socks4:') return tunnelThroughSocks4(proxyUrl, address, port, signal)
   if (proxyUrl.protocol === 'socks:' || proxyUrl.protocol === 'socks5:') {
-    return tunnelThroughSocks5(proxyUrl, address, port)
+    return tunnelThroughSocks5(proxyUrl, address, port, signal)
   }
-  const socket = await connectProxySocket(proxyUrl, ca)
+  if (!['http:', 'https:'].includes(proxyUrl.protocol))
+    throw new Error('Unsupported proxy protocol.')
+  const socket = await connectProxySocket(proxyUrl, ca, signal)
   const authority = `${urlHost(address)}:${port}`
   const authorization = proxyCredentials(proxyUrl)
   socket.write(
     `CONNECT ${authority} HTTP/1.1\r\nHost: ${authority}\r\n${authorization ? `Proxy-Authorization: ${authorization}\r\n` : ''}Connection: keep-alive\r\n\r\n`
   )
-  const response = await readHeader(socket)
+  const response = await readHeader(socket).catch((error: unknown) => {
+    socket.destroy()
+    throw error
+  })
   const status = /^HTTP\/\d(?:\.\d)?\s+(\d{3})/i.exec(response.header)?.[1]
   if (status !== '200') {
     socket.destroy()
@@ -971,5 +983,5 @@ class CommandGateway {
   }
 }
 
-export { CommandGateway, LOCAL_RPC_BROKER_HOST, sharedGatewayPortActive }
+export { CommandGateway, LOCAL_RPC_BROKER_HOST, sharedGatewayPortActive, tunnelThroughProxy }
 export type { CommandGatewayOptions, GatewayCredentials, GatewayDecision, ParentProxySettings }

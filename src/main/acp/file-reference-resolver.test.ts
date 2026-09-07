@@ -336,6 +336,7 @@ describe('managed file reference resolver', () => {
     const client = createProjectDbClient(root)
     disconnect = () => client.$disconnect()
     await migrateApplicationDatabase(client)
+    await client.project.create({ data: { id: 'project-1', name: 'Project one' } })
     const uploads = new UploadRepository(root, { getClient: () => Promise.resolve(client) })
     const [pending] = await stageUploadFixtures(uploads, {
       files: [
@@ -398,6 +399,7 @@ describe('managed file reference resolver', () => {
     const client = createProjectDbClient(root)
     disconnect = () => client.$disconnect()
     await migrateApplicationDatabase(client)
+    await client.project.create({ data: { id: 'project-a', name: 'Project A' } })
     const uploads = new UploadRepository(root, { getClient: () => Promise.resolve(client) })
     const [pending] = await stageUploadFixtures(uploads, {
       files: [

@@ -24,7 +24,10 @@ import {
   type ComposerPastedTextStage
 } from './composer/composer-doc'
 
+import type { MessageQueueEditIntent } from './workspace-message-queue-owner'
+
 export type ComposerDraft = {
+  queuedEdit?: MessageQueueEditIntent
   doc: ComposerDoc
   annotations: Annotation[]
   attachments: UploadedAttachment[]
@@ -57,6 +60,7 @@ export type ComposerUploadApi = UploadStagingApi & {
 }
 
 type WorkspaceComposerUploadControllerInput = {
+  initialDraft: ComposerDraft
   activeDraftKeyRef: { current: string }
   docRef: { current: ComposerDoc }
   annotationsRef: { current: Annotation[] }
@@ -106,10 +110,11 @@ type WorkspaceComposerUploadController = {
     ) => ComposerUndoTransaction
   }
   lifecycle: {
+    captureDraftAttachments: () => ComposerDeletionCleanup
     activateDraftAttachments: (draft: ComposerDraft) => void
     clearActiveAttachments: () => void
     setActiveAttachments: (attachments: UploadedAttachment[]) => void
-    deleteAttachmentFiles: (attachments: UploadedAttachment[]) => void
+    releaseHistoryResources: (snapshots: readonly ComposerDeletionCleanup[]) => void
     hasUnfinishedTransfers: (draftKey: string) => boolean
     beginSessionDeletion: (draftKey: string) => boolean
     settleSessionDeletion: (draftKey: string, deleted: boolean) => void
@@ -142,6 +147,7 @@ export const unfinishedComposerUpload = (transfer: ComposerUploadTransfer): bool
   transfer.status !== 'error'
 
 export const useWorkspaceComposerUploadController = ({
+  initialDraft,
   activeDraftKeyRef,
   docRef,
   annotationsRef,
@@ -159,8 +165,10 @@ export const useWorkspaceComposerUploadController = ({
   automaticReadingEnabledRef,
   setActiveAutomaticReadingEnabled
 }: WorkspaceComposerUploadControllerInput): WorkspaceComposerUploadController => {
-  const [attachments, setAttachments] = useState<UploadedAttachment[]>([])
-  const [transfers, setTransfers] = useState<ComposerUploadTransfer[]>([])
+  const [attachments, setAttachments] = useState<UploadedAttachment[]>(initialDraft.attachments)
+  const [transfers, setTransfers] = useState<ComposerUploadTransfer[]>(
+    initialDraft.attachmentTransfers
+  )
   const { t } = useTranslation()
   const [error, setErrorText] = useState<string | null>(null)
   const [errorDetail, setErrorDetail] = useState<string>()
@@ -169,7 +177,7 @@ export const useWorkspaceComposerUploadController = ({
     setErrorDetail(undefined)
   }, [])
   const attachmentsRef = useRef(attachments)
-  const transfersRef = useRef<ComposerUploadTransfer[]>([])
+  const transfersRef = useRef<ComposerUploadTransfer[]>(initialDraft.attachmentTransfers)
   const controllersRef = useRef<Record<string, AbortController>>({})
   const cancelledTransfersRef = useRef(new Set<string>())
   const deletionCleanupRef = useRef<Record<string, ComposerDeletionCleanup>>({})
@@ -198,6 +206,13 @@ export const useWorkspaceComposerUploadController = ({
       setActiveTransfers(update(transfersRef.current))
     },
     [setActiveTransfers]
+  )
+  const captureDraftAttachments = useCallback(
+    (): ComposerDeletionCleanup => ({
+      attachments: attachmentsRef.current,
+      attachmentTransfers: transfersRef.current
+    }),
+    []
   )
   const clearPastedTextUndo = useCallback(
     (draftKey = activeDraftKeyRef.current): void => {
@@ -239,6 +254,16 @@ export const useWorkspaceComposerUploadController = ({
         if (!retainedAttachmentPaths.has(path))
           void uploads.deleteUpload({ path }).catch(() => undefined)
       }
+      // Upload jobs belong to this mounted controller. Retain completed uploads, but
+      // turn unfinished long pastes back into editable text before parking the draft.
+      for (const draft of Object.values(draftsRef.current)) {
+        for (const transfer of draft.attachmentTransfers) {
+          if (transfer.pastedTextId) {
+            draft.doc = restorePastedTextNode(draft.doc, transfer.pastedTextId)?.doc ?? draft.doc
+          }
+        }
+        draft.attachmentTransfers = []
+      }
       transferFilesRef.current = {}
     },
     [draftsRef, uploads]
@@ -269,7 +294,7 @@ export const useWorkspaceComposerUploadController = ({
     [annotationsRef, automaticReadingEnabledRef, docRef, readingContextSourcesRef]
   )
   const releaseHistoryResources = useCallback(
-    (snapshots: readonly ComposerHistorySnapshot[]): void => {
+    (snapshots: readonly ComposerDeletionCleanup[]): void => {
       if (snapshots.length === 0) return
       const retainedAttachmentPaths = new Set(attachmentsRef.current.map(({ path }) => path))
       const retainedTransferIds = new Set(transfersRef.current.map(({ transferId }) => transferId))
@@ -622,6 +647,10 @@ export const useWorkspaceComposerUploadController = ({
                 .abortTransfer({ transferId: transfer.transferId })
                 .catch(() => undefined)
               throw claimError
+            }
+            if (controller.signal.aborted) {
+              await uploads.deleteUpload({ path: attachment.path }).catch(() => undefined)
+              continue
             }
             commitDraftAttachment(draftKey, transfer.transferId, attachment, transfer.pastedTextId)
           } catch (uploadError) {
@@ -1149,7 +1178,12 @@ export const useWorkspaceComposerUploadController = ({
       }
       const draftKey = activeDraftKeyRef.current
       clearPastedTextUndo(draftKey)
-      clearUndo(draftKey)
+      reconcileHistorySnapshots(draftKey, (snapshot) => ({
+        ...snapshot,
+        attachmentTransfers: snapshot.attachmentTransfers.filter(
+          (candidate) => candidate.transferId !== transfer.transferId
+        )
+      }))
       markChanged(draftKey)
       cancelledTransfersRef.current.add(transfer.transferId)
       controllersRef.current[transfer.transferId]?.abort()
@@ -1173,7 +1207,7 @@ export const useWorkspaceComposerUploadController = ({
     [
       activeDraftKeyRef,
       clearPastedTextUndo,
-      clearUndo,
+      reconcileHistorySnapshots,
       docRef,
       markChanged,
       removePastedText,
@@ -1193,7 +1227,10 @@ export const useWorkspaceComposerUploadController = ({
         return
       }
       clearPastedTextUndo()
-      clearUndo()
+      reconcileHistorySnapshots(activeDraftKeyRef.current, (snapshot) => ({
+        ...snapshot,
+        attachments: snapshot.attachments.filter((item) => item.id !== attachment.id)
+      }))
       markChanged()
       updateActiveAttachments((current) => current.filter((item) => item.id !== attachment.id))
       const cleanup = deletionCleanupRef.current[activeDraftKeyRef.current]
@@ -1207,7 +1244,7 @@ export const useWorkspaceComposerUploadController = ({
     [
       activeDraftKeyRef,
       clearPastedTextUndo,
-      clearUndo,
+      reconcileHistorySnapshots,
       docRef,
       markChanged,
       removePastedText,
@@ -1314,10 +1351,11 @@ export const useWorkspaceComposerUploadController = ({
       beginUndoTransaction
     },
     lifecycle: {
+      captureDraftAttachments,
       activateDraftAttachments,
       clearActiveAttachments,
       setActiveAttachments,
-      deleteAttachmentFiles,
+      releaseHistoryResources,
       hasUnfinishedTransfers,
       beginSessionDeletion,
       settleSessionDeletion

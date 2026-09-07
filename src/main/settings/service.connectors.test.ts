@@ -57,7 +57,7 @@ describe('SettingsService connector facade', () => {
       transport: 'streamable_http',
       oauth: { scopes: ['read'] }
     })
-    const credential = created.credentials[0]!
+    const credential = created.createdCredential
 
     expect(authenticate).not.toHaveBeenCalled()
     expect(credential.status).toBe('disconnected')

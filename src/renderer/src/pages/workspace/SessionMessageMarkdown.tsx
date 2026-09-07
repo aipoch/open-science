@@ -12,10 +12,11 @@ import {
   isPendingArtifactPublication
 } from './artifact-preview-utils'
 import { createPreviewResourceKey } from './previews/preview-resource-key'
+import { usePreviewResourceKey } from './previews/usePreviewResourceGeneration'
 import { useManagedPreviewResource } from './previews/useManagedPreviewResource'
 import { useNearViewport } from './previews/useNearViewport'
 import {
-  normalizeSessionArtifactReferences,
+  createSessionArtifactReferenceNormalizer,
   resolveMessageArtifactReference,
   type MessageArtifact
 } from './session-message-artifact-reference'
@@ -91,6 +92,7 @@ const SessionArtifactImage = ({
     mtimeMs: artifact.mtimeMs
   }
   const requestKey = createPreviewResourceKey(request)
+  const resourceRequestKey = usePreviewResourceKey(request)
   const [failedRequestKey, setFailedRequestKey] = useState<string>()
   const [setElement, isNearViewport] = useNearViewport<HTMLButtonElement | HTMLSpanElement>()
   // Latch the first approach: the loaded <img> is much taller than the alt-text placeholder, so
@@ -101,7 +103,7 @@ const SessionArtifactImage = ({
   if (isNearViewport && !hasBeenNearViewport) {
     setHasBeenNearViewport(true)
   }
-  const hasFailed = failedRequestKey === requestKey
+  const hasFailed = failedRequestKey === resourceRequestKey
   const resourceState = useManagedPreviewResource(
     request,
     !publicationPending && !isTiff && hasBeenNearViewport && !hasFailed
@@ -213,7 +215,7 @@ const SessionArtifactImage = ({
             event.currentTarget.naturalHeight
           )
         }
-        onError={() => setFailedRequestKey(requestKey)}
+        onError={() => setFailedRequestKey(resourceRequestKey)}
       />
     </button>
   )
@@ -227,9 +229,11 @@ const SessionMessageMarkdown = memo(
     onPreviewArtifact,
     onPreviewArtifactModal
   }: SessionMessageMarkdownProps): React.JSX.Element => {
+    // Append-only streaming reprocesses just the trailing block instead of the full message.
+    const [normalizeArtifactReferences] = useState(() => createSessionArtifactReferenceNormalizer())
     const normalizedContent = useMemo(
-      () => normalizeSessionArtifactReferences(content, artifacts),
-      [artifacts, content]
+      () => normalizeArtifactReferences(content, artifacts),
+      [normalizeArtifactReferences, artifacts, content]
     )
     const components = useMemo<Components>(
       () => ({

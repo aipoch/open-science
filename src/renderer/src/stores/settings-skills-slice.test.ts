@@ -246,7 +246,11 @@ describe('settings Skills slice', () => {
 
   it.each([
     ['createSkill', 'createSkill', { name: 'New', description: '', body: '' }],
-    ['updateSkill', 'updateSkill', { id: 'target', name: 'Updated', description: '', body: '' }],
+    [
+      'updateSkill',
+      'updateSkill',
+      { id: 'target', name: 'Updated', etag: 'version', description: '', body: '' }
+    ],
     ['deleteSkill', 'deleteSkill', 'target']
   ] as const)('reconciles the catalog after %s', async (_label, actionName, input) => {
     const commandName = actionName as 'createSkill' | 'updateSkill' | 'deleteSkill'

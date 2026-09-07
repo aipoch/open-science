@@ -27,7 +27,7 @@ export const buildAnalysisPrompt = (jobs: JobSummary[]): string => {
     lines.push(`Status: ${job.status}`)
 
     if (job.featured_files && job.featured_files.length > 0) {
-      lines.push(`Featured output files (workspace-relative paths):`)
+      lines.push(`Featured output files (paths relative to result.local_output_root):`)
       for (const f of job.featured_files) {
         lines.push(`  - ${f}`)
       }
@@ -44,7 +44,9 @@ export const buildAnalysisPrompt = (jobs: JobSummary[]): string => {
     lines.push('')
     lines.push(
       `Please use \`attachJob("${job.job_id}").result()\` to retrieve the full result dictionary, ` +
-        `examine the output files, and call \`write_artifact_file\` to publish any results worth preserving.`
+        `examine the output files, join \`result.local_output_root\` with each relative file path, ` +
+        `and pass that absolute local path plus \`producerRunId: result.producer_run_id\` to the exposed ` +
+        `\`write_artifact_file\` tool to publish any results worth preserving.`
     )
 
     if (job.status === 'failed' || job.status === 'timeout') {
@@ -68,6 +70,14 @@ export type JobAnalysisTriggerDeps = {
     messageId: string,
     jobIds: readonly string[]
   ) => Promise<{ sessionId: string; messageId: string } | undefined>
+  // Read-only preparation: reuse durable content before admission. Read failures are retryable;
+  // undefined rejects an invalid Session/batch identity without calling the runtime.
+  preparePrompt: (
+    sessionId: string,
+    text: string,
+    messageId: string,
+    jobIds: readonly string[]
+  ) => Promise<string | undefined>
   // The Session Message and terminal response must be durable before settling the Compute claim.
   flushPersistence: () => Promise<void>
   createMessageId: () => string
@@ -81,9 +91,10 @@ export type JobAnalysisTriggerDeps = {
     | 'running'
     | Exclude<ComputeJobAnalysisState, 'dispatched'>
     | Promise<'missing' | 'running' | Exclude<ComputeJobAnalysisState, 'dispatched'>>
-  // Registers a one-shot callback for when the given session's turn reaches a terminal state.
+  // Registers a one-shot callback for the specified analysis Message's terminal outcome.
   onTurnEnd: (
     sessionId: string,
+    messageId: string,
     callback: (outcome: Exclude<ComputeJobAnalysisState, 'dispatched'>) => void
   ) => void
   // Structured logger; receives a tag and a detail message for observability.
@@ -95,6 +106,7 @@ type PendingBatch = {
   messageId?: string
   // The Message ID is chosen, but its durable dispatched transition may not have committed yet.
   claimPending?: boolean
+  readRetryDelayMs?: number
   jobs: Map<string, JobSummary>
 }
 
@@ -128,12 +140,12 @@ export const createJobAnalysisTrigger = (deps: JobAnalysisTriggerDeps): JobAnaly
   const claimRetryTimers = new Map<string, ReturnType<typeof setTimeout>>()
   const settlementRetryTimers = new Map<string, ReturnType<typeof setTimeout>>()
 
-  const scheduleClaimRetry = (key: string): void => {
+  const scheduleClaimRetry = (key: string, delayMs = transitionRetryDelayMs): void => {
     if (disposed || claimRetryTimers.has(key)) return
     const timer = setTimeout(() => {
       claimRetryTimers.delete(key)
       scheduleFlush(key)
-    }, transitionRetryDelayMs)
+    }, delayMs)
     claimRetryTimers.set(key, timer)
   }
 
@@ -305,7 +317,16 @@ export const createJobAnalysisTrigger = (deps: JobAnalysisTriggerDeps): JobAnaly
   ): void => {
     if (disposed) return
     awaitingTurnEnd.set(key, { batch, sessionId, messageId, jobIds })
-    deps.onTurnEnd(sessionId, (outcome) => void onTurnEndCallback(key, outcome))
+    deps.onTurnEnd(sessionId, messageId, (outcome) => void onTurnEndCallback(key, outcome))
+  }
+
+  const retryRead = (batch: PendingBatch): void => {
+    // A committed claim must not absorb newer jobs waiting under the Session's pending key.
+    const key = `${batch.sessionId}\u0000${batch.messageId}`
+    pendingBatches.set(key, batch)
+    const delayMs = batch.readRetryDelayMs ?? transitionRetryDelayMs
+    batch.readRetryDelayMs = Math.min(delayMs * 2, 30_000)
+    scheduleClaimRetry(key, delayMs)
   }
 
   const flushBatch = async (key: string): Promise<void> => {
@@ -340,7 +361,7 @@ export const createJobAnalysisTrigger = (deps: JobAnalysisTriggerDeps): JobAnaly
       } catch (err) {
         if (disposed) return
         deps.log('analysis-turn:reconcile-failed', `session=${sessionId} error=${String(err)}`)
-        await settle(key, batch, sessionId, messageId, jobIds, 'failed')
+        retryRead(batch)
         return
       }
       if (recoveredState !== 'missing' && recoveredState !== 'running') {
@@ -356,6 +377,7 @@ export const createJobAnalysisTrigger = (deps: JobAnalysisTriggerDeps): JobAnaly
         await deps.transitionAnalysis({ sessionId, jobIds, messageId, state: 'dispatched' })
         if (disposed) return
         batch.claimPending = false
+        batch.messageId = messageId
       } catch (err) {
         if (disposed) return
         deps.log('analysis-turn:claim-failed', `session=${sessionId} error=${String(err)}`)
@@ -373,7 +395,26 @@ export const createJobAnalysisTrigger = (deps: JobAnalysisTriggerDeps): JobAnaly
 
     deps.log('analysis-turn:sending', `session=${sessionId} jobs=[${jobIds.join(',')}]`)
 
-    const prompt = buildAnalysisPrompt(jobsToSend)
+    let prompt: string | undefined
+    try {
+      prompt = await deps.preparePrompt(
+        sessionId,
+        buildAnalysisPrompt(jobsToSend),
+        messageId,
+        jobIds
+      )
+      if (disposed) return
+    } catch (err) {
+      if (disposed) return
+      deps.log('analysis-turn:prepare-failed', `session=${sessionId} error=${String(err)}`)
+      retryRead(batch)
+      return
+    }
+    batch.readRetryDelayMs = undefined
+    if (prompt === undefined) {
+      await settle(key, batch, sessionId, messageId, jobIds, 'failed')
+      return
+    }
 
     let result: Awaited<ReturnType<typeof deps.sendPrompt>>
 

@@ -15,10 +15,10 @@ const PROBE_SCRIPT = [
   'echo "os=$(uname -s 2>/dev/null)"',
   'echo "cpus=$(nproc 2>/dev/null || sysctl -n hw.logicalcpu 2>/dev/null || echo)"',
   'echo "mem_mib=$(free -m 2>/dev/null | awk \'NR==2{print $2}\' || echo $(( $(sysctl -n hw.memsize 2>/dev/null || echo 0) / 1048576 )))"',
-  "echo \"gpus=$(nvidia-smi -L 2>/dev/null | grep -oP 'GPU \\d+: \\K[^(]+' | tr '\\n' ';' || echo)\"",
-  'echo "sbatch=$(command -v sbatch 2>/dev/null && echo yes || echo no)"',
-  'echo "qsub=$(command -v qsub 2>/dev/null && echo yes || echo no)"',
-  'echo "bsub=$(command -v bsub 2>/dev/null && echo yes || echo no)"',
+  "echo \"gpus=$(nvidia-smi -L 2>/dev/null | sed -n 's/^GPU [0-9][0-9]*: \\([^()]*\\).*/\\1/p' | tr '\\n' ';' || echo)\"",
+  'echo "sbatch=$(command -v sbatch >/dev/null 2>&1 && echo yes || echo no)"',
+  'echo "qsub=$(command -v qsub >/dev/null 2>&1 && echo yes || echo no)"',
+  'echo "bsub=$(command -v bsub >/dev/null 2>&1 && echo yes || echo no)"',
   'echo "scratch=$SCRATCH"'
 ].join('\n')
 
@@ -59,7 +59,9 @@ export const parseProbeOutput = (stdout: string): ProbeScriptOutput => {
         ? 'pbs'
         : values['bsub'] === 'yes'
           ? 'lsf'
-          : 'none'
+          : ['sbatch', 'qsub', 'bsub'].every((key) => values[key] === 'no')
+            ? 'none'
+            : undefined
 
   return {
     os: values['os'] || undefined,
@@ -93,6 +95,13 @@ const waitForRetry = (delayMs: number, signal?: AbortSignal): Promise<void> => {
 
 const buildDetailsSkeleton = (probe: ProbeResult): string => {
   const lines: string[] = ['## Resources', '']
+  if (probe.detectedScheduler && probe.detectedScheduler !== 'none') {
+    lines.push(
+      'The CPU, memory and GPU values below describe the SSH login host, not a scheduler allocation.',
+      'Inspect scheduler partitions and provider guidance before requesting compute resources.',
+      ''
+    )
+  }
   if (probe.cpus != null) lines.push(`cpus: ${probe.cpus}`)
   if (probe.memMib != null) lines.push(`mem: ${Math.round(probe.memMib / 1024)} GB`)
   if (probe.gpus && probe.gpus.length > 0) {
@@ -131,7 +140,9 @@ export class ComputeHostProfileOwner {
         authenticationCode: failure.code,
         authenticationRevision
       }
-      await this.repository.updateProbeResult(providerId, result, 'direct_ssh')
+      if (!(await this.repository.updateProbeResult(providerId, result, host.shape, host.id))) {
+        throw new ComputeConnectionError('credential_conflict')
+      }
       return result
     }
     let connection
@@ -205,11 +216,32 @@ export class ComputeHostProfileOwner {
         authenticationCode: failure.code,
         authenticationRevision
       }
-      await this.repository.updateProbeResult(providerId, result, 'direct_ssh')
+      if (!(await this.repository.updateProbeResult(providerId, result, host.shape, host.id))) {
+        throw new ComputeConnectionError('credential_conflict')
+      }
       return result
     }
 
     const parsed = parseProbeOutput(runResult.stdout)
+    if (
+      runResult.exitCode !== 0 ||
+      runResult.truncated ||
+      !parsed.os ||
+      !parsed.detectedScheduler
+    ) {
+      const result: ProbeResult = {
+        ok: false,
+        probedAt,
+        exitCode: runResult.exitCode,
+        authenticationRevision,
+        errorTail:
+          runResult.stderr.trim().slice(-2048) || 'Resource probe did not return complete output.'
+      }
+      if (!(await this.repository.updateProbeResult(providerId, result, host.shape, host.id))) {
+        throw new ComputeConnectionError('credential_conflict')
+      }
+      return result
+    }
     const shape =
       parsed.detectedScheduler && parsed.detectedScheduler !== 'none'
         ? 'scheduler_cluster'
@@ -227,17 +259,24 @@ export class ComputeHostProfileOwner {
       detectedScheduler: parsed.detectedScheduler
     }
 
-    await this.repository.updateProbeResult(providerId, result, shape)
-    if (!host.scratchPinned && parsed.scratchEnv) {
-      let safeScratchRoot: string | undefined
+    let safeScratchRoot: string | undefined
+    if (parsed.scratchEnv) {
       try {
         safeScratchRoot = assertSafeScratchRoot(parsed.scratchEnv)
       } catch {
-        // Ignore an unusable remote value without hiding persistence failures for valid paths.
+        // Invalid remote paths do not invalidate otherwise usable resource information.
       }
-      if (safeScratchRoot !== undefined) {
-        await this.repository.updateScratchRoot(providerId, safeScratchRoot)
-      }
+    }
+    if (
+      !(await this.repository.updateProbeResult(
+        providerId,
+        result,
+        shape,
+        host.id,
+        safeScratchRoot
+      ))
+    ) {
+      throw new ComputeConnectionError('credential_conflict')
     }
     return result
   }
@@ -274,22 +313,42 @@ export class ComputeHostProfileOwner {
         `Details must be ${DETAILS_DOC_MAX_LENGTH} characters or fewer (got ${text.length}).`
       )
     }
-    await this.repository.updateDetails(providerId, text, author)
+    if (!(await this.repository.updateDetails(providerId, text, author, host.id, oldText))) {
+      throw new Error(
+        'details_conflict: old_text does not match the current details document. Reload and merge your draft.'
+      )
+    }
   }
 
   async appendDetails(
     providerId: string,
     { text, author }: { text: string; author: DetailsAuthor }
   ): Promise<void> {
-    const host = await this.repository.get(providerId)
-    if (!host) throw hostNotFound(providerId)
-    const newDoc = host.detailsDoc ? `${host.detailsDoc}\n${text}` : text
-    if (newDoc.length > DETAILS_DOC_MAX_LENGTH) {
-      throw new Error(
-        `Details must be ${DETAILS_DOC_MAX_LENGTH} characters or fewer (appended doc would be ${newDoc.length}).`
+    const initialHost = await this.repository.get(providerId)
+    if (!initialHost) throw hostNotFound(providerId)
+    let host = initialHost
+    for (let attempt = 0; attempt < 5; attempt++) {
+      const newDoc = host.detailsDoc ? `${host.detailsDoc}\n${text}` : text
+      if (newDoc.length > DETAILS_DOC_MAX_LENGTH) {
+        throw new Error(
+          `Details must be ${DETAILS_DOC_MAX_LENGTH} characters or fewer (appended doc would be ${newDoc.length}).`
+        )
+      }
+      if (
+        await this.repository.updateDetails(
+          providerId,
+          newDoc,
+          author,
+          initialHost.id,
+          host.detailsDoc
+        )
       )
+        return
+      const current = await this.repository.get(providerId)
+      if (!current || current.id !== initialHost.id) throw hostNotFound(providerId)
+      host = current
     }
-    await this.repository.updateDetails(providerId, newDoc, author)
+    throw new Error('details_conflict: concurrent edits prevented appending. Retry the append.')
   }
 
   async setScratchRoot(providerId: string, path: string): Promise<void> {

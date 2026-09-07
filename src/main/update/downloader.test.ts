@@ -8,6 +8,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 
 import type { DownloadProgress } from '../../shared/download-progress'
 import { downloadInstaller } from './downloader'
+import { parseManifest } from './manifest'
 
 const sha256 = (buf: Buffer): string => createHash('sha256').update(buf).digest('hex')
 
@@ -23,6 +24,42 @@ afterEach(async () => {
 })
 
 describe('downloadInstaller', () => {
+  it.each(['lowercase', 'uppercase', 'mixed', 'incorrect'])(
+    'U03: verifies a manifest checksum with %s hex through the real downloader',
+    async (casing) => {
+      dir = await mkdtemp(join(tmpdir(), 'upd-checksum-'))
+      const target = join(dir, 'installer.dmg')
+      const body = Buffer.from('installer-bytes')
+      const digest = sha256(body)
+      const checksum =
+        casing === 'uppercase'
+          ? digest.toUpperCase()
+          : casing === 'mixed'
+            ? [...digest].map((char, index) => (index % 2 ? char.toUpperCase() : char)).join('')
+            : casing === 'incorrect'
+              ? '0'.repeat(64)
+              : digest
+      const manifest = parseManifest({
+        version: '1.1.0',
+        downloads: {
+          'mac-arm64': { url: 'https://cdn/installer.dmg', size: body.byteLength, sha256: checksum }
+        }
+      })
+      const downloading = downloadInstaller(manifest.downloads['mac-arm64'], target, {
+        fetchImpl: async () => responseAt('https://cdn/installer.dmg', body)
+      })
+
+      if (casing === 'incorrect') {
+        await expect(downloading).rejects.toThrow('Checksum mismatch')
+        expect(existsSync(target)).toBe(false)
+        expect(existsSync(`${target}.part`)).toBe(false)
+      } else {
+        await expect(downloading).resolves.toBe(target)
+        expect(await readFile(target)).toEqual(body)
+      }
+    }
+  )
+
   it('writes to the target path, verifies sha256, and reports superset progress', async () => {
     dir = await mkdtemp(join(tmpdir(), 'upd-'))
     const target = join(dir, 'open-science-0.3.0-mac-arm64.dmg')

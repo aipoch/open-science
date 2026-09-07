@@ -12,7 +12,7 @@ import { cn } from '@/lib/utils'
 
 import { getFileExtension, getImageMimeTypeForExtension } from '../preview-support'
 
-type ArtifactSource = 'upload' | 'artifact'
+type ArtifactSource = 'upload' | 'artifact' | 'literature'
 
 type ArtifactFileIconProps = {
   name: string

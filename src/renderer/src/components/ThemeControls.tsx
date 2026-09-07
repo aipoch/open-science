@@ -1,35 +1,24 @@
 import type { TFunction } from 'i18next'
-import { Check, Monitor, Moon, Sun } from 'lucide-react'
+import { Monitor, Moon, Sun } from 'lucide-react'
 import { RadioGroup } from 'radix-ui'
 import { useTranslation } from 'react-i18next'
 
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuLabel,
-  DropdownMenuTrigger
-} from '@/components/ui/dropdown-menu'
 import { cn } from '@/lib/utils'
 import type { ThemePreference } from '@/lib/theme'
 import { useThemeStore } from '@/stores/theme-store'
 
-// Single source of truth for the three choices, shared by the settings segmented control and the
-// home-header menu so their labels, icons, and order never drift. Labels are catalog keys resolved at
-// render time — the list is module-level and cannot call a hook.
+// Labels are catalog keys resolved at render time; the module-level list cannot call a hook.
 const THEME_OPTIONS = [
   {
     value: 'system',
     labelKey: 'System',
-    descriptionKey: 'Match your device',
     Icon: Monitor
   },
-  { value: 'light', labelKey: 'Light', descriptionKey: 'Always light', Icon: Sun },
-  { value: 'dark', labelKey: 'Dark', descriptionKey: 'Always dark', Icon: Moon }
+  { value: 'light', labelKey: 'Light', Icon: Sun },
+  { value: 'dark', labelKey: 'Dark', Icon: Moon }
 ] as const satisfies readonly {
   value: ThemePreference
   labelKey: string
-  descriptionKey: string
   Icon: typeof Monitor
 }[]
 
@@ -71,55 +60,5 @@ export const ThemeSegmentedControl = (): React.JSX.Element => {
         )
       })}
     </RadioGroup.Root>
-  )
-}
-
-type ThemePreferenceMenuProps = {
-  className?: string
-}
-
-// Compact icon button for the home header, sized to match the neighboring GitHub / settings actions.
-// The trigger shows the icon for the *current preference* (Monitor / Sun / Moon); the popover lists
-// all three choices with a check beside the active one.
-export const ThemePreferenceMenu = ({ className }: ThemePreferenceMenuProps): React.JSX.Element => {
-  const { t } = useTranslation()
-  const preference = useThemeStore((state) => state.preference)
-  const setPreference = useThemeStore((state) => state.setPreference)
-  const active = THEME_OPTIONS.find((option) => option.value === preference) ?? THEME_OPTIONS[0]
-  const ActiveIcon = active.Icon
-
-  return (
-    <DropdownMenu>
-      <DropdownMenuTrigger asChild>
-        <button
-          type="button"
-          aria-label={t('Theme: {{theme}}', { theme: themeOptionLabel(active.labelKey, t) })}
-          title={t('Theme: {{theme}}', { theme: themeOptionLabel(active.labelKey, t) })}
-          className={cn(
-            'inline-flex size-9 items-center justify-center rounded-lg text-text-300 transition-colors duration-150 ease-out hover:bg-bg-300 hover:text-text-000',
-            className
-          )}
-        >
-          <ActiveIcon className="size-4" strokeWidth={2} aria-hidden="true" />
-        </button>
-      </DropdownMenuTrigger>
-      <DropdownMenuContent align="end" className="w-52">
-        <DropdownMenuLabel>{t('Theme')}</DropdownMenuLabel>
-        {THEME_OPTIONS.map(({ value, labelKey, descriptionKey, Icon }) => (
-          <DropdownMenuItem key={value} onSelect={() => setPreference(value)} className="gap-2">
-            <Icon className="size-4 text-muted-foreground" strokeWidth={2} aria-hidden="true" />
-            <span className="flex-1">
-              <span className="block leading-tight">{themeOptionLabel(labelKey, t)}</span>
-              <span className="block whitespace-nowrap text-xs leading-tight text-muted-foreground">
-                {t(descriptionKey)}
-              </span>
-            </span>
-            {preference === value ? (
-              <Check className="size-4 text-foreground" strokeWidth={2.5} aria-hidden="true" />
-            ) : null}
-          </DropdownMenuItem>
-        ))}
-      </DropdownMenuContent>
-    </DropdownMenu>
   )
 }

@@ -348,10 +348,14 @@ class DelegationSettlementWakeOwner {
     })
   }
 
-  shutdown(): void {
-    this.stopped = true
+  invalidateAll(): void {
     for (const state of this.sessions.values()) if (state.timer) clearTimeout(state.timer)
     this.sessions.clear()
+  }
+
+  shutdown(): void {
+    this.stopped = true
+    this.invalidateAll()
   }
 
   private enqueueExisting(

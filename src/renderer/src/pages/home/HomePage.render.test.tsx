@@ -812,6 +812,27 @@ describe('HomePage activity overview', () => {
     expect(onOpenGlobalSearch).toHaveBeenCalledOnce()
   })
 
+  it('keeps preferences in Settings and opens Settings directly from the gear', async () => {
+    await act(async () =>
+      root.render(
+        <HomePage canDeleteProjects hasCompleteSessionCatalog onOpenGlobalSearch={vi.fn()} />
+      )
+    )
+
+    const header = container.querySelector('header')
+    expect(header).not.toBeNull()
+    expect(header?.querySelector('[aria-label^="Language:"]')).toBeNull()
+    expect(header?.querySelector('[aria-label^="Theme:"]')).toBeNull()
+    const settings = header?.querySelector<HTMLButtonElement>('[aria-label="Model settings"]')
+    expect(settings).not.toBeNull()
+    expect(useSettingsStore.getState().isSettingsOpen).toBe(false)
+
+    await act(async () => settings?.click())
+
+    expect(useSettingsStore.getState().isSettingsOpen).toBe(true)
+    expect(document.querySelector('[role="menu"]')).toBeNull()
+  })
+
   it('places the update action beside Settings and before New project', async () => {
     await act(async () =>
       root.render(

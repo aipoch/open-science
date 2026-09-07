@@ -630,6 +630,110 @@ describe('SessionPersistenceCoordinator', () => {
     expect(durable.artifacts?.map(({ id }) => id)).toEqual(['concurrent-artifact', 'task-artifact'])
   })
 
+  it('stages and settles Task completion after the renderer projects the completed turn idle', async () => {
+    const prompt = createUserMessage('task-prompt', 1)
+    const modelCall = {
+      id: 'task-prompt:model-call:0',
+      index: 0,
+      inputTokens: 10,
+      cacheTokens: 0,
+      outputTokens: 2
+    }
+    const rendererAnswer: PersistedChatMessage = {
+      id: 'renderer-answer',
+      role: 'agent',
+      content: 'Finished',
+      status: 'complete',
+      responseToMessageId: prompt.id,
+      eventIds: ['task-answer-event'],
+      turnUsage: { inputTokens: 10, cacheTokens: 0, outputTokens: 2, turnCount: 1 },
+      modelCallUsage: [modelCall],
+      createdAt: 2,
+      updatedAt: 2
+    }
+    const taskAnswer: PersistedChatMessage = {
+      ...rendererAnswer,
+      id: 'task-answer',
+      eventIds: ['task-answer-event']
+    }
+    let durable = createSession({
+      revision: 3,
+      status: 'idle',
+      activeRun: undefined,
+      messages: [prompt, rendererAnswer]
+    })
+    const repository = createSessionRepository({
+      loadSessionWithDiagnostics: vi.fn(async () => ({
+        status: 'found' as const,
+        session: structuredClone(durable)
+      })),
+      saveSession: vi.fn(async (candidate, expectedRevision) => {
+        expect(expectedRevision ?? candidate.revision).toBe(durable.revision)
+        durable = structuredClone({ ...candidate, revision: (durable.revision ?? 0) + 1 })
+        return structuredClone(durable)
+      })
+    })
+    const coordinator = new SessionPersistenceCoordinator(repository, createFileIndex())
+
+    await coordinator.stageTaskCompletion({
+      projectId: durable.projectId,
+      sessionId: durable.id,
+      promptMessageId: prompt.id,
+      message: taskAnswer,
+      activities: [],
+      updatedAt: 3
+    })
+    await coordinator.settleTaskCompletion({
+      projectId: durable.projectId,
+      sessionId: durable.id,
+      promptMessageId: prompt.id,
+      taskRunCommitId: 'task-run',
+      messageId: rendererAnswer.id,
+      artifacts: [],
+      updatedAt: 3
+    })
+
+    expect(durable).toMatchObject({
+      revision: 5,
+      status: 'idle',
+      activeRun: undefined,
+      taskRunCommitId: 'task-run'
+    })
+    expect(durable.messages.map(({ id }) => id)).toEqual([prompt.id, rendererAnswer.id])
+    expect(
+      durable.messages.flatMap((message) => message.modelCallUsage ?? []).map(({ id }) => id)
+    ).toEqual([modelCall.id])
+
+    durable = {
+      ...durable,
+      revision: 6,
+      status: 'running',
+      activeRun: { promptMessageId: 'analysis-prompt', startedAt: 4 }
+    }
+    await expect(
+      coordinator.stageTaskCompletion({
+        projectId: durable.projectId,
+        sessionId: durable.id,
+        promptMessageId: prompt.id,
+        message: taskAnswer,
+        activities: [],
+        updatedAt: 5
+      })
+    ).rejects.toThrow('Task completion no longer owns the active Session run.')
+    await expect(
+      coordinator.settleTaskCompletion({
+        projectId: durable.projectId,
+        sessionId: durable.id,
+        promptMessageId: prompt.id,
+        taskRunCommitId: 'task-run',
+        messageId: rendererAnswer.id,
+        artifacts: [],
+        updatedAt: 5
+      })
+    ).rejects.toThrow('Task completion no longer owns the active Session run.')
+    expect(durable.activeRun?.promptMessageId).toBe('analysis-prompt')
+  })
+
   it('persists Task failure as a delta against current authority', async () => {
     const taskMessage: PersistedChatMessage = {
       id: 'task-answer',
@@ -2736,7 +2840,7 @@ describe('SessionPersistenceCoordinator', () => {
         projectId: 'project-1',
         sessionId: 'session-1',
         archived: true,
-        expectedArchivedAt: null
+        expectedRevision: 0
       })
     ).rejects.toThrow('Finish or stop this session before archiving.')
   })
@@ -2779,7 +2883,7 @@ describe('SessionPersistenceCoordinator', () => {
         projectId: delegated.projectId,
         sessionId: delegated.id,
         archived: true,
-        expectedArchivedAt: null
+        expectedRevision: 0
       })
     ).rejects.toThrow('Finish or stop this session before archiving.')
 
@@ -2795,7 +2899,7 @@ describe('SessionPersistenceCoordinator', () => {
         projectId: inactiveRoute.projectId,
         sessionId: inactiveRoute.id,
         archived: true,
-        expectedArchivedAt: null
+        expectedRevision: 0
       })
     ).rejects.toThrow('Finish or stop this session before archiving.')
 
@@ -2811,7 +2915,7 @@ describe('SessionPersistenceCoordinator', () => {
         projectId: terminal.projectId,
         sessionId: terminal.id,
         archived: true,
-        expectedArchivedAt: null
+        expectedRevision: 0
       })
     ).resolves.toMatchObject({ archivedAt: expect.any(Number) })
   })
@@ -2834,7 +2938,7 @@ describe('SessionPersistenceCoordinator', () => {
           projectId: delegated.projectId,
           sessionId: delegated.id,
           archived: true,
-          expectedArchivedAt: null
+          expectedRevision: persisted?.revision ?? 0
         })
       ])
 
@@ -4785,6 +4889,7 @@ describe('SessionPersistenceCoordinator', () => {
     const root = await mkdtemp(join(tmpdir(), 'open-science-upload-startup-partial-'))
     const client = createProjectDbClient(root)
     await migrateApplicationDatabase(client)
+    await client.project.create({ data: { id: 'project-1', name: 'Project one' } })
     const content = Buffer.from('sample,value\na,1\n')
     const retainedPath = join(root, 'uploads', 'default-project', 'session-1', 'retained.csv')
     const missingPath = join(root, 'uploads', 'default-project', 'session-1', 'missing.csv')

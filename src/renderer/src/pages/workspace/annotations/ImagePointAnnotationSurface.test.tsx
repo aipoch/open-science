@@ -8,7 +8,7 @@ import { createArtifactVersionLocator } from '../../../../../shared/artifact-pro
 import type { PreviewFileItem } from '@/stores/preview-workbench-store'
 
 import { ImagePointAnnotationSurface } from './ImagePointAnnotationSurface'
-import { requestAnnotationReveal } from './annotation-reveal'
+import { requestAnnotationReveal, subscribeAnnotationReveal } from './annotation-reveal'
 
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
@@ -45,6 +45,7 @@ describe('ImagePointAnnotationSurface', () => {
 
   afterEach(async () => {
     await act(async () => root.unmount())
+    subscribeAnnotationReveal(() => true)()
     container.remove()
   })
 
@@ -289,7 +290,7 @@ describe('ImagePointAnnotationSurface', () => {
     expect(onRemove).toHaveBeenCalledWith('point-existing')
   })
 
-  it('opens an existing pin preview when the composer reveals its source', async () => {
+  it.each(['draft', 'sent', 'late-mount'] as const)('opens a pin preview for %s', async (mode) => {
     const annotation = {
       id: 'point-reveal',
       kind: 'image-point',
@@ -307,15 +308,25 @@ describe('ImagePointAnnotationSurface', () => {
       point: { x: 0.5, y: 0.5 },
       naturalSize: { width: 800, height: 400 }
     } as const
+    if (mode === 'late-mount') await act(async () => requestAnnotationReveal(annotation))
     await renderSurface({
-      activeAnnotations: [annotation]
+      activeAnnotations: mode === 'draft' ? [annotation] : [],
+      onUpdateNote: vi.fn(),
+      onRemove: vi.fn()
     })
-
-    await act(async () => requestAnnotationReveal(annotation))
+    if (mode !== 'late-mount') await act(async () => requestAnnotationReveal(annotation))
     expect(document.querySelector('[data-image-annotation-preview]')?.textContent).toBe(
       'Revealed from composer'
     )
     expect(document.querySelector('textarea')).toBeNull()
+    if (mode !== 'draft') {
+      expect(
+        Array.from(document.querySelectorAll('button')).some(
+          (button) => button.textContent === 'Edit' || button.textContent === 'Delete'
+        )
+      ).toBe(false)
+      expect(onAdd).not.toHaveBeenCalled()
+    }
   })
 
   it('repositions normalized markers after the surface is resized', async () => {

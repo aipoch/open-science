@@ -532,6 +532,37 @@ describe('managed-claude: install orchestration', () => {
     ).toBe(true)
   })
 
+  it('aborts an in-flight download and removes its staging directory', async () => {
+    const controller = new AbortController()
+    const downloadStarted = Promise.withResolvers<void>()
+    let downloadSignal: AbortSignal | undefined
+    const install = installManagedClaude({
+      installId: 'cancel-download',
+      onEvent: () => undefined,
+      dataRoot: root,
+      registries: ['https://reg'],
+      version: '2.1.209',
+      platform,
+      fetchJson: async () => ({
+        dist: { tarball: 'https://reg/x.tgz', integrity: `sha512-${'x'.repeat(16)}` }
+      }),
+      fetchTarball: async (_url, signal) => {
+        downloadSignal = signal
+        downloadStarted.resolve()
+        return { stream: new Readable({ read: () => undefined }) }
+      },
+      verifyBinary: async () => '2.1.209',
+      signal: controller.signal
+    })
+    await downloadStarted.promise
+
+    controller.abort()
+
+    await expect(install).resolves.toMatchObject({ result: { ok: false } })
+    expect(downloadSignal).toBe(controller.signal)
+    expect((await readdir(root)).filter((name) => name.includes('.staging-'))).toEqual([])
+  })
+
   it('preserves the existing runtime when the replacement archive is incomplete', async () => {
     const existingPath = join(managedClaudeDir(root), 'claude')
     await mkdir(managedClaudeDir(root), { recursive: true })

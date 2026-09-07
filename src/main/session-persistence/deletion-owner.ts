@@ -4,14 +4,19 @@ import {
   hasAnswerableDelegatedQuestion,
   hasCurrentRunningDelegatedAttempt
 } from '../../shared/delegated-work-projection'
-import type {
-  LoadAllSessionsResult,
-  PersistedChatSession,
-  PersistedSessionStatus,
-  SessionLoadFailure,
-  SessionLoadWarning,
-  UpdateSessionArchiveRequest
+import {
+  SessionDeletionCommittedError,
+  sessionRevision,
+  SessionRevisionConflictError,
+  type LoadAllSessionsResult,
+  type PersistedChatSession,
+  type PersistedChatMessage,
+  type PersistedSessionStatus,
+  type SessionLoadFailure,
+  type SessionLoadWarning,
+  type UpdateSessionArchiveRequest
 } from '../../shared/session-persistence'
+import { PENDING_UPLOAD_SESSION_ID } from '../../shared/uploads'
 import type { SessionDeletionReceipt } from '../artifacts/provenance-message-snapshot'
 import { ArchiveAvailabilityError } from '../archive/availability-error'
 import type { ManagedFileSoftDeleteToken } from '../project-files/repository'
@@ -25,6 +30,33 @@ import type { ProjectSessionDeletionState } from './repository'
 import { saveSessionWithRevision } from './save-session'
 import type { SessionPersistenceStateOwner } from './state-owner'
 import { hasLegacySessionUpload } from './legacy-upload'
+
+// Old JSON may still reference process-local drafts. Drop only those references during deletion;
+// the existing startup transfer owner cleans their bytes after the process ends.
+const withoutPendingUploadReferences = (session: PersistedChatSession): PersistedChatSession => {
+  const strip = <Message extends PersistedChatMessage>(message: Message): Message => ({
+    ...message,
+    ...(message.uploads
+      ? {
+          uploads: message.uploads.filter(
+            (upload) => upload.versionId || upload.sessionId !== PENDING_UPLOAD_SESSION_ID
+          )
+        }
+      : {})
+  })
+  return {
+    ...session,
+    messages: session.messages.map(strip),
+    ...(session.conversationGraph
+      ? {
+          conversationGraph: {
+            ...session.conversationGraph,
+            messages: session.conversationGraph.messages.map(strip)
+          }
+        }
+      : {})
+  }
+}
 
 type ProjectSessionDeletionResult =
   { status: 'completed' } | { status: 'orphan-retained'; reason: 'missing-upload-authority' }
@@ -52,7 +84,10 @@ type SessionDeletionRepository = {
     | { status: 'missing' }
     | { status: 'unreadable' }
   >
-  saveSession(session: PersistedChatSession): Promise<PersistedChatSession | void>
+  saveSession(
+    session: PersistedChatSession,
+    expectedRevision?: number
+  ): Promise<PersistedChatSession | void>
   saveCommittedProjectSession(session: PersistedChatSession): Promise<void>
   deleteSession(projectId: string, sessionId: string): Promise<void>
   deleteProjectSessions(projectId: string): Promise<void>
@@ -130,12 +165,6 @@ const ARCHIVE_BLOCKING_SESSION_STATUSES = new Set<PersistedSessionStatus>([
   'waiting-plan-approval'
 ])
 
-const assertArchiveExpectedAt = (value: number | null, target: 'Project' | 'Session'): void => {
-  if (value !== null && (!Number.isSafeInteger(value) || value <= 0)) {
-    throw new Error(`${target} archive state is invalid.`)
-  }
-}
-
 const isSessionArchiveBlocked = (session: PersistedChatSession): boolean =>
   ARCHIVE_BLOCKING_SESSION_STATUSES.has(session.status)
 
@@ -173,18 +202,16 @@ class SessionPersistenceDeletionOwner {
 
   async assertProjectArchivable(
     projectId: string,
-    isRuntimeBusy: (sessionId: string) => boolean = () => false
+    isRuntimeBusy: (sessionId: string) => boolean | Promise<boolean> = () => false
   ): Promise<string[]> {
     const loaded = await this.repository.loadProjectWithDiagnostics(projectId)
     if (!loaded.isComplete) {
       throw new Error('Cannot archive a Project while its Session catalog is incomplete.')
     }
-    if (
-      loaded.sessions.some(
-        (session) => isSessionArchiveBlockedByPersistedWork(session) || isRuntimeBusy(session.id)
-      )
-    ) {
-      throw new Error('Finish or stop active sessions before archiving this project.')
+    for (const session of loaded.sessions) {
+      if (isSessionArchiveBlockedByPersistedWork(session) || (await isRuntimeBusy(session.id))) {
+        throw new Error('Finish or stop active sessions before archiving this project.')
+      }
     }
     return loaded.sessions.map((session) => session.id)
   }
@@ -202,9 +229,11 @@ class SessionPersistenceDeletionOwner {
 
   async updateArchive(
     request: UpdateSessionArchiveRequest,
-    isRuntimeBusy: () => boolean = () => false
+    isRuntimeBusy: () => boolean | Promise<boolean> = () => false
   ): Promise<PersistedChatSession> {
-    assertArchiveExpectedAt(request.expectedArchivedAt, 'Session')
+    if (!Number.isSafeInteger(request.expectedRevision) || request.expectedRevision < 0) {
+      throw new Error('Session archive state is invalid.')
+    }
     this.assertArchiveMutable(request.projectId, request.sessionId)
 
     const loaded = await this.repository.loadSessionWithDiagnostics(
@@ -217,21 +246,25 @@ class SessionPersistenceDeletionOwner {
     }
 
     const currentArchivedAt = loaded.session.archivedAt ?? null
-    if (currentArchivedAt !== request.expectedArchivedAt) {
-      throw new Error('Session archive state changed elsewhere.')
+    if (sessionRevision(loaded.session) !== request.expectedRevision) {
+      throw new SessionRevisionConflictError(
+        request.expectedRevision,
+        sessionRevision(loaded.session)
+      )
     }
     if (
       request.archived &&
-      (isSessionArchiveBlockedByPersistedWork(loaded.session) || isRuntimeBusy())
+      (isSessionArchiveBlockedByPersistedWork(loaded.session) || (await isRuntimeBusy()))
     ) {
       throw new Error('Finish or stop this session before archiving.')
     }
+    this.assertArchiveMutable(request.projectId, request.sessionId)
     if (request.archived === (currentArchivedAt !== null)) return loaded.session
 
     const next: PersistedChatSession = { ...loaded.session }
     if (request.archived) next.archivedAt = Date.now()
     else delete next.archivedAt
-    const persisted = await saveSessionWithRevision(this.repository, next)
+    const persisted = await saveSessionWithRevision(this.repository, next, request.expectedRevision)
     this.stateOwner.recordSession(persisted)
     return persisted
   }
@@ -245,9 +278,10 @@ class SessionPersistenceDeletionOwner {
       return this.uploads.upgradeLegacySessionUploads(session, { mode: 'terminal-delete' })
     }
 
-    const upgradedSession = await this.uploads.upgradeLegacySessionUploads(session, {
-      mode: 'live-save'
-    })
+    const upgradedSession = await this.uploads.upgradeLegacySessionUploads(
+      withoutPendingUploadReferences(session),
+      { mode: 'live-save' }
+    )
     const persisted = await saveSessionWithRevision(this.repository, upgradedSession)
     return this.uploads.upgradeLegacySessionUploads(persisted, {
       mode: 'terminal-delete'
@@ -265,9 +299,12 @@ class SessionPersistenceDeletionOwner {
 
     let terminalSession = session
     if (hasLegacySessionUpload(session)) {
-      terminalSession = await this.uploads.upgradeLegacySessionUploads(session, {
-        mode: requireExistingUploadAuthority ? 'orphan-recovery' : 'live-save'
-      })
+      terminalSession = await this.uploads.upgradeLegacySessionUploads(
+        withoutPendingUploadReferences(session),
+        {
+          mode: requireExistingUploadAuthority ? 'orphan-recovery' : 'live-save'
+        }
+      )
       await saveUpgradedSession(terminalSession)
     }
 
@@ -435,14 +472,17 @@ class SessionPersistenceDeletionOwner {
   async deleteSession(
     projectId: string,
     sessionId: string
-  ): Promise<SessionDeletionReceipt['kind']> {
+  ): Promise<{
+    receiptKind: SessionDeletionReceipt['kind']
+    cleanupError?: SessionDeletionCommittedError
+  }> {
     const operation = startDiagnosticOperation(this.log, {
       operation: 'session-persistence-deletion'
     })
     let failurePhase = 'load-authority'
     let token: ManagedFileSoftDeleteToken | undefined
     let receipt: SessionDeletionReceipt = { kind: 'ordinary', projectId, sessionId }
-    let jsonDeleted = false
+    const cleanupErrors: unknown[] = []
     let computeJobsPrepared = false
     let managedWorkspaceRetained = false
     let session: PersistedChatSession | undefined
@@ -485,19 +525,10 @@ class SessionPersistenceDeletionOwner {
       failurePhase = 'delete-authority'
       operation.phase(failurePhase)
       await this.repository.deleteSession(projectId, sessionId)
-      jsonDeleted = true
-      if (this.computeJobs) {
-        failurePhase = 'commit-compute-cleanup'
-        operation.phase(failurePhase)
-        await this.computeJobs.commitSessionJobDeletion(projectId, sessionId)
-      }
-      failurePhase = 'complete-provenance'
-      operation.phase(failurePhase)
-      await this.provenance?.completeSessionDeletion(receipt)
     } catch (error) {
       let recoveryPhase: string | undefined
       try {
-        if (!jsonDeleted) {
+        if (!(error instanceof SessionDeletionCommittedError)) {
           const recoveryErrors: unknown[] = []
           try {
             if (receipt.kind === 'retained') {
@@ -537,8 +568,6 @@ class SessionPersistenceDeletionOwner {
                 .join('; ')}`
             )
           }
-        } else {
-          this.fileIndex.markReconciliationIncomplete(projectId)
         }
       } catch (restoreError) {
         this.fileIndex.markReconciliationIncomplete(projectId)
@@ -546,11 +575,40 @@ class SessionPersistenceDeletionOwner {
         throw restoreError
       }
       operation.fail(error, { failurePhase })
-      throw error
+      if (!(error instanceof SessionDeletionCommittedError)) throw error
+      cleanupErrors.push(error)
     }
 
+    // Authority is gone. Each participant must get its completion attempt even if another fails;
+    // their existing recovery paths own any unfinished work, and none may be rolled back to active.
+    if (this.computeJobs) {
+      failurePhase = 'commit-compute-cleanup'
+      operation.phase(failurePhase)
+      try {
+        await this.computeJobs.commitSessionJobDeletion(projectId, sessionId)
+      } catch (error) {
+        operation.fail(error, { failurePhase })
+        cleanupErrors.push(error)
+      }
+    }
+    failurePhase = 'complete-provenance'
+    operation.phase(failurePhase)
+    try {
+      await this.provenance?.completeSessionDeletion(receipt)
+    } catch (error) {
+      operation.fail(error, { failurePhase })
+      cleanupErrors.push(error)
+    }
+    if (cleanupErrors.length > 0) {
+      this.fileIndex.markReconciliationIncomplete(projectId)
+      const cause =
+        cleanupErrors.length === 1
+          ? cleanupErrors[0]
+          : new AggregateError(cleanupErrors, 'Session deletion committed but cleanup failed.')
+      return { receiptKind: receipt.kind, cleanupError: new SessionDeletionCommittedError(cause) }
+    }
     operation.complete({ receiptKind: receipt.kind })
-    return receipt.kind
+    return { receiptKind: receipt.kind }
   }
 
   async reconcileSessionDeletion(

@@ -28,6 +28,7 @@ const createDependencies = (
   mkdir: vi.fn().mockResolvedValue(undefined),
   readDirectoryEntries: vi.fn().mockResolvedValue([]),
   readFile: vi.fn(),
+  readFileWithinLimit: vi.fn(),
   remove: vi.fn().mockResolvedValue(undefined),
   rename: vi.fn().mockResolvedValue(undefined),
   stat: vi.fn(),
@@ -166,6 +167,36 @@ describe('durable JSON file recovery', () => {
       readDurableJsonFile(filePath, JSON.parse, dependencies, { maxBytes: 10 })
     ).rejects.toThrow('settings.json exceeds the 10 byte read limit.')
     expect(dependencies.readFile).not.toHaveBeenCalled()
+  })
+
+  it('rejects a primary replaced with oversized contents after the path stat', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'durable-json-read-race-'))
+    roots.push(root)
+    const filePath = join(root, 'settings.json')
+    const initialContents = '{}\n'
+    const oversizedContents = '{"replacement":"larger than the admitted file"}\n'
+    await writeFile(filePath, initialContents, 'utf8')
+    let replaced = false
+
+    await expect(
+      readDurableJsonFile(
+        filePath,
+        JSON.parse,
+        {
+          stat: async (path) => {
+            const metadata = await statFile(path)
+            if (!replaced && path === filePath) {
+              replaced = true
+              await writeFile(filePath, oversizedContents, 'utf8')
+            }
+            return metadata
+          }
+        },
+        { maxBytes: Buffer.byteLength(initialContents) }
+      )
+    ).rejects.toThrow(
+      `settings.json exceeds the ${Buffer.byteLength(initialContents)} byte read limit.`
+    )
   })
 
   it('keeps a valid primary authoritative and removes recognized temps', async () => {

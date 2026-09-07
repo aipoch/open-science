@@ -5,7 +5,7 @@ import type { PreviewFileSource } from '@/stores/preview-workbench-store'
 import type { PreviewFileItem } from '@/stores/preview-workbench-store'
 
 import { PreviewErrorCard, PreviewFallbackCard, PreviewLoadingContent } from '../PreviewFallback'
-import { createPreviewResourceKey } from '../preview-resource-key'
+import { usePreviewResourceKey } from '../usePreviewResourceGeneration'
 import type { PreviewFileRendererProps } from '../preview-types'
 import { useCachedPreviewImage } from '../useCachedPreviewImage'
 import { ZoomablePreview } from './ZoomablePreview'
@@ -95,7 +95,7 @@ export const PreviewImageContent = ({
   onAnnotationError?: (error: AnnotationValidationError) => void
 }): React.JSX.Element => {
   const { t } = useTranslation()
-  const requestKey = createPreviewResourceKey({
+  const requestKey = usePreviewResourceKey({
     projectId,
     sessionId,
     source,

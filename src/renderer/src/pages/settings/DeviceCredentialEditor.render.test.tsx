@@ -88,6 +88,98 @@ describe('DeviceCredentialEditor', () => {
     expect(onDone).toHaveBeenCalledOnce()
   })
 
+  it('C03 explains that a credential was saved when its runtime refresh fails', async () => {
+    const credential = {
+      id: 'token',
+      displayName: 'Lab token',
+      kind: 'token' as const,
+      status: 'stored' as const,
+      needsSecret: false,
+      consumerCount: 1,
+      consumerNames: ['Lab'],
+      createdAt: 1,
+      updatedAt: 1
+    }
+    const message =
+      'Credential changes were saved, but Connectors could not refresh. Retry from Settings > Connectors.'
+    useSettingsStore.setState({
+      deviceCredentials: [credential],
+      updateDeviceCredential: vi.fn().mockRejectedValue(new Error(message))
+    })
+    const onDone = vi.fn()
+    act(() =>
+      root.render(
+        <DeviceCredentialEditor credential={credential} onDone={onDone} onCancel={vi.fn()} />
+      )
+    )
+    const save = Array.from(container.querySelectorAll<HTMLButtonElement>('button')).find(
+      (button) => button.textContent === 'Save'
+    )!
+    await act(async () => {
+      save.click()
+    })
+    expect(container.textContent).toContain(message)
+    expect(onDone).not.toHaveBeenCalled()
+  })
+
+  it.each([true, false])(
+    'offers client secret replacement for an existing OAuth credential when unreadable is %s',
+    async (needsSecret) => {
+      const update = vi.fn().mockResolvedValue(undefined)
+      useSettingsStore.setState({ updateDeviceCredential: update })
+      const credential = {
+        id: 'registered-oauth',
+        displayName: 'Registered OAuth',
+        kind: 'oauth' as const,
+        status: 'disconnected' as const,
+        needsSecret,
+        needsClientSecret: needsSecret,
+        hasClientSecret: true,
+        resourceUri: 'https://mcp.example.test/',
+        transport: 'streamable_http' as const,
+        oauth: {
+          clientId: 'registered-client',
+          authorizationServerUrl: 'https://auth.example.test/'
+        },
+        consumerCount: 1,
+        consumerNames: ['Consumer'],
+        createdAt: 1,
+        updatedAt: 1
+      }
+      act(() =>
+        root.render(
+          <DeviceCredentialEditor credential={credential} onDone={vi.fn()} onCancel={vi.fn()} />
+        )
+      )
+      // Accept either a directly editable field or an explicit replacement disclosure.
+      const replacement = Array.from(container.querySelectorAll<HTMLButtonElement>('button')).find(
+        (button) => /replace.*client secret/i.test(button.textContent ?? '')
+      )
+      if (replacement) act(() => replacement.click())
+      const field = container.querySelector<HTMLInputElement>('input[type="password"]')
+      expect(
+        field,
+        'An existing registered OAuth client needs a write-only replacement field'
+      ).not.toBeNull()
+      expect(field?.value).toBe('')
+      const paste = new Event('paste', { bubbles: true, cancelable: true })
+      Object.defineProperty(paste, 'clipboardData', {
+        value: { getData: () => 'new-client-secret', setData: vi.fn() }
+      })
+      act(() => field!.dispatchEvent(paste))
+      const save = Array.from(container.querySelectorAll<HTMLButtonElement>('button')).find(
+        (button) => button.textContent === 'Save'
+      )!
+      await act(async () => save.click())
+      expect(update).toHaveBeenCalledWith({
+        id: credential.id,
+        displayName: credential.displayName,
+        secret: 'new-client-secret'
+      })
+      expect(field?.value).toBe('')
+    }
+  )
+
   it('reconnects an existing OAuth credential through the device lifecycle action', async () => {
     const credential = {
       id: 'credential-oauth',

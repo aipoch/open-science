@@ -5,6 +5,8 @@ import { useTranslation } from 'react-i18next'
 import { Card } from '@/components/ui/card'
 import { cn } from '@/lib/utils'
 import { APP } from '../../../../shared/app-config'
+import { isSupportedCodexAcpVersion } from '../../../../shared/codex-runtime'
+import type { AgentFrameworkId } from '../../../../shared/settings'
 import type { StorageInfo } from '../../../../shared/storage'
 import { useNotebookEnvStore } from '@/stores/notebook-env-store'
 import { useSettingsStore } from '@/stores/settings-store'
@@ -176,6 +178,11 @@ const OnboardingWizard = ({
   const environmentCheckError = useSettingsStore((state) => state.environmentCheckError)
   const isCheckingEnvironment = useSettingsStore((state) => state.isCheckingEnvironment)
   const checkEnvironment = useSettingsStore((state) => state.checkEnvironment)
+  const agentFrameworkId = useSettingsStore((state) => state.agentFrameworkId)
+  const agentFrameworks = useSettingsStore((state) => state.agentFrameworks)
+  const preflight = useSettingsStore((state) => state.preflight)
+  const codexVersion = useSettingsStore((state) => state.codex.version)
+  const setAgentFramework = useSettingsStore((state) => state.setAgentFramework)
 
   // First-time setup always starts on the visible environment summary, even when every check has
   // already passed. The user explicitly continues to agent setup after reviewing it.
@@ -197,9 +204,29 @@ const OnboardingWizard = ({
     }
   }, [step])
   // The provider draft lives here (not in ProviderStep) so going Back and returning keeps it.
-  const [formValue, setFormValue] = useState<ProviderFormValue>(() =>
-    createEmptyProviderFormValue()
+  const [providerDraft, setProviderDraft] = useState<{
+    value: ProviderFormValue
+    providerId?: string
+    generation: number
+  }>(() => ({ value: createEmptyProviderFormValue(), generation: 0 }))
+  const setFormValue = useCallback<React.Dispatch<React.SetStateAction<ProviderFormValue>>>(
+    (update) => {
+      setProviderDraft((current) => {
+        const value = typeof update === 'function' ? update(current.value) : update
+        if (value === current.value) return current
+        const changedKind =
+          value.type !== current.value.type || value.vendorId !== current.value.vendorId
+        return changedKind ? { value, generation: current.generation + 1 } : { ...current, value }
+      })
+    },
+    []
   )
+  const recordSavedProvider = (providerId: string | undefined): void => {
+    // A response for an abandoned provider kind cannot attach its identity to the new draft.
+    setProviderDraft((current) =>
+      current.generation === providerDraft.generation ? { ...current, providerId } : current
+    )
+  }
   // Fetched once, up front, so Location has the default to show and a post-selection relaunch can
   // resume after the already-completed storage step.
   const [dataRootInfo, setDataRootInfo] = useState<StorageInfo | null>(null)
@@ -239,6 +266,73 @@ const OnboardingWizard = ({
 
   const didRequestCheck = useRef(false)
   const didKickEnv = useRef(false)
+  const didSelectInitialAgent = useRef(false)
+  const [isSelectingInitialAgent, setIsSelectingInitialAgent] = useState(false)
+
+  useEffect(() => {
+    if (step !== 'environment') {
+      didSelectInitialAgent.current = true
+      return
+    }
+    if (
+      didSelectInitialAgent.current ||
+      isCheckingEnvironment ||
+      !environmentCheck ||
+      environmentCheck.agentFrameworkId !== agentFrameworkId ||
+      environmentCheck.runtime.found ||
+      !['system', 'storage'].every((id) =>
+        environmentCheck.checks.some((check) => check.id === id && check.status === 'passed')
+      ) ||
+      environmentCheck.checks.some(
+        (check) =>
+          check.status === 'failed' && check.id !== 'agent' && check.id !== 'install-network'
+      )
+    ) {
+      return
+    }
+    // Match AgentPanel's installed-runtime ordering and Codex adapter compatibility guard.
+    const ready: Record<AgentFrameworkId, boolean> = {
+      'claude-code': preflight.claudeReady,
+      opencode: preflight.opencodeReady,
+      codex: preflight.codexReady && (!codexVersion || isSupportedCodexAcpVersion(codexVersion)),
+      codebuddy: preflight.codebuddyReady
+    }
+    if (ready[agentFrameworkId]) return
+    const installed = agentFrameworks.find((framework) => ready[framework.id])
+    if (!installed) return
+
+    didSelectInitialAgent.current = true
+    didRequestCheck.current = true
+    useSettingsStore.setState({ environmentCheck: undefined, environmentCheckError: undefined })
+    void Promise.resolve().then(async () => {
+      setIsSelectingInitialAgent(true)
+      try {
+        await setAgentFramework(installed.id)
+        await checkEnvironment({ force: true })
+      } catch (error) {
+        didSelectInitialAgent.current = false
+        useSettingsStore.setState({
+          environmentCheckError:
+            error instanceof Error
+              ? error.message
+              : t('Could not switch to {{name}}', { name: installed.displayName })
+        })
+      } finally {
+        setIsSelectingInitialAgent(false)
+      }
+    })
+  }, [
+    step,
+    isCheckingEnvironment,
+    environmentCheck,
+    agentFrameworkId,
+    agentFrameworks,
+    preflight,
+    codexVersion,
+    setAgentFramework,
+    checkEnvironment,
+    t
+  ])
 
   // Fetch the current data location once, up front, for Location display and relaunch resume.
   const handleDataRootInfoSuccess = useCallback((info: StorageInfo): void => {
@@ -373,7 +467,10 @@ const OnboardingWizard = ({
             {/* Each step owns its validation gate and advances only through its callback. The shell
                 owns cross-step drafts so Back/Continue never discards provider or location input. */}
             {step === 'environment' ? (
-              <EnvironmentStep onContinue={() => setStep('location')} />
+              <EnvironmentStep
+                isSelectingAgent={isSelectingInitialAgent}
+                onContinue={() => setStep('location')}
+              />
             ) : step === 'location' ? (
               <LocationStep
                 dataRootInfo={dataRootInfo}
@@ -396,10 +493,14 @@ const OnboardingWizard = ({
               />
             ) : step === 'provider' ? (
               <ProviderStep
-                formValue={formValue}
+                formValue={providerDraft.value}
                 setFormValue={setFormValue}
+                providerId={providerDraft.providerId}
+                onProviderSaved={recordSavedProvider}
                 onBack={() => setStep('agent')}
-                onAdvance={() => setStep('notebook')}
+                onAdvance={() =>
+                  setStep((current) => (current === 'provider' ? 'notebook' : current))
+                }
               />
             ) : step === 'notebook' ? (
               <NotebookStep onBack={() => setStep('provider')} />

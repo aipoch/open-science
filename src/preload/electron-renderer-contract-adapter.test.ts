@@ -172,6 +172,28 @@ describe('electron renderer contract adapter', () => {
     )
   })
 
+  it('reconstructs Session size-limit failures from the Electron ACP command boundary', async () => {
+    const port = createPort()
+    const adapter = createElectronRendererContractAdapter(port)
+    port.invoke.mockResolvedValue({
+      ok: false,
+      error: {
+        code: 'session-size-limit',
+        message: 'Session exceeds the persistence limit.'
+      }
+    })
+
+    await expect(
+      adapter.invoke('acp.respondToPermission', {
+        requestId: 'permission-1',
+        optionId: 'allow-once'
+      })
+    ).rejects.toMatchObject({
+      name: 'ApplicationCommandError',
+      code: 'session-size-limit'
+    })
+  })
+
   it('rejects surface-native methods from the IPC request path', async () => {
     const port = createPort()
     const adapter = createElectronRendererContractAdapter(port)

@@ -4,7 +4,7 @@ import type { PreviewFileItem } from '@/stores/preview-workbench-store'
 
 import { createManagedPreviewRequest } from './preview-file-reader'
 import { isManagedFilePublicationPendingError } from './preview-errors'
-import { createPreviewResourceKey } from './preview-resource-key'
+import { usePreviewResourceKey } from './usePreviewResourceGeneration'
 
 const MAX_CACHED_IMAGE_BYTES = 64 * 1024 * 1024
 const MAX_CACHED_IMAGE_COUNT = 32
@@ -91,7 +91,7 @@ const loadImage = async (item: PreviewImageItem): Promise<CachedImage> => {
     const blob = await response.blob()
     return { url: URL.createObjectURL(blob), size: blob.size }
   } finally {
-    void window.api.previewResources.release({ resourceId: resource.id })
+    void window.api.previewResources.release({ resourceId: resource.id }).catch(() => undefined)
   }
 }
 
@@ -153,7 +153,7 @@ const useCachedPreviewImage = (
   enabled = true,
   invalidateWhenDisabled = false
 ): CachedPreviewImageState => {
-  const requestKey = createPreviewResourceKey(item)
+  const requestKey = usePreviewResourceKey(item)
   const [result, setResult] = useState<
     | { requestKey: string; status: 'ready'; url: string }
     | { requestKey: string; status: 'error'; error: Error }

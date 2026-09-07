@@ -25,6 +25,7 @@ import { SessionPlanInteractionOwner } from '../session-plan/session-plan-intera
 import { composeAcpRuntimeBaseOwners } from './runtime-base-composition'
 import type { RuntimeEventInput } from './runtime-snapshot-owner'
 import { AcpPermissionContext } from './permission-context'
+import { PermissionProfileUnavailableError } from './permission-profile-controller'
 import { permissionRequestFingerprint } from './permission-broker'
 import { ACP_STEERING_METHOD } from './native-follow-up'
 import { ContextUsageTracker, type TokenCounter } from './context-usage-tracker'
@@ -4733,37 +4734,31 @@ describe('ACP runtime session management', () => {
     await vi.waitFor(() => expect(fixture.runtimeContext().plan?.delivery).toBeUndefined())
   })
 
-  it('recovers a claimed Plan delivery without durable provider acceptance', async () => {
-    const fixture = createDurablePlanDeliveryResumeHarness('delivering')
-
-    await fixture.runtime.resumeSession({
-      sessionId: 'restored-plan-session',
-      providerSessionId: 'restored-plan-session',
-      cwd: '/workspace',
-      projectId: 'project-1',
-      previousFrameworkId: opencodeFramework.id
-    })
-    await vi.waitFor(() => expect(fixture.fakeAgent.prompts).toHaveLength(1))
-    await vi.waitFor(() => expect(fixture.runtimeContext().plan?.delivery).toBeUndefined())
-    expect(fixture.promptAttempts).toEqual(['plan-delivery-resume-1'])
-  })
-
-  it('recovers claimed review feedback without durable provider acceptance', async () => {
-    const fixture = createDurablePlanDeliveryResumeHarness('delivering', {
-      kind: 'review-feedback'
-    })
-
-    await fixture.runtime.resumeSession({
-      sessionId: 'restored-plan-session',
-      providerSessionId: 'restored-plan-session',
-      cwd: '/workspace',
-      projectId: 'project-1',
-      previousFrameworkId: opencodeFramework.id
-    })
-
-    await vi.waitFor(() => expect(fixture.fakeAgent.prompts).toHaveLength(1))
-    await vi.waitFor(() => expect(fixture.runtimeContext().plan?.delivery).toBeUndefined())
-  })
+  it.each(['approved-plan', 'rejected-plan', 'review-feedback'] as const)(
+    'P03 preserves an uncertain %s receipt after restart without automatically replaying it',
+    async (kind) => {
+      const fixture = createDurablePlanDeliveryResumeHarness('delivering', { kind })
+      await fixture.runtime.resumeSession({
+        sessionId: 'restored-plan-session',
+        providerSessionId: 'restored-plan-session',
+        cwd: '/workspace',
+        projectId: 'project-1',
+        previousFrameworkId: opencodeFramework.id
+      })
+      // Wait for the public resume scheduler to finish inspecting the persisted receipt.
+      await vi.waitFor(() => expect(fixture.readSessionRuntimeContext).toHaveBeenCalled())
+      await new Promise<void>((resolve) => setTimeout(resolve, 0))
+      expect(fixture.fakeAgent.prompts).toHaveLength(0)
+      expect(fixture.patchSessionRuntimeContext).not.toHaveBeenCalled()
+      expect(fixture.runtimeContext().plan?.delivery?.state).toBe('delivering')
+      expect(fixture.events).toContainEqual(
+        expect.objectContaining({
+          kind: 'error',
+          text: expect.stringMatching(/may already have been accepted/i)
+        })
+      )
+    }
+  )
 
   it('clears an accepted Plan delivery after restart without replaying it', async () => {
     const fixture = createDurablePlanDeliveryResumeHarness('accepted')
@@ -5934,8 +5929,10 @@ describe('ACP runtime session management', () => {
     })
     const session = await runtime.createSession({ cwd: '/workspace', memoryEnabled: true })
 
+    const memorySignal = runtime.sessionMemorySignal(session.sessionId)
     runtime.setMemoryEnabled(session.sessionId, false)
 
+    expect(memorySignal?.aborted).toBe(true)
     expect(runtime.isSessionMemoryEnabled(session.sessionId)).toBe(false)
     expect(fakeAgent.newSessions).toHaveLength(1)
     expect(fakeAgent.resumedSessions).toEqual([])
@@ -10048,6 +10045,7 @@ describe('ACP runtime session management', () => {
     const client = createProjectDbClient(root)
     temporaryDisconnections.push(() => client.$disconnect())
     await migrateApplicationDatabase(client)
+    await client.project.create({ data: { id: 'project-1', name: 'Project one' } })
     await client.fileOriginSession.create({
       data: { projectId: 'project-1', sessionId: 'current-session' }
     })
@@ -11953,6 +11951,55 @@ describe('ACP runtime session management', () => {
     runtime.respondToPermission({ requestId: permission.requestId, cancelled: true })
     await expect(prompting).resolves.toMatchObject({ stopReason: 'end_turn' })
   })
+
+  it.each([
+    { framework: claudeCodeFramework, bypass: 'bypassPermissions', profile: 'ask' as const },
+    { framework: claudeCodeFramework, bypass: 'bypassPermissions', profile: 'auto' as const },
+    { framework: codeBuddyFramework, bypass: 'fullAccess', profile: 'ask' as const },
+    { framework: codeBuddyFramework, bypass: 'fullAccess', profile: 'auto' as const }
+  ])(
+    'A03: preserves $framework.id Full state without publishing an unavailable $profile downgrade',
+    async ({ framework, bypass, profile }) => {
+      const process = new FakeAgentProcess()
+      const onSetMode = vi.fn()
+      const onStateChanged = vi.fn()
+      startPermissionProbeAgent(process, {
+        newSessionId: 'native-bypass-session',
+        toolCallId: 'tool-1',
+        toolTitle: 'Run command',
+        modes: createModes([bypass]),
+        onSetMode
+      })
+      const runtime = new AcpRuntime({
+        appVersion: '0.1.0',
+        defaultCwd: '/workspace',
+        spawnAgent: () => asAgentProcess(process),
+        framework,
+        callbacks: { onStateChanged }
+      })
+      const session = await runtime.createSession({ cwd: '/workspace', permissionProfile: 'full' })
+      const previousProfile = structuredClone(
+        runtime.getSnapshot().permissionProfiles[session.sessionId]
+      )
+      expect(previousProfile).toMatchObject({
+        selectedProfile: 'full',
+        effectiveProfile: 'full',
+        currentModeId: bypass
+      })
+      onSetMode.mockClear()
+      onStateChanged.mockClear()
+
+      await expect
+        .soft(runtime.setPermissionProfile({ sessionId: session.sessionId, profile }))
+        .rejects.toThrow(PermissionProfileUnavailableError)
+
+      expect
+        .soft(runtime.getSnapshot().permissionProfiles[session.sessionId])
+        .toEqual(previousProfile)
+      expect.soft(onStateChanged).not.toHaveBeenCalled()
+      expect(onSetMode).not.toHaveBeenCalled()
+    }
+  )
 
   it('restores the committed profile when the provider mode change fails', async () => {
     const process = new FakeAgentProcess()

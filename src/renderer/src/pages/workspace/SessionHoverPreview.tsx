@@ -11,7 +11,7 @@ import {
 } from 'react'
 import { useTranslation } from 'react-i18next'
 
-import { HoverCard, HoverCardContent, HoverCardTrigger } from '@/components/ui/hover-card'
+import { Popover, PopoverAnchor, PopoverContent } from '@/components/ui/popover'
 import { Input } from '@/components/ui/input'
 import { cn } from '@/lib/utils'
 import {
@@ -19,9 +19,7 @@ import {
   SESSION_DETAILS_TITLE_MAX_LENGTH
 } from '../../../../shared/session-persistence'
 
-const SESSION_HOVER_PREVIEW_DELAY_MS = 0
-// Radix-internal close grace while the pointer crosses from the row onto the card; the explicit
-// pointer-leave handlers below still close the card as soon as the hover region is left for good.
+const SESSION_HOVER_PREVIEW_DELAY_MS = 300
 const SESSION_HOVER_PREVIEW_SKIP_DELAY_MS = 300
 const SESSION_HOVER_PREVIEW_ALIGN_OFFSET_PX = 0
 
@@ -39,7 +37,9 @@ type SessionRenameRequest = (
 type SessionHoverPreviewContextValue = {
   activeSessionId: string | null
   closeNow: (sessionId: string) => void
-  requestOpen: (sessionId: string) => void
+  requestOpen: (sessionId: string, immediate?: boolean) => void
+  cancelOpen: (sessionId: string) => void
+  setProtected: (sessionId: string, protectedFromHover: boolean) => void
 }
 
 const SessionHoverPreviewContext = createContext<SessionHoverPreviewContextValue | null>(null)
@@ -48,21 +48,63 @@ const SessionHoverPreviewProvider = ({ children }: { children: ReactNode }): Rea
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null)
   const activeSessionIdRef = useRef<string | null>(null)
 
-  const requestOpen = useCallback((sessionId: string): void => {
-    activeSessionIdRef.current = sessionId
-    setActiveSessionId(sessionId)
+  const protectedSessionRef = useRef<string | null>(null)
+  const pendingRef = useRef<{ id: string; timer: ReturnType<typeof setTimeout> } | null>(null)
+  const warmUntilRef = useRef(0)
+
+  const cancelOpen = useCallback((sessionId: string): void => {
+    if (pendingRef.current?.id !== sessionId) return
+    clearTimeout(pendingRef.current.timer)
+    pendingRef.current = null
   }, [])
 
-  const closeNow = useCallback((sessionId: string): void => {
-    if (activeSessionIdRef.current !== sessionId) return
-
-    activeSessionIdRef.current = null
-    setActiveSessionId(null)
+  const requestOpen = useCallback((sessionId: string, immediate = false): void => {
+    if (protectedSessionRef.current && protectedSessionRef.current !== sessionId) return
+    if (pendingRef.current) clearTimeout(pendingRef.current.timer)
+    pendingRef.current = null
+    const show = (): void => {
+      pendingRef.current = null
+      activeSessionIdRef.current = sessionId
+      setActiveSessionId(sessionId)
+    }
+    if (immediate || activeSessionIdRef.current || Date.now() < warmUntilRef.current) show()
+    else
+      pendingRef.current = {
+        id: sessionId,
+        timer: setTimeout(show, SESSION_HOVER_PREVIEW_DELAY_MS)
+      }
   }, [])
+
+  const closeNow = useCallback(
+    (sessionId: string): void => {
+      cancelOpen(sessionId)
+      if (activeSessionIdRef.current !== sessionId) return
+      activeSessionIdRef.current = null
+      protectedSessionRef.current = null
+      warmUntilRef.current = Date.now() + SESSION_HOVER_PREVIEW_SKIP_DELAY_MS
+      setActiveSessionId(null)
+    },
+    [cancelOpen]
+  )
+
+  const setProtected = useCallback((sessionId: string, protectedFromHover: boolean): void => {
+    if (protectedFromHover) {
+      if (pendingRef.current) clearTimeout(pendingRef.current.timer)
+      pendingRef.current = null
+      protectedSessionRef.current = sessionId
+    } else if (protectedSessionRef.current === sessionId) protectedSessionRef.current = null
+  }, [])
+
+  useEffect(
+    () => () => {
+      if (pendingRef.current) clearTimeout(pendingRef.current.timer)
+    },
+    []
+  )
 
   const value = useMemo(
-    () => ({ activeSessionId, closeNow, requestOpen }),
-    [activeSessionId, closeNow, requestOpen]
+    () => ({ activeSessionId, closeNow, requestOpen, cancelOpen, setProtected }),
+    [activeSessionId, closeNow, requestOpen, cancelOpen, setProtected]
   )
 
   return (
@@ -72,72 +114,8 @@ const SessionHoverPreviewProvider = ({ children }: { children: ReactNode }): Rea
   )
 }
 
-const SessionTitleMarquee = ({
-  title,
-  className
-}: {
-  title: string
-  className?: string
-}): React.JSX.Element => {
-  const viewportRef = useRef<HTMLSpanElement>(null)
-  const contentRef = useRef<HTMLSpanElement>(null)
-  const animationRef = useRef<Animation>(undefined)
-
-  useEffect(() => {
-    const trigger = viewportRef.current?.closest('button')
-    const stop = (): void => {
-      animationRef.current?.cancel()
-      animationRef.current = undefined
-    }
-    const start = (): void => {
-      stop()
-      const viewport = viewportRef.current
-      const content = contentRef.current
-      if (
-        !viewport ||
-        !content ||
-        content.scrollWidth <= viewport.clientWidth ||
-        typeof content.animate !== 'function' ||
-        window.matchMedia?.('(prefers-reduced-motion: reduce)').matches
-      ) {
-        return
-      }
-
-      const overflow = content.scrollWidth - viewport.clientWidth
-      animationRef.current = content.animate(
-        [{ transform: 'translateX(0)' }, { transform: `translateX(-${overflow}px)` }],
-        {
-          delay: 300,
-          duration: overflow * 35,
-          easing: 'linear',
-          fill: 'forwards'
-        }
-      )
-    }
-
-    trigger?.addEventListener('pointerenter', start)
-    trigger?.addEventListener('pointerleave', stop)
-    return () => {
-      trigger?.removeEventListener('pointerenter', start)
-      trigger?.removeEventListener('pointerleave', stop)
-      stop()
-    }
-  }, [])
-
-  return (
-    <span
-      ref={viewportRef}
-      data-slot="session-title-marquee"
-      className={cn('min-w-0 flex-1 overflow-hidden whitespace-nowrap', className)}
-    >
-      <span ref={contentRef} className="inline-block min-w-max">
-        {title}
-      </span>
-    </span>
-  )
-}
-
-const sessionHoverPreviewTitleClassName = 'truncate text-sm font-semibold leading-5'
+const sessionHoverPreviewTitleClassName =
+  'whitespace-pre-wrap break-words text-sm font-semibold leading-5'
 
 // Click-to-edit title for the hover card. Enter or blur commits a non-empty trimmed title,
 // Escape cancels; editing state is mirrored to the parent so the card stays open mid-edit.
@@ -156,12 +134,21 @@ const SessionHoverPreviewTitle = ({
   const [editing, setEditing] = useState(false)
   const editingRef = useRef(false)
   const inputRef = useRef<HTMLInputElement>(null)
+  const titleButtonRef = useRef<HTMLButtonElement>(null)
+  const restoreTitleFocusRef = useRef(false)
   // The input intentionally keeps its draft when live Session props change mid-edit. Keep the
   // matching optimistic-concurrency baseline stable for the same interval.
   const expectedTitleRef = useRef(title)
   const savingRef = useRef(false)
   const [isSaving, setIsSaving] = useState(false)
   const [renameError, setRenameError] = useState<string | null>(null)
+
+  useEffect(() => {
+    if (editing || !restoreTitleFocusRef.current) return
+    restoreTitleFocusRef.current = false
+    // Unmounting the editor drops focus to body. Do not steal focus from an explicit navigation.
+    if (document.activeElement === document.body) titleButtonRef.current?.focus()
+  }, [editing])
 
   const updateEditing = useCallback(
     (next: boolean): void => {
@@ -227,15 +214,20 @@ const SessionHoverPreviewTitle = ({
           onKeyDown={(event) => {
             if (event.key === 'Enter') {
               event.preventDefault()
+              restoreTitleFocusRef.current = true
               commit()
               return
             }
             if (event.key === 'Escape' && !savingRef.current) {
               event.stopPropagation()
+              restoreTitleFocusRef.current = true
               updateEditing(false)
             }
           }}
-          onBlur={commit}
+          onBlur={() => {
+            if (!savingRef.current) restoreTitleFocusRef.current = false
+            commit()
+          }}
         />
         {renameError ? (
           <p role="alert" className="text-xs leading-4 text-danger-000">
@@ -248,6 +240,7 @@ const SessionHoverPreviewTitle = ({
 
   return (
     <button
+      ref={titleButtonRef}
       type="button"
       data-slot="session-hover-preview-title-button"
       aria-label={t('Rename session title')}
@@ -333,17 +326,20 @@ const SessionHoverPreview = ({
   const context = useContext(SessionHoverPreviewContext)
   if (!context) throw new Error('SessionHoverPreview must be inside SessionHoverPreviewProvider')
 
-  const { activeSessionId, closeNow, requestOpen } = context
+  const { activeSessionId, closeNow, requestOpen, cancelOpen, setProtected } = context
   const open = !previewSuppressed && activeSessionId === session.id
   const onPreviewRequestRef = useRef(onPreviewRequest)
-  // Radix types the trigger ref as its default anchor element; with asChild the rendered element
-  // is the caller's child, and only Element-level APIs (contains/matches) are used here.
-  const triggerRef = useRef<HTMLAnchorElement>(null)
+  const triggerRef = useRef<HTMLDivElement>(null)
   const contentRef = useRef<HTMLDivElement>(null)
   const [descriptionLoading, setDescriptionLoading] = useState(false)
   // While the inline title editor is active the card is pinned open; pointer leaves and
   // Radix-initiated close requests are ignored until the edit commits or cancels.
   const editingRef = useRef(false)
+  const closeTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
+  const restoreFocusRef = useRef(false)
+  const focusOnOpenRef = useRef(false)
+  const suppressFocusRef = useRef(false)
+  const cancelClose = useCallback((): void => clearTimeout(closeTimerRef.current), [])
 
   useEffect(() => {
     onPreviewRequestRef.current = onPreviewRequest
@@ -352,116 +348,164 @@ const SessionHoverPreview = ({
   useEffect(() => {
     if (!open) return
 
+    let active = true
     const request = onPreviewRequestRef.current?.(session.id)
     if (!request) {
       void Promise.resolve().then(() => setDescriptionLoading(false))
       return
     }
     void Promise.resolve().then(() => setDescriptionLoading(true))
-    void request.finally(() => {
-      setDescriptionLoading(false)
-    })
+    void Promise.resolve(request).then(
+      () => {
+        if (active) setDescriptionLoading(false)
+      },
+      () => {
+        if (active) setDescriptionLoading(false)
+      }
+    )
+    return () => {
+      active = false
+    }
   }, [open, session.id])
 
-  useEffect(() => () => closeNow(session.id), [closeNow, session.id])
+  useEffect(
+    () => () => {
+      cancelClose()
+      closeNow(session.id)
+    },
+    [cancelClose, closeNow, session.id]
+  )
 
   useEffect(() => {
     if (previewSuppressed) closeNow(session.id)
   }, [closeNow, previewSuppressed, session.id])
 
   const requestClose = useCallback((): void => {
-    if (editingRef.current) return
-    // Focus moved into the portaled card (e.g. Tab from the row to the rename control): keep the
-    // interactive card open until that focus leaves the card.
-    if (contentRef.current?.contains(document.activeElement)) return
-    closeNow(session.id)
-  }, [closeNow, session.id])
+    cancelOpen(session.id)
+    cancelClose()
+    closeTimerRef.current = setTimeout(() => {
+      if (editingRef.current || contentRef.current?.contains(document.activeElement)) return
+      if (
+        triggerRef.current?.contains(document.activeElement) &&
+        document.activeElement?.matches(':focus-visible')
+      )
+        return
+      closeNow(session.id)
+    }, SESSION_HOVER_PREVIEW_SKIP_DELAY_MS)
+  }, [cancelClose, cancelOpen, closeNow, session.id])
 
   const handleEditingChange = useCallback(
     (editing: boolean): void => {
       editingRef.current = editing
-      if (editing) return
-      // Editing ended (commit or cancel): resume normal close semantics by closing immediately
-      // when the pointer is no longer over the trigger or the card.
+      setProtected(session.id, editing)
+      if (editing) {
+        cancelClose()
+        return
+      }
       if (triggerRef.current?.matches(':hover') || contentRef.current?.matches(':hover')) return
-      closeNow(session.id)
+      requestClose()
     },
-    [closeNow, session.id]
+    [cancelClose, requestClose, session.id, setProtected]
   )
 
   return (
-    <HoverCard
+    <Popover
       open={open}
-      openDelay={SESSION_HOVER_PREVIEW_DELAY_MS}
-      closeDelay={SESSION_HOVER_PREVIEW_SKIP_DELAY_MS}
       onOpenChange={(nextOpen) => {
-        if (nextOpen && !previewSuppressed) {
-          requestOpen(session.id)
-          return
-        }
-        requestClose()
+        if (!nextOpen && !editingRef.current) closeNow(session.id)
       }}
     >
-      <HoverCardTrigger
+      <PopoverAnchor
+        data-session-preview={open ? 'open' : 'closed'}
         ref={triggerRef}
         asChild
-        onPointerEnter={() => {
-          if (!previewSuppressed) requestOpen(session.id)
+        onPointerEnter={(event) => {
+          cancelClose()
+          if (!previewSuppressed && event.pointerType !== 'touch') requestOpen(session.id)
         }}
-        onPointerLeave={(event) => {
-          if (event.currentTarget.matches(':focus-visible')) return
-          if (
-            event.relatedTarget instanceof Node &&
-            contentRef.current?.contains(event.relatedTarget)
-          ) {
-            return
-          }
-          requestClose()
-        }}
+        onPointerLeave={requestClose}
         onFocus={(event) => {
-          if (!(event.target instanceof Element) || !event.target.matches(':focus-visible')) {
-            event.preventDefault()
+          if (suppressFocusRef.current) {
+            suppressFocusRef.current = false
             return
           }
-          if (!previewSuppressed) requestOpen(session.id)
+          if (!(event.target instanceof Element) || !event.target.matches(':focus-visible')) return
+          cancelClose()
+          if (!previewSuppressed) requestOpen(session.id, true)
+        }}
+        onKeyDown={(event) => {
+          const trigger = triggerRef.current
+          const rowButton = trigger?.matches('button') ? trigger : trigger?.querySelector('button')
+          if (event.key === 'ArrowRight' && event.target === rowButton && !previewSuppressed) {
+            event.preventDefault()
+            const control = contentRef.current?.querySelector<HTMLElement>('button, input')
+            if (control) {
+              control.focus()
+            } else {
+              focusOnOpenRef.current = true
+              requestOpen(session.id, true)
+            }
+          }
         }}
         onBlur={(event) => {
-          if (event.currentTarget.matches(':hover')) return
           if (
             event.relatedTarget instanceof Node &&
             contentRef.current?.contains(event.relatedTarget)
-          ) {
-            // Internal focus transition; preventDefault also skips Radix's composed trigger-blur
-            // close (composeEventHandlers honors defaultPrevented).
-            event.preventDefault()
+          )
             return
-          }
-          // Defer the close decision until focus settles: document.activeElement then reflects the
-          // destination even when relatedTarget is null (programmatic focus moves), and
-          // requestClose keeps the card open while focus stays inside it.
-          setTimeout(requestClose, 0)
+          requestClose()
         }}
       >
         {children}
-      </HoverCardTrigger>
-      <HoverCardContent
+      </PopoverAnchor>
+      <PopoverContent
         ref={contentRef}
         side="right"
         align="start"
         sideOffset={0}
         alignOffset={SESSION_HOVER_PREVIEW_ALIGN_OFFSET_PX}
         collisionPadding={8}
-        onPointerLeave={(event) => {
+        data-slot="session-preview-content"
+        aria-label={session.title}
+        onPointerEnter={cancelClose}
+        onPointerLeave={requestClose}
+        onFocusCapture={() => {
+          cancelClose()
+          setProtected(session.id, true)
+        }}
+        onBlurCapture={(event) => {
           if (
             event.relatedTarget instanceof Node &&
-            triggerRef.current?.contains(event.relatedTarget)
-          ) {
+            contentRef.current?.contains(event.relatedTarget)
+          )
             return
-          }
+          if (!editingRef.current) setProtected(session.id, false)
           requestClose()
         }}
-        onEscapeKeyDown={() => requestClose()}
-        className="max-w-none overflow-visible border-0 bg-transparent p-0 text-inherit shadow-none motion-reduce:animate-none"
+        onOpenAutoFocus={(event) => {
+          if (!focusOnOpenRef.current) event.preventDefault()
+          focusOnOpenRef.current = false
+        }}
+        onCloseAutoFocus={(event) => {
+          event.preventDefault()
+          if (!restoreFocusRef.current) return
+          restoreFocusRef.current = false
+          suppressFocusRef.current = true
+          const trigger = triggerRef.current
+          if (trigger?.matches('button')) trigger.focus()
+          else trigger?.querySelector<HTMLElement>('button')?.focus()
+        }}
+        onInteractOutside={(event) => {
+          if (editingRef.current) event.preventDefault()
+        }}
+        onEscapeKeyDown={(event) => {
+          if (editingRef.current) {
+            event.preventDefault()
+            return
+          }
+          restoreFocusRef.current = contentRef.current?.contains(document.activeElement) ?? false
+        }}
+        className="max-h-[var(--radix-popover-content-available-height)] w-80 max-w-[calc(100vw-1rem)] overflow-y-auto overscroll-contain border-0 bg-transparent p-0 text-inherit shadow-none motion-reduce:animate-none"
       >
         <SessionHoverPreviewCard
           session={session}
@@ -470,8 +514,8 @@ const SessionHoverPreview = ({
           onRenameTitle={onRenameTitle}
           onEditingChange={handleEditingChange}
         />
-      </HoverCardContent>
-    </HoverCard>
+      </PopoverContent>
+    </Popover>
   )
 }
 
@@ -481,7 +525,6 @@ export {
   SESSION_HOVER_PREVIEW_SKIP_DELAY_MS,
   SessionHoverPreview,
   SessionHoverPreviewCard,
-  SessionHoverPreviewProvider,
-  SessionTitleMarquee
+  SessionHoverPreviewProvider
 }
 export type { SessionPreviewRequest, SessionRenameRequest }

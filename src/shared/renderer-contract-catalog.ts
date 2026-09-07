@@ -1,4 +1,6 @@
 import type { ProvenanceReadResult } from './provenance-read-result'
+import type { LiteratureJobRequest, LiteratureJobsResult } from './literature-jobs'
+import type { LiteratureFullTextRequest, LiteratureFullTextResult } from './literature'
 import type {
   AcpCancelPromptRequest,
   AcpAgentRuntimeUpdate,
@@ -23,7 +25,11 @@ import type {
   AcpStateSnapshot,
   AcpStateUpdate
 } from './acp'
-import type { ActivePlanProjection, PlanResponseCommand } from './session-plan/contract'
+import type {
+  ActivePlanProjection,
+  PlanResponseCommand,
+  PlanResponseIdentity
+} from './session-plan/contract'
 import type {
   SideChatCloseRequest,
   SideChatPromptRequest,
@@ -35,6 +41,7 @@ import type {
   SideChatStartResponse
 } from './side-chat'
 import type { SourcePreviewLoadState } from './source-preview'
+import type { ArtifactLiteratureManifest } from './artifact-literature'
 import type {
   ArtifactPreviewResult,
   FinalizeRunArtifactsRequest,
@@ -165,6 +172,7 @@ import type {
   ExportNotebookAllResult,
   ExportNotebookKernelRequest,
   ExportNotebookResult,
+  AbortNotebookCodeCellRequest,
   FinishNotebookCodeCellRequest,
   NotebookLanguage,
   NotebookNamespaceRequest,
@@ -226,6 +234,26 @@ import type {
   TagsChangedEvent,
   UpdateTagRequest
 } from './tags'
+import type {
+  LiteratureCatalogCommand,
+  LiteratureCatalogReceipt,
+  LiteratureCatalogSearchPage,
+  LiteratureCatalogSearchRequest,
+  LiteratureCitationStylesRequest,
+  LiteratureCitationStylesResult,
+  LiteratureFormatDocumentRequest,
+  LiteratureFormatDocumentResult,
+  LiteratureFormatReferencesRequest,
+  LiteratureFormatReferencesResult,
+  LiteratureItemView,
+  LiteratureItemInput,
+  LiteratureMetadataCompletionRequest,
+  LiteratureMetadataCompletionResult,
+  LiteraturePdfImportReceipt,
+  LiteraturePdfImportRequest,
+  LiteratureRecordImportRequest,
+  LiteratureRecordImportResult
+} from './literature'
 import type {
   CreateMemoryCategoryRequest,
   CreateMemoryEntryRequest,
@@ -376,7 +404,7 @@ import type {
 import type { PackageMirror } from './mirror'
 import type { NetworkProxySettings } from './network-proxy'
 import type { NotebookNetworkSettings, NotebookNetworkStatus } from './notebook-network'
-import { NETWORK_SYSTEM_RESUMED_CHANNEL, type NetworkInfo } from './network'
+import type { NetworkInfo } from './network'
 import type {
   ActiveSessionInfo,
   DataRootInspection,
@@ -760,15 +788,22 @@ export const RENDERER_API_CONTRACT = Object.freeze({
   'acp.resetSessionContext': callable<
     (request: AcpResumeSessionRequest) => Promise<AcpCreateSessionResponse>
   >()('acp', ['acp:reset-session-context']),
+  'acp.discardUnavailablePlan': callable<
+    (request: PlanResponseIdentity) => Promise<{ revision: number }>
+  >()('acp', ['acp:discard-unavailable-plan', WEB, undefined, undefined, RUNTIME_VALIDATED]),
   'acp.respondPlan': callable<(request: PlanResponseCommand) => Promise<unknown>>()('acp', [
-    'acp:respond-plan'
+    'acp:respond-plan',
+    WEB,
+    undefined,
+    undefined,
+    RUNTIME_VALIDATED
   ]),
   'acp.respondToElicitation': callable<
     (response: ElicitationResponse) => Promise<AcpStateCommandResponse>
-  >()('acp', ['acp:respond-elicitation']),
+  >()('acp', ['acp:respond-elicitation', WEB, undefined, undefined, RUNTIME_VALIDATED]),
   'acp.respondToPermission': callable<
     (response: AcpPermissionResponse) => Promise<AcpStateCommandResponse>
-  >()('acp', ['acp:respond-permission']),
+  >()('acp', ['acp:respond-permission', WEB, undefined, undefined, RUNTIME_VALIDATED]),
   'acp.resumeSession': callable<
     (request: AcpResumeSessionRequest) => Promise<AcpCreateSessionResponse>
   >()('acp', ['acp:resume-session']),
@@ -807,6 +842,11 @@ export const RENDERER_API_CONTRACT = Object.freeze({
       request: GetArtifactVersionProvenanceRequest
     ) => Promise<ProvenanceReadResult<ArtifactVersionExecutionProvenance>>
   >()('artifacts', ['artifacts:get-version-execution']),
+  'artifacts.getVersionLiterature': callable<
+    (
+      request: GetArtifactVersionProvenanceRequest
+    ) => Promise<ArtifactLiteratureManifest | undefined>
+  >()('artifacts', ['artifacts:get-version-literature']),
   'artifacts.getVersionMessages': callable<
     (
       request: GetArtifactVersionProvenanceRequest
@@ -854,6 +894,9 @@ export const RENDERER_API_CONTRACT = Object.freeze({
     'compute',
     ['compute:concurrency:set']
   ),
+  'compute.executionModeSet': callable<
+    (providerId: string, executionMode: import('./compute').ComputeExecutionMode) => Promise<void>
+  >()('compute', ['compute:execution-mode:set']),
   'compute.create': callable<(request: CreateComputeHostRequest) => Promise<ComputeHost>>()(
     'compute',
     ['compute:create']
@@ -1055,6 +1098,45 @@ export const RENDERER_API_CONTRACT = Object.freeze({
     'logs:reveal-in-folder',
     LOCAL
   ]),
+  'literature.formatReferences': callable<
+    (request: LiteratureFormatReferencesRequest) => Promise<LiteratureFormatReferencesResult>
+  >()('literature', ['literature:format-references', WEB, undefined, undefined, RUNTIME_VALIDATED]),
+  'literature.formatDocument': callable<
+    (request: LiteratureFormatDocumentRequest) => Promise<LiteratureFormatDocumentResult>
+  >()('literature', ['literature:format-document', WEB, undefined, undefined, RUNTIME_VALIDATED]),
+  'literature.citationStyles': callable<
+    (request: LiteratureCitationStylesRequest) => Promise<LiteratureCitationStylesResult>
+  >()('literature', ['literature:citation-styles', WEB, undefined, undefined, RUNTIME_VALIDATED]),
+  'literature.lookupMetadata': callable<(doi: string) => Promise<LiteratureItemInput>>()(
+    'literature',
+    ['literature:lookup-metadata', WEB, undefined, undefined, RUNTIME_VALIDATED]
+  ),
+  'literature.completeMetadata': callable<
+    (request: LiteratureMetadataCompletionRequest) => Promise<LiteratureMetadataCompletionResult>
+  >()('literature', ['literature:complete-metadata', WEB, undefined, undefined, RUNTIME_VALIDATED]),
+  'literature.get': callable<(itemId: string) => Promise<LiteratureItemView | undefined>>()(
+    'literature',
+    ['literature:get', WEB, undefined, undefined, RUNTIME_VALIDATED]
+  ),
+  'literature.fullText': callable<
+    (request: LiteratureFullTextRequest) => Promise<LiteratureFullTextResult>
+  >()('literature', ['literature:full-text', WEB, undefined, undefined, RUNTIME_VALIDATED]),
+  'literature.jobs': callable<(request: LiteratureJobRequest) => Promise<LiteratureJobsResult>>()(
+    'literature',
+    ['literature:jobs', WEB, undefined, undefined, RUNTIME_VALIDATED]
+  ),
+  'literature.importPdf': callable<
+    (request: LiteraturePdfImportRequest) => Promise<LiteraturePdfImportReceipt>
+  >()('literature', ['literature:import-pdf', WEB, undefined, undefined, RUNTIME_VALIDATED]),
+  'literature.importRecords': callable<
+    (request: LiteratureRecordImportRequest) => Promise<LiteratureRecordImportResult>
+  >()('literature', ['literature:import-records', WEB, undefined, undefined, RUNTIME_VALIDATED]),
+  'literature.search': callable<
+    (request: LiteratureCatalogSearchRequest) => Promise<LiteratureCatalogSearchPage>
+  >()('literature', ['literature:search', WEB, undefined, undefined, RUNTIME_VALIDATED]),
+  'literature.transact': callable<
+    (command: LiteratureCatalogCommand) => Promise<LiteratureCatalogReceipt>
+  >()('literature', ['literature:transact', WEB, undefined, undefined, RUNTIME_VALIDATED]),
   'managedFileVersions.cancelDiff': callable<
     (
       request: ManagedFileVersionCancelDiffRequest
@@ -1126,10 +1208,6 @@ export const RENDERER_API_CONTRACT = Object.freeze({
     'network:get-info',
     ELECTRON
   ]),
-  'network.onSystemResume': callable<(listener: () => void) => RemoveListener>()('network', [
-    NETWORK_SYSTEM_RESUMED_CHANNEL,
-    ELECTRON_EVENT
-  ]),
   'notebook.appendCodeCell': callable<
     (request: AppendNotebookCodeCellRequest) => Promise<{
       sessionId: string
@@ -1155,6 +1233,14 @@ export const RENDERER_API_CONTRACT = Object.freeze({
   'notebook.exportIpynbAll': callable<
     (request: ExportNotebookAllRequest) => Promise<ExportNotebookAllResult>
   >()('notebook', ['notebook:export-ipynb-all', LOCAL]),
+  'notebook.abortCodeCell': callable<
+    (request: AbortNotebookCodeCellRequest) => Promise<{
+      sessionId: string
+      cellId: string
+      code: string
+      status: string
+    }>
+  >()('notebook', ['notebook:abort-code-cell']),
   'notebook.finishCodeCell': callable<
     (request: FinishNotebookCodeCellRequest) => Promise<{
       sessionId: string
@@ -1591,7 +1677,7 @@ export const RENDERER_API_CONTRACT = Object.freeze({
   ),
   'sessions.updateArchive': callable<
     (request: UpdateSessionArchiveRequest) => Promise<PersistedChatSession>
-  >()('sessions', ['sessions:update-archive']),
+  >()('sessions', ['sessions:update-archive', WEB, undefined, undefined, RUNTIME_VALIDATED]),
   'sessions.unlinkPdfContext': callable<
     (request: UnlinkSessionPdfContextRequest) => Promise<SessionRuntimeContext>
   >()('sessions', ['sessions:unlink-pdf-context', WEB, undefined, undefined, RUNTIME_VALIDATED]),
@@ -2113,7 +2199,10 @@ export const RENDERER_API_CONTRACT = Object.freeze({
     (request: { id: string }) => Promise<SpecialistDeletePreview>
   >()('specialist', ['specialist:delete-preview', ELECTRON]),
   'specialist.previewExport': callable<
-    (request: { specialistId: string }) => Promise<SpecialistExportPreview>
+    (request: {
+      specialistId: string
+      includedSkillIds?: readonly string[]
+    }) => Promise<SpecialistExportPreview>
   >()('specialist', ['specialist:export-preview', ELECTRON]),
   'specialist.removeMarketplaceSource': callable<
     (request: RemoveMarketplaceSourceRequest) => Promise<void>
@@ -2141,6 +2230,10 @@ export const RENDERER_API_CONTRACT = Object.freeze({
     'specialist',
     ['specialist:update', ELECTRON]
   ),
+  'storage.acceptMissingDataRoot': callable<() => Promise<void>>()('storage', [
+    'storage:accept-missing-data-root',
+    LOCAL
+  ]),
   'storage.ackDataRootHandoffFlush': callable<
     (response: SessionPersistenceFlushResponse) => Promise<void>
   >()('storage', ['storage:ack-data-root-handoff-flush', LOCAL]),
@@ -2383,6 +2476,7 @@ const RENDERER_CAPABILITY_ORDER = Object.freeze([
   'lifecycle',
   'locale',
   'local-fs',
+  'literature',
   'memory',
   'logs',
   'managed-file-versions',

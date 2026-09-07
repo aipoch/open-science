@@ -31,12 +31,16 @@ export type CodexDetectDeps = {
   homePath: string
   platform: NodeJS.Platform
   isRunnable: (path: string) => Promise<boolean>
-  getAdapterVersion: (path: string) => Promise<string | undefined>
-  getCodexVersion: (path: string) => Promise<string | undefined>
+  getAdapterVersion: (path: string, signal?: AbortSignal) => Promise<string | undefined>
+  getCodexVersion: (path: string, signal?: AbortSignal) => Promise<string | undefined>
   // Spawns the adapter and performs a real ACP initialize handshake. Resolves true only when the
   // adapter (and the native Codex it resolves) answers with a valid protocol version.
-  smokeInitialize: (path: string, opts?: { codexPath?: string }) => Promise<boolean>
-  resolveNpmBinDirs: () => Promise<string[]>
+  smokeInitialize: (
+    path: string,
+    opts?: { codexPath?: string },
+    signal?: AbortSignal
+  ) => Promise<boolean>
+  resolveNpmBinDirs: (signal?: AbortSignal) => Promise<string[]>
   extraDirs?: string[]
   managedAdapterPath?: string
   managedCodexPath?: string
@@ -51,10 +55,19 @@ const parseVersion = (output: string): string | undefined => {
   return match?.[0]
 }
 
-const collectCandidateDirs = async (deps: CodexDetectDeps): Promise<string[]> => {
+const collectCandidateDirs = async (
+  deps: CodexDetectDeps,
+  signal?: AbortSignal
+): Promise<string[]> => {
   const p = pathFor(deps.platform)
   const pathDirs = (deps.env.PATH ?? '').split(p.delimiter).filter(Boolean)
-  const npmDirs = await deps.resolveNpmBinDirs().catch(() => [])
+  let npmDirs: string[] = []
+  try {
+    npmDirs = await deps.resolveNpmBinDirs(signal)
+  } catch {
+    signal?.throwIfAborted()
+  }
+  signal?.throwIfAborted()
   const wellKnown =
     deps.platform === 'win32'
       ? deps.env.APPDATA
@@ -74,10 +87,12 @@ const collectCandidateDirs = async (deps: CodexDetectDeps): Promise<string[]> =>
 }
 
 const detectCodex = async (
-  deps: CodexDetectDeps = createDefaultDetectDeps()
+  deps: CodexDetectDeps = createDefaultDetectDeps(),
+  signal?: AbortSignal
 ): Promise<CodexDetectResult | undefined> => {
   const p = pathFor(deps.platform)
-  const dirs = await collectCandidateDirs(deps)
+  signal?.throwIfAborted()
+  const dirs = await collectCandidateDirs(deps, signal)
   const names =
     deps.platform === 'win32'
       ? ['codex-acp.cmd', 'codex-acp.exe', 'codex-acp.bat', 'codex-acp']
@@ -90,9 +105,12 @@ const detectCodex = async (
   const candidates = deps.managedAdapterPath ? [deps.managedAdapterPath] : discoveredCandidates
 
   for (const adapterPath of Array.from(new Set(candidates))) {
-    if (!(await deps.isRunnable(adapterPath))) continue
+    const runnable = await deps.isRunnable(adapterPath)
+    signal?.throwIfAborted()
+    if (!runnable) continue
 
-    const versionOutput = await deps.getAdapterVersion(adapterPath)
+    const versionOutput = await deps.getAdapterVersion(adapterPath, signal)
+    signal?.throwIfAborted()
     const adapterVersion = versionOutput ? parseVersion(versionOutput) : undefined
     if (!adapterVersion) continue
     if (!isSupportedCodexAcpVersion(adapterVersion)) continue
@@ -100,12 +118,13 @@ const detectCodex = async (
     const result: CodexDetectResult = { adapterPath, adapterVersion }
     if (adapterPath === deps.managedAdapterPath) {
       const managedOutput = deps.managedCodexPath
-        ? await deps.getCodexVersion(deps.managedCodexPath)
+        ? await deps.getCodexVersion(deps.managedCodexPath, signal)
         : undefined
+      signal?.throwIfAborted()
       const managedVersion = managedOutput ? parseVersion(managedOutput) : undefined
       const nativeCodex = managedVersion
         ? { path: deps.managedCodexPath!, version: managedVersion }
-        : await detectNativeCodex(deps)
+        : await detectNativeCodex(deps, signal)
       // The adapter is app-owned, while the native executable may be the bundled binary or a global
       // installation. Pin the resolved executable through CODEX_PATH in either case.
       if (!nativeCodex) continue
@@ -116,10 +135,11 @@ const detectCodex = async (
     // A version string is not enough: an adapter with a missing or mismatched native Codex passes
     // `--version` but fails the first real session. Gate "ready" on a live ACP initialize so PATH/npm/
     // manual installs are held to the same bar as the managed pair.
-    const smokeOk = await deps.smokeInitialize(
-      adapterPath,
-      result.nativeCodexPath ? { codexPath: result.nativeCodexPath } : undefined
-    )
+    const smokeOpts = result.nativeCodexPath ? { codexPath: result.nativeCodexPath } : undefined
+    const smokeOk = signal
+      ? await deps.smokeInitialize(adapterPath, smokeOpts, signal)
+      : await deps.smokeInitialize(adapterPath, smokeOpts)
+    signal?.throwIfAborted()
     if (!smokeOk) continue
 
     return result
@@ -132,7 +152,8 @@ const detectCodex = async (
 // independently. Returns diagnostic information even when full pairing fails, so the UI can
 // distinguish "adapter missing" from "native Codex missing" from "both present but incompatible".
 const detectCodexComponents = async (
-  deps: CodexDetectDeps = createDefaultDetectDeps()
+  deps: CodexDetectDeps = createDefaultDetectDeps(),
+  signal?: AbortSignal
 ): Promise<{
   nativeCliFound: boolean
   nativeCliPath?: string
@@ -142,10 +163,11 @@ const detectCodexComponents = async (
   adapterVersion?: string
   adapterFailureReason?: 'version-probe-failed' | 'unsupported-version' | 'smoke-test-failed'
 }> => {
+  signal?.throwIfAborted()
   const p = pathFor(deps.platform)
 
   // Check for adapter first
-  const dirs = await collectCandidateDirs(deps)
+  const dirs = await collectCandidateDirs(deps, signal)
   const adapterNames =
     deps.platform === 'win32'
       ? ['codex-acp.cmd', 'codex-acp.exe', 'codex-acp.bat', 'codex-acp']
@@ -158,12 +180,13 @@ const detectCodexComponents = async (
     : discoveredAdapterCandidates
 
   const managedNativeOutput = deps.managedCodexPath
-    ? await deps.getCodexVersion(deps.managedCodexPath)
+    ? await deps.getCodexVersion(deps.managedCodexPath, signal)
     : undefined
+  signal?.throwIfAborted()
   const managedNativeVersion = managedNativeOutput ? parseVersion(managedNativeOutput) : undefined
   const nativeCodex = managedNativeVersion
     ? { path: deps.managedCodexPath!, version: managedNativeVersion }
-    : await detectNativeCodex(deps)
+    : await detectNativeCodex(deps, signal)
 
   let adapterFound = false
   let adapterPath: string | undefined
@@ -172,9 +195,11 @@ const detectCodexComponents = async (
     'version-probe-failed' | 'unsupported-version' | 'smoke-test-failed' | undefined
 
   for (const candidate of Array.from(new Set(adapterCandidates))) {
+    signal?.throwIfAborted()
     if (!(await deps.isRunnable(candidate))) continue
 
-    const versionOutput = await deps.getAdapterVersion(candidate)
+    const versionOutput = await deps.getAdapterVersion(candidate, signal)
+    signal?.throwIfAborted()
     const version = versionOutput ? parseVersion(versionOutput) : undefined
 
     if (!version) {
@@ -199,8 +224,10 @@ const detectCodexComponents = async (
     // Version probe succeeded - now check if smoke test passes
     const smokeOk = await deps.smokeInitialize(
       candidate,
-      deps.managedAdapterPath && nativeCodex ? { codexPath: nativeCodex.path } : undefined
+      deps.managedAdapterPath && nativeCodex ? { codexPath: nativeCodex.path } : undefined,
+      signal
     )
+    signal?.throwIfAborted()
     if (smokeOk) {
       adapterFound = true
       adapterPath = candidate
@@ -234,7 +261,12 @@ const detectCodexComponents = async (
 // the bundled Node, or a native/`.cmd` wrapper on PATH) and resolves as soon as initialize succeeds.
 const runAcpInitializeSmoke =
   (platform: NodeJS.Platform) =>
-  async (adapterPath: string, opts: { codexPath?: string } = {}): Promise<boolean> => {
+  async (
+    adapterPath: string,
+    opts: { codexPath?: string } = {},
+    signal?: AbortSignal
+  ): Promise<boolean> => {
+    signal?.throwIfAborted()
     let codexHome: string
     try {
       codexHome = await mkdtemp(path.join(tmpdir(), 'os-codex-smoke-'))
@@ -258,7 +290,8 @@ const runAcpInitializeSmoke =
     })
 
     try {
-      return await new Promise<boolean>((resolve) => {
+      signal?.throwIfAborted()
+      const result = await new Promise<boolean>((resolve) => {
         let settled = false
         let buffer = ''
         const child = spawn(command, args, {
@@ -278,6 +311,7 @@ const runAcpInitializeSmoke =
           if (settled) return
           settled = true
           clearTimeout(timer)
+          signal?.removeEventListener('abort', onAbort)
           child.stdin.destroy()
           // Reap the adapter AND its Codex grandchild while the parent is still alive (on success this
           // runs the moment initialize answers), awaiting the robust tree teardown before resolving. A
@@ -294,6 +328,9 @@ const runAcpInitializeSmoke =
             .finally(() => resolve(ok))
         }
         const timer = setTimeout(() => finish(false), ACP_SMOKE_TIMEOUT_MS)
+        const onAbort = (): void => finish(false)
+        signal?.addEventListener('abort', onAbort, { once: true })
+        if (signal?.aborted) onAbort()
 
         const consume = (line: string): void => {
           const trimmed = line.trim()
@@ -329,6 +366,8 @@ const runAcpInitializeSmoke =
           if (error) finish(false)
         })
       })
+      signal?.throwIfAborted()
+      return result
     } finally {
       await rm(codexHome, { recursive: true, force: true }).catch(() => {})
     }
@@ -347,7 +386,7 @@ const isRunnableFile =
 
 const runVersion =
   (platform: NodeJS.Platform, adapter: boolean) =>
-  async (candidate: string): Promise<string | undefined> => {
+  async (candidate: string, signal?: AbortSignal): Promise<string | undefined> => {
     try {
       const isJavaScript = adapter && candidate.toLowerCase().endsWith('.js')
       const executable = isJavaScript ? process.execPath : candidate
@@ -360,32 +399,38 @@ const runVersion =
         env: {
           ...augmentedPathEnv(process.env),
           ...(isJavaScript ? { ELECTRON_RUN_AS_NODE: '1', NO_BROWSER: '1' } : {})
-        }
+        },
+        signal
       })
 
       return parseVersion(stdout)
     } catch {
+      signal?.throwIfAborted()
       return undefined
     }
   }
 
-const resolveNpmBinDirs = (platform: NodeJS.Platform) => async (): Promise<string[]> => {
-  try {
-    const useShell = platform === 'win32'
-    const { stdout } = await execFileAsync('npm', ['prefix', '-g'], {
-      timeout: 10_000,
-      shell: useShell,
-      windowsHide: true,
-      env: augmentedPathEnv()
-    })
-    const prefix = stdout.trim()
-    if (!prefix) return []
+const resolveNpmBinDirs =
+  (platform: NodeJS.Platform) =>
+  async (signal?: AbortSignal): Promise<string[]> => {
+    try {
+      const useShell = platform === 'win32'
+      const { stdout } = await execFileAsync('npm', ['prefix', '-g'], {
+        timeout: 10_000,
+        shell: useShell,
+        windowsHide: true,
+        env: augmentedPathEnv(),
+        signal
+      })
+      const prefix = stdout.trim()
+      if (!prefix) return []
 
-    return platform === 'win32' ? [prefix] : [pathFor(platform).join(prefix, 'bin')]
-  } catch {
-    return []
+      return platform === 'win32' ? [prefix] : [pathFor(platform).join(prefix, 'bin')]
+    } catch {
+      signal?.throwIfAborted()
+      return []
+    }
   }
-}
 
 const createDefaultDetectDeps = (): CodexDetectDeps => {
   const platform = process.platform
@@ -413,8 +458,10 @@ const detectNativeCodex = async (
   deps: Pick<CodexDetectDeps, 'platform' | 'env' | 'getCodexVersion'> &
     Partial<
       Pick<CodexDetectDeps, 'homePath' | 'resolveNpmBinDirs' | 'extraDirs'>
-    > = createDefaultDetectDeps()
+    > = createDefaultDetectDeps(),
+  signal?: AbortSignal
 ): Promise<{ path: string; version: string } | undefined> => {
+  signal?.throwIfAborted()
   const p = pathFor(deps.platform)
   const wellKnown: string[] = []
 
@@ -431,7 +478,15 @@ const detectNativeCodex = async (
   // Search raw PATH plus the augmented dirs, mirroring collectCandidateDirs so this probe agrees
   // with the adapter's own codex resolution during the smoke test.
   const pathDirs = (deps.env.PATH ?? '').split(p.delimiter).filter(Boolean)
-  const npmDirs = deps.resolveNpmBinDirs ? await deps.resolveNpmBinDirs().catch(() => []) : []
+  let npmDirs: string[] = []
+  if (deps.resolveNpmBinDirs) {
+    try {
+      npmDirs = await deps.resolveNpmBinDirs(signal)
+    } catch {
+      signal?.throwIfAborted()
+    }
+  }
+  signal?.throwIfAborted()
   const augmentedDirs =
     deps.platform === 'win32'
       ? deps.env.APPDATA
@@ -455,7 +510,8 @@ const detectNativeCodex = async (
   const candidates = Array.from(new Set([...wellKnown, ...pathCandidates]))
 
   for (const codexPath of candidates) {
-    const versionOutput = await deps.getCodexVersion(codexPath)
+    const versionOutput = await deps.getCodexVersion(codexPath, signal)
+    signal?.throwIfAborted()
     const version = versionOutput ? parseVersion(versionOutput) : undefined
     if (version) {
       return { path: codexPath, version }

@@ -1,3 +1,200 @@
+// Keep these standalone published types aligned with the safe Settings contracts.
+// connector-types.test.ts verifies complete request and response equivalence.
+export type ToolPermission = 'allow' | 'ask' | 'block'
+
+export type ConnectorToolView = {
+  id: string // "<connector>/<method>"
+  method: string
+  description: string
+  permission: ToolPermission
+}
+
+export type ConnectorGroup = 'featured' | 'directory'
+
+export type ConnectorView = {
+  id: string
+  // Immutable invocation/export name. Bundled Connectors currently use the same value as id.
+  name: string
+  displayName: string
+  description: string
+  sources: string[]
+  requiresNcbi: boolean
+  enabled: boolean // !disabledConnectorIds.includes(id)
+  autoAllow: boolean // autoAllowIds.includes(id) — "Skip approvals"
+  group: ConnectorGroup
+}
+
+export type ConnectorDetailView = ConnectorView & {
+  useWhen: string
+  termsUrl?: string
+  tools: ConnectorToolView[]
+}
+
+export type NcbiCredentialsView = { contactEmail?: string; hasApiKey: boolean }
+
+export type OpenAlexCredentialView = { hasApiKey: boolean }
+
+export type CustomServerTransport = 'stdio' | 'streamable_http' | 'sse'
+
+export type CustomServerView = {
+  id: string
+  // Immutable agent-facing name used by host.mcp, Specialists, and generated MCP skills.
+  name: string
+  // User-facing label; spaces, punctuation, and duplicates are allowed.
+  displayName: string
+  description?: string
+  transport: CustomServerTransport
+  enabled: boolean
+  // Physical availability is independent of Main's enabled toggle. An invalid persisted server may
+  // remain visible to a Specialist but can never be selected or dispatched.
+  availability?: 'unavailable' | 'unauthenticated' | 'credential_unavailable'
+  // Background discovery is transient and does not make the Connector unavailable by itself.
+  checking?: boolean
+  // Display-only config summary. Environment/header names are safe to show; values stay write-only.
+  command?: string
+  args?: string[]
+  url?: string
+  hasHeaders?: boolean
+  headerNames?: string[]
+  hasEnv?: boolean
+  environmentNames?: string[]
+  // Opaque device credential reference used to preselect a shared OAuth credential in Configure.
+  oauthCredentialId?: string
+  oauth?: {
+    clientMetadataUrl?: string
+    authorizationServerUrl?: string
+    scopes?: string[]
+    clientId?: string
+    redirectUri?: string
+    hasTokens: boolean
+    // Optional for compatibility with snapshots from an older main process during development.
+    hasClientSecret?: boolean
+    sharedCredential?: boolean
+  }
+}
+
+export type ConnectorsSnapshot = {
+  connectors: ConnectorView[]
+  customServers: CustomServerView[]
+  // Derived Agent Skill documents can fail independently after durable Connector settings save.
+  skillProjectionStatus?: 'degraded'
+  // Local IDs reserved until interrupted custom Connector deletion cleanup completes.
+  reservedCustomServerIds?: string[]
+  ncbi: NcbiCredentialsView
+  // Optional only for compatibility with an older main process during local development.
+  openAlex?: OpenAlexCredentialView
+}
+
+export type DeviceCredentialKind = 'api_key' | 'token' | 'oauth'
+
+export type DeviceOAuthTransport = Extract<CustomServerTransport, 'streamable_http' | 'sse'>
+
+export type DeviceOAuthRegistration = {
+  clientMetadataUrl?: string
+  authorizationServerUrl?: string
+  scopes?: string[]
+  clientId?: string
+  redirectUri?: string
+}
+
+export type DeviceCredentialView = {
+  id: string
+  displayName: string
+  kind: DeviceCredentialKind
+  status: 'stored' | 'connected' | 'disconnected'
+  needsSecret: boolean
+  resourceUri?: string
+  transport?: DeviceOAuthTransport
+  oauth?: DeviceOAuthRegistration
+  hasClientSecret?: boolean
+  // Derived separately from unreadable OAuth login state; never persisted.
+  needsClientSecret?: boolean
+  consumerCount: number
+  consumerNames: string[]
+  createdAt: number
+  updatedAt: number
+}
+
+export type DeviceCredentialsSnapshot = { credentials: DeviceCredentialView[] }
+
+export type CreateDeviceCredentialResult = {
+  // Missing when creation committed but the full consumer projection could not be read.
+  credentials?: DeviceCredentialView[]
+  createdCredential: DeviceCredentialView
+}
+
+export type CreateDeviceCredentialRequest =
+  | { displayName: string; kind: 'api_key' | 'token'; secret: string }
+  | {
+      displayName: string
+      kind: 'oauth'
+      resourceUri: string
+      transport: DeviceOAuthTransport
+      oauth: DeviceOAuthRegistration & {
+        clientSecret?: string
+      }
+    }
+
+export type UpdateDeviceCredentialRequest = {
+  id: string
+  displayName?: string
+  secret?: string
+}
+
+export type AddCustomServerRequest = {
+  // Optional immutable local ID. Omission lets main infer one from `name` and fall back to a UUID.
+  id?: string
+  name: string
+  displayName: string
+  description?: string
+  transport: CustomServerTransport
+  command?: string
+  args?: string[]
+  envCredentialIds?: Record<string, string>
+  url?: string
+  headerCredentialIds?: Record<string, string>
+  oauthCredentialId?: string
+  // Non-secret registration requirements checked against a selected shared OAuth credential.
+  // They are validation input only and are not persisted on the Connector.
+  oauthRequirements?: DeviceOAuthRegistration
+  // Request-only marker from an imported template. Main validates the selected shared credential;
+  // the marker is never persisted on the Connector.
+  requiresOAuthClientSecret?: boolean
+}
+
+export type UpdateCustomServerRequest = {
+  id: string
+  displayName?: string
+  description?: string
+  transport: CustomServerTransport
+  command?: string
+  // Omitted keeps saved args while staying on stdio; [] explicitly clears them.
+  args?: string[]
+  env?: Record<string, string>
+  envCredentialIds?: Record<string, string>
+  url?: string
+  headers?: Record<string, string>
+  headerCredentialIds?: Record<string, string>
+  // Omitted retains the current shared OAuth binding; a value selects or replaces it.
+  oauthCredentialId?: string
+  oauth?: {
+    clientMetadataUrl?: string
+    authorizationServerUrl?: string
+    scopes?: string[]
+    clientId?: string
+    redirectUri?: string
+    // Omitted keeps the stored secret; null explicitly removes it.
+    clientSecret?: string | null
+  } | null
+}
+
+export type ConnectorTransport = CustomServerTransport
+export type ConnectorConfiguration = Omit<UpdateCustomServerRequest, 'id'>
+export type ConnectorTestResult = { success: boolean; toolCount?: number; message: string }
+export type CredentialInput = CreateDeviceCredentialRequest
+export type CredentialView = DeviceCredentialView
+export type CredentialsSnapshot = DeviceCredentialsSnapshot
+
 export type PermissionProfile = 'ask' | 'auto' | 'full'
 export type DelegationPolicy = 'allow' | 'deny'
 export type TurnIntent = 'plan-first'
@@ -260,6 +457,37 @@ export class OpenScienceClient {
     requestTimeoutMs?: number
   })
   health(options?: RequestOptions): Promise<unknown>
+  listConnectors(options?: RequestOptions): Promise<ConnectorsSnapshot>
+  getConnector(
+    id: string,
+    options?: RequestOptions
+  ): Promise<ConnectorDetailView | CustomServerView>
+  setConnectorEnabled(
+    id: string,
+    enabled: boolean,
+    options?: RequestOptions
+  ): Promise<ConnectorsSnapshot>
+  addConnector(
+    request: AddCustomServerRequest,
+    options?: RequestOptions
+  ): Promise<ConnectorsSnapshot>
+  updateConnector(
+    id: string,
+    request: ConnectorConfiguration,
+    options?: RequestOptions
+  ): Promise<ConnectorsSnapshot>
+  removeConnector(id: string, options?: RequestOptions): Promise<ConnectorsSnapshot>
+  testConnector(id: string, options?: RequestOptions): Promise<ConnectorTestResult>
+  listCredentials(options?: RequestOptions): Promise<CredentialsSnapshot>
+  createCredential(
+    request: CredentialInput,
+    options?: RequestOptions
+  ): Promise<CreateDeviceCredentialResult>
+  updateCredential(
+    id: string,
+    request: { displayName?: string; secret?: string },
+    options?: RequestOptions
+  ): Promise<CredentialsSnapshot>
   listProjects(options?: RequestOptions): Promise<Project[]>
   createProject(
     request: {

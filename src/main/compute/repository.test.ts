@@ -51,6 +51,7 @@ describe('compute host repository', () => {
         id: 'host-1',
         providerId: 'ssh:biowulf',
         displayName: 'biowulf',
+        executionMode: 'direct_ssh',
         shape: 'direct_ssh',
         sshAlias: 'biowulf',
         sshOverrides: undefined,
@@ -302,9 +303,15 @@ describe('compute host repository', () => {
       const { client, computeHost } = createMockClient({})
       const repository = new ComputeHostRepository(() => Promise.resolve(client))
 
-      await expect(repository.updateScratchRoot('ssh:biowulf', scratchRoot)).rejects.toThrow(
-        /scratch root/i
-      )
+      await expect(
+        repository.updateProbeResult(
+          'ssh:biowulf',
+          { ok: true, probedAt: '', exitCode: 0, errorTail: null, authenticationRevision: 1 },
+          'direct_ssh',
+          'host-1',
+          scratchRoot
+        )
+      ).rejects.toThrow(/scratch root/i)
       expect(computeHost.update).not.toHaveBeenCalled()
     }
   )
@@ -627,7 +634,12 @@ describe('compute host repository', () => {
     const update = vi.fn()
     const updateMany = vi.fn(async () => ({ count: 0 }))
     const repository = new ComputeHostRepository(
-      async () => ({ computeHost: { update, updateMany } }) as unknown as ComputeHostClient
+      async () =>
+        ({
+          computeHost: { update, updateMany },
+          $transaction: async (fn: (tx: unknown) => unknown) =>
+            fn({ computeHost: { update, updateMany } })
+        }) as unknown as ComputeHostClient
     )
     const staleProbe = {
       ok: true as const,
@@ -639,10 +651,10 @@ describe('compute host repository', () => {
     }
 
     await expect(
-      repository.updateProbeResult('ssh:biowulf', staleProbe, 'direct_ssh')
-    ).resolves.toBeUndefined()
+      repository.updateProbeResult('ssh:biowulf', staleProbe, 'direct_ssh', 'host-1')
+    ).resolves.toBe(false)
     expect(updateMany).toHaveBeenCalledWith({
-      where: { providerId: 'ssh:biowulf', authenticationRevision: 1 },
+      where: { id: 'host-1', providerId: 'ssh:biowulf', authenticationRevision: 1 },
       data: {
         probeResult: JSON.stringify({ schemaVersion: 1, ...staleProbe }),
         shape: 'direct_ssh'

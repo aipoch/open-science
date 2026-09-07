@@ -31,6 +31,21 @@ describe('compareVersions', () => {
 })
 
 describe('isNewer', () => {
+  it.each([
+    ['1.1.0', '1.1.0-nightly.abc1234', true],
+    ['1.1.0', '1.1.0-nightly.123abcd', true],
+    ['1.1.0', '1.1.0-nightly.0001234', true],
+    ['1.1.0+release', '1.1.0-nightly.123abcd+build', true],
+    ['1.0.9', '1.1.0-nightly.abc1234', false],
+    ['1.1.1', '1.1.0-nightly.abc1234', true],
+    ['1.1.0', '1.1.0+build', false],
+    ['1.1.0-nightly.abc1234', '1.1.0', false],
+    ['1.1.0-nightly.999abcd', '1.1.0-nightly.123abcd', false],
+    ['1.1.0-nightly.abc1234', '1.1.0-nightly.def5678', false]
+  ])('compares release eligibility for %s against %s', (latest, current, expected) => {
+    expect(isNewer(latest, current)).toBe(expected)
+  })
+
   it('is true only when latest exceeds current', () => {
     expect(isNewer('0.3.0', '0.2.0')).toBe(true)
     expect(isNewer('0.2.0', '0.2.0')).toBe(false)

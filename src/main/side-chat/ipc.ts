@@ -24,6 +24,7 @@ const registerSideChatIpcHandlers = (
   dependencies: SideChatIpcDependencies
 ): void => {
   const startingParents = new Set<string>()
+  const sends = new Map<string, { cancellation: AbortController; dispatching: boolean }>()
   const closeRequestedParents = new Set<string>()
   const loadAvailableParent = async (
     projectId: string,
@@ -59,22 +60,35 @@ const registerSideChatIpcHandlers = (
     }
   })
   ipcMainHandle('side-chat:send', async (_event, request: SideChatPromptRequest) => {
+    if (sends.has(request.sideSessionId)) throw new Error('A Side chat prompt is already running.')
     const parent = runtime.parentFor(request.sideSessionId)
     if (!parent) throw new Error('Side chat Session is not active.')
-    return dependencies.withParentAvailable(parent.parentSessionId, async () => {
-      const parentSession = await loadAvailableParent(parent.projectId, parent.parentSessionId)
-      const historyPreamble = parentSession
-        ? buildHistoryPreamble(parentSession.messages, {
-            target: 'codex-bridge',
-            budget: SIDE_CHAT_MESSAGE_LIMIT
-          })
-        : undefined
-      return runtime.send({ ...request, historyPreamble })
-    })
+    const send = { cancellation: new AbortController(), dispatching: false }
+    sends.set(request.sideSessionId, send)
+    try {
+      return await dependencies.withParentAvailable(parent.parentSessionId, async () => {
+        send.cancellation.signal.throwIfAborted()
+        const parentSession = await loadAvailableParent(parent.projectId, parent.parentSessionId)
+        send.cancellation.signal.throwIfAborted()
+        const historyPreamble = parentSession
+          ? buildHistoryPreamble(parentSession.messages, {
+              target: 'codex-bridge',
+              budget: SIDE_CHAT_MESSAGE_LIMIT
+            })
+          : undefined
+        send.dispatching = true
+        return runtime.send({ ...request, historyPreamble }, send.cancellation)
+      })
+    } finally {
+      if (sends.get(request.sideSessionId) === send) sends.delete(request.sideSessionId)
+    }
   })
-  ipcMainHandle('side-chat:cancel', (_event, request: SideChatSessionRequest) =>
-    runtime.cancel(request)
-  )
+  ipcMainHandle('side-chat:cancel', (_event, request: SideChatSessionRequest) => {
+    const send = sends.get(request.sideSessionId)
+    send?.cancellation.abort(new Error('Side chat prompt cancelled.'))
+    if (send && !send.dispatching) return
+    return runtime.cancel(request)
+  })
   ipcMainHandle('side-chat:close', (_event, request: SideChatCloseRequest) => {
     if ('sideSessionId' in request) return runtime.close(request)
     if (startingParents.has(request.parentSessionId)) {

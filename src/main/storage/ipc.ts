@@ -11,6 +11,7 @@ const registerStorageIpcHandlers = (
   deps: StorageIpcDeps,
   owner: StorageCommandOwner = createStorageCommandOwner(deps)
 ): void => {
+  ipcMainHandle('storage:accept-missing-data-root', () => owner.acceptMissingDataRoot())
   ipcMainHandle('storage:get-status', () => owner.getStatus())
   ipcMainHandle('storage:get-info', () => owner.getInfo())
   ipcMainHandle('storage:reveal-app-storage', () => owner.revealAppStorage())

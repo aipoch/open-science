@@ -154,7 +154,7 @@ const DependencyStatusBadge = ({
       )
 
   return (
-    <TooltipProvider delayDuration={200}>
+    <>
       <Tooltip>
         <TooltipTrigger asChild>
           <button
@@ -173,7 +173,7 @@ const DependencyStatusBadge = ({
           {detail}
         </TooltipContent>
       </Tooltip>
-    </TooltipProvider>
+    </>
   )
 }
 
@@ -481,6 +481,7 @@ const NotebookPreview = ({ item }: NotebookPreviewProps): React.JSX.Element => {
   const [isLoading, setIsLoading] = useState(false)
   const [submittingTarget, setSubmittingTarget] = useState<string | undefined>()
   const [actionError, setActionError] = useState<string | null>(null)
+  const [isAbortingWrite, setIsAbortingWrite] = useState(false)
   const [isRestarting, setIsRestarting] = useState(false)
   const [activeKind, setActiveKind] = useState<NotebookKernelKind>('python')
   const [frameFilter, setFrameFilter] = useState<NotebookFrameFilterValue>()
@@ -984,6 +985,26 @@ const NotebookPreview = ({ item }: NotebookPreviewProps): React.JSX.Element => {
     }
   }
 
+  const handleAbortWrite = async (): Promise<void> => {
+    const write = notebookState?.activeWrite
+    if (!write || isAbortingWrite) return
+    setIsAbortingWrite(true)
+    setActionError(null)
+    try {
+      await window.api.notebook.abortCodeCell({
+        ...createNotebookRequest(item.notebook),
+        cellId: write.cellId,
+        writeId: write.writeId
+      })
+      await loadNotebookState()
+    } catch (error) {
+      await loadNotebookState()
+      setActionError(getErrorMessage(error))
+    } finally {
+      setIsAbortingWrite(false)
+    }
+  }
+
   // Restarts only the selected R environment, then replaces state so its banner clears.
   const handleRestart = async (): Promise<void> => {
     if (!activeEnvName) return
@@ -1040,7 +1061,7 @@ const NotebookPreview = ({ item }: NotebookPreviewProps): React.JSX.Element => {
       data-testid="notebook-variables-view"
     >
       <div className="flex shrink-0 flex-wrap items-center gap-2 border-b border-border-100 px-3 py-2">
-        <TooltipProvider delayDuration={200}>
+        <>
           <Tooltip>
             <TooltipTrigger asChild>
               <button
@@ -1057,7 +1078,7 @@ const NotebookPreview = ({ item }: NotebookPreviewProps): React.JSX.Element => {
               {t('Close')}
             </TooltipContent>
           </Tooltip>
-        </TooltipProvider>
+        </>
         <div className="mr-auto min-w-0">
           <div className="text-xs font-medium text-text-100">{t('Variables')}</div>
           <div className="text-[11px] text-text-300">
@@ -1244,286 +1265,306 @@ const NotebookPreview = ({ item }: NotebookPreviewProps): React.JSX.Element => {
   const initialStateError = !notebookState && actionError
 
   return (
-    <section
-      className="@container/notebook relative flex h-full min-w-0 flex-col overflow-hidden bg-bg-000"
-      data-testid="kernel-notebook-pane"
-    >
-      {gated ? (
-        <EnvProvisionOverlay ui={provisionUi} onRetry={() => void retryProvision()} />
-      ) : null}
-      {frameOptions.length > 0 ? (
-        <div className="flex max-w-full shrink-0 items-center gap-2 overflow-hidden border-b border-border-100 px-2 py-1.5">
-          <label
-            htmlFor={`notebook-preview-frame-filter-${item.notebook.sessionId}`}
-            className="shrink-0 text-xs text-text-300"
-          >
-            {t('Agent')}
-          </label>
-          <Select
-            value={effectiveFrameFilter ?? ''}
-            onValueChange={(value) => setFrameFilter(value as NotebookFrameFilterValue)}
-          >
-            <SelectTrigger
-              id={`notebook-preview-frame-filter-${item.notebook.sessionId}`}
-              aria-label={t('Filter notebook runs by Agent')}
-              title={frameOptions.find(({ value }) => value === effectiveFrameFilter)?.label}
-              className="min-w-0 max-w-full flex-1 text-xs"
-            >
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              {frameOptions.map((option) => (
-                <SelectItem key={option.value} value={option.value}>
-                  {option.label} ·{' '}
-                  {t('{{count}} runs', {
-                    defaultValue_one: '{{count}} run',
-                    count: option.count
-                  })}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </div>
-      ) : null}
-      <header
-        className="flex shrink-0 items-center border-b border-border-100 px-2 py-1.5"
-        data-testid="kernel-switcher"
+    <TooltipProvider delayDuration={200}>
+      <section
+        className="@container/notebook relative flex h-full min-w-0 flex-col overflow-hidden bg-bg-000"
+        data-testid="kernel-notebook-pane"
       >
-        <div
-          ref={kernelScrollFadeRef}
-          className="scroll-fade-x flex min-w-0 flex-1 items-center gap-1 overflow-x-auto"
-        >
-          {visibleKinds.map((kind) =>
-            kind === 'r' ? (
-              // R additionally kicks off lazy provisioning on first selection (D6 — see lazy-r.ts).
-              <button
-                key="r"
-                type="button"
-                data-testid="kernel-switcher-r"
-                onClick={() => {
-                  setActiveKind('r')
-                  onSelectLanguage('r')
-                }}
-                className={cn(
-                  'flex shrink-0 items-center gap-1.5 rounded-md px-2 py-1 text-xs transition-colors',
-                  effectiveActiveKind === 'r'
-                    ? 'bg-bg-300 text-text-000'
-                    : 'text-text-300 hover:bg-bg-200 hover:text-text-100'
-                )}
-              >
-                {isPreparingR ? t('R (preparing…)') : 'R'}
-              </button>
-            ) : (
-              <button
-                key={kind}
-                type="button"
-                data-testid={`kernel-switcher-${kind}`}
-                onClick={() => {
-                  setShowVariables(false)
-                  setActiveKind(kind)
-                }}
-                className={cn(
-                  'flex shrink-0 items-center gap-1.5 rounded-md px-2 py-1 text-xs transition-colors',
-                  effectiveActiveKind === kind
-                    ? 'bg-bg-300 text-text-000'
-                    : 'text-text-300 hover:bg-bg-200 hover:text-text-100'
-                )}
-              >
-                {kernelKindLabel(kind)}
-              </button>
-            )
-          )}
-        </div>
-        {activeDataLanguage ? (
-          <TooltipProvider delayDuration={200}>
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <button
-                  type="button"
-                  aria-label={t('Inspect variables')}
-                  aria-pressed={showVariables}
-                  aria-disabled={namespaceButtonDisabled}
-                  onClick={() => {
-                    if (!namespaceButtonDisabled) setShowVariables((current) => !current)
-                  }}
-                  className={cn(
-                    'ml-2 inline-flex size-7 shrink-0 items-center justify-center rounded-md text-text-300 transition-colors',
-                    showVariables && !namespaceButtonDisabled
-                      ? 'bg-bg-300 text-text-000'
-                      : 'hover:bg-bg-200 hover:text-text-100',
-                    namespaceButtonDisabled && 'cursor-not-allowed opacity-45'
-                  )}
-                  data-testid="notebook-variables-button"
-                >
-                  <Variable className="size-3.5" aria-hidden="true" />
-                </button>
-              </TooltipTrigger>
-              <TooltipContent side="bottom">
-                {isSelectedKernelRunning
-                  ? t('Variables are available when this kernel is idle')
-                  : isNamespaceLost || isHistoricalEnvironmentView
-                    ? t('Variables are available only while this kernel is live')
-                    : t('Inspect variables')}
-              </TooltipContent>
-            </Tooltip>
-          </TooltipProvider>
+        {gated ? (
+          <EnvProvisionOverlay ui={provisionUi} onRetry={() => void retryProvision()} />
         ) : null}
-        {activeRuntimeBinding && activeRuntimeDetails ? (
-          <TooltipProvider delayDuration={200}>
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <button
-                  type="button"
-                  aria-label={
-                    activeRuntimeSettingsLabel
-                      ? `${activeRuntimeDetails}. ${activeRuntimeSettingsLabel}`
-                      : activeRuntimeDetails
-                  }
-                  onClick={() => {
-                    if (activeRuntimeUnavailable) openSettingsToPanel('runtimes')
-                  }}
-                  className={cn(
-                    'ml-2 flex min-w-0 max-w-56 shrink-0 items-center gap-1.5 rounded-md bg-bg-300 px-2 py-1 text-[11px] text-text-200',
-                    activeRuntimeUnavailable &&
-                      'bg-status-failure-surface text-status-failure-foreground dark:bg-status-failure-dark-surface dark:text-status-failure-dark-foreground'
-                  )}
-                  data-testid="notebook-runtime-binding"
-                >
-                  <span className="min-w-0 truncate">{activeRuntimeBinding.label}</span>
-                  {activeRuntimeUnavailable ? (
-                    <span
-                      className="shrink-0 font-medium"
-                      data-testid="notebook-runtime-binding-status"
-                    >
-                      {t('Unavailable')}
-                    </span>
-                  ) : null}
-                </button>
-              </TooltipTrigger>
-              <TooltipContent side="bottom" className="max-w-[320px] break-words">
-                <div>{activeRuntimeDetails}</div>
-                {activeRuntimeSettingsLabel ? <div>{activeRuntimeSettingsLabel}</div> : null}
-              </TooltipContent>
-            </Tooltip>
-          </TooltipProvider>
-        ) : null}
-      </header>
-
-      {showEnvSelector ? (
-        <div
-          ref={environmentScrollFadeRef}
-          className="scroll-fade-x flex min-w-0 shrink-0 items-center gap-1 overflow-x-auto border-b border-border-100 px-2 py-1"
-          data-testid="env-selector"
-        >
-          {envNames.map((envName) => (
-            <button
-              key={envName}
-              type="button"
-              data-testid={`env-option-${envName}`}
-              onClick={() => setActiveEnv(envName)}
-              className={cn(
-                'flex shrink-0 items-center gap-1.5 rounded-md px-2 py-0.5 text-[11px] transition-colors',
-                effectiveActiveEnv === envName
-                  ? 'bg-bg-200 text-text-100'
-                  : 'text-text-300 hover:bg-bg-200 hover:text-text-100'
-              )}
+        {frameOptions.length > 0 ? (
+          <div className="flex max-w-full shrink-0 items-center gap-2 overflow-hidden border-b border-border-100 px-2 py-1.5">
+            <label
+              htmlFor={`notebook-preview-frame-filter-${item.notebook.sessionId}`}
+              className="shrink-0 text-xs text-text-300"
             >
-              <span
-                className={cn(
-                  'h-1.5 w-1.5 rounded-full',
-                  envStatusDotClass(envOptionStatus(envName))
-                )}
-                data-testid={`env-option-${envName}-status`}
-              />
-              {environmentLabel(envName)}
-            </button>
-          ))}
-        </div>
-      ) : null}
-
-      {restartRecommended ? (
-        <div
-          className="flex shrink-0 items-center justify-between gap-2 border-b border-border-100 bg-bg-300 px-3 py-1.5 text-[11px] text-text-100"
-          data-testid="r-restart-banner"
-        >
-          <span>{t('Installed R packages need a kernel restart to load.')}</span>
-          <button
-            type="button"
-            disabled={isRestarting}
-            onClick={() => void handleRestart()}
-            className="shrink-0 rounded-md border border-border-200 px-2 py-0.5 font-medium text-text-100 transition-colors hover:bg-bg-200 disabled:opacity-50"
-            data-testid="r-restart-button"
-          >
-            {isRestarting ? t('Restarting…') : t('Restart R kernel')}
-          </button>
-        </div>
-      ) : null}
-
-      {initialStateError ? (
-        <div
-          role="alert"
-          className="flex min-h-0 flex-1 items-center justify-center overflow-auto p-6"
-          data-testid="notebook-state-load-error"
-        >
-          <ErrorNotice
-            icon={TriangleAlert}
-            tone="amber"
-            description={initialStateError}
-            primaryButton={{
-              label: t('Retry'),
-              onClick: () => void loadNotebookState(),
-              loading: isLoading
-            }}
-          />
-        </div>
-      ) : (
-        <div
-          className="flex min-h-0 flex-1"
-          data-testid={
-            showVariables && activeDataLanguage ? 'notebook-responsive-variables-layout' : undefined
-          }
+              {t('Agent')}
+            </label>
+            <Select
+              value={effectiveFrameFilter ?? ''}
+              onValueChange={(value) => setFrameFilter(value as NotebookFrameFilterValue)}
+            >
+              <SelectTrigger
+                id={`notebook-preview-frame-filter-${item.notebook.sessionId}`}
+                aria-label={t('Filter notebook runs by Agent')}
+                title={frameOptions.find(({ value }) => value === effectiveFrameFilter)?.label}
+                className="min-w-0 max-w-full flex-1 text-xs"
+              >
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {frameOptions.map((option) => (
+                  <SelectItem key={option.value} value={option.value}>
+                    {option.label} ·{' '}
+                    {t('{{count}} runs', {
+                      defaultValue_one: '{{count}} run',
+                      count: option.count
+                    })}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+        ) : null}
+        <header
+          className="flex shrink-0 items-center border-b border-border-100 px-2 py-1.5"
+          data-testid="kernel-switcher"
         >
           <div
-            className={cn(
-              'min-h-0 min-w-0 flex-1 flex-col overflow-hidden',
-              showVariables && activeDataLanguage ? 'hidden @min-[55rem]/notebook:flex' : 'flex'
-            )}
-            data-testid="notebook-primary-view"
+            ref={kernelScrollFadeRef}
+            className="scroll-fade-x flex min-w-0 flex-1 items-center gap-1 overflow-x-auto"
           >
-            {notebookView}
+            {visibleKinds.map((kind) =>
+              kind === 'r' ? (
+                // R additionally kicks off lazy provisioning on first selection (D6 — see lazy-r.ts).
+                <button
+                  key="r"
+                  type="button"
+                  data-testid="kernel-switcher-r"
+                  onClick={() => {
+                    setActiveKind('r')
+                    onSelectLanguage('r')
+                  }}
+                  className={cn(
+                    'flex shrink-0 items-center gap-1.5 rounded-md px-2 py-1 text-xs transition-colors',
+                    effectiveActiveKind === 'r'
+                      ? 'bg-bg-300 text-text-000'
+                      : 'text-text-300 hover:bg-bg-200 hover:text-text-100'
+                  )}
+                >
+                  {isPreparingR ? t('R (preparing…)') : 'R'}
+                </button>
+              ) : (
+                <button
+                  key={kind}
+                  type="button"
+                  data-testid={`kernel-switcher-${kind}`}
+                  onClick={() => {
+                    setShowVariables(false)
+                    setActiveKind(kind)
+                  }}
+                  className={cn(
+                    'flex shrink-0 items-center gap-1.5 rounded-md px-2 py-1 text-xs transition-colors',
+                    effectiveActiveKind === kind
+                      ? 'bg-bg-300 text-text-000'
+                      : 'text-text-300 hover:bg-bg-200 hover:text-text-100'
+                  )}
+                >
+                  {kernelKindLabel(kind)}
+                </button>
+              )
+            )}
           </div>
-          {showVariables && activeDataLanguage ? namespaceView : null}
-        </div>
-      )}
+          {activeDataLanguage ? (
+            <>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <button
+                    type="button"
+                    aria-label={t('Inspect variables')}
+                    aria-pressed={showVariables}
+                    aria-disabled={namespaceButtonDisabled}
+                    onClick={() => {
+                      if (!namespaceButtonDisabled) setShowVariables((current) => !current)
+                    }}
+                    className={cn(
+                      'ml-2 inline-flex size-7 shrink-0 items-center justify-center rounded-md text-text-300 transition-colors',
+                      showVariables && !namespaceButtonDisabled
+                        ? 'bg-bg-300 text-text-000'
+                        : 'hover:bg-bg-200 hover:text-text-100',
+                      namespaceButtonDisabled && 'cursor-not-allowed opacity-45'
+                    )}
+                    data-testid="notebook-variables-button"
+                  >
+                    <Variable className="size-3.5" aria-hidden="true" />
+                  </button>
+                </TooltipTrigger>
+                <TooltipContent side="bottom">
+                  {isSelectedKernelRunning
+                    ? t('Variables are available when this kernel is idle')
+                    : isNamespaceLost || isHistoricalEnvironmentView
+                      ? t('Variables are available only while this kernel is live')
+                      : t('Inspect variables')}
+                </TooltipContent>
+              </Tooltip>
+            </>
+          ) : null}
+          {activeRuntimeBinding && activeRuntimeDetails ? (
+            <>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <button
+                    type="button"
+                    aria-label={
+                      activeRuntimeSettingsLabel
+                        ? `${activeRuntimeDetails}. ${activeRuntimeSettingsLabel}`
+                        : activeRuntimeDetails
+                    }
+                    onClick={() => {
+                      if (activeRuntimeUnavailable) openSettingsToPanel('runtimes')
+                    }}
+                    className={cn(
+                      'ml-2 flex min-w-0 max-w-56 shrink-0 items-center gap-1.5 rounded-md bg-bg-300 px-2 py-1 text-[11px] text-text-200',
+                      activeRuntimeUnavailable &&
+                        'bg-status-failure-surface text-status-failure-foreground dark:bg-status-failure-dark-surface dark:text-status-failure-dark-foreground'
+                    )}
+                    data-testid="notebook-runtime-binding"
+                  >
+                    <span className="min-w-0 truncate">{activeRuntimeBinding.label}</span>
+                    {activeRuntimeUnavailable ? (
+                      <span
+                        className="shrink-0 font-medium"
+                        data-testid="notebook-runtime-binding-status"
+                      >
+                        {t('Unavailable')}
+                      </span>
+                    ) : null}
+                  </button>
+                </TooltipTrigger>
+                <TooltipContent side="bottom" className="max-w-[320px] break-words">
+                  <div>{activeRuntimeDetails}</div>
+                  {activeRuntimeSettingsLabel ? <div>{activeRuntimeSettingsLabel}</div> : null}
+                </TooltipContent>
+              </Tooltip>
+            </>
+          ) : null}
+        </header>
 
-      {!initialStateError && !showVariables && (isNamespaceLost || isHistoricalEnvironmentView) ? (
-        <footer
-          className="flex h-7 shrink-0 items-center justify-between gap-3 border-t border-border-200 bg-bg-000 px-2 text-[11px] text-text-300"
-          data-testid="notebook-read-only-status"
-        >
-          <span className="min-w-0 truncate">
-            {isHistoricalEnvironmentView
-              ? t('{{environment}} · history only; new code runs in {{activeEnvironment}}', {
-                  environment: activeEnvName,
-                  activeEnvironment: executionEnvironment
-                })
-              : isKernelInactive && !hasActiveKernelHistory
-                ? t('{{kernel}} · view only; the agent must activate this kernel first', {
-                    kernel: activeDataLanguage === 'r' ? 'R' : 'Python'
+        {showEnvSelector ? (
+          <div
+            ref={environmentScrollFadeRef}
+            className="scroll-fade-x flex min-w-0 shrink-0 items-center gap-1 overflow-x-auto border-b border-border-100 px-2 py-1"
+            data-testid="env-selector"
+          >
+            {envNames.map((envName) => (
+              <button
+                key={envName}
+                type="button"
+                data-testid={`env-option-${envName}`}
+                onClick={() => setActiveEnv(envName)}
+                className={cn(
+                  'flex shrink-0 items-center gap-1.5 rounded-md px-2 py-0.5 text-[11px] transition-colors',
+                  effectiveActiveEnv === envName
+                    ? 'bg-bg-200 text-text-100'
+                    : 'text-text-300 hover:bg-bg-200 hover:text-text-100'
+                )}
+              >
+                <span
+                  className={cn(
+                    'h-1.5 w-1.5 rounded-full',
+                    envStatusDotClass(envOptionStatus(envName))
+                  )}
+                  data-testid={`env-option-${envName}-status`}
+                />
+                {environmentLabel(envName)}
+              </button>
+            ))}
+          </div>
+        ) : null}
+
+        {notebookState?.activeWrite ? (
+          <div className="flex shrink-0 items-center justify-between gap-2 border-b border-border-100 bg-bg-300 px-3 py-1.5 text-[11px] text-text-100">
+            <span>{t('Receiving code. Cancelling discards the unfinished code.')}</span>
+            <button
+              type="button"
+              disabled={isAbortingWrite}
+              onClick={() => void handleAbortWrite()}
+              className="shrink-0 rounded-md border border-border-200 px-2 py-0.5 font-medium text-text-100 transition-colors hover:bg-bg-200 disabled:opacity-50"
+            >
+              {t('Cancel code reception')}
+            </button>
+          </div>
+        ) : null}
+
+        {restartRecommended ? (
+          <div
+            className="flex shrink-0 items-center justify-between gap-2 border-b border-border-100 bg-bg-300 px-3 py-1.5 text-[11px] text-text-100"
+            data-testid="r-restart-banner"
+          >
+            <span>{t('Installed R packages need a kernel restart to load.')}</span>
+            <button
+              type="button"
+              disabled={isRestarting}
+              onClick={() => void handleRestart()}
+              className="shrink-0 rounded-md border border-border-200 px-2 py-0.5 font-medium text-text-100 transition-colors hover:bg-bg-200 disabled:opacity-50"
+              data-testid="r-restart-button"
+            >
+              {isRestarting ? t('Restarting…') : t('Restart R kernel')}
+            </button>
+          </div>
+        ) : null}
+
+        {initialStateError ? (
+          <div
+            role="alert"
+            className="flex min-h-0 flex-1 items-center justify-center overflow-auto p-6"
+            data-testid="notebook-state-load-error"
+          >
+            <ErrorNotice
+              icon={TriangleAlert}
+              tone="amber"
+              description={initialStateError}
+              primaryButton={{
+                label: t('Retry'),
+                onClick: () => void loadNotebookState(),
+                loading: isLoading
+              }}
+            />
+          </div>
+        ) : (
+          <div
+            className="flex min-h-0 flex-1"
+            data-testid={
+              showVariables && activeDataLanguage
+                ? 'notebook-responsive-variables-layout'
+                : undefined
+            }
+          >
+            <div
+              className={cn(
+                'min-h-0 min-w-0 flex-1 flex-col overflow-hidden',
+                showVariables && activeDataLanguage ? 'hidden @min-[55rem]/notebook:flex' : 'flex'
+              )}
+              data-testid="notebook-primary-view"
+            >
+              {notebookView}
+            </div>
+            {showVariables && activeDataLanguage ? namespaceView : null}
+          </div>
+        )}
+
+        {!initialStateError &&
+        !showVariables &&
+        (isNamespaceLost || isHistoricalEnvironmentView) ? (
+          <footer
+            className="flex h-7 shrink-0 items-center justify-between gap-3 border-t border-border-200 bg-bg-000 px-2 text-[11px] text-text-300"
+            data-testid="notebook-read-only-status"
+          >
+            <span className="min-w-0 truncate">
+              {isHistoricalEnvironmentView
+                ? t('{{environment}} · history only; new code runs in {{activeEnvironment}}', {
+                    environment: activeEnvName,
+                    activeEnvironment: executionEnvironment
                   })
-                : activeDataLanguage === 'r'
-                  ? t("R · view only; this kernel's namespace no longer exists")
-                  : t("Python · view only; this kernel's namespace no longer exists")}
-          </span>
-          <span className="shrink-0 tabular-nums">
-            {t('{{count}} cells', {
-              defaultValue_one: '{{count}} cell',
-              count: cellCount
-            })}
-          </span>
-        </footer>
-      ) : null}
-    </section>
+                : isKernelInactive && !hasActiveKernelHistory
+                  ? t('{{kernel}} · view only; the agent must activate this kernel first', {
+                      kernel: activeDataLanguage === 'r' ? 'R' : 'Python'
+                    })
+                  : activeDataLanguage === 'r'
+                    ? t("R · view only; this kernel's namespace no longer exists")
+                    : t("Python · view only; this kernel's namespace no longer exists")}
+            </span>
+            <span className="shrink-0 tabular-nums">
+              {t('{{count}} cells', {
+                defaultValue_one: '{{count}} cell',
+                count: cellCount
+              })}
+            </span>
+          </footer>
+        ) : null}
+      </section>
+    </TooltipProvider>
   )
 }
 

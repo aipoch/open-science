@@ -40,6 +40,15 @@ vi.mock('./environment-check', () => ({
   }))
 }))
 
+const { runInstallWithFallbackSpy } = vi.hoisted(() => ({
+  runInstallWithFallbackSpy: vi.fn()
+}))
+
+vi.mock('./claude-install', async (importActual) => ({
+  ...(await importActual<typeof import('./claude-install')>()),
+  runInstallWithFallback: runInstallWithFallbackSpy
+}))
+
 const { AgentRuntimeManager } = await import('./agent-runtime-manager')
 const { SettingsRepository } = await import('./repository')
 const { getAppClaudeConfigDir } = await import('./provider-env')
@@ -182,6 +191,7 @@ describe('AgentRuntimeManager', () => {
   }
 
   beforeEach(async () => {
+    runInstallWithFallbackSpy.mockReset()
     storageRoot = await mkdtemp(join(tmpdir(), 'open-science-runtime-manager-'))
     repository = new SettingsRepository(storageRoot)
     inventory = createInventory()
@@ -228,6 +238,190 @@ describe('AgentRuntimeManager', () => {
         nativeVersion: '0.144.6'
       }
     })
+  })
+
+  it('keeps the install cancellation signal through successful post-install discovery', async () => {
+    const claudePath = '/usr/local/bin/claude'
+    const opencodePath = '/usr/local/bin/opencode'
+    inventory.claude.set(claudePath, '2.1.0')
+    inventory.opencode.set(opencodePath, '1.19.0')
+    inventory.codexAdapter.set(managedAdapterPath, 'codex-acp 1.6.2')
+    inventory.codexNative.set(managedCodexPath, 'codex-cli 0.144.6')
+    const claudeDeps = createClaudeDeps(inventory)
+    const opencodeDeps = createOpencodeDeps(inventory)
+    const codexDeps = createCodexDeps(inventory, managedAdapterPath, managedCodexPath)
+    const claudeGetVersion = vi.spyOn(claudeDeps, 'getVersion')
+    const opencodeGetVersion = vi.spyOn(opencodeDeps, 'getVersion')
+    const codexGetAdapterVersion = vi.spyOn(codexDeps, 'getAdapterVersion')
+    runInstallWithFallbackSpy.mockImplementation(async ({ installId }) => ({
+      installId,
+      ok: true
+    }))
+    manager = createManager({
+      detectDeps: claudeDeps,
+      opencodeDetectDeps: opencodeDeps,
+      codexDetectDeps: codexDeps
+    })
+
+    await manager.installClaude({ source: 'npm' }, vi.fn())
+    await manager.installOpencode({ source: 'npm' }, vi.fn())
+    await manager.installCodex({ source: 'npm' }, vi.fn())
+
+    expect(claudeGetVersion).toHaveBeenCalledWith(claudePath, expect.any(AbortSignal))
+    expect(opencodeGetVersion).toHaveBeenCalledWith(opencodePath, expect.any(AbortSignal))
+    expect(codexGetAdapterVersion).toHaveBeenCalledWith(managedAdapterPath, expect.any(AbortSignal))
+  })
+
+  it('aborts and drains standalone detection before disposal completes', async () => {
+    const claudePath = '/usr/local/bin/claude'
+    inventory.claude.set(claudePath, '2.1.0')
+    const entered = Promise.withResolvers<AbortSignal | undefined>()
+    const releaseCleanup = Promise.withResolvers<void>()
+    const detectDeps = createClaudeDeps(inventory)
+    detectDeps.getVersion = async (_path, signal) => {
+      entered.resolve(signal)
+      await releaseCleanup.promise
+      signal?.throwIfAborted()
+      return '2.1.0'
+    }
+    manager = createManager({ detectDeps })
+
+    const callerAbort = new AbortController()
+    const detection = manager.detectClaude(callerAbort.signal)
+    const observedSignal = await entered.promise
+    let disposeSettled = false
+    const disposal = manager.dispose().then(() => {
+      disposeSettled = true
+    })
+    await new Promise<void>((resolve) => setImmediate(resolve))
+    const waitedForCleanup = !disposeSettled
+    releaseCleanup.resolve()
+    const detectionOutcome = await detection.then(
+      () => 'resolved',
+      (error: unknown) => (error as Error).name
+    )
+    await disposal
+
+    expect(observedSignal?.aborted).toBe(true)
+    expect(callerAbort.signal.aborted).toBe(false)
+    expect(waitedForCleanup).toBe(true)
+    expect(detectionOutcome).toBe('AbortError')
+  })
+
+  it.each(['getPreflight', 'checkEnvironment'] as const)(
+    'aborts and drains all %s runtime probes before disposal completes',
+    async (operation) => {
+      const claudePath = join(storageRoot, 'claude')
+      const opencodePath = join(storageRoot, 'opencode')
+      await repository.setClaudeInfo({ resolvedPath: claudePath, version: 'old' })
+      await repository.setOpencodeInfo(opencodePath, 'old')
+      const claudeEntered = Promise.withResolvers<AbortSignal | undefined>()
+      const opencodeEntered = Promise.withResolvers<AbortSignal | undefined>()
+      const releaseClaude = Promise.withResolvers<void>()
+      const releaseOpencode = Promise.withResolvers<void>()
+      manager = createManager({
+        detectDeps: {
+          ...createClaudeDeps(inventory),
+          getVersion: async (_path, signal) => {
+            claudeEntered.resolve(signal)
+            await releaseClaude.promise
+            signal?.throwIfAborted()
+            return '2.1.0'
+          }
+        },
+        opencodeDetectDeps: {
+          ...createOpencodeDeps(inventory),
+          getVersion: async (_path, signal) => {
+            opencodeEntered.resolve(signal)
+            await releaseOpencode.promise
+            // Even a probe that resolves after cancellation must not publish its result.
+            return '1.19.0'
+          }
+        }
+      })
+      const providers: ProviderPreflightAccess = {
+        resolveProviderApiEndpoints: () => [],
+        resolveActiveModel: () => undefined,
+        isProviderKeyUsable: async () => false
+      }
+      const pending =
+        operation === 'getPreflight' ? manager.getPreflight(providers) : manager.checkEnvironment()
+      const outcome = pending.then(
+        () => 'resolved',
+        (error: Error) => error.name
+      )
+      const signals = await Promise.all([claudeEntered.promise, opencodeEntered.promise])
+      let disposed = false
+      const disposal = manager.dispose().then(() => {
+        disposed = true
+      })
+      releaseClaude.resolve()
+      await new Promise<void>((resolve) => setImmediate(resolve))
+      const waitedForSibling = !disposed
+      releaseOpencode.resolve()
+      await disposal
+
+      expect(signals.map((signal) => signal?.aborted)).toEqual([true, true])
+      expect(waitedForSibling).toBe(true)
+      expect(await outcome).toBe('AbortError')
+      expect(await repository.getSettings()).toMatchObject({
+        claude: { version: 'old' },
+        opencodeVersion: 'old'
+      })
+      await expect(
+        operation === 'getPreflight' ? manager.getPreflight(providers) : manager.checkEnvironment()
+      ).rejects.toMatchObject({ name: 'AbortError' })
+    }
+  )
+
+  it('propagates failed installation cleanup through disposal', async () => {
+    const entered = Promise.withResolvers<void>()
+    const cleanupFailure = new Error('Installer cleanup was not confirmed')
+    runInstallWithFallbackSpy.mockImplementation(
+      ({ signal, installId, onCleanupFailure }) =>
+        new Promise((resolve) => {
+          signal.addEventListener(
+            'abort',
+            () => {
+              onCleanupFailure?.(cleanupFailure)
+              resolve({ installId, ok: false, error: 'Installation cancelled.' })
+            },
+            { once: true }
+          )
+          entered.resolve()
+        })
+    )
+    const install = manager.installClaude({ source: 'npm' }, vi.fn())
+    await entered.promise
+    await expect(manager.dispose()).rejects.toBe(cleanupFailure)
+    await expect(install).resolves.toMatchObject({ ok: false })
+  })
+
+  it('rejects new detection and install work after disposal starts', async () => {
+    await manager.dispose()
+
+    await expect(manager.detectClaude(new AbortController().signal)).rejects.toMatchObject({
+      name: 'AbortError'
+    })
+    await expect(manager.installClaude({ source: 'managed' }, vi.fn())).resolves.toMatchObject({
+      ok: false,
+      error: 'Settings service is shutting down.'
+    })
+  })
+
+  it('cancels the default Codex JavaScript adapter version probe promptly', async () => {
+    await mkdir(dirname(managedAdapterPath), { recursive: true })
+    await writeFile(managedAdapterPath, 'setTimeout(() => {}, 1000)\n')
+    inventory.opencode.set(managedAdapterPath, 'unused')
+    manager = createManager({ codexDetectDeps: undefined })
+    const controller = new AbortController()
+    const startedAt = Date.now()
+    setTimeout(() => controller.abort(), 25)
+
+    await expect(manager.detectCodex(controller.signal)).rejects.toMatchObject({
+      name: 'AbortError'
+    })
+    expect(Date.now() - startedAt).toBeLessThan(750)
   })
 
   it('rejects and clears a cached CodeBuddy runtime outside the pinned version', async () => {
@@ -681,6 +875,51 @@ describe('AgentRuntimeManager', () => {
       error: 'second installer was invoked'
     })
     expect(installManagedOpencodeImpl).toHaveBeenCalledOnce()
+  })
+
+  it('rejects managed runtime installs while update handoff holds admission', async () => {
+    const installManagedClaudeImpl: NonNullable<ManagerOptions['installManagedClaudeImpl']> = vi.fn(
+      async ({ installId }) => ({
+        result: { installId, ok: false, error: 'installer was invoked' }
+      })
+    )
+    manager = createManager({ installManagedClaudeImpl })
+    const releaseAdmission = manager.holdInstallAdmission()
+
+    try {
+      await expect(manager.installClaude({ source: 'managed' }, vi.fn())).resolves.toMatchObject({
+        ok: false,
+        error: 'Another install is already in progress.'
+      })
+      expect(installManagedClaudeImpl).not.toHaveBeenCalled()
+    } finally {
+      releaseAdmission()
+    }
+
+    await manager.installClaude({ source: 'managed' }, vi.fn())
+    expect(installManagedClaudeImpl).toHaveBeenCalledOnce()
+  })
+
+  it('keeps admission closed until every overlapping handoff releases it', async () => {
+    const installManagedClaudeImpl: NonNullable<ManagerOptions['installManagedClaudeImpl']> = vi.fn(
+      async ({ installId }) => ({
+        result: { installId, ok: false, error: 'installer was invoked' }
+      })
+    )
+    manager = createManager({ installManagedClaudeImpl })
+    const releaseUpdate = manager.holdInstallAdmission()
+    const releaseDataRoot = manager.holdInstallAdmission()
+
+    releaseUpdate()
+    await expect(manager.installClaude({ source: 'managed' }, vi.fn())).resolves.toMatchObject({
+      ok: false,
+      error: 'Another install is already in progress.'
+    })
+    expect(installManagedClaudeImpl).not.toHaveBeenCalled()
+
+    releaseDataRoot()
+    await manager.installClaude({ source: 'managed' }, vi.fn())
+    expect(installManagedClaudeImpl).toHaveBeenCalledOnce()
   })
 
   it('keeps managed CodeBuddy installs behind the shared install lock', async () => {

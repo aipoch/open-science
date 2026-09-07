@@ -37,8 +37,13 @@ const upsertReview = (
   updated: ReviewWithChecks
 ): ReviewWithChecks[] => {
   const current = reviews.find((r) => r.id === updated.id)
-  const merged =
-    current && updated.stale === undefined ? { ...updated, stale: current.stale } : updated
+  const merged = current
+    ? {
+        ...updated,
+        stale: updated.stale ?? current.stale,
+        verificationUnavailable: updated.verificationUnavailable ?? current.verificationUnavailable
+      }
+    : updated
   const without = reviews.filter((r) => r.id !== updated.id)
   return [merged, ...without].sort((a, b) => b.createdAt - a.createdAt)
 }
@@ -70,7 +75,14 @@ const mergeLoadedReviews = (
     // recompute keeps the existing stale rather than replacing it with undefined.
     const stale = review.stale ?? current.stale
     const base = review.updatedAt > current.updatedAt ? review : current
-    byId.set(review.id, base.stale === stale ? base : { ...base, stale })
+    const verificationUnavailable =
+      review.verificationUnavailable ?? current.verificationUnavailable
+    byId.set(
+      review.id,
+      base.stale === stale && base.verificationUnavailable === verificationUnavailable
+        ? base
+        : { ...base, stale, verificationUnavailable }
+    )
   }
   return [...byId.values()].sort((a, b) => b.createdAt - a.createdAt)
 }

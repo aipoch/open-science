@@ -5,6 +5,49 @@ import type { PermissionGrantRegistry } from './registry'
 import { createPermissionGrantProjectionController } from './projection-controller'
 
 describe('Permission Grant projection controller', () => {
+  it('does not wait for metadata again when it changes during a revoke commit', async () => {
+    let registryChanged: (() => void) | undefined
+    const projects = { list: vi.fn().mockResolvedValue([{ id: 'p', name: 'Old name' }]) }
+    const remaining = {
+      id: 'other',
+      revision: 1,
+      capability: { kind: 'file_operation', key: 'file:read' },
+      scope: { kind: 'project', projectId: 'p' }
+    }
+    const controller: ReturnType<typeof createPermissionGrantProjectionController> =
+      createPermissionGrantProjectionController({
+        registry: {
+          listCached: () => [remaining],
+          subscribe: (listener: () => void) => {
+            registryChanged = listener
+            return () => undefined
+          },
+          revoke: async () => {
+            controller.invalidateProjection()
+            registryChanged?.()
+            return {
+              grants: [],
+              conflicts: [],
+              receipt: { undoToken: 'receipt', expiresAt: 8000, revokedCount: 1 }
+            }
+          }
+        } as unknown as PermissionGrantRegistry,
+        projects,
+        sessions: { metadataSnapshot: async () => ({ sessions: [], isComplete: true }) },
+        publishChanged: vi.fn()
+      })
+    const result = await controller.revoke({ grants: [{ id: 'revoked', revision: 1 }] })
+    expect(projects.list).toHaveBeenCalledOnce()
+    expect(result).toMatchObject({
+      version: 2,
+      grants: [{ id: 'other', scopeName: null }],
+      incompleteStores: ['projects', 'sessions', 'connector_policy'],
+      receipt: { undoToken: 'receipt' }
+    })
+    expect(JSON.stringify(result)).not.toContain('Old name')
+    controller.dispose()
+  })
+
   it('owns one Registry subscription and versions projections before publishing changes', async () => {
     let registryChanged: (() => void) | undefined
     const registry = {
@@ -94,6 +137,7 @@ describe('Permission Grant projection controller', () => {
     })
     const registry = {
       list: vi.fn().mockResolvedValue([]),
+      listCached: vi.fn().mockReturnValue([]),
       revoke,
       subscribe: vi.fn((listener: () => void) => {
         registryChanged = listener
@@ -232,10 +276,10 @@ describe('Permission Grant projection controller', () => {
     })
 
     await expect(controller.restoreDefaults()).resolves.toMatchObject({
-      restoredCount: 10,
-      version: 10,
-      counts: { global: 10 }
+      restoredCount: 20,
+      version: 20,
+      counts: { global: 20 }
     })
-    expect(remember).toHaveBeenCalledTimes(10)
+    expect(remember).toHaveBeenCalledTimes(20)
   })
 })

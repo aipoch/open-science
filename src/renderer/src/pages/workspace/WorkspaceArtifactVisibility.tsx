@@ -27,7 +27,11 @@ const getMessageArtifacts = (
   )
   const artifactsByLogicalId = new Map<string, MessageArtifact>()
   for (const artifactId of message.artifactIds) {
-    const artifact = artifactsById.get(artifactId) ?? resolvedArtifactsByVersionId?.get(artifactId)
+    const stored = artifactsById.get(artifactId)
+    const artifact =
+      stored?.versionId && stored.isPublished === undefined
+        ? (resolvedArtifactsByVersionId?.get(artifactId) ?? stored)
+        : (stored ?? resolvedArtifactsByVersionId?.get(artifactId))
     if (!artifact) continue
     const logicalId = artifact.versionId
       ? `version:${artifact.versionId}`
@@ -70,6 +74,7 @@ const toResolvedMessageArtifact = (descriptor: ArtifactVersionDescriptor): Messa
   artifactId: descriptor.artifactId,
   versionId: descriptor.versionId,
   versionNumber: descriptor.versionNumber,
+  isPublished: descriptor.isPublished === true,
   kind: 'managed-file',
   path: createArtifactVersionLocator({
     projectId: resolveProjectId(descriptor),
@@ -127,7 +132,11 @@ const useHistoricalArtifactDescriptors = (
       return
     }
     const cache = resolvedRef.current.artifactsByVersionId
-    const storedArtifactIds = new Set((artifacts ?? []).map((artifact) => artifact.id))
+    const storedArtifactIds = new Set(
+      (artifacts ?? [])
+        .filter((artifact) => !artifact.versionId || artifact.isPublished !== undefined)
+        .map((artifact) => artifact.id)
+    )
     const unresolvedVersionIds = [
       ...new Set([
         ...messages.flatMap((message) => message.artifactIds ?? []),

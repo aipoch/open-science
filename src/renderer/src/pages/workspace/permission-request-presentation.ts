@@ -7,6 +7,9 @@ import {
 } from './notebook-tool-names'
 import {
   buildLiteratureToolSummary,
+  getLiteratureLibraryToolAction,
+  isLiteratureLibraryLatexTool,
+  isLiteratureLibraryPdfReadTool,
   isLiteratureReadDocumentTool
 } from './literature-tool-presentation'
 
@@ -300,6 +303,11 @@ const isArtifactWriteRequest = (request: AcpPermissionRequest): boolean =>
 const isLiteratureReadRequest = (request: AcpPermissionRequest): boolean =>
   isMcpPermissionRequest(request) && isLiteratureReadDocumentTool(request.mcpIdentity)
 
+const getLiteratureLibraryRequestAction = (
+  request: AcpPermissionRequest
+): 'format' | 'read' | 'search' | 'save' | undefined =>
+  isMcpPermissionRequest(request) ? getLiteratureLibraryToolAction(request.mcpIdentity) : undefined
+
 const planPermissionPresentation = (
   request: AcpPermissionRequest
 ): PermissionPresentation | undefined => {
@@ -411,6 +419,38 @@ const describePermissionRequest = (request: AcpPermissionRequest): PermissionPre
     }
   }
 
+  const libraryAction = getLiteratureLibraryRequestAction(request)
+  if (libraryAction) {
+    const readsPdf = isLiteratureLibraryPdfReadTool(request.mcpIdentity)
+    const preparesLatex = isLiteratureLibraryLatexTool(request.mcpIdentity)
+    return {
+      actionTitle: preparesLatex
+        ? 'Prepare LaTeX bundle?'
+        : libraryAction === 'format'
+          ? 'Format citation document?'
+          : libraryAction === 'search'
+            ? 'Search literature library?'
+            : readsPdf
+              ? 'Read literature PDF evidence?'
+              : libraryAction === 'read'
+                ? 'Read literature abstract?'
+                : 'Save to Literature Inbox?',
+      categoryLabel: 'Literature library',
+      description: preparesLatex
+        ? 'Packages an already-saved LaTeX document with verified Literature metadata and a BibTeX library.'
+        : libraryAction === 'format'
+          ? 'Formats an already-saved DOCX with verified Literature metadata and Zotero-compatible Word Fields.'
+          : libraryAction === 'search'
+            ? 'Searches your Literature Library without modifying it.'
+            : readsPdf
+              ? 'Retrieves relevant passages with page numbers from one attached PDF without modifying it.'
+              : libraryAction === 'read'
+                ? 'Reads the complete abstract from your Literature Library without modifying it.'
+                : 'Saves discovered literature to Inbox for review.',
+      hideToolIdentity: true
+    }
+  }
+
   const planPresentation = planPermissionPresentation(request)
   if (planPresentation) return planPresentation
 
@@ -487,6 +527,7 @@ const describePermissionRequest = (request: AcpPermissionRequest): PermissionPre
 
 export {
   describePermissionRequest,
+  getLiteratureLibraryRequestAction,
   getNotebookNetworkApproval,
   isArtifactWriteRequest,
   isLiteratureReadRequest,

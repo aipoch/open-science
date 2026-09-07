@@ -23,6 +23,7 @@ import {
 import { useSettingsStore } from '@/stores/settings-store'
 import { localizeCredentialError } from './credential-error-message'
 import { MaskedPasswordField } from './MaskedPasswordField'
+import { DeviceCredentialLoadNotice } from './DeviceCredentialLoadNotice'
 
 type DeviceCredentialEditorProps = {
   credential?: DeviceCredentialView
@@ -152,7 +153,7 @@ export function DeviceCredentialEditor({
         await updateCredential({
           id: activeCredential.id,
           displayName: displayName.trim(),
-          ...(activeCredential.kind !== 'oauth' && secret.trim() ? { secret } : {})
+          ...(secret.trim() ? { secret } : {})
         })
       } else if (kind === 'oauth') {
         const created = await createCredential({
@@ -185,6 +186,8 @@ export function DeviceCredentialEditor({
           }
         })
         setCreatedCredential(created)
+        setSecret('')
+        if (useSettingsStore.getState().deviceCredentialsError) return
         setBusyAction('authenticating')
         try {
           await authenticateCredential({ id: created.id })
@@ -198,9 +201,13 @@ export function DeviceCredentialEditor({
         return
       } else {
         const created = await createCredential({ displayName: displayName.trim(), kind, secret })
+        setCreatedCredential(created)
+        setSecret('')
+        if (useSettingsStore.getState().deviceCredentialsError) return
         onDone(created)
         return
       }
+      setSecret('')
       onDone(createdCredential ? activeCredential : undefined)
     } catch (error) {
       if (kind === 'oauth') setAdvancedOpen(true)
@@ -287,6 +294,8 @@ export function DeviceCredentialEditor({
             {t('Use a name that identifies the account or service.')}
           </span>
         </label>
+
+        {editing ? <DeviceCredentialLoadNotice saved={createdCredential !== undefined} /> : null}
 
         {!editing ? (
           <label className={fieldClassName}>
@@ -519,6 +528,30 @@ export function DeviceCredentialEditor({
           </>
         ) : null}
 
+        {activeCredential?.kind === 'oauth' && activeCredential.oauth?.clientId ? (
+          <label className={fieldClassName}>
+            <span className={labelClassName}>{t('Replacement client secret')}</span>
+            <MaskedPasswordField
+              value={secret}
+              onChange={setSecret}
+              disabled={busy || !encryptionAvailable}
+            />
+            <span className={helperClassName}>{t('Leave blank to keep the stored value.')}</span>
+          </label>
+        ) : null}
+
+        {activeCredential?.kind === 'oauth' &&
+        activeCredential.needsSecret &&
+        encryptionAvailable ? (
+          <p className="text-sm text-status-warning-foreground" role="status">
+            {activeCredential.needsClientSecret
+              ? t(
+                  'Replace the client secret before signing in. Your Connector bindings will be kept.'
+                )
+              : t('The saved sign-in state could not be read. Sign in again to restore it.')}
+          </p>
+        ) : null}
+
         {kind !== 'oauth' ? (
           <label className={fieldClassName}>
             <span className={labelClassName}>
@@ -587,7 +620,7 @@ export function DeviceCredentialEditor({
                 <Button
                   type="button"
                   variant="outline"
-                  disabled={busy || !encryptionAvailable}
+                  disabled={busy || !encryptionAvailable || activeCredential.needsClientSecret}
                   onClick={() => void authenticate()}
                 >
                   {t('Sign in again')}
@@ -605,7 +638,7 @@ export function DeviceCredentialEditor({
               <Button
                 type="button"
                 variant="outline"
-                disabled={busy || !encryptionAvailable}
+                disabled={busy || !encryptionAvailable || activeCredential.needsClientSecret}
                 onClick={() => void authenticate()}
               >
                 {t('Sign in')}

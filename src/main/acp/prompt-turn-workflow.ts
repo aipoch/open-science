@@ -469,6 +469,9 @@ class AcpPromptTurnWorkflow {
                 })
               }
             }
+            // Receipts describe provider acceptance and keep their durable notifications. Only
+            // the current turn may publish live acceptance and Skill completion after those waits.
+            if (!this.isCurrent(turn)) return
             this.safeCallback('provider-prompt-accepted callback failed', () =>
               env.onProviderPromptAccepted?.(sessionId, turn.mode.promptAttemptId)
             )

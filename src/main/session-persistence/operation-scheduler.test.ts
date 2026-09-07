@@ -1,3 +1,4 @@
+import { setImmediate } from 'node:timers/promises'
 import { describe, expect, it } from 'vitest'
 
 import { SessionPersistenceOperationScheduler } from './operation-scheduler'
@@ -19,6 +20,79 @@ const flushMicrotasks = async (): Promise<void> => {
 }
 
 describe('SessionPersistenceOperationScheduler', () => {
+  it.each([false, true])(
+    'rejects identity expansion behind a successor without bypassing earlier owners (transitive: %s)',
+    async (transitive) => {
+      const scheduler = new SessionPersistenceOperationScheduler()
+      const identityGate = createDeferred()
+      const extendGate = createDeferred()
+      const order: string[] = []
+      const identity = scheduler.runSessionIdentity('session-1', async () => {
+        order.push('identity:start')
+        await identityGate.promise
+        order.push('identity:end')
+      })
+      const project = scheduler.runProject('project-1', async (scope) => {
+        await extendGate.promise
+        return scope.runSessionIdentities(['unclaimed-session', 'session-1'], async () => {
+          order.push('nested')
+        })
+      })
+      const successor = scheduler.runSession('project-1', 'session-1', async () => {
+        order.push('successor')
+      })
+      const indirect = transitive
+        ? scheduler.runSession('project-2', 'session-1', async () => {
+            order.push('indirect')
+          })
+        : undefined
+      const global = scheduler.runGlobal(async () => {
+        order.push('global')
+      })
+      const later = scheduler.runProject('project-3', async () => {
+        order.push('later')
+      })
+      let projectSettled = false
+      const projectResult = Promise.allSettled([project]).then((results) => {
+        projectSettled = true
+        return results
+      })
+      extendGate.resolve()
+      await setImmediate()
+      expect(projectSettled).toBe(true)
+      expect(await projectResult).toEqual([
+        {
+          status: 'rejected',
+          reason: new Error(
+            'Session identity reservation conflicted with a later operation. Retry the operation.'
+          )
+        }
+      ])
+      expect(order).toEqual(['identity:start'])
+
+      let allSettled = false
+      const completion = Promise.allSettled([identity, successor, indirect, global, later])
+      void completion.then(() => {
+        allSettled = true
+      })
+      identityGate.resolve()
+      await setImmediate()
+      expect(allSettled).toBe(true)
+      expect((await completion).every((result) => result.status === 'fulfilled')).toBe(true)
+      expect(order).toEqual([
+        'identity:start',
+        'identity:end',
+        'successor',
+        ...(transitive ? ['indirect'] : []),
+        'global',
+        'later'
+      ])
+      await expect(
+        scheduler.runSessionIdentity('unclaimed-session', async () => 'available')
+      ).resolves.toBe('available')
+    }
+  )
+
   it('allows independent Projects to progress concurrently', async () => {
     const scheduler = new SessionPersistenceOperationScheduler()
     const projectOneGate = createDeferred()

@@ -7,7 +7,11 @@ import type { Project } from '../../../shared/projects'
 import { useNavigationStore } from '@/stores/navigation-store'
 import { createInitialProjectState, useProjectStore } from '@/stores/project-store'
 
-import { useProjectFormDialog, type UseProjectFormDialogResult } from './useProjectFormDialog'
+import {
+  useProjectFormDialog,
+  type UseProjectFormDialogOptions,
+  type UseProjectFormDialogResult
+} from './useProjectFormDialog'
 
 // React's act() refuses to run unless the environment opts in to act-aware scheduling.
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
@@ -29,13 +33,15 @@ const setProjectsApi = (api: Partial<Window['api']['projects']>): void => {
 }
 
 // Minimal renderHook harness (the repo does not depend on @testing-library/react).
-const renderHook = (): { current: () => UseProjectFormDialogResult; unmount: () => void } => {
+const renderHook = (
+  options: UseProjectFormDialogOptions = {}
+): { current: () => UseProjectFormDialogResult; unmount: () => void } => {
   let latest: UseProjectFormDialogResult | undefined
   const container = document.createElement('div')
   const root = createRoot(container)
 
   const HookHarness = (): null => {
-    latest = useProjectFormDialog()
+    latest = useProjectFormDialog(options)
     return null
   }
 
@@ -113,6 +119,22 @@ describe('useProjectFormDialog', () => {
     })
     expect(hook.current().dialogProps.open).toBe(false)
     expect(openProject).toHaveBeenCalledWith('created-1', 'user')
+    hook.unmount()
+  })
+
+  it('hands a newly created project to an embedded flow without navigating', async () => {
+    const created = createProject({ id: 'created-for-reading' })
+    setProjectsApi({ create: vi.fn().mockResolvedValue(created) })
+    const onCreated = vi.fn()
+    const hook = renderHook({ onCreated })
+
+    act(() => hook.current().openCreateDialog())
+    act(() => hook.current().dialogProps.onNameChange('Reading project'))
+    await act(async () => submitForm(hook.current()))
+
+    expect(onCreated).toHaveBeenCalledWith(created)
+    expect(openProject).not.toHaveBeenCalled()
+    expect(hook.current().dialogProps.open).toBe(false)
     hook.unmount()
   })
 

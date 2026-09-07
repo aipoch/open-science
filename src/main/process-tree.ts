@@ -316,7 +316,6 @@ const terminatePosixTree = async (
 
   if (exited && survivors.length === 0) return { reaped: snapshot.complete }
 
-  let childExited = exited
   if (survivors.length > 0) {
     log?.error(
       `process tree left ${survivors.length} descendant(s) alive after ${gracefulSignal}; escalating to SIGKILL`
@@ -328,12 +327,17 @@ const terminatePosixTree = async (
       `process ${child.pid ?? '(no pid)'} did not exit after ${gracefulSignal}; escalating to SIGKILL`
     )
     forceKillChild(child)
-    childExited = await waitForExit(child, SIGKILL_GRACE_MS)
   }
 
-  // Re-check after SIGKILL: reaped only if the direct child exited and no descendant is still alive.
+  // SIGKILL delivery is asynchronous. Give descendants the same bounded exit grace even when the
+  // direct child exited first; an immediate probe can otherwise report a successfully stopped tree
+  // as unconfirmed. Wait concurrently so the whole forced pass still has one grace period.
+  const [childExited, descendantsExited] = await Promise.all([
+    exited ? true : waitForExit(child, SIGKILL_GRACE_MS),
+    waitForPidsExit(descendants, SIGKILL_GRACE_MS)
+  ])
   return {
-    reaped: snapshot.complete && childExited && descendants.filter(isProcessAlive).length === 0
+    reaped: snapshot.complete && childExited && descendantsExited
   }
 }
 

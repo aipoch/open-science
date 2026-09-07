@@ -35,6 +35,7 @@ const makeJob = (
 
 const createDeps = (overrides: Partial<JobAnalysisTriggerDeps> = {}): JobAnalysisTriggerDeps => ({
   sendPrompt: vi.fn(async (sessionId, _text, messageId) => ({ sessionId, messageId })),
+  preparePrompt: vi.fn(async (_sessionId, text) => text),
   flushPersistence: vi.fn().mockResolvedValue(undefined),
   createMessageId: vi.fn().mockReturnValue('msg-1'),
   transitionAnalysis: vi.fn().mockResolvedValue(undefined),
@@ -46,6 +47,8 @@ const createDeps = (overrides: Partial<JobAnalysisTriggerDeps> = {}): JobAnalysi
 })
 
 const flushMicrotasks = async (): Promise<void> => {
+  await Promise.resolve()
+  await Promise.resolve()
   await Promise.resolve()
   await Promise.resolve()
   await Promise.resolve()
@@ -66,6 +69,10 @@ describe('buildAnalysisPrompt', () => {
     expect(prompt).toContain('attachJob')
     expect(prompt).not.toContain('attach_job')
     expect(prompt).toContain('result()')
+    expect(prompt).toContain('result.local_output_root')
+    expect(prompt).toContain('producerRunId: result.producer_run_id')
+    expect(prompt).toContain('absolute local path')
+    expect(prompt).toContain('exposed `write_artifact_file` tool')
   })
 
   it('includes all job_ids when multiple jobs are batched', () => {
@@ -114,11 +121,11 @@ describe('createJobAnalysisTrigger — immediate send', () => {
 
     // onTurnEnd should have been called to register a callback
     expect(deps.onTurnEnd).toHaveBeenCalledTimes(1)
-    const [sessionId, callback] = (deps.onTurnEnd as ReturnType<typeof vi.fn>).mock.calls[0] as [
-      string,
-      (outcome: 'succeeded' | 'failed' | 'cancelled') => void
-    ]
+    const [sessionId, messageId, callback] = (deps.onTurnEnd as ReturnType<typeof vi.fn>).mock
+      .calls[0] as [string, string, (outcome: 'succeeded' | 'failed' | 'cancelled') => void]
     expect(sessionId).toBe('sess-1')
+
+    expect(messageId).toBe('msg-1')
 
     // Simulate turn completion by invoking the callback
     callback('succeeded')
@@ -149,7 +156,7 @@ describe('createJobAnalysisTrigger — immediate send', () => {
         .mockResolvedValue([
           makeJob({ analysis_state: 'dispatched', analysis_message_id: 'msg-1' })
         ]),
-      onTurnEnd: vi.fn((_sessionId, callback) => {
+      onTurnEnd: vi.fn((_sessionId, _messageId, callback) => {
         turnEndCallback = callback
       })
     })
@@ -201,7 +208,7 @@ describe('createJobAnalysisTrigger — immediate send', () => {
     const deps = createDeps({
       transitionAnalysis,
       getJobsForSession: vi.fn().mockResolvedValue([]),
-      onTurnEnd: vi.fn((_sessionId, callback) => {
+      onTurnEnd: vi.fn((_sessionId, _messageId, callback) => {
         turnEndCallback = callback
       })
     })
@@ -442,7 +449,7 @@ describe('createJobAnalysisTrigger — queuing', () => {
         .mockReturnValueOnce('msg-1')
         .mockReturnValueOnce('msg-2'),
       transitionAnalysis,
-      onTurnEnd: vi.fn((_sessionId, callback) => {
+      onTurnEnd: vi.fn((_sessionId, _messageId, callback) => {
         turnEndCallbacks.push(callback)
       })
     })
@@ -482,7 +489,7 @@ describe('createJobAnalysisTrigger — queuing', () => {
   it('serializes recovered and pending analysis batches for the same session', async () => {
     const turnEndCallbacks: Array<(outcome: 'succeeded' | 'failed' | 'cancelled') => void> = []
     const deps = createDeps({
-      onTurnEnd: vi.fn((_sessionId, callback) => {
+      onTurnEnd: vi.fn((_sessionId, _messageId, callback) => {
         turnEndCallbacks.push(callback)
       })
     })
@@ -558,4 +565,115 @@ describe('createJobAnalysisTrigger — cross-session isolation', () => {
     const [sessionId] = (deps.sendPrompt as ReturnType<typeof vi.fn>).mock.calls[0] as [string]
     expect(sessionId).toBe('sess-xyz')
   })
+})
+
+describe('createJobAnalysisTrigger — recovery reads', () => {
+  it('backs off unknown outcomes and cancels the retry on disposal', async () => {
+    vi.useFakeTimers()
+    const getTurnState = vi.fn().mockRejectedValue(new Error('Temporary read failure'))
+    const deps = createDeps({ getTurnState })
+    const trigger = createJobAnalysisTrigger(deps)
+    const job = makeJob({ analysis_state: 'dispatched', analysis_message_id: 'saved-message' })
+    trigger.onJobDone(job)
+    await flushMicrotasks()
+    expect(getTurnState).toHaveBeenCalledTimes(1)
+    for (const [index, delay] of [1000, 2000, 4000, 8000, 16000, 30000, 30000].entries()) {
+      trigger.onJobDone(job)
+      await vi.advanceTimersByTimeAsync(delay - 1)
+      expect(getTurnState).toHaveBeenCalledTimes(index + 1)
+      await vi.advanceTimersByTimeAsync(1)
+      expect(getTurnState).toHaveBeenCalledTimes(index + 2)
+    }
+    expect(deps.transitionAnalysis).not.toHaveBeenCalled()
+    expect(deps.sendPrompt).not.toHaveBeenCalled()
+    trigger.dispose()
+    await vi.advanceTimersByTimeAsync(60000)
+    expect(getTurnState).toHaveBeenCalledTimes(8)
+    expect(vi.getTimerCount()).toBe(0)
+  })
+
+  it('keeps new pending jobs out of a claimed batch after a preparation read failure', async () => {
+    vi.useFakeTimers()
+    let rejectRead!: (error: Error) => void
+    const preparePrompt = vi
+      .fn<JobAnalysisTriggerDeps['preparePrompt']>()
+      .mockImplementationOnce(
+        () =>
+          new Promise((_resolve, reject) => {
+            rejectRead = reject
+          })
+      )
+      .mockImplementation(async (_sessionId, text) => text)
+    const callbacks: Array<(outcome: 'succeeded' | 'failed' | 'cancelled') => void> = []
+    const deps = createDeps({
+      preparePrompt,
+      createMessageId: vi
+        .fn()
+        .mockReturnValueOnce('first-message')
+        .mockReturnValueOnce('second-message'),
+      onTurnEnd: vi.fn((_sessionId, _messageId, callback) => {
+        callbacks.push(callback)
+      })
+    })
+    const trigger = createJobAnalysisTrigger(deps)
+    trigger.onJobDone(makeJob({ job_id: 'first-job' }))
+    await flushMicrotasks()
+    trigger.onJobDone(makeJob({ job_id: 'second-job' }))
+    rejectRead(new Error('Temporary Session read failure'))
+    await flushMicrotasks()
+    expect(deps.sendPrompt).not.toHaveBeenCalled()
+    await vi.advanceTimersByTimeAsync(1000)
+    expect(deps.sendPrompt).toHaveBeenCalledExactlyOnceWith(
+      'sess-1',
+      expect.stringContaining('first-job'),
+      'first-message',
+      ['first-job']
+    )
+    callbacks[0]!('succeeded')
+    await flushMicrotasks()
+    await flushMicrotasks()
+    expect(deps.sendPrompt).toHaveBeenLastCalledWith(
+      'sess-1',
+      expect.stringContaining('second-job'),
+      'second-message',
+      ['second-job']
+    )
+    expect(deps.transitionAnalysis).toHaveBeenCalledWith(
+      expect.objectContaining({
+        state: 'dispatched',
+        messageId: 'first-message',
+        jobIds: ['first-job']
+      })
+    )
+    expect(deps.transitionAnalysis).toHaveBeenCalledWith(
+      expect.objectContaining({
+        state: 'dispatched',
+        messageId: 'second-message',
+        jobIds: ['second-job']
+      })
+    )
+    trigger.dispose()
+  })
+
+  it.each(['succeeded', 'failed', 'cancelled'] as const)(
+    'settles a recovered %s outcome once without sending another prompt',
+    async (outcome) => {
+      const deps = createDeps({ getTurnState: vi.fn().mockResolvedValue(outcome) })
+      const trigger = createJobAnalysisTrigger(deps)
+      trigger.onJobDone(
+        makeJob({ analysis_state: 'dispatched', analysis_message_id: 'saved-message' })
+      )
+      await flushMicrotasks()
+      await flushMicrotasks()
+      expect(deps.transitionAnalysis).toHaveBeenCalledExactlyOnceWith({
+        sessionId: 'sess-1',
+        messageId: 'saved-message',
+        jobIds: ['job-1'],
+        state: outcome
+      })
+      expect(deps.sendPrompt).not.toHaveBeenCalled()
+      expect(deps.onTurnEnd).not.toHaveBeenCalled()
+      trigger.dispose()
+    }
+  )
 })

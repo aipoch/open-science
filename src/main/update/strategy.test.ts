@@ -95,7 +95,7 @@ describe('createDataRootResearchSafeInstallGate', () => {
     }
   )
 
-  it.each(['delegated', 'reviewer'] as const)(
+  it.each(['delegated', 'reviewer', 'settings-install'] as const)(
     'still refuses confirmed migration while %s work is active',
     async (blocker) => {
       const teardown = vi.fn<InstallGate>().mockResolvedValue({ completed: true, reaped: true })

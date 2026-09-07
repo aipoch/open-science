@@ -3,6 +3,7 @@ import type { ComputeHost as PrismaComputeHost, PrismaClient } from '@prisma/cli
 import type {
   ComputeHost,
   ComputeAuthenticationMode,
+  ComputeExecutionMode,
   ComputeHostShape,
   CreateComputeHostRequest,
   DetailsAuthor,
@@ -193,6 +194,11 @@ const asShape = (value: string): ComputeHostShape => {
   throw new Error(`Compute Host data is corrupt or unsupported: unknown shape ${value}.`)
 }
 
+const asExecutionMode = (value: string): ComputeExecutionMode => {
+  if (value === 'direct_ssh' || value === 'slurm') return value
+  throw new Error(`Compute Host data is corrupt or unsupported: unknown execution mode ${value}.`)
+}
+
 const asAuthor = (value: string | null): DetailsAuthor | undefined => {
   if (value === null) return undefined
   if (value === 'user' || value === 'agent') return value
@@ -231,6 +237,7 @@ const toHost = (row: PrismaComputeHost, hasCredential = false): ComputeHost => (
   providerId: row.providerId,
   displayName: row.displayName,
   shape: asShape(row.shape),
+  executionMode: asExecutionMode(row.executionMode ?? 'direct_ssh'),
   sshAlias: row.sshAlias,
   sshOverrides: parseComputeJson(row.sshOverrides, decodeSshOverrides, 'sshOverrides'),
   authentication: {
@@ -323,6 +330,7 @@ class ComputeHostRepository {
   // Creates a host record. Validates the alias, the 32 KiB details cap, and rejects a duplicate
   // provider_id with a readable error before inserting. No SSH connection is made in Phase 1.
   async create(request: CreateComputeHostRequest): Promise<ComputeHost> {
+    const executionMode = asExecutionMode(request.executionMode ?? 'direct_ssh')
     const profile = validateHostConnectionProfile({
       sshAlias: request.sshAlias,
       displayName: request.displayName,
@@ -356,6 +364,7 @@ class ComputeHostRepository {
     const row = await client.computeHost.create({
       data: {
         providerId,
+        executionMode,
         displayName: profile.displayName,
         sshAlias: alias,
         sshOverrides: serializeOverrides({
@@ -403,6 +412,7 @@ class ComputeHostRepository {
       const host = await transaction.computeHost.create({
         data: {
           providerId,
+          executionMode: asExecutionMode(request.executionMode ?? 'direct_ssh'),
           displayName: request.displayName?.trim() || alias,
           sshAlias: alias,
           sshOverrides: serializeOverrides({ user: request.username, port: request.port }),
@@ -732,62 +742,53 @@ class ComputeHostRepository {
     )
   }
 
-  // Writes the structured probe snapshot and inferred shape. Never touches detailsDoc (design.md §4).
+  // Commit the observed identity's snapshot and automatic path in one persistence boundary.
   async updateProbeResult(
     providerId: string,
     result: ProbeResult,
-    shape: ComputeHostShape
-  ): Promise<void> {
+    shape: ComputeHostShape,
+    hostId: string,
+    scratchRoot?: string
+  ): Promise<boolean> {
+    if (!Number.isInteger(result.authenticationRevision)) return false
+    const safeScratchRoot =
+      scratchRoot === undefined ? undefined : assertSafeScratchRoot(scratchRoot)
     const client = await this.getClient()
-
-    if (Number.isInteger(result.authenticationRevision)) {
-      await client.computeHost.updateMany({
-        where: { providerId, authenticationRevision: result.authenticationRevision },
-        data: {
-          probeResult: serializeProbeResult(result),
-          shape
-        }
-      })
-      return
-    }
-    await client.computeHost.update({
-      where: { providerId },
-      data: {
-        probeResult: serializeProbeResult(result),
-        shape
+    return client.$transaction(async (transaction) => {
+      const where = {
+        id: hostId,
+        providerId,
+        authenticationRevision: result.authenticationRevision
       }
+      const updated = await transaction.computeHost.updateMany({
+        where,
+        data: { probeResult: serializeProbeResult(result), ...(result.ok ? { shape } : {}) }
+      })
+      if (updated.count !== 1) return false
+      if (result.ok && safeScratchRoot !== undefined) {
+        await transaction.computeHost.updateMany({
+          where: { ...where, scratchPinned: false },
+          data: { scratchRoot: safeScratchRoot }
+        })
+      }
+      return true
     })
   }
 
-  // Updates scratchRoot when the probe reads $SCRATCH and scratchPinned is false. Probe callers
-  // must check scratchPinned before calling (ComputeService.probe does this).
-  async updateScratchRoot(providerId: string, scratchRoot: string): Promise<void> {
-    const safeScratchRoot = assertSafeScratchRoot(scratchRoot)
-    const client = await this.getClient()
-
-    await client.computeHost.update({
-      where: { providerId },
-      data: { scratchRoot: safeScratchRoot }
-    })
-  }
-
-  // Writes detailsDoc and records who edited it (user or agent) and when. Called by
-  // ComputeService.replaceDetails (UI + agent-facing). Never called by probe.
+  // Compare and write atomically; author metadata belongs only to the accepted save.
   async updateDetails(
     providerId: string,
     detailsDoc: string,
-    author: DetailsAuthor
-  ): Promise<void> {
+    author: DetailsAuthor,
+    hostId: string,
+    oldText: string
+  ): Promise<boolean> {
     const client = await this.getClient()
-
-    await client.computeHost.update({
-      where: { providerId },
-      data: {
-        detailsDoc,
-        detailsUpdatedBy: author,
-        detailsUpdatedAt: new Date()
-      }
+    const updated = await client.computeHost.updateMany({
+      where: { id: hostId, providerId, detailsDoc: oldText },
+      data: { detailsDoc, detailsUpdatedBy: author, detailsUpdatedAt: new Date() }
     })
+    return updated.count === 1
   }
 
   // Updates scratchRoot and sets scratchPinned=true. Called when the user explicitly sets a
@@ -819,6 +820,17 @@ class ComputeHostRepository {
     await client.computeHost.update({
       where: { providerId },
       data: { concurrencyLimit }
+    })
+  }
+
+  async updateExecutionMode(
+    providerId: string,
+    executionMode: ComputeExecutionMode
+  ): Promise<void> {
+    const client = await this.getClient()
+    await client.computeHost.update({
+      where: { providerId },
+      data: { executionMode: asExecutionMode(executionMode) }
     })
   }
 }

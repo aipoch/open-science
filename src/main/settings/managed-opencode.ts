@@ -1,9 +1,10 @@
-import { spawnSync, type SpawnSyncReturns } from 'node:child_process'
+import { execFile, spawnSync } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import { constants, readFileSync, type Dirent, type Stats } from 'node:fs'
 import { chmod, lstat, mkdir, open, readdir, rename, rm, writeFile } from 'node:fs/promises'
 import { arch as osArch } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
+import { promisify } from 'node:util'
 
 import type { ClaudeInstallEvent } from '../../shared/settings'
 import {
@@ -16,6 +17,8 @@ import {
   type FetchTarball,
   type ManagedInstallOutcome
 } from './managed-claude'
+
+const execFileAsync = promisify(execFile)
 
 // App-managed OpenCode installer. opencode ships per-platform native packages
 // (`opencode-<os>-<arch>[-musl]`) as optionalDependencies of the `opencode-ai` wrapper, with the binary
@@ -281,12 +284,13 @@ const resolveNative = async (
   registry: string,
   key: string,
   version: string | undefined,
-  fetchJson: FetchJson
+  fetchJson: FetchJson,
+  signal?: AbortSignal
 ): Promise<{ version: string; tarball: string; integrity: string }> => {
   let resolvedVersion = version
 
   if (!resolvedVersion) {
-    const wrapper = asRecord(await fetchJson(`${registry}/${OPENCODE_WRAPPER}`))
+    const wrapper = asRecord(await fetchJson(`${registry}/${OPENCODE_WRAPPER}`, signal))
     const latest = asRecord(wrapper['dist-tags']).latest
     if (typeof latest !== 'string' || latest.length === 0) {
       throw new Error('Registry did not report a latest opencode version')
@@ -295,7 +299,7 @@ const resolveNative = async (
   }
 
   const meta = asRecord(
-    await fetchJson(`${registry}/${OPENCODE_PLATFORM_PREFIX}-${key}/${resolvedVersion}`)
+    await fetchJson(`${registry}/${OPENCODE_PLATFORM_PREFIX}-${key}/${resolvedVersion}`, signal)
   )
   const dist = asRecord(meta.dist)
   const tarball = dist.tarball
@@ -314,7 +318,10 @@ const resolveNative = async (
 // `illegalInstruction` flag (the AVX2-baseline signal) so the caller can add an actionable hint.
 export type VerifyBinaryResult =
   { ok: true } | { ok: false; reason: string; illegalInstruction: boolean }
-export type VerifyBinary = (binPath: string) => VerifyBinaryResult
+export type VerifyBinary = (
+  binPath: string,
+  signal?: AbortSignal
+) => VerifyBinaryResult | Promise<VerifyBinaryResult>
 
 // Windows reports an illegal instruction not as a signal but as NTSTATUS STATUS_ILLEGAL_INSTRUCTION in
 // the exit status. Node surfaces it as the unsigned value (3221225501) or its signed 32-bit form
@@ -323,20 +330,37 @@ const ILLEGAL_INSTRUCTION_STATUS = 0xc000001d
 const isIllegalInstructionStatus = (status: number | null | undefined): boolean =>
   status === ILLEGAL_INSTRUCTION_STATUS || status === (ILLEGAL_INSTRUCTION_STATUS | 0)
 
-// Just the fields of a spawnSync result the classifier reads.
-export type VersionProbe = Partial<Pick<SpawnSyncReturns<string>, 'error' | 'signal' | 'status'>>
+export type VersionProbe = {
+  error?: Error
+  signal?: NodeJS.Signals | null
+  status?: number | null
+}
 export type VersionProbeSpawn = (
   command: string,
   args: readonly string[],
-  options: { encoding: 'utf8'; timeout: number }
-) => VersionProbe
+  options: { encoding: 'utf8'; timeout: number; signal?: AbortSignal }
+) => VersionProbe | Promise<VersionProbe>
+
+const spawnVersionProbe: VersionProbeSpawn = async (command, args, options) => {
+  try {
+    await execFileAsync(command, args, options)
+    return { status: 0 }
+  } catch (error) {
+    const failure = error as Error & { code?: string | number; signal?: NodeJS.Signals }
+    if (failure.signal) return { signal: failure.signal }
+    if (typeof failure.code === 'number') return { status: failure.code }
+    return { error: failure }
+  }
+}
 
 // Runs the installed binary with `--version`. The injectable spawn (defaulting to the real spawnSync)
 // lets tests lock the exact args and timeout without a real process.
 export const runVersionProbe = (
   binPath: string,
-  spawn: VersionProbeSpawn = spawnSync as unknown as VersionProbeSpawn
-): VersionProbe => spawn(binPath, ['--version'], { encoding: 'utf8', timeout: 15_000 })
+  spawn: VersionProbeSpawn = spawnVersionProbe,
+  signal?: AbortSignal
+): Promise<VersionProbe> =>
+  Promise.resolve(spawn(binPath, ['--version'], { encoding: 'utf8', timeout: 15_000, signal }))
 
 // Pure classifier for a version probe. A spawn error, a terminating signal, or a non-zero exit all mean
 // the binary is not usable here; `illegalInstruction` is the AVX2-baseline signal (SIGILL on POSIX, the
@@ -365,8 +389,8 @@ export const classifyVerifyResult = (
 
 // Default verifier: probe the installed binary, then classify. Exported so the production classification
 // (not just injected fakes) is exercised by tests.
-export const defaultVerifyBinary: VerifyBinary = (binPath) =>
-  classifyVerifyResult(runVersionProbe(binPath))
+export const defaultVerifyBinary: VerifyBinary = async (binPath, signal) =>
+  classifyVerifyResult(await runVersionProbe(binPath, undefined, signal))
 
 // The baseline native package inserts `baseline` right after the x64 arch token, BEFORE any `-musl`
 // suffix, matching what opencode publishes: linux-x64 → linux-x64-baseline, linux-x64-musl →
@@ -384,6 +408,7 @@ export type InstallManagedOpencodeOptions = {
   fetchTarball?: FetchTarball
   verifyBinary?: VerifyBinary
   detectAvx2?: () => boolean
+  signal?: AbortSignal
   renamePath?: typeof rename
   tmpDir?: string
 }
@@ -459,6 +484,7 @@ export const installManagedOpencode = async ({
   fetchTarball = defaultFetchTarball,
   verifyBinary = defaultVerifyBinary,
   detectAvx2: detectAvx2Dep = detectAvx2,
+  signal,
   renamePath = rename,
   tmpDir
 }: InstallManagedOpencodeOptions): Promise<ManagedInstallOutcome> => {
@@ -489,7 +515,7 @@ export const installManagedOpencode = async ({
         stream: 'system',
         chunk: `Resolving ${OPENCODE_PLATFORM_PREFIX}-${packageKey} from ${registry} …\n`
       })
-      const resolution = await resolveNative(registry, packageKey, pinnedVersion, fetchJson)
+      const resolution = await resolveNative(registry, packageKey, pinnedVersion, fetchJson, signal)
 
       await downloadAndVerify({
         url: resolution.tarball,
@@ -497,14 +523,16 @@ export const installManagedOpencode = async ({
         destPath: tgzPath,
         installId,
         onEvent,
-        fetchTarball
+        fetchTarball,
+        signal
       })
 
       onEvent({ kind: 'progress', installId, phase: 'extracting' })
       const found = await extractFileFromTgz({
         tgzPath,
         entryName: `package/bin/${platform.binName}`,
-        destPath: stagedPath
+        destPath: stagedPath,
+        signal
       })
 
       if (!found) throw new Error(`Native package did not contain bin/${platform.binName}`)
@@ -512,7 +540,9 @@ export const installManagedOpencode = async ({
 
       // Smoke-check the staged binary before reporting success — a clean download does not guarantee
       // it runs on this CPU. Report a soft failure so no broken candidate is published.
-      const verification = verifyBinary(stagedPath)
+      signal?.throwIfAborted()
+      const verification = await verifyBinary(stagedPath, signal)
+      signal?.throwIfAborted()
       if (!verification.ok) {
         const illegalInstruction = verification.illegalInstruction
         const hint = illegalInstruction
@@ -526,6 +556,7 @@ export const installManagedOpencode = async ({
         }
       }
       await ensureOpencodeRuntimeOwnerMarker(stagedRoot)
+      signal?.throwIfAborted()
 
       return { ok: true, version: resolution.version }
     } finally {
@@ -599,6 +630,7 @@ export const installManagedOpencode = async ({
               first.resolvedVersion
             )
           } catch {
+            signal?.throwIfAborted()
             // Baseline unavailable (e.g. 404): fall through to the illegal-instruction/AVX2 error below.
           }
           if (baseline?.ok) {
@@ -627,6 +659,7 @@ export const installManagedOpencode = async ({
           stream: 'system',
           chunk: `${registry} failed: ${lastError}\n`
         })
+        if (signal?.aborted) return { result: { installId, ok: false, error: lastError } }
         if (reachedPublication) return { result: { installId, ok: false, error: lastError } }
       }
     }

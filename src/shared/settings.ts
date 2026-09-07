@@ -1124,6 +1124,8 @@ export type SkillView = {
 // A skill view plus its SKILL.md body (frontmatter stripped) and the names of any files under its
 // `references/` directory, for the detail/edit view.
 export type SkillDetailView = SkillView & {
+  // Opaque read-time validator for conditional saves; not a stored revision counter.
+  etag?: string
   body: string
   metadata?: Record<string, string>
   references: SkillReferenceInfo[]
@@ -1191,6 +1193,8 @@ export type CreateSkillRequest = {
 // Update an existing personal skill through a staged package replacement.
 export type UpdateSkillRequest = {
   id: string
+  // Omit for an unconditional update; supplied etags are checked before any write.
+  etag?: string
   description: string
   body: string
   metadata?: Record<string, string>
@@ -1391,6 +1395,7 @@ export type ImportAgentHomeSkillsResult = {
 
 // One skill directory found by a repo scan, with an importable URL and whether it's already imported.
 export type ScannedSkillView = {
+  installedId?: string
   name: string
   path: string
   url: string
@@ -1548,6 +1553,8 @@ export type DeviceCredentialView = {
   transport?: DeviceOAuthTransport
   oauth?: DeviceOAuthRegistration
   hasClientSecret?: boolean
+  // Derived separately from unreadable OAuth login state; never persisted.
+  needsClientSecret?: boolean
   consumerCount: number
   consumerNames: string[]
   createdAt: number
@@ -1555,7 +1562,9 @@ export type DeviceCredentialView = {
 }
 
 export type DeviceCredentialsSnapshot = { credentials: DeviceCredentialView[] }
-export type CreateDeviceCredentialResult = DeviceCredentialsSnapshot & {
+export type CreateDeviceCredentialResult = {
+  // Missing when creation committed but the full consumer projection could not be read.
+  credentials?: DeviceCredentialView[]
   createdCredential: DeviceCredentialView
 }
 
@@ -1684,6 +1693,7 @@ export type UpdateCustomServerRequest = {
   description?: string
   transport: CustomServerTransport
   command?: string
+  // Omitted keeps saved args while staying on stdio; [] explicitly clears them.
   args?: string[]
   env?: Record<string, string>
   envCredentialIds?: Record<string, string>

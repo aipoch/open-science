@@ -689,7 +689,21 @@ class SessionPersistenceStateOwner {
   async stageTaskCompletion(
     command: StageTaskSessionCompletionRequest
   ): Promise<PersistedChatSession> {
-    const session = await this.loadTaskRunAuthority(command)
+    const session = await this.loadTaskRunAuthority(command, {
+      stagedMessage: command.message
+    })
+    const activeMessages = resolveActiveConversationMessages(
+      materializeSessionConversationGraph(session).conversationGraph
+    )
+    const rendererSettledMessage =
+      session.activeRun === undefined
+        ? activeMessages.findLast(
+            (message) =>
+              message.role === 'agent' &&
+              message.status === 'complete' &&
+              message.responseToMessageId === command.promptMessageId
+          )
+        : undefined
     const messageIds = new Set(session.messages.map(({ id }) => id))
     const activities = (session.activities ?? []).map((activity) => structuredClone(activity))
     const activityById = new Map(activities.map((activity) => [activity.id, activity]))
@@ -710,7 +724,7 @@ class SessionPersistenceStateOwner {
     const candidate = materializeSessionConversationGraph({
       ...session,
       messages:
-        command.message && !messageIds.has(command.message.id)
+        command.message && !rendererSettledMessage && !messageIds.has(command.message.id)
           ? [...session.messages, structuredClone(command.message)]
           : session.messages,
       activities,
@@ -723,7 +737,9 @@ class SessionPersistenceStateOwner {
   async settleTaskCompletion(
     command: SettleTaskSessionCompletionRequest
   ): Promise<PersistedChatSession> {
-    const session = await this.loadTaskRunAuthority(command)
+    const session = await this.loadTaskRunAuthority(command, {
+      settledMessageId: command.messageId
+    })
     return this.persistTaskTerminalState(session, command, {
       status: 'idle',
       error: undefined,
@@ -732,7 +748,9 @@ class SessionPersistenceStateOwner {
   }
 
   async failTaskRun(command: FailTaskSessionRunRequest): Promise<PersistedChatSession> {
-    const session = await this.loadTaskRunAuthority(command, command.messageId)
+    const session = await this.loadTaskRunAuthority(command, {
+      settledMessageId: command.messageId
+    })
     return this.persistTaskTerminalState(session, command, {
       status: 'error',
       error: command.error,
@@ -746,7 +764,10 @@ class SessionPersistenceStateOwner {
       sessionId: string
       promptMessageId: string
     },
-    settledMessageId?: string
+    proof: Readonly<{
+      settledMessageId?: string
+      stagedMessage?: PersistedChatMessage
+    }> = {}
   ): Promise<PersistedChatSession> {
     this.options.assertMutable(command.projectId, command.sessionId, 'mutate')
     const loaded = await loadAuthority(
@@ -757,6 +778,7 @@ class SessionPersistenceStateOwner {
     if (loaded.status !== 'found') {
       throw new Error(`Cannot mutate Task completion for a ${loaded.status} Session.`)
     }
+    const { settledMessageId, stagedMessage } = proof
     const ownsActiveRun = loaded.session.activeRun?.promptMessageId === command.promptMessageId
     const ownsSettledMessage =
       loaded.session.activeRun === undefined &&
@@ -765,7 +787,23 @@ class SessionPersistenceStateOwner {
         (message) =>
           message.id === settledMessageId && message.responseToMessageId === command.promptMessageId
       )
-    if (!ownsActiveRun && !ownsSettledMessage) {
+    const materializedGraph = materializeSessionConversationGraph(loaded.session).conversationGraph
+    const activeMessages = materializedGraph
+      ? resolveActiveConversationMessages(materializedGraph)
+      : loaded.session.messages
+    const ownsStagedMessage =
+      loaded.session.activeRun === undefined &&
+      stagedMessage?.role === 'agent' &&
+      stagedMessage.status === 'complete' &&
+      stagedMessage.responseToMessageId === command.promptMessageId &&
+      activeMessages.some((message) => message.id === command.promptMessageId) &&
+      activeMessages.some(
+        (message) =>
+          message.role === 'agent' &&
+          message.status === 'complete' &&
+          message.responseToMessageId === command.promptMessageId
+      )
+    if (!ownsActiveRun && !ownsSettledMessage && !ownsStagedMessage) {
       throw new Error('Task completion no longer owns the active Session run.')
     }
     return loaded.session

@@ -23,6 +23,12 @@ import {
   type LocalResourceBudgetOverrides
 } from '../resource-budget'
 import { availableBytes } from '../storage/usage'
+import {
+  contentBlobIdForVersion,
+  markContentBlobAvailable,
+  registerContentBlob
+} from '../storage/content-blob-registry'
+import type { PreparedArtifactLiteratureManifest } from './literature-manifest'
 
 const SAFE_SEGMENT_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]*$/
 const SHA256_PATTERN = /^[a-f0-9]{64}$/
@@ -88,6 +94,9 @@ type CompatibilityRoutingPublicationOptions = {
   signal?: AbortSignal
 }
 type PersistedVersionFileRecord = {
+  state: string
+  originKind: string
+  managedVisibleAt: Date | null
   id: string
   artifactId: string
   versionNumber: number
@@ -97,6 +106,7 @@ type PersistedVersionFileRecord = {
   contentType: string | null
   sizeBytes: bigint
   checksum: string
+  contentBlobId: string | null
   createdAt: Date
   producerRunId: string | null
   executionSnapshotJson: string | null
@@ -146,6 +156,10 @@ type ArtifactProvenanceVersionWriterOptions = {
     sizeBytes: number
     createdAt: Date
   }) => PreparedArtifactVersionPersistence
+  prepareLiteratureManifest: (
+    request: CreateArtifactVersionRequest['literature'],
+    context: Pick<CreateArtifactVersionRequest, 'projectId' | 'appSessionId' | 'promptMessageId'>
+  ) => Promise<PreparedArtifactLiteratureManifest | undefined>
   recoverStagingVersion: (
     version: StagingArtifactVersionRecord,
     projectId: string,
@@ -387,6 +401,11 @@ class ArtifactProvenanceVersionWriter {
         checksum,
         appGeneratedProducer
       )
+      const literatureManifest = await this.options.prepareLiteratureManifest(request.literature, {
+        projectId,
+        appSessionId,
+        promptMessageId: request.promptMessageId
+      })
       const persisted = await withVersionAllocationRetry(() =>
         client.$transaction(async (transaction) => {
           const origin = await transaction.fileOriginSession.upsert({
@@ -483,6 +502,7 @@ class ArtifactProvenanceVersionWriter {
                 'execution.json'
               )
             : undefined
+          const contentBlobId = contentBlobIdForVersion('artifact-version', versionId)
 
           const countedStates = ['staging', 'pending', 'finalized']
           const [turnUsage, sessionUsage] = await Promise.all([
@@ -531,6 +551,7 @@ class ArtifactProvenanceVersionWriter {
                 producerRunId: prepared.producerRunId,
                 producerRunIndex: prepared.producerRunIndex,
                 state: 'staging',
+                contentBlobId,
                 contentStorageKey,
                 evidenceStorageKey,
                 contentType: request.contentType,
@@ -544,6 +565,20 @@ class ArtifactProvenanceVersionWriter {
                 executionSnapshotStorageKey,
                 executionSnapshotSchemaVersion: prepared.executionSnapshotJson ? 2 : undefined,
                 ...(prepared.inputs ? { inputs: prepared.inputs } : {}),
+                ...(literatureManifest
+                  ? {
+                      literatureManifest: {
+                        create: {
+                          schemaVersion: literatureManifest.schemaVersion,
+                          styleId: literatureManifest.styleId,
+                          locale: literatureManifest.locale,
+                          manifestJson: literatureManifest.manifestJson,
+                          checksum: literatureManifest.checksum,
+                          createdAt
+                        }
+                      }
+                    }
+                  : {}),
                 createdAt
               }
             })
@@ -582,6 +617,22 @@ class ArtifactProvenanceVersionWriter {
 
       await publishCompatibilityRouting(persisted, { allowRoutingReplacement: true, signal })
       const finalized = await client.$transaction(async (transaction) => {
+        const contentBlobId =
+          persisted.contentBlobId ?? contentBlobIdForVersion('artifact-version', persisted.id)
+        await registerContentBlob(transaction, {
+          id: contentBlobId,
+          storageKey: persisted.contentStorageKey,
+          checksum: persisted.checksum,
+          sizeBytes: persisted.sizeBytes,
+          contentType: persisted.contentType,
+          createdAt: persisted.createdAt
+        })
+        await markContentBlobAvailable(transaction, {
+          id: contentBlobId,
+          storageKey: persisted.contentStorageKey,
+          checksum: persisted.checksum,
+          sizeBytes: persisted.sizeBytes
+        })
         await transaction.artifactLineage.update({
           where: { id: persisted.artifactId },
           data: { filename: request.filename }

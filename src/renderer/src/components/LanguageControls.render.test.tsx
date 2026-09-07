@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { i18next } from '@/i18n'
 import { useLocaleStore } from '@/stores/locale-store'
 import { clickRadixMenuItem, openRadixMenu } from '@/pages/settings/test-utils'
-import { LanguagePreferenceMenu, LanguageSelect } from './LanguageControls'
+import { LanguageSelect } from './LanguageControls'
 
 if (!Element.prototype.hasPointerCapture) {
   Element.prototype.hasPointerCapture = (): boolean => false
@@ -199,33 +199,5 @@ describe('LanguageSelect', () => {
     expect(container.querySelector('button')?.getAttribute('aria-label')).toBe(
       'Sprache der Benutzeroberfläche'
     )
-  })
-})
-
-describe('LanguagePreferenceMenu', () => {
-  it('names the active choice in its trigger', () => {
-    render(<LanguagePreferenceMenu />)
-    expect(container.querySelector('button')?.getAttribute('aria-label')).toBe('Language: System')
-
-    act(() => {
-      useLocaleStore.getState().setPreference('zh-Hant')
-    })
-
-    expect(container.querySelector('button')?.getAttribute('aria-label')).toBe('語言: 繁體中文')
-  })
-
-  it('marks only the active choice', () => {
-    act(() => {
-      useLocaleStore.getState().setPreference('zh-Hans')
-    })
-    render(<LanguagePreferenceMenu />)
-    openRadixMenu(container.querySelector('button'))
-
-    const active = Array.from(document.querySelectorAll('[role="menuitem"]')).filter((item) =>
-      item.querySelector('svg:last-child')
-    )
-
-    expect(active).toHaveLength(1)
-    expect(active[0]?.textContent).toContain('简体中文')
   })
 })

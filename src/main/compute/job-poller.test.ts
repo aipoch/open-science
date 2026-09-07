@@ -13,7 +13,7 @@ import {
   type ComputeConnectionBrokerAcquirer,
   type ComputeConnectionLease
 } from './connection-broker'
-import { JobPoller } from './job-poller'
+import { JobPoller, POLL_INTERVAL_MS } from './job-poller'
 import { DispatchTracker } from './dispatch-tracker'
 import type { HarvestFn } from './job-poller'
 
@@ -278,6 +278,63 @@ describe('JobPoller', () => {
       expect.objectContaining({ status: 'success', exitCode: 0 })
     )
     expect(onJobUpdated).toHaveBeenCalled()
+  })
+
+  it('exposes the Slurm terminal state when scheduler failure logs are empty', async () => {
+    const job = makeJob({
+      execution_mode: 'slurm',
+      remote_handle: JSON.stringify({
+        driver: 'slurm',
+        version: 1,
+        scheduler_job_id: '321',
+        workdir: '~/.openscience/jobs/job-1',
+        stdout_path: '~/.openscience/jobs/job-1/stdout',
+        stderr_path: '~/.openscience/jobs/job-1/stderr'
+      })
+    })
+    const update = vi.fn((_id: string, updates: unknown) =>
+      Promise.resolve({ ...job, ...(updates as object) })
+    )
+    const runner: SshRunner = {
+      run: vi.fn((_target, command) =>
+        Promise.resolve(
+          command.startsWith('sacct ')
+            ? {
+                exitCode: 0,
+                stdout: '321|OUT_OF_MEMORY|0:9\n',
+                stderr: '',
+                truncated: false,
+                timedOut: false
+              }
+            : {
+                exitCode: 0,
+                stdout: '',
+                stderr: '',
+                truncated: false,
+                timedOut: false
+              }
+        )
+      )
+    }
+    const jobRepo = {
+      findNonTerminal: vi.fn(async () => [job]),
+      updateIfStatus: guardStatusUpdate(update)
+    } as unknown as ComputeJobRepository
+
+    await new JobPoller({
+      connectionBroker: brokerFromRunner(runner),
+      hostRepository: {} as ComputeHostRepository,
+      jobRepository: jobRepo
+    }).tick()
+
+    expect(update).toHaveBeenCalledWith(
+      'job-1',
+      expect.objectContaining({
+        status: 'failed',
+        errorCode: 'job_failed',
+        stderrTail: 'Slurm scheduler state: OUT_OF_MEMORY.'
+      })
+    )
   })
 
   it('keeps lifecycle unchanged and records an automatic retry for truncated output', async () => {
@@ -1560,6 +1617,32 @@ describe('JobPoller', () => {
     expect((runner.run as ReturnType<typeof vi.fn>).mock.calls.length).toBe(0)
   })
 
+  it('starts a 15s interval even when the job list is empty', () => {
+    const jobRepo = {
+      findNonTerminal: vi.fn(() => Promise.resolve([]))
+    } as unknown as ComputeJobRepository
+    const hostRepo = { get: vi.fn() } as unknown as ComputeHostRepository
+    const runner = makeSshRunner({
+      exitCode: 0,
+      stdout: '',
+      stderr: '',
+      truncated: false,
+      timedOut: false
+    })
+    const setIntervalMock = vi.fn(() => 1 as unknown as ReturnType<typeof setInterval>)
+
+    const poller = new JobPoller({
+      connectionBroker: brokerFromRunner(runner),
+      hostRepository: hostRepo,
+      jobRepository: jobRepo,
+      setInterval: setIntervalMock,
+      clearInterval: vi.fn()
+    })
+    poller.start()
+
+    expect(setIntervalMock).toHaveBeenCalledWith(expect.any(Function), POLL_INTERVAL_MS)
+  })
+
   it('start/stop manage the interval', () => {
     const jobRepo = {
       findNonTerminal: vi.fn(() => Promise.resolve([]))
@@ -1963,7 +2046,7 @@ describe('JobPoller — harvest wiring', () => {
     await Promise.resolve()
     await Promise.resolve()
 
-    expect(started.length).toBe(3)
+    await vi.waitFor(() => expect(started.length).toBe(3))
   })
 
   it('does not affect poller tick when a harvest fails (error isolation)', async () => {

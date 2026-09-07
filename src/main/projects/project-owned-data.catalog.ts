@@ -257,6 +257,47 @@ const PROJECT_OWNED_DATA_CATALOG: readonly ProjectOwnedDataCatalogEntry[] = [
     }
   },
   {
+    id: 'literature-inbox-provenance',
+    medium: 'sqlite',
+    resources: ['LiteratureInboxCandidate'],
+    prismaModels: [
+      {
+        name: 'LiteratureInboxCandidate',
+        ownerFields: [optionalOwner('sourceProjectId'), optionalOwner('sourceSessionId')]
+      }
+    ],
+    policy: {
+      kind: 'retained-history',
+      effect: 'retain',
+      retention: 'Retained with the global Literature inbox history.',
+      reason:
+        'Optional source Project and Session ids are immutable discovery provenance rather than ownership.'
+    }
+  },
+  {
+    id: 'project-literature-links',
+    medium: 'sqlite',
+    resources: ['ProjectLiterature'],
+    prismaModels: [
+      {
+        name: 'ProjectLiterature',
+        ownerFields: [requiredOwner('projectId')],
+        relationContracts: [
+          {
+            field: 'project',
+            target: 'Project',
+            fromFields: ['projectId'],
+            onDelete: 'Cascade'
+          }
+        ]
+      }
+    ],
+    policy: {
+      kind: 'foreign-key-cascade',
+      note: 'Project Literature membership is removed if its owning Project row is hard-deleted.'
+    }
+  },
+  {
     id: 'review-persistence',
     medium: 'sqlite',
     resources: ['Review', 'ReviewScopeSnapshot'],

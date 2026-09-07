@@ -217,6 +217,45 @@ const createHarness = (): {
 }
 
 describe('settings preferences slice', () => {
+  it('keeps a newer committed proxy snapshot when an older save response arrives last', async () => {
+    const { commands, store } = createHarness()
+    const older = deferred<NetworkProxySettings>()
+    const latest: NetworkProxySettings = { mode: 'manual', server: 'http://latest.example:8080' }
+    commands.setNetworkProxy.mockReturnValueOnce(older.promise).mockResolvedValueOnce(latest)
+    commands.getSettings.mockResolvedValue(snapshot({ networkProxy: latest }))
+    const pending = store.getState().setNetworkProxy({ mode: 'direct' })
+    await store.getState().setNetworkProxy(latest)
+    older.resolve({ mode: 'direct' })
+    await pending
+    expect(store.getState().networkProxy).toEqual(latest)
+  })
+  it.each(['networkProxy', 'packageMirror', 'notebookNetwork'] as const)(
+    'keeps a successful %s save when a full settings refresh is unavailable',
+    async (field) => {
+      const { commands, store } = createHarness()
+      commands.getSettings.mockRejectedValue(new Error('refresh unavailable'))
+      const values = {
+        networkProxy: { mode: 'direct' as const },
+        packageMirror: { caBundle: '/certs/new.pem' },
+        notebookNetwork: {
+          ...DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
+          allowedDomains: ['data.example.org']
+        }
+      }
+      const pending =
+        field === 'networkProxy'
+          ? store.getState().setNetworkProxy(values.networkProxy)
+          : field === 'packageMirror'
+            ? store.getState().setPackageMirror(values.packageMirror)
+            : store.getState().setNotebookNetwork(values.notebookNetwork)
+      const result = await pending.then(
+        () => 'saved',
+        (error) => error
+      )
+      expect.soft(result).toBe('saved')
+      expect(store.getState()[field]).toEqual(values[field])
+    }
+  )
   let commands: CommandMocks
   let reconcileSnapshot: Mock
   let store: StoreApi<TestStore>

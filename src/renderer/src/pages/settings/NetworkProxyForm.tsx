@@ -90,6 +90,7 @@ const NetworkProxyForm = ({ onDone }: NetworkProxyFormProps): React.JSX.Element 
           className="pt-0"
         >
           <Select
+            disabled={isSaving}
             value={draft.mode}
             onValueChange={(value) => handleModeChange(value as NetworkProxyMode)}
           >
@@ -123,6 +124,7 @@ const NetworkProxyForm = ({ onDone }: NetworkProxyFormProps): React.JSX.Element 
                   aria-invalid={showServerError ? true : undefined}
                   aria-describedby="network-proxy-server-help"
                   value={draft.server ?? ''}
+                  disabled={isSaving}
                   placeholder={t('http://127.0.0.1:1086')}
                   onBlur={() => setServerTouched(true)}
                   onChange={(event) => {
@@ -141,7 +143,7 @@ const NetworkProxyForm = ({ onDone }: NetworkProxyFormProps): React.JSX.Element 
                   }
                   role={showServerError ? 'alert' : undefined}
                 >
-                  {showServerError || t('Example: http://127.0.0.1:1086')}
+                  {showServerError ? t(showServerError) : t('Example: http://127.0.0.1:1086')}
                 </p>
               </div>
             </SettingsRow>
@@ -156,10 +158,13 @@ const NetworkProxyForm = ({ onDone }: NetworkProxyFormProps): React.JSX.Element 
                 id="network-proxy-bypass"
                 aria-label={t('Proxy bypass rules')}
                 value={draft.bypassRules ?? ''}
+                disabled={isSaving}
                 placeholder={t('*.internal.example, 10.0.0.0/8')}
-                onChange={(event) =>
+                onChange={(event) => {
                   setDraft((current) => ({ ...current, bypassRules: event.target.value }))
-                }
+                  setMessage(undefined)
+                  setIsSuccess(false)
+                }}
               />
             </SettingsRow>
           </>

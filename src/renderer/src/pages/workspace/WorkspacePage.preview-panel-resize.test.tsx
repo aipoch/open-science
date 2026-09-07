@@ -541,7 +541,7 @@ describe('WorkspacePage preview panel resize sync', () => {
     }
   })
 
-  // Right preview edge keeps the always-on divider from main; left stays tick-on-hover only.
+  // Right preview edge keeps its resting border; pointer geometry is covered in Electron E2E.
   it('keeps the always-on border divider on the right preview resize handle', async () => {
     await renderPage()
 
@@ -550,14 +550,8 @@ describe('WorkspacePage preview panel resize sync', () => {
 
     expect(rightHandle?.className).toContain('bg-border')
     expect(rightHandle?.className).toContain('shadow-[1px_0_3px_rgba(30,28,24,0.08)]')
-    expect(rightHandle?.className).toContain('before:w-1')
-    expect(rightHandle?.className).toContain('before:right-full')
     expect(leftHandle?.className).not.toContain('bg-border')
     expect(leftHandle?.className).not.toContain('shadow-[1px_0_3px_rgba(30,28,24,0.08)]')
-    expect(leftHandle?.className).not.toContain('before:w-1')
-    expect(leftHandle?.className).toContain('before:right-full')
-    expect(leftHandle?.className).toContain('before:mr-[3px]')
-    expect(leftHandle?.className).toContain('before:left-auto')
   })
 
   it('animates the sidebar to zero and restores its last open size', async () => {

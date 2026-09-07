@@ -1,3 +1,4 @@
+import { RetryableHarvestError } from './job-harvest-scheduler'
 /**
  * harvest-engine.ts — downloads a finished job's output files from the remote workdir.
  *
@@ -153,7 +154,7 @@ export const enumerateRemoteFiles = async (
 ): Promise<HarvestFileEntry[]> => {
   // Single-quote the workdir path for safe embedding in the SSH command.
   const quotedWorkdir = quoteRemotePath(remoteWorkdir)
-  const cmd = `find ${quotedWorkdir} -type f -printf '%P\\t%s\\t%i\\t%T@\\n' 2>/dev/null || true`
+  const cmd = `find ${quotedWorkdir} -type f -printf '%P\\t%s\\t%i\\t%T@\\n'`
 
   const result = await connection.run(cmd, {
     timeoutMs: ENUMERATE_TIMEOUT_MS,
@@ -163,7 +164,7 @@ export const enumerateRemoteFiles = async (
   const connectionFailure = classifyConnectionFailure(result, false)
   if (connectionFailure) throw connectionFailure
 
-  if (result.exitCode !== 0 && result.exitCode !== null) {
+  if (result.exitCode !== 0) {
     throw new Error('Remote file enumeration failed.')
   }
 
@@ -334,7 +335,8 @@ const buildLeftOnRemoteUri = (
  *   5. Download featured + hidden files; put stdout/stderr at harvest root.
  *   6. Write harvestedAt / harvestError / leftOnRemote to DB.
  *
- * On any error: sets harvestError + harvestedAt (harvest_failed). Remote workdir
+ * Recoverable connection/enumeration/local preparation failures remain unharvested with backoff.
+ * Final outcomes set harvestError + harvestedAt. Remote workdir
  * is NEVER deleted (preserved for manual recovery, design §9).
  *
  * This function is idempotent: calling it twice on the same job overwrites the
@@ -366,11 +368,11 @@ export const harvestJob = async (job: ComputeJob, deps: HarvestDeps): Promise<vo
     try {
       await harvestJobUnchecked(job, deps, { harvestDir, attemptDir, backupDir, renamePath })
     } catch (error) {
-      if (error instanceof ComputeConnectionError) {
+      if (error instanceof ComputeConnectionError || error instanceof RetryableHarvestError) {
         // Keep harvestedAt unset so restart/tick recovery retries. Persist only a safe error class;
         // never persist connection output or credentials.
         const pendingJob = await deps.jobRepository.update(job.job_id, {
-          harvestError: `harvest pending: ${error.code}`
+          harvestError: `harvest pending: ${error instanceof ComputeConnectionError ? error.code : error.message}`
         })
         deps.publishJobUpdated?.(pendingJob)
       }
@@ -584,8 +586,7 @@ const harvestJobUnchecked = async (
   } catch (err) {
     if (deps.signal?.aborted) throw err
     if (err instanceof ComputeConnectionError) throw err
-    await finalizeAndReturn('Remote file enumeration failed.', '[]')
-    return
+    throw new RetryableHarvestError('Remote file enumeration failed.')
   }
 
   deps.signal?.throwIfAborted()
@@ -651,9 +652,7 @@ const harvestJobUnchecked = async (
     }
   } catch (err) {
     if (deps.signal?.aborted) throw err
-    const msg = toErrorMessage(err)
-    await finalizeAndReturn(`free-space check failed: ${msg}`, '[]')
-    return
+    throw new RetryableHarvestError('Local free-space check failed.')
   }
   const requestedBudgetBytes = Math.min(
     Math.floor((normalizedHarvestConfig.max_total_mb ?? 0) * MIB_BYTES),
@@ -703,8 +702,8 @@ const harvestJobUnchecked = async (
         throw new Error('free-space query returned an invalid value')
       }
     } catch (error) {
-      errors.push('free-space check failed: ' + String(error))
-      return false
+      if (deps.signal?.aborted) throw error
+      throw new RetryableHarvestError('Local free-space check failed.')
     }
     const diskAvailableBytes = Math.max(
       0,

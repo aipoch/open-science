@@ -1,10 +1,12 @@
 import {
+  MAX_ACP_RUNTIME_EVENTS,
   sanitizeAcpContextWindowSample,
   type AcpContextWindowSample,
   type AcpModelCallUsage,
   type AcpTurnTokenUsage
 } from '../../../shared/acp'
 import { isReportableRunFailure } from '../../../shared/run-error-classification'
+import { retainRecentSessionEventIds } from '../../../shared/session-persistence'
 import type {
   PersistedActivityGroup,
   PersistedChatSession,
@@ -146,6 +148,24 @@ const failStreamingMessages = (messages: ChatMessage[], now = Date.now()): ChatM
           updatedAt: now
         }
       : message
+  )
+
+const compactTerminalMessageEventIds = (messages: ChatMessage[]): ChatMessage[] =>
+  messages.map((message) =>
+    message.status !== 'streaming' && message.eventIds.length > MAX_ACP_RUNTIME_EVENTS
+      ? { ...message, eventIds: retainRecentSessionEventIds(message.eventIds) }
+      : message
+  )
+
+const compactTerminalActivityEventIds = (
+  activities: ToolActivity[] | undefined
+): ToolActivity[] | undefined =>
+  activities?.map((activity) =>
+    activity.status !== 'pending' &&
+    activity.status !== 'in_progress' &&
+    activity.eventIds.length > MAX_ACP_RUNTIME_EVENTS
+      ? { ...activity, eventIds: retainRecentSessionEventIds(activity.eventIds) }
+      : activity
   )
 
 const appendContextWindowSample = (
@@ -323,20 +343,22 @@ export const projectFinishedRun = (
   const keepArtifactError = isArtifactFinalizationError(session.error)
   const now = Math.max(Date.now(), session.updatedAt + 1)
   const terminalPromptMessageId = promptMessageId ?? session.activeRun?.promptMessageId
-  const messages = appendContextWindowSample(
-    session,
-    completeStreamingMessages(
-      session.messages,
+  const messages = compactTerminalMessageEventIds(
+    appendContextWindowSample(
+      session,
+      completeStreamingMessages(
+        session.messages,
+        terminalPromptMessageId,
+        turnUsage,
+        modelCallUsage,
+        now
+      ),
       terminalPromptMessageId,
-      turnUsage,
-      modelCallUsage,
+      contextWindowSample,
       now
-    ),
-    terminalPromptMessageId,
-    contextWindowSample,
-    now
+    )
   )
-  const activities = completeOpenActivities(session.activities)
+  const activities = compactTerminalActivityEventIds(completeOpenActivities(session.activities))
   const activityGroups = completeOpenActivityGroups(session.activityGroups, now)
   let conversationGraph: NonNullable<PersistedChatSession['conversationGraph']>
   try {
@@ -380,14 +402,16 @@ export const projectFailedRun = (
   contextWindowSample?: RunTerminalContextWindowSample
 ): ChatSession => {
   const now = Math.max(Date.now(), session.updatedAt + 1)
-  const messages = appendContextWindowSample(
-    session,
-    failStreamingMessages(session.messages, now),
-    promptMessageId,
-    contextWindowSample,
-    now
+  const messages = compactTerminalMessageEventIds(
+    appendContextWindowSample(
+      session,
+      failStreamingMessages(session.messages, now),
+      promptMessageId,
+      contextWindowSample,
+      now
+    )
   )
-  const activities = failOpenActivities(session.activities)
+  const activities = compactTerminalActivityEventIds(failOpenActivities(session.activities))
   const activityGroups = completeOpenActivityGroups(session.activityGroups, now)
   let conversationGraph: NonNullable<PersistedChatSession['conversationGraph']>
   try {
@@ -439,8 +463,8 @@ export const projectCompactionStarted = (
     error: undefined,
     errorReportable: undefined,
     compacting: true,
-    messages: failStreamingMessages(session.messages),
-    activities: failOpenActivities(session.activities),
+    messages: compactTerminalMessageEventIds(failStreamingMessages(session.messages)),
+    activities: compactTerminalActivityEventIds(failOpenActivities(session.activities)),
     activityGroups: completeOpenActivityGroups(session.activityGroups, Date.now()),
     updatedAt: Date.now()
   }
@@ -474,21 +498,23 @@ export const projectInterruptedRun = (
 ): ChatSession => {
   const now = Math.max(Date.now(), session.updatedAt + 1)
   const failedMessages = failStreamingMessages(session.messages, now)
-  const messages = appendContextWindowSample(
-    session,
-    (turnUsage
-      ? completeStreamingMessages(failedMessages, promptMessageId, turnUsage, modelCallUsage, now)
-      : failedMessages
-    ).map((message) =>
-      message.id === promptMessageId && message.role === 'user'
-        ? { ...message, interrupted: true as const, updatedAt: now }
-        : message
-    ),
-    promptMessageId,
-    contextWindowSample,
-    now
+  const messages = compactTerminalMessageEventIds(
+    appendContextWindowSample(
+      session,
+      (turnUsage
+        ? completeStreamingMessages(failedMessages, promptMessageId, turnUsage, modelCallUsage, now)
+        : failedMessages
+      ).map((message) =>
+        message.id === promptMessageId && message.role === 'user'
+          ? { ...message, interrupted: true as const, updatedAt: now }
+          : message
+      ),
+      promptMessageId,
+      contextWindowSample,
+      now
+    )
   )
-  const activities = failOpenActivities(session.activities)
+  const activities = compactTerminalActivityEventIds(failOpenActivities(session.activities))
   const activityGroups = completeOpenActivityGroups(session.activityGroups, now)
   const resumeRecovery = {
     kind: 'resume-required' as const,

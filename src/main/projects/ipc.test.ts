@@ -183,7 +183,7 @@ describe('createProjectHandlers', () => {
       handlers.updateArchive({
         id: unrelatedProject.id,
         archived: true,
-        expectedArchivedAt: null
+        expectedArchiveRevision: 0
       })
     ]
     await flushMicrotasks()

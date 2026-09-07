@@ -4,9 +4,10 @@ description: Evaluate and use SSH Remote Compute before choosing where to run GP
 license: Apache-2.0
 ---
 
-This skill covers remote compute over SSH: listing hosts, creating handles, running short
-remote commands (callCommand), reading/writing host knowledge docs, and the full async
-job lifecycle — submit → harvest → analysis turn → publish artifacts.
+This skill covers remote compute over SSH, including direct execution and Slurm submission:
+listing hosts, creating handles, running short remote commands (callCommand), reading/writing host
+knowledge docs, and the full async job lifecycle — submit → harvest → analysis turn → publish
+artifacts.
 
 **Where host.compute runs:** `host.compute` lives ONLY on the control-plane REPL kernel — run
 every example below with the `repl_execute` tool (JavaScript), the same kernel that hosts
@@ -31,7 +32,8 @@ const selectedHosts = hosts.filter((host) => host.role === 'selected')
 const candidates = selectedHosts.length > 0 ? selectedHosts : hosts
 ```
 
-Each list item is a compact summary with `provider_id`, `display_name`, `shape`, `status`, and `role`
+Each list item is a compact summary with `provider_id`, `display_name`, `shape`, `execution_mode`,
+`status`, and `role`
 (`last_probe_ok`, `probe_failed`, or `not_probed`). `last_probe_ok` means the most recent persisted
 Probe succeeded; it does not assert live connectivity. Knowledge documents and resource probe
 snapshots are deliberately excluded from discovery results.
@@ -87,18 +89,27 @@ Use `submitJob` for long-running computations (minutes to hours). It returns imm
 automatically harvests the outputs and initiates a new analysis turn. Do not poll for completion;
 perform only the single bounded immediate-failure check below, then return control to the user.
 
+For a local input, `src` is relative to the Agent Session workspace—the same workspace used by file
+writing tools. Write a script or small generated input there, then pass its relative path. Open
+Science snapshots accepted inputs before approval and dispatch. Do not pass arbitrary absolute local
+paths or copy files into app-managed `notebooks/...` directories. An absolute `src` is valid only
+when it is the exact path returned by `host.artifactPath(versionId)` or an exact registered Session
+input path already supplied in the Notebook context.
+
 ```javascript
 // Reuse the `candidates` selected above from the Session catalog.
 
-// Submit a non-blocking job — returns immediately after the user approves
+// Submit a non-blocking job — returns immediately after the user approves.
+// The Compute Host's configured execution mode selects direct SSH or Slurm.
 const c = host.compute.create('ssh:<alias>')
 const job = await c.submitJob(
   '<one-line intent for the approval card>', // shown in the approval card
   '<shell command>', // command to run remotely
   {
+    environment: 'protein-gpu', // optional logical name; see Environment activation below
     timeoutSeconds: 3600, // optional; default 24 h, max 7 days
     inputs: [
-      { src: 'in.dat', dstFilename: 'in.dat' }, // stage a workspace file
+      { src: 'in.dat', dstFilename: 'in.dat' }, // stage an Agent Session workspace file
       { remotePath: 'ssh:<alias>/<abs_path>' } // link a remote file (no transfer)
     ],
     outputs: [
@@ -114,7 +125,7 @@ const job = await c.submitJob(
     }
   }
 )
-// job → { job_id, provider_id, status: 'submitted', remote_workdir }
+// job → { job_id, provider_id, status: 'submitted' | 'queued', remote_workdir }
 // Give dispatch enough time to expose an immediately broken script, then fetch one result snapshot.
 await new Promise((resolve) => setTimeout(resolve, 2000))
 // result() is a non-blocking local DB/directory read in every state; it never waits for completion,
@@ -131,6 +142,51 @@ and error details already persisted by dispatch. This catches syntax errors, mis
 and other scripts that fail as soon as they start without waiting for a long-running job or starting
 a second harvest. **Do not wait again** and do not turn this into a polling loop: after printing the
 snapshot, end the cell and let the app own the rest of the lifecycle.
+
+### Direct SSH or Slurm
+
+The Compute Host's configured execution mode selects how every job is launched. `direct_ssh` runs
+the command as a detached process on the SSH target. `slurm` submits it with `sbatch`; put the
+cluster's required `#SBATCH` directives at the top of `command`. Open Science owns submission,
+scheduler-status polling, cancellation, and harvest. Do not call `sbatch`, `squeue`, or `scancel`
+around `submitJob` yourself.
+
+Read `listHosts()` for the configured mode and `details()` for provider-specific directives; do not
+try to override the mode per job or infer it only from the workload. If Slurm is unavailable or
+rejects the script, report the returned error and
+the concrete next step (for example, add an account or partition directive). Do not silently rerun
+the workload directly on a login node.
+
+Open Science accepts ordinary single-job directives such as partition, account, CPUs, memory, and
+GPUs. Set `timeoutSeconds` for the workload runtime. You may set the scheduler allocation limit with
+one `#SBATCH --time=value` directive; when it is absent, Open Science derives a default allocation
+limit from `timeoutSeconds`. Open Science owns the job name, working directory, stdout, and stderr
+directives. Avoid job arrays because one Open Science job tracks one scheduler job and one output
+harvest. Submit independent work as separate jobs and use the Session concurrency limit when needed.
+
+For Slurm, request resources with one `#SBATCH --option=value` directive per line (or a value-free
+flag such as `#SBATCH --exclusive`). The legacy `resources` option is descriptive metadata; it
+does not allocate CPUs, memory, or GPUs. `timeoutSeconds` limits workload runtime, not queue wait;
+`#SBATCH --time` sets the scheduler allocation limit. Neither is a promise of queue start time.
+
+The non-blocking job `status()` and `result()` snapshots include `scheduler_job_id` when known,
+`error_code` on failure, and `last_poll_error` when observation or submission recovery needs
+attention. A pending reason or delayed accounting row does not mean the workload failed. If a
+submission is unconfirmed, use the reported job identity and provider diagnostics before deciding
+whether to submit again; Open Science does not automatically submit a duplicate.
+
+### Environment activation
+
+The optional `environment` value is a logical name, not a shell command. Open Science sources
+`~/.openscience/environments/<name>.sh` before the workload for direct and Slurm jobs. Names are
+1–64 letters, numbers, periods, underscores, or hyphens and must start with a letter or number.
+The file and every software/cache path it references must be visible on the execution node.
+
+If a submission reports that this activation file is missing, load the Compute Environment Setup
+Skill to prepare exact setup, repair, and removal instructions for the user or host administrator
+to run outside Open Science. Validate the user-managed activation after they apply the plan, then
+retry. Do not guess a conda name, add an inline install to the science job, or hide activation in
+`.bashrc`. Omit `environment` when the command deliberately uses the host's default environment.
 
 **End the cell after that one check. Do NOT write a polling loop.** The app runs the poller and harvest in the
 background. When the job finishes, the app automatically starts a new analysis turn in this
@@ -158,8 +214,11 @@ conversation — the conversation is NOT locked while the job runs, so the user 
 // Non-blocking DB read — no SSH. Use if you need a status snapshot mid-conversation.
 const handle = c.attachJob(job.job_id)
 const s = await handle.status()
-// s → { job_id, status, cancellation_status?, exit_code, stdout_tail, stderr_tail, remote_workdir }
-// status: 'submitted' | 'running' | 'success' | 'failed' | 'timeout' | 'error'
+// s → {
+//   job_id, scheduler_job_id?, status, cancellation_status?, exit_code,
+//   error_code?, last_poll_error?, stdout_tail, stderr_tail, remote_workdir
+// }
+// status: 'queued' | 'submitted' | 'running' | 'success' | 'failed' | 'timeout' | 'error'
 ```
 
 To stop one active job, request durable cancellation through the same handle:
@@ -172,19 +231,20 @@ await c.attachJob(job.job_id).cancel()
 
 ### submitJob status values
 
-| status      | meaning                                                                |
-| ----------- | ---------------------------------------------------------------------- |
-| `submitted` | accepted; background dispatch in progress                              |
-| `running`   | remote process confirmed alive (pid recorded)                          |
-| `success`   | exit code 0                                                            |
-| `failed`    | non-zero exit (`job_failed`) or process vanished (`process_vanished`)  |
-| `timeout`   | exceeded `timeoutSeconds`                                              |
-| `error`     | never reached the remote host (`host_unreachable` / `dispatch_failed`) |
+| status      | meaning                                                               |
+| ----------- | --------------------------------------------------------------------- |
+| `queued`    | waiting for a Session concurrency slot                                |
+| `submitted` | accepted; direct dispatch or Slurm queue observation is in progress   |
+| `running`   | direct process or Slurm allocation observed running                   |
+| `success`   | exit code 0                                                           |
+| `failed`    | non-zero exit (`job_failed`) or process vanished (`process_vanished`) |
+| `timeout`   | exceeded `timeoutSeconds`                                             |
+| `error`     | dispatch or setup failed before a tracked workload started            |
 
 ## Workflow: the analysis turn
 
 When the app initiates the analysis turn, it provides the `job_id`, `status`, and
-`featured_files` (workspace-relative paths under `hpc/<job_id>/featured/`). In this turn:
+`featured_files` (Notebook Session-relative paths under `hpc/<job_id>/featured/`). In this turn:
 
 1. Call `attachJob(job_id).result()` to get the full result dict.
 2. Inspect the outputs, run any analysis needed.
@@ -196,7 +256,9 @@ const c = host.compute.create('ssh:<alias>')
 const r = await c.attachJob(job_id).result()
 // r → {
 //   job_id, status, exit_code,
-//   featured_files: ['hpc/<job_id>/featured/out.result', ...],   // workspace-relative
+//   local_output_root: '/absolute/path/to/this/notebook/session',
+//   producer_run_id: 'notebook-run-...',
+//   featured_files: ['hpc/<job_id>/featured/out.result', ...],   // Notebook Session-relative
 //   hidden_files:   ['hpc/<job_id>/hidden/run.log', ...],
 //   output_files:   [...featured_files, ...hidden_files],         // featured first
 //   left_on_remote: [{ uri: 'ssh:<alias>/<abs_path>', size_mb: 420, reason: 'residency:remote' }],
@@ -206,26 +268,43 @@ const r = await c.attachJob(job_id).result()
 // }
 ```
 
-Files land in the workspace at `hpc/<job_id>/` and are readable directly:
+Harvested files use `hpc/<job_id>/` paths inside the Notebook Session, relative to
+`r.local_output_root`, its absolute root. This is separate from the Agent Session workspace used to
+resolve a submitted relative `src`. In the automatic analysis turn, join the returned root and
+relative output path; do not copy files between app-managed directories. For example:
 
 ```python
-# python cell — files are in the workspace; open() works with workspace-relative paths
+# Substitute the exact root and featured path returned by result().
+from pathlib import Path
 import pandas as pd
-df = pd.read_csv('hpc/<job_id>/featured/results.csv')
+df = pd.read_csv(Path('<local_output_root>') / 'hpc/<job_id>/featured/results.csv')
 ```
 
 ### Publish artifacts
 
-Harvest only lands files in the workspace — it does NOT publish artifacts automatically.
-Call `write_artifact_file` in the analysis turn to publish outputs worth keeping:
+Harvest only lands files in the Notebook Session — it does NOT publish artifacts automatically.
+Call the `write_artifact_file` tool exposed by the `open-science-artifacts` server directly in the
+analysis turn, outside `repl_execute`. Do not call it through `host.mcp` or guess a Connector alias.
+Pass an absolute `source.path` formed by joining `r.local_output_root` with the corresponding entry
+in `r.featured_files`:
 
-```javascript
-// In the analysis turn — publish featured outputs as artifacts (bound to this turn)
-for (const path of r.featured_files) {
-  await host.mcp('artifacts', 'write_artifact_file', { path })
+```json
+{
+  "filename": "results.csv",
+  "mimeType": "text/csv",
+  "producerRunId": "<producer_run_id>",
+  "source": {
+    "kind": "localPath",
+    "path": "<local_output_root>/hpc/<job_id>/featured/results.csv"
+  }
 }
-// Artifacts appear in the artifact panel with provenance tied to this analysis turn.
 ```
+
+Repeat the direct tool call for each output in `r.featured_files` worth publishing, mapping each path
+the same way. Pass `r.producer_run_id` as the top-level `producerRunId`; it identifies the Notebook
+submission run that owns the Compute Job and lets the artifact retain that execution lineage across
+analysis turns. Do not substitute the current analysis run id or guess an id. Artifacts appear in the
+artifact panel with provenance tied to the compute execution and this analysis turn.
 
 ### When the job fails
 

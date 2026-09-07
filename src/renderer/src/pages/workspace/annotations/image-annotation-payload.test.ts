@@ -111,7 +111,11 @@ describe('image annotation Agent payload projection', () => {
               y: 799,
               instruction: 'note for point-1'
             },
-            { type: 'quote', content: 'Compare this sentence.' },
+            {
+              type: 'quote',
+              content: 'Compare this sentence.',
+              source: { kind: 'agent-message', sessionId: 'session-1', messageId: 'message-1' }
+            },
             {
               type: 'image-point',
               source: {

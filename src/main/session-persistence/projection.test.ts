@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rename, rm } from 'node:fs/promises'
+import { lstat, mkdtemp, readFile, rename, rm, truncate, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -9,7 +9,12 @@ vi.mock('electron', () => ({
   app: { getPath: () => '/home/user', isPackaged: true }
 }))
 
-import type { PersistedChatSession } from '../../shared/session-persistence'
+import {
+  MAX_PERSISTED_SESSION_BYTES,
+  SESSION_SIZE_LIMIT_ERROR_CODE,
+  type LoadAllSessionsResult,
+  type PersistedChatSession
+} from '../../shared/session-persistence'
 import {
   createLinearConversationGraph,
   forkEditedConversationMessage,
@@ -350,7 +355,7 @@ describe('Session projection', () => {
       runsAt: expect.arrayContaining([101, 201]),
       totalArtifacts: 2,
       usageEvents: expect.arrayContaining([
-        expect.objectContaining({ timestamp: 104, inputTokens: 10, rootRunUsage: true })
+        expect.objectContaining({ timestamp: 104, inputTokens: 10 })
       ])
     })
     await expect(
@@ -439,8 +444,7 @@ describe('Session projection', () => {
           timestamp: 120,
           inputTokens: 5,
           cacheTokens: 2,
-          outputTokens: 4,
-          rootRunUsage: false
+          outputTokens: 4
         })
       ])
     })
@@ -473,6 +477,70 @@ describe('Session projection', () => {
     ).rejects.toThrow('Session projection updatedAt must be a non-negative safe integer.')
 
     expect.soft(await readFile(authorityPath, 'utf8')).toBe(originalAuthority)
+    await expect(projection.pending()).resolves.toEqual([])
+  })
+
+  it('rejects an oversized first save before reserving projection metadata', async () => {
+    storageRoot = await mkdtemp(join(tmpdir(), 'open-science-session-size-admission-'))
+    client = createProjectDbClient(storageRoot)
+    await migrateApplicationDatabase(client)
+    await client.project.create({
+      data: { id: 'project-1', name: 'Project', createdAt: new Date(50) }
+    })
+    const projection = new SessionProjectionRepository(async () => client!)
+    const repository = new SessionRepository(storageRoot, { maxSessionBytes: 1 }, projection)
+
+    await expect(repository.saveSession(session('oversized'))).rejects.toMatchObject({
+      code: SESSION_SIZE_LIMIT_ERROR_CODE
+    })
+
+    await expect(projection.list()).resolves.toEqual([])
+    await expect(projection.pending()).resolves.toEqual([])
+  })
+
+  it('accounts for an assigned Session number before reserving projection metadata', async () => {
+    storageRoot = await mkdtemp(join(tmpdir(), 'open-science-session-number-size-admission-'))
+    const candidate = session('number-boundary')
+    const authorityPath = join(storageRoot, 'sessions', 'project-1', 'number-boundary.json')
+    await new SessionRepository(storageRoot).saveSession(candidate)
+    const maxSessionBytes = (await lstat(authorityPath)).size
+    await rm(authorityPath)
+
+    client = createProjectDbClient(storageRoot)
+    await migrateApplicationDatabase(client)
+    await client.project.create({
+      data: { id: 'project-1', name: 'Project', createdAt: new Date(50) }
+    })
+    const projection = new SessionProjectionRepository(async () => client!)
+    const repository = new SessionRepository(storageRoot, { maxSessionBytes }, projection)
+
+    await expect(repository.saveSession(candidate)).rejects.toMatchObject({
+      code: SESSION_SIZE_LIMIT_ERROR_CODE
+    })
+
+    await expect(projection.list()).resolves.toEqual([])
+    await expect(projection.pending()).resolves.toEqual([])
+  })
+
+  it('rejects oversized existing authority before marking its projection pending', async () => {
+    storageRoot = await mkdtemp(join(tmpdir(), 'open-science-session-existing-size-admission-'))
+    client = createProjectDbClient(storageRoot)
+    await migrateApplicationDatabase(client)
+    await client.project.create({
+      data: { id: 'project-1', name: 'Project', createdAt: new Date(50) }
+    })
+    const projection = new SessionProjectionRepository(async () => client!)
+    const initialRepository = new SessionRepository(storageRoot, {}, projection)
+    const saved = await initialRepository.saveSession(session('existing-oversized'))
+    const authorityPath = join(storageRoot, 'sessions', 'project-1', 'existing-oversized.json')
+    const maxSessionBytes = (await lstat(authorityPath)).size + 1024
+    await truncate(authorityPath, maxSessionBytes + 1)
+    const repository = new SessionRepository(storageRoot, { maxSessionBytes }, projection)
+
+    await expect(repository.saveSession(saved)).rejects.toMatchObject({
+      code: SESSION_SIZE_LIMIT_ERROR_CODE
+    })
+
     await expect(projection.pending()).resolves.toEqual([])
   })
 
@@ -695,6 +763,13 @@ describe('Session projection', () => {
     })
     await repository.commitSave(owned)
 
+    await repository.markPending(owned.projectId, owned.id, 'save')
+    await expect(repository.markPending('project-1', owned.id, 'delete')).rejects.toThrow(
+      'another Project'
+    )
+    await expect(repository.pending()).resolves.toEqual([
+      { projectId: owned.projectId, sessionId: owned.id, operation: 'save' }
+    ])
     await expect(repository.commitDelete('project-1', owned.id)).rejects.toThrow('another Project')
     await expect(client.session.findUnique({ where: { id: owned.id } })).resolves.toMatchObject({
       projectId: 'project-2',
@@ -705,6 +780,11 @@ describe('Session projection', () => {
     await expect(client.sessionArtifactRef.count({ where: { sessionId: owned.id } })).resolves.toBe(
       1
     )
+    await repository.commitDelete(owned.projectId, owned.id)
+    await expect(repository.markPending('project-1', owned.id, 'delete')).rejects.toThrow(
+      'another Project'
+    )
+    await expect(repository.pending()).resolves.toEqual([])
   })
 
   it('retains Project metadata and Session Usage when the whole Project is deleted', async () => {
@@ -902,6 +982,108 @@ describe('Session projection', () => {
     await repository.ensureSessionProjection(() => repository.loadAll())
 
     expect(scan).toHaveBeenCalledOnce()
+  })
+
+  it('reports oversized authority when the ready projection needs no startup recovery', async () => {
+    storageRoot = await mkdtemp(join(tmpdir(), 'open-science-session-ready-size-limit-'))
+    client = createProjectDbClient(storageRoot)
+    await migrateApplicationDatabase(client)
+    await client.project.create({ data: { id: 'project-1', name: 'Project' } })
+    const projection = new SessionProjectionRepository(async () => client!)
+    const repository = new SessionRepository(storageRoot, {}, projection)
+    const saved = await repository.saveSession(session('session-1'))
+    await repository.ensureSessionProjection(() => repository.loadAll())
+    await truncate(
+      join(storageRoot, 'sessions', saved.projectId, `${saved.id}.json`),
+      MAX_PERSISTED_SESSION_BYTES + 1
+    )
+
+    const loaded = await repository.ensureSessionProjection(async () => {
+      const scan = await repository.loadAllWithDiagnostics()
+      return {
+        ...scan.result,
+        diagnostics: { isComplete: scan.isComplete, warnings: scan.warnings ?? [] }
+      }
+    })
+
+    expect(loaded.result?.diagnostics).toMatchObject({
+      isComplete: false,
+      warnings: [
+        {
+          kind: 'too-large',
+          projectId: saved.projectId,
+          fileName: `${saved.id}.json`,
+          recovered: false
+        }
+      ]
+    })
+    expect(loaded.sessions).toEqual([])
+  })
+
+  it('removes a stale ready projection after oversized authority is moved out', async () => {
+    storageRoot = await mkdtemp(join(tmpdir(), 'open-science-session-size-recovery-'))
+    client = createProjectDbClient(storageRoot)
+    await migrateApplicationDatabase(client)
+    await client.project.create({ data: { id: 'project-1', name: 'Project' } })
+    const projection = new SessionProjectionRepository(async () => client!)
+    const repository = new SessionRepository(storageRoot, {}, projection)
+    const saved = await repository.saveSession(session('session-1'))
+    await repository.ensureSessionProjection(() => repository.loadAll())
+    const authorityPath = join(storageRoot, 'sessions', saved.projectId, `${saved.id}.json`)
+    await truncate(authorityPath, MAX_PERSISTED_SESSION_BYTES + 1)
+
+    const loadAuthority = async (): Promise<LoadAllSessionsResult> => {
+      const scan = await repository.loadAllWithDiagnostics({ mode: 'read-only' })
+      return {
+        ...scan.result,
+        diagnostics: { isComplete: scan.isComplete, warnings: scan.warnings ?? [] }
+      }
+    }
+    await expect(repository.ensureSessionProjection(loadAuthority)).resolves.toMatchObject({
+      sessions: []
+    })
+    await rename(authorityPath, join(storageRoot, 'removed-session.json'))
+
+    await expect(repository.ensureSessionProjection(loadAuthority)).resolves.toMatchObject({
+      sessions: []
+    })
+    await expect(projection.list()).resolves.toEqual([])
+  })
+
+  it('reports an oversized recovery temp behind a ready projection', async () => {
+    storageRoot = await mkdtemp(join(tmpdir(), 'open-science-session-ready-temp-size-limit-'))
+    client = createProjectDbClient(storageRoot)
+    await migrateApplicationDatabase(client)
+    await client.project.create({ data: { id: 'project-1', name: 'Project' } })
+    const projection = new SessionProjectionRepository(async () => client!)
+    const maxSessionBytes = 64 * 1024
+    const repository = new SessionRepository(storageRoot, { maxSessionBytes }, projection)
+    const saved = await repository.saveSession(session('session-1'))
+    await repository.ensureSessionProjection(() => repository.loadAll())
+    const authorityPath = join(storageRoot, 'sessions', saved.projectId, `${saved.id}.json`)
+    await writeFile(`${authorityPath}.1700000000000-1.tmp`, '', 'utf8')
+    await truncate(`${authorityPath}.1700000000000-1.tmp`, maxSessionBytes + 1)
+
+    const loaded = await repository.ensureSessionProjection(async () => {
+      const scan = await repository.loadAllWithDiagnostics({ mode: 'read-only' })
+      return {
+        ...scan.result,
+        diagnostics: { isComplete: scan.isComplete, warnings: scan.warnings ?? [] }
+      }
+    })
+
+    expect(loaded.result?.diagnostics).toMatchObject({
+      isComplete: false,
+      warnings: [
+        {
+          kind: 'too-large',
+          projectId: saved.projectId,
+          fileName: `${saved.id}.json`,
+          recovered: false
+        }
+      ]
+    })
+    expect(loaded.sessions).toEqual([])
   })
 
   it('does not reuse retained tombstone numbers during a projection-version rebuild', async () => {

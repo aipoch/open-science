@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 
 import { detectCodeBuddy, type CodeBuddyDetectDeps } from './codebuddy-detect'
 
@@ -23,6 +23,24 @@ describe('codebuddy detection', () => {
       resolvedPath: '/npm/bin/codebuddy-code',
       version: '2.138.0'
     })
+  })
+
+  it('passes cancellation through directory and version probes', async () => {
+    const controller = new AbortController()
+    const resolveNpmBinDirs = vi.fn().mockResolvedValue(['/npm/bin'])
+    const getVersion = vi.fn().mockResolvedValue('2.138.0')
+
+    await detectCodeBuddy(
+      {
+        ...deps({ '/usr/local/bin/codebuddy': '2.138.0' }),
+        resolveNpmBinDirs,
+        getVersion
+      },
+      controller.signal
+    )
+
+    expect(resolveNpmBinDirs).toHaveBeenCalledWith(controller.signal)
+    expect(getVersion).toHaveBeenCalledWith('/usr/local/bin/codebuddy', controller.signal)
   })
 
   it('rejects versions outside the app-pinned release', async () => {

@@ -1,4 +1,4 @@
-import type { AcpPermissionResponse } from '../../shared/acp'
+import type { AcpPermissionRequest, AcpPermissionResponse } from '../../shared/acp'
 import {
   sanitizeSessionPermissionRuntimeContext,
   type PersistedChatSession,
@@ -30,6 +30,35 @@ const isRevisionConflict = (error: unknown): boolean =>
   'code' in error &&
   error.code === 'revision-conflict'
 
+const LITERATURE_SAVE_PERMISSION_IDENTITY = 'open-science-library/save_to_inbox'
+const MAX_PERMISSION_PREVIEW_TITLE_CHARS = 512
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === 'object' && value !== null && !Array.isArray(value)
+
+// Durable permission state needs a human-readable preview, not a second copy of every abstract and
+// author. The original request remains live for execution and its full fingerprint is persisted.
+const requestForPersistence = (request: AcpPermissionRequest): AcpPermissionRequest => {
+  if (request.mcpIdentity !== LITERATURE_SAVE_PERMISSION_IDENTITY || !isRecord(request.rawInput)) {
+    return request
+  }
+  const input = isRecord(request.rawInput.arguments) ? request.rawInput.arguments : request.rawInput
+  if (!Array.isArray(input.candidates)) return request
+
+  return {
+    ...request,
+    rawInput: {
+      candidates: input.candidates.slice(0, 10).flatMap((candidate) => {
+        if (!isRecord(candidate) || !isRecord(candidate.item)) return []
+        const title = candidate.item.title
+        return typeof title === 'string' && title.trim()
+          ? [{ item: { title: title.trim().slice(0, MAX_PERMISSION_PREVIEW_TITLE_CHARS) } }]
+          : []
+      })
+    }
+  }
+}
+
 class AcpPermissionWaitOwner {
   constructor(
     private readonly sessions?: PermissionWaitSessions,
@@ -50,7 +79,7 @@ class AcpPermissionWaitOwner {
 
     const permission = sanitizeSessionPermissionRuntimeContext({
       state: 'pending',
-      request: candidate.request,
+      request: requestForPersistence(candidate.request),
       originatingPromptMessageId: candidate.promptMessageId,
       fingerprint: candidate.fingerprint,
       categoryKey: candidate.categoryKey,

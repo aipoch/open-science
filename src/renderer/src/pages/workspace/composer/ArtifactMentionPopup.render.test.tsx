@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { i18next } from '@/i18n'
 import { ArtifactMentionPopup } from './ArtifactMentionPopup'
 import { useNavigationStore } from '@/stores/navigation-store'
+import type { LiteratureCollectionView, LiteratureItemView } from '../../../../../shared/literature'
 import type { ProjectFileItem } from '../../../../../shared/project-files'
 
 let container: HTMLDivElement
@@ -39,6 +40,60 @@ const defaultProjectFiles: ProjectFileItem[] = [
     sortAtMs: 1710000002000
   }
 ]
+
+const libraryPdf: LiteratureItemView = {
+  id: 'literature-item-1',
+  item: {
+    itemType: 'journalArticle',
+    title: 'Corrective Retrieval Augmented Generation',
+    abstract: '',
+    issuedText: '2024',
+    issuedYear: 2024,
+    containerTitle: 'arXiv',
+    shortTitle: 'CRAG',
+    language: 'en',
+    rights: '',
+    url: '',
+    extra: '',
+    typeFields: {},
+    creators: [
+      {
+        nameMode: 'person',
+        givenName: 'Shi-Qi',
+        familyName: 'Yan',
+        creatorType: 'author'
+      }
+    ],
+    identifiers: []
+  },
+  attachments: [
+    {
+      id: 'literature-attachment-1',
+      kind: 'fullText',
+      title: '',
+      sortOrder: 0,
+      versions: [
+        {
+          id: 'literature-version-1',
+          versionNumber: 1,
+          filename: 'crag.pdf',
+          contentType: 'application/pdf',
+          sizeBytes: 629,
+          checksum: 'a'.repeat(64),
+          pageCount: 14,
+          createdAt: 2
+        }
+      ],
+      createdAt: 2,
+      updatedAt: 2
+    }
+  ],
+  projectIds: [],
+  collectionIds: [],
+  metadataRevision: 1,
+  createdAt: 1,
+  updatedAt: 2
+}
 
 beforeEach(() => {
   // Non-image rows never read previews, but stub the api so an accidental read never throws.
@@ -85,6 +140,9 @@ beforeEach(() => {
           canDiff: false
         }
       }))
+    },
+    literature: {
+      search: vi.fn().mockResolvedValue({ entries: [] })
     }
   }
   useNavigationStore.setState({ activeProjectId: 'default' })
@@ -183,6 +241,115 @@ describe('ArtifactMentionPopup', () => {
     // Section tags distinguish upload vs generated output.
     expect(text).toContain('upload')
     expect(text).toContain('output')
+  })
+
+  it('offers a Literature record as an immutable bibliographic mention with optional PDF', async () => {
+    const onSelect = vi.fn()
+    window.api.literature.search = vi.fn().mockResolvedValue({ entries: [libraryPdf] })
+
+    await renderPopup({ query: 'Corrective', onSelect })
+    await vi.waitFor(() =>
+      expect(document.body.textContent).toContain('Corrective Retrieval Augmented Generation')
+    )
+
+    const libraryRow = options().find((option) =>
+      option.textContent?.includes('Corrective Retrieval Augmented Generation')
+    )
+    expect(libraryRow?.textContent).toContain('Yan, Shi-Qi · 2024')
+
+    act(() => libraryRow?.click())
+    expect(onSelect).toHaveBeenCalledWith({
+      type: 'literature',
+      itemId: 'literature-item-1',
+      metadataRevision: 1,
+      item: libraryPdf.item,
+      attachmentVersionId: 'literature-version-1'
+    })
+  })
+
+  it('offers a metadata-only Literature record without pretending it is a file', async () => {
+    const onSelect = vi.fn()
+    window.api.literature.search = vi.fn().mockResolvedValue({
+      entries: [{ ...libraryPdf, id: 'metadata-only', attachments: [] }]
+    })
+
+    await renderPopup({ query: 'Corrective', onSelect })
+    await vi.waitFor(() =>
+      expect(document.body.textContent).toContain('Corrective Retrieval Augmented Generation')
+    )
+    act(() =>
+      options()
+        .find((option) => option.textContent?.includes('Corrective'))
+        ?.click()
+    )
+
+    expect(onSelect).toHaveBeenCalledWith({
+      type: 'literature',
+      itemId: 'metadata-only',
+      metadataRevision: 1,
+      item: libraryPdf.item
+    })
+  })
+
+  it('offers explicit current-Project Library and Collection retrieval scopes', async () => {
+    const onSelect = vi.fn()
+    window.api.literature.search = vi.fn().mockImplementation(async (request) => ({
+      entries:
+        request.scope === 'collections'
+          ? [
+              {
+                id: 'collection-1',
+                name: 'TP53 evidence',
+                description: '',
+                itemCount: 27,
+                createdAt: 1,
+                updatedAt: 1
+              } satisfies LiteratureCollectionView
+            ]
+          : []
+    }))
+
+    await renderPopup({ query: 'Library', onSelect })
+    await vi.waitFor(() =>
+      expect(document.body.textContent).toContain('References linked to this project.')
+    )
+    act(() =>
+      options()
+        .find((option) => option.textContent?.includes('References linked to this project.'))
+        ?.click()
+    )
+    expect(onSelect).toHaveBeenLastCalledWith({
+      type: 'literature-scope',
+      scope: 'project'
+    })
+
+    await renderPopup({ query: 'TP53', onSelect })
+    await vi.waitFor(() => expect(document.body.textContent).toContain('TP53 evidence'))
+    act(() =>
+      options()
+        .find((option) => option.textContent?.includes('TP53 evidence'))
+        ?.click()
+    )
+    expect(onSelect).toHaveBeenLastCalledWith({
+      type: 'literature-scope',
+      scope: 'collection',
+      collectionId: 'collection-1',
+      name: 'TP53 evidence'
+    })
+  })
+
+  it('keeps Literature records available when Collection suggestions fail', async () => {
+    window.api.literature.search = vi.fn().mockImplementation(async (request) => {
+      if (request.scope === 'collections') throw new Error('Collection search unavailable')
+      return { entries: [libraryPdf] }
+    })
+
+    await renderPopup({ query: 'Corrective' })
+
+    await vi.waitFor(() =>
+      expect(document.body.textContent).toContain('Corrective Retrieval Augmented Generation')
+    )
+    expect(document.body.textContent).not.toContain('Could not load library references.')
   })
 
   it('uses the preview-tab abbreviation for a long filename while preserving its extension', async () => {
@@ -435,8 +602,8 @@ describe('ArtifactMentionPopup', () => {
     window.api.projectFiles.listFiles = vi.fn().mockResolvedValue({ items: [], totalCount: 0 })
     await renderPopup()
 
+    await vi.waitFor(() => expect(document.body.textContent).toContain('No artifacts yet'))
     expect(options()).toHaveLength(0)
-    expect(document.body.textContent).toContain('No artifacts yet')
   })
 
   it('closes on Escape', async () => {

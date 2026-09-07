@@ -121,7 +121,7 @@ describe('createCloseConfirm', () => {
 
     await expect(pending).resolves.toBe('cancel')
     expect(h.sent).toEqual([
-      { requestId: 'req-1', variant: 'quit', sessions: [], reviewerActive: true }
+      { requestId: 'req-1', variant: 'quit', sessions: [], unlistedWorkActive: true }
     ])
   })
 

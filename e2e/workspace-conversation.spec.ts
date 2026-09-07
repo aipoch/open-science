@@ -14,6 +14,61 @@ const CONTEXT_COMPACTION_PROMPT = 'Preview context compaction.'
 const CITATION_PREVIEW_PROMPT = 'Preview a cited source.'
 const AXE_PATH = resolve(process.cwd(), 'node_modules/axe-core/axe.min.js')
 
+test('keeps source icons inside table cells after expanding a message table', async ({ app }) => {
+  await app.completeOnboarding()
+  const page = await app.configureFakeAgent()
+  await allowCitationPreviewDomain(page)
+  await page.route('https://citation.example/favicon.ico', (route) =>
+    route.fulfill({
+      contentType: 'image/svg+xml',
+      body: '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16"><rect width="16" height="16" fill="teal"/></svg>'
+    })
+  )
+  await createProject(page)
+  await page
+    .getByRole('textbox', { name: 'Ask anything' })
+    .fill('Expand a table with source links.')
+  await page.getByRole('button', { name: 'Send message' }).click()
+
+  const table = page.getByRole('region', { name: 'Conversation' }).locator('table')
+  await expect(table).toBeVisible()
+  await expect(table.locator('[data-session-link-favicon]')).toHaveCount(2)
+  await expect(table.locator('[data-session-link-favicon][data-state="local"]')).toHaveCount(1)
+  await table.hover()
+  await page.getByTitle('View fullscreen', { exact: true }).click()
+
+  const fullscreen = page.locator('[data-streamdown="table-fullscreen"]')
+  await expect(fullscreen).toBeVisible()
+  await expect(fullscreen.locator('[data-session-link-favicon]')).toHaveCount(2)
+  // Exercise the actual portal and stylesheet: jsdom cannot detect an icon covering the dialog.
+  await expect
+    .poll(() =>
+      fullscreen.locator('[data-session-link-favicon]').evaluateAll((icons) =>
+        icons.every((icon) => {
+          const cell = icon.closest('td')!.getBoundingClientRect()
+          return [...icon.querySelectorAll('svg, img')].every((image) => {
+            const bounds = image.getBoundingClientRect()
+            return (
+              bounds.width > 0 &&
+              bounds.width <= 20 &&
+              bounds.height > 0 &&
+              bounds.height <= 20 &&
+              bounds.left >= cell.left &&
+              bounds.right <= cell.right &&
+              bounds.top >= cell.top &&
+              bounds.bottom <= cell.bottom
+            )
+          })
+        })
+      )
+    )
+    .toBe(true)
+  await fullscreen.getByTitle('Download table', { exact: true }).click()
+  await expect(fullscreen.getByRole('button', { name: 'CSV', exact: true })).toBeVisible()
+  await fullscreen.getByTitle('Exit fullscreen', { exact: true }).click()
+  await expect(fullscreen).toHaveCount(0)
+})
+
 const persistedMemoryState = async (
   page: Page
 ): Promise<{
@@ -66,6 +121,48 @@ const clickPermissionDecision = async (page: Page, decision: 'allow' | 'deny'): 
   })
 }
 
+test('explains disabled revision navigation while a turn is running', async ({ app }, testInfo) => {
+  await app.completeOnboarding()
+  const page = await app.configureFakeAgent()
+  await createProject(page)
+
+  await page.getByRole('textbox', { name: 'Ask anything' }).fill(USER_MESSAGE)
+  await expect(page.getByRole('button', { name: 'Send message' })).toBeEnabled()
+  await page.getByRole('button', { name: 'Send message' }).click()
+
+  const conversation = page.getByRole('region', { name: 'Conversation' })
+  await expect(conversation.getByText(USER_MESSAGE, { exact: true })).toBeVisible()
+  await expect(conversation.getByText(AGENT_REPLY, { exact: true })).toBeVisible()
+  // Reply text can arrive before the Agent turn ends. Wait for Main to observe completion
+  // before editing history and restarting, which otherwise can open a native quit dialog.
+  await expect.poll(() => page.evaluate(() => window.api.storage.detectActive())).toEqual([])
+
+  await conversation.getByText(USER_MESSAGE, { exact: true }).hover()
+  await conversation.getByRole('button', { name: 'Edit message' }).click()
+  await conversation.getByRole('textbox', { name: 'Edit message' }).fill(EDITED_USER_MESSAGE)
+  await conversation.getByRole('button', { name: 'Send', exact: true }).click()
+
+  const previous = conversation.getByRole('button', { name: 'Previous message revision' })
+  await expect(previous).toBeEnabled()
+  await page
+    .getByRole('textbox', { name: 'Ask anything' })
+    .fill('Run the ordered slow tool journey.')
+  await page.getByRole('button', { name: 'Send message' }).click()
+  await expect(page.getByTestId('composer-queue-submit')).toBeVisible()
+  await expect(previous).toBeDisabled()
+  const explanation = 'Message revisions are unavailable while this session is busy or blocked.'
+  const trigger = previous.locator('..')
+  await trigger.focus()
+  await expect(page.getByRole('tooltip', { name: explanation })).toBeVisible()
+  await page.screenshot({ path: testInfo.outputPath('revision-navigation-running.png') })
+  await expect(conversation.getByLabel('Message revision', { exact: true })).toHaveText('2/2')
+  await expect(previous).toBeEnabled()
+  await previous.click()
+  await expect(conversation.getByText(USER_MESSAGE, { exact: true })).toBeVisible()
+  await expect(conversation.getByLabel('Message revision', { exact: true })).toHaveText('1/2')
+  await page.screenshot({ path: testInfo.outputPath('revision-navigation-idle.png') })
+})
+
 test('edits and navigates message revisions that persist after relaunch', async ({ app }) => {
   await app.completeOnboarding()
   let page = await app.configureFakeAgent()
@@ -93,23 +190,35 @@ test('edits and navigates message revisions that persist after relaunch', async 
   })
   const nextRevision = conversation.getByRole('button', { name: 'Next message revision' })
   await expect(conversation.getByText(EDITED_USER_MESSAGE, { exact: true })).toBeVisible()
-  await expect(revision).toHaveText('2/2')
+  await expect(revision).toHaveText(['2/2'])
   await expect(previousRevision).toBeEnabled()
   await expect(nextRevision).toBeDisabled()
+  // Main can be idle while the renderer still drains the edited send. This existing control
+  // also waits for the active run, pending queue and branch-switch guard to clear.
+  await expect(conversation.getByRole('button', { name: 'Branch in new session' })).toBeEnabled()
+
+  // The edit starts another Agent turn. Let it finish before switching branches or restarting,
+  // otherwise application.close() can wait indefinitely on the native active-session quit dialog.
+  await expect(conversation.getByText(AGENT_REPLY, { exact: true })).toBeVisible()
+  await expect.poll(() => page.evaluate(() => window.api.storage.detectActive())).toEqual([])
 
   await previousRevision.click()
   await expect(conversation.getByText(USER_MESSAGE, { exact: true })).toBeVisible()
-  await expect(revision).toHaveText('1/2')
+  await expect(revision).toHaveText(['1/2'])
   await expect(previousRevision).toBeDisabled()
   await expect(nextRevision).toBeEnabled()
 
   await nextRevision.click()
   await expect(conversation.getByText(EDITED_USER_MESSAGE, { exact: true })).toBeVisible()
-  await expect(revision).toHaveText('2/2')
+  await expect(revision).toHaveText(['2/2'])
   await previousRevision.click()
   await expect(conversation.getByText(USER_MESSAGE, { exact: true })).toBeVisible()
-  await expect(revision).toHaveText('1/2')
+  await expect(revision).toHaveText(['1/2'])
 
+  // Branch content renders before the asynchronous history switch and persistence drain finish.
+  // Wait for the same idle control used above before asking Electron to quit for the restart.
+  await expect(conversation.getByRole('button', { name: 'Branch in new session' })).toBeEnabled()
+  await expect.poll(() => page.evaluate(() => window.api.storage.detectActive())).toEqual([])
   page = await app.restart()
   await page
     .getByRole('region', { name: 'Recent sessions' })
@@ -118,7 +227,7 @@ test('edits and navigates message revisions that persist after relaunch', async 
   conversation = page.getByRole('region', { name: 'Conversation' })
   await expect(conversation.getByText(USER_MESSAGE, { exact: true })).toBeVisible()
   await expect(conversation.getByText(AGENT_REPLY, { exact: true })).toBeVisible()
-  await expect(conversation.getByLabel('Message revision', { exact: true })).toHaveText('1/2')
+  await expect(conversation.getByLabel('Message revision', { exact: true })).toHaveText(['1/2'])
   await expect(
     conversation.getByRole('button', { name: 'Previous message revision' })
   ).toBeDisabled()
@@ -126,7 +235,7 @@ test('edits and navigates message revisions that persist after relaunch', async 
 
   await conversation.getByRole('button', { name: 'Next message revision' }).click()
   await expect(conversation.getByText(EDITED_USER_MESSAGE, { exact: true })).toBeVisible()
-  await expect(conversation.getByLabel('Message revision', { exact: true })).toHaveText('2/2')
+  await expect(conversation.getByLabel('Message revision', { exact: true })).toHaveText(['2/2'])
 })
 
 test('keeps Memory reversible while the replacement session awaits history replay', async ({
@@ -611,7 +720,7 @@ test('shows the Electron failure reason when a source request fails', async ({ a
   await expect(sourceError).toContainText('ERR_CONNECTION_REFUSED (-102)')
 })
 
-test('archives a completed session from its mobile sidebar actions', async ({ app }) => {
+test('archives a completed session from its mobile sidebar actions', async ({ app }, testInfo) => {
   await app.completeOnboarding()
   const page = await app.configureFakeAgent()
   await createProject(page)
@@ -619,6 +728,33 @@ test('archives a completed session from its mobile sidebar actions', async ({ ap
   await page.getByRole('textbox', { name: 'Ask anything' }).fill(USER_MESSAGE)
   await page.getByRole('button', { name: 'Send message' }).click()
   await expect(page.getByText(AGENT_REPLY, { exact: true })).toBeVisible()
+
+  const advanceRevision = async (): Promise<void> => {
+    const session = await page.evaluate(async (title) => {
+      const session = (await window.api.sessions.loadAll()).sessions.find(
+        (candidate) => candidate.title === title
+      )
+      if (!session) throw new Error('Archive fixture Session was not persisted.')
+      return session
+    }, USER_MESSAGE)
+    await page.getByRole('menuitem', { name: 'Archive' }).evaluate((element, session) => {
+      // Queue another client's write immediately before the menu submits its captured version.
+      element.addEventListener(
+        'click',
+        () => {
+          void window.api.sessions.editDetails({
+            projectId: session.projectId!,
+            sessionId: session.id,
+            title: session.title,
+            description: `${session.description ?? ''} concurrent edit`,
+            expectedTitle: session.title,
+            expectedDescription: session.description ?? ''
+          })
+        },
+        { capture: true, once: true }
+      )
+    }, session)
+  }
 
   await page.setViewportSize({ width: 375, height: 900 })
   await page.getByRole('button', { name: 'Open navigation' }).click()
@@ -640,12 +776,50 @@ test('archives a completed session from its mobile sidebar actions', async ({ ap
   await exportDialog.getByRole('button', { name: 'Close' }).click()
   await expect(exportDialog).toBeHidden()
 
+  const undo = page.getByTestId('archive-undo-snackbar')
+  const conflict = page.getByText(/Session revision conflict:/)
+  // Exercise two consecutive authority changes, not just one lucky retry. Each conflict
+  // must finish refreshing the projection before a fresh user action opens the menu again.
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    await page.getByRole('button', { name: 'Open navigation' }).click()
+    await page.getByRole('button', { name: `Open actions for ${USER_MESSAGE}` }).click()
+    const archive = page.getByRole('menuitem', { name: 'Archive' })
+    await expect(archive).toBeEnabled()
+    if (attempt < 2) await advanceRevision()
+    await archive.click()
+    if (attempt < 2) {
+      await expect(conflict).toBeVisible()
+      await expect(undo).toBeHidden()
+    } else {
+      await expect(undo).toContainText('Archived session')
+    }
+  }
+  await expect(page.getByRole('button', { name: `Open actions for ${USER_MESSAGE}` })).toBeHidden()
+  await page.screenshot({
+    path: testInfo.outputPath('mobile-session-archived.png'),
+    animations: 'disabled'
+  })
+})
+
+test('identifies the Project before deleting a workspace Session', async ({ app }, testInfo) => {
+  await app.completeOnboarding()
+  const page = await app.configureFakeAgent()
+  await createProject(page)
+  await page.getByRole('textbox', { name: 'Ask anything' }).fill(USER_MESSAGE)
+  await page.getByRole('button', { name: 'Send message' }).click()
+  await expect(page.getByText(AGENT_REPLY, { exact: true })).toBeVisible()
+
+  await page.setViewportSize({ width: 375, height: 900 })
   await page.getByRole('button', { name: 'Open navigation' }).click()
   await page.getByRole('button', { name: `Open actions for ${USER_MESSAGE}` }).click()
-  const archive = page.getByRole('menuitem', { name: 'Archive' })
-  await expect(archive).toBeEnabled()
-  await archive.click()
-
-  await expect(page.getByTestId('archive-undo-snackbar')).toContainText('Archived session')
-  await expect(page.getByRole('button', { name: `Open actions for ${USER_MESSAGE}` })).toBeHidden()
+  await page.getByRole('menuitem', { name: 'Delete', exact: true }).click()
+  const confirmation = page.getByRole('alertdialog', { name: 'Delete Session?' })
+  await expect(confirmation).toContainText(`Project: ${PROJECT_NAME}`)
+  await expect(confirmation).toContainText(USER_MESSAGE)
+  await page.screenshot({
+    path: testInfo.outputPath('workspace-delete-project.png'),
+    animations: 'disabled'
+  })
+  await confirmation.getByRole('button', { name: 'Cancel', exact: true }).click()
+  await expect(confirmation).toBeHidden()
 })

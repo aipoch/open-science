@@ -106,6 +106,7 @@ const publicStoreTarget = modulePath(facadePath)
 const publicValueExports = [
   'createInitialSessionState',
   'createSessionStore',
+  'findMostRecentSessionId',
   'getExternallyHydratedSessionAuthority',
   'isArtifactFinalizationError',
   'isRetryableArtifactFinalizationError',
@@ -134,6 +135,8 @@ const publicTypeExports = [
   'SessionStore',
   'SessionStoreApi',
   'SessionWaitReason',
+  'StreamingMessageContent',
+  'StreamingMessageContentByMessageId',
   'ToolActivity',
   'ToolActivityStatus'
 ].sort()
@@ -925,7 +928,8 @@ describe('Session Store architecture', () => {
     ])
     expect(ownerTypeProperties('session-store-persistence-owner.ts', 'SessionStoreData')).toEqual([
       'selectedSessionId',
-      'sessions'
+      'sessions',
+      'streamingMessages'
     ])
     expect(
       ownerTypeProperties('session-store-persistence-owner.ts', 'SessionPersistenceActions')
@@ -970,6 +974,7 @@ describe('Session Store architecture', () => {
       'finishCompaction',
       'finishRun',
       'interruptRun',
+      'invalidateActivePlanProjection',
       'markResumed',
       'prepareInterruptedTurnContinuation',
       'recordArtifactError',
@@ -1038,6 +1043,7 @@ describe('Session Store architecture', () => {
       testFiles: {
         owner: [
           'src/renderer/src/stores/session-store.test.ts',
+          'src/renderer/src/stores/session-store.archive-order.test.ts',
           'src/renderer/src/stores/session-store.architecture.test.ts',
           'src/renderer/src/stores/session-job-store.test.ts'
         ],

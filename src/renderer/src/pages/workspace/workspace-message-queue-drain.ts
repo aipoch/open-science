@@ -13,6 +13,7 @@ import {
 import {
   WorkspaceMessageQueueOwner,
   type MessageQueueDispatch,
+  type MessageQueueItem,
   type WorkspaceMessageQueueControllerOptions
 } from './workspace-message-queue-owner'
 
@@ -43,25 +44,36 @@ const dispatchQueuedSession = (
       return
     }
   }
-  const item = owner.itemsFor(sessionId)[0]
-  if (!item || item.phase === 'sending' || item.phase === 'error') return
-  const contextError = queueItemContextError(session, item)
-  if (contextError) {
-    if (item.kind === 'application') {
-      const remaining = owner.itemsFor(sessionId).filter((candidate) => candidate.id !== item.id)
+  let item: MessageQueueItem | undefined
+  // Only skip terminal automatic heads; reserve at most one send per drain.
+  for (
+    let remainingHeads = owner.itemsFor(sessionId).length;
+    remainingHeads > 0;
+    remainingHeads--
+  ) {
+    const head = owner.itemsFor(sessionId)[0]
+    if (!head || head.phase === 'sending' || head.phase === 'error') return
+    const contextError = queueItemContextError(session, head)
+    if (!contextError) {
+      item = head
+      break
+    }
+    if (head.kind === 'application') {
+      const remaining = owner.itemsFor(sessionId).filter((candidate) => candidate.id !== head.id)
       if (remaining.length === 0) owner.queues.delete(sessionId)
       else owner.queues.set(sessionId, remaining)
       owner.emit()
-      item.application?.resolve(undefined)
-      return
+      head.application?.resolve(undefined)
+      continue
     }
-    owner.replaceItem(sessionId, item.id, {
+    owner.replaceItem(sessionId, head.id, {
       phase: 'error',
       error: contextError,
       deferredUntilIdle: false
     })
     return
   }
+  if (!item) return
   if (!current.isSpecialistReady(sessionId)) return
   if (!queueSessionIsSendable(current, session)) return
 
@@ -95,6 +107,8 @@ const dispatchQueuedSession = (
       const result = item.revisionMessageId
         ? await current.runtime.resendEditedMessage!(sessionId, item.revisionMessageId, {
             text: item.text,
+            ...(item.agentFrameworkId ? { expectedFrameworkId: item.agentFrameworkId } : {}),
+            agentConfiguration: item.agentConfiguration,
             annotations: item.snapshot?.annotations,
             referencedArtifacts: item.snapshot ? docToArtifactRefs(item.snapshot.doc) : undefined,
             parts: item.snapshot ? docToMessageParts(item.snapshot.doc) : undefined,
@@ -109,11 +123,13 @@ const dispatchQueuedSession = (
             parts: item.snapshot ? docToMessageParts(item.snapshot.doc) : undefined,
             pdfContext: item.snapshot?.pdfContext,
             pdfReadingPosition: item.snapshot?.pdfReadingPosition,
+            pdfReadingPositionSource: item.snapshot?.pdfReadingPositionSource,
             pendingPdfContextAttachmentIds: item.snapshot?.pendingPdfContextAttachmentIds,
             pendingPdfContextVersions: item.snapshot?.pendingPdfContextVersions,
             cwd: item.cwd,
             projectId: item.projectId,
             permissionProfile: item.permissionProfile,
+            ...(item.agentFrameworkId ? { expectedFrameworkId: item.agentFrameworkId } : {}),
             agentConfiguration: item.agentConfiguration,
             forcedSkillIds: item.forcedSkillIds,
             specialistId: item.specialistId,
@@ -211,16 +227,13 @@ const sendQueuedItemNow = async (
     if (displacedDispatch && displacedDispatch.itemId !== itemId) {
       await displacedDispatch.completion
     }
-    const current = owner.resolveOptions(optionsRef.current)
-    const session = current.getSession(sessionId)
-    if (session?.fixLoopActive) {
-      await current.abortFixLoop({
-        projectId: session.projectId,
-        appSessionId: sessionId
-      })
-    }
-    const liveSession = current.getSession(sessionId)
-    if (liveSession) {
+    let current = owner.resolveOptions(optionsRef.current)
+    let liveSession = current.getSession(sessionId)
+    const canContinue = (): boolean => {
+      if (!liveSession) {
+        owner.discardSession(sessionId, current.composer.discardSnapshot)
+        return false
+      }
       const contextError = queueItemContextError(liveSession, item)
       if (contextError) {
         owner.replaceItem(sessionId, itemId, {
@@ -228,26 +241,39 @@ const sendQueuedItemNow = async (
           error: contextError,
           deferredUntilIdle: false
         })
-        return
+        return false
       }
-      if (!current.isSpecialistReady(sessionId)) {
+      if (
+        current.isPersistenceBlocked(sessionId) ||
+        !current.isSpecialistReady(sessionId) ||
+        queuePermissionIsPending(current, liveSession) ||
+        liveSession.archivedAt !== undefined ||
+        !(current.isProjectActive?.(liveSession.projectId) ?? true) ||
+        liveSession.conversationGraphSyncBlocked ||
+        liveSession.compacting ||
+        liveSession.specialistBindingPending === true ||
+        current.isBarrierInFlight(sessionId) ||
+        current.isSideChatOpen(sessionId)
+      ) {
         owner.replaceItem(sessionId, itemId, {
           phase: 'queued',
           error: undefined,
           deferredUntilIdle: true
         })
         owner.emit(MESSAGE_QUEUE_ANNOUNCEMENTS.deferredUntilIdle)
-        return
+        return false
       }
-      if (queuePermissionIsPending(current, liveSession)) {
-        owner.replaceItem(sessionId, itemId, {
-          phase: 'queued',
-          error: undefined,
-          deferredUntilIdle: true
-        })
-        owner.emit(MESSAGE_QUEUE_ANNOUNCEMENTS.deferredUntilIdle)
-        return
-      }
+      return true
+    }
+    if (!canContinue()) return
+    if (liveSession?.fixLoopActive) {
+      await current.abortFixLoop({
+        projectId: liveSession.projectId,
+        appSessionId: sessionId
+      })
+      current = owner.resolveOptions(optionsRef.current)
+      liveSession = current.getSession(sessionId)
+      if (!canContinue()) return
     }
     const liveTurn = isQueueLiveTurn(liveSession)
     const referencedArtifacts = docToArtifactRefs(item.snapshot.doc)
@@ -270,6 +296,8 @@ const sendQueuedItemNow = async (
       try {
         const steered = await current.runtime.steerFollowUp({
           sessionId,
+          ...(item.agentFrameworkId ? { expectedFrameworkId: item.agentFrameworkId } : {}),
+          agentConfiguration: item.agentConfiguration,
           text: item.text,
           ...(item.snapshot.attachments.length > 0
             ? { attachments: item.snapshot.attachments }

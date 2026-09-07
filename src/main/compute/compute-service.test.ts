@@ -54,8 +54,8 @@ const makeRepo = (
   clearScratchRoot: ReturnType<typeof vi.fn>
   updateConcurrencyLimit: ReturnType<typeof vi.fn>
 } => {
-  const updateProbeResult = vi.fn(() => Promise.resolve())
-  const updateDetails = vi.fn(() => Promise.resolve())
+  const updateProbeResult = vi.fn(() => Promise.resolve(true))
+  const updateDetails = vi.fn(() => Promise.resolve(true))
   const updateScratchPinned = vi.fn(() => Promise.resolve())
   const clearScratchRoot = vi.fn(() => Promise.resolve())
   const updateConcurrencyLimit = vi.fn(() => Promise.resolve())
@@ -137,14 +137,25 @@ describe('ComputeService host profile facade', () => {
     expect(updateProbeResult).toHaveBeenCalledWith(
       'ssh:biowulf',
       expect.objectContaining({ ok: true, cpus: 4 }),
-      'scheduler_cluster'
+      'scheduler_cluster',
+      'host-1',
+      undefined
     )
-    expect(updateDetails).toHaveBeenNthCalledWith(1, 'ssh:biowulf', 'replacement', 'user')
+    expect(updateDetails).toHaveBeenNthCalledWith(
+      1,
+      'ssh:biowulf',
+      'replacement',
+      'user',
+      'host-1',
+      'current details'
+    )
     expect(updateDetails).toHaveBeenNthCalledWith(
       2,
       'ssh:biowulf',
       'current details\nappendix',
-      'agent'
+      'agent',
+      'host-1',
+      'current details'
     )
     expect(updateScratchPinned).toHaveBeenCalledWith('ssh:biowulf', '/portable/scratch')
     expect(clearScratchRoot).toHaveBeenCalledWith('ssh:biowulf')

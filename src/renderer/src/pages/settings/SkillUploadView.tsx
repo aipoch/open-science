@@ -146,6 +146,7 @@ const SkillUploadView = ({
 
   // Parses one picked file into its candidates, capturing a per-file error instead of throwing.
   const parseFile = async (file: File): Promise<ParseResult> => {
+    const sourceId = crypto.randomUUID()
     const name = file.name.toLowerCase()
     const isBundle = name.endsWith('.zip') || name.endsWith('.skill')
 
@@ -185,7 +186,7 @@ const SkillUploadView = ({
         return {
           candidates: previews.map((preview) => ({
             kind: 'bundle',
-            key: `${file.name}::${preview.subPath}`,
+            key: `${sourceId}::${preview.subPath}`,
             fileName: file.name,
             base64,
             subPath: preview.subPath,
@@ -228,7 +229,7 @@ const SkillUploadView = ({
         candidates: [
           {
             kind: 'markdown',
-            key: file.name,
+            key: sourceId,
             fileName: file.name,
             name: parsed.name,
             description: parsed.description ?? '',

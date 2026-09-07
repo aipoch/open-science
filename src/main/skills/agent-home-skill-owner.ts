@@ -1,14 +1,13 @@
 import { createHash } from 'node:crypto'
 import { cp, lstat, readFile, readdir, stat } from 'node:fs/promises'
-import { basename, join, resolve } from 'node:path'
+import { basename, join, relative } from 'node:path'
 
 import type { AgentHomeSkillRef, AgentHomeSkillSource } from '../../shared/settings'
-import { SKILL_IMPORT_LIMITS } from '../../shared/skill-import-limits'
+import { SKILL_IMPORT_LIMITS, isAppOwnedSkillRootFile } from '../../shared/skill-import-limits'
 import { parseSkillDocument } from './frontmatter'
-import {
-  SOURCE_MANIFEST,
-  type SkillPackageTransactionOwner,
-  type StagedSkillPackage
+import type {
+  SkillPackageTransactionOwner,
+  StagedSkillPackage
 } from './skill-package-transaction-owner'
 import type { ImportOutcome, ParsedSkillPreview } from './user-skill-import-contracts'
 import { assertUsableSkillName, isUsableSkillName, type UserSkillStore } from './user-skill-store'
@@ -271,9 +270,9 @@ class AgentHomeSkillOwner {
         if (!entryStat.isFile()) {
           throw new Error(`Agent-home Skill contains an unsupported filesystem entry.`)
         }
-        if (relativePath === SOURCE_MANIFEST) {
+        if (isAppOwnedSkillRootFile(relativePath)) {
           if (options.skipSourceManifest) continue
-          throw new Error(`Skill import may not include the reserved file ${SOURCE_MANIFEST}.`)
+          throw new Error(`Skill import may not include the reserved file ${relativePath}.`)
         }
         if (fileCount >= SKILL_IMPORT_LIMITS.maxFiles) {
           throw new Error(`Agent-home Skill has more than ${SKILL_IMPORT_LIMITS.maxFiles} files.`)
@@ -361,8 +360,10 @@ class AgentHomeSkillOwner {
         force: false,
         errorOnExist: true,
         filter: async (entry) => {
-          if (resolve(entry) === resolve(sourcePath, SOURCE_MANIFEST)) {
-            throw new Error(`Skill import may not include the reserved file ${SOURCE_MANIFEST}.`)
+          if (isAppOwnedSkillRootFile(relative(sourcePath, entry))) {
+            throw new Error(
+              `Skill import may not include the reserved file ${relative(sourcePath, entry)}.`
+            )
           }
           if ((await lstat(entry)).isSymbolicLink()) {
             throw new Error(`Refusing to import an agent-home Skill containing a symbolic link.`)
@@ -540,11 +541,29 @@ class AgentHomeSkillOwner {
           : null
         const identityUnchanged =
           existing?.agentHome && agentHomeKey(existing.agentHome) === agentHomeKey(skill)
+        let installedSignature: string | undefined
         if (existingDirectoryName && identityUnchanged && existing.signature === staged.signature) {
+          try {
+            installedSignature = await this.signatureOfAgentHomeSkill(
+              this.store.skillDirectory('imported', existingDirectoryName),
+              { skipSourceManifest: true }
+            )
+          } catch {
+            // A broken live tree is repaired from the validated staging copy.
+          }
+        }
+        if (
+          existingDirectoryName &&
+          identityUnchanged &&
+          existing.signature === staged.signature &&
+          installedSignature === staged.signature
+        ) {
           await this.transactions.discard(staged)
           return { status: 'unchanged', id: `imported-${existingDirectoryName}` }
         }
 
+        if (existingDirectoryName)
+          await this.store.assertOrdinaryReplacement('imported', existingDirectoryName)
         await this.transactions.promote(staged)
         return {
           status: existingDirectoryName ? 'updated' : 'imported',

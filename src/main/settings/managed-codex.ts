@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { spawn, spawnSync } from 'node:child_process'
+import { execFile, spawn } from 'node:child_process'
 import { createReadStream, type Dirent } from 'node:fs'
 import {
   chmod,
@@ -19,6 +19,7 @@ import { arch as osArch } from 'node:os'
 import { dirname, join, posix, resolve, sep } from 'node:path'
 import { Writable } from 'node:stream'
 import { pipeline } from 'node:stream/promises'
+import { promisify } from 'node:util'
 import { createGunzip } from 'node:zlib'
 
 import type { ClaudeInstallEvent, ClaudeInstallResult } from '../../shared/settings'
@@ -41,6 +42,8 @@ import { createLogger } from '../logger'
 import { stripCodexCredentialEnv } from './process-tree'
 import { terminateProcessTree } from '../process-tree'
 import { toErrorMessage } from '../error-message'
+
+const execFileAsync = promisify(execFile)
 
 export const CODEX_ACP_VERSION = MINIMUM_CODEX_ACP_VERSION
 export const CODEX_VERSION = '0.144.6'
@@ -786,9 +789,10 @@ const resolvePinnedPackage = async (
   encodedName: string,
   version: string,
   expectedIntegrity: string,
-  fetchJson: FetchJson
+  fetchJson: FetchJson,
+  signal?: AbortSignal
 ): Promise<PackageResolution> => {
-  const metadata = asRecord(await fetchJson(`${registry}/${encodedName}/${version}`))
+  const metadata = asRecord(await fetchJson(`${registry}/${encodedName}/${version}`, signal))
   const dist = asRecord(metadata.dist)
   const tarball = dist.tarball
   const integrity = dist.integrity
@@ -989,14 +993,16 @@ class TarSubtreeExtractor extends Writable {
 const extractCodexVendor = async ({
   tgzPath,
   target,
-  destination
+  destination,
+  signal
 }: {
   tgzPath: string
   target: string
   destination: string
+  signal?: AbortSignal
 }): Promise<void> => {
   const extractor = new TarSubtreeExtractor(`package/vendor/${target}`, destination)
-  await pipeline(createReadStream(tgzPath), createGunzip(), extractor)
+  await pipeline(createReadStream(tgzPath), createGunzip(), extractor, { signal })
   if (!extractor.foundEntries()) {
     throw new Error(`Codex package did not contain vendor/${target}`)
   }
@@ -1010,11 +1016,12 @@ export type ManagedCodexInstallOutcome = {
   codexVersion?: string
 }
 
-export type VersionVerifier = (path: string) => Promise<string | undefined>
+export type VersionVerifier = (path: string, signal?: AbortSignal) => Promise<string | undefined>
 export type PairVerifier = (
   adapterPath: string,
   codexPath: string,
-  codexHome: string
+  codexHome: string,
+  signal?: AbortSignal
 ) => Promise<void>
 
 export type InstallManagedCodexOptions = {
@@ -1032,6 +1039,7 @@ export type InstallManagedCodexOptions = {
   verifyCodex?: VersionVerifier
   verifyPair?: PairVerifier
   integrities?: { adapter: string; codex: string }
+  signal?: AbortSignal
 }
 
 const parseVersion = (output: string): string | undefined =>
@@ -1046,37 +1054,67 @@ export type ManagedCodexVersionSpawn = (
     windowsHide: true
     env?: NodeJS.ProcessEnv
     shell?: boolean
+    signal?: AbortSignal
   }
-) => { status: number | null; stdout: string }
+) => Promise<{ status: number | null; stdout: string }>
 
-export const runManagedCodexVersion = (
+const spawnManagedCodexVersion: ManagedCodexVersionSpawn = async (executable, args, options) => {
+  try {
+    const { stdout } = await execFileAsync(executable, args, options)
+    return { status: 0, stdout }
+  } catch (error) {
+    const failure = error as { code?: string | number; stdout?: string }
+    return {
+      status: typeof failure.code === 'number' ? failure.code : null,
+      stdout: typeof failure.stdout === 'string' ? failure.stdout : ''
+    }
+  }
+}
+
+export const runManagedCodexVersion = async (
   executable: string,
   args: string[],
   env?: NodeJS.ProcessEnv,
   _platform: NodeJS.Platform = process.platform,
-  spawnVersion: ManagedCodexVersionSpawn = spawnSync as unknown as ManagedCodexVersionSpawn
-): string | undefined => {
+  spawnVersion: ManagedCodexVersionSpawn = spawnManagedCodexVersion,
+  signal?: AbortSignal
+): Promise<string | undefined> => {
   const useShell = _platform === 'win32' && /\.(cmd|bat)$/i.test(executable)
-  const result = spawnVersion(useShell ? `"${executable}"` : executable, args, {
+  const result = await spawnVersion(useShell ? `"${executable}"` : executable, args, {
     encoding: 'utf8',
     timeout: 10_000,
     windowsHide: true,
     env,
+    signal,
     ...(useShell ? { shell: true } : {})
   })
 
   return result.status === 0 ? parseVersion(result.stdout) : undefined
 }
 
-const defaultVerifyAdapter: VersionVerifier = async (adapterPath) =>
-  runManagedCodexVersion(process.execPath, [adapterPath, '--version'], {
-    ...process.env,
-    ELECTRON_RUN_AS_NODE: '1',
-    NO_BROWSER: '1'
-  })
+const defaultVerifyAdapter: VersionVerifier = async (adapterPath, signal) =>
+  runManagedCodexVersion(
+    process.execPath,
+    [adapterPath, '--version'],
+    {
+      ...process.env,
+      ELECTRON_RUN_AS_NODE: '1',
+      NO_BROWSER: '1'
+    },
+    process.platform,
+    undefined,
+    signal
+  )
 
-const defaultVerifyCodex: VersionVerifier = async (codexPath) =>
-  runManagedCodexVersion(codexPath, ['--version'], { ...process.env, NO_BROWSER: '1' })
+const defaultVerifyCodex: VersionVerifier = async (codexPath, signal) =>
+  runManagedCodexVersion(
+    codexPath,
+    ['--version'],
+    { ...process.env, NO_BROWSER: '1' },
+    process.platform,
+    undefined,
+    signal
+  )
 
 // Keeps adapter stderr useful for troubleshooting while preventing credentials or unbounded child
 // output from entering the app log. The installer never logs the child environment or initialize body.
@@ -1094,7 +1132,13 @@ export const sanitizeManagedCodexDiagnostic = (
   }
 }
 
-export const verifyManagedCodexPair: PairVerifier = async (adapterPath, codexPath, codexHome) => {
+export const verifyManagedCodexPair: PairVerifier = async (
+  adapterPath,
+  codexPath,
+  codexHome,
+  signal
+) => {
+  signal?.throwIfAborted()
   await mkdir(codexHome, { recursive: true })
   // Force the in-memory credential store so a stray host key can never be persisted into this home
   // during the handshake (defense-in-depth alongside the credential-stripped env below).
@@ -1189,11 +1233,23 @@ export const verifyManagedCodexPair: PairVerifier = async (adapterPath, codexPat
         if (settled) return
         settled = true
         clearTimeout(timeout)
+        abortSignal?.removeEventListener('abort', abortInstall)
         if (stdoutBuffer.trim()) consumeStdoutLine(stdoutBuffer)
         // Reap the adapter AND its Codex app-server grandchild on every terminal path (success, error,
         // timeout), awaiting the SAME memoized teardown before resolving. On timeout the parent is still
         // alive here; on success consumeStdoutLine already started the one reap this awaits.
         void reapTree().finally(() => resolveResult({ status, signal }))
+      }
+      const abortSignal = signal
+      const abortInstall = (): void => {
+        spawnError =
+          abortSignal?.reason instanceof Error
+            ? abortSignal.reason
+            : new Error('Codex install cancelled')
+        child.stdin.destroy()
+        child.stdout.destroy()
+        child.stderr.destroy()
+        finish(child.exitCode, child.signalCode)
       }
       const timeout = setTimeout(() => {
         spawnError = new Error('ACP initialize check timed out after 15000ms')
@@ -1202,6 +1258,8 @@ export const verifyManagedCodexPair: PairVerifier = async (adapterPath, codexPat
         child.stderr.destroy()
         finish(child.exitCode, child.signalCode)
       }, 15_000)
+      abortSignal?.addEventListener('abort', abortInstall, { once: true })
+      if (abortSignal?.aborted) abortInstall()
 
       child.once('error', (error) => {
         spawnError = error
@@ -1341,6 +1399,7 @@ export const installManagedCodex = async (
     verifyCodex = defaultVerifyCodex,
     verifyPair = verifyManagedCodexPair,
     existingCodexPath,
+    signal,
     integrities = {
       adapter: CODEX_ACP_INTEGRITY,
       codex: CODEX_INTEGRITIES[platform.key] ?? ''
@@ -1373,7 +1432,8 @@ export const installManagedCodex = async (
         '@agentclientprotocol%2fcodex-acp',
         CODEX_ACP_VERSION,
         integrities.adapter,
-        fetchJson
+        fetchJson,
+        signal
       )
       const codex = existingCodexPath
         ? undefined
@@ -1382,7 +1442,8 @@ export const installManagedCodex = async (
             '@openai%2fcodex',
             `${CODEX_VERSION}-${platform.key}`,
             integrities.codex,
-            fetchJson
+            fetchJson,
+            signal
           )
 
       await downloadAndVerify({
@@ -1391,7 +1452,8 @@ export const installManagedCodex = async (
         destPath: adapterTgz,
         installId,
         onEvent,
-        fetchTarball
+        fetchTarball,
+        signal
       })
       if (codex) {
         await downloadAndVerify({
@@ -1400,7 +1462,8 @@ export const installManagedCodex = async (
           destPath: codexTgz,
           installId,
           onEvent,
-          fetchTarball
+          fetchTarball,
+          signal
         })
       }
 
@@ -1409,7 +1472,8 @@ export const installManagedCodex = async (
       const foundAdapter = await extractFileFromTgz({
         tgzPath: adapterTgz,
         entryName: 'package/dist/index.js',
-        destPath: stagedAdapter
+        destPath: stagedAdapter,
+        signal
       })
       if (!foundAdapter) throw new Error('Codex ACP package did not contain dist/index.js')
       await ensureManagedCodexContextUsage(stagedAdapter)
@@ -1418,7 +1482,8 @@ export const installManagedCodex = async (
         await extractCodexVendor({
           tgzPath: codexTgz,
           target: platform.target,
-          destination: join(stagedRoot, 'codex')
+          destination: join(stagedRoot, 'codex'),
+          signal
         })
       }
       const codexPath = existingCodexPath ?? codexBinaryInRoot(stagedRoot, platform)
@@ -1428,17 +1493,23 @@ export const installManagedCodex = async (
       }
 
       onEvent({ kind: 'progress', installId, phase: 'installing' })
-      const adapterVersion = await verifyAdapter(stagedAdapter)
+      signal?.throwIfAborted()
+      const adapterVersion = await verifyAdapter(stagedAdapter, signal)
+      signal?.throwIfAborted()
       if (!adapterVersion) throw new Error('Installed Codex ACP adapter failed its --version check')
       let codexVersion: string
       try {
-        const verifiedVersion = await verifyCodex(codexPath)
+        const verifiedVersion = await verifyCodex(codexPath, signal)
+        signal?.throwIfAborted()
         if (!verifiedVersion) throw new Error('Installed Codex binary failed its --version check')
         // Smoke home lives in scratch (auto-removed), NEVER inside stagedRoot: stagedRoot is moved to
         // the final runtime, so anything Codex might write here must not ride along into the install.
-        await verifyPair(stagedAdapter, codexPath, join(scratch, 'smoke-home'))
+        const smokeHome = join(scratch, 'smoke-home')
+        if (signal) await verifyPair(stagedAdapter, codexPath, smokeHome, signal)
+        else await verifyPair(stagedAdapter, codexPath, smokeHome)
         codexVersion = verifiedVersion
       } catch (error) {
+        signal?.throwIfAborted()
         if (!existingCodexPath) throw error
         onEvent({
           kind: 'log',
@@ -1449,6 +1520,7 @@ export const installManagedCodex = async (
         return installManagedCodex({ ...options, existingCodexPath: undefined })
       }
 
+      signal?.throwIfAborted()
       reachedLocalInstall = true
       if (existingCodexPath) {
         await mkdir(managedCodexRoot(dataRoot), { recursive: true })
@@ -1469,6 +1541,7 @@ export const installManagedCodex = async (
       }
     } catch (error) {
       lastError = toErrorMessage(error)
+      if (signal?.aborted) return { result: { installId, ok: false, error: lastError } }
       if (reachedLocalInstall) {
         // Local install failure — do not attribute it to the registry or try the next one.
         onEvent({

@@ -2,6 +2,8 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 
 import {
   createArtifactChip,
+  createLiteratureChip,
+  createLiteratureScopeChip,
   createSessionChip,
   createSkillChip,
   type ComposerNode
@@ -33,10 +35,13 @@ type UseMentionTriggerOptions = {
 
 type UseMentionTriggerResult = MentionState & {
   cancel: () => void
-  replaceTokenWith: (node: ComposerNode) => void
+  selectionKey: object | null
+  replaceTokenWith: (node: ComposerNode) => boolean
 }
 
-const INACTIVE: MentionState = { active: false, query: '', anchorRect: null }
+type Token = { node: Node; offset: number; text: string }
+type TriggerState = MentionState & { token: Token | null }
+const INACTIVE: TriggerState = { active: false, query: '', anchorRect: null, token: null }
 
 // Read the text preceding the caret within its text node. A preceding chip (or any element) acts as a
 // clean word boundary, so a trigger at the start of a post-chip text node opens a fresh mention — this
@@ -68,7 +73,7 @@ export const useMentionTrigger = ({
   disabled = false,
   onStateChange
 }: UseMentionTriggerOptions): UseMentionTriggerResult => {
-  const [state, setState] = useState<MentionState>(INACTIVE)
+  const [state, setState] = useState<TriggerState>(INACTIVE)
 
   // Refs keep the latest state and callback available to event handlers without re-subscribing.
   const stateRef = useRef(state)
@@ -77,12 +82,13 @@ export const useMentionTrigger = ({
     onStateChangeRef.current = onStateChange
   }, [onStateChange])
 
-  const emit = useCallback((next: MentionState): void => {
+  const emit = useCallback((next: TriggerState): void => {
     const prev = stateRef.current
     if (
       prev.active === next.active &&
       prev.query === next.query &&
-      prev.anchorRect === next.anchorRect
+      prev.anchorRect === next.anchorRect &&
+      prev.token === next.token
     ) {
       return
     }
@@ -106,7 +112,14 @@ export const useMentionTrigger = ({
     if (!match.active) return emit(INACTIVE)
 
     const rect = computeAnchorRect(anchorNode, anchorOffset, trigger.length + match.query.length)
-    emit({ active: true, query: match.query, anchorRect: rect })
+    // Preserve identity across placement-only updates, invalidate it when the input token changes.
+    const previous = stateRef.current.token
+    const text = anchorNode.textContent ?? ''
+    const token =
+      previous?.node === anchorNode && previous.offset === anchorOffset && previous.text === text
+        ? previous
+        : { node: anchorNode, offset: anchorOffset, text }
+    emit({ active: true, query: match.query, anchorRect: rect, token })
   }, [editorRef, trigger, disabled, emit])
 
   // Subscribe to selection and input changes while enabled; reset on teardown or disable.
@@ -126,17 +139,25 @@ export const useMentionTrigger = ({
 
   // Replace the active trigger token with a chip or text node and place the caret after it.
   const replaceTokenWith = useCallback(
-    (node: ComposerNode): void => {
+    (node: ComposerNode): boolean => {
+      // An async picker retains this render's token; never apply it to a newer selection.
+      const token = state.token
+      if (!token || token !== stateRef.current.token || disabled) return false
       const editor = editorRef.current
       const selection = window.getSelection()
-      if (!editor || !selection || selection.rangeCount === 0) return
+      if (!editor || !selection || selection.rangeCount === 0 || !selection.isCollapsed)
+        return false
       const { anchorNode, anchorOffset } = selection
-      if (!anchorNode || anchorNode.nodeType !== Node.TEXT_NODE || !editor.contains(anchorNode)) {
-        return
-      }
+      if (
+        anchorNode !== token.node ||
+        anchorOffset !== token.offset ||
+        anchorNode.textContent !== token.text ||
+        !editor.contains(anchorNode)
+      )
+        return false
 
       const match = detectTrigger(textBeforeCaretIn(anchorNode, anchorOffset), trigger)
-      if (!match.active) return
+      if (!match.active) return false
 
       // Delete the `<trigger><query>` run ending at the caret.
       const tokenLength = trigger.length + match.query.length
@@ -151,9 +172,13 @@ export const useMentionTrigger = ({
           ? createSkillChip(node)
           : node.type === 'artifact'
             ? createArtifactChip(node)
-            : node.type === 'session'
-              ? createSessionChip(node)
-              : document.createTextNode(node.text)
+            : node.type === 'literature'
+              ? createLiteratureChip(node)
+              : node.type === 'literature-scope'
+                ? createLiteratureScopeChip(node)
+                : node.type === 'session'
+                  ? createSessionChip(node)
+                  : document.createTextNode(node.text)
       range.insertNode(inserted)
       const after = document.createRange()
       after.setStartAfter(inserted)
@@ -164,9 +189,11 @@ export const useMentionTrigger = ({
       emit(INACTIVE)
       // Let the editor re-read its DOM into the doc model.
       editor.dispatchEvent(new Event('input', { bubbles: true }))
+      return true
     },
-    [editorRef, trigger, emit]
+    [editorRef, trigger, emit, state.token, disabled]
   )
 
-  return { ...state, cancel, replaceTokenWith }
+  const { token, ...mentionState } = state
+  return { ...mentionState, selectionKey: token, cancel, replaceTokenWith }
 }

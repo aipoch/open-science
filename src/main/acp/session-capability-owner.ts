@@ -13,6 +13,10 @@ import {
 } from '../artifacts/mcp-server'
 import { getArtifactCurrentRunFilePath } from '../artifacts/repository'
 import { createLogger, diagnosticErrorFields } from '../logger'
+import {
+  LITERATURE_LIBRARY_MCP_SERVER_NAME,
+  type LiteratureLibraryMcpHandler
+} from '../literature/library-mcp-server'
 import { LITERATURE_MCP_SERVER_NAME, type LiteratureMcpHandler } from '../literature/mcp-server'
 import {
   NOTEBOOK_MCP_SERVER_NAME,
@@ -41,6 +45,7 @@ const CURRENT_PRIMARY_CAPABILITIES = [
   'notebook',
   'skill-import',
   'plan',
+  'literature-library',
   'literature',
   'host-agents',
   'host-skills',
@@ -244,6 +249,13 @@ type SessionCapabilityOwnerOptions = {
     isEnabled: (appSessionId: string, projectId: string) => Promise<boolean>
     handlerFor: (appSessionId: string, projectId: string) => LiteratureMcpHandler
   }>
+  library?: Readonly<{
+    handlerFor: (
+      appSessionId: string,
+      projectId: string,
+      workspaceCwd: string
+    ) => LiteratureLibraryMcpHandler
+  }>
   mcpHttpHost?: AgentMcpHttpHost
 }
 
@@ -348,7 +360,7 @@ export class AcpSessionCapabilityOwner {
           ownsStableIdentity &&
           (request.policy.role === 'side-chat' ||
             !request.framework.acceptsStdioMcp ||
-            Boolean(this.options.literature && this.options.mcpHttpHost)),
+            Boolean((this.options.literature || this.options.library) && this.options.mcpHttpHost)),
         notebookSessionId: routingIds.notebook || undefined,
         notebookRelease,
         skillImportRelease,
@@ -356,7 +368,11 @@ export class AcpSessionCapabilityOwner {
         ownsStableIdentity
       })
       if (ownsStableIdentity && request.stableAppSessionId) {
-        this.restoreCommittedLiteratureRoute(request.stableAppSessionId, request.projectId)
+        this.restoreCommittedLiteratureRoute(
+          request.stableAppSessionId,
+          request.projectId,
+          request.sessionCwd
+        )
       }
       this.finishProvisionalRoutingOwner(routingIds, routingOwner)
       throw error
@@ -427,7 +443,9 @@ export class AcpSessionCapabilityOwner {
               ownsRoutingIds &&
               (request.policy.role === 'side-chat' ||
                 !request.framework.acceptsStdioMcp ||
-                Boolean(this.options.literature && this.options.mcpHttpHost)),
+                Boolean(
+                  (this.options.literature || this.options.library) && this.options.mcpHttpHost
+                )),
             notebookSessionId: routingIds.notebook || undefined,
             notebookRelease,
             skillImportRelease,
@@ -435,7 +453,11 @@ export class AcpSessionCapabilityOwner {
             ownsStableIdentity: ownsRoutingIds
           })
           if (ownsRoutingIds && request.stableAppSessionId) {
-            this.restoreCommittedLiteratureRoute(request.stableAppSessionId, request.projectId)
+            this.restoreCommittedLiteratureRoute(
+              request.stableAppSessionId,
+              request.projectId,
+              request.sessionCwd
+            )
           }
           this.finishProvisionalRoutingOwner(routingIds, routingOwner)
           throw new Error('ACP session capability provision was superseded.')
@@ -463,6 +485,18 @@ export class AcpSessionCapabilityOwner {
           this.options.mcpHttpHost.registerLiterature(
             routingIds.literature,
             this.options.literature.handlerFor(appSessionId, request.projectId)
+          )
+        }
+        if (
+          built.descriptor.capabilities.includes('literature-library') &&
+          routingIds.literature &&
+          routingIds.literature !== appSessionId &&
+          this.options.library &&
+          this.options.mcpHttpHost
+        ) {
+          this.options.mcpHttpHost.registerLiteratureLibrary(
+            routingIds.literature,
+            this.options.library.handlerFor(appSessionId, request.projectId, request.sessionCwd)
           )
         }
         this.commit({
@@ -495,7 +529,9 @@ export class AcpSessionCapabilityOwner {
             ownsStableIdentity &&
             (request.policy.role === 'side-chat' ||
               !request.framework.acceptsStdioMcp ||
-              Boolean(this.options.literature && this.options.mcpHttpHost)),
+              Boolean(
+                (this.options.literature || this.options.library) && this.options.mcpHttpHost
+              )),
           notebookSessionId: routingIds.notebook || undefined,
           notebookRelease,
           skillImportRelease,
@@ -503,7 +539,11 @@ export class AcpSessionCapabilityOwner {
           ownsStableIdentity
         })
         if (ownsStableIdentity && request.stableAppSessionId) {
-          this.restoreCommittedLiteratureRoute(request.stableAppSessionId, request.projectId)
+          this.restoreCommittedLiteratureRoute(
+            request.stableAppSessionId,
+            request.projectId,
+            request.sessionCwd
+          )
         }
         this.finishProvisionalRoutingOwner(routingIds, routingOwner)
       }
@@ -518,7 +558,7 @@ export class AcpSessionCapabilityOwner {
         skillImport: this.options.skillImport ? stableAppSessionId : '',
         plan: this.options.plan ? stableAppSessionId : '',
         sideChat: this.options.sideChat ? stableAppSessionId : '',
-        literature: this.options.literature ? stableAppSessionId : ''
+        literature: this.options.literature || this.options.library ? stableAppSessionId : ''
       })
     }
 
@@ -528,7 +568,7 @@ export class AcpSessionCapabilityOwner {
     if (this.options.skillImport) this.skillImportSessionSequence += 1
     if (this.options.plan) this.planSessionSequence += 1
     if (this.options.sideChat) this.sideChatSessionSequence += 1
-    if (this.options.literature) this.literatureSessionSequence += 1
+    if (this.options.literature || this.options.library) this.literatureSessionSequence += 1
 
     return Object.freeze({
       artifact: this.options.artifacts
@@ -544,9 +584,10 @@ export class AcpSessionCapabilityOwner {
       sideChat: this.options.sideChat
         ? `side-chat-session-${timestamp}-${this.sideChatSessionSequence}`
         : '',
-      literature: this.options.literature
-        ? `literature-session-${timestamp}-${this.literatureSessionSequence}`
-        : ''
+      literature:
+        this.options.literature || this.options.library
+          ? `literature-session-${timestamp}-${this.literatureSessionSequence}`
+          : ''
     })
   }
 
@@ -579,6 +620,10 @@ export class AcpSessionCapabilityOwner {
           request.routingIds.literature,
           request.projectId
         )))
+    const libraryAllowed =
+      policyAllowsSessionCapability(request.policy, 'literature-library') &&
+      Boolean(this.options.library) &&
+      Boolean(this.options.mcpHttpHost)
 
     const servers =
       transport === 'stdio'
@@ -620,6 +665,26 @@ export class AcpSessionCapabilityOwner {
         headers: [{ name: 'authorization', value: `Bearer ${token}` }]
       })
     }
+    if (
+      libraryAllowed &&
+      this.options.library &&
+      this.options.mcpHttpHost &&
+      this.canPublishHttpRoute(request)
+    ) {
+      const host = this.options.mcpHttpHost
+      const { token } = await host.ensureStarted()
+      const routingId = request.routingIds.literature
+      host.registerLiteratureLibrary(
+        routingId,
+        this.options.library.handlerFor(routingId, request.projectId, request.sessionCwd)
+      )
+      servers.push({
+        type: 'http',
+        name: LITERATURE_LIBRARY_MCP_SERVER_NAME,
+        url: host.urlFor('library', routingId),
+        headers: [{ name: 'authorization', value: `Bearer ${token}` }]
+      })
+    }
     const modelFacingServers = servers.map((server) => {
       const name = (server as { name?: unknown }).name
       if (typeof name !== 'string') return server
@@ -640,6 +705,9 @@ export class AcpSessionCapabilityOwner {
     if (canonicalMcpServerNames.includes(PLAN_MCP_SERVER_NAME)) capabilities.push('plan')
     if (canonicalMcpServerNames.includes(LITERATURE_MCP_SERVER_NAME)) {
       capabilities.push('literature')
+    }
+    if (canonicalMcpServerNames.includes(LITERATURE_LIBRARY_MCP_SERVER_NAME)) {
+      capabilities.push('literature-library')
     }
     if (canonicalMcpServerNames.includes(HOST_MESSAGE_MCP_SERVER_NAME)) {
       capabilities.push('host-message')
@@ -698,6 +766,7 @@ export class AcpSessionCapabilityOwner {
       transport: descriptor.transport,
       count: modelFacingServers.length,
       literatureMounted: descriptor.capabilities.includes('literature'),
+      libraryMounted: descriptor.capabilities.includes('literature-library'),
       literatureProvisionedWithSessionNew: request.literatureEnabled
     })
 
@@ -746,15 +815,27 @@ export class AcpSessionCapabilityOwner {
     this.commitPlanRelease(appSessionId, request.planRelease)
   }
 
-  private restoreCommittedLiteratureRoute(appSessionId: string, projectId: string): void {
-    if (!this.descriptors.get(appSessionId)?.capabilities.includes('literature')) return
+  private restoreCommittedLiteratureRoute(
+    appSessionId: string,
+    projectId: string,
+    workspaceCwd: string
+  ): void {
+    const descriptor = this.descriptors.get(appSessionId)
     const routingId = this.literatureRoutingIds.get(appSessionId)
-    if (!routingId || !this.options.literature || !this.options.mcpHttpHost) return
+    if (!routingId || !descriptor || !this.options.mcpHttpHost) return
     try {
-      this.options.mcpHttpHost.registerLiterature(
-        routingId,
-        this.options.literature.handlerFor(appSessionId, projectId)
-      )
+      if (descriptor.capabilities.includes('literature') && this.options.literature) {
+        this.options.mcpHttpHost.registerLiterature(
+          routingId,
+          this.options.literature.handlerFor(appSessionId, projectId)
+        )
+      }
+      if (descriptor.capabilities.includes('literature-library') && this.options.library) {
+        this.options.mcpHttpHost.registerLiteratureLibrary(
+          routingId,
+          this.options.library.handlerFor(appSessionId, projectId, workspaceCwd)
+        )
+      }
     } catch (error) {
       safeLogError('committed Literature route restoration failed', {
         ...diagnosticErrorFields(error),

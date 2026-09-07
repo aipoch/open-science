@@ -39,13 +39,9 @@ let downloadArtifactsDialogProps: {
   session: ChatSession | undefined
   onClose: () => void
 }
-let deleteDialogProps: {
-  session: ChatSession | undefined
-  canDelete: boolean
-  isDeleting?: boolean
-  error?: 'runtime' | 'persistence'
-  onConfirmDelete: () => void
-}
+let deleteDialogProps: Parameters<
+  (typeof import('./DeleteSessionDialog'))['DeleteSessionDialog']
+>[0]
 
 // The runtime bridge is stubbed; sendMessage resolves truthy so the success path clears the composer.
 const runtime = vi.hoisted(() => ({
@@ -99,12 +95,16 @@ vi.mock('./EditSessionDialog', () => ({
   EditSessionDialog: (): React.JSX.Element => <div />
 }))
 
-vi.mock('./DeleteSessionDialog', () => ({
-  DeleteSessionDialog: (props: typeof deleteDialogProps): React.JSX.Element => {
-    deleteDialogProps = props
-    return <div />
+vi.mock('./DeleteSessionDialog', async () => {
+  const actual =
+    await vi.importActual<typeof import('./DeleteSessionDialog')>('./DeleteSessionDialog')
+  return {
+    DeleteSessionDialog: (props: typeof deleteDialogProps): React.JSX.Element => {
+      deleteDialogProps = props
+      return <actual.DeleteSessionDialog {...props} />
+    }
   }
-}))
+})
 
 vi.mock('./DownloadSessionArtifactsDialog', () => ({
   DownloadSessionArtifactsDialog: (
@@ -962,6 +962,28 @@ describe('WorkspacePage draft preservation', () => {
     expect(deleteUpload).toHaveBeenCalledWith({ path: firstAttachment.path })
     expect(deleteUpload).not.toHaveBeenCalledWith({ path: newerAttachment.path })
   })
+
+  it.each(['proj-1', 'proj-2'])(
+    'identifies the owning Project in the delete modal for %s',
+    async (projectId) => {
+      const first = { ...useProjectStore.getState().projects[0], name: 'Alpha biology' }
+      const second = { ...first, id: 'proj-2', name: 'Beta physics' }
+      useProjectStore.setState({ projects: [first, second] })
+      const target = { ...createSession('same-title-target', projectId), title: 'Experiment notes' }
+      useSessionStore.setState((state) => ({ sessions: [...state.sessions, target] }))
+      await renderPage()
+      await act(async () => sidebarProps.onDeleteSession(target))
+      const dialog = document.querySelector('[role="alertdialog"]')
+      const projectName = projectId === 'proj-1' ? first.name : second.name
+      expect(dialog?.textContent).toContain('Experiment notes')
+      expect(dialog?.textContent).toContain(`Project: ${projectName}`)
+
+      await act(async () => useNavigationStore.setState({ activeProjectId: 'proj-2' }))
+      expect(document.querySelector('[role="alertdialog"]')?.textContent).toContain(
+        `Project: ${projectName}`
+      )
+    }
+  )
 
   it('drops a stored draft and deletes its staged files when the session is deleted', async () => {
     await renderPage()

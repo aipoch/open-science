@@ -41,6 +41,22 @@ type MessageQueueItem = {
   revisionMessageId?: string
 }
 
+type MessageQueueEditIntent = Pick<
+  MessageQueueItem,
+  | 'kind'
+  | 'sessionId'
+  | 'agentFrameId'
+  | 'messageBranchId'
+  | 'permissionProfile'
+  | 'agentConfiguration'
+  | 'specialistId'
+  | 'agentFrameworkId'
+  | 'agentBackendId'
+  | 'projectId'
+  | 'cwd'
+  | 'revisionMessageId'
+>
+
 type MessageQueueAdmission = {
   session: ChatSession
   snapshot: ComposerSendSnapshot
@@ -81,6 +97,7 @@ type WorkspaceMessageQueueControllerOptions = {
   isBarrierInFlight: (sessionId: string) => boolean
   isPresentationRevealing: (sessionId: string) => boolean
   isSpecialistReady: (sessionId: string) => boolean
+  isPersistenceBlocked: (sessionId: string) => boolean
   hasPendingPermissionRequest: (sessionId: string) => boolean
   isProjectActive?: (projectId: string) => boolean
   abortFixLoop: (request: { projectId: string; appSessionId: string }) => Promise<unknown>
@@ -101,6 +118,7 @@ type WorkspaceMessageQueueRuntimeOptions = Pick<
   | 'runtime'
   | 'isBarrierInFlight'
   | 'isSpecialistReady'
+  | 'isPersistenceBlocked'
   | 'isSideChatOpen'
   | 'hasPendingPermissionRequest'
   | 'isProjectActive'
@@ -250,3 +268,5 @@ export type {
   WorkspaceMessageQueueControllerOptions,
   WorkspaceMessageQueueRuntimeOptions
 }
+
+export type { MessageQueueEditIntent }

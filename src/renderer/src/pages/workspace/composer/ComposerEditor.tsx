@@ -12,7 +12,11 @@ import { createPreviewFileItemFromLocal, LOCAL_PREVIEW_SESSION_ID } from '../pre
 import { createPreviewFileItemFromMention } from '../preview-file-item'
 import { createPreviewRequestScope } from '../previews/preview-file-reader'
 
-import { ArtifactMentionPopup, type PickedArtifact } from './ArtifactMentionPopup'
+import {
+  ArtifactMentionPopup,
+  type PickedArtifact,
+  type PickedMention
+} from './ArtifactMentionPopup'
 import {
   applyDocToDom,
   createPastedTextAnchor,
@@ -89,6 +93,22 @@ const nodesEqual = (a: ComposerNode[], b: ComposerNode[]): boolean => {
     }
     if (node.type === 'session' && other.type === 'session') {
       return node.sessionId === other.sessionId && node.title === other.title
+    }
+    if (node.type === 'literature' && other.type === 'literature') {
+      return (
+        node.itemId === other.itemId &&
+        node.metadataRevision === other.metadataRevision &&
+        node.attachmentVersionId === other.attachmentVersionId
+      )
+    }
+    if (node.type === 'literature-scope' && other.type === 'literature-scope') {
+      return (
+        node.scope === other.scope &&
+        (node.scope === 'project' ||
+          (other.scope === 'collection' &&
+            node.collectionId === other.collectionId &&
+            node.name === other.name))
+      )
     }
     if (node.type === 'pasted-text' && other.type === 'pasted-text') {
       return node.id === other.id && node.text === other.text
@@ -476,6 +496,22 @@ export const ComposerEditor = ({
   const mentionPopupOpen = mention.active || artifactMention.active || sessionMention.active
   const undoCaretRef = useRef<ComposerCaretPosition | undefined>(undefined)
 
+  const { cancel: cancelSkillMention } = mention
+  const { cancel: cancelArtifactMention } = artifactMention
+  const { cancel: cancelSessionMention } = sessionMention
+
+  // Different Sessions can have identical draft text and therefore reuse the same DOM token.
+  useLayoutEffect(() => {
+    cancelSkillMention()
+    cancelArtifactMention()
+    cancelSessionMention()
+  }, [
+    mentionPreviewContext?.sessionId,
+    cancelSkillMention,
+    cancelArtifactMention,
+    cancelSessionMention
+  ])
+
   // Read the live DOM back into a doc and notify the parent.
   const emitDocFromDom = useCallback((): void => {
     const root = editorRef.current
@@ -549,6 +585,16 @@ export const ComposerEditor = ({
       useNavigationStore.getState().openSessionById(sessionId, 'user')
       return
     }
+    const literatureChip = (event.target as HTMLElement).closest?.(
+      '[data-mention-type="literature"]'
+    ) as HTMLElement | null
+    if (root && literatureChip && root.contains(literatureChip)) {
+      const itemId = literatureChip.getAttribute('data-literature-item-id')
+      if (!itemId) return
+      event.preventDefault()
+      useNavigationStore.getState().openLiteratureItem(itemId, 'user')
+      return
+    }
     const chip = (event.target as HTMLElement).closest?.(
       '[data-mention-type="artifact"]'
     ) as HTMLElement | null
@@ -574,7 +620,12 @@ export const ComposerEditor = ({
       return
     }
 
-    if ((source !== 'upload' && source !== 'artifact') || !mentionPreviewContext) return
+    if (
+      (source !== 'upload' && source !== 'artifact' && source !== 'literature') ||
+      !mentionPreviewContext
+    ) {
+      return
+    }
     const path = chip.getAttribute('data-mention-path')
     if (!path) return
     event.preventDefault()
@@ -588,6 +639,12 @@ export const ComposerEditor = ({
       versionId: chip.getAttribute('data-mention-version-id') ?? undefined
     }
     const { sessionId, projectId } = mentionPreviewContext
+    if (source === 'literature') {
+      usePreviewWorkbenchStore
+        .getState()
+        .upsertAndActivateItem(createPreviewFileItemFromMention(part, '__literature__', projectId))
+      return
+    }
     void (async () => {
       const read =
         source === 'upload' ? window.api.uploads.readPreview : window.api.artifacts.readPreview
@@ -771,32 +828,39 @@ export const ComposerEditor = ({
   const handleSelectSkill = (skill: SkillView): void => {
     const root = editorRef.current
     undoCaretRef.current = root ? currentCaretPosition(root) : undefined
-    mention.replaceTokenWith({ type: 'skill', id: skill.id, name: skill.displayName })
-    mention.cancel()
+    if (!mention.replaceTokenWith({ type: 'skill', id: skill.id, name: skill.displayName })) {
+      undoCaretRef.current = undefined
+    }
   }
 
   // Replace the active `@query` token with an artifact chip, then close the popup.
-  const handleSelectArtifact = (ref: PickedArtifact): void => {
+  const handleSelectArtifact = (ref: PickedMention): void => {
     const root = editorRef.current
     undoCaretRef.current = root ? currentCaretPosition(root) : undefined
-    artifactMention.replaceTokenWith({
-      type: 'artifact',
-      id: ref.id,
-      sourceFileId: ref.sourceFileId,
-      name: ref.name,
-      path: ref.path,
-      source: ref.source,
-      mimeType: ref.mimeType,
-      versionId: ref.versionId
-    })
-    artifactMention.cancel()
+    if ('type' in ref && (ref.type === 'literature' || ref.type === 'literature-scope')) {
+      if (!artifactMention.replaceTokenWith(ref)) undoCaretRef.current = undefined
+      return
+    }
+    const artifact = ref as PickedArtifact
+    if (
+      !artifactMention.replaceTokenWith({
+        type: 'artifact',
+        id: artifact.id,
+        sourceFileId: artifact.sourceFileId,
+        name: artifact.name,
+        path: artifact.path,
+        source: artifact.source,
+        mimeType: artifact.mimeType,
+        versionId: artifact.versionId
+      })
+    )
+      undoCaretRef.current = undefined
   }
 
   const handleSelectSession = (session: PickedSession): void => {
     const root = editorRef.current
     undoCaretRef.current = root ? currentCaretPosition(root) : undefined
-    sessionMention.replaceTokenWith(session)
-    sessionMention.cancel()
+    if (!sessionMention.replaceTokenWith(session)) undoCaretRef.current = undefined
   }
 
   return (
@@ -859,6 +923,7 @@ export const ComposerEditor = ({
       ) : null}
       {mention.active ? (
         <SkillMentionPopup
+          composingRef={composingRef}
           query={mention.query}
           allowedSkillIds={allowedSkillIds}
           listboxId={mentionListboxId}
@@ -869,7 +934,9 @@ export const ComposerEditor = ({
       ) : null}
       {artifactMention.active ? (
         <ArtifactMentionPopup
+          composingRef={composingRef}
           query={artifactMention.query}
+          selectionKey={artifactMention.selectionKey}
           onSelect={handleSelectArtifact}
           onClose={artifactMention.cancel}
           listboxId={mentionListboxId}
@@ -878,6 +945,7 @@ export const ComposerEditor = ({
       ) : null}
       {sessionMention.active ? (
         <SessionMentionPopup
+          composingRef={composingRef}
           query={sessionMention.query}
           onSelect={handleSelectSession}
           onClose={sessionMention.cancel}

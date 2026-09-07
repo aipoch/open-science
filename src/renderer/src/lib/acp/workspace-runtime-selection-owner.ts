@@ -32,6 +32,7 @@ type WorkspaceSessionRuntimeSelection = Readonly<{
 }>
 
 type AdmitSendConfigurationInput = Readonly<{
+  expectedFrameworkId?: AcpSessionAgentTarget['frameworkId']
   sessionId?: string
   agentConfiguration?: SessionAgentConfiguration
 }>
@@ -166,6 +167,8 @@ const useWorkspaceRuntimeSelectionOwner = (): {
   )
   const admitSendConfiguration = useCallback(
     (input: AdmitSendConfigurationInput): SessionAgentConfiguration | undefined => {
+      if (input.expectedFrameworkId && input.expectedFrameworkId !== agentFrameworkId)
+        return undefined
       const storedResolution = input.agentConfiguration
         ? undefined
         : resolveStoredSessionResolution(input.sessionId)
@@ -182,7 +185,7 @@ const useWorkspaceRuntimeSelectionOwner = (): {
       }
       return agentConfiguration
     },
-    [configuredModelCatalog, resolveStoredSessionResolution]
+    [agentFrameworkId, configuredModelCatalog, resolveStoredSessionResolution]
   )
 
   return {

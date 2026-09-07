@@ -1,11 +1,11 @@
 import { useSmoothStreamingContent } from '@/components/streamdown/use-smooth-streaming-content'
 import { ErrorNotice } from '@/components/error-notice'
 import { MessageScrollerItem } from '@/components/ui/message-scroller'
-import { Popover, PopoverAnchor, PopoverContent } from '@/components/ui/popover'
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { useDateTimeFormat } from '@/hooks/useDateTimeFormat'
 import { cn, formatByteSize } from '@/lib/utils'
 import { useNavigationStore } from '@/stores/navigation-store'
+import { useSessionStore } from '@/stores/session-store'
 import { useSettingsStore } from '@/stores/settings-store'
 import type { ChatMessage, ChatSession } from '@/stores/session-store'
 import { Collapsible } from 'radix-ui'
@@ -29,23 +29,14 @@ import {
   Loader2,
   Pencil
 } from 'lucide-react'
-import {
-  memo,
-  useEffect,
-  useId,
-  useLayoutEffect,
-  useRef,
-  useState,
-  type FocusEvent,
-  type ReactNode
-} from 'react'
+import { memo, useEffect, useId, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import { formatDisplayNumber } from '@/lib/locale-format'
 import type { ArtifactPreviewResult } from '../../../../shared/artifacts'
 import type { ProvenanceMessagePart } from '../../../../shared/artifact-provenance'
 import type { AcpTurnTokenUsage } from '../../../../shared/acp'
 import type { PersistedRuntimeSegment } from '../../../../shared/conversation-graph'
-import type { MessagePart } from '../../../../shared/session-persistence'
+import type { LiteratureReference, MessagePart } from '../../../../shared/session-persistence'
 import {
   isComputeJobCompletionAttribution,
   isComputeJobCompletionPresentation,
@@ -97,6 +88,7 @@ import {
 } from '../../../../shared/annotations'
 import { annotationValidationMessage } from './annotations/annotation-validation-message'
 import type { SendEditedMessage } from './workspace-edited-message'
+import { ArtifactLiteratureDetailDialog } from './ArtifactLiteratureDetailDialog'
 
 type EditAnnotationTarget = {
   messageId: string
@@ -110,6 +102,7 @@ type MessageArtifact = NonNullable<ChatSession['artifacts']>[number] & {
 type MessageUploadAttachment = NonNullable<ChatMessage['uploads']>[number]
 type MessageImage = NonNullable<ChatMessage['images']>[number]
 type ArtifactMentionPart = Extract<MessagePart, { type: 'artifact' }>
+type LiteratureMentionPart = Extract<MessagePart, { type: 'literature' }>
 type MessageRuntimeIdentity = Partial<
   Pick<PersistedRuntimeSegment, 'frameworkId' | 'backendId' | 'model'>
 >
@@ -159,6 +152,7 @@ type WorkspaceMessageItemProps = {
   revisionNavigation?: {
     index: number
     total: number
+    disabledReason?: string
     onPrevious?: () => void
     onNext?: () => void
   }
@@ -194,9 +188,18 @@ const MessageTimestamp = ({
   const formatDate = useDateTimeFormat()
 
   return (
-    <time dateTime={date.toISOString()} title={formatDate(date, 'full')}>
-      {label} {formatDate(date)}
-    </time>
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <time
+          dateTime={date.toISOString()}
+          tabIndex={0}
+          className="rounded-sm focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50"
+        >
+          {label} {formatDate(date)}
+        </time>
+      </TooltipTrigger>
+      <TooltipContent>{formatDate(date, 'full')}</TooltipContent>
+    </Tooltip>
   )
 }
 
@@ -238,11 +241,6 @@ const TurnTokenUsage = ({
   const provider = providers?.find((candidate) => candidate.id === providerId)
   const kindKey = provider ? providerKindKey(provider.type, provider.vendorId) : undefined
   const model = runtimeIdentity?.model?.trim()
-  const contentId = useId()
-  const triggerRef = useRef<HTMLButtonElement | null>(null)
-  const contentRef = useRef<HTMLDivElement | null>(null)
-  const closeTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
-  const openedFromPointerRef = useRef(false)
   const accessibleLabel = usage
     ? t('Token usage for this response')
     : t('Token usage unavailable for this response')
@@ -272,60 +270,18 @@ const TurnTokenUsage = ({
         })
       : t('Token usage breakdown unavailable')
 
-  const keepOpen = (): void => {
-    if (closeTimerRef.current) clearTimeout(closeTimerRef.current)
-    closeTimerRef.current = undefined
-  }
-
-  const scheduleClose = (): void => {
-    keepOpen()
-    closeTimerRef.current = setTimeout(() => {
-      const focused = document.activeElement
-      if (triggerRef.current?.contains(focused) || contentRef.current?.contains(focused)) return
-      setOpen(false)
-    }, 100)
-  }
-
-  const handleBlur = (event: FocusEvent<HTMLElement>): void => {
-    const next = event.relatedTarget
-    if (triggerRef.current?.contains(next) || contentRef.current?.contains(next)) return
-    scheduleClose()
-  }
-
-  useEffect(
-    () => () => {
-      if (closeTimerRef.current) clearTimeout(closeTimerRef.current)
-    },
-    []
-  )
-
   return (
-    <Popover open={open} onOpenChange={setOpen}>
-      <PopoverAnchor asChild>
-        <span data-slot="turn-token-usage" className="inline-flex whitespace-nowrap">
+    <Tooltip open={open} onOpenChange={setOpen}>
+      <span data-slot="turn-token-usage" className="inline-flex whitespace-nowrap">
+        <TooltipTrigger asChild>
           <button
-            ref={triggerRef}
             type="button"
             aria-label={accessibleLabel}
-            aria-haspopup="dialog"
             aria-expanded={open}
-            aria-controls={open ? contentId : undefined}
             className="inline-flex touch-manipulation items-center gap-1 border-b border-dashed border-current pb-px leading-none transition-colors duration-150 motion-reduce:transition-none hover:text-text-100 focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50"
-            onPointerEnter={() => {
-              openedFromPointerRef.current = true
-              keepOpen()
-              setOpen(true)
-            }}
-            onPointerLeave={scheduleClose}
-            onFocus={() => {
-              openedFromPointerRef.current = false
-              keepOpen()
-              setOpen(true)
-            }}
-            onBlur={handleBlur}
-            onClick={() => {
-              openedFromPointerRef.current = false
-              keepOpen()
+            onClick={(event) => {
+              // Calls is read-only detail; retain explicit click/touch access to the hover content.
+              event.preventDefault()
               setOpen(true)
             }}
           >
@@ -337,24 +293,15 @@ const TurnTokenUsage = ({
             />
             {t('Calls')}
           </button>
-        </span>
-      </PopoverAnchor>
-      <PopoverContent
-        ref={contentRef}
-        id={contentId}
+        </TooltipTrigger>
+      </span>
+      <TooltipContent
         data-slot="turn-token-usage-popover"
-        aria-label={accessibleLabel}
+        aria-label={`${accessibleLabel}: ${breakdownLabel}`}
         side="top"
         align="center"
         sideOffset={8}
         className="w-48 max-w-[calc(100vw-2rem)] rounded-lg border border-border bg-popover p-2.5 text-[12px] text-popover-foreground shadow-menu"
-        onPointerEnter={keepOpen}
-        onPointerLeave={scheduleClose}
-        onFocusCapture={keepOpen}
-        onBlurCapture={handleBlur}
-        onOpenAutoFocus={(event) => {
-          if (openedFromPointerRef.current) event.preventDefault()
-        }}
       >
         <div className="flex items-center justify-between gap-3">
           <div className="flex items-center gap-1.5">
@@ -486,8 +433,8 @@ const TurnTokenUsage = ({
             ) : null}
           </div>
         ) : null}
-      </PopoverContent>
-    </Popover>
+      </TooltipContent>
+    </Tooltip>
   )
 }
 
@@ -567,7 +514,7 @@ const WorkspaceAssistantTurnCompletion = ({
       className="mt-3 flex items-center gap-x-3 whitespace-nowrap text-[11px] leading-4 text-text-000/70 tabular-nums"
     >
       {message.status === 'complete' && onBranchInNewSession ? (
-        <TooltipProvider delayDuration={200}>
+        <>
           <div data-slot="assistant-message-actions" className="flex items-center gap-0.5">
             <UserMessageActionTooltip label={copied ? t('Copied') : t('Copy message')}>
               <button
@@ -595,7 +542,7 @@ const WorkspaceAssistantTurnCompletion = ({
               </button>
             </UserMessageActionTooltip>
           </div>
-        </TooltipProvider>
+        </>
       ) : null}
       {terminalDate ? <MessageTimestamp label={terminalLabel} date={terminalDate} /> : null}
       {terminalDate && turnStartedDate ? (
@@ -648,61 +595,89 @@ const MessagePartsMeasurement = ({
 }: {
   parts: Array<MessagePart | ProvenanceMessagePart>
   isStatic: boolean
-}): React.JSX.Element => (
-  <p className="whitespace-pre-wrap break-words [overflow-wrap:anywhere]">
-    {parts.map((part, index) => {
-      if (part.type === 'skill') {
+}): React.JSX.Element => {
+  const { t } = useTranslation()
+  return (
+    <p className="whitespace-pre-wrap break-words [overflow-wrap:anywhere]">
+      {parts.map((part, index) => {
+        if (part.type === 'skill') {
+          return (
+            <span
+              key={index}
+              data-slot="user-message-measurement-part"
+              data-part-type="skill"
+              data-content={`/${part.name}`}
+              className={cn(mentionPillClassName, measurementContentClassName)}
+            />
+          )
+        }
+
+        if (part.type === 'artifact') {
+          const isLinkedFolder = !isStatic && 'source' in part && part.source === 'linked-folder'
+          return (
+            <span
+              key={index}
+              data-slot="user-message-measurement-part"
+              data-part-type="artifact"
+              data-content={`@${isLinkedFolder ? part.relativePath : part.name}`}
+              className={cn(
+                isStatic ? mentionPillClassName : artifactMentionPillClassName,
+                measurementContentClassName
+              )}
+            />
+          )
+        }
+
+        if (part.type === 'session') {
+          return (
+            <span
+              key={index}
+              data-slot="user-message-measurement-part"
+              data-part-type="session"
+              data-content={`#${part.title}`}
+              className={cn(mentionPillClassName, measurementContentClassName)}
+            />
+          )
+        }
+
+        if (part.type === 'literature') {
+          return (
+            <span
+              key={index}
+              data-slot="user-message-measurement-part"
+              data-part-type="literature"
+              data-content={`@${part.item.title}`}
+              className={cn(mentionPillClassName, measurementContentClassName)}
+            />
+          )
+        }
+
+        if (part.type === 'literature-scope') {
+          const name = part.scope === 'collection' ? part.name : t('Library')
+          return (
+            <span
+              key={index}
+              data-slot="user-message-measurement-part"
+              data-part-type="literature-scope"
+              data-content={`@${name}`}
+              className={cn(mentionPillClassName, measurementContentClassName)}
+            />
+          )
+        }
+
         return (
           <span
             key={index}
             data-slot="user-message-measurement-part"
-            data-part-type="skill"
-            data-content={`/${part.name}`}
-            className={cn(mentionPillClassName, measurementContentClassName)}
+            data-part-type="text"
+            data-content={part.text}
+            className={cn('whitespace-pre-wrap', measurementContentClassName)}
           />
         )
-      }
-
-      if (part.type === 'artifact') {
-        const isLinkedFolder = !isStatic && 'source' in part && part.source === 'linked-folder'
-        return (
-          <span
-            key={index}
-            data-slot="user-message-measurement-part"
-            data-part-type="artifact"
-            data-content={`@${isLinkedFolder ? part.relativePath : part.name}`}
-            className={cn(
-              isStatic ? mentionPillClassName : artifactMentionPillClassName,
-              measurementContentClassName
-            )}
-          />
-        )
-      }
-
-      if (part.type === 'session') {
-        return (
-          <span
-            key={index}
-            data-slot="user-message-measurement-part"
-            data-part-type="session"
-            data-content={`#${part.title}`}
-            className={cn(mentionPillClassName, measurementContentClassName)}
-          />
-        )
-      }
-
-      return (
-        <span
-          key={index}
-          data-slot="user-message-measurement-part"
-          data-part-type="text"
-          data-content={part.text}
-          className={cn('whitespace-pre-wrap', measurementContentClassName)}
-        />
-      )
-    })}
-  </p>
-)
+      })}
+    </p>
+  )
+}
 
 type CollapsibleUserMessageContentProps = {
   children: ReactNode
@@ -1153,12 +1128,16 @@ const MessagePdfReadingContext = ({
 const MessagePartsContent = ({
   parts,
   isStatic = false,
+  projectId,
   onOpenSkillMention,
+  onOpenLiteratureMention,
   onPreviewMentionArtifact
 }: {
   parts: Array<MessagePart | ProvenanceMessagePart>
   isStatic?: boolean
+  projectId?: string
   onOpenSkillMention: (skillId: string, name: string) => void
+  onOpenLiteratureMention: (part: LiteratureMentionPart) => void
   onPreviewMentionArtifact: (part: ArtifactMentionPart) => void
 }): React.JSX.Element => {
   const { t } = useTranslation()
@@ -1261,6 +1240,78 @@ const MessagePartsContent = ({
           )
         }
 
+        if (part.type === 'literature') {
+          return (
+            <button
+              key={index}
+              type="button"
+              className={cn(
+                artifactMentionPillClassName,
+                mentionButtonClassName,
+                'bg-mention-chip text-mention-chip-foreground'
+              )}
+              onClick={() => onOpenLiteratureMention(part)}
+              aria-label={t('Open {{name}}', { name: part.item.title })}
+              title={part.item.title}
+            >
+              <span className="min-w-0 truncate">@{part.item.title}</span>
+            </button>
+          )
+        }
+
+        if (part.type === 'literature-scope') {
+          const name = part.scope === 'collection' ? part.name : t('Library')
+          if (!isStatic && part.scope === 'project' && projectId) {
+            return (
+              <button
+                key={index}
+                type="button"
+                className={cn(
+                  mentionPillClassName,
+                  mentionButtonClassName,
+                  'bg-accent text-accent-foreground'
+                )}
+                onClick={() =>
+                  useNavigationStore.getState().openProjectLiterature(projectId, 'user')
+                }
+                aria-label={t("Open this project's Library")}
+                title={name}
+              >
+                @{name}
+              </button>
+            )
+          }
+          if (!isStatic && part.scope === 'collection') {
+            return (
+              <button
+                key={index}
+                type="button"
+                className={cn(
+                  mentionPillClassName,
+                  mentionButtonClassName,
+                  'bg-accent text-accent-foreground'
+                )}
+                onClick={() =>
+                  useNavigationStore.getState().openCollectionLiterature(part.collectionId, 'user')
+                }
+                aria-label={t('Open {{name}}', { name })}
+                title={name}
+              >
+                @{name}
+              </button>
+            )
+          }
+          return (
+            <span
+              key={index}
+              className={cn(mentionPillClassName, 'bg-accent text-accent-foreground')}
+              title={name}
+            >
+              @{name}
+            </span>
+          )
+        }
+
         return (
           <span key={index} className="whitespace-pre-wrap">
             {part.text}
@@ -1298,7 +1349,7 @@ const WorkspaceMessageItemImpl = ({
   staticParts,
   onPresentationChange,
   presentationSourceOpen,
-  presentationAnimateOnMount = true,
+  presentationAnimateOnMount,
   reserveLoadingRowHeight = true,
   reviewerCorrectionState = 'failed'
 }: WorkspaceMessageItemProps): React.JSX.Element => {
@@ -1315,11 +1366,17 @@ const WorkspaceMessageItemImpl = ({
     message.relayedFrom?.kind === 'side-chat' && message.relayedFrom.direction === 'to-main'
   const presentsAssistantMessage = !isUserMessage && !isSideChatAdvisory
   const shouldAnimateAssistant = presentsAssistantMessage && message.status === 'streaming'
+  // In-flight text lives outside the Message object during streaming so sibling transcript rows
+  // keep stable props; only this row subscribes to its own per-tick content.
+  const streamingContent = useSessionStore((state) =>
+    shouldAnimateAssistant ? state.streamingMessages[message.id]?.content : undefined
+  )
+  const liveMessageContent = streamingContent ?? message.content
   const assistantSourceOpen = shouldAnimateAssistant && (presentationSourceOpen ?? true)
   const assistantPresentation = useSmoothStreamingContent(
-    presentsAssistantMessage ? message.content : '',
+    presentsAssistantMessage ? liveMessageContent : '',
     assistantSourceOpen,
-    shouldAnimateAssistant && assistantSourceOpen && presentationAnimateOnMount
+    shouldAnimateAssistant && assistantSourceOpen && (presentationAnimateOnMount ?? true)
   )
   const isAssistantPresenting = presentsAssistantMessage && assistantPresentation.isPresenting
 
@@ -1349,7 +1406,12 @@ const WorkspaceMessageItemImpl = ({
   // one-line streamed reply is ~44px; turning containment on at completion inflates it to 160px
   // and pushes a live tool below it. Keep this row out of that path for the rest of the mount.
   const skipContentVisibilityNow =
-    message.status === 'streaming' || isAssistantPresenting || isEditing
+    message.status === 'streaming' ||
+    isAssistantPresenting ||
+    // A reply held behind another message's presentation barrier may already be complete
+    // when it first mounts. It still needs measured geometry for live bottom-follow.
+    (presentsAssistantMessage && presentationAnimateOnMount === true) ||
+    isEditing
   const [skipContentVisibility, setSkipContentVisibility] = useState(skipContentVisibilityNow)
   if (skipContentVisibilityNow && !skipContentVisibility) setSkipContentVisibility(true)
   const copyResetTimeoutRef = useRef<number | null>(null)
@@ -1358,6 +1420,8 @@ const WorkspaceMessageItemImpl = ({
   const editAnnotationsRef = useRef(editAnnotations)
   const restoreEditButtonFocusRef = useRef(false)
   const [editFocusRequest, setEditFocusRequest] = useState(0)
+  const [selectedLiteratureReference, setSelectedLiteratureReference] =
+    useState<LiteratureReference>()
 
   const updateEditAnnotations = (next: Annotation[]): AnnotationValidationError | undefined => {
     const validation = validateAnnotations(next, docToText(editDocRef.current))
@@ -1398,7 +1462,7 @@ const WorkspaceMessageItemImpl = ({
 
   // Copies the message text and briefly swaps the icon to confirm the clipboard write succeeded.
   const handleCopyMessage = (): void => {
-    void navigator.clipboard.writeText(message.content).then(() => {
+    void navigator.clipboard.writeText(liveMessageContent).then(() => {
       setCopied(true)
       if (copyResetTimeoutRef.current !== null) window.clearTimeout(copyResetTimeoutRef.current)
       copyResetTimeoutRef.current = window.setTimeout(() => setCopied(false), 2000)
@@ -1477,13 +1541,17 @@ const WorkspaceMessageItemImpl = ({
       <MessagePartsContent
         parts={staticParts}
         isStatic
+        projectId={projectId}
         onOpenSkillMention={onOpenSkillMention}
+        onOpenLiteratureMention={setSelectedLiteratureReference}
         onPreviewMentionArtifact={onPreviewMentionArtifact}
       />
     ) : message.parts && message.parts.length > 0 ? (
       <MessagePartsContent
         parts={message.parts}
+        projectId={projectId}
         onOpenSkillMention={onOpenSkillMention}
+        onOpenLiteratureMention={setSelectedLiteratureReference}
         onPreviewMentionArtifact={onPreviewMentionArtifact}
       />
     ) : message.content ? (
@@ -1492,328 +1560,365 @@ const WorkspaceMessageItemImpl = ({
   const hasInteractiveUserMessageContent = Boolean(
     !staticParts &&
     message.parts?.some(
-      (part) => part.type === 'skill' || part.type === 'artifact' || part.type === 'session'
+      (part) =>
+        part.type === 'skill' ||
+        part.type === 'artifact' ||
+        part.type === 'literature' ||
+        part.type === 'session' ||
+        (part.type === 'literature-scope' && part.scope === 'project' && Boolean(projectId))
     )
   )
 
   return (
-    <MessageScrollerItem
-      key={message.id}
-      messageId={message.id}
-      disableContainment={skipContentVisibilityNow || skipContentVisibility}
-      scrollAnchor={message.role === 'user'}
-      className="min-w-0"
-    >
-      <div className={cn('px-4 pb-1 pt-5 md:px-6', contentPaddingClassName)}>
-        {/* User prompts stay compact; assistant responses remain a readable transcript surface. */}
-        {isComputeJobCompletion ? (
-          <div
-            data-testid="compute-job-completion-event"
-            className="flex max-w-[56rem] items-start gap-2 rounded-lg bg-bg-200 px-3 py-2 text-xs text-text-300"
-            role="status"
-          >
-            <Bot className="mt-0.5 size-3.5 shrink-0 text-text-300" aria-hidden="true" />
-            <div className="flex min-w-0 flex-col gap-0.5 sm:flex-row sm:items-baseline sm:gap-2">
-              <span className="font-medium text-text-200">{t('Remote job completed')}</span>
-              <span className="text-text-300">{t('Analysis started automatically')}</span>
-            </div>
-          </div>
-        ) : isReviewerCorrection ? (
-          <div
-            data-testid="reviewer-correction-message"
-            data-active={reviewerCorrectionActive || undefined}
-            className="flex max-w-[56rem] items-start gap-2 rounded-lg bg-bg-200 px-3 py-2 text-xs text-text-300"
-            role="status"
-            aria-live={reviewerCorrectionActive ? 'polite' : undefined}
-          >
-            {reviewerCorrectionActive ? (
-              <CircleGauge
-                data-testid="reviewer-correction-active-icon"
-                className="mt-0.5 size-3.5 shrink-0 animate-spin text-text-300 motion-reduce:animate-none"
-                aria-hidden="true"
-              />
-            ) : reviewerCorrectionState === 'completed' ? (
-              <Check
-                data-testid="reviewer-correction-settled-icon"
-                className="mt-0.5 size-3.5 shrink-0 text-text-300"
-                aria-hidden="true"
-              />
-            ) : (
-              <CircleAlert
-                data-testid="reviewer-correction-failed-icon"
-                className="mt-0.5 size-3.5 shrink-0 text-status-warning-foreground dark:text-status-warning-dark-foreground"
-                aria-hidden="true"
-              />
-            )}
-            <div className="flex min-w-0 flex-col gap-0.5 sm:flex-row sm:items-baseline sm:gap-2">
-              <span className="font-medium text-text-200">
-                {reviewerCorrectionState === 'waiting'
-                  ? t('Reviewer requested corrections')
-                  : t('Corrections requested')}
-              </span>
-              {reviewerCorrectionState === 'waiting' && (
-                <span className="text-text-300">{t('Agent is addressing the feedback')}</span>
-              )}
-              {reviewerCorrectionState === 'responding' && (
-                <span className="text-text-300">
-                  {t('Handed off to the Agent · response started')}
-                </span>
-              )}
-              {reviewerCorrectionState === 'completed' && (
-                <span className="text-text-300">{t('Response completed.')}</span>
-              )}
-              {reviewerCorrectionState === 'failed' && (
-                <span className="text-text-300">{t('Response failed.')}</span>
-              )}
-            </div>
-          </div>
-        ) : isSideChatAdvisory ? (
-          <div
-            data-testid="side-chat-advisory"
-            className="flex min-w-0 items-center gap-2 rounded-xl bg-bg-200 px-3 py-2 text-[13px] text-text-100"
-          >
-            <MessageCircleMore className="size-4 shrink-0 text-text-300" aria-hidden="true" />
-            <span className="shrink-0 font-medium">{t('Side chat')}</span>
-            <span className="min-w-0 truncate">{message.content}</span>
-          </div>
-        ) : isUserMessage ? (
-          isEditing ? (
-            <div className="flex justify-end">
-              {/* Inline editing swaps the bubble for a multi-line editor; confirm resends the prompt. */}
-              <div className={editCardClassName} aria-busy={isResendingEdit}>
-                <MessageUploadAttachmentList
-                  attachments={uploads}
-                  onPreviewUploadAttachment={onPreviewUploadAttachment}
-                />
-                {uploads.length > 0 ? (
-                  <hr
-                    role="separator"
-                    className="-mt-1.5 w-full border-0 border-t border-border-200"
-                  />
-                ) : null}
-                <AnnotationDraftCards
-                  annotations={editAnnotations}
-                  disabled={!canEditMessage || isResendingEdit}
-                  onReveal={requestAnnotationReveal}
-                  onUpdateNote={(id, note) => {
-                    const next = editAnnotations.map((annotation) =>
-                      annotation.id === id
-                        ? annotation.kind === 'text'
-                          ? { ...annotation, note: note.trim() || undefined }
-                          : { ...annotation, note: note.trim() }
-                        : annotation
-                    )
-                    return updateEditAnnotations(next)
-                  }}
-                  onRemove={(id) => {
-                    updateEditAnnotations(
-                      editAnnotationsRef.current.filter((annotation) => annotation.id !== id)
-                    )
-                  }}
-                />
-                <ComposerEditor
-                  doc={editDoc}
-                  onDocChange={(next) => {
-                    editDocRef.current = next
-                    setEditDoc(next)
-                    const validation = validateAnnotations(editAnnotations, docToText(next))
-                    setEditError(
-                      validation ? annotationValidationMessage(validation, t) : undefined
-                    )
-                  }}
-                  onSubmit={handleConfirmEdit}
-                  onPaste={ignoreEditPaste}
-                  placeholder={t('Edit your message')}
-                  ariaLabel={t('Edit message')}
-                  focusRequest={editFocusRequest}
-                />
-                {editError ? (
-                  <div
-                    role="alert"
-                    className="[&>section]:max-w-none [&>section]:gap-2 [&_h1]:text-xs"
-                  >
-                    <ErrorNotice tone="red" title={editError} />
-                  </div>
-                ) : null}
-                <div className="flex items-center justify-end gap-1">
-                  <button
-                    type="button"
-                    className={editCancelButtonClassName}
-                    disabled={isResendingEdit}
-                    onClick={handleCancelEdit}
-                  >
-                    {t('Cancel')}
-                  </button>
-                  <button
-                    type="button"
-                    className={editSendButtonClassName}
-                    disabled={
-                      !canEditMessage ||
-                      isResendingEdit ||
-                      (docIsEmpty(editDoc) && editAnnotations.length === 0)
-                    }
-                    onClick={handleConfirmEdit}
-                  >
-                    {isResendingEdit ? (
-                      <Loader2 className="size-3 animate-spin" aria-hidden="true" />
-                    ) : null}
-                    {t('Send')}
-                  </button>
-                </div>
+    <>
+      <MessageScrollerItem
+        key={message.id}
+        messageId={message.id}
+        disableContainment={skipContentVisibilityNow || skipContentVisibility}
+        scrollAnchor={message.role === 'user'}
+        className="min-w-0"
+      >
+        <div className={cn('px-4 pb-1 pt-5 md:px-6', contentPaddingClassName)}>
+          {/* User prompts stay compact; assistant responses remain a readable transcript surface. */}
+          {isComputeJobCompletion ? (
+            <div
+              data-testid="compute-job-completion-event"
+              className="flex max-w-[56rem] items-start gap-2 rounded-lg bg-bg-200 px-3 py-2 text-xs text-text-300"
+              role="status"
+            >
+              <Bot className="mt-0.5 size-3.5 shrink-0 text-text-300" aria-hidden="true" />
+              <div className="flex min-w-0 flex-col gap-0.5 sm:flex-row sm:items-baseline sm:gap-2">
+                <span className="font-medium text-text-200">{t('Remote job completed')}</span>
+                <span className="text-text-300">{t('Analysis started automatically')}</span>
               </div>
             </div>
-          ) : (
-            <div className="group flex flex-col items-end">
-              <div
-                data-slot="user-bubble-row"
-                className="flex w-full max-w-full items-center justify-end gap-1"
-              >
-                {/* Copy/edit controls stay left of the bubble; Branch navigation lives below it. */}
-                {showUserActions && isHumanUser ? (
-                  <TooltipProvider delayDuration={200}>
-                    <div data-slot="user-message-actions" className={userMessageActionsClassName}>
-                      <UserMessageActionTooltip label={copied ? t('Copied') : t('Copy message')}>
-                        <button
-                          type="button"
-                          className={userMessageActionButtonClassName}
-                          aria-label={copied ? t('Copied') : t('Copy message')}
-                          onClick={handleCopyMessage}
-                        >
-                          {copied ? (
-                            <Check className="size-3.5" strokeWidth={2} aria-hidden="true" />
-                          ) : (
-                            <Copy className="size-3.5" strokeWidth={2} aria-hidden="true" />
-                          )}
-                        </button>
-                      </UserMessageActionTooltip>
-                      <UserMessageActionTooltip label={t('Edit message')}>
-                        <button
-                          ref={editButtonRef}
-                          type="button"
-                          className={userMessageActionButtonClassName}
-                          aria-label={t('Edit message')}
-                          disabled={!canEditMessage}
-                          onClick={handleStartEdit}
-                        >
-                          <Pencil className="size-3.5" strokeWidth={2} aria-hidden="true" />
-                        </button>
-                      </UserMessageActionTooltip>
-                    </div>
-                  </TooltipProvider>
-                ) : null}
-                <div data-slot="user-message-bubble" className={userMessageBubbleClassName}>
-                  <MessagePdfReadingContext message={message} projectId={projectId} />
-                  <AnnotationMessageCards
-                    annotations={message.annotations ?? []}
-                    onReveal={requestAnnotationReveal}
-                  />
+          ) : isReviewerCorrection ? (
+            <div
+              data-testid="reviewer-correction-message"
+              data-active={reviewerCorrectionActive || undefined}
+              className="flex max-w-[56rem] items-start gap-2 rounded-lg bg-bg-200 px-3 py-2 text-xs text-text-300"
+              role="status"
+              aria-live={reviewerCorrectionActive ? 'polite' : undefined}
+            >
+              {reviewerCorrectionActive ? (
+                <CircleGauge
+                  data-testid="reviewer-correction-active-icon"
+                  className="mt-0.5 size-3.5 shrink-0 animate-spin text-text-300 motion-reduce:animate-none"
+                  aria-hidden="true"
+                />
+              ) : reviewerCorrectionState === 'completed' ? (
+                <Check
+                  data-testid="reviewer-correction-settled-icon"
+                  className="mt-0.5 size-3.5 shrink-0 text-text-300"
+                  aria-hidden="true"
+                />
+              ) : (
+                <CircleAlert
+                  data-testid="reviewer-correction-failed-icon"
+                  className="mt-0.5 size-3.5 shrink-0 text-status-warning-foreground dark:text-status-warning-dark-foreground"
+                  aria-hidden="true"
+                />
+              )}
+              <div className="flex min-w-0 flex-col gap-0.5 sm:flex-row sm:items-baseline sm:gap-2">
+                <span className="font-medium text-text-200">
+                  {reviewerCorrectionState === 'waiting'
+                    ? t('Reviewer requested corrections')
+                    : t('Corrections requested')}
+                </span>
+                {reviewerCorrectionState === 'waiting' && (
+                  <span className="text-text-300">{t('Agent is addressing the feedback')}</span>
+                )}
+                {reviewerCorrectionState === 'responding' && (
+                  <span className="text-text-300">
+                    {t('Handed off to the Agent · response started')}
+                  </span>
+                )}
+                {reviewerCorrectionState === 'completed' && (
+                  <span className="text-text-300">{t('Response completed.')}</span>
+                )}
+                {reviewerCorrectionState === 'failed' && (
+                  <span className="text-text-300">{t('Response failed.')}</span>
+                )}
+              </div>
+            </div>
+          ) : isSideChatAdvisory ? (
+            <div
+              data-testid="side-chat-advisory"
+              className="flex min-w-0 items-center gap-2 rounded-xl bg-bg-200 px-3 py-2 text-[13px] text-text-100"
+            >
+              <MessageCircleMore className="size-4 shrink-0 text-text-300" aria-hidden="true" />
+              <span className="shrink-0 font-medium">{t('Side chat')}</span>
+              <span className="min-w-0 truncate">{message.content}</span>
+            </div>
+          ) : isUserMessage ? (
+            isEditing ? (
+              <div className="flex justify-end">
+                {/* Inline editing swaps the bubble for a multi-line editor; confirm resends the prompt. */}
+                <div className={editCardClassName} aria-busy={isResendingEdit}>
                   <MessageUploadAttachmentList
                     attachments={uploads}
                     onPreviewUploadAttachment={onPreviewUploadAttachment}
                   />
-                  {/* Structured parts drive styled pills; plain content is the backward-compatible fallback. */}
-                  {isHumanUser && userMessageContent ? (
-                    <CollapsibleUserMessageContent
-                      hasInteractiveContent={hasInteractiveUserMessageContent}
-                      message={message}
-                      staticParts={staticParts}
+                  {uploads.length > 0 ? (
+                    <hr
+                      role="separator"
+                      className="-mt-1.5 w-full border-0 border-t border-border-200"
+                    />
+                  ) : null}
+                  <AnnotationDraftCards
+                    annotations={editAnnotations}
+                    disabled={!canEditMessage || isResendingEdit}
+                    onReveal={requestAnnotationReveal}
+                    onUpdateNote={(id, note) => {
+                      const next = editAnnotations.map((annotation) =>
+                        annotation.id === id
+                          ? annotation.kind === 'text'
+                            ? { ...annotation, note: note.trim() || undefined }
+                            : { ...annotation, note: note.trim() }
+                          : annotation
+                      )
+                      return updateEditAnnotations(next)
+                    }}
+                    onRemove={(id) => {
+                      updateEditAnnotations(
+                        editAnnotationsRef.current.filter((annotation) => annotation.id !== id)
+                      )
+                    }}
+                  />
+                  <ComposerEditor
+                    doc={editDoc}
+                    onDocChange={(next) => {
+                      editDocRef.current = next
+                      setEditDoc(next)
+                      const validation = validateAnnotations(editAnnotations, docToText(next))
+                      setEditError(
+                        validation ? annotationValidationMessage(validation, t) : undefined
+                      )
+                    }}
+                    onSubmit={handleConfirmEdit}
+                    onPaste={ignoreEditPaste}
+                    placeholder={t('Edit your message')}
+                    ariaLabel={t('Edit message')}
+                    focusRequest={editFocusRequest}
+                  />
+                  {editError ? (
+                    <div role="alert">
+                      <ErrorNotice tone="red" title={editError} />
+                    </div>
+                  ) : null}
+                  <div className="flex items-center justify-end gap-1">
+                    <button
+                      type="button"
+                      className={editCancelButtonClassName}
+                      disabled={isResendingEdit}
+                      onClick={handleCancelEdit}
                     >
-                      {userMessageContent}
-                    </CollapsibleUserMessageContent>
-                  ) : (
-                    userMessageContent
-                  )}
+                      {t('Cancel')}
+                    </button>
+                    <button
+                      type="button"
+                      className={editSendButtonClassName}
+                      disabled={
+                        !canEditMessage ||
+                        isResendingEdit ||
+                        (docIsEmpty(editDoc) && editAnnotations.length === 0)
+                      }
+                      onClick={handleConfirmEdit}
+                    >
+                      {isResendingEdit ? (
+                        <Loader2 className="size-3 animate-spin" aria-hidden="true" />
+                      ) : null}
+                      {t('Send')}
+                    </button>
+                  </div>
                 </div>
               </div>
-              {sending || sentDate || message.interrupted || showRevisionNavigation ? (
+            ) : (
+              <div className="group flex flex-col items-end">
                 <div
-                  data-slot="user-message-footer"
-                  className="mt-1 flex min-h-6 w-full flex-wrap items-center justify-end gap-x-2 text-[11px] leading-4 text-text-000/70 tabular-nums"
+                  data-slot="user-bubble-row"
+                  className="flex w-full max-w-full items-center justify-end gap-1"
                 >
-                  {sending ? (
-                    <span className="flex items-center gap-1" role="status" aria-live="polite">
-                      <Loader2
-                        className="size-3 animate-spin motion-reduce:animate-none"
-                        aria-hidden="true"
-                      />
-                      {t('Sending…')}
-                    </span>
-                  ) : null}
-                  {message.interrupted ? (
-                    <span
-                      data-slot="user-message-interrupted"
-                      className="italic text-amber-600 dark:text-amber-400"
-                    >
-                      {t('This turn was interrupted.')}
-                    </span>
-                  ) : null}
-                  {sentDate ? <MessageTimestamp label={t('Sent')} date={sentDate} /> : null}
-                  {showRevisionNavigation ? (
-                    <TooltipProvider delayDuration={200}>
-                      <div
-                        data-slot="user-message-revision-navigation"
-                        className="flex items-center gap-0.5 text-[13px] text-text-100"
-                      >
-                        <UserMessageActionTooltip label={t('Previous message revision')}>
+                  {/* Copy/edit controls stay left of the bubble; Branch navigation lives below it. */}
+                  {showUserActions && isHumanUser ? (
+                    <>
+                      <div data-slot="user-message-actions" className={userMessageActionsClassName}>
+                        <UserMessageActionTooltip label={copied ? t('Copied') : t('Copy message')}>
                           <button
                             type="button"
                             className={userMessageActionButtonClassName}
-                            aria-label={t('Previous message revision')}
-                            disabled={!revisionNavigation.onPrevious || !canEditMessage}
-                            onClick={revisionNavigation.onPrevious}
+                            aria-label={copied ? t('Copied') : t('Copy message')}
+                            onClick={handleCopyMessage}
                           >
-                            <ChevronLeft className="size-3.5" aria-hidden="true" />
+                            {copied ? (
+                              <Check className="size-3.5" strokeWidth={2} aria-hidden="true" />
+                            ) : (
+                              <Copy className="size-3.5" strokeWidth={2} aria-hidden="true" />
+                            )}
                           </button>
                         </UserMessageActionTooltip>
-                        <GitBranch
-                          data-slot="user-message-revision-icon"
-                          className="size-3.5 text-text-300"
-                          aria-hidden="true"
-                        />
-                        <span aria-label={t('Message revision')} className="min-w-7 text-center">
-                          {revisionNavigation.index + 1}/{revisionNavigation.total}
-                        </span>
-                        <UserMessageActionTooltip label={t('Next message revision')}>
+                        <UserMessageActionTooltip label={t('Edit message')}>
                           <button
+                            ref={editButtonRef}
                             type="button"
                             className={userMessageActionButtonClassName}
-                            aria-label={t('Next message revision')}
-                            disabled={!revisionNavigation.onNext || !canEditMessage}
-                            onClick={revisionNavigation.onNext}
+                            aria-label={t('Edit message')}
+                            disabled={!canEditMessage}
+                            onClick={handleStartEdit}
                           >
-                            <ChevronRight className="size-3.5" aria-hidden="true" />
+                            <Pencil className="size-3.5" strokeWidth={2} aria-hidden="true" />
                           </button>
                         </UserMessageActionTooltip>
                       </div>
-                    </TooltipProvider>
+                    </>
                   ) : null}
+                  <div data-slot="user-message-bubble" className={userMessageBubbleClassName}>
+                    <MessagePdfReadingContext message={message} projectId={projectId} />
+                    <AnnotationMessageCards
+                      annotations={message.annotations ?? []}
+                      onReveal={requestAnnotationReveal}
+                    />
+                    <MessageUploadAttachmentList
+                      attachments={uploads}
+                      onPreviewUploadAttachment={onPreviewUploadAttachment}
+                    />
+                    {/* Structured parts drive styled pills; plain content is the backward-compatible fallback. */}
+                    {isHumanUser && userMessageContent ? (
+                      <CollapsibleUserMessageContent
+                        hasInteractiveContent={hasInteractiveUserMessageContent}
+                        message={message}
+                        staticParts={staticParts}
+                      >
+                        {userMessageContent}
+                      </CollapsibleUserMessageContent>
+                    ) : (
+                      userMessageContent
+                    )}
+                  </div>
                 </div>
-              ) : null}
-            </div>
-          )
-        ) : (
-          <div
-            className={cn(
-              assistantMessageSurfaceClassName,
-              'select-text overflow-visible',
-              // Reserve the tallest loading-row geometry only when this reply replaces that row.
-              // If Thinking or a live tool remains below, the buffered message stays at line height.
-              isAssistantPresenting && (reserveLoadingRowHeight ? 'min-h-14' : 'min-h-5')
-            )}
-          >
-            {message.content ? (
-              annotationPort ? (
-                <TextAnnotationSurface
-                  source={{
-                    kind: 'agent-message',
-                    sessionId: annotationPort.sessionId,
-                    messageId: message.id
-                  }}
-                  activeAnnotations={annotationPort.activeAnnotations}
-                  onAdd={annotationPort.onAdd}
-                  onUpdateNote={annotationPort.onUpdateNote}
-                  onError={annotationPort.onError}
-                >
+                {sending || sentDate || message.interrupted || showRevisionNavigation ? (
+                  <div
+                    data-slot="user-message-footer"
+                    className="mt-1 flex min-h-6 w-full flex-wrap items-center justify-end gap-x-2 text-[11px] leading-4 text-text-000/70 tabular-nums"
+                  >
+                    {sending ? (
+                      <span className="flex items-center gap-1" role="status" aria-live="polite">
+                        <Loader2
+                          className="size-3 animate-spin motion-reduce:animate-none"
+                          aria-hidden="true"
+                        />
+                        {t('Sending…')}
+                      </span>
+                    ) : null}
+                    {message.interrupted ? (
+                      <span
+                        data-slot="user-message-interrupted"
+                        className="italic text-amber-600 dark:text-amber-400"
+                      >
+                        {t('This turn was interrupted.')}
+                      </span>
+                    ) : null}
+                    {sentDate ? <MessageTimestamp label={t('Sent')} date={sentDate} /> : null}
+                    {showRevisionNavigation ? (
+                      <>
+                        <div
+                          data-slot="user-message-revision-navigation"
+                          className="flex items-center gap-0.5 text-[13px] text-text-100"
+                        >
+                          <UserMessageActionTooltip
+                            label={
+                              revisionNavigation.disabledReason ?? t('Previous message revision')
+                            }
+                          >
+                            <span
+                              tabIndex={revisionNavigation.disabledReason ? 0 : undefined}
+                              aria-label={revisionNavigation.disabledReason}
+                            >
+                              <button
+                                type="button"
+                                className={userMessageActionButtonClassName}
+                                aria-label={t('Previous message revision')}
+                                disabled={
+                                  !revisionNavigation.onPrevious ||
+                                  !canEditMessage ||
+                                  Boolean(revisionNavigation.disabledReason)
+                                }
+                                onClick={revisionNavigation.onPrevious}
+                              >
+                                <ChevronLeft className="size-3.5" aria-hidden="true" />
+                              </button>
+                            </span>
+                          </UserMessageActionTooltip>
+                          <GitBranch
+                            data-slot="user-message-revision-icon"
+                            className="size-3.5 text-text-300"
+                            aria-hidden="true"
+                          />
+                          <span aria-label={t('Message revision')} className="min-w-7 text-center">
+                            {revisionNavigation.index + 1}/{revisionNavigation.total}
+                          </span>
+                          <UserMessageActionTooltip
+                            label={revisionNavigation.disabledReason ?? t('Next message revision')}
+                          >
+                            <span
+                              tabIndex={revisionNavigation.disabledReason ? 0 : undefined}
+                              aria-label={revisionNavigation.disabledReason}
+                            >
+                              <button
+                                type="button"
+                                className={userMessageActionButtonClassName}
+                                aria-label={t('Next message revision')}
+                                disabled={
+                                  !revisionNavigation.onNext ||
+                                  !canEditMessage ||
+                                  Boolean(revisionNavigation.disabledReason)
+                                }
+                                onClick={revisionNavigation.onNext}
+                              >
+                                <ChevronRight className="size-3.5" aria-hidden="true" />
+                              </button>
+                            </span>
+                          </UserMessageActionTooltip>
+                        </div>
+                      </>
+                    ) : null}
+                  </div>
+                ) : null}
+              </div>
+            )
+          ) : (
+            <div
+              className={cn(
+                assistantMessageSurfaceClassName,
+                'select-text overflow-visible',
+                // Reserve the tallest loading-row geometry only when this reply replaces that row.
+                // If Thinking or a live tool remains below, the buffered message stays at line height.
+                isAssistantPresenting && (reserveLoadingRowHeight ? 'min-h-14' : 'min-h-5')
+              )}
+            >
+              {liveMessageContent ? (
+                annotationPort ? (
+                  <TextAnnotationSurface
+                    source={{
+                      kind: 'agent-message',
+                      sessionId: annotationPort.sessionId,
+                      messageId: message.id
+                    }}
+                    activeAnnotations={annotationPort.activeAnnotations}
+                    onAdd={annotationPort.onAdd}
+                    onUpdateNote={annotationPort.onUpdateNote}
+                    onError={annotationPort.onError}
+                    isAnimating={isAssistantPresenting}
+                  >
+                    <SessionMessageMarkdown
+                      content={assistantPresentation.content}
+                      isAnimating={isAssistantPresenting}
+                      artifacts={artifacts}
+                      onPreviewArtifact={onPreviewArtifact}
+                      onPreviewArtifactModal={onPreviewArtifactModal}
+                    />
+                  </TextAnnotationSurface>
+                ) : (
                   <SessionMessageMarkdown
                     content={assistantPresentation.content}
                     isAnimating={isAssistantPresenting}
@@ -1821,38 +1926,38 @@ const WorkspaceMessageItemImpl = ({
                     onPreviewArtifact={onPreviewArtifact}
                     onPreviewArtifactModal={onPreviewArtifactModal}
                   />
-                </TextAnnotationSurface>
-              ) : (
-                <SessionMessageMarkdown
-                  content={assistantPresentation.content}
-                  isAnimating={isAssistantPresenting}
-                  artifacts={artifacts}
-                  onPreviewArtifact={onPreviewArtifact}
-                  onPreviewArtifactModal={onPreviewArtifactModal}
+                )
+              ) : null}
+              <MessageImageList images={message.images ?? []} />
+              <MessageArtifactList onPreviewArtifact={onPreviewArtifact} artifacts={artifacts} />
+              {showAssistantFooter && !isAssistantPresenting ? (
+                <WorkspaceAssistantTurnCompletion
+                  message={message}
+                  turnStartedAt={turnStartedAt}
+                  runtimeIdentity={runtimeIdentity}
+                  canBranchInNewSession={canBranchInNewSession}
+                  onBranchInNewSession={onBranchInNewSession}
                 />
-              )
-            ) : null}
-            <MessageImageList images={message.images ?? []} />
-            <MessageArtifactList onPreviewArtifact={onPreviewArtifact} artifacts={artifacts} />
-            {showAssistantFooter && !isAssistantPresenting ? (
-              <WorkspaceAssistantTurnCompletion
-                message={message}
-                turnStartedAt={turnStartedAt}
-                runtimeIdentity={runtimeIdentity}
-                canBranchInNewSession={canBranchInNewSession}
-                onBranchInNewSession={onBranchInNewSession}
-              />
-            ) : null}
-          </div>
-        )}
-      </div>
-      <EditMessageConfirmDialog
-        open={isConfirmingEdit}
-        subsequentTurns={subsequentTurns}
-        onCancel={() => setIsConfirmingEdit(false)}
-        onConfirm={confirmEditedResend}
-      />
-    </MessageScrollerItem>
+              ) : null}
+            </div>
+          )}
+        </div>
+        <EditMessageConfirmDialog
+          open={isConfirmingEdit}
+          subsequentTurns={subsequentTurns}
+          onCancel={() => setIsConfirmingEdit(false)}
+          onConfirm={confirmEditedResend}
+        />
+        {selectedLiteratureReference ? (
+          <ArtifactLiteratureDetailDialog
+            reference={selectedLiteratureReference}
+            onOpenChange={(open) => {
+              if (!open) setSelectedLiteratureReference(undefined)
+            }}
+          />
+        ) : null}
+      </MessageScrollerItem>
+    </>
   )
 }
 
@@ -1921,6 +2026,7 @@ const areRevisionNavigationsEqual = (
     next !== undefined &&
     previous.index === next.index &&
     previous.total === next.total &&
+    previous.disabledReason === next.disabledReason &&
     (previous.onPrevious === undefined) === (next.onPrevious === undefined) &&
     (previous.onNext === undefined) === (next.onNext === undefined))
 
@@ -1955,7 +2061,7 @@ const areWorkspaceMessageItemPropsEqual = (
   areRevisionNavigationsEqual(previous.revisionNavigation, next.revisionNavigation) &&
   previous.onPresentationChange === next.onPresentationChange &&
   (previous.presentationSourceOpen ?? true) === (next.presentationSourceOpen ?? true) &&
-  (previous.presentationAnimateOnMount ?? true) === (next.presentationAnimateOnMount ?? true) &&
+  previous.presentationAnimateOnMount === next.presentationAnimateOnMount &&
   (previous.reserveLoadingRowHeight ?? true) === (next.reserveLoadingRowHeight ?? true)
 
 const WorkspaceMessageItem = memo(WorkspaceMessageItemImpl, areWorkspaceMessageItemPropsEqual)

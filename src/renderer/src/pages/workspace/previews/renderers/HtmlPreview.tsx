@@ -5,7 +5,7 @@ import { cn } from '@/lib/utils'
 import { MANAGED_PREVIEW_LOAD_ERROR } from '../../../../../../shared/preview-resources'
 
 import { PreviewErrorCard, PreviewLoadingContent } from '../PreviewFallback'
-import { createPreviewResourceKey } from '../preview-resource-key'
+import { usePreviewResourceKey } from '../usePreviewResourceGeneration'
 import type { PreviewFileRendererProps } from '../preview-types'
 import { useManagedPreviewResource } from '../useManagedPreviewResource'
 import { usePreviewFileContent } from '../usePreviewFileContent'
@@ -61,7 +61,7 @@ export const HtmlPreviewRenderer = (props: PreviewFileRendererProps): React.JSX.
   const { item } = props
   const { t } = useTranslation()
   const [mode, setMode] = useState<HtmlPreviewMode>('render')
-  const requestKey = createPreviewResourceKey(item)
+  const requestKey = usePreviewResourceKey(item)
   const [failedRequestKey, setFailedRequestKey] = useState<string | undefined>(undefined)
   const hasFailed = failedRequestKey === requestKey
   const iframeRef = useRef<HTMLIFrameElement | null>(null)

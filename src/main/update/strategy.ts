@@ -63,7 +63,10 @@ export const createDataRootResearchSafeInstallGate = (
   createActiveResearchSafeInstallGate(() => {
     const blockers = detectBlockers()
     return confirmedInterruption
-      ? blockers.filter((blocker) => blocker === 'delegated' || blocker === 'reviewer')
+      ? blockers.filter(
+          (blocker) =>
+            blocker === 'delegated' || blocker === 'reviewer' || blocker === 'settings-install'
+        )
       : blockers
   }, runTeardownGate)
 

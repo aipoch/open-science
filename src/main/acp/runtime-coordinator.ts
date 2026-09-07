@@ -356,6 +356,12 @@ class AcpRuntimeCoordinator {
     return this.runtimeForSession(sessionId).getSessionPlanProjection(projectId, sessionId)
   }
 
+  discardUnavailableSessionPlan(
+    input: Parameters<AcpRuntime['discardUnavailableSessionPlan']>[0]
+  ): Promise<{ revision: number }> {
+    return this.runtimeForSession(input.sessionId).discardUnavailableSessionPlan(input)
+  }
+
   respondSessionPlan(
     input: Parameters<AcpRuntime['respondSessionPlan']>[0]
   ): ReturnType<AcpRuntime['respondSessionPlan']> {
@@ -373,6 +379,10 @@ class AcpRuntimeCoordinator {
   hasLiveSession(projectId: string, sessionId: string): boolean {
     const runtime = this.sessionRuntimes.get(sessionId)
     return runtime?.hasLiveSession(projectId, sessionId) ?? false
+  }
+
+  sessionMemorySignal(sessionId: string): AbortSignal | undefined {
+    return this.findRuntimeForSession(sessionId)?.sessionMemorySignal(sessionId)
   }
 
   isSessionMemoryEnabled(sessionId: string): boolean {
@@ -450,7 +460,7 @@ class AcpRuntimeCoordinator {
   shutdown(): void {
     this.invalidateAllSessionTurns()
     this.supersedeInitializationRequests()
-    void this.delegatedWork?.stopAll().catch(() => undefined)
+    void this.delegatedWork?.shutdown().catch(() => undefined)
     for (const runtime of this.runtimes) runtime.shutdown()
     this.clearRuntimeOwnership()
     this.onDisconnected?.()
@@ -460,7 +470,10 @@ class AcpRuntimeCoordinator {
     this.providerShutdownStartedForQuit = true
     this.invalidateAllSessionTurns()
     this.supersedeInitializationRequests()
-    return this.shutdownAll((runtime) => runtime.shutdownForQuit())
+    return this.shutdownAll(
+      (runtime) => runtime.shutdownForQuit(),
+      () => this.delegatedWork?.shutdown()
+    )
   }
 
   // Gives active agents a bounded chance to return their terminal stop response before process-tree
@@ -529,7 +542,10 @@ class AcpRuntimeCoordinator {
   async shutdownForUpdateGate(): Promise<{ reaped: boolean }> {
     this.invalidateAllSessionTurns()
     this.supersedeInitializationRequests()
-    return this.shutdownAll((runtime) => runtime.shutdownForUpdateGate())
+    return this.shutdownAll(
+      (runtime) => runtime.shutdownForUpdateGate(),
+      () => this.delegatedWork?.stopAll()
+    )
   }
 
   async createSession(request: AcpCreateSessionRequest = {}): Promise<AcpCreateSessionResponse> {
@@ -1168,8 +1184,24 @@ class AcpRuntimeCoordinator {
     this.assertPromptAdmissionOpen()
     await this.promptAdmissionGuard?.(request.sessionId)
     this.assertPromptAdmissionOpen()
-    const dispatch = (): Promise<AcpSteerFollowUpResult> =>
-      this.runtimeForSession(request.sessionId).steerFollowUp(request)
+    const dispatch = (): Promise<AcpSteerFollowUpResult> => {
+      const runtime = this.runtimeForSession(request.sessionId)
+      const isCurrent = (): boolean => {
+        if (this.findRuntimeForSession(request.sessionId) !== runtime) return false
+        const expected = request.agentTarget
+        if (!expected) return true
+        const actual = this.runtimeTargets.get(runtime)
+        return (
+          actual !== undefined &&
+          actual.frameworkId === expected.frameworkId &&
+          actual.providerId === expected.providerId &&
+          actual.model === expected.model &&
+          actual.reasoningEffort === expected.reasoningEffort
+        )
+      }
+      if (!isCurrent()) return Promise.resolve({ injected: false, reason: 'prompt-required' })
+      return runtime.steerFollowUp(request, isCurrent)
+    }
     return this.promptDispatchAdmissionGuard
       ? this.promptDispatchAdmissionGuard(request.sessionId, dispatch)
       : dispatch()
@@ -1974,11 +2006,12 @@ class AcpRuntimeCoordinator {
   }
 
   private async shutdownAll(
-    shutdown: (runtime: AcpRuntime) => Promise<{ reaped: boolean }>
+    shutdown: (runtime: AcpRuntime) => Promise<{ reaped: boolean }>,
+    stopDelegatedWork: () => Promise<void> | undefined
   ): Promise<{ reaped: boolean }> {
     const runtimes = Array.from(this.runtimes)
     const [delegatedOutcome, ...outcomes] = await Promise.allSettled([
-      this.delegatedWork?.stopAll() ?? Promise.resolve(),
+      stopDelegatedWork() ?? Promise.resolve(),
       ...runtimes.map(shutdown)
     ])
     const failure =

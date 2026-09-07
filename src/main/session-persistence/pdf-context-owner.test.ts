@@ -3,6 +3,7 @@ import { describe, expect, it, vi, type Mock } from 'vitest'
 import type { NotebookRunInputFile } from '../../shared/notebook'
 import type { SessionRuntimeContext } from '../../shared/session-persistence'
 import { ImmutableInputAuthority } from '../immutable-input-authority'
+import { SessionPdfSourceResolver } from '../literature/session-pdf-source-resolver'
 import { inspectPdfPageCount, MAX_AUTO_EXTRACT_PDF_BYTES } from '../uploads/attachment-media'
 import { SessionPdfContextOwner } from './pdf-context-owner'
 
@@ -35,8 +36,8 @@ type SessionPdfContextOwnerHarness = Readonly<{
 }>
 
 const setup = (resolved: NotebookRunInputFile | null = input): SessionPdfContextOwnerHarness => {
-  const resolveVersion = vi.fn(async () => resolved ?? undefined)
-  const resolveContent = vi.fn(async () => '/managed/paper.pdf')
+  const resolveVersion: Mock = vi.fn(async () => resolved ?? undefined)
+  const resolveContent: Mock = vi.fn(async () => '/managed/paper.pdf')
   const resolvePendingContent = vi.fn(async () => '/managed/pending.pdf')
   const readSessionRuntimeContext = vi.fn<
     (projectId: string, sessionId: string) => Promise<SessionRuntimeContext>
@@ -47,7 +48,31 @@ const setup = (resolved: NotebookRunInputFile | null = input): SessionPdfContext
     ...request.patch
   }))
   const owner = new SessionPdfContextOwner({
-    inputs: { resolveVersion, resolveContent },
+    sources: {
+      resolveVersion: async (request) => {
+        if (request.sourceKind === 'literature-attachment-version') return undefined
+        const resolvedInput = await resolveVersion({
+          projectId: request.projectId,
+          sourceKind: request.sourceKind,
+          inputFileVersionId: request.sourceVersionId,
+          ...(request.expectedSourceFileId
+            ? { expectedSourceFileId: request.expectedSourceFileId }
+            : {})
+        })
+        if (!resolvedInput) return undefined
+        return {
+          sourceKind: resolvedInput.sourceKind,
+          sourceFileId: resolvedInput.sourceFileId,
+          sourceVersionId: resolvedInput.inputFileVersionId,
+          sourceSessionId: resolvedInput.sourceSessionId,
+          filename: resolvedInput.filename,
+          contentType: resolvedInput.contentType,
+          sizeBytes: resolvedInput.sizeBytes,
+          checksum: resolvedInput.checksum,
+          path: await resolveContent(resolvedInput)
+        }
+      }
+    },
     pendingUploads: { resolveContent: resolvePendingContent },
     sessions: { readSessionRuntimeContext, patchSessionRuntimeContext }
   })
@@ -210,11 +235,15 @@ describe('SessionPdfContextOwner', () => {
       revision: request.expectedRevision + 1,
       ...request.patch
     }))
+    const inputs = new ImmutableInputAuthority({
+      storageRoot: '/storage',
+      managedFileVersions: { openVersion }
+    } as never)
     const owner = new SessionPdfContextOwner({
-      inputs: new ImmutableInputAuthority({
-        storageRoot: '/storage',
-        managedFileVersions: { openVersion }
-      } as never),
+      sources: new SessionPdfSourceResolver({
+        inputs,
+        literature: { resolveVersion: vi.fn() }
+      }),
       sessions: { readSessionRuntimeContext, patchSessionRuntimeContext }
     })
     const source = {

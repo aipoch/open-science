@@ -54,6 +54,26 @@ describe('ACP session aggregate', () => {
     expect(aggregate.snapshot().memoryEnabled).toBe(false)
   })
 
+  it('invalidates old Memory operations across disable, re-enable, replacement, and detach', () => {
+    const aggregate = new AcpSessionAggregate('app-session')
+    aggregate.attach(attachInput('provider-1'))
+    const first = aggregate.memorySignal()
+    aggregate.setMemoryEnabled(true)
+    expect(aggregate.memorySignal()).toBe(first)
+    aggregate.setMemoryEnabled(false)
+    expect(first.aborted).toBe(true)
+    aggregate.setMemoryEnabled(true)
+    const second = aggregate.memorySignal()
+    expect(second.aborted).toBe(false)
+    expect(first.aborted).toBe(true)
+    aggregate.attach(attachInput('provider-2', { memoryEnabled: false }))
+    expect(second.aborted).toBe(true)
+    aggregate.setMemoryEnabled(true)
+    const third = aggregate.memorySignal()
+    aggregate.detachConnection()
+    expect(third.aborted).toBe(true)
+  })
+
   it('replaces provider metadata without erasing retained backend affinity', () => {
     const aggregate = new AcpSessionAggregate('app-session')
     const configOption = {

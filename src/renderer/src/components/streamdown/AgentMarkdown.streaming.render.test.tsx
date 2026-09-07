@@ -122,4 +122,106 @@ describe('AgentMarkdown streaming presentation', () => {
       '/.open-science/artifact/version-1'
     )
   })
+
+  it('hides an unclosed trailing blockquote while streaming, without CSS :has()', async () => {
+    vi.useRealTimers()
+
+    await act(async () => {
+      root.render(<PresentedAgentMarkdown content={'Intro paragraph\n\n>'} isAnimating />)
+    })
+
+    const quote = container.querySelector('blockquote')
+    expect(quote).not.toBeNull()
+    expect(quote?.textContent?.trim()).toBe('')
+    expect(quote?.className).toContain('hidden')
+  })
+
+  it('shows only the blockquotes that have paragraph content while streaming', async () => {
+    vi.useRealTimers()
+
+    await act(async () => {
+      root.render(<PresentedAgentMarkdown content={'> quoted text\n\n>'} isAnimating />)
+    })
+
+    const quotes = container.querySelectorAll('blockquote')
+    expect(quotes).toHaveLength(2)
+    expect(quotes[0].className).not.toContain('hidden')
+    expect(quotes[0].textContent).toContain('quoted text')
+    expect(quotes[1].className).toContain('hidden')
+  })
+
+  it('keeps nested blockquotes visible when an inner paragraph has text', async () => {
+    vi.useRealTimers()
+
+    await act(async () => {
+      root.render(<PresentedAgentMarkdown content={'> > nested text'} isAnimating />)
+    })
+
+    const quotes = container.querySelectorAll('blockquote')
+    expect(quotes.length).toBeGreaterThan(0)
+    for (const quote of quotes) {
+      expect(quote.className).not.toContain('hidden')
+    }
+  })
+
+  it('hides an image-only blockquote while streaming, matching the old :has(p) rule', async () => {
+    vi.useRealTimers()
+
+    await act(async () => {
+      root.render(
+        <PresentedAgentMarkdown content="> ![alt](https://example.com/x.png)" isAnimating />
+      )
+    })
+
+    const quote = container.querySelector('blockquote')
+    expect(quote).not.toBeNull()
+    // Streamdown's paragraph unwraps the lone image, so no <p> reaches the DOM — the old
+    // blockquote:not(:has(p:not(:empty))) selector hid this quote too.
+    expect(quote?.querySelector('p')).toBeNull()
+    expect(quote?.className).toContain('hidden')
+  })
+
+  it('shows the same empty blockquote once streaming settles', async () => {
+    vi.useRealTimers()
+
+    await act(async () => {
+      root.render(<PresentedAgentMarkdown content={'Intro paragraph\n\n>'} isAnimating />)
+    })
+    expect(container.querySelector('blockquote')?.className).toContain('hidden')
+
+    await act(async () => {
+      root.render(<PresentedAgentMarkdown content={'Intro paragraph\n\n>'} />)
+    })
+
+    const quote = container.querySelector('blockquote')
+    expect(quote).not.toBeNull()
+    expect(quote?.className).not.toContain('hidden')
+  })
+
+  it('keeps a supplied blockquote component in charge of chrome while toggling hidden', async () => {
+    vi.useRealTimers()
+    const CustomQuote = ({
+      children,
+      className
+    }: React.ComponentProps<'blockquote'> & { node?: unknown }): React.JSX.Element => (
+      <aside className={className} data-testid="custom-quote">
+        {children}
+      </aside>
+    )
+
+    await act(async () => {
+      root.render(
+        <PresentedAgentMarkdown
+          content={'> visible text\n\n>'}
+          components={{ blockquote: CustomQuote }}
+          isAnimating
+        />
+      )
+    })
+
+    const quotes = container.querySelectorAll('[data-testid="custom-quote"]')
+    expect(quotes).toHaveLength(2)
+    expect(quotes[0].className).not.toContain('hidden')
+    expect(quotes[1].className).toContain('hidden')
+  })
 })

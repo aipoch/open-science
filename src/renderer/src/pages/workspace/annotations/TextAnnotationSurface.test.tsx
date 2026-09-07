@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { installCssHighlightsMock, type TestHighlightRegistry } from '@/test-utils/css-highlights'
 import type { TextAnnotation } from '../../../../../shared/annotations'
 import { WorkspaceToolCodeBlock } from '../WorkspaceToolCodeBlock'
-import { requestAnnotationReveal } from './annotation-reveal'
+import { requestAnnotationReveal, subscribeAnnotationReveal } from './annotation-reveal'
 import { TextAnnotationSurface } from './TextAnnotationSurface'
 
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
@@ -17,6 +17,7 @@ const annotation = (id: string, quote: string): TextAnnotation => ({
   kind: 'text',
   target: 'agent',
   quote,
+  anchor: { position: { start: 0, end: quote.length }, suffix: ' then repeat' },
   source: { kind: 'agent-message', sessionId: 'session-1', messageId: 'message-1' }
 })
 
@@ -33,6 +34,7 @@ describe('TextAnnotationSurface highlight restoration', () => {
 
   afterEach(async () => {
     await act(async () => root.unmount())
+    subscribeAnnotationReveal(() => true)()
     vi.unstubAllGlobals()
     container.remove()
   })
@@ -56,8 +58,53 @@ describe('TextAnnotationSurface highlight restoration', () => {
     )
   }
 
+  it('retries a sent quote after its surface and asynchronous content mount', async () => {
+    const saved = annotation('late-quote', 'unique evidence')
+    await act(async () => requestAnnotationReveal(saved))
+    await renderSurface([], 'message-1', 'Loading content')
+    expect(container.textContent).toContain('The exact annotation location could not be found.')
+    expect(Array.from(highlights.get('agent-annotation-reveal') ?? [])).toHaveLength(0)
+    Element.prototype.scrollIntoView = vi.fn()
+    await renderSurface([], 'message-1', 'The unique evidence remains.')
+    expect(
+      Array.from(highlights.get('agent-annotation-reveal') ?? []).map((range) => range.toString())
+    ).toEqual([saved.quote])
+    expect(container.querySelector('[data-text-annotation-edit]')).toBeNull()
+    expect(container.textContent).not.toContain('The exact annotation location could not be found.')
+  })
+
+  it('does not guess an ambiguous historical quote or claim a different message source', async () => {
+    await renderSurface([])
+    await act(async () =>
+      requestAnnotationReveal({ ...annotation('legacy-quote', 'repeat'), anchor: undefined })
+    )
+    expect(container.textContent).toContain('The exact annotation location could not be found.')
+    expect(Array.from(highlights.get('agent-annotation-reveal') ?? [])).toHaveLength(0)
+    await renderSurface([], 'message-2', 'repeat')
+    expect(Array.from(highlights.get('agent-annotation-reveal') ?? [])).toHaveLength(0)
+    expect(container.textContent).not.toContain('The exact annotation location could not be found.')
+  })
+
+  it.each([true, false])('reveals a sent message quote with draft present=%s', async (inDraft) => {
+    const saved = annotation('history-quote', 'unique evidence')
+    await renderSurface(inDraft ? [saved] : [], 'message-1', 'The unique evidence remains.')
+    const scroll = vi.fn()
+    container.querySelector('p')!.scrollIntoView = scroll
+    await act(async () => requestAnnotationReveal(saved))
+    expect(
+      Array.from(highlights.get('agent-annotation-reveal') ?? []).map((range) => range.toString())
+    ).toContain(saved.quote)
+    expect(scroll).toHaveBeenCalled()
+  })
+
   it('rebuilds duplicate quote ranges deterministically after a virtualized remount', async () => {
-    const active = [annotation('first', 'repeat'), annotation('second', 'repeat')]
+    const active = [
+      annotation('first', 'repeat'),
+      {
+        ...annotation('second', 'repeat'),
+        anchor: { position: { start: 12, end: 18 }, prefix: 'repeat then ' }
+      }
+    ]
     await renderSurface(active)
 
     const firstMountRanges = Array.from(highlights.get('agent-annotation-draft') ?? [])
@@ -103,6 +150,40 @@ describe('TextAnnotationSurface highlight restoration', () => {
     const range = Array.from(highlights.get('agent-annotation-draft') ?? [])[0]
     expect(range?.toString()).toBe('repeat')
     expect(range?.startOffset).toBe(7)
+  })
+
+  it('defers the highlight reconcile while animating and reconciles once streaming ends', async () => {
+    const active = [annotation('streaming', 'repeat')]
+    const renderWith = async (isAnimating: boolean, content: string): Promise<void> => {
+      await act(async () =>
+        root.render(
+          <TextAnnotationSurface
+            source={{ kind: 'agent-message', sessionId: 'session-1', messageId: 'message-1' }}
+            activeAnnotations={active}
+            onAdd={vi.fn()}
+            onError={vi.fn()}
+            isAnimating={isAnimating}
+          >
+            <p>{content}</p>
+          </TextAnnotationSurface>
+        )
+      )
+    }
+
+    await renderWith(false, 'repeat then repeat')
+    expect(Array.from(highlights.get('agent-annotation-draft') ?? [])[0]?.toString()).toBe('repeat')
+
+    // Streaming replaces the mounted text node; the live range collapses onto
+    // the parent per DOM range adjustment. While animating it is left stale
+    // instead of being re-anchored every frame.
+    await renderWith(true, 'prefix repeat then repeat')
+    const deferred = Array.from(highlights.get('agent-annotation-draft') ?? [])[0]
+    expect(deferred?.toString()).toBe('')
+
+    await renderWith(false, 'prefix repeat then repeat')
+    const reconciled = Array.from(highlights.get('agent-annotation-draft') ?? [])[0]
+    expect(reconciled?.toString()).toBe('repeat')
+    expect(reconciled?.startOffset).toBe(7)
   })
 
   it('keeps a saved code quote highlighted and revealable after async syntax highlighting', async () => {
@@ -258,6 +339,7 @@ describe('TextAnnotationSurface note editor highlight', () => {
 
   afterEach(async () => {
     await act(async () => root.unmount())
+    subscribeAnnotationReveal(() => true)()
     vi.unstubAllGlobals()
     container.remove()
     window.getSelection()?.removeAllRanges()
@@ -528,6 +610,7 @@ describe('TextAnnotationSurface annotate trigger', () => {
 
   afterEach(async () => {
     await act(async () => root.unmount())
+    subscribeAnnotationReveal(() => true)()
     container.remove()
     window.getSelection()?.removeAllRanges()
   })
@@ -698,6 +781,32 @@ describe('TextAnnotationSurface annotate trigger', () => {
     await commitSelection(paragraph)
     expect(annotateTrigger()).toBeDefined()
 
+    await act(async () => {
+      if (paragraph.firstChild) paragraph.firstChild.textContent = 'stream replaced the quote'
+    })
+    expect(annotateTrigger()).toBeUndefined()
+  })
+
+  it('keeps retargeting the draft selection while the surface is animating', async () => {
+    await act(async () =>
+      root.render(
+        <TextAnnotationSurface
+          source={{ kind: 'agent-message', sessionId: 'session-1', messageId: 'message-1' }}
+          activeAnnotations={[]}
+          onAdd={vi.fn()}
+          onError={vi.fn()}
+          isAnimating={true}
+        >
+          <p>selectable agent reply</p>
+        </TextAnnotationSurface>
+      )
+    )
+    const paragraph = container.querySelector('p')!
+    await commitSelection(paragraph)
+    expect(annotateTrigger()).toBeDefined()
+
+    // The highlight reconcile is deferred during streaming, but a manual
+    // selection must still follow (or drop with) the mutating text.
     await act(async () => {
       if (paragraph.firstChild) paragraph.firstChild.textContent = 'stream replaced the quote'
     })

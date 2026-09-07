@@ -7,6 +7,10 @@ import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/
 import { createArtifactMcpServer, type ArtifactMcpEnvironment } from '../artifacts/mcp-server'
 import { ArtifactRepository } from '../artifacts/repository'
 import { createNotebookMcpServer, type NotebookMcpEnvironment } from '../notebook/mcp-server'
+import {
+  createLiteratureLibraryMcpServer,
+  type LiteratureLibraryMcpHandler
+} from '../literature/library-mcp-server'
 import { createLiteratureMcpServer, type LiteratureMcpHandler } from '../literature/mcp-server'
 import {
   callGitHubSkillImportRpc,
@@ -43,6 +47,7 @@ const SERVER_KINDS = [
   'skill-import',
   'plan',
   'host-message',
+  'library',
   'literature'
 ] as const
 type ServerKind = (typeof SERVER_KINDS)[number]
@@ -57,6 +62,7 @@ type SessionEntry = {
   skillImport?: SkillImportMcpEnvironment
   plan?: PlanMcpEnvironment
   hostMessage?: HostMessageMcpHandler
+  library?: LiteratureLibraryMcpHandler
   literature?: LiteratureMcpHandler
 }
 
@@ -168,6 +174,12 @@ class AgentMcpHttpHost {
     this.sessions.set(routingId, entry)
   }
 
+  registerLiteratureLibrary(routingId: string, handler: LiteratureLibraryMcpHandler): void {
+    const entry = this.sessions.get(routingId) ?? {}
+    entry.library = handler
+    this.sessions.set(routingId, entry)
+  }
+
   // Drops a routing id's registered environments once its session is gone.
   unregister(routingId: string): void {
     this.sessions.delete(routingId)
@@ -220,6 +232,10 @@ class AgentMcpHttpHost {
 
     if (kind === 'literature') {
       return entry.literature ? createLiteratureMcpServer(entry.literature) : undefined
+    }
+
+    if (kind === 'library') {
+      return entry.library ? createLiteratureLibraryMcpServer(entry.library) : undefined
     }
 
     const skillImportEnvironment = entry.skillImport

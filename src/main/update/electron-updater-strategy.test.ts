@@ -98,6 +98,97 @@ const diagnosticRecords = (log: Logger): Record<string, unknown>[] =>
   )
 
 describe('ElectronUpdaterStrategy', () => {
+  it.each(['up-to-date', 'error'])(
+    'releases a waiting download after a provider check returns %s',
+    async (outcome) => {
+      const updater = new FakeUpdater()
+      let releaseCheck!: () => void
+      const gate = new Promise<void>((resolve) => {
+        releaseCheck = resolve
+      })
+      updater.checkForUpdates.mockImplementationOnce(async () => {
+        updater.emit('checking-for-update')
+        await gate
+        if (outcome === 'error') throw new Error('offline')
+        updater.emit('update-not-available', { version: '0.2.0' })
+      })
+      const strategy = new ElectronUpdaterStrategy({
+        updater,
+        currentVersion: '0.2.0',
+        broadcast: vi.fn(),
+        fetchImpl: offlineFetch()
+      })
+      const checking = strategy.check()
+      const downloading = strategy.download()
+      releaseCheck()
+      await checking
+      expect((await downloading).state).toBe(outcome)
+      expect(updater.downloadUpdate).not.toHaveBeenCalled()
+
+      await strategy.check()
+      expect((await strategy.download()).state).toBe('ready')
+      expect(updater.downloadUpdate).toHaveBeenCalledTimes(1)
+    }
+  )
+
+  it('lets only a fresh retry transfer after cancelling a waiting download', async () => {
+    const updater = new FakeUpdater()
+    let releaseCheck!: () => void
+    const gate = new Promise<void>((resolve) => {
+      releaseCheck = resolve
+    })
+    updater.checkForUpdates.mockImplementationOnce(async () => {
+      updater.emit('checking-for-update')
+      await gate
+      updater.emit('update-available', { version: '0.3.0' })
+    })
+    const strategy = new ElectronUpdaterStrategy({
+      updater,
+      currentVersion: '0.2.0',
+      broadcast: vi.fn(),
+      fetchImpl: offlineFetch()
+    })
+    const checking = strategy.check()
+    const first = strategy.download()
+    await strategy.cancel()
+    const retry = strategy.download()
+    const duplicate = strategy.download()
+    releaseCheck()
+    await Promise.all([checking, first, retry, duplicate])
+    expect(updater.downloadUpdate).toHaveBeenCalledTimes(1)
+    expect(strategy.getStatus().state).toBe('ready')
+  })
+
+  it('U01: cancel prevents an in-place download waiting for check', async () => {
+    const updater = new FakeUpdater()
+    let releaseCheck!: () => void
+    const checkGate = new Promise<void>((resolve) => {
+      releaseCheck = resolve
+    })
+    updater.checkForUpdates = vi.fn(async () => {
+      updater.emit('checking-for-update')
+      await checkGate
+      updater.emit('update-available', { version: '0.3.0' })
+    })
+    const strategy = new ElectronUpdaterStrategy({
+      updater,
+      currentVersion: '0.2.0',
+      broadcast: vi.fn(),
+      fetchImpl: offlineFetch()
+    })
+
+    const checking = strategy.check()
+    expect(strategy.getStatus().state).toBe('checking')
+    const downloading = strategy.download()
+    await strategy.cancel()
+    releaseCheck()
+    await checking
+    const result = await downloading
+
+    expect.soft(updater.downloadUpdate).not.toHaveBeenCalled()
+    expect.soft(result.state).toBe('available')
+  })
+
   it('disables auto download/install on construction', () => {
     const updater = new FakeUpdater()
     new ElectronUpdaterStrategy({ updater, currentVersion: '0.2.0', broadcast: vi.fn() })
@@ -797,6 +888,32 @@ describe('ElectronUpdaterStrategy', () => {
       state: 'error',
       error: expect.stringMatching(/subagents are still running/i),
       blockedBy: ['delegated']
+    })
+    expect(backendTeardownGate).not.toHaveBeenCalled()
+    expect(updater.quitAndInstall).not.toHaveBeenCalled()
+  })
+
+  it('blocks restart while an Agent Runtime installation is active', async () => {
+    const updater = new FakeUpdater()
+    const backendTeardownGate = vi.fn(async () => ({ completed: true, reaped: true }))
+    const strategy = new ElectronUpdaterStrategy({
+      updater,
+      currentVersion: '0.2.0',
+      broadcast: vi.fn(),
+      installGate: createActiveResearchSafeInstallGate(
+        () => ['settings-install'],
+        backendTeardownGate
+      )
+    })
+    markUpdateReady(updater)
+
+    const status = await strategy.apply()
+
+    expect(status).toMatchObject({
+      state: 'error',
+      error:
+        'An Agent Runtime is still installing. Wait for it to finish before restarting to update.',
+      blockedBy: ['settings-install']
     })
     expect(backendTeardownGate).not.toHaveBeenCalled()
     expect(updater.quitAndInstall).not.toHaveBeenCalled()

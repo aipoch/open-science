@@ -35,6 +35,7 @@ const connectedHost = (): ComputeHost => ({
   providerId: 'ssh:biowulf',
   displayName: 'biowulf',
   shape: 'direct_ssh',
+  executionMode: 'direct_ssh',
   sshAlias: 'biowulf',
   sshOverrides: undefined,
   scratchRoot: '/scratch/user',

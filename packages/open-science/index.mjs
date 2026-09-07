@@ -179,6 +179,67 @@ export class OpenScienceClient {
     )
   }
 
+  listConnectors(options) {
+    return this.request(`/api/v1/connectors`, { ...options, method: 'GET' })
+  }
+
+  getConnector(id, options) {
+    return this.request(`/api/v1/connectors/${encodeURIComponent(id)}`, {
+      ...options,
+      method: 'GET'
+    })
+  }
+
+  setConnectorEnabled(id, enabled, options) {
+    return this.request(`/api/v1/connectors/${encodeURIComponent(id)}/enabled`, {
+      ...options,
+      method: 'PUT',
+      body: { enabled }
+    })
+  }
+
+  addConnector(request, options) {
+    return this.request(`/api/v1/connectors`, { ...options, method: 'POST', body: request })
+  }
+
+  updateConnector(id, request, options) {
+    return this.request(`/api/v1/connectors/${encodeURIComponent(id)}`, {
+      ...options,
+      method: 'PATCH',
+      body: request
+    })
+  }
+
+  removeConnector(id, options) {
+    return this.request(`/api/v1/connectors/${encodeURIComponent(id)}`, {
+      ...options,
+      method: 'DELETE'
+    })
+  }
+
+  testConnector(id, options) {
+    return this.request(`/api/v1/connectors/${encodeURIComponent(id)}/test`, {
+      ...options,
+      method: 'POST'
+    })
+  }
+
+  listCredentials(options) {
+    return this.request(`/api/v1/credentials`, { ...options, method: 'GET' })
+  }
+
+  createCredential(request, options) {
+    return this.request(`/api/v1/credentials`, { ...options, method: 'POST', body: request })
+  }
+
+  updateCredential(id, request, options) {
+    return this.request(`/api/v1/credentials/${encodeURIComponent(id)}`, {
+      ...options,
+      method: 'PATCH',
+      body: request
+    })
+  }
+
   listProjects(options) {
     return this.request('/api/v1/projects', options)
   }
@@ -634,8 +695,32 @@ export const connectToOpenScience = async ({
   requestTimeoutMs,
   signal
 } = {}) => {
-  const state = await findServiceState({ override: configRoot, env })
-  if (!state) {
+  let client
+  let lastError
+  await findServiceState({
+    override: configRoot,
+    env,
+    accept: async (state) => {
+      signal?.throwIfAborted()
+      try {
+        const candidate = new OpenScienceClient({
+          baseUrl: `http://127.0.0.1:${state.port}`,
+          token: await readWebToken(state.configRoot),
+          fetch,
+          requestTimeoutMs
+        })
+        await candidate.health({ signal })
+        client = candidate
+        return true
+      } catch (error) {
+        signal?.throwIfAborted()
+        lastError = error
+        return false
+      }
+    }
+  })
+  if (!client) {
+    if (lastError) throw lastError
     throw new OpenScienceApiError(
       'Open Science is not running. Start it with "open-science start".',
       {
@@ -643,13 +728,5 @@ export const connectToOpenScience = async ({
       }
     )
   }
-  const token = await readWebToken(state.configRoot)
-  const client = new OpenScienceClient({
-    baseUrl: `http://127.0.0.1:${state.port}`,
-    token,
-    fetch,
-    requestTimeoutMs
-  })
-  await client.health({ signal })
   return client
 }

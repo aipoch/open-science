@@ -133,7 +133,7 @@ export const PreviewLoadingContent = ({
         <div className="min-w-0">
           <div className="truncate text-[12px] font-medium text-text-000">{loadingTitle}</div>
           {loadingDescription ? (
-            <div className="mt-0.5 truncate text-[10px] text-text-300" title={loadingDescription}>
+            <div className="mt-0.5 truncate text-[10px] text-text-100" title={loadingDescription}>
               {loadingDescription}
             </div>
           ) : null}
@@ -182,7 +182,7 @@ export const PreviewFallbackCard = ({
         </div>
         <div className="min-w-0 pt-px">
           <div className="text-[12px] font-medium text-text-000">{cardTitle}</div>
-          <p className="mt-0.5 text-[10px] leading-4 text-text-300">{message}</p>
+          <p className="mt-0.5 text-[10px] leading-4 text-text-100">{message}</p>
           {retryable && runtime ? (
             <Button
               type="button"
@@ -263,7 +263,7 @@ export const PreviewUnsupportedContent = ({
         <PreviewFormatTile badge={presentation.badge} />
         <div className="min-w-0 pt-px">
           <div className="text-[12px] font-medium text-text-000">{t('Preview unavailable')}</div>
-          <p className="mt-0.5 text-[10px] leading-4 text-text-300">
+          <p className="mt-0.5 text-[10px] leading-4 text-text-100">
             {t("This file type isn't supported for preview")}
           </p>
           {source === 'local' ? (

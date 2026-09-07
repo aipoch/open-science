@@ -35,7 +35,7 @@ type GroupCursor = {
 type SearchArtifactCursor = {
   version: 2
   kind: 'globalArtifacts'
-  primaryProjectId: string
+  primaryProjectIds: string[]
   queryKey: string
   sortAtMs: string
   seq: number
@@ -534,7 +534,7 @@ const decodeGroupCursor = (cursor: string, request: ListArtifactGroupsRequest): 
 
 const decodeSearchArtifactCursor = (
   cursor: string,
-  primaryProjectId: string,
+  primaryProjectIds: string[],
   search: NormalizedSearch | undefined
 ): SearchArtifactCursor => {
   const value = parseCursor(cursor)
@@ -544,7 +544,7 @@ const decodeSearchArtifactCursor = (
     !isRecord(value) ||
     value.version !== 2 ||
     value.kind !== 'globalArtifacts' ||
-    value.primaryProjectId !== primaryProjectId ||
+    JSON.stringify(value.primaryProjectIds) !== JSON.stringify(primaryProjectIds) ||
     typeof value.queryKey !== 'string' ||
     typeof value.sortAtMs !== 'string' ||
     !/^-?\d+$/.test(value.sortAtMs) ||

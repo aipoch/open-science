@@ -8,6 +8,7 @@
 // Host topology, inferred by probe in a later issue. Persisted so downstream issues can branch on it;
 // Phase 1 never reads it for behavior.
 export type ComputeHostShape = 'direct_ssh' | 'scheduler_cluster' | 'bridge_runner'
+export type ComputeExecutionMode = 'direct_ssh' | 'slurm'
 
 export type ComputeHostPreferenceValidationErrorCode = 'invalid_provider_id' | 'host_not_found'
 
@@ -101,6 +102,8 @@ export type ComputeHost = {
   providerId: string
   displayName: string
   shape: ComputeHostShape
+  // Absent only in legacy/in-memory callers; persisted Hosts always project direct_ssh or slurm.
+  executionMode?: ComputeExecutionMode
   sshAlias: string
   sshOverrides: SshOverrides | undefined
   // Absent only in legacy/in-memory callers; persisted Hosts always project this status.
@@ -122,6 +125,7 @@ export type ComputeHostSummary = {
   provider_id: string
   display_name: string
   shape: ComputeHostShape
+  execution_mode: ComputeExecutionMode
   status: 'last_probe_ok' | 'probe_failed' | 'not_probed'
 }
 
@@ -159,6 +163,7 @@ export const computeHostSummary = (host: ComputeHost): ComputeHostSummary => ({
   provider_id: host.providerId,
   display_name: host.displayName,
   shape: host.shape,
+  execution_mode: host.executionMode ?? 'direct_ssh',
   status:
     host.probeResult === undefined
       ? 'not_probed'
@@ -192,7 +197,13 @@ export type CreateComputeHostRequest = {
   displayName?: string
   detailsDoc?: string
   sshOverrides?: SshOverrides
+  executionMode?: ComputeExecutionMode
 }
+
+export type SetComputeHostExecutionModeRequest = Readonly<{
+  providerId: string
+  executionMode: ComputeExecutionMode
+}>
 
 export type CreatePasswordComputeHostRequest = Omit<CreateComputeHostRequest, 'sshOverrides'> & {
   authenticationMode: 'password'
@@ -222,9 +233,9 @@ export type ChangeComputeHostAuthenticationRequest = Readonly<{
   expectedRevision: number
   operationId: string
   authenticationMode: ComputeAuthenticationMode
-  // Absent in ssh_config mode: the User (and port fallback) then come from ~/.ssh/config.
+  // Absent overrides in ssh_config mode inherit User and Port from ~/.ssh/config.
   username?: string
-  port: number
+  port?: number
   identityFile?: string
   password?: string
 }>
@@ -289,6 +300,7 @@ export type ComputeCallError = {
     | 'timeout'
     | 'approval_denied'
     | 'queue_full'
+    | 'invalid_resources'
     | ComputeAuthenticationErrorCode
   message: string
   retry_after_user_action: boolean
@@ -332,6 +344,8 @@ export type ComputeApprovalRequestInfo = ComputeApprovalRequestBase &
         operation: 'submit_job'
         command_preview: string
         command_full: string
+        execution_mode?: ComputeExecutionMode
+        environment?: string
         inputs_summary?: string
         resources?: string
         timeout_seconds: number
@@ -388,6 +402,7 @@ export type ComputeJob = {
   job_id: string
   provider_id: string
   shape: string
+  execution_mode?: ComputeExecutionMode
   session_id: string
   project_id: string
   status: ComputeJobStatus
@@ -445,6 +460,9 @@ export type ComputeJob = {
 // Only the fields needed for the agent to track job progress are included.
 export type JobStatusResult = {
   job_id: string
+  scheduler_job_id?: string
+  error_code?: string
+  last_poll_error?: string
   status: ComputeJobStatus
   cancellation_status?: ComputeJobCancellationStatus
   exit_code: number | undefined
@@ -459,9 +477,18 @@ export type JobStatusResult = {
 // In non-terminal states or before harvest completes, file fields are empty arrays.
 export type JobResult = {
   job_id: string
+  // Notebook Run that submitted this job. Pass it as producerRunId when publishing a harvested
+  // local file so cross-turn provenance resolves to the actual producing execution.
+  producer_run_id?: string
+  scheduler_job_id?: string
+  error_code?: string
+  last_poll_error?: string
   status: ComputeJobStatus
   cancellation_status?: ComputeJobCancellationStatus
   exit_code: number | undefined
+  // Absolute canonical Notebook Session root. Join workspace-relative output paths to this root
+  // before passing a harvested file to write_artifact_file as an absolute localPath.
+  local_output_root?: string
   // Workspace-relative paths of featured output files (hpc/<jobId>/featured/*).
   featured_files: string[]
   // Workspace-relative paths of hidden output files (hpc/<jobId>/hidden/*).
@@ -501,6 +528,7 @@ export type ComputeJobErrorCode =
   | 'job_failed'
   | 'timeout'
   | 'process_vanished'
+  | 'invalid_resources'
 
 // Lightweight job summary returned by the renderer IPC `compute:jobs:list` and broadcast via
 // `compute:job-updated`. Contains the fields the UI needs for badge + job feed display. The host

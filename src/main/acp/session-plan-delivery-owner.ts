@@ -20,6 +20,7 @@ class SessionPlanDeliveryOwner {
     }))
   }
 
+  // Call only with live proof that dispatch/handoff never happened; persisted state alone is insufficient.
   async rearmUnaccepted(projectId: string, sessionId: string, commandId: string): Promise<boolean> {
     return this.transitionTo(projectId, sessionId, commandId, 'delivering', (delivery) => ({
       ...delivery,
@@ -28,10 +29,41 @@ class SessionPlanDeliveryOwner {
   }
 
   async accept(projectId: string, sessionId: string, commandId: string): Promise<boolean> {
-    return this.transitionTo(projectId, sessionId, commandId, 'delivering', (delivery) => ({
-      ...delivery,
-      state: 'accepted'
-    }))
+    const initial = await this.sessions.readSessionRuntimeContext(projectId, sessionId)
+    const original = matchPlanDelivery(initial.plan, { commandId })
+    if (!initial.plan || !original) return false
+    // Keep dispatch claims single-attempt; only acceptance retries unrelated context writes.
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      const context =
+        attempt === 0
+          ? initial
+          : await this.sessions.readSessionRuntimeContext(projectId, sessionId)
+      const plan = context.plan
+      const delivery = matchPlanDelivery(plan, {
+        commandId,
+        artifactVersionId: initial.plan.artifactVersionId,
+        kind: original.kind,
+        originatingPromptMessageId: original.originatingPromptMessageId
+      })
+      if (
+        !plan ||
+        !delivery ||
+        plan.artifactId !== initial.plan.artifactId ||
+        plan.artifactChecksum !== initial.plan.artifactChecksum ||
+        delivery.createdAt !== original.createdAt
+      )
+        return false
+      if (delivery.state === 'accepted') return true
+      if (delivery.state !== 'delivering') return false
+      if (
+        await this.patch(projectId, sessionId, context.revision, plan, {
+          ...delivery,
+          state: 'accepted'
+        })
+      )
+        return true
+    }
+    return false
   }
 
   async clear(projectId: string, sessionId: string, commandId: string): Promise<boolean> {

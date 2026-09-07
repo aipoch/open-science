@@ -4,11 +4,12 @@ import {
   type ManagedProjectFileAnnotationIdentity
 } from '../../../../../shared/annotations'
 import { parseArtifactVersionLocator } from '../../../../../shared/artifact-provenance'
+import { parseLiteratureAttachmentVersionReference } from '../../../../../shared/literature'
 import { parseUploadVersionReference } from '../../../../../shared/uploads'
 import type { PreviewFileItem } from '@/stores/preview-workbench-store'
 import { usePreviewWorkbenchStore } from '@/stores/preview-workbench-store'
 
-import { createPreviewFileItem } from '../preview-file-item'
+import { createPreviewFileItem, LITERATURE_PREVIEW_SESSION_ID } from '../preview-file-item'
 
 // Composer chips cannot reach their source surfaces directly. This module owns
 // file-tab activation/reconstruction and publishes one generic reveal request
@@ -36,7 +37,7 @@ const fileAnnotationSource = (
 
 const publishAnnotationReveal = (annotation: Annotation): void => {
   pendingRevealId = annotation.id
-  pendingRevealAnnotation = annotation.kind === 'pdf' ? annotation : undefined
+  pendingRevealAnnotation = annotation
   document.dispatchEvent(new CustomEvent(REVEAL_PREPARE_EVENT, { detail: annotation }))
   document.dispatchEvent(new CustomEvent(REVEAL_EVENT, { detail: annotation.id }))
 }
@@ -78,6 +79,11 @@ const managedAnnotationIdentity = (
   if (source.kind === 'project-file') {
     return resolveManagedProjectFileAnnotationIdentity(source)
   }
+  if (source.kind === 'literature-attachment-version') {
+    return parseLiteratureAttachmentVersionReference(source.path) === source.versionId
+      ? undefined
+      : null
+  }
   if (source.kind === 'artifact-version') {
     const artifact = parseArtifactVersionLocator(source.path)
     if (
@@ -114,6 +120,14 @@ const fileSourceMatchesItem = (annotation: Annotation, item: PreviewFileItem): b
   if (item.projectId !== source.projectId) return false
   const managedIdentity = managedAnnotationIdentity(source)
   if (managedIdentity === null) return false
+  const literatureVersionId = parseLiteratureAttachmentVersionReference(source.path)
+  if (literatureVersionId) {
+    return (
+      item.source === 'literature' &&
+      item.path === source.path &&
+      literatureVersionId === source.versionId
+    )
+  }
   const itemFileSource = item.source === 'upload' ? 'upload' : 'artifact'
   const matchesManagedIdentity =
     managedIdentity !== undefined &&
@@ -123,7 +137,8 @@ const fileSourceMatchesItem = (annotation: Annotation, item: PreviewFileItem): b
   const itemVersionId =
     item.selectedVersionId ??
     parseArtifactVersionLocator(item.path)?.versionId ??
-    parseUploadVersionReference(item.path)?.versionId
+    parseUploadVersionReference(item.path)?.versionId ??
+    parseLiteratureAttachmentVersionReference(item.path)
   const sourceVersionId = managedIdentity?.versionId ?? source.versionId
   if (sourceVersionId || itemVersionId) return sourceVersionId === itemVersionId
   return true
@@ -140,13 +155,22 @@ const createAnnotationPreviewItem = (annotation: Annotation): PreviewFileItem | 
   const upload = parseUploadVersionReference(source.path)
   const managedIdentity = managedAnnotationIdentity(source)
   if (managedIdentity === null) return undefined
+  const literatureVersionId = parseLiteratureAttachmentVersionReference(source.path)
   const projectId = source.projectId
-  const sessionId = source.sessionId ?? artifact?.appSessionId ?? upload?.sessionId
+  const sessionId =
+    source.sessionId ??
+    artifact?.appSessionId ??
+    upload?.sessionId ??
+    (literatureVersionId ? LITERATURE_PREVIEW_SESSION_ID : undefined)
   if (!sessionId) return undefined
 
   const name = sourceName(source.path, source.name)
   const versionId =
-    managedIdentity?.versionId ?? source.versionId ?? artifact?.versionId ?? upload?.versionId
+    managedIdentity?.versionId ??
+    source.versionId ??
+    artifact?.versionId ??
+    upload?.versionId ??
+    literatureVersionId
   // A reopened managed tab keeps the stable logical file identity separate from its exact Version.
   const uploadFileId = managedIdentity?.fileSource === 'upload' ? managedIdentity.fileId : undefined
   const artifactFileId =
@@ -159,7 +183,9 @@ const createAnnotationPreviewItem = (annotation: Annotation): PreviewFileItem | 
         ? `upload:${uploadFileId}`
         : upload
           ? `upload:${upload.versionId}`
-          : `file:${projectId}:${source.path}`),
+          : literatureVersionId
+            ? `literature-version:${literatureVersionId}`
+            : `file:${projectId}:${source.path}`),
     projectId,
     sessionId,
     path: source.path,
@@ -170,7 +196,7 @@ const createAnnotationPreviewItem = (annotation: Annotation): PreviewFileItem | 
         : annotation.kind === 'pdf'
           ? 'application/pdf'
           : undefined,
-    source: uploadFileId ? 'upload' : undefined,
+    source: uploadFileId ? 'upload' : literatureVersionId ? 'literature' : undefined,
     artifactId: artifactFileId,
     managedFileId,
     selectedVersionId: managedFileId ? versionId : undefined

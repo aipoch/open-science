@@ -24,6 +24,8 @@ import {
   type SideChatAnnotationItem
 } from '../../../../shared/annotations'
 
+import { useFollowScrollBottom } from './use-follow-scroll-bottom'
+
 import { ResizableBottomPanel } from './ResizableBottomPanel'
 import { SentAnnotationCards, type SentAnnotationCardView } from './annotations/SentAnnotationCards'
 import type { SideChatEntry, SideChatView } from './use-side-chat-controller'
@@ -151,7 +153,7 @@ const SideChatPanel = ({
   controls
 }: SideChatPanelProps): React.JSX.Element => {
   const { t } = useTranslation()
-  const messageScrollRef = useRef<HTMLDivElement>(null)
+  const messageViewportRef = useFollowScrollBottom(true)
   const followUpRef = useRef<HTMLTextAreaElement>(null)
   const [presentationState, setPresentationState] = useState<SideChatPresentationState>(() => ({
     generation: view.generation,
@@ -201,12 +203,6 @@ const SideChatPanel = ({
     [view.generation]
   )
 
-  useEffect(() => {
-    const messageScroll = messageScrollRef.current?.querySelector<HTMLElement>(
-      '[data-slot="scroll-area-viewport"]'
-    )
-    if (messageScroll) messageScroll.scrollTop = messageScroll.scrollHeight
-  }, [presentationBarrierIndex, view.entries, view.running, view.error])
   useEffect(() => {
     if (view.sideSessionId) followUpRef.current?.focus()
   }, [view.sideSessionId])
@@ -262,7 +258,7 @@ const SideChatPanel = ({
           className="relative min-h-0 flex-1 overflow-hidden"
         >
           <ScrollArea
-            ref={messageScrollRef}
+            viewportRef={messageViewportRef}
             data-testid="side-chat-message-scroll"
             className="h-full overscroll-contain text-[14px] leading-6"
           >
@@ -282,8 +278,20 @@ const SideChatPanel = ({
                       key={JSON.stringify([view.generation, entry.id])}
                       className="my-2 text-[12px] text-text-300"
                     >
-                      {entry.title}
-                      {entry.status ? ` · ${entry.status}` : ''}
+                      {entry.title === 'Tool' ? t('Tool') : entry.title}
+                      {entry.status
+                        ? ` · ${
+                            entry.status === 'completed'
+                              ? t('Completed')
+                              : entry.status === 'failed'
+                                ? t('Failed')
+                                : entry.status === 'in_progress'
+                                  ? t('Running')
+                                  : entry.status === 'pending'
+                                    ? t('Pending')
+                                    : entry.status
+                          }`
+                        : ''}
                     </div>
                   )
                 }
@@ -324,6 +332,11 @@ const SideChatPanel = ({
               })}
               {view.running && presentationBarrierIndex < 0 ? (
                 <div className="py-2 text-text-300">{t('Thinking…')}</div>
+              ) : null}
+              {view.persistenceError ? (
+                <div role="alert" className="py-2 text-[12px] text-danger-000">
+                  {t('Could not save Side chat: {{error}}', { error: view.persistenceError })}
+                </div>
               ) : null}
               {view.error && presentationBarrierIndex < 0 ? (
                 <div role="alert" className="py-2 text-[12px] text-danger-000">

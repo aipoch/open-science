@@ -287,18 +287,27 @@ const createUploadCommandOwner = (
       )
       const projectId = request.projectId ?? DEFAULT_UPLOAD_PROJECT_ID
       try {
-        await withDataRootWrite(() =>
-          repository.finalizePendingSessionUploads(
-            STANDALONE_UPLOAD_SESSION_ID,
-            [attachment],
-            projectId
+        const published = await withDataRootWrite(() => {
+          const finalize = (): Promise<UploadedAttachment[]> =>
+            repository.finalizePendingSessionUploads(
+              STANDALONE_UPLOAD_SESSION_ID,
+              [attachment],
+              projectId
+            )
+          return options.withSessionMutation
+            ? options.withSessionMutation(projectId, STANDALONE_UPLOAD_SESSION_ID, finalize)
+            : finalize()
+        })
+        if (published.length !== 1) {
+          throw new Error(
+            `Expected exactly one published standalone upload, received ${published.length}.`
           )
-        )
+        }
+        return published[0]
       } catch (error) {
         await repository.deleteUpload({ path: attachment.path }).catch(() => undefined)
         throw error
       }
-      return attachment
     },
     beginTransfer: async ({ callerLease, args: [request] }) => {
       const owner = registerCaller(callerLease)

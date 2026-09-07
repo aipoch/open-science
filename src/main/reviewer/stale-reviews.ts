@@ -9,7 +9,7 @@ import { isTurnScopeStale } from './scope'
 
 // Marks each completed review whose audited turn no longer matches its current scope (e.g. an artifact
 // was edited after the review ran). A deleted Session has no live evidence to recompute; a failure while
-// reading an active Session's evidence instead fails closed as stale. Running/error reviews have no
+// reading an active Session's evidence reports unverified coverage, not a content change. Running/error reviews have no
 // verdict to invalidate.
 export const flagStaleReviews = async (
   reviews: ReviewWithChecks[],
@@ -32,7 +32,7 @@ export const flagStaleReviews = async (
 
 // Recomputes one review's scope and returns it with a DEFINITIVE stale flag (true/false) on success.
 // A non-complete review has no verdict to invalidate. A completed review that cannot be recomputed is
-// explicitly stale: continuing to present its old verdict as current would be a false audit claim.
+// explicitly unverified: a read failure does not establish that the content changed.
 const flagOne = async (
   review: ReviewWithChecks,
   session: PersistedChatSession,
@@ -51,8 +51,12 @@ const flagOne = async (
       resolveArtifactVersion,
       review.scope.messageBranchId
     )
-    return { ...review, stale: isTurnScopeStale(review.scope, current) }
+    return {
+      ...review,
+      stale: isTurnScopeStale(review.scope, current),
+      verificationUnavailable: false
+    }
   } catch {
-    return { ...review, stale: true }
+    return { ...review, verificationUnavailable: true }
   }
 }

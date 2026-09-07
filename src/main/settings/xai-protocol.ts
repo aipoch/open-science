@@ -30,6 +30,9 @@ const contentParts = (content: unknown): unknown => {
     if (part.type === 'image_url' && object(part.image_url)) {
       return { type: 'input_image', image_url: part.image_url.url }
     }
+    if (part.type === 'image' && object(part.source) && part.source.type === 'url') {
+      return { type: 'input_image', image_url: part.source.url }
+    }
     if (part.type === 'image' && object(part.source) && part.source.type === 'base64') {
       return {
         type: 'input_image',
@@ -41,22 +44,16 @@ const contentParts = (content: unknown): unknown => {
 }
 
 export const sanitizeXaiResponsesRequest = (body: Json): Json => {
-  const clean = (value: unknown): unknown => {
-    if (Array.isArray(value)) return value.map(clean)
-    if (!object(value)) return value
-    return Object.fromEntries(
-      Object.entries(value)
-        .filter(
-          ([key, child]) =>
-            child !== null &&
-            key !== 'prompt_cache_retention' &&
-            key !== 'safety_identifier' &&
-            key !== 'external_web_access'
-        )
-        .map(([key, child]) => [key, clean(child)])
+  // Unsupported request metadata is top-level. Schemas and tool output are opaque business data.
+  const sanitized = Object.fromEntries(
+    Object.entries(body).filter(
+      ([key, value]) =>
+        value !== null &&
+        key !== 'prompt_cache_retention' &&
+        key !== 'safety_identifier' &&
+        key !== 'external_web_access'
     )
-  }
-  const sanitized = clean(body) as Json
+  )
   if (Array.isArray(sanitized.additional_tools)) {
     sanitized.tools = [
       ...(Array.isArray(sanitized.tools) ? sanitized.tools : []),
@@ -107,6 +104,29 @@ export const anthropicToResponses = (body: Json, model: string): Json => {
           call_id: part.tool_use_id,
           output: textOf(part.content)
         })
+        if (Array.isArray(part.content)) {
+          const media: unknown[] = []
+          for (const resultPart of part.content) {
+            if (!object(resultPart)) throw new Error('Unsupported tool result content.')
+            if (resultPart.type === 'text' || resultPart.type === 'input_text') continue
+            const converted = contentParts([resultPart])
+            const image = Array.isArray(converted) ? converted[0] : undefined
+            if (
+              !object(image) ||
+              image.type !== 'input_image' ||
+              typeof image.image_url !== 'string'
+            ) {
+              throw new Error('Unsupported tool result image content.')
+            }
+            media.push(image)
+          }
+          if (media.length > 0) {
+            messageContent.push(
+              { type: 'input_text', text: `Images from tool call ${String(part.tool_use_id)}:` },
+              ...media
+            )
+          }
+        }
       } else {
         const converted = contentParts([part])
         messageContent.push(Array.isArray(converted) ? converted[0] : part)
@@ -232,17 +252,35 @@ const responseCalls = (response: Json): Json[] =>
 
 const usage = (response: Json): Json => (object(response.usage) ? response.usage : {})
 
+const responseFinishReason = (response: Json): 'length' | 'content_filter' | undefined => {
+  if (response.status === 'incomplete') {
+    const reason = object(response.incomplete_details)
+      ? response.incomplete_details.reason
+      : undefined
+    if (reason === 'max_output_tokens') return 'length'
+    if (reason === 'content_filter') return 'content_filter'
+    throw new Error('Upstream response is incomplete for an unsupported reason.')
+  }
+  // Older compatible providers omit status. Explicit nonterminal/failed statuses are not success.
+  if (response.status != null && response.status !== 'completed') {
+    throw new Error('Upstream response did not complete successfully.')
+  }
+  return undefined
+}
+
 export const responsesToAnthropic = (response: Json, model: string): Json => {
+  const finishReason = responseFinishReason(response)
   const content: Json[] = []
   const text = responseText(response)
   if (text) content.push({ type: 'text', text })
   for (const call of responseCalls(response)) {
-    let input: unknown = {}
+    let input: unknown
     try {
-      input = typeof call.arguments === 'string' ? JSON.parse(call.arguments) : {}
+      input = typeof call.arguments === 'string' ? JSON.parse(call.arguments) : undefined
     } catch {
-      input = {}
+      throw new Error('Upstream tool arguments must be a valid JSON object.')
     }
+    if (!object(input)) throw new Error('Upstream tool arguments must be a valid JSON object.')
     content.push({ type: 'tool_use', id: call.call_id ?? call.id, name: call.name, input })
   }
   const counts = usage(response)
@@ -252,7 +290,14 @@ export const responsesToAnthropic = (response: Json, model: string): Json => {
     role: 'assistant',
     model,
     content,
-    stop_reason: responseCalls(response).length > 0 ? 'tool_use' : 'end_turn',
+    stop_reason:
+      finishReason === 'length'
+        ? 'max_tokens'
+        : finishReason === 'content_filter'
+          ? 'refusal'
+          : responseCalls(response).length > 0
+            ? 'tool_use'
+            : 'end_turn',
     stop_sequence: null,
     usage: {
       input_tokens: counts.input_tokens ?? 0,
@@ -262,6 +307,7 @@ export const responsesToAnthropic = (response: Json, model: string): Json => {
 }
 
 export const responsesToChat = (response: Json, model: string): Json => {
+  const finishReason = responseFinishReason(response)
   const calls = responseCalls(response)
   const counts = usage(response)
   const inputDetails = object(counts.input_tokens_details) ? counts.input_tokens_details : {}
@@ -288,7 +334,7 @@ export const responsesToChat = (response: Json, model: string): Json => {
               }
             : {})
         },
-        finish_reason: calls.length ? 'tool_calls' : 'stop'
+        finish_reason: finishReason ?? (calls.length ? 'tool_calls' : 'stop')
       }
     ],
     usage: {

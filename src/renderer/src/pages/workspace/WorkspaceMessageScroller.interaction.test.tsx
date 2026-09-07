@@ -1629,6 +1629,68 @@ describe('WorkspaceMessageScroller artifact click behavior', () => {
     )
   })
 
+  it('reruns a failed historical card with its original scope branch', async () => {
+    const { WorkspaceMessageScroller } = await import('./WorkspaceMessageScroller')
+    const run = vi.fn().mockResolvedValue({ started: true })
+    window.api.reviewer.run = run
+    const messages = [
+      createMessage({ id: 'original-user', sortIndex: 1 }),
+      createMessage({
+        id: 'original-answer',
+        role: 'agent',
+        responseToMessageId: 'original-user',
+        sortIndex: 2
+      }),
+      createMessage({ id: 'newer-user', sortIndex: 3 })
+    ]
+    useReviewStore.getState().handleReviewUpdate({
+      review: {
+        id: 'historical-error',
+        projectId: 'default',
+        sessionId: 'session-1',
+        turnMessageId: 'original-answer',
+        scope: {
+          turnMessageId: 'original-answer',
+          messageBranchId: 'original-branch',
+          blocks: [],
+          artifactVersionIds: []
+        },
+        lifecycle: 'error',
+        outcome: null,
+        errorMessage: 'Temporary failure',
+        model: 'test',
+        reviewerLog: [],
+        checks: [],
+        createdAt: 1000,
+        updatedAt: 1000
+      }
+    })
+    root = createRoot(container)
+    await act(async () => {
+      root.render(
+        <WorkspaceMessageScroller
+          activeSession={createSession({ status: 'idle', messages })}
+          onSendEditedMessage={vi.fn()}
+        />
+      )
+    })
+    const retry = Array.from(container.querySelectorAll('button')).find(
+      (button) => button.textContent === 'Re-run review'
+    )
+    expect(retry).toBeDefined()
+    await act(async () => {
+      retry!.click()
+    })
+    expect(run).toHaveBeenCalledWith(
+      expect.objectContaining({
+        turnMessageId: 'original-answer',
+        scopeTurnMessageId: 'original-answer',
+        scopeMessageBranchId: 'original-branch',
+        origin: 'manual'
+      })
+    )
+  })
+
   it('renders one initial and three fix-loop Review Runs at their four distinct scope anchors', async () => {
     const { WorkspaceMessageScroller } = await import('./WorkspaceMessageScroller')
     const answerIds = ['answer-initial', 'answer-fix-1', 'answer-fix-2', 'answer-fix-3']
@@ -2271,6 +2333,90 @@ describe('WorkspaceMessageScroller artifact click behavior', () => {
     )
   })
 
+  it.each([true, false])(
+    'hydrates historical publication without saving Session metadata: %s',
+    async (isPublished) => {
+      const { WorkspaceMessageScroller } = await import('./WorkspaceMessageScroller')
+      const artifact = {
+        id: 'historical-version',
+        artifactId: 'historical-artifact',
+        versionId: 'historical-version',
+        kind: 'managed-file' as const,
+        path: '/workspace/historical.txt',
+        name: 'historical.txt',
+        mimeType: 'text/plain',
+        size: 10,
+        mtimeMs: 1
+      }
+      const session = createSession({
+        status: 'idle',
+        messages: [
+          createMessage({
+            id: 'reply-1',
+            role: 'agent',
+            content: 'Done',
+            artifactIds: [artifact.id]
+          })
+        ],
+        artifacts: [artifact]
+      })
+      let resolve!: (descriptors: ArtifactVersionDescriptor[]) => void
+      window.api.artifacts.resolveVersionDescriptors = vi.fn(
+        () =>
+          new Promise<ArtifactVersionDescriptor[]>((done) => {
+            resolve = done
+          })
+      )
+      root = createRoot(container)
+      await act(async () =>
+        root.render(
+          <WorkspaceMessageScroller activeSession={session} onSendEditedMessage={vi.fn()} />
+        )
+      )
+      const card = (): HTMLButtonElement | null =>
+        container.querySelector('button[aria-label="Preview generated file historical.txt"]')
+      expect(card()?.disabled).toBe(true)
+      expect(window.api.artifacts.readPreview).not.toHaveBeenCalled()
+      expect(window.api.previewResources.acquire).not.toHaveBeenCalled()
+      expect(window.api.artifacts.resolveVersionDescriptors).toHaveBeenCalledWith({
+        projectId: session.projectId,
+        appSessionId: session.id,
+        versionIds: [artifact.versionId]
+      })
+      await act(async () =>
+        resolve([
+          {
+            ...artifact,
+            projectId: session.projectId,
+            sessionId: session.id,
+            versionNumber: 1,
+            checksum: 'a'.repeat(64),
+            createdAt: '2026-09-05T00:00:00.000Z',
+            state: 'finalized',
+            isPublished
+          }
+        ])
+      )
+      expect(card()?.disabled).toBe(!isPublished)
+      expect(session.artifacts).toEqual([artifact])
+      expect('isPublished' in artifact).toBe(false)
+      if (!isPublished) {
+        expect(window.api.artifacts.readPreview).not.toHaveBeenCalled()
+        expect(window.api.previewResources.acquire).not.toHaveBeenCalled()
+        // A later live publication takes precedence over a cached unpublished historical result.
+        await act(async () =>
+          root.render(
+            <WorkspaceMessageScroller
+              activeSession={{ ...session, artifacts: [{ ...artifact, isPublished: true }] }}
+              onSendEditedMessage={vi.fn()}
+            />
+          )
+        )
+        expect(card()?.disabled).toBe(false)
+      }
+    }
+  )
+
   it('resolves copied generated Version metadata and previews the source Version owner', async () => {
     const { WorkspaceMessageScroller } = await import('./WorkspaceMessageScroller')
     const descriptor: ArtifactVersionDescriptor = {
@@ -2286,7 +2432,8 @@ describe('WorkspaceMessageScroller artifact click behavior', () => {
       versionNumber: 2,
       checksum: 'a'.repeat(64),
       createdAt: '2026-08-03T14:43:07.000Z',
-      state: 'finalized'
+      state: 'finalized',
+      isPublished: true
     }
     const resolveVersionDescriptors = vi.fn().mockResolvedValue([descriptor])
     window.api.artifacts.resolveVersionDescriptors = resolveVersionDescriptors
@@ -2360,7 +2507,8 @@ describe('WorkspaceMessageScroller artifact click behavior', () => {
       versionNumber: 1,
       checksum: 'b'.repeat(64),
       createdAt: '2026-08-08T00:00:00.000Z',
-      state: 'finalized'
+      state: 'finalized',
+      isPublished: true
     }
     window.api.artifacts.resolveVersionDescriptors = vi.fn().mockResolvedValue([descriptor])
     const session = createSession({
@@ -2540,7 +2688,8 @@ describe('WorkspaceMessageScroller artifact click behavior', () => {
       versionNumber: 1,
       checksum: 'b'.repeat(64),
       createdAt: '2026-08-08T00:00:00.000Z',
-      state: 'finalized'
+      state: 'finalized',
+      isPublished: true
     }
     window.api.artifacts.resolveVersionDescriptors = vi.fn().mockResolvedValue([descriptor])
     const session = createSession({
@@ -2659,7 +2808,8 @@ describe('WorkspaceMessageScroller artifact click behavior', () => {
       versionNumber: 1,
       checksum: 'b'.repeat(64),
       createdAt: '2026-08-08T00:00:00.000Z',
-      state: 'finalized'
+      state: 'finalized',
+      isPublished: true
     }
     window.api.artifacts.resolveVersionDescriptors = vi.fn().mockResolvedValue([descriptor])
     const session = createSession({
@@ -2798,7 +2948,8 @@ describe('WorkspaceMessageScroller artifact click behavior', () => {
       versionNumber: 1,
       checksum: 'a'.repeat(64),
       createdAt: '2026-08-08T00:00:00.000Z',
-      state: 'finalized'
+      state: 'finalized',
+      isPublished: true
     }
     const descriptorB: ArtifactVersionDescriptor = {
       ...descriptorA,
@@ -2980,7 +3131,8 @@ describe('WorkspaceMessageScroller artifact click behavior', () => {
       versionNumber: 2,
       checksum: 'a'.repeat(64),
       createdAt: '2026-08-03T14:43:07.000Z',
-      state: 'finalized'
+      state: 'finalized',
+      isPublished: true
     }
     const deferred = createDeferred<ArtifactVersionDescriptor[]>()
     const resolveVersionDescriptors = vi.fn(() => deferred.promise)
@@ -3041,7 +3193,8 @@ describe('WorkspaceMessageScroller artifact click behavior', () => {
       versionNumber: 2,
       checksum: 'a'.repeat(64),
       createdAt: '2026-08-03T14:43:07.000Z',
-      state: 'finalized'
+      state: 'finalized',
+      isPublished: true
     }
     const resolveVersionDescriptors = vi
       .fn()
@@ -3100,7 +3253,8 @@ describe('WorkspaceMessageScroller artifact click behavior', () => {
       versionNumber: 2,
       checksum: 'a'.repeat(64),
       createdAt: '2026-08-03T14:43:07.000Z',
-      state: 'finalized'
+      state: 'finalized',
+      isPublished: true
     }
     const firstLookup = createDeferred<ArtifactVersionDescriptor[]>()
     const secondLookup = createDeferred<ArtifactVersionDescriptor[]>()
@@ -3303,6 +3457,149 @@ describe('WorkspaceMessageScroller artifact click behavior', () => {
         .querySelector('[aria-label="Scroll to first message"]')
         ?.getAttribute('data-revealed')
     ).toBe('true')
+  })
+
+  it('coalesces resize-driven scroll eligibility updates into one deferred frame', async () => {
+    vi.useFakeTimers()
+    const resizeCallbacks: ResizeObserverCallback[] = []
+    vi.stubGlobal(
+      'ResizeObserver',
+      class {
+        constructor(callback: ResizeObserverCallback) {
+          resizeCallbacks.push(callback)
+        }
+        observe(): void {
+          /* no-op */
+        }
+        unobserve(): void {
+          /* no-op */
+        }
+        disconnect(): void {
+          /* no-op */
+        }
+      }
+    )
+    vi.stubGlobal(
+      'requestAnimationFrame',
+      (callback: FrameRequestCallback) =>
+        setTimeout(() => callback(performance.now()), 16) as unknown as number
+    )
+    vi.stubGlobal('cancelAnimationFrame', (frameId: number) => clearTimeout(frameId))
+    const { WorkspaceMessageScroller } = await import('./WorkspaceMessageScroller')
+    const messages = [
+      createMessage({ id: 'prompt-1' }),
+      createMessage({ id: 'reply-1', role: 'agent' }),
+      createMessage({ id: 'prompt-2' }),
+      createMessage({ id: 'reply-2', role: 'agent' })
+    ]
+
+    root = createRoot(container)
+    await act(async () => {
+      root.render(
+        <WorkspaceMessageScroller
+          activeSession={createSession({ status: 'idle', messages })}
+          onSendEditedMessage={vi.fn()}
+        />
+      )
+    })
+
+    const viewport = container.querySelector<HTMLElement>(
+      '[data-testid="message-scroller-viewport"]'
+    )
+    let scrollHeightReads = 0
+    Object.defineProperties(viewport, {
+      clientHeight: { configurable: true, value: 400 },
+      scrollHeight: {
+        configurable: true,
+        get: () => {
+          scrollHeightReads += 1
+          return 10_000
+        }
+      },
+      scrollTop: { configurable: true, writable: true, value: 1_200 }
+    })
+    const notifyResize = async (): Promise<void> => {
+      await act(async () => {
+        for (const callback of resizeCallbacks) callback([], {} as ResizeObserver)
+      })
+    }
+
+    // Streaming resizes the content every frame; several notifications inside one frame must not
+    // trigger synchronous layout reads — they collapse into a single rAF-deferred evaluation.
+    scrollHeightReads = 0
+    await notifyResize()
+    await notifyResize()
+    await notifyResize()
+    expect(scrollHeightReads).toBe(0)
+    expect(container.querySelector('[aria-label="Scroll to first message"]')).toBeNull()
+
+    await act(async () => vi.advanceTimersByTimeAsync(16))
+    expect(container.querySelector('[aria-label="Scroll to first message"]')).not.toBeNull()
+    expect(scrollHeightReads).toBeLessThan(3)
+  })
+
+  it('cancels a pending resize-driven eligibility update on unmount', async () => {
+    vi.useFakeTimers()
+    const resizeCallbacks: ResizeObserverCallback[] = []
+    vi.stubGlobal(
+      'ResizeObserver',
+      class {
+        constructor(callback: ResizeObserverCallback) {
+          resizeCallbacks.push(callback)
+        }
+        observe(): void {
+          /* no-op */
+        }
+        unobserve(): void {
+          /* no-op */
+        }
+        disconnect(): void {
+          /* no-op */
+        }
+      }
+    )
+    vi.stubGlobal(
+      'requestAnimationFrame',
+      (callback: FrameRequestCallback) =>
+        setTimeout(() => callback(performance.now()), 16) as unknown as number
+    )
+    vi.stubGlobal('cancelAnimationFrame', (frameId: number) => clearTimeout(frameId))
+    const { WorkspaceMessageScroller } = await import('./WorkspaceMessageScroller')
+
+    root = createRoot(container)
+    await act(async () => {
+      root.render(
+        <WorkspaceMessageScroller
+          activeSession={createSession({ status: 'idle' })}
+          onSendEditedMessage={vi.fn()}
+        />
+      )
+    })
+
+    const viewport = container.querySelector<HTMLElement>(
+      '[data-testid="message-scroller-viewport"]'
+    )
+    let scrollHeightReads = 0
+    Object.defineProperties(viewport, {
+      clientHeight: { configurable: true, value: 400 },
+      scrollHeight: {
+        configurable: true,
+        get: () => {
+          scrollHeightReads += 1
+          return 10_000
+        }
+      }
+    })
+    await act(async () => {
+      for (const callback of resizeCallbacks) callback([], {} as ResizeObserver)
+    })
+
+    await act(async () => {
+      root.unmount()
+    })
+    await act(async () => vi.advanceTimersByTimeAsync(64))
+    expect(scrollHeightReads).toBe(0)
+    root = createRoot(container)
   })
 
   it('does not write to the preview store for non-managed-file artifacts', async () => {
@@ -3573,6 +3870,7 @@ describe('WorkspaceMessageScroller artifact click behavior', () => {
           id: 'artifact-1',
           artifactId: 'managed-artifact-1',
           versionId: 'artifact-version-1',
+          isPublished: true,
           kind: 'managed-file',
           path: '/workspace/report.txt',
           fileUrl: 'file:///workspace/report.txt',
@@ -3790,6 +4088,7 @@ describe('WorkspaceMessageScroller artifact click behavior', () => {
           id: 'artifact-version-1',
           artifactId: 'managed-artifact-1',
           versionId: 'artifact-version-1',
+          isPublished: true,
           kind: 'managed-file',
           path: '/workspace/message-1/.pending',
           name: '.pending',
@@ -3984,6 +4283,89 @@ describe('WorkspaceMessageScroller artifact click behavior', () => {
     expect(rawOutputReads).toBeLessThanOrEqual(itemCount * 8)
   })
 
+  it.each([
+    { status: 'running' as const },
+    { status: 'idle' as const, compacting: true },
+    { status: 'idle' as const, fixLoopActive: true },
+    { status: 'idle' as const, branchSwitchBlocked: true },
+    { status: 'idle' as const, conversationGraphSyncBlocked: true },
+    { status: 'waiting-for-user' as const },
+    { status: 'waiting-permission' as const },
+    { status: 'waiting-plan-approval' as const }
+  ])('disables revision navigation while editing remains available: %j', async (blocked) => {
+    const { WorkspaceMessageScroller } = await import('./WorkspaceMessageScroller')
+    const { WorkspaceMessageEditStateProvider } = await import('./workspace-message-edit-state')
+    useSessionStore.setState({
+      sessions: [
+        createSession({
+          status: 'idle',
+          messages: [createMessage({ id: 'original', content: 'Original prompt' })]
+        })
+      ],
+      selectedSessionId: 'session-1'
+    })
+    useSessionStore.getState().truncateSessionFromMessage('session-1', 'original')
+    useSessionStore
+      .getState()
+      .appendUserMessage({ sessionId: 'session-1', content: 'Edited prompt' })
+    const running = useSessionStore.getState().sessions[0]
+    expect(running.status).toBe('running')
+    const branchId = running.conversationGraph!.frames[0].activeBranchId
+    useSessionStore.setState({ sessions: [{ ...running, activeRun: undefined, ...blocked }] })
+    const onSendEditedMessage = vi.fn()
+    const Parent = (): React.JSX.Element => {
+      const activeSession = useSessionStore((state) => state.sessions[0])
+      return (
+        <WorkspaceMessageEditStateProvider canEditMessage={true}>
+          <WorkspaceMessageScroller
+            activeSession={activeSession}
+            onSendEditedMessage={onSendEditedMessage}
+          />
+        </WorkspaceMessageEditStateProvider>
+      )
+    }
+    root = createRoot(container)
+    await act(async () => root.render(<Parent />))
+    const previous = (): HTMLButtonElement => {
+      const button = container.querySelector<HTMLButtonElement>(
+        '[aria-label="Previous message revision"]'
+      )
+      if (!button) throw new Error('Previous revision button missing')
+      return button
+    }
+    expect(
+      container.querySelector<HTMLButtonElement>('[aria-label="Edit message"]')?.disabled
+    ).toBe(false)
+    expect.soft(previous().disabled).toBe(true)
+    await act(async () => previous().click())
+    expect(useSessionStore.getState().sessions[0].conversationGraph!.frames[0].activeBranchId).toBe(
+      branchId
+    )
+
+    await act(async () => {
+      useSessionStore.getState().finishRun('session-1')
+      useSessionStore.setState((state) => ({
+        sessions: state.sessions.map((session) => ({
+          ...session,
+          compacting: false,
+          fixLoopActive: false,
+          branchSwitchBlocked: false,
+          conversationGraphSyncBlocked: false
+        }))
+      }))
+    })
+    expect(previous().disabled).toBe(false)
+    await act(async () => useSessionStore.getState().setBranchSwitchBlocked('session-1', true))
+    expect(previous().disabled).toBe(true)
+    expect(
+      container.querySelector<HTMLButtonElement>('[aria-label="Edit message"]')?.disabled
+    ).toBe(false)
+    await act(async () => useSessionStore.getState().setBranchSwitchBlocked('session-1', false))
+    expect(previous().disabled).toBe(false)
+    await act(async () => previous().click())
+    expect(useSessionStore.getState().sessions[0].messages[0].content).toBe('Original prompt')
+  })
+
   it('renders a long conversation graph without rescanning it for every visible revision', async () => {
     const { WorkspaceMessageScroller } = await import('./WorkspaceMessageScroller')
     const itemCount = 240
@@ -4069,6 +4451,31 @@ describe('WorkspaceMessageScroller artifact click behavior', () => {
     await act(async () => viewport?.dispatchEvent(new Event('scroll', { bubbles: true })))
 
     expect(container.textContent).toContain('prefetched transcript sentinel')
+  })
+
+  it('acknowledges every find show request in an unchanged conversation', async () => {
+    const { WorkspaceMessageScroller } = await import('./WorkspaceMessageScroller')
+    root = createRoot(container)
+    await act(async () => {
+      root.render(
+        <WorkspaceMessageScroller
+          activeSession={createSession({
+            status: 'idle',
+            messages: [createMessage({ content: 'searchable text' })]
+          })}
+          onSendEditedMessage={vi.fn()}
+        />
+      )
+    })
+    await act(async () => showWindowFindListener?.())
+    expect(announceWindowFindContentReady).toHaveBeenCalledTimes(1)
+    announceWindowFindContentReady.mockClear()
+    await act(async () => showWindowFindListener?.())
+    expect.soft(announceWindowFindContentReady).toHaveBeenCalledTimes(1)
+    await act(async () => hideWindowFindListener?.())
+    announceWindowFindContentReady.mockClear()
+    await act(async () => showWindowFindListener?.())
+    expect(announceWindowFindContentReady).toHaveBeenCalledTimes(1)
   })
 
   it('reveals the full transcript only while whole-window find is open', async () => {

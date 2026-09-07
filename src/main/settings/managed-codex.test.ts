@@ -193,10 +193,10 @@ import {
   uninstallManagedCodex
 } from './managed-codex'
 
-it('runs Windows Codex command shims through the shell during version verification', () => {
-  const spawnVersion = vi.fn(() => ({ status: 0, stdout: 'codex-cli 0.144.6' }))
+it('runs Windows Codex command shims through the shell during version verification', async () => {
+  const spawnVersion = vi.fn(async () => ({ status: 0, stdout: 'codex-cli 0.144.6' }))
 
-  expect(
+  await expect(
     runManagedCodexVersion(
       'C:\\Users\\me\\AppData\\Roaming\\npm\\codex.cmd',
       ['--version'],
@@ -204,12 +204,30 @@ it('runs Windows Codex command shims through the shell during version verificati
       'win32',
       spawnVersion
     )
-  ).toBe('0.144.6')
+  ).resolves.toBe('0.144.6')
   expect(spawnVersion).toHaveBeenCalledWith(
     '"C:\\Users\\me\\AppData\\Roaming\\npm\\codex.cmd"',
     ['--version'],
     expect.objectContaining({ shell: true })
   )
+})
+
+it('aborts a running Codex version check', async () => {
+  const controller = new AbortController()
+  const startedAt = Date.now()
+  setTimeout(() => controller.abort(), 25)
+
+  await expect(
+    runManagedCodexVersion(
+      process.execPath,
+      ['-e', 'setTimeout(() => {}, 1000)'],
+      undefined,
+      process.platform,
+      undefined,
+      controller.signal
+    )
+  ).resolves.toBeUndefined()
+  expect(Date.now() - startedAt).toBeLessThan(750)
 })
 
 const tarEntry = (name: string, content: Buffer, mode = 0o644): Buffer => {
@@ -518,6 +536,9 @@ describe('installManagedCodex', () => {
     await mkdir(managedCodexRoot(root), { recursive: true })
     await writeFile(join(managedCodexRoot(root), 'old-install'), 'old')
 
+    const controller = new AbortController()
+    const verifyAdapter = vi.fn().mockResolvedValue('1.6.2')
+    const verifyCodex = vi.fn().mockResolvedValue('0.144.6')
     const verifyPair = vi.fn().mockResolvedValue(undefined)
     const outcome = await installManagedCodex({
       installId: 'codex-1',
@@ -527,9 +548,10 @@ describe('installManagedCodex', () => {
       platform,
       fetchJson,
       fetchTarball,
-      verifyAdapter: () => Promise.resolve('1.6.2'),
-      verifyCodex: () => Promise.resolve('0.144.6'),
+      verifyAdapter,
+      verifyCodex,
       verifyPair,
+      signal: controller.signal,
       integrities: { adapter: sha512(adapterTgz), codex: sha512(nativeTgz) }
     })
 
@@ -546,10 +568,13 @@ describe('installManagedCodex', () => {
     ])
     expect(await readFile(managedCodexAdapterEntry(root), 'utf8')).toContain('codex-acp')
     expect(await readFile(managedCodexBinary(root, platform), 'utf8')).toBe('native-codex')
+    expect(verifyAdapter).toHaveBeenCalledWith(expect.any(String), controller.signal)
+    expect(verifyCodex).toHaveBeenCalledWith(expect.any(String), controller.signal)
     expect(verifyPair).toHaveBeenCalledWith(
       expect.stringContaining(join('adapter', 'dist', 'index.js')),
       expect.stringContaining(join('codex', 'vendor', platform.target, 'bin', 'codex')),
-      expect.stringContaining('smoke-home')
+      expect.stringContaining('smoke-home'),
+      controller.signal
     )
     expect(
       await readFile(

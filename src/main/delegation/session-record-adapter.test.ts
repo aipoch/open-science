@@ -2091,3 +2091,99 @@ describe('Session delegated-work adapter', () => {
     expect(execution.controls()).toHaveLength(1)
   })
 })
+
+describe('reported continuation persistence regression', () => {
+  it('D04 persists a failed handoff, retains confirmed answers, and notifies subscribers without replay', async () => {
+    const { coordinator, readSession } = createHarness()
+    const execution = createDeterministicDelegateExecution(1)
+    const onRecordsChanged = vi.fn()
+    const records = createSessionDelegatedWorkRecords(
+      { commands: coordinator, readSession, frameworkId: 'codex', onRecordsChanged },
+      key
+    )
+    let failSnapshot = false
+    const work = createDurableDelegatedWork({
+      execution,
+      records: {
+        ...records,
+        async confirmQuestion(input) {
+          await records.confirmQuestion(input)
+          failSnapshot = true
+        },
+        async snapshot() {
+          if (failSnapshot) {
+            failSnapshot = false
+            throw new Error('post-commit snapshot unavailable')
+          }
+          return records.snapshot()
+        }
+      }
+    })
+    const rootCaller: AuthenticatedDelegateCaller = {
+      session: key,
+      frameId: createSession().conversationGraph!.rootFrameId,
+      role: 'main',
+      originMessageId: rootPrompt.id,
+      toolInvocationId: 'question-handoff'
+    }
+    await work.delegate(rootCaller, { task: 'Ask', name: 'Question' }, { wait: false })
+    await expect.poll(() => execution.controls()).toHaveLength(1)
+    const control = execution.controls()[0]
+    await work.requestUserInput(
+      {
+        ...rootCaller,
+        role: 'delegate',
+        frameId: control.input.frameId,
+        attemptId: control.input.attemptId,
+        originMessageId: control.input.turn!.promptMessageId,
+        toolInvocationId: 'ask-question'
+      },
+      {
+        sessionId: key.sessionId,
+        questions: [
+          { question: 'Which cohort?', options: [{ label: 'Strict' }, { label: 'Broad' }] }
+        ]
+      },
+      'handoff-question'
+    )
+    control.complete('Waiting for your answer')
+    await expect.poll(() => execution.releasedFrames()).toHaveLength(1)
+    onRecordsChanged.mockClear()
+    await expect(
+      work.confirmQuestion(key, {
+        requestId: 'handoff-question',
+        answers: [{ questionIndex: 0, value: 'Strict' }]
+      })
+    ).rejects.toThrow('post-commit snapshot unavailable')
+    const durable = normalizeSessionFile(await readSession())!
+    expect.soft(durable.runtimeContext?.delegatedWork?.questionRequests?.[0]).toMatchObject({
+      status: 'confirmed',
+      answers: [{ questionIndex: 0, value: 'Strict' }],
+      continuationAttemptId: expect.any(String)
+    })
+    expect.soft(durable.runtimeContext?.delegatedWork?.records[0].attempts[1]).toMatchObject({
+      status: 'error',
+      endedAt: expect.any(Number),
+      error: { message: 'post-commit snapshot unavailable' }
+    })
+    expect
+      .soft(
+        durable.conversationGraph?.frames.find((frame) => frame.id === control.input.frameId)
+          ?.status
+      )
+      .toBe('error')
+    expect.soft(onRecordsChanged).toHaveBeenCalledTimes(2)
+    const reopened = createDurableDelegatedWork({
+      execution,
+      records: createSessionDelegatedWorkRecords(
+        { commands: coordinator, readSession, frameworkId: 'codex' },
+        key
+      )
+    })
+    expect.soft((await reopened.recoverInterrupted()).interrupted).toHaveLength(0)
+    expect((await reopened.recoverInterrupted()).interrupted).toHaveLength(0)
+    expect(execution.controls()).toHaveLength(1)
+    const available = await execution.reserve(1)
+    await available.releaseAll()
+  })
+})

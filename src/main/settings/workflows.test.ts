@@ -644,6 +644,31 @@ describe('SettingsWorkflows catalog and appearance effects', () => {
     ])
   })
 
+  it('retires credential authentication before replacing a secret and preserves it if cancellation fails', async () => {
+    const calls: string[] = []
+    const { store, capability } = fakeStore()
+    store.cancelDeviceCredentialAuthentication.mockImplementation(async () => {
+      calls.push('cancel')
+    })
+    store.updateDeviceCredential.mockImplementation(async (_request, withConsumersBlocked) =>
+      withConsumersBlocked([], async () => {
+        calls.push('write')
+        return { credentials: [] }
+      })
+    )
+    const workflows = createSettingsWorkflows(capability, testEffects()).connectors
+    await workflows.updateDeviceCredential({ id: 'oauth', secret: 'replacement' })
+    expect(calls).toEqual(['cancel', 'write'])
+    expect(store.cancelDeviceCredentialAuthentication).toHaveBeenCalledWith({ id: 'oauth' })
+    store.cancelDeviceCredentialAuthentication.mockRejectedValueOnce(
+      new Error('Cancellation failed')
+    )
+    await expect(
+      workflows.updateDeviceCredential({ id: 'oauth', secret: 'second' })
+    ).rejects.toThrow('Cancellation failed')
+    expect(calls).toEqual(['cancel', 'write'])
+  })
+
   it('blocks and resets consumers across a static credential rotation', async () => {
     const calls: string[] = []
     let finishRefresh!: () => void
@@ -717,7 +742,7 @@ describe('SettingsWorkflows catalog and appearance effects', () => {
 
     await expect(
       workflows.updateDeviceCredential({ id: 'shared-static', secret: 'rotated' })
-    ).rejects.toThrow('refresh failed')
+    ).rejects.toThrow('Credential changes were saved, but Connectors could not refresh.')
 
     expect(store.updateDeviceCredential).toHaveBeenCalledOnce()
     expect(release).not.toHaveBeenCalled()

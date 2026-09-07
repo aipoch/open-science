@@ -235,6 +235,7 @@ describe('Compute service architecture', () => {
         'deleteOwnerRows',
         'dispatchError',
         'dispatchRunning',
+        'dispatchSubmitted',
         'failRemoteHandleRecovery',
         'finishPolled',
         'observeRunning',
@@ -245,7 +246,13 @@ describe('Compute service architecture', () => {
       ].sort()
     )
     expect(calledMembersOn(computePaths.jobLifecycle, ['this', 'repository'])).toEqual(
-      ['abortOwnerDeletion', 'beginOwnerDeletion', 'deleteByOwner', 'updateIfStatus'].sort()
+      [
+        'abortOwnerDeletion',
+        'beginOwnerDeletion',
+        'deleteByOwner',
+        'recordCancellationHandle',
+        'updateIfStatus'
+      ].sort()
     )
 
     const lifecycleTarget = modulePath(computePaths.jobLifecycle)
@@ -277,7 +284,7 @@ describe('Compute service architecture', () => {
   it('restores local owner barriers before runtime and defers remote recovery until after startup', () => {
     const source = readSource(computePaths.mainIpc)
     const projectBarriers = source.indexOf(
-      'await projectDeletionCoordinator.restorePendingDeletionBarriers()'
+      'projectDeletionCoordinator.restorePendingDeletionBarriers()'
     )
     const jobBarriers = source.indexOf(
       'await jobDeletionOwner.restoreOrphanJobDeletionBarriers',
@@ -449,6 +456,7 @@ describe('Compute service architecture', () => {
         'probe',
         'replaceDetails',
         'setConcurrencyLimit',
+        'setExecutionMode',
         'setScratchRoot',
         'setSessionConcurrencyLimit',
         'startQueueReconciliation',
@@ -513,7 +521,7 @@ describe('Compute service architecture', () => {
     const computeContracts = RENDERER_CONTRACT_CATALOG.filter(
       ({ channel }) => channel?.startsWith('compute:') === true
     )
-    expect(computeContracts).toHaveLength(37)
+    expect(computeContracts).toHaveLength(38)
     const remoteRestricted = computeContracts.filter(
       ({ surfaceInstallation }) => surfaceInstallation.remoteWeb === 'rejecting-stub'
     )

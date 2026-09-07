@@ -51,7 +51,8 @@ const ManagedFileDownloadButtonState = ({
   const { t } = useTranslation()
   const { status, sizeLimitError } = download
 
-  const hasExplicitManagedVersion = Boolean(projectId && fileId && versionId)
+  const hasExplicitManagedVersion =
+    (source === 'artifact' || source === 'upload') && Boolean(projectId && fileId && versionId)
   const hasResolvedVersionContext =
     Boolean(latestVersionId) &&
     Number.isSafeInteger(versionNumber) &&

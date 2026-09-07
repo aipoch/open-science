@@ -1,8 +1,11 @@
-import { describe, expect, it, vi } from 'vitest'
+import { EventEmitter } from 'node:events'
+
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { DATABASE_STARTUP_CHANNELS, type DatabaseStartupState } from '../../shared/database-startup'
 import { installDatabaseStartupQuitGuard, registerDatabaseStartupIpc } from './database-startup-ipc'
 import { createDatabaseStartupOwner, type DatabaseStartupOwner } from './database-startup-owner'
+import { DatabaseMigrationError } from './migration-service'
 
 describe('database startup Electron bridge', () => {
   it('serves the current state and broadcasts owner changes', async () => {
@@ -133,6 +136,116 @@ describe('database startup Electron bridge', () => {
 
     expect(quit).toHaveBeenCalledOnce()
     guard.dispose()
+  })
+})
+
+describe('startup quit handoff deadline', () => {
+  let guard: ReturnType<typeof installDatabaseStartupQuitGuard> | undefined
+  beforeEach(() => vi.useFakeTimers())
+  afterEach(() => {
+    guard?.dispose()
+    vi.useRealTimers()
+  })
+
+  const setup = (
+    verifyDatabase: Parameters<
+      typeof createDatabaseStartupOwner
+    >[0]['verifyDatabase'] = async () => {}
+  ): {
+    owner: DatabaseStartupOwner
+    app: { quit: ReturnType<typeof vi.fn>; exit: ReturnType<typeof vi.fn> }
+    guard: ReturnType<typeof installDatabaseStartupQuitGuard>
+    requestQuit: () => ReturnType<typeof vi.fn>
+  } => {
+    const owner = createDatabaseStartupOwner({ verifyDatabase, reportBlocked: vi.fn() })
+    const app = Object.assign(new EventEmitter(), { quit: vi.fn(), exit: vi.fn() })
+    guard = installDatabaseStartupQuitGuard({ app: app as never, owner })
+    const requestQuit = (): ReturnType<typeof vi.fn> => {
+      const preventDefault = vi.fn()
+      app.emit('before-quit', { preventDefault })
+      return preventDefault
+    }
+    return { owner, app, guard, requestQuit }
+  }
+
+  it('bounds a stalled handoff without extending the deadline for repeated quits', async () => {
+    const { owner, app, guard, requestQuit } = setup()
+    await owner.start()
+    expect(requestQuit()).toHaveBeenCalledOnce()
+    await vi.advanceTimersByTimeAsync(2_500)
+    expect(requestQuit()).toHaveBeenCalledOnce()
+    await vi.advanceTimersByTimeAsync(2_499)
+    expect(app.exit).not.toHaveBeenCalled()
+    await vi.advanceTimersByTimeAsync(1)
+    expect(app.exit).toHaveBeenCalledExactlyOnceWith(0)
+    guard.release()
+    await vi.advanceTimersByTimeAsync(5_000)
+    expect(app.quit).not.toHaveBeenCalled()
+    expect(app.exit).toHaveBeenCalledOnce()
+  })
+
+  it.each(['starting', 'ready'] as const)(
+    'replays one quit and cancels the deadline when ownership is released from %s',
+    async (phase) => {
+      const { owner, app, guard, requestQuit } = setup()
+      await owner.start()
+      if (phase === 'ready') owner.complete()
+      expect(requestQuit()).toHaveBeenCalledOnce()
+      expect(requestQuit()).toHaveBeenCalledOnce()
+      await vi.advanceTimersByTimeAsync(1)
+      expect(app.quit).not.toHaveBeenCalled()
+      guard.release()
+      guard.release()
+      expect(app.quit).toHaveBeenCalledOnce()
+      expect(requestQuit()).not.toHaveBeenCalled()
+      await vi.advanceTimersByTimeAsync(5_000)
+      expect(app.exit).not.toHaveBeenCalled()
+    }
+  )
+
+  it('starts the handoff deadline only after an active migration settles', async () => {
+    let finish!: () => void
+    const { owner, app, requestQuit } = setup(
+      (progress) =>
+        new Promise<void>((resolve) => {
+          finish = resolve
+          progress({ phase: 'migrating', migrationId: '0001' })
+        })
+    )
+    const attempt = owner.start()
+    expect(requestQuit()).toHaveBeenCalledOnce()
+    await vi.advanceTimersByTimeAsync(10_000)
+    expect(app.exit).not.toHaveBeenCalled()
+    finish()
+    await attempt
+    await vi.advanceTimersByTimeAsync(4_999)
+    expect(app.exit).not.toHaveBeenCalled()
+    await vi.advanceTimersByTimeAsync(1)
+    expect(app.exit).toHaveBeenCalledExactlyOnceWith(0)
+  })
+
+  it.each([false, true])(
+    'cancels pending work on disposal (attempt settled: %s)',
+    async (settled) => {
+      const { owner, app, guard, requestQuit } = setup()
+      await owner.start()
+      requestQuit()
+      if (settled) await vi.advanceTimersByTimeAsync(1)
+      guard.dispose()
+      await vi.advanceTimersByTimeAsync(10_000)
+      expect(app.quit).not.toHaveBeenCalled()
+      expect(app.exit).not.toHaveBeenCalled()
+    }
+  )
+
+  it('allows a first quit in blocked startup without a handoff deadline', async () => {
+    const { owner, app, requestQuit } = setup(async () => {
+      throw new DatabaseMigrationError('database_open_failed', 'Database is locked.', true)
+    })
+    expect((await owner.start()).phase).toBe('blocked')
+    expect(requestQuit()).not.toHaveBeenCalled()
+    await vi.advanceTimersByTimeAsync(10_000)
+    expect(app.exit).not.toHaveBeenCalled()
   })
 })
 

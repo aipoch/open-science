@@ -231,6 +231,9 @@ const buildContinuationRequest = (
       : referencedSessions.length
         ? { referencedSessions }
         : {}),
+    ...((livePrompt?.parts?.length ? livePrompt.parts : prompt.parts)?.length
+      ? { parts: livePrompt?.parts?.length ? livePrompt.parts : prompt.parts }
+      : {}),
     ...(attachments?.length ? { attachments } : {}),
     ...(preparedAnnotations.images?.length ? { currentImages: preparedAnnotations.images } : {}),
     ...(replay?.historyPreamble ? { historyPreamble: replay.historyPreamble } : {}),

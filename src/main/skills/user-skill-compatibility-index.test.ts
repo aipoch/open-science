@@ -181,7 +181,7 @@ describe('UserSkillCompatibilityIndex', () => {
 
     expect(result).toMatchObject({
       sourceDir,
-      compatibility: expect.stringMatching(/^sha256-tree-v2:[a-f0-9]{64}$/)
+      compatibility: expect.stringMatching(/^sha256-tree-v3:[a-f0-9]{64}$/)
     })
   })
 
@@ -215,4 +215,30 @@ describe('UserSkillCompatibilityIndex', () => {
     expect(mutatingHash).toHaveBeenCalledTimes(3)
     expect(restartedHash).not.toHaveBeenCalled()
   })
+})
+
+it('rebuilds a historical v1 cache instead of trusting its old file metadata', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'legacy-skill-cache-'))
+  try {
+    const source = join(root, 'skills', 'personal', 'demo')
+    await mkdir(source, { recursive: true })
+    await writeFile(join(source, 'SKILL.md'), '---\nname: demo\n---\nBody')
+    await new UserSkillCompatibilityIndex(root).scan([source])
+    const path = join(root, 'runtime-support', 'user-skill-compatibility-v1.json')
+    const legacy = JSON.parse(await readFile(path, 'utf8'))
+    legacy.version = 1
+    for (const pkg of Object.values(legacy.packages) as Array<{
+      files: Record<string, { executable?: boolean }>
+    }>) {
+      for (const file of Object.values(pkg.files)) delete file.executable
+    }
+    await writeFile(path, JSON.stringify(legacy))
+    const hashFile = vi.fn(hashFileContents)
+    const result = await new UserSkillCompatibilityIndex(root, { hashFile }).scan([source])
+    expect(hashFile).toHaveBeenCalledOnce()
+    expect(result[0]).toMatchObject({ compatibility: expect.stringMatching(/^sha256-tree-v3:/) })
+    expect(JSON.parse(await readFile(path, 'utf8')).version).toBe(2)
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
 })

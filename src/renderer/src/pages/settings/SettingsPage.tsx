@@ -26,7 +26,7 @@ import {
   X,
   Zap
 } from 'lucide-react'
-import { Dialog } from 'radix-ui'
+import * as Dialog from '@/components/ui/dialog'
 import { FocusScope } from '@radix-ui/react-focus-scope'
 import {
   forwardRef,
@@ -372,6 +372,8 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
   const consumePendingSettingsIntent = useSettingsStore(
     (state) => state.consumePendingSettingsIntent
   )
+  const preflightFailed = useSettingsStore((state) => state.preflightFailed)
+  const refreshPreflight = useSettingsStore((state) => state.refreshPreflight)
   const settingsWriteError = useSettingsStore((state) => state.settingsWriteError)
   const clearSettingsWriteError = useSettingsStore((state) => state.clearSettingsWriteError)
   const canImportInstalledSkills =
@@ -862,7 +864,9 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
               ? t('GitHub')
               : credentialsView.serviceId === 'openalex'
                 ? t('OpenAlex')
-                : t('Literature access')
+                : credentialsView.serviceId === 'unpaywall'
+                  ? t('Unpaywall')
+                  : t('Literature access')
       return {
         rootLabelKey: 'Credentials',
         rootTo: { panel: 'credentials', view: { kind: 'list' } },
@@ -1172,7 +1176,7 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
                                   setIsMobileNavOpen(false)
                                   navigatePanel(id)
                                 }}
-                                className={`flex h-8 w-full items-center gap-2 rounded-lg px-2 text-left text-sm transition-colors duration-150 motion-reduce:transition-none ${
+                                className={`flex h-8 w-full items-center gap-2 rounded-lg px-2 text-left text-sm ${
                                   isActive
                                     ? 'bg-muted font-medium text-foreground'
                                     : 'text-muted-foreground hover:bg-muted hover:text-foreground'
@@ -1199,7 +1203,7 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
                     href={APP.links.githubFeedback}
                     target="_blank"
                     rel="noreferrer"
-                    className="flex h-8 w-full items-center gap-2 rounded-lg px-2 text-left text-sm text-muted-foreground transition-colors duration-150 motion-reduce:transition-none hover:bg-muted hover:text-foreground"
+                    className="flex h-8 w-full items-center gap-2 rounded-lg px-2 text-left text-sm text-muted-foreground hover:bg-muted hover:text-foreground"
                   >
                     <MessageSquare
                       className="size-4 shrink-0 text-muted-foreground"
@@ -1352,6 +1356,24 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
                 </div>
               </div>
 
+              {preflightFailed ? (
+                <div
+                  role="alert"
+                  className="mx-5 mt-3 flex items-center gap-3 text-sm text-destructive"
+                >
+                  <p>
+                    {t('Could not refresh environment readiness. Saved settings are unchanged.')}
+                  </p>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => void refreshPreflight().catch(() => undefined)}
+                  >
+                    {t('Retry preflight')}
+                  </Button>
+                </div>
+              ) : null}
+
               {settingsWriteError ? (
                 <div
                   data-slot="settings-write-error"
@@ -1463,6 +1485,13 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
                               ? { kind: 'edit', id: reference.resourceId }
                               : { kind: 'detail', id: reference.resourceId }
                           })
+                          return
+                        }
+                        if (reference.resourceType === 'literature.item') {
+                          useNavigationStore
+                            .getState()
+                            .openLiteratureItem(reference.resourceId, 'user')
+                          onClose()
                           return
                         }
                         const specialist = specialistItems.find(

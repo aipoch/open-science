@@ -68,10 +68,10 @@ export type ResolveProjectFileRequest = {
   name: string
 }
 
-// Bounded global-search projection. The primary Project is independently paged; Other Projects
-// deliberately return only a small combined sample so the command palette remains responsive.
+// The primary Project set is one paged collection. Home searches all active Projects; Workspace
+// pages its current Project and requests a bounded sample from Other Projects.
 export type SearchArtifactsRequest = {
-  primaryProjectId: string
+  primaryProjectIds: string[]
   otherProjectIds: string[]
   filenameContains?: string
   excludedSessionIds?: string[]

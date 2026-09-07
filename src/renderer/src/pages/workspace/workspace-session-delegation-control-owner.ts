@@ -1,6 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 
-import type { DelegationPolicy } from '../../../../shared/session-persistence'
+import {
+  isSessionSizeLimitError,
+  type DelegationPolicy
+} from '../../../../shared/session-persistence'
 import type { AgentFrameworkId, AgentFrameworkView } from '../../../../shared/settings'
 import { setDelegationPolicyAuthority } from '@/lib/session-persistence/session-persistence'
 import type { ChatSession } from '@/stores/session-store'
@@ -11,6 +14,7 @@ type WorkspaceSessionDelegationControlOwnerOptions = Readonly<{
   selectedFrameworkId: AgentFrameworkId
   frameworks: readonly AgentFrameworkView[]
   setError: (error: string | null) => void
+  onSessionSizeLimit?: (sessionId: string) => void
 }>
 
 type WorkspaceSessionDelegationControl = Readonly<{
@@ -51,7 +55,8 @@ const useWorkspaceSessionDelegationControlOwner = ({
   selectedSessionId,
   selectedFrameworkId,
   frameworks,
-  setError
+  setError,
+  onSessionSizeLimit
 }: WorkspaceSessionDelegationControlOwnerOptions): WorkspaceSessionDelegationControl => {
   const pendingSessionIdsRef = useRef(new Set<string>())
   const [pendingSessionIds, setPendingSessionIds] = useState<ReadonlySet<string>>(() => new Set())
@@ -99,6 +104,7 @@ const useWorkspaceSessionDelegationControlOwner = ({
       try {
         await setDelegationPolicyAuthority(session.projectId, session.id, policy)
       } catch (error) {
+        if (isSessionSizeLimitError(error)) onSessionSizeLimit?.(session.id)
         setError(errorMessage(error))
       } finally {
         pendingSessionIdsRef.current.delete(session.id)
@@ -110,7 +116,7 @@ const useWorkspaceSessionDelegationControlOwner = ({
         })
       }
     },
-    [activeSession, frameworkSupported, isNewConversation, setError]
+    [activeSession, frameworkSupported, isNewConversation, onSessionSizeLimit, setError]
   )
 
   return {

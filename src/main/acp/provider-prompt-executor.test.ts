@@ -18,6 +18,15 @@ import {
   type ProviderPromptExecutionInput
 } from './provider-prompt-executor'
 import type { AcpProviderTurnAdapter, AcpProviderTurnProbe } from './provider-turn-adapter'
+import {
+  sanitizeSessionRuntimeContext,
+  type SessionRuntimeContext
+} from '../../shared/session-persistence'
+import {
+  SessionPlanDeliveryOwner,
+  type SessionPlanDeliverySessions
+} from './session-plan-delivery-owner'
+import { composeAcpRuntimePlanWorkflow } from './runtime-plan-composition'
 
 type NextUpdate = Awaited<ReturnType<ActiveSession['nextUpdate']>>
 
@@ -129,6 +138,86 @@ const setup = (
 }
 
 describe('AcpProviderPromptExecutor', () => {
+  it.each(['claude-code', 'opencode', 'codex', 'codebuddy'] as const)(
+    'P03 does not requeue accepted output after a receipt revision conflict on %s',
+    async (frameworkId) => {
+      const fixture = setup()
+      let context: SessionRuntimeContext = {
+        version: 1,
+        revision: 0,
+        plan: {
+          artifactId: 'artifact-1',
+          artifactVersionId: 'version-1',
+          artifactChecksum: 'a'.repeat(64),
+          originatingPromptMessageId: 'prompt-1',
+          approval: 'approved',
+          stepStatuses: {},
+          delivery: {
+            commandId: 'command-1',
+            kind: 'approved-plan',
+            state: 'delivering',
+            originatingPromptMessageId: 'prompt-1',
+            createdAt: 1
+          }
+        }
+      }
+      let concurrentWritePending = true
+      const sessions: SessionPlanDeliverySessions = {
+        readSessionRuntimeContext: vi.fn(async () => structuredClone(context)),
+        patchSessionRuntimeContext: vi.fn(async (command) => {
+          if (concurrentWritePending) {
+            concurrentWritePending = false
+            // An unrelated owner wins the same runtime-context revision; the receipt is unchanged.
+            context = { ...context, revision: context.revision + 1 }
+          }
+          if (command.expectedRevision !== context.revision) {
+            throw Object.assign(new Error('revision conflict'), { code: 'revision-conflict' })
+          }
+          const next = sanitizeSessionRuntimeContext({
+            ...context,
+            ...command.patch,
+            revision: context.revision + 1
+          })
+          if (!next) throw new Error('Session runtime context patch is not JSON-safe.')
+          context = next
+          return structuredClone(context)
+        })
+      }
+      const deliveries = new SessionPlanDeliveryOwner(sessions)
+      const workflow = composeAcpRuntimePlanWorkflow(
+        {} as Parameters<typeof composeAcpRuntimePlanWorkflow>[0],
+        {} as Parameters<typeof composeAcpRuntimePlanWorkflow>[1],
+        { publication: { pushEvent: vi.fn() } } as unknown as Parameters<
+          typeof composeAcpRuntimePlanWorkflow
+        >[2],
+        { deliveries }
+      )
+      const disconnected = new Error('provider disconnected after first output')
+      vi.mocked(fixture.session.nextUpdate)
+        .mockResolvedValueOnce(update())
+        .mockRejectedValueOnce(disconnected)
+      await expect(
+        fixture.executor.execute({
+          ...fixture.input,
+          frameworkId,
+          onAccepted: () =>
+            workflow.prompt.providerAccepted('session-1', {
+              kind: 'app-continuation',
+              planDelivery: { projectId: 'project-1', commandId: 'command-1' }
+            })
+        })
+      ).rejects.toBe(disconnected)
+      expect(fixture.routeNotification).toHaveBeenCalledWith(notification)
+      // A fresh owner sees only persisted state, as after a restart. Recovery uses this public operation.
+      const restartedOwner = new SessionPlanDeliveryOwner(sessions)
+      const requeued = await restartedOwner.rearmUnaccepted('project-1', 'session-1', 'command-1')
+      expect({ requeued, state: context.plan?.delivery?.state }).toEqual({
+        requeued: false,
+        state: 'accepted'
+      })
+    }
+  )
+
   it('gives the Claude adapter a transcript reader for the active config root', async () => {
     const executor = new AcpProviderPromptExecutor({
       backendGeneration: {
@@ -473,6 +562,96 @@ describe('AcpProviderPromptExecutor', () => {
     expect(acceptedThenStale.probe.finalize).not.toHaveBeenCalled()
     expect(acceptedThenStale.probe.cancel).toHaveBeenCalledOnce()
   })
+
+  it.each(['text', 'tool', 'stop'] as const)(
+    'drops a first %s superseded during acceptance without disturbing the new interaction',
+    async (firstKind) => {
+      const response: PromptResponse = { stopReason: 'cancelled' }
+      const toolNotification: SessionNotification = {
+        sessionId: 'provider-1',
+        update: {
+          sessionUpdate: 'tool_call_update',
+          toolCallId: 'old-tool',
+          status: 'in_progress'
+        }
+      }
+      const first: NextUpdate =
+        firstKind === 'stop'
+          ? stop(response)
+          : firstKind === 'text'
+            ? update()
+            : {
+                kind: 'session_update',
+                notification: toolNotification,
+                update: toolNotification.update
+              }
+      const old = setup(firstKind === 'stop' ? [first] : [first, update(), stop(response)])
+      const oldOwner = Symbol('old interaction')
+      const newOwner = Symbol('new interaction')
+      let owner = oldOwner
+      const acceptedEntered = deferred<void>()
+      const acceptedGate = deferred<void>()
+      old.accepted.mockImplementationOnce(() => {
+        acceptedEntered.resolve()
+        return acceptedGate.promise
+      })
+      old.captureStop.mockImplementation(() => owner === oldOwner)
+      const pendingOld = old.executor.execute({
+        ...old.input,
+        isCurrent: () => owner === oldOwner
+      })
+      await acceptedEntered.promise
+      expect(old.routeNotification).not.toHaveBeenCalled()
+      expect(old.captureStop).not.toHaveBeenCalled()
+
+      // Replace ownership while acceptance is suspended, not before dispatch or after routing.
+      owner = newOwner
+      const nextResponse: PromptResponse = { stopReason: 'end_turn' }
+      const next = setup([update(), stop(nextResponse)])
+      const nextAcceptedEntered = deferred<void>()
+      const nextAcceptedGate = deferred<void>()
+      next.accepted.mockImplementationOnce(() => {
+        nextAcceptedEntered.resolve()
+        return nextAcceptedGate.promise
+      })
+      next.captureStop.mockImplementation(() => owner === newOwner)
+      // Same executor and provider id exercise token-scoped cleanup, with a new session queue.
+      const pendingNext = old.executor.execute({
+        ...next.input,
+        isCurrent: () => owner === newOwner
+      })
+      await nextAcceptedEntered.promise
+
+      acceptedGate.resolve()
+      const oldOutcome = await pendingOld
+      const providerMessage = { sessionId: 'provider-1', message: { type: 'result' } }
+      old.executor.observeProviderMessage(providerMessage)
+      nextAcceptedGate.resolve()
+      const nextOutcome = await pendingNext
+
+      expect(oldOutcome).toEqual({ kind: 'superseded', response })
+      expect(old.accepted).toHaveBeenCalledOnce()
+      expect.soft(old.routeNotification).not.toHaveBeenCalled()
+      expect.soft(old.probe.observe).not.toHaveBeenCalled()
+      // Stop already has a second ownership boundary in captureStop; retain it as a control.
+      if (firstKind !== 'stop') expect(old.captureStop).not.toHaveBeenCalled()
+      expect(old.probe.finalize).not.toHaveBeenCalled()
+      expect(old.probe.cancel).toHaveBeenCalledOnce()
+      expect(old.report).not.toHaveBeenCalled()
+      expect(old.session.nextUpdate).toHaveBeenCalledTimes(firstKind === 'stop' ? 1 : 3)
+
+      expect(nextOutcome).toMatchObject({ kind: 'stopped', response: nextResponse })
+      expect(next.accepted).toHaveBeenCalledOnce()
+      expect(next.probe.observe.mock.calls).toEqual([[providerMessage], [notification]])
+      expect(next.routeNotification.mock.calls).toEqual([[notification]])
+      expect(next.captureStop).toHaveBeenCalledOnce()
+      expect(next.probe.finalize).toHaveBeenCalledWith({ response: nextResponse })
+      expect(next.probe.cancel).not.toHaveBeenCalled()
+      expect(next.report).not.toHaveBeenCalled()
+      old.executor.observeProviderMessage(providerMessage)
+      expect(next.probe.observe).toHaveBeenCalledTimes(2)
+    }
+  )
 
   it('treats a lost terminal capture race as superseded', async () => {
     const response: PromptResponse = { stopReason: 'end_turn' }

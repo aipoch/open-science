@@ -1,6 +1,7 @@
 import { z } from 'zod'
 
 import { APPLICATION_COMMAND_ERROR_CODES } from './application-command-contract'
+import { WEB_CALLER_LOCATIONS } from './web-caller-location'
 import { WEB_EVENT_CHANNELS, WEB_INVOKE_CHANNELS } from './web-api-map.generated'
 
 export const WEB_RPC_PROTOCOL_VERSION = 1 as const
@@ -101,6 +102,7 @@ export const webRpcResponseSchema = z.discriminatedUnion('ok', [
 export const webRpcBootstrapSchema = z
   .object({
     platform: z.string(),
+    webCallerLocation: z.enum(WEB_CALLER_LOCATIONS).optional(),
     versions: z.object({ electron: z.string(), chrome: z.string(), node: z.string() }).strict(),
     rpcProtocolVersion: z.literal(WEB_RPC_PROTOCOL_VERSION),
     eventStream: z
