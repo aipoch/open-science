@@ -2659,6 +2659,47 @@ describe('workspace agent message sending', () => {
     })
   })
 
+  it.each(['plan-first', undefined] as const)(
+    'inherits the source turn intent on edit resend: %s',
+    async (turnIntent) => {
+      const runtime = {
+        state: createSnapshot(['transport-session-1']),
+        createSession: vi.fn(),
+        resumeSession: vi.fn(),
+        resetSessionContext: vi.fn().mockResolvedValue({ contextReset: true }),
+        sendPrompt: vi.fn().mockResolvedValue(createSnapshot(['transport-session-1']))
+      }
+      await sendWorkspaceMessage(runtime, {
+        sessionId: 'transport-session-1',
+        text: 'analyze this dataset',
+        cwd: '/workspace/project',
+        projectId: 'project-1',
+        turnIntent
+      })
+      await flushRuntimeTasks()
+      const source = useSessionStore.getState().sessions[0].messages[0]
+      expect(source.turnIntent).toBe(turnIntent)
+      expect(runtime.sendPrompt.mock.calls[0]?.[11]).toBe(turnIntent)
+      useSessionStore.getState().finishRun('transport-session-1')
+      runtime.sendPrompt.mockClear()
+
+      await expect(
+        resendEditedWorkspaceMessage(runtime, {
+          sessionId: 'transport-session-1',
+          messageId: source.id,
+          text: 'analyze the revised dataset'
+        })
+      ).resolves.toBe(true)
+      await flushRuntimeTasks()
+
+      const revised = useSessionStore.getState().sessions[0].messages.at(-1)
+      expect(revised?.content).toBe('analyze the revised dataset')
+      expect(runtime.sendPrompt).toHaveBeenCalledOnce()
+      expect.soft(revised?.turnIntent).toBe(turnIntent)
+      expect.soft(runtime.sendPrompt.mock.calls[0]?.[11]).toBe(turnIntent)
+    }
+  )
+
   it('forwards and durably stores Plan first for an existing Session', async () => {
     const runtime = {
       state: createSnapshot(['transport-session-1']),

@@ -2052,6 +2052,7 @@
     "Preview {{title}}": "Vista previa {{title}}",
     "Preview — matches the list and picker.": "Vista previa: coincide con la lista y el selector.",
     "Previous Artifact version": "Versión anterior del artefacto",
+    "Message revisions are unavailable while this session is busy or blocked.": "Las versiones de mensajes no están disponibles mientras esta sesión esté ocupada o bloqueada.",
     "Previous message revision": "Revisión del mensaje anterior",
     "Previous page": "Página anterior",
     "Previous preview page": "Página de vista previa anterior",
