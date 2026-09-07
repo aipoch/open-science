@@ -94,6 +94,7 @@ const PREVIEW_TAB_EDGE_INSET = 8
 const PreviewTabActionTarget = ({
   item,
   tabCount,
+  retryPending,
   onPdfContextError,
   onLinkReadingContext,
   onUnlinkReadingContext,
@@ -101,6 +102,7 @@ const PreviewTabActionTarget = ({
 }: {
   item: PreviewItem
   tabCount: number
+  retryPending?: PreviewTabActionError
   onPdfContextError?: (message: string | null) => void
   onLinkReadingContext?: PreviewInteractionPort['onLinkReadingContext']
   onUnlinkReadingContext?: PreviewInteractionPort['onUnlinkReadingContext']
@@ -118,6 +120,7 @@ const PreviewTabActionTarget = ({
   )
   const context: PreviewTabActionContext = {
     tabCount,
+    retryPending,
     pdfContextPending: pdfAction?.pending,
     ...(pdfAction && !pdfAction.disabled ? { pdfContext: pdfAction.state } : {})
   }
@@ -213,6 +216,7 @@ const PreviewTab = ({
   containerRef,
   tabRef,
   tabCount,
+  retryPending,
   onPdfContextError,
   onLinkReadingContext,
   onUnlinkReadingContext,
@@ -225,6 +229,7 @@ const PreviewTab = ({
   containerRef: (element: HTMLDivElement | null) => void
   tabRef: (element: HTMLButtonElement | null) => void
   tabCount: number
+  retryPending?: PreviewTabActionError
   onPdfContextError?: (message: string | null) => void
   onLinkReadingContext?: PreviewInteractionPort['onLinkReadingContext']
   onUnlinkReadingContext?: PreviewInteractionPort['onUnlinkReadingContext']
@@ -247,6 +252,7 @@ const PreviewTab = ({
       <PreviewTabActionTarget
         item={tab}
         tabCount={tabCount}
+        retryPending={retryPending}
         onPdfContextError={onPdfContextError}
         onLinkReadingContext={onLinkReadingContext}
         onUnlinkReadingContext={onUnlinkReadingContext}
@@ -309,6 +315,7 @@ const PreviewTab = ({
 // Horizontal, scrollable strip of every file the user has asked to preview this session.
 const PreviewTabBar = ({
   tabs,
+  retryPending,
   activeItemId,
   onActivate,
   onClose,
@@ -317,6 +324,7 @@ const PreviewTabBar = ({
   onUnlinkReadingContext
 }: {
   tabs: PreviewItem[]
+  retryPending?: PreviewTabActionError
   activeItemId: string | undefined
   onActivate: (id: string) => void
   onClose: (id: string) => boolean
@@ -417,6 +425,7 @@ const PreviewTabBar = ({
             tabRefs.current[index] = element
           }}
           tabCount={tabs.length}
+          retryPending={retryPending}
           onPdfContextError={onPdfContextError}
           onLinkReadingContext={onLinkReadingContext}
           onUnlinkReadingContext={onUnlinkReadingContext}
@@ -711,7 +720,8 @@ const PreviewPanelSurface = ({
               actionFailure.fileName,
               actionFailure.retry,
               error,
-              actionFailure.projectId
+              actionFailure.projectId,
+              actionFailure.itemId
             )
           : current
       )
@@ -765,6 +775,7 @@ const PreviewPanelSurface = ({
           >
             <PreviewTabBar
               tabs={items}
+              retryPending={retryPending?.projectId === activeProjectId ? retryPending : undefined}
               activeItemId={activeItemId}
               onActivate={activateItem}
               onClose={removeItem}

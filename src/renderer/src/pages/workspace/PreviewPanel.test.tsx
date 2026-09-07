@@ -1696,6 +1696,47 @@ describe('PreviewPanel', () => {
     }
   })
 
+  it.each(['download', 'copy-path', 'save-as-artifact'])(
+    'disables the same menu command while %s is being retried',
+    async (command) => {
+      let finish!: () => void
+      const operation = vi
+        .fn()
+        .mockRejectedValueOnce(new Error('Permission denied'))
+        .mockImplementation(
+          () =>
+            new Promise<void>((resolve) => {
+              finish = resolve
+            })
+        )
+      Object.assign(navigator, { clipboard: { writeText: operation } })
+      if (command === 'download') window.api.saveManagedFile = operation
+      if (command === 'save-as-artifact') window.api.uploads.stageLocalPath = operation
+      usePreviewWorkbenchStore.getState().upsertAndActivateItem(createFileItem({ source: 'local' }))
+      await renderPanel()
+      await openTabContextMenu(0)
+      await clickMenuCommand(command)
+      const retry = container.querySelector<HTMLButtonElement>(
+        '[data-testid="preview-tab-action-error"] button:last-child'
+      )!
+      await act(async () => retry.click())
+      expect(operation).toHaveBeenCalledTimes(2)
+      try {
+        await openTabContextMenu(0)
+        const menuAction = document.body.querySelector(`[data-action-id="${command}"]`)
+        expect(menuAction?.getAttribute('aria-disabled')).toBe('true')
+        await clickMenuCommand(command)
+        expect(operation).toHaveBeenCalledTimes(2)
+      } finally {
+        await act(async () => finish())
+      }
+      await openTabContextMenu(0)
+      expect(
+        document.body.querySelector(`[data-action-id="${command}"]`)?.getAttribute('aria-disabled')
+      ).not.toBe('true')
+    }
+  )
+
   it('focuses the remaining active tab after closing the focused tab from its menu', async () => {
     await renderTwoFileTabs()
     container.querySelector<HTMLButtonElement>('[role="tab"]')!.focus()

@@ -32,6 +32,7 @@ export const PREVIEW_TAB_ACTION_CATALOG: Record<PreviewTabActionCommand, ActionM
 
 export type PreviewTabActionContext = {
   tabCount: number
+  retryPending?: PreviewTabActionError
   // Set by the host (which owns the stores) for linkable PDF file tabs; drives the leading
   // Read-with-agent command's label.
   pdfContextPending?: boolean
@@ -106,7 +107,8 @@ export class PreviewTabActionError extends Error {
     readonly fileName: string,
     readonly retry: () => Promise<void>,
     cause: unknown,
-    readonly projectId: string | undefined
+    readonly projectId: string | undefined,
+    readonly itemId: string
   ) {
     super('Preview tab action failed', { cause })
   }
@@ -114,8 +116,10 @@ export class PreviewTabActionError extends Error {
 
 const retryableFileBinding = (
   command: PreviewTabActionCommand,
-  deps: PreviewTabActionDeps
+  deps: PreviewTabActionDeps,
+  pending?: PreviewTabActionError
 ): ActionMenuBinding<PreviewItem> => ({
+  disabled: (item) => pending?.itemId === item.id && pending.command === command,
   execute: async (item) => {
     const retry = async (): Promise<void> => {
       await runPreviewTabAction(command, item, deps)
@@ -123,7 +127,14 @@ const retryableFileBinding = (
     try {
       await retry()
     } catch (error) {
-      throw new PreviewTabActionError(command, item.title, retry, error, deps.activeProjectId)
+      throw new PreviewTabActionError(
+        command,
+        item.title,
+        retry,
+        error,
+        deps.activeProjectId,
+        item.id
+      )
     }
   }
 })
@@ -137,9 +148,9 @@ export const createPreviewTabActionBindings = (
     execute: (item) => runPreviewTabAction('close-others', item, deps),
     disabled: context.tabCount <= 1
   },
-  download: retryableFileBinding('download', deps),
-  'copy-path': retryableFileBinding('copy-path', deps),
-  'save-as-artifact': retryableFileBinding('save-as-artifact', deps),
+  download: retryableFileBinding('download', deps, context.retryPending),
+  'copy-path': retryableFileBinding('copy-path', deps, context.retryPending),
+  'save-as-artifact': retryableFileBinding('save-as-artifact', deps, context.retryPending),
   ...(context.pdfContext && deps.togglePdfContext
     ? {
         'toggle-pdf-context': {
