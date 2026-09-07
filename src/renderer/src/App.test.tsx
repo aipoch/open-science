@@ -622,6 +622,7 @@ describe('App startup routing', () => {
         status: 'idle',
         messages: [],
         conversationGraph: {
+          messages: [],
           activeFrameId: 'frame-1',
           frames: [{ id: 'frame-1', activeBranchId: 'branch-1' }]
         },
