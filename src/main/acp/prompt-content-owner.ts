@@ -262,7 +262,14 @@ class AcpPromptContentOwner {
       const contentBlocks: ContentBlock[] = input.text.trim()
         ? [{ type: 'text', text: input.text }]
         : []
-      let imageBudget: InlineImageBudget = { imageCount: 0, base64Bytes: 0 }
+      // Reserve current images before admitting history, without changing the historical prefix.
+      const currentImageBudget = input.imageCompatibilityRelay
+        ? { imageCount: 0, base64Bytes: 0 }
+        : currentImages.reduce<InlineImageBudget>(
+            (budget, image) => consumeInlineImageBudget(budget, image),
+            { imageCount: 0, base64Bytes: 0 }
+          )
+      let imageBudget: InlineImageBudget = currentImageBudget
       const totalFileTextBudget = Math.max(1, Math.floor(input.fileTextBudget ?? 12_000))
       const fileTextBudget: PromptFileTextBudget = {
         remaining: totalFileTextBudget,
@@ -318,11 +325,10 @@ class AcpPromptContentOwner {
         }
       }
       if (input.historyImages.length > 0) {
-        this.setSessionInlineImageBytes(input, imageBudget.base64Bytes)
-      }
-
-      for (const image of currentImages) {
-        appendBlock({ type: 'image', data: image.data, mimeType: image.mimeType })
+        this.setSessionInlineImageBytes(
+          input,
+          imageBudget.base64Bytes - currentImageBudget.base64Bytes
+        )
       }
 
       if (hasUploads) {
@@ -348,9 +354,10 @@ class AcpPromptContentOwner {
           ...input.historyUploads.map((upload) => finalizedById.get(upload.id) ?? upload),
           ...input.currentUploads.map((upload) => finalizedById.get(upload.id) ?? upload)
         ]
+      }
 
-        // Preserve the existing order: history uploads, current uploads, then explicit references.
-        for (let index = 0; index < promptUploads.length; index += 1) {
+      const appendUploads = async (start: number, end: number): Promise<void> => {
+        for (let index = start; index < end; index += 1) {
           const resolved = await this.createAttachmentContentBlocks(
             input,
             promptUploads[index],
@@ -360,7 +367,8 @@ class AcpPromptContentOwner {
           )
           promptUploads[index] = resolved.attachment
           for (const block of resolved.blocks) {
-            const appended = appendBlock(
+            const previousImageCount = imageSources.length
+            appendBlock(
               block,
               this.imageOverflowResourceLink(
                 block,
@@ -371,12 +379,21 @@ class AcpPromptContentOwner {
                 ? { kind: 'upload-version', uploadVersionId: resolved.attachment.versionId }
                 : undefined
             )
-            if (index < input.historyUploads.length && isImageBlock(block) && appended) {
-              historyImageCount += 1
+            if (index < input.historyUploads.length) {
+              historyImageCount += imageSources.length - previousImageCount
             }
           }
         }
       }
+
+      // Keep the historical prefix while admitting current inline images before upload fallbacks.
+      await appendUploads(0, input.historyUploads.length)
+      for (const image of currentImages) {
+        // Sanitized above and already reserved in the native request budget.
+        contentBlocks.push({ type: 'image', data: image.data, mimeType: image.mimeType })
+        imageSources.push(undefined)
+      }
+      await appendUploads(input.historyUploads.length, promptUploads.length)
 
       for (const reference of input.references) {
         const resolved = await this.createReferencedArtifactContentBlocks(

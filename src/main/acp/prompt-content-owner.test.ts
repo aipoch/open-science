@@ -17,6 +17,11 @@ import {
   FileReferenceResolver
 } from './file-reference-resolver'
 import { AcpPromptContentOwner, resolvePdfPreparationScope } from './prompt-content-owner'
+import { ImageInputCompatibilityOwner } from './image-input-compatibility-owner'
+import type {
+  RestrictedInferenceRunInput,
+  RestrictedInferenceResult
+} from './restricted-inference-runner'
 import { TurnResourceSnapshotStore } from './turn-resource-snapshot-store'
 
 const { loggerInfo } = vi.hoisted(() => ({ loggerInfo: vi.fn() }))
@@ -1653,3 +1658,175 @@ describe('AcpPromptContentOwner', () => {
     expect(contentBlocks(afterFailure.content).at(-1)?.type).toBe('resource_link')
   })
 })
+
+it.each(['current failure', 'historical failure', 'image budget', 'evidence budget'])(
+  'preserves mixed image identity through %s',
+  async (scenario) => {
+    const bytes = Buffer.from('historical image')
+    const lease = createTrustedLease(bytes)
+    const attachment: UploadedAttachment = {
+      id: 'upload-1',
+      versionId: 'version-1',
+      sessionId: 'session-1',
+      name: 'history.png',
+      originalName: 'history.png',
+      path: 'upload-version:version-1',
+      mimeType: 'image/png',
+      size: bytes.length,
+      createdAt: '2026-09-01T00:00:00.000Z'
+    }
+    const owner = new AcpPromptContentOwner({
+      uploadRepository: {} as UploadRepository,
+      managedFileVersions: {
+        openLatest: vi.fn(async () => ({
+          ...lease,
+          logicalFile: {
+            id: 'upload-1',
+            projectId: 'project-1',
+            sessionId: 'session-1',
+            displayName: 'history.png'
+          },
+          version: {
+            id: 'version-1',
+            versionNumber: 1,
+            filename: 'history.png',
+            contentType: 'image/png',
+            checksum: 'a'.repeat(64),
+            createdAt: new Date('2026-09-01T00:00:00.000Z')
+          }
+        }))
+      } as never,
+      fileReferenceResolver: new FileReferenceResolver([])
+    })
+    const currentData = Buffer.from('current image').toString('base64')
+    for (const historyUploads of [
+      [],
+      Array.from({ length: scenario.includes('budget') ? 9 : 1 }, () => attachment)
+    ]) {
+      const prepared = await owner.prepare({
+        appSessionId: 'session-1',
+        projectId: 'project-1',
+        text: 'Analyze the new image',
+        currentImages: [{ mimeType: 'image/png', data: currentData, byteLength: 13 }],
+        historyImages: [],
+        historyUploads,
+        currentUploads: [],
+        references: [],
+        codexSkillInputs: [],
+        skillImportEnabled: false,
+        imageCompatibilityRelay: true
+      })
+      const relay = new ImageInputCompatibilityOwner({
+        captureTarget: async () => ({
+          frameworkId: 'opencode',
+          providerId: 'vision',
+          model: { kind: 'required', id: 'vision' },
+          reasoningEffort: 'default'
+        }),
+        runner: {
+          run: vi.fn(
+            async ({ images }: RestrictedInferenceRunInput): Promise<RestrictedInferenceResult> => {
+              if (scenario === 'current failure' && images?.[0].data === currentData)
+                throw new Error('current extraction failed')
+              if (scenario === 'historical failure' && images?.[0].data !== currentData)
+                throw new Error('historical extraction failed')
+              return {
+                text: JSON.stringify({
+                  summary:
+                    images?.[0].data === currentData ? 'Current image evidence' : 'Old image only',
+                  findings: [],
+                  transcription: scenario === 'evidence budget' ? 'x'.repeat(40_000) : '',
+                  regions: [],
+                  entities: [],
+                  relations: [],
+                  uncertainty: []
+                }),
+                frameworkId: 'opencode',
+                model: 'vision',
+                stopReason: 'end_turn'
+              }
+            }
+          )
+        }
+      })
+      try {
+        const blocks = contentBlocks(prepared.content).filter((block) => block.type === 'image')
+        expect(blocks.at(-1)).toMatchObject({ data: currentData })
+        expect(prepared.historyImageCount).toBe(historyUploads.length)
+        expect(prepared.imageSources).toEqual([
+          ...historyUploads.map(() => ({ kind: 'upload-version', uploadVersionId: 'version-1' })),
+          undefined
+        ])
+        if (scenario === 'current failure') {
+          await expect(relay.prepare({ ...prepared, supportsImageInput: false })).rejects.toThrow(
+            'current extraction failed'
+          )
+        } else {
+          const result = contentBlocks(
+            await relay.prepare({ ...prepared, supportsImageInput: false })
+          )
+          expect(result.at(-1)).toMatchObject({
+            type: 'text',
+            text: expect.stringContaining('Current image evidence')
+          })
+          if (historyUploads.length > 0) {
+            expect(JSON.stringify(result)).toContain('Historical image omitted')
+          }
+        }
+      } finally {
+        prepared.close()
+      }
+    }
+  }
+)
+
+it.each(['current', 'historical'] as const)(
+  'retains current inline images before native %s upload overflow',
+  async (origin) => {
+    const root = await createRoot()
+    const uploads = new UploadRepository(root)
+    const pendingUploads = await stageUploadFixtures(uploads, {
+      files: Array.from({ length: 9 }, (_, index) => ({
+        name: `upload-${index}.png`,
+        mimeType: 'image/png',
+        content: Buffer.alloc(2 * 1024 * 1024, index).toString('base64')
+      }))
+    })
+    const finalizedUploads = await uploads.finalizePendingSessionUploads(
+      'session-1',
+      pendingUploads,
+      'default-project'
+    )
+    const currentData = Buffer.alloc(MAX_ACP_MESSAGE_IMAGE_BYTES, 42).toString('base64')
+    const owner = new AcpPromptContentOwner({
+      uploadRepository: uploads,
+      fileReferenceResolver: createManagedFileReferenceResolver({ uploads }),
+      inlineImageBudgetBytes: 64 * 1024 * 1024
+    })
+    const prepared = await owner.prepare({
+      appSessionId: 'session-1',
+      projectId: 'default-project',
+      text: 'Inspect these images',
+      historyImages: [],
+      historyUploads: origin === 'historical' ? finalizedUploads : [],
+      currentUploads: origin === 'current' ? finalizedUploads : [],
+      currentImages: [
+        { mimeType: 'image/png', data: currentData, byteLength: MAX_ACP_MESSAGE_IMAGE_BYTES }
+      ],
+      references: [],
+      codexSkillInputs: [],
+      skillImportEnabled: false
+    })
+    try {
+      const blocks = contentBlocks(prepared.content)
+      expect(blocks.some((block) => block.type === 'image' && block.data === currentData)).toBe(
+        true
+      )
+      expect(blocks.some((block) => block.type === 'resource_link')).toBe(true)
+      expect(prepared.historyImageCount).toBe(origin === 'historical' ? 9 : 0)
+      expect(prepared.imageSources).toHaveLength(10)
+    } finally {
+      prepared.close()
+    }
+  }
+)
