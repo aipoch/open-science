@@ -234,6 +234,7 @@ export const WEB_INVOKE_CHANNELS = {
   'settings.getSettings': 'settings:get-settings',
   'settings.getSkillDetail': 'settings:get-skill-detail',
   'settings.getWsl2BashPreviewStatus': 'settings:get-wsl2-bash-preview-status',
+  'settings.getWslSetupStatus': 'settings:get-wsl-setup-status',
   'settings.importAgentHomeSkills': 'settings:import-agent-home-skills',
   'settings.importSkill': 'settings:import-skill',
   'settings.importSkillZip': 'settings:import-skill-zip',

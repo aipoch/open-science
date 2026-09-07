@@ -68,6 +68,7 @@ type CoreSettingsCommandStore = Pick<
   | 'getNotebookNetworkStatus'
   | 'getLocalShellRuntimePreference'
   | 'getWsl2BashPreviewStatus'
+  | 'getWslSetupStatus'
   | 'getGitHubTokenStatus'
   | 'getPreflight'
   | 'getSettingsView'
@@ -187,6 +188,11 @@ const settingsCoreApplicationCommands = Object.freeze({
     readonly [],
     StoreResult<'getWsl2BashPreviewStatus'>
   >('settings:get-wsl2-bash-preview-status'),
+  getWslSetupStatus: defineApplicationCommand<
+    'settings:get-wsl-setup-status',
+    readonly [],
+    StoreResult<'getWslSetupStatus'>
+  >('settings:get-wsl-setup-status'),
   getLocalShellRuntimePreference: defineApplicationCommand<
     'settings:get-local-shell-runtime-preference',
     readonly [],
@@ -425,6 +431,7 @@ const settingsCoreApplicationCommandGroup = defineApplicationCommandGroup('setti
   settingsCoreApplicationCommands.getNotebookNetworkStatus,
   settingsCoreApplicationCommands.getLocalShellRuntimePreference,
   settingsCoreApplicationCommands.getWsl2BashPreviewStatus,
+  settingsCoreApplicationCommands.getWslSetupStatus,
   settingsCoreApplicationCommands.getPreflight,
   settingsCoreApplicationCommands.getSettings,
   settingsCoreApplicationCommands.getSkillDetail,
@@ -532,6 +539,10 @@ const registerCoreSettingsApplicationCommands = (
       'settings:get-wsl2-bash-preview-status': ({ callerContext }) => {
         requireLocalCaller(callerContext, 'settings:get-wsl2-bash-preview-status')
         return dependencies.service.getWsl2BashPreviewStatus()
+      },
+      'settings:get-wsl-setup-status': ({ callerContext }) => {
+        requireLocalCaller(callerContext, 'settings:get-wsl-setup-status')
+        return dependencies.service.getWslSetupStatus()
       },
       'settings:get-preflight': () => dependencies.service.getPreflight(),
       'settings:get-settings': () => dependencies.snapshotCommits.readCurrentSnapshot(),

@@ -63,6 +63,7 @@ import {
 } from './codex-detect'
 import { detectNpmAvailable, runInstallWithFallback, type InstallTarget } from './claude-install'
 import { OPENCODE_INSTALL_TARGET } from './opencode-install'
+import { SettingsInstallCoordinator } from './settings-install-coordinator'
 import type { ClaudeRuntimeModelConfig } from './claude-config-provision'
 import { provisionAppClaudePrivateProfile } from './claude-config-provision'
 import { provisionClaudeRuntime, type ClaudeRuntimeAssets } from './claude-runtime-provisioner'
@@ -314,6 +315,7 @@ export type AgentRuntimeManagerOptions = {
     options: InstallManagedCodexOptions
   ) => Promise<ManagedCodexInstallOutcome>
   resolveCodexProxyEnvironment?: () => Promise<SystemProxyEnvironment | undefined>
+  installCoordinator?: SettingsInstallCoordinator
 }
 
 // Owns host runtime discovery, installation, executable preparation, and runtime-specific filesystem
@@ -332,10 +334,9 @@ export class AgentRuntimeManager {
   private readonly codexDetectDeps: CodexDetectDeps
   private readonly allocateOpenCodeUsagePort: () => Promise<number>
   private readonly executeClaudeProbe: ExecuteClaudeProbe
-  private activeInstallId: string | undefined
   private activeInstallAbort: AbortController | undefined
   private activeInstallCompletion: Promise<Error | undefined> | undefined
-  private installAdmissionHolders = 0
+  private readonly installCoordinator: SettingsInstallCoordinator
   private readonly shutdownAbort = new AbortController()
   private readonly activeDetections = new Set<Promise<unknown>>()
   private environmentCheckRuntimeProbe: ReusableRuntimeProbe | undefined
@@ -355,21 +356,15 @@ export class AgentRuntimeManager {
   private readonly resolveProxyEnvironment: () => Promise<SystemProxyEnvironment | undefined>
 
   hasActiveInstall(): boolean {
-    return this.activeInstallId !== undefined
+    return this.installCoordinator.getActiveId() !== undefined
   }
 
   getActiveInstallId(): string | undefined {
-    return this.activeInstallId
+    return this.installCoordinator.getActiveId()
   }
 
   holdInstallAdmission(): () => void {
-    this.installAdmissionHolders += 1
-    let released = false
-    return () => {
-      if (released) return
-      released = true
-      this.installAdmissionHolders -= 1
-    }
+    return this.installCoordinator.holdAdmission()
   }
 
   async dispose(): Promise<void> {
@@ -428,6 +423,7 @@ export class AgentRuntimeManager {
 
     this.allocateOpenCodeUsagePort = options.allocateOpenCodeUsagePort ?? allocateLoopbackPort
     this.executeClaudeProbe = options.executeClaudeProbe ?? executeClaudeProbe
+    this.installCoordinator = options.installCoordinator ?? new SettingsInstallCoordinator()
     this.installManagedClaudeImpl = options.installManagedClaudeImpl ?? installManagedClaude
     this.installManagedOpencodeImpl = options.installManagedOpencodeImpl ?? installManagedOpencode
     this.installManagedCodeBuddyImpl =
@@ -822,14 +818,14 @@ export class AgentRuntimeManager {
     if (this.shutdownAbort.signal.aborted) {
       return { installId, ok: false, error: 'Settings service is shutting down.' }
     }
-    if (this.activeInstallId !== undefined || this.installAdmissionHolders > 0) {
+    const lease = this.installCoordinator.tryAcquire(installId)
+    if (!lease) {
       return { installId, ok: false, error: 'Another install is already in progress.' }
     }
 
     const controller = new AbortController()
     const completion = Promise.withResolvers<Error | undefined>()
     let cleanupFailure: Error | undefined
-    this.activeInstallId = installId
     this.activeInstallAbort = controller
     this.activeInstallCompletion = completion.promise
     try {
@@ -837,11 +833,9 @@ export class AgentRuntimeManager {
         cleanupFailure = error
       })
     } finally {
-      if (this.activeInstallId === installId) {
-        this.activeInstallId = undefined
-        this.activeInstallAbort = undefined
-        this.activeInstallCompletion = undefined
-      }
+      this.activeInstallAbort = undefined
+      this.activeInstallCompletion = undefined
+      lease.release()
       completion.resolve(cleanupFailure)
     }
   }

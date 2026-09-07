@@ -83,6 +83,35 @@ export type WslPlatformInstallResult = Readonly<{
   snapshot: WslSetupSnapshot
 }>
 
+export type WslSetupOperationKind = 'install-platform' | 'install-recommended-distro'
+
+export type WslSetupOperationOutcome =
+  'completed' | 'restart-required' | 'cancelled' | 'failed' | 'interrupted' | 'blocked'
+
+export type WslSetupOperation =
+  | Readonly<{ state: 'idle' }>
+  | Readonly<{
+      state: 'running'
+      kind: WslSetupOperationKind
+      phase: 'installing' | 'verifying'
+      operationReference: string
+      startedAt: number
+    }>
+  | Readonly<{
+      state: 'finished'
+      kind: WslSetupOperationKind
+      outcome: WslSetupOperationOutcome
+      operationReference: string
+      startedAt: number
+      finishedAt: number
+    }>
+
+export type WslSetupStatus = Readonly<{
+  revision: number
+  snapshot?: WslSetupSnapshot
+  operation: WslSetupOperation
+}>
+
 export type WslSupportHandoff = Readonly<{
   errorCode: string
   supportReference: string

@@ -2,6 +2,7 @@ import { EventEmitter } from 'node:events'
 import { type spawn } from 'node:child_process'
 import { describe, expect, it, vi } from 'vitest'
 
+import { SettingsInstallCoordinator } from '../settings/settings-install-coordinator'
 import {
   RECOMMENDED_WSL_DISTRO,
   WSL_DISTRO_INSTALL_TIMEOUT_MS,
@@ -11,6 +12,7 @@ import {
   type WslPlatformInstaller,
   type WslTerminalLauncher
 } from './wsl-setup-owner'
+import type { WslSetupStatus } from '../../shared/wsl-setup'
 
 const result = (
   stdout = '',
@@ -84,6 +86,284 @@ describe('WslSetupOwner', () => {
       capabilities: {},
       versions: { wsl: 'unknown', distribution: 'unknown' },
       target: 'restore-wsl2-bash'
+    })
+  })
+
+  it('keeps an in-progress platform installation observable outside its original caller', async () => {
+    const installation = Promise.withResolvers<{ kind: 'uac-cancelled' }>()
+    const owner = makeOwner({
+      installer: { install: () => installation.promise },
+      workspacePath: 'C:\\science',
+      readSelection: async () => undefined,
+      writeSelection: async () => undefined,
+      operationReference: () => 'install1'
+    })
+
+    const completion = owner.installPlatform()
+
+    expect(owner.getStatus()).toMatchObject({
+      operation: {
+        state: 'running',
+        kind: 'install-platform',
+        phase: 'installing',
+        operationReference: 'install1'
+      }
+    })
+
+    installation.resolve({ kind: 'uac-cancelled' })
+    await completion
+  })
+
+  it('returns the live status after startup reconciliation has already completed', async () => {
+    const installation = Promise.withResolvers<{ kind: 'uac-cancelled' }>()
+    const journal = {
+      load: vi.fn(async () => undefined),
+      save: vi.fn(async () => undefined),
+      clear: vi.fn(async () => undefined)
+    }
+    const owner = makeOwner({
+      installer: { install: () => installation.promise },
+      operationJournal: journal,
+      workspacePath: 'C:\\science',
+      readSelection: async () => undefined,
+      writeSelection: async () => undefined,
+      operationReference: () => 'install1'
+    })
+
+    await owner.reconcileInterruptedOperation()
+    const completion = owner.installPlatform()
+    await vi.waitFor(() => expect(journal.save).toHaveBeenCalledOnce())
+
+    await expect(owner.reconcileInterruptedOperation()).resolves.toMatchObject({
+      operation: { state: 'running', operationReference: 'install1' }
+    })
+
+    installation.resolve({ kind: 'uac-cancelled' })
+    await completion
+  })
+
+  it('publishes durable status transitions to observers while installation continues', async () => {
+    const installation = Promise.withResolvers<{ kind: 'uac-cancelled' }>()
+    const statuses: WslSetupStatus[] = []
+    const owner = makeOwner({
+      installer: { install: () => installation.promise },
+      workspacePath: 'C:\\science',
+      readSelection: async () => undefined,
+      writeSelection: async () => undefined,
+      operationReference: () => 'install1',
+      onStatusChanged: (status) => statuses.push(status)
+    })
+
+    const completion = owner.installPlatform()
+    expect(statuses.at(-1)?.operation).toMatchObject({ state: 'running', phase: 'installing' })
+
+    installation.resolve({ kind: 'uac-cancelled' })
+    await completion
+    expect(statuses.at(-1)?.operation).toMatchObject({
+      state: 'finished',
+      outcome: 'cancelled',
+      operationReference: 'install1'
+    })
+    expect(statuses.at(-1)?.snapshot).toMatchObject({ errorCode: 'wsl_install_uac_cancelled' })
+  })
+
+  it('keeps a terminal installation result when an older probe finishes later', async () => {
+    const staleStatus = Promise.withResolvers<ReturnType<typeof result>>()
+    const installation = Promise.withResolvers<{ kind: 'uac-cancelled' }>()
+    const references = ['probe1', 'install1']
+    const owner = makeOwner({
+      runner: {
+        run: vi.fn(async (args) => (args[0] === '--status' ? staleStatus.promise : result()))
+      },
+      installer: { install: () => installation.promise },
+      workspacePath: 'C:\\science',
+      readSelection: async () => undefined,
+      writeSelection: async () => undefined,
+      operationReference: () => references.shift() ?? 'later'
+    })
+
+    const staleProbe = owner.probe()
+    const install = owner.installPlatform()
+    installation.resolve({ kind: 'uac-cancelled' })
+    await install
+    staleStatus.resolve(result('', 1, '', 'not-found'))
+
+    await expect(staleProbe).resolves.toMatchObject({
+      errorCode: 'wsl_install_uac_cancelled',
+      operationReference: 'install1'
+    })
+    expect(owner.getStatus().snapshot).toMatchObject({
+      errorCode: 'wsl_install_uac_cancelled',
+      operationReference: 'install1'
+    })
+  })
+
+  it('does not let optional activation metadata strand a completed installation', async () => {
+    const journal = {
+      load: vi.fn(async () => undefined),
+      save: vi.fn(async () => undefined),
+      clear: vi.fn(async () => undefined)
+    }
+    const owner = makeOwner({
+      installer: { install: async () => ({ kind: 'uac-cancelled' }) },
+      operationJournal: journal,
+      workspacePath: 'C:\\science',
+      readSelection: async () => undefined,
+      readActivation: async () => Promise.reject(new Error('settings unavailable')),
+      writeSelection: async () => undefined,
+      operationReference: () => 'install1'
+    })
+
+    await expect(owner.installPlatform()).resolves.toMatchObject({
+      outcome: 'uac-cancelled',
+      snapshot: { errorCode: 'wsl_install_uac_cancelled' }
+    })
+    expect(owner.getStatus().operation).toMatchObject({
+      state: 'finished',
+      outcome: 'cancelled',
+      operationReference: 'install1'
+    })
+    expect(journal.clear).toHaveBeenCalledOnce()
+  })
+
+  it('joins an in-progress platform installation instead of starting another one', async () => {
+    const installation = Promise.withResolvers<{ kind: 'uac-cancelled' }>()
+    const installer = { install: vi.fn(() => installation.promise) }
+    const owner = makeOwner({
+      installer,
+      workspacePath: 'C:\\science',
+      readSelection: async () => undefined,
+      writeSelection: async () => undefined,
+      operationReference: () => 'install1'
+    })
+
+    const firstCompletion = owner.installPlatform()
+    const joinedCompletion = owner.installPlatform()
+
+    expect(installer.install).toHaveBeenCalledOnce()
+    expect(owner.getStatus().operation).toMatchObject({
+      state: 'running',
+      operationReference: 'install1'
+    })
+
+    installation.resolve({ kind: 'uac-cancelled' })
+    await expect(Promise.all([firstCompletion, joinedCompletion])).resolves.toEqual([
+      expect.objectContaining({ operationReference: 'install1' }),
+      expect.objectContaining({ operationReference: 'install1' })
+    ])
+  })
+
+  it('does not start WSL setup while another Settings installation owns admission', async () => {
+    const installCoordinator = new SettingsInstallCoordinator()
+    const runtimeInstall = installCoordinator.tryAcquire('runtime-install')
+    const installer = { install: vi.fn() }
+    const owner = makeOwner({
+      installer,
+      installCoordinator,
+      workspacePath: 'C:\\science',
+      readSelection: async () => undefined,
+      writeSelection: async () => undefined,
+      operationReference: () => 'install1'
+    })
+
+    await expect(owner.installPlatform()).resolves.toMatchObject({
+      outcome: 'unknown',
+      snapshot: { state: 'failed', errorCode: 'wsl_install_conflict' }
+    })
+    expect(installer.install).not.toHaveBeenCalled()
+    runtimeInstall?.release()
+  })
+
+  it('does not start the platform installer when its crash marker cannot be persisted', async () => {
+    const failure = new Error('disk unavailable')
+    const journal = {
+      load: vi.fn(async () => undefined),
+      save: vi.fn(async () => Promise.reject(failure)),
+      clear: vi.fn()
+    }
+    const installer = { install: vi.fn() }
+    const owner = makeOwner({
+      installer,
+      operationJournal: journal,
+      workspacePath: 'C:\\science',
+      readSelection: async () => undefined,
+      writeSelection: async () => undefined,
+      operationReference: () => 'install1'
+    })
+
+    await expect(owner.installPlatform()).resolves.toMatchObject({
+      outcome: 'unknown',
+      snapshot: { state: 'failed', errorCode: 'wsl_install_journal_unavailable' }
+    })
+    expect(installer.install).not.toHaveBeenCalled()
+  })
+
+  it('surfaces a crash marker cleanup failure instead of reporting a reusable success', async () => {
+    const journal = {
+      load: vi.fn(async () => undefined),
+      save: vi.fn(async () => undefined),
+      clear: vi.fn(async () => Promise.reject(new Error('disk unavailable')))
+    }
+    const owner = makeOwner({
+      installer: { install: async () => ({ kind: 'exited', exitCode: 0 }) },
+      runner: makeRunner(result('Default Version: 2'), result(''), result('')),
+      operationJournal: journal,
+      workspacePath: 'C:\\science',
+      readSelection: async () => undefined,
+      writeSelection: async () => undefined,
+      operationReference: () => 'install1'
+    })
+
+    await expect(owner.installPlatform()).resolves.toMatchObject({
+      outcome: 'unknown',
+      snapshot: {
+        state: 'failed',
+        errorCode: 'wsl_install_journal_unavailable',
+        operationReference: 'install1'
+      }
+    })
+    expect(owner.getStatus()).toMatchObject({
+      operation: { state: 'finished', outcome: 'failed', operationReference: 'install1' },
+      snapshot: { state: 'failed', errorCode: 'wsl_install_journal_unavailable' }
+    })
+  })
+
+  it('moves a platform installation through verification into an observable terminal result', async () => {
+    const installation = Promise.withResolvers<{ kind: 'exited'; exitCode: number }>()
+    const statusCheck = Promise.withResolvers<ReturnType<typeof result>>()
+    const runner: WslCommandRunner = {
+      run: vi.fn(async (args) => (args[0] === '--status' ? statusCheck.promise : result()))
+    }
+    const owner = makeOwner({
+      installer: { install: () => installation.promise },
+      runner,
+      workspacePath: 'C:\\science',
+      readSelection: async () => undefined,
+      writeSelection: async () => undefined,
+      operationReference: () => 'install2'
+    })
+
+    const completion = owner.installPlatform()
+    installation.resolve({ kind: 'exited', exitCode: 0 })
+
+    await vi.waitFor(() => {
+      expect(owner.getStatus().operation).toMatchObject({
+        state: 'running',
+        phase: 'verifying'
+      })
+    })
+
+    statusCheck.resolve(result('Default Version: 2'))
+    await completion
+
+    expect(owner.getStatus()).toMatchObject({
+      snapshot: { state: 'distro-required', operationReference: 'install2' },
+      operation: {
+        state: 'finished',
+        kind: 'install-platform',
+        outcome: 'completed',
+        operationReference: 'install2'
+      }
     })
   })
 
@@ -298,10 +578,168 @@ describe('WslSetupOwner', () => {
       state: 'distro-required',
       distros: [{ name: 'Ubuntu-22.04', version: 2 }]
     })
+    const operation = owner.getStatus().operation
+    expect(operation.state).toBe('finished')
+    if (operation.state !== 'finished') throw new Error('Expected a finished install operation.')
+    expect(snapshot.operationReference).toBe(operation.operationReference)
     expect(runner.run).toHaveBeenCalledTimes(7)
     expect(JSON.stringify([...log.info.mock.calls, ...log.warn.mock.calls])).not.toContain(
       'Ubuntu-22.04'
     )
+  })
+
+  it('keeps one observable recommended-distro installation for concurrent callers', async () => {
+    const installation = Promise.withResolvers<ReturnType<typeof result>>()
+    const runner: WslCommandRunner = {
+      run: vi.fn(async (args) => {
+        if (args[0] === '--install') return installation.promise
+        if (args[0] === '--status') return result('Default Version: 2')
+        return result('')
+      })
+    }
+    const owner = makeOwner({
+      runner,
+      workspacePath: 'C:\\science',
+      readSelection: async () => undefined,
+      writeSelection: vi.fn(),
+      operationReference: () => 'distro1'
+    })
+
+    const firstCompletion = owner.installRecommendedDistro()
+    const joinedCompletion = owner.installRecommendedDistro()
+
+    await vi.waitFor(() => {
+      expect(owner.getStatus().operation).toMatchObject({
+        state: 'running',
+        kind: 'install-recommended-distro',
+        phase: 'installing',
+        operationReference: 'distro1'
+      })
+    })
+    expect(
+      vi.mocked(runner.run).mock.calls.filter(([args]) => args[0] === '--install')
+    ).toHaveLength(1)
+
+    installation.resolve(result('', 1, 'install failed'))
+    await Promise.all([firstCompletion, joinedCompletion])
+    expect(owner.getStatus().operation).toMatchObject({
+      state: 'finished',
+      kind: 'install-recommended-distro',
+      operationReference: 'distro1'
+    })
+  })
+
+  it('reconciles an interrupted distro install with read-only probes and never retries it', async () => {
+    const journal = {
+      load: vi.fn(async () => ({
+        kind: 'install-recommended-distro' as const,
+        operationReference: 'distro1',
+        startedAt: 1
+      })),
+      save: vi.fn(),
+      clear: vi.fn(async () => undefined)
+    }
+    const runner = makeRunner(result('Default Version: 2'), result(''), result(''))
+    const owner = makeOwner({
+      runner,
+      operationJournal: journal,
+      workspacePath: 'C:\\science',
+      readSelection: async () => undefined,
+      writeSelection: vi.fn()
+    })
+
+    await expect(owner.reconcileInterruptedOperation()).resolves.toMatchObject({
+      operation: {
+        state: 'finished',
+        kind: 'install-recommended-distro',
+        outcome: 'interrupted',
+        operationReference: 'distro1'
+      },
+      snapshot: { state: 'failed', errorCode: 'wsl_install_interrupted' }
+    })
+    expect(vi.mocked(runner.run).mock.calls.map(([args]) => args[0])).not.toContain('--install')
+    expect(journal.clear).not.toHaveBeenCalled()
+
+    await expect(owner.installRecommendedDistro()).resolves.toMatchObject({
+      state: 'failed',
+      errorCode: 'wsl_install_interrupted',
+      operationReference: 'distro1'
+    })
+    expect(journal.save).not.toHaveBeenCalled()
+    expect(vi.mocked(runner.run).mock.calls.map(([args]) => args[0])).not.toContain('--install')
+  })
+
+  it('clears an interrupted marker only after a later read-only probe confirms the install', async () => {
+    const journal = {
+      load: vi.fn(async () => ({
+        kind: 'install-recommended-distro' as const,
+        operationReference: 'distro1',
+        startedAt: 1
+      })),
+      save: vi.fn(),
+      clear: vi.fn(async () => undefined)
+    }
+    const runner = makeRunner(
+      result('Default Version: 2'),
+      result(''),
+      result(''),
+      result('Default Version: 2'),
+      result('Ubuntu-22.04'),
+      result('* Ubuntu-22.04 Stopped 2')
+    )
+    const owner = makeOwner({
+      runner,
+      operationJournal: journal,
+      workspacePath: 'C:\\science',
+      readSelection: async () => undefined,
+      writeSelection: vi.fn()
+    })
+
+    await expect(owner.reconcileInterruptedOperation()).resolves.toMatchObject({
+      operation: { state: 'finished', outcome: 'interrupted' }
+    })
+    expect(journal.clear).not.toHaveBeenCalled()
+
+    await expect(owner.probe()).resolves.toMatchObject({
+      state: 'distro-required',
+      distros: [{ name: 'Ubuntu-22.04', version: 2 }],
+      operationReference: 'distro1'
+    })
+    expect(owner.getStatus().operation).toMatchObject({
+      state: 'finished',
+      outcome: 'completed',
+      operationReference: 'distro1'
+    })
+    expect(journal.clear).toHaveBeenCalledOnce()
+    expect(vi.mocked(runner.run).mock.calls.map(([args]) => args[0])).not.toContain('--install')
+  })
+
+  it('fails closed when an existing crash marker cannot be read', async () => {
+    const journal = {
+      load: vi.fn(async () => Promise.reject(new Error('corrupt marker'))),
+      save: vi.fn(async () => undefined),
+      clear: vi.fn(async () => undefined)
+    }
+    const installer = { install: vi.fn() }
+    const owner = makeOwner({
+      installer,
+      operationJournal: journal,
+      workspacePath: 'C:\\science',
+      readSelection: async () => undefined,
+      writeSelection: async () => undefined,
+      operationReference: () => 'recovery1'
+    })
+
+    await expect(owner.reconcileInterruptedOperation()).resolves.toMatchObject({
+      snapshot: { state: 'failed', errorCode: 'wsl_install_journal_unavailable' }
+    })
+    await expect(owner.installPlatform()).resolves.toMatchObject({
+      outcome: 'unknown',
+      snapshot: { state: 'failed', errorCode: 'wsl_install_journal_unavailable' }
+    })
+    expect(installer.install).not.toHaveBeenCalled()
+    expect(journal.save).not.toHaveBeenCalled()
+    expect(journal.clear).not.toHaveBeenCalled()
   })
 
   it('gives distro download and registration more than the probe timeout', async () => {

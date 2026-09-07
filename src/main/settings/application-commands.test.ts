@@ -45,6 +45,7 @@ const expectedChannels = [
   'settings:get-notebook-network-status',
   'settings:get-local-shell-runtime-preference',
   'settings:get-wsl2-bash-preview-status',
+  'settings:get-wsl-setup-status',
   'settings:get-preflight',
   'settings:get-settings',
   'settings:get-skill-detail',

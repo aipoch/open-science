@@ -9,7 +9,7 @@ import {
   RefreshCw,
   SquareTerminal
 } from 'lucide-react'
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { Button } from '@/components/ui/button'
@@ -32,11 +32,12 @@ import {
   type SwitchToPowerShellResult,
   type UseWsl2BashResult,
   type Wsl2BashPreviewStatus,
-  type WslPlatformInstallResult,
   type WslReadiness,
+  type WslSetupOperation,
   type WslSetupSnapshot
 } from '../../../../shared/wsl-setup'
 import { SettingsField, SettingsSection } from './SettingsLayout'
+import { useWslSetupStatus } from './useWslSetupStatus'
 
 const statusCopy = (snapshot: WslSetupSnapshot, t: (key: string) => string): string => {
   switch (snapshot.state) {
@@ -80,6 +81,14 @@ const recoveryCopy = (
       )
     case 'wsl_terminal_open_failed':
       return t('The distribution terminal could not be opened. Check again, then retry.')
+    case 'wsl_install_interrupted':
+      return t(
+        'The previous installation was interrupted or could not be confirmed. Complete WSL setup in Windows, then check again.'
+      )
+    case 'wsl_install_journal_unavailable':
+      return t(
+        'Open Science could not safely record the installation. No new installation command was started.'
+      )
     case 'wsl_network_mode_unsupported':
       return t('Set WSL networkingMode to mirrored, shut down WSL, then check again.')
     case 'wsl_workspace_path_unsupported':
@@ -91,6 +100,34 @@ const recoveryCopy = (
     default:
       return undefined
   }
+}
+
+const errorTone = (errorCode: string | undefined): 'amber' | 'red' => {
+  switch (errorCode) {
+    case 'wsl_install_interrupted':
+    case 'wsl_install_journal_unavailable':
+    case 'wsl_distro_install_failed':
+    case 'wsl_distro_install_unconfirmed':
+    case 'wsl_workspace_path_unsupported':
+    case 'wsl_workspace_unreachable':
+    case 'wsl_workspace_not_local':
+    case 'wsl_workspace_not_ntfs':
+    case 'wsl_workspace_volume_unavailable':
+      return 'red'
+    default:
+      return 'amber'
+  }
+}
+
+const operationCopy = (
+  operation: WslSetupOperation,
+  t: (key: string, options?: Record<string, unknown>) => string
+): string => {
+  if (operation.state !== 'running') return t('Checking WSL2 readiness…')
+  if (operation.phase === 'verifying') return t('Verifying the current WSL2 setup…')
+  return operation.kind === 'install-platform'
+    ? t('Installing the WSL2 platform in Windows…')
+    : t('Installing {{distro}}…', { distro: RECOMMENDED_WSL_DISTRO })
 }
 
 export const WslLocalShellSection = ({
@@ -110,14 +147,17 @@ export const WslLocalShellSection = ({
   })
   const [distro, setDistro] = useState('')
   const [user, setUser] = useState('')
-  const [busy, setBusy] = useState(previewAvailable)
-  const [installResult, setInstallResult] = useState<WslPlatformInstallResult>()
+  const [actionBusy, setBusy] = useState(false)
   const [copied, setCopied] = useState(false)
   const [shellSwitchResult, setShellSwitchResult] = useState<
     | { runtime: 'powershell'; result: SwitchToPowerShellResult }
     | { runtime: 'wsl2-bash'; result: UseWsl2BashResult }
   >()
   const [shellSwitchFailed, setShellSwitchFailed] = useState<'powershell' | 'wsl2-bash'>()
+  const setupStatus = useWslSetupStatus(previewAvailable)
+  const installBusy = setupStatus?.operation.state === 'running'
+  const busy = actionBusy || installBusy || (previewAvailable && setupStatus === undefined)
+  const statusHydrated = useRef(false)
   const projects = useProjectStore((state) => state.projects)
   const chatProjectId = useMemo(
     () => resolveCustomizeProjectId(projects.filter((project) => project.archivedAt === undefined)),
@@ -149,7 +189,6 @@ export const WslLocalShellSection = ({
       try {
         const next = await window.api.settings.probeWslSetup()
         if (isActive()) {
-          setInstallResult(undefined)
           apply(next)
         }
       } catch {
@@ -169,13 +208,30 @@ export const WslLocalShellSection = ({
   )
 
   useEffect(() => {
-    if (!previewAvailable) return () => undefined
+    if (!previewAvailable || !setupStatus) return undefined
     let active = true
-    queueMicrotask(() => void probe(() => active))
+    queueMicrotask(() => {
+      if (!active) return
+      const firstStatus = !statusHydrated.current
+      statusHydrated.current = true
+      if (setupStatus.snapshot) {
+        setSnapshot(setupStatus.snapshot)
+        if (firstStatus) {
+          setDistro(
+            setupStatus.snapshot.selection?.distro ??
+              setupStatus.snapshot.distros.find((item) => item.version === 2)?.name ??
+              ''
+          )
+          setUser(setupStatus.snapshot.selection?.user ?? '')
+        }
+      } else if (firstStatus && setupStatus.operation.state === 'idle') {
+        void probe(() => active)
+      }
+    })
     return () => {
       active = false
     }
-  }, [previewAvailable, probe])
+  }, [previewAvailable, probe, setupStatus])
 
   const saveAndCheck = async (): Promise<void> => {
     setBusy(true)
@@ -194,10 +250,8 @@ export const WslLocalShellSection = ({
     setBusy(true)
     try {
       const result = await window.api.settings.installWslPlatform()
-      setInstallResult(result)
       apply(result.snapshot)
     } catch {
-      setInstallResult(undefined)
       setSnapshot((current) => ({
         ...current,
         state: 'not-installed',
@@ -224,11 +278,14 @@ export const WslLocalShellSection = ({
   }
 
   const installFailure =
-    installResult?.outcome === 'uac-cancelled' ||
-    installResult?.outcome === 'spawn-failed' ||
-    installResult?.outcome === 'unknown'
-      ? installResult.outcome
-      : undefined
+    snapshot.errorCode === 'wsl_install_uac_cancelled'
+      ? 'uac-cancelled'
+      : snapshot.errorCode === 'wsl_install_spawn_failed'
+        ? 'spawn-failed'
+        : snapshot.errorCode === 'wsl_install_unknown' ||
+            snapshot.errorCode === 'wsl_install_conflict'
+          ? 'unknown'
+          : undefined
 
   const openTerminal = async (withUser: boolean, requestedDistro?: string): Promise<void> => {
     const selectedDistro = requestedDistro ?? snapshot.selection?.distro ?? distro
@@ -366,6 +423,11 @@ export const WslLocalShellSection = ({
   }
 
   const supportAvailable = !busy && snapshot.state !== 'checking' && snapshot.state !== 'ready'
+  const isErrorSurface =
+    !busy &&
+    (installFailure !== undefined ||
+      snapshot.state === 'not-installed' ||
+      snapshot.state === 'failed')
   const candidateIsActive =
     snapshot.activeRuntime === 'wsl2-bash' &&
     snapshot.selection !== undefined &&
@@ -402,10 +464,14 @@ export const WslLocalShellSection = ({
         </Button>
       }
     >
-      <div className="rounded-lg border border-border bg-card p-4" data-testid="wsl-local-shell">
+      <div
+        className={isErrorSurface ? '' : 'rounded-lg border border-border bg-card p-4'}
+        data-testid="wsl-local-shell"
+      >
         {installFailure && !busy ? (
           <div className="flex justify-center">
             <ErrorNotice
+              role="alert"
               icon={CircleX}
               tone={installFailure === 'spawn-failed' ? 'red' : 'amber'}
               title={
@@ -423,6 +489,7 @@ export const WslLocalShellSection = ({
                   : t('No installation command will run again unless you choose to retry it.')
               }
               errorCode={`${snapshot.errorCode ?? 'wsl_install_unknown'} · ${snapshot.operationReference}`}
+              diagnosticsLabel={t('Diagnostics')}
               secondaryButton={{ label: t('Check again'), onClick: () => void probe() }}
               primaryButton={{
                 label: t('Try installation again'),
@@ -433,6 +500,7 @@ export const WslLocalShellSection = ({
         ) : snapshot.state === 'not-installed' && !busy ? (
           <div className="flex justify-center">
             <ErrorNotice
+              role="alert"
               icon={CircleX}
               tone="amber"
               title={statusCopy(snapshot, t)}
@@ -444,6 +512,7 @@ export const WslLocalShellSection = ({
                   ? `${snapshot.errorCode} · ${snapshot.operationReference}`
                   : undefined
               }
+              diagnosticsLabel={t('Diagnostics')}
               secondaryButton={{ label: t('Check again'), onClick: () => void probe() }}
               primaryButton={{ label: t('Install WSL2'), onClick: () => void installWslPlatform() }}
             />
@@ -451,8 +520,9 @@ export const WslLocalShellSection = ({
         ) : snapshot.state === 'failed' && !busy ? (
           <div className="flex justify-center">
             <ErrorNotice
+              role="alert"
               icon={CircleX}
-              tone="red"
+              tone={errorTone(snapshot.errorCode)}
               title={statusCopy(snapshot, t)}
               description={recoveryCopy(snapshot.errorCode, t)}
               errorCode={
@@ -460,6 +530,7 @@ export const WslLocalShellSection = ({
                   ? `${snapshot.errorCode} · ${snapshot.operationReference}`
                   : undefined
               }
+              diagnosticsLabel={t('Diagnostics')}
               primaryButton={{ label: t('Check again'), onClick: () => void probe() }}
             />
           </div>
@@ -475,11 +546,18 @@ export const WslLocalShellSection = ({
             ) : (
               <CircleX className="size-4 text-status-failure-foreground" aria-hidden="true" />
             )}
-            <span role="status">{statusCopy(snapshot, t)}</span>
+            <span role="status">
+              {installBusy && setupStatus
+                ? operationCopy(setupStatus.operation, t)
+                : statusCopy(snapshot, t)}
+            </span>
           </div>
         )}
 
-        {!busy && installResult?.outcome === 'completed' ? (
+        {!busy &&
+        setupStatus?.operation.state === 'finished' &&
+        setupStatus.operation.kind === 'install-platform' &&
+        setupStatus.operation.outcome === 'completed' ? (
           <p className="mt-3 text-sm text-status-success-foreground" role="status">
             {t(
               'The WSL2 platform installation completed. Continue with the next setup step below.'
@@ -487,7 +565,10 @@ export const WslLocalShellSection = ({
           </p>
         ) : null}
 
-        {!busy && installResult?.outcome === 'restart-required' ? (
+        {!busy &&
+        setupStatus?.operation.state === 'finished' &&
+        setupStatus.operation.kind === 'install-platform' &&
+        setupStatus.operation.outcome === 'restart-required' ? (
           <p className="mt-3 text-sm text-status-warning-foreground" role="status">
             {t('Restart Windows before continuing. Returning here will start a fresh check.')}
           </p>
@@ -678,12 +759,14 @@ export const WslLocalShellSection = ({
         {!busy && shellSwitchFailed ? (
           <div className="mt-4 flex justify-center">
             <ErrorNotice
+              role="alert"
               icon={CircleX}
               tone="red"
               title={t('Open Science could not finish changing the Shell runtime.')}
               description={t(
                 'Restart Open Science before running another Shell command, then try the switch again.'
               )}
+              diagnosticsLabel={t('Diagnostics')}
               primaryButton={{
                 label: t('Try switching again'),
                 onClick: () =>

@@ -93,6 +93,7 @@ import type {
   WslSelection,
   WslPlatformInstallResult,
   WslSetupSnapshot,
+  WslSetupStatus,
   WslSupportHandoff
 } from '../../shared/wsl-setup'
 import type { Wsl2BashPreviewStatus } from '../../shared/wsl-setup'
@@ -133,6 +134,7 @@ import type {
 import { DeviceCredentialStore, type ResolvedOAuthDeviceCredential } from './device-credentials'
 import { ProviderAccountsModule } from './provider-accounts'
 import { AgentRuntimeManager, type ExecuteClaudeProbe } from './agent-runtime-manager'
+import { SettingsInstallCoordinator } from './settings-install-coordinator'
 import {
   AgentBackendResolver,
   type AgentBackendResolutionContext,
@@ -172,6 +174,7 @@ export type UninstallResult = {
 export type SettingsServiceOptions = {
   repository?: SettingsRepository
   configRoot?: string
+  installCoordinator?: SettingsInstallCoordinator
   // Packaged main entry reused as the isolated stdio Skill runtime MCP child.
   skillRuntimeMcpEntryPath?: string
   log?: Logger
@@ -225,6 +228,8 @@ export type SettingsServiceOptions = {
   installNotebookNetwork?: () => Promise<{ cancelled: boolean }>
   removeNotebookNetwork?: () => Promise<{ cancelled: boolean }>
   wslSetup?: {
+    getStatus?(): WslSetupStatus
+    reconcileInterruptedOperation?(): Promise<WslSetupStatus>
     probe(): Promise<WslSetupSnapshot>
     installPlatform(): Promise<WslPlatformInstallResult>
     select(request: SelectWslProfileRequest): Promise<WslSetupSnapshot>
@@ -254,6 +259,7 @@ class SettingsService {
   private readonly connectors: ConnectorSettingsModule
   private readonly providers: ProviderAccountsModule
   private readonly runtimeManager: AgentRuntimeManager
+  private readonly installCoordinator: SettingsInstallCoordinator
   private readonly backendResolver: AgentBackendResolver
   private readonly scenarioModels: ScenarioModelOwner
   private readonly configRoot: string
@@ -276,15 +282,15 @@ class SettingsService {
   private skillDeletionGuard?: (skillId: string) => Promise<void>
 
   hasActiveInstall(): boolean {
-    return this.runtimeManager.hasActiveInstall()
+    return this.installCoordinator.getActiveId() !== undefined
   }
 
   getActiveInstallId(): string | undefined {
-    return this.runtimeManager.getActiveInstallId()
+    return this.installCoordinator.getActiveId()
   }
 
   holdInstallAdmission(): () => void {
-    return this.runtimeManager.holdInstallAdmission()
+    return this.installCoordinator.holdAdmission()
   }
 
   async dispose(): Promise<void> {
@@ -299,6 +305,7 @@ class SettingsService {
 
   constructor(options: SettingsServiceOptions = {}) {
     this.configRoot = options.configRoot ?? resolveConfigRoot()
+    this.installCoordinator = options.installCoordinator ?? new SettingsInstallCoordinator()
     this.repository = options.repository ?? new SettingsRepository(this.configRoot)
     this.networkProxy = new NetworkProxySettingsOwner({
       repository: this.repository,
@@ -357,6 +364,7 @@ class SettingsService {
       userClaudeDir: this.userClaudeDir,
       skills: this.skills,
       connectors: this.connectors,
+      installCoordinator: this.installCoordinator,
       allocateSettingsIdSequence,
       detectDeps: options.detectDeps,
       opencodeDetectDeps: options.opencodeDetectDeps,
@@ -519,6 +527,16 @@ class SettingsService {
     this.requireWsl2Preview()
     if (!this.wslSetup) throw new Error('WSL setup is unavailable.')
     return this.wslSetup.probe()
+  }
+
+  async getWslSetupStatus(): Promise<WslSetupStatus> {
+    this.requireWsl2Preview()
+    if (!this.wslSetup) throw new Error('WSL setup is unavailable.')
+    if (this.wslSetup.reconcileInterruptedOperation) {
+      return this.wslSetup.reconcileInterruptedOperation()
+    }
+    if (this.wslSetup.getStatus) return this.wslSetup.getStatus()
+    throw new Error('WSL setup status is unavailable.')
   }
 
   installWslPlatform(): Promise<WslPlatformInstallResult> {

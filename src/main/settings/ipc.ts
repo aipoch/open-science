@@ -345,6 +345,7 @@ const registerSettingsIpcHandlers = ({
   ipcMainHandle('settings:get-package-mirror', () => service.getPackageMirror())
   ipcMainHandle('settings:get-notebook-network-status', () => service.getNotebookNetworkStatus())
   ipcMainHandle('settings:get-wsl2-bash-preview-status', () => service.getWsl2BashPreviewStatus())
+  ipcMainHandle('settings:get-wsl-setup-status', () => service.getWslSetupStatus())
   ipcMainHandle('settings:get-local-shell-runtime-preference', () =>
     service.getLocalShellRuntimePreference()
   )

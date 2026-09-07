@@ -10,13 +10,22 @@ import {
   type WslReadiness,
   type WslSelection,
   type WslPlatformInstallResult,
+  type WslSetupOperation,
+  type WslSetupOperationKind,
+  type WslSetupOperationOutcome,
   type WslSetupSnapshot,
+  type WslSetupStatus,
   type WslSetupState,
   type WslSupportHandoff
 } from '../../shared/wsl-setup'
 import { createLogger } from '../logger'
+import { SettingsInstallCoordinator } from '../settings/settings-install-coordinator'
 import { resolveWindowsPowerShellExecutable } from '../windows-powershell'
 import type { WindowsVolumeProbeResult } from './windows-volume-probe'
+import type {
+  WslSetupOperationJournal,
+  WslSetupOperationRecord
+} from './wsl-setup-operation-journal'
 
 export type WslCommandResult = Readonly<{
   stdout: string
@@ -55,9 +64,14 @@ type WslSetupOwnerOptions = Readonly<{
     }>
   >
   writeSelection(selection: WslSelection): Promise<unknown>
+  installCoordinator?: SettingsInstallCoordinator
+  operationJournal?: WslSetupOperationJournal
+  onStatusChanged?(status: WslSetupStatus): void
   operationReference?: () => string
   log?: Pick<ReturnType<typeof createLogger>, 'info' | 'warn'>
 }>
+
+type WslActivation = Awaited<ReturnType<NonNullable<WslSetupOwnerOptions['readActivation']>>>
 
 export interface WslTerminalLauncher {
   open(args: readonly string[]): Promise<void>
@@ -232,127 +246,459 @@ export class WslSetupOwner {
   private readonly installer: WslPlatformInstaller
   private readonly terminal: WslTerminalLauncher
   private readonly log: Pick<ReturnType<typeof createLogger>, 'info' | 'warn'>
+  private readonly installCoordinator: SettingsInstallCoordinator
   private latestSnapshot: WslSetupSnapshot | undefined
+  private operation: WslSetupOperation = Object.freeze({ state: 'idle' })
+  private revision = 0
+  private activePlatformInstall: Promise<WslPlatformInstallResult> | undefined
+  private activeRecommendedDistroInstall: Promise<WslSetupSnapshot> | undefined
+  private reconciliation: Promise<void> | undefined
+  private recoveryBlocked = false
+  private recoveryRecord: WslSetupOperationRecord | undefined
+  private readonly inProcessOperationReferences = new Set<string>()
 
   constructor(private readonly options: WslSetupOwnerOptions) {
     this.runner = options.runner ?? executeWsl
     this.installer = options.installer ?? elevatedWslPlatformInstaller
     this.terminal = options.terminal ?? openWslTerminal
     this.log = options.log ?? createLogger('wsl-setup')
+    this.installCoordinator = options.installCoordinator ?? new SettingsInstallCoordinator()
   }
 
-  async installPlatform(): Promise<WslPlatformInstallResult> {
+  getStatus(): WslSetupStatus {
+    return Object.freeze({
+      revision: this.revision,
+      ...(this.latestSnapshot ? { snapshot: this.latestSnapshot } : {}),
+      operation: this.operation
+    })
+  }
+
+  reconcileInterruptedOperation(): Promise<WslSetupStatus> {
+    if (!this.options.operationJournal) return Promise.resolve(this.getStatus())
+    this.reconciliation ??= this.runInterruptedOperationReconciliation()
+    return this.reconciliation.then(() => this.getStatus())
+  }
+
+  private async runInterruptedOperationReconciliation(): Promise<void> {
+    let record: WslSetupOperationRecord | undefined
+    try {
+      record = await this.options.operationJournal?.load()
+    } catch (error) {
+      this.log.warn('wsl setup operation journal could not be read', { error })
+      this.recoveryBlocked = true
+      this.recoveryRecord = undefined
+      this.latestSnapshot = setupSnapshot('failed', this.reference(), [], {
+        errorCode: 'wsl_install_journal_unavailable'
+      })
+      this.statusChanged()
+      return
+    }
+    if (!record || this.inProcessOperationReferences.has(record.operationReference)) {
+      if (!record) this.recoveryBlocked = false
+      return
+    }
+
+    this.recoveryBlocked = true
+    this.recoveryRecord = record
+    await this.reconcileOperationRecord(record)
+  }
+
+  private async reconcileOperationRecord(record: WslSetupOperationRecord): Promise<void> {
+    let snapshot: WslSetupSnapshot
+    try {
+      snapshot = await this.runProbe(record.operationReference)
+    } catch {
+      snapshot = setupSnapshot('failed', record.operationReference, [], {
+        errorCode: 'wsl_install_interrupted'
+      })
+    }
+    const confirmed =
+      record.kind === 'install-platform'
+        ? snapshot.state !== 'not-installed' && snapshot.state !== 'failed'
+        : snapshot.state === 'restart-required' ||
+          snapshot.distros.some((distro) => distro.name === RECOMMENDED_WSL_DISTRO)
+    if (!confirmed) {
+      snapshot = {
+        ...snapshot,
+        state: 'failed',
+        errorCode: 'wsl_install_interrupted',
+        operationReference: record.operationReference
+      }
+    }
+    this.latestSnapshot = await this.withActivation(snapshot)
+    if (!confirmed) {
+      this.finishOperation(record.kind, record.operationReference, record.startedAt, 'interrupted')
+      return
+    }
+
+    try {
+      await this.options.operationJournal?.clear()
+      this.recoveryBlocked = false
+      this.recoveryRecord = undefined
+      this.finishOperation(
+        record.kind,
+        record.operationReference,
+        record.startedAt,
+        snapshot.state === 'restart-required' ? 'restart-required' : 'completed'
+      )
+    } catch (error) {
+      this.log.warn('wsl setup operation journal could not be cleared', { error })
+      this.latestSnapshot = setupSnapshot('failed', record.operationReference, snapshot.distros, {
+        errorCode: 'wsl_install_journal_unavailable'
+      })
+      this.finishOperation(record.kind, record.operationReference, record.startedAt, 'failed')
+    }
+  }
+
+  installPlatform(): Promise<WslPlatformInstallResult> {
+    if (this.activePlatformInstall) return this.activePlatformInstall
+    const completion = this.runPlatformInstall()
+    this.activePlatformInstall = completion
+    const clear = (): void => {
+      if (this.activePlatformInstall === completion) this.activePlatformInstall = undefined
+    }
+    completion.then(clear, clear)
+    return completion
+  }
+
+  private async runPlatformInstall(): Promise<WslPlatformInstallResult> {
+    if (this.options.operationJournal) await this.reconcileInterruptedOperation()
+    if (this.recoveryBlocked) {
+      const snapshot =
+        this.latestSnapshot ??
+        setupSnapshot('failed', this.reference(), [], {
+          errorCode: 'wsl_install_journal_unavailable'
+        })
+      return {
+        outcome: 'unknown',
+        ownership: WSL_PLATFORM_OWNERSHIP,
+        operationReference: snapshot.operationReference,
+        snapshot
+      }
+    }
     const startedAt = Date.now()
     const operationReference = this.reference()
-    this.log.info('wsl install started', {
-      operationReference,
-      ownership: WSL_PLATFORM_OWNERSHIP
-    })
-    let execution: WslPlatformInstallExecution
-    try {
-      execution = await this.installer.install()
-    } catch {
-      execution = { kind: 'spawn-failed' }
-    }
-
-    let outcome: WslPlatformInstallResult['outcome']
-    let snapshot: WslSetupSnapshot
-    if (execution.kind === 'uac-cancelled') {
-      outcome = 'uac-cancelled'
-      snapshot = setupSnapshot('not-installed', operationReference, [], {
-        errorCode: 'wsl_install_uac_cancelled'
-      })
-    } else if (execution.kind === 'spawn-failed') {
-      outcome = 'spawn-failed'
-      snapshot = setupSnapshot('not-installed', operationReference, [], {
-        errorCode: 'wsl_install_spawn_failed'
-      })
-    } else {
-      try {
-        snapshot = await this.runProbe(operationReference)
-      } catch {
-        snapshot = setupSnapshot('failed', operationReference, [], {
-          errorCode: 'wsl_install_unknown'
-        })
+    const lease = this.installCoordinator.tryAcquire(`wsl-platform:${operationReference}`)
+    if (!lease) {
+      const snapshot = await this.withActivation(
+        setupSnapshot('failed', operationReference, [], { errorCode: 'wsl_install_conflict' })
+      )
+      this.latestSnapshot = snapshot
+      this.statusChanged()
+      return {
+        outcome: 'unknown',
+        ownership: WSL_PLATFORM_OWNERSHIP,
+        operationReference,
+        snapshot
       }
-      if (snapshot.state === 'restart-required' || execution.exitCode === 3010) {
-        outcome = 'restart-required'
-        snapshot = setupSnapshot('restart-required', operationReference, snapshot.distros, {
-          errorCode: 'wsl_restart_required'
+    }
+    this.inProcessOperationReferences.add(operationReference)
+    let journalSaved = false
+    try {
+      this.operation = Object.freeze({
+        state: 'running',
+        kind: 'install-platform',
+        phase: 'installing',
+        operationReference,
+        startedAt
+      })
+      this.statusChanged()
+      if (this.options.operationJournal) {
+        try {
+          await this.options.operationJournal.save({
+            kind: 'install-platform',
+            operationReference,
+            startedAt
+          })
+          journalSaved = true
+        } catch (error) {
+          this.log.warn('wsl setup operation journal could not be written', { error })
+          const snapshot = await this.withActivation(
+            setupSnapshot('failed', operationReference, [], {
+              errorCode: 'wsl_install_journal_unavailable'
+            })
+          )
+          this.latestSnapshot = snapshot
+          this.finishOperation('install-platform', operationReference, startedAt, 'failed')
+          return {
+            outcome: 'unknown',
+            ownership: WSL_PLATFORM_OWNERSHIP,
+            operationReference,
+            snapshot
+          }
+        }
+      }
+      this.log.info('wsl install started', {
+        operationReference,
+        ownership: WSL_PLATFORM_OWNERSHIP
+      })
+      let execution: WslPlatformInstallExecution
+      try {
+        execution = await this.installer.install()
+      } catch {
+        execution = { kind: 'spawn-failed' }
+      }
+
+      let outcome: WslPlatformInstallResult['outcome']
+      let snapshot: WslSetupSnapshot
+      if (execution.kind === 'uac-cancelled') {
+        outcome = 'uac-cancelled'
+        snapshot = setupSnapshot('not-installed', operationReference, [], {
+          errorCode: 'wsl_install_uac_cancelled'
+        })
+      } else if (execution.kind === 'spawn-failed') {
+        outcome = 'spawn-failed'
+        snapshot = setupSnapshot('not-installed', operationReference, [], {
+          errorCode: 'wsl_install_spawn_failed'
         })
       } else {
-        outcome =
-          snapshot.state !== 'not-installed' && snapshot.state !== 'failed'
-            ? 'completed'
-            : 'unknown'
-        if (outcome === 'unknown') snapshot = { ...snapshot, errorCode: 'wsl_install_unknown' }
+        this.operation = Object.freeze({
+          state: 'running',
+          kind: 'install-platform',
+          phase: 'verifying',
+          operationReference,
+          startedAt
+        })
+        this.statusChanged()
+        try {
+          snapshot = await this.runProbe(operationReference)
+        } catch {
+          snapshot = setupSnapshot('failed', operationReference, [], {
+            errorCode: 'wsl_install_unknown'
+          })
+        }
+        if (snapshot.state === 'restart-required' || execution.exitCode === 3010) {
+          outcome = 'restart-required'
+          snapshot = setupSnapshot('restart-required', operationReference, snapshot.distros, {
+            errorCode: 'wsl_restart_required'
+          })
+        } else {
+          outcome =
+            snapshot.state !== 'not-installed' && snapshot.state !== 'failed'
+              ? 'completed'
+              : 'unknown'
+          if (outcome === 'unknown') snapshot = { ...snapshot, errorCode: 'wsl_install_unknown' }
+        }
       }
-    }
 
-    const fields = {
-      operationReference,
-      ownership: WSL_PLATFORM_OWNERSHIP,
-      outcome,
-      state: snapshot.state,
-      errorCode: snapshot.errorCode,
-      durationMs: Date.now() - startedAt
-    }
-    if (outcome === 'completed') this.log.info('wsl install completed', fields)
-    else this.log.warn('wsl install completed', fields)
-    snapshot = await this.withActivation(snapshot)
-    this.latestSnapshot = snapshot
-    return {
-      outcome,
-      ownership: WSL_PLATFORM_OWNERSHIP,
-      operationReference,
-      snapshot
+      const fields = {
+        operationReference,
+        ownership: WSL_PLATFORM_OWNERSHIP,
+        outcome,
+        state: snapshot.state,
+        errorCode: snapshot.errorCode,
+        durationMs: Date.now() - startedAt
+      }
+      if (outcome === 'completed') this.log.info('wsl install completed', fields)
+      else this.log.warn('wsl install completed', fields)
+      snapshot = await this.withActivation(snapshot)
+      if (journalSaved) {
+        journalSaved = false
+        const cleared = await this.clearOperationJournal({
+          kind: 'install-platform',
+          operationReference,
+          startedAt
+        })
+        if (!cleared) {
+          outcome = 'unknown'
+          snapshot = setupSnapshot('failed', operationReference, snapshot.distros, {
+            errorCode: 'wsl_install_journal_unavailable'
+          })
+        }
+      }
+      this.latestSnapshot = snapshot
+      this.finishOperation(
+        'install-platform',
+        operationReference,
+        startedAt,
+        this.platformOperationOutcome(outcome)
+      )
+      return {
+        outcome,
+        ownership: WSL_PLATFORM_OWNERSHIP,
+        operationReference,
+        snapshot
+      }
+    } finally {
+      if (journalSaved) {
+        journalSaved = false
+        const record = { kind: 'install-platform' as const, operationReference, startedAt }
+        if (!(await this.clearOperationJournal(record))) {
+          this.latestSnapshot = setupSnapshot('failed', operationReference, [], {
+            errorCode: 'wsl_install_journal_unavailable'
+          })
+          this.finishOperation('install-platform', operationReference, startedAt, 'failed')
+        }
+      }
+      this.inProcessOperationReferences.delete(operationReference)
+      lease.release()
     }
   }
 
-  async installRecommendedDistro(): Promise<WslSetupSnapshot> {
-    const current = await this.probe()
-    if (current.state !== 'distro-required' || current.distros.length > 0) {
-      return this.remember(
-        setupSnapshot('failed', this.reference(), current.distros, {
-          selection: current.selection,
-          readiness: current.readiness,
-          errorCode: 'wsl_distro_install_not_allowed'
+  installRecommendedDistro(): Promise<WslSetupSnapshot> {
+    if (this.activeRecommendedDistroInstall) return this.activeRecommendedDistroInstall
+    const completion = this.runRecommendedDistroInstall()
+    this.activeRecommendedDistroInstall = completion
+    const clear = (): void => {
+      if (this.activeRecommendedDistroInstall === completion) {
+        this.activeRecommendedDistroInstall = undefined
+      }
+    }
+    completion.then(clear, clear)
+    return completion
+  }
+
+  private async runRecommendedDistroInstall(): Promise<WslSetupSnapshot> {
+    if (this.options.operationJournal) await this.reconcileInterruptedOperation()
+    if (this.recoveryBlocked) {
+      return (
+        this.latestSnapshot ??
+        setupSnapshot('failed', this.reference(), [], {
+          errorCode: 'wsl_install_journal_unavailable'
         })
       )
     }
-
     const operationReference = this.reference()
     const startedAt = Date.now()
-    this.log.info('wsl distro install started', { operationReference })
-    const result = await this.runner.run(
-      ['--install', '--distribution', RECOMMENDED_WSL_DISTRO, '--no-launch'],
-      { timeoutMs: WSL_DISTRO_INSTALL_TIMEOUT_MS }
-    )
-    const fresh = await this.probe()
-    if (
-      fresh.state === 'restart-required' ||
-      fresh.distros.some((item) => item.name === RECOMMENDED_WSL_DISTRO)
-    ) {
-      this.log.info('wsl distro install completed', {
+    const lease = this.installCoordinator.tryAcquire(`wsl-distro:${operationReference}`)
+    if (!lease) {
+      return this.remember(
+        setupSnapshot('failed', operationReference, [], { errorCode: 'wsl_install_conflict' })
+      )
+    }
+    this.inProcessOperationReferences.add(operationReference)
+    let journalSaved = false
+    this.operation = Object.freeze({
+      state: 'running',
+      kind: 'install-recommended-distro',
+      phase: 'verifying',
+      operationReference,
+      startedAt
+    })
+    this.statusChanged()
+    let terminalOutcome: WslSetupOperationOutcome = 'failed'
+    const settle = async (
+      candidate: WslSetupSnapshot,
+      outcome: WslSetupOperationOutcome
+    ): Promise<WslSetupSnapshot> => {
+      terminalOutcome = outcome
+      let snapshot = candidate
+      if (journalSaved) {
+        journalSaved = false
+        const cleared = await this.clearOperationJournal({
+          kind: 'install-recommended-distro',
+          operationReference,
+          startedAt
+        })
+        if (!cleared) {
+          terminalOutcome = 'failed'
+          snapshot = setupSnapshot('failed', operationReference, candidate.distros, {
+            errorCode: 'wsl_install_journal_unavailable'
+          })
+        }
+      }
+      return this.remember(snapshot)
+    }
+    try {
+      const current = await this.probeForOperation(operationReference)
+      if (current.state !== 'distro-required' || current.distros.length > 0) {
+        terminalOutcome = 'blocked'
+        return this.remember(
+          setupSnapshot('failed', operationReference, current.distros, {
+            selection: current.selection,
+            readiness: current.readiness,
+            errorCode: 'wsl_distro_install_not_allowed'
+          })
+        )
+      }
+
+      this.operation = Object.freeze({
+        state: 'running',
+        kind: 'install-recommended-distro',
+        phase: 'installing',
         operationReference,
-        outcome: fresh.state,
+        startedAt
+      })
+      this.statusChanged()
+      try {
+        await this.options.operationJournal?.save({
+          kind: 'install-recommended-distro',
+          operationReference,
+          startedAt
+        })
+        journalSaved = this.options.operationJournal !== undefined
+      } catch (error) {
+        this.log.warn('wsl setup operation journal could not be written', { error })
+        return this.remember(
+          setupSnapshot('failed', operationReference, [], {
+            errorCode: 'wsl_install_journal_unavailable'
+          })
+        )
+      }
+      this.log.info('wsl distro install started', { operationReference })
+      const result = await this.runner.run(
+        ['--install', '--distribution', RECOMMENDED_WSL_DISTRO, '--no-launch'],
+        { timeoutMs: WSL_DISTRO_INSTALL_TIMEOUT_MS }
+      )
+      this.operation = Object.freeze({
+        state: 'running',
+        kind: 'install-recommended-distro',
+        phase: 'verifying',
+        operationReference,
+        startedAt
+      })
+      this.statusChanged()
+      const fresh = await this.probeForOperation(operationReference)
+      if (
+        fresh.state === 'restart-required' ||
+        fresh.distros.some((item) => item.name === RECOMMENDED_WSL_DISTRO)
+      ) {
+        const outcome = fresh.state === 'restart-required' ? 'restart-required' : 'completed'
+        this.log.info('wsl distro install completed', {
+          operationReference,
+          outcome: fresh.state,
+          durationMs: Date.now() - startedAt
+        })
+        return settle(fresh, outcome)
+      }
+      this.log.warn('wsl distro install completed', {
+        operationReference,
+        outcome: 'failed',
+        errorCode:
+          result.exitCode === 0 ? 'wsl_distro_install_unconfirmed' : 'wsl_distro_install_failed',
         durationMs: Date.now() - startedAt
       })
-      return fresh
+      return settle(
+        setupSnapshot('failed', operationReference, fresh.distros, {
+          errorCode:
+            result.exitCode === 0 ? 'wsl_distro_install_unconfirmed' : 'wsl_distro_install_failed'
+        }),
+        'failed'
+      )
+    } finally {
+      if (journalSaved) {
+        journalSaved = false
+        const record = {
+          kind: 'install-recommended-distro' as const,
+          operationReference,
+          startedAt
+        }
+        if (!(await this.clearOperationJournal(record))) {
+          terminalOutcome = 'failed'
+          this.latestSnapshot = setupSnapshot('failed', operationReference, [], {
+            errorCode: 'wsl_install_journal_unavailable'
+          })
+        }
+      }
+      this.inProcessOperationReferences.delete(operationReference)
+      this.finishOperation(
+        'install-recommended-distro',
+        operationReference,
+        startedAt,
+        terminalOutcome
+      )
+      lease.release()
     }
-    this.log.warn('wsl distro install completed', {
-      operationReference,
-      outcome: 'failed',
-      errorCode:
-        result.exitCode === 0 ? 'wsl_distro_install_unconfirmed' : 'wsl_distro_install_failed',
-      durationMs: Date.now() - startedAt
-    })
-    return this.remember(
-      setupSnapshot('failed', operationReference, fresh.distros, {
-        errorCode:
-          result.exitCode === 0 ? 'wsl_distro_install_unconfirmed' : 'wsl_distro_install_failed'
-      })
-    )
   }
 
   async openTerminal(request: OpenWslTerminalRequest): Promise<WslSetupSnapshot> {
@@ -419,23 +765,30 @@ export class WslSetupOwner {
       const snapshot = setupSnapshot('failed', this.reference(), [], {
         errorCode: 'wsl_selection_invalid'
       })
-      this.latestSnapshot = snapshot
-      return snapshot
+      return this.remember(snapshot)
     }
     await this.options.writeSelection(selection)
     return this.probe(selection)
   }
 
   async probe(selectionOverride?: WslSelection): Promise<WslSetupSnapshot> {
+    if (this.options.operationJournal && this.recoveryBlocked) {
+      if (this.recoveryRecord) {
+        await this.reconcileOperationRecord(this.recoveryRecord)
+      } else {
+        this.reconciliation = undefined
+        await this.reconcileInterruptedOperation()
+      }
+      if (this.latestSnapshot) return this.latestSnapshot
+    }
+    if (this.operation.state === 'running') {
+      return this.latestSnapshot ?? setupSnapshot('checking', this.operation.operationReference)
+    }
     const startedAt = Date.now()
     const operationReference = this.reference()
+    const startingRevision = this.revision
     this.log.info('wsl probe started', { operationReference })
-    let snapshot: WslSetupSnapshot
-    try {
-      snapshot = await this.runProbe(operationReference, selectionOverride)
-    } catch {
-      snapshot = setupSnapshot('failed', operationReference, [], { errorCode: 'wsl_probe_failed' })
-    }
+    const snapshot = await this.probeForOperation(operationReference, selectionOverride)
     const fields = {
       operationReference,
       state: snapshot.state,
@@ -444,8 +797,10 @@ export class WslSetupOwner {
     }
     if (snapshot.state === 'ready') this.log.info('wsl probe completed', fields)
     else this.log.warn('wsl probe completed', fields)
-    snapshot = await this.withActivation(snapshot)
+    if (this.revision !== startingRevision) return this.latestSnapshot ?? snapshot
     this.latestSnapshot = snapshot
+    this.operation = Object.freeze({ state: 'idle' })
+    this.statusChanged()
     return snapshot
   }
 
@@ -762,11 +1117,85 @@ export class WslSetupOwner {
 
   private remember(snapshot: WslSetupSnapshot): WslSetupSnapshot {
     this.latestSnapshot = snapshot
+    this.statusChanged()
     return snapshot
   }
 
+  private async probeForOperation(
+    operationReference: string,
+    selectionOverride?: WslSelection
+  ): Promise<WslSetupSnapshot> {
+    let snapshot: WslSetupSnapshot
+    try {
+      snapshot = await this.runProbe(operationReference, selectionOverride)
+    } catch {
+      snapshot = setupSnapshot('failed', operationReference, [], { errorCode: 'wsl_probe_failed' })
+    }
+    return this.withActivation(snapshot)
+  }
+
+  private finishOperation(
+    kind: WslSetupOperationKind,
+    operationReference: string,
+    startedAt: number,
+    outcome: WslSetupOperationOutcome
+  ): void {
+    this.operation = Object.freeze({
+      state: 'finished',
+      kind,
+      outcome,
+      operationReference,
+      startedAt,
+      finishedAt: Date.now()
+    })
+    this.statusChanged()
+  }
+
+  private async clearOperationJournal(record: WslSetupOperationRecord): Promise<boolean> {
+    try {
+      await this.options.operationJournal?.clear()
+      return true
+    } catch (error) {
+      this.log.warn('wsl setup operation journal could not be cleared', { error })
+      this.recoveryBlocked = true
+      this.recoveryRecord = record
+      return false
+    }
+  }
+
+  private platformOperationOutcome(
+    outcome: WslPlatformInstallResult['outcome']
+  ): WslSetupOperationOutcome {
+    switch (outcome) {
+      case 'completed':
+        return 'completed'
+      case 'restart-required':
+        return 'restart-required'
+      case 'uac-cancelled':
+        return 'cancelled'
+      case 'spawn-failed':
+      case 'unknown':
+        return 'failed'
+    }
+  }
+
+  private statusChanged(): void {
+    this.revision += 1
+    try {
+      this.options.onStatusChanged?.(this.getStatus())
+    } catch (error) {
+      this.log.warn('wsl status observer failed', { error })
+    }
+  }
+
   private async withActivation(snapshot: WslSetupSnapshot): Promise<WslSetupSnapshot> {
-    const activation = await this.options.readActivation?.()
+    let activation: WslActivation | undefined
+    try {
+      activation = await this.options.readActivation?.()
+    } catch (error) {
+      this.log.warn('wsl activation metadata could not be read', { error })
+      return snapshot
+    }
     if (!activation) return snapshot
     return Object.freeze({
       ...snapshot,

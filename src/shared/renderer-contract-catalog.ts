@@ -54,6 +54,7 @@ import type {
   WslPlatformInstallResult,
   Wsl2BashPreviewStatus,
   WslSetupSnapshot,
+  WslSetupStatus,
   WslSupportHandoff
 } from './wsl-setup'
 import type { SourcePreviewLoadState } from './source-preview'
@@ -1942,6 +1943,9 @@ export const RENDERER_API_CONTRACT = Object.freeze({
     'settings',
     ['settings:changed', EVENT]
   ),
+  'settings.onWslSetupChanged': callable<
+    (listener: (status: WslSetupStatus) => void) => () => void
+  >()('settings', ['settings:wsl-setup-changed', ELECTRON_EVENT]),
   'settings.onConnectorApprovalRequest': callable<
     (listener: AcpListener<ConnectorApprovalRequest>) => RemoveListener
   >()('settings', ['connectors:approval-request', EVENT]),
@@ -2086,6 +2090,10 @@ export const RENDERER_API_CONTRACT = Object.freeze({
     'settings',
     ['settings:get-wsl2-bash-preview-status', LOCAL]
   ),
+  'settings.getWslSetupStatus': callable<() => Promise<WslSetupStatus>>()('settings', [
+    'settings:get-wsl-setup-status',
+    LOCAL
+  ]),
   'settings.getLocalShellRuntimePreference': callable<
     () => Promise<LocalShellRuntimePreference | undefined>
   >()('settings', ['settings:get-local-shell-runtime-preference', LOCAL]),

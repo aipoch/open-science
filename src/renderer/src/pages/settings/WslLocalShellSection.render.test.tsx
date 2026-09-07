@@ -4,6 +4,7 @@ import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { Project } from '../../../../shared/projects'
+import type { WslPlatformInstallResult } from '../../../../shared/wsl-setup'
 import { createInitialProjectState, useProjectStore } from '@/stores/project-store'
 import { useNavigationStore } from '@/stores/navigation-store'
 import { useSettingsStore } from '@/stores/settings-store'
@@ -19,6 +20,8 @@ let openTerminal: ReturnType<typeof vi.fn>
 let createSupportHandoff: ReturnType<typeof vi.fn>
 let switchToPowerShell: ReturnType<typeof vi.fn>
 let useWsl2Bash: ReturnType<typeof vi.fn>
+let getWslSetupStatus: ReturnType<typeof vi.fn>
+let onWslSetupChanged: ReturnType<typeof vi.fn>
 
 const project = (id: string, updatedAt: number): Project => ({
   id,
@@ -98,8 +101,12 @@ beforeEach(() => {
     selection: { distro: 'Ubuntu-24.04', user: 'scientist' },
     appliesTo: 'subsequent-executions'
   })
+  getWslSetupStatus = vi.fn().mockResolvedValue({ revision: 0, operation: { state: 'idle' } })
+  onWslSetupChanged = vi.fn(() => () => undefined)
   ;(window as unknown as { api: unknown }).api = {
     settings: {
+      getWslSetupStatus,
+      onWslSetupChanged,
       probeWslSetup: probe,
       selectWslProfile: select,
       installWslPlatform: install,
@@ -374,29 +381,30 @@ describe('WslLocalShellSection', () => {
     expect(container.textContent).toContain('keep using PowerShell')
   })
 
-  it('starts a fresh probe when Settings is reopened instead of retaining install success', async () => {
-    probe
-      .mockResolvedValueOnce({
+  it('restores an in-progress installation when Settings is reopened without probing or starting it again', async () => {
+    const installation = Promise.withResolvers<WslPlatformInstallResult>()
+    let statusListener: ((status: unknown) => void) | undefined
+    const runningStatus = {
+      revision: 2,
+      snapshot: {
         state: 'not-installed',
         distros: [],
         errorCode: 'wsl_not_installed',
         operationReference: 'before01'
-      })
-      .mockResolvedValueOnce({
-        state: 'not-installed',
-        distros: [],
-        errorCode: 'wsl_not_installed',
-        operationReference: 'after002'
-      })
-    install.mockResolvedValue({
-      outcome: 'completed',
-      operationReference: 'install4',
-      snapshot: {
-        state: 'distro-required',
-        distros: [],
-        errorCode: 'wsl_distro_missing',
-        operationReference: 'install4'
+      },
+      operation: {
+        state: 'running',
+        kind: 'install-platform',
+        phase: 'installing',
+        operationReference: 'install4',
+        startedAt: 1
       }
+    }
+    probe.mockResolvedValue(runningStatus.snapshot)
+    install.mockReturnValue(installation.promise)
+    onWslSetupChanged.mockImplementation((listener) => {
+      statusListener = listener
+      return () => undefined
     })
 
     await act(async () => root.render(<WslLocalShellSection />))
@@ -404,19 +412,42 @@ describe('WslLocalShellSection', () => {
     const installButton = [...container.querySelectorAll('button')].find((button) =>
       button.textContent?.includes('Install WSL2')
     )
-    await act(async () => installButton?.click())
-    await flush()
-    expect(container.textContent).toContain('platform installation completed')
+    act(() => installButton?.click())
+    act(() => statusListener?.(runningStatus))
+    expect(container.textContent).toContain('Installing the WSL2 platform in Windows')
 
     act(() => root.unmount())
     root = createRoot(container)
+    getWslSetupStatus.mockResolvedValue(runningStatus)
     await act(async () => root.render(<WslLocalShellSection />))
     await flush()
 
-    expect(probe).toHaveBeenCalledTimes(2)
+    expect(probe).toHaveBeenCalledOnce()
     expect(install).toHaveBeenCalledOnce()
-    expect(container.textContent).not.toContain('platform installation completed')
-    expect(container.textContent).toContain('wsl_not_installed · after002')
+    expect(container.textContent).toContain('Installing the WSL2 platform in Windows')
+    expect(container.textContent).not.toContain('Install WSL2')
+
+    act(() =>
+      statusListener?.({
+        revision: 3,
+        snapshot: {
+          state: 'not-installed',
+          distros: [],
+          errorCode: 'wsl_install_uac_cancelled',
+          operationReference: 'install4'
+        },
+        operation: {
+          state: 'finished',
+          kind: 'install-platform',
+          outcome: 'cancelled',
+          operationReference: 'install4',
+          startedAt: 1,
+          finishedAt: 2
+        }
+      })
+    )
+    await flush()
+    expect(container.textContent).toContain('installation was cancelled')
   })
 
   it('selects an existing WSL2 distro and exact user, then shows every readiness result', async () => {
@@ -463,6 +494,25 @@ describe('WslLocalShellSection', () => {
       'Move the Open Science data folder to a local NTFS drive'
     )
     expect(container.textContent).toContain('Not checked')
+    expect(container.querySelector('[role="alert"]')).not.toBeNull()
+    expect(container.querySelector('details')?.open).toBe(false)
+  })
+
+  it.each([
+    ['wsl_root_user', 'warning'],
+    ['wsl_install_interrupted', 'failure']
+  ] as const)('uses the semantic ErrorNotice tone for %s', async (errorCode, tone) => {
+    probe.mockResolvedValue({
+      state: 'failed',
+      distros: [],
+      errorCode,
+      operationReference: 'a1b2c3d4'
+    })
+    await act(async () => root.render(<WslLocalShellSection />))
+    await flush()
+
+    const notice = container.querySelector('[role="alert"]')
+    expect(notice?.parentElement?.querySelector(`.text-status-${tone}-foreground`)).not.toBeNull()
   })
 
   it('uses named Settings status tokens for passed, failed, and unchecked readiness icons', async () => {

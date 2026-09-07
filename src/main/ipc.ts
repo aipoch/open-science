@@ -307,8 +307,10 @@ import { registerLocalFsIpcHandlers } from './local-fs/ipc'
 import { GrantedLocalRootsRepository } from './local-fs/granted-roots-repository'
 import { LocalFsService } from './local-fs/service'
 import { SettingsService } from './settings/service'
+import { SettingsInstallCoordinator } from './settings/settings-install-coordinator'
 import { SettingsRepository } from './settings/repository'
 import { WslSetupOwner } from './wsl/wsl-setup-owner'
+import { FileWslSetupOperationJournal } from './wsl/wsl-setup-operation-journal'
 import { initializeWsl2BashPreview, wsl2BashPreviewStatus } from './wsl/wsl2-preview-gate'
 import { runPackagedWsl2RestartCertification } from './wsl/wsl2-packaged-restart-certification'
 import { resolveConfiguredShellRuntimeBinding } from './notebook/configured-shell-runtime'
@@ -571,6 +573,7 @@ const createApplicationModules = async (
     packaged: app.isPackaged,
     resourcesPath: process.resourcesPath
   })
+  const settingsInstallCoordinator = new SettingsInstallCoordinator()
   const wslSetup = new WslSetupOwner({
     // Managed workspaces, handoff data, and caches live below this local NTFS mount root. The
     // execution adapter will still validate each invocation's concrete authorized paths.
@@ -584,7 +587,10 @@ const createApplicationModules = async (
         selection: settings.activatedWslSelection
       }
     },
-    writeSelection: (selection) => settingsRepository.setWslSelection(selection)
+    writeSelection: (selection) => settingsRepository.setWslSelection(selection),
+    installCoordinator: settingsInstallCoordinator,
+    operationJournal: new FileWslSetupOperationJournal(resolveConfigRoot()),
+    onStatusChanged: (status) => applicationEvents.publish('settings:wsl-setup-changed', status)
   })
   const networkProxyRuntime = new NetworkProxyRuntime({
     setProxy: (config) => session.defaultSession.setProxy(config)
@@ -692,6 +698,7 @@ const createApplicationModules = async (
   const settingsService = await modules.add(undefined, () => {
     const capability = new SettingsService({
       repository: settingsRepository,
+      installCoordinator: settingsInstallCoordinator,
       skillRuntimeMcpEntryPath: mainEntryPath,
       openAlexFetch: netFetchStandard,
       applyNetworkProxy: async (settings) => {

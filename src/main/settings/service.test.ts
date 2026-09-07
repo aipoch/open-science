@@ -32,6 +32,7 @@ import type { SystemProxyEnvironment } from './system-proxy'
 import type { AgentBackendResolutionContext } from './backend-resolver'
 import type { Logger } from '../logger'
 import type { SettingsServiceOptions } from './service'
+import { SettingsInstallCoordinator } from './settings-install-coordinator'
 
 // Reversible fake safeStorage so provider keys can be encrypted/decrypted without an OS keychain.
 vi.mock('electron', () => ({
@@ -201,6 +202,7 @@ const createService = (
     userAgentsDir?: string
     userSkills?: UserSkillRepositoryType
     log?: Logger
+    installCoordinator?: SettingsInstallCoordinator
     wslSetup?: SettingsServiceOptions['wslSetup']
     wsl2PreviewStatus?: SettingsServiceOptions['wsl2PreviewStatus']
   } = {}
@@ -291,6 +293,7 @@ const createService = (
     claudeIsolatedAuth: options.claudeIsolatedAuth as any,
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     claudeSharedAuth: options.claudeSharedAuth as any,
+    installCoordinator: options.installCoordinator,
     wslSetup: options.wslSetup,
     wsl2PreviewStatus:
       options.wsl2PreviewStatus ?? (() => ({ available: true, reason: 'available' }))
@@ -4834,6 +4837,18 @@ describe('installClaude (app-managed source)', () => {
 
     expect(service.hasActiveInstall()).toBe(false)
     expect(service.getActiveInstallId()).toBeUndefined()
+  })
+
+  it('reports installations owned by another Settings capability through the shared coordinator', () => {
+    const installCoordinator = new SettingsInstallCoordinator()
+    const service = createService(undefined, { installCoordinator })
+    const lease = installCoordinator.tryAcquire('wsl-platform:install1')
+
+    expect(service.hasActiveInstall()).toBe(true)
+    expect(service.getActiveInstallId()).toBe('wsl-platform:install1')
+
+    lease?.release()
+    expect(service.hasActiveInstall()).toBe(false)
   })
 
   it('aborts and drains an active runtime install during dispose', async () => {
