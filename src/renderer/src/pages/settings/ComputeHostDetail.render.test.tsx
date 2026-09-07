@@ -1,4 +1,6 @@
 // @vitest-environment jsdom
+import { setI18nLocale } from '@/i18n'
+import { useLocaleStore } from '@/stores/locale-store'
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -1387,4 +1389,41 @@ it('keeps the draft and reloads a merge base after a details conflict', async ()
   expect(section.textContent).toContain('other writer')
   await click('Save')
   expect(saveDetails).toHaveBeenLastCalledWith('ssh:biowulf', 'my draft', 'other writer')
+})
+
+// Exercise live app-language changes while Intl retains the host's default locale.
+it('updates metadata dates with the interface language on an unchanged host', async () => {
+  const timestamp = '2026-09-02T12:00:00.000Z'
+  const options: Intl.DateTimeFormatOptions = { dateStyle: 'medium', timeStyle: 'short' }
+  const hostLocale = new Intl.DateTimeFormat().resolvedOptions().locale
+  useComputeStore.setState({
+    hosts: [
+      {
+        ...passwordHost(),
+        authentication: { ...passwordHost().authentication!, lastVerifiedAt: Date.parse(timestamp) }
+      }
+    ]
+  })
+  await act(async () => root.render(<ComputeHostDetail providerId="ssh:biowulf" />))
+  try {
+    for (const locale of ['en', 'zh-Hans', 'zh-Hant', 'de'] as const) {
+      await act(async () => {
+        setI18nLocale(locale)
+        useLocaleStore.setState({ locale })
+      })
+      const expected = new Intl.DateTimeFormat(locale, options).format(new Date(timestamp))
+      expect(document.body.textContent).toContain(expected)
+      expect(new Intl.DateTimeFormat().resolvedOptions().locale).toBe(hostLocale)
+      if (locale === 'zh-Hans') {
+        expect(expected).not.toBe(
+          new Intl.DateTimeFormat('en-US', options).format(new Date(timestamp))
+        )
+      }
+    }
+  } finally {
+    await act(async () => {
+      setI18nLocale('en')
+      useLocaleStore.setState({ locale: 'en' })
+    })
+  }
 })

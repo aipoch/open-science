@@ -493,6 +493,32 @@ afterEach(() => {
 })
 
 describe('ArtifactProvenancePanel', () => {
+  it.each([1, 2])('renders the English package count for %i installed packages', async (count) => {
+    const snapshot = provenance()
+    const environment = snapshot.evidence!.environment as { packages: unknown[] }
+    environment.packages = environment.packages.slice(0, count)
+    getVersionProvenance.mockResolvedValue(snapshot)
+    await act(async () => root.unmount())
+    root = createRoot(container)
+    await act(async () =>
+      root.render(
+        <ArtifactProvenancePanel
+          item={item}
+          projectId="project-1"
+          onClose={vi.fn()}
+          initialTab="environment"
+        />
+      )
+    )
+    await flush()
+    const capture = [...container.querySelectorAll('dt')].find(
+      (node) => node.textContent === 'Capture'
+    )
+    expect(capture?.nextElementSibling?.textContent).toBe(
+      `partial · ${count} package${count === 1 ? '' : 's'}`
+    )
+  })
+
   it('navigates to the previous Artifact version outside the loaded history page', async () => {
     act(() => root.unmount())
     container.replaceChildren()

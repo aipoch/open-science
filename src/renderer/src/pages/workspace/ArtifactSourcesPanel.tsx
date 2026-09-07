@@ -2,6 +2,7 @@
 import { Check, Eye, LoaderCircle, SlidersHorizontal } from 'lucide-react'
 import { useEffect, useState, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
+import { useDateTimeFormat } from '@/hooks/useDateTimeFormat'
 
 import type {
   ArtifactLiteratureManifest,
@@ -50,6 +51,7 @@ const ArtifactSourcesPanel = ({
   }
 }): React.JSX.Element => {
   const { t } = useTranslation()
+  const formatDate = useDateTimeFormat()
   const [selectedReference, setSelectedReference] = useState<
     ArtifactLiteratureReference | undefined
   >()
@@ -281,10 +283,7 @@ const ArtifactSourcesPanel = ({
                 defaultValue_one: '{{count}} reference'
               })}
               {' · '}
-              {new Intl.DateTimeFormat(undefined, {
-                dateStyle: 'medium',
-                timeStyle: 'short'
-              }).format(new Date(literature.corpus.capturedAt))}
+              {formatDate(literature.corpus.capturedAt, 'dateTime')}
             </span>
           </div>
           <ul className="mt-2 space-y-1 text-xs text-text-300">

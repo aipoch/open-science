@@ -1,5 +1,7 @@
 // @vitest-environment jsdom
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { setI18nLocale } from '@/i18n'
+import { useLocaleStore } from '@/stores/locale-store'
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { ArtifactLiteratureManifest } from '../../../../shared/artifact-literature'
@@ -303,4 +305,33 @@ describe('ArtifactSourcesPanel', () => {
     resolveSave({ mode: 'save', versionId: 'version-2', versionNumber: 2 })
     expect(await screen.findByText('Saved as version 2.')).not.toBeNull()
   })
+})
+
+// Exercise live app-language changes while Intl retains the host's default locale.
+it('updates metadata dates with the interface language on an unchanged host', async () => {
+  const timestamp = '2026-09-02T12:00:00.000Z'
+  const options: Intl.DateTimeFormatOptions = { dateStyle: 'medium', timeStyle: 'short' }
+  const hostLocale = new Intl.DateTimeFormat().resolvedOptions().locale
+  render(<ArtifactSourcesPanel literature={literature} />)
+  try {
+    for (const locale of ['en', 'zh-Hans', 'zh-Hant', 'de'] as const) {
+      await act(async () => {
+        setI18nLocale(locale)
+        useLocaleStore.setState({ locale })
+      })
+      const expected = new Intl.DateTimeFormat(locale, options).format(new Date(timestamp))
+      expect(document.body.textContent).toContain(expected)
+      expect(new Intl.DateTimeFormat().resolvedOptions().locale).toBe(hostLocale)
+      if (locale === 'zh-Hans') {
+        expect(expected).not.toBe(
+          new Intl.DateTimeFormat('en-US', options).format(new Date(timestamp))
+        )
+      }
+    }
+  } finally {
+    await act(async () => {
+      setI18nLocale('en')
+      useLocaleStore.setState({ locale: 'en' })
+    })
+  }
 })
