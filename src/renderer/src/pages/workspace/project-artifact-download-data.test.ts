@@ -17,13 +17,10 @@ const file = (id: string, source: ProjectFileItem['source'] = 'artifact'): Proje
 })
 
 describe('Project Artifact download data', () => {
-  it('loads every page of the flat all-files collection', async () => {
+  it('reads every project export member from one snapshot', async () => {
     const firstPage = Array.from({ length: 100 }, (_, index) => file(`file-${index}`))
     const lastPage = [file('file-100'), file('upload-1', 'upload')]
-    const listFiles = vi
-      .fn()
-      .mockResolvedValueOnce({ items: firstPage, nextCursor: 'page-2', totalCount: 102 })
-      .mockResolvedValueOnce({ items: lastPage, totalCount: 102 })
+    const readExportFiles = vi.fn().mockResolvedValue([...firstPage, ...lastPage])
     const getOverview = vi.fn().mockResolvedValue({
       totalCount: 102,
       uploadCount: 1,
@@ -34,20 +31,10 @@ describe('Project Artifact download data', () => {
     const repairIndex = vi.fn()
 
     await expect(
-      listAllProjectFiles({ getOverview, listFiles, repairIndex, projectId: 'project-1' })
+      listAllProjectFiles({ getOverview, readExportFiles, repairIndex, projectId: 'project-1' })
     ).resolves.toEqual([...firstPage, ...lastPage])
     expect(repairIndex).not.toHaveBeenCalled()
-    expect(listFiles).toHaveBeenNthCalledWith(1, {
-      projectId: 'project-1',
-      collection: { kind: 'all' },
-      limit: 100
-    })
-    expect(listFiles).toHaveBeenNthCalledWith(2, {
-      projectId: 'project-1',
-      collection: { kind: 'all' },
-      cursor: 'page-2',
-      limit: 100
-    })
+    expect(readExportFiles).toHaveBeenCalledExactlyOnceWith({ projectId: 'project-1' })
   })
 
   it('repairs an incomplete Project Files index before listing', async () => {
@@ -68,10 +55,10 @@ describe('Project Artifact download data', () => {
         isIndexComplete: true
       })
     const repairIndex = vi.fn().mockResolvedValue(undefined)
-    const listFiles = vi.fn().mockResolvedValue({ items: [file('file-1')], totalCount: 1 })
+    const readExportFiles = vi.fn().mockResolvedValue([file('file-1')])
 
     await expect(
-      listAllProjectFiles({ getOverview, listFiles, repairIndex, projectId: 'project-1' })
+      listAllProjectFiles({ getOverview, readExportFiles, repairIndex, projectId: 'project-1' })
     ).resolves.toEqual([file('file-1')])
     expect(repairIndex).toHaveBeenCalledWith({ projectId: 'project-1' })
     expect(getOverview).toHaveBeenCalledTimes(2)
@@ -87,11 +74,11 @@ describe('Project Artifact download data', () => {
     }
     const getOverview = vi.fn().mockResolvedValue(incomplete)
     const repairIndex = vi.fn().mockResolvedValue(undefined)
-    const listFiles = vi.fn()
+    const readExportFiles = vi.fn()
 
     await expect(
-      listAllProjectFiles({ getOverview, listFiles, repairIndex, projectId: 'project-1' })
+      listAllProjectFiles({ getOverview, readExportFiles, repairIndex, projectId: 'project-1' })
     ).rejects.toThrow('Some Project Files could not be indexed yet.')
-    expect(listFiles).not.toHaveBeenCalled()
+    expect(readExportFiles).not.toHaveBeenCalled()
   })
 })

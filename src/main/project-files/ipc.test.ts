@@ -60,6 +60,7 @@ describe('project files IPC handlers', () => {
     }
     const repository = {
       getOverview: vi.fn().mockResolvedValue(overview),
+      readExportFiles: vi.fn().mockResolvedValue([]),
       listFiles: vi.fn().mockResolvedValue(filePage),
       resolveFile: vi.fn().mockResolvedValue(resolvedFile),
       listArtifactGroups: vi.fn().mockResolvedValue(groupPage),
@@ -116,6 +117,7 @@ describe('project files IPC handlers', () => {
   it('routes an explicit index repair through the session coordinator', async () => {
     const repository = {
       getOverview: vi.fn(),
+      readExportFiles: vi.fn().mockResolvedValue([]),
       listFiles: vi.fn(),
       resolveFile: vi.fn(),
       listArtifactGroups: vi.fn(),
@@ -136,6 +138,7 @@ describe('project files IPC handlers', () => {
     const recoveryFailure = new Error('another Project deletion is incomplete')
     const repository = {
       getOverview: vi.fn(),
+      readExportFiles: vi.fn().mockResolvedValue([]),
       listFiles: vi.fn(),
       resolveFile: vi.fn(),
       listArtifactGroups: vi.fn(),
@@ -167,6 +170,7 @@ describe('project files IPC handlers', () => {
           isIndexComplete: true
         }
       }),
+      readExportFiles: vi.fn().mockResolvedValue([]),
       listFiles: vi.fn(async () => {
         order.push('files')
         return { items: [], totalCount: 0 }
@@ -265,6 +269,7 @@ describe('registerProjectFilesIpcHandlers', () => {
         artifactGroupCount: 0,
         isIndexComplete: true
       }),
+      readExportFiles: vi.fn().mockResolvedValue([]),
       listFiles: vi.fn().mockResolvedValue({ items: [], totalCount: 0 }),
       resolveFile: vi.fn().mockResolvedValue(undefined),
       listArtifactGroups: vi.fn().mockResolvedValue({ items: [], totalCount: 0 }),
@@ -286,6 +291,7 @@ describe('registerProjectFilesIpcHandlers', () => {
 
     expect(handlers.has('project-files:get-overview')).toBe(true)
     expect(handlers.has('project-files:list-files')).toBe(true)
+    expect(handlers.has('project-files:read-export-files')).toBe(true)
     expect(handlers.has('project-files:resolve-file')).toBe(true)
     expect(handlers.has('project-files:list-artifact-groups')).toBe(true)
     expect(handlers.has('project-files:search-artifacts')).toBe(true)
@@ -302,6 +308,7 @@ describe('registerProjectFilesIpcHandlers', () => {
     }
     const injected: ProjectFilesHandlers = {
       getOverview: vi.fn().mockResolvedValue(overview),
+      readExportFiles: vi.fn().mockResolvedValue([]),
       listFiles: vi.fn(),
       resolveFile: vi.fn(),
       listArtifactGroups: vi.fn(),
@@ -329,6 +336,7 @@ describe('registerProjectFilesIpcHandlers', () => {
         artifactGroupCount: 0,
         isIndexComplete: true
       }),
+      readExportFiles: vi.fn().mockResolvedValue([]),
       listFiles: vi.fn(),
       resolveFile: vi.fn(),
       listArtifactGroups: vi.fn(),
@@ -362,6 +370,7 @@ describe('registerProjectFilesIpcHandlers', () => {
           isIndexComplete: true
         }
       }),
+      readExportFiles: vi.fn().mockResolvedValue([]),
       listFiles: vi.fn(),
       resolveFile: vi.fn(),
       listArtifactGroups: vi.fn(),
@@ -388,6 +397,7 @@ describe('registerProjectFilesIpcHandlers', () => {
     const order: string[] = []
     const localRepository: ProjectFilesQueryRepository = {
       getOverview: vi.fn(),
+      readExportFiles: vi.fn().mockResolvedValue([]),
       listFiles: vi.fn(async () => {
         order.push('files')
         return { items: [], totalCount: 0 }
@@ -418,10 +428,36 @@ describe('registerProjectFilesIpcHandlers', () => {
     expect(localRepository.listFiles).toHaveBeenCalledWith(filesRequest)
   })
 
+  it('gates export snapshots on project recovery and forwards the exact scope', async () => {
+    registerProjectFilesIpcHandlers(repository, repairBackend, recoveryBackend)
+    const request = { projectId: 'project-1', sessionId: 'session-1' }
+    let resolveRecovery!: () => void
+    vi.mocked(recoveryBackend.waitForProjectOperations).mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          resolveRecovery = resolve
+        })
+    )
+    const pending = invoke('project-files:read-export-files', request)
+    expect(repository.readExportFiles).not.toHaveBeenCalled()
+    resolveRecovery()
+    await expect(pending).resolves.toEqual([])
+    expect(repository.readExportFiles).toHaveBeenCalledExactlyOnceWith(request)
+    expect(recoveryBackend.waitForProjectOperations).toHaveBeenCalledWith(['project-1'])
+    vi.mocked(recoveryBackend.waitForProjectOperations).mockRejectedValueOnce(
+      new Error('recovery failed')
+    )
+    await expect(invoke('project-files:read-export-files', request)).rejects.toThrow(
+      'recovery failed'
+    )
+    expect(repository.readExportFiles).toHaveBeenCalledTimes(1)
+  })
+
   it('list-artifact-groups handler waits for deletion recovery before listing groups', async () => {
     const order: string[] = []
     const localRepository: ProjectFilesQueryRepository = {
       getOverview: vi.fn(),
+      readExportFiles: vi.fn().mockResolvedValue([]),
       listFiles: vi.fn(),
       resolveFile: vi.fn(),
       listArtifactGroups: vi.fn(async () => {
@@ -452,6 +488,7 @@ describe('registerProjectFilesIpcHandlers', () => {
     const order: string[] = []
     const localRepository: ProjectFilesQueryRepository = {
       getOverview: vi.fn(),
+      readExportFiles: vi.fn().mockResolvedValue([]),
       listFiles: vi.fn(),
       resolveFile: vi.fn(),
       listArtifactGroups: vi.fn(),

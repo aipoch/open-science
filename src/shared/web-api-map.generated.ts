@@ -145,6 +145,7 @@ export const WEB_INVOKE_CHANNELS = {
   'projectFiles.getOverview': 'project-files:get-overview',
   'projectFiles.listArtifactGroups': 'project-files:list-artifact-groups',
   'projectFiles.listFiles': 'project-files:list-files',
+  'projectFiles.readExportFiles': 'project-files:read-export-files',
   'projectFiles.repairIndex': 'project-files:repair-index',
   'projectFiles.resolveFile': 'project-files:resolve-file',
   'projectFiles.searchArtifacts': 'project-files:search-artifacts',

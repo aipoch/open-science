@@ -6,6 +6,7 @@ import type {
   HostArtifactCatalogItem,
   ListArtifactGroupsRequest,
   ListProjectFilesRequest,
+  ReadProjectExportFilesRequest,
   ProjectFileItem,
   ProjectFilesOverview,
   ProjectFilesPage,
@@ -187,6 +188,24 @@ class ProjectFilesQueryOwner {
             })
           : undefined
     }
+  }
+
+  async readExportFiles(request: ReadProjectExportFilesRequest): Promise<ProjectFileItem[]> {
+    requireIdentifier(request.projectId, 'projectId')
+    if (request.sessionId !== undefined) requireIdentifier(request.sessionId, 'sessionId')
+    const client = await this.getClient()
+    if (!this.readIndexComplete(request.projectId)) {
+      throw new Error('Some Project Files could not be indexed yet.')
+    }
+    // A single SQL statement fixes both membership and immutable Version IDs. Never traverse live
+    // pages here: a new current Version can move an unread file behind an earlier page's cursor.
+    const rows = await queryAuthoritativeFiles(client, {
+      projectIds: [request.projectId],
+      ...(request.sessionId === undefined
+        ? {}
+        : { source: 'artifact', sessionId: request.sessionId })
+    })
+    return rows.map((row) => toProjectFileItem(row))
   }
 
   async resolveFile(request: ResolveProjectFileRequest): Promise<ProjectFileItem | undefined> {

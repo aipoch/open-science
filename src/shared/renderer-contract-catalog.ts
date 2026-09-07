@@ -270,6 +270,7 @@ import type {
   GetProjectFilesOverviewRequest,
   ListArtifactGroupsRequest,
   ListProjectFilesRequest,
+  ReadProjectExportFilesRequest,
   ProjectFileItem,
   ProjectFilesChangedEvent,
   ProjectFilesOverview,
@@ -1410,6 +1411,9 @@ export const RENDERER_API_CONTRACT = Object.freeze({
   'projectFiles.listFiles': callable<
     (request: ListProjectFilesRequest) => Promise<ProjectFilesPage>
   >()('project-files', ['project-files:list-files']),
+  'projectFiles.readExportFiles': callable<
+    (request: ReadProjectExportFilesRequest) => Promise<ProjectFileItem[]>
+  >()('project-files', ['project-files:read-export-files']),
   'projectFiles.resolveFile': callable<
     (request: ResolveProjectFileRequest) => Promise<ProjectFileItem | undefined>
   >()('project-files', ['project-files:resolve-file']),
