@@ -9,6 +9,7 @@ import { ErrorNotice } from '@/components/error-notice'
 import { GlobalSearchDialog } from '@/components/global-search/GlobalSearchDialog'
 import { LegacyDataMoveDialog } from '@/components/LegacyDataMoveDialog'
 import { LifecycleToast } from '@/components/LifecycleToast'
+import { LanguageSaveToast } from '@/components/LanguageControls'
 import { NotificationLiveToast } from '@/components/NotificationLiveToast'
 import { OpenScienceLogoLoader } from '@/components/OpenScienceLogoLoader'
 import { PermissionUndoSnackbar } from '@/components/PermissionUndoSnackbar'
@@ -256,6 +257,7 @@ const ApplicationPresentationHost = (): React.JSX.Element => {
           onView={events.lifecycle.viewNotice}
         />
         <ConnectorAuthToast />
+        {isBasePresentationActive ? <LanguageSaveToast /> : null}
         <StorageCleanupToast />
         <NotificationLiveToast />
         <PermissionUndoSnackbar allowsArchiveShortcut={events.allowsArchiveUndoShortcut} />

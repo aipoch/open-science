@@ -285,11 +285,12 @@ const waitForRendererReady = async (page: Page): Promise<void> => {
           const bridge = globalThis as unknown as {
             api: { databaseStartup: { getState: () => Promise<{ phase: string }> } }
           }
-          return (await bridge.api.databaseStartup.getState()).phase
+          // Preserve startup diagnostics when a migration blocks before the journey can begin.
+          return await bridge.api.databaseStartup.getState()
         }),
       { timeout: 60_000 }
     )
-    .toBe('ready')
+    .toMatchObject({ phase: 'ready' })
   await page.getByText('Loading settings...').waitFor({ state: 'hidden', timeout: 60_000 })
 }
 
