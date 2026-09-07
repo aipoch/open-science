@@ -4488,6 +4488,39 @@ describe('ProjectFilesView — granted local folders', () => {
       el.textContent?.includes('TychoStation')
     )
 
+  it('regression: returns to Home when selecting the machine after a granted folder', async () => {
+    await renderFilesView()
+    await openFilterMenu()
+    await clickElement(document.querySelector('[data-testid="granted-root-root-1"]'))
+    expect(listDir).toHaveBeenCalledWith('/Users/roxi/Projects')
+    listDir.mockClear()
+    await openFilterMenu()
+    await clickElement(machineRow())
+    expect(listDir).toHaveBeenCalledWith('/Users/roxi')
+    expect(container.querySelector<HTMLInputElement>('[aria-label="Directory path"]')?.value).toBe(
+      '/Users/roxi'
+    )
+  })
+
+  it('regression: navigates to another granted folder after selecting the machine', async () => {
+    const other = { ...grantedRoot, id: 'root-2', name: 'Results', path: '/Users/roxi/Results' }
+    vi.mocked(window.api.localFs.listGrantedRoots).mockResolvedValue([grantedRoot, other])
+    useGrantedFoldersStore.setState({ roots: [grantedRoot, other], loaded: true })
+    await renderFilesView()
+    await openFilterMenu()
+    await clickElement(document.querySelector('[data-testid="granted-root-root-1"]'))
+    await openFilterMenu()
+    await clickElement(machineRow())
+    listDir.mockClear()
+    await openFilterMenu()
+    await clickElement(document.querySelector('[data-testid="granted-root-root-2"]'))
+    expect(filterButton()?.textContent).toContain('Results')
+    expect(listDir).toHaveBeenCalledWith(other.path)
+    expect(container.querySelector<HTMLInputElement>('[aria-label="Directory path"]')?.value).toBe(
+      other.path
+    )
+  })
+
   it('moves the selected check between the machine row and a picked folder row', async () => {
     await renderFilesView()
     await openFilterMenu()

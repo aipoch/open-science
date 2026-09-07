@@ -340,8 +340,9 @@ const ProjectFilesViewContent = ({
   // One-shot navigation request for the local browser, set when a granted folder is picked in the
   // filter menu. The nonce makes repeated picks of the same folder observable.
   const [localRequestedPath, setLocalRequestedPath] = useState<
-    { path: string; nonce: number } | undefined
+    { path?: string; nonce: number } | undefined
   >(undefined)
+  const localNavigationNonce = useRef(0)
   // Granted folder the local browser is scoped to; undefined means the machine itself.
   const [selectedLocalRootId, setSelectedLocalRootId] = useState<string | undefined>(undefined)
   const [grantDialogOpen, setGrantDialogOpen] = useState(false)
@@ -380,7 +381,7 @@ const ProjectFilesViewContent = ({
         const root = roots.find((candidate) => candidate.id === persisted.localRootId)
         if (!root) return
         setSelectedLocalRootId(root.id)
-        setLocalRequestedPath({ path: root.path, nonce: 1 })
+        setLocalRequestedPath({ path: root.path, nonce: ++localNavigationNonce.current })
       })
       .catch(() => undefined)
   }, [])
@@ -396,7 +397,7 @@ const ProjectFilesViewContent = ({
     (root: GrantedLocalRoot): void => {
       setSourceMode('local')
       setSelectedLocalRootId(root.id)
-      setLocalRequestedPath((previous) => ({ path: root.path, nonce: (previous?.nonce ?? 0) + 1 }))
+      setLocalRequestedPath({ path: root.path, nonce: ++localNavigationNonce.current })
       persistFilter({ sourceMode: 'local', localRootId: root.id })
     },
     [persistFilter]
@@ -407,7 +408,7 @@ const ProjectFilesViewContent = ({
   const handleBrowseLocal = useCallback((): void => {
     setSourceMode('local')
     setSelectedLocalRootId(undefined)
-    setLocalRequestedPath(undefined)
+    setLocalRequestedPath({ nonce: ++localNavigationNonce.current })
     persistFilter({ sourceMode: 'local' })
   }, [persistFilter])
 

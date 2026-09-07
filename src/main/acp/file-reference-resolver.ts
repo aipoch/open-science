@@ -1,7 +1,7 @@
 import { createReadStream, createWriteStream, rmSync } from 'node:fs'
 import { mkdtemp, realpath, rm, stat } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { basename, join } from 'node:path'
+import { basename, isAbsolute, join, relative, sep } from 'node:path'
 import { Transform } from 'node:stream'
 import { pipeline } from 'node:stream/promises'
 import { pathToFileURL } from 'node:url'
@@ -10,7 +10,6 @@ import type { FileReference } from '../../shared/artifacts'
 import { parseArtifactVersionLocator } from '../../shared/artifact-provenance'
 import { parseLiteratureAttachmentVersionReference } from '../../shared/literature'
 import type { GrantedLocalRoot } from '../../shared/local-fs'
-import { isPathWithin } from '../../shared/local-fs'
 import { MAX_UPLOAD_FILE_BYTES } from '../../shared/uploads'
 import type { ArtifactRepository } from '../artifacts/repository'
 import { createLogger, errorLogFields } from '../logger'
@@ -473,7 +472,12 @@ export const createManagedFileReferenceResolver = (dependencies: {
           realpath(root.path),
           realpath(join(root.path, reference.relativePath))
         ])
-        if (!isPathWithin(resolvedFile, resolvedRoot)) {
+        const relativeFile = relative(resolvedRoot, resolvedFile)
+        if (
+          isAbsolute(relativeFile) ||
+          relativeFile === '..' ||
+          relativeFile.startsWith(`..${sep}`)
+        ) {
           throw new Error('Linked-folder reference escapes the granted folder.')
         }
         const fileInfo = await stat(resolvedFile)
