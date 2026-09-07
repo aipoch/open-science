@@ -246,7 +246,13 @@ describe('Compute service architecture', () => {
       ].sort()
     )
     expect(calledMembersOn(computePaths.jobLifecycle, ['this', 'repository'])).toEqual(
-      ['abortOwnerDeletion', 'beginOwnerDeletion', 'deleteByOwner', 'updateIfStatus'].sort()
+      [
+        'abortOwnerDeletion',
+        'beginOwnerDeletion',
+        'deleteByOwner',
+        'recordCancellationHandle',
+        'updateIfStatus'
+      ].sort()
     )
 
     const lifecycleTarget = modulePath(computePaths.jobLifecycle)

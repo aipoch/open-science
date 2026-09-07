@@ -476,10 +476,11 @@ describe('application database migrations', () => {
         '0029_compute_host_execution_mode',
         '0030_literature_foundation',
         '0031_project_archive_revision',
-        '0032_permission_approval_summary'
+        '0032_permission_approval_summary',
+        '0033_compute_job_harvest_retry'
       ],
       from: null,
-      to: '0032_permission_approval_summary'
+      to: '0033_compute_job_harvest_retry'
     })
     expect(compatibility).toEqual([{ sqliteVersion: expect.stringMatching(/^\d+\.\d+\.\d+$/) }])
     await expect(
@@ -492,8 +493,8 @@ describe('application database migrations', () => {
     await expect(migrateApplicationDatabase(client)).resolves.toEqual({
       adoptedLegacy: false,
       applied: [],
-      from: '0032_permission_approval_summary',
-      to: '0032_permission_approval_summary'
+      from: '0033_compute_job_harvest_retry',
+      to: '0033_compute_job_harvest_retry'
     })
   })
 
@@ -595,7 +596,8 @@ describe('application database migrations', () => {
         '0029_compute_host_execution_mode',
         '0030_literature_foundation',
         '0031_project_archive_revision',
-        '0032_permission_approval_summary'
+        '0032_permission_approval_summary',
+        '0033_compute_job_harvest_retry'
       ]
     })
     await expect(
@@ -681,7 +683,8 @@ describe('application database migrations', () => {
         '0029_compute_host_execution_mode',
         '0030_literature_foundation',
         '0031_project_archive_revision',
-        '0032_permission_approval_summary'
+        '0032_permission_approval_summary',
+        '0033_compute_job_harvest_retry'
       ]
     })
     await expect(migrateApplicationDatabase(client)).resolves.toMatchObject({ applied: [] })
@@ -726,7 +729,7 @@ describe('application database migrations', () => {
 
     await expect(migrateApplicationDatabase(client)).resolves.toMatchObject({
       applied: expect.arrayContaining(['0010_compute_password_auth']),
-      to: '0032_permission_approval_summary'
+      to: '0033_compute_job_harvest_retry'
     })
     await expect(
       client.$executeRawUnsafe(
@@ -781,10 +784,11 @@ describe('application database migrations', () => {
         '0029_compute_host_execution_mode',
         '0030_literature_foundation',
         '0031_project_archive_revision',
-        '0032_permission_approval_summary'
+        '0032_permission_approval_summary',
+        '0033_compute_job_harvest_retry'
       ],
       from: '0005_project_preview_state_owner_fk',
-      to: '0032_permission_approval_summary'
+      to: '0033_compute_job_harvest_retry'
     })
     await expect(verifyCurrentApplicationSchema(client)).resolves.toBeUndefined()
   })
@@ -867,10 +871,11 @@ describe('application database migrations', () => {
         '0029_compute_host_execution_mode',
         '0030_literature_foundation',
         '0031_project_archive_revision',
-        '0032_permission_approval_summary'
+        '0032_permission_approval_summary',
+        '0033_compute_job_harvest_retry'
       ],
       from: '0005_project_preview_state_owner_fk',
-      to: '0032_permission_approval_summary'
+      to: '0033_compute_job_harvest_retry'
     })
     await expect(
       client.$queryRaw<
@@ -993,7 +998,7 @@ describe('application database migrations', () => {
       })
     ).rejects.toMatchObject({
       code: 'database_validation_failed',
-      migrationId: '0032_permission_approval_summary'
+      migrationId: '0033_compute_job_harvest_retry'
     })
     expect(retired).toEqual([])
     await expect(access(backupPath)).resolves.toBeUndefined()
@@ -1010,7 +1015,7 @@ describe('application database migrations', () => {
     ).resolves.toEqual({
       adoptedLegacy: false,
       applied: ['9997_test_suffix'],
-      from: '0032_permission_approval_summary',
+      from: '0033_compute_job_harvest_retry',
       to: '9997_test_suffix'
     })
     await expect(
@@ -1050,6 +1055,7 @@ describe('application database migrations', () => {
       { id: '0030_literature_foundation' },
       { id: '0031_project_archive_revision' },
       { id: '0032_permission_approval_summary' },
+      { id: '0033_compute_job_harvest_retry' },
       { id: '9997_test_suffix' }
     ])
   })
@@ -1134,10 +1140,11 @@ describe('application database migrations', () => {
         '0029_compute_host_execution_mode',
         '0030_literature_foundation',
         '0031_project_archive_revision',
-        '0032_permission_approval_summary'
+        '0032_permission_approval_summary',
+        '0033_compute_job_harvest_retry'
       ],
       from: '0001_runtime_schema_baseline',
-      to: '0032_permission_approval_summary'
+      to: '0033_compute_job_harvest_retry'
     })
     expect(backupEvents).toEqual([
       {
@@ -1223,7 +1230,8 @@ describe('application database migrations', () => {
       { id: '0029_compute_host_execution_mode' },
       { id: '0030_literature_foundation' },
       { id: '0031_project_archive_revision' },
-      { id: '0032_permission_approval_summary' }
+      { id: '0032_permission_approval_summary' },
+      { id: '0033_compute_job_harvest_retry' }
     ])
   })
 
@@ -1349,6 +1357,7 @@ describe('application database migrations', () => {
         '0030_literature_foundation',
         '0031_project_archive_revision',
         '0032_permission_approval_summary',
+        '0033_compute_job_harvest_retry',
         '9997_test_suffix'
       ],
       to: '9997_test_suffix'
@@ -1486,7 +1495,7 @@ describe('application database migrations', () => {
       adoptedLegacy: false,
       applied: MIGRATION_MANIFEST.slice(computePasswordAuthIndex).map(({ id }) => id),
       from: '0009_vision_evidence',
-      to: '0032_permission_approval_summary'
+      to: '0033_compute_job_harvest_retry'
     })
     await expect(
       client.$queryRaw<Array<{ projectId: string }>>`
@@ -1606,7 +1615,8 @@ describe('application database migrations', () => {
         '0029_compute_host_execution_mode',
         '0030_literature_foundation',
         '0031_project_archive_revision',
-        '0032_permission_approval_summary'
+        '0032_permission_approval_summary',
+        '0033_compute_job_harvest_retry'
       ]
     })
     await expect(
@@ -1735,7 +1745,8 @@ describe('application database migrations', () => {
         '0029_compute_host_execution_mode',
         '0030_literature_foundation',
         '0031_project_archive_revision',
-        '0032_permission_approval_summary'
+        '0032_permission_approval_summary',
+        '0033_compute_job_harvest_retry'
       ]
     })
     await expect(migrateApplicationDatabase(client)).resolves.toMatchObject({ applied: [] })
@@ -1816,7 +1827,8 @@ describe('application database migrations', () => {
         '0029_compute_host_execution_mode',
         '0030_literature_foundation',
         '0031_project_archive_revision',
-        '0032_permission_approval_summary'
+        '0032_permission_approval_summary',
+        '0033_compute_job_harvest_retry'
       ]
     })
     await expect(
@@ -1900,7 +1912,8 @@ describe('application database migrations', () => {
         '0029_compute_host_execution_mode',
         '0030_literature_foundation',
         '0031_project_archive_revision',
-        '0032_permission_approval_summary'
+        '0032_permission_approval_summary',
+        '0033_compute_job_harvest_retry'
       ]
     })
     await expect(verifyCurrentApplicationSchema(client)).resolves.toBeUndefined()
@@ -2018,7 +2031,8 @@ describe('application database migrations', () => {
         '0029_compute_host_execution_mode',
         '0030_literature_foundation',
         '0031_project_archive_revision',
-        '0032_permission_approval_summary'
+        '0032_permission_approval_summary',
+        '0033_compute_job_harvest_retry'
       ]
     })
     await expect(
@@ -2541,8 +2555,8 @@ describe('application database migrations', () => {
         entries.filter((entry) => entry.endsWith('.backup')).sort()
       )
     ).resolves.toEqual([
-      'open-science.db.before-0031_project_archive_revision.backup',
       'open-science.db.before-0032_permission_approval_summary.backup',
+      'open-science.db.before-0033_compute_job_harvest_retry.backup',
       unknownBackupName
     ])
     expect(retired).toHaveLength(MIGRATION_MANIFEST.length - 2)
@@ -2843,10 +2857,11 @@ describe('application database migrations', () => {
         '0029_compute_host_execution_mode',
         '0030_literature_foundation',
         '0031_project_archive_revision',
-        '0032_permission_approval_summary'
+        '0032_permission_approval_summary',
+        '0033_compute_job_harvest_retry'
       ],
       from: '0024_compute_job_file_evidence',
-      to: '0032_permission_approval_summary'
+      to: '0033_compute_job_harvest_retry'
     })
     await expect(
       client.$queryRawUnsafe<Array<{ currentVersionId: string | null }>>(
@@ -2905,7 +2920,7 @@ describe('application database migrations', () => {
         MIGRATION_MANIFEST.findIndex(({ id }) => id === '0009_vision_evidence')
       ).map(({ id }) => id),
       from: '0008_database_json_constraints',
-      to: '0032_permission_approval_summary'
+      to: '0033_compute_job_harvest_retry'
     })
     await expect(verifyCurrentApplicationSchema(client)).resolves.toBeUndefined()
   })
@@ -2969,10 +2984,11 @@ describe('application database migrations', () => {
         '0029_compute_host_execution_mode',
         '0030_literature_foundation',
         '0031_project_archive_revision',
-        '0032_permission_approval_summary'
+        '0032_permission_approval_summary',
+        '0033_compute_job_harvest_retry'
       ],
       from: '0024_compute_job_file_evidence',
-      to: '0032_permission_approval_summary'
+      to: '0033_compute_job_harvest_retry'
     })
     await expect(
       client.$queryRaw<Array<{ uploadVersionId: string }>>`

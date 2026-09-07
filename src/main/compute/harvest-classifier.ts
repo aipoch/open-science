@@ -69,6 +69,7 @@ const CONTROL_FILES = new Set([
   'command.sh',
   'launcher.sh',
   'exit_code',
+  'exit_code.tmp',
   'job.pid',
   'job.sbatch',
   'scheduler_job_id',
@@ -80,6 +81,13 @@ const CONTROL_FILES = new Set([
 
 /** stdout and stderr share the download budget but are scheduled after declared outputs. */
 const LOG_FILES = new Set(['stdout', 'stderr'])
+
+/** Input names share the launcher's flat namespace, including transient control files. */
+export const assertSafeInputDestination = (name: string): void => {
+  if (CONTROL_FILES.has(name) || LOG_FILES.has(name)) {
+    throw new Error(`dst_filename "${name}" is reserved for Compute Job control files.`)
+  }
+}
 
 export const HARVEST_MAX_FILE_MB = 100
 export const HARVEST_MAX_TOTAL_MB = 500

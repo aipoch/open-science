@@ -436,6 +436,27 @@ export class ComputeJobRepository {
     })
   }
 
+  // A launch response may arrive after cancellation fenced ordinary lifecycle transitions.
+  // Preserve only the missing handle, without reviving execution or overwriting another observer.
+  async recordCancellationHandle(jobId: string, remoteHandle: string): Promise<void> {
+    await this.runMutation(async () => {
+      const client = await this.getClient()
+      await client.$transaction(async (transaction) => {
+        const current = await transaction.computeJob.findUnique({ where: { id: jobId } })
+        if (!current || !this.isOwnerMutable(current.projectId, current.sessionId)) return
+        await transaction.computeJob.updateMany({
+          where: {
+            id: jobId,
+            status: { in: ['submitted', 'running'] },
+            remoteHandle: null,
+            operations: { some: { kind: 'cancel', phase: 'active' } }
+          },
+          data: this.toUpdateData({ remoteHandle }, current.sensitiveDataEncrypted === true)
+        })
+      })
+    })
+  }
+
   // Observational projection for renderer lists and concurrency status. Unlike lifecycle scans,
   // this retains quarantined/needs-attention rows so users can inspect durable state safely.
   async findBySession(sessionId: string, statuses?: string[]): Promise<ComputeJob[]> {
@@ -682,8 +703,7 @@ export class ComputeJobRepository {
     return await client.computeJob.count({
       where: {
         sessionId,
-        status: { in: ['submitted', 'running'] },
-        operations: { none: { kind: 'cancel' } }
+        status: { in: ['submitted', 'running'] }
       }
     })
   }
@@ -695,8 +715,7 @@ export class ComputeJobRepository {
     return await client.computeJob.count({
       where: {
         providerId,
-        status: { in: ['submitted', 'running'] },
-        operations: { none: { kind: 'cancel' } }
+        status: { in: ['submitted', 'running'] }
       }
     })
   }

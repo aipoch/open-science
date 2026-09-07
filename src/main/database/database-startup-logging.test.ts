@@ -124,7 +124,8 @@ describe('database startup logging', () => {
               '0029_compute_host_execution_mode',
               '0030_literature_foundation',
               '0031_project_archive_revision',
-              '0032_permission_approval_summary'
+              '0032_permission_approval_summary',
+              '0033_compute_job_harvest_retry'
             ],
             adoptedLegacy: true
           })
