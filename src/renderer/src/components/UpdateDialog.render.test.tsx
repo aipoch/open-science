@@ -30,6 +30,24 @@ afterEach(() => {
 })
 
 describe('UpdateDialog', () => {
+  it('keeps long release notes in one scrolling body and cancellation outside it', () => {
+    const notes = Array.from({ length: 35 }, (_, index) => `Release note ${index + 1}`).join('\n')
+    useUpdateStore.setState({
+      isDialogOpen: true,
+      status: { state: 'available', current: '0.26.0', latest: '0.26.1', notes }
+    })
+    act(() => root.render(<UpdateDialog />))
+    const dialog = document.querySelector('[role="dialog"]')!
+    const viewport = dialog.querySelector('[data-slot="scroll-area-viewport"]')!
+    expect(viewport.textContent).toContain('Release note 35')
+    const cancel = Array.from(dialog.querySelectorAll('button')).find(
+      (button) => button.textContent === 'Cancel'
+    )!
+    expect(viewport.contains(cancel)).toBe(false)
+    act(() => cancel.click())
+    expect(useUpdateStore.getState().isDialogOpen).toBe(false)
+  })
+
   it('U04: offers manual download instead of an inert button when the installer artifact is missing', () => {
     useUpdateStore.setState({
       isDialogOpen: true,

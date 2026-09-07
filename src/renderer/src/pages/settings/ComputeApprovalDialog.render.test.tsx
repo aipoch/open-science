@@ -47,6 +47,21 @@ afterEach(() => {
 })
 
 describe('ComputeApprovalDialog', () => {
+  it('keeps the complete expanded command separate from the approval actions', async () => {
+    const commandFull = Array.from(
+      { length: 120 },
+      (_, i) => `python analysis.py --sample ${i}`
+    ).join('; ')
+    useComputeStore.setState({ pendingApprovals: [{ ...request, commandFull }] })
+    act(() => root.render(<ComputeApprovalDialog />))
+    act(() => findButton('Show full command')!.click())
+    const viewport = document.querySelector('[data-slot="scroll-area-viewport"]')!
+    expect(viewport.textContent).toContain(commandFull)
+    expect(viewport.contains(findButton('Deny')!)).toBe(false)
+    await act(async () => findButton('Deny')!.click())
+    expect(useComputeStore.getState().respondApproval).toHaveBeenCalledWith(request.id, 'deny')
+  })
+
   it('renders nothing without a pending approval', () => {
     act(() => root.render(<ComputeApprovalDialog />))
 

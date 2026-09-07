@@ -1478,6 +1478,46 @@ describe('LiteratureLibraryPage', () => {
     )
   })
 
+  it('keeps every Reading project selectable and creation outside the scrolling list', async () => {
+    const entry = createLibraryItemWithPdf()
+    const template = useProjectStore.getState().projects[0]
+    useProjectStore.setState({
+      projects: Array.from({ length: 35 }, (_, index) => ({
+        ...template,
+        id: `project-${index + 1}`,
+        name: `Reading project ${index + 1}`
+      }))
+    })
+    search.mockImplementation((request: { scope: string }) =>
+      Promise.resolve(request.scope === 'library' ? { entries: [entry] } : { entries: [] })
+    )
+    render(<LiteratureLibraryPage />)
+    fireEvent.click(screen.getByRole('button', { name: 'All references' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Preview paper.pdf' }))
+    fireEvent.click(
+      within(screen.getByTestId('literature-pdf-preview')).getByRole('button', {
+        name: 'Read with agent',
+        hidden: true
+      })
+    )
+    const dialog = await screen.findByRole('dialog', { name: 'Read with agent' })
+    const viewport = dialog.querySelector<HTMLElement>('[data-slot="scroll-area-viewport"]')!
+    const lastProject = within(dialog).getByRole('button', { name: 'Reading project 35' })
+    expect(viewport.contains(lastProject)).toBe(true)
+    expect(viewport.contains(within(dialog).getByRole('button', { name: 'New project' }))).toBe(
+      false
+    )
+    expect(within(viewport).getAllByRole('button')).toHaveLength(35)
+    fireEvent.click(lastProject)
+    await waitFor(() =>
+      expect(startPdfReadingConversation).toHaveBeenCalledWith(
+        'project-35',
+        expect.objectContaining({ source: 'literature' }),
+        { sourceKind: 'literature-attachment-version', sourceVersionId: 'version-1' }
+      )
+    )
+  })
+
   it('reviews a batch of references and opens a three-PDF Reading draft without silently including missing PDFs', async () => {
     const entries = [1, 2, 3, 4].map((id) => {
       const entry = createLibraryItemWithPdf()
