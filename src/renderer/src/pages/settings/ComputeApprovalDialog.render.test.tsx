@@ -47,6 +47,32 @@ afterEach(() => {
 })
 
 describe('ComputeApprovalDialog', () => {
+  it('starts the next queued approval at the top after scrolling a long request', async () => {
+    const nextRequest = {
+      ...request,
+      id: 'approval-2',
+      commandPreview: 'Inspect the next request',
+      commandFull: 'Inspect the next request'
+    }
+    useComputeStore.setState({
+      pendingApprovals: [
+        { ...request, commandFull: 'python analysis.py; '.repeat(120) },
+        nextRequest
+      ],
+      respondApproval: vi.fn(async () => {
+        useComputeStore.setState({ pendingApprovals: [nextRequest] })
+      })
+    })
+    act(() => root.render(<ComputeApprovalDialog />))
+    act(() => findButton('Show full command')!.click())
+    const viewport = document.querySelector<HTMLElement>('[data-slot="scroll-area-viewport"]')!
+    viewport.scrollTop = 500
+    await act(async () => findButton('Deny')!.click())
+    const nextViewport = document.querySelector<HTMLElement>('[data-slot="scroll-area-viewport"]')!
+    expect(nextViewport.textContent).toContain(nextRequest.commandPreview)
+    expect(nextViewport.scrollTop).toBe(0)
+  })
+
   it('keeps the complete expanded command separate from the approval actions', async () => {
     const commandFull = Array.from(
       { length: 120 },

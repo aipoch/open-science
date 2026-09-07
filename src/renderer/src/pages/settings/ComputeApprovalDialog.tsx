@@ -131,7 +131,10 @@ export function ComputeApprovalDialog({
             </div>
           </div>
 
-          <ScrollArea className="grid min-h-0 flex-1 [&>[data-slot=scroll-area-viewport]]:h-auto [&>[data-slot=scroll-area-viewport]]:min-h-0">
+          <ScrollArea
+            key={dialogRequest.id}
+            className="grid min-h-0 flex-1 [&>[data-slot=scroll-area-viewport]]:h-auto [&>[data-slot=scroll-area-viewport]]:min-h-0"
+          >
             <div className={dialogBodyClassName}>
               <div className="space-y-1.5 rounded-lg border border-border bg-muted/40 p-3 text-xs">
                 <div className="flex gap-2">
