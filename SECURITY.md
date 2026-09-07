@@ -79,9 +79,8 @@ installers or accept update metadata obtained from an unrelated mirror or third 
 
 On macOS, the [official Homebrew cask](https://formulae.brew.sh/cask/open-science)
 downloads the installer from this repository’s GitHub Releases and checks its pinned
-SHA-256 hash. See the [installation guide](docs/installation.md) for commands and
-uninstall data handling. The manual verification steps below also apply to downloaded
-release installers.
+SHA-256 hash. The manual verification steps below also apply to downloaded release
+installers.
 
 Each stable release includes `SHA256SUMS.txt`. Download it from the same GitHub Release
 and compare the entry for your installer:

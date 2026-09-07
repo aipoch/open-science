@@ -99,7 +99,7 @@ macOS에서는 [Homebrew](https://brew.sh)로도 설치할 수 있습니다:
 brew install --cask open-science
 ```
 
-Homebrew는 Apple Silicon 또는 Intel용 패키지를 자동으로 선택합니다. 업데이트, 제거 및 수동 설치에서 전환하는 방법은 [설치 가이드(영문)](../installation.md)를 참고하세요.
+Homebrew는 Apple Silicon 또는 Intel용 패키지를 자동으로 선택합니다.
 
 ### 2. 최초 설정 완료
 

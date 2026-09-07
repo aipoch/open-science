@@ -100,7 +100,7 @@ Unter macOS können Sie die App auch mit [Homebrew](https://brew.sh) installiere
 brew install --cask open-science
 ```
 
-Homebrew wählt automatisch das Paket für Apple Silicon oder Intel aus. Hinweise zu Updates, zur Deinstallation und zum Wechsel von einer manuellen Installation finden Sie in der [Installationsanleitung (Englisch)](../installation.md).
+Homebrew wählt automatisch das Paket für Apple Silicon oder Intel aus.
 
 ### 2. Schließen Sie die Ersteinrichtung ab
 

@@ -98,7 +98,7 @@ On macOS, you can also install with [Homebrew](https://brew.sh):
 brew install --cask open-science
 ```
 
-Homebrew selects the Apple Silicon or Intel package automatically. See the [installation guide](docs/installation.md) for upgrades, uninstalling, and switching from a manual installation.
+Homebrew selects the Apple Silicon or Intel package automatically.
 
 ### 2. Complete first-time setup
 
