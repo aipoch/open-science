@@ -4634,6 +4634,24 @@
     "Loaded bytes {{start}}–{{end}}": "불러온 바이트 {{start}}–{{end}}",
     "First line is continued from the previous page": "첫 번째 행은 이전 페이지에서 이어집니다",
     "Last line continues on the next page": "마지막 행은 다음 페이지로 이어집니다",
-    "Partial source context; syntax highlighting is unavailable": "소스 컨텍스트이 일부만 있어 구문 강조를 사용할 수 없습니다"
+    "Partial source context; syntax highlighting is unavailable": "소스 컨텍스트이 일부만 있어 구문 강조를 사용할 수 없습니다",
+    "Carriage return (CR)": "캐리지 리턴(CR)",
+    "Line feed (LF)": "줄 바꿈(LF)",
+    "Line ending (CRLF)": "줄 끝 문자(CRLF)",
+    "Line ending characters": "줄 끝 문자",
+    "UTF-8 BOM added": "UTF-8 BOM 추가됨",
+    "UTF-8 BOM removed": "UTF-8 BOM 제거됨",
+    "No text changes.": "텍스트 변경 사항이 없습니다.",
+    "Newline at end of file added": "파일 끝 줄 바꿈 추가됨",
+    "Newline at end of file removed": "파일 끝 줄 바꿈 제거됨",
+    "Unchanged sections are omitted. Use the version preview or download to read the complete files.": "변경되지 않은 부분은 생략됩니다. 전체 파일을 읽으려면 버전 미리보기를 사용하거나 다운로드하세요.",
+    "Unchanged lines omitted: {{lineCount}} (base {{oldStart}}–{{oldEnd}}, selected {{newStart}}–{{newEnd}})": "생략된 변경 없는 줄 수: {{lineCount}} (기준 {{oldStart}}–{{oldEnd}}, 선택 {{newStart}}–{{newEnd}})",
+    "A version exceeds the 2 MiB comparison input limit. Preview or download each version to compare the complete files.": "버전이 비교 입력 한도인 2 MiB를 초과합니다. 전체 파일을 비교하려면 각 버전의 미리보기를 사용하거나 다운로드하세요.",
+    "The changes exceed the comparison display limit, even with unchanged sections omitted. Preview or download each version to compare the complete files.": "변경되지 않은 부분을 생략해도 변경 사항이 비교 표시 한도를 초과합니다. 전체 파일을 비교하려면 각 버전의 미리보기를 사용하거나 다운로드하세요.",
+    "Comparison took too long. You can retry, but complex changes may reach the time limit again.": "비교 시간이 너무 오래 걸렸습니다. 다시 시도할 수 있지만 복잡한 변경 사항은 다시 시간 한도에 도달할 수 있습니다.",
+    "Other comparisons are running. Wait for them to finish, then retry.": "다른 비교가 실행 중입니다. 완료될 때까지 기다린 후 다시 시도하세요.",
+    "Version storage is unavailable. Check that the storage location is accessible, then retry.": "버전 저장소를 사용할 수 없습니다. 저장 위치에 접근할 수 있는지 확인한 후 다시 시도하세요.",
+    "This comparison could not be completed. Return to the version preview to check the file.": "비교를 완료하지 못했습니다. 버전 미리보기로 돌아가 파일을 확인하세요.",
+    "View version": "버전 보기"
   }
 }

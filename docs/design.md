@@ -1105,3 +1105,19 @@ alert region excludes the diagnostic payload so opening it does not announce the
 - CSL examples use a focusable preview button and a non-modal Popover: hover/focus discovers, click/tap pins, Escape/outside interaction dismisses, and internal scrolling preserves the panel. Show the complete style title, lazy-load and deduplicate per style, retain cached examples, and offer Retry after failure. The formatter's plain-text contract and content-addressed style identities stay unchanged.
 - Root canvas, body, and application root share the current theme background so exposed scrolling regions remain continuous; document canvases retain their own surface.
 - Use tabular digits for comparable numeric columns and changing counts/durations. Right-align numeric columns and reserve a minimum duration width where appropriate; retain existing formats and units.
+
+## File version comparisons
+
+Version comparisons retain the first and last three lines of each unchanged run and show explicit
+omitted line ranges. Omitted rows contain range metadata, never synthetic source text. All changed
+lines remain subject to the existing Worker time, memory, concurrency and output limits; exceeding
+the output budget is an explicit failure, never a successful truncated result. Markdown with omitted
+sections is shown as source excerpts because the missing text may contain fences or reference definitions.
+Complete files remain available through version previews and per-version downloads; this surface does
+not expand omitted ranges in place.
+
+Comparison failures use compact `ErrorNotice` with controlled translated explanations. Concurrency,
+timeout and temporarily unavailable storage offer a direct manual retry through fresh inspection;
+capacity failures explain the limit and return to version preview. Raw internal errors are not displayed.
+Visible CR/LF/CRLF labels and trailing-newline/BOM summaries clarify format changes without changing raw
+segments. BOM flags and omitted ranges are transient comparison metadata, not persisted version fields.

@@ -4790,6 +4790,24 @@
     "Loaded bytes {{start}}–{{end}}": "Geladene Bytes {{start}}–{{end}}",
     "First line is continued from the previous page": "Die erste Zeile wird von der vorherigen Seite fortgesetzt",
     "Last line continues on the next page": "Die letzte Zeile wird auf der nächsten Seite fortgesetzt",
-    "Partial source context; syntax highlighting is unavailable": "Unvollständiger Quelltextkontext; Syntaxhervorhebung nicht verfügbar"
+    "Partial source context; syntax highlighting is unavailable": "Unvollständiger Quelltextkontext; Syntaxhervorhebung nicht verfügbar",
+    "Carriage return (CR)": "Wagenrücklauf (CR)",
+    "Line feed (LF)": "Zeilenvorschub (LF)",
+    "Line ending (CRLF)": "Zeilenende (CRLF)",
+    "Line ending characters": "Zeilenendezeichen",
+    "UTF-8 BOM added": "UTF-8-BOM hinzugefügt",
+    "UTF-8 BOM removed": "UTF-8-BOM entfernt",
+    "No text changes.": "Keine Textänderungen.",
+    "Newline at end of file added": "Zeilenumbruch am Dateiende hinzugefügt",
+    "Newline at end of file removed": "Zeilenumbruch am Dateiende entfernt",
+    "Unchanged sections are omitted. Use the version preview or download to read the complete files.": "Unveränderte Abschnitte sind ausgelassen. Verwenden Sie die Versionsvorschau oder den Download, um die vollständigen Dateien zu lesen.",
+    "Unchanged lines omitted: {{lineCount}} (base {{oldStart}}–{{oldEnd}}, selected {{newStart}}–{{newEnd}})": "Ausgelassene unveränderte Zeilen: {{lineCount}} (Basis {{oldStart}}–{{oldEnd}}, Auswahl {{newStart}}–{{newEnd}})",
+    "A version exceeds the 2 MiB comparison input limit. Preview or download each version to compare the complete files.": "Eine Version überschreitet die Eingabegrenze von 2 MiB. Öffnen Sie die Vorschau oder laden Sie jede Version herunter, um die vollständigen Dateien zu vergleichen.",
+    "The changes exceed the comparison display limit, even with unchanged sections omitted. Preview or download each version to compare the complete files.": "Die Änderungen überschreiten auch ohne unveränderte Abschnitte die Anzeigegrenze. Öffnen Sie die Vorschau oder laden Sie jede Version herunter, um die vollständigen Dateien zu vergleichen.",
+    "Comparison took too long. You can retry, but complex changes may reach the time limit again.": "Der Vergleich hat zu lange gedauert. Sie können es erneut versuchen, aber komplexe Änderungen können das Zeitlimit erneut erreichen.",
+    "Other comparisons are running. Wait for them to finish, then retry.": "Andere Vergleiche werden ausgeführt. Warten Sie, bis sie abgeschlossen sind, und versuchen Sie es erneut.",
+    "Version storage is unavailable. Check that the storage location is accessible, then retry.": "Der Versionsspeicher ist nicht verfügbar. Prüfen Sie, ob der Speicherort erreichbar ist, und versuchen Sie es erneut.",
+    "This comparison could not be completed. Return to the version preview to check the file.": "Dieser Vergleich konnte nicht abgeschlossen werden. Kehren Sie zur Versionsvorschau zurück, um die Datei zu prüfen.",
+    "View version": "Version anzeigen"
   }
 }

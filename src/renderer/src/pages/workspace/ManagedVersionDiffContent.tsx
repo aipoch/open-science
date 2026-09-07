@@ -3,7 +3,10 @@ import { useTranslation } from 'react-i18next'
 
 import { AgentMarkdown, type AgentMarkdownExtension } from '@/components/streamdown/AgentMarkdown'
 import type { PreviewFileFormat } from '@/stores/preview-workbench-store'
-import type { ManagedFileVersionDiffResult } from '../../../../shared/managed-file-versions'
+import type {
+  ManagedFileVersionDiffResult,
+  ManagedFileVersionDiffSegment
+} from '../../../../shared/managed-file-versions'
 
 import { getFileExtension } from './preview-support'
 import {
@@ -23,7 +26,7 @@ const markdownChangeStyles =
   '[&_[data-managed-diff=added]]:bg-diff-added-highlight [&_[data-managed-diff=added]]:font-medium [&_[data-managed-diff=added]]:text-text-000 [&_[data-managed-diff=added]]:no-underline [&_[data-managed-diff=removed]]:bg-diff-removed-highlight [&_[data-managed-diff=removed]]:text-text-000 [&_[data-managed-diff=removed]]:line-through'
 
 type ManagedDiffTagProps = Record<string, unknown> & { children?: ReactNode }
-type DiffSegment = ManagedFileVersionDiffResult['lines'][number]['segments'][number]
+type DiffSegment = ManagedFileVersionDiffSegment
 type MarkdownDiffBlock = Extract<DiffRenderBlock, { kind: 'markdown' }>
 
 const ManagedDiffAdded = ({ children }: ManagedDiffTagProps): React.JSX.Element => {
@@ -48,6 +51,28 @@ const ManagedDiffRemoved = ({ children }: ManagedDiffTagProps): React.JSX.Elemen
   )
 }
 
+const ControlCharacterLabel = ({ text }: { text: string }): React.JSX.Element | null => {
+  const { t } = useTranslation()
+  if (!/^[\r\n]+$/u.test(text)) return null
+  const label =
+    text === '\r'
+      ? t('Carriage return (CR)')
+      : text === '\n'
+        ? t('Line feed (LF)')
+        : text === '\r\n'
+          ? t('Line ending (CRLF)')
+          : t('Line ending characters')
+  return (
+    <span
+      data-diff-format-label=""
+      className="mx-1 select-none rounded border px-1 font-sans text-xs no-underline"
+      style={{ textDecoration: 'none' }}
+    >
+      {label}
+    </span>
+  )
+}
+
 const DiffSegments = ({ segments }: { segments: DiffSegment[] }): React.JSX.Element => {
   const { t } = useTranslation()
   return (
@@ -61,6 +86,7 @@ const DiffSegments = ({ segments }: { segments: DiffSegment[] }): React.JSX.Elem
             className="bg-diff-added-highlight font-medium text-text-000 no-underline"
           >
             <span className="sr-only">{t('Added:')} </span>
+            <ControlCharacterLabel text={segment.text} />
             <span data-managed-diff-content="">{segment.text}</span>
           </ins>
         ) : segment.kind === 'removed' ? (
@@ -71,6 +97,7 @@ const DiffSegments = ({ segments }: { segments: DiffSegment[] }): React.JSX.Elem
             className="bg-diff-removed-highlight text-text-000 line-through"
           >
             <span className="sr-only">{t('Removed:')} </span>
+            <ControlCharacterLabel text={segment.text} />
             <span data-managed-diff-content="">{segment.text}</span>
           </del>
         ) : (
@@ -136,13 +163,70 @@ const ManagedVersionDiffContent = memo(
       [markdownChangeTags, presentationKind, result]
     )
 
+    const lastBefore = result.lines.findLast(
+      (line) => line.kind === 'context' || line.kind === 'removed'
+    )
+    const lastAfter = result.lines.findLast(
+      (line) => line.kind === 'context' || line.kind === 'added'
+    )
+    const endsWithNewline = (line: typeof lastBefore): boolean =>
+      line !== undefined &&
+      line.kind !== 'omitted' &&
+      /[\r\n]$/u.test(line.segments.map((segment) => segment.text).join(''))
+    const trailingNewlineChanged = endsWithNewline(lastBefore) !== endsWithNewline(lastAfter)
+
     return (
       <div
         className="min-h-full bg-bg-000 py-2 font-mono text-xs text-text-000"
         role="region"
         aria-label={t('File version differences')}
       >
+        {trailingNewlineChanged ? (
+          <p className="mx-4 mb-2 select-none font-sans text-sm" data-diff-format-summary="">
+            {endsWithNewline(lastAfter)
+              ? t('Newline at end of file added')
+              : t('Newline at end of file removed')}
+          </p>
+        ) : null}
+        {result.baseFormat &&
+        result.selectedFormat &&
+        result.baseFormat.hasUtf8Bom !== result.selectedFormat.hasUtf8Bom ? (
+          <p className="mx-4 mb-2 select-none font-sans text-sm" data-diff-format-summary="">
+            {result.selectedFormat.hasUtf8Bom ? t('UTF-8 BOM added') : t('UTF-8 BOM removed')}
+          </p>
+        ) : null}
+        {!result.lines.some((line) => line.kind === 'added' || line.kind === 'removed') ? (
+          <p className="mx-4 mb-2 select-none font-sans text-sm">{t('No text changes.')}</p>
+        ) : null}
+        {result.lines.some((line) => line.kind === 'omitted') ? (
+          <p className="mx-4 mb-2 select-none font-sans text-xs text-text-100">
+            {t(
+              'Unchanged sections are omitted. Use the version preview or download to read the complete files.'
+            )}
+          </p>
+        ) : null}
         {blocks.map((block) => {
+          if (block.kind === 'omitted') {
+            const lineCount = block.count
+            return (
+              <div
+                key={`omitted:${block.startIndex}`}
+                data-diff-kind="omitted"
+                className="my-2 select-none border-y px-4 py-2 font-sans text-text-100"
+              >
+                {t(
+                  'Unchanged lines omitted: {{lineCount}} (base {{oldStart}}–{{oldEnd}}, selected {{newStart}}–{{newEnd}})',
+                  {
+                    lineCount,
+                    oldStart: block.oldLineNumber,
+                    oldEnd: block.oldLineNumber + lineCount - 1,
+                    newStart: block.newLineNumber,
+                    newEnd: block.newLineNumber + lineCount - 1
+                  }
+                )}
+              </div>
+            )
+          }
           if (block.kind === 'markdown') {
             if (block.changeKind === 'context' || block.changeKind === 'mixed') {
               return (
