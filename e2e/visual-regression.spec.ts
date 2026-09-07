@@ -3,6 +3,7 @@ import type { Page } from 'playwright'
 import type { PersistedChatSession } from '../src/shared/session-persistence'
 import { createProject, sendPrompt } from './certification/helpers'
 import { test } from './fixtures/electron-app'
+import { setTheme } from './fixtures/settings-preferences'
 
 const prepareVisualPage = async (page: Page): Promise<void> => {
   await page.emulateMedia({ reducedMotion: 'reduce' })
@@ -15,31 +16,6 @@ const prepareVisualPage = async (page: Page): Promise<void> => {
     content:
       '[data-slot="message-scroller-button"][data-direction="start"] { visibility: hidden !important; }'
   })
-}
-
-const setTheme = async (page: Page, theme: 'Dark' | 'Light'): Promise<void> => {
-  const homeThemeMenu = page.getByRole('button', { name: /^Theme:/ })
-  const workspaceNavigation = page.getByRole('complementary', { name: 'Workspace navigation' })
-  await expect(homeThemeMenu.or(workspaceNavigation)).toBeVisible()
-  if (await homeThemeMenu.isVisible()) {
-    await homeThemeMenu.click()
-    await page.getByRole('menuitem', { name: new RegExp(`^${theme}`) }).click()
-  } else {
-    await page.getByRole('button', { name: 'Settings', exact: true }).click()
-    const settings = page.getByRole('dialog', { name: 'Settings' })
-    await settings
-      .getByRole('navigation', { name: 'Settings' })
-      .getByRole('button', { name: 'General', exact: true })
-      .click()
-    await settings
-      .getByRole('radiogroup', { name: 'Theme' })
-      .getByRole('radio', { name: theme })
-      .click()
-    await page.keyboard.press('Escape')
-    await expect(settings).toBeHidden()
-  }
-  if (theme === 'Dark') await expect(page.locator('html')).toHaveClass(/dark/)
-  else await expect(page.locator('html')).not.toHaveClass(/dark/)
 }
 
 const setViewport = async (page: Page, width: number, height = 800): Promise<void> => {
@@ -209,11 +185,10 @@ test('keeps core desktop surfaces visually stable', async ({ app }) => {
   await setVisualState(page, { theme: 'Light', width: 1280 })
   await expect(page.getByRole('region', { name: 'Projects' })).toBeVisible()
 
-  await page.getByRole('button', { name: 'Theme: Light' }).click()
-  const systemDescription = page.getByText('Match your device', { exact: true })
-  await expect(systemDescription).toBeVisible()
-  await expect(systemDescription).toHaveCSS('white-space', 'nowrap')
-  await page.keyboard.press('Escape')
+  await expect(page.getByRole('button', { name: /^Theme:/ })).toHaveCount(0)
+  await expect(
+    page.locator('button').filter({ has: page.locator('svg.lucide-languages') })
+  ).toHaveCount(0)
 
   await expectStableScreenshot(page, 'home-empty.png')
 
