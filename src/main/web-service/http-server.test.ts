@@ -1,7 +1,7 @@
 // @ts-expect-error The published ESM entry uses a sibling index.d.ts.
 import { OpenScienceClient } from '../../../packages/open-science/index.mjs'
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
-import { request as httpRequest, type IncomingMessage, ServerResponse } from 'node:http'
+import { request as httpRequest, IncomingMessage, ServerResponse } from 'node:http'
 import { connect } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -142,6 +142,39 @@ const startBudgetTestServer = async (
   servers.push(server)
   return server
 }
+it('does not expose unexpected RPC body stream errors', async () => {
+  const original = IncomingMessage.prototype[Symbol.asyncIterator]
+  const iterator = vi
+    .spyOn(IncomingMessage.prototype, Symbol.asyncIterator)
+    .mockImplementation(function (this: IncomingMessage) {
+      if (this.url?.startsWith('/rpc/')) {
+        return (async function* () {
+          yield Buffer.from('{')
+          throw new Error('private-stream-path/secret')
+        })()
+      }
+      return original.call(this)
+    })
+  try {
+    const server = await startBudgetTestServer({
+      perRequestBytes: 1024,
+      perClientInFlightBytes: 2048,
+      serverInFlightBytes: 4096
+    })
+    const response = await fetch(`http://127.0.0.1:${server.port}/rpc/projects%3Alist`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: '{}'
+    })
+    expect(response.status).toBe(400)
+    expect(await response.json()).toMatchObject({
+      error: { code: 'invalid_request', message: 'Failed to read request body.' }
+    })
+  } finally {
+    iterator.mockRestore()
+  }
+})
+
 const runWithCallerContext = <Result>(_context: CallerContext, operation: () => Result): Result =>
   operation()
 
