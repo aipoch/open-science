@@ -270,7 +270,9 @@ const createReviewerCommandOwner = (options: ReviewerIpcOptions): ReviewerComman
     try {
       session = await sessionRepository.loadSession(request.projectId, request.appSessionId)
     } catch {
-      return reviews.map((review) => ({ ...review, verificationUnavailable: true }))
+      return reviews.map((review) =>
+        review.lifecycle === 'complete' ? { ...review, verificationUnavailable: true } : review
+      )
     }
     return flagStaleReviews(reviews, session, dataRoot, resolveArtifactVersion)
   }

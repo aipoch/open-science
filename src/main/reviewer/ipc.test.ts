@@ -743,7 +743,7 @@ describe('reviewer IPC handlers', () => {
     })
 
     it('retains history with an unavailable verification marker when the session load throws', async () => {
-      const reviews = [{ id: 'review-1', turnMessageId: 'message-1' }]
+      const reviews = [{ id: 'review-1', turnMessageId: 'message-1', lifecycle: 'complete' }]
       getReviewsForSession.mockResolvedValue(reviews)
       sessionLoadOne.mockRejectedValueOnce(new Error('session store unavailable'))
       registerReviewerIpcHandlers({ acpRuntime })
@@ -763,6 +763,27 @@ describe('reviewer IPC handlers', () => {
       // A read error is distinct from a missing Session and from a confirmed scope change.
       expect(flagStaleReviews).not.toHaveBeenCalled()
     })
+
+    it.each(['running', 'error'])(
+      'does not attach a historical verification marker to a %s review on a session read error',
+      async (lifecycle) => {
+        const review = { id: 'review-1', turnMessageId: 'message-1', lifecycle }
+        getReviewsForSession.mockResolvedValue([review])
+        sessionLoadOne.mockRejectedValueOnce(
+          Object.assign(new Error('Temporary session read failure'), { code: 'EIO' })
+        )
+        const owner = createReviewerCommandOwner({ acpRuntime })
+
+        const result = await owner.getForSession({
+          projectId: 'project-1',
+          appSessionId: 'session-1'
+        })
+
+        expect(result[0]).toEqual(review)
+        expect(result[0].verificationUnavailable).toBeUndefined()
+        expect(flagStaleReviews).not.toHaveBeenCalled()
+      }
+    )
   })
 
   describe('reviewer:abort-fix-loop handler', () => {
