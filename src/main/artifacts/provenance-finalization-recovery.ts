@@ -56,10 +56,9 @@ type ArtifactProvenanceFinalizationRecoveryOptions = {
   >
 }
 
-// Resolves the agent message owning the prepared prompt turn's output. It prefers a single message
-// before the next user prompt on the declared Branch and Runtime Segment, and past that boundary
-// accepts only a message the durable Session already claims; choosing a latest message (or
-// accepting multiple unclaimed candidates) could attach a crashed run to a later turn.
+// Prefer a complete durable claim on the declared Branch and Runtime Segment over the prompt-window
+// heuristic: an in-turn user feedback Message can separate commentary from the real output owner.
+// Only an entirely unclaimed run may fall back to a single Message before the next user prompt.
 const inferDurableFinalizationMessageId = (
   session: PersistedChatSession,
   context: PreparedArtifactFinalizationContext,
@@ -87,28 +86,29 @@ const inferDurableFinalizationMessageId = (
     message.agentFrameId === context.agentFrameId &&
     message.introducedOnBranchId === context.messageBranchId &&
     message.runtimeSegmentId === context.runtimeSegmentId
-  const turnCandidates = path.slice(promptIndex + 1, turnEnd).filter(ownsRunOutput)
-  let message = turnCandidates.length === 1 ? turnCandidates[0] : undefined
-  if (!message) {
-    // A turn may contain commentary before its result, and a Session Plan persists review feedback
-    // as a durable user Message inside the still-open turn, so the owner can also follow that
-    // prompt boundary. Use durable attachments to distinguish the owner, but reject even a partial
-    // competing claim anywhere in the Session graph/projection.
-    const candidates =
-      turnCandidates.length > 0 ? turnCandidates : path.slice(promptIndex + 1).filter(ownsRunOutput)
-    const claimedMessageIds = new Set(
-      [...session.messages, ...(session.conversationGraph?.messages ?? [])]
-        .filter((candidate) => candidate.artifactIds?.some((id) => versionIds.includes(id)))
-        .map((candidate) => candidate.id)
-    )
+  const claimedMessageIds = new Set(
+    [...session.messages, ...(session.conversationGraph?.messages ?? [])]
+      .filter((candidate) => candidate.artifactIds?.some((id) => versionIds.includes(id)))
+      .map((candidate) => candidate.id)
+  )
+  let message: (typeof path)[number] | undefined
+  if (claimedMessageIds.size > 0) {
+    // Even a partial or competing claim blocks heuristic fallback. Otherwise an unrelated single
+    // commentary Message could permanently acquire a Version already attached to its real owner.
     if (claimedMessageIds.size !== 1) return undefined
-    message = candidates.find((candidate) => claimedMessageIds.has(candidate.id))
+    message = path
+      .slice(promptIndex + 1)
+      .find((candidate) => ownsRunOutput(candidate) && claimedMessageIds.has(candidate.id))
     if (
       !message ||
       !versionIds.every((id) => isArtifactLinkedToDurableMessage(session, message!.id, id))
     ) {
       return undefined
     }
+  } else {
+    const turnCandidates = path.slice(promptIndex + 1, turnEnd).filter(ownsRunOutput)
+    if (turnCandidates.length !== 1) return undefined
+    message = turnCandidates[0]
   }
 
   validateDurableMessageOwnership(session, { ...context, messageId: message.id })
