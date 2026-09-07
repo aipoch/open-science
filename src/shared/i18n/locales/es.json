@@ -4952,6 +4952,24 @@
     "Loaded bytes {{start}}–{{end}}": "Bytes cargados {{start}}–{{end}}",
     "First line is continued from the previous page": "La primera línea continúa desde la página anterior",
     "Last line continues on the next page": "La última línea continúa en la página siguiente",
-    "Partial source context; syntax highlighting is unavailable": "Contexto de código fuente parcial; resaltado de sintaxis no disponible"
+    "Partial source context; syntax highlighting is unavailable": "Contexto de código fuente parcial; resaltado de sintaxis no disponible",
+    "Carriage return (CR)": "Retorno de carro (CR)",
+    "Line feed (LF)": "Salto de línea (LF)",
+    "Line ending (CRLF)": "Final de línea (CRLF)",
+    "Line ending characters": "Caracteres de final de línea",
+    "UTF-8 BOM added": "BOM UTF-8 añadido",
+    "UTF-8 BOM removed": "BOM UTF-8 eliminado",
+    "No text changes.": "No hay cambios en el texto.",
+    "Newline at end of file added": "Salto de línea al final del archivo añadido",
+    "Newline at end of file removed": "Salto de línea al final del archivo eliminado",
+    "Unchanged sections are omitted. Use the version preview or download to read the complete files.": "Se omiten las secciones sin cambios. Use la vista previa de la versión o descargue los archivos para leerlos completos.",
+    "Unchanged lines omitted: {{lineCount}} (base {{oldStart}}–{{oldEnd}}, selected {{newStart}}–{{newEnd}})": "Líneas sin cambios omitidas: {{lineCount}} (base {{oldStart}}–{{oldEnd}}, seleccionada {{newStart}}–{{newEnd}})",
+    "A version exceeds the 2 MiB comparison input limit. Preview or download each version to compare the complete files.": "Una versión supera el límite de entrada de 2 MiB. Abra la vista previa o descargue cada versión para comparar los archivos completos.",
+    "The changes exceed the comparison display limit, even with unchanged sections omitted. Preview or download each version to compare the complete files.": "Los cambios superan el límite de visualización, incluso omitiendo las secciones sin cambios. Abra la vista previa o descargue cada versión para comparar los archivos completos.",
+    "Comparison took too long. You can retry, but complex changes may reach the time limit again.": "La comparación tardó demasiado. Puede reintentar, pero los cambios complejos pueden volver a alcanzar el límite de tiempo.",
+    "Other comparisons are running. Wait for them to finish, then retry.": "Hay otras comparaciones en curso. Espere a que terminen y vuelva a intentarlo.",
+    "Version storage is unavailable. Check that the storage location is accessible, then retry.": "El almacenamiento de versiones no está disponible. Compruebe que la ubicación sea accesible y vuelva a intentarlo.",
+    "This comparison could not be completed. Return to the version preview to check the file.": "No se pudo completar la comparación. Vuelva a la vista previa de la versión para comprobar el archivo.",
+    "View version": "Ver versión"
   }
 }

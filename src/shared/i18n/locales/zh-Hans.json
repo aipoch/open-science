@@ -4636,6 +4636,24 @@
     "Loaded bytes {{start}}–{{end}}": "已读取字节 {{start}}–{{end}}",
     "First line is continued from the previous page": "首行接续上一页的内容",
     "Last line continues on the next page": "末行将在下一页继续",
-    "Partial source context; syntax highlighting is unavailable": "源码上下文不完整，无法进行语法高亮"
+    "Partial source context; syntax highlighting is unavailable": "源码上下文不完整，无法进行语法高亮",
+    "Carriage return (CR)": "回车符（CR）",
+    "Line feed (LF)": "换行符（LF）",
+    "Line ending (CRLF)": "行结束符（CRLF）",
+    "Line ending characters": "行结束字符",
+    "UTF-8 BOM added": "已添加 UTF-8 BOM",
+    "UTF-8 BOM removed": "已移除 UTF-8 BOM",
+    "No text changes.": "正文没有变化。",
+    "Newline at end of file added": "已添加文件末尾换行",
+    "Newline at end of file removed": "已移除文件末尾换行",
+    "Unchanged sections are omitted. Use the version preview or download to read the complete files.": "已省略未变化的部分。可通过版本预览或下载查看完整文件。",
+    "Unchanged lines omitted: {{lineCount}} (base {{oldStart}}–{{oldEnd}}, selected {{newStart}}–{{newEnd}})": "已省略的未变化行数：{{lineCount}}（基准 {{oldStart}}–{{oldEnd}}，所选 {{newStart}}–{{newEnd}}）",
+    "A version exceeds the 2 MiB comparison input limit. Preview or download each version to compare the complete files.": "某个版本超过了 2 MiB 的比较输入限制。请预览或下载各版本以比较完整文件。",
+    "The changes exceed the comparison display limit, even with unchanged sections omitted. Preview or download each version to compare the complete files.": "即使省略未变化的部分，差异仍超过比较显示限制。请预览或下载各版本以比较完整文件。",
+    "Comparison took too long. You can retry, but complex changes may reach the time limit again.": "比较耗时过长。可以重试，但复杂修改可能再次达到时限。",
+    "Other comparisons are running. Wait for them to finish, then retry.": "其他比较正在进行。请等待完成后重试。",
+    "Version storage is unavailable. Check that the storage location is accessible, then retry.": "版本存储不可用。请确认存储位置可以访问后重试。",
+    "This comparison could not be completed. Return to the version preview to check the file.": "无法完成此次比较。请返回版本预览检查文件。",
+    "View version": "查看版本"
   }
 }

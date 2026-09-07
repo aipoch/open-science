@@ -80,6 +80,7 @@ import { PreviewFileContent } from './previews/PreviewFileContent'
 import type { PreviewDownloadVersionContext } from './previews/preview-runtime-context'
 import type { PreviewInteractionPort } from './previews/preview-types'
 import { ArtifactProvenancePanel } from './ArtifactProvenancePanel'
+import { ManagedVersionDiffError } from './ManagedVersionDiffError'
 import { ManagedVersionDiffContent } from './ManagedVersionDiffContent'
 import { PreviewActionMenuAdapterProvider } from './preview-actions/preview-action-adapter'
 import { usePreviewActions } from './preview-actions/preview-action-hooks'
@@ -1669,10 +1670,14 @@ const PreviewFileSurface = forwardRef<PreviewFileSurfaceHandle, PreviewFileSurfa
                         format={resolvedPreviewItem.format}
                         name={resolvedPreviewItem.name}
                       />
+                    ) : managedWorkflow.diffError ? (
+                      <ManagedVersionDiffError
+                        error={managedWorkflow.diffError}
+                        onRetry={managedWorkflow.refreshInspect}
+                        onView={managedWorkflow.stopDiff}
+                      />
                     ) : (
-                      <div className="p-4 text-sm text-text-100">
-                        {managedWorkflow.diffError ?? t('Comparing versions...')}
-                      </div>
+                      <div className="p-4 text-sm text-text-100">{t('Comparing versions...')}</div>
                     )
                   ) : renderContent ? (
                     <PreviewFileContent

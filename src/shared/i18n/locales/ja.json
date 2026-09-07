@@ -4636,6 +4636,24 @@
     "Loaded bytes {{start}}–{{end}}": "読み込み済みのバイト範囲：{{start}}～{{end}}",
     "First line is continued from the previous page": "最初の行は前のページからの続きです",
     "Last line continues on the next page": "最後の行は次のページに続きます",
-    "Partial source context; syntax highlighting is unavailable": "ソースの前後関係が不完全なため、構文の強調表示は利用できません"
+    "Partial source context; syntax highlighting is unavailable": "ソースの前後関係が不完全なため、構文の強調表示は利用できません",
+    "Carriage return (CR)": "復帰文字（CR）",
+    "Line feed (LF)": "改行文字（LF）",
+    "Line ending (CRLF)": "行末文字（CRLF）",
+    "Line ending characters": "行末文字",
+    "UTF-8 BOM added": "UTF-8 BOM を追加",
+    "UTF-8 BOM removed": "UTF-8 BOM を削除",
+    "No text changes.": "本文に変更はありません。",
+    "Newline at end of file added": "ファイル末尾の改行を追加",
+    "Newline at end of file removed": "ファイル末尾の改行を削除",
+    "Unchanged sections are omitted. Use the version preview or download to read the complete files.": "変更のない部分は省略されています。全文を読むには、バージョンをプレビューするかダウンロードしてください。",
+    "Unchanged lines omitted: {{lineCount}} (base {{oldStart}}–{{oldEnd}}, selected {{newStart}}–{{newEnd}})": "省略された未変更行数：{{lineCount}}（比較元 {{oldStart}}–{{oldEnd}}、選択中 {{newStart}}–{{newEnd}}）",
+    "A version exceeds the 2 MiB comparison input limit. Preview or download each version to compare the complete files.": "バージョンが比較入力の上限 2 MiB を超えています。各バージョンをプレビューまたはダウンロードして、ファイル全体を比較してください。",
+    "The changes exceed the comparison display limit, even with unchanged sections omitted. Preview or download each version to compare the complete files.": "変更のない部分を省略しても、差分が表示上限を超えています。各バージョンをプレビューまたはダウンロードして、ファイル全体を比較してください。",
+    "Comparison took too long. You can retry, but complex changes may reach the time limit again.": "比較に時間がかかりすぎました。再試行できますが、複雑な変更では再び制限時間に達する場合があります。",
+    "Other comparisons are running. Wait for them to finish, then retry.": "他の比較を実行中です。完了してから再試行してください。",
+    "Version storage is unavailable. Check that the storage location is accessible, then retry.": "バージョンの保存先を利用できません。保存先にアクセスできることを確認してから再試行してください。",
+    "This comparison could not be completed. Return to the version preview to check the file.": "比較を完了できませんでした。バージョンのプレビューに戻ってファイルを確認してください。",
+    "View version": "バージョンを表示"
   }
 }

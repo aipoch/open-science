@@ -5085,6 +5085,24 @@
     "Loaded bytes {{start}}–{{end}}": "Загруженные байты {{start}}–{{end}}",
     "First line is continued from the previous page": "Первая строка продолжается с предыдущей страницы",
     "Last line continues on the next page": "Последняя строка продолжается на следующей странице",
-    "Partial source context; syntax highlighting is unavailable": "Неполный контекст исходного кода; подсветка синтаксиса недоступна"
+    "Partial source context; syntax highlighting is unavailable": "Неполный контекст исходного кода; подсветка синтаксиса недоступна",
+    "Carriage return (CR)": "Возврат каретки (CR)",
+    "Line feed (LF)": "Перевод строки (LF)",
+    "Line ending (CRLF)": "Окончание строки (CRLF)",
+    "Line ending characters": "Символы окончания строки",
+    "UTF-8 BOM added": "Добавлен BOM UTF-8",
+    "UTF-8 BOM removed": "Удалён BOM UTF-8",
+    "No text changes.": "Текст не изменён.",
+    "Newline at end of file added": "Добавлен перевод строки в конце файла",
+    "Newline at end of file removed": "Удалён перевод строки в конце файла",
+    "Unchanged sections are omitted. Use the version preview or download to read the complete files.": "Неизменённые разделы пропущены. Для чтения файлов целиком откройте предпросмотр версии или скачайте их.",
+    "Unchanged lines omitted: {{lineCount}} (base {{oldStart}}–{{oldEnd}}, selected {{newStart}}–{{newEnd}})": "Пропущено неизменённых строк: {{lineCount}} (базовая версия {{oldStart}}–{{oldEnd}}, выбранная {{newStart}}–{{newEnd}})",
+    "A version exceeds the 2 MiB comparison input limit. Preview or download each version to compare the complete files.": "Одна из версий превышает лимит входных данных сравнения в 2 МиБ. Откройте предпросмотр или скачайте каждую версию для сравнения файлов целиком.",
+    "The changes exceed the comparison display limit, even with unchanged sections omitted. Preview or download each version to compare the complete files.": "Изменения превышают лимит отображения даже после пропуска неизменённых разделов. Откройте предпросмотр или скачайте каждую версию для сравнения файлов целиком.",
+    "Comparison took too long. You can retry, but complex changes may reach the time limit again.": "Сравнение заняло слишком много времени. Можно повторить попытку, но сложные изменения могут снова привести к превышению времени.",
+    "Other comparisons are running. Wait for them to finish, then retry.": "Выполняются другие сравнения. Дождитесь их завершения и повторите попытку.",
+    "Version storage is unavailable. Check that the storage location is accessible, then retry.": "Хранилище версий недоступно. Проверьте доступность места хранения и повторите попытку.",
+    "This comparison could not be completed. Return to the version preview to check the file.": "Не удалось завершить сравнение. Вернитесь к предпросмотру версии, чтобы проверить файл.",
+    "View version": "Открыть версию"
   }
 }
