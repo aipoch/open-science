@@ -19,6 +19,47 @@ LID - 10.1016/j.cell.2011.03.019 [doi]
 `
 
 describe('LiteratureReferenceResolver', () => {
+  it('resolves the reported Springer PDF DOI into a complete unsaved reference', async () => {
+    const fetchFn = vi.fn<typeof fetch>().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          message: {
+            DOI: '10.1007/s11914-026-00956-3',
+            type: 'journal-article',
+            title: ['Metabolism in Tumour-Induced Bone Disease'],
+            'container-title': ['Current Osteoporosis Reports'],
+            published: { 'date-parts': [[2026, 2, 16]] },
+            volume: '24',
+            issue: '1',
+            'article-number': '8',
+            author: [
+              { given: 'Renee T.', family: 'Ormsby' },
+              { given: 'Claire M.', family: 'Edwards' }
+            ]
+          }
+        })
+      )
+    )
+    const [result] = await new LiteratureReferenceResolver(fetchFn).resolve([
+      'doi:10.1007/s11914-026-00956-3'
+    ])
+    expect(result.item).toMatchObject({
+      title: 'Metabolism in Tumour-Induced Bone Disease',
+      containerTitle: 'Current Osteoporosis Reports',
+      issuedYear: 2026,
+      issuedText: '2026-02-16',
+      typeFields: { volume: '24', issue: '1', pages: '8' },
+      creators: [
+        expect.objectContaining({ familyName: 'Ormsby' }),
+        expect.objectContaining({ familyName: 'Edwards' })
+      ]
+    })
+    expect(fetchFn).toHaveBeenCalledExactlyOnceWith(
+      'https://api.crossref.org/works/10.1007%2Fs11914-026-00956-3',
+      expect.objectContaining({ signal: expect.any(AbortSignal) })
+    )
+  })
+
   it('resolves a compact mixed identifier batch and preserves input order', async () => {
     const fetchFn = vi.fn(async (input: string | URL | Request) => {
       const url = String(input)

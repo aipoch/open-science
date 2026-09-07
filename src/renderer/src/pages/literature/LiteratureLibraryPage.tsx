@@ -147,6 +147,7 @@ import { LiteratureDetailLinkList } from './LiteratureDetailLinkList'
 import { LiteratureMetadataLookup } from './LiteratureMetadataLookup'
 import { useLiteratureEntries } from './useLiteratureEntries'
 import { useLiteratureMetadata } from './useLiteratureMetadata'
+import { LiteratureLibraryCount } from './LiteratureLibraryCount'
 import { LiteratureMetadataEditor } from './LiteratureMetadataEditor'
 import { LiteratureDuplicatePolicyField } from './LiteratureDuplicatePolicyField'
 import { LiteratureSearchInput } from './LiteratureSearchInput'
@@ -1210,6 +1211,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
     duplicateCountRef.current?.setCount(count)
   }, [])
   const [duplicatesRevision, setDuplicatesRevision] = useState(0)
+  const [libraryCountRevision, setLibraryCountRevision] = useState(0)
   const [mergeSurvivorId, setMergeSurvivorId] = useState('')
   const [mergeFieldSources, setMergeFieldSources] = useState<Record<string, string>>({})
   const [items, setItems] = useState<LiteratureItemView[]>([])
@@ -1595,7 +1597,10 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
   })
   const loadEntries = useCallback(
     (force = false): Promise<void> => {
-      if (force) setDuplicatesRevision((value) => value + 1)
+      if (force) {
+        setDuplicatesRevision((value) => value + 1)
+        setLibraryCountRevision((value) => value + 1)
+      }
       return reloadEntries(force)
     },
     [reloadEntries]
@@ -2227,7 +2232,11 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
     setIsReadingImportMetadata(true)
     setIsCreatingItem(true)
     void import('./literature-pdf-metadata')
-      .then(({ extractLiteraturePdfDraft }) => extractLiteraturePdfDraft(file, fallback))
+      .then(async ({ extractLiteraturePdfDraft, completeLiteraturePdfDraft }) => {
+        const local = await extractLiteraturePdfDraft(file, fallback)
+        if (importMetadataGenerationRef.current !== generation) return local
+        return completeLiteraturePdfDraft(local)
+      })
       .then((draft) => {
         if (importMetadataGenerationRef.current === generation) setPendingImportDraft(draft)
       })
@@ -2969,6 +2978,10 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
                 >
                   <BookOpenText className="size-4" aria-hidden="true" />
                   {!sidebarCollapsed ? <span>{t('All references')}</span> : null}
+                  <LiteratureLibraryCount
+                    revision={libraryCountRevision}
+                    hidden={sidebarCollapsed}
+                  />
                 </button>
                 <button
                   type="button"

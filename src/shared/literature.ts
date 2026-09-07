@@ -898,6 +898,19 @@ const literatureApplicationCommandContracts = Object.freeze({
     validationCodec(z.tuple([literatureCitationStylesRequestSchema])),
     validationCodec(literatureCitationStylesResultSchema)
   ),
+  lookupMetadata: defineApplicationCommandContract(
+    validationCodec(
+      z.tuple([
+        z
+          .string()
+          .trim()
+          .min(1)
+          .max(2048)
+          .regex(/^10\.\d{4,9}\/\S+$/u)
+      ])
+    ),
+    validationCodec(literatureItemInputSchema)
+  ),
   completeMetadata: defineApplicationCommandContract(
     validationCodec(z.tuple([literatureMetadataCompletionRequestSchema])),
     validationCodec(literatureMetadataCompletionResultSchema)

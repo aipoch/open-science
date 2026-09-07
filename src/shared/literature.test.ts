@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest'
 import {
   createLiteratureAttachmentVersionReference,
   createLiteratureIdentifierUrl,
+  literatureApplicationCommandContracts,
   literatureCatalogCommandSchema,
   literatureCatalogSearchRequestSchema,
   literatureCollectionViewSchema,
@@ -13,6 +14,21 @@ import {
   normalizeLiteratureIdentifierValue,
   parseLiteratureAttachmentVersionReference
 } from './literature'
+
+describe('Literature DOI draft lookup contract', () => {
+  it('accepts a DOI and rejects URLs, malformed identifiers, and oversized arguments', () => {
+    const { args } = literatureApplicationCommandContracts.lookupMetadata
+    expect(args.parse(['10.1007/s11914-026-00956-3'])).toEqual(['10.1007/s11914-026-00956-3'])
+    for (const input of [
+      [],
+      ['https://example.com'],
+      ['10.1007/has space'],
+      ['10.1007/' + 'a'.repeat(2048)]
+    ]) {
+      expect(() => args.parse(input)).toThrow()
+    }
+  })
+})
 
 describe('Literature citation style requests', () => {
   it('keeps style listing on the stable parameter-free request shape', () => {

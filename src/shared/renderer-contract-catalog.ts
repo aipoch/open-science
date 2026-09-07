@@ -246,6 +246,7 @@ import type {
   LiteratureFormatReferencesRequest,
   LiteratureFormatReferencesResult,
   LiteratureItemView,
+  LiteratureItemInput,
   LiteratureMetadataCompletionRequest,
   LiteratureMetadataCompletionResult,
   LiteraturePdfImportReceipt,
@@ -1106,6 +1107,10 @@ export const RENDERER_API_CONTRACT = Object.freeze({
   'literature.citationStyles': callable<
     (request: LiteratureCitationStylesRequest) => Promise<LiteratureCitationStylesResult>
   >()('literature', ['literature:citation-styles', WEB, undefined, undefined, RUNTIME_VALIDATED]),
+  'literature.lookupMetadata': callable<(doi: string) => Promise<LiteratureItemInput>>()(
+    'literature',
+    ['literature:lookup-metadata', WEB, undefined, undefined, RUNTIME_VALIDATED]
+  ),
   'literature.completeMetadata': callable<
     (request: LiteratureMetadataCompletionRequest) => Promise<LiteratureMetadataCompletionResult>
   >()('literature', ['literature:complete-metadata', WEB, undefined, undefined, RUNTIME_VALIDATED]),
