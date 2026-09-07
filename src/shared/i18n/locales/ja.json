@@ -4066,6 +4066,8 @@
     "Edit session": "セッションを編集",
     "This session's title or description changed in another window. Your changes were not saved. Close and reopen the editor to review the latest details.": "このセッションのタイトルまたは説明が別のウィンドウで変更されました。変更は保存されていません。エディターを閉じて再度開き、最新の詳細を確認してください。",
     "Could not save session details.": "セッションの詳細を保存できませんでした。",
+    "Shorten the title to 80 characters or fewer before saving.": "保存する前にタイトルを80文字以内に短くしてください。",
+    "Shorten the description to 1000 characters or fewer before saving.": "保存する前に説明を1000文字以内に短くしてください。",
     "Generates a title and description after the first message is saved.": "最初のメッセージが保存された後にタイトルと説明を生成します。",
     "Models for session details, subagents, review, and image understanding.": "セッションの詳細、サブエージェント、レビュー、画像理解に使用するモデルです。",
     "Session details": "セッションの詳細",

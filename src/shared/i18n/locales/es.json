@@ -4374,6 +4374,8 @@
     "Edit session": "Editar sesión",
     "This session's title or description changed in another window. Your changes were not saved. Close and reopen the editor to review the latest details.": "El título o la descripción de esta sesión cambió en otra ventana. Sus cambios no se guardaron. Cierre y vuelva a abrir el editor para revisar los detalles más recientes.",
     "Could not save session details.": "No se pudieron guardar los detalles de la sesión.",
+    "Shorten the title to 80 characters or fewer before saving.": "Acorte el título a 80 caracteres o menos antes de guardar.",
+    "Shorten the description to 1000 characters or fewer before saving.": "Acorte la descripción a 1000 caracteres o menos antes de guardar.",
     "Generates a title and description after the first message is saved.": "Genera un título y una descripción después de guardar el primer mensaje.",
     "Models for session details, subagents, review, and image understanding.": "Modelos para detalles de sesión, subagentes, revisión y comprensión de imágenes.",
     "Session details": "Detalles de la sesión",

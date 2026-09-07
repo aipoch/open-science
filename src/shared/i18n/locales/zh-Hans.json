@@ -4067,6 +4067,8 @@
     "Edit session": "编辑会话",
     "This session's title or description changed in another window. Your changes were not saved. Close and reopen the editor to review the latest details.": "此会话的标题或描述已在另一个窗口中更改。你的更改尚未保存。请关闭并重新打开编辑器，以查看最新详情。",
     "Could not save session details.": "无法保存会话详情。",
+    "Shorten the title to 80 characters or fewer before saving.": "请将标题缩短至 80 个字符以内再保存。",
+    "Shorten the description to 1000 characters or fewer before saving.": "请将描述缩短至 1000 个字符以内再保存。",
     "Generates a title and description after the first message is saved.": "首条消息保存后生成标题和描述。",
     "Models for session details, subagents, review, and image understanding.": "用于会话详情、子智能体、审查和图像理解的模型。",
     "Session details": "会话详情",
