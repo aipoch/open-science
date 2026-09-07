@@ -570,6 +570,8 @@ describe('workspace message queue controller', () => {
     const hook = renderController(input)
     mounted.push(hook)
     const queued = admission('queued with new Reading PDFs')
+    queued.snapshot.pdfReadingPosition = { pageNumber: 2, pageCount: 14 }
+    queued.snapshot.pdfReadingPositionSource = { attachmentId: 'upload-1' }
     queued.snapshot.pendingPdfContextAttachmentIds = ['upload-1']
     queued.snapshot.pendingPdfContextVersions = [
       {
@@ -586,6 +588,8 @@ describe('workspace message queue controller', () => {
     await vi.waitFor(() => expect(input.runtime.sendMessage).toHaveBeenCalledOnce())
     expect(input.runtime.sendMessage).toHaveBeenCalledWith(
       expect.objectContaining({
+        pdfReadingPosition: { pageNumber: 2, pageCount: 14 },
+        pdfReadingPositionSource: { attachmentId: 'upload-1' },
         pendingPdfContextAttachmentIds: ['upload-1'],
         pendingPdfContextVersions: [
           {

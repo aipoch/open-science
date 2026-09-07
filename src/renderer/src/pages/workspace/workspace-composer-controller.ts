@@ -1,3 +1,4 @@
+import type { PdfReadingPositionSource } from '../../../../shared/session-pdf-context'
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 
 import type { UploadedAttachment } from '../../../../shared/uploads'
@@ -86,6 +87,7 @@ export type ComposerSendSnapshot = {
   automaticReadingEnabled?: boolean
   pdfContext?: MessagePdfContextSnapshot
   pdfReadingPosition?: PdfReadingPosition
+  pdfReadingPositionSource?: PdfReadingPositionSource
   pendingPdfContextAttachmentIds?: string[]
   pendingPdfContextVersions?: Array<{
     sourceKind: SessionPdfContextSource['sourceKind']
@@ -466,12 +468,14 @@ const useWorkspaceComposerController = ({
     | undefined
   >(undefined)
   const readingMutationPromiseRef = useRef<Promise<void> | undefined>(undefined)
-  const readingMutationPromiseSessionIdRef = useRef<string | undefined>(undefined)
+  const readingMutationPromiseRuntimeRef =
+    useRef<typeof readingMutationRuntimeRef.current>(undefined)
   useLayoutEffect(() => {
     const current = readingMutationRuntimeRef.current
     if (
       activeSession &&
       (current?.sessionId !== activeSession.id ||
+        current?.projectId !== activeSession.projectId ||
         (!readingMutationPromiseRef.current &&
           (activeSession.runtimeContext?.revision ?? 0) >= current.runtimeContext.revision))
     ) {
@@ -490,16 +494,23 @@ const useWorkspaceComposerController = ({
   const reconcileReadingContextSources = useCallback(
     (requestedSources: SessionPdfContextSource[]): Promise<void> => {
       if (!activeSession) return Promise.resolve()
+      const operationRuntime = readingMutationRuntimeRef.current
+      if (!operationRuntime) return Promise.resolve()
       const uniqueSources = [
         ...new Map(requestedSources.map((source) => [pdfContextSourceKey(source), source])).values()
       ].slice(0, MAX_SESSION_PDF_CONTEXTS)
       readingContextSourcesRef.current = uniqueSources
       if (readingMutationPromiseRef.current) {
         const pending = readingMutationPromiseRef.current
-        if (readingMutationPromiseSessionIdRef.current === activeSession.id) return pending
+        if (readingMutationPromiseRuntimeRef.current === operationRuntime) return pending
         return pending
           .catch(() => undefined)
-          .then(() => restoreReadingContextSourcesRef.current(uniqueSources))
+          .then(() => {
+            // Leaving the originating Project/Session invalidates this queued intent, even
+            // if the user returns before the preceding IPC finishes.
+            if (readingMutationRuntimeRef.current !== operationRuntime) return
+            return restoreReadingContextSourcesRef.current(readingContextSourcesRef.current)
+          })
       }
       const currentSources = (
         readingMutationRuntimeRef.current?.runtimeContext.pdfContext?.bindings ?? []
@@ -516,7 +527,7 @@ const useWorkspaceComposerController = ({
       setIsPdfContextPending(true)
       const run = (async (): Promise<void> => {
         try {
-          while (readingMutationRuntimeRef.current?.sessionId === operationSessionId) {
+          while (readingMutationRuntimeRef.current === operationRuntime) {
             const runtime = readingMutationRuntimeRef.current.runtimeContext
             const target = readingContextSourcesRef.current
             const targetKeys = new Set(target.map(pdfContextSourceKey))
@@ -532,7 +543,7 @@ const useWorkspaceComposerController = ({
                 expectedRevision: runtime.revision,
                 bindingId: removed.bindingId
               })
-              if (readingMutationRuntimeRef.current?.sessionId !== operationSessionId) return
+              if (readingMutationRuntimeRef.current !== operationRuntime) return
               readingMutationRuntimeRef.current.runtimeContext = nextRuntime
               usePreviewWorkbenchStore.getState().clearPdfReadingPosition(removed.bindingId)
               continue
@@ -547,13 +558,14 @@ const useWorkspaceComposerController = ({
                 expectedRevision: runtime.revision,
                 sources: added
               })
-              if (readingMutationRuntimeRef.current?.sessionId !== operationSessionId) return
+              if (readingMutationRuntimeRef.current !== operationRuntime) return
               readingMutationRuntimeRef.current.runtimeContext = nextRuntime
               continue
             }
             break
           }
         } catch (error) {
+          if (readingMutationRuntimeRef.current !== operationRuntime) throw error
           const currentBindings =
             readingMutationRuntimeRef.current?.runtimeContext.pdfContext?.bindings ?? []
           readingContextSourcesRef.current = currentBindings.map(
@@ -571,12 +583,12 @@ const useWorkspaceComposerController = ({
       const tracked = run.finally(() => {
         if (readingMutationPromiseRef.current !== tracked) return
         readingMutationPromiseRef.current = undefined
-        readingMutationPromiseSessionIdRef.current = undefined
+        readingMutationPromiseRuntimeRef.current = undefined
         setPdfContextPendingBindingId(undefined)
         setIsPdfContextPending(false)
       })
       readingMutationPromiseRef.current = tracked
-      readingMutationPromiseSessionIdRef.current = operationSessionId
+      readingMutationPromiseRuntimeRef.current = operationRuntime
       return tracked
     },
     [activeSession, onSessionSizeLimit, setError]
@@ -603,7 +615,7 @@ const useWorkspaceComposerController = ({
         return
       const transaction =
         !readingMutationPromiseRef.current ||
-        readingMutationPromiseSessionIdRef.current !== activeSession.id
+        readingMutationPromiseRuntimeRef.current !== readingMutationRuntimeRef.current
           ? beginReadingContextUndo()
           : undefined
       try {
@@ -670,7 +682,7 @@ const useWorkspaceComposerController = ({
       if (!durableBinding || !activeSession) return
       const transaction =
         !readingMutationPromiseRef.current ||
-        readingMutationPromiseSessionIdRef.current !== activeSession.id
+        readingMutationPromiseRuntimeRef.current !== readingMutationRuntimeRef.current
           ? beginReadingContextUndo()
           : undefined
       void reconcileReadingContextSources(
@@ -1051,12 +1063,23 @@ const useWorkspaceComposerController = ({
               }
             }
           : {}),
-        // Finalized uploads precede immutable versions at first-send linking. Do not
-        // apply a version's viewport to an upload in a mixed draft.
-        ...(includeReadingContext &&
-        pdfReadingPosition &&
-        !(activePendingReading?.kind === 'version' && pendingPdfContextAttachmentIds.length > 0)
-          ? { pdfReadingPosition }
+        ...(includeReadingContext && pdfReadingPosition
+          ? {
+              pdfReadingPosition,
+              pdfReadingPositionSource: activeReadingBinding
+                ? {
+                    sourceKind: activeReadingBinding.sourceKind,
+                    sourceVersionId: activeReadingBinding.sourceVersionId
+                  }
+                : activePendingReading?.kind === 'staged-upload'
+                  ? { attachmentId: activePendingReading.attachmentId }
+                  : activePendingReading
+                    ? {
+                        sourceKind: activePendingReading.sourceKind,
+                        sourceVersionId: activePendingReading.sourceVersionId
+                      }
+                    : undefined
+            }
           : {}),
         ...(pendingPdfContextAttachmentIds.length > 0 ? { pendingPdfContextAttachmentIds } : {}),
         ...(pendingPdfContextVersions.length > 0 ? { pendingPdfContextVersions } : {})
