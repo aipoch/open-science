@@ -1,0 +1,52 @@
+import { uploadFileChunks } from '../pages/workspace/composer-upload-transfer'
+import type { SpecialistPackageCandidatePreview } from '../../../shared/specialist-package'
+import type { UploadTransferProgress } from '../../../shared/uploads'
+
+// Keep the picker synchronous with the user click so browser user activation is preserved.
+export const chooseSpecialistZip = (signal: AbortSignal): Promise<File | undefined> =>
+  new Promise((resolve) => {
+    const input = document.createElement('input')
+    input.type = 'file'
+    input.accept = '.zip'
+    input.hidden = true
+    const finish = (file?: File): void => {
+      signal.removeEventListener('abort', cancel)
+      input.remove()
+      resolve(file)
+    }
+    const cancel = (): void => finish()
+    signal.addEventListener('abort', cancel, { once: true })
+    input.addEventListener('change', () => finish(input.files?.[0]), { once: true })
+    input.addEventListener('cancel', () => finish(), { once: true })
+    document.body.appendChild(input)
+    input.click()
+  })
+
+export const uploadSpecialistZip = async (
+  file: File,
+  signal: AbortSignal,
+  onProgress: (progress: UploadTransferProgress) => void
+): Promise<SpecialistPackageCandidatePreview> => {
+  const transferId = crypto.randomUUID()
+  const request = { transferId }
+  try {
+    await uploadFileChunks(
+      file,
+      {
+        beginTransfer: (input) => window.api.specialist.beginPackageUpload(input),
+        appendTransfer: (input) => window.api.uploads.appendTransfer(input),
+        getTransferStatus: (input) => window.api.uploads.getTransferStatus(input)
+      },
+      { transferId, name: file.name, signal, onProgress }
+    )
+    const preview = await window.api.specialist.previewPackageUpload(request)
+    if (signal.aborted) {
+      await window.api.specialist.cancelPackage({ candidateToken: preview.candidateToken })
+      throw new DOMException('Upload cancelled.', 'AbortError')
+    }
+    return preview
+  } catch (error) {
+    await window.api.specialist.abortPackageUpload(request).catch(() => undefined)
+    throw error
+  }
+}

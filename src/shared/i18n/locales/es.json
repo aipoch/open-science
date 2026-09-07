@@ -105,6 +105,8 @@
     "Automatic contrast": "Contraste automático",
     "Display range": "Rango de visualización",
     "Your draft is preserved. Reload the current details, then merge them into your draft before saving.": "Se conserva su borrador. Vuelva a cargar los detalles actuales y combínelos con su borrador antes de guardar.",
+    "Could not import Specialist ZIP. Try again.": "No se pudo importar el ZIP del Especialista. Inténtelo de nuevo.",
+    "Uploading Specialist ZIP… {{percent}}%": "Subiendo el ZIP del Especialista… {{percent}}%",
     "Project: {{name}}": "Proyecto: {{name}}",
     "An installer is not available for this platform. Download manually to check other installation options.": "No hay un instalador disponible para esta plataforma. Descargue manualmente para consultar otras opciones de instalación.",
     "Latest saved version": "Última versión guardada",

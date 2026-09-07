@@ -2131,6 +2131,16 @@ export const RENDERER_API_CONTRACT = Object.freeze({
   'specialist.addMarketplaceSource': callable<
     (request: AddMarketplaceSourceRequest) => Promise<MarketplaceSourceView>
   >()('specialist', ['specialist:marketplace-source-add', ELECTRON]),
+  'specialist.beginPackageUpload': callable<
+    (request: BeginUploadTransferRequest) => Promise<UploadTransferStatus>
+  >()('specialist', ['specialist:package-upload-begin']),
+  'specialist.previewPackageUpload': callable<
+    (request: UploadTransferRequest) => Promise<SpecialistPackageCandidatePreview>
+  >()('specialist', ['specialist:package-upload-preview']),
+  'specialist.abortPackageUpload': callable<(request: UploadTransferRequest) => Promise<void>>()(
+    'specialist',
+    ['specialist:package-upload-abort']
+  ),
   'specialist.cancelHandoff': callable<(request: CompletionHandoffCommand) => Promise<void>>()(
     'specialist',
     ['specialist:cancel-handoff', ELECTRON]
@@ -2140,7 +2150,7 @@ export const RENDERER_API_CONTRACT = Object.freeze({
   >()('specialist', ['specialist:marketplace-candidate-cancel', ELECTRON]),
   'specialist.cancelPackage': callable<
     (request: SpecialistPackageInstallRequest) => Promise<void>
-  >()('specialist', ['specialist:package-cancel', ELECTRON]),
+  >()('specialist', ['specialist:package-cancel', WEB]),
   'specialist.create': callable<(request: CreateSpecialistRequest) => Promise<SpecialistView>>()(
     'specialist',
     ['specialist:create', ELECTRON]
@@ -2171,17 +2181,17 @@ export const RENDERER_API_CONTRACT = Object.freeze({
   >()('specialist', ['specialist:marketplace-install', ELECTRON]),
   'specialist.installPackage': callable<
     (request: SpecialistPackageInstallRequest) => Promise<SpecialistPackageInstallResult>
-  >()('specialist', ['specialist:package-install', ELECTRON]),
+  >()('specialist', ['specialist:package-install', WEB]),
   'specialist.list': callable<() => Promise<SpecialistCatalogSnapshot>>()('specialist', [
     'specialist:list',
-    ELECTRON
+    WEB
   ]),
   'specialist.listMarketplace': callable<
     (request?: ListMarketplaceRequest) => Promise<MarketplaceSnapshot>
   >()('specialist', ['specialist:marketplace-list', ELECTRON]),
   'specialist.onCatalogChanged': callable<(listener: () => void) => RemoveListener>()(
     'specialist',
-    ['specialist:catalog-changed', ELECTRON_EVENT]
+    ['specialist:catalog-changed', EVENT]
   ),
   'specialist.onHandoffLifecycleEvent': callable<
     (listener: AcpListener<CompletionHandoffLifecycleEvent>) => RemoveListener
@@ -2222,13 +2232,13 @@ export const RENDERER_API_CONTRACT = Object.freeze({
   >()('specialist', ['specialist:package-select', ELECTRON]),
   'specialist.setEnabled': callable<
     (request: SetSpecialistEnabledRequest) => Promise<SpecialistView>
-  >()('specialist', ['specialist:set-enabled', ELECTRON]),
+  >()('specialist', ['specialist:set-enabled', WEB]),
   'specialist.setSessionSpecialist': callable<
     (request: SetSessionSpecialistRequest) => Promise<SetSessionSpecialistResponse>
   >()('specialist', ['specialist:set-session-specialist', ELECTRON]),
   'specialist.update': callable<(request: UpdateSpecialistRequest) => Promise<SpecialistView>>()(
     'specialist',
-    ['specialist:update', ELECTRON]
+    ['specialist:update', WEB]
   ),
   'storage.acceptMissingDataRoot': callable<() => Promise<void>>()('storage', [
     'storage:accept-missing-data-root',

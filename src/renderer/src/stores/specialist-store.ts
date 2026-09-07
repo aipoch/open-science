@@ -1,3 +1,4 @@
+import { chooseSpecialistZip, uploadSpecialistZip } from '../lib/specialist-package-upload'
 import { create, type StoreApi } from 'zustand'
 import type {
   SpecialistListItem,
@@ -47,7 +48,10 @@ export type SpecialistEditorDraft = {
   activeCapTab: 'skills' | 'connectors'
 }
 
+let packageUploadController: AbortController | undefined
+
 type SpecialistStoreData = {
+  packageUploadPercent?: number
   items: SpecialistListItem[]
   isLoaded: boolean
   loadError: string | undefined
@@ -225,7 +229,34 @@ const useSpecialistStore = create<SpecialistStore>((set) => ({
     if (useSpecialistStore.getState().integrity.status === 'degraded') {
       throw new Error(SPECIALIST_DOCUMENT_READ_ONLY_ERROR)
     }
-    const result = await window.api.specialist.selectPackage()
+    const result =
+      typeof window.api.specialist?.selectPackage === 'function'
+        ? await window.api.specialist.selectPackage()
+        : await (async () => {
+            packageUploadController?.abort()
+            const controller = new AbortController()
+            packageUploadController = controller
+            try {
+              const file = await chooseSpecialistZip(controller.signal)
+              if (!file || controller.signal.aborted) return { cancelled: true as const }
+              set({ packageUploadPercent: 0 })
+              return await uploadSpecialistZip(file, controller.signal, (progress) => {
+                set({
+                  packageUploadPercent: progress.totalBytes
+                    ? Math.round((progress.receivedBytes * 100) / progress.totalBytes)
+                    : 100
+                })
+              })
+            } catch (error) {
+              if (controller.signal.aborted) return { cancelled: true as const }
+              throw error
+            } finally {
+              if (packageUploadController === controller) {
+                packageUploadController = undefined
+                set({ packageUploadPercent: undefined })
+              }
+            }
+          })()
     set({ packagePreview: 'cancelled' in result ? undefined : result })
     return result
   },
@@ -249,6 +280,7 @@ const useSpecialistStore = create<SpecialistStore>((set) => ({
   },
 
   cancelPackage: async () => {
+    packageUploadController?.abort()
     const preview = useSpecialistStore.getState().packagePreview
     if (preview) {
       await window.api.specialist.cancelPackage({ candidateToken: preview.candidateToken })

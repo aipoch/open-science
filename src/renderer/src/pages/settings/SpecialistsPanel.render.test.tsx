@@ -705,6 +705,47 @@ describe('SpecialistsPanel', () => {
     expect(document.body.textContent).not.toContain('Export complete')
   })
 
+  it('opens a browser ZIP chooser on Remote Web without the Electron specialist API', async () => {
+    delete (window.api as { specialist?: Window['api']['specialist'] }).specialist
+    useSpecialistStore.setState({ items: [], isLoaded: false })
+    const selectionErrors: unknown[] = []
+    // Observe the real store action without leaking its rejection into unrelated tests.
+    useSpecialistStore.setState({
+      selectPackage: async () => {
+        try {
+          return await initialStore.selectPackage()
+        } catch (error) {
+          selectionErrors.push(error)
+          return { cancelled: true }
+        }
+      }
+    })
+    const requestedInputs: HTMLInputElement[] = []
+    const inputClick = vi.spyOn(HTMLInputElement.prototype, 'click').mockImplementation(function (
+      this: HTMLInputElement
+    ) {
+      requestedInputs.push(this)
+    })
+    try {
+      await act(async () => {
+        root.render(<SpecialistsPanel view={{ kind: 'import' }} onNavigate={vi.fn()} />)
+      })
+      const chooseZip = Array.from(document.body.querySelectorAll('button')).find(
+        (button) => button.textContent === 'Choose ZIP'
+      )
+      expect(chooseZip).toBeDefined()
+      expect(chooseZip?.disabled).toBe(false)
+      await act(async () => chooseZip!.click())
+
+      expect.soft(selectionErrors).toEqual([])
+      expect(
+        requestedInputs.some((input) => input.type === 'file' && input.accept.includes('.zip'))
+      ).toBe(true)
+    } finally {
+      inputClick.mockRestore()
+    }
+  })
+
   it('matches the Import ZIP entry hierarchy and template action summary', async () => {
     await act(async () => {
       root.render(<SpecialistsPanel view={{ kind: 'import' }} onNavigate={vi.fn()} />)
@@ -872,7 +913,7 @@ describe('SpecialistsPanel', () => {
       status: 'installed',
       specialist: { id: 'research-synth' }
     })
-    const cancelPackage = vi.fn()
+    const cancelPackage = vi.fn().mockResolvedValue(undefined)
     const savePackageReport = vi.fn().mockResolvedValue({ saved: true })
     window.api.specialist.savePackageReport = savePackageReport
     const writeText = vi.fn().mockResolvedValue(undefined)

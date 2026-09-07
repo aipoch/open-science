@@ -103,6 +103,8 @@
     "Automatic contrast": "자동 대비",
     "Display range": "표시 범위",
     "Your draft is preserved. Reload the current details, then merge them into your draft before saving.": "초안이 보존됩니다. 현재 설명을 다시 불러온 후 초안에 병합하고 저장하세요.",
+    "Could not import Specialist ZIP. Try again.": "스페셜리스트 ZIP을 가져오지 못했습니다. 다시 시도하세요.",
+    "Uploading Specialist ZIP… {{percent}}%": "스페셜리스트 ZIP 업로드 중… {{percent}}%",
     "Project: {{name}}": "프로젝트: {{name}}",
     "An installer is not available for this platform. Download manually to check other installation options.": "이 플랫폼에서 사용할 수 있는 설치 프로그램이 없습니다. 수동 다운로드 페이지에서 다른 설치 방법을 확인하세요.",
     "Latest saved version": "최근 저장된 버전",

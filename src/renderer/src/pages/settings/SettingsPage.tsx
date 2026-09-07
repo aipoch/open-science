@@ -826,7 +826,9 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
           ? t('New specialist')
           : specialistsView.kind === 'marketplace'
             ? t('Marketplace')
-            : (editingSpecialist?.name ?? t('Edit specialist'))
+            : specialistsView.kind === 'import'
+              ? t('Import ZIP')
+              : (editingSpecialist?.name ?? t('Edit specialist'))
       return {
         rootLabelKey: 'Specialists',
         rootTo,

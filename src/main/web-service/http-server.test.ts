@@ -3099,14 +3099,26 @@ describe('startWebHttpServer', () => {
       'compute:scratch:set',
       'compute:ssh-config-aliases'
     ]
+    const specialistChannels = [
+      'specialist:list',
+      'specialist:update',
+      'specialist:set-enabled',
+      'specialist:package-upload-begin',
+      'specialist:package-upload-preview',
+      'specialist:package-upload-abort',
+      'specialist:package-install',
+      'specialist:package-cancel'
+    ]
     const remoteDeniedComputeChannels = ['compute:download', 'compute:reveal-in-folder']
     const remoteAllowedChannels = [
+      ...specialistChannels,
       ...acpChannels,
       ...permissionChannels,
       ...computeChannels.filter((channel) => !remoteDeniedComputeChannels.includes(channel))
     ]
     const rpcChannels = [
-      'specialist:list',
+      'specialist:package-select',
+      ...specialistChannels,
       ...acpChannels,
       ...permissionChannels,
       ...computeChannels
@@ -3182,14 +3194,15 @@ describe('startWebHttpServer', () => {
     }
     expect(localBootstrapBody.webCallerLocation).toBe('local')
     expect(localBootstrapBody.rpcChannels).toEqual([
+      ...specialistChannels,
       ...acpChannels,
       ...permissionChannels,
       ...computeChannels
     ])
     expect(localBootstrapBody.restrictedRpcChannels).toEqual([])
 
-    expect((await invoke('specialist:list')).status).toBe(404)
-    expect((await invoke('specialist:list', true)).status).toBe(404)
+    expect((await invoke('specialist:package-select')).status).toBe(404)
+    expect((await invoke('specialist:package-select', true)).status).toBe(404)
     expect(rpc.invoke.mock.calls.map(([channel]) => channel)).toEqual([
       ...remoteAllowedChannels,
       ...remoteDeniedComputeChannels
