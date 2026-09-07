@@ -66,9 +66,8 @@ const groupConversationItems = (
     }
 
     groupedItems.push({
-      id: activityGroupId
-        ? `activity-group-${activityGroupId}`
-        : `activity-group-${item.activity.id}`,
+      // Business groups can span standalone cards; each contiguous row owns its identity.
+      id: `activity-group-${item.activity.id}`,
       type: 'activity-group',
       createdAt: item.createdAt,
       sortIndex: item.sortIndex,

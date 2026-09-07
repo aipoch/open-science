@@ -139,8 +139,8 @@ const WorkspaceRunMarks = ({
   const scrollToRun = (mark: RunMark, index: number): void => {
     if (!viewport) return
     const target = findMessageTarget(viewport, mark.id)
+    onRevealMessage?.(mark.id)
     if (!target) {
-      onRevealMessage?.(mark.id)
       setCurrentIndex(index)
       return
     }

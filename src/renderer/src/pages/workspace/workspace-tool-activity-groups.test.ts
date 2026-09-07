@@ -148,6 +148,43 @@ describe('groupConversationItems', () => {
     ])
   })
 
+  it.each(['elicitation', 'plan', 'compaction'] as const)(
+    'keeps %s-separated segment identities through appends and status updates',
+    (kind) => {
+      const first = activityItem(createActivity({ id: 'segment-first', activityGroupId: 'shared' }))
+      const last = activityItem(createActivity({ id: 'segment-last', activityGroupId: 'shared' }))
+      const separatorActivity = createActivity({ id: 'separator', activityGroupId: 'shared' })
+      const separator =
+        kind === 'plan'
+          ? planActivityItem(separatorActivity)
+          : kind === 'compaction'
+            ? compactionActivityItem(separatorActivity)
+            : activityItem({
+                ...separatorActivity,
+                elicitation: { message: 'Choose', fields: [], state: 'answered' }
+              })
+      const source = [first, separator, last]
+      const ids = groupConversationItems(source).map((item) => item.id)
+      expect(new Set(ids).size).toBe(3)
+      const appended = activityItem(createActivity({ id: 'appended', activityGroupId: 'shared' }))
+      const updated = groupConversationItems([
+        activityItem(
+          createActivity({ id: 'segment-first', activityGroupId: 'shared', status: 'completed' })
+        ),
+        separator,
+        last,
+        appended
+      ])
+      expect(updated.map((item) => item.id)).toEqual(ids)
+      expect(updated.at(-1)).toMatchObject({
+        activities: [
+          expect.objectContaining({ id: 'segment-last' }),
+          expect.objectContaining({ id: 'appended' })
+        ]
+      })
+    }
+  )
+
   it('splits adjacent activities at declared group boundaries', () => {
     const grouped = groupConversationItems(
       [
@@ -175,8 +212,8 @@ describe('groupConversationItems', () => {
     )
 
     expect(grouped).toEqual([
-      expect.objectContaining({ id: 'activity-group-g1', title: 'Inspect files' }),
-      expect.objectContaining({ id: 'activity-group-g2', title: 'Apply changes' })
+      expect.objectContaining({ id: 'activity-group-a1', title: 'Inspect files' }),
+      expect.objectContaining({ id: 'activity-group-a2', title: 'Apply changes' })
     ])
   })
 
