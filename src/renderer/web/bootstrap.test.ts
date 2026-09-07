@@ -57,6 +57,14 @@ class FakeWebSocket {
 }
 
 type WebApi = {
+  specialist: Record<
+    | 'beginPackageUpload'
+    | 'previewPackageUpload'
+    | 'abortPackageUpload'
+    | 'installPackage'
+    | 'cancelPackage',
+    (request: unknown) => Promise<unknown>
+  >
   settings: Record<
     'installClaude' | 'installCodeBuddy' | 'installCodex' | 'installOpencode',
     (request: unknown) => Promise<unknown>
@@ -70,6 +78,50 @@ type WebApi = {
   }
   saveManagedFile: (request: SaveManagedFileRequest) => Promise<{ saved: boolean }>
 }
+
+// Exercise the installed public API: only HTTP completion and event liveness are controlled.
+const longRunningOperations = [
+  {
+    channel: 'notebook:execute',
+    result: { runId: 'run-1', status: 'completed' },
+    invoke: (api: WebApi) =>
+      api.notebook.execute({
+        sessionId: 'session-1',
+        workspaceCwd: '/workspace',
+        code: 'long_running_analysis()'
+      })
+  },
+  {
+    channel: 'specialist:package-upload-begin',
+    result: { transferId: 'transfer-1', name: 'expert.zip', receivedBytes: 0, totalBytes: 1024 },
+    invoke: (api: WebApi) =>
+      api.specialist.beginPackageUpload({
+        transferId: 'transfer-1',
+        name: 'expert.zip',
+        size: 1024
+      })
+  },
+  {
+    channel: 'specialist:package-upload-preview',
+    result: { candidateToken: 'candidate-1', diagnostics: [], installable: false },
+    invoke: (api: WebApi) => api.specialist.previewPackageUpload({ transferId: 'transfer-1' })
+  },
+  {
+    channel: 'specialist:package-upload-abort',
+    result: null,
+    invoke: (api: WebApi) => api.specialist.abortPackageUpload({ transferId: 'transfer-1' })
+  },
+  {
+    channel: 'specialist:package-install',
+    result: { status: 'failed', code: 'candidate-expired' },
+    invoke: (api: WebApi) => api.specialist.installPackage({ candidateToken: 'candidate-1' })
+  },
+  {
+    channel: 'specialist:package-cancel',
+    result: null,
+    invoke: (api: WebApi) => api.specialist.cancelPackage({ candidateToken: 'candidate-1' })
+  }
+]
 
 const bootstrapPayload = {
   eventStream: {
@@ -351,133 +403,132 @@ describe('Web bootstrap event connection', () => {
     })
   })
 
-  it('lets a long Notebook execution finish under its own deadline', async () => {
-    let rpcSignal: AbortSignal | undefined
-    vi.stubGlobal(
-      'fetch',
-      vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
-        if (String(input) === '/api/bootstrap') {
-          return Promise.resolve(
-            new Response(
-              JSON.stringify({ ...bootstrapPayload, rpcChannels: ['notebook:execute'] }),
-              { status: 200, headers: { 'content-type': 'application/json' } }
+  it.each(longRunningOperations)(
+    'lets $channel finish after 30 seconds while connected',
+    async ({ channel, invoke, result }) => {
+      let rpcSignal: AbortSignal | undefined
+      vi.stubGlobal(
+        'fetch',
+        vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+          if (String(input) === '/api/bootstrap') {
+            return Promise.resolve(
+              new Response(JSON.stringify({ ...bootstrapPayload, rpcChannels: [channel] }), {
+                status: 200,
+                headers: { 'content-type': 'application/json' }
+              })
             )
-          )
+          }
+          if (String(input) === `/rpc/${encodeURIComponent(channel)}`) {
+            rpcSignal = init?.signal ?? undefined
+            return new Promise<Response>((resolve, reject) => {
+              const timeout = window.setTimeout(
+                () =>
+                  resolve(
+                    new Response(
+                      JSON.stringify({
+                        protocolVersion: WEB_RPC_PROTOCOL_VERSION,
+                        ok: true,
+                        result
+                      }),
+                      { status: 200, headers: { 'content-type': 'application/json' } }
+                    )
+                  ),
+                60_000
+              )
+              rpcSignal?.addEventListener(
+                'abort',
+                () => {
+                  window.clearTimeout(timeout)
+                  reject(rpcSignal?.reason ?? new DOMException('Request aborted', 'AbortError'))
+                },
+                { once: true }
+              )
+            })
+          }
+          throw new Error(`Unexpected fetch: ${String(input)}`)
+        })
+      )
+
+      const api = await loadBootstrap()
+      const socket = FakeWebSocket.instances[0]
+      socket.emit('open')
+      socket.emit('message', { data: readyFrame(0) })
+      const request = invoke(api)
+      let outcome: unknown = 'still-pending'
+      void request.then(
+        () => {
+          outcome = 'resolved'
+        },
+        (error: unknown) => {
+          outcome = error
         }
-        if (String(input) === '/rpc/notebook%3Aexecute') {
-          rpcSignal = init?.signal ?? undefined
-          return new Promise<Response>((resolve, reject) => {
-            const timeout = window.setTimeout(
-              () =>
-                resolve(
-                  new Response(
-                    JSON.stringify({
-                      protocolVersion: WEB_RPC_PROTOCOL_VERSION,
-                      ok: true,
-                      result: { runId: 'run-1', status: 'completed' }
-                    }),
-                    { status: 200, headers: { 'content-type': 'application/json' } }
-                  )
-                ),
-              60_000
+      )
+
+      await vi.advanceTimersByTimeAsync(20_000)
+      socket.emit('message', { data: heartbeatFrame(0) })
+      await vi.advanceTimersByTimeAsync(10_001)
+
+      expect(outcome).toBe('still-pending')
+      expect(rpcSignal?.aborted ?? false).toBe(false)
+
+      await vi.advanceTimersByTimeAsync(9_999)
+      socket.emit('message', { data: heartbeatFrame(0) })
+      await vi.advanceTimersByTimeAsync(20_000)
+
+      await expect(request).resolves.toEqual(result)
+    }
+  )
+
+  it.each(longRunningOperations)(
+    'aborts $channel when its event connection disconnects',
+    async ({ channel, invoke }) => {
+      let rpcSignal: AbortSignal | undefined
+      vi.stubGlobal(
+        'fetch',
+        vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+          if (String(input) === '/api/bootstrap') {
+            return Promise.resolve(
+              new Response(JSON.stringify({ ...bootstrapPayload, rpcChannels: [channel] }), {
+                status: 200,
+                headers: { 'content-type': 'application/json' }
+              })
             )
-            rpcSignal?.addEventListener(
-              'abort',
-              () => {
-                window.clearTimeout(timeout)
-                reject(rpcSignal?.reason ?? new DOMException('Request aborted', 'AbortError'))
-              },
-              { once: true }
-            )
-          })
+          }
+          if (String(input) === `/rpc/${encodeURIComponent(channel)}`) {
+            rpcSignal = init?.signal ?? undefined
+            return new Promise<Response>((_resolve, reject) => {
+              rpcSignal?.addEventListener(
+                'abort',
+                () =>
+                  reject(rpcSignal?.reason ?? new DOMException('Request aborted', 'AbortError')),
+                { once: true }
+              )
+            })
+          }
+          throw new Error(`Unexpected fetch: ${String(input)}`)
+        })
+      )
+
+      const api = await loadBootstrap()
+      const socket = FakeWebSocket.instances[0]
+      socket.emit('open')
+      socket.emit('message', { data: readyFrame(0) })
+      const request = invoke(api)
+      let outcome: unknown = 'still-pending'
+      void request.then(
+        () => {
+          outcome = 'resolved'
+        },
+        (error: unknown) => {
+          outcome = error
         }
-        throw new Error(`Unexpected fetch: ${String(input)}`)
-      })
-    )
+      )
 
-    const api = await loadBootstrap()
-    const socket = FakeWebSocket.instances[0]
-    socket.emit('open')
-    socket.emit('message', { data: readyFrame(0) })
-    const request = api.notebook.execute({
-      sessionId: 'session-1',
-      workspaceCwd: '/workspace',
-      code: 'long_running_analysis()'
-    })
-    let settled = false
-    void request.then(
-      () => {
-        settled = true
-      },
-      () => {
-        settled = true
-      }
-    )
-
-    await vi.advanceTimersByTimeAsync(20_000)
-    socket.emit('message', { data: heartbeatFrame(0) })
-    await vi.advanceTimersByTimeAsync(10_001)
-
-    expect(settled).toBe(false)
-    expect(rpcSignal?.aborted ?? false).toBe(false)
-
-    await vi.advanceTimersByTimeAsync(9_999)
-    socket.emit('message', { data: heartbeatFrame(0) })
-    await vi.advanceTimersByTimeAsync(20_000)
-
-    await expect(request).resolves.toEqual({ runId: 'run-1', status: 'completed' })
-  })
-
-  it('aborts a long Notebook request when its event connection disconnects', async () => {
-    let rpcSignal: AbortSignal | undefined
-    vi.stubGlobal(
-      'fetch',
-      vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
-        if (String(input) === '/api/bootstrap') {
-          return Promise.resolve(
-            new Response(
-              JSON.stringify({ ...bootstrapPayload, rpcChannels: ['notebook:execute'] }),
-              { status: 200, headers: { 'content-type': 'application/json' } }
-            )
-          )
-        }
-        if (String(input) === '/rpc/notebook%3Aexecute') {
-          rpcSignal = init?.signal ?? undefined
-          return new Promise<Response>((_resolve, reject) => {
-            rpcSignal?.addEventListener(
-              'abort',
-              () => reject(rpcSignal?.reason ?? new DOMException('Request aborted', 'AbortError')),
-              { once: true }
-            )
-          })
-        }
-        throw new Error(`Unexpected fetch: ${String(input)}`)
-      })
-    )
-
-    const api = await loadBootstrap()
-    const socket = FakeWebSocket.instances[0]
-    socket.emit('open')
-    socket.emit('message', { data: readyFrame(0) })
-    const request = api.notebook.execute({
-      sessionId: 'session-1',
-      workspaceCwd: '/workspace',
-      code: 'long_running_analysis()'
-    })
-    let outcome: unknown = 'still-pending'
-    void request.then(
-      () => {
-        outcome = 'resolved'
-      },
-      (error: unknown) => {
-        outcome = error
-      }
-    )
-
-    socket.emit('close')
-    expect(rpcSignal?.aborted).toBe(true)
-    await vi.waitFor(() => expect(outcome).toBeInstanceOf(DOMException))
-  })
+      socket.emit('close')
+      expect(rpcSignal?.aborted).toBe(true)
+      await vi.waitFor(() => expect(outcome).toBeInstanceOf(DOMException))
+    }
+  )
 
   it('does not abort an ordinary mutation when its event connection disconnects', async () => {
     let rpcSignal: AbortSignal | undefined

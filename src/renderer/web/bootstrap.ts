@@ -61,6 +61,11 @@ const EVENT_CONNECTION_IDLE_TIMEOUT_MS = 30_000
 const DOMAIN_OWNED_WEB_RPC_CHANNELS = new Set([
   'notebook:execute',
   'notebook:run-cell',
+  'specialist:package-upload-begin',
+  'specialist:package-upload-preview',
+  'specialist:package-upload-abort',
+  'specialist:package-install',
+  'specialist:package-cancel',
   'settings:install-claude',
   'settings:install-codebuddy',
   'settings:install-codex',
