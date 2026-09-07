@@ -194,13 +194,12 @@ export const ArtifactMentionPopup = ({
 
   // Fuzzy-match the query against each filename, ranked best-first. Ranking happens within each section
   // so uploads still render before outputs — the flat highlight index depends on that order. Empty
-  // query shows every artifact untouched.
+  // query preserves the incoming order within each section.
   const matches = useMemo<ArtifactRow[]>(() => {
     const needle = query.trim()
-    if (needle.length === 0) return rows
 
     const rankSection = (tag: ArtifactRow['tag']): ArtifactRow[] =>
-      tag === 'library'
+      needle.length === 0 || tag === 'library'
         ? rows.filter((row) => row.tag === tag)
         : rows
             .filter((row) => row.tag === tag)
