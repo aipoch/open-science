@@ -344,9 +344,10 @@ class AcpPromptContentOwner {
           ...input.historyUploads.map((upload) => finalizedById.get(upload.id) ?? upload),
           ...input.currentUploads.map((upload) => finalizedById.get(upload.id) ?? upload)
         ]
+      }
 
-        // Preserve the existing order: history uploads, current uploads, then explicit references.
-        for (let index = 0; index < promptUploads.length; index += 1) {
+      const appendUploads = async (start: number, end: number): Promise<void> => {
+        for (let index = start; index < end; index += 1) {
           const resolved = await this.createAttachmentContentBlocks(
             input,
             promptUploads[index],
@@ -375,10 +376,12 @@ class AcpPromptContentOwner {
         }
       }
 
-      // The relay classifies the historical image prefix, including upload resource links.
+      // Keep the historical prefix while admitting current inline images before upload fallbacks.
+      await appendUploads(0, input.historyUploads.length)
       for (const image of currentImages) {
         appendBlock({ type: 'image', data: image.data, mimeType: image.mimeType })
       }
+      await appendUploads(input.historyUploads.length, promptUploads.length)
 
       for (const reference of input.references) {
         const resolved = await this.createReferencedArtifactContentBlocks(
