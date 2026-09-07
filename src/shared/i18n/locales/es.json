@@ -1,5 +1,6 @@
 {
   "common": {
+    "The conversation changed. Close and reopen export to review it.": "La conversación cambió. Cierre y vuelva a abrir la exportación para revisarla.",
     "Approval needed": "Se necesita aprobación",
     "Cancel": "Cancelar",
     "Stay": "Permanecer en la aplicación",
@@ -1317,7 +1318,6 @@
     "No response yet": "Aún no hay respuesta",
     "Attachments: {{total}}": "Adjuntos: {{total}}",
     "Wait for the conversation to finish before exporting it.": "Espere a que finalice la conversación antes de exportarla.",
-    "The conversation changed. Close and reopen export to review it.": "La conversación cambió. Cierre y vuelva a abrir la exportación para revisarla.",
     "Select content to export.": "Seleccione el contenido para exportar.",
     "The entire conversation will be exported.": "Se exportará toda la conversación.",
     "Only HTTPS sources can be previewed": "Solo se pueden previsualizar fuentes HTTPS",

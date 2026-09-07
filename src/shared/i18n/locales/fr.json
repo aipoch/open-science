@@ -1,5 +1,6 @@
 {
   "common": {
+    "The conversation changed. Close and reopen export to review it.": "La conversation a changé. Fermez puis rouvrez l’exportation pour la vérifier.",
     "Approval needed": "Approbation nécessaire",
     "Cancel": "Annuler",
     "Stay": "Rester dans l’application",
@@ -1316,7 +1317,6 @@
     "No response yet": "Pas encore de réponse",
     "Attachments: {{total}}": "Pièces jointes : {{total}}",
     "Wait for the conversation to finish before exporting it.": "Attendez la fin de la conversation avant de l’exporter.",
-    "The conversation changed. Close and reopen export to review it.": "La conversation a changé. Fermez puis rouvrez l’exportation pour la vérifier.",
     "Select content to export.": "Sélectionnez le contenu à exporter.",
     "The entire conversation will be exported.": "La conversation entière sera exportée.",
     "Only selected content will be exported.": "Seul le contenu sélectionné sera exporté.",

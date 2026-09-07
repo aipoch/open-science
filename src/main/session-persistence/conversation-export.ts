@@ -6,6 +6,7 @@ import { join } from 'node:path'
 
 import {
   createConversationExportDocument,
+  hashConversationExportContent,
   renderConversationHtml,
   renderConversationMarkdown,
   sanitizeExportFilename,
@@ -17,6 +18,9 @@ import { hasCurrentRunningDelegatedAttempt } from '../../shared/delegated-work-p
 import type { PersistedChatSession } from '../../shared/session-persistence'
 import { englishNativeTranslator, type NativeTranslator } from '../locale/main-process-messages'
 import { publishUserFile } from '../user-file-publisher'
+import { createLogger, diagnosticErrorFields } from '../logger'
+
+const log = createLogger('conversation-export')
 
 type ConversationExportPrintWindow = {
   loadFile(path: string): Promise<void>
@@ -89,6 +93,9 @@ const assertExportConversationRequest = (
     typeof request.sessionId !== 'string' ||
     request.sessionId.length === 0 ||
     (request.format !== 'markdown' && request.format !== 'pdf') ||
+    (request.expectedContentHash !== undefined &&
+      (typeof request.expectedContentHash !== 'string' ||
+        !/^[a-f0-9]{64}$/.test(request.expectedContentHash))) ||
     (selectedPromptMessageIds !== undefined &&
       (!Array.isArray(selectedPromptMessageIds) ||
         selectedPromptMessageIds.length === 0 ||
@@ -158,6 +165,14 @@ const createConversationExportService = (
       const request = assertExportConversationRequest(rawRequest)
       const session = await deps.loadSession(request.projectId, request.sessionId)
       if (!session) throw new Error('Conversation not found.')
+      if (
+        request.expectedContentHash !== undefined &&
+        request.expectedContentHash !== (await hashConversationExportContent(session))
+      ) {
+        throw new Error(
+          deps.translate('The conversation changed. Close and reopen export to review it.')
+        )
+      }
       if (
         deps.isSessionActive(request.projectId, request.sessionId) ||
         hasCurrentRunningDelegatedAttempt(session) ||
@@ -240,21 +255,26 @@ const createConversationExportService = (
 
         const printWindow = deps.createPrintWindow()
         try {
-          await printWindow.loadFile(htmlPath)
-          await printWindow.webContents.executeJavaScript(
-            'document.fonts ? document.fonts.ready.then(() => true) : true'
-          )
+          let generationFinished = false
           const pdf = await printToPdfWithTimeout(
-            printWindow.webContents.printToPDF({
-              pageSize: 'A4',
-              printBackground: true,
-              margins: {
-                top: 0.2,
-                bottom: 0.2,
-                left: 0.2,
-                right: 0.2
-              }
-            }),
+            (async () => {
+              await printWindow.loadFile(htmlPath)
+              if (generationFinished) throw new Error('PDF generation already ended.')
+              await printWindow.webContents.executeJavaScript(
+                'document.fonts ? document.fonts.ready.then(() => true) : true'
+              )
+              if (generationFinished) throw new Error('PDF generation already ended.')
+              return printWindow.webContents.printToPDF({
+                pageSize: 'A4',
+                printBackground: true,
+                margins: {
+                  top: 0.2,
+                  bottom: 0.2,
+                  left: 0.2,
+                  right: 0.2
+                }
+              })
+            })(),
             deps.exportLimits.pdfPrintTimeoutMs,
             () =>
               new Error(
@@ -262,7 +282,9 @@ const createConversationExportService = (
                   'Conversation PDF export timed out. Select fewer conversation turns.'
                 )
               )
-          )
+          ).finally(() => {
+            generationFinished = true
+          })
           await deps.publishUserFile(dialogResult.filePath, (temporaryPath) =>
             deps.writeFile(temporaryPath, pdf)
           )
@@ -271,7 +293,14 @@ const createConversationExportService = (
           printWindow.destroy()
         }
       } finally {
-        await deps.removeDirectory(tempDirectory)
+        try {
+          await deps.removeDirectory(tempDirectory)
+        } catch (error) {
+          log.warn(
+            'Failed to remove conversation export temporary directory',
+            diagnosticErrorFields(error)
+          )
+        }
       }
     }
   }

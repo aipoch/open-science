@@ -1,5 +1,6 @@
 {
   "common": {
+    "The conversation changed. Close and reopen export to review it.": "대화가 변경되었습니다. 내용을 검토하려면 내보내기를 닫았다가 다시 여세요.",
     "Approval needed": "승인 필요",
     "Cancel": "취소",
     "Stay": "앱에 머물기",
@@ -1281,7 +1282,6 @@
     "No response yet": "아직 응답 없음",
     "Attachments: {{total}}": "첨부 파일: {{total}}",
     "Wait for the conversation to finish before exporting it.": "대화가 끝난 후 내보내세요.",
-    "The conversation changed. Close and reopen export to review it.": "대화가 변경되었습니다. 내용을 검토하려면 내보내기를 닫았다가 다시 여세요.",
     "Select content to export.": "내보낼 콘텐츠를 선택하세요.",
     "The entire conversation will be exported.": "전체 대화를 내보냅니다.",
     "Only selected content will be exported.": "선택한 콘텐츠만 내보냅니다.",
