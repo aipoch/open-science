@@ -4038,7 +4038,7 @@
     "Saved names: {{names}}.": "Gespeicherte Namen: {{names}}.",
     "Failed to restore scratch auto-detection.": "Die automatische Erkennung des Scratch-Verzeichnisses konnte nicht wiederhergestellt werden.",
     "Helper source evidence is incomplete for this version.": "Die Nachweise zum Quellcode der Hilfsprogramme sind für diese Version unvollständig.",
-    "Supporting code evidence is incomplete for this version.": "Die Nachweise zum unterstützenden Code sind für diese Version unvollständig.",
+    "Supporting code is incomplete. Failed or interrupted cells may have changed kernel state before stopping.": "Der unterstützende Code ist unvollständig. Fehlgeschlagene oder unterbrochene Zellen haben möglicherweise vor dem Abbruch den Kernel-Zustand verändert.",
     "Reconstructed directly from the immutable Execution Log · see <logLink>Execution Log</logLink> for the raw record": "Direkt aus dem unveränderlichen Ausführungsprotokoll rekonstruiert · den Rohdatensatz finden Sie im <logLink>Ausführungsprotokoll</logLink>",
     "Reconstructing directly from recorded helper and execution evidence.": "Direkte Rekonstruktion aus den aufgezeichneten Hilfsprogramm- und Ausführungsnachweisen.",
     "This script can be reconstructed directly from the immutable Execution Log.": "Dieses Skript kann direkt aus dem unveränderlichen Ausführungsprotokoll rekonstruiert werden.",

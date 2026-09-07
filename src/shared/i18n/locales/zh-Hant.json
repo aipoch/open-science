@@ -1427,7 +1427,7 @@
     "Generated from the name when possible. Edit it now or leave it blank to generate automatically; it cannot be changed after creation.": "可根據名稱自動產生。現在可以編輯，或留空以自動產生；建立後不可變更。",
     "Generating reconstructed script": "正在產生重建腳本",
     "Helper source evidence is incomplete for this version.": "此版本的 Helper 原始碼證據不完整。",
-    "Supporting code evidence is incomplete for this version.": "此版本的支援程式碼證據不完整。",
+    "Supporting code is incomplete. Failed or interrupted cells may have changed kernel state before stopping.": "輔助程式碼不完整。失敗或中斷的儲存格可能在停止前已改變核心狀態。",
     "Generating script…": "正在產生腳本…",
     "Generating…": "正在產生…",
     "Get a desktop notification when a task finishes, fails, or waits for your approval while you're away from the app.": "當你不在應用程式中時，任務完成、失敗或等待核准時會收到桌面通知。",

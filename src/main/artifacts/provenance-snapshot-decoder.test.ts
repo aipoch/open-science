@@ -90,6 +90,30 @@ describe('Artifact persistence decoders', () => {
     })
   })
 
+  it.each([false, true, undefined])(
+    'preserves optional dispatch evidence %s in Execution v2',
+    (kernelDispatched) => {
+      const value = executionSnapshot(2)
+      const runs = value.runs as Record<string, unknown>[]
+      Object.assign(runs[0]!, { kernelDispatched })
+      const decoded = decodeArtifactExecutionSnapshot(JSON.stringify(value))
+      expect(decoded.status).toBe('valid')
+      if (decoded.status !== 'valid') throw new Error('expected valid execution evidence')
+      if (kernelDispatched === undefined)
+        expect(decoded.value.runs[0]).not.toHaveProperty('kernelDispatched')
+      else expect(decoded.value.runs[0]).toHaveProperty('kernelDispatched', kernelDispatched)
+    }
+  )
+
+  it.each(['false', 0, null])(
+    'rejects malformed dispatch evidence %s instead of treating it as safe',
+    (kernelDispatched) => {
+      const value = executionSnapshot(2)
+      Object.assign((value.runs as Record<string, unknown>[])[0]!, { kernelDispatched })
+      expect(decodeArtifactExecutionSnapshot(JSON.stringify(value))).toEqual({ status: 'corrupt' })
+    }
+  )
+
   it('classifies Review scope v2 as valid, v1 as legacy, and future versions as unsupported', () => {
     expect(decodeReviewScopeSnapshot('{"schemaVersion":2,"blocks":[]}').status).toBe('valid')
     expect(decodeReviewScopeSnapshot('{"schemaVersion":1,"blocks":[]}').status).toBe('legacy')

@@ -1342,7 +1342,7 @@
     "Generated from the name when possible. Edit it now or leave it blank to generate automatically; it cannot be changed after creation.": "可能な場合は名前から生成されます。今すぐ編集するか、空白のままにすると自動的に生成されます。作成後は変更できません。",
     "Generating reconstructed script": "再構築されたスクリプトの生成",
     "Helper source evidence is incomplete for this version.": "このバージョンのヘルパーソースの証拠は不完全です。",
-    "Supporting code evidence is incomplete for this version.": "このバージョンの補助コードの証拠は不完全です。",
+    "Supporting code is incomplete. Failed or interrupted cells may have changed kernel state before stopping.": "補助コードが不完全です。失敗または中断したセルは、停止前にカーネルの状態を変更した可能性があります。",
     "Generating script…": "スクリプトを生成中…",
     "Generating…": "生成中…",
     "Get a desktop notification when a task finishes, fails, or waits for your approval while you're away from the app.": "アプリを離れている間にタスクが完了、失敗、または承認待ちになったときに、デスクトップ通知を受け取ります。",

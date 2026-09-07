@@ -1403,7 +1403,7 @@
     "Generated from the name when possible. Edit it now or leave it blank to generate automatically; it cannot be changed after creation.": "Создано из имени, если возможно. Редактируйте его сейчас или оставьте пустым, чтобы сгенерировать автоматически; после создания изменить нельзя.",
     "Generating reconstructed script": "Создание восстановленного скрипта",
     "Helper source evidence is incomplete for this version.": "Данные об исходном коде вспомогательных модулей для этой версии неполны.",
-    "Supporting code evidence is incomplete for this version.": "Данные о вспомогательном коде для этой версии неполны.",
+    "Supporting code is incomplete. Failed or interrupted cells may have changed kernel state before stopping.": "Вспомогательный код неполон. Ячейки с ошибкой или прерванным выполнением могли изменить состояние ядра до остановки.",
     "Generating script…": "Создание скрипта…",
     "Generating…": "Создание…",
     "Get a desktop notification when a task finishes, fails, or waits for your approval while you're away from the app.": "Получать уведомления, когда задача завершена, завершилась с ошибкой или ожидает разрешения, пока приложение неактивно.",
