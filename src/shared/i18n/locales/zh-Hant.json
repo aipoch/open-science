@@ -99,6 +99,7 @@
     "Import Connector configuration": "匯入連接器設定"
   },
   "renderer": {
+    "Your draft is preserved. Reload the current details, then merge them into your draft before saving.": "草稿已保留。請重新載入目前說明，將其合併至草稿後再儲存。",
     "Project: {{name}}": "專案：{{name}}",
     "An installer is not available for this platform. Download manually to check other installation options.": "此平台暫無可用的安裝套件。請前往手動下載頁面查看其他安裝選項。",
     "Latest saved version": "最新儲存的版本",

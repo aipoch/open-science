@@ -742,62 +742,53 @@ class ComputeHostRepository {
     )
   }
 
-  // Writes the structured probe snapshot and inferred shape. Never touches detailsDoc (design.md §4).
+  // Commit the observed identity's snapshot and automatic path in one persistence boundary.
   async updateProbeResult(
     providerId: string,
     result: ProbeResult,
-    shape: ComputeHostShape
-  ): Promise<void> {
+    shape: ComputeHostShape,
+    hostId: string,
+    scratchRoot?: string
+  ): Promise<boolean> {
+    if (!Number.isInteger(result.authenticationRevision)) return false
+    const safeScratchRoot =
+      scratchRoot === undefined ? undefined : assertSafeScratchRoot(scratchRoot)
     const client = await this.getClient()
-
-    if (Number.isInteger(result.authenticationRevision)) {
-      await client.computeHost.updateMany({
-        where: { providerId, authenticationRevision: result.authenticationRevision },
-        data: {
-          probeResult: serializeProbeResult(result),
-          shape
-        }
-      })
-      return
-    }
-    await client.computeHost.update({
-      where: { providerId },
-      data: {
-        probeResult: serializeProbeResult(result),
-        shape
+    return client.$transaction(async (transaction) => {
+      const where = {
+        id: hostId,
+        providerId,
+        authenticationRevision: result.authenticationRevision
       }
+      const updated = await transaction.computeHost.updateMany({
+        where,
+        data: { probeResult: serializeProbeResult(result), ...(result.ok ? { shape } : {}) }
+      })
+      if (updated.count !== 1) return false
+      if (result.ok && safeScratchRoot !== undefined) {
+        await transaction.computeHost.updateMany({
+          where: { ...where, scratchPinned: false },
+          data: { scratchRoot: safeScratchRoot }
+        })
+      }
+      return true
     })
   }
 
-  // Updates scratchRoot when the probe reads $SCRATCH and scratchPinned is false. Probe callers
-  // must check scratchPinned before calling (ComputeService.probe does this).
-  async updateScratchRoot(providerId: string, scratchRoot: string): Promise<void> {
-    const safeScratchRoot = assertSafeScratchRoot(scratchRoot)
-    const client = await this.getClient()
-
-    await client.computeHost.update({
-      where: { providerId },
-      data: { scratchRoot: safeScratchRoot }
-    })
-  }
-
-  // Writes detailsDoc and records who edited it (user or agent) and when. Called by
-  // ComputeService.replaceDetails (UI + agent-facing). Never called by probe.
+  // Compare and write atomically; author metadata belongs only to the accepted save.
   async updateDetails(
     providerId: string,
     detailsDoc: string,
-    author: DetailsAuthor
-  ): Promise<void> {
+    author: DetailsAuthor,
+    hostId: string,
+    oldText: string
+  ): Promise<boolean> {
     const client = await this.getClient()
-
-    await client.computeHost.update({
-      where: { providerId },
-      data: {
-        detailsDoc,
-        detailsUpdatedBy: author,
-        detailsUpdatedAt: new Date()
-      }
+    const updated = await client.computeHost.updateMany({
+      where: { id: hostId, providerId, detailsDoc: oldText },
+      data: { detailsDoc, detailsUpdatedBy: author, detailsUpdatedAt: new Date() }
     })
+    return updated.count === 1
   }
 
   // Updates scratchRoot and sets scratchPinned=true. Called when the user explicitly sets a
