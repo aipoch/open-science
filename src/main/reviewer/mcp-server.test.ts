@@ -589,6 +589,42 @@ describe('ReviewerMcpServer HTTP transport', () => {
     }
   }
 
+  it('does not echo malformed request content in the parse error', async () => {
+    const server = new ReviewerMcpServer(scope, vi.fn(), createReviewerEvidence(), 'initial')
+    const { endpoint, token } = await server.start()
+    try {
+      const response = await fetch(endpoint, {
+        method: 'POST',
+        headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+        body: '{"private-request-secret": invalid}'
+      })
+      expect(response.status).toBe(400)
+      expect(await response.json()).toEqual({ error: 'Invalid JSON body' })
+    } finally {
+      await server.stop()
+    }
+  })
+
+  it('does not expose unexpected transport failures', async () => {
+    const server = new ReviewerMcpServer(scope, vi.fn(), createReviewerEvidence(), 'initial')
+    vi.spyOn(
+      server as unknown as { handleHttpRequest: () => Promise<void> },
+      'handleHttpRequest'
+    ).mockRejectedValue(new Error('private-transport-path/secret'))
+    const { endpoint, token } = await server.start()
+    try {
+      const response = await fetch(endpoint, {
+        method: 'POST',
+        headers: { authorization: `Bearer ${token}` },
+        body: '{}'
+      })
+      expect(response.status).toBe(500)
+      expect(await response.json()).toEqual({ error: 'Internal reviewer request failure.' })
+    } finally {
+      await server.stop()
+    }
+  })
+
   it('bounds declared and chunked HTTP bodies while accepting the exact request limit', async () => {
     const evidence = createReviewerEvidence()
     const onSubmit = vi.fn().mockResolvedValue(undefined)
@@ -619,6 +655,7 @@ describe('ReviewerMcpServer HTTP transport', () => {
         body: `${initializeBody} `
       })
       expect(declared.status).toBe(413)
+      expect(await declared.json()).toEqual({ error: 'Request body exceeds the size limit.' })
       expect(declared.headers.get('connection')).toBe('close')
 
       const chunked = await new Promise<{
