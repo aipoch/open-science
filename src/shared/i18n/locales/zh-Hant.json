@@ -4620,6 +4620,10 @@
     "Automatic correction stopped because the active conversation changed.": "作用中的對話已變更，自動修正已停止。",
     "Review did not start. Please try again.": "審查未啟動，請重試。",
     "Review failed. You can try again.": "審查失敗，可以重試。",
-    "No checkable claims": "沒有可檢查的主張"
+    "No checkable claims": "沒有可檢查的主張",
+    "UTF-16 CSV preview is not supported. Save a copy as UTF-8 to preview it.": "暫不支援預覽 UTF-16 編碼的 CSV。請另存一份 UTF-8 編碼的副本以進行預覽。",
+    "The preview limit was reached before a complete header could be read.": "尚未讀取完整表頭，已達到預覽上限。",
+    "The file exceeds the preview limit. Only complete records are shown.": "檔案超出預覽上限，僅顯示完整記錄。",
+    "The delimiter could not be detected reliably. Commas are used in this preview.": "無法可靠識別分隔符號。本次預覽使用逗號作為分隔符號。"
   }
 }
