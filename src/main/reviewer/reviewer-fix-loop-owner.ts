@@ -368,6 +368,7 @@ export const runReviewerFixLoop = async (options: ReviewerFixLoopOptions): Promi
       session: correctionState.session,
       sessionId,
       scopeTurnMessageId: correctionTurnMessageId,
+      scopeMessageBranchId: correctionScope?.messageBranchId,
       turnMessageId: originalTurnMessageId,
       projectId,
       reviewRepository,

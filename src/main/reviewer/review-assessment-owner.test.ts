@@ -42,7 +42,8 @@ const harness = vi.hoisted(() => ({
   disposeError: undefined as Error | undefined,
   stopError: undefined as Error | undefined,
   bridgeScoped: undefined as boolean | undefined,
-  coverage: undefined as object | undefined
+  coverage: undefined as object | undefined,
+  scopeBranch: undefined as string | undefined
 }))
 const logSpies = vi.hoisted(() => ({
   info: vi.fn(),
@@ -68,7 +69,14 @@ const insideMutation = (event: string): void => {
 const scope: TurnScope = { turnMessageId: 'turn-scope', blocks: [], artifactVersionIds: [] }
 
 vi.mock('./artifact-digest', () => ({
-  resolveTurnScopeWithArtifactDigests: async () => {
+  resolveTurnScopeWithArtifactDigests: async (
+    _session: unknown,
+    _turn: unknown,
+    _root: unknown,
+    _resolver: unknown,
+    branch: string | undefined
+  ) => {
+    harness.scopeBranch = branch
     outsideMutation('scope')
     return scope
   }
@@ -319,8 +327,22 @@ describe('review assessment owner', () => {
     harness.stopError = undefined
     harness.bridgeScoped = undefined
     harness.coverage = undefined
+    harness.scopeBranch = undefined
     vi.clearAllMocks()
   })
+
+  it.each(['initial', 'tracked'] as const)(
+    'resolves %s assessment evidence on the requested historical branch',
+    async (mode) => {
+      await runReviewAssessment({
+        ...commonOptions(makeRepository()),
+        mode,
+        trackedChecks: [],
+        scopeMessageBranchId: 'historical-branch'
+      })
+      expect(harness.scopeBranch).toBe('historical-branch')
+    }
+  )
 
   it('publishes initial running before onStarted and keeps remote work outside mutations', async () => {
     const reviewRepository = makeRepository()

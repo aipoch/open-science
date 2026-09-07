@@ -354,6 +354,8 @@ export type ReviewRunRequest = {
   // the original turn (turnMessageId), but its scope belongs to the correction turn (scopeTurnMessageId)
   // — re-running must re-audit that correction turn, not the original.
   scopeTurnMessageId?: string
+  // Keep historical reruns on the branch captured by their Review scope.
+  scopeMessageBranchId?: string
   // Who requested the run. 'auto' (post-turn auto-review) is idempotent per turn: main refuses to start
   // a second review for a turn that already has one, which is the atomic guarantee against duplicate
   // runs from concurrent entry points. 'manual' (Request review / stale/error Re-run) intentionally

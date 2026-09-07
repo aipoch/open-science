@@ -1281,6 +1281,7 @@ const WorkspaceMessageScrollerImpl = ({
         sessionId: review.sessionId,
         turnMessageId: review.turnMessageId,
         scopeTurnMessageId: review.scope.turnMessageId,
+        scopeMessageBranchId: review.scope.messageBranchId,
         projectId: review.projectId,
         mainSessionId: review.sessionId,
         // Explicit user Re-run: bypass main's auto-only per-turn idempotency so the stale/error review

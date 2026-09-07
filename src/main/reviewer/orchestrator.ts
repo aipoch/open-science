@@ -45,6 +45,8 @@ export type RunReviewOptions = {
   // review). The scope is resolved from this turn; the row is still grouped under turnMessageId.
   // Defaults to turnMessageId.
   scopeTurnMessageId?: string
+  // Keep historical reruns on the branch captured by their Review scope.
+  scopeMessageBranchId?: string
   // Exact child provenance for a delegated turn. Delegated review is evidence-only and may not
   // enter the correction loop.
   evidenceScope?: DelegatedReviewEvidenceScope
@@ -132,6 +134,7 @@ const runReviewWithSession = async (
     sessionId,
     turnMessageId,
     scopeTurnMessageId,
+    scopeMessageBranchId,
     evidenceScope,
     projectId,
     getSession,
@@ -164,6 +167,7 @@ const runReviewWithSession = async (
     session,
     sessionId,
     scopeTurnMessageId: scopeTurnMessageId ?? turnMessageId,
+    scopeMessageBranchId,
     turnMessageId,
     evidenceScope,
     projectId,
@@ -276,6 +280,8 @@ export const runReview = async (options: RunReviewOptions): Promise<ReviewWithCh
     (turnMessageId !== options.evidenceScope.terminalMessageId ||
       (options.scopeTurnMessageId !== undefined &&
         options.scopeTurnMessageId !== options.evidenceScope.terminalMessageId) ||
+      (options.scopeMessageBranchId !== undefined &&
+        options.scopeMessageBranchId !== options.evidenceScope.messageBranchId) ||
       mainSessionId !== undefined)
   ) {
     throw new Error('Delegated Review authority is limited to its exact terminal evidence scope.')

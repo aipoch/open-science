@@ -405,6 +405,22 @@ describe('reviewer IPC handlers', () => {
     expect(passed.scopeTurnMessageId).toBe('correction')
   })
 
+  it('preserves the historical scope branch when starting a manual rerun', async () => {
+    const owner = createReviewerCommandOwner({ acpRuntime })
+    const request = {
+      ...createRequest(),
+      scopeTurnMessageId: 'historical-answer',
+      scopeMessageBranchId: 'original-branch'
+    }
+    await expect(owner.run(request)).resolves.toEqual({ started: true })
+    expect(runReview).toHaveBeenCalledWith(
+      expect.objectContaining({
+        scopeTurnMessageId: 'historical-answer',
+        scopeMessageBranchId: 'original-branch'
+      })
+    )
+  })
+
   it('passes a live session loader to the orchestrator instead of a review-start snapshot', async () => {
     sessionLoadOne
       .mockResolvedValueOnce({ id: 'session-1', messages: [{ id: 'original-turn' }] })
