@@ -20,6 +20,7 @@ import type { ActivePlanProjection } from '../../../../shared/session-plan/contr
 import { toRuntimeUploadedAttachment } from '../../../../shared/uploads'
 import {
   createInitialSessionState,
+  getExternallyHydratedSessionAuthority,
   isExternallyHydratedSession,
   toPersistedSession,
   useSessionStore
@@ -1076,6 +1077,155 @@ describe('renderer session persistence bridge', () => {
     expect(api.saveSession).not.toHaveBeenCalled()
   })
 
+  it.each([undefined, 100])(
+    'does not echo archive authority (archivedAt=%s) back to persistence',
+    async (archivedAt) => {
+      const base = createPersistedSession({ revision: 42 })
+      useSessionStore.getState().hydrateSessions([base])
+      let durable = { ...base, revision: 43, archivedAt }
+      const api = createApi({
+        loadOne: vi.fn(async () => durable),
+        saveSession: vi.fn(async (submitted: PersistedChatSession) => {
+          if (submitted.revision !== durable.revision) {
+            throw new SessionRevisionConflictError(submitted.revision ?? 0, durable.revision)
+          }
+          durable = {
+            ...submitted,
+            revision: durable.revision + 1,
+            archivedAt: submitted.archivedAt
+          }
+          return durable
+        })
+      })
+      const save = createStoreSaver(api, useSessionStore.getState())
+      const source = useSessionStore.getState().sessions[0]
+
+      useSessionStore.getState().applyDurableSessionProjection({
+        source,
+        session: durable,
+        mode: 'archive-authority'
+      })
+      await save(useSessionStore.getState())
+
+      expect(
+        durable.revision,
+        'Refreshing archive authority must not create another revision'
+      ).toBe(43)
+      expect(api.saveSession).not.toHaveBeenCalled()
+      expect(useSessionStore.getState().sessions[0].revision).toBe(43)
+    }
+  )
+
+  it('still saves a local edit after refreshing archive authority', async () => {
+    const base = createPersistedSession({ revision: 42 })
+    useSessionStore.getState().hydrateSessions([base])
+    const api = createApi({ loadOne: vi.fn(async () => ({ ...base, revision: 43 })) })
+    const save = createStoreSaver(api, useSessionStore.getState())
+    useSessionStore.getState().renameSession(base.id, 'Local edit')
+    const source = useSessionStore.getState().sessions[0]
+    useSessionStore.getState().applyDurableSessionProjection({
+      source,
+      session: { ...base, revision: 43 },
+      mode: 'archive-authority'
+    })
+
+    expect(isExternallyHydratedSession(useSessionStore.getState().sessions[0])).toBe(false)
+    await save(useSessionStore.getState())
+    expect(api.saveSession).toHaveBeenCalledWith(expect.objectContaining({ title: 'Local edit' }), {
+      conflictRebaseFields: ['title']
+    })
+  })
+
+  it('does not echo archive refresh for the full session loaded with startup summaries', async () => {
+    const base = createPersistedSession({ revision: 42 })
+    useSessionStore.getState().hydrateSessionSummaries(
+      [
+        {
+          id: base.id,
+          projectId: base.projectId!,
+          title: base.title,
+          number: 1,
+          status: 'idle',
+          presentedStatus: 'idle',
+          revision: 42,
+          pinned: false,
+          activeMessageCount: 0,
+          artifactCount: 0,
+          filesRevision: 0,
+          createdAt: base.createdAt,
+          updatedAt: base.updatedAt,
+          needsStartupRecovery: false
+        }
+      ],
+      base
+    )
+    const api = createApi()
+    const save = createStoreSaver(api, useSessionStore.getState())
+    useSessionStore.getState().applyDurableSessionProjection({
+      source: useSessionStore.getState().sessions[0],
+      session: { ...base, revision: 43 },
+      mode: 'archive-authority'
+    })
+    await save(useSessionStore.getState())
+    expect(api.saveSession).not.toHaveBeenCalled()
+  })
+
+  it('still saves an unsaved title on an externally hydrated archive projection', async () => {
+    const base = createPersistedSession({ revision: 42 })
+    useSessionStore.getState().hydrateSessions([base])
+    const api = createApi()
+    const save = createStoreSaver(api, useSessionStore.getState())
+    useSessionStore.getState().renameSession(base.id, 'Local edit')
+    useSessionStore.getState().upsertPersistedSession({ ...base, revision: 43 })
+    const source = useSessionStore.getState().sessions[0]
+    expect(isExternallyHydratedSession(source)).toBe(true)
+    useSessionStore.getState().applyDurableSessionProjection({
+      source,
+      session: { ...base, revision: 44 },
+      mode: 'archive-authority'
+    })
+    await save(useSessionStore.getState())
+    expect(api.saveSession).toHaveBeenCalledWith(
+      expect.objectContaining({ title: 'Local edit', revision: 44 }),
+      { conflictRebaseFields: ['title'] }
+    )
+  })
+
+  it('retains newer authority while persisting a context reset from a delayed archive receipt', async () => {
+    const base = createPersistedSession({ revision: 43 })
+    useSessionStore.getState().hydrateSessions([base])
+    const api = createApi()
+    const save = createStoreSaver(api, useSessionStore.getState())
+    const source = useSessionStore.getState().sessions[0]
+    useSessionStore.getState().applyDurableSessionProjection({
+      source,
+      session: { ...base, revision: 42, archivedAt: 100, branchContextResetRequired: true },
+      mode: 'archive-authority'
+    })
+    const projected = useSessionStore.getState().sessions[0]
+    expect(projected.archivedAt).toBeUndefined()
+    expect(getExternallyHydratedSessionAuthority(projected)?.revision).toBe(43)
+    await save(useSessionStore.getState())
+    expect(api.saveSession).toHaveBeenCalledWith(
+      expect.objectContaining({ revision: 43, branchContextResetRequired: true })
+    )
+  })
+
+  it('honors a forced save after archive authority refresh', async () => {
+    const base = createPersistedSession({ revision: 42 })
+    useSessionStore.getState().hydrateSessions([base])
+    const api = createApi()
+    const save = createStoreSaver(api, useSessionStore.getState())
+    const source = useSessionStore.getState().sessions[0]
+    useSessionStore.getState().applyDurableSessionProjection({
+      source,
+      session: { ...base, revision: 43 },
+      mode: 'archive-authority'
+    })
+    await save(useSessionStore.getState(), { forceTargets: new Set(['session:session-1']) })
+    expect(api.saveSession).toHaveBeenCalledWith(expect.objectContaining({ revision: 43 }))
+  })
+
   it('saves only the session whose reference changed', async () => {
     const api = createApi()
     const save = createStoreSaver(api)
@@ -1095,51 +1245,59 @@ describe('renderer session persistence bridge', () => {
     )
   })
 
-  it('persists in-flight streaming text that Session identity stability keeps out of Messages', async () => {
-    useSessionStore.getState().appendUserMessage({
-      sessionId: 'session-1',
-      content: 'Stream a response',
-      cwd: '/workspace/project',
-      projectId: 'project-a'
-    })
-    useSessionStore.getState().appendAgentMessageChunk({
-      sessionId: 'session-1',
-      streamId: 'assistant-1',
-      eventId: 'event-1',
-      content: 'Hello'
-    })
-    const api = createApi()
-    const save = createStoreSaver(api, useSessionStore.getState())
+  it.each([false, true])(
+    'persists identity-stable streaming text after hydration=%s',
+    async (hydrate) => {
+      useSessionStore.getState().appendUserMessage({
+        sessionId: 'session-1',
+        content: 'Stream a response',
+        cwd: '/workspace/project',
+        projectId: 'project-a'
+      })
+      useSessionStore.getState().appendAgentMessageChunk({
+        sessionId: 'session-1',
+        streamId: 'assistant-1',
+        eventId: 'event-1',
+        content: 'Hello'
+      })
+      if (hydrate) {
+        useSessionStore
+          .getState()
+          .hydrateSessions([toPersistedSession(useSessionStore.getState().sessions[0])])
+      }
+      const api = createApi()
+      const save = createStoreSaver(api, useSessionStore.getState())
 
-    // Pure text-growth ticks hold the new text in the streaming slice only; the Session object,
-    // its messages array, and the saver's identity diff all stay unchanged.
-    useSessionStore.getState().appendAgentMessageChunk({
-      sessionId: 'session-1',
-      streamId: 'assistant-1',
-      eventId: 'event-2',
-      content: ' world'
-    })
-    const state = useSessionStore.getState()
-    expect(state.sessions[0].messages.at(-1)?.content).toBe('Hello')
-    await save(state)
+      // Pure text-growth ticks hold the new text in the streaming slice only; the Session object,
+      // its messages array, and the saver's identity diff all stay unchanged.
+      useSessionStore.getState().appendAgentMessageChunk({
+        sessionId: 'session-1',
+        streamId: 'assistant-1',
+        eventId: 'event-2',
+        content: ' world'
+      })
+      const state = useSessionStore.getState()
+      expect(state.sessions[0].messages.at(-1)?.content).toBe('Hello')
+      await save(state)
 
-    expect(api.saveSession).toHaveBeenCalledTimes(1)
-    const persisted = vi.mocked(api.saveSession).mock.calls[0][0]
-    expect(persisted.messages.find((message) => message.role === 'agent')).toMatchObject({
-      content: 'Hello world',
-      eventIds: ['event-1', 'event-2']
-    })
+      expect(api.saveSession).toHaveBeenCalledTimes(1)
+      const persisted = vi.mocked(api.saveSession).mock.calls[0][0]
+      expect(persisted.messages.find((message) => message.role === 'agent')).toMatchObject({
+        content: 'Hello world',
+        eventIds: ['event-1', 'event-2']
+      })
 
-    // A crash after the turn ends must still find the complete terminal Message on disk.
-    useSessionStore.getState().finishRun('session-1')
-    await save(useSessionStore.getState())
-    const terminal = vi.mocked(api.saveSession).mock.calls.at(-1)![0]
-    expect(terminal.messages.find((message) => message.role === 'agent')).toMatchObject({
-      content: 'Hello world',
-      status: 'complete',
-      eventIds: ['event-1', 'event-2']
-    })
-  })
+      // A crash after the turn ends must still find the complete terminal Message on disk.
+      useSessionStore.getState().finishRun('session-1')
+      await save(useSessionStore.getState())
+      const terminal = vi.mocked(api.saveSession).mock.calls.at(-1)![0]
+      expect(terminal.messages.find((message) => message.role === 'agent')).toMatchObject({
+        content: 'Hello world',
+        status: 'complete',
+        eventIds: ['event-1', 'event-2']
+      })
+    }
+  )
 
   it('reports only changed safe fields for stale-graph conflict rebasing', async () => {
     const persisted = materializeSessionConversationGraph(
