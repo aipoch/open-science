@@ -14,6 +14,7 @@ export type PickedSession = SessionReference
 
 type SessionMentionPopupProps = {
   query: string
+  composingRef?: React.RefObject<boolean>
   listboxId?: string
   onActiveOptionIdChange?: (optionId: string | undefined) => void
   onSelect: (session: PickedSession) => void
@@ -34,6 +35,7 @@ type SessionRow = PickedSession & {
 // rows sort first; picking a row snapshots only global Session identity plus its current title.
 export const SessionMentionPopup = ({
   query,
+  composingRef,
   listboxId,
   onActiveOptionIdChange,
   onSelect,
@@ -136,6 +138,7 @@ export const SessionMentionPopup = ({
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent): void => {
+      if (event.isComposing || composingRef?.current) return
       if (event.key === 'ArrowDown') {
         event.preventDefault()
         if (matches.length > 0) setActiveIndex((safeIndex + 1) % matches.length)
@@ -161,7 +164,7 @@ export const SessionMentionPopup = ({
 
     document.addEventListener('keydown', onKeyDown)
     return () => document.removeEventListener('keydown', onKeyDown)
-  }, [matches, onClose, onSelect, safeIndex])
+  }, [matches, onClose, onSelect, safeIndex, composingRef])
 
   return (
     <div className="absolute bottom-full left-0 z-50 mb-1 flex max-h-[min(55vh,24rem)] min-w-[320px] max-w-[440px] flex-col overflow-hidden rounded-xl border-0.5 border-border-200 bg-bg-000 p-1.5 shadow-[0_4px_16px_hsl(var(--always-black)/10%)]">
@@ -172,6 +175,11 @@ export const SessionMentionPopup = ({
         aria-label={t('Sessions')}
         className="min-h-0 flex-1 overflow-y-auto"
       >
+        {matches.length === 0 && (
+          <li role="presentation" className="px-2 py-3 text-sm text-text-300">
+            <div role="status">{t('No matching sessions')}</div>
+          </li>
+        )}
         {matches.map((session, index) => {
           const isActive = index === safeIndex
           return (
@@ -216,12 +224,16 @@ export const SessionMentionPopup = ({
         })}
       </ul>
       <div className="mt-1 -mx-1.5 -mb-1.5 flex shrink-0 items-center gap-3 border-t border-border-300 px-3.5 pt-1.5 pb-2 text-[11px] text-text-400 select-none">
-        <span>
-          <span className="text-text-300">↑↓</span> {t('navigate')}
-        </span>
-        <span>
-          <span className="text-text-300">Enter / Tab</span> {t('select')}
-        </span>
+        {matches.length > 0 && (
+          <>
+            <span>
+              <span className="text-text-300">↑↓</span> {t('navigate')}
+            </span>
+            <span>
+              <span className="text-text-300">Enter / Tab</span> {t('select')}
+            </span>
+          </>
+        )}
         <span>
           <span className="text-text-300">Esc</span> {t('close')}
         </span>

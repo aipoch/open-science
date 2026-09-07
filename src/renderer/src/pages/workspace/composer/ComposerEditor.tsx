@@ -812,8 +812,9 @@ export const ComposerEditor = ({
   const handleSelectSkill = (skill: SkillView): void => {
     const root = editorRef.current
     undoCaretRef.current = root ? currentCaretPosition(root) : undefined
-    mention.replaceTokenWith({ type: 'skill', id: skill.id, name: skill.displayName })
-    mention.cancel()
+    if (!mention.replaceTokenWith({ type: 'skill', id: skill.id, name: skill.displayName })) {
+      undoCaretRef.current = undefined
+    }
   }
 
   // Replace the active `@query` token with an artifact chip, then close the popup.
@@ -821,29 +822,29 @@ export const ComposerEditor = ({
     const root = editorRef.current
     undoCaretRef.current = root ? currentCaretPosition(root) : undefined
     if ('type' in ref && (ref.type === 'literature' || ref.type === 'literature-scope')) {
-      artifactMention.replaceTokenWith(ref)
-      artifactMention.cancel()
+      if (!artifactMention.replaceTokenWith(ref)) undoCaretRef.current = undefined
       return
     }
     const artifact = ref as PickedArtifact
-    artifactMention.replaceTokenWith({
-      type: 'artifact',
-      id: artifact.id,
-      sourceFileId: artifact.sourceFileId,
-      name: artifact.name,
-      path: artifact.path,
-      source: artifact.source,
-      mimeType: artifact.mimeType,
-      versionId: artifact.versionId
-    })
-    artifactMention.cancel()
+    if (
+      !artifactMention.replaceTokenWith({
+        type: 'artifact',
+        id: artifact.id,
+        sourceFileId: artifact.sourceFileId,
+        name: artifact.name,
+        path: artifact.path,
+        source: artifact.source,
+        mimeType: artifact.mimeType,
+        versionId: artifact.versionId
+      })
+    )
+      undoCaretRef.current = undefined
   }
 
   const handleSelectSession = (session: PickedSession): void => {
     const root = editorRef.current
     undoCaretRef.current = root ? currentCaretPosition(root) : undefined
-    sessionMention.replaceTokenWith(session)
-    sessionMention.cancel()
+    if (!sessionMention.replaceTokenWith(session)) undoCaretRef.current = undefined
   }
 
   return (
@@ -906,6 +907,7 @@ export const ComposerEditor = ({
       ) : null}
       {mention.active ? (
         <SkillMentionPopup
+          composingRef={composingRef}
           query={mention.query}
           allowedSkillIds={allowedSkillIds}
           listboxId={mentionListboxId}
@@ -916,7 +918,9 @@ export const ComposerEditor = ({
       ) : null}
       {artifactMention.active ? (
         <ArtifactMentionPopup
+          composingRef={composingRef}
           query={artifactMention.query}
+          selectionKey={artifactMention.selectionKey}
           onSelect={handleSelectArtifact}
           onClose={artifactMention.cancel}
           listboxId={mentionListboxId}
@@ -925,6 +929,7 @@ export const ComposerEditor = ({
       ) : null}
       {sessionMention.active ? (
         <SessionMentionPopup
+          composingRef={composingRef}
           query={sessionMention.query}
           onSelect={handleSelectSession}
           onClose={sessionMention.cancel}

@@ -5058,6 +5058,10 @@
     "Find": "Найти",
     "Find text": "Найти текст",
     "Find in window": "Найти в окне",
-    "Close find": "Закрыть поиск"
+    "Close find": "Закрыть поиск",
+    "Loading skills…": "Загрузка навыков…",
+    "Could not load skills": "Не удалось загрузить навыки",
+    "No skills available": "Нет доступных навыков",
+    "No matching sessions": "Нет совпадающих сессий"
   }
 }

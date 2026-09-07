@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { BookOpenText, FolderOpen } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 
@@ -39,6 +39,8 @@ export type PickedMention = PickedArtifact | LiteratureReference | LiteratureSco
 // document while mounted.
 type ArtifactMentionPopupProps = {
   query: string
+  selectionKey?: object | null
+  composingRef?: React.RefObject<boolean>
   listboxId?: string
   onActiveOptionIdChange?: (optionId: string | undefined) => void
   onSelect: (ref: PickedMention) => void
@@ -70,6 +72,8 @@ const SECTION_LIBRARY_KEY = 'Library'
 
 export const ArtifactMentionPopup = ({
   query,
+  composingRef,
+  selectionKey,
   listboxId,
   onActiveOptionIdChange,
   onSelect,
@@ -243,6 +247,7 @@ export const ArtifactMentionPopup = ({
 
   const selectRow = useCallback(
     async (row: ArtifactRow): Promise<void> => {
+      const revision = ++selectionRevisionRef.current
       if (
         (row.tag === 'library' || row.tag === 'library-scope' || row.tag === 'collection-scope') &&
         row.picked
@@ -254,7 +259,6 @@ export const ArtifactMentionPopup = ({
         setSelectionError(t('Could not resolve file version.'))
         return
       }
-      const revision = ++selectionRevisionRef.current
       setSelectionError(undefined)
       const inspect = window.api.managedFileVersions?.inspect
       if (!inspect) {
@@ -296,16 +300,17 @@ export const ArtifactMentionPopup = ({
     [onSelect, t]
   )
 
-  useEffect(
+  useLayoutEffect(
     () => () => {
       selectionRevisionRef.current += 1
     },
-    []
+    [query, selectionKey, activeProjectId]
   )
 
   // Handle navigation keys at the document level while mounted, since focus stays in the editor.
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent): void => {
+      if (event.isComposing || composingRef?.current) return
       if (event.key === 'ArrowDown') {
         event.preventDefault()
         if (matches.length > 0) setActiveIndex((safeIndex + 1) % matches.length)
@@ -335,7 +340,7 @@ export const ArtifactMentionPopup = ({
 
     document.addEventListener('keydown', onKeyDown)
     return () => document.removeEventListener('keydown', onKeyDown)
-  }, [matches, safeIndex, selectRow, onClose])
+  }, [matches, safeIndex, selectRow, onClose, composingRef])
 
   // Split the flat match list back into its sections, preserving the flat highlight index.
   const uploadMatches = matches.filter((row) => row.tag === 'upload')

@@ -4609,6 +4609,10 @@
     "Find": "検索",
     "Find text": "テキストを検索",
     "Find in window": "ウィンドウ内を検索",
-    "Close find": "検索を閉じる"
+    "Close find": "検索を閉じる",
+    "Loading skills…": "スキルを読み込み中…",
+    "Could not load skills": "スキルを読み込めませんでした",
+    "No skills available": "利用可能なスキルはありません",
+    "No matching sessions": "一致するセッションはありません"
   }
 }
