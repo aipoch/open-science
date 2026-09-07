@@ -39,6 +39,28 @@ const useWorkspaceRuntimeSaveAsSkillOwner = ({
           .getState()
           .sessions.find((candidate) => candidate.id === request.sessionId)
         if (!initialSession) throw new Error(`Session not found: ${request.sessionId}`)
+        const initialHead = initialSession.conversationGraph?.branches.find(
+          ({ id }) => id === request.messageBranchId
+        )?.headMessageId
+        const isCurrent = (): boolean => {
+          const current = useSessionStore
+            .getState()
+            .sessions.find((candidate) => candidate.id === request.sessionId)
+          const graph = current?.conversationGraph
+          const frame = graph?.frames.find(({ id }) => id === graph.activeFrameId)
+          const head = graph?.branches.find(({ id }) => id === frame?.activeBranchId)?.headMessageId
+          return Boolean(
+            current &&
+            current.projectId === request.projectId &&
+            !current.interrupted &&
+            !current.resumeRecovery &&
+            frame?.id === request.agentFrameId &&
+            frame.activeBranchId === request.messageBranchId &&
+            (controlMessageId
+              ? current.activeRun?.promptMessageId === controlMessageId && head === controlMessageId
+              : !current.activeRun && head === initialHead)
+          )
+        }
         const selected = resolveSessionRuntimeSelection(request.sessionId)
         const replayPolicy = {
           ...selected.historyReplayDescriptor,
@@ -47,6 +69,7 @@ const useWorkspaceRuntimeSaveAsSkillOwner = ({
         const prepared = await prepareExistingWorkspacePrompt(runtime, {
           sessionId: request.sessionId,
           requireExistingSession: true,
+          isCurrent,
           cwd: initialSession.cwd,
           projectId: initialSession.projectId,
           permissionProfile: initialSession.permissionProfile,
@@ -67,6 +90,7 @@ const useWorkspaceRuntimeSaveAsSkillOwner = ({
           replay: { descriptor: replayPolicy },
           drainRuntimeEvents
         })
+        if (!isCurrent()) return
         if (!prepared) throw new Error('Save as skill Session preparation did not complete.')
         const session = useSessionStore
           .getState()
@@ -100,6 +124,7 @@ const useWorkspaceRuntimeSaveAsSkillOwner = ({
         if (!controlMessage) throw new Error('Save as skill control message could not be created.')
         controlMessageId = controlMessage.messageId
         await flushSessionPersistence()
+        if (!isCurrent()) return
         await window.api.acp.saveAsSkill({
           ...request,
           ...(selected.supportsImageRelay ? { supportsImageRelay: true } : {}),
