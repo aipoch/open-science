@@ -6,7 +6,11 @@ import { join, win32 } from 'node:path'
 import { promisify } from 'node:util'
 
 import type { NotebookLanguage } from '../../shared/notebook'
-import type { DiscoveredInterpreter, EnvProvenance } from '../../shared/notebook-runtime'
+import type {
+  DiscoveredInterpreter,
+  EnvProvenance,
+  RuntimeEnablement
+} from '../../shared/notebook-runtime'
 import { createLogger } from '../logger'
 import { isMacOSDeveloperToolsPythonStub, isPython3Version } from './python-command'
 import { parseRVersion, rHasJsonlite } from './r-command'
@@ -409,7 +413,8 @@ const condaEnvName = (interpreterPath: string): string | undefined => {
 // runnability and classified by provenance. The orchestration is pure over the injected deps.
 export const discoverInterpreters = async (
   language: NotebookLanguage,
-  deps: DiscoveryDeps
+  deps: DiscoveryDeps,
+  enablement?: RuntimeEnablement
 ): Promise<DiscoveredInterpreter[]> => {
   // Dedup by real path FIRST, then probe unique candidates with BOUNDED concurrency. Each probe spawns
   // subprocesses (a `--version` probe, plus a jsonlite probe for R); serial made discovery scale with
@@ -420,6 +425,9 @@ export const discoverInterpreters = async (
   const unique: { path: string; envId: string }[] = []
   for (const path of await deps.candidatePaths(language)) {
     const envId = deps.realpath(path)
+    // Execution discovery must not wait for a disabled interpreter to time out. Inventory and
+    // repair callers omit enablement so they can still inspect disabled or broken environments.
+    if (enablement?.enabled[envId] === false) continue
     if (language === 'python' && isMacOSDeveloperToolsPythonStub(envId, deps.platform)) continue
     if (seen.has(envId)) continue
     seen.add(envId)
