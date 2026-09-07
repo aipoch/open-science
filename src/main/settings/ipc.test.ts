@@ -5,6 +5,8 @@ import {
   CLAUDE_SHARED_PROVIDER_ID,
   CODEX_SUBSCRIPTION_PROVIDER_ID
 } from '../../shared/settings'
+import { resolveProviderEffectiveModel } from '../../shared/provider-reasoning-effort'
+import type { ProviderView } from '../../shared/settings'
 import type { SettingsService } from './service'
 import type { SettingsIpcOptions } from './ipc'
 import type { SettingsWorkflowEffects } from './workflows'
@@ -748,6 +750,62 @@ describe('settings IPC handlers', () => {
       })
 
       expect(onActiveProviderChanged).toHaveBeenCalledOnce()
+    }
+  )
+
+  it.each(['p1', 'other'])(
+    'reconnects provider-default Sessions after catalog refresh with active provider %s',
+    async (activeProviderId) => {
+      handlers.clear()
+      const service = createFakeService()
+      let provider: ProviderView = {
+        id: 'p1',
+        type: 'official',
+        vendorId: 'anthropic',
+        name: 'Anthropic',
+        models: ['claude-sonnet-4-6', 'claude-opus-4-6'],
+        supportsImageInput: true,
+        hasKey: true,
+        needsKey: false
+      }
+      service.getSettingsView.mockImplementation(async () => ({
+        claude: {},
+        activeProviderId,
+        providers: [provider]
+      }))
+      const onActiveProviderChanged = vi.fn()
+      registerTestSettingsIpcHandlers({ service: asService(service), onActiveProviderChanged })
+      expect(resolveProviderEffectiveModel(provider, undefined)).toBe('claude-sonnet-4-6')
+      service.refreshProviderModels.mockImplementation(async () => {
+        provider = { ...provider, models: ['claude-opus-4-6', 'claude-sonnet-4-6'] }
+        return { ok: true, category: 'ok', models: provider.models }
+      })
+      await invoke('settings:refresh-provider-models', { providerId: 'p1' })
+      expect(resolveProviderEffectiveModel(provider, undefined)).toBe('claude-opus-4-6')
+      expect(onActiveProviderChanged).toHaveBeenCalledWith(['p1'], activeProviderId === 'p1')
+    }
+  )
+
+  it.each(['unchanged', 'failed'])(
+    'does not reconnect existing Sessions after an %s catalog refresh',
+    async (outcome) => {
+      handlers.clear()
+      const service = createFakeService()
+      const provider = { id: 'p1', models: ['claude-opus-4-6', 'claude-sonnet-4-6'] }
+      service.getSettingsView.mockResolvedValue({
+        claude: {},
+        activeProviderId: 'p1',
+        providers: [provider]
+      })
+      service.refreshProviderModels.mockResolvedValue(
+        outcome === 'failed'
+          ? { ok: false, category: 'network' }
+          : { ok: true, category: 'ok', models: provider.models }
+      )
+      const onActiveProviderChanged = vi.fn()
+      registerTestSettingsIpcHandlers({ service: asService(service), onActiveProviderChanged })
+      await invoke('settings:refresh-provider-models', { providerId: 'p1' })
+      expect(onActiveProviderChanged).not.toHaveBeenCalled()
     }
   )
 

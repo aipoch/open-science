@@ -4154,6 +4154,7 @@ const createApplicationModules = async (
       }
     },
     settingsCore: {
+      runtime: settingsWorkflows.runtime,
       service: settingsService,
       appearance: settingsWorkflows.appearance,
       snapshotCommits: settingsSnapshotCommits,

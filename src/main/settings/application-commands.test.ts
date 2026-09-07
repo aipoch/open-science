@@ -133,6 +133,7 @@ const createDependencies = (
     appearance,
     dependencies: {
       service,
+      runtime: { refreshProviderModels: (request) => service.refreshProviderModels(request) },
       appearance: { setAppIconVariant: appearance },
       snapshotCommits,
       emitInstallEvent,
@@ -144,6 +145,25 @@ const createDependencies = (
 }
 
 describe('Settings core application commands', () => {
+  it('routes model refresh through the runtime workflow before publishing the snapshot', async () => {
+    const { dependencies, serviceMethod } = createDependencies()
+    const result = { ok: true, category: 'ok', models: ['new-default'] } as const
+    const refreshProviderModels = vi.fn().mockResolvedValue(result)
+    const router = createApplicationCommandRouter()
+    registerCoreSettingsApplicationCommands(router.registrar, {
+      ...dependencies,
+      runtime: { refreshProviderModels }
+    })
+    await expect(
+      router.dispatcher.invoke(
+        settingsCoreApplicationCommands.refreshProviderModels,
+        invocation([{ providerId: 'provider-1' }])
+      )
+    ).resolves.toEqual(result)
+    expect(refreshProviderModels).toHaveBeenCalledWith({ providerId: 'provider-1' })
+    expect(serviceMethod('refreshProviderModels')).not.toHaveBeenCalled()
+  })
+
   it('returns and publishes current snapshots when an older command result resolves late', async () => {
     const currentSnapshot = {
       claude: {},
