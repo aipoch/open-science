@@ -1752,7 +1752,10 @@ const ArtifactProvenancePanel = ({
                   <dt className="text-text-300">{t('Capture')}</dt>
                   <dd className="text-text-100">
                     {asString(environment.capture_status) ?? t('partial')} ·{' '}
-                    {t('{{count}} packages', { count: environmentPackages.length })}
+                    {t('{{count}} packages', {
+                      count: environmentPackages.length,
+                      defaultValue_one: '{{count}} package'
+                    })}
                   </dd>
                 </dl>
                 {environmentWarnings.length > 0 ? (

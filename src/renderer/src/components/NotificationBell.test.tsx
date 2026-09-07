@@ -99,6 +99,32 @@ const stubMutableViewport = (): { setMobile: (mobile: boolean) => void } => {
 }
 
 describe('NotificationBell', () => {
+  it.each([
+    ['minute', 60_000],
+    ['hour', 3_600_000],
+    ['day', 86_400_000],
+    ['week', 7 * 86_400_000],
+    ['month', 40 * 86_400_000],
+    ['year', 365 * 86_400_000]
+  ] as const)('renders English singular and plural %s timestamps', async (unit, duration) => {
+    const now = Date.now()
+    const item = useNotificationInboxStore.getState().items[0]!
+    useNotificationInboxStore.setState({
+      items: [1, 2].map((count) => ({
+        ...item,
+        id: `message-${count}`,
+        createdAt: now - duration * count
+      }))
+    })
+    await act(async () => root.render(<NotificationBell />))
+    await act(async () =>
+      container.querySelector<HTMLButtonElement>('[aria-label^="Messages,"]')?.click()
+    )
+    expect(document.body.textContent).toContain(`1 ${unit} ago`)
+    expect(document.body.textContent).toContain(`2 ${unit}s ago`)
+    expect(document.body.textContent).not.toContain(`1 ${unit}s ago`)
+  })
+
   it('renders a red-dot entry point with an accessible unread count and pending state', async () => {
     await act(async () => root.render(<NotificationBell />))
 

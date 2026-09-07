@@ -1,5 +1,6 @@
 import { useEffect, useEffectEvent, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+import { useDateTimeFormat } from '@/hooks/useDateTimeFormat'
 import { AlertCircle, ListTodo, LoaderCircle, X } from 'lucide-react'
 import { LiteratureErrorNotice } from './LiteratureErrorNotice'
 import { Button } from '@/components/ui/button'
@@ -23,6 +24,7 @@ export function LiteratureBackgroundTasks({
   hidden?: boolean
 }): React.JSX.Element {
   const { t } = useTranslation()
+  const formatDate = useDateTimeFormat()
   const [open, setOpen] = useState(false)
   const [jobs, setJobs] = useState<LiteratureJobSummary[]>([])
   const [error, setError] = useState(false)
@@ -208,7 +210,7 @@ export function LiteratureBackgroundTasks({
                       {job.failed > 0 ? ` · ${t('Failed')}: ${job.failed}` : null}
                     </p>
                     <p className="text-xs text-muted-foreground">
-                      {new Date(job.createdAt).toLocaleString()}
+                      {formatDate(job.createdAt, 'dateTime')}
                     </p>
                   </div>
                   <div className="flex gap-2">
