@@ -546,3 +546,19 @@ describe('AcpPromptOutcomeFinalizer', () => {
     expect(harness.handles.prepared?.close).toHaveBeenCalledOnce()
   })
 })
+
+it('publishes a prompt-scoped cancellation when the provider resolves cancelled without a local request', async () => {
+  const harness = createHarness()
+  expect(harness.interactions.captureTerminal(harness.interaction, 'cancelled')).toBe(true)
+  await expect(
+    new AcpPromptOutcomeFinalizer().finalize(harness.handles, stopped({ stopReason: 'cancelled' }))
+  ).resolves.toMatchObject({ stopReason: 'cancelled' })
+  expect(harness.events).toContainEqual(
+    expect.objectContaining({
+      kind: 'stop',
+      sessionId: 's1',
+      promptMessageId: 'prompt-1',
+      text: 'cancelled'
+    })
+  )
+})
