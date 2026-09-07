@@ -197,6 +197,176 @@ afterEach(() => {
 })
 
 describe('workspace message queue controller', () => {
+  it.each(['permission change', 'persistence block'] as const)(
+    'MQ01: does not abort automatic repair when send now encounters %s',
+    async (blocker) => {
+      let currentSession = { ...session(), fixLoopActive: true }
+      let persistenceBlocked = false
+      const input = options(currentSession, {
+        getSession: () => currentSession,
+        isPersistenceBlocked: () => persistenceBlocked
+      })
+      const hook = renderController(input)
+      mounted.push(hook)
+      act(() => hook.result.current.lifecycle.enqueue(admission('queued during repair')))
+      const itemId = hook.result.current.items[0].id
+
+      if (blocker === 'permission change') {
+        currentSession = { ...currentSession, permissionProfile: 'auto' }
+      } else {
+        persistenceBlocked = true
+      }
+      await act(async () => hook.result.current.actions.sendNow(itemId))
+
+      expect(input.runtime.sendMessage).not.toHaveBeenCalled()
+      expect(hook.result.current.items[0]).toMatchObject(
+        blocker === 'permission change'
+          ? { phase: 'error', error: { kind: 'send' } }
+          : { phase: 'queued', deferredUntilIdle: true }
+      )
+      expect(input.abortFixLoop).not.toHaveBeenCalled()
+    }
+  )
+
+  it('MQ01: rechecks updated options after awaiting repair termination', async () => {
+    const currentSession = { ...session(), fixLoopActive: true }
+    let finishAbort!: () => void
+    const abortFixLoop = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          finishAbort = resolve
+        })
+    )
+    const steerFollowUp = vi.fn(async () => ({
+      injected: true as const,
+      transport: 'acp-steering' as const,
+      messageId: 'steered-message'
+    }))
+    const input = options(currentSession, { abortFixLoop })
+    input.runtime.steerFollowUp = steerFollowUp
+    const hook = renderController(input)
+    mounted.push(hook)
+    act(() => hook.result.current.lifecycle.enqueue(admission('wait for repair termination')))
+    let sending!: Promise<void>
+    act(() => {
+      sending = hook.result.current.actions.sendNow(hook.result.current.items[0].id)
+    })
+    expect(abortFixLoop).toHaveBeenCalledOnce()
+    hook.rerender({ ...input, isPersistenceBlocked: () => true })
+    await act(async () => {
+      finishAbort()
+      await sending
+    })
+    expect(steerFollowUp).not.toHaveBeenCalled()
+    expect(input.runtime.sendMessage).not.toHaveBeenCalled()
+    expect(hook.result.current.items[0]).toMatchObject({ phase: 'queued', deferredUntilIdle: true })
+  })
+
+  it.each([1, 3])(
+    'MQ03: advances past %i stale automatic heads after one background session update',
+    async (headCount) => {
+      let currentSession = { ...session(), agentBackendId: 'backend-a' }
+      let notifySessionChanged: (() => void) | undefined
+      const input = options(currentSession, {
+        promptInFlightSessionIds: [],
+        getSession: () => currentSession,
+        subscribeSessionChanges: (listener) => {
+          notifySessionChanged = listener
+          return () => {
+            notifySessionChanged = undefined
+          }
+        }
+      })
+      const hook = renderController(input)
+      mounted.push(hook)
+      let automatic!: Promise<{ sessionId: string; messageId: string } | undefined>
+      act(() => {
+        const completions = Array.from({ length: headCount }, (_, index) => {
+          return hook.result.current.lifecycle.enqueueApplication({
+            session: currentSession,
+            text: 'Analyze job-1.',
+            attribution: {
+              kind: 'application',
+              feature: 'compute',
+              purpose: 'job-completion-analysis',
+              deliveryKey: `compute_done:session-a:job-${index}`,
+              jobIds: ['job-1']
+            }
+          })
+        })
+        automatic = Promise.all(completions).then((results) => {
+          expect(results).toEqual(Array(headCount).fill(undefined))
+          return undefined
+        })
+        hook.result.current.lifecycle.enqueue(admission('user after automatic'))
+      })
+      hook.leaveWorkspace()
+      currentSession = { ...session('idle'), agentBackendId: 'backend-b' }
+      expect(notifySessionChanged).toBeTypeOf('function')
+      await act(async () => {
+        notifySessionChanged!()
+      })
+
+      await vi.waitFor(() => expect(input.runtime.sendMessage).toHaveBeenCalledOnce())
+      expect(input.runtime.sendMessage).toHaveBeenCalledWith(
+        expect.objectContaining({ text: 'user after automatic' })
+      )
+      await expect(automatic).resolves.toBeUndefined()
+    }
+  )
+
+  it.each(['up', 'down'] as const)(
+    'MQ02: moves one visible neighbor %s across a hidden automatic item',
+    async (direction) => {
+      let currentSession = session()
+      const sendMessage = vi.fn(async (request: { text: string }) => {
+        currentSession = session('running')
+        return { sessionId: 'session-a', messageId: request.text }
+      })
+      const input = options(currentSession, {
+        promptInFlightSessionIds: [],
+        getSession: () => currentSession,
+        runtime: { sendMessage, cancelRun: vi.fn(async () => undefined) }
+      })
+      const hook = renderController(input)
+      mounted.push(hook)
+      act(() => {
+        hook.result.current.lifecycle.enqueue(admission('A'))
+        void hook.result.current.lifecycle.enqueueApplication({
+          session: currentSession,
+          text: 'Analyze job-1.',
+          attribution: {
+            kind: 'application',
+            feature: 'compute',
+            purpose: 'job-completion-analysis',
+            deliveryKey: 'compute_done:session-a:job-1',
+            jobIds: ['job-1']
+          }
+        })
+        hook.result.current.lifecycle.enqueue(admission('B'))
+      })
+      expect(hook.result.current.items.map((item) => item.text)).toEqual(['A', 'B'])
+      const itemId = hook.result.current.items[direction === 'up' ? 1 : 0].id
+      act(() => hook.result.current.actions.move(itemId, direction))
+
+      expect(hook.result.current.items.map((item) => item.text)).toEqual(['B', 'A'])
+
+      const announcement = hook.result.current.announcement
+      // A visible boundary must not move across a hidden item or announce a move.
+      act(() => hook.result.current.actions.move(itemId, direction))
+      expect(hook.result.current.announcement).toBe(announcement)
+      for (let count = 1; count <= 3; count++) {
+        currentSession = session('idle')
+        await act(async () => hook.rerender({ ...input }))
+        expect(sendMessage).toHaveBeenCalledTimes(count)
+        await act(async () => hook.rerender({ ...input }))
+      }
+      expect(sendMessage.mock.calls.map((call) => call[0].text)).toEqual(
+        direction === 'up' ? ['B', 'A', 'Analyze job-1.'] : ['Analyze job-1.', 'B', 'A']
+      )
+    }
+  )
+
   it('retains queued messages when the Workspace unmounts for Project navigation', () => {
     const input = options(session())
     const workspace = renderController(input)
