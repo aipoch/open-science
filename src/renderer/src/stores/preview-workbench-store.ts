@@ -456,7 +456,17 @@ export const usePreviewWorkbenchStore = create<PreviewWorkbenchStore>((set, get)
     // Deferred restore callbacks must not overwrite a later tab action or another restore.
     let expected = initial
     const activate = (): boolean => {
-      if (restored && get() !== expected) return false
+      const current = get()
+      if (
+        restored &&
+        (current.activeProjectId !== expected.activeProjectId ||
+          current.items !== expected.items ||
+          current.activeItemId !== expected.activeItemId ||
+          current.panelState !== expected.panelState ||
+          current.openRequestVersion !== expected.openRequestVersion ||
+          current.byProject[projectId] !== expected.byProject[projectId])
+      )
+        return false
       return applyRestore(() => {
         set((state) => {
           if (state.activeProjectId === projectId) {

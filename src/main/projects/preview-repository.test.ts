@@ -1,7 +1,7 @@
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 // Item-path encode/decode falls back to resolveDataRoot(), which reads electron's app.getPath.
 vi.mock('electron', () => ({
@@ -9,6 +9,7 @@ vi.mock('electron', () => ({
 }))
 
 import type { PersistedPreviewState } from '../../shared/preview-state'
+import { initDataRoot } from '../storage-root'
 import { PreviewStateRepository, type PreviewStateClient } from './preview-repository'
 import { createProjectDbClient, migrateApplicationDatabase } from './prisma-client'
 
@@ -40,7 +41,13 @@ const createState = (overrides: Partial<PersistedPreviewState> = {}): PersistedP
   ...overrides
 })
 
+beforeEach(() => {
+  // Match application startup: path encoding must not probe legacy home directories for every tab.
+  initDataRoot(DATA_ROOT)
+})
+
 afterEach(async () => {
+  initDataRoot(undefined)
   await disconnect?.()
   disconnect = undefined
 

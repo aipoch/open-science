@@ -323,6 +323,25 @@ describe('preview draft lifecycle', () => {
     }
   )
 
+  it('applies an approved restore after unrelated composer state changes', async () => {
+    await act(async () => root.render(<PreviewPanelSurface />))
+    await startEditing()
+    await act(async () =>
+      usePreviewWorkbenchStore.getState().activateProject(projectId, { items: [] })
+    )
+    expect(confirmation()).not.toBeNull()
+    await act(async () =>
+      usePreviewWorkbenchStore.getState().setDraftStagedUploadIds(['new-attachment'])
+    )
+    await act(async () =>
+      confirmation()!.querySelector<HTMLButtonElement>('button:last-of-type')!.click()
+    )
+    expect(editor()).toBeNull()
+    expect(usePreviewWorkbenchStore.getState().items).toEqual([])
+    expect(usePreviewWorkbenchStore.getState().draftStagedUploadIds).toEqual(['new-attachment'])
+    expect(window.api.managedFileVersions.saveTextEdit).not.toHaveBeenCalled()
+  })
+
   it('does not discard a draft for an obsolete restore after a newer tab action', async () => {
     await act(async () => root.render(<PreviewPanelSurface />))
     await startEditing()
