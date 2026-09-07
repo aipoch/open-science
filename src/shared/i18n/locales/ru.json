@@ -5137,6 +5137,7 @@
     "{{count}} running background tasks_one": "{{count}} фоновая задача выполняется",
     "{{count}} running background tasks_few": "{{count}} фоновые задачи выполняются",
     "{{count}} running background tasks_many": "{{count}} фоновых задач выполняется",
-    "{{count}} running background tasks_other": "{{count}} фоновые задачи выполняются"
+    "{{count}} running background tasks_other": "{{count}} фоновые задачи выполняются",
+    "Updated: {{completed}}. Not updated: {{remaining}}.": "Обновлено: {{completed}}. Не обновлено: {{remaining}}."
   }
 }

@@ -4689,6 +4689,7 @@
     "Local Runs and remote Compute Jobs for this Session. Click to show or hide the ledger.": "이 세션의 로컬 실행 및 원격 Compute Job입니다. 클릭하여 목록을 표시하거나 숨깁니다.",
     "{{count}} tasks_other": "작업 {{count}}개",
     "{{count}} background tasks_other": "백그라운드 작업 {{count}}개",
-    "{{count}} running background tasks_other": "실행 중인 백그라운드 작업 {{count}}개"
+    "{{count}} running background tasks_other": "실행 중인 백그라운드 작업 {{count}}개",
+    "Updated: {{completed}}. Not updated: {{remaining}}.": "업데이트됨: {{completed}}. 업데이트되지 않음: {{remaining}}."
   }
 }

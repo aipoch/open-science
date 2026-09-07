@@ -18,12 +18,14 @@ type HookProps = { enabled: boolean; scopeKey: string; request: LiteratureCatalo
 
 const setup = (): RenderHookResult<ReturnType<typeof useLiteratureEntries>, HookProps> & {
   onPage: ReturnType<typeof vi.fn>
+  onError: ReturnType<typeof vi.fn>
 } => {
   const onPage = vi.fn()
   const onEmptyPage = vi.fn()
   const onError = vi.fn()
   return {
     onPage,
+    onError,
     ...renderHook<ReturnType<typeof useLiteratureEntries>, HookProps>(
       ({ enabled, scopeKey, request }) =>
         useLiteratureEntries({ enabled, scopeKey, request, onPage, onEmptyPage, onError }),
@@ -42,6 +44,82 @@ describe('useLiteratureEntries', () => {
   afterEach(() => {
     cleanup()
     vi.useRealTimers()
+  })
+
+  it.each(['initial', 'next page', 'filter'] as const)(
+    'ends loading after a failed %s request and permits retry',
+    async (kind) => {
+      if (kind === 'initial') search.mockRejectedValueOnce(new Error('Unavailable'))
+      const { result, rerender, onError } = setup()
+      await act(async () => {})
+      if (kind !== 'initial') {
+        search.mockRejectedValueOnce(new Error('Unavailable'))
+        rerender({
+          enabled: true,
+          scopeKey: kind === 'filter' ? 'filtered' : 'library',
+          request: { ...request, ...(kind === 'filter' ? { query: 'new' } : { offset: 50 }) }
+        })
+        await act(async () => {
+          await vi.runAllTimersAsync()
+        })
+      }
+      expect(onError).toHaveBeenLastCalledWith(true)
+      expect(result.current.loading).toBe(false)
+      expect(result.current.pageTransitionLoading).toBe(false)
+      search.mockResolvedValueOnce({
+        entries: [
+          {
+            id: 'retry',
+            item: literatureItemInputSchema.parse({
+              itemType: 'journalArticle',
+              title: 'Recovered'
+            }),
+            attachments: [],
+            collectionIds: [],
+            projectIds: [],
+            metadataRevision: 1,
+            createdAt: 1,
+            updatedAt: 1
+          }
+        ],
+        totalCount: 51
+      })
+      await act(() => result.current.reload(true))
+      expect(onError).toHaveBeenLastCalledWith(false)
+      expect(result.current.loading).toBe(false)
+    }
+  )
+
+  it('returns from a failed scope to the cached page without another request', async () => {
+    const { result, rerender, onError, onPage } = setup()
+    await act(async () => {})
+    search.mockRejectedValueOnce(new Error('Unavailable'))
+    rerender({ enabled: true, scopeKey: 'filtered', request: { ...request, query: 'new' } })
+    await act(async () => {})
+    expect(onError).toHaveBeenLastCalledWith(true)
+    rerender({ enabled: true, scopeKey: 'library', request })
+    await act(async () => {})
+    expect(onError).toHaveBeenLastCalledWith(false)
+    expect(result.current.loading).toBe(false)
+    expect(onPage).toHaveBeenCalledTimes(1)
+    expect(onPage).toHaveBeenLastCalledWith(page, request, false)
+    expect(search).toHaveBeenCalledTimes(2)
+  })
+
+  it('ignores an old rejection after a new scope succeeds', async () => {
+    let reject: (error: Error) => void = () => {}
+    search.mockImplementationOnce(
+      () =>
+        new Promise((_, fail) => {
+          reject = fail
+        })
+    )
+    const { result, rerender, onError } = setup()
+    rerender({ enabled: true, scopeKey: 'filtered', request: { ...request, query: 'new' } })
+    await act(async () => {})
+    await act(async () => reject(new Error('Old failure')))
+    expect(onError).not.toHaveBeenCalledWith(true)
+    expect(result.current.loading).toBe(false)
   })
 
   it('starts first-page navigation without waiting for a debounce timer', async () => {

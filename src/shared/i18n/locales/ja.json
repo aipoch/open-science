@@ -4691,6 +4691,7 @@
     "Local Runs and remote Compute Jobs for this Session. Click to show or hide the ledger.": "このセッションのローカル実行とリモートの Compute Job。クリックで一覧の表示を切り替えます。",
     "{{count}} tasks_other": "{{count}} 件のタスク",
     "{{count}} background tasks_other": "{{count}} 件のバックグラウンドタスク",
-    "{{count}} running background tasks_other": "実行中のバックグラウンドタスク {{count}} 件"
+    "{{count}} running background tasks_other": "実行中のバックグラウンドタスク {{count}} 件",
+    "Updated: {{completed}}. Not updated: {{remaining}}.": "更新済み：{{completed}}。未更新：{{remaining}}。"
   }
 }

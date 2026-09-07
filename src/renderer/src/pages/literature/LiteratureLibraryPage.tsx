@@ -1248,6 +1248,11 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
   const [entriesTotalCount, setEntriesTotalCount] = useState(0)
   const [nextEntriesOffset, setNextEntriesOffset] = useState<number>()
   const [error, setError] = useState<string>()
+  const [lifecycleFailure, setLifecycleFailure] = useState<{
+    itemIds: string[]
+    state: 'active' | 'deleted'
+    completed: number
+  }>()
   const [linkedItemError, setLinkedItemError] = useState<string>()
   const [pendingCandidateId, setPendingCandidateId] = useState<string>()
   const [dismissedCandidateUndo, setDismissedCandidateUndo] = useState<DismissedCandidateUndo>()
@@ -1411,9 +1416,18 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
     })
   }, [clearSelection, consumeLiteratureCollection, pendingLiteratureCollectionId])
 
+  const collectionsGenerationRef = useRef(0)
   const loadCollections = useCallback(async (): Promise<void> => {
-    const page = await window.api.literature.search({ scope: 'collections', limit: 100 })
-    setCollections(page.entries.filter(isCollection))
+    const generation = ++collectionsGenerationRef.current
+    const collections: LiteratureCollectionView[] = []
+    let offset: number | undefined = 0
+    do {
+      const page = await window.api.literature.search({ scope: 'collections', limit: 100, offset })
+      if (generation !== collectionsGenerationRef.current) return
+      collections.push(...page.entries.filter(isCollection))
+      offset = page.nextOffset
+    } while (offset !== undefined)
+    setCollections(collections)
   }, [])
 
   const loadInboxPendingCount = useCallback(async (): Promise<void> => {
@@ -1425,16 +1439,18 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
     setInboxPendingCount(page.totalCount ?? page.entries.length)
   }, [])
 
+  const projectCountsGenerationRef = useRef(0)
   const loadProjectCounts = useCallback(async (): Promise<void> => {
+    const generation = ++projectCountsGenerationRef.current
     const page = await window.api.literature.search({ scope: 'project-counts' })
-    setProjectItemCounts((current) => ({
-      ...current,
-      ...Object.fromEntries(
+    if (generation !== projectCountsGenerationRef.current) return
+    setProjectItemCounts(
+      Object.fromEntries(
         page.entries
           .filter(isProjectCount)
           .map(({ projectId, itemCount }) => [projectId, itemCount])
       )
-    }))
+    )
   }, [])
 
   const selectedCollection = useMemo(
@@ -1585,6 +1601,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
   const entriesRequest = useMemo(() => buildEntriesRequest(), [buildEntriesRequest])
   const {
     loading: entriesLoading,
+    failed: entriesFailed,
     pageTransitionLoading: entriesPageTransitionLoading,
     reload: reloadEntries,
     refreshItems
@@ -1629,6 +1646,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
     const timeout = window.setTimeout(() => {
       setEntriesOffset(0)
       clearSelection()
+      setLifecycleFailure(undefined)
     }, 0)
     return () => window.clearTimeout(timeout)
   }, [clearSelection, entriesKey])
@@ -2387,20 +2405,37 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
     if ((!allMatchingSelected && (itemIds?.length ?? 0) === 0) || isBatching) return
     setIsBatching(true)
     setError(undefined)
+    setLifecycleFailure(undefined)
+    let resolvedIds: readonly string[] = []
+    let completed = 0
     try {
-      const resolvedIds = itemIds ?? (await resolveSelectedItemIds())
+      resolvedIds = itemIds ?? (await resolveSelectedItemIds())
       for (let offset = 0; offset < resolvedIds.length; offset += LITERATURE_BATCH_COMMAND_SIZE) {
-        await window.api.literature.transact({
-          kind: 'set-item-lifecycle',
-          itemIds: resolvedIds.slice(offset, offset + LITERATURE_BATCH_COMMAND_SIZE),
-          state
-        })
+        const batch = resolvedIds.slice(offset, offset + LITERATURE_BATCH_COMMAND_SIZE)
+        await window.api.literature.transact({ kind: 'set-item-lifecycle', itemIds: batch, state })
+        completed += batch.length
       }
       clearSelection()
-      await loadEntries(true)
     } catch {
-      setError(t('Literature could not be updated.'))
+      if (resolvedIds.length) {
+        const remaining = resolvedIds.slice(completed)
+        selectionStore.replace(remaining)
+        setLifecycleFailure({ itemIds: remaining, state, completed })
+      } else {
+        setError(t('Literature could not be updated.'))
+      }
     } finally {
+      if (resolvedIds.length) {
+        // Refresh even after a failed command: earlier batches may already be committed.
+        const refreshed = await Promise.allSettled([
+          loadEntries(true),
+          loadCollections(),
+          loadProjectCounts()
+        ])
+        if (refreshed.some((result) => result.status === 'rejected')) {
+          setError(t('Literature could not be loaded.'))
+        }
+      }
       setIsBatching(false)
     }
   }
@@ -3692,14 +3727,48 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
               onChanged={receiveBackgroundItems}
             />
           ) : null}
+          {lifecycleFailure ? (
+            <div className="mt-5">
+              <LiteratureErrorNotice
+                title={t('Literature could not be updated.')}
+                description={t('Updated: {{completed}}. Not updated: {{remaining}}.', {
+                  completed: lifecycleFailure.completed,
+                  remaining: lifecycleFailure.itemIds.length
+                })}
+                secondaryButton={{
+                  label: t('Retry'),
+                  disabled: isBatching,
+                  onClick: () =>
+                    void setItemsLifecycle(lifecycleFailure.itemIds, lifecycleFailure.state)
+                }}
+              />
+            </div>
+          ) : null}
           {(linkedItemError || error) && !entriesLoading ? (
             <div className="mt-5">
-              <LiteratureErrorNotice title={linkedItemError || error || undefined} />
+              <LiteratureErrorNotice
+                title={linkedItemError || error || undefined}
+                secondaryButton={
+                  !linkedItemError && error === t('Literature could not be loaded.')
+                    ? {
+                        label: t('Retry'),
+                        disabled: isBatching,
+                        onClick: () => {
+                          void Promise.all([
+                            loadEntries(true),
+                            loadCollections(),
+                            loadProjectCounts()
+                          ]).catch(() => setError(t('Literature could not be loaded.')))
+                        }
+                      }
+                    : undefined
+                }
+              />
             </div>
           ) : null}
 
           <div className="mt-6 flex min-h-0 flex-1 flex-col gap-2">
-            {entriesLoading && !entriesPageTransitionLoading ? (
+            {entriesFailed ? null : entriesLoading && !entriesPageTransitionLoading ? (
               <div
                 role="status"
                 className="flex min-h-0 flex-1 justify-center py-20 text-muted-foreground"

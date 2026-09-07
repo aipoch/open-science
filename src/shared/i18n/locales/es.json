@@ -5005,6 +5005,7 @@
     "{{count}} background tasks_other": "{{count}} tareas en segundo plano",
     "{{count}} running background tasks_one": "{{count}} tarea en segundo plano en ejecución",
     "{{count}} running background tasks_many": "{{count}} tareas en segundo plano en ejecución",
-    "{{count}} running background tasks_other": "{{count}} tareas en segundo plano en ejecución"
+    "{{count}} running background tasks_other": "{{count}} tareas en segundo plano en ejecución",
+    "Updated: {{completed}}. Not updated: {{remaining}}.": "Actualizadas: {{completed}}. Sin actualizar: {{remaining}}."
   }
 }

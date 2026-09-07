@@ -4691,6 +4691,7 @@
     "Local Runs and remote Compute Jobs for this Session. Click to show or hide the ledger.": "此会话的本地运行与远程 Compute 作业。点击以显示或隐藏台账。",
     "{{count}} tasks_other": "{{count}} 个任务",
     "{{count}} background tasks_other": "{{count}} 个后台任务",
-    "{{count}} running background tasks_other": "{{count}} 个后台任务正在运行"
+    "{{count}} running background tasks_other": "{{count}} 个后台任务正在运行",
+    "Updated: {{completed}}. Not updated: {{remaining}}.": "已更新：{{completed}}。未更新：{{remaining}}。"
   }
 }

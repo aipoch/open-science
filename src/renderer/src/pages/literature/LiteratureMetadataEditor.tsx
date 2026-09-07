@@ -123,6 +123,7 @@ const LiteratureMetadataEditor = ({
   }
 
   const submit = (): void => {
+    if (saving) return
     const creators = draft.creators.filter((creator) =>
       creator.nameMode === 'organization'
         ? creator.literalName.trim()
@@ -133,13 +134,17 @@ const LiteratureMetadataEditor = ({
   }
 
   return (
-    <div className={cn('max-h-[70vh] space-y-5 overflow-y-auto p-5 text-sm', className)}>
+    <fieldset
+      disabled={saving}
+      className={cn('min-w-0 max-h-[70vh] space-y-5 overflow-y-auto p-5 text-sm', className)}
+    >
       {beforeFields}
       <div className="block space-y-1.5">
         <label htmlFor="literature-reference-type" className="font-medium">
           {t('Reference type')}
         </label>
         <Select
+          disabled={saving}
           value={draft.itemType}
           onValueChange={(value) =>
             setDraft((current) => ({
@@ -325,6 +330,7 @@ const LiteratureMetadataEditor = ({
           {draft.identifiers.map((identifier, index) => (
             <div key={index} className="flex items-center gap-2">
               <Select
+                disabled={saving}
                 value={identifier.scheme}
                 onValueChange={(value) =>
                   updateIdentifier(index, {
@@ -413,7 +419,7 @@ const LiteratureMetadataEditor = ({
           {t('Save')}
         </Button>
       </div>
-    </div>
+    </fieldset>
   )
 }
 

@@ -31,12 +31,14 @@ const useLiteratureEntries = ({
   onError
 }: LiteratureEntriesOptions): {
   loading: boolean
+  failed: boolean
   pageTransitionLoading: boolean
   reload: (force?: boolean) => Promise<void>
   refreshItems: (itemIds: string[]) => Promise<void>
 } => {
   const [loading, setLoading] = useState(true)
   const [loadedKey, setLoadedKey] = useState<string>()
+  const [failedKey, setFailedKey] = useState<string>()
   const generationRef = useRef(0)
   const cacheRef = useRef(new Map<string, LiteratureCatalogSearchPage>())
   const dirtyKeys = useRef(new Set<string>())
@@ -56,11 +58,13 @@ const useLiteratureEntries = ({
         setCachedKeys(new Set())
         appliedPageRef.current = undefined
         setLoadedKey(undefined)
+        setFailedKey(undefined)
       }
       if (!enabled) return
       const generation = ++generationRef.current
       const cached =
         force || dirtyKeys.current.has(pageKey) ? undefined : cacheRef.current.get(pageKey)
+      setFailedKey(undefined)
       onError(false)
       if (
         cached &&
@@ -91,7 +95,10 @@ const useLiteratureEntries = ({
         appliedPageRef.current = { key: pageKey, page }
         setLoadedKey(pageKey)
       } catch {
-        if (generation === generationRef.current) onError(true)
+        if (generation === generationRef.current) {
+          setFailedKey(pageKey)
+          onError(true)
+        }
       } finally {
         if (generation === generationRef.current) setLoading(false)
       }
@@ -155,9 +162,11 @@ const useLiteratureEntries = ({
     }
   }, [pageKey, reload, request.offset, request.query, scopeKey])
 
-  const pending = !cachedKeys.has(pageKey) && (loading || loadedKey !== pageKey)
+  const pending =
+    failedKey !== pageKey && !cachedKeys.has(pageKey) && (loading || loadedKey !== pageKey)
   return {
     loading: pending,
+    failed: failedKey === pageKey,
     pageTransitionLoading: pending && loadedKey?.startsWith(`${scopeKey}:`) === true,
     reload,
     refreshItems

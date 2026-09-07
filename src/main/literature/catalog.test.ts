@@ -78,6 +78,94 @@ describe('LiteratureCatalog', () => {
     return new LiteratureCatalog(async () => client!)
   }
 
+  it.each([
+    ['deleted', 'missing'],
+    ['active', 'missing'],
+    ['deleted', 'alias'],
+    ['active', 'alias']
+  ] as const)(
+    'rolls back an unavailable lifecycle batch when setting %s with a %s item',
+    async (state, unavailable) => {
+      const catalog = await setup()
+      const item = await catalog.transact({ kind: 'create-item', item: candidate().item })
+      let unavailableId = 'missing-item'
+      if (unavailable === 'alias') {
+        const alias = await catalog.transact({
+          kind: 'create-item',
+          item: candidate({ doi: '10.1234/alias', title: 'Alias' }).item
+        })
+        const reviewed = (await Promise.all([catalog.get(item.id), catalog.get(alias.id)])).map(
+          (view) => view!
+        )
+        await catalog.transact({
+          kind: 'merge-items',
+          survivorId: item.id,
+          duplicateIds: [alias.id],
+          expectedMetadataRevision: reviewed[0].metadataRevision,
+          expectedItems: reviewed.map(({ id, metadataRevision, updatedAt }) => ({
+            id,
+            metadataRevision,
+            updatedAt
+          })),
+          item: reviewed[0].item
+        })
+        unavailableId = alias.id
+      }
+      if (state === 'active') {
+        await catalog.transact({ kind: 'set-item-lifecycle', itemIds: [item.id], state: 'deleted' })
+      }
+      const before = await client!.literatureItem.findUniqueOrThrow({ where: { id: item.id } })
+      await expect(
+        catalog.transact({
+          kind: 'set-item-lifecycle',
+          itemIds: [item.id, unavailableId],
+          state
+        })
+      ).rejects.toThrow('One or more Literature Items are unavailable.')
+      const after = await client!.literatureItem.findUniqueOrThrow({ where: { id: item.id } })
+      expect(after.deletedAt).toEqual(before.deletedAt)
+    }
+  )
+
+  it.each(['project', 'collection'] as const)(
+    'counts only visible references in %s navigation while preserving restore links',
+    async (scope) => {
+      const catalog = await setup()
+      const item = await catalog.transact({ kind: 'create-item', item: candidate().item })
+      const collection = await catalog.transact({ kind: 'create-collection', name: 'Reading' })
+      await catalog.transact({
+        kind: 'set-project-item',
+        projectId: 'project-1',
+        itemId: item.id,
+        included: true,
+        source: 'library'
+      })
+      await catalog.transact({
+        kind: 'set-collection-item',
+        collectionId: collection.id,
+        itemId: item.id,
+        included: true
+      })
+      for (const state of ['active', 'deleted', 'active'] as const) {
+        await catalog.transact({ kind: 'set-item-lifecycle', itemIds: [item.id], state })
+        const list = await catalog.search({
+          scope: 'library',
+          ...(scope === 'project' ? { projectId: 'project-1' } : { collectionId: collection.id })
+        })
+        expect(list.totalCount).toBe(state === 'deleted' ? 0 : 1)
+        const navigation = await catalog.search({
+          scope: scope === 'project' ? 'project-counts' : 'collections'
+        })
+        const row = navigation.entries.find((entry) =>
+          scope === 'project'
+            ? 'projectId' in entry && entry.projectId === 'project-1'
+            : 'id' in entry && entry.id === collection.id
+        )
+        expect(row && 'itemCount' in row ? row.itemCount : 0).toBe(list.totalCount)
+      }
+    }
+  )
+
   it('shares duplicate scans across count and page requests and invalidates on metadata mutations', async () => {
     const catalog = await setup()
     const findMany = vi.spyOn(client!.literatureItem, 'findMany')

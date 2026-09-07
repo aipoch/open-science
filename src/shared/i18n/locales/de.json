@@ -4844,6 +4844,7 @@
     "{{count}} background tasks_one": "{{count}} Hintergrundaufgabe",
     "{{count}} background tasks_other": "{{count}} Hintergrundaufgaben",
     "{{count}} running background tasks_one": "{{count}} laufende Hintergrundaufgabe",
-    "{{count}} running background tasks_other": "{{count}} laufende Hintergrundaufgaben"
+    "{{count}} running background tasks_other": "{{count}} laufende Hintergrundaufgaben",
+    "Updated: {{completed}}. Not updated: {{remaining}}.": "Aktualisiert: {{completed}}. Nicht aktualisiert: {{remaining}}."
   }
 }

@@ -5005,6 +5005,7 @@
     "{{count}} background tasks_other": "{{count}} tâches en arrière-plan",
     "{{count}} running background tasks_one": "{{count}} tâche en arrière-plan en cours",
     "{{count}} running background tasks_many": "{{count}} tâches en arrière-plan en cours",
-    "{{count}} running background tasks_other": "{{count}} tâches en arrière-plan en cours"
+    "{{count}} running background tasks_other": "{{count}} tâches en arrière-plan en cours",
+    "Updated: {{completed}}. Not updated: {{remaining}}.": "Références mises à jour : {{completed}}. Non mises à jour : {{remaining}}."
   }
 }

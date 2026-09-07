@@ -595,6 +595,7 @@ class LiteratureCatalog {
     if (request.scope === 'project-counts') {
       const rows = await client.projectLiterature.groupBy({
         by: ['projectId'],
+        where: { item: { deletedAt: null, mergedIntoItemId: null } },
         _count: { itemId: true },
         orderBy: { projectId: 'asc' }
       })
@@ -615,7 +616,11 @@ class LiteratureCatalog {
         client.literatureCollection.count({ where }),
         client.literatureCollection.findMany({
           where,
-          include: { _count: { select: { items: true } } },
+          include: {
+            _count: {
+              select: { items: { where: { item: { deletedAt: null, mergedIntoItemId: null } } } }
+            }
+          },
           orderBy: [{ sortOrder: 'asc' }, { name: 'asc' }],
           skip: offset,
           take: limit + 1
@@ -1481,13 +1486,15 @@ class LiteratureCatalog {
     const itemIds = [...new Set(command.itemIds)]
     const client = await this.getClient()
     const now = new Date()
-    const updated = await client.literatureItem.updateMany({
-      where: { id: { in: itemIds }, mergedIntoItemId: null },
-      data: command.state === 'deleted' ? { deletedAt: now } : { deletedAt: null }
+    await client.$transaction(async (transaction) => {
+      const updated = await transaction.literatureItem.updateMany({
+        where: { id: { in: itemIds }, mergedIntoItemId: null },
+        data: command.state === 'deleted' ? { deletedAt: now } : { deletedAt: null }
+      })
+      if (updated.count !== itemIds.length) {
+        throw new Error('One or more Literature Items are unavailable.')
+      }
     })
-    if (updated.count !== itemIds.length) {
-      throw new Error('One or more Literature Items are unavailable.')
-    }
     return { kind: 'item', id: itemIds[0]!, state: command.state }
   }
 
