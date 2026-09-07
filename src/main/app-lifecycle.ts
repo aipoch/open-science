@@ -81,7 +81,7 @@ export type AppLifecycleDeps = {
   isMigrationInProgress: () => boolean
   // Requests an app quit (app.quit); the before-quit handler below turns it into an awaited teardown.
   quit: () => void
-  // Number of live BrowserWindows, used to decide whether to recreate on macOS activate.
+  // Number of live BrowserWindows (retained for existing lifecycle compositions).
   countWindows: () => number
   // Headless web mode starts the backend and tray without opening a renderer window.
   createInitialWindow?: boolean
@@ -613,9 +613,11 @@ export const installAppLifecycle = (
     })()
   })
 
-  // macOS: recreate a window when the dock icon is clicked with no windows open.
+  // Dock activation targets the main window, including one hidden to the tray.
   deps.app.on('activate', () => {
-    if (deps.countWindows() === 0) mainWindow = openWindow()
+    if (shutdownStarted || shutdownFinished || quitConfirmed || systemShutdownRequested) return
+    if (deps.createInitialWindow === false && !mainWindow) return
+    showMainWindow()
   })
 
   // With a tray the app stays resident (windows only hide), so window-all-closed shouldn't quit. Without

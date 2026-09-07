@@ -486,6 +486,7 @@ import type {
   RemoveMarketplaceSourceRequest
 } from './specialist-marketplace'
 import type {
+  CloseConfirmDismissal,
   CloseConfirmRequest,
   CloseConfirmResponse,
   WindowFindAppearance,
@@ -2428,6 +2429,9 @@ export const RENDERER_API_CONTRACT = Object.freeze({
     ['shortcut:close-active-pane', CLOSE_PANE_EVENT],
     { optionalMember: true }
   ),
+  'window.onCloseConfirmDismiss': callable<
+    (listener: (payload: CloseConfirmDismissal) => void) => RemoveListener
+  >()('window', ['window:close-confirm-dismiss', ELECTRON_EVENT], { optionalMember: true }),
   'window.onCloseConfirmRequest': callable<
     (listener: (payload: CloseConfirmRequest) => void) => RemoveListener
   >()('window', ['window:close-confirm-request', ELECTRON_EVENT], { optionalMember: true }),

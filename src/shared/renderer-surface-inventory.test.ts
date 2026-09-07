@@ -134,6 +134,7 @@ const GENERATED_SOURCE_OMISSIONS = [
   'window.closeFind',
   'window.findInPage',
   'window.onCloseActivePane',
+  'window.onCloseConfirmDismiss',
   'window.onCloseConfirmRequest',
   'window.onFindInPageResult',
   'window.onHideWindowFind',

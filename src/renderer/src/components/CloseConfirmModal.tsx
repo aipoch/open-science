@@ -1,5 +1,5 @@
 import { AlertDialog } from 'radix-ui'
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { Button } from '@/components/ui/button'
@@ -45,20 +45,33 @@ export const CloseConfirmModal = ({
 }): React.JSX.Element | null => {
   const { t } = useTranslation()
   const [request, setRequest] = useState<ActiveRequest | undefined>(undefined)
+  const activeRequestId = useRef<string | undefined>(undefined)
   const [remember, setRemember] = useState(true)
 
   useEffect(() => {
     const windowApi = window.api.window
     if (!windowApi.onCloseConfirmRequest) return undefined
-    return windowApi.onCloseConfirmRequest((payload: CloseConfirmRequest) => {
+    const offRequest = windowApi.onCloseConfirmRequest((payload: CloseConfirmRequest) => {
+      activeRequestId.current = payload.requestId
       windowApi.sendCloseConfirmResponse?.({ requestId: payload.requestId, ack: true })
       setRemember(true)
       setRequest(payload)
       onOpenChange?.(true)
     })
+    const offDismiss = windowApi.onCloseConfirmDismiss?.(({ requestId }) => {
+      if (activeRequestId.current !== requestId) return
+      activeRequestId.current = undefined
+      setRequest(undefined)
+      onOpenChange?.(false)
+    })
+    return () => {
+      offRequest()
+      offDismiss?.()
+    }
   }, [onOpenChange])
 
   const reply = (choice: CloseConfirmChoice): void => {
+    activeRequestId.current = undefined
     if (request) {
       window.api.window.sendCloseConfirmResponse?.({
         requestId: request.requestId,
