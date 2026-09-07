@@ -4925,6 +4925,10 @@
     "Find": "Rechercher",
     "Find text": "Rechercher du texte",
     "Find in window": "Rechercher dans la fenêtre",
-    "Close find": "Fermer la recherche"
+    "Close find": "Fermer la recherche",
+    "Loading skills…": "Chargement des compétences…",
+    "Could not load skills": "Impossible de charger les compétences",
+    "No skills available": "Aucune compétence disponible",
+    "No matching sessions": "Aucune session correspondante"
   }
 }

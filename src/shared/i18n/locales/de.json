@@ -4763,6 +4763,10 @@
     "Find": "Suchen",
     "Find text": "Text suchen",
     "Find in window": "Im Fenster suchen",
-    "Close find": "Suche schließen"
+    "Close find": "Suche schließen",
+    "Loading skills…": "Fähigkeiten werden geladen…",
+    "Could not load skills": "Fähigkeiten konnten nicht geladen werden",
+    "No skills available": "Keine Fähigkeiten verfügbar",
+    "No matching sessions": "Keine passenden Sitzungen"
   }
 }

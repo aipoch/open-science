@@ -4607,6 +4607,10 @@
     "Find": "찾기",
     "Find text": "텍스트 찾기",
     "Find in window": "창에서 찾기",
-    "Close find": "찾기 닫기"
+    "Close find": "찾기 닫기",
+    "Loading skills…": "스킬 로딩 중…",
+    "Could not load skills": "스킬을 불러오지 못했습니다",
+    "No skills available": "사용 가능한 스킬 없음",
+    "No matching sessions": "일치하는 세션 없음"
   }
 }

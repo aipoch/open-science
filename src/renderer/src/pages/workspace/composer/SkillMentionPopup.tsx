@@ -1,5 +1,8 @@
 import { useEffect, useId, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+import { CircleAlert, LoaderCircle, PackageOpen, RotateCw, SearchX } from 'lucide-react'
+
+import { Button } from '@/components/ui/button'
 
 import type { SkillSource, SkillView } from '../../../../../shared/settings'
 import { useSettingsStore } from '@/stores/settings-store'
@@ -19,6 +22,7 @@ const TIER_DESCRIPTION = 0
 // editor, so this listens for navigation keys on document while mounted rather than owning focus.
 type SkillMentionPopupProps = {
   query: string
+  composingRef?: React.RefObject<boolean>
   allowedSkillIds?: readonly string[]
   listboxId?: string
   onActiveOptionIdChange?: (optionId: string | undefined) => void
@@ -36,6 +40,7 @@ const SOURCE_LABEL_KEYS = {
 
 export const SkillMentionPopup = ({
   query,
+  composingRef,
   allowedSkillIds,
   listboxId,
   onActiveOptionIdChange,
@@ -44,15 +49,31 @@ export const SkillMentionPopup = ({
 }: SkillMentionPopupProps): React.JSX.Element | null => {
   const { t } = useTranslation()
   const skills = useSettingsStore((state) => state.skills)
+  const skillsLoaded = useSettingsStore((state) => state.skillsLoaded)
+  const [loadError, setLoadError] = useState(false)
+  const [retryAttempt, setRetryAttempt] = useState(0)
   const loadSkills = useSettingsStore((state) => state.loadSkills)
   const generatedListboxId = useId()
   const resolvedListboxId = listboxId ?? generatedListboxId
 
-  // The skill list is loaded lazily by the Settings panel; the composer may open before that ever ran,
-  // so hydrate it here when empty. Cheap and idempotent — the store keeps the result after the first load.
+  // Catalog ownership stays in the store; only this popup's retry feedback is local.
   useEffect(() => {
-    if (skills.length === 0) void loadSkills()
-  }, [skills.length, loadSkills])
+    if (skillsLoaded || skills.length > 0) return
+    let cancelled = false
+    void loadSkills().catch(() => {
+      if (!cancelled) setLoadError(true)
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [skillsLoaded, skills.length, loadSkills, retryAttempt])
+
+  const visibleSkills = useMemo(() => {
+    const allowed = allowedSkillIds ? new Set(allowedSkillIds) : undefined
+    return skills.filter(
+      (skill) => skill.available !== false && (allowed ? allowed.has(skill.id) : skill.enabled)
+    )
+  }, [skills, allowedSkillIds])
 
   // Rank the query best-first: fuzzy subsequence against the name (so "cg" finds "clinical-genomics"),
   // falling back to a plain substring in the description. Names always outrank description-only hits;
@@ -60,11 +81,6 @@ export const SkillMentionPopup = ({
   // Empty query shows every skill in its original order.
   const matches = useMemo<SkillMatch[]>(() => {
     const needle = query.trim()
-    const allowed = allowedSkillIds ? new Set(allowedSkillIds) : undefined
-    const availableSkills = skills.filter((skill) => skill.available !== false)
-    const visibleSkills = allowed
-      ? availableSkills.filter((skill) => allowed.has(skill.id))
-      : availableSkills.filter((skill) => skill.enabled)
     if (needle.length === 0) return visibleSkills.map((skill) => ({ skill, positions: [] }))
 
     const descNeedle = needle.toLowerCase()
@@ -90,7 +106,7 @@ export const SkillMentionPopup = ({
         .sort((a, b) => b.tier - a.tier || b.score - a.score)
         .map(({ skill, positions }) => ({ skill, positions }))
     )
-  }, [skills, query, allowedSkillIds])
+  }, [visibleSkills, query])
 
   const [activeIndex, setActiveIndex] = useState(0)
 
@@ -120,6 +136,7 @@ export const SkillMentionPopup = ({
   // Handle navigation keys at the document level while mounted, since focus stays in the editor.
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent): void => {
+      if (event.isComposing || composingRef?.current) return
       if (event.key === 'ArrowDown') {
         event.preventDefault()
         if (matches.length > 0) setActiveIndex((safeIndex + 1) % matches.length)
@@ -147,16 +164,65 @@ export const SkillMentionPopup = ({
 
     document.addEventListener('keydown', onKeyDown)
     return () => document.removeEventListener('keydown', onKeyDown)
-  }, [matches, safeIndex, onSelect, onClose])
+  }, [matches, safeIndex, onSelect, onClose, composingRef])
+
+  const loading = skills.length === 0 && !skillsLoaded && !loadError
+  const failed = skills.length === 0 && !skillsLoaded && loadError
+  const StatusIcon = loading
+    ? LoaderCircle
+    : failed
+      ? CircleAlert
+      : visibleSkills.length === 0
+        ? PackageOpen
+        : SearchX
 
   return (
-    <div className="absolute bottom-full left-0 mb-1 z-50 flex flex-col bg-bg-000 border-0.5 border-border-200 rounded-xl shadow-[0_4px_16px_hsl(var(--always-black)/10%)] p-1.5 min-w-[320px] max-w-[440px] max-h-[min(45vh,18rem)] overflow-hidden">
+    <div className="absolute bottom-full left-0 mb-1 z-50 flex flex-col bg-bg-000 border-0.5 border-border-200 rounded-xl shadow-[0_4px_16px_hsl(var(--always-black)/10%)] p-1.5 w-max min-w-[min(320px,100%)] max-w-[min(440px,100%)] max-h-[min(45vh,18rem)] overflow-hidden">
       <ul
         id={resolvedListboxId}
         role="listbox"
         aria-label={t('Skill suggestions')}
         className="min-h-0 flex-1 overflow-y-auto"
       >
+        {matches.length === 0 && (
+          <li role="presentation" className="flex min-h-18 items-center gap-3 px-3 py-3.5">
+            <span
+              aria-hidden="true"
+              className={`flex size-8 shrink-0 items-center justify-center rounded-lg ${failed ? 'bg-status-warning-surface text-status-warning-foreground dark:bg-status-warning-dark-surface dark:text-status-warning-dark-foreground' : 'bg-bg-200 text-text-100'}`}
+            >
+              <StatusIcon
+                className={`size-4${loading ? ' animate-spin motion-reduce:animate-none' : ''}`}
+              />
+            </span>
+            <div
+              role={failed ? 'alert' : 'status'}
+              className="min-w-0 flex-1 text-sm font-medium leading-5 text-text-000"
+            >
+              {loading
+                ? t('Loading skills…')
+                : failed
+                  ? t('Could not load skills')
+                  : visibleSkills.length === 0
+                    ? t('No skills available')
+                    : t('No matching skills')}
+            </div>
+            {failed && (
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onMouseDown={(event) => event.preventDefault()}
+                onClick={() => {
+                  setLoadError(false)
+                  setRetryAttempt((attempt) => attempt + 1)
+                }}
+              >
+                <RotateCw aria-hidden="true" />
+                {t('Retry')}
+              </Button>
+            )}
+          </li>
+        )}
         {matches.map(({ skill, positions }, index) => {
           const isActive = index === safeIndex
           return (
@@ -189,15 +255,28 @@ export const SkillMentionPopup = ({
           )
         })}
       </ul>
-      <div className="mt-1 -mx-1.5 -mb-1.5 shrink-0 px-3.5 pt-1.5 pb-2 border-t border-border-300 flex items-center gap-3 text-[11px] text-text-400 select-none">
+      <div className="mt-1 -mx-1.5 -mb-1.5 flex shrink-0 items-center justify-end gap-3 border-t border-border-200 bg-bg-200/40 px-3 py-1.5 text-[11px] text-text-100 select-none">
+        {matches.length > 0 && (
+          <>
+            <span>
+              <kbd className="rounded border border-border-200 bg-bg-000 px-1 py-0.5 font-sans text-[10px] font-medium">
+                ↑↓
+              </kbd>{' '}
+              {t('navigate')}
+            </span>
+            <span>
+              <kbd className="rounded border border-border-200 bg-bg-000 px-1 py-0.5 font-sans text-[10px] font-medium">
+                Enter / Tab
+              </kbd>{' '}
+              {t('select')}
+            </span>
+          </>
+        )}
         <span>
-          <span className="text-text-300">↑↓</span> {t('navigate')}
-        </span>
-        <span>
-          <span className="text-text-300">Enter / Tab</span> {t('select')}
-        </span>
-        <span>
-          <span className="text-text-300">Esc</span> {t('close')}
+          <kbd className="rounded border border-border-200 bg-bg-000 px-1 py-0.5 font-sans text-[10px] font-medium">
+            Esc
+          </kbd>{' '}
+          {t('close')}
         </span>
       </div>
     </div>

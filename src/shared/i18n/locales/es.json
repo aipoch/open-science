@@ -4925,6 +4925,10 @@
     "Find": "Buscar",
     "Find text": "Buscar texto",
     "Find in window": "Buscar en la ventana",
-    "Close find": "Cerrar búsqueda"
+    "Close find": "Cerrar búsqueda",
+    "Loading skills…": "Cargando habilidades…",
+    "Could not load skills": "No se pudieron cargar las habilidades",
+    "No skills available": "No hay habilidades disponibles",
+    "No matching sessions": "No hay sesiones coincidentes"
   }
 }

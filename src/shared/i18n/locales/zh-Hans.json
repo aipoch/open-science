@@ -4609,6 +4609,10 @@
     "Find": "查找",
     "Find text": "查找文本",
     "Find in window": "在窗口中查找",
-    "Close find": "关闭查找"
+    "Close find": "关闭查找",
+    "Loading skills…": "正在加载技能…",
+    "Could not load skills": "无法加载技能",
+    "No skills available": "没有可用技能",
+    "No matching sessions": "没有匹配的会话"
   }
 }
