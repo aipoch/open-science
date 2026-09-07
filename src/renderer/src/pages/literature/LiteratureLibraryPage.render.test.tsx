@@ -352,6 +352,7 @@ describe('LiteratureLibraryPage', () => {
         platform: 'darwin',
         saveBlobFile,
         literature: {
+          lookupMetadata: vi.fn(async () => libraryItem.item),
           jobs: vi.fn(async () => ({ jobs: [], summaries: [] })),
           search,
           transact,
