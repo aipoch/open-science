@@ -3116,6 +3116,94 @@ describe('ConversationPanel composer intake', () => {
     expect(container.querySelector('[aria-label="Cancel Side chat response"]')).not.toBeNull()
   })
 
+  it('keeps earlier Side chat content visible when the user scrolls up during output', () => {
+    const sideChat = {
+      send: vi.fn(async () => true),
+      setDraft: vi.fn(),
+      cancel: vi.fn(),
+      close: vi.fn(),
+      view: {
+        generation: 1,
+        parentSessionId: 'session-existing',
+        projectId: 'project-a',
+        sideSessionId: 'side-scroll',
+        draft: '',
+        running: true,
+        entries: [
+          {
+            id: 'user-1',
+            kind: 'message' as const,
+            role: 'user' as const,
+            text: 'Explain this result'
+          }
+        ]
+      }
+    }
+    renderPanel({ sideChat })
+    const viewport = container.querySelector(
+      '[data-testid="side-chat-message-scroll"] [data-slot="scroll-area-viewport"]'
+    ) as HTMLDivElement
+    Object.defineProperties(viewport, {
+      scrollHeight: { configurable: true, value: 1200 },
+      clientHeight: { configurable: true, value: 300 }
+    })
+    viewport.scrollTop = 900
+    act(() => viewport.dispatchEvent(new Event('scroll', { bubbles: true })))
+    viewport.scrollTop = 200
+    act(() => viewport.dispatchEvent(new Event('scroll', { bubbles: true })))
+    renderPanel({
+      sideChat: {
+        ...sideChat,
+        view: {
+          ...sideChat.view,
+          entries: [
+            ...sideChat.view.entries,
+            {
+              id: 'assistant-1',
+              kind: 'message',
+              role: 'assistant',
+              text: 'More output while reading earlier content'
+            }
+          ]
+        }
+      }
+    })
+    expect(viewport.scrollTop).toBe(200)
+  })
+
+  it('translates Side chat tool completion while preserving the technical tool name', async () => {
+    const { i18next } = await import('../../i18n')
+    await act(async () => {
+      await i18next.changeLanguage('zh-Hans')
+    })
+    try {
+      renderPanel({
+        sideChat: {
+          send: vi.fn(async () => true),
+          setDraft: vi.fn(),
+          cancel: vi.fn(),
+          close: vi.fn(),
+          view: {
+            generation: 1,
+            parentSessionId: 'session-existing',
+            projectId: 'project-a',
+            sideSessionId: 'side-translated',
+            draft: '',
+            running: false,
+            entries: [{ id: 'tool-1', kind: 'tool', title: 'send_message', status: 'completed' }]
+          }
+        }
+      })
+      const panel = container.querySelector('[data-testid="side-chat-panel"]')!
+      expect(panel.textContent).toContain('send_message')
+      expect(panel.textContent).not.toContain('completed')
+    } finally {
+      await act(async () => {
+        await i18next.changeLanguage('en')
+      })
+    }
+  })
+
   it('presents complete user annotation text consistently and leaves invalid or assistant text raw', () => {
     const annotationText =
       'Compare these observations.\n\n[Annotations]\n' +
@@ -3242,6 +3330,7 @@ describe('ConversationPanel composer intake', () => {
           sideSessionId: 'side-1',
           draft: '',
           running: true,
+          persistenceError: 'Disk full',
           entries
         }
       }
@@ -3249,6 +3338,9 @@ describe('ConversationPanel composer intake', () => {
 
     expect(container.textContent).toContain('Historical answer')
     expect(container.textContent).not.toContain('Flow')
+    expect(container.querySelector('[role="alert"]')?.textContent).toContain(
+      'Could not save Side chat: Disk full'
+    )
     expect(container.querySelectorAll('.agent-markdown-streaming')).toHaveLength(1)
 
     await act(async () => vi.advanceTimersByTimeAsync(496))

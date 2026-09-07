@@ -30,6 +30,7 @@ type SideChatRelayMessage = Readonly<{
 
 type SideChatRelayClaim = Readonly<{
   messages: readonly SideChatRelayMessage[]
+  isCurrent: () => boolean
   commit: () => readonly SideChatRelayMessage[]
   restore: () => void
 }>
@@ -153,6 +154,7 @@ class SideChatRelayOwner {
     const ownsClaim = (): boolean => this.claims.get(parentSessionId) === token
     return {
       messages,
+      isCurrent: () => !settled && ownsClaim(),
       commit: () => {
         if (settled || !ownsClaim()) return []
         settled = true

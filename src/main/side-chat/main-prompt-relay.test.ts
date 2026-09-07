@@ -348,7 +348,7 @@ describe('main prompt side-chat relay', () => {
     expect(adapter.claim('main-1')?.historyPreamble).toContain('Advisory.')
   })
 
-  it('restores the in-memory claim when atomic durable commit fails', async () => {
+  it('holds an accepted claim when its durable commit fails', async () => {
     const relay = new SideChatRelayOwner({
       targetState: () => 'idle',
       appendRelay: async () => undefined
@@ -369,6 +369,165 @@ describe('main prompt side-chat relay', () => {
     })
 
     await expect(adapter.claim('main-1')?.commit('prompt-1')).rejects.toThrow('disk unavailable')
-    expect(adapter.claim('main-1')?.historyPreamble).toContain('Retry me.')
+    expect(adapter.claim('main-1')).toBeUndefined()
   })
+})
+
+it('does not requeue an advisory already accepted by Main when local commit fails', async () => {
+  const relay = new SideChatRelayOwner({
+    targetState: () => 'running',
+    appendRelay: async () => undefined
+  })
+  relay.bind({
+    sideSessionId: 'side-1',
+    sideChatId: 'chat-1',
+    parentSessionId: 'main-1',
+    projectId: 'project-1'
+  })
+  const queued = await relay.send({
+    sideSessionId: 'side-1',
+    target: 'main',
+    text: 'Use the latest result.'
+  })
+  const steerAdvisory = vi.fn(async () => ({
+    injected: true as const,
+    promptMessageId: 'accepted-main-prompt'
+  }))
+  const commitSideChatRelays = vi
+    .fn(async () => [])
+    .mockRejectedValueOnce(new Error('Session file is busy'))
+  const adapter = createMainPromptSideChatRelay({
+    relay,
+    steerAdvisory,
+    commitSideChatRelays,
+    onDelivered: vi.fn()
+  })
+  await adapter.tryInject('main-1', queued).catch(() => undefined)
+  expect(steerAdvisory).toHaveBeenCalledOnce()
+  expect(commitSideChatRelays).toHaveBeenCalledWith(
+    expect.objectContaining({
+      relayIds: [queued.messageId],
+      promptMessageId: 'accepted-main-prompt'
+    })
+  )
+  const nextTurn = adapter.claim('main-1')
+  expect(nextTurn?.includes(queued.messageId) ?? false).toBe(false)
+})
+
+it('retries only the accepted relay commit with the same prompt identity and publishes once', async () => {
+  const relay = new SideChatRelayOwner({
+    targetState: () => 'running',
+    appendRelay: async () => undefined
+  })
+  relay.bind({
+    sideSessionId: 'side-1',
+    sideChatId: 'chat-1',
+    parentSessionId: 'main-1',
+    projectId: 'project-1'
+  })
+  const queued = await relay.send({
+    sideSessionId: 'side-1',
+    target: 'main',
+    text: 'Keep this advice.'
+  })
+  const steerAdvisory = vi.fn(async () => ({
+    injected: true as const,
+    promptMessageId: 'original-prompt'
+  }))
+  const persisted = {
+    id: 'main-advisory',
+    role: 'user' as const,
+    content: 'Keep this advice.',
+    status: 'complete' as const,
+    eventIds: [],
+    createdAt: 1,
+    updatedAt: 1
+  }
+  const commitSideChatRelays = vi
+    .fn(async () => [persisted])
+    .mockRejectedValueOnce(new Error('Disk full'))
+  const onDelivered = vi.fn()
+  const adapter = createMainPromptSideChatRelay({
+    relay,
+    steerAdvisory,
+    commitSideChatRelays,
+    onDelivered
+  })
+  await expect(adapter.tryInject('main-1', queued)).resolves.toMatchObject({
+    status: 'injected',
+    persistenceError: 'Disk full'
+  })
+  expect(onDelivered).not.toHaveBeenCalled()
+  await expect(adapter.tryInject('main-1', queued)).resolves.toMatchObject({ status: 'injected' })
+  expect(steerAdvisory).toHaveBeenCalledOnce()
+  expect(commitSideChatRelays).toHaveBeenCalledTimes(2)
+  expect(commitSideChatRelays.mock.calls[0]).toEqual(commitSideChatRelays.mock.calls[1])
+  expect(onDelivered).toHaveBeenCalledOnce()
+  expect(adapter.claim('main-1')).toBeUndefined()
+})
+
+it('keeps a next-turn accepted claim out of replay while coalescing commit retries', async () => {
+  const relay = new SideChatRelayOwner({
+    targetState: () => 'idle',
+    appendRelay: async () => undefined
+  })
+  relay.bind({
+    sideSessionId: 'side-1',
+    sideChatId: 'chat-1',
+    parentSessionId: 'main-1',
+    projectId: 'project-1'
+  })
+  await relay.send({ sideSessionId: 'side-1', target: 'main', text: 'Accepted advice.' })
+  let saved!: () => void
+  const saving = new Promise<void>((resolve) => {
+    saved = resolve
+  })
+  const commitSideChatRelays = vi
+    .fn(async () => {
+      await saving
+      return []
+    })
+    .mockRejectedValueOnce(new Error('Disk full'))
+  const adapter = createMainPromptSideChatRelay({
+    relay,
+    commitSideChatRelays,
+    onDelivered: vi.fn()
+  })
+  const delivery = adapter.claim('main-1')!
+  await expect(delivery.commit('main-prompt')).rejects.toThrow('Disk full')
+  delivery.restore()
+  expect(adapter.claim('main-1')).toBeUndefined()
+  expect(adapter.claim('main-1')).toBeUndefined()
+  expect(commitSideChatRelays).toHaveBeenCalledTimes(2)
+  saved()
+  await delivery.commit('different-prompt')
+  expect(commitSideChatRelays.mock.calls[1]).toEqual(commitSideChatRelays.mock.calls[0])
+  await delivery.commit('main-prompt')
+  expect(commitSideChatRelays).toHaveBeenCalledTimes(2)
+})
+
+it('drops an accepted pending claim when its parent has been released', async () => {
+  const relay = new SideChatRelayOwner({
+    targetState: () => 'idle',
+    appendRelay: async () => undefined
+  })
+  relay.bind({
+    sideSessionId: 'side-1',
+    sideChatId: 'chat-1',
+    parentSessionId: 'main-1',
+    projectId: 'project-1'
+  })
+  await relay.send({ sideSessionId: 'side-1', target: 'main', text: 'Old advice.' })
+  const commitSideChatRelays = vi.fn(async () => {
+    throw new Error('Disk full')
+  })
+  const adapter = createMainPromptSideChatRelay({
+    relay,
+    commitSideChatRelays,
+    onDelivered: vi.fn()
+  })
+  await expect(adapter.claim('main-1')!.commit('main-prompt')).rejects.toThrow('Disk full')
+  relay.releaseParent('main-1')
+  expect(adapter.claim('main-1')).toBeUndefined()
+  expect(commitSideChatRelays).toHaveBeenCalledOnce()
 })
