@@ -356,6 +356,30 @@ describe('LiteratureCatalog', () => {
     expect((await client!.literatureItem.findUnique({ where: { id } }))!.deletedAt).not.toBeNull()
   })
 
+  it('does not let a conflicting row create aliases for later import rows', async () => {
+    const catalog = await setup()
+    const existing = candidate({ doi: '10.1234/one' }).item
+    const incoming = candidate({ doi: '10.1234/two' }).item
+    const {
+      itemIds: [id]
+    } = await catalog.importItems([existing])
+    const independent = await catalog.inspectImportItems([incoming, existing], [])
+    const entries = await catalog.inspectImportItems(
+      [
+        { ...existing, identifiers: [...existing.identifiers, ...incoming.identifiers] },
+        incoming,
+        existing
+      ],
+      []
+    )
+    expect(entries[0].status).toBe('conflict')
+    expect(
+      entries.slice(1).map(({ status, existingItemId }) => ({ status, existingItemId }))
+    ).toEqual(independent.map(({ status, existingItemId }) => ({ status, existingItemId })))
+    expect(entries[2].existingItemId).toBe(id)
+    expect(await client!.literatureItem.count()).toBe(1)
+  })
+
   it('keeps preview and commit aligned when later rows use an earlier matching row alias', async () => {
     const catalog = await setup()
     const a = candidate().item

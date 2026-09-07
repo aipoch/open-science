@@ -408,6 +408,7 @@ const resolveImportItems = (
 ): ReturnType<typeof importIdentity>[] =>
   items.map((item, inputIndex) => {
     const resolution = importIdentity(identities, item)
+    if (resolution.conflict) return resolution
     const target = resolution.target ?? inputIndex
     const previous = identities.records.get(target)
     rememberImportIdentity(identities, target, {
