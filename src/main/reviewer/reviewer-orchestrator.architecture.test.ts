@@ -448,6 +448,7 @@ describe('Reviewer orchestrator architecture', () => {
           'src/main/reviewer/orchestrator.start-contract.test.ts',
           'src/main/reviewer/fix-loop.test.ts',
           'src/main/reviewer/reviewer-fix-loop-owner.test.ts',
+          'src/main/reviewer/correction-context.test.ts',
           'src/main/reviewer/correction.test.ts'
         ],
         contract: [

@@ -270,7 +270,7 @@ const createReviewerCommandOwner = (options: ReviewerIpcOptions): ReviewerComman
     try {
       session = await sessionRepository.loadSession(request.projectId, request.appSessionId)
     } catch {
-      return reviews
+      return reviews.map((review) => ({ ...review, verificationUnavailable: true }))
     }
     return flagStaleReviews(reviews, session, dataRoot, resolveArtifactVersion)
   }

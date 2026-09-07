@@ -491,38 +491,42 @@ describe('review assessment owner', () => {
     )
   })
 
-  it('aborts an active initial Reviewer session and persists its existing error lifecycle', async () => {
-    harness.submission = undefined
-    harness.nextUpdate = () => new Promise(() => {})
-    const reviewRepository = makeRepository()
-    const controller = new AbortController()
+  it.each(['initial', 'tracked'] as const)(
+    'aborts an active %s Reviewer session and cleans up its resources',
+    async (mode) => {
+      harness.submission = undefined
+      harness.nextUpdate = () => new Promise(() => {})
+      const reviewRepository = makeRepository()
+      const controller = new AbortController()
 
-    const assessment = runReviewAssessment({
-      ...commonOptions(reviewRepository),
-      mode: 'initial',
-      abortSignal: controller.signal
-    })
-    await vi.waitFor(() => expect(harness.events).toContain('acp:prompt'))
-    controller.abort()
+      const assessment = runReviewAssessment({
+        ...commonOptions(reviewRepository),
+        mode,
+        trackedChecks: [],
+        abortSignal: controller.signal
+      })
+      await vi.waitFor(() => expect(harness.events).toContain('acp:prompt'))
+      controller.abort()
 
-    const result = await assessment
-    expect(result.review).toMatchObject({
-      lifecycle: 'error',
-      errorMessage: 'reviewer session was aborted before stopping'
-    })
-    expect(harness.events).toContain('acp:dispose')
-    expect(harness.events).toContain('mcp:stop')
-    const errorPatch = vi
-      .mocked(reviewRepository.updateReview)
-      .mock.calls.map(([, patch]) => patch)
-      .find((patch) => patch.lifecycle === 'error')
-    expect(Buffer.byteLength(JSON.stringify(errorPatch?.reviewerLog), 'utf8')).toBeLessThanOrEqual(
-      1_024 * 1_024
-    )
-    expect(errorPatch?.reviewerLog).toContainEqual(
-      expect.objectContaining({ kind: 'tool', toolName: 'review_coverage' })
-    )
-  })
+      const result = await assessment
+      expect(result.review).toMatchObject({
+        lifecycle: 'error',
+        errorMessage: 'reviewer session was aborted before stopping'
+      })
+      expect(harness.events).toContain('acp:dispose')
+      expect(harness.events).toContain('mcp:stop')
+      const errorPatch = vi
+        .mocked(reviewRepository.updateReview)
+        .mock.calls.map(([, patch]) => patch)
+        .find((patch) => patch.lifecycle === 'error')
+      expect(
+        Buffer.byteLength(JSON.stringify(errorPatch?.reviewerLog), 'utf8')
+      ).toBeLessThanOrEqual(1_024 * 1_024)
+      expect(errorPatch?.reviewerLog).toContainEqual(
+        expect.objectContaining({ kind: 'tool', toolName: 'review_coverage' })
+      )
+    }
+  )
 
   it('records the selected session model instead of the context tokenization model', async () => {
     const reviewRepository = makeRepository()

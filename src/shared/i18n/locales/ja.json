@@ -4614,6 +4614,12 @@
     "Loading skills…": "スキルを読み込み中…",
     "Could not load skills": "スキルを読み込めませんでした",
     "No skills available": "利用可能なスキルはありません",
-    "No matching sessions": "一致するセッションはありません"
+    "No matching sessions": "一致するセッションはありません",
+    "Current evidence could not be verified": "現在の証拠を検証できませんでした",
+    "Historical results are retained. Retry to verify the current evidence.": "過去の結果は保持されています。再試行して現在の証拠を検証してください。",
+    "Automatic correction stopped because the active conversation changed.": "アクティブな会話が変更されたため、自動修正を停止しました。",
+    "Review did not start. Please try again.": "レビューを開始できませんでした。もう一度お試しください。",
+    "Review failed. You can try again.": "レビューに失敗しました。再試行できます。",
+    "No checkable claims": "検証可能な主張はありません"
   }
 }

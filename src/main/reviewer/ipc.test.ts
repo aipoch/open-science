@@ -696,7 +696,37 @@ describe('reviewer IPC handlers', () => {
       expect(result).toBe(reviews)
     })
 
-    it('returns reviews unflagged when the session load throws', async () => {
+    it('distinguishes unreadable current evidence from an ordinary historical pass', async () => {
+      const reviews = [
+        {
+          id: 'review-1',
+          projectId: 'project-1',
+          sessionId: 'session-1',
+          turnMessageId: 'message-1',
+          lifecycle: 'complete',
+          outcome: 'pass',
+          checks: [],
+          submittedChecks: []
+        }
+      ]
+      getReviewsForSession.mockResolvedValue(reviews)
+      sessionLoadOne.mockRejectedValueOnce(
+        Object.assign(new Error('Temporary session read failure'), { code: 'EIO' })
+      )
+      const owner = createReviewerCommandOwner({ acpRuntime })
+
+      const result = await owner.getForSession({
+        projectId: 'project-1',
+        appSessionId: 'session-1'
+      })
+
+      expect(result).toEqual(expect.arrayContaining([expect.objectContaining(reviews[0])]))
+      expect(flagStaleReviews).not.toHaveBeenCalled()
+      expect(result[0].stale).not.toBe(true)
+      expect(result[0].verificationUnavailable).toBe(true)
+    })
+
+    it('retains history with an unavailable verification marker when the session load throws', async () => {
       const reviews = [{ id: 'review-1', turnMessageId: 'message-1' }]
       getReviewsForSession.mockResolvedValue(reviews)
       sessionLoadOne.mockRejectedValueOnce(new Error('session store unavailable'))
@@ -711,8 +741,10 @@ describe('reviewer IPC handlers', () => {
         }
       )
 
-      expect(result).toBe(reviews)
-      // Fail-open: a load failure must not hide stale findings by leaving the detector un-runnable.
+      expect(result).toEqual(
+        reviews.map((review) => ({ ...review, verificationUnavailable: true }))
+      )
+      // A read error is distinct from a missing Session and from a confirmed scope change.
       expect(flagStaleReviews).not.toHaveBeenCalled()
     })
   })

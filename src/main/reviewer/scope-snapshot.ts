@@ -133,6 +133,9 @@ export const buildReviewScopeSnapshot = (
         ...(block.id === startingUserBlockId && evidence?.turnPlan
           ? { turnPlan: evidence.turnPlan }
           : {}),
+        ...(block.id === startingUserBlockId && evidence?.planEvidenceLimitation
+          ? { planEvidenceLimitation: evidence.planEvidenceLimitation }
+          : {}),
         ...(fileEvidence && fileEvidence.length > 0 ? { fileEvidence } : {})
       }) as Record<string, unknown>
     }

@@ -372,7 +372,16 @@ const WorkspaceReviewCard = ({
     )
   )
   if (!review) return null
-  return <ReviewerCard review={review} onGoToTranscript={onGoToTranscript} onRerun={onRerun} />
+  return (
+    <ReviewerCard
+      review={review}
+      onGoToTranscript={onGoToTranscript}
+      onRerun={onRerun}
+      onRetryVerification={() =>
+        useReviewStore.getState().loadReviewsForSession(sessionId, projectId)
+      }
+    />
+  )
 }
 
 type EditableWorkspaceMessageItemProps = Omit<

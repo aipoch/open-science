@@ -105,7 +105,7 @@ export type RunReviewOptions = {
   // composer in the renderer.
   onFixLoopEnd?: () => void
   // AbortSignal for the admitted Review chain. It stops an active initial Reviewer session and also
-  // makes the fix loop exit at the next round boundary without further [Auditor] injections.
+  // cancels tracked assessments and prevents further [Auditor] injections.
   fixLoopAbortSignal?: AbortSignal
   // How long the fix loop waits for the correction turn to reach durable session storage. The main
   // agent can finish before the renderer's persistence queue flushes, so a single immediate read races.
@@ -198,6 +198,7 @@ const runReviewWithSession = async (
       await runReviewerFixLoop({
         sessionId,
         originalTurnMessageId: turnMessageId,
+        correctionScope: finalReview.scope,
         openChecks: finalReview.checks.filter((c) => c.status === 'warn' || c.status === 'fail'),
         projectId,
         mainSessionId,

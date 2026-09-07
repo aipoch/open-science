@@ -4930,6 +4930,12 @@
     "Loading skills…": "Chargement des compétences…",
     "Could not load skills": "Impossible de charger les compétences",
     "No skills available": "Aucune compétence disponible",
-    "No matching sessions": "Aucune session correspondante"
+    "No matching sessions": "Aucune session correspondante",
+    "Current evidence could not be verified": "Les éléments actuels n’ont pas pu être vérifiés",
+    "Historical results are retained. Retry to verify the current evidence.": "Les résultats précédents sont conservés. Réessayez pour vérifier les éléments actuels.",
+    "Automatic correction stopped because the active conversation changed.": "La correction automatique a été arrêtée, car la conversation active a changé.",
+    "Review did not start. Please try again.": "L’examen n’a pas démarré. Veuillez réessayer.",
+    "Review failed. You can try again.": "L’examen a échoué. Vous pouvez réessayer.",
+    "No checkable claims": "Aucune affirmation vérifiable"
   }
 }

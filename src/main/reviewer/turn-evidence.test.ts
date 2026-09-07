@@ -179,6 +179,45 @@ describe('Reviewer Turn evidence discovery', () => {
     expect(evidence.sourceDocumentVersionIds).toEqual(['source-1'])
   })
 
+  it('preserves an approved historical turn Plan when another turn activates its own Plan', async () => {
+    const originalPlan = plan()
+    const originalSession = session([originalPlan])
+    const before = await resolveReviewerTurnEvidence(originalSession, scope)
+    const laterSession = session([
+      originalPlan,
+      plan({
+        artifactId: 'later-plan-artifact',
+        artifactVersionId: 'later-plan-version',
+        artifactChecksum: 'later-plan-checksum',
+        originatingPromptMessageId: 'user-2',
+        revision: 2
+      })
+    ])
+    laterSession.messages.push(
+      {
+        ...originalSession.messages[0],
+        id: 'user-2',
+        content: 'Do another task.',
+        createdAt: 4,
+        updatedAt: 4
+      },
+      {
+        ...originalSession.messages[1],
+        id: 'agent-2',
+        content: 'Other task done.',
+        createdAt: 5,
+        updatedAt: 5
+      }
+    )
+    const after = await resolveReviewerTurnEvidence(laterSession, scope)
+
+    expect(before.turnPlan).toMatchObject({ versionId: 'plan-version', status: 'completed' })
+    expect(after.turnPlan).toEqual(before.turnPlan)
+    expect(buildReviewScopeSnapshot(laterSession, scope, after)[0]?.payload.turnPlan).toEqual(
+      buildReviewScopeSnapshot(originalSession, scope, before)[0]?.payload.turnPlan
+    )
+  })
+
   it('does not expose pending, replaced, or unrelated Plans as current-Turn requirements', async () => {
     const pending = plan({
       artifactVersionId: 'pending',
@@ -203,6 +242,35 @@ describe('Reviewer Turn evidence discovery', () => {
     )
     expect(withoutApproved).not.toHaveProperty('turnPlan')
     expect(withRejectedReplacement).not.toHaveProperty('turnPlan')
+  })
+
+  it('does not resurrect an approved historical Plan after a rejected replacement and a later unrelated Plan', async () => {
+    const evidence = await resolveReviewerTurnEvidence(
+      session([
+        plan(),
+        plan({
+          artifactVersionId: 'rejected-replacement',
+          approval: 'rejected',
+          lifecycle: 'rejected',
+          revision: 2
+        }),
+        plan({
+          artifactVersionId: 'new-task-plan',
+          originatingPromptMessageId: 'other-user',
+          revision: 3
+        })
+      ]),
+      scope
+    )
+    expect(evidence.turnPlan).toBeUndefined()
+  })
+
+  it('records unavailable Plan coverage without inventing requirements for missing history', async () => {
+    const value = session([])
+    const evidence = await resolveReviewerTurnEvidence(value, scope)
+    const snapshot = buildReviewScopeSnapshot(value, scope, evidence)
+    expect(evidence.turnPlan).toBeUndefined()
+    expect(snapshot[0].payload.planEvidenceLimitation).toContain('plan compliance was not assessed')
   })
 
   it('keeps legacy ordered blocks unchanged when additive evidence is unavailable', async () => {

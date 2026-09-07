@@ -1,7 +1,12 @@
 // Owns the bounded Reviewer correction loop and its durable re-review lifecycle.
 
 import { createLogger } from '../logger'
-import type { ReviewCheck, ReviewWithChecks } from '../../shared/reviewer'
+import {
+  REVIEW_CORRECTION_CONTEXT_CHANGED,
+  type TurnScope,
+  type ReviewCheck,
+  type ReviewWithChecks
+} from '../../shared/reviewer'
 import {
   materializeSessionConversationGraph,
   type PersistedChatSession
@@ -16,6 +21,7 @@ import type { SessionAuxiliaryTurnUsageRecord } from '../session-persistence/aux
 import type { ArtifactVersionEvidenceResolvers } from './host-sdk'
 import { runReviewAssessment } from './review-assessment-owner'
 import type { ReviewRepository } from './repository'
+import { resolveTurnScope } from './scope'
 import { toErrorMessage } from '../error-message'
 import type { ReviewerFileEvidenceResolver } from './turn-evidence'
 
@@ -39,6 +45,7 @@ type ReviewerFixLoopOptions = {
   sessionId: string
   // The original turn's message id (shared across all Review rows in this closure).
   originalTurnMessageId: string
+  correctionScope?: TurnScope
   // The currently-open warn/fail checks to carry forward into each re-review.
   openChecks: ReviewCheck[]
   projectId: string
@@ -62,7 +69,7 @@ type ReviewerFixLoopOptions = {
   reviewerMaxUpdates: number
   maxRounds: number
   sessionRefreshTimeoutMs: number
-  // Optional abort signal: when aborted, the loop exits at the next round boundary.
+  // Cancels loads, correction admission, and active tracked assessments.
   abortSignal?: AbortSignal
   recordUsage?: (record: SessionAuxiliaryTurnUsageRecord) => Promise<unknown>
 }
@@ -87,6 +94,7 @@ const waitForCorrectionAgentMessage = async (options: {
     if (options.abortSignal?.aborted) return undefined
 
     const latest = await options.getSession(options.sessionId)
+    if (options.abortSignal?.aborted) return undefined
     const correction = latest?.messages.find(
       (message) =>
         !options.messageIdsBefore.has(message.id) &&
@@ -139,6 +147,8 @@ export const runReviewerFixLoop = async (options: ReviewerFixLoopOptions): Promi
   } = options
 
   let openChecks = [...options.openChecks]
+  let correctionScope = options.correctionScope
+  const correctionPromptIds = new Set<string>()
   let causeReviewId = openChecks[0]?.reviewId
   const correctionOwner = new ReviewerCorrectionOwner({ acpRuntime, onCorrectionPrompt })
   const commitDispositionBatch = async (
@@ -194,7 +204,16 @@ export const runReviewerFixLoop = async (options: ReviewerFixLoopOptions): Promi
         round,
         error: toErrorMessage(error)
       })
-      await markOpenChecksUnaddressed('correction_failed', 'Could not load the durable session.')
+      await markOpenChecksUnaddressed(
+        abortSignal?.aborted ? 'aborted' : 'correction_failed',
+        abortSignal?.aborted
+          ? 'The fix loop was aborted by the user.'
+          : 'Could not load the durable session.'
+      )
+      return
+    }
+    if (abortSignal?.aborted) {
+      await markOpenChecksUnaddressed('aborted', 'The fix loop was aborted by the user.')
       return
     }
     if (!sessionBefore) {
@@ -210,24 +229,49 @@ export const runReviewerFixLoop = async (options: ReviewerFixLoopOptions): Promi
     let correctionPromptMessageId: string | undefined
     try {
       const conversationGraph =
+        sessionBefore.conversationGraph ??
         materializeSessionConversationGraph(sessionBefore).conversationGraph!
       const originatingPrompt = resolveActiveConversationMessages(conversationGraph)
         .toReversed()
         .find((message) => message.role === 'user' && message.status === 'complete')
       if (!originatingPrompt) {
-        throw new Error(
-          'The active conversation has no complete user prompt for correction provenance.'
-        )
+        await markOpenChecksUnaddressed('aborted', REVIEW_CORRECTION_CONTEXT_CHANGED)
+        return
       }
+      correctionScope ??= resolveTurnScope(sessionBefore, originalTurnMessageId)
+      const knownMessages = sessionBefore.conversationGraph?.messages ?? sessionBefore.messages
+      const scopedPromptId = correctionScope.blocks.find(
+        (block) =>
+          block.kind === 'message' &&
+          knownMessages.some(
+            (message) =>
+              message.id === block.sourceId &&
+              message.role === 'user' &&
+              !message.responseToMessageId
+          )
+      )?.sourceId
       const provenanceContext = getActiveConversationContext(
         conversationGraph,
         originatingPrompt.id
       )
+      if (
+        !scopedPromptId ||
+        (originatingPrompt.id !== scopedPromptId &&
+          !correctionPromptIds.has(originatingPrompt.id)) ||
+        (correctionScope.agentFrameId &&
+          correctionScope.agentFrameId !== provenanceContext.agentFrameId) ||
+        (correctionScope.messageBranchId &&
+          correctionScope.messageBranchId !== provenanceContext.messageBranchId)
+      ) {
+        await markOpenChecksUnaddressed('aborted', REVIEW_CORRECTION_CONTEXT_CHANGED)
+        return
+      }
       const correctionResult = await correctionOwner.request({
         projectId,
         sessionId: mainSessionId,
         causeReviewId: causeReviewId ?? openChecks[0].reviewId,
         checks: openChecks,
+        abortSignal,
         provenanceContext
       })
       if (correctionResult.status === 'failed') {
@@ -235,6 +279,7 @@ export const runReviewerFixLoop = async (options: ReviewerFixLoopOptions): Promi
         onCorrectionFailed?.()
       } else if (correctionResult.status === 'completed') {
         correctionPromptMessageId = correctionResult.promptMessageId
+        correctionPromptIds.add(correctionPromptMessageId)
       }
     } catch (error) {
       correctionFailed = true
@@ -243,6 +288,11 @@ export const runReviewerFixLoop = async (options: ReviewerFixLoopOptions): Promi
         round,
         error: toErrorMessage(error)
       })
+    }
+
+    if (abortSignal?.aborted) {
+      await markOpenChecksUnaddressed('aborted', 'The fix loop was aborted by the user.')
+      return
     }
 
     // Error handling: a failed correction counts as a round (prevents infinite loop) but we
@@ -278,8 +328,10 @@ export const runReviewerFixLoop = async (options: ReviewerFixLoopOptions): Promi
         error: toErrorMessage(error)
       })
       await markOpenChecksUnaddressed(
-        'correction_failed',
-        'Could not reload the durable correction turn.'
+        abortSignal?.aborted ? 'aborted' : 'correction_failed',
+        abortSignal?.aborted
+          ? 'The fix loop was aborted by the user.'
+          : 'Could not reload the durable correction turn.'
       )
       return
     }
@@ -312,6 +364,7 @@ export const runReviewerFixLoop = async (options: ReviewerFixLoopOptions): Promi
 
     const scopedResult = await runReviewAssessment({
       mode: 'tracked',
+      abortSignal,
       session: correctionState.session,
       sessionId,
       scopeTurnMessageId: correctionTurnMessageId,
@@ -331,6 +384,10 @@ export const runReviewerFixLoop = async (options: ReviewerFixLoopOptions): Promi
       trackedChecks: openChecks,
       recordUsage
     })
+    if (abortSignal?.aborted && scopedResult.review.lifecycle === 'error') {
+      await markOpenChecksUnaddressed('aborted', 'The fix loop was aborted by the user.')
+      return
+    }
     const reReviewResult = scopedResult.review
 
     // Step E: compute resolution transitions for the original review's open checks.
@@ -422,8 +479,10 @@ export const runReviewerFixLoop = async (options: ReviewerFixLoopOptions): Promi
       remaining: openChecks.length
     })
     await markOpenChecksUnaddressed(
-      'loop_terminated',
-      `Fix loop reached its ${maxRounds}-round cap.`
+      abortSignal?.aborted ? 'aborted' : 'loop_terminated',
+      abortSignal?.aborted
+        ? 'The fix loop was aborted by the user.'
+        : `Fix loop reached its ${maxRounds}-round cap.`
     )
   }
 }

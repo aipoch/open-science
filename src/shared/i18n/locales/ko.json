@@ -4612,6 +4612,12 @@
     "Loading skills…": "스킬 로딩 중…",
     "Could not load skills": "스킬을 불러오지 못했습니다",
     "No skills available": "사용 가능한 스킬 없음",
-    "No matching sessions": "일치하는 세션 없음"
+    "No matching sessions": "일치하는 세션 없음",
+    "Current evidence could not be verified": "현재 증거를 검증할 수 없습니다",
+    "Historical results are retained. Retry to verify the current evidence.": "이전 결과가 보존되어 있습니다. 다시 시도하여 현재 증거를 검증하세요.",
+    "Automatic correction stopped because the active conversation changed.": "활성 대화가 변경되어 자동 수정을 중지했습니다.",
+    "Review did not start. Please try again.": "검토가 시작되지 않았습니다. 다시 시도하세요.",
+    "Review failed. You can try again.": "검토에 실패했습니다. 다시 시도할 수 있습니다.",
+    "No checkable claims": "검증할 수 있는 주장이 없습니다"
   }
 }
