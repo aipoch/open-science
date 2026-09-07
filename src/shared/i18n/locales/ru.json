@@ -5105,6 +5105,12 @@
     "Other comparisons are running. Wait for them to finish, then retry.": "Выполняются другие сравнения. Дождитесь их завершения и повторите попытку.",
     "Version storage is unavailable. Check that the storage location is accessible, then retry.": "Хранилище версий недоступно. Проверьте доступность места хранения и повторите попытку.",
     "This comparison could not be completed. Return to the version preview to check the file.": "Не удалось завершить сравнение. Вернитесь к предпросмотру версии, чтобы проверить файл.",
-    "View version": "Открыть версию"
+    "View version": "Открыть версию",
+    "Only the first record is previewed.": "В предпросмотре показана только первая запись.",
+    "No atoms found": "Атомы не найдены",
+    "Previewing model 1 of {{total}}.": "Предпросмотр модели 1 из {{total}}.",
+    "Hydrogens are hidden; alternate locations use blank or A. Atom count refers to the displayed model.": "Атомы водорода скрыты; для альтернативных положений используются пробел или A. Число атомов относится к отображаемой модели.",
+    "Generating surface…": "Создание поверхности…",
+    "Surface could not be generated. Showing sticks.": "Не удалось создать поверхность. Показана стержневая модель."
   }
 }

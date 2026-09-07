@@ -4654,6 +4654,12 @@
     "Other comparisons are running. Wait for them to finish, then retry.": "다른 비교가 실행 중입니다. 완료될 때까지 기다린 후 다시 시도하세요.",
     "Version storage is unavailable. Check that the storage location is accessible, then retry.": "버전 저장소를 사용할 수 없습니다. 저장 위치에 접근할 수 있는지 확인한 후 다시 시도하세요.",
     "This comparison could not be completed. Return to the version preview to check the file.": "비교를 완료하지 못했습니다. 버전 미리보기로 돌아가 파일을 확인하세요.",
-    "View version": "버전 보기"
+    "View version": "버전 보기",
+    "Only the first record is previewed.": "첫 번째 레코드만 미리 봅니다.",
+    "No atoms found": "원자를 찾을 수 없습니다",
+    "Previewing model 1 of {{total}}.": "모델 {{total}}개 중 1번을 미리 봅니다.",
+    "Hydrogens are hidden; alternate locations use blank or A. Atom count refers to the displayed model.": "수소 원자는 숨깁니다. 대체 위치는 공백 또는 A를 사용합니다. 원자 수는 표시된 모델 기준입니다.",
+    "Generating surface…": "표면 생성 중…",
+    "Surface could not be generated. Showing sticks.": "표면을 생성하지 못했습니다. 막대 형태로 표시합니다."
   }
 }

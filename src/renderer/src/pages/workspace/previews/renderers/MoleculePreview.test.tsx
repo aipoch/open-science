@@ -89,7 +89,7 @@ describe('MoleculePreviewRenderer', () => {
 
   it('renders SMILES through OpenChemLib with the available canvas size', async () => {
     const toSVG = vi.fn(() => '<svg data-testid="molecule-svg"></svg>')
-    mocks.fromSmiles.mockReturnValue({ toSVG })
+    mocks.fromSmiles.mockReturnValue({ toSVG, getAllAtoms: () => 3 })
     mocks.state.current = readyState('CCO')
 
     await render(item('ethanol.smi'))
