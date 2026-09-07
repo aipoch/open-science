@@ -496,6 +496,22 @@ export const ComposerEditor = ({
   const mentionPopupOpen = mention.active || artifactMention.active || sessionMention.active
   const undoCaretRef = useRef<ComposerCaretPosition | undefined>(undefined)
 
+  const { cancel: cancelSkillMention } = mention
+  const { cancel: cancelArtifactMention } = artifactMention
+  const { cancel: cancelSessionMention } = sessionMention
+
+  // Different Sessions can have identical draft text and therefore reuse the same DOM token.
+  useLayoutEffect(() => {
+    cancelSkillMention()
+    cancelArtifactMention()
+    cancelSessionMention()
+  }, [
+    mentionPreviewContext?.sessionId,
+    cancelSkillMention,
+    cancelArtifactMention,
+    cancelSessionMention
+  ])
+
   // Read the live DOM back into a doc and notify the parent.
   const emitDocFromDom = useCallback((): void => {
     const root = editorRef.current

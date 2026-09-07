@@ -363,7 +363,7 @@ describe('ComposerEditor mention input safety', () => {
     expect(editor().querySelector('[data-mention-type]')).not.toBeNull()
   })
 
-  it.each(['another token', 'cancel', 'replace draft', 'new selection'])(
+  it.each(['another token', 'cancel', 'replace draft', 'switch session', 'new selection'])(
     'ignores an earlier file lookup after %s',
     async (change) => {
       const inspect = vi.mocked(window.api.managedFileVersions.inspect)
@@ -375,7 +375,7 @@ describe('ComposerEditor mention input safety', () => {
             resolve = done
           })
       )
-      renderEditor()
+      renderEditor({ mentionPreviewContext: { sessionId: 'session-1', projectId: 'default' } })
       await typeQuery(change === 'another token' ? '@seq @seq' : '@seq')
       dispatchKey(editor(), 'Enter')
       let expected = '@seq'
@@ -387,8 +387,16 @@ describe('ComposerEditor mention input safety', () => {
         expected = '@seq @seq'
       } else if (change === 'cancel') {
         dispatchKey(editor(), 'Escape')
+      } else if (change === 'switch session') {
+        renderEditor({
+          doc: { nodes: [{ type: 'text', text: '@seq' }] },
+          mentionPreviewContext: { sessionId: 'session-2', projectId: 'default' }
+        })
       } else if (change === 'replace draft') {
-        renderEditor({ doc: { nodes: [{ type: 'text', text: '@seq new draft' }] } })
+        renderEditor({
+          doc: { nodes: [{ type: 'text', text: '@seq new draft' }] },
+          mentionPreviewContext: { sessionId: 'session-1', projectId: 'default' }
+        })
         // Preserve the query while replacing the controlled draft through public props.
         act(() => {
           setCaret(editor().firstChild!, 4)
