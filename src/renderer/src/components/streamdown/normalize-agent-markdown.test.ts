@@ -278,3 +278,12 @@ it('leaves ambiguous axis quoting unchanged', () => {
     expect(normalizeMermaidChart(input)).toBe(input)
   }
 })
+
+it('keeps a fence info string inside an open code block literal', () => {
+  const code = '```markdown\n```js\n> [!NOTE]\n> Literal.\n\n> [!TIP]\n> Also literal.\n```\n'
+  expect(normalizeAgentMarkdown(code)).toBe(code)
+  const incremental = createAgentMarkdownNormalizer()
+  for (let end = 1; end <= code.length; end += 1) {
+    expect(incremental(code.slice(0, end))).toBe(code.slice(0, end))
+  }
+})

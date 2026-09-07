@@ -11,7 +11,8 @@ type MarkdownPluginNeeds = {
 }
 
 // Tracks one fence's open/close state while lines stream through `feed`. A fence opens on the
-// first marker line and closes on a marker with the same character at equal or greater length.
+// first marker line and closes on a marker with the same character at equal or greater length,
+// followed only by spaces or tabs (and an optional CR from CRLF input).
 const createCodeFenceTracker = (): {
   feed: (line: string) => boolean
   isOpen: () => boolean
@@ -29,7 +30,11 @@ const createCodeFenceTracker = (): {
           open = true
           markerChar = fence[1][0]
           markerLength = fence[1].length
-        } else if (fence[1][0] === markerChar && fence[1].length >= markerLength) {
+        } else if (
+          fence[1][0] === markerChar &&
+          fence[1].length >= markerLength &&
+          /^[ \t]*\r?$/.test(line.slice(fence[0].length))
+        ) {
           open = false
         }
       }
@@ -77,7 +82,8 @@ const feedScanFence = (state: PluginNeedsScanState, line: string): boolean => {
       state.fenceMarkerLength = fence[1].length
     } else if (
       fence[1][0] === state.fenceMarkerChar &&
-      fence[1].length >= state.fenceMarkerLength
+      fence[1].length >= state.fenceMarkerLength &&
+      /^[ \t]*\r?$/.test(line.slice(fence[0].length))
     ) {
       state.fenceOpen = false
     }
