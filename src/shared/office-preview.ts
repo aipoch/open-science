@@ -1,3 +1,5 @@
+import { isLocale, type Locale } from './locale'
+
 export const OFFICE_PREVIEW_MAX_FILE_BYTES = 40 * 1024 * 1024
 export const OFFICE_PREVIEW_PROCESS_MEMORY_LIMIT_BYTES = 1_536 * 1024 * 1024
 export const OFFICE_PREVIEW_PROCESS_MEMORY_POLL_MS = 1_000
@@ -94,6 +96,7 @@ export type OfficePreviewRuntimeStart = {
   extension: OfficePreviewRequestedExtension
   name: string
   attempt: number
+  locale?: Locale
 }
 
 export type OfficePreviewPhase =
@@ -185,6 +188,7 @@ const isOfficePreviewRuntimeStart = (value: unknown): value is OfficePreviewRunt
     typeof start.extension === 'string' &&
     OFFICE_PREVIEW_EXTENSIONS.has(start.extension as OfficePreviewRequestedExtension) &&
     isNonEmptyString(start.name) &&
+    (start.locale === undefined || isLocale(start.locale)) &&
     Number.isSafeInteger(start.attempt) &&
     (start.attempt ?? -1) >= 0 &&
     typeof resource === 'object' &&

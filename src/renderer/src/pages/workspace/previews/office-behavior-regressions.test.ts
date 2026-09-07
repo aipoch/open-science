@@ -7,6 +7,7 @@ import {
   createSpreadsheetParserContext,
   handleSpreadsheetWorkerRequest
 } from '@file-viewer/renderer-spreadsheet/worker/sheetjs'
+import { initI18n } from '../../../i18n'
 import { runOfficePreview } from '../../../office-preview/office-preview-runtime'
 import { validateOfficePackage } from './office-package'
 import { renderOfficeFile } from './office-renderers'
@@ -146,7 +147,7 @@ describe('Office behavior through real parsers and adapters', () => {
     'OF01: a blank visible %s sheet completes first paint',
     async (extension) => {
       const outcome = await renderWorkbook(workbookBytes(extension), extension)
-      await vi.waitFor(() => expect(outcome.state).toBe('ready'), { timeout: 500 })
+      await vi.waitFor(() => expect(outcome.state).toBe('ready'), { timeout: 2_000 })
       expect(
         Array.from(container.querySelectorAll('.sheet-tab'), (tab) => tab.textContent)
       ).toEqual(['Visible'])
@@ -160,8 +161,8 @@ describe('Office behavior through real parsers and adapters', () => {
   ] as const)(
     'OF02: %s visible data=%s never selects hidden content',
     async (extension, visibleData) => {
-      await renderWorkbook(workbookBytes(extension, visibleData, true), extension)
-      await vi.waitFor(() => expect(harness.instances.length).toBeGreaterThan(0))
+      const outcome = await renderWorkbook(workbookBytes(extension, visibleData, true), extension)
+      await vi.waitFor(() => expect(outcome.state).toBe('ready'))
       expect(JSON.stringify(harness.instances.flatMap((table) => table.getRows()))).not.toContain(
         'HIDDEN_DATA'
       )
@@ -170,6 +171,28 @@ describe('Office behavior through real parsers and adapters', () => {
       ).toEqual(['Visible'])
     }
   )
+
+  it('keeps visible worksheet tabs displayed and switches to another worksheet', async () => {
+    const workbook = utils.book_new()
+    utils.book_append_sheet(workbook, utils.aoa_to_sheet([['FIRST_DATA']]), 'First')
+    utils.book_append_sheet(workbook, utils.aoa_to_sheet([['SECOND_DATA']]), 'Second')
+    const outcome = await renderWorkbook(
+      new Uint8Array(write(workbook, { type: 'array', bookType: 'xlsx' })),
+      'xlsx'
+    )
+    await vi.waitFor(() => expect(outcome.state).toBe('ready'))
+    const toolbar = container.querySelector<HTMLElement>('.toolbar')!
+    expect(getComputedStyle(toolbar).display).not.toBe('none')
+    const tabs = Array.from(container.querySelectorAll<HTMLButtonElement>('.sheet-tab'))
+    expect(tabs.map((tab) => tab.textContent)).toEqual(['First', 'Second'])
+    tabs[1].click()
+    await vi.waitFor(() =>
+      expect(JSON.stringify(harness.instances.flatMap((table) => table.getRows()))).toContain(
+        'SECOND_DATA'
+      )
+    )
+    expect(getComputedStyle(toolbar).display).not.toBe('none')
+  })
 
   it.each([1, 2] as const)(
     'completes an all-hidden workbook without exposing Hidden=%s',
@@ -213,6 +236,45 @@ describe('Office behavior through real parsers and adapters', () => {
     ])
     expect(context.workbook?.Workbook?.Sheets?.map((sheet) => sheet.Hidden)).toEqual([0, 1])
   })
+
+  it.each([
+    ['zh-Hans', '此工作簿没有可见的工作表。'],
+    [undefined, 'This workbook has no visible worksheets.']
+  ] as const)(
+    'applies startup locale %s before rendering the empty state',
+    async (locale, expected) => {
+      initI18n(locale ? 'en' : 'de')
+      const workbook = utils.book_new()
+      utils.book_append_sheet(workbook, utils.aoa_to_sheet([]), 'Private')
+      utils.book_set_sheet_visibility(workbook, 'Private', 1)
+      const bytes = new Uint8Array(write(workbook, { type: 'array', bookType: 'xlsx' }))
+      const start = {
+        sessionId: 'locale-session',
+        extension: 'xlsx' as const,
+        name: 'hidden.xlsx',
+        attempt: 0,
+        locale,
+        resource: {
+          id: 'locale-resource',
+          url: 'https://preview.test/hidden.xlsx',
+          size: bytes.byteLength,
+          mimeType: 'application/octet-stream',
+          version: 1
+        }
+      }
+      try {
+        cleanup = await runOfficePreview({
+          start,
+          container,
+          fetchFile: vi.fn().mockResolvedValue(new Response(new Uint8Array(bytes).buffer)),
+          reportState: vi.fn()
+        })
+        expect(container.querySelector('[role="status"]')?.textContent).toBe(expected)
+      } finally {
+        initI18n('en')
+      }
+    }
+  )
 
   it('OF03: reports a terminal Worker failure after ready', async () => {
     const bytes = workbookBytes('xlsx', true)

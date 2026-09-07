@@ -272,6 +272,32 @@ describe('OfficePreviewRenderer', () => {
     expect(latestOpenContextMenu).toHaveBeenCalledWith({ x: 17, y: 29 }, frame)
   })
 
+  it('passes the current host language when starting the isolated iframe', async () => {
+    await act(async () => {
+      await i18next.changeLanguage('zh-Hans')
+    })
+    try {
+      await renderPreview()
+      const frame = container.querySelector<HTMLIFrameElement>('[data-office-preview-frame]')!
+      const postMessage = vi.spyOn(frame.contentWindow!, 'postMessage')
+      await act(async () => {
+        frame.dispatchEvent(new Event('load'))
+        await flushMicrotasks()
+      })
+      expect(postMessage).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: 'start',
+          start: expect.objectContaining({ locale: 'zh-Hans' })
+        }),
+        OFFICE_PREVIEW_RUNTIME_ORIGIN
+      )
+    } finally {
+      await act(async () => {
+        await i18next.changeLanguage('en')
+      })
+    }
+  })
+
   it('attaches on iframe load before relaying start and runtime state', async () => {
     await renderPreview()
     const frame = container.querySelector<HTMLIFrameElement>('[data-office-preview-frame]')

@@ -71,6 +71,14 @@ describe('Office preview frame messages', () => {
       name: 'report.docx',
       attempt: 0
     }
+    const message = { channel: 'open-science-office-preview', version: 1, type: 'start', start }
+    expect(isOfficePreviewHostMessage({ ...message, start: { ...start, locale: 'zh-Hans' } })).toBe(
+      true
+    )
+    expect(
+      isOfficePreviewHostMessage({ ...message, start: { ...start, locale: 'unsupported' } })
+    ).toBe(false)
+    expect(isOfficePreviewHostMessage({ ...message, start: { ...start, locale: 42 } })).toBe(false)
     expect(
       isOfficePreviewHostMessage({
         channel: 'open-science-office-preview',
