@@ -155,6 +155,14 @@ const openWslTerminal = createWslTerminalLauncher()
 
 const clean = (value: string): string => value.replaceAll('\0', '').replaceAll('\r', '').trim()
 
+const DOCKER_DESKTOP_INTERNAL_DISTROS = new Set(['docker-desktop', 'docker-desktop-data'])
+
+const isDockerDesktopInternalDistro = (name: string): boolean =>
+  DOCKER_DESKTOP_INTERNAL_DISTROS.has(name.trim().toLowerCase())
+
+const isSelectableDistro = (distro: WslDistro): boolean =>
+  !isDockerDesktopInternalDistro(distro.name)
+
 export const parseWslDistros = (quietOutput: string, verboseOutput: string): WslDistro[] => {
   const names = clean(quietOutput)
     .split('\n')
@@ -405,7 +413,8 @@ export class WslSetupOwner {
       selection.distro.length > 256 ||
       selection.user.length > 128 ||
       /[\0\r\n]/.test(selection.distro) ||
-      /[\0\r\n]/.test(selection.user)
+      /[\0\r\n]/.test(selection.user) ||
+      isDockerDesktopInternalDistro(selection.distro)
     ) {
       const snapshot = setupSnapshot('failed', this.reference(), [], {
         errorCode: 'wsl_selection_invalid'
@@ -531,7 +540,7 @@ export class WslSetupOwner {
     if (listed.exitCode !== 0) {
       return setupSnapshot('failed', operationReference, [], { errorCode: 'wsl_probe_failed' })
     }
-    const distros = parseWslDistros(names.stdout, listed.stdout)
+    const distros = parseWslDistros(names.stdout, listed.stdout).filter(isSelectableDistro)
     if (distros.length === 0) {
       return setupSnapshot('distro-required', operationReference, [], {
         errorCode: 'wsl_distro_missing'
@@ -539,7 +548,9 @@ export class WslSetupOwner {
     }
 
     const selection = selectionOverride ?? (await this.options.readSelection())
-    if (!selection) return setupSnapshot('distro-required', operationReference, distros)
+    if (!selection || isDockerDesktopInternalDistro(selection.distro)) {
+      return setupSnapshot('distro-required', operationReference, distros)
+    }
     const distro = distros.find((candidate) => candidate.name === selection.distro)
     if (!distro) {
       return setupSnapshot('failed', operationReference, distros, {

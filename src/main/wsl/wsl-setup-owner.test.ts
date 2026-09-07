@@ -536,6 +536,58 @@ describe('WslSetupOwner', () => {
     expect(logged).not.toContain('private terminal output')
   })
 
+  it('treats Docker Desktop internal distributions as no selectable distro', async () => {
+    const owner = makeOwner({
+      runner: makeRunner(
+        result('Default Version: 2'),
+        result('docker-desktop\ndocker-desktop-data'),
+        result('* docker-desktop Running 2\n  docker-desktop-data Stopped 2')
+      ),
+      workspacePath: 'C:\\science',
+      readSelection: async () => undefined,
+      writeSelection: vi.fn(),
+      operationReference: () => 'docker1'
+    })
+
+    await expect(owner.probe()).resolves.toEqual({
+      state: 'distro-required',
+      distros: [],
+      errorCode: 'wsl_distro_missing',
+      operationReference: 'docker1'
+    })
+  })
+
+  it('ignores a historical reserved selection while preserving similar user distros', async () => {
+    const owner = makeOwner({
+      runner: makeRunner(
+        result('Default Version: 2'),
+        result('docker-desktop\nDOCKER-DESKTOP-DATA\ndocker-desktop-dev\nUbuntu-24.04'),
+        result(
+          '  docker-desktop Running 2\n' +
+            '  DOCKER-DESKTOP-DATA Stopped 2\n' +
+            '  docker-desktop-dev Running 2\n' +
+            '* Ubuntu-24.04 Stopped 2'
+        )
+      ),
+      workspacePath: 'C:\\science',
+      readSelection: async () => ({
+        distro: 'DOCKER-DESKTOP-DATA',
+        user: 'scientist'
+      }),
+      writeSelection: vi.fn(),
+      operationReference: () => 'docker3'
+    })
+
+    await expect(owner.probe()).resolves.toEqual({
+      state: 'distro-required',
+      distros: [
+        { name: 'docker-desktop-dev', version: 2, isDefault: false },
+        { name: 'Ubuntu-24.04', version: 2, isDefault: true }
+      ],
+      operationReference: 'docker3'
+    })
+  })
+
   it('distinguishes platform, restart, and distro-required setup states', async () => {
     const absent = makeOwner({
       runner: makeRunner(result('', 1, 'WSL is not installed')),
@@ -608,6 +660,29 @@ describe('WslSetupOwner', () => {
       state: 'not-installed',
       errorCode: 'wsl_not_installed'
     })
+  })
+
+  it('rejects case-variant Docker Desktop selections before persistence or probing', async () => {
+    const runner = makeRunner()
+    const writeSelection = vi.fn()
+    const owner = makeOwner({
+      runner,
+      workspacePath: 'C:\\science',
+      readSelection: async () => undefined,
+      writeSelection,
+      operationReference: () => 'docker2'
+    })
+
+    const snapshot = await owner.select({ distro: 'Docker-Desktop', user: 'scientist' })
+
+    expect(snapshot).toEqual({
+      state: 'failed',
+      distros: [],
+      errorCode: 'wsl_selection_invalid',
+      operationReference: 'docker2'
+    })
+    expect(writeSelection).not.toHaveBeenCalled()
+    expect(runner.run).not.toHaveBeenCalled()
   })
 
   it('persists an exact distro and non-root user but reports ready only after every check passes', async () => {
