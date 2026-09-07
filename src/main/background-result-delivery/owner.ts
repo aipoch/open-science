@@ -117,6 +117,7 @@ class BackgroundResultDeliveryOwner {
   private readonly maxDeliveryAttempts: number
   private readonly scheduled = new Map<string, ReturnType<typeof setTimeout>>()
   private readonly sessionOperations = new Map<string, Promise<void>>()
+  private readonly projectOperations = new Map<string, Set<Promise<void>>>()
   private readonly sessionFences = new Set<string>()
   private readonly projectFences = new Set<string>()
   private readonly claimRecoveryTimer: ReturnType<typeof setInterval>
@@ -162,10 +163,11 @@ class BackgroundResultDeliveryOwner {
     this.scheduled.set(sessionId, timer)
   }
 
-  private serializeSession<Result>(
-    sessionId: string,
+  private serializeSource<Result>(
+    source: Pick<BackgroundResultSourceRef, 'projectId' | 'sessionId'>,
     operation: () => Promise<Result>
   ): Promise<Result> {
+    const { projectId, sessionId } = source
     const previous = this.sessionOperations.get(sessionId) ?? Promise.resolve()
     const result = previous.catch(() => undefined).then(operation)
     const tail = result.then(
@@ -173,7 +175,12 @@ class BackgroundResultDeliveryOwner {
       () => undefined
     )
     this.sessionOperations.set(sessionId, tail)
+    const projectOperations = this.projectOperations.get(projectId) ?? new Set<Promise<void>>()
+    projectOperations.add(tail)
+    this.projectOperations.set(projectId, projectOperations)
     void tail.then(() => {
+      projectOperations.delete(tail)
+      if (projectOperations.size === 0) this.projectOperations.delete(projectId)
       if (this.sessionOperations.get(sessionId) === tail) this.sessionOperations.delete(sessionId)
     })
     return result
@@ -189,26 +196,31 @@ class BackgroundResultDeliveryOwner {
   }
 
   async register(source: BackgroundResultSourceRef): Promise<BackgroundResultDelivery | undefined> {
-    if (this.isFenced(source)) return undefined
-    const delivery = await this.options.repository.register(source)
-    this.publishChanged(source.projectId)
-    return delivery
+    return this.serializeSource(source, async () => {
+      if (this.isFenced(source)) return undefined
+      const delivery = await this.options.repository.register(source)
+      this.publishChanged(source.projectId)
+      return delivery
+    })
   }
 
   async enqueue(source: BackgroundResultSourceRef): Promise<BackgroundResultDelivery | undefined> {
-    if (this.isFenced(source)) return undefined
-    const delivery = await this.options.repository.enqueue(source)
-    if (!delivery) return undefined
-    this.publishChanged(source.projectId)
-    if (delivery.state === 'pending') this.schedule(source.sessionId)
-    return delivery
+    return this.serializeSource(source, async () => {
+      if (this.isFenced(source)) return undefined
+      const delivery = await this.options.repository.enqueue(source)
+      if (!delivery) return undefined
+      this.publishChanged(source.projectId)
+      if (delivery.state === 'pending' && !this.isFenced(source)) this.schedule(source.sessionId)
+      return delivery
+    })
   }
 
   async acknowledgeObserved(
     source: BackgroundResultSourceRef
   ): Promise<AgentResultFollowUpDelivery> {
     if (this.isFenced(source)) return 'suppressed'
-    return this.serializeSession(source.sessionId, async () => {
+    return this.serializeSource(source, async () => {
+      if (this.isFenced(source)) return 'suppressed'
       const existing = await this.options.repository.findBySource(source)
       if (
         existing?.continuationMessageId &&
@@ -372,7 +384,7 @@ class BackgroundResultDeliveryOwner {
         await this.options.repository.releaseClaim(ids, claimToken)
         return 'queued'
       }
-      const admission = await this.serializeSession(sessionId, async () => {
+      const admission = await this.serializeSource(dispatchDeliveries[0]!, async () => {
         if (dispatchDeliveries.some((delivery) => this.isFenced(delivery))) return undefined
         const dispatchable = await this.options.repository.beginDispatch(
           ids,
@@ -475,9 +487,7 @@ class BackgroundResultDeliveryOwner {
       if (timer) clearTimeout(timer)
       this.scheduled.delete(sessionId)
     }
-    await Promise.all(
-      sessionIds.map((sessionId) => this.sessionOperations.get(sessionId) ?? Promise.resolve())
-    )
+    await Promise.all(this.projectOperations.get(projectId) ?? [])
   }
 
   async commitProjectDeletion(projectId: string): Promise<void> {

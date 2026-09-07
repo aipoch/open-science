@@ -258,6 +258,79 @@ describe('BackgroundResultDeliveryOwner', () => {
     owner.dispose()
   })
 
+  it.each([
+    ['register', 'Session'],
+    ['enqueue', 'Session'],
+    ['register', 'Project'],
+    ['enqueue', 'Project']
+  ] as const)(
+    'waits for an in-flight %s before %s deletion removes rows',
+    async (operation, target) => {
+      const { owner, repository } = harness()
+      const write = deferred()
+      const rows = new Set<string>()
+      const source = delivery('run-1', { state: 'pending' })
+      repository[operation].mockImplementationOnce(async () => {
+        await write.promise
+        rows.add(source.id)
+        return source
+      })
+      const removeRows = async (): Promise<number> => {
+        const count = rows.size
+        rows.clear()
+        return count
+      }
+      repository.deleteSession.mockImplementationOnce(removeRows)
+      repository.deleteProject.mockImplementationOnce(removeRows)
+
+      const mutation = owner[operation](source)
+      await vi.waitFor(() => expect(repository[operation]).toHaveBeenCalledOnce())
+      let prepared = false
+      const deletion = (async () => {
+        if (target === 'Session') {
+          await owner.prepareSessionDeletion(source.projectId, source.sessionId)
+          prepared = true
+          await owner.commitSessionDeletion(source.projectId, source.sessionId)
+        } else {
+          // The first admission has not written its row, so the repository cannot list this Session.
+          await owner.prepareProjectDeletion(source.projectId)
+          prepared = true
+          await owner.commitProjectDeletion(source.projectId)
+        }
+      })()
+      await new Promise<void>((resolve) => setImmediate(resolve))
+      expect(prepared).toBe(false)
+
+      write.resolve()
+      await Promise.all([mutation, deletion])
+      expect(prepared).toBe(true)
+      expect(rows.size).toBe(0)
+      await expect(owner[operation](source)).resolves.toBeUndefined()
+      expect(repository[operation]).toHaveBeenCalledOnce()
+      owner.dispose()
+    }
+  )
+
+  it('suppresses queued observations once Session deletion is fenced', async () => {
+    const { owner, repository } = harness()
+    const write = deferred()
+    const source = delivery('run-1')
+    repository.register.mockImplementationOnce(async () => {
+      await write.promise
+      return source
+    })
+    const registration = owner.register(source)
+    await vi.waitFor(() => expect(repository.register).toHaveBeenCalledOnce())
+    const observation = owner.acknowledgeObserved(source)
+    const deletion = owner.prepareSessionDeletion(source.projectId, source.sessionId)
+    write.resolve()
+
+    await Promise.all([registration, deletion])
+    await expect(observation).resolves.toBe('suppressed')
+    expect(repository.acknowledgeObserved).not.toHaveBeenCalled()
+    owner.dispose()
+  })
+
   it('allows a delivery Turn to observe a result after provider admission', async () => {
     const { owner, sendContinuation } = harness()
     sendContinuation.mockImplementationOnce(() => ({
