@@ -13,6 +13,8 @@ import {
   usePreviewWorkbenchStore,
   type PreviewFileItem
 } from '@/stores/preview-workbench-store'
+import { validateAnnotations, type PdfAnnotation } from '../../../../../shared/annotations'
+import { createLiteratureAttachmentVersionReference } from '../../../../../shared/literature'
 import type { Annotation } from '../../../../../shared/annotations'
 import { createUploadVersionReference } from '../../../../../shared/uploads'
 import { createManagedPreviewRequest } from '../previews/preview-file-reader'
@@ -57,6 +59,72 @@ describe('annotation reveal', () => {
     quote: 'quoted evidence',
     source: { kind: 'agent-message', sessionId: 'session-1', messageId: 'message-1' }
   })
+
+  it.each([false, true])(
+    'reveals a literature PDF with source tab already open=%s',
+    (alreadyOpen) => {
+      const annotation: PdfAnnotation = {
+        id: 'literature-quote',
+        kind: 'pdf',
+        target: 'agent',
+        source: {
+          kind: 'literature-attachment-version',
+          projectId: 'project-1',
+          versionId: 'literature-version-1',
+          name: 'paper.pdf',
+          checksum: 'a'.repeat(64),
+          path: createLiteratureAttachmentVersionReference('literature-version-1')
+        },
+        selector: {
+          kind: 'text',
+          pageNumber: 2,
+          exact: 'quoted evidence',
+          position: { start: 0, end: 15 },
+          quads: [{ x: 0.1, y: 0.1, width: 0.4, height: 0.03 }],
+          extractorVersion: 'pdfjs-5.4.624'
+        }
+      }
+      expect(validateAnnotations([annotation])).toBeUndefined()
+      if (alreadyOpen)
+        usePreviewWorkbenchStore.getState().upsertItem({
+          id: 'existing-literature',
+          type: 'file',
+          projectId: 'project-1',
+          sessionId: 'literature',
+          title: 'paper.pdf',
+          name: 'paper.pdf',
+          path: annotation.source.path,
+          source: 'literature',
+          format: 'pdf',
+          mimeType: 'application/pdf'
+        })
+      // Consume any prior pending request before attaching this case's observers.
+      subscribeAnnotationReveal(() => true)()
+      const prepare = vi.fn()
+      const reveal = vi.fn(() => true)
+      const offPrepare = subscribeAnnotationRevealPreparation(prepare)
+      const offReveal = subscribeAnnotationReveal(reveal)
+      try {
+        const before = usePreviewWorkbenchStore.getState().items
+        requestAnnotationReveal({
+          ...annotation,
+          source: { ...annotation.source, versionId: 'forged-version' }
+        })
+        expect(usePreviewWorkbenchStore.getState().items).toEqual(before)
+        expect(prepare).not.toHaveBeenCalled()
+        expect(reveal).not.toHaveBeenCalled()
+        requestAnnotationReveal(annotation)
+        expect.soft(usePreviewWorkbenchStore.getState().items).toHaveLength(1)
+        expect.soft(prepare).toHaveBeenCalledWith(annotation)
+        expect.soft(reveal).toHaveBeenCalledWith(annotation.id)
+        if (alreadyOpen)
+          expect(usePreviewWorkbenchStore.getState().items[0]?.id).toBe('existing-literature')
+      } finally {
+        offPrepare()
+        offReveal()
+      }
+    }
+  )
 
   it('scrolls to the range and flashes a stronger highlight', () => {
     revealTextAnnotationRange(textRange())

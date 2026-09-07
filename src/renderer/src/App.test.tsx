@@ -3,6 +3,8 @@ import { act, type ReactNode } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { createLinearConversationGraph } from '../../shared/conversation-graph'
+
 const mocks = vi.hoisted(() => {
   // Captures the onOpenSession listener so tests can fire the notification nudge directly.
   const notificationNudgeBox: { current: (() => void) | undefined } = { current: undefined }
@@ -621,11 +623,12 @@ describe('App startup routing', () => {
         cwd: '/workspace/project-1',
         status: 'idle',
         messages: [],
-        conversationGraph: {
+        conversationGraph: createLinearConversationGraph({
+          sessionId: 'session-1',
           messages: [],
-          activeFrameId: 'frame-1',
-          frames: [{ id: 'frame-1', activeBranchId: 'branch-1' }]
-        },
+          createdAt: 1,
+          updatedAt: 1
+        }),
         createdAt: 1,
         updatedAt: 1
       }

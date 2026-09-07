@@ -5,9 +5,9 @@ import {
   sanitizeAcpMessageImage,
   type AcpMessageImage
 } from './acp'
-import { parseArtifactVersionLocator } from './artifact-provenance'
+import { createArtifactVersionLocator, parseArtifactVersionLocator } from './artifact-provenance'
 import { parseLiteratureAttachmentVersionReference } from './literature'
-import { parseUploadVersionReference } from './uploads'
+import { createUploadVersionReference, parseUploadVersionReference } from './uploads'
 
 export const ANNOTATION_LIMITS = Object.freeze({
   count: 10,
@@ -121,11 +121,14 @@ export type SessionTextAnnotationSource = Exclude<
   Readonly<{ kind: 'project-file'; projectId: string; path: string }>
 >
 
+export type TextAnnotationAnchor = Pick<PdfTextSelector, 'position' | 'prefix' | 'suffix'>
+
 export type TextAnnotation = Readonly<{
   id: string
   kind: 'text'
   target: 'agent'
   quote: string
+  anchor?: TextAnnotationAnchor
   note?: string
   source: TextAnnotationSource
 }>
@@ -174,8 +177,11 @@ export type PdfRegionSelector = Readonly<{
   rect: PdfNormalizedRect
   pageRotation: number
   text?: string
-  image: AcpMessageImage
-}>
+}> &
+  (
+    | Readonly<{ image: AcpMessageImage; imageOmissionReason?: never }>
+    | Readonly<{ image?: never; imageOmissionReason: 'session-budget' }>
+  )
 
 export type PdfAnnotation = Readonly<{
   id: string
@@ -198,7 +204,9 @@ export type Annotation = TextAnnotation | ImagePointAnnotation | PdfAnnotation
 
 export const annotationRequiresImageInput = (annotation: Annotation): boolean =>
   annotation.kind === 'image-point' ||
-  (annotation.kind === 'pdf' && annotation.selector.kind === 'region')
+  (annotation.kind === 'pdf' &&
+    annotation.selector.kind === 'region' &&
+    !!annotation.selector.image)
 
 export type PreparedImagePoint = Readonly<{
   annotationId: string
@@ -230,14 +238,16 @@ export type SideChatAnnotationItem =
   | Readonly<{
       type: 'quote'
       content: string
-      source?: Readonly<{
-        kind: 'pdf'
-        versionId: string
-        name: string
-        checksum: string
-        page: number
-        selector: Omit<PdfTextSelector, 'kind' | 'pageNumber' | 'exact'>
-      }>
+      source?:
+        | TextAnnotationSource
+        | Readonly<{
+            kind: 'pdf'
+            versionId: string
+            name: string
+            checksum: string
+            page: number
+            selector: Omit<PdfTextSelector, 'kind' | 'pageNumber' | 'exact'>
+          }>
       instruction?: string
     }>
   | Readonly<{
@@ -351,7 +361,9 @@ const sanitizePdfAnnotation = (
       typeof selector.pageRotation !== 'number' ||
       ![0, 90, 180, 270].includes(selector.pageRotation) ||
       (selector.text !== undefined && !text) ||
-      !image
+      (!image &&
+        !(selector.image === undefined && selector.imageOmissionReason === 'session-budget')) ||
+      (image !== undefined && selector.imageOmissionReason !== undefined)
     ) {
       return undefined
     }
@@ -367,7 +379,7 @@ const sanitizePdfAnnotation = (
         rect,
         pageRotation: selector.pageRotation,
         ...(text ? { text } : {}),
-        image
+        ...(image ? { image } : { imageOmissionReason: 'session-budget' as const })
       }
     }
   }
@@ -468,6 +480,27 @@ const sanitizeTextSource = (value: unknown): TextAnnotationSource | undefined =>
   return undefined
 }
 
+const sanitizeTextAnchor = (value: unknown, quote: string): TextAnnotationAnchor | undefined => {
+  if (!isRecord(value) || !isRecord(value.position)) return undefined
+  const { start, end } = value.position
+  if (
+    typeof start !== 'number' ||
+    !Number.isSafeInteger(start) ||
+    start < 0 ||
+    typeof end !== 'number' ||
+    !Number.isSafeInteger(end) ||
+    end !== start + quote.length ||
+    (value.prefix !== undefined && !boundedString(value.prefix, 256)) ||
+    (value.suffix !== undefined && !boundedString(value.suffix, 256))
+  )
+    return undefined
+  return {
+    position: { start, end },
+    ...(typeof value.prefix === 'string' ? { prefix: value.prefix } : {}),
+    ...(typeof value.suffix === 'string' ? { suffix: value.suffix } : {})
+  }
+}
+
 export const sanitizeAnnotation = (value: unknown): Annotation | undefined => {
   if (!isRecord(value) || value.target !== 'agent') return undefined
   const id = trimmed(value.id)
@@ -477,7 +510,17 @@ export const sanitizeAnnotation = (value: unknown): Annotation | undefined => {
     const source = sanitizeTextSource(value.source)
     const note = trimmed(value.note)
     if (!quote || !source) return undefined
-    return { id, kind: 'text', target: 'agent', quote, source, ...(note ? { note } : {}) }
+    const anchor = value.anchor === undefined ? undefined : sanitizeTextAnchor(value.anchor, quote)
+    if (value.anchor !== undefined && !anchor) return undefined
+    return {
+      id,
+      kind: 'text',
+      target: 'agent',
+      quote,
+      source,
+      ...(anchor ? { anchor } : {}),
+      ...(note ? { note } : {})
+    }
   }
   if (value.kind === 'pdf') return sanitizePdfAnnotation(value, id)
   if (value.kind === 'image-point' && isRecord(value.source) && isRecord(value.point)) {
@@ -568,7 +611,7 @@ export const sanitizeAnnotations = (value: unknown): Annotation[] => {
     annotations.push(annotation)
     if (annotations.length >= ANNOTATION_LIMITS.count) break
   }
-  return validateAnnotations(annotations) ? [] : annotations
+  return validateAnnotationData(annotations) ? [] : annotations
 }
 
 export const imageVersionKey = (source: ImagePointAnnotation['source']): string =>
@@ -688,7 +731,8 @@ const payloadItem = (
       }>
       rect: PdfNormalizedRect
       pageRotation: number
-      image: number
+      image?: number
+      imageOmissionReason?: 'session-budget'
       content?: string
       instruction?: string
     }>
@@ -715,6 +759,7 @@ const payloadItem = (
     return {
       type: 'quote',
       content: annotation.quote,
+      source: annotation.source,
       ...(annotation.note ? { instruction: annotation.note } : {})
     }
   }
@@ -722,7 +767,7 @@ const payloadItem = (
     const { selector } = annotation
     if (selector.kind === 'region') {
       const image = pdfRegionImages.get(annotation.id)
-      if (image === undefined) {
+      if (selector.image && image === undefined) {
         throw new Error(
           `PDF region annotation ${annotation.id} was not prepared for Agent context.`
         )
@@ -738,7 +783,7 @@ const payloadItem = (
         },
         rect: selector.rect,
         pageRotation: selector.pageRotation,
-        image,
+        ...(selector.image ? { image } : { imageOmissionReason: selector.imageOmissionReason }),
         ...(selector.text ? { content: selector.text } : {}),
         ...(annotation.note ? { instruction: annotation.note } : {})
       }
@@ -800,7 +845,11 @@ const annotationPayloadTextFromPrepared = (
   let regionImage = 0
   const regionImageByAnnotation = new Map<string, number>()
   for (const annotation of annotations) {
-    if (annotation.kind === 'pdf' && annotation.selector.kind === 'region') {
+    if (
+      annotation.kind === 'pdf' &&
+      annotation.selector.kind === 'region' &&
+      annotation.selector.image
+    ) {
       regionImage += 1
       regionImageByAnnotation.set(annotation.id, regionImage)
     }
@@ -817,7 +866,7 @@ const annotationPayloadTextFromPrepared = (
 
 const preparePdfRegionImages = (annotations: readonly Annotation[]): AcpMessageImage[] =>
   annotations.flatMap((annotation) =>
-    annotation.kind === 'pdf' && annotation.selector.kind === 'region'
+    annotation.kind === 'pdf' && annotation.selector.kind === 'region' && annotation.selector.image
       ? [annotation.selector.image]
       : []
   )
@@ -873,6 +922,12 @@ const sideChatAnnotationItem = (value: unknown): SideChatAnnotationItem | undefi
       ...(value.instruction === undefined ? [] : ['instruction'])
     ]
     const source = value.source
+    const textSource = sanitizeTextSource(source)
+    const validTextSource =
+      textSource &&
+      isRecord(source) &&
+      Object.keys(source).length === Object.keys(textSource).length &&
+      Object.entries(textSource).every(([key, entry]) => source[key] === entry)
     if (
       !hasExactKeys(value, keys) ||
       typeof value.content !== 'string' ||
@@ -883,6 +938,7 @@ const sideChatAnnotationItem = (value: unknown): SideChatAnnotationItem | undefi
           !value.instruction ||
           value.instruction.length > ANNOTATION_LIMITS.note)) ||
       (source !== undefined &&
+        !validTextSource &&
         (!isRecord(source) ||
           !hasExactKeys(source, ['kind', 'versionId', 'name', 'checksum', 'page', 'selector']) ||
           source.kind !== 'pdf' ||
@@ -1003,6 +1059,41 @@ export const parseSideChatAnnotationText = (
   }
 }
 
+const textAnnotationFileReferences = (annotations: readonly Annotation[]): ArtifactReference[] =>
+  annotations.flatMap((annotation): ArtifactReference[] => {
+    if (annotation.kind !== 'text' || annotation.source.kind !== 'project-file') return []
+    const source = annotation.source
+    const identity = resolveManagedProjectFileAnnotationIdentity(source)
+    const sessionId =
+      source.sessionId ??
+      parseArtifactVersionLocator(source.path)?.appSessionId ??
+      parseUploadVersionReference(source.path)?.sessionId
+    if (!identity || !sessionId) return []
+    const path =
+      identity.fileSource === 'artifact'
+        ? createArtifactVersionLocator({
+            projectId: source.projectId,
+            appSessionId: sessionId,
+            artifactId: identity.fileId,
+            versionId: identity.versionId
+          })
+        : createUploadVersionReference(identity.versionId, {
+            projectId: source.projectId,
+            sessionId,
+            fileId: identity.fileId
+          })
+    return [
+      {
+        id: identity.fileSource === 'artifact' ? identity.fileId : identity.versionId,
+        sourceFileId: identity.fileId,
+        name: source.name ?? source.path.split(/[\\/]/).at(-1)!,
+        path,
+        source: identity.fileSource,
+        versionId: identity.versionId
+      }
+    ]
+  })
+
 export const prepareAnnotationsForAgent = (
   text: string,
   annotations: readonly Annotation[],
@@ -1019,16 +1110,15 @@ export const prepareAnnotationsForAgent = (
   return {
     promptText,
     referencedArtifacts: mergeImageAnnotationReferences(
-      referencedArtifacts,
+      [...(referencedArtifacts ?? []), ...textAnnotationFileReferences(annotations)],
       preparedImages.attachments
     ),
     ...(regionImages.length > 0 ? { images: regionImages } : {})
   }
 }
 
-export const validateAnnotations = (
-  annotations: readonly Annotation[],
-  messageText = ''
+const validateAnnotationData = (
+  annotations: readonly Annotation[]
 ): AnnotationValidationError | undefined => {
   if (annotations.length > ANNOTATION_LIMITS.count) return 'too-many'
   let regionImageCount = 0
@@ -1048,7 +1138,11 @@ export const validateAnnotations = (
     ) {
       return 'quote-too-long'
     }
-    if (annotation.kind === 'pdf' && annotation.selector.kind === 'region') {
+    if (
+      annotation.kind === 'pdf' &&
+      annotation.selector.kind === 'region' &&
+      annotation.selector.image
+    ) {
       regionImageCount += 1
       regionImageBytes += annotation.selector.image.byteLength
     }
@@ -1060,6 +1154,15 @@ export const validateAnnotations = (
   ) {
     return 'payload-too-large'
   }
+  return undefined
+}
+
+export const validateAnnotations = (
+  annotations: readonly Annotation[],
+  messageText = ''
+): AnnotationValidationError | undefined => {
+  const error = validateAnnotationData(annotations)
+  if (error) return error
   if (annotationPayloadText(annotations).length > ANNOTATION_LIMITS.payload) {
     return 'payload-too-large'
   }
