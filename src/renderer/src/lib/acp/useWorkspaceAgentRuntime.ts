@@ -51,6 +51,7 @@ import {
   syncWorkspaceContextUsage,
   syncWorkspaceElicitationState,
   syncWorkspaceInteractionState,
+  syncWorkspaceInteractionStateFromSnapshot,
   syncWorkspacePermissionState,
   useWorkspaceRuntimeEventDrain,
   useWorkspaceRuntimeEventIngest
@@ -710,6 +711,7 @@ export {
   pendingWorkspacePermissions,
   syncWorkspaceContextUsage,
   syncWorkspaceInteractionState,
+  syncWorkspaceInteractionStateFromSnapshot,
   useWorkspaceSubagentRuntimeSession,
   useWorkspaceAgentRuntime
 }

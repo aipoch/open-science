@@ -14,7 +14,7 @@ import {
   resolveHistoryReplayTarget,
   type HistoryReplayDescriptor
 } from './history-preamble'
-import { syncWorkspaceInteractionState } from './useWorkspaceAgentRuntime'
+import { syncWorkspaceInteractionStateFromSnapshot } from './useWorkspaceAgentRuntime'
 import { acquireWorkspacePromptPreparation } from './workspace-prompt-preparation-lock'
 
 type WorkspaceElicitationRuntime = Pick<
@@ -261,8 +261,9 @@ const reviseWorkspaceElicitation = async (
     await (options.flushPersistence ?? flushSessionPersistence)()
     const snapshot = await runtime.respondToElicitation(responseToSend)
     useSessionStore.getState().clearBranchContextReset(session.id)
-    syncWorkspaceInteractionState(snapshot)
+    const acceptedSnapshot = syncWorkspaceInteractionStateFromSnapshot(snapshot)
     if (
+      acceptedSnapshot &&
       !snapshot.pendingElicitations?.some(
         (request) =>
           request.sessionId === restoredRequest.sessionId &&
@@ -380,12 +381,13 @@ const respondToWorkspaceElicitation = async (
   }
 
   const snapshot = await runtime.respondToElicitation(responseToSend)
-  syncWorkspaceInteractionState(snapshot)
+  const acceptedSnapshot = syncWorkspaceInteractionStateFromSnapshot(snapshot)
   const sessionId =
     response.request?.sessionId ??
     runtime.state.pendingElicitations?.find((request) => request.requestId === response.requestId)
       ?.sessionId
   if (
+    acceptedSnapshot &&
     sessionId &&
     !snapshot.pendingElicitations?.some(
       (request) => request.sessionId === sessionId && isDurableAgentUserChoiceRequest(request)

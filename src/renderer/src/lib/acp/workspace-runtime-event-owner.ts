@@ -34,6 +34,7 @@ import {
 const pendingPermissionSessionIds = new Set<string>()
 const pendingElicitationSessionIds = new Set<string>()
 const firstOutputWaitingSessionIds = new Set<string>()
+let agentPromptOwnershipSessionIds = new Set<string>()
 
 type RuntimeEventApplier = (event: AcpRuntimeEvent) => Promise<boolean>
 type RuntimeEventBatchApplier = (events: AcpRuntimeEvent[]) => Promise<boolean>
@@ -439,7 +440,12 @@ const liveWorkspaceRuntimeEventProcessor = createWorkspaceRuntimeEventProcessor(
     ) {
       return true
     }
-    const applied = await applyWorkspaceRuntimeEvent(event)
+    const applied = await applyWorkspaceRuntimeEvent(event, {
+      // Read current authority when the lane applies the event, not when its batch was queued.
+      agentPromptInFlight: Boolean(
+        event.sessionId && agentPromptOwnershipSessionIds.has(event.sessionId)
+      )
+    })
     if (applied && permissionLifecycleEvent) {
       for (const observer of permissionLifecycleObservers) {
         observer.onApplied(permissionLifecycleEvent)
@@ -457,12 +463,16 @@ const liveWorkspaceRuntimeEventProcessor = createWorkspaceRuntimeEventProcessor(
 // ids belong to background/runtime-only sessions; repeated snapshots must not restart the gap timer.
 const syncWorkspaceAgentFirstOutputState = (sessionIds: string[]): void => {
   const nextSessionIds = new Set(sessionIds)
+  agentPromptOwnershipSessionIds = nextSessionIds
   const store = useSessionStore.getState()
-  const workspaceSessionIds = new Set(store.sessions.map((session) => session.id))
+  const workspaceSessions = new Map(store.sessions.map((session) => [session.id, session]))
 
   for (const sessionId of nextSessionIds) {
-    if (!workspaceSessionIds.has(sessionId) || firstOutputWaitingSessionIds.has(sessionId)) continue
-    store.setAgentPromptInFlight(sessionId, true)
+    const workspaceSession = workspaceSessions.get(sessionId)
+    if (!workspaceSession) continue
+    if (!workspaceSession.agentPromptInFlight) store.setAgentPromptInFlight(sessionId, true)
+    if (firstOutputWaitingSessionIds.has(sessionId)) continue
+
     store.setAwaitingFirstAgentOutput(sessionId, true)
     firstOutputWaitingSessionIds.add(sessionId)
   }
@@ -547,6 +557,7 @@ const resetWorkspaceRuntimeEventOwnerForTests = (): void => {
   pendingPermissionSessionIds.clear()
   pendingElicitationSessionIds.clear()
   firstOutputWaitingSessionIds.clear()
+  agentPromptOwnershipSessionIds = new Set()
   resetAcpRuntimeSnapshotRevisionForTests()
 }
 
@@ -554,6 +565,14 @@ const resetWorkspaceRuntimeEventOwnerForTests = (): void => {
 // quit-persistence pulls so a delayed older snapshot cannot replay stale lifecycle authority.
 const acceptWorkspaceRuntimeSnapshot = (snapshot: Pick<AcpStateSnapshot, 'revision'>): boolean => {
   return acceptAcpRuntimeSnapshotRevision(snapshot)
+}
+
+const syncWorkspaceInteractionStateFromSnapshot = (
+  snapshot: Parameters<typeof syncWorkspaceInteractionState>[0] & Pick<AcpStateSnapshot, 'revision'>
+): boolean => {
+  if (!acceptWorkspaceRuntimeSnapshot(snapshot)) return false
+  syncWorkspaceInteractionState(snapshot)
+  return true
 }
 
 const ingestWorkspaceRuntimeSnapshot = async (
@@ -568,8 +587,8 @@ const ingestWorkspaceRuntimeSnapshot = async (
   return true
 }
 
-// Publishes prompt ownership before applying the same snapshot's events so first output can only
-// clear, never re-arm, the renderer waiting state.
+// Publishes prompt ownership before applying events. Provider stops retain that authority while
+// visible output and terminal tool transitions continue to own the first-output waiting edge.
 const processWorkspaceRuntimeEvents = (snapshot: WorkspaceRuntimeEventSnapshot): Promise<boolean> =>
   ingestWorkspaceRuntimeSnapshot(snapshot, true)
 
@@ -618,6 +637,7 @@ const useWorkspaceRuntimeEventIngest = <Runtime extends WorkspaceRuntimeEventIng
   })
   const agentPromptInFlightSessionIds =
     runtime.state.agentPromptInFlightSessionIds ?? EMPTY_AGENT_PROMPT_IN_FLIGHT_SESSION_IDS
+  const snapshotRevision = runtime.state.revision
 
   useEffect(() => {
     runtimeRef.current = runtime
@@ -639,18 +659,24 @@ const useWorkspaceRuntimeEventIngest = <Runtime extends WorkspaceRuntimeEventIng
     if (!subscribeRuntimeEvents) return
     return subscribeRuntimeEvents((events, snapshot) => {
       const currentRuntime = runtimeRef.current
-      const eventRuntime = snapshot ? { ...currentRuntime, state: snapshot } : currentRuntime
+      // Live events have no snapshot; their React fallback can also predate an accepted command.
+      const acceptedSnapshot = acceptWorkspaceRuntimeSnapshot(snapshot ?? currentRuntime.state)
+      const eventRuntime =
+        acceptedSnapshot && snapshot ? { ...currentRuntime, state: snapshot } : currentRuntime
       const acceptedEvents = [...events]
-      syncWorkspaceAgentFirstOutputState(eventRuntime.state.agentPromptInFlightSessionIds ?? [])
+      if (acceptedSnapshot) {
+        syncWorkspaceAgentFirstOutputState(eventRuntime.state.agentPromptInFlightSessionIds ?? [])
+      }
       processLifecycleEvents(eventRuntime, acceptedEvents, optionsRef.current)
       void processIncrementalWorkspaceRuntimeEvents(acceptedEvents)
     })
   }, [processLifecycleEvents, subscribeRuntimeEvents])
 
   useEffect(() => {
-    if (!subscribeRuntimeEvents) return
+    if (!subscribeRuntimeEvents || !acceptWorkspaceRuntimeSnapshot({ revision: snapshotRevision }))
+      return
     syncWorkspaceAgentFirstOutputState(agentPromptInFlightSessionIds)
-  }, [agentPromptInFlightSessionIds, subscribeRuntimeEvents])
+  }, [agentPromptInFlightSessionIds, snapshotRevision, subscribeRuntimeEvents])
 
   return Boolean(subscribeRuntimeEvents)
 }
@@ -757,6 +783,7 @@ export {
   syncWorkspaceContextUsage,
   syncWorkspaceElicitationState,
   syncWorkspaceInteractionState,
+  syncWorkspaceInteractionStateFromSnapshot,
   syncWorkspacePermissionState,
   useWorkspaceRuntimeEventDrain,
   useWorkspaceRuntimeEventIngest
