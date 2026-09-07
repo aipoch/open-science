@@ -229,6 +229,7 @@ const useSpecialistStore = create<SpecialistStore>((set) => ({
     if (useSpecialistStore.getState().integrity.status === 'degraded') {
       throw new Error(SPECIALIST_DOCUMENT_READ_ONLY_ERROR)
     }
+    let ownsSelection = true
     const result =
       typeof window.api.specialist?.selectPackage === 'function'
         ? await window.api.specialist.selectPackage()
@@ -241,6 +242,7 @@ const useSpecialistStore = create<SpecialistStore>((set) => ({
               if (!file || controller.signal.aborted) return { cancelled: true as const }
               set({ packageUploadPercent: 0 })
               return await uploadSpecialistZip(file, controller.signal, (progress) => {
+                if (controller.signal.aborted || packageUploadController !== controller) return
                 set({
                   packageUploadPercent: progress.totalBytes
                     ? Math.round((progress.receivedBytes * 100) / progress.totalBytes)
@@ -251,13 +253,14 @@ const useSpecialistStore = create<SpecialistStore>((set) => ({
               if (controller.signal.aborted) return { cancelled: true as const }
               throw error
             } finally {
-              if (packageUploadController === controller) {
+              ownsSelection = packageUploadController === controller
+              if (ownsSelection) {
                 packageUploadController = undefined
                 set({ packageUploadPercent: undefined })
               }
             }
           })()
-    set({ packagePreview: 'cancelled' in result ? undefined : result })
+    if (ownsSelection) set({ packagePreview: 'cancelled' in result ? undefined : result })
     return result
   },
 
