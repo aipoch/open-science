@@ -130,6 +130,28 @@ describe('installMermaidViewToggle', () => {
     expect(findToggle(actions)?.disabled).toBe(true)
   })
 
+  // Regression: syncButton runs inside the MutationObserver callback. An unconditional
+  // innerHTML rewrite queues another delivery forever, pegging the main thread — the app
+  // freezes and diagrams never finish rendering. After the toggle settles the installer
+  // must stop producing mutations entirely.
+  it('stops mutating the DOM once the toggle has settled', async () => {
+    rememberMermaidSource('r-9', SOURCE)
+    const { actions } = createMermaidBlock('r-9')
+    await flushMutations()
+    await flushMutations()
+    expect(findToggle(actions)).not.toBeNull()
+
+    let mutations = 0
+    const probe = new MutationObserver(() => {
+      mutations += 1
+    })
+    probe.observe(actions, { childList: true, subtree: true, attributes: true })
+    for (let round = 0; round < 5; round += 1) await flushMutations()
+    probe.disconnect()
+
+    expect(mutations).toBe(0)
+  })
+
   it('translates the label when the language changes', async () => {
     rememberMermaidSource('r-7', SOURCE)
     const { actions } = createMermaidBlock('r-7')

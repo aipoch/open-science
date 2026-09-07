@@ -35,12 +35,20 @@ const currentSource = (block: HTMLElement): string | undefined => {
 
 const syncButton = (button: HTMLButtonElement, block: HTMLElement): void => {
   const showingSource = block.getAttribute(VIEW_ATTRIBUTE) === 'source'
+  const disabled = !showingSource && currentSource(block) === undefined
+  // syncButton runs inside the MutationObserver callback. Rewriting innerHTML always replaces
+  // the child nodes — even with identical markup — which queues another delivery and loops
+  // forever on the main thread. Only touch the DOM when something actually changed.
+  const stateKey = `${showingSource ? 'source' : 'diagram'}:${disabled ? 'off' : 'on'}:${i18next.language}`
+  if (button.dataset.toggleState === stateKey) return
+  button.dataset.toggleState = stateKey
+
   button.innerHTML = showingSource ? EYE_ICON : CODE_ICON
   const label = i18next.t(showingSource ? 'View diagram' : 'View source')
   button.title = label
   button.setAttribute('aria-label', label)
   button.setAttribute('aria-pressed', String(showingSource))
-  button.disabled = !showingSource && currentSource(block) === undefined
+  button.disabled = disabled
 }
 
 const showSource = (block: HTMLElement): void => {
