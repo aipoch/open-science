@@ -298,6 +298,43 @@ describe('OfficePreviewRenderer', () => {
     }
   })
 
+  it('updates the isolated preview when the host language changes after attachment', async () => {
+    await renderPreview()
+    const frame = container.querySelector<HTMLIFrameElement>('[data-office-preview-frame]')!
+    const postMessage = vi.spyOn(frame.contentWindow!, 'postMessage')
+    await act(async () => {
+      frame.dispatchEvent(new Event('load'))
+      await flushMicrotasks()
+    })
+    await act(async () => {
+      emitState({ sessionId: 'office-session-1', phase: 'ready' })
+      await flushMicrotasks()
+    })
+    expect(attachFrame).toHaveBeenCalledOnce()
+    postMessage.mockClear()
+    try {
+      await act(async () => {
+        await i18next.changeLanguage('zh-Hans')
+        await flushMicrotasks()
+      })
+      // The installed hook returns a new i18n wrapper when its language changes.
+      expect(open).toHaveBeenCalledOnce()
+      expect(attachFrame).toHaveBeenCalledTimes(2)
+      expect(container.querySelector('[data-office-preview-frame]')).toBe(frame)
+      expect(postMessage).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: 'start',
+          start: expect.objectContaining({ locale: 'zh-Hans' })
+        }),
+        OFFICE_PREVIEW_RUNTIME_ORIGIN
+      )
+    } finally {
+      await act(async () => {
+        await i18next.changeLanguage('en')
+      })
+    }
+  })
+
   it('attaches on iframe load before relaying start and runtime state', async () => {
     await renderPreview()
     const frame = container.querySelector<HTMLIFrameElement>('[data-office-preview-frame]')
