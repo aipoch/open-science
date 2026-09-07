@@ -157,13 +157,13 @@ const textRangesForQuery = (root: HTMLElement, query: string): Range[] => {
   const normalizedText = text.toLocaleLowerCase()
   const normalizedQuery = query.toLocaleLowerCase()
   if (!normalizedQuery) return []
-  // Keep whole-string casing (for example, Greek final sigma), but map length-changing
-  // graphemes back to their original DOM character, including locale-specific combining marks.
+  // Keep whole-string casing (for example, Greek final sigma). Length-changing lowercase
+  // mappings need a base character and its combining marks together (Turkish/Lithuanian I).
+  // Unicode mark runs suffice here; full grapheme segmentation would require Intl.Segmenter
+  // in older Web browsers without improving these UTF-16 mappings.
   const originalStarts: number[] = []
   const originalEnds: number[] = []
-  for (const { segment, index } of new Intl.Segmenter(undefined, {
-    granularity: 'grapheme'
-  }).segment(text)) {
+  for (const { 0: segment, index } of text.matchAll(/\P{M}\p{M}*|\p{M}+/gu)) {
     const length = segment.toLocaleLowerCase().length
     for (let offset = 0; offset < length; offset += 1) {
       originalStarts.push(index + (length === segment.length ? offset : 0))

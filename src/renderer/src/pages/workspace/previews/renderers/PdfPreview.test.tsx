@@ -746,70 +746,74 @@ describe('PdfPreviewContent', () => {
     return input
   }
 
-  it.each([
-    { text: ['İA'], query: 'a', expected: ['A'] },
-    { text: ['İA', 'B'], query: 'ab', expected: ['AB'] },
-    { text: ['AA'], query: 'a', expected: ['A', 'A'] },
-    { text: ['A', 'B'], query: 'ab', expected: ['AB'] },
-    { text: ['İ'], query: 'i', expected: ['İ'] },
-    { text: ['İΟΣ'], query: 'ος', expected: ['ΟΣ'] },
-    { text: ['😀İA'], query: 'a', expected: ['A'] },
-    { text: ['I\u0307A'], query: 'a', expected: ['A'], locale: 'tr' },
-    { text: ['I\u0301A'], query: 'a', expected: ['A'], locale: 'lt' }
-  ])(
-    'highlights original DOM characters for $text searching $query',
-    async ({ text, query, expected, locale = 'en' }) => {
-      vi.useFakeTimers()
-      const lower = String.prototype.toLocaleLowerCase
-      vi.spyOn(String.prototype, 'toLocaleLowerCase').mockImplementation(function (this: string) {
-        return lower.call(this, locale)
-      })
-      const highlights = new Map<string, Set<Range>>()
-      vi.stubGlobal('CSS', { highlights })
-      vi.stubGlobal(
-        'Highlight',
-        class extends Set<Range> {
-          constructor(...ranges: Range[]) {
-            super(ranges)
+  describe.each([true, false])('Intl.Segmenter available: %s', (available) => {
+    it.each([
+      { text: ['İA'], query: 'a', expected: ['A'] },
+      { text: ['İA', 'B'], query: 'ab', expected: ['AB'] },
+      { text: ['AA'], query: 'a', expected: ['A', 'A'] },
+      { text: ['A', 'B'], query: 'ab', expected: ['AB'] },
+      { text: ['İ'], query: 'i', expected: ['İ'] },
+      { text: ['İΟΣ'], query: 'ος', expected: ['ΟΣ'] },
+      { text: ['😀İA'], query: 'a', expected: ['A'] },
+      { text: ['I\u0307A'], query: 'a', expected: ['A'], locale: 'tr' },
+      { text: ['I\u0301A'], query: 'a', expected: ['A'], locale: 'lt' }
+    ])(
+      'highlights original DOM characters for $text searching $query',
+      async ({ text, query, expected, locale = 'en' }) => {
+        vi.useFakeTimers()
+        if (!available)
+          vi.stubGlobal('Intl', Object.create(Intl, { Segmenter: { value: undefined } }))
+        const lower = String.prototype.toLocaleLowerCase
+        vi.spyOn(String.prototype, 'toLocaleLowerCase').mockImplementation(function (this: string) {
+          return lower.call(this, locale)
+        })
+        const highlights = new Map<string, Set<Range>>()
+        vi.stubGlobal('CSS', { highlights })
+        vi.stubGlobal(
+          'Highlight',
+          class extends Set<Range> {
+            constructor(...ranges: Range[]) {
+              super(ranges)
+            }
+          }
+        )
+        const errors: Error[] = []
+        class SearchBoundary extends Component<{ children: ReactNode }, { failed: boolean }> {
+          state = { failed: false }
+          static getDerivedStateFromError(): { failed: boolean } {
+            return { failed: true }
+          }
+          componentDidCatch(error: Error): void {
+            errors.push(error)
+          }
+          render(): ReactNode {
+            return this.state.failed ? null : this.props.children
           }
         }
-      )
-      const errors: Error[] = []
-      class SearchBoundary extends Component<{ children: ReactNode }, { failed: boolean }> {
-        state = { failed: false }
-        static getDerivedStateFromError(): { failed: boolean } {
-          return { failed: true }
-        }
-        componentDidCatch(error: Error): void {
-          errors.push(error)
-        }
-        render(): ReactNode {
-          return this.state.failed ? null : this.props.children
-        }
-      }
-      vi.spyOn(console, 'error').mockImplementation(() => undefined)
-      getPage.mockResolvedValue({
-        getViewport: () => ({ width: 600, height: 800 }),
-        getTextContent: async () => ({ items: text.map((str) => ({ str })), styles: {} }),
-        render: () => ({ promise: Promise.resolve(), cancel: vi.fn() }),
-        cleanup: vi.fn()
-      })
-      await act(async () =>
-        root.render(
-          <SearchBoundary>
-            <PdfPreviewContent path="/workspace/unicode.pdf" name="unicode.pdf" />
-          </SearchBoundary>
+        vi.spyOn(console, 'error').mockImplementation(() => undefined)
+        getPage.mockResolvedValue({
+          getViewport: () => ({ width: 600, height: 800 }),
+          getTextContent: async () => ({ items: text.map((str) => ({ str })), styles: {} }),
+          render: () => ({ promise: Promise.resolve(), cancel: vi.fn() }),
+          cleanup: vi.fn()
+        })
+        await act(async () =>
+          root.render(
+            <SearchBoundary>
+              <PdfPreviewContent path="/workspace/unicode.pdf" name="unicode.pdf" />
+            </SearchBoundary>
+          )
         )
-      )
-      expect(container.querySelector('[data-pdf-text-layer]')?.textContent).toBe(text.join(''))
-      const input = await openSearch(query)
-      expect(errors.map((error) => error.name)).toEqual([])
-      expect(input.parentElement?.textContent).toContain(`1/${expected.length}`)
-      expect(
-        Array.from(highlights.get('pdf-search-results') ?? [], (range) => range.toString())
-      ).toEqual(expected)
-    }
-  )
+        expect(container.querySelector('[data-pdf-text-layer]')?.textContent).toBe(text.join(''))
+        const input = await openSearch(query)
+        expect(errors.map((error) => error.name)).toEqual([])
+        expect(input.parentElement?.textContent).toContain(`1/${expected.length}`)
+        expect(
+          Array.from(highlights.get('pdf-search-results') ?? [], (range) => range.toString())
+        ).toEqual(expected)
+      }
+    )
+  })
 
   it.each(['first', 'next'])('reveals the %s match inside a tall PDF page', async (target) => {
     vi.useFakeTimers()
