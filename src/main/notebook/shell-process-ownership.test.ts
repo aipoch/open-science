@@ -8,7 +8,7 @@ import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { registerOwnedPosixProcessGroup } from '../process-tree'
-import { ShellProcessOwnershipRegistry } from './shell-process-ownership'
+import { ShellProcessOwnershipRegistry } from './shell-process-ownership.windows-posix'
 import type { ChildProcess } from 'node:child_process'
 
 vi.mock('node:fs', async (importOriginal) => ({

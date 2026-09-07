@@ -1,7 +1,7 @@
 import type { ChildProcess } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import * as processTree from '../process-tree'
-import { ShellProcessOwnershipRegistry } from './shell-process-ownership'
+import { ShellProcessOwnershipRegistry } from './shell-process-ownership.windows-posix'
 import { mkdtemp, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'

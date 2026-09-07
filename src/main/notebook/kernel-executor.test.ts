@@ -36,7 +36,7 @@ import type { NotebookExecutionRequest, NotebookExecutionResult } from './runtim
 import { NotebookHelperModuleHost } from './helper-module-host'
 import { NotebookNetworkSandboxOwner } from './network-sandbox-owner'
 import { DEFAULT_NOTEBOOK_NETWORK_SETTINGS } from '../../shared/notebook-network'
-import { KernelProcessLifecycleOwner } from './kernel-process-lifecycle'
+import { KernelProcessLifecycleOwner } from './kernel-process-lifecycle.windows-posix'
 
 // -- TimeoutController: pure state machine, driven with fake timers + a signal recorder. ------------
 

@@ -34,7 +34,7 @@ import {
 import { resolveProjectId } from '../../shared/project-scope'
 import { reconcileWorkingFileEvidence } from './working-file-observer'
 import { createLogger, diagnosticErrorFields } from '../logger'
-import type { KernelProcessLifecycleOwner } from './kernel-process-lifecycle'
+import type { KernelProcessLifecycleOwner } from './kernel-process-lifecycle.windows-posix'
 
 type RuntimeSession = NotebookSessionAggregate
 const log = createLogger('notebook:file-evidence-lifecycle')

@@ -82,7 +82,7 @@ import type {
   KernelProcessLifecycleOwner,
   KernelProcessReceipt,
   KernelProcessSpawnIntent
-} from './kernel-process-lifecycle'
+} from './kernel-process-lifecycle.windows-posix'
 import { readProcessStartToken } from './operation-recovery'
 
 // Driver-internal process kind. 'python'/'r' are the data kernels selected by the agent-facing

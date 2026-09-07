@@ -5,7 +5,7 @@ import { join } from 'node:path'
 import { Prisma, PrismaClient } from '@prisma/client'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
-import { migrateApplicationDatabase } from './migration-service'
+import { createProjectDbClient, migrateApplicationDatabase } from '../projects/prisma-client'
 
 describe('BackgroundResultDelivery migration', () => {
   let root: string
@@ -13,8 +13,7 @@ describe('BackgroundResultDelivery migration', () => {
 
   beforeEach(async () => {
     root = await mkdtemp(join(tmpdir(), 'open-science-background-result-delivery-'))
-    const databasePath = join(root, 'open-science.db').replaceAll('\\', '/')
-    client = new PrismaClient({ datasources: { db: { url: `file:${databasePath}` } } })
+    client = createProjectDbClient(root)
     await migrateApplicationDatabase(client)
   })
 

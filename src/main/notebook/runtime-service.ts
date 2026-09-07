@@ -61,7 +61,7 @@ import type { NotebookKernelExecutorOptions } from './kernel-executor'
 import { saveIpynbAll } from './save-ipynb-all'
 import { englishNativeTranslator, type NativeTranslator } from '../locale/main-process-messages'
 import type { ProbeDeps } from './mirror-probe'
-import { detachedShellMechanism } from './shell-detachment-policy'
+import { detachedShellMechanism } from './shell-detachment-policy.windows-posix'
 import {
   installPackages as installPackagesDefault,
   type InstallDeps,
@@ -97,7 +97,7 @@ import type {
 } from '../../shared/notebook-runtime'
 import type { NotebookRuntimeSettings } from '../settings/capabilities'
 import { NotebookRecoveryCoordinator } from './recovery-coordinator'
-import { KernelProcessLifecycleOwner } from './kernel-process-lifecycle'
+import { KernelProcessLifecycleOwner } from './kernel-process-lifecycle.windows-posix'
 import { managedNotebookWorkingCache } from './windows-micromamba-working-cache'
 import { NotebookRuntimeRepairOwner, type ExplicitRuntimeRepairTarget } from './runtime-repair'
 import { NotebookRuntimeRepairPolicy } from './runtime-repair-policy'
@@ -121,7 +121,7 @@ import { resolveProjectId, type ProjectIdScope } from '../../shared/project-scop
 import { NotebookRunTerminalizationOwner } from './run-terminalization'
 import type { NotebookShellProcess, NotebookShellResult } from './shell-process'
 import { NotebookShellProcessAdapter } from './shell-process'
-import { ShellProcessOwnershipRegistry } from './shell-process-ownership'
+import { ShellProcessOwnershipRegistry } from './shell-process-ownership.windows-posix'
 import type { NotebookProcessSandbox } from './process-sandbox'
 import { sandboxedPackageSpawn } from './package-process-sandbox'
 import {

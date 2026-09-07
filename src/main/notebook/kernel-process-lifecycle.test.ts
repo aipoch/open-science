@@ -5,7 +5,10 @@ import { join } from 'node:path'
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import { defaultController, KernelProcessLifecycleOwner } from './kernel-process-lifecycle'
+import {
+  defaultController,
+  KernelProcessLifecycleOwner
+} from './kernel-process-lifecycle.windows-posix'
 import { readProcessStartToken } from './operation-recovery'
 
 const processIsAlive = (pid: number): boolean => {
