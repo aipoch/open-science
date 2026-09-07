@@ -8,6 +8,8 @@ import type { PersistedChatSession } from '../../../../shared/session-persistenc
 import { createInitialSessionJobState, useSessionJobStore } from '../../stores/session-job-store'
 import { createInitialSessionState, useSessionStore } from '../../stores/session-store'
 import { useJobAnalysisEffect } from './useJobAnalysisEffect'
+import { buildAnalysisPrompt } from './job-analysis-trigger'
+import { sendWorkspaceMessage } from '../acp/workspace-runtime-command-owner'
 
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
@@ -40,14 +42,45 @@ describe('useJobAnalysisEffect persistence readiness', () => {
   let root: Root
   type AnalysisSendMessage = Parameters<typeof useJobAnalysisEffect>[0]['sendMessage']
 
-  const sendMessage = vi.fn(async (input: Parameters<AnalysisSendMessage>[0]) => {
-    const sessionId = input.sessionId ?? 'session-1'
+  const recordAnalysisRun = (input: Parameters<AnalysisSendMessage>[0]): void => {
+    const messageId = input.messageId ?? 'message-1'
     useSessionStore.setState((state) => ({
       sessions: state.sessions.map((session) =>
-        session.id === sessionId ? { ...session, status: 'running' } : session
+        session.id === (input.sessionId ?? 'session-1')
+          ? {
+              ...session,
+              status: 'running',
+              activeRun: { promptMessageId: messageId, startedAt: 1400 },
+              messages: [
+                ...session.messages.filter((message) => message.id !== messageId),
+                {
+                  id: messageId,
+                  role: 'user',
+                  content: input.text,
+                  status: 'complete',
+                  eventIds: [],
+                  createdAt: 1400,
+                  updatedAt: 1400
+                },
+                {
+                  id: `${messageId}-reply`,
+                  role: 'agent',
+                  responseToMessageId: messageId,
+                  content: 'Analysis in progress',
+                  status: 'streaming',
+                  eventIds: [],
+                  createdAt: 1500,
+                  updatedAt: 1500
+                }
+              ]
+            }
+          : session
       )
     }))
-    return { sessionId, messageId: input.messageId ?? 'message-1' }
+  }
+  const sendMessage = vi.fn(async (input: Parameters<AnalysisSendMessage>[0]) => {
+    recordAnalysisRun(input)
+    return { sessionId: input.sessionId ?? 'session-1', messageId: input.messageId ?? 'message-1' }
   })
   const jobsPendingNotification = vi.fn().mockResolvedValue([makeCompletedJob()])
   const jobsMarkConsumed = vi.fn().mockResolvedValue(undefined)
@@ -88,7 +121,9 @@ describe('useJobAnalysisEffect persistence readiness', () => {
         ...(request.state === 'succeeded' ? { notification_consumed_at: 1500 } : {})
       })
     ])
-    jobsList.mockClear()
+    jobsList
+      .mockReset()
+      .mockImplementation(async () => [...useSessionJobStore.getState().jobsById.values()])
     loadOne.mockReset().mockResolvedValue(undefined)
     useSessionJobStore.setState({
       ...createInitialSessionJobState(),
@@ -125,6 +160,461 @@ describe('useJobAnalysisEffect persistence readiness', () => {
     vi.useRealTimers()
     act(() => root.unmount())
     container.remove()
+  })
+
+  it.each([
+    'unchanged input',
+    'reordered jobs',
+    'changed output files',
+    'missing attribution',
+    'inactive branch'
+  ])('reuses the saved batch prompt through runtime admission after %s', async (change) => {
+    const messageId = 'analysis-saved-batch'
+    const first = makeCompletedJob({ job_id: 'first-job', featured_files: ['original.csv'] })
+    const second = makeCompletedJob({ job_id: 'second-job' })
+    const originalText = buildAnalysisPrompt([first, second])
+    const recovered =
+      change === 'reordered jobs'
+        ? [second, first]
+        : change === 'changed output files'
+          ? [{ ...first, featured_files: ['new.csv', 'original.csv'] }, second]
+          : [first, second]
+    jobsPendingNotification.mockResolvedValueOnce(
+      recovered.map((job) => ({
+        ...job,
+        analysis_state: 'dispatched',
+        analysis_message_id: messageId
+      }))
+    )
+    useSessionStore.setState((state) => ({
+      sessions: state.sessions.map((session) => ({
+        ...session,
+        messages: [
+          {
+            id: messageId,
+            role: 'user',
+            content: originalText,
+            status: 'complete',
+            eventIds: [],
+            createdAt: 1400,
+            updatedAt: 1400,
+            attribution: {
+              kind: 'application',
+              feature: 'compute',
+              purpose: 'job-completion-analysis',
+              deliveryKey: 'compute_done:session-1:first-job,second-job',
+              jobIds: ['first-job', 'second-job']
+            }
+          }
+        ]
+      }))
+    }))
+    if (change === 'missing attribution') {
+      useSessionStore.setState((state) => ({
+        sessions: state.sessions.map((session) => ({
+          ...session,
+          messages: session.messages.map((message) => ({ ...message, attribution: undefined }))
+        }))
+      }))
+    }
+    if (change === 'inactive branch') {
+      useSessionStore.getState().finishRun('session-1')
+      useSessionStore.getState().truncateSessionFromMessage('session-1', messageId)
+      expect(useSessionStore.getState().sessions[0]!.messages).toEqual([])
+    }
+    const runtime: Parameters<typeof sendWorkspaceMessage>[0] = {
+      state: {
+        status: 'connected',
+        cwd: '/workspace/project-a',
+        sessionIds: ['session-1'],
+        events: [],
+        pendingPermissions: [],
+        permissionProfiles: {},
+        permissionGrants: {},
+        contextUsageBySession: {},
+        promptInFlight: false,
+        promptInFlightSessionIds: []
+      },
+      createSession: vi.fn(),
+      resumeSession: vi.fn(),
+      resetSessionContext: vi.fn(),
+      sendPrompt: vi.fn().mockResolvedValue(undefined)
+    }
+    window.api.sessions.saveSession = vi.fn(async (session) => session)
+    const admission = vi.fn<AnalysisSendMessage>((input) =>
+      sendWorkspaceMessage(runtime, {
+        ...input,
+        agentFrameworkId: 'claude-code'
+      })
+    )
+
+    await act(async () => root.render(<Probe enabled onSendMessage={admission} />))
+
+    expect(admission).toHaveBeenCalledOnce()
+    expect
+      .soft(await admission.mock.results[0]?.value)
+      .toEqual({ sessionId: 'session-1', messageId })
+    expect.soft(admission.mock.calls[0]?.[0].text).toBe(originalText)
+    expect.soft(runtime.sendPrompt).toHaveBeenCalledOnce()
+    expect(jobsTransitionAnalysis).not.toHaveBeenCalledWith(
+      expect.objectContaining({ state: 'failed' })
+    )
+  })
+
+  it('settles the completed analysis independently of a later failing user turn', async () => {
+    jobsPendingNotification.mockResolvedValueOnce([])
+    let accept!: () => void
+    let analysisMessageId!: string
+    const admission = vi.fn<AnalysisSendMessage>((input) => {
+      analysisMessageId = input.messageId!
+      return new Promise((resolve) => {
+        accept = () => resolve({ sessionId: 'session-1', messageId: analysisMessageId })
+      })
+    })
+    await act(async () => root.render(<Probe enabled onSendMessage={admission} />))
+    await act(async () => useSessionJobStore.getState().applyUpdate(makeCompletedJob()))
+    expect(admission).toHaveBeenCalledOnce()
+    await act(async () => {
+      useSessionStore.setState((state) => ({
+        sessions: state.sessions.map((session) => ({
+          ...session,
+          status: 'running',
+          activeRun: { promptMessageId: 'later-user-message', startedAt: 1600 },
+          messages: [
+            {
+              id: analysisMessageId,
+              role: 'user',
+              content: admission.mock.calls[0]![0].text,
+              status: 'complete',
+              eventIds: [],
+              createdAt: 1400,
+              updatedAt: 1400
+            },
+            {
+              id: 'analysis-reply',
+              role: 'agent',
+              responseToMessageId: analysisMessageId,
+              content: 'Completed analysis',
+              status: 'complete',
+              eventIds: [],
+              createdAt: 1500,
+              updatedAt: 1500
+            },
+            {
+              id: 'later-user-message',
+              role: 'user',
+              content: 'An unrelated request',
+              status: 'complete',
+              eventIds: [],
+              createdAt: 1600,
+              updatedAt: 1600
+            }
+          ]
+        }))
+      }))
+      accept()
+    })
+    await act(async () => {
+      useSessionStore.getState().failRun('session-1', 'Later turn failed')
+    })
+    expect(jobsTransitionAnalysis).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        messageId: analysisMessageId,
+        state: 'succeeded'
+      })
+    )
+    expect(jobsTransitionAnalysis).not.toHaveBeenCalledWith(
+      expect.objectContaining({ state: 'failed' })
+    )
+  })
+
+  it('retries a transient recovered Session read without terminalizing the analysis', async () => {
+    vi.useFakeTimers()
+    const messageId = 'analysis-read-retry'
+    jobsPendingNotification.mockResolvedValueOnce([
+      makeCompletedJob({
+        analysis_state: 'dispatched',
+        analysis_message_id: messageId
+      })
+    ])
+    const session = useSessionStore.getState().sessions[0]!
+    useSessionStore.setState({ sessions: [{ ...session, contentLoaded: false }] })
+    loadOne.mockRejectedValueOnce(new Error('Temporary local read failure')).mockResolvedValue({
+      ...session,
+      messages: [
+        {
+          id: messageId,
+          role: 'user',
+          content: 'Saved analysis',
+          status: 'complete',
+          eventIds: [],
+          createdAt: 1400,
+          updatedAt: 1400
+        },
+        {
+          id: 'saved-reply',
+          role: 'agent',
+          responseToMessageId: messageId,
+          content: 'Done',
+          status: 'complete',
+          eventIds: [],
+          createdAt: 1500,
+          updatedAt: 1500
+        }
+      ]
+    })
+    await act(async () => root.render(<Probe enabled />))
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1000)
+    })
+
+    expect(sendMessage).not.toHaveBeenCalled()
+    expect(jobsTransitionAnalysis).not.toHaveBeenCalledWith(
+      expect.objectContaining({ state: 'failed' })
+    )
+    expect(loadOne).toHaveBeenCalledTimes(2)
+    expect(jobsTransitionAnalysis).toHaveBeenLastCalledWith(
+      expect.objectContaining({ messageId, state: 'succeeded' })
+    )
+  })
+
+  it('preserves cancellation when a recovered analysis has a partial error reply', async () => {
+    const messageId = 'analysis-cancelled-with-output'
+    jobsPendingNotification.mockResolvedValueOnce([
+      makeCompletedJob({
+        analysis_state: 'dispatched',
+        analysis_message_id: messageId
+      })
+    ])
+    useSessionStore.setState((state) => ({
+      sessions: state.sessions.map((session) => ({
+        ...session,
+        status: 'error',
+        resumeRecovery: { kind: 'resume-required', cause: 'cancelled', promptMessageId: messageId },
+        messages: [
+          {
+            id: messageId,
+            role: 'user',
+            content: 'Saved analysis',
+            status: 'complete',
+            eventIds: [],
+            createdAt: 1400,
+            updatedAt: 1400
+          },
+          {
+            id: 'partial-reply',
+            role: 'agent',
+            responseToMessageId: messageId,
+            content: 'Partial analysis',
+            status: 'error',
+            eventIds: [],
+            createdAt: 1500,
+            updatedAt: 1500
+          }
+        ]
+      }))
+    }))
+    await act(async () => root.render(<Probe enabled />))
+
+    expect(sendMessage).not.toHaveBeenCalled()
+    expect(jobsTransitionAnalysis).toHaveBeenLastCalledWith(
+      expect.objectContaining({ messageId, state: 'cancelled' })
+    )
+  })
+
+  it.each([
+    'wrong job',
+    'wrong session',
+    'wrong message',
+    'incomplete batch',
+    'wrong role',
+    'wrong attribution'
+  ])('rejects reuse of a saved prompt with %s', async (mismatch) => {
+    const messageId = 'analysis-bound'
+    const job = makeCompletedJob({ analysis_state: 'dispatched', analysis_message_id: messageId })
+    jobsPendingNotification.mockResolvedValueOnce([job])
+    jobsList.mockResolvedValue([
+      {
+        ...job,
+        ...(mismatch === 'wrong job' ? { job_id: 'different-job' } : {}),
+        ...(mismatch === 'wrong session' ? { session_id: 'different-session' } : {}),
+        ...(mismatch === 'wrong message' ? { analysis_message_id: 'different-message' } : {})
+      },
+      ...(mismatch === 'incomplete batch' ? [{ ...job, job_id: 'unscanned-job' }] : [])
+    ])
+    useSessionStore.setState((state) => ({
+      sessions: state.sessions.map((session) => ({
+        ...session,
+        messages: [
+          {
+            id: messageId,
+            role: mismatch === 'wrong role' ? 'agent' : 'user',
+            content: 'Saved original',
+            status: 'complete',
+            eventIds: [],
+            createdAt: 1400,
+            updatedAt: 1400,
+            ...(mismatch === 'wrong attribution'
+              ? {
+                  attribution: {
+                    kind: 'application' as const,
+                    feature: 'compute' as const,
+                    purpose: 'job-completion-analysis' as const,
+                    deliveryKey: 'compute_done:session-1:other-job',
+                    jobIds: ['other-job']
+                  }
+                }
+              : {})
+          }
+        ]
+      }))
+    }))
+    await act(async () => root.render(<Probe enabled />))
+    expect(sendMessage).not.toHaveBeenCalled()
+    expect(jobsTransitionAnalysis).toHaveBeenLastCalledWith(
+      expect.objectContaining({ messageId, state: 'failed' })
+    )
+  })
+
+  it('reads completed analysis on an inactive branch without switching the visible branch', async () => {
+    const messageId = 'analysis-inactive-complete'
+    recordAnalysisRun({ sessionId: 'session-1', messageId, text: 'Saved analysis' })
+    useSessionStore.getState().finishRun('session-1')
+    useSessionStore.getState().truncateSessionFromMessage('session-1', messageId)
+    const graph = useSessionStore.getState().sessions[0]!.conversationGraph
+    jobsPendingNotification.mockResolvedValueOnce([
+      makeCompletedJob({ analysis_state: 'dispatched', analysis_message_id: messageId })
+    ])
+    await act(async () => root.render(<Probe enabled />))
+    expect(sendMessage).not.toHaveBeenCalled()
+    expect(jobsTransitionAnalysis).toHaveBeenLastCalledWith(
+      expect.objectContaining({ messageId, state: 'succeeded' })
+    )
+    expect(useSessionStore.getState().sessions[0]!.conversationGraph).toBe(graph)
+    expect(useSessionStore.getState().sessions[0]!.messages).toEqual([])
+  })
+
+  it('ignores unrelated outcomes while the matching analysis has no terminal evidence', async () => {
+    jobsPendingNotification.mockResolvedValueOnce([])
+    await act(async () => root.render(<Probe enabled />))
+    await act(async () => useSessionJobStore.getState().applyUpdate(makeCompletedJob()))
+    const messageId = sendMessage.mock.calls[0]![0].messageId!
+    await act(async () => {
+      useSessionStore.setState((state) => ({
+        sessions: state.sessions.map((session) => ({
+          ...session,
+          status: 'error',
+          activeRun: undefined,
+          resumeRecovery: {
+            kind: 'resume-required',
+            cause: 'cancelled',
+            promptMessageId: 'unrelated-message'
+          }
+        }))
+      }))
+    })
+    expect(jobsTransitionAnalysis).toHaveBeenCalledTimes(1)
+    await act(async () => {
+      useSessionStore.getState().interruptRun('session-1', 'cancelled', 'Stopped', messageId)
+    })
+    expect(jobsTransitionAnalysis).toHaveBeenLastCalledWith(
+      expect.objectContaining({ messageId, state: 'cancelled' })
+    )
+    const count = jobsTransitionAnalysis.mock.calls.length
+    await act(async () => useSessionStore.getState().finishRun('session-1'))
+    expect(jobsTransitionAnalysis).toHaveBeenCalledTimes(count)
+  })
+
+  it.each(['succeeded', 'failed'] as const)(
+    'settles an observed analysis %s even when it produced no text reply',
+    async (outcome) => {
+      jobsPendingNotification.mockResolvedValueOnce([])
+      const admission = vi.fn<AnalysisSendMessage>(async (input) => {
+        recordAnalysisRun(input)
+        useSessionStore.setState((state) => ({
+          sessions: state.sessions.map((session) => ({
+            ...session,
+            messages: session.messages.filter((message) => message.role !== 'agent')
+          }))
+        }))
+        return { sessionId: 'session-1', messageId: input.messageId! }
+      })
+      await act(async () => root.render(<Probe enabled onSendMessage={admission} />))
+      await act(async () => useSessionJobStore.getState().applyUpdate(makeCompletedJob()))
+      expect(admission).toHaveBeenCalledOnce()
+      await act(async () => {
+        if (outcome === 'failed')
+          useSessionStore.getState().failRun('session-1', 'Provider failed before output')
+        else useSessionStore.getState().finishRun('session-1')
+      })
+      expect(jobsTransitionAnalysis).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          messageId: admission.mock.calls[0]![0].messageId,
+          state: outcome
+        })
+      )
+    }
+  )
+
+  it('waits for a rearmed analysis despite an old partial error reply', async () => {
+    const messageId = 'analysis-rearmed'
+    recordAnalysisRun({ sessionId: 'session-1', messageId, text: 'Saved analysis' })
+    useSessionStore.setState((state) => ({
+      sessions: state.sessions.map((session) => ({
+        ...session,
+        messages: session.messages.map((message) =>
+          message.role === 'agent' ? { ...message, status: 'error' } : message
+        )
+      }))
+    }))
+    jobsPendingNotification.mockResolvedValueOnce([
+      makeCompletedJob({ analysis_state: 'dispatched', analysis_message_id: messageId })
+    ])
+    await act(async () => root.render(<Probe enabled />))
+    expect(sendMessage).not.toHaveBeenCalled()
+    expect(jobsTransitionAnalysis).not.toHaveBeenCalled()
+    await act(async () =>
+      useSessionStore.getState().interruptRun('session-1', 'cancelled', 'Stopped', messageId)
+    )
+    expect(jobsTransitionAnalysis).toHaveBeenLastCalledWith(
+      expect.objectContaining({ state: 'cancelled' })
+    )
+  })
+
+  it('retries a failed batch read with the saved message identity', async () => {
+    vi.useFakeTimers()
+    const messageId = 'analysis-batch-read'
+    const job = makeCompletedJob({ analysis_state: 'dispatched', analysis_message_id: messageId })
+    jobsPendingNotification.mockResolvedValueOnce([job])
+    jobsList
+      .mockRejectedValueOnce(new Error('Temporary batch read failure'))
+      .mockResolvedValue([job])
+    useSessionStore.setState((state) => ({
+      sessions: state.sessions.map((session) => ({
+        ...session,
+        messages: [
+          {
+            id: messageId,
+            role: 'user',
+            content: 'Saved original',
+            status: 'complete',
+            eventIds: [],
+            createdAt: 1400,
+            updatedAt: 1400
+          }
+        ]
+      }))
+    }))
+    await act(async () => root.render(<Probe enabled />))
+    expect(jobsTransitionAnalysis).not.toHaveBeenCalled()
+    expect(sendMessage).not.toHaveBeenCalled()
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1000)
+    })
+    expect(sendMessage).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ messageId, text: 'Saved original' })
+    )
+    expect(jobsTransitionAnalysis).not.toHaveBeenCalled()
   })
 
   it('does not start job analysis while Session persistence is not ready', async () => {
@@ -205,13 +695,7 @@ describe('useJobAnalysisEffect persistence readiness', () => {
     )
 
     await act(async () => root.render(<Probe enabled={false} />))
-    act(() => {
-      useSessionStore.setState((state) => ({
-        sessions: state.sessions.map((session) =>
-          session.id === 'session-1' ? { ...session, status: 'idle' } : session
-        )
-      }))
-    })
+    act(() => useSessionStore.getState().finishRun('session-1'))
     await act(async () => new Promise((resolve) => setTimeout(resolve, 0)))
 
     expect(sendMessage).toHaveBeenCalledOnce()
@@ -236,11 +720,7 @@ describe('useJobAnalysisEffect persistence readiness', () => {
       ]
     })
     const firstSend = vi.fn<AnalysisSendMessage>(async (input) => {
-      useSessionStore.setState((state) => ({
-        sessions: state.sessions.map((session) =>
-          session.id === 'session-1' ? { ...session, status: 'running' } : session
-        )
-      }))
+      recordAnalysisRun(input)
       return { sessionId: 'session-1', messageId: input.messageId ?? 'message-1' }
     })
     const replacementSend = vi.fn<AnalysisSendMessage>(async (input) => ({
@@ -254,13 +734,7 @@ describe('useJobAnalysisEffect persistence readiness', () => {
     expect(firstSend).toHaveBeenCalledOnce()
 
     await act(async () => root.render(<Probe enabled onSendMessage={replacementSend} />))
-    act(() => {
-      useSessionStore.setState((state) => ({
-        sessions: state.sessions.map((session) =>
-          session.id === 'session-1' ? { ...session, status: 'idle' } : session
-        )
-      }))
-    })
+    act(() => useSessionStore.getState().finishRun('session-1'))
     await act(async () => new Promise((resolve) => setTimeout(resolve, 0)))
 
     expect(firstSend).toHaveBeenCalledOnce()
@@ -273,16 +747,8 @@ describe('useJobAnalysisEffect persistence readiness', () => {
   it('settles when the analysis turn ends before its completion listener is registered', async () => {
     jobsPendingNotification.mockResolvedValueOnce([])
     const immediateSend = vi.fn<AnalysisSendMessage>(async (input) => {
-      useSessionStore.setState((state) => ({
-        sessions: state.sessions.map((session) =>
-          session.id === 'session-1' ? { ...session, status: 'running' } : session
-        )
-      }))
-      useSessionStore.setState((state) => ({
-        sessions: state.sessions.map((session) =>
-          session.id === 'session-1' ? { ...session, status: 'idle' } : session
-        )
-      }))
+      recordAnalysisRun(input)
+      useSessionStore.getState().finishRun('session-1')
       return { sessionId: 'session-1', messageId: input.messageId ?? 'message-1' }
     })
 
@@ -370,18 +836,22 @@ describe('useJobAnalysisEffect persistence readiness', () => {
     await act(async () => Promise.resolve())
 
     expect(sendMessage).not.toHaveBeenCalled()
-    expect(useSessionStore.getState().sessions[0]?.messages).toEqual([
-      expect.objectContaining({ id: 'local-message', content: 'A newer local edit' })
-    ])
+    expect(useSessionStore.getState().sessions[0]?.messages).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: 'local-message', content: 'A newer local edit' })
+      ])
+    )
 
     await act(async () => {
       await vi.advanceTimersByTimeAsync(250)
     })
 
     expect(sendMessage).toHaveBeenCalledOnce()
-    expect(useSessionStore.getState().sessions[0]?.messages).toEqual([
-      expect.objectContaining({ id: 'local-message', content: 'A newer local edit' })
-    ])
+    expect(useSessionStore.getState().sessions[0]?.messages).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: 'local-message', content: 'A newer local edit' })
+      ])
+    )
   })
 
   it('recovers pending analysis across all Sessions from the App-level owner', async () => {
@@ -462,7 +932,9 @@ describe('useJobAnalysisEffect persistence readiness', () => {
     expect(hydratedBackground).toMatchObject({
       cwd: '/workspace/project-a',
       agentConfiguration: persistedBackground.agentConfiguration,
-      messages: [{ id: 'earlier-message', content: 'Earlier question' }]
+      messages: expect.arrayContaining([
+        expect.objectContaining({ id: 'earlier-message', content: 'Earlier question' })
+      ])
     })
   })
 
@@ -520,18 +992,7 @@ describe('useJobAnalysisEffect persistence readiness', () => {
     await act(async () => new Promise((resolve) => setTimeout(resolve, 0)))
 
     expect(sendMessage).toHaveBeenCalledOnce()
-    act(() => {
-      useSessionStore.setState((state) => ({
-        sessions: state.sessions.map((session) =>
-          session.id === 'session-1' ? { ...session, status: 'running' } : session
-        )
-      }))
-      useSessionStore.setState((state) => ({
-        sessions: state.sessions.map((session) =>
-          session.id === 'session-1' ? { ...session, status: 'idle' } : session
-        )
-      }))
-    })
+    act(() => useSessionStore.getState().finishRun('session-1'))
     await act(async () => new Promise((resolve) => setTimeout(resolve, 0)))
 
     expect(jobsTransitionAnalysis).toHaveBeenLastCalledWith(
@@ -554,20 +1015,7 @@ describe('useJobAnalysisEffect persistence readiness', () => {
     await act(async () => new Promise((resolve) => setTimeout(resolve, 0)))
 
     expect(sendMessage).toHaveBeenCalledOnce()
-    act(() => {
-      useSessionStore.setState((state) => ({
-        sessions: state.sessions.map((session) =>
-          session.id === 'session-1' ? { ...session, status: 'running' } : session
-        )
-      }))
-      useSessionStore.setState((state) => ({
-        sessions: state.sessions.map((session) =>
-          session.id === 'session-1'
-            ? { ...session, status: 'error', error: 'Analysis turn failed' }
-            : session
-        )
-      }))
-    })
+    act(() => useSessionStore.getState().failRun('session-1', 'Analysis turn failed'))
     await act(async () => new Promise((resolve) => setTimeout(resolve, 0)))
 
     expect(jobsTransitionAnalysis).toHaveBeenLastCalledWith(
