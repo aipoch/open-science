@@ -3903,8 +3903,19 @@ describe('LiteratureLibraryPage', () => {
   })
 
   it('filters and moves the current view to Trash', async () => {
-    search.mockImplementation((request: { scope: string }) =>
-      Promise.resolve(request.scope === 'library' ? { entries: [libraryItem] } : { entries: [] })
+    let resolveFilteredSearch!: (page: { entries: (typeof libraryItem)[] }) => void
+    const filteredSearch = new Promise<{ entries: (typeof libraryItem)[] }>((resolve) => {
+      resolveFilteredSearch = resolve
+    })
+    search.mockImplementation(
+      (request: { scope: string; filter?: { yearFrom?: number; hasFullText?: boolean } }) => {
+        if (request.filter?.yearFrom === 2020 && request.filter.hasFullText === true) {
+          return filteredSearch
+        }
+        return Promise.resolve(
+          request.scope === 'library' ? { entries: [libraryItem] } : { entries: [] }
+        )
+      }
     )
 
     render(<LiteratureLibraryPage />)
@@ -3929,7 +3940,11 @@ describe('LiteratureLibraryPage', () => {
       )
     )
 
-    fireEvent.click(screen.getByLabelText('Select Corrective Retrieval Augmented Generation'))
+    // The search call can be observed before its response renders the filtered row.
+    setTimeout(() => resolveFilteredSearch({ entries: [libraryItem] }), 0)
+    fireEvent.click(
+      await screen.findByLabelText('Select Corrective Retrieval Augmented Generation')
+    )
     expect(screen.queryByLabelText('Sort references')).toBeNull()
     expect(screen.getByRole('button', { name: 'Clear selection' })).not.toBeNull()
     const actionRail = document.querySelector<HTMLElement>('[data-slot="literature-action-rail"]')
