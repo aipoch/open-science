@@ -111,11 +111,14 @@ describe('Side chat IPC', () => {
     await handlers.get('side-chat:cancel')?.(undefined, { sideSessionId: 'side-1' } as never)
     await handlers.get('side-chat:close')?.(undefined, { sideSessionId: 'side-1' } as never)
 
-    expect(runtime.send).toHaveBeenCalledWith({
-      sideSessionId: 'side-1',
-      text: 'Follow up',
-      historyPreamble: expect.stringContaining('Latest Main output.')
-    })
+    expect(runtime.send).toHaveBeenCalledWith(
+      {
+        sideSessionId: 'side-1',
+        text: 'Follow up',
+        historyPreamble: expect.stringContaining('Latest Main output.')
+      },
+      expect.any(AbortController)
+    )
     expect(runtime.cancel).toHaveBeenCalledWith({ sideSessionId: 'side-1' })
     expect(runtime.close).toHaveBeenCalledWith({ sideSessionId: 'side-1' })
   })
@@ -237,4 +240,95 @@ describe('Side chat IPC', () => {
     expect(runtime.closeForParent).toHaveBeenCalledWith('main-1')
     expect(runtime.closeActiveForParent).not.toHaveBeenCalled()
   })
+})
+
+it('cancels a follow-up while the latest parent snapshot is still loading', async () => {
+  let loaded!: () => void
+  const loading = new Promise<void>((resolve) => {
+    loaded = resolve
+  })
+  const runtime = {
+    parentFor: () => ({ parentSessionId: 'main-1', projectId: 'project-1' }),
+    send: vi.fn(),
+    cancel: vi.fn()
+  }
+  registerSideChatIpcHandlers(runtime as never, {
+    loadParentSession: vi.fn(async () => {
+      await loading
+      return undefined
+    }),
+    hasLiveParentSession: () => true,
+    withParentAvailable: async (_sessionId, operation) => operation()
+  })
+  const sending = (
+    handlers.get('side-chat:send')!(undefined, {
+      sideSessionId: 'side-1',
+      text: 'Cancel this'
+    } as never) as Promise<unknown>
+  ).catch((error: unknown) => error)
+  await handlers.get('side-chat:cancel')!(undefined, { sideSessionId: 'side-1' } as never)
+  loaded()
+  await sending
+  expect(runtime.send).not.toHaveBeenCalled()
+})
+
+it('uses the selected Main branch when refreshing a follow-up snapshot', async () => {
+  const {
+    createLinearConversationGraph,
+    forkEditedConversationMessage,
+    synchronizeActiveConversationMessages
+  } = await import('../../shared/conversation-graph')
+  const { materializeSessionConversationGraph } = await import('../../shared/session-persistence')
+  const message = (
+    id: string
+  ): import('../../shared/session-persistence').PersistedChatMessage => ({
+    id,
+    role: 'user' as const,
+    content: id,
+    status: 'complete' as const,
+    eventIds: [],
+    createdAt: 1,
+    updatedAt: 1
+  })
+  const old = message('INACTIVE_BRANCH_RESULT')
+  const latest = message('SELECTED_BRANCH_RESULT')
+  const original = createLinearConversationGraph({
+    sessionId: 'main-1',
+    messages: [old],
+    createdAt: 1,
+    updatedAt: 1
+  })
+  const selected = synchronizeActiveConversationMessages(
+    forkEditedConversationMessage(original, old.id, 'selected-branch', 2),
+    [latest],
+    2
+  )
+  const parent = materializeSessionConversationGraph({
+    id: 'main-1',
+    projectId: 'project-1',
+    title: 'Main',
+    cwd: '.',
+    status: 'idle',
+    messages: [latest],
+    conversationGraph: selected,
+    createdAt: 1,
+    updatedAt: 2
+  })
+  expect(parent.conversationGraph.messages.map((entry) => entry.id)).toContain(old.id)
+  const runtime = {
+    parentFor: () => ({ parentSessionId: 'main-1', projectId: 'project-1' }),
+    send: vi.fn()
+  }
+  registerSideChatIpcHandlers(runtime as never, {
+    loadParentSession: async () => parent,
+    hasLiveParentSession: () => true,
+    withParentAvailable: async (_sessionId, operation) => operation()
+  })
+  await handlers.get('side-chat:send')!(undefined, {
+    sideSessionId: 'side-1',
+    text: 'Explain Main'
+  } as never)
+  const prompt = runtime.send.mock.lastCall?.[0].historyPreamble
+  expect(prompt).toContain('SELECTED_BRANCH_RESULT')
+  expect(prompt).not.toContain('INACTIVE_BRANCH_RESULT')
 })

@@ -420,7 +420,7 @@ describe('SideChatRuntimeOwner lifecycle', () => {
       sessionId: 'side-session-1',
       text: 'What context do you have?',
       historyPreamble: 'Main snapshot.',
-      resumeFallback: { historyPreamble: 'Main snapshot.' }
+      resumeFallback: { historyPreamble: expect.stringContaining('Main snapshot.') }
     })
     expect(registerHostMessageSession).toHaveBeenCalledWith(
       'provider-session-1',
@@ -1004,7 +1004,7 @@ describe('SideChatRuntimeOwner lifecycle', () => {
         expect.objectContaining({
           sideSessionId: started.sideSessionId,
           running: false,
-          error: expect.stringContaining('reconnect')
+          notice: 'connection-ended'
         })
       )
     )
@@ -1336,7 +1336,7 @@ describe('SideChatRuntimeOwner lifecycle', () => {
       expect.objectContaining({
         sideSessionId: 'side-chat-resume-save-retry',
         running: false,
-        error: expect.stringContaining('reconnect')
+        notice: 'connection-ended'
       })
     )
 
@@ -1475,8 +1475,9 @@ describe('SideChatRuntimeOwner lifecycle', () => {
       historyPreamble: expect.stringContaining('Earlier answer')
     })
     expect(sent[1]).toMatchObject({
-      historyPreamble: expect.stringContaining('First attempt')
+      historyPreamble: expect.stringContaining('Earlier answer')
     })
+    expect(String(sent[1].historyPreamble)).not.toContain('First attempt')
   })
 
   it('lets close win while a dormant provider Session is reconnecting', async () => {
@@ -1847,7 +1848,7 @@ describe('SideChatRuntimeOwner lifecycle', () => {
       expect.objectContaining({
         sideSessionId: started.sideSessionId,
         running: false,
-        error: expect.stringContaining('interrupted')
+        notice: 'interrupted'
       })
     )
     await expect(
@@ -2070,7 +2071,7 @@ describe('SideChatRuntimeOwner lifecycle', () => {
       expect.objectContaining({
         sideSessionId: started.sideSessionId,
         running: false,
-        error: expect.stringContaining('reconnect')
+        notice: 'connection-ended'
       })
     )
   })
@@ -2323,4 +2324,307 @@ describe('SideChatRuntimeOwner lifecycle', () => {
     finishShutdown()
     await close
   })
+})
+
+// Exercise preflight and recovery through the existing runtime/persistence ports.
+describe('Side chat recovery and preflight regressions', () => {
+  const setup = async (
+    dormant = false,
+    framework: ResolvedAgentBackend['framework'] = claudeCodeFramework
+  ): Promise<{
+    owner: SideChatRuntimeOwner
+    sideSessionId: string
+    persistence: ReturnType<typeof createPersistence>
+    onEvent: ReturnType<typeof vi.fn>
+    sendPrompt: ReturnType<
+      typeof vi.fn<
+        (request: {
+          sessionId: string
+          historyPreamble?: string
+        }) => Promise<{ stopReason: 'end_turn' }>
+      >
+    >
+    resumeSession: ReturnType<
+      typeof vi.fn<
+        () => Promise<{
+          sessionId: string
+          providerSessionId: string
+          frameworkId: ResolvedAgentBackend['framework']['id']
+          contextReset: boolean
+        }>
+      >
+    >
+    identity: {
+      sessionId: string
+      providerSessionId: string
+      frameworkId: ResolvedAgentBackend['framework']['id']
+      contextReset: boolean
+    }
+    accept: (sessionId: string) => void
+    emit: NonNullable<NonNullable<AcpRuntimeOptions['callbacks']>['onEvent']>
+  }> => {
+    temporaryRoot = await mkdtemp(join(tmpdir(), 'open-science-side-chat-reliability-'))
+    const persistence = createPersistence()
+    const onEvent = vi.fn()
+    let callbacks: AcpRuntimeOptions['callbacks']
+    const identity = {
+      sessionId: 'provider-reliability',
+      providerSessionId: 'provider-reliability',
+      frameworkId: framework.id,
+      contextReset: true
+    }
+    const resumeSession = vi.fn(async () => identity)
+    const sendPrompt = vi.fn(async (request: { sessionId: string; historyPreamble?: string }) => {
+      callbacks?.onProviderPromptAccepted?.(request.sessionId)
+      return { stopReason: 'end_turn' as const }
+    })
+    const owner = new SideChatRuntimeOwner({
+      appVersion: '0.25.1',
+      configRoot: temporaryRoot,
+      captureTarget: async () => ({ ...target, frameworkId: framework.id }),
+      resolveTarget: async () => backend(framework),
+      relay: createRelayOwner(),
+      persistence,
+      onEvent,
+      createRuntime: (options) => {
+        callbacks = options.callbacks
+        return {
+          createSession: vi.fn(async () => identity),
+          resumeSession,
+          sendPrompt,
+          cancelPrompt: vi.fn(async () => ({ stopReason: 'cancelled' })),
+          requestProviderReconnect: vi.fn(async () => undefined),
+          deleteSession: vi.fn(async () => ({ sessionIds: [] })),
+          respondToPermission: vi.fn(async () => undefined),
+          shutdownForQuit: vi.fn(async () => undefined)
+        } as never
+      }
+    })
+    let sideSessionId = 'side-reliability'
+    if (dormant) {
+      owner.hydrate([
+        {
+          projectId: 'project-1',
+          parentSessionId: 'main-reliability',
+          sideChat: {
+            version: 1,
+            id: sideSessionId,
+            lifecycle: 'interrupted',
+            frameworkId: framework.id,
+            providerSessionId: 'provider-old',
+            historyPreamble: 'Original Main snapshot.',
+            entries: [
+              {
+                id: 'assistant-earlier',
+                kind: 'message',
+                role: 'assistant',
+                text: 'Earlier side answer.'
+              }
+            ],
+            createdAt: 10,
+            updatedAt: 20
+          }
+        }
+      ])
+    } else {
+      sideSessionId = (
+        await owner.start({
+          parentSessionId: 'main-reliability',
+          projectId: 'project-1',
+          text: 'Initial question',
+          historyPreamble: 'Original Main snapshot.'
+        })
+      ).sideSessionId
+      await vi.waitFor(() => expect(owner.list().chats[0].running).toBe(false))
+      await vi.waitFor(() => expect(persistence.save.mock.calls.length).toBeGreaterThanOrEqual(2))
+    }
+    return {
+      owner,
+      sideSessionId,
+      persistence,
+      onEvent,
+      sendPrompt,
+      resumeSession,
+      identity,
+      accept: (sessionId: string) => callbacks?.onProviderPromptAccepted?.(sessionId),
+      emit: (
+        event: Parameters<NonNullable<NonNullable<AcpRuntimeOptions['callbacks']>['onEvent']>>[0]
+      ) => callbacks?.onEvent?.(event)
+    }
+  }
+
+  it.each(['dormant', 'reconnect'] as const)(
+    'preserves the latest Main snapshot when %s adopts fresh context',
+    async (mode) => {
+      const { owner, sideSessionId, sendPrompt, persistence } = await setup(mode === 'dormant')
+      if (mode === 'reconnect') {
+        await owner.send({
+          sideSessionId,
+          text: 'Normal follow-up',
+          historyPreamble: 'Main result before reconnect.'
+        })
+        await vi.waitFor(() => expect(owner.list().chats[0].running).toBe(false))
+        await owner.requestProviderReconnect()
+      }
+      await owner.send({
+        sideSessionId,
+        text: 'Explain the latest Main result',
+        historyPreamble: 'LATEST_MAIN_RESULT'
+      })
+      expect(sendPrompt.mock.lastCall?.[0].historyPreamble).toContain('LATEST_MAIN_RESULT')
+      expect(sendPrompt.mock.lastCall?.[0]).toMatchObject({
+        resumeFallback: { historyPreamble: expect.stringContaining('LATEST_MAIN_RESULT') }
+      })
+      expect(persistence.save.mock.lastCall?.[0].sideChat.historyPreamble).toContain(
+        'LATEST_MAIN_RESULT'
+      )
+    }
+  )
+
+  it('does not send a follow-up cancelled while dormant provider resume is pending', async () => {
+    const { owner, sideSessionId, sendPrompt, resumeSession, identity } = await setup(true)
+    const resumed = deferred<typeof identity>()
+    resumeSession.mockImplementationOnce(() => resumed.promise)
+    const sending = owner
+      .send({ sideSessionId, text: 'Do not send after cancellation' })
+      .catch((error: unknown) => error)
+    await vi.waitFor(() => expect(resumeSession).toHaveBeenCalledOnce())
+    const cancelled = await owner.cancel({ sideSessionId }).catch((error: unknown) => error)
+    resumed.resolve(identity)
+    await sending
+    expect.soft(cancelled).toBeUndefined()
+    expect(sendPrompt).not.toHaveBeenCalled()
+  })
+
+  it('does not send a follow-up cancelled while its transcript save is pending', async () => {
+    const { owner, sideSessionId, sendPrompt, persistence } = await setup()
+    const saveEntered = deferred<void>()
+    const saved = deferred<void>()
+    persistence.save.mockImplementationOnce(async (input) => {
+      saveEntered.resolve()
+      await saved.promise
+      return input.sideChat
+    })
+    const sending = owner
+      .send({ sideSessionId, text: 'Do not send after cancellation' })
+      .catch((error: unknown) => error)
+    await saveEntered.promise
+    await owner.cancel({ sideSessionId })
+    saved.resolve()
+    await sending
+    expect(sendPrompt).toHaveBeenCalledTimes(1)
+  })
+
+  it('publishes a streaming save failure and keeps the provider turn running', async () => {
+    const { owner, sideSessionId, sendPrompt, persistence, onEvent, emit, accept } = await setup()
+    const finished = deferred<{ stopReason: 'end_turn' }>()
+    sendPrompt.mockImplementationOnce((request) => {
+      accept(request.sessionId)
+      return finished.promise
+    })
+    const sending = owner
+      .send({ sideSessionId, text: 'Stream an answer' })
+      .catch((error: unknown) => error)
+    await vi.waitFor(() => expect(sendPrompt).toHaveBeenCalledTimes(2))
+    persistence.save.mockRejectedValueOnce(new Error('Disk full while saving Side chat'))
+    onEvent.mockClear()
+    emit({
+      id: 'stream-event',
+      messageId: 'stream-message',
+      sessionId: 'provider-reliability',
+      timestamp: 30,
+      kind: 'message',
+      level: 'info',
+      role: 'assistant',
+      text: 'Still streaming'
+    })
+    await vi.waitFor(() => {
+      const snapshot = owner.list().chats[0]
+      expect(snapshot.persistenceError ?? snapshot.error).toContain('Disk full')
+    })
+    const snapshot = owner.list().chats[0]
+    const events = JSON.stringify(onEvent.mock.calls)
+    finished.resolve({ stopReason: 'end_turn' })
+    await sending
+    expect.soft(snapshot.running).toBe(true)
+    expect(events).toContain('Disk full while saving Side chat')
+  })
+  it('clears a streaming save error after a later save without stopping output', async () => {
+    const { owner, sideSessionId, persistence, sendPrompt, emit, accept, onEvent } = await setup()
+    const finished = deferred<{ stopReason: 'end_turn' }>()
+    sendPrompt.mockImplementationOnce((request) => {
+      accept(request.sessionId)
+      return finished.promise
+    })
+    await owner.send({ sideSessionId, text: 'Keep streaming' })
+    persistence.save.mockRejectedValueOnce(new Error('Disk temporarily full'))
+    const chunk = {
+      sessionId: 'provider-reliability',
+      timestamp: 1,
+      kind: 'message' as const,
+      level: 'info' as const,
+      role: 'assistant' as const,
+      messageId: 'answer',
+      text: 'More text'
+    }
+    emit({ ...chunk, id: 'chunk-first' })
+    await vi.waitFor(() =>
+      expect(owner.list().chats[0].persistenceError).toBe('Disk temporarily full')
+    )
+    emit({ ...chunk, id: 'chunk-next' })
+    await vi.waitFor(() => expect(owner.list().chats[0].persistenceError).toBeUndefined())
+    expect(owner.list().chats[0].running).toBe(true)
+    expect(onEvent.mock.lastCall?.[0]).toMatchObject({
+      event: { kind: 'persistence', error: undefined }
+    })
+    expect(onEvent.mock.lastCall?.[0].event.error).toBeUndefined()
+    finished.resolve({ stopReason: 'end_turn' })
+  })
+
+  it('preserves both context sources and labels within the replay budget', async () => {
+    const { owner, sideSessionId, sendPrompt } = await setup(true)
+    await owner.send({
+      sideSessionId,
+      text: 'Expand the analysis',
+      historyPreamble: 'Old Main details. '.repeat(1000) + 'LATEST_MAIN_RESULT'
+    })
+    const preamble = sendPrompt.mock.lastCall?.[0].historyPreamble ?? ''
+    expect(preamble.length).toBeLessThanOrEqual(SIDE_CHAT_MESSAGE_LIMIT)
+    expect(preamble).toContain('Main conversation snapshot:')
+    expect(preamble).toContain('LATEST_MAIN_RESULT')
+    expect(preamble).toContain('Side chat transcript before this follow-up:')
+    expect(preamble).toContain('Earlier side answer.')
+  })
+  it.each([
+    ['claude-code', claudeCodeFramework],
+    ['opencode', opencodeFramework],
+    ['codex', codexFramework]
+  ] as const)(
+    'refreshes a restored %s owner and prevents preflight cancellation from reaching its provider',
+    async (_name, framework) => {
+      const { owner, sideSessionId, sendPrompt, persistence } = await setup(true, framework)
+      await owner.send({
+        sideSessionId,
+        text: 'Latest context',
+        historyPreamble: 'LATEST_MAIN_RESULT'
+      })
+      expect(sendPrompt.mock.lastCall?.[0].historyPreamble).toContain('LATEST_MAIN_RESULT')
+      await vi.waitFor(() => expect(owner.list().chats[0].running).toBe(false))
+      const saved = deferred<void>()
+      const entered = deferred<void>()
+      persistence.save.mockImplementationOnce(async (input) => {
+        entered.resolve()
+        await saved.promise
+        return input.sideChat
+      })
+      const sending = owner
+        .send({ sideSessionId, text: 'Do not dispatch' })
+        .catch((error: unknown) => error)
+      await entered.promise
+      await owner.cancel({ sideSessionId })
+      saved.resolve()
+      await sending
+      expect(sendPrompt).toHaveBeenCalledTimes(1)
+    }
+  )
 })

@@ -1,4 +1,5 @@
 import { create } from 'zustand'
+import { useSettingsStore } from './settings-store'
 
 // Real end-to-end reachability probed by the main process (the same HTTPS HEAD check the
 // onboarding environment step uses). 'unknown' means a probe is in flight and surfaces render it
@@ -20,7 +21,7 @@ type NetworkStore = {
   // holds the result for MIN_CHECKING_MS (user-visible re-checks); silent probes apply as soon
   // as the answer lands. With no link the probe short-circuits to 'unreachable' — no point
   // issuing HTTPS requests we know cannot get out.
-  probeConnectivity: (options?: { announce?: boolean }) => Promise<void>
+  probeConnectivity: (options?: { announce?: boolean; invalidate?: boolean }) => Promise<void>
 }
 
 // Minimum time an announced probe's Checking… presentation stays visible, so a clicked
@@ -31,11 +32,16 @@ export const useNetworkStore = create<NetworkStore>((set, get) => {
   let probeGeneration = 0
   let lastKnownConnectivity: Extract<NetworkConnectivity, 'reachable' | 'unreachable'> | undefined
 
-  const probeConnectivity = async ({ announce = false } = {}): Promise<void> => {
+  const probeConnectivity = async ({
+    announce = false,
+    invalidate = false
+  } = {}): Promise<void> => {
     const generation = ++probeGeneration
     const startedAt = Date.now()
     const currentConnectivity = get().connectivity
-    if (currentConnectivity === 'reachable' || currentConnectivity === 'unreachable') {
+    if (invalidate) {
+      lastKnownConnectivity = undefined
+    } else if (currentConnectivity === 'reachable' || currentConnectivity === 'unreachable') {
       lastKnownConnectivity = currentConnectivity
     }
 
@@ -105,6 +111,19 @@ let monitorStarted = false
 export const startNetworkMonitor = (): void => {
   if (monitorStarted || typeof window === 'undefined') return
   monitorStarted = true
+
+  useSettingsStore.subscribe((state, previous) => {
+    const next = state.networkProxy
+    const before = previous.networkProxy
+    if (
+      next.mode === before.mode &&
+      next.server === before.server &&
+      next.bypassRules === before.bypassRules
+    )
+      return
+    // A new proxy invalidates both the cached result and all older in-flight probes.
+    void useNetworkStore.getState().probeConnectivity({ announce: true, invalidate: true })
+  })
 
   window.addEventListener('online', () => {
     useNetworkStore.setState({ isOnline: true })

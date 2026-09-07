@@ -13,6 +13,7 @@ export type SideChatSendMessageResult = Readonly<{
   targetState: SideChatTargetState
   delivery: 'next-user-turn' | 'current-turn'
   persisted: true
+  persistenceError?: string
   systemHint: string
 }>
 
@@ -51,6 +52,8 @@ export type SideChatSnapshot = Readonly<{
   entries: readonly SideChatEntry[]
   running: boolean
   error?: string
+  persistenceError?: string
+  notice?: 'interrupted' | 'connection-ended'
 }>
 
 export type SideChatSnapshotList = Readonly<{
@@ -68,7 +71,10 @@ export type SideChatRuntimeEvent = Readonly<{
   parentSessionId: string
   projectId: string
   sideSessionId: string
-  event: import('./acp').AcpRuntimeEvent | SideChatLifecycleEvent
+  event:
+    | import('./acp').AcpRuntimeEvent
+    | SideChatLifecycleEvent
+    | Readonly<{ kind: 'persistence'; error?: string }>
 }>
 
 export type SideChatRelayDeliveredEvent = Readonly<{

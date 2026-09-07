@@ -1114,10 +1114,7 @@ const ConversationPanel = ({
                   />
                 ) : null}
                 {composerError ? (
-                  <div
-                    role="alert"
-                    className="mb-2 [&>section]:max-w-none [&>section]:items-start [&>section]:gap-2 [&>section>svg]:hidden [&_h1]:text-xs"
-                  >
+                  <div role="alert" className="mb-2">
                     <ErrorNotice icon={AlertTriangle} tone="red" title={composerError} />
                   </div>
                 ) : null}

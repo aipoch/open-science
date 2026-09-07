@@ -1,5 +1,7 @@
 export type NotebookNetworkPolicy = Readonly<{
   allowedDomains: readonly string[]
+  /** Overrides wildcard allows; an exact allow still represents explicit approval. */
+  askDomains?: readonly string[]
   deniedDomains: readonly string[]
   deniedDomainReasons?: Readonly<Record<string, string>>
 }>

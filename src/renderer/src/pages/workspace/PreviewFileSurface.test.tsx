@@ -375,7 +375,15 @@ describe('PreviewFileSurface managed text versions', () => {
     expect(alert?.textContent).toContain(
       failure === 'result' ? error.message : 'Version transport disconnected.'
     )
-    if (failure === 'result') expect(alert?.textContent).toContain(error.code)
+    const notice = alert!.closest('section')!
+    const diagnostics = notice.querySelector('details')
+    if (failure === 'result') {
+      expect(diagnostics!.open).toBe(false)
+      expect(diagnostics!.closest('[role="alert"]')).toBeNull()
+      expect(diagnostics!.textContent).toContain(error.code)
+    } else {
+      expect(diagnostics).toBeNull()
+    }
     expect(container.querySelector('[aria-label="Edit README.md"]')).toBeNull()
     const failedRequest = inspect.mock.calls.at(-1)![0]
     let finish!: (result: Result) => void
@@ -385,7 +393,7 @@ describe('PreviewFileSurface managed text versions', () => {
           finish = resolve
         })
     )
-    await click(alert!.querySelector('button'))
+    await click(notice.querySelector('button'))
     expect(inspect).toHaveBeenLastCalledWith(failedRequest)
     expect(
       [...container.querySelectorAll('[role="status"]')].some((status) =>

@@ -1,8 +1,7 @@
 import { useSmoothStreamingContent } from '@/components/streamdown/use-smooth-streaming-content'
 import { ErrorNotice } from '@/components/error-notice'
 import { MessageScrollerItem } from '@/components/ui/message-scroller'
-import { Popover, PopoverAnchor, PopoverContent } from '@/components/ui/popover'
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { useDateTimeFormat } from '@/hooks/useDateTimeFormat'
 import { cn, formatByteSize } from '@/lib/utils'
 import { useNavigationStore } from '@/stores/navigation-store'
@@ -30,16 +29,7 @@ import {
   Loader2,
   Pencil
 } from 'lucide-react'
-import {
-  memo,
-  useEffect,
-  useId,
-  useLayoutEffect,
-  useRef,
-  useState,
-  type FocusEvent,
-  type ReactNode
-} from 'react'
+import { memo, useEffect, useId, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import { formatDisplayNumber } from '@/lib/locale-format'
 import type { ArtifactPreviewResult } from '../../../../shared/artifacts'
@@ -197,9 +187,18 @@ const MessageTimestamp = ({
   const formatDate = useDateTimeFormat()
 
   return (
-    <time dateTime={date.toISOString()} title={formatDate(date, 'full')}>
-      {label} {formatDate(date)}
-    </time>
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <time
+          dateTime={date.toISOString()}
+          tabIndex={0}
+          className="rounded-sm focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50"
+        >
+          {label} {formatDate(date)}
+        </time>
+      </TooltipTrigger>
+      <TooltipContent>{formatDate(date, 'full')}</TooltipContent>
+    </Tooltip>
   )
 }
 
@@ -241,11 +240,6 @@ const TurnTokenUsage = ({
   const provider = providers?.find((candidate) => candidate.id === providerId)
   const kindKey = provider ? providerKindKey(provider.type, provider.vendorId) : undefined
   const model = runtimeIdentity?.model?.trim()
-  const contentId = useId()
-  const triggerRef = useRef<HTMLButtonElement | null>(null)
-  const contentRef = useRef<HTMLDivElement | null>(null)
-  const closeTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
-  const openedFromPointerRef = useRef(false)
   const accessibleLabel = usage
     ? t('Token usage for this response')
     : t('Token usage unavailable for this response')
@@ -275,60 +269,18 @@ const TurnTokenUsage = ({
         })
       : t('Token usage breakdown unavailable')
 
-  const keepOpen = (): void => {
-    if (closeTimerRef.current) clearTimeout(closeTimerRef.current)
-    closeTimerRef.current = undefined
-  }
-
-  const scheduleClose = (): void => {
-    keepOpen()
-    closeTimerRef.current = setTimeout(() => {
-      const focused = document.activeElement
-      if (triggerRef.current?.contains(focused) || contentRef.current?.contains(focused)) return
-      setOpen(false)
-    }, 100)
-  }
-
-  const handleBlur = (event: FocusEvent<HTMLElement>): void => {
-    const next = event.relatedTarget
-    if (triggerRef.current?.contains(next) || contentRef.current?.contains(next)) return
-    scheduleClose()
-  }
-
-  useEffect(
-    () => () => {
-      if (closeTimerRef.current) clearTimeout(closeTimerRef.current)
-    },
-    []
-  )
-
   return (
-    <Popover open={open} onOpenChange={setOpen}>
-      <PopoverAnchor asChild>
-        <span data-slot="turn-token-usage" className="inline-flex whitespace-nowrap">
+    <Tooltip open={open} onOpenChange={setOpen}>
+      <span data-slot="turn-token-usage" className="inline-flex whitespace-nowrap">
+        <TooltipTrigger asChild>
           <button
-            ref={triggerRef}
             type="button"
             aria-label={accessibleLabel}
-            aria-haspopup="dialog"
             aria-expanded={open}
-            aria-controls={open ? contentId : undefined}
             className="inline-flex touch-manipulation items-center gap-1 border-b border-dashed border-current pb-px leading-none transition-colors duration-150 motion-reduce:transition-none hover:text-text-100 focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50"
-            onPointerEnter={() => {
-              openedFromPointerRef.current = true
-              keepOpen()
-              setOpen(true)
-            }}
-            onPointerLeave={scheduleClose}
-            onFocus={() => {
-              openedFromPointerRef.current = false
-              keepOpen()
-              setOpen(true)
-            }}
-            onBlur={handleBlur}
-            onClick={() => {
-              openedFromPointerRef.current = false
-              keepOpen()
+            onClick={(event) => {
+              // Calls is read-only detail; retain explicit click/touch access to the hover content.
+              event.preventDefault()
               setOpen(true)
             }}
           >
@@ -340,24 +292,15 @@ const TurnTokenUsage = ({
             />
             {t('Calls')}
           </button>
-        </span>
-      </PopoverAnchor>
-      <PopoverContent
-        ref={contentRef}
-        id={contentId}
+        </TooltipTrigger>
+      </span>
+      <TooltipContent
         data-slot="turn-token-usage-popover"
-        aria-label={accessibleLabel}
+        aria-label={`${accessibleLabel}: ${breakdownLabel}`}
         side="top"
         align="center"
         sideOffset={8}
         className="w-48 max-w-[calc(100vw-2rem)] rounded-lg border border-border bg-popover p-2.5 text-[12px] text-popover-foreground shadow-menu"
-        onPointerEnter={keepOpen}
-        onPointerLeave={scheduleClose}
-        onFocusCapture={keepOpen}
-        onBlurCapture={handleBlur}
-        onOpenAutoFocus={(event) => {
-          if (openedFromPointerRef.current) event.preventDefault()
-        }}
       >
         <div className="flex items-center justify-between gap-3">
           <div className="flex items-center gap-1.5">
@@ -489,8 +432,8 @@ const TurnTokenUsage = ({
             ) : null}
           </div>
         ) : null}
-      </PopoverContent>
-    </Popover>
+      </TooltipContent>
+    </Tooltip>
   )
 }
 
@@ -570,7 +513,7 @@ const WorkspaceAssistantTurnCompletion = ({
       className="mt-3 flex items-center gap-x-3 whitespace-nowrap text-[11px] leading-4 text-text-000/70 tabular-nums"
     >
       {message.status === 'complete' && onBranchInNewSession ? (
-        <TooltipProvider delayDuration={200}>
+        <>
           <div data-slot="assistant-message-actions" className="flex items-center gap-0.5">
             <UserMessageActionTooltip label={copied ? t('Copied') : t('Copy message')}>
               <button
@@ -598,7 +541,7 @@ const WorkspaceAssistantTurnCompletion = ({
               </button>
             </UserMessageActionTooltip>
           </div>
-        </TooltipProvider>
+        </>
       ) : null}
       {terminalDate ? <MessageTimestamp label={terminalLabel} date={terminalDate} /> : null}
       {terminalDate && turnStartedDate ? (
@@ -1626,7 +1569,7 @@ const WorkspaceMessageItemImpl = ({
   )
 
   return (
-    <TooltipProvider delayDuration={200}>
+    <>
       <MessageScrollerItem
         key={message.id}
         messageId={message.id}
@@ -1758,10 +1701,7 @@ const WorkspaceMessageItemImpl = ({
                     focusRequest={editFocusRequest}
                   />
                   {editError ? (
-                    <div
-                      role="alert"
-                      className="[&>section]:max-w-none [&>section]:gap-2 [&_h1]:text-xs"
-                    >
+                    <div role="alert">
                       <ErrorNotice tone="red" title={editError} />
                     </div>
                   ) : null}
@@ -1992,7 +1932,7 @@ const WorkspaceMessageItemImpl = ({
           />
         ) : null}
       </MessageScrollerItem>
-    </TooltipProvider>
+    </>
   )
 }
 

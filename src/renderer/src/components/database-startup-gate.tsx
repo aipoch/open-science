@@ -180,6 +180,7 @@ const DatabaseStartupGate = ({ children }: DatabaseStartupGateProps): React.JSX.
       aria-live="polite"
     >
       <ErrorNotice
+        fullPage
         icon={guidance?.icon}
         tone={guidance?.tone}
         title={t("Open Science couldn't start")}

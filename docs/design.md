@@ -913,10 +913,22 @@ colors communicate a successful or failed probe/migration result.
   also removes its assignments before the deleted ID can be reused. Skill, Connector, and Specialist
   file formats are unchanged, and no pin, bookmark, Group, import/export, or cloud-sync data is
   migrated.
+- Temporary catalog unavailability, including a Skill identity conflict, preserves existing Tag
+  assignments. Reconciliation uses all existing resource IDs; adding assignments still requires an
+  available resource. No catalog or assignment storage format changes are needed.
+- A Tag editor keeps its draft and submission version when a newer snapshot arrives. A conflict
+  blocks saving until the user reloads the latest values or explicitly keeps the draft for another
+  save. That save still checks the acknowledged version. Reordering retains its existing timestamp
+  semantics and can therefore require confirmation without discarding the draft.
+- Resource catalog loading is tracked independently by type. Failed catalogs show a retry action,
+  available resource rows remain visible, and Tag totals and type totals count known assignments
+  even when metadata is missing. An incomplete catalog is not presented as an empty Tag.
 - Resource rows and detail/editor surfaces share the same searchable assignment menu. Creating a Tag
   from that menu assigns it immediately with the default visual; the Tags manager can then change its
   icon or color. Assignment changes update optimistically and reload the authoritative snapshot after
-  a failure. The Tags browser keeps its selected Tag, resource filter, query, and scroll position when
+  a failure. Rollback preserves newer authoritative revisions and other pending assignments; order
+  rollback only runs while the failed operation still owns the current Tag array. The Tags browser
+  keeps its selected Tag, resource filter, query, and scroll position when
   Settings history opens a resource and returns.
 
 #### Specialist-scoped resources and Marketplace
@@ -982,13 +994,27 @@ Preference-save and app-icon-preview failures use one line of small red text wit
 action for dismiss or retry. Do not add a border, background, brand mark, or status icon. Keep the
 language rollback explanation available to screen readers.
 
-Use the shared `ErrorNotice` for error summaries. Center the decorative flask mark (`size-18`) above
-the summary with a 32px gap to distinguish it from the smaller status icon. Use one bounded column
-(`max-w-md`, `min-w-0`), and left-align headings, descriptions, codes, and help.
-Pair the status icon with the first text line. Long error text and identifiers must wrap inside the
-column. Group primary and secondary actions at the trailing edge with `flex-wrap` and a consistent
-small gap; wrap whole controls instead of splitting their labels. Preserve semantic status tones,
-disabled/loading behavior, and immediately visible keyboard focus.
+Use the shared `ErrorNotice` for error summaries. The default is a compact inline surface across
+Settings, workspace previews, conversations, and Literature: a neutral `bg-card` surface with a
+`border-border` outline, a small semantically colored status icon, 16px padding, and 14px copy.
+Place a single recovery action at the trailing edge, wrapping below the copy in narrow containers.
+Keep inline actions low emphasis so they do not compete with the page's primary task. Omit the
+flask and avoid a second border or background in wrappers. All copy and identifiers wrap.
+
+Conflicts can include owner-provided content and two described choices below the summary. Tag
+editors show the latest saved name, icon, and color without replacing the draft. Continue editing
+only acknowledges that version; a separate Save submits the draft. Loading the latest version
+replaces the draft. Each action's consequence is connected with `aria-describedby`.
+
+Callers translate all copy. Inline technical codes use a native, initially closed diagnostic
+disclosure with a caller-provided label; recovery actions remain available outside it. When using
+`role`, ErrorNotice announces only its summary, leaving diagnostics outside the live region.
+Preserve semantic tones, loading/disabled behavior, and visible keyboard focus.
+
+Only app startup blockers (database startup and initial settings loading) opt into `fullPage`:
+center the decorative flask (`size-18`) above a bounded `max-w-md` column, with larger status icons,
+16px headings, and trailing actions. This single presentation option replaces independent brand
+visibility and compactness switches; it does not introduce application state or persisted data.
 
 Provenance diagnostics share the summary's width below a divider. A disclosure button exposes its
 expanded state and controls the diagnostic region; the copy action belongs in that region's header
