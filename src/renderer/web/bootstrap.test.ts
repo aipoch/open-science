@@ -57,6 +57,7 @@ class FakeWebSocket {
 }
 
 type WebApi = {
+  uploads: Record<'appendTransfer' | 'getTransferStatus', (request: unknown) => Promise<unknown>>
   specialist: Record<
     | 'beginPackageUpload'
     | 'previewPackageUpload'
@@ -78,6 +79,22 @@ type WebApi = {
   }
   saveManagedFile: (request: SaveManagedFileRequest) => Promise<{ saved: boolean }>
 }
+
+const chunkOperations = [
+  {
+    channel: 'uploads:append-transfer',
+    invoke: (api: WebApi) =>
+      api.uploads.appendTransfer({
+        transferId: 'transfer-1',
+        offset: 0,
+        chunk: new Uint8Array([1])
+      })
+  },
+  {
+    channel: 'uploads:transfer-status',
+    invoke: (api: WebApi) => api.uploads.getTransferStatus({ transferId: 'transfer-1' })
+  }
+]
 
 // Exercise the installed public API: only HTTP completion and event liveness are controlled.
 const longRunningOperations = [
@@ -354,20 +371,26 @@ describe('Web bootstrap event connection', () => {
     })
   })
 
-  it('settles a Web RPC when the remote response stops making progress', async () => {
+  it.each([
+    {
+      channel: 'projects:create',
+      invoke: (api: WebApi) => api.projects.create({ name: 'Never finishes' })
+    },
+    ...chunkOperations
+  ])('times out $channel after 30 seconds while connected', async ({ channel, invoke }) => {
     let rpcSignal: AbortSignal | undefined
     vi.stubGlobal(
       'fetch',
       vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
         if (String(input) === '/api/bootstrap') {
           return Promise.resolve(
-            new Response(
-              JSON.stringify({ ...bootstrapPayload, rpcChannels: ['projects:create'] }),
-              { status: 200, headers: { 'content-type': 'application/json' } }
-            )
+            new Response(JSON.stringify({ ...bootstrapPayload, rpcChannels: [channel] }), {
+              status: 200,
+              headers: { 'content-type': 'application/json' }
+            })
           )
         }
-        if (String(input) === '/rpc/projects%3Acreate') {
+        if (String(input) === `/rpc/${encodeURIComponent(channel)}`) {
           rpcSignal = init?.signal ?? undefined
           return new Promise<Response>((_resolve, reject) => {
             rpcSignal?.addEventListener(
@@ -382,7 +405,10 @@ describe('Web bootstrap event connection', () => {
     )
 
     const api = await loadBootstrap()
-    const request = api.projects.create({ name: 'Never finishes' })
+    const socket = FakeWebSocket.instances[0]
+    socket.emit('open')
+    socket.emit('message', { data: readyFrame(0) })
+    const request = invoke(api)
     const outcome = Promise.race([
       request.then(
         () => 'resolved' as const,
@@ -393,7 +419,9 @@ describe('Web bootstrap event connection', () => {
       )
     ])
 
-    await vi.advanceTimersByTimeAsync(30_001)
+    await vi.advanceTimersByTimeAsync(20_000)
+    socket.emit('message', { data: heartbeatFrame(0) })
+    await vi.advanceTimersByTimeAsync(10_001)
 
     await expect(outcome).resolves.toBe('rejected')
     expect(rpcSignal?.aborted).toBe(true)
@@ -479,7 +507,7 @@ describe('Web bootstrap event connection', () => {
     }
   )
 
-  it.each(longRunningOperations)(
+  it.each([...longRunningOperations, ...chunkOperations])(
     'aborts $channel when its event connection disconnects',
     async ({ channel, invoke }) => {
       let rpcSignal: AbortSignal | undefined

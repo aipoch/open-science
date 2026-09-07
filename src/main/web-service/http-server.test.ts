@@ -2428,60 +2428,84 @@ describe('startWebHttpServer', () => {
     ).toHaveLength(1)
   })
 
-  it('releases an HTTP-only caller when its connection closes during command execution', async () => {
-    let markInvocationStarted: (() => void) | undefined
-    const invocationStarted = new Promise<void>((resolve) => {
-      markInvocationStarted = resolve
-    })
-    let finishInvocation: (() => void) | undefined
-    const invocationGate = new Promise<void>((resolve) => {
-      finishInvocation = resolve
-    })
-    let callerSignal: AbortSignal | undefined
-    const directInvoke = vi.fn(async (_channel, invocation) => {
-      callerSignal = invocation.callerLease.signal
-      markInvocationStarted?.()
-      await invocationGate
-      return []
-    })
-    const server = await startTestWebHttpServer({
-      host: '127.0.0.1',
-      port: 0,
-      token: 'test-token',
-      staticRoot: '/unused',
-      rpc: { channels: () => ['projects:list'], invoke: vi.fn() },
-      applicationCommands: {
-        localWeb: { commandNames: () => ['projects:list'], invoke: directInvoke },
-        remoteWeb: { commandNames: () => [], rejectedCommandNames: () => [], invoke: vi.fn() }
-      },
-      bootstrap: {
-        appName: 'Open Science',
-        appVersion: '0.0.0',
-        configRoot: '/fake/root',
-        platform: 'test',
-        versions: { electron: '1', chrome: '1', node: '1' }
+  it.each([false, true])(
+    'releases a caller when its pending HTTP request closes (event socket: %s)',
+    async (withEventSocket) => {
+      let markInvocationStarted: (() => void) | undefined
+      const invocationStarted = new Promise<void>((resolve) => {
+        markInvocationStarted = resolve
+      })
+      let finishInvocation: (() => void) | undefined
+      const invocationGate = new Promise<void>((resolve) => {
+        finishInvocation = resolve
+      })
+      let callerSignal: AbortSignal | undefined
+      const directInvoke = vi.fn(async (_channel, invocation) => {
+        callerSignal = invocation.callerLease.signal
+        markInvocationStarted?.()
+        await invocationGate
+        return []
+      })
+      const server = await startTestWebHttpServer({
+        host: '127.0.0.1',
+        port: 0,
+        token: 'test-token',
+        staticRoot: '/unused',
+        rpc: { channels: () => ['projects:list'], invoke: vi.fn() },
+        applicationCommands: {
+          localWeb: { commandNames: () => ['projects:list'], invoke: directInvoke },
+          remoteWeb: { commandNames: () => [], rejectedCommandNames: () => [], invoke: vi.fn() }
+        },
+        bootstrap: {
+          appName: 'Open Science',
+          appVersion: '0.0.0',
+          configRoot: '/fake/root',
+          platform: 'test',
+          versions: { electron: '1', chrome: '1', node: '1' }
+        }
+      })
+      servers.push(server)
+      let socket: WebSocket | undefined
+      if (withEventSocket) {
+        socket = new WebSocket(`ws://127.0.0.1:${server.port}/events?client=http-only-client`, {
+          headers: { authorization: 'Bearer test-token' }
+        })
+        await new Promise<void>((resolve, reject) => {
+          socket!.once('open', () => resolve())
+          socket!.once('error', reject)
+        })
       }
-    })
-    servers.push(server)
-    const request = httpRequest({
-      host: '127.0.0.1',
-      port: server.port,
-      path: '/rpc/projects%3Alist',
-      method: 'POST',
-      headers: {
-        authorization: 'Bearer test-token',
-        'content-type': 'application/json',
-        'x-open-science-client': 'http-only-client'
-      }
-    })
-    request.once('error', () => undefined)
-    request.end(JSON.stringify({ protocolVersion: WEB_RPC_PROTOCOL_VERSION, args: [] }))
-    await invocationStarted
+      const request = httpRequest({
+        host: '127.0.0.1',
+        port: server.port,
+        path: '/rpc/projects%3Alist',
+        method: 'POST',
+        headers: {
+          authorization: 'Bearer test-token',
+          'content-type': 'application/json',
+          'x-open-science-client': 'http-only-client'
+        }
+      })
+      request.once('error', () => undefined)
+      request.end(JSON.stringify({ protocolVersion: WEB_RPC_PROTOCOL_VERSION, args: [] }))
+      await invocationStarted
 
-    request.destroy()
-    await vi.waitFor(() => expect(callerSignal?.aborted).toBe(true))
-    finishInvocation?.()
-  })
+      try {
+        if (socket) {
+          const closed = new Promise<void>((resolve) => socket!.once('close', () => resolve()))
+          socket.close()
+          await closed
+          expect(callerSignal?.aborted).toBe(false)
+        }
+        request.destroy()
+        await vi.waitFor(() => expect(callerSignal?.aborted).toBe(true))
+      } finally {
+        socket?.close()
+        request.destroy()
+        finishInvocation?.()
+      }
+    }
+  )
 
   it('releases an HTTP-only caller after its idle retention window', async () => {
     let callerSignal: AbortSignal | undefined
