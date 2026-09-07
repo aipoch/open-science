@@ -1,3 +1,10 @@
+import { McpClientManager } from '../../connectors/mcp-client-manager'
+import {
+  classifyCustomMcpFailure,
+  hasUsableCustomMcpCredentials,
+  isCustomMcpServerRouteSafe,
+  toCustomMcpConfig
+} from '../../connectors/custom-mcp-bootstrap'
 import type {
   AuthenticateCustomServerRequest,
   CreateDeviceCredentialRequest,
@@ -22,6 +29,7 @@ import type { SettingsService } from '../service'
 type ConnectorSettingsWorkflowStore = Pick<
   SettingsService,
   | 'getConnectors'
+  | 'saveCustomServerOAuthState'
   | 'listConnectors'
   | 'listDeviceCredentials'
   | 'deviceCredentialConsumerIds'
@@ -70,6 +78,56 @@ class ConnectorSettingsWorkflows {
     private readonly settings: ConnectorSettingsWorkflowStore,
     private readonly effects: ConnectorSettingsWorkflowEffects
   ) {}
+
+  async testCustomServer(
+    request: { id: string },
+    callerSignal?: AbortSignal
+  ): Promise<{ success: boolean; toolCount?: number; message: string }> {
+    const servers = (await this.settings.getConnectors())?.customMcpServers ?? []
+    const server = servers.find((item) => item.id === request.id)
+    if (!server)
+      return {
+        success: false,
+        message:
+          'Diagnostics require an existing custom MCP Connector. Bundled Connector live tests are not supported.'
+      }
+    if (!isCustomMcpServerRouteSafe(server, servers))
+      return { success: false, message: 'Connector configuration is invalid.' }
+    if (!hasUsableCustomMcpCredentials(server))
+      return {
+        success: false,
+        message:
+          'Connector credentials are unavailable. Re-enter them using secure credential storage.'
+      }
+    // A probe must not reset or populate the shared runtime client cache.
+    const manager = new McpClientManager({
+      saveOAuthState: (id, state, fingerprint, secretRef) =>
+        this.settings.saveCustomServerOAuthState(id, state, fingerprint, secretRef)
+    })
+    const timeout = AbortSignal.timeout(10_000)
+    const signal = callerSignal ? AbortSignal.any([callerSignal, timeout]) : timeout
+    try {
+      const tools = await manager.listTools(toCustomMcpConfig(server), signal)
+      return {
+        success: true,
+        toolCount: tools.length,
+        message: 'MCP connection and tool discovery succeeded. Business tools were not executed.'
+      }
+    } catch (error) {
+      return {
+        success: false,
+        message: callerSignal?.aborted
+          ? 'MCP diagnostic cancelled.'
+          : signal.aborted
+            ? 'MCP connection timed out.'
+            : classifyCustomMcpFailure(error) === 'unauthenticated'
+              ? 'MCP authentication failed. Authenticate the existing credential before retrying.'
+              : 'MCP connection or tool discovery failed. Check the command, endpoint, and credentials.'
+      }
+    } finally {
+      await manager.closeAll()
+    }
+  }
 
   async setConnectorEnabled(
     request: SetConnectorEnabledRequest

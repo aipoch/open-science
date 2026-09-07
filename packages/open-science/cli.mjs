@@ -8,6 +8,7 @@ import { chmod, lstat, mkdir, readFile, readlink, rename, rm, stat } from 'node:
 import { dirname, join, resolve } from 'node:path'
 import { Readable } from 'node:stream'
 import { pipeline } from 'node:stream/promises'
+import { text as readStreamText } from 'node:stream/consumers'
 import { spawn } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 
@@ -34,6 +35,10 @@ Commands:
   url         Print the authenticated web URL
   update      Check, download, and apply an application update
   codex login [--force]
+  connector list | show <id> | enable <id> | disable <id>
+  connector add | update <id>      Read configuration JSON from stdin
+  connector remove <id> | test <id>
+  credential list | add | update <id>  Read credential JSON from stdin for writes
   project list
   project create <name> [--description <text>] [--agent-context <text> | --agent-context-file <path>]
   project update <id-or-name> [--name <name>] [--description <text>] [--agent-context <text> | --agent-context-file <path> | --clear-agent-context]
@@ -138,11 +143,41 @@ const VALUE_OPTIONS = {
   '--output': 'output'
 }
 
-const TASK_COMMANDS = new Set(['project', 'run', 'session', 'settings', 'plan', 'artifacts'])
-const GROUP_COMMANDS = new Set(['codex', 'project', 'session', 'settings', 'plan', 'artifacts'])
+const TASK_COMMANDS = new Set([
+  'project',
+  'run',
+  'session',
+  'settings',
+  'plan',
+  'artifacts',
+  'connector',
+  'credential'
+])
+const GROUP_COMMANDS = new Set([
+  'codex',
+  'project',
+  'session',
+  'settings',
+  'plan',
+  'artifacts',
+  'connector',
+  'credential'
+])
 // Project create, update, and session-defaults intentionally remain unbounded because their
 // positional Project names may contain multiple unquoted words.
 const POSITIONAL_LIMITS = new Map([
+  ['connector list', 0],
+  ['connector show', 1],
+  ['connector enable', 1],
+  ['connector disable', 1],
+  ['connector add', 0],
+  ['connector update', 1],
+  ['connector remove', 1],
+  ['connector test', 1],
+  ['credential list', 0],
+  ['credential add', 0],
+  ['credential update', 1],
+
   ['start', 0],
   ['stop', 0],
   ['status', 0],
@@ -894,7 +929,7 @@ const TASK_DEPS = {
   connect: (options) => connectToOpenScience(options),
   readFile: (path) => readFile(path, 'utf8'),
   readBinaryFile: (path) => readFile(path),
-  readStdin: () => readFile(0, 'utf8'),
+  readStdin: () => readStreamText(process.stdin),
   writeDownload,
   log: (...args) => console.log(...args),
   warn: (...args) => console.warn(...args),
@@ -1377,6 +1412,58 @@ export const runTaskCommand = async (parsed, dependencies = {}) => {
   const deps = { ...TASK_DEPS, ...dependencies }
   const { command, subcommand, positionals = [], options } = parsed
   const client = await deps.connect({ configRoot: options.configRoot })
+
+  if (command === 'connector' || command === 'credential') {
+    const id = positionals[0]
+    const actions =
+      command === 'connector'
+        ? ['list', 'show', 'enable', 'disable', 'add', 'update', 'remove', 'test']
+        : ['list', 'add', 'update']
+    if (!actions.includes(subcommand))
+      throw new CliUsageError(`Unknown command: ${command} ${subcommand ?? ''}`)
+    if (!['list', 'add'].includes(subcommand) && !id) throw new CliUsageError('An ID is required.')
+    let input
+    if (subcommand === 'add' || subcommand === 'update') {
+      if (deps.stdinIsTTY)
+        throw new CliUsageError('Pipe a JSON configuration object through stdin.')
+      try {
+        input = JSON.parse(await deps.readStdin())
+      } catch {
+        throw new CliUsageError('Stdin must contain a valid JSON configuration object.')
+      }
+      if (!input || typeof input !== 'object' || Array.isArray(input)) {
+        throw new CliUsageError('Stdin must contain a JSON configuration object.')
+      }
+    }
+    let result
+    if (command === 'credential') {
+      if (subcommand === 'list') result = await client.listCredentials()
+      else if (subcommand === 'add') result = await client.createCredential(input)
+      else result = await client.updateCredential(id, input)
+    } else {
+      if (subcommand === 'list') result = await client.listConnectors()
+      else if (subcommand === 'show') result = await client.getConnector(id)
+      else if (subcommand === 'enable' || subcommand === 'disable')
+        result = await client.setConnectorEnabled(id, subcommand === 'enable')
+      else if (subcommand === 'add') result = await client.addConnector(input)
+      else if (subcommand === 'update') result = await client.updateConnector(id, input)
+      else if (subcommand === 'remove') result = await client.removeConnector(id)
+      else result = await client.testConnector(id)
+    }
+    // Preserve every safe status/configuration field in both output formats.
+    deps.log(JSON.stringify(result, null, options.json ? undefined : 2))
+    if (
+      !options.json &&
+      command === 'connector' &&
+      ['add', 'update', 'remove', 'enable', 'disable'].includes(subcommand)
+    ) {
+      deps.log(
+        'Connector settings saved. Existing session refresh follows the configured agent framework; start a new session if its tool list is unchanged.'
+      )
+    }
+    if (subcommand === 'test' && result?.success === false) deps.setExitCode(1)
+    return
+  }
 
   if (command === 'project' && subcommand === 'list') {
     outputValue(await client.listProjects(), options, deps)

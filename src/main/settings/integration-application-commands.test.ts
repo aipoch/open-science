@@ -46,6 +46,7 @@ const expectedSkillChannels = [
 ] as const
 
 const expectedConnectorChannels = [
+  'settings:test-custom-server',
   'settings:list-device-credentials',
   'settings:create-device-credential',
   'settings:update-device-credential',
@@ -151,7 +152,7 @@ const createDependencies = (): Readonly<{
 }
 
 describe('Settings integration application commands', () => {
-  it('defines the exact 36-command Skill, Connector, and approval inventory', () => {
+  it('defines the exact 37-command Skill, Connector, and approval inventory', () => {
     const groups = [
       settingsSkillApplicationCommandGroup,
       settingsConnectorApplicationCommandGroup,
@@ -185,12 +186,12 @@ describe('Settings integration application commands', () => {
     expect(settingsApprovalApplicationCommandGroup.commands.map((command) => command.name)).toEqual(
       expectedApprovalChannels
     )
-    expect(groups.reduce((count, group) => count + group.commands.length, 0)).toBe(36)
+    expect(groups.reduce((count, group) => count + group.commands.length, 0)).toBe(37)
     expect(router.dispatcher.commandNames()).toEqual([...expectedChannels].sort())
     expect(settingsChannels).toEqual(
       expect.arrayContaining([
         ...expectedSkillChannels,
-        ...expectedConnectorChannels,
+        ...expectedConnectorChannels.filter((channel) => channel !== 'settings:test-custom-server'),
         ...expectedApprovalChannels
       ])
     )
@@ -594,6 +595,13 @@ describe('Settings integration application commands', () => {
         )
       )
     ).rejects.toThrow('Channel only available from the local app: settings:retry-custom-server')
+
+    await expect(
+      router.dispatcher.invoke(
+        settingsIntegrationApplicationCommands.testCustomServer,
+        invocation([{ id: 'server-1' }] as const, createTaskCallerContext({ location: 'remote' }))
+      )
+    ).rejects.toThrow('Channel only available from the local app: settings:test-custom-server')
 
     await expect(
       router.dispatcher.invoke(
