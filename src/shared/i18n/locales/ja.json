@@ -4662,6 +4662,8 @@
     "Previewing model 1 of {{total}}.": "{{total}} 個中のモデル 1 をプレビューしています。",
     "Hydrogens are hidden; alternate locations use blank or A. Atom count refers to the displayed model.": "水素原子は非表示です。代替位置は空白または A を使用します。原子数は表示中のモデルのものです。",
     "Generating surface…": "表面を生成中…",
-    "Surface could not be generated. Showing sticks.": "表面を生成できませんでした。スティック表示に戻しました。"
+    "Surface could not be generated. Showing sticks.": "表面を生成できませんでした。スティック表示に戻しました。",
+    "This workbook has no worksheets.": "このブックにはワークシートがありません。",
+    "This workbook has no visible worksheets.": "このブックには表示されているワークシートがありません。"
   }
 }

@@ -4816,6 +4816,8 @@
     "Previewing model 1 of {{total}}.": "Vorschau von Modell 1 von {{total}}.",
     "Hydrogens are hidden; alternate locations use blank or A. Atom count refers to the displayed model.": "Wasserstoffatome sind ausgeblendet; alternative Positionen verwenden ein Leerzeichen oder A. Die Atomzahl bezieht sich auf das angezeigte Modell.",
     "Generating surface…": "Oberfläche wird erzeugt…",
-    "Surface could not be generated. Showing sticks.": "Die Oberfläche konnte nicht erzeugt werden. Stäbchen werden angezeigt."
+    "Surface could not be generated. Showing sticks.": "Die Oberfläche konnte nicht erzeugt werden. Stäbchen werden angezeigt.",
+    "This workbook has no worksheets.": "Diese Arbeitsmappe enthält keine Arbeitsblätter.",
+    "This workbook has no visible worksheets.": "Diese Arbeitsmappe enthält keine sichtbaren Arbeitsblätter."
   }
 }

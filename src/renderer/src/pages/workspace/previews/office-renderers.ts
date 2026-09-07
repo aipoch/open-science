@@ -1,3 +1,5 @@
+import { i18next } from '../../../i18n'
+
 import type { OfficeFileExtension } from './office-package'
 
 export type OfficeRenderCleanup = () => void | Promise<void>
@@ -12,6 +14,7 @@ type RenderOfficeFileOptions = {
   container: HTMLDivElement
   signal: AbortSignal
   onStatus?: (status: OfficeRenderStatus) => void
+  onError?: (error: Error) => void
 }
 
 type TargetedOfficeRenderSession = {
@@ -24,7 +27,7 @@ type TargetedOfficeRenderSession = {
 
 type RenderTargetedOfficeFileOptions = Omit<
   RenderOfficeFileOptions,
-  'extension' | 'name' | 'onStatus'
+  'extension' | 'name' | 'onStatus' | 'onError'
 > & {
   extension: 'docx' | 'pptx'
   targetPages: number[]
@@ -353,13 +356,52 @@ const installPptxFit = (
   }
 }
 
-// Keeps rendered hyperlinks visible as document text without allowing preview navigation or pings.
-const neutralizeDocxLinks = (container: HTMLElement): void => {
+// Keep bookmark activation local; never restore href navigation, external URLs, or pings.
+const installDocxLinks = (container: HTMLElement): OfficeRenderCleanup => {
+  const listeners: Array<() => void> = []
+  const targets = new Map(
+    Array.from(container.querySelectorAll<HTMLElement>('[id]'), (node) => [node.id, node])
+  )
   container.querySelectorAll<HTMLAnchorElement>('a').forEach((link) => {
+    const href = link.getAttribute('href')
     for (const attribute of ['href', 'target', 'rel', 'download', 'ping', 'referrerpolicy']) {
       link.removeAttribute(attribute)
     }
+    if (!href?.startsWith('#')) return
+    let id = href.slice(1)
+    if (!targets.has(id)) {
+      try {
+        id = decodeURIComponent(id)
+      } catch {
+        return
+      }
+    }
+    const target = targets.get(id)
+    if (!target) return
+    link.setAttribute('role', 'link')
+    link.tabIndex = 0
+    const activate = (event: Event): void => {
+      event.preventDefault()
+      if (!container.contains(target)) return
+      target.scrollIntoView({ block: 'start' })
+      // Chromium drops focus if tabindex is removed immediately after focusing a bookmark.
+      if (!target.hasAttribute('tabindex')) {
+        target.tabIndex = -1
+        listeners.push(() => target.removeAttribute('tabindex'))
+      }
+      target.focus({ preventScroll: true })
+    }
+    const onKeyDown = (event: KeyboardEvent): void => {
+      if (event.key === 'Enter') activate(event)
+    }
+    link.addEventListener('click', activate)
+    link.addEventListener('keydown', onKeyDown)
+    listeners.push(() => {
+      link.removeEventListener('click', activate)
+      link.removeEventListener('keydown', onKeyDown)
+    })
   })
+  return () => listeners.forEach((remove) => remove())
 }
 
 const SPREADSHEET_WORKER_STARTUP_TIMEOUT_MS = 5_000
@@ -372,6 +414,11 @@ const RENDERING_STATUS: OfficeRenderStatus = {
   phase: 'rendering'
 }
 const SPREADSHEET_STATUS_STYLE = `
+${SPREADSHEET_STATUS_SCOPE} .spreadsheet-empty {
+  padding: 2rem;
+  text-align: center;
+  color: var(--text-100);
+}
 ${SPREADSHEET_STATUS_SCOPE} .excel-wrapper .loading {
   display: none !important;
 }
@@ -579,7 +626,8 @@ export const renderOfficeFile = async ({
   name,
   container,
   signal,
-  onStatus
+  onStatus,
+  onError
 }: RenderOfficeFileOptions): Promise<OfficeRenderCleanup> => {
   if (extension === 'docx') {
     // Keep active-content features disabled and inline media so detached Blob URLs cannot leak.
@@ -599,12 +647,13 @@ export const renderOfficeFile = async ({
       clearContainer(container)
       throw error
     }
-    neutralizeDocxLinks(container)
+    const disposeLinks = installDocxLinks(container)
     const wrapper = container.querySelector<HTMLElement>('.docx-wrapper')
     const disposeFit = wrapper ? installDocxFit(container, wrapper) : undefined
     const blobUrls = collectBlobUrls(container)
 
     return () => {
+      disposeLinks()
       disposeFit?.()
       blobUrls.forEach((url) => URL.revokeObjectURL(url))
       clearContainer(container)
@@ -627,6 +676,9 @@ export const renderOfficeFile = async ({
       throw new Error('Spreadsheet preview error observer is unavailable')
     }
 
+    let disposed = false
+    let sessionReady = false
+    let fatalError: Error | undefined
     let firstPaintSettled = false
     let resolveFirstPaint: () => void = () => undefined
     let rejectFirstPaint: (error: Error) => void = () => undefined
@@ -639,16 +691,23 @@ export const renderOfficeFile = async ({
     // Upstream does not call onProgressiveRender for parse errors, so observe its error node early.
     const errorObserver = new MutationObserverCtor(() => {
       const error = getSpreadsheetParseError(container)
-      if (!error || firstPaintSettled) return
-
-      firstPaintSettled = true
+      if (!error || fatalError || disposed || signal.aborted) return
+      fatalError = error
       errorObserver.disconnect()
-      rejectFirstPaint(error)
+      if (!firstPaintSettled) {
+        firstPaintSettled = true
+        rejectFirstPaint(error)
+      }
+      if (sessionReady) {
+        void dispose().catch((cleanupError) =>
+          console.error('Failed to dispose spreadsheet preview', cleanupError)
+        )
+        onError?.(error)
+      }
     })
     const markFirstPaint = (): void => {
       if (firstPaintSettled) return
       firstPaintSettled = true
-      errorObserver.disconnect()
       onStatus?.(RENDERING_STATUS)
       resolveFirstPaint()
     }
@@ -674,6 +733,14 @@ export const renderOfficeFile = async ({
             onProgressiveRender: markFirstPaint,
             options: {
               locale: 'en-US',
+              messages: {
+                'state.empty.title': i18next.isInitialized
+                  ? i18next.t('This workbook has no worksheets.')
+                  : 'This workbook has no worksheets.',
+                'state.empty.message': i18next.isInitialized
+                  ? i18next.t('This workbook has no visible worksheets.')
+                  : 'This workbook has no visible worksheets.'
+              },
               spreadsheet: {
                 worker: true,
                 workerUrl
@@ -692,11 +759,11 @@ export const renderOfficeFile = async ({
       throw error
     }
 
-    let disposed = false
     // Cleanup is idempotent because timeout, abort, file replacement, and unmount can race.
     const dispose = async (): Promise<void> => {
       if (disposed) return
       disposed = true
+      errorObserver.disconnect()
       try {
         if ('unmount' in instance) await instance.unmount()
         else if ('$destroy' in instance) await instance.$destroy()
@@ -752,6 +819,11 @@ export const renderOfficeFile = async ({
       if (signal.aborted) onAbort()
     })
 
+    if (fatalError) {
+      await dispose()
+      throw fatalError
+    }
+    sessionReady = true
     return dispose
   }
 
@@ -961,7 +1033,7 @@ export const renderTargetedOfficeFile = async ({
     if (page) wrapper.appendChild(page)
   }
   container.appendChild(wrapper)
-  neutralizeDocxLinks(container)
+  const disposeLinks = installDocxLinks(container)
   const disposeFit = pages.size > 0 ? installDocxFit(container, wrapper) : undefined
   const blobUrls = collectBlobUrls(container)
   let disposed = false
@@ -980,6 +1052,7 @@ export const renderTargetedOfficeFile = async ({
     dispose: () => {
       if (disposed) return
       disposed = true
+      disposeLinks()
       disposeFit?.()
       blobUrls.forEach((url) => URL.revokeObjectURL(url))
       clearContainer(container)

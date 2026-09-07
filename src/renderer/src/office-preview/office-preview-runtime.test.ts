@@ -21,6 +21,38 @@ describe('runOfficePreview', () => {
     mocks.render.mockResolvedValue(vi.fn())
   })
 
+  it('does not report ready when a session error races the renderer return', async () => {
+    const failure = new Error('Worker stopped after first paint')
+    const dispose = vi.fn()
+    mocks.render.mockImplementation(async (options) => {
+      options.onError(failure)
+      return dispose
+    })
+    const reportState = vi.fn()
+    await expect(
+      runOfficePreview({
+        start: {
+          sessionId: 'session-race',
+          extension: 'xlsx',
+          name: 'book.xlsx',
+          attempt: 0,
+          resource: {
+            id: 'resource',
+            url: 'https://preview.test/book.xlsx',
+            size: 3,
+            mimeType: 'application/octet-stream',
+            version: 1
+          }
+        },
+        container: document.createElement('div'),
+        fetchFile: vi.fn().mockResolvedValue(new Response(new Uint8Array([1, 2, 3]))),
+        reportState
+      })
+    ).rejects.toThrow(failure.message)
+    expect(dispose).toHaveBeenCalledOnce()
+    expect(reportState.mock.calls.some(([state]) => state.phase === 'ready')).toBe(false)
+  })
+
   it('reads, validates, and renders inside the isolated runtime', async () => {
     const bytes = new Uint8Array([1, 2, 3])
     const disposeRender = vi.fn()

@@ -5111,6 +5111,8 @@
     "Previewing model 1 of {{total}}.": "Предпросмотр модели 1 из {{total}}.",
     "Hydrogens are hidden; alternate locations use blank or A. Atom count refers to the displayed model.": "Атомы водорода скрыты; для альтернативных положений используются пробел или A. Число атомов относится к отображаемой модели.",
     "Generating surface…": "Создание поверхности…",
-    "Surface could not be generated. Showing sticks.": "Не удалось создать поверхность. Показана стержневая модель."
+    "Surface could not be generated. Showing sticks.": "Не удалось создать поверхность. Показана стержневая модель.",
+    "This workbook has no worksheets.": "В этой книге нет листов.",
+    "This workbook has no visible worksheets.": "В этой книге нет видимых листов."
   }
 }

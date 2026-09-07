@@ -4662,6 +4662,8 @@
     "Previewing model 1 of {{total}}.": "正在預覽第 1 個模型，共 {{total}} 個。",
     "Hydrogens are hidden; alternate locations use blank or A. Atom count refers to the displayed model.": "隱藏氫原子；替代位置使用空白或 A。原子數指目前顯示的模型。",
     "Generating surface…": "正在產生表面…",
-    "Surface could not be generated. Showing sticks.": "無法產生表面。已顯示為棍狀。"
+    "Surface could not be generated. Showing sticks.": "無法產生表面。已顯示為棍狀。",
+    "This workbook has no worksheets.": "此活頁簿沒有工作表。",
+    "This workbook has no visible worksheets.": "此活頁簿沒有可見的工作表。"
   }
 }
