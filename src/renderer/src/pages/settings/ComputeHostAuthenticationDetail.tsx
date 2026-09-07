@@ -52,7 +52,9 @@ export function ComputeHostAuthenticationDetail({
   const currentRevision = host.authentication?.revision ?? 1
   const [mode, setMode] = useState<ComputeAuthenticationMode>(currentMode)
   const [username, setUsername] = useState(host.sshOverrides?.user ?? '')
-  const [port, setPort] = useState(String(host.sshOverrides?.port ?? 22))
+  const [port, setPort] = useState(
+    String(host.sshOverrides?.port ?? (currentMode === 'password' ? 22 : ''))
+  )
   const identityFile = host.sshOverrides?.identityFile ?? ''
   const [password, setPassword] = useState('')
   const [busy, setBusy] = useState(false)
@@ -81,7 +83,7 @@ export function ComputeHostAuthenticationDetail({
     if (!isEditing) {
       setMode(currentMode)
       setUsername(host.sshOverrides?.user ?? '')
-      setPort(String(host.sshOverrides?.port ?? 22))
+      setPort(String(host.sshOverrides?.port ?? (currentMode === 'password' ? 22 : '')))
     }
   }
 
@@ -109,7 +111,7 @@ export function ComputeHostAuthenticationDetail({
     onEditingChange(false)
     setMode(currentMode)
     setUsername(host.sshOverrides?.user ?? '')
-    setPort(String(host.sshOverrides?.port ?? 22))
+    setPort(String(host.sshOverrides?.port ?? (currentMode === 'password' ? 22 : '')))
     setPassword('')
     setValidationError(undefined)
   }
@@ -118,18 +120,22 @@ export function ComputeHostAuthenticationDetail({
     setPassword('')
     setFeedback(undefined)
     setValidationError(undefined)
+    if (nextMode === 'password' && !port.trim()) setPort('22')
     setMode(nextMode)
     setAuthenticationOperation(undefined)
   }
 
   const save = async (): Promise<void> => {
-    const parsedPort = Number(port)
+    const parsedPort = mode === 'ssh_config' && !port.trim() ? undefined : Number(port)
     const normalizedUsername = username.trim() || undefined
     if (mode === 'password' && !normalizedUsername) {
       setValidationError({ field: 'username', text: t('Username is required.') })
       return
     }
-    if (!Number.isInteger(parsedPort) || parsedPort < 1 || parsedPort > 65_535) {
+    if (
+      parsedPort !== undefined &&
+      (!Number.isInteger(parsedPort) || parsedPort < 1 || parsedPort > 65_535)
+    ) {
       setValidationError({
         field: 'port',
         text: t('Port must be an integer from 1 through 65535.')
@@ -140,7 +146,7 @@ export function ComputeHostAuthenticationDetail({
       mode === 'ssh_config' ? identityFile.trim() || undefined : undefined
     const modeChanged = mode !== currentMode
     const usernameChanged = normalizedUsername !== (host.sshOverrides?.user || undefined)
-    const portChanged = parsedPort !== (host.sshOverrides?.port ?? 22)
+    const portChanged = parsedPort !== host.sshOverrides?.port
     const identityFileChanged =
       mode === 'ssh_config' &&
       normalizedIdentityFile !== (host.sshOverrides?.identityFile || undefined)
@@ -235,7 +241,10 @@ export function ComputeHostAuthenticationDetail({
             <dt className="text-muted-foreground">{t('Username')}</dt>
             <dd className="col-span-2">{host.sshOverrides?.user || t('From SSH configuration')}</dd>
             <dt className="text-muted-foreground">{t('Port')}</dt>
-            <dd className="col-span-2">{host.sshOverrides?.port ?? 22}</dd>
+            <dd className="col-span-2">
+              {host.sshOverrides?.port ??
+                (currentMode === 'password' ? 22 : t('From SSH configuration'))}
+            </dd>
             <dt className="text-muted-foreground">
               {currentMode === 'password' ? t('Saved password') : t('Credential')}
             </dt>
@@ -356,6 +365,7 @@ export function ComputeHostAuthenticationDetail({
             <Label htmlFor="compute-detail-port">{t('Port')}</Label>
             <Input
               id="compute-detail-port"
+              placeholder={mode === 'ssh_config' ? t('From SSH configuration') : undefined}
               inputMode="numeric"
               value={port}
               onChange={(event) => {

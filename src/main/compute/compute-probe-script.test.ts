@@ -16,7 +16,7 @@ describe('compute probe shell protocol', () => {
       const host = { providerId: 'ssh:probe', scratchPinned: true } as ComputeHost
       const repository = {
         get: vi.fn(async () => host),
-        updateProbeResult: vi.fn()
+        updateProbeResult: vi.fn(async () => true)
       } as unknown as ComputeHostRepository
       const broker = {
         acquire: async () => ({

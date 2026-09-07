@@ -57,7 +57,7 @@ type ChangeComputeHostAuthenticationPersistence = Readonly<{
   requestFingerprint: string
   authenticationMode: ComputeAuthenticationMode
   username: string | undefined
-  port: number
+  port?: number
   identityFile?: string
   ciphertext?: Buffer
   verifiedAt: Date
@@ -331,7 +331,13 @@ class ComputeAuthOwner {
     if (!Number.isInteger(request.expectedRevision) || request.expectedRevision < 1) {
       throw new ComputeConnectionError('credential_conflict')
     }
-    if (!Number.isInteger(request.port) || request.port < 1 || request.port > 65_535) {
+    if (
+      (request.authenticationMode === 'password' || request.port !== undefined) &&
+      (request.port === undefined ||
+        !Number.isInteger(request.port) ||
+        request.port < 1 ||
+        request.port > 65_535)
+    ) {
       throw new ComputeConnectionError(
         'unsupported_auth_configuration',
         'Port must be an integer from 1 through 65535.'
@@ -366,7 +372,7 @@ class ComputeAuthOwner {
     const hasMaterialChange =
       host.authentication?.mode !== request.authenticationMode ||
       host.sshOverrides?.user !== username ||
-      (host.sshOverrides?.port ?? 22) !== request.port ||
+      host.sshOverrides?.port !== request.port ||
       (request.authenticationMode === 'ssh_config' && currentIdentityFile !== identityFile)
     if (!hasMaterialChange) return host
     if (await this.dependencies.hasBlockingJobs?.(providerId)) {

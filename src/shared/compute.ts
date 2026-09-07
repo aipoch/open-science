@@ -233,9 +233,9 @@ export type ChangeComputeHostAuthenticationRequest = Readonly<{
   expectedRevision: number
   operationId: string
   authenticationMode: ComputeAuthenticationMode
-  // Absent in ssh_config mode: the User (and port fallback) then come from ~/.ssh/config.
+  // Absent overrides in ssh_config mode inherit User and Port from ~/.ssh/config.
   username?: string
-  port: number
+  port?: number
   identityFile?: string
   password?: string
 }>

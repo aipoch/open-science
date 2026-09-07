@@ -84,11 +84,15 @@ const changeComputeHostAuthenticationRequestSchema = z
     operationId: z.string(),
     authenticationMode: z.enum(['ssh_config', 'password']),
     username: z.string().optional(),
-    port: finiteNumberSchema,
+    port: finiteNumberSchema.optional(),
     identityFile: z.string().optional(),
     password: z.string().optional()
   })
-  .strict() satisfies z.ZodType<ChangeComputeHostAuthenticationRequest>
+  .strict()
+  .refine((request) => request.authenticationMode === 'ssh_config' || request.port !== undefined, {
+    path: ['port'],
+    message: 'Port is required for password authentication.'
+  }) satisfies z.ZodType<ChangeComputeHostAuthenticationRequest>
 
 const deleteComputeHostRequestSchema = z
   .object({ providerId: z.string() })

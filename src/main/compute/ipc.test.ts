@@ -2420,6 +2420,49 @@ describe('installComputeIpcHandlers', () => {
     await rm(storageRoot, { recursive: true, force: true })
   })
 
+  it.each([{}, { port: undefined }])(
+    'forwards an inherited SSH port through Electron IPC: %j',
+    async (port) => {
+      const module = createComputeIpcModule(mockRepository({}), mockJobRepo({}))
+      const changeAuthentication = vi
+        .spyOn(module.handlers, 'changeAuthentication')
+        .mockResolvedValue({ ok: true, host: sampleHost() })
+      installComputeModule(module)
+      const request = {
+        providerId: 'ssh:biowulf',
+        expectedRevision: 1,
+        operationId: 'inherit-port',
+        authenticationMode: 'ssh_config',
+        username: 'researcher',
+        ...port
+      }
+
+      await expect(invokeHandler('compute:change-authentication', request)).resolves.toMatchObject({
+        ok: true
+      })
+      expect(changeAuthentication).toHaveBeenCalledWith(request)
+      expect(changeAuthentication.mock.calls[0][0].port).toBeUndefined()
+    }
+  )
+
+  it('rejects an omitted password-authentication port before invoking the owner', async () => {
+    const module = createComputeIpcModule(mockRepository({}), mockJobRepo({}))
+    const changeAuthentication = vi.spyOn(module.handlers, 'changeAuthentication')
+    installComputeModule(module)
+
+    await expect(
+      invokeHandler('compute:change-authentication', {
+        providerId: 'ssh:biowulf',
+        expectedRevision: 1,
+        operationId: 'password-port',
+        authenticationMode: 'password',
+        username: 'researcher',
+        password: 'secret'
+      })
+    ).rejects.toThrow(/invalid.*compute:change-authentication/i)
+    expect(changeAuthentication).not.toHaveBeenCalled()
+  })
+
   it('registers every compute:* channel that the renderer can invoke', () => {
     const module = createComputeIpcModule(mockRepository({}), mockJobRepo({}))
     installComputeModule(module)

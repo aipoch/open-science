@@ -1306,3 +1306,85 @@ describe('ComputeHostDetail', () => {
     expect(container.querySelector('[data-compute-authentication-alert]')).toBeNull()
   })
 })
+
+it.each([undefined, 2222])(
+  'saves an inherited SSH port when editing or clearing the override (%s)',
+  async (initialPort) => {
+    const changeAuthentication = vi.fn().mockResolvedValue(host())
+    useComputeStore.setState({
+      hosts: [
+        host({ sshOverrides: { user: 'before', ...(initialPort ? { port: initialPort } : {}) } })
+      ],
+      changeAuthentication
+    })
+    await act(async () => root.render(<ComputeHostDetail providerId="ssh:biowulf" />))
+    const section = Array.from(
+      container.querySelectorAll<HTMLElement>('[data-slot="settings-section"]')
+    ).find((section) => section.querySelector('h3')?.textContent === 'Configuration')!
+    act(() =>
+      Array.from(section.querySelectorAll('button'))
+        .find((button) => button.textContent?.trim() === 'Edit')!
+        .click()
+    )
+    const enter = (id: string, value: string): void => {
+      const input = container.querySelector<HTMLInputElement>(id)!
+      act(() => {
+        Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(
+          input,
+          value
+        )
+        input.dispatchEvent(new Event('input', { bubbles: true }))
+      })
+    }
+    enter('#compute-detail-username', 'after')
+    if (initialPort) enter('#compute-detail-port', '')
+    await act(async () =>
+      Array.from(section.querySelectorAll('button'))
+        .find((button) => button.textContent?.trim() === 'Test and save')!
+        .click()
+    )
+    expect(changeAuthentication).toHaveBeenCalledOnce()
+    expect(changeAuthentication.mock.calls[0][0].port).toBeUndefined()
+  }
+)
+
+it('keeps the draft and reloads a merge base after a details conflict', async () => {
+  stubDetailsGet('base')
+  const saveDetails = vi
+    .fn()
+    .mockRejectedValueOnce(new Error('details_conflict: old_text does not match'))
+  useComputeStore.setState({ hosts: [host({ detailsDoc: 'base' })], saveDetails })
+  await act(async () => root.render(<ComputeHostDetail providerId="ssh:biowulf" />))
+  const section = Array.from(
+    container.querySelectorAll<HTMLElement>('[data-slot="settings-section"]')
+  ).find((section) => section.querySelector('h3')?.textContent === 'Details')!
+  const click = async (text: string): Promise<void> => {
+    await act(async () =>
+      Array.from(section.querySelectorAll('button'))
+        .find((button) => button.textContent?.trim() === text)!
+        .click()
+    )
+  }
+  await click('Edit')
+  const draft = section.querySelector('textarea')!
+  act(() => {
+    Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!.call(
+      draft,
+      'my draft'
+    )
+    draft.dispatchEvent(new Event('input', { bubbles: true }))
+  })
+  await click('Save')
+  expect(draft.value).toBe('my draft')
+  stubDetailsGet('other writer')
+  expect(
+    Array.from(section.querySelectorAll('button')).some(
+      (button) => button.textContent?.trim() === 'Reload'
+    )
+  ).toBe(true)
+  await click('Reload')
+  expect(draft.value).toBe('my draft')
+  expect(section.textContent).toContain('other writer')
+  await click('Save')
+  expect(saveDetails).toHaveBeenLastCalledWith('ssh:biowulf', 'my draft', 'other writer')
+})
