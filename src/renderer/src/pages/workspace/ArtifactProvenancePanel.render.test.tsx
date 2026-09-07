@@ -1210,6 +1210,50 @@ describe('ArtifactProvenancePanel', () => {
     expect(container.textContent).toContain('Corrective Retrieval Augmented Generation')
   })
 
+  it('explains incomplete kernel state without hiding the reason or offering a download', async () => {
+    act(() => root.unmount())
+    getCodeReconstruction.mockResolvedValue({
+      state: 'unavailable',
+      reason: 'supporting-code-incomplete'
+    })
+    root = createRoot(container)
+    await act(async () =>
+      root.render(<ArtifactProvenancePanel item={item} projectId="project-1" onClose={vi.fn()} />)
+    )
+    await flush()
+    const reason = [...container.querySelectorAll('p')].find((p) =>
+      p.textContent?.includes('Failed or interrupted cells')
+    )
+    expect(reason?.textContent).toContain('may have changed kernel state before stopping')
+    expect(reason?.className).not.toContain('truncate')
+    const generate = [...container.querySelectorAll('button')].find(
+      (button) => button.textContent === 'Generate script'
+    )
+    expect(generate?.disabled).toBe(true)
+    expect(container.textContent).not.toContain('Download script')
+    expect(generateCodeReconstruction).not.toHaveBeenCalled()
+  })
+
+  it('retains generation after an incomplete model response and offers download only after retry succeeds', async () => {
+    generateCodeReconstruction.mockRejectedValueOnce(
+      new Error('Code reconstruction reached the model output limit. Try another model.')
+    )
+    const generate = [...container.querySelectorAll('button')].find(
+      (button) => button.textContent === 'Generate script'
+    )
+    await act(async () => generate?.click())
+    await flush()
+    expect(container.querySelector('[role="alert"]')?.textContent).toContain('model output limit')
+    expect(container.textContent).not.toContain('Download script')
+    const retry = [...container.querySelectorAll('button')].find(
+      (button) => button.textContent === 'Generate script'
+    )
+    await act(async () => retry?.click())
+    await flush()
+    expect(generateCodeReconstruction).toHaveBeenCalledTimes(2)
+    expect(container.textContent).toContain('Download script')
+  })
+
   it('checks the reconstruction cache on Code open without calling the model', async () => {
     expect(getCodeReconstruction).toHaveBeenCalledOnce()
     expect(getCodeReconstruction).toHaveBeenCalledWith({

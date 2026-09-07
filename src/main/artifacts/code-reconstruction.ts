@@ -23,7 +23,8 @@ const CONTEXT_MAX_BYTES = 256 * 1024
 const PRODUCER_SCRIPT_MAX_BYTES = 160 * 1024
 const OUTPUT_MAX_BYTES = 4 * 1024
 const RESPONSE_MAX_BYTES = 1024 * 1024
-const PROMPT_VERSION = 'artifact-code-reconstruction-v2'
+// Older caches did not validate completion or preserve failed-cell state.
+const PROMPT_VERSION = 'artifact-code-reconstruction-v3'
 
 type CodeReconstructionRepository = Pick<
   import('./provenance-repository').ArtifactProvenanceRepository,
@@ -213,6 +214,22 @@ const sourceState = (
   )
   if (!producerRun?.script.trim()) {
     return { state: 'unavailable', reason: 'producer-script-missing' }
+  }
+  // Failed/interrupted cells can mutate a persistent kernel before stopping. Apply this before
+  // cache lookup and both reconstruction paths; missing epoch IDs cannot prove isolation.
+  if (
+    producerRun.kernelKind !== 'bash' &&
+    provenance.execution.runs.some(
+      (run) =>
+        run.runIndex <= producerRun.runIndex &&
+        run.kernelKind === producerRun.kernelKind &&
+        (!producerRun.kernelEpochId ||
+          !run.kernelEpochId ||
+          run.kernelEpochId === producerRun.kernelEpochId) &&
+        run.status !== 'completed'
+    )
+  ) {
+    return { state: 'unavailable', reason: 'supporting-code-incomplete' }
   }
   const hasHelperKeys = provenance.execution.runs.some(
     (run) => (run.helperModuleKeys?.length ?? 0) > 0
@@ -440,32 +457,44 @@ const buildContext = (
     }
   }
 
+  const omitRun = (run: ReconstructionRun): void => {
+    context.omissions.omittedRuns += 1
+    context.omissions.omittedOutputs += run.outputs.length
+    context.omissions.omittedBytes += byteLength(escapePromptEvidence(JSON.stringify(run)))
+    if (!context.omissions.reasons.includes('context-byte-limit')) {
+      context.omissions.reasons.push('context-byte-limit')
+    }
+  }
   for (const run of earlierRuns) {
     const projected = projectRun(run, PRODUCER_SCRIPT_MAX_BYTES)
     context.execution.runs.push(projected)
-    if (byteLength(JSON.stringify(context)) > CONTEXT_MAX_BYTES) {
+    if (byteLength(buildPrompt(JSON.stringify(context))) > CONTEXT_MAX_BYTES) {
       context.execution.runs.pop()
-      context.omissions.omittedRuns += 1
-      context.omissions.omittedOutputs += run.outputs.length
-      context.omissions.omittedBytes += byteLength(JSON.stringify(projected))
-      if (!context.omissions.reasons.includes('context-byte-limit')) {
-        context.omissions.reasons.push('context-byte-limit')
-      }
+      omitRun(projected)
     }
   }
 
   let serialized = JSON.stringify(context)
-  if (byteLength(serialized) > CONTEXT_MAX_BYTES) {
-    const producerWithoutOutputs = { ...producer, outputs: [] }
+  // Omission metadata also consumes space; discard the oldest retained history until it fits.
+  while (
+    byteLength(buildPrompt(serialized)) > CONTEXT_MAX_BYTES &&
+    context.execution.runs.length > 1
+  ) {
+    omitRun(context.execution.runs.pop()!)
+    serialized = JSON.stringify(context)
+  }
+  if (byteLength(buildPrompt(serialized)) > CONTEXT_MAX_BYTES && producer.outputs.length > 0) {
     context.omissions.omittedOutputs += producer.outputs.length
-    context.omissions.omittedBytes += byteLength(JSON.stringify(producer.outputs))
+    context.omissions.omittedBytes += byteLength(
+      escapePromptEvidence(JSON.stringify(producer.outputs))
+    )
     if (!context.omissions.reasons.includes('context-byte-limit')) {
       context.omissions.reasons.push('context-byte-limit')
     }
-    context.execution.runs = [producerWithoutOutputs]
+    producer.outputs = []
     serialized = JSON.stringify(context)
   }
-  if (byteLength(serialized) > CONTEXT_MAX_BYTES) {
+  if (byteLength(buildPrompt(serialized)) > CONTEXT_MAX_BYTES) {
     throw new Error('The producer script is too large to reconstruct safely.')
   }
   return {

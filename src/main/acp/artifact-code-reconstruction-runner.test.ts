@@ -186,6 +186,50 @@ describe('ArtifactCodeReconstructionRunner cleanup', () => {
     )
   })
 
+  it.each(['claude-code', 'opencode', 'codex', 'codebuddy'] as const)(
+    'accepts only normal completion for %s while preserving usage and releasing the runner',
+    async (frameworkId) => {
+      temporaryRoot = await mkdtemp(join(tmpdir(), 'open-science-reconstruction-completion-'))
+      const usage = { inputTokens: 7, cacheTokens: 1, outputTokens: 2, turnCount: 1 }
+      const inference = vi.spyOn(RestrictedInferenceRunner.prototype, 'run').mockResolvedValue({
+        text: 'print("partial")',
+        frameworkId,
+        model: 'model-a',
+        stopReason: 'max_turn_requests',
+        usage
+      })
+      const recordUsage = vi.fn(async () => undefined)
+      const runner = new ArtifactCodeReconstructionRunner({
+        appVersion: '0.11.0',
+        configRoot: temporaryRoot,
+        captureTarget: vi.fn(),
+        resolveTarget: vi.fn(),
+        recordUsage
+      })
+      const selected = { ...target, frameworkId }
+      const context = { projectId: 'project-1', sessionId: 'session-1' }
+      await expect(runner.run('evidence', selected, context)).rejects.toThrow(
+        'did not finish normally'
+      )
+      expect(recordUsage).toHaveBeenCalledExactlyOnceWith(
+        expect.objectContaining({ frameworkId, usage })
+      )
+      inference.mockResolvedValue({
+        text: 'print("complete")',
+        frameworkId,
+        model: 'model-a',
+        stopReason: 'end_turn',
+        usage
+      })
+      await expect(runner.run('evidence', selected, context)).resolves.toEqual({
+        text: 'print("complete")',
+        frameworkId,
+        model: 'model-a'
+      })
+      expect(recordUsage).toHaveBeenCalledTimes(2)
+    }
+  )
+
   it('records provider usage attached to an ordinary reconstruction error', async () => {
     temporaryRoot = await mkdtemp(join(tmpdir(), 'open-science-reconstruction-error-usage-'))
     const usage = { inputTokens: 7, cacheTokens: 1, outputTokens: 2, turnCount: 1 }

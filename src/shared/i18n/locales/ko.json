@@ -1360,7 +1360,7 @@
     "Generated from the name when possible. Edit it now or leave it blank to generate automatically; it cannot be changed after creation.": "가능한 경우 이름에서 생성됩니다. 지금 편집하거나 자동으로 생성되도록 비워 두세요. 생성 후에는 변경할 수 없습니다.",
     "Generating reconstructed script": "재구성된 스크립트 생성",
     "Helper source evidence is incomplete for this version.": "이 버전의 헬퍼 소스 근거가 불완전합니다.",
-    "Supporting code evidence is incomplete for this version.": "이 버전의 지원 코드 근거가 불완전합니다.",
+    "Supporting code is incomplete. Failed or interrupted cells may have changed kernel state before stopping.": "보조 코드가 불완전합니다. 실패하거나 중단된 셀이 멈추기 전에 커널 상태를 변경했을 수 있습니다.",
     "Generating script…": "스크립트 생성 중…",
     "Generating…": "생성 중…",
     "Get a desktop notification when a task finishes, fails, or waits for your approval while you're away from the app.": "앱을 사용하지 않는 동안 작업이 완료되거나 실패하거나 승인을 기다리는 경우 데스크톱 알림을 받습니다.",

@@ -179,7 +179,9 @@ const codeReconstructionUnavailableLabel = (
     case 'helper-evidence-incomplete':
       return t('Helper source evidence is incomplete for this version.')
     case 'supporting-code-incomplete':
-      return t('Supporting code evidence is incomplete for this version.')
+      return t(
+        'Supporting code is incomplete. Failed or interrupted cells may have changed kernel state before stopping.'
+      )
   }
 }
 
@@ -1441,7 +1443,7 @@ const ArtifactProvenancePanel = ({
                   {codeReconstructionResult.message}
                 </p>
               ) : codeReconstructionState?.state === 'unavailable' ? (
-                <p className="min-w-0 flex-1 truncate text-sm text-text-200">
+                <p className="min-w-0 flex-1 text-sm text-text-200">
                   {codeReconstructionUnavailableLabel(codeReconstructionState.reason, t)}
                 </p>
               ) : codeReconstructionResult?.status === 'generating' ? (

@@ -1401,7 +1401,7 @@
     "Generated from the name when possible. Edit it now or leave it blank to generate automatically; it cannot be changed after creation.": "Généré à partir du nom lorsque cela est possible. Modifiez-le maintenant ou laissez-le vide pour le générer automatiquement ; il ne peut pas être modifié après la création.",
     "Generating reconstructed script": "Génération d'un script reconstruit",
     "Helper source evidence is incomplete for this version.": "Les preuves du code source des helpers sont incomplètes pour cette version.",
-    "Supporting code evidence is incomplete for this version.": "Les preuves du code complémentaire sont incomplètes pour cette version.",
+    "Supporting code is incomplete. Failed or interrupted cells may have changed kernel state before stopping.": "Le code auxiliaire est incomplet. Les cellules en échec ou interrompues peuvent avoir modifié l’état du noyau avant de s’arrêter.",
     "Generating script…": "Génération du script…",
     "Generating…": "Générer…",
     "Get a desktop notification when a task finishes, fails, or waits for your approval while you're away from the app.": "Recevez une notification sur le bureau lorsqu'une tâche se termine, échoue ou attend votre approbation lorsque vous êtes absent de l'application.",
