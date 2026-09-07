@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import { act, StrictMode } from 'react'
+import { fireEvent } from '@testing-library/react'
 import { createRoot, type Root } from 'react-dom/client'
 import type { JSX, PropsWithChildren } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -8,7 +9,16 @@ import { createInitialSettingsState, useSettingsStore } from '@/stores/settings-
 import { useNavigationStore } from '@/stores/navigation-store'
 import type { ChatMessage } from '@/stores/session-store'
 
-import { WorkspaceMessageItem } from './WorkspaceMessageItem'
+import { TooltipProvider } from '@/components/ui/tooltip'
+import { WorkspaceMessageItem as MessageItem } from './WorkspaceMessageItem'
+
+const WorkspaceMessageItem = (
+  props: React.ComponentProps<typeof MessageItem>
+): React.JSX.Element => (
+  <TooltipProvider delayDuration={200}>
+    <MessageItem {...props} />
+  </TooltipProvider>
+)
 
 const { artifactPreview } = vi.hoisted(() => ({
   artifactPreview: vi.fn(() => null)
@@ -612,7 +622,7 @@ describe('WorkspaceMessageItem turn token usage', () => {
     expect(document.body.textContent).not.toContain('Input 12,345')
 
     await act(async () => {
-      usageTrigger?.dispatchEvent(new MouseEvent('pointerover', { bubbles: true }))
+      usageTrigger?.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }))
       await Promise.resolve()
     })
 
@@ -625,7 +635,9 @@ describe('WorkspaceMessageItem turn token usage', () => {
     expect(usagePopover?.textContent).toContain('Cache678')
     expect(usagePopover?.textContent).toContain('Output90')
     expect(usagePopover?.textContent).toContain('Total13,113')
-    expect(usagePopover?.getAttribute('aria-label')).toBe('Token usage for this response')
+    expect(usagePopover?.querySelector('[role="tooltip"]')?.textContent).toContain(
+      'Token usage for this response: Input 12,345, Cache 678, Output 90; Total 13,113 tokens'
+    )
     expect(usagePopover?.className).toContain('border-border')
     expect(usagePopover?.className).toContain('bg-popover')
     expect(usagePopover?.className).toContain('shadow-menu')
@@ -700,7 +712,7 @@ describe('WorkspaceMessageItem turn token usage', () => {
       '[data-slot="turn-token-usage"] button'
     )
     await act(async () => {
-      usageTrigger?.dispatchEvent(new MouseEvent('pointerover', { bubbles: true }))
+      usageTrigger?.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }))
       await Promise.resolve()
     })
 
@@ -753,7 +765,7 @@ describe('WorkspaceMessageItem turn token usage', () => {
       '[data-slot="turn-token-usage"] button'
     )
     await act(async () => {
-      usageTrigger?.dispatchEvent(new MouseEvent('pointerover', { bubbles: true }))
+      usageTrigger?.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }))
       await Promise.resolve()
     })
 
@@ -783,7 +795,7 @@ describe('WorkspaceMessageItem turn token usage', () => {
       '[data-slot="turn-token-usage"] button'
     )
     await act(async () => {
-      usageTrigger?.dispatchEvent(new MouseEvent('pointerover', { bubbles: true }))
+      usageTrigger?.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }))
       await Promise.resolve()
     })
 
@@ -824,24 +836,20 @@ describe('WorkspaceMessageItem turn token usage', () => {
       '[data-slot="turn-token-usage"] button'
     )
     act(() => {
-      usageTrigger?.dispatchEvent(new MouseEvent('pointerover', { bubbles: true }))
+      usageTrigger?.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }))
     })
 
     const usagePopover = document.body.querySelector('[data-slot="turn-token-usage-popover"]')
     act(() => {
-      usageTrigger?.dispatchEvent(
-        new MouseEvent('pointerout', { bubbles: true, relatedTarget: usagePopover })
-      )
-      usagePopover?.dispatchEvent(
-        new MouseEvent('pointerover', { bubbles: true, relatedTarget: usageTrigger })
-      )
+      fireEvent.pointerLeave(usageTrigger!)
+      fireEvent.pointerMove(usagePopover!, { pointerType: 'mouse' })
       vi.advanceTimersByTime(100)
     })
     expect(document.body.querySelector('[data-slot="turn-token-usage-popover"]')).not.toBeNull()
 
     act(() => {
-      usagePopover?.dispatchEvent(new MouseEvent('pointerout', { bubbles: true }))
-      vi.advanceTimersByTime(100)
+      fireEvent.pointerLeave(usagePopover!)
+      fireEvent.pointerMove(document.body, { pointerType: 'mouse', clientX: 1000, clientY: 1000 })
     })
     expect(document.body.querySelector('[data-slot="turn-token-usage-popover"]')).toBeNull()
   })
@@ -889,10 +897,8 @@ describe('WorkspaceMessageItem turn token usage', () => {
     expect(document.body.querySelector('[data-slot="turn-token-usage-popover"]')).toBeNull()
   })
 
-  it('clears a pending Usage close when the token summary unmounts', async () => {
+  it('cancels pending Calls hover when the token summary unmounts', async () => {
     vi.useFakeTimers()
-    const setTimeoutSpy = vi.spyOn(globalThis, 'setTimeout')
-    const clearTimeoutSpy = vi.spyOn(globalThis, 'clearTimeout')
     await renderMessageItem(
       createMessage({
         role: 'agent',
@@ -901,23 +907,17 @@ describe('WorkspaceMessageItem turn token usage', () => {
         turnUsage: { inputTokens: 12_345, cacheTokens: 678, outputTokens: 90 }
       })
     )
-
-    const usageTrigger = container.querySelector<HTMLButtonElement>(
-      '[data-slot="turn-token-usage"] button'
-    )
+    const trigger = container.querySelector('[data-slot="turn-token-usage"] button')!
     act(() => {
-      usageTrigger?.dispatchEvent(new MouseEvent('pointerover', { bubbles: true }))
-      usageTrigger?.dispatchEvent(new MouseEvent('pointerout', { bubbles: true }))
+      fireEvent.pointerMove(trigger, { pointerType: 'mouse' })
     })
-    const closeTimerIndex = setTimeoutSpy.mock.calls.findLastIndex(([, delay]) => delay === 100)
-    const closeTimer = setTimeoutSpy.mock.results[closeTimerIndex]?.value
-    expect(closeTimer).toBeDefined()
-
     await renderMessageItem(
       createMessage({ role: 'agent', content: 'Done without totals', completedAt: 1710000126000 })
     )
-
-    expect(clearTimeoutSpy).toHaveBeenCalledWith(closeTimer)
+    act(() => {
+      vi.advanceTimersByTime(201)
+    })
+    expect(document.body.querySelector('[data-slot="turn-token-usage-popover"]')).toBeNull()
   })
 
   it('shows failed time and elapsed run time even when token totals are absent', async () => {

@@ -612,7 +612,11 @@ export const createSessionPersistenceOwner = <State extends SessionStoreData>(
   hydrateSessions: (sessions, manifest, selection) => {
     const hydrated = [...sessions]
       .sort((left, right) => right.updatedAt - left.updatedAt)
-      .map(hydrateSession)
+      .map((session) => {
+        const hydrated = hydrateSession(session)
+        markExternallyHydratedSession(hydrated, session)
+        return hydrated
+      })
     const hasExplicitSelection = selection !== undefined
     const requestedSelection = hasExplicitSelection ? selection.sessionId : manifest?.lastSessionId
     const selectedSessionId = hydrated.some((session) => session.id === requestedSelection)
@@ -630,7 +634,10 @@ export const createSessionPersistenceOwner = <State extends SessionStoreData>(
       .sort((left, right) => right.updatedAt - left.updatedAt)
       .map((summary) => {
         const authority = selectedById.get(summary.id)
-        return authority ? hydrateSession(authority) : hydrateSessionSummary(summary)
+        if (!authority) return hydrateSessionSummary(summary)
+        const hydrated = hydrateSession(authority)
+        markExternallyHydratedSession(hydrated, authority)
+        return hydrated
       })
     const hasExplicitSelection = selection !== undefined
     const requestedSelection = hasExplicitSelection ? selection.sessionId : manifest?.lastSessionId
@@ -825,6 +832,17 @@ export const createSessionPersistenceOwner = <State extends SessionStoreData>(
       if (mode === 'archive-authority') {
         const projected = archive
         if (projected === current) return state
+        const previousAuthority = externallyHydratedSessionAuthorities.get(current)
+        if (previousAuthority) {
+          // Refreshing archive metadata is not a local edit. Preserve dirty sessions as dirty,
+          // and do not let a delayed receipt replace a newer persistence acknowledgement.
+          markExternallyHydratedSession(
+            projected,
+            sessionRevision(previousAuthority) > sessionRevision(session)
+              ? previousAuthority
+              : session
+          )
+        }
         return {
           sessions: state.sessions.map((candidate) =>
             candidate === current ? projected : candidate

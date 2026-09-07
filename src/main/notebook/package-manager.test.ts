@@ -139,6 +139,11 @@ describe('defaultSpawn (fail-closed spawn hooks)', () => {
             `const { spawn } = require('node:child_process');`,
             `const { writeFileSync } = require('node:fs');`,
             `const descendant = spawn(process.execPath, ['-e', 'setTimeout(() => {}, 15000)']);`,
+            // Keep the fixture parent alive to reap its child on POSIX. Otherwise simultaneous
+            // SIGTERM can orphan the child and make success depend on the runner's init reaping it.
+            // Ignoring the parent's signal also ensures killing only the parent cannot pass.
+            `process.on('SIGTERM', () => {});`,
+            `descendant.on('exit', () => process.exit(0));`,
             `writeFileSync(process.env.DESCENDANT_PID_PATH, String(descendant.pid));`,
             `setTimeout(() => {}, 15000);`
           ].join('')

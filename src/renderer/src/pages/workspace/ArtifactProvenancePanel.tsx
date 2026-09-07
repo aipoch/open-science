@@ -59,6 +59,7 @@ import { WorkspaceContextCompactionActivityRow } from './WorkspaceContextCompact
 import { WorkspacePlanActivityRecord } from './WorkspacePlanActivityRecord'
 import { WorkspaceElicitationCard } from './WorkspaceElicitationCard'
 import { WorkspaceAssistantTurnCompletion, WorkspaceMessageItem } from './WorkspaceMessageItem'
+import { TooltipProvider } from '@/components/ui/tooltip'
 import { createWorkspaceConversationTimeline } from './workspace-conversation-timeline'
 import { useHorizontalScrollFade } from './use-horizontal-scroll-fade'
 import { ArtifactSourcesPanel } from './ArtifactSourcesPanel'
@@ -376,134 +377,136 @@ const ProvenanceMessagesTimeline = ({
   )
 
   return (
-    <MessageScrollerProvider
-      key={`${sessionId}:${snapshot.items.at(-1)?.id ?? 'empty'}`}
-      autoScroll
-      defaultScrollPosition="last-anchor"
-      scrollPreviousItemPeek={64}
-    >
-      <MessageScroller className="min-h-0 bg-bg-000">
-        <MessageScrollerViewport aria-label={t('Provenance messages')}>
-          <MessageScrollerContent className="gap-0 px-4">
-            <div className="mx-auto w-full max-w-4xl pb-4">
-              {conversationItems.map((conversationItem) => {
-                if (conversationItem.type === 'message') {
-                  return (
-                    <WorkspaceMessageItem
-                      key={conversationItem.id}
-                      message={conversationItem.message}
-                      staticParts={projectedById.get(conversationItem.message.id)?.parts}
-                      onPreviewArtifact={ignoreArtifactPreview}
-                      onPreviewUploadAttachment={ignoreUploadPreview}
-                      onOpenSkillMention={ignoreSkillOpen}
-                      onPreviewMentionArtifact={ignoreMentionPreview}
-                      artifacts={[]}
-                      showUserActions={false}
-                      showAssistantFooter={conversationItem.message.role !== 'agent'}
-                      contentPaddingClassName="px-0 md:px-0"
-                    />
-                  )
-                }
+    <TooltipProvider key={sessionId} delayDuration={200} skipDelayDuration={300}>
+      <MessageScrollerProvider
+        key={`${sessionId}:${snapshot.items.at(-1)?.id ?? 'empty'}`}
+        autoScroll
+        defaultScrollPosition="last-anchor"
+        scrollPreviousItemPeek={64}
+      >
+        <MessageScroller className="min-h-0 bg-bg-000">
+          <MessageScrollerViewport aria-label={t('Provenance messages')}>
+            <MessageScrollerContent className="gap-0 px-4">
+              <div className="mx-auto w-full max-w-4xl pb-4">
+                {conversationItems.map((conversationItem) => {
+                  if (conversationItem.type === 'message') {
+                    return (
+                      <WorkspaceMessageItem
+                        key={conversationItem.id}
+                        message={conversationItem.message}
+                        staticParts={projectedById.get(conversationItem.message.id)?.parts}
+                        onPreviewArtifact={ignoreArtifactPreview}
+                        onPreviewUploadAttachment={ignoreUploadPreview}
+                        onOpenSkillMention={ignoreSkillOpen}
+                        onPreviewMentionArtifact={ignoreMentionPreview}
+                        artifacts={[]}
+                        showUserActions={false}
+                        showAssistantFooter={conversationItem.message.role !== 'agent'}
+                        contentPaddingClassName="px-0 md:px-0"
+                      />
+                    )
+                  }
 
-                if (conversationItem.type === 'turn-completion') {
-                  return (
-                    <MessageScrollerItem
-                      key={conversationItem.id}
-                      messageId={conversationItem.id}
-                      className="min-w-0"
-                    >
-                      <div className="pb-1">
-                        <WorkspaceAssistantTurnCompletion
-                          message={conversationItem.message}
-                          turnStartedAt={
-                            conversationItem.message.responseToMessageId
-                              ? messageCreatedAtById.get(
-                                  conversationItem.message.responseToMessageId
-                                )
-                              : undefined
-                          }
-                        />
-                      </div>
-                    </MessageScrollerItem>
-                  )
-                }
-
-                // Artifact provenance builds its immutable transcript from persisted messages and
-                // activities only, so no coordinator lifecycle or durable Subagent command rows
-                // are supplied here. Derived config-change dividers are render-time annotations,
-                // not provenance records, and are skipped as well.
-                if (
-                  conversationItem.type === 'handoff' ||
-                  conversationItem.type === 'subagent-message' ||
-                  conversationItem.type === 'session-config-change'
-                )
-                  return null
-
-                if (conversationItem.type === 'plan-activity') {
-                  return (
-                    <WorkspacePlanActivityRecord
-                      key={conversationItem.id}
-                      activity={conversationItem.activity}
-                      contentPaddingClassName="px-0 md:px-0"
-                    />
-                  )
-                }
-
-                if (conversationItem.type === 'compaction-activity') {
-                  return (
-                    <WorkspaceContextCompactionActivityRow
-                      key={conversationItem.id}
-                      activity={conversationItem.activity}
-                      contentPaddingClassName="px-0 md:px-0"
-                    />
-                  )
-                }
-
-                if (conversationItem.type === 'activity') {
-                  return (
-                    <MessageScrollerItem
-                      key={conversationItem.id}
-                      messageId={conversationItem.id}
-                      className="min-w-0"
-                    >
-                      <div className="py-3">
-                        {conversationItem.activity.elicitation ? (
-                          <WorkspaceElicitationCard
-                            elicitation={conversationItem.activity.elicitation}
+                  if (conversationItem.type === 'turn-completion') {
+                    return (
+                      <MessageScrollerItem
+                        key={conversationItem.id}
+                        messageId={conversationItem.id}
+                        className="min-w-0"
+                      >
+                        <div className="pb-1">
+                          <WorkspaceAssistantTurnCompletion
+                            message={conversationItem.message}
+                            turnStartedAt={
+                              conversationItem.message.responseToMessageId
+                                ? messageCreatedAtById.get(
+                                    conversationItem.message.responseToMessageId
+                                  )
+                                : undefined
+                            }
                           />
-                        ) : null}
-                      </div>
-                    </MessageScrollerItem>
-                  )
-                }
+                        </div>
+                      </MessageScrollerItem>
+                    )
+                  }
 
-                return (
-                  <WorkspaceActivityGroup
-                    key={conversationItem.id}
-                    group={conversationItem}
-                    isExpanded={!collapsedGroups.has(conversationItem.id)}
-                    onToggleGroup={(groupId) =>
-                      setCollapsedGroups((current) => {
-                        const next = new Set(current)
-                        if (next.has(groupId)) next.delete(groupId)
-                        else next.add(groupId)
-                        return next
-                      })
-                    }
-                    expansionOverrides={expandedRows}
-                    contentPaddingClassName="px-0 md:px-0"
-                    onToggleRow={(activityId, nextExpanded) =>
-                      setExpandedRows((current) => ({ ...current, [activityId]: nextExpanded }))
-                    }
-                  />
-                )
-              })}
-            </div>
-          </MessageScrollerContent>
-        </MessageScrollerViewport>
-        <MessageScrollerButton className="z-10 border-border-200 bg-bg-000 shadow-card hover:bg-bg-200 data-[direction=end]:bottom-3" />
-      </MessageScroller>
-    </MessageScrollerProvider>
+                  // Artifact provenance builds its immutable transcript from persisted messages and
+                  // activities only, so no coordinator lifecycle or durable Subagent command rows
+                  // are supplied here. Derived config-change dividers are render-time annotations,
+                  // not provenance records, and are skipped as well.
+                  if (
+                    conversationItem.type === 'handoff' ||
+                    conversationItem.type === 'subagent-message' ||
+                    conversationItem.type === 'session-config-change'
+                  )
+                    return null
+
+                  if (conversationItem.type === 'plan-activity') {
+                    return (
+                      <WorkspacePlanActivityRecord
+                        key={conversationItem.id}
+                        activity={conversationItem.activity}
+                        contentPaddingClassName="px-0 md:px-0"
+                      />
+                    )
+                  }
+
+                  if (conversationItem.type === 'compaction-activity') {
+                    return (
+                      <WorkspaceContextCompactionActivityRow
+                        key={conversationItem.id}
+                        activity={conversationItem.activity}
+                        contentPaddingClassName="px-0 md:px-0"
+                      />
+                    )
+                  }
+
+                  if (conversationItem.type === 'activity') {
+                    return (
+                      <MessageScrollerItem
+                        key={conversationItem.id}
+                        messageId={conversationItem.id}
+                        className="min-w-0"
+                      >
+                        <div className="py-3">
+                          {conversationItem.activity.elicitation ? (
+                            <WorkspaceElicitationCard
+                              elicitation={conversationItem.activity.elicitation}
+                            />
+                          ) : null}
+                        </div>
+                      </MessageScrollerItem>
+                    )
+                  }
+
+                  return (
+                    <WorkspaceActivityGroup
+                      key={conversationItem.id}
+                      group={conversationItem}
+                      isExpanded={!collapsedGroups.has(conversationItem.id)}
+                      onToggleGroup={(groupId) =>
+                        setCollapsedGroups((current) => {
+                          const next = new Set(current)
+                          if (next.has(groupId)) next.delete(groupId)
+                          else next.add(groupId)
+                          return next
+                        })
+                      }
+                      expansionOverrides={expandedRows}
+                      contentPaddingClassName="px-0 md:px-0"
+                      onToggleRow={(activityId, nextExpanded) =>
+                        setExpandedRows((current) => ({ ...current, [activityId]: nextExpanded }))
+                      }
+                    />
+                  )
+                })}
+              </div>
+            </MessageScrollerContent>
+          </MessageScrollerViewport>
+          <MessageScrollerButton className="z-10 border-border-200 bg-bg-000 shadow-card hover:bg-bg-200 data-[direction=end]:bottom-3" />
+        </MessageScroller>
+      </MessageScrollerProvider>
+    </TooltipProvider>
   )
 }
 
