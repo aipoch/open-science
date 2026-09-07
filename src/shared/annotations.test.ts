@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest'
 import {
   ANNOTATION_LIMITS,
   annotationPayloadText,
+  annotationRequiresImageInput,
   imageAnnotationSourceIsFixed,
   pdfAnnotationSourceIsFixed,
   parseSideChatAnnotationText,
@@ -86,7 +87,150 @@ const pdfRegionAnnotation = (): PdfAnnotation => ({
   }
 })
 
+describe('ordinary text source identity in Agent input', () => {
+  it.each(['file', 'message'] as const)(
+    'distinguishes identical quotes from different %s sources',
+    (kind) => {
+      const from = (label: string): TextAnnotation =>
+        textAnnotation({
+          quote: 'The value is 42.',
+          note: 'Correct the referenced source.',
+          source:
+            kind === 'file'
+              ? {
+                  kind: 'project-file',
+                  projectId: 'project-1',
+                  sessionId: 'session-1',
+                  name: `file-${label}.md`,
+                  versionId: `version-${label}`,
+                  path: `artifact-version:project-1/session-1/file-${label}/version-${label}`
+                }
+              : { kind: 'agent-message', sessionId: 'session-1', messageId: `message-${label}` }
+        })
+      const a = from('A')
+      const b = from('B')
+      expect(validateAnnotations([a])).toBeUndefined()
+      expect(validateAnnotations([b])).toBeUndefined()
+      const promptA = prepareAnnotationsForAgent('', [a])
+      const promptB = prepareAnnotationsForAgent('', [b])
+      expect(promptA.promptText).toContain(a.quote)
+      expect(promptB.promptText).toContain(b.quote)
+      expect(promptB).not.toEqual(promptA)
+    }
+  )
+})
+
 describe('annotations', () => {
+  it('restores bounded historical annotations even when new source metadata exceeds the send budget', () => {
+    const historical = Array.from({ length: 10 }, (_, index) =>
+      textAnnotation({
+        id: `history-${index}`,
+        quote: 'x'.repeat(940)
+      })
+    )
+    expect(validateAnnotations(historical)).toBe('payload-too-large')
+    expect(sanitizeAnnotations(historical)).toEqual(historical)
+  })
+
+  it('round-trips text anchors and rejects malformed anchor positions', () => {
+    const selected = textAnnotation({
+      quote: 'repeat',
+      anchor: {
+        position: { start: 12, end: 18 },
+        prefix: 'repeat then '
+      }
+    })
+    expect(sanitizeAnnotations(JSON.parse(JSON.stringify([selected])))).toEqual([selected])
+    expect(
+      sanitizeAnnotations([{ ...selected, anchor: { position: { start: 12, end: 17 } } }])
+    ).toEqual([])
+    expect(
+      sanitizeAnnotations([{ ...selected, anchor: { position: { start: -1, end: 5 } } }])
+    ).toEqual([])
+  })
+
+  it('prepares omitted PDF bitmaps explicitly and numbers only actual image attachments', () => {
+    const region = pdfRegionAnnotation()
+    const omitted: PdfAnnotation = {
+      ...region,
+      id: 'omitted',
+      selector: {
+        kind: 'region',
+        pageNumber: 6,
+        rect: { x: 0.2, y: 0.3, width: 0.4, height: 0.25 },
+        pageRotation: 0,
+        text: 'Figure 2.',
+        imageOmissionReason: 'session-budget'
+      }
+    }
+    expect(sanitizeAnnotations(JSON.parse(JSON.stringify([omitted])))).toEqual([omitted])
+    expect(annotationRequiresImageInput(omitted)).toBe(false)
+    const prepared = prepareAnnotationsForAgent('', [omitted, region])
+    expect(prepared.images).toEqual([{ mimeType: 'image/png', data: 'AQID', byteLength: 3 }])
+    const payload = JSON.parse(prepared.promptText.slice('[Annotations]\n'.length))
+    expect(payload.items[0]).toMatchObject({
+      type: 'pdf-region',
+      imageOmissionReason: 'session-budget',
+      source: { versionId: region.source.versionId, page: 6 }
+    })
+    expect(payload.items[0]).not.toHaveProperty('image')
+    expect(payload.items[1]).toMatchObject({ image: 1 })
+    expect(payload.items[1]).not.toHaveProperty('imageOmissionReason')
+    expect(
+      sanitizeAnnotations([
+        { ...omitted, selector: { ...omitted.selector, imageOmissionReason: 'unknown' } }
+      ])
+    ).toEqual([])
+    expect(
+      sanitizeAnnotations([
+        { ...omitted, selector: { ...omitted.selector, imageOmissionReason: undefined } }
+      ])
+    ).toEqual([])
+    expect(
+      sanitizeAnnotations([
+        { ...region, selector: { ...region.selector, imageOmissionReason: 'session-budget' } }
+      ])
+    ).toEqual([])
+  })
+
+  it('includes deduplicated immutable file references for ordinary text quotes', () => {
+    const annotation = textAnnotation({
+      source: {
+        kind: 'project-file',
+        projectId: 'project-1',
+        sessionId: 'session-1',
+        name: 'results.md',
+        versionId: 'version-1',
+        path: 'artifact-version:project-1/session-1/artifact-1/version-1'
+      }
+    })
+    const prepared = prepareAnnotationsForAgent('', [annotation, { ...annotation, id: 'another' }])
+    expect(prepared.referencedArtifacts).toEqual([
+      {
+        id: 'artifact-1',
+        sourceFileId: 'artifact-1',
+        name: 'results.md',
+        source: 'artifact',
+        versionId: 'version-1',
+        path: 'artifact-version:project-1/session-1/artifact-1/version-1'
+      }
+    ])
+    expect(
+      prepareAnnotationsForAgent('', [annotation], prepared.referencedArtifacts).referencedArtifacts
+    ).toEqual(prepared.referencedArtifacts)
+  })
+
+  it('still parses historical Side chat quotes without source metadata', () => {
+    expect(
+      parseSideChatAnnotationText(
+        '[Annotations]\n{"items":[{"type":"quote","content":"Evidence"}]}'
+      )
+    ).toEqual({
+      text: '',
+      items: [{ type: 'quote', content: 'Evidence' }]
+    })
+  })
+
   it('projects mixed annotations into canonical Side chat text without an image attachment', () => {
     const annotations: Annotation[] = [
       textAnnotation({ note: 'Explain this caveat.' }),
@@ -94,7 +238,7 @@ describe('annotations', () => {
     ]
     const expected =
       'Compare these observations.\n\n[Annotations]\n' +
-      '{"items":[{"type":"quote","content":"The confidence intervals overlap.","instruction":"Explain this caveat."},{"type":"image-point","source":{"kind":"artifact-version","artifactId":"artifact-1","versionId":"version-1","name":"figure.png"},"x":500,"y":200,"instruction":"Inspect the peak."}]}'
+      '{"items":[{"type":"quote","content":"The confidence intervals overlap.","source":{"kind":"agent-message","sessionId":"session-1","messageId":"message-1"},"instruction":"Explain this caveat."},{"type":"image-point","source":{"kind":"artifact-version","artifactId":"artifact-1","versionId":"version-1","name":"figure.png"},"x":500,"y":200,"instruction":"Inspect the peak."}]}'
 
     expect(sideChatAnnotationText('  Compare these observations.  ', annotations)).toBe(expected)
     expect(expected).not.toContain('imageAttachment')
@@ -104,6 +248,7 @@ describe('annotations', () => {
         {
           type: 'quote',
           content: 'The confidence intervals overlap.',
+          source: { kind: 'agent-message', sessionId: 'session-1', messageId: 'message-1' },
           instruction: 'Explain this caveat.'
         },
         {
@@ -126,11 +271,17 @@ describe('annotations', () => {
     const projected = sideChatAnnotationText('', [textAnnotation()])
 
     expect(projected).toBe(
-      '[Annotations]\n{"items":[{"type":"quote","content":"The confidence intervals overlap."}]}'
+      '[Annotations]\n{"items":[{"type":"quote","content":"The confidence intervals overlap.","source":{"kind":"agent-message","sessionId":"session-1","messageId":"message-1"}}]}'
     )
     expect(parseSideChatAnnotationText(projected)).toEqual({
       text: '',
-      items: [{ type: 'quote', content: 'The confidence intervals overlap.' }]
+      items: [
+        {
+          type: 'quote',
+          content: 'The confidence intervals overlap.',
+          source: { kind: 'agent-message', sessionId: 'session-1', messageId: 'message-1' }
+        }
+      ]
     })
   })
 
@@ -164,7 +315,13 @@ describe('annotations', () => {
 
     expect(parseSideChatAnnotationText(projected)).toEqual({
       text: 'Explain the literal marker [Annotations]\n here.',
-      items: [{ type: 'quote', content: 'The confidence intervals overlap.' }]
+      items: [
+        {
+          type: 'quote',
+          content: 'The confidence intervals overlap.',
+          source: { kind: 'agent-message', sessionId: 'session-1', messageId: 'message-1' }
+        }
+      ]
     })
   })
 
@@ -176,6 +333,7 @@ describe('annotations', () => {
             {
               type: 'quote',
               content: 'The confidence intervals overlap.',
+              source: { kind: 'agent-message', sessionId: 'session-1', messageId: 'message-1' },
               instruction: 'Explain this caveat.'
             }
           ]
@@ -350,7 +508,14 @@ describe('annotations', () => {
           items: [
             {
               type: 'quote',
-              content: 'The confidence intervals overlap.'
+              content: 'The confidence intervals overlap.',
+              source: {
+                kind: 'session-item',
+                sessionId: 'session-1',
+                itemId: 'activity-1',
+                itemType: 'tool-activity',
+                sectionId: 'output'
+              }
             }
           ]
         })

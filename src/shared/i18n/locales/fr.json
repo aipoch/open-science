@@ -4901,6 +4901,8 @@
     "Tag assignments are preserved.": "Les associations de tags sont conservées.",
     "{{count}} tagged resources are currently unavailable._many": "{{count}} ressources associées à ce tag sont actuellement indisponibles.",
     "{{count}} tagged resources are currently unavailable._other": "{{count}} ressources associées à ce tag sont actuellement indisponibles.",
-    "{{count}} tagged resources are currently unavailable._one": "{{count}} ressource associée à ce tag est actuellement indisponible."
+    "{{count}} tagged resources are currently unavailable._one": "{{count}} ressource associée à ce tag est actuellement indisponible.",
+    "Image not retained: session image budget reached.": "Image non conservée : la limite des images de la session est atteinte.",
+    "The exact annotation location could not be found.": "La position exacte de l’annotation est introuvable."
   }
 }

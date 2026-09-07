@@ -4585,6 +4585,8 @@
     "Tag version updated": "タグのバージョンが更新されました",
     "Not saved yet. Saving later will replace the latest version.": "まだ保存されていません。後で保存すると最新バージョンを上書きします。",
     "Tag assignments are preserved.": "タグの関連付けは保持されています。",
-    "{{count}} tagged resources are currently unavailable._other": "タグ付けされたリソース {{count}} 件は現在利用できません。"
+    "{{count}} tagged resources are currently unavailable._other": "タグ付けされたリソース {{count}} 件は現在利用できません。",
+    "Image not retained: session image budget reached.": "セッションの画像容量の上限に達したため、画像は保存されていません。",
+    "The exact annotation location could not be found.": "注釈の正確な位置が見つかりませんでした。"
   }
 }

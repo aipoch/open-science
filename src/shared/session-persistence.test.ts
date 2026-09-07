@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
 import { MAX_ACP_RUNTIME_EVENTS, MAX_ACP_SESSION_IMAGE_BYTES } from './acp'
+import { validateAnnotations, type PdfAnnotation } from './annotations'
 import { MAX_ELICITATION_OPTIONS_PER_FIELD } from './elicitation'
 
 import {
@@ -1542,6 +1543,92 @@ describe('upload message persistence', () => {
 })
 
 describe('message image persistence', () => {
+  it('preserves accepted PDF region evidence when previous images exhaust the session budget', () => {
+    const region: PdfAnnotation = {
+      id: 'small-region',
+      kind: 'pdf',
+      target: 'agent',
+      note: 'Inspect this evidence.',
+      source: {
+        kind: 'upload-version',
+        projectId: 'project-a',
+        sessionId: 'session-1',
+        versionId: 'version-1',
+        name: 'paper.pdf',
+        path: 'upload-version:project-a/session-1/version-1',
+        checksum: 'a'.repeat(64)
+      },
+      selector: {
+        kind: 'region',
+        pageNumber: 6,
+        pageRotation: 0,
+        rect: { x: 0.2, y: 0.3, width: 0.4, height: 0.25 },
+        text: 'Figure 2. Retrieval evaluator.',
+        image: { mimeType: 'image/png', data: 'AQID', byteLength: 3 }
+      }
+    }
+    expect(validateAnnotations([region])).toBeUndefined()
+    const data = 'A'.repeat(4 * 1024 * 1024)
+    const byteLength = (data.length * 3) / 4
+    const history: PersistedChatMessage[] = Array.from(
+      { length: MAX_ACP_SESSION_IMAGE_BYTES / byteLength },
+      (_, index) => ({
+        id: `image-message-${index}`,
+        role: 'agent',
+        content: '',
+        status: 'complete',
+        eventIds: [],
+        createdAt: index,
+        updatedAt: index,
+        images: [{ id: `image-${index}`, mimeType: 'image/png', data, byteLength }]
+      })
+    )
+    const evidence: PersistedChatMessage = {
+      id: 'evidence-message',
+      role: 'user',
+      content: '',
+      status: 'complete',
+      eventIds: [],
+      createdAt: 10,
+      updatedAt: 10,
+      annotations: [region]
+    }
+    const session: PersistedChatSession = {
+      id: 'session-1',
+      projectId: 'project-a',
+      title: 'PDF evidence',
+      cwd: '/workspace',
+      status: 'idle',
+      messages: [...history, evidence],
+      createdAt: 1,
+      updatedAt: 10
+    }
+    const control = createSessionFile({ ...session, messages: [evidence] }).session
+    expect(control.messages[0].annotations).toEqual([region])
+    expect(
+      history
+        .flatMap((message) => message.images ?? [])
+        .reduce((total, image) => total + image.byteLength, 0)
+    ).toBe(MAX_ACP_SESSION_IMAGE_BYTES)
+    const saved = createSessionFile(session).session
+    expect(session.messages.at(-1)?.annotations).toEqual([region])
+    // A successful save must not silently turn accepted evidence into an empty user message.
+    const expected = {
+      ...region,
+      selector: {
+        ...region.selector,
+        image: undefined,
+        imageOmissionReason: 'session-budget'
+      }
+    }
+    expect.soft(saved.messages.at(-1)?.annotations).toEqual([expected])
+    expect.soft(saved.conversationGraph?.messages.at(-1)?.annotations).toEqual([expected])
+    const restored = normalizeSessionFile(
+      JSON.parse(JSON.stringify({ version: SESSION_FILE_VERSION, session: saved }))
+    )
+    expect(restored?.messages.at(-1)?.annotations).toEqual([expected])
+  })
+
   it('keeps only bounded raster images with recomputed byte metadata', () => {
     const images = sanitizeMessageImages([
       { id: 'image-1', mimeType: 'image/png', data: 'AQID', byteLength: 999 },

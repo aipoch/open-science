@@ -5034,6 +5034,8 @@
     "{{count}} tagged resources are currently unavailable._many": "{{count}} ресурсов с тегом сейчас недоступны.",
     "{{count}} tagged resources are currently unavailable._few": "{{count}} ресурса с тегом сейчас недоступны.",
     "{{count}} tagged resources are currently unavailable._other": "{{count}} ресурса с тегом сейчас недоступны.",
-    "{{count}} tagged resources are currently unavailable._one": "{{count}} ресурс с тегом сейчас недоступен."
+    "{{count}} tagged resources are currently unavailable._one": "{{count}} ресурс с тегом сейчас недоступен.",
+    "Image not retained: session image budget reached.": "Изображение не сохранено: достигнут лимит изображений сеанса.",
+    "The exact annotation location could not be found.": "Не удалось найти точное положение аннотации."
   }
 }

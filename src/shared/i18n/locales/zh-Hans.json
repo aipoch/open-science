@@ -4585,6 +4585,8 @@
     "Tag version updated": "标签版本已更新",
     "Not saved yet. Saving later will replace the latest version.": "尚未保存。之后保存会覆盖最新版本。",
     "Tag assignments are preserved.": "标签关联已保留。",
-    "{{count}} tagged resources are currently unavailable._other": "{{count}} 个已关联资源暂不可用。"
+    "{{count}} tagged resources are currently unavailable._other": "{{count}} 个已关联资源暂不可用。",
+    "Image not retained: session image budget reached.": "图片未保留：已达到会话图片容量上限。",
+    "The exact annotation location could not be found.": "无法找到标注的准确位置。"
   }
 }

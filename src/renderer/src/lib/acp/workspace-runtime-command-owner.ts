@@ -690,7 +690,10 @@ const sendWorkspaceMessage = async (
     input.supportsImageInput !== true &&
     input.supportsImageRelay !== true &&
     annotations.some(
-      (annotation) => annotation.kind === 'pdf' && annotation.selector.kind === 'region'
+      (annotation) =>
+        annotation.kind === 'pdf' &&
+        annotation.selector.kind === 'region' &&
+        !!annotation.selector.image
     )
   ) {
     throw new Error(VISION_MODEL_NOT_CONFIGURED_MESSAGE)

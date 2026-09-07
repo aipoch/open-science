@@ -4585,6 +4585,8 @@
     "Tag version updated": "標籤版本已更新",
     "Not saved yet. Saving later will replace the latest version.": "尚未儲存。之後儲存會覆寫最新版本。",
     "Tag assignments are preserved.": "標籤關聯已保留。",
-    "{{count}} tagged resources are currently unavailable._other": "{{count}} 個已關聯資源暫時無法使用。"
+    "{{count}} tagged resources are currently unavailable._other": "{{count}} 個已關聯資源暫時無法使用。",
+    "Image not retained: session image budget reached.": "圖片未保留：已達到工作階段圖片容量上限。",
+    "The exact annotation location could not be found.": "無法找到標註的確切位置。"
   }
 }

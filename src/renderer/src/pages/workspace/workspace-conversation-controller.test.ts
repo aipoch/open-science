@@ -971,7 +971,7 @@ describe('workspace conversation controller', () => {
     await vi.waitFor(() =>
       expect(input.sideChat?.start).toHaveBeenCalledWith(
         'Compare these observations.\n\n[Annotations]\n' +
-          '{"items":[{"type":"quote","content":"The confidence intervals overlap.","instruction":"Explain this caveat."}]}'
+          '{"items":[{"type":"quote","content":"The confidence intervals overlap.","source":{"kind":"agent-message","sessionId":"session-a","messageId":"agent-message-a"},"instruction":"Explain this caveat."}]}'
       )
     )
 
@@ -998,7 +998,7 @@ describe('workspace conversation controller', () => {
     await vi.waitFor(() =>
       expect(input.sideChat?.start).toHaveBeenCalledWith(
         '[Annotations]\n' +
-          '{"items":[{"type":"quote","content":"The confidence intervals overlap.","instruction":"Explain this caveat."}]}'
+          '{"items":[{"type":"quote","content":"The confidence intervals overlap.","source":{"kind":"agent-message","sessionId":"session-a","messageId":"agent-message-a"},"instruction":"Explain this caveat."}]}'
       )
     )
     expect(input.composer.lifecycle.clearDraft).toHaveBeenCalledWith('session-a', 3)

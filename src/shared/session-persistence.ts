@@ -3558,13 +3558,25 @@ export function sanitizeSessionMessageImages(session: PersistedChatSession): Per
         totalBytes += image.byteLength
         return true
       })
-      const annotations = (message.annotations ?? []).filter((annotation) => {
-        if (annotation.kind !== 'pdf' || annotation.selector.kind !== 'region') return true
+      const annotations = (message.annotations ?? []).map((annotation) => {
+        if (
+          annotation.kind !== 'pdf' ||
+          annotation.selector.kind !== 'region' ||
+          !annotation.selector.image
+        )
+          return annotation
         if (totalBytes + annotation.selector.image.byteLength > MAX_ACP_SESSION_IMAGE_BYTES) {
-          return false
+          return {
+            ...annotation,
+            selector: {
+              ...annotation.selector,
+              image: undefined,
+              imageOmissionReason: 'session-budget' as const
+            }
+          }
         }
         totalBytes += annotation.selector.image.byteLength
-        return true
+        return annotation
       })
       return {
         ...message,

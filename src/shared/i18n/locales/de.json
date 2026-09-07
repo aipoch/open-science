@@ -4739,6 +4739,8 @@
     "Not saved yet. Saving later will replace the latest version.": "Noch nicht gespeichert. Späteres Speichern ersetzt die neueste Version.",
     "Tag assignments are preserved.": "Die Tag-Zuordnungen bleiben erhalten.",
     "{{count}} tagged resources are currently unavailable._other": "{{count}} getaggte Ressourcen sind derzeit nicht verfügbar.",
-    "{{count}} tagged resources are currently unavailable._one": "{{count}} getaggte Ressource ist derzeit nicht verfügbar."
+    "{{count}} tagged resources are currently unavailable._one": "{{count}} getaggte Ressource ist derzeit nicht verfügbar.",
+    "Image not retained: session image budget reached.": "Bild nicht gespeichert: Das Bildbudget der Sitzung ist ausgeschöpft.",
+    "The exact annotation location could not be found.": "Die genaue Position der Anmerkung konnte nicht gefunden werden."
   }
 }
