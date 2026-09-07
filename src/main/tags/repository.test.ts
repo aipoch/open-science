@@ -202,6 +202,38 @@ describe('TagRepository', () => {
     expect((await repository.snapshot(1)).assignments).toEqual([])
   })
 
+  it('returns persisted assignments when an unrelated catalog fails and reconciles after recovery', async () => {
+    let catalogFails = false
+    let skills = [{ id: 'analysis' }]
+    const catalog = new TagResourceCatalog({
+      listSkills: async () => skills,
+      listConnectors: async () => ({ connectors: [], customServers: [] }),
+      listSpecialists: async () => {
+        if (catalogFails) throw new Error('Specialist catalog offline')
+        return []
+      },
+      listLiteratureItems: async () => []
+    })
+    const service = new TagService(repository, catalog, { publish: () => undefined })
+    const assignment = {
+      tagId: 'tag-favorite',
+      resourceType: 'catalog.skill' as const,
+      resourceId: 'analysis',
+      assigned: true
+    }
+    const saved = await service.setAssignment(assignment)
+    catalogFails = true
+    skills = []
+
+    await expect(service.snapshot()).resolves.toEqual(saved)
+    expect(await client.tagAssignment.count()).toBe(1)
+    await expect(service.setAssignment(assignment)).rejects.toThrow('Specialist catalog offline')
+
+    catalogFails = false
+    expect((await service.snapshot()).assignments).toEqual([])
+    expect(await client.tagAssignment.count()).toBe(0)
+  })
+
   it('preserves assignments through temporary identity conflicts and prunes actual deletion', async () => {
     let skills = [{ id: 'analysis', available: true }]
     const catalog = new TagResourceCatalog({

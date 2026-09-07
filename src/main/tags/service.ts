@@ -49,8 +49,12 @@ class TagService {
         }
       }
       // Unavailable identities still exist; only assignment creation requires availability.
-      const resources = await this.resources.snapshot({ includeUnavailable: true })
-      const pruned = await this.repository.pruneStaleAssignments(resources)
+      const resources = await this.resources
+        .snapshot({ includeUnavailable: true })
+        .catch(() => undefined)
+      // Catalog outages do not invalidate saved relationships. Retry reconciliation on the
+      // next snapshot; renderer catalog loaders already own per-type errors and retry actions.
+      const pruned = resources ? await this.repository.pruneStaleAssignments(resources) : 0
       if (pruned > 0) {
         this.revision += 1
         this.events.publish('tags:changed', { revision: this.revision })
