@@ -7,6 +7,7 @@
 //   - opening a file does NOT show an inline detail panel; it opens a standalone preview-workbench
 //     tab (source:'local') that renders through the shared preview pipeline with a dedicated header
 //   - bookmarks persist under the reserved LOCAL_BOOKMARKS_KEY in the compute bookmark store
+import { ErrorNotice } from '@/components/error-notice'
 import {
   ArrowLeft,
   ChevronDown,
@@ -162,11 +163,13 @@ const GoToMenu = ({
   isBookmarked,
   onNavigate,
   onPinCurrent,
-  onRemoveBookmark
+  onRemoveBookmark,
+  bookmarksDisabled
 }: {
   drives: LocalDrive[]
   home: string | undefined
   bookmarks: string[]
+  bookmarksDisabled: boolean
   currentPath: string
   isBookmarked: boolean
   onNavigate: (path: string) => void
@@ -253,6 +256,7 @@ const GoToMenu = ({
                       e.stopPropagation()
                       onRemoveBookmark(path)
                     }}
+                    disabled={bookmarksDisabled}
                     aria-label={t('Unpin {{path}}', { path })}
                     className="flex size-6 shrink-0 items-center justify-center self-center rounded-md text-muted-foreground transition-colors hover:bg-surface-control-hover hover:text-text-000"
                   >
@@ -263,7 +267,11 @@ const GoToMenu = ({
             ))}
             {/* The pin action belongs to the Pinned category and always closes it. */}
             {!isBookmarked && currentPath ? (
-              <DropdownMenuItem className="items-start gap-2 text-xs" onSelect={onPinCurrent}>
+              <DropdownMenuItem
+                className="items-start gap-2 text-xs"
+                onSelect={onPinCurrent}
+                disabled={bookmarksDisabled}
+              >
                 <GoToRow
                   icon={<Pin className="size-3.5 text-muted-foreground" strokeWidth={1.5} />}
                   label={t('Pin current folder')}
@@ -452,9 +460,9 @@ export const LocalFileBrowser = ({
 }: {
   // Reports the visible entry count so the Files tab header can show it next to the source picker.
   onEntryCountChange?: (count: number | undefined) => void
-  // External navigation request (a granted folder picked in the filter menu). `nonce` makes repeat
+  // External navigation request; an omitted path explicitly requests Home. `nonce` makes repeat
   // requests observable even for the same path; requests for the current directory are no-ops.
-  requestedPath?: { path: string; nonce: number }
+  requestedPath?: { path?: string; nonce: number }
 }): React.JSX.Element => {
   const { t } = useTranslation()
 
@@ -463,7 +471,14 @@ export const LocalFileBrowser = ({
   const [cwd, setCwd] = useState('')
   const [state, setState] = useState<BrowserState>({ kind: 'loading' })
   const [addressInput, setAddressInput] = useState('')
-  const [bookmarks, setBookmarks] = useState<string[]>([])
+  const [bookmarks, setBookmarks] = useState<string[] | null>(null)
+  const [bookmarkError, setBookmarkError] = useState<string>()
+  const [savingBookmarks, setSavingBookmarks] = useState(false)
+  const savingBookmarksRef = useRef(false)
+  const [initializeNonce, setInitializeNonce] = useState(0)
+  const [initializationError, setInitializationError] = useState<string>()
+  const mountedRef = useRef(false)
+  const bookmarkReadRequestRef = useRef(0)
   const [pendingSensitiveEntry, setPendingSensitiveEntry] = useState<PendingSensitiveEntry | null>(
     null
   )
@@ -485,6 +500,9 @@ export const LocalFileBrowser = ({
   // A request already pending when the browser mounts replaces the initial Home landing instead
   // of racing it.
   const initialRequestedPathRef = useRef(requestedPath)
+  useEffect(() => {
+    initialRequestedPathRef.current = requestedPath
+  }, [requestedPath])
   const navigationRequestRef = useRef(0)
 
   // Clear the reported count when this container goes away, so the header stops showing a stale one.
@@ -524,34 +542,66 @@ export const LocalFileBrowser = ({
     }
   }, [])
 
-  // On mount: fetch roots + drives + bookmarks, then land in Home — or in a path already requested
-  // before the browser mounted (its nonce is marked handled so the effect below doesn't
-  // re-navigate).
-  useEffect(() => {
-    const navigationIntent = navigationRequestRef.current
-    void (async () => {
-      const [fetchedRoots, fetchedDrives, fetchedBookmarks] = await Promise.all([
-        window.api.localFs.getRoots(),
-        // A drive-enumeration failure must not take the whole browser down with it.
-        window.api.localFs.listDrives().catch(() => []),
-        window.api.compute.bookmarksGet(LOCAL_BOOKMARKS_KEY)
-      ])
-      setRoots(fetchedRoots)
-      setDrives(fetchedDrives)
-      setBookmarks(fetchedBookmarks)
-      if (navigationIntent !== navigationRequestRef.current) return
-      const pendingRequest = initialRequestedPathRef.current
-      await navigate(pendingRequest?.path ?? fetchedRoots.home)
-    })()
-  }, [navigate])
+  const loadBookmarks = useCallback((): Promise<void> => {
+    const request = ++bookmarkReadRequestRef.current
+    return window.api.compute
+      .bookmarksGet(LOCAL_BOOKMARKS_KEY)
+      .then((saved) => {
+        if (!mountedRef.current || request !== bookmarkReadRequestRef.current) return
+        setBookmarks(saved)
+        setBookmarkError(undefined)
+      })
+      .catch((error: Error) => {
+        if (mountedRef.current && request === bookmarkReadRequestRef.current)
+          setBookmarkError(error.message)
+      })
+  }, [])
 
-  // External navigation requests (granted folder picked in the filter menu) steer the browser.
+  useEffect(() => {
+    mountedRef.current = true
+    void loadBookmarks()
+    return () => {
+      mountedRef.current = false
+      bookmarkReadRequestRef.current += 1
+    }
+  }, [loadBookmarks])
+
+  // Required roots initialize independently of optional bookmarks and drive enumeration.
+  useEffect(() => {
+    let cancelled = false
+    const navigationIntent = navigationRequestRef.current
+    void window.api.localFs
+      .listDrives()
+      .then((drives) => {
+        if (!cancelled) setDrives(drives)
+      })
+      .catch(() => undefined)
+    void window.api.localFs
+      .getRoots()
+      .then(async (fetchedRoots) => {
+        if (cancelled) return
+        setRoots(fetchedRoots)
+        if (navigationIntent !== navigationRequestRef.current) return
+        const pendingRequest = initialRequestedPathRef.current
+        handledRequestNonceRef.current = pendingRequest?.nonce ?? 0
+        await navigate(pendingRequest?.path ?? fetchedRoots.home)
+      })
+      .catch((error: Error) => {
+        if (!cancelled) setInitializationError(error.message)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [navigate, initializeNonce])
+
   useEffect(() => {
     if (!requestedPath || requestedPath.nonce === handledRequestNonceRef.current) return
+    const target = requestedPath.path ?? roots?.home
+    if (!target) return
     handledRequestNonceRef.current = requestedPath.nonce
-    if (!sameLocalDirectory(requestedPath.path, cwdRef.current, window.api.platform))
-      void navigate(requestedPath.path)
-  }, [requestedPath, navigate])
+    if (state.kind !== 'ok' || !sameLocalDirectory(target, cwdRef.current, window.api.platform))
+      void navigate(target)
+  }, [requestedPath, roots, navigate, state.kind])
 
   const listing = state.kind === 'ok' ? state : null
   const currentPath = listing?.resolvedPath ?? cwd
@@ -611,20 +661,36 @@ export const LocalFileBrowser = ({
     openEntry(pending)
   }
 
-  const isBookmarked = bookmarks.includes(currentPath)
+  const isBookmarked = bookmarks?.includes(currentPath) ?? false
+  const bookmarksDisabled = bookmarks === null || savingBookmarks || !currentPath
+
+  const saveBookmarks = async (next: string[]): Promise<void> => {
+    if (bookmarks === null || savingBookmarksRef.current) return
+    savingBookmarksRef.current = true
+    setSavingBookmarks(true)
+    try {
+      await window.api.compute.bookmarksSet(LOCAL_BOOKMARKS_KEY, next)
+      if (!mountedRef.current) return
+      setBookmarks(next)
+      setBookmarkError(undefined)
+    } catch (error) {
+      if (mountedRef.current) setBookmarkError((error as Error).message)
+    } finally {
+      savingBookmarksRef.current = false
+      if (mountedRef.current) setSavingBookmarks(false)
+    }
+  }
 
   const handleToggleBookmark = async (): Promise<void> => {
-    const next = isBookmarked
-      ? bookmarks.filter((b) => b !== currentPath)
-      : [...bookmarks, currentPath]
-    setBookmarks(next)
-    await window.api.compute.bookmarksSet(LOCAL_BOOKMARKS_KEY, next)
+    if (bookmarksDisabled || !bookmarks) return
+    await saveBookmarks(
+      isBookmarked ? bookmarks.filter((b) => b !== currentPath) : [...bookmarks, currentPath]
+    )
   }
 
   const handleRemoveBookmark = async (path: string): Promise<void> => {
-    const next = bookmarks.filter((b) => b !== path)
-    setBookmarks(next)
-    await window.api.compute.bookmarksSet(LOCAL_BOOKMARKS_KEY, next)
+    if (bookmarksDisabled || !bookmarks) return
+    await saveBookmarks(bookmarks.filter((b) => b !== path))
   }
 
   return (
@@ -656,7 +722,8 @@ export const LocalFileBrowser = ({
           <GoToMenu
             drives={drives}
             home={roots?.home}
-            bookmarks={bookmarks}
+            bookmarks={bookmarks ?? []}
+            bookmarksDisabled={bookmarksDisabled}
             currentPath={currentPath}
             isBookmarked={isBookmarked}
             onNavigate={(path) => void navigate(path)}
@@ -682,7 +749,9 @@ export const LocalFileBrowser = ({
               variant="ghost"
               size="icon-sm"
               className={TOOLBAR_ICON_BUTTON}
-              onClick={() => void navigate(currentPath)}
+              onClick={() =>
+                roots ? void navigate(currentPath || roots.home) : setInitializeNonce((n) => n + 1)
+              }
               aria-label={t('Refresh directory')}
             >
               <RefreshCw className="size-4" strokeWidth={TOOLBAR_ICON_STROKE} />
@@ -700,6 +769,7 @@ export const LocalFileBrowser = ({
               variant="ghost"
               size="icon-sm"
               className={TOOLBAR_ICON_BUTTON}
+              disabled={bookmarksDisabled}
               onClick={() => void handleToggleBookmark()}
               aria-label={isBookmarked ? t('Remove bookmark') : t('Pin this folder')}
             >
@@ -715,8 +785,39 @@ export const LocalFileBrowser = ({
         </div>
       </TooltipProvider>
 
-      {/* Listing */}
-      <LocalListing state={state} onOpenEntry={handleOpenEntry} />
+      {bookmarkError ? (
+        <ErrorNotice
+          description={bookmarkError}
+          tone="amber"
+          primaryButton={
+            bookmarks === null
+              ? {
+                  label: t('Retry'),
+                  onClick: () => {
+                    setBookmarkError(undefined)
+                    void loadBookmarks()
+                  }
+                }
+              : undefined
+          }
+        />
+      ) : null}
+      {initializationError ? (
+        <ErrorNotice
+          description={initializationError}
+          tone="amber"
+          primaryButton={{
+            label: t('Retry'),
+            onClick: () => {
+              setInitializationError(undefined)
+              setInitializeNonce((n) => n + 1)
+            }
+          }}
+        />
+      ) : (
+        <LocalListing state={state} onOpenEntry={handleOpenEntry} />
+      )}
+
       <SensitiveLocalPathDialog
         pending={pendingSensitiveEntry}
         onCancel={() => setPendingSensitiveEntry(null)}

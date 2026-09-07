@@ -2,6 +2,7 @@
 // browses any folder on any mounted drive via a breadcrumb + folder-only listing, picks an access
 // level, and grants the current folder. The breadcrumb bar doubles as a path field (click its
 // empty area to type a path), and its leading drive crumb opens a drive/volume switcher.
+import { ErrorNotice } from '@/components/error-notice'
 import { ChevronDown, CircleAlert, Folder, Home, Info, X } from 'lucide-react'
 import { RadioGroup } from 'radix-ui'
 import * as Dialog from '@/components/ui/dialog'
@@ -155,6 +156,8 @@ const GrantFolderAccessDialogContent = ({
   const grant = useGrantedFoldersStore((state) => state.grant)
   // Host platform drives path segmentation/joining ('win32' paths use '\' and drive roots).
   const platform = window.api?.platform ?? 'darwin'
+  const [initializationError, setInitializationError] = useState<string>()
+  const [initializeNonce, setInitializeNonce] = useState(0)
   const [home, setHome] = useState<string | undefined>(undefined)
   const [drives, setDrives] = useState<LocalDrive[]>([])
   const [cwd, setCwd] = useState('')
@@ -225,11 +228,13 @@ const GrantFolderAccessDialogContent = ({
       setCwd(fetchedRoots.home)
       setDrives(fetchedDrives)
       await refresh().catch(() => undefined)
-    })()
+    })().catch((error: Error) => {
+      if (!cancelled) setInitializationError(error.message)
+    })
     return () => {
       cancelled = true
     }
-  }, [refresh])
+  }, [refresh, initializeNonce])
 
   // List the current folder's subfolders. Browsing is not scope-confined ("Home start, full-disk
   // navigable"): any location the breadcrumb or path field points at gets listed.
@@ -302,13 +307,13 @@ const GrantFolderAccessDialogContent = ({
   const isHome = home !== undefined && sameLocalDirectory(cwd, home, platform)
 
   const handleGrant = async (): Promise<void> => {
-    if (grantingRef.current) return
+    if (grantingRef.current || isHome || listing.kind !== 'ok' || result?.kind !== 'ok') return
     grantingRef.current = true
     const attempt = ++grantAttemptRef.current
     setIsGranting(true)
     onGrantingChange(true)
     try {
-      const nextRoots = await grant(cwd, access)
+      const nextRoots = await grant(result.path, access)
       if (attempt !== grantAttemptRef.current) return
       const granted =
         nextRoots.find((root) => sameLocalDirectory(root.path, cwd, platform)) ??
@@ -548,7 +553,19 @@ const GrantFolderAccessDialogContent = ({
 
         {/* Subfolder listing */}
         <div className="flex max-h-[320px] min-h-[220px] flex-col overflow-y-auto px-5 pb-3 pt-2">
-          {listing.kind === 'loading' ? (
+          {initializationError ? (
+            <ErrorNotice
+              description={initializationError}
+              tone="amber"
+              primaryButton={{
+                label: t('Retry'),
+                onClick: () => {
+                  setInitializationError(undefined)
+                  setInitializeNonce((n) => n + 1)
+                }
+              }}
+            />
+          ) : listing.kind === 'loading' ? (
             <div className="flex flex-1 items-center justify-center text-[13px] text-text-300">
               {t('Loading…')}
             </div>
@@ -635,7 +652,7 @@ const GrantFolderAccessDialogContent = ({
             <Button
               type="button"
               data-testid="grant-access-grant"
-              disabled={isHome || isGranting}
+              disabled={isHome || isGranting || listing.kind !== 'ok'}
               onClick={() => setGrantConfirmationOpen(true)}
               className="bg-primary text-primary-foreground hover:bg-primary/80 disabled:bg-primary disabled:text-primary-foreground disabled:opacity-40"
             >

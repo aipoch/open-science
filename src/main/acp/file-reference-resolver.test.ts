@@ -720,3 +720,62 @@ describe('managed file reference resolver', () => {
     ).rejects.toThrow(/escapes the granted folder/i)
   })
 })
+
+describe.skipIf(process.platform === 'win32')('POSIX linked-folder scope', () => {
+  it.each(['ro', 'rw'] as const)(
+    'regression: rejects a backslash sibling symlink for %s access',
+    async (access) => {
+      root = await mkdtemp(join(tmpdir(), 'file-reference-scope-'))
+      const allowed = join(root, 'allowed')
+      const sibling = join(root, 'allowed\\outside')
+      await mkdir(allowed)
+      await mkdir(sibling)
+      await writeFile(join(sibling, 'audit.txt'), 'AUDIT OUTSIDE ROOT')
+      await symlink(join(sibling, 'audit.txt'), join(allowed, 'linked.txt'))
+      const resolver = createManagedFileReferenceResolver({
+        grantedRoots: { resolveRoot: async () => ({ path: allowed, access }) }
+      })
+      try {
+        await expect(
+          resolver.resolve(
+            { projectId: 'default-project', sessionId: 'scope-test' },
+            {
+              id: 'linked',
+              name: 'linked.txt',
+              source: 'linked-folder',
+              rootId: 'root',
+              relativePath: 'linked.txt'
+            }
+          )
+        ).rejects.toThrow(/escapes the granted folder/i)
+      } finally {
+        resolver.clear()
+      }
+    }
+  )
+})
+
+it.skipIf(process.platform === 'win32')(
+  'allows POSIX backslashes and dot-prefixed filenames inside a granted folder',
+  async () => {
+    root = await mkdtemp(join(tmpdir(), 'file-reference-names-'))
+    for (const name of ['..notes.txt', 'allowed\\outside.txt']) {
+      await writeFile(join(root, name), 'allowed')
+      const resolver = createManagedFileReferenceResolver({
+        grantedRoots: { resolveRoot: async () => ({ path: root!, access: 'rw' }) }
+      })
+      const result = await resolver.resolve(
+        { projectId: 'test', sessionId: 'test' },
+        {
+          id: name,
+          name,
+          source: 'linked-folder',
+          rootId: 'root',
+          relativePath: name
+        }
+      )
+      expect(await readFile(result.absolutePath, 'utf8')).toBe('allowed')
+      resolver.clear()
+    }
+  }
+)
