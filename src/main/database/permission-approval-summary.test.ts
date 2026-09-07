@@ -22,7 +22,7 @@ it('upgrades historical permissions without inferring descriptions or changing a
     const grant = await registry.remember({ capability, scope: { kind: 'global' } })
     await client.$executeRawUnsafe('ALTER TABLE "PermissionGrant" DROP COLUMN "approvalSummary"')
     await client.$executeRawUnsafe(
-      "DELETE FROM \"_open_science_migrations\" WHERE id IN ('0032_permission_approval_summary', '0033_compute_job_harvest_retry')"
+      "DELETE FROM \"_open_science_migrations\" WHERE id IN ('0032_permission_approval_summary', '0033_compute_job_harvest_retry', '0034_background_result_delivery')"
     )
     const before = await client.$queryRawUnsafe(
       'SELECT id, capabilityKind, capabilityKey, qualifierMode, qualifierValue, scopeKind, projectId, sessionId, fingerprint, revision, createdAt FROM "PermissionGrant"'
@@ -30,7 +30,11 @@ it('upgrades historical permissions without inferring descriptions or changing a
     await expect(
       migrateApplicationDatabase(client, { databasePath: join(root, 'open-science.db') })
     ).resolves.toMatchObject({
-      applied: ['0032_permission_approval_summary', '0033_compute_job_harvest_retry']
+      applied: [
+        '0032_permission_approval_summary',
+        '0033_compute_job_harvest_retry',
+        '0034_background_result_delivery'
+      ]
     })
     const after = await client.$queryRawUnsafe<Array<Record<string, unknown>>>(
       'SELECT * FROM "PermissionGrant"'
