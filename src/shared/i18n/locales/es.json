@@ -4946,6 +4946,8 @@
     "UTF-16 CSV preview is not supported. Save a copy as UTF-8 to preview it.": "La vista previa de CSV en UTF-16 no es compatible. Guarde una copia en UTF-8 para previsualizarla.",
     "The preview limit was reached before a complete header could be read.": "Se alcanzó el límite de la vista previa antes de poder leer una cabecera completa.",
     "The file exceeds the preview limit. Only complete records are shown.": "El archivo supera el límite de la vista previa. Solo se muestran registros completos.",
-    "The delimiter could not be detected reliably. Commas are used in this preview.": "No se pudo detectar el delimitador de forma fiable. Se utilizan comas en esta vista previa."
+    "The delimiter could not be detected reliably. Commas are used in this preview.": "No se pudo detectar el delimitador de forma fiable. Se utilizan comas en esta vista previa.",
+    "Recheck message snapshot": "Volver a comprobar la instantánea de mensajes",
+    "Table preview: showing first {{shown}} of {{total}} rows.": "Vista previa de la tabla: se muestran las primeras {{shown}} de {{total}} filas."
   }
 }

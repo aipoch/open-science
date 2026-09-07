@@ -5079,6 +5079,8 @@
     "UTF-16 CSV preview is not supported. Save a copy as UTF-8 to preview it.": "Предпросмотр CSV в UTF-16 не поддерживается. Сохраните копию в UTF-8 для предпросмотра.",
     "The preview limit was reached before a complete header could be read.": "Предел предпросмотра достигнут до завершения чтения заголовка.",
     "The file exceeds the preview limit. Only complete records are shown.": "Файл превышает предел предпросмотра. Показаны только полные записи.",
-    "The delimiter could not be detected reliably. Commas are used in this preview.": "Не удалось надёжно определить разделитель. В этом предпросмотре используются запятые."
+    "The delimiter could not be detected reliably. Commas are used in this preview.": "Не удалось надёжно определить разделитель. В этом предпросмотре используются запятые.",
+    "Recheck message snapshot": "Проверить снимок сообщений ещё раз",
+    "Table preview: showing first {{shown}} of {{total}} rows.": "Предпросмотр таблицы: показаны первые {{shown}} из {{total}} строк."
   }
 }

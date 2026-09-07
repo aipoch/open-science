@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { act } from 'react'
+import { act, useState } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -39,6 +39,12 @@ vi.mock('@/components/ReviewerCard', () => ({
   }
 }))
 
+vi.mock('./previews/PreviewFileContent', () => ({
+  PreviewFileContent: ({ item }: { item: PreviewFileItem }) => (
+    <div data-testid="preview-version">{item.selectedVersionId}</div>
+  )
+}))
+
 vi.mock('./SessionNotebookDialog', () => ({
   NotebookDialogCell: ({ run }: { run: { runId: string } }) => (
     <div data-testid="notebook-run">{run.runId}</div>
@@ -68,6 +74,8 @@ vi.mock('./WorkspaceActivityGroup', () => ({
 }))
 
 import { ArtifactProvenancePanel } from './ArtifactProvenancePanel'
+import { PreviewFileSurface } from './PreviewFileSurface'
+import { buildBoundedExecutionSnapshot } from '../../../../main/artifacts/provenance-execution-evidence'
 
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
@@ -1928,6 +1936,18 @@ describe('ArtifactProvenancePanel', () => {
       2,
       expect.objectContaining({ suggestedName: 'sin-v1-r.ipynb' })
     )
+    for (const [index, kernel] of ['python', 'r'].entries()) {
+      const notebook = JSON.parse(new TextDecoder().decode(saveBlobFile.mock.calls[index]![0].data))
+      expect(notebook.metadata.open_science).toMatchObject({
+        kernel_filter: kernel,
+        snapshot_scope: { retained_run_count: 2, kernels: ['python', 'r'] }
+      })
+      expect(notebook.cells[0].cell_type).toBe('markdown')
+      expect(notebook.cells[0].source.join('')).toContain(`only ${kernel} runs`)
+      const code = notebook.cells.filter((cell: { cell_type: string }) => cell.cell_type === 'code')
+      expect(code).toHaveLength(1)
+      expect(code[0].source.join('')).toContain(kernel === 'python' ? 'np.sin(0)' : 'plot(sin(0))')
+    }
   })
 
   it('discloses bounded execution evidence instead of presenting it as complete', async () => {
@@ -1979,5 +1999,298 @@ describe('ArtifactProvenancePanel', () => {
 
     expect(container.textContent).toContain('save cancelled')
     expect(container.querySelector('[data-testid="notebook-run"]')).not.toBeNull()
+  })
+})
+
+describe('Provenance selection and evidence completeness', () => {
+  it('follows an external version selection after accepting a panel navigation', async () => {
+    const renderPanel = (selectedItem: PreviewFileItem): boolean => {
+      root.render(
+        <ArtifactProvenancePanel
+          item={selectedItem}
+          projectId="project-1"
+          onClose={vi.fn()}
+          onVersionChange={renderPanel}
+        />
+      )
+      return true
+    }
+    await act(async () => renderPanel(item))
+    const next = (): HTMLButtonElement =>
+      container.querySelector<HTMLButtonElement>('[aria-label="Next Artifact version"]')!
+    expect(next().disabled).toBe(false)
+    await act(async () => next().click())
+    await flush()
+    expect(getVersionProvenance).toHaveBeenLastCalledWith(
+      expect.objectContaining({ versionId: 'version-2' })
+    )
+    expect(next().disabled).toBe(true)
+
+    await act(async () => renderPanel({ ...item }))
+    await flush()
+    expect
+      .soft(getVersionProvenance)
+      .toHaveBeenLastCalledWith(expect.objectContaining({ versionId: 'version-1' }))
+    expect
+      .soft(window.api.artifacts.getLineage)
+      .toHaveBeenLastCalledWith(expect.objectContaining({ versionId: 'version-1' }))
+    expect(next().disabled).toBe(false)
+  })
+
+  it('keeps the mounted provenance pane aligned with the owning preview selection', async () => {
+    vi.stubGlobal(
+      'ResizeObserver',
+      class {
+        observe(): void {
+          /* jsdom does not measure layout. */
+        }
+        unobserve(): void {
+          /* jsdom does not measure layout. */
+        }
+        disconnect(): void {
+          /* jsdom does not measure layout. */
+        }
+      }
+    )
+    const Owner = (): React.JSX.Element => {
+      const [selected, setSelected] = useState(item)
+      return (
+        <>
+          <button onClick={() => setSelected({ ...item })}>Select original file version</button>
+          <PreviewFileSurface
+            item={selected}
+            onItemChange={setSelected}
+            onClose={vi.fn()}
+            provenanceEntry="leading"
+          />
+        </>
+      )
+    }
+    try {
+      await act(async () => root.render(<Owner />))
+      await flush()
+      const open = container.querySelector<HTMLButtonElement>(
+        '[aria-label="Open Provenance for sin.png"]'
+      )!
+      expect(open).not.toBeNull()
+      await act(async () => open.click())
+      await flush()
+      const pane = container.querySelector('[data-testid="preview-provenance-pane"]')!
+      expect(pane).not.toBeNull()
+      const next = (): HTMLButtonElement =>
+        pane.querySelector<HTMLButtonElement>('[aria-label="Next Artifact version"]')!
+      await act(async () => next().click())
+      await flush()
+      expect(container.querySelector('[data-testid="preview-version"]')?.textContent).toBe(
+        'version-2'
+      )
+      expect(next().disabled).toBe(true)
+      await clickTab('Select original file version')
+      await flush()
+      expect(container.querySelector('[data-testid="preview-version"]')?.textContent).toBe(
+        'version-1'
+      )
+      expect(container.querySelector('[data-testid="preview-provenance-pane"]')).toBe(pane)
+      expect(next().disabled).toBe(false)
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  })
+
+  it('reads a pending message snapshot again after file metadata changes and the tab reopens', async () => {
+    getVersionMessages.mockResolvedValueOnce({
+      messages: { state: 'unavailable', reason: 'message-snapshot-pending' }
+    })
+    await clickTab('Messages')
+    await flush()
+    expect(getVersionMessages).toHaveBeenCalledTimes(1)
+    expect(container.textContent).toContain('message-snapshot-pending')
+    await clickTab('Code')
+    await act(async () =>
+      root.render(
+        <ArtifactProvenancePanel
+          item={{ ...item, mtimeMs: 2, versionNumber: 1 }}
+          projectId="project-1"
+          onClose={vi.fn()}
+        />
+      )
+    )
+    await clickTab('Messages')
+    await flush()
+    expect.soft(getVersionMessages).toHaveBeenCalledTimes(2)
+    expect.soft(container.textContent).toContain('The plot is ready.')
+
+    // Remounting proves the same version's available response can be read and displayed.
+    await act(async () =>
+      root.render(
+        <ArtifactProvenancePanel
+          key="reopened"
+          item={item}
+          projectId="project-1"
+          onClose={vi.fn()}
+          initialTab="messages"
+        />
+      )
+    )
+    await flush()
+    expect(container.textContent).toContain('The plot is ready.')
+  })
+
+  it('rechecks pending messages explicitly without polling and retains a ready snapshot on refresh', async () => {
+    const pending = { messages: { state: 'unavailable', reason: 'message-snapshot-pending' } }
+    getVersionMessages.mockResolvedValueOnce(pending).mockResolvedValueOnce(pending)
+    await clickTab('Messages')
+    await flush()
+    const recheck = (): HTMLButtonElement | undefined =>
+      [...container.querySelectorAll('button')].find(
+        (button) => button.textContent === 'Recheck message snapshot'
+      )
+    expect(recheck()).toBeDefined()
+    await act(async () => recheck()!.click())
+    await flush()
+    expect(getVersionMessages).toHaveBeenCalledTimes(2)
+    expect(recheck()).toBeDefined()
+    await flush()
+    expect(getVersionMessages).toHaveBeenCalledTimes(2)
+    await act(async () => recheck()!.click())
+    await flush()
+    expect(getVersionMessages).toHaveBeenCalledTimes(3)
+    expect(container.textContent).toContain('The plot is ready.')
+    expect(recheck()).toBeUndefined()
+    await clickTab('Code')
+    await act(async () =>
+      root.render(
+        <ArtifactProvenancePanel
+          item={{ ...item, mtimeMs: 3 }}
+          projectId="project-1"
+          onClose={vi.fn()}
+        />
+      )
+    )
+    await clickTab('Messages')
+    await flush()
+    expect(getVersionMessages).toHaveBeenCalledTimes(3)
+    expect(container.textContent).toContain('The plot is ready.')
+  })
+
+  it('rechecks pending messages when file metadata changes while Messages stays open', async () => {
+    getVersionMessages.mockResolvedValueOnce({
+      messages: { state: 'unavailable', reason: 'message-snapshot-pending' }
+    })
+    await clickTab('Messages')
+    await flush()
+    await act(async () =>
+      root.render(
+        <ArtifactProvenancePanel
+          item={{ ...item, mtimeMs: 3 }}
+          projectId="project-1"
+          onClose={vi.fn()}
+        />
+      )
+    )
+    await flush()
+    expect(getVersionMessages).toHaveBeenCalledTimes(2)
+    expect(container.textContent).toContain('The plot is ready.')
+  })
+
+  it('preserves known execution omissions in the downloaded notebook', async () => {
+    const truncation = {
+      reason: 'payload-limit',
+      omittedLeadingRunCount: 3,
+      omittedOutputCount: 17,
+      omittedInputCount: 2
+    }
+    getVersionExecution.mockResolvedValue({ execution: { ...provenance().execution!, truncation } })
+    await clickTab('Execution Log')
+    await flush()
+    expect(container.textContent).toContain('omitted 3 earlier runs, 17 outputs, and 2 inputs')
+    await clickTab('Download notebook')
+    expect(saveBlobFile).toHaveBeenCalledOnce()
+    const notebook = JSON.parse(new TextDecoder().decode(saveBlobFile.mock.calls[0]![0].data))
+    expect.soft(notebook.metadata.open_science.truncation).toEqual(truncation)
+    expect(notebook.cells[0]).toMatchObject({ cell_type: 'markdown' })
+    expect(notebook.cells[0].source.join('')).toContain(
+      'omitted 3 earlier runs, 17 outputs, and 2 inputs'
+    )
+  })
+
+  const capturedTable = (): NonNullable<ArtifactVersionProvenance['execution']> => {
+    const base = provenance().execution!
+    const snapshot = buildBoundedExecutionSnapshot(
+      {
+        schemaVersion: 2,
+        rootFrameId: base.rootFrameId,
+        agentFrameId: base.agentFrameId,
+        messageBranchId: base.messageBranchId,
+        terminalPromptMessageId: base.terminalPromptMessageId,
+        producerRunId: base.producerRunId,
+        producerRunIndex: base.producerRunIndex,
+        createdAt: base.createdAt
+      },
+      [
+        {
+          runIndex: 0,
+          run: {
+            runId: base.producerRunId,
+            cellId: 'cell-1',
+            source: 'agent',
+            kernelKind: 'python',
+            script: 'samples',
+            status: 'completed',
+            startedAt: 1,
+            endedAt: 2,
+            text: { stdout: '', stderr: '', traceback: '', plain: [] },
+            outputs: [
+              {
+                type: 'json',
+                data: Array.from({ length: 1000 }, (_, i) => ({
+                  sample: `S-${i}`,
+                  concentration: 3.2
+                }))
+              }
+            ],
+            artifacts: [],
+            workingFiles: []
+          }
+        }
+      ]
+    )
+    expect(snapshot.truncation).toBeUndefined()
+    expect(snapshot.runs[0]!.outputs[0]).toMatchObject({
+      type: 'table',
+      columns: ['sample', 'concentration'],
+      rowCount: 1000
+    })
+    expect(snapshot.inputFiles).toEqual([])
+    expect(snapshot.helperModules ?? []).toEqual([])
+    return { ...snapshot, inputFiles: [], helperModules: [] }
+  }
+
+  it('exports captured table columns and original row count along with preview rows', async () => {
+    const execution = capturedTable()
+    getVersionExecution.mockResolvedValue({ execution })
+    await clickTab('Execution Log')
+    await clickTab('Download notebook')
+    expect(saveBlobFile).toHaveBeenCalledOnce()
+    const notebook = JSON.parse(new TextDecoder().decode(saveBlobFile.mock.calls[0]![0].data))
+    const data = notebook.cells.find((cell: { cell_type: string }) => cell.cell_type === 'code')
+      .outputs[0].data
+    expect.soft(data['application/json']).toMatchObject({
+      columns: ['sample', 'concentration'],
+      rowCount: 1000,
+      previewRows: expect.any(Array)
+    })
+    expect(data['text/plain'].join('')).toContain('concentration')
+    expect(data['text/plain'].join('')).toContain('first 100 of 1000 rows')
+    expect(data['application/json'].previewRows).toHaveLength(100)
+    expect(data['application/json'].previewRows[0]).toEqual(['S-0', 3.2])
+  })
+
+  it('discloses the displayed and original row counts for a sampled execution table', async () => {
+    getVersionExecution.mockResolvedValue({ execution: capturedTable() })
+    await clickTab('Execution Log')
+    await flush()
+    expect(container.querySelector('[data-testid="notebook-run"]')).not.toBeNull()
+    expect(container.textContent).toMatch(/100[\s\S]*1[,]?000/)
   })
 })

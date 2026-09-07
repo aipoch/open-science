@@ -4630,6 +4630,8 @@
     "UTF-16 CSV preview is not supported. Save a copy as UTF-8 to preview it.": "UTF-16 の CSV プレビューには対応していません。プレビューするには、UTF-8 でコピーを保存してください。",
     "The preview limit was reached before a complete header could be read.": "ヘッダー全体を読み込む前にプレビューの上限に達しました。",
     "The file exceeds the preview limit. Only complete records are shown.": "ファイルがプレビューの上限を超えています。完全なレコードのみ表示しています。",
-    "The delimiter could not be detected reliably. Commas are used in this preview.": "区切り文字を確実に検出できませんでした。このプレビューではカンマを使用しています。"
+    "The delimiter could not be detected reliably. Commas are used in this preview.": "区切り文字を確実に検出できませんでした。このプレビューではカンマを使用しています。",
+    "Recheck message snapshot": "メッセージスナップショットを再確認",
+    "Table preview: showing first {{shown}} of {{total}} rows.": "テーブルプレビュー：全 {{total}} 行のうち先頭 {{shown}} 行を表示。"
   }
 }

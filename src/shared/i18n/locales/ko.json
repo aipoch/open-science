@@ -4628,6 +4628,8 @@
     "UTF-16 CSV preview is not supported. Save a copy as UTF-8 to preview it.": "UTF-16 CSV 미리보기는 지원되지 않습니다. 미리 보려면 UTF-8로 사본을 저장하세요.",
     "The preview limit was reached before a complete header could be read.": "전체 헤더를 읽기 전에 미리보기 한도에 도달했습니다.",
     "The file exceeds the preview limit. Only complete records are shown.": "파일이 미리보기 한도를 초과합니다. 완전한 레코드만 표시됩니다.",
-    "The delimiter could not be detected reliably. Commas are used in this preview.": "구분자를 정확히 감지하지 못했습니다. 이 미리보기에서는 쉼표를 사용합니다."
+    "The delimiter could not be detected reliably. Commas are used in this preview.": "구분자를 정확히 감지하지 못했습니다. 이 미리보기에서는 쉼표를 사용합니다.",
+    "Recheck message snapshot": "메시지 스냅샷 다시 확인",
+    "Table preview: showing first {{shown}} of {{total}} rows.": "표 미리보기: 전체 {{total}}행 중 처음 {{shown}}행 표시."
   }
 }

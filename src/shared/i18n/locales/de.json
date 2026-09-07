@@ -4784,6 +4784,8 @@
     "UTF-16 CSV preview is not supported. Save a copy as UTF-8 to preview it.": "Die Vorschau von UTF-16-CSV-Dateien wird nicht unterstützt. Speichern Sie eine Kopie als UTF-8, um sie in der Vorschau anzuzeigen.",
     "The preview limit was reached before a complete header could be read.": "Das Vorschaulimit wurde erreicht, bevor die Kopfzeile vollständig gelesen werden konnte.",
     "The file exceeds the preview limit. Only complete records are shown.": "Die Datei überschreitet das Vorschaulimit. Es werden nur vollständige Datensätze angezeigt.",
-    "The delimiter could not be detected reliably. Commas are used in this preview.": "Das Trennzeichen konnte nicht zuverlässig erkannt werden. In dieser Vorschau werden Kommas verwendet."
+    "The delimiter could not be detected reliably. Commas are used in this preview.": "Das Trennzeichen konnte nicht zuverlässig erkannt werden. In dieser Vorschau werden Kommas verwendet.",
+    "Recheck message snapshot": "Nachrichten-Snapshot erneut prüfen",
+    "Table preview: showing first {{shown}} of {{total}} rows.": "Tabellenvorschau: Die ersten {{shown}} von {{total}} Zeilen werden angezeigt."
   }
 }
