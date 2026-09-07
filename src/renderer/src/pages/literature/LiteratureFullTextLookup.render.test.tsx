@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { literatureItemInputSchema, type LiteratureItemView } from '../../../../shared/literature'
 import { LiteratureFullTextLookup } from './LiteratureFullTextLookup'
@@ -77,12 +77,12 @@ describe('LiteratureFullTextLookup', () => {
     expect(await screen.findByText('Configured')).not.toBeNull()
     expect(saveEmail).toHaveBeenCalledWith({ contactEmail: 'research@lab.org' })
     expect(screen.queryByLabelText('Contact email')).toBeNull()
-    expect(fullText).toHaveBeenCalledTimes(2)
+    await waitFor(() => expect(fullText).toHaveBeenCalledTimes(2))
     fireEvent.click(screen.getByRole('button', { name: 'Edit' }))
     fireEvent.click(screen.getByRole('button', { name: 'Remove email' }))
     await screen.findByRole('button', { name: 'Configure Unpaywall' })
     expect(saveEmail).toHaveBeenLastCalledWith({ contactEmail: '' })
-    expect(fullText).toHaveBeenCalledTimes(3)
+    await waitFor(() => expect(fullText).toHaveBeenCalledTimes(3))
   })
 
   it.each(['pmc-unavailable', 'unpaywall-unavailable'])(
