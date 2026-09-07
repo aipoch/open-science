@@ -94,6 +94,14 @@ Revise los activos y la información de verificación publicada en la página de
 
 > Si macOS o Windows muestra una advertencia de desarrollador no identificado o de editor desconocido, verifique que el paquete provenga de la página oficial de lanzamientos antes de continuar.
 
+En macOS, también puede instalar la aplicación con [Homebrew](https://brew.sh):
+
+```bash
+brew install --cask open-science
+```
+
+Homebrew selecciona automáticamente el paquete para Apple Silicon o Intel.
+
 ### 2. Complete la configuración inicial
 
 El primer lanzamiento tiene cinco pasos guiados:

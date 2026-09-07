@@ -94,6 +94,14 @@ Open Science ist in drei Schritten einsatzbereit: Installationspaket herunterlad
 
 > Wenn macOS oder Windows vor einem nicht identifizierten Entwickler oder einem unbekannten Herausgeber warnt, vergewissern Sie sich vor dem Fortfahren, dass das Paket von der offiziellen Releases-Seite stammt.
 
+Unter macOS können Sie die App auch mit [Homebrew](https://brew.sh) installieren:
+
+```bash
+brew install --cask open-science
+```
+
+Homebrew wählt automatisch das Paket für Apple Silicon oder Intel aus.
+
 ### 2. Schließen Sie die Ersteinrichtung ab
 
 Der erste Start besteht aus fünf geführten Schritten:

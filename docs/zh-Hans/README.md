@@ -93,6 +93,14 @@ Open Science 支持机器学习、统计学、生命科学、化学、材料科�
 
 > 如果 macOS 或 Windows 显示“无法识别的开发者”或“未知发布者”警告，请先确认软件包来自官方 Releases 页面，再继续操作。
 
+macOS 用户也可以通过 [Homebrew](https://brew.sh) 安装：
+
+```bash
+brew install --cask open-science
+```
+
+Homebrew 会自动选择 Apple Silicon 或 Intel 安装包。
+
 ### 2. 完成首次设置
 
 首次启动包含五个引导步骤：
