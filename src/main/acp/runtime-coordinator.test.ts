@@ -3295,6 +3295,55 @@ describe('AcpRuntimeCoordinator', () => {
     }
   )
 
+  it.each([
+    { hasPriorOwner: true, changedProjectId: 'project-a' },
+    { hasPriorOwner: false, changedProjectId: 'project-a' },
+    { hasPriorOwner: false, changedProjectId: 'project-b' }
+  ])(
+    'scopes pending adoption retirement to $changedProjectId (prior owner: $hasPriorOwner)',
+    async ({ hasPriorOwner, changedProjectId }) => {
+      const adoption = createDeferred<void>()
+      const created: ReturnType<typeof createFakeRuntime>[] = []
+      const coordinator = new AcpRuntimeCoordinator((callbacks) => {
+        const fake = createFakeRuntime({
+          frameworkId: 'claude-code',
+          sessionIds: [`session-${created.length}`],
+          callbacks,
+          ...(created.length === 0 ? {} : { beforeResume: () => adoption.promise })
+        })
+        created.push(fake)
+        return fake.runtime
+      })
+      const sessionId = hasPriorOwner
+        ? (await coordinator.createSession({ projectId: 'project-a' })).sessionId
+        : 'restored-session'
+      const resume = coordinator.resumeSession({
+        sessionId,
+        projectId: 'project-a',
+        cwd: '/workspace',
+        previousFrameworkId: 'claude-code',
+        agentTarget: {
+          frameworkId: 'claude-code',
+          providerId: 'incoming-provider',
+          model: 'model',
+          reasoningEffort: 'high'
+        }
+      })
+      await vi.waitFor(() => expect(created[1]?.resumeSession).toHaveBeenCalledOnce())
+      await coordinator.requestProjectAgentContextReload(changedProjectId)
+      adoption.resolve()
+      if (changedProjectId === 'project-a') {
+        expect.soft(created[1].requestRetirement).toHaveBeenCalledOnce()
+        await expect(resume).rejects.toThrow('adoption was superseded')
+      } else {
+        expect(created[1].requestRetirement).not.toHaveBeenCalled()
+        await expect(resume).resolves.toMatchObject({ sessionId })
+        await coordinator.sendPrompt({ sessionId, text: 'Continue without another resume' })
+        expect(created[1].sendPrompt).toHaveBeenCalledOnce()
+      }
+    }
+  )
+
   it('publishes prompt ownership only from the runtime that currently owns the session', async () => {
     const retirement = createDeferred<void>()
     const created: ReturnType<typeof createFakeRuntime>[] = []

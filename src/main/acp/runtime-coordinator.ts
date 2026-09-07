@@ -174,7 +174,10 @@ class AcpRuntimeCoordinator {
   ) => Promise<void>
   private promptAdmissionClosedForQuit = false
   private providerShutdownStartedForQuit = false
-  private readonly pendingSessionAdoptions = new Map<string, AcpRuntime>()
+  private readonly pendingSessionAdoptions = new Map<
+    string,
+    { runtime: AcpRuntime; projectId?: string }
+  >()
   private readonly pendingResumeReconciliations = new Map<string, PendingResumeReconciliation>()
   private readonly pendingSessionDrains = new Map<string, PendingSessionDrain>()
   // The latest user-originated prompt is retained only long enough to construct an app-owned
@@ -592,13 +595,21 @@ class AcpRuntimeCoordinator {
     // Keep the prior owner authoritative until adoption finishes. The renderer does not create the
     // incoming optimistic run until this promise resolves, so terminal events emitted while the old
     // generation drains can still settle its own Runtime Segment without touching the next one.
-    if (transfersOwnership) this.pendingSessionAdoptions.set(request.sessionId, runtime)
+    if (transfersOwnership) {
+      this.pendingSessionAdoptions.set(request.sessionId, {
+        runtime,
+        projectId: request.projectId ?? owner?.liveSessionProjectId(request.sessionId)
+      })
+    }
 
     let response: AcpCreateSessionResponse
     try {
       response = await runtime.resumeSession(request)
     } catch (error) {
-      if (transfersOwnership && this.pendingSessionAdoptions.get(request.sessionId) === runtime) {
+      if (
+        transfersOwnership &&
+        this.pendingSessionAdoptions.get(request.sessionId)?.runtime === runtime
+      ) {
         this.pendingSessionAdoptions.delete(request.sessionId)
       }
       await this.retireUnusedTargetedRuntime(runtime)
@@ -614,17 +625,20 @@ class AcpRuntimeCoordinator {
 
     if (
       transfersOwnership &&
-      (this.pendingSessionAdoptions.get(request.sessionId) !== runtime ||
+      (this.pendingSessionAdoptions.get(request.sessionId)?.runtime !== runtime ||
         !this.runtimes.has(runtime) ||
         this.retiredRuntimes.has(runtime))
     ) {
-      if (this.pendingSessionAdoptions.get(request.sessionId) === runtime) {
+      if (this.pendingSessionAdoptions.get(request.sessionId)?.runtime === runtime) {
         this.pendingSessionAdoptions.delete(request.sessionId)
       }
       throw new Error('ACP session adoption was superseded before ownership could commit')
     }
 
-    if (transfersOwnership && this.pendingSessionAdoptions.get(request.sessionId) === runtime) {
+    if (
+      transfersOwnership &&
+      this.pendingSessionAdoptions.get(request.sessionId)?.runtime === runtime
+    ) {
       this.pendingSessionAdoptions.delete(request.sessionId)
     }
 
@@ -1423,6 +1437,11 @@ class AcpRuntimeCoordinator {
     for (const [sessionId, runtime] of this.sessionRuntimes) {
       if (runtime.liveSessionProjectId(sessionId) === projectId) affected.add(runtime)
     }
+    // A resume may have captured context before publishing any live Session. Its request's
+    // Project identity must participate even while the prior owner remains authoritative.
+    for (const pending of this.pendingSessionAdoptions.values()) {
+      if (pending.projectId === projectId) affected.add(pending.runtime)
+    }
     await this.retireRuntimeGenerations(affected)
   }
 
@@ -1835,7 +1854,7 @@ class AcpRuntimeCoordinator {
       // resumeSession owns the handoff commit. AcpRuntime emits its attached snapshot just before the
       // resume promise resolves; treating that intermediate state as ownership would again suppress
       // terminal events from the draining generation during the adoption window.
-      if (this.pendingSessionAdoptions.get(sessionId) === runtime) continue
+      if (this.pendingSessionAdoptions.get(sessionId)?.runtime === runtime) continue
 
       const owner = this.sessionRuntimes.get(sessionId)
       // A late state emission from a retiring runtime must not steal back a session already adopted by
@@ -1896,7 +1915,7 @@ class AcpRuntimeCoordinator {
       this.onSessionUnavailable?.(sessionId)
     }
     for (const [sessionId, incoming] of this.pendingSessionAdoptions) {
-      if (incoming === runtime) this.pendingSessionAdoptions.delete(sessionId)
+      if (incoming.runtime === runtime) this.pendingSessionAdoptions.delete(sessionId)
     }
     for (const [sessionId, pending] of this.pendingResumeReconciliations) {
       if (pending.runtime === runtime) this.pendingResumeReconciliations.delete(sessionId)
