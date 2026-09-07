@@ -49,13 +49,18 @@ const moveQueuedItem = (
 ): void => {
   const queue = activeSessionQueue(owner, optionsRef.current.activeSession?.id)
   if (!queue) return
-  const items = [...queue.items]
+  const items = queue.items.filter((item) => item.kind === 'user')
   const index = items.findIndex((item) => item.id === itemId)
-  const target = direction === 'up' ? index - 1 : index + 1
-  if (index < 0 || target < 0 || target >= items.length) return
-  ;[items[index], items[target]] = [items[target], items[index]]
-  owner.queues.set(queue.sessionId, items)
-  owner.emit(queuedMessageMovedAnnouncement(direction))
+  const target = items[direction === 'up' ? index - 1 : index + 1]
+  if (index < 0 || !target) return
+  moveQueuedItemTo(
+    owner,
+    optionsRef,
+    itemId,
+    target.id,
+    direction === 'up' ? 'before' : 'after',
+    queuedMessageMovedAnnouncement(direction)
+  )
 }
 
 const moveQueuedItemTo = (
@@ -63,7 +68,8 @@ const moveQueuedItemTo = (
   optionsRef: MessageQueueOptionsRef,
   itemId: string,
   targetId: string,
-  edge: 'before' | 'after'
+  edge: 'before' | 'after',
+  announcement: string = MESSAGE_QUEUE_ANNOUNCEMENTS.reordered
 ): void => {
   const queue = activeSessionQueue(owner, optionsRef.current.activeSession?.id)
   if (!queue || itemId === targetId) return
@@ -74,7 +80,7 @@ const moveQueuedItemTo = (
   const target = items.findIndex((item) => item.id === targetId)
   items.splice(edge === 'after' ? target + 1 : target, 0, moved)
   owner.queues.set(queue.sessionId, items)
-  owner.emit(MESSAGE_QUEUE_ANNOUNCEMENTS.reordered)
+  owner.emit(announcement)
 }
 
 const removeQueuedItem = (
