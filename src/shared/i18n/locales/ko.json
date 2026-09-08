@@ -4780,6 +4780,16 @@
     "Saving stopped. Completed results are kept.": "저장이 중지되었습니다. 완료된 결과는 유지됩니다.",
     "Could not save reference {{number}}. Earlier results are kept.": "문헌 {{number}}을(를) 저장하지 못했습니다. 이전 결과는 유지됩니다.",
     "Open Inbox": "받은 편지함 열기",
-    "Open existing reference {{number}}": "기존 문헌 {{number}} 열기"
+    "Open existing reference {{number}}": "기존 문헌 {{number}} 열기",
+    "The selected file is not valid CSL XML.": "선택한 파일은 유효한 CSL XML이 아닙니다.",
+    "CSL files with a document type declaration are not supported.": "문서 유형 선언이 포함된 CSL 파일은 지원하지 않습니다.",
+    "The selected file must be an independent CSL 1.0 style.": "선택한 파일은 독립형 CSL 1.0 스타일이어야 합니다.",
+    "The CSL style must include a title and an id.": "CSL 스타일에는 제목과 ID가 포함되어야 합니다.",
+    "Dependent CSL styles are not supported yet. Import an independent style.": "종속형 CSL 스타일은 아직 지원하지 않습니다. 독립형 스타일을 가져오세요.",
+    "Open Science requires CSL styles with both citation and bibliography sections.": "Open Science에는 인용 및 참고문헌 섹션이 모두 포함된 CSL 스타일이 필요합니다.",
+    "The CSL style references an undefined macro: {{macro}}": "CSL 스타일이 정의되지 않은 매크로를 참조합니다: {{macro}}",
+    "Citation styles could not be loaded. Please try again.": "인용 스타일을 불러오지 못했습니다. 다시 시도하세요.",
+    "The CSL style could not be imported. Please try again.": "CSL 스타일을 가져오지 못했습니다. 다시 시도하세요.",
+    "The CSL style could not be deleted. Please try again.": "CSL 스타일을 삭제하지 못했습니다. 다시 시도하세요."
   }
 }

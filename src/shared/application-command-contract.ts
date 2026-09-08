@@ -5,7 +5,15 @@ export const APPLICATION_COMMAND_ERROR_CODES = [
   'command-failed',
   'session-details-conflict',
   'session-size-limit',
-  'session-revision-conflict'
+  'session-revision-conflict',
+  'csl-file-too-large',
+  'csl-invalid-xml',
+  'csl-unsupported-doctype',
+  'csl-unsupported-style',
+  'csl-missing-metadata',
+  'csl-dependent-style',
+  'csl-undefined-macro',
+  'csl-missing-sections'
 ] as const
 
 export type ApplicationCommandErrorCode = (typeof APPLICATION_COMMAND_ERROR_CODES)[number]
@@ -37,6 +45,7 @@ export const defineApplicationCommandContract = <Args extends readonly unknown[]
 export type ApplicationCommandErrorEnvelope = Readonly<{
   code: ApplicationCommandErrorCode
   message: string
+  parameters?: Readonly<{ macro: string }>
 }>
 
 export type ApplicationCommandOutcome<Result> =
@@ -52,7 +61,8 @@ export const isApplicationCommandErrorCode = (
 export class ApplicationCommandError extends Error {
   constructor(
     readonly code: ApplicationCommandErrorCode,
-    message: string
+    message: string,
+    readonly parameters?: Readonly<{ macro: string }>
   ) {
     super(message)
     this.name = 'ApplicationCommandError'
@@ -64,7 +74,13 @@ export const toApplicationCommandErrorEnvelope = (
 ): ApplicationCommandErrorEnvelope =>
   Object.freeze(
     error instanceof ApplicationCommandError
-      ? { code: error.code, message: error.message }
+      ? {
+          code: error.code,
+          message: error.message,
+          ...(error.code === 'csl-undefined-macro' && error.parameters
+            ? { parameters: { macro: error.parameters.macro } }
+            : {})
+        }
       : {
           code: 'command-failed' as const,
           message: error instanceof Error ? error.message : String(error)
@@ -90,6 +106,21 @@ export const unwrapApplicationCommandOutcome = <Result>(value: unknown): Result 
     'message' in value.error &&
     typeof value.error.message === 'string'
   ) {
+    const parameters = 'parameters' in value.error ? value.error.parameters : undefined
+    if (value.error.code === 'csl-undefined-macro') {
+      if (
+        !parameters ||
+        typeof parameters !== 'object' ||
+        !('macro' in parameters) ||
+        typeof parameters.macro !== 'string' ||
+        Object.keys(parameters).length !== 1
+      )
+        throw invalidOutcome()
+      throw new ApplicationCommandError(value.error.code, value.error.message, {
+        macro: parameters.macro
+      })
+    }
+    if (parameters !== undefined) throw invalidOutcome()
     throw new ApplicationCommandError(value.error.code, value.error.message)
   }
   throw invalidOutcome()

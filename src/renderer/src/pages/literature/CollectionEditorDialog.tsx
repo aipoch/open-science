@@ -49,7 +49,7 @@ export const CollectionEditorDialog = forwardRef<
   const [name, setName] = useState('')
   const [description, setDescription] = useState('')
   const [saving, setSaving] = useState(false)
-  const [error, setError] = useState<string>()
+  const [error, setError] = useState<'name-conflict' | 'create-failed' | 'update-failed'>()
 
   useImperativeHandle(ref, () => ({
     openCreate: () => {
@@ -104,10 +104,10 @@ export const CollectionEditorDialog = forwardRef<
     } catch (error) {
       setError(
         error instanceof Error && error.message.includes(LITERATURE_COLLECTION_NAME_CONFLICT)
-          ? t('A collection with this name already exists at this level. Choose another name.')
+          ? 'name-conflict'
           : mode === 'create'
-            ? t('Collection could not be created.')
-            : t('Collection could not be updated.')
+            ? 'create-failed'
+            : 'update-failed'
       )
     } finally {
       setSaving(false)
@@ -216,7 +216,13 @@ export const CollectionEditorDialog = forwardRef<
             </div>
             {error ? (
               <p className="px-5 pb-4 text-sm text-danger-000" role="alert">
-                {error}
+                {error === 'name-conflict'
+                  ? t(
+                      'A collection with this name already exists at this level. Choose another name.'
+                    )
+                  : error === 'create-failed'
+                    ? t('Collection could not be created.')
+                    : t('Collection could not be updated.')}
               </p>
             ) : null}
             <div

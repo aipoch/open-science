@@ -4782,6 +4782,16 @@
     "Saving stopped. Completed results are kept.": "保存已停止。已完成的结果会保留。",
     "Could not save reference {{number}}. Earlier results are kept.": "无法保存第 {{number}} 条文献。此前的结果会保留。",
     "Open Inbox": "打开收件箱",
-    "Open existing reference {{number}}": "打开已有文献 {{number}}"
+    "Open existing reference {{number}}": "打开已有文献 {{number}}",
+    "The selected file is not valid CSL XML.": "所选文件不是有效的 CSL XML。",
+    "CSL files with a document type declaration are not supported.": "不支持包含文档类型声明的 CSL 文件。",
+    "The selected file must be an independent CSL 1.0 style.": "所选文件必须是独立的 CSL 1.0 样式。",
+    "The CSL style must include a title and an id.": "CSL 样式必须包含标题和 ID。",
+    "Dependent CSL styles are not supported yet. Import an independent style.": "暂不支持依赖型 CSL 样式。请导入独立样式。",
+    "Open Science requires CSL styles with both citation and bibliography sections.": "Open Science 要求 CSL 样式同时包含引文和参考文献部分。",
+    "The CSL style references an undefined macro: {{macro}}": "CSL 样式引用了未定义的宏：{{macro}}",
+    "Citation styles could not be loaded. Please try again.": "无法加载引用样式。请重试。",
+    "The CSL style could not be imported. Please try again.": "无法导入 CSL 样式。请重试。",
+    "The CSL style could not be deleted. Please try again.": "无法删除 CSL 样式。请重试。"
   }
 }

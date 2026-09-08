@@ -430,7 +430,7 @@ const publicApplicationCommandError = (
     : { code: 'command-failed', message: INTERNAL_SERVER_ERROR_MESSAGE }
 
 const applicationCommandErrorStatus = (error: ApplicationCommandError): number => {
-  if (error.code === 'invalid-command-arguments') return 400
+  if (error.code === 'invalid-command-arguments' || error.code.startsWith('csl-')) return 400
   if (error.code === 'command-unavailable') return 404
   if (error.code === 'session-details-conflict') return 409
   if (error.code === 'session-revision-conflict') return 409
@@ -538,12 +538,13 @@ const webRpcError = (
   response: ServerResponse,
   status: number,
   code: WebRpcErrorCode,
-  message: string
+  message: string,
+  parameters?: ApplicationCommandError['parameters']
 ): void => {
   json(response, status, {
     protocolVersion: WEB_RPC_PROTOCOL_VERSION,
     ok: false,
-    error: { code, message }
+    error: { code, message, ...(parameters ? { parameters } : {}) }
   })
 }
 
@@ -1658,7 +1659,13 @@ const startWebHttpServer = async (options: WebServerOptions): Promise<RunningWeb
           const publicError = publicApplicationCommandError(error)
           const status =
             error instanceof ApplicationCommandError ? applicationCommandErrorStatus(error) : 500
-          webRpcError(response, status, publicError.code, publicError.message)
+          webRpcError(
+            response,
+            status,
+            publicError.code,
+            publicError.message,
+            publicError.parameters
+          )
         } finally {
           request.off('aborted', releaseDisconnectedClient)
           response.off('close', releaseDisconnectedClient)

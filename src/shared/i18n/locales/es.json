@@ -5096,6 +5096,16 @@
     "Saving stopped. Completed results are kept.": "Se detuvo el guardado. Se conservan los resultados completados.",
     "Could not save reference {{number}}. Earlier results are kept.": "No se pudo guardar la referencia {{number}}. Se conservan los resultados anteriores.",
     "Open Inbox": "Abrir bandeja de entrada",
-    "Open existing reference {{number}}": "Abrir referencia existente {{number}}"
+    "Open existing reference {{number}}": "Abrir referencia existente {{number}}",
+    "The selected file is not valid CSL XML.": "El archivo seleccionado no contiene XML de CSL válido.",
+    "CSL files with a document type declaration are not supported.": "No se admiten archivos CSL con una declaración de tipo de documento.",
+    "The selected file must be an independent CSL 1.0 style.": "El archivo seleccionado debe ser un estilo CSL 1.0 independiente.",
+    "The CSL style must include a title and an id.": "El estilo CSL debe incluir un título y un ID.",
+    "Dependent CSL styles are not supported yet. Import an independent style.": "Aún no se admiten estilos CSL dependientes. Importe un estilo independiente.",
+    "Open Science requires CSL styles with both citation and bibliography sections.": "Open Science requiere estilos CSL con secciones de citas y bibliografía.",
+    "The CSL style references an undefined macro: {{macro}}": "El estilo CSL hace referencia a una macro no definida: {{macro}}",
+    "Citation styles could not be loaded. Please try again.": "No se han podido cargar los estilos de cita. Vuelva a intentarlo.",
+    "The CSL style could not be imported. Please try again.": "No se ha podido importar el estilo CSL. Vuelva a intentarlo.",
+    "The CSL style could not be deleted. Please try again.": "No se ha podido eliminar el estilo CSL. Vuelva a intentarlo."
   }
 }
