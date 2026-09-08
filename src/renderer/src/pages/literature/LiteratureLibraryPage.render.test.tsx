@@ -3341,26 +3341,59 @@ describe('LiteratureLibraryPage', () => {
     ).toBe('Important new unsaved analysis')
   })
 
-  it('distinguishes a committed note from a failed readback and retains its text', async () => {
-    window.localStorage.setItem(
-      'open-science:literature-table-preferences',
-      JSON.stringify({ visible: ['notes'] })
-    )
-    search.mockImplementation((request: LiteratureCatalogSearchRequest) =>
-      Promise.resolve({ entries: request.scope === 'library' ? [libraryItem] : [] })
-    )
-    get.mockRejectedValueOnce(new Error('read unavailable'))
-    render(<LiteratureLibraryPage />)
-    fireEvent.click(screen.getByRole('button', { name: 'All references' }))
-    const input = (await screen.findByRole('textbox', {
-      name: `Note for ${libraryItem.item.title}`
-    })) as HTMLInputElement
-    fireEvent.change(input, { target: { value: 'Committed analysis' } })
-    fireEvent.blur(input)
-    await screen.findByText('The reference was saved, but could not be reloaded.')
-    expect(input.value).toBe('Committed analysis')
-    expect(transact).toHaveBeenCalledTimes(1)
-  })
+  it.each([false, true])(
+    'reloads a committed note without repeating the write (edited during recovery: %s)',
+    async (edited) => {
+      window.localStorage.setItem(
+        'open-science:literature-table-preferences',
+        JSON.stringify({ visible: ['notes'] })
+      )
+      search.mockImplementation((request: LiteratureCatalogSearchRequest) =>
+        Promise.resolve({ entries: request.scope === 'library' ? [libraryItem] : [] })
+      )
+      get
+        .mockRejectedValueOnce(new Error('read unavailable'))
+        .mockRejectedValueOnce(new Error('still unavailable'))
+        .mockResolvedValue({
+          ...libraryItem,
+          metadataRevision: 2,
+          item: { ...libraryItem.item, personalNote: 'Committed analysis' }
+        })
+      render(<LiteratureLibraryPage />)
+      fireEvent.click(screen.getByRole('button', { name: 'All references' }))
+      const input = (await screen.findByRole('textbox', {
+        name: `Note for ${libraryItem.item.title}`
+      })) as HTMLInputElement
+      fireEvent.change(input, { target: { value: 'Committed analysis' } })
+      fireEvent.blur(input)
+      await screen.findByText('The reference was saved, but could not be reloaded.')
+      expect(input.value).toBe('Committed analysis')
+      expect(transact).toHaveBeenCalledTimes(1)
+      fireEvent.click(screen.getByRole('button', { name: 'Retry' }))
+      await waitFor(() => expect(get).toHaveBeenCalledTimes(2))
+      await waitFor(() =>
+        expect(screen.getByRole('button', { name: 'Retry' }).hasAttribute('disabled')).toBe(false)
+      )
+      expect(input.value).toBe('Committed analysis')
+      expect(transact).toHaveBeenCalledTimes(1)
+      if (edited) fireEvent.change(input, { target: { value: 'Further analysis' } })
+      fireEvent.click(screen.getByRole('button', { name: 'Retry' }))
+      await waitFor(() => expect(get).toHaveBeenCalledTimes(3))
+      expect(transact).toHaveBeenCalledTimes(1)
+      await waitFor(() => expect(input.getAttribute('aria-invalid')).toBeNull())
+      expect(input.value).toBe(edited ? 'Further analysis' : 'Committed analysis')
+      if (edited) {
+        fireEvent.blur(input)
+        await waitFor(() => expect(transact).toHaveBeenCalledTimes(2))
+        expect(transact.mock.calls[1][0]).toEqual(
+          expect.objectContaining({
+            expectedMetadataRevision: 2,
+            item: expect.objectContaining({ personalNote: 'Further analysis' })
+          })
+        )
+      }
+    }
+  )
 
   it('retries a failed note without losing text and adopts the next clean snapshot', async () => {
     window.localStorage.setItem(

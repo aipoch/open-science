@@ -919,13 +919,20 @@ function LiteratureNoteControl({
   onCommit
 }: Readonly<{
   entry: LiteratureItemView
-  onCommit: (base: LiteratureItemView, note: string) => Promise<void>
+  onCommit: (
+    base: LiteratureItemView,
+    note: string,
+    onPersisted: (reload: () => Promise<LiteratureItemView>) => void
+  ) => Promise<void>
 }>): React.JSX.Element {
   const { t } = useTranslation()
   const [edit, setEdit] = useState<{ base: LiteratureItemView; draft: string }>()
   const [isSaving, setIsSaving] = useState(false)
   const [failed, setFailed] = useState(false)
   const savingRef = useRef(false)
+  const recoveryRef = useRef<
+    { note: string; reload: () => Promise<LiteratureItemView> } | undefined
+  >(undefined)
   const cancelNextBlurRef = useRef(false)
   const dirty = edit !== undefined && edit.draft !== (edit.base.item.personalNote ?? '')
   // A dirty draft keeps its original full item and revision, including across rating refreshes.
@@ -939,7 +946,7 @@ function LiteratureNoteControl({
     }
     if (savingRef.current) return
     const note = draft.trim()
-    if (note === (base.item.personalNote ?? '')) {
+    if (!recoveryRef.current && note === (base.item.personalNote ?? '')) {
       setEdit(undefined)
       setFailed(false)
       return
@@ -947,8 +954,26 @@ function LiteratureNoteControl({
     savingRef.current = true
     setIsSaving(true)
     try {
-      await onCommit(base, note)
-      setEdit(undefined)
+      const recovery = recoveryRef.current
+      if (recovery) {
+        const updated = await recovery.reload()
+        // New typing during recovery remains a draft. Only rebase it when the saved note
+        // still matches our acknowledged write; otherwise retain conflict protection.
+        setEdit(
+          note === recovery.note
+            ? undefined
+            : {
+                base: (updated.item.personalNote ?? '') === recovery.note ? updated : base,
+                draft
+              }
+        )
+      } else {
+        await onCommit(base, note, (reload) => {
+          recoveryRef.current = { note, reload }
+        })
+        setEdit(undefined)
+      }
+      recoveryRef.current = undefined
       setFailed(false)
     } catch {
       setFailed(true)
@@ -2126,7 +2151,8 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
 
   const persistInlineItem = async (
     entry: LiteratureItemView,
-    patch: Partial<Pick<LiteratureItemInput, 'itemType' | 'personalNote' | 'rating'>>
+    patch: Partial<Pick<LiteratureItemInput, 'itemType' | 'personalNote' | 'rating'>>,
+    onPersisted?: (reload: () => Promise<LiteratureItemView>) => void
   ): Promise<void> => {
     const item = { ...entry.item, ...patch }
     if (
@@ -2144,11 +2170,21 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
         item
       })
       persisted = true
-      const updated = await window.api.literature.get(entry.id)
-      if (!updated) throw new Error('Literature Item is unavailable after updating.')
-      await refreshItems([updated.id], [updated])
-      detailController.replace(updated)
-      setError(undefined)
+      const reload = async (): Promise<LiteratureItemView> => {
+        try {
+          const updated = await window.api.literature.get(entry.id)
+          if (!updated) throw new Error('Literature Item is unavailable after updating.')
+          await refreshItems([updated.id], [updated])
+          detailController.replace(updated)
+          setError(undefined)
+          return updated
+        } catch (error) {
+          setError(t('The reference was saved, but could not be reloaded.'))
+          throw error
+        }
+      }
+      onPersisted?.(reload)
+      await reload()
     } catch (error) {
       setError(
         persisted
@@ -4252,8 +4288,8 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
                                         <LiteratureNoteControl
                                           key={entry.id}
                                           entry={entry}
-                                          onCommit={(base, personalNote) =>
-                                            persistInlineItem(base, { personalNote })
+                                          onCommit={(base, personalNote, onPersisted) =>
+                                            persistInlineItem(base, { personalNote }, onPersisted)
                                           }
                                         />
                                       </td>
