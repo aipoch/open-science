@@ -7200,6 +7200,12 @@ describe('LiteratureLibraryPage', () => {
       render(<LiteratureLibraryPage />)
       await screen.findByRole('heading', { name: 'Retrieval research' })
       await openMenu(screen.getByTitle('More actions'))
+      // The project heading appears before its SQLite-backed membership request settles.
+      await waitFor(() =>
+        expect(screen.getByRole('menuitem', { name: 'RIS' }).hasAttribute('data-disabled')).toBe(
+          false
+        )
+      )
       fireEvent.click(screen.getByRole('menuitem', { name: 'RIS' }))
       await waitFor(() => expect(saveBlobFile).toHaveBeenCalledTimes(1), { timeout: 15000 })
       const first = new TextDecoder().decode(

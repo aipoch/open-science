@@ -22,7 +22,7 @@ it('upgrades historical permissions without inferring descriptions or changing a
     const grant = await registry.remember({ capability, scope: { kind: 'global' } })
     await client.$executeRawUnsafe('ALTER TABLE "PermissionGrant" DROP COLUMN "approvalSummary"')
     await client.$executeRawUnsafe(
-      "DELETE FROM \"_open_science_migrations\" WHERE id IN ('0032_permission_approval_summary', '0033_compute_job_harvest_retry', '0034_background_result_delivery', '0035_literature_pdf_provenance', '0036_content_verification_observation', '0037_literature_inbox_integrity')"
+      "DELETE FROM \"_open_science_migrations\" WHERE id IN ('0032_permission_approval_summary', '0033_compute_job_harvest_retry', '0034_background_result_delivery', '0035_literature_pdf_provenance', '0036_content_verification_observation', '0037_literature_inbox_integrity', '0038_literature_search_text')"
     )
     const before = await client.$queryRawUnsafe(
       'SELECT id, capabilityKind, capabilityKey, qualifierMode, qualifierValue, scopeKind, projectId, sessionId, fingerprint, revision, createdAt FROM "PermissionGrant"'
@@ -36,7 +36,8 @@ it('upgrades historical permissions without inferring descriptions or changing a
         '0034_background_result_delivery',
         '0035_literature_pdf_provenance',
         '0036_content_verification_observation',
-        '0037_literature_inbox_integrity'
+        '0037_literature_inbox_integrity',
+        '0038_literature_search_text'
       ]
     })
     const after = await client.$queryRawUnsafe<Array<Record<string, unknown>>>(

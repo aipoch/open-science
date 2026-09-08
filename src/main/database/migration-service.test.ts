@@ -459,6 +459,107 @@ describe('application database migrations', () => {
     )
   })
 
+  it('backfills searchable literature text without changing historical metadata', async () => {
+    storageRoot = await mkdtemp(join(tmpdir(), 'literature-search-upgrade-'))
+    client = createProjectDbClient(storageRoot)
+    await client.$executeRawUnsafe('PRAGMA legacy_alter_table = ON')
+    await createDatabaseAtReleasedManifest(
+      client,
+      MIGRATION_MANIFEST.filter(({ id }) => id < '0038_literature_search_text')
+    )
+    await client.$executeRaw`INSERT INTO "LiteratureItem" (id, "itemType", title, abstract, "containerTitle", "metadataRevision", "updatedAt")
+      VALUES ('historical', 'book', 'ÉTUDE', '95% confidence gene_A', 'Биология', 7, 123456789)`
+    await client.$executeRaw`INSERT INTO "LiteratureCreator" (id, "nameMode", "givenName", "familyName", "normalizedName", "updatedAt")
+      VALUES ('historical-author', 'person', 'Jane', 'Smith', 'smith jane', 123456789)`
+    await client.$executeRaw`INSERT INTO "LiteratureItemCreator" ("itemId", "creatorId", "creatorType", ordinal)
+      VALUES ('historical', 'historical-author', 'author', 0)`
+    const batch = Array.from({ length: 501 }, (_, index) => ({
+      id: `batch-${index}`,
+      title: 'Überblick batch'
+    }))
+    await client.$executeRaw`INSERT INTO "LiteratureItem" (id, "itemType", title, "updatedAt")
+      SELECT json_extract(value, '$.id'), 'book', json_extract(value, '$.title'), 123456789 FROM json_each(${JSON.stringify(batch)})`
+    await client.$executeRaw`INSERT INTO "LiteratureCreator" (id, "nameMode", "literalName", "normalizedName", "updatedAt")
+      SELECT json_extract(value, '$.id'), 'organization', 'ÉTUDE Institute', 'étude institute', 123456789 FROM json_each(${JSON.stringify(batch)})`
+    await migrateApplicationDatabase(client)
+    const catalog = new LiteratureCatalog(async () => client!)
+    for (const query of ['étude', '95%', 'gene_A', 'Jane Smith', 'Smith Jane', 'биология'])
+      expect((await catalog.search({ scope: 'library', query })).totalCount).toBe(1)
+    expect(
+      await client.$queryRaw`SELECT title, "normalizedTitle", "normalizedAbstract", "normalizedContainerTitle", "metadataRevision", "updatedAt" FROM "LiteratureItem" WHERE id = 'historical'`
+    ).toEqual([
+      {
+        title: 'ÉTUDE',
+        normalizedTitle: 'étude',
+        normalizedAbstract: '95% confidence gene_a',
+        normalizedContainerTitle: 'биология',
+        metadataRevision: 7,
+        updatedAt: new Date(123456789)
+      }
+    ])
+    expect(
+      (await catalog.search({ scope: 'library', query: 'überblick batch', allItemIds: true }))
+        .totalCount
+    ).toBe(501)
+    expect(
+      await client.literatureCreator.count({ where: { normalizedDisplayName: 'étude institute' } })
+    ).toBe(501)
+    const before = await client.literatureItem.findUniqueOrThrow({ where: { id: 'historical' } })
+    await migrateApplicationDatabase(client)
+    expect(await client.literatureItem.findUniqueOrThrow({ where: { id: 'historical' } })).toEqual(
+      before
+    )
+  })
+
+  it('fills derived literature text when adopting an already current schema', async () => {
+    storageRoot = await mkdtemp(join(tmpdir(), 'literature-search-adoption-'))
+    client = createProjectDbClient(storageRoot)
+    await migrateApplicationDatabase(client)
+    await client.literatureItem.create({
+      data: { id: 'adopted', itemType: 'book', title: 'ÉTUDE' }
+    })
+    await client.$executeRaw`DELETE FROM "_open_science_migrations" WHERE id = '0038_literature_search_text'`
+    await migrateApplicationDatabase(client)
+    expect(
+      (
+        await new LiteratureCatalog(async () => client!).search({
+          scope: 'library',
+          query: 'étude'
+        })
+      ).totalCount
+    ).toBe(1)
+  })
+
+  it('rolls back a failed literature text backfill and retries the upgrade', async () => {
+    storageRoot = await mkdtemp(join(tmpdir(), 'literature-search-rollback-'))
+    client = createProjectDbClient(storageRoot)
+    await client.$executeRawUnsafe('PRAGMA legacy_alter_table = ON')
+    await createDatabaseAtReleasedManifest(
+      client,
+      MIGRATION_MANIFEST.filter(({ id }) => id < '0038_literature_search_text')
+    )
+    await client.$executeRaw`INSERT INTO "LiteratureItem" (id, "itemType", title, "updatedAt") VALUES ('old', 'book', 'Überblick', 123456789)`
+    await client.$executeRawUnsafe(
+      `CREATE TEMP TRIGGER refuse_search_backfill BEFORE UPDATE ON "LiteratureItem" BEGIN SELECT RAISE(ABORT, 'backfill blocked'); END`
+    )
+    await expect(migrateApplicationDatabase(client)).rejects.toBeDefined()
+    expect(
+      await client.$queryRaw`SELECT id FROM "_open_science_migrations" WHERE id = '0038_literature_search_text'`
+    ).toEqual([])
+    const columns = await client.$queryRaw<{ name: string }[]>`PRAGMA table_info("LiteratureItem")`
+    expect(columns.some(({ name }) => name === 'normalizedTitle')).toBe(false)
+    await client.$executeRawUnsafe('DROP TRIGGER refuse_search_backfill')
+    await migrateApplicationDatabase(client)
+    expect(
+      (
+        await new LiteratureCatalog(async () => client!).search({
+          scope: 'library',
+          query: 'überblick'
+        })
+      ).totalCount
+    ).toBe(1)
+  })
+
   it('creates the final literature uniqueness policy and verifies it on restart', async () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open-science-explicit-duplicates-'))
     client = createProjectDbClient(storageRoot)
@@ -552,10 +653,11 @@ describe('application database migrations', () => {
         '0034_background_result_delivery',
         '0035_literature_pdf_provenance',
         '0036_content_verification_observation',
-        '0037_literature_inbox_integrity'
+        '0037_literature_inbox_integrity',
+        '0038_literature_search_text'
       ],
       from: null,
-      to: '0037_literature_inbox_integrity'
+      to: '0038_literature_search_text'
     })
     expect(compatibility).toEqual([{ sqliteVersion: expect.stringMatching(/^\d+\.\d+\.\d+$/) }])
     await expect(
@@ -568,8 +670,8 @@ describe('application database migrations', () => {
     await expect(migrateApplicationDatabase(client)).resolves.toEqual({
       adoptedLegacy: false,
       applied: [],
-      from: '0037_literature_inbox_integrity',
-      to: '0037_literature_inbox_integrity'
+      from: '0038_literature_search_text',
+      to: '0038_literature_search_text'
     })
   })
 
@@ -597,10 +699,11 @@ describe('application database migrations', () => {
         '0034_background_result_delivery',
         '0035_literature_pdf_provenance',
         '0036_content_verification_observation',
-        '0037_literature_inbox_integrity'
+        '0037_literature_inbox_integrity',
+        '0038_literature_search_text'
       ],
       from: '0033_compute_job_harvest_retry',
-      to: '0037_literature_inbox_integrity'
+      to: '0038_literature_search_text'
     })
     await expect(
       client.$queryRaw<Array<{ name: string }>>`
@@ -705,7 +808,8 @@ describe('application database migrations', () => {
         '0034_background_result_delivery',
         '0035_literature_pdf_provenance',
         '0036_content_verification_observation',
-        '0037_literature_inbox_integrity'
+        '0037_literature_inbox_integrity',
+        '0038_literature_search_text'
       ]
     })
     await expect(
@@ -796,7 +900,8 @@ describe('application database migrations', () => {
         '0034_background_result_delivery',
         '0035_literature_pdf_provenance',
         '0036_content_verification_observation',
-        '0037_literature_inbox_integrity'
+        '0037_literature_inbox_integrity',
+        '0038_literature_search_text'
       ]
     })
     await expect(migrateApplicationDatabase(client)).resolves.toMatchObject({ applied: [] })
@@ -841,7 +946,7 @@ describe('application database migrations', () => {
 
     await expect(migrateApplicationDatabase(client)).resolves.toMatchObject({
       applied: expect.arrayContaining(['0010_compute_password_auth']),
-      to: '0037_literature_inbox_integrity'
+      to: '0038_literature_search_text'
     })
     await expect(
       client.$executeRawUnsafe(
@@ -901,10 +1006,11 @@ describe('application database migrations', () => {
         '0034_background_result_delivery',
         '0035_literature_pdf_provenance',
         '0036_content_verification_observation',
-        '0037_literature_inbox_integrity'
+        '0037_literature_inbox_integrity',
+        '0038_literature_search_text'
       ],
       from: '0005_project_preview_state_owner_fk',
-      to: '0037_literature_inbox_integrity'
+      to: '0038_literature_search_text'
     })
     await expect(verifyCurrentApplicationSchema(client)).resolves.toBeUndefined()
   })
@@ -992,10 +1098,11 @@ describe('application database migrations', () => {
         '0034_background_result_delivery',
         '0035_literature_pdf_provenance',
         '0036_content_verification_observation',
-        '0037_literature_inbox_integrity'
+        '0037_literature_inbox_integrity',
+        '0038_literature_search_text'
       ],
       from: '0005_project_preview_state_owner_fk',
-      to: '0037_literature_inbox_integrity'
+      to: '0038_literature_search_text'
     })
     await expect(
       client.$queryRaw<
@@ -1118,7 +1225,7 @@ describe('application database migrations', () => {
       })
     ).rejects.toMatchObject({
       code: 'database_validation_failed',
-      migrationId: '0037_literature_inbox_integrity'
+      migrationId: '0038_literature_search_text'
     })
     expect(retired).toEqual([])
     await expect(access(backupPath)).resolves.toBeUndefined()
@@ -1135,7 +1242,7 @@ describe('application database migrations', () => {
     ).resolves.toEqual({
       adoptedLegacy: false,
       applied: ['9997_test_suffix'],
-      from: '0037_literature_inbox_integrity',
+      from: '0038_literature_search_text',
       to: '9997_test_suffix'
     })
     await expect(
@@ -1180,6 +1287,7 @@ describe('application database migrations', () => {
       { id: '0035_literature_pdf_provenance' },
       { id: '0036_content_verification_observation' },
       { id: '0037_literature_inbox_integrity' },
+      { id: '0038_literature_search_text' },
       { id: '9997_test_suffix' }
     ])
   })
@@ -1269,10 +1377,11 @@ describe('application database migrations', () => {
         '0034_background_result_delivery',
         '0035_literature_pdf_provenance',
         '0036_content_verification_observation',
-        '0037_literature_inbox_integrity'
+        '0037_literature_inbox_integrity',
+        '0038_literature_search_text'
       ],
       from: '0001_runtime_schema_baseline',
-      to: '0037_literature_inbox_integrity'
+      to: '0038_literature_search_text'
     })
     expect(backupEvents).toEqual([
       {
@@ -1363,7 +1472,8 @@ describe('application database migrations', () => {
       { id: '0034_background_result_delivery' },
       { id: '0035_literature_pdf_provenance' },
       { id: '0036_content_verification_observation' },
-      { id: '0037_literature_inbox_integrity' }
+      { id: '0037_literature_inbox_integrity' },
+      { id: '0038_literature_search_text' }
     ])
   })
 
@@ -1494,6 +1604,7 @@ describe('application database migrations', () => {
         '0035_literature_pdf_provenance',
         '0036_content_verification_observation',
         '0037_literature_inbox_integrity',
+        '0038_literature_search_text',
         '9997_test_suffix'
       ],
       to: '9997_test_suffix'
@@ -1631,7 +1742,7 @@ describe('application database migrations', () => {
       adoptedLegacy: false,
       applied: MIGRATION_MANIFEST.slice(computePasswordAuthIndex).map(({ id }) => id),
       from: '0009_vision_evidence',
-      to: '0037_literature_inbox_integrity'
+      to: '0038_literature_search_text'
     })
     await expect(
       client.$queryRaw<Array<{ projectId: string }>>`
@@ -1756,7 +1867,8 @@ describe('application database migrations', () => {
         '0034_background_result_delivery',
         '0035_literature_pdf_provenance',
         '0036_content_verification_observation',
-        '0037_literature_inbox_integrity'
+        '0037_literature_inbox_integrity',
+        '0038_literature_search_text'
       ]
     })
     await expect(
@@ -1890,7 +2002,8 @@ describe('application database migrations', () => {
         '0034_background_result_delivery',
         '0035_literature_pdf_provenance',
         '0036_content_verification_observation',
-        '0037_literature_inbox_integrity'
+        '0037_literature_inbox_integrity',
+        '0038_literature_search_text'
       ]
     })
     await expect(migrateApplicationDatabase(client)).resolves.toMatchObject({ applied: [] })
@@ -1976,7 +2089,8 @@ describe('application database migrations', () => {
         '0034_background_result_delivery',
         '0035_literature_pdf_provenance',
         '0036_content_verification_observation',
-        '0037_literature_inbox_integrity'
+        '0037_literature_inbox_integrity',
+        '0038_literature_search_text'
       ]
     })
     await expect(
@@ -2065,7 +2179,8 @@ describe('application database migrations', () => {
         '0034_background_result_delivery',
         '0035_literature_pdf_provenance',
         '0036_content_verification_observation',
-        '0037_literature_inbox_integrity'
+        '0037_literature_inbox_integrity',
+        '0038_literature_search_text'
       ]
     })
     await expect(verifyCurrentApplicationSchema(client)).resolves.toBeUndefined()
@@ -2188,7 +2303,8 @@ describe('application database migrations', () => {
         '0034_background_result_delivery',
         '0035_literature_pdf_provenance',
         '0036_content_verification_observation',
-        '0037_literature_inbox_integrity'
+        '0037_literature_inbox_integrity',
+        '0038_literature_search_text'
       ]
     })
     await expect(
@@ -2711,8 +2827,8 @@ describe('application database migrations', () => {
         entries.filter((entry) => entry.endsWith('.backup')).sort()
       )
     ).resolves.toEqual([
-      'open-science.db.before-0036_content_verification_observation.backup',
       'open-science.db.before-0037_literature_inbox_integrity.backup',
+      'open-science.db.before-0038_literature_search_text.backup',
       unknownBackupName
     ])
     expect(retired).toHaveLength(MIGRATION_MANIFEST.length - 2)
@@ -3018,10 +3134,11 @@ describe('application database migrations', () => {
         '0034_background_result_delivery',
         '0035_literature_pdf_provenance',
         '0036_content_verification_observation',
-        '0037_literature_inbox_integrity'
+        '0037_literature_inbox_integrity',
+        '0038_literature_search_text'
       ],
       from: '0024_compute_job_file_evidence',
-      to: '0037_literature_inbox_integrity'
+      to: '0038_literature_search_text'
     })
     await expect(
       client.$queryRawUnsafe<Array<{ currentVersionId: string | null }>>(
@@ -3080,7 +3197,7 @@ describe('application database migrations', () => {
         MIGRATION_MANIFEST.findIndex(({ id }) => id === '0009_vision_evidence')
       ).map(({ id }) => id),
       from: '0008_database_json_constraints',
-      to: '0037_literature_inbox_integrity'
+      to: '0038_literature_search_text'
     })
     await expect(verifyCurrentApplicationSchema(client)).resolves.toBeUndefined()
   })
@@ -3149,10 +3266,11 @@ describe('application database migrations', () => {
         '0034_background_result_delivery',
         '0035_literature_pdf_provenance',
         '0036_content_verification_observation',
-        '0037_literature_inbox_integrity'
+        '0037_literature_inbox_integrity',
+        '0038_literature_search_text'
       ],
       from: '0024_compute_job_file_evidence',
-      to: '0037_literature_inbox_integrity'
+      to: '0038_literature_search_text'
     })
     await expect(
       client.$queryRaw<Array<{ uploadVersionId: string }>>`
