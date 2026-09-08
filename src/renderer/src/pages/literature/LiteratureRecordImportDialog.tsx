@@ -27,6 +27,7 @@ import type {
 } from '../../../../shared/literature'
 
 export type RecordImportDraft = Readonly<{
+  reading?: boolean
   fileName: string
   content: string
   preview?: LiteratureRecordImportResult
@@ -115,7 +116,7 @@ export const LiteratureRecordImportDialog = ({
                   className="size-4 animate-spin motion-reduce:animate-none"
                   aria-hidden="true"
                 />
-                {t('Loading…')}
+                {recordImport.reading ? t('Reading…') : t('Loading…')}
               </p>
             ) : (
               <div className="space-y-4">
