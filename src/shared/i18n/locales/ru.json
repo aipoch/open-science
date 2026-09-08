@@ -5269,6 +5269,7 @@
     "Select at least one result.": "Выберите хотя бы один результат.",
     "Search again resets unfinished results and their selections.": "Повторный поиск сбрасывает незавершённые результаты и их выбор.",
     "Apply selected": "Применить выбранное",
-    "Add selected": "Добавить выбранное"
+    "Add selected": "Добавить выбранное",
+    "Some references failed. Search again to retry unfinished references.": "Не удалось обработать некоторые источники. Повторите поиск, чтобы снова обработать незавершённые источники."
   }
 }

@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react'
 import { StrictMode, useState } from 'react'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { literatureItemInputSchema, type LiteratureItemView } from '../../../../shared/literature'
@@ -501,4 +501,18 @@ it('retires failed apply selections when another window saves a different review
   if (retry) fireEvent.click(retry)
   await act(async () => {})
   expect(jobs.mock.calls.filter(([request]) => request.action === 'apply')).toHaveLength(1)
+})
+
+it('reports failed searches instead of completion when no candidates are ready', async () => {
+  job.state = 'review'
+  job.rows[0]!.status = 'error'
+  open(id, 'full-text')
+  await flush()
+  const status = screen.getByRole('status')
+  expect(within(status).getByText('Failed')).toBeTruthy()
+  expect(within(status).queryByText('Completed')).toBeNull()
+  expect(status.textContent).toContain(
+    'Some references failed. Search again to retry unfinished references.'
+  )
+  expect(screen.getByRole('button', { name: 'Search again' })).toBeTruthy()
 })

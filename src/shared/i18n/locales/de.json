@@ -4976,6 +4976,7 @@
     "Select at least one result.": "Wählen Sie mindestens ein Ergebnis aus.",
     "Search again resets unfinished results and their selections.": "Eine erneute Suche setzt nicht abgeschlossene Ergebnisse und deren Auswahl zurück.",
     "Apply selected": "Auswahl anwenden",
-    "Add selected": "Auswahl hinzufügen"
+    "Add selected": "Auswahl hinzufügen",
+    "Some references failed. Search again to retry unfinished references.": "Einige Literaturstellen sind fehlgeschlagen. Suchen Sie erneut, um nicht abgeschlossene Literaturstellen erneut zu versuchen."
   }
 }

@@ -284,20 +284,24 @@ export const LiteratureBatchLookupDialog = ({
               ? t('Saving…')
               : t('Downloading…')
             : t('Searching…')
-          : hasCandidates
-            ? t('Awaiting review')
-            : t('Completed')
+          : failed > 0
+            ? t('Failed')
+            : hasCandidates
+              ? t('Awaiting review')
+              : t('Completed')
   const statusHint = paused
     ? t('Progress is saved. Resume to continue unfinished references.')
     : stopping
       ? t('Finishing the current reference before pausing.')
       : running
         ? t('You can close this window. Tasks continue in the background.')
-        : hasCandidates
-          ? t('Review the results before applying them.')
-          : done > 0
-            ? t('Completed results are saved.')
-            : t('No results are available to apply.')
+        : failed > 0
+          ? t('Some references failed. Search again to retry unfinished references.')
+          : hasCandidates
+            ? t('Review the results before applying them.')
+            : done > 0
+              ? t('Completed results are saved.')
+              : t('No results are available to apply.')
   const resumeLabel =
     job?.phase === 'apply'
       ? mode === 'metadata'

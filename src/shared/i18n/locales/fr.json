@@ -5137,6 +5137,7 @@
     "Select at least one result.": "Sélectionnez au moins un résultat.",
     "Search again resets unfinished results and their selections.": "Relancer la recherche réinitialise les résultats inachevés et les sélections associées.",
     "Apply selected": "Appliquer la sélection",
-    "Add selected": "Ajouter la sélection"
+    "Add selected": "Ajouter la sélection",
+    "Some references failed. Search again to retry unfinished references.": "Certaines références ont échoué. Relancez la recherche pour réessayer les références inachevées."
   }
 }

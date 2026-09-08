@@ -4823,6 +4823,7 @@
     "Select at least one result.": "結果を少なくとも1つ選択してください。",
     "Search again resets unfinished results and their selections.": "再検索すると、未完了の結果とその選択内容がリセットされます。",
     "Apply selected": "選択項目を適用",
-    "Add selected": "選択項目を追加"
+    "Add selected": "選択項目を追加",
+    "Some references failed. Search again to retry unfinished references.": "一部の文献の処理に失敗しました。再検索して未完了の文献を再試行してください。"
   }
 }

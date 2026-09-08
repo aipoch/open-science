@@ -4823,6 +4823,7 @@
     "Select at least one result.": "请至少选择一项结果。",
     "Search again resets unfinished results and their selections.": "重新检索会重置未完成的结果及其选择。",
     "Apply selected": "应用所选",
-    "Add selected": "添加所选"
+    "Add selected": "添加所选",
+    "Some references failed. Search again to retry unfinished references.": "部分文献处理失败。重新检索可重试未完成的文献。"
   }
 }

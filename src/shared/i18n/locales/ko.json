@@ -4821,6 +4821,7 @@
     "Select at least one result.": "결과를 하나 이상 선택하세요.",
     "Search again resets unfinished results and their selections.": "다시 검색하면 완료되지 않은 결과와 선택 사항이 초기화됩니다.",
     "Apply selected": "선택 항목 적용",
-    "Add selected": "선택 항목 추가"
+    "Add selected": "선택 항목 추가",
+    "Some references failed. Search again to retry unfinished references.": "일부 문헌 처리에 실패했습니다. 다시 검색하여 미완료 문헌을 재시도하세요."
   }
 }
