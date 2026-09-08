@@ -262,47 +262,62 @@ describe('WorkspaceToolDetailsRow', () => {
     expect(container.textContent).not.toContain('private-')
   })
 
-  it('opens the Literature Inbox from a completed save card', async () => {
-    const activity = createActivity({
-      providerToolName: 'mcp__open-science-library__save_to_inbox',
-      rawInput: { candidates: [{ item: { title: 'Paper A' } }] },
-      toolContent: [
-        {
-          type: 'content',
-          content: {
-            type: 'text',
-            text: JSON.stringify({
-              openScienceLiteraturePresentation: {
-                libraryAction: 'save',
-                itemTitles: ['Paper A'],
-                candidateCount: 1,
-                savedCount: 1
-              }
-            })
+  it.each([true, false])(
+    'offers an Inbox action only with a pending receipt (receipt: %s)',
+    async (hasReceipt) => {
+      const activity = createActivity({
+        providerToolName: 'mcp__open-science-library__save_to_inbox',
+        rawInput: { candidates: [{ item: { title: 'Paper A' } }] },
+        toolContent: [
+          {
+            type: 'content',
+            content: {
+              type: 'text',
+              text: JSON.stringify({
+                ...(hasReceipt
+                  ? { results: [{ kind: 'candidate', id: 'pending-1', state: 'pending' }] }
+                  : {}),
+                openScienceLiteraturePresentation: {
+                  libraryAction: 'save',
+                  itemTitles: ['Paper A'],
+                  candidateCount: 1,
+                  savedCount: 1
+                }
+              })
+            }
           }
-        }
-      ]
-    })
+        ]
+      })
 
-    useNavigationStore.setState({ view: 'workspace' })
-    root = createRoot(container)
-    await act(async () => {
-      root.render(
-        <WorkspaceToolDetailsRow
-          activity={activity}
-          details={buildToolActivityDetails(activity)!}
-          isExpanded={true}
-          onToggle={vi.fn()}
-        />
+      useNavigationStore.setState({ view: 'workspace' })
+      root = createRoot(container)
+      await act(async () => {
+        root.render(
+          <WorkspaceToolDetailsRow
+            activity={activity}
+            details={buildToolActivityDetails(activity)!}
+            isExpanded={true}
+            onToggle={vi.fn()}
+          />
+        )
+      })
+
+      const card = container.querySelector('[data-testid="literature-tool-card"]')!
+      const openInbox = Array.from(card.querySelectorAll('button')).find(
+        (button) => button.textContent === 'Open Inbox'
       )
-    })
-
-    const card = container.querySelector('[data-testid="literature-tool-card"]')
-    expect(card?.tagName).toBe('BUTTON')
-    expect(card?.textContent).toContain('Open')
-    act(() => card?.dispatchEvent(new MouseEvent('click', { bubbles: true })))
-    expect(useNavigationStore.getState().view).toBe('library')
-  })
+      if (hasReceipt) {
+        expect(openInbox).toBeDefined()
+        act(() => openInbox!.click())
+        expect(useNavigationStore.getState().view).toBe('library')
+      } else {
+        expect(openInbox).toBeUndefined()
+        expect(card.textContent).not.toContain('Pending review:')
+        act(() => card.dispatchEvent(new MouseEvent('click', { bubbles: true })))
+        expect(useNavigationStore.getState().view).toBe('workspace')
+      }
+    }
+  )
 
   it('presents citation document formatting as a first-party Literature action', async () => {
     const activity = createActivity({

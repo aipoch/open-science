@@ -293,18 +293,19 @@ const composeAcpRuntimeBaseOwners = (options: AcpRuntimeOptions) => {
             },
             ...(options.literatureLibrary!.resolveSaveReferences
               ? {
-                  resolveSaveReferences: (references: readonly string[]) =>
-                    options.literatureLibrary!.resolveSaveReferences!(references)
+                  resolveSaveReferences: (references: readonly string[], signal?: AbortSignal) =>
+                    options.literatureLibrary!.resolveSaveReferences!(references, signal)
                 }
               : {}),
             ...(options.literatureLibrary!.readCandidateFile
               ? {
-                  readCandidateFile: (filename: string) =>
+                  readCandidateFile: (filename: string, signal?: AbortSignal) =>
                     options.literatureLibrary!.readCandidateFile!({
                       projectId,
                       sessionId: appSessionId,
                       workspaceCwd,
-                      filename
+                      filename,
+                      signal
                     })
                 }
               : {}),
