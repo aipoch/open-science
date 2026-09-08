@@ -4745,6 +4745,6 @@
     "PDF not validated: exceeds the 50 MiB automatic processing limit.": "PDF 검증 안 됨: 자동 처리 한도 50 MiB를 초과합니다.",
     "PDF structure not yet validated.": "PDF 구조가 아직 검증되지 않았습니다.",
     "Attachment unavailable": "첨부 파일 사용 불가",
-    "This PDF is linked to a chat. Remove it from the chat before removing this attachment.": "이 PDF는 채팅에 연결되어 있습니다. 이 첨부 파일을 제거하기 전에 채팅에서 PDF를 제거하세요."
+    "This PDF is referenced by a chat or its message history and cannot be removed. Unlinking the current chat does not remove historical references.": "이 PDF는 채팅 또는 메시지 기록에서 참조되고 있어 제거할 수 없습니다. 현재 채팅에서 연결을 해제해도 기록의 참조는 제거되지 않습니다."
   }
 }

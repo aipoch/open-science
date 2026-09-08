@@ -114,7 +114,7 @@ export const LiteratureAttachments = ({
         setError(
           error instanceof Error && error.message.includes('LITERATURE_ATTACHMENT_IN_USE')
             ? t(
-                'This PDF is linked to a chat. Remove it from the chat before removing this attachment.'
+                'This PDF is referenced by a chat or its message history and cannot be removed. Unlinking the current chat does not remove historical references.'
               )
             : t('The attachment operation failed. Try again.')
         )

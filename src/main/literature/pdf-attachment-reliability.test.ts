@@ -10,6 +10,12 @@ import {
   type LiteraturePdfImportRequest
 } from '../../shared/literature'
 import { createTestPdf as pdf } from '../../../test/fixtures/literature-pdf'
+import {
+  createLinearConversationGraph,
+  forkEditedConversationMessage,
+  resolveActiveConversationMessages
+} from '../../shared/conversation-graph'
+import type { PersistedChatMessage } from '../../shared/session-persistence'
 import { PENDING_UPLOAD_SESSION_ID } from '../../shared/uploads'
 import { createProjectDbClient, migrateApplicationDatabase } from '../projects/prisma-client'
 import { ContentRepository } from '../storage/content-repository'
@@ -347,6 +353,86 @@ describe('Literature PDF attachment reliability', () => {
     await expect(catalog.transact(remove)).resolves.toMatchObject({ state: 'unlinked' })
     await expect(authority.resolveVersion(version.id)).resolves.toBeUndefined()
   })
+
+  it.each(['legacy message', 'inactive branch'] as const)(
+    'preserves a PDF referenced by a retained %s after the live context is unlinked',
+    async (kind) => {
+      const { importer, request, catalog, authority, sessions } = await setup()
+      const imported = await importer.import(request)
+      const attachment = imported.item.attachments[0]
+      const version = attachment.versions[0]
+      const message: PersistedChatMessage = {
+        id: 'prompt',
+        role: 'user',
+        content: 'Read this paper',
+        status: 'complete',
+        eventIds: [],
+        createdAt: 1,
+        updatedAt: 1,
+        pdfContext: {
+          version: 1,
+          bindings: [
+            {
+              version: 1,
+              bindingId: 'binding',
+              sourceKind: 'literature-attachment-version',
+              sourceFileId: attachment.id,
+              sourceVersionId: version.id,
+              name: version.filename,
+              mimeType: 'application/pdf',
+              sizeBytes: version.sizeBytes,
+              checksum: version.checksum,
+              linkedAt: 1
+            }
+          ]
+        }
+      }
+      const graph =
+        kind === 'inactive branch'
+          ? forkEditedConversationMessage(
+              createLinearConversationGraph({
+                sessionId: 'history-session',
+                messages: [message],
+                createdAt: 1,
+                updatedAt: 1
+              }),
+              message.id,
+              'edited-branch',
+              2
+            )
+          : undefined
+      await sessions.saveSession({
+        id: 'history-session',
+        projectId: 'project',
+        title: 'Reading history',
+        cwd: root,
+        status: 'idle',
+        filesRevision: 0,
+        createdAt: 1,
+        updatedAt: 2,
+        runtimeContext: { version: 1, revision: 1 },
+        messages: graph ? resolveActiveConversationMessages(graph) : [message],
+        ...(graph ? { conversationGraph: graph } : {})
+      })
+      const stored = await sessions.loadSessionWithDiagnostics('project', 'history-session')
+      if (stored.status !== 'found') throw new Error('Saved session missing')
+      const history = stored.session.conversationGraph?.messages ?? stored.session.messages
+      expect(
+        history.find(({ id }) => id === message.id)?.pdfContext?.bindings[0].sourceVersionId
+      ).toBe(version.id)
+      if (kind === 'inactive branch')
+        expect(resolveActiveConversationMessages(stored.session.conversationGraph!)).toEqual([])
+      await expect(authority.resolveVersion(version.id)).resolves.toBeDefined()
+      await expect(
+        catalog.transact({
+          kind: 'delete-attachment',
+          itemId: request.itemId,
+          attachmentId: attachment.id
+        })
+      ).rejects.toThrow('LITERATURE_ATTACHMENT_IN_USE')
+      await expect(authority.resolveVersion(version.id)).resolves.toBeDefined()
+    }
+  )
 
   it('keeps different same-named PDFs as independent attachments without an explicit version target', async () => {
     const { importer, request, path } = await setup()

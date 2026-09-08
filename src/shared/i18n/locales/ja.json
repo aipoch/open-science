@@ -4747,6 +4747,6 @@
     "PDF not validated: exceeds the 50 MiB automatic processing limit.": "PDF は未検証です：自動処理の上限 50 MiB を超えています。",
     "PDF structure not yet validated.": "PDF の構造は未検証です。",
     "Attachment unavailable": "添付ファイルを利用できません",
-    "This PDF is linked to a chat. Remove it from the chat before removing this attachment.": "このPDFはチャットにリンクされています。この添付ファイルを削除する前に、チャットからPDFを削除してください。"
+    "This PDF is referenced by a chat or its message history and cannot be removed. Unlinking the current chat does not remove historical references.": "このPDFはチャットまたはメッセージ履歴で参照されているため、削除できません。現在のチャットからリンクを解除しても、履歴内の参照は削除されません。"
   }
 }

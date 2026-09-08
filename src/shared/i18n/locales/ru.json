@@ -5193,6 +5193,6 @@
     "PDF not validated: exceeds the 50 MiB automatic processing limit.": "PDF не проверен: превышен предел автоматической обработки в 50 MiB.",
     "PDF structure not yet validated.": "Структура PDF ещё не проверена.",
     "Attachment unavailable": "Вложение недоступно",
-    "This PDF is linked to a chat. Remove it from the chat before removing this attachment.": "Этот PDF связан с чатом. Уберите его из чата, прежде чем удалять это вложение."
+    "This PDF is referenced by a chat or its message history and cannot be removed. Unlinking the current chat does not remove historical references.": "Этот PDF используется в чате или истории сообщений, поэтому его нельзя удалить. Отвязка от текущего чата не удаляет ссылки в истории."
   }
 }

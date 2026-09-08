@@ -2280,7 +2280,7 @@ describe('LiteratureLibraryPage', () => {
     fireEvent.click(await screen.findByRole('menuitem', { name: 'Remove attachment' }))
     expect(
       await within(detail).findByText(
-        'This PDF is linked to a chat. Remove it from the chat before removing this attachment.'
+        'This PDF is referenced by a chat or its message history and cannot be removed. Unlinking the current chat does not remove historical references.'
       )
     ).not.toBeNull()
     expect(within(detail).getByRole('button', { name: 'Preview paper.pdf' })).not.toBeNull()

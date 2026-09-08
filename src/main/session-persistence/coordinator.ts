@@ -544,7 +544,14 @@ class SessionPersistenceCoordinator implements DelegatedWorkRecordCommands {
         throw new Error('Cannot remove an attachment without a complete Session catalog.')
       if (
         scan.result.sessions.some((session) =>
-          session.runtimeContext?.pdfContext?.bindings.some(
+          [
+            ...(session.runtimeContext?.pdfContext?.bindings ?? []),
+            // The graph retains snapshots on inactive branches; session.messages is only
+            // the active projection when a graph exists.
+            ...(session.conversationGraph?.messages ?? session.messages).flatMap(
+              (message) => message.pdfContext?.bindings ?? []
+            )
+          ].some(
             (binding) =>
               binding.sourceKind === 'literature-attachment-version' &&
               binding.sourceFileId === attachmentId
