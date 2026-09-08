@@ -1,4 +1,4 @@
-<h1 align="center">AIPOCH Open Science</h1>
+<h1 align="center">AIPOCH Open-Science</h1>
 
 <p align="center">
   面向可复现科学研究的开源、本地优先、模型无关 AI 研究工作台。
@@ -45,14 +45,14 @@
 
 > 本文档是英文 `README.md` 的翻译。如内容存在差异，请以[英文原文](../../README.md)为准。
 
-Open Science 是由 [AIPOCH](https://aipoch.com/open-science) 为科学家和研究人员开发的开源、本地优先且模型无关的 AI 研究工作台。它通过科学 AI 智能体、Python 和 R 执行、科学数据连接器以及对 macOS、Windows 和 Linux 的跨平台支持，实现可复现、可检查的研究。在同一个工作区中，新建项目，用自然语言描述研究目标，然后让智能体读取文件、搜索网页、运行代码、查询科学数据源，并生成带有可追溯来源的报告、表格和图表。
+AIPOCH Open-Science 是由 [AIPOCH](https://aipoch.com/open-science) 为科学家和研究人员开发的开源、本地优先且模型无关的 AI 研究工作台。它通过科学 AI 智能体、Python 和 R 执行、科学数据连接器以及对 macOS、Windows 和 Linux 的跨平台支持，实现可复现、可检查的研究。在同一个工作区中，新建项目，用自然语言描述研究目标，然后让智能体读取文件、搜索网页、运行代码、查询科学数据源，并生成带有可追溯来源的报告、表格和图表。
 
-Open Science 支持机器学习、统计学、生命科学、化学、材料科学、物理学和环境科学等领域的计算密集型与数据密集型研究。它覆盖从文献综述、假设构建到代码执行、数据分析、仿真、可视化以及生成可追溯研究成果的完整研究流程。
+AIPOCH Open-Science 支持机器学习、统计学、生命科学、化学、材料科学、物理学和环境科学等领域的计算密集型与数据密集型研究。它覆盖从文献综述、假设构建到代码执行、数据分析、仿真、可视化以及生成可追溯研究成果的完整研究流程。
 
-> 💡 **[Open Science v0.26.0 已发布](https://github.com/aipoch/open-science/releases/latest)** _（最后更新于 2026 年 9 月）_。Open Science v0.26.0 带来 HPC 级计算能力和文献工作区：远程计算主机在直连 SSH 之外新增按主机选择的 Slurm 执行模式；全新的参考文献库用于整理参考文献、PDF 和引用，支持按标识符导入、重复题录合并、附加开放获取全文以及引用格式化。Apodex 加入内置服务商，最新的 OpenAI 与 Anthropic 模型开箱可选，Notebook 工具调用会显示为可读的摘要卡片，此外还带来更流畅的流式渲染、更少打扰的默认权限，以及遍布各处的一大批修复。详情请查看[最新发行说明](https://github.com/aipoch/open-science/releases/latest)。
+> 💡 **[AIPOCH Open-Science v0.26.0 已发布](https://github.com/aipoch/open-science/releases/latest)** _（最后更新于 2026 年 9 月）_。AIPOCH Open-Science v0.26.0 带来 HPC 级计算能力和文献工作区：远程计算主机在直连 SSH 之外新增按主机选择的 Slurm 执行模式；全新的参考文献库用于整理参考文献、PDF 和引用，支持按标识符导入、重复题录合并、附加开放获取全文以及引用格式化。Apodex 加入内置服务商，最新的 OpenAI 与 Anthropic 模型开箱可选，Notebook 工具调用会显示为可读的摘要卡片，此外还带来更流畅的流式渲染、更少打扰的默认权限，以及遍布各处的一大批修复。详情请查看[最新发行说明](https://github.com/aipoch/open-science/releases/latest)。
 
 <p align="center">
- <img width="1920" height="1140" alt="AIPOCH Open Science 首屏横幅：Science, Open to All——开源、模型无关、可自托管的科学 AI 研究工作台" src="../images/readme/open-science-banner.png" />
+ <img width="1920" height="1140" alt="AIPOCH Open-Science 首屏横幅：Science, Open to All——开源、模型无关、可自托管的科学 AI 研究工作台" src="../images/readme/open-science-banner.png" />
 </p>
 
 ## 目录
@@ -60,7 +60,7 @@ Open Science 支持机器学习、统计学、生命科学、化学、材料科�
 - [快速开始](#-快速开始)
 - [产品导览](#产品导览)
 - [基准测试表现](#基准测试表现)
-- [为什么选择 Open Science](#为什么选择-open-science)
+- [为什么选择 AIPOCH Open-Science](#为什么选择-aipoch-open-science)
 - [核心能力](#核心能力)
 - [模型服务商](#模型服务商)
 - [数据、权限与信任](#数据权限与信任)
@@ -72,7 +72,7 @@ Open Science 支持机器学习、统计学、生命科学、化学、材料科�
 
 ## 🚀 快速开始
 
-通过三个步骤运行 Open Science：下载适合你平台的安装程序、完成首次启动向导，然后新建研究项目。
+通过三个步骤运行 AIPOCH Open-Science：下载适合你平台的安装程序、完成首次启动向导，然后新建研究项目。
 
 ### 1. 下载应用
 
@@ -109,8 +109,8 @@ Homebrew 会自动选择 Apple Silicon 或 Intel 安装包。
 
 <table>
   <tr>
-    <td width="50%"><img src="../images/readme/onboarding-environment.jpg" alt="Open Science 自动执行首次启动环境检查"></td>
-    <td width="50%"><img src="../images/readme/onboarding-model-provider.jpg" alt="Open Science 首次启动模型服务商配置"></td>
+    <td width="50%"><img src="../images/readme/onboarding-environment.jpg" alt="AIPOCH Open-Science 自动执行首次启动环境检查"></td>
+    <td width="50%"><img src="../images/readme/onboarding-model-provider.jpg" alt="AIPOCH Open-Science 首次启动模型服务商配置"></td>
   </tr>
   <tr>
     <td align="center"><sub>主机兼容性、存储和网络检查</sub></td>
@@ -136,14 +136,14 @@ Notebook 执行是可选功能。所有必需的环境和智能体运行时检�
 
 ### 从研究请求到可追溯结果
 
-以一个具有代表性的生物信息学任务为例：复现已发表的差异表达分析，将重新生成的结果与论文比较，并交付审阅所需的报告、表格和图像。以下截图来自已记录的 Open Science 工作流，用于展示各个阶段，并非同一次连续会话。
+以一个具有代表性的生物信息学任务为例：复现已发表的差异表达分析，将重新生成的结果与论文比较，并交付审阅所需的报告、表格和图像。以下截图来自已记录的 AIPOCH Open-Science 工作流，用于展示各个阶段，并非同一次连续会话。
 
 #### 1. 明确研究任务与证据
 
 说明研究问题、来源论文与数据集、必需的方法或阈值、预期输出和验收标准。上传支持文件，或使用 `@` 引用已有项目产物，让智能体从明确的输入开始，而不是依赖隐藏上下文。
 
 <p align="center">
-  <img src="../images/readme/product-tour-task.jpg" alt="Open Science 论文复现任务，在同一工作区中显示研究结论、生成产物和来源比较" width="900">
+  <img src="../images/readme/product-tour-task.jpg" alt="AIPOCH Open-Science 论文复现任务，在同一工作区中显示研究结论、生成产物和来源比较" width="900">
 </p>
 
 #### 2. 使用可检查的科学工具执行
@@ -151,7 +151,7 @@ Notebook 执行是可选功能。所有必需的环境和智能体运行时检�
 智能体可以在共享 Notebook 中组合科学技能、受权限控制的研究连接器、搜索、文件操作以及 Python 或 R 代码。生成图像可与研究摘要并排审阅，产物记录则提供已捕获的生成代码和执行证据供检查。
 
 <p align="center">
-  <img src="../images/readme/product-tour-execute.png" alt="Open Science 生物信息学分析，并排显示研究摘要、生成图像和已捕获的生成代码" width="900">
+  <img src="../images/readme/product-tour-execute.png" alt="AIPOCH Open-Science 生物信息学分析，并排显示研究摘要、生成图像和已捕获的生成代码" width="900">
 </p>
 
 #### 3. 就地审阅报告、表格和图像
@@ -159,7 +159,7 @@ Notebook 执行是可选功能。所有必需的环境和智能体运行时检�
 最终回答会概述哪些结果成功复现、哪些存在差异，以及需要关注的局限。生成的 Markdown 报告、CSV 表格、图像和其他研究产物会继续附属于会话，并汇集到项目文件库，可在对话旁预览，也可用于后续工作。
 
 <p align="center">
-  <img src="../images/readme/product-tour-output.jpg" alt="Open Science 复现结果，在智能体说明旁预览差异表达图像和生成文件" width="900">
+  <img src="../images/readme/product-tour-output.jpg" alt="AIPOCH Open-Science 复现结果，在智能体说明旁预览差异表达图像和生成文件" width="900">
 </p>
 
 #### 4. 将每个产物追溯到证据
@@ -167,22 +167,22 @@ Notebook 执行是可选功能。所有必需的环境和智能体运行时检�
 每个生成产物都以不可变且带校验和的版本保存。其 **Provenance** 视图可显示生成代码与执行历史、引用的输入、观测到的环境清单、生成该产物的对话分支，以及限定到该版本的 Reviewer 结果。无法验证的证据会标记为不可用，而不会被推断补全。
 
 <p align="center">
-  <img src="../images/readme/product-tour-provenance.jpg" alt="Open Science 研究产物预览，其中包含用于追溯生成结果的 Provenance 入口" width="900">
+  <img src="../images/readme/product-tour-provenance.jpg" alt="AIPOCH Open-Science 研究产物预览，其中包含用于追溯生成结果的 Provenance 入口" width="900">
 </p>
 
 ## 基准测试表现
 
 ### 🏆 BiomniBench-DA Public 50 第一名
 
-Open Science 在汇总的 BiomniBench-DA Public 50 对比中取得最高排名分：使用 **gpt-5.6-sol (xhigh)** 获得 **79.05** 分。该成绩是 Gemini 3.1 Pro 评审得分 **81.04** 与 DeepSeek v4-pro 评审得分 **77.06** 的等权平均值，使 Open Science 在所收集的 Public 50 结果中位列 **第一**。查看 [BiomniBench-DA 数据集](https://huggingface.co/datasets/phylobio/BiomniBench-DA)。
+AIPOCH Open-Science 在汇总的 BiomniBench-DA Public 50 对比中取得最高排名分：使用 **gpt-5.6-sol (xhigh)** 获得 **79.05** 分。该成绩是 Gemini 3.1 Pro 评审得分 **81.04** 与 DeepSeek v4-pro 评审得分 **77.06** 的等权平均值，使 AIPOCH Open-Science 在所收集的 Public 50 结果中位列 **第一**。查看 [BiomniBench-DA 数据集](https://huggingface.co/datasets/phylobio/BiomniBench-DA)。
 
 <p align="center">
-  <img src="../images/readme/biomnibench-public50-leaderboard.png" alt="BiomniBench-DA Public 50 对比，其中 AIPOCH Open Science 以 79.05 分排名第一" width="1200" />
+  <img src="../images/readme/biomnibench-public50-leaderboard.png" alt="BiomniBench-DA Public 50 对比，其中 AIPOCH Open-Science 以 79.05 分排名第一" width="1200" />
 </p>
 
-## 为什么选择 Open Science
+## 为什么选择 AIPOCH Open-Science
 
-Open Science 把分散在聊天窗口、Notebook、本地脚本、科学数据库、文件与报告工具中的研究工作整合为一个持久化、本地优先的 AI 研究工作台，让执行过程与证据始终相连。
+AIPOCH Open-Science 把分散在聊天窗口、Notebook、本地脚本、科学数据库、文件与报告工具中的研究工作整合为一个持久化、本地优先的 AI 研究工作台，让执行过程与证据始终相连。
 
 - **持久执行。** 项目、会话、文件、预览和运行历史在重启后仍会保留；经用户批准，智能体可以运行命令、Python 和 R 并生成产物。
 - **结果可追溯。** 不可变产物版本保留可验证的生成证据，并清楚标记无法获得的证据。
@@ -190,11 +190,9 @@ Open Science 把分散在聊天窗口、Notebook、本地脚本、科学数据�
 - **本地优先控制。** 应用和项目状态保留在你的计算机上；外部调用只使用你明确配置或批准的服务。
 - **开放且可扩展。** 独立开发的 Apache-2.0 代码库、技能、连接器、工具活动和生成文件均可检查，并可继续添加技能和 MCP 连接器。
 
-[AIPOCH](https://aipoch.com/) 开发了 [Open Science](https://aipoch.com/open-science)，将其打造为面向科学 AI 工作流的开源、本地优先桌面研究工作台。
-
 ## 核心能力
 
-Open Science 在一个本地工作区中整合项目管理、多模型智能体执行、Python 和 R Notebook、科学数据连接器、带来源的不可变产物版本，以及受权限控制的人工参与机制。不断变化的目录、打包细节和新增选项应以已安装应用及[最新发行说明](https://github.com/aipoch/open-science/releases/latest)为准。
+AIPOCH Open-Science 在一个本地工作区中整合项目管理、多模型智能体执行、Python 和 R Notebook、科学数据连接器、带来源的不可变产物版本，以及受权限控制的人工参与机制。不断变化的目录、打包细节和新增选项应以已安装应用及[最新发行说明](https://github.com/aipoch/open-science/releases/latest)为准。
 
 | 领域                           | 核心能力                                                                                                                                                                                                                                                                                                                                                                                                   |
 | ------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -211,7 +209,7 @@ Open Science 在一个本地工作区中整合项目管理、多模型智能体�
 
 ## 模型服务商
 
-Open Science 在产品层面不限定模型：可连接主要云端 LLM 服务商、自定义网关，或复用现有 Claude、Codex 订阅。当前可用服务商取决于所选智能体后端及其支持的 API 协议。模型有四种连接方式：
+AIPOCH Open-Science 在产品层面不限定模型：可连接主要云端 LLM 服务商、自定义网关，或复用现有 Claude、Codex 订阅。当前可用服务商取决于所选智能体后端及其支持的 API 协议。模型有四种连接方式：
 
 | 服务商模式       | 工作方式                                                                                                                                                                                                                        |
 | ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -228,7 +226,7 @@ Open Science 在产品层面不限定模型：可连接主要云端 LLM 服务�
 
 ## 数据、权限与信任
 
-Open Science 将项目数据、设置、产物版本和来源证据存储在本地计算机上。API Key 保存在本地，并在操作系统支持时使用其安全凭据存储。日志保存在本地，不会自动上传。
+AIPOCH Open-Science 将项目数据、设置、产物版本和来源证据存储在本地计算机上。API Key 保存在本地，并在操作系统支持时使用其安全凭据存储。日志保存在本地，不会自动上传。
 
 仍可能发生外部数据流，应对其进行审查：
 
@@ -249,15 +247,15 @@ Open Science 将项目数据、设置、产物版本和来源证据存储在本�
 
 ## 项目状态
 
-Open Science 是持续开发中的桌面应用，可用于 macOS、Windows 和 Linux。开发重点是可靠的本地优先研究工作流、可扩展科学能力、可追溯研究产物以及用户控制的执行。
+AIPOCH Open-Science 是持续开发中的桌面应用，可用于 macOS、Windows 和 Linux。开发重点是可靠的本地优先研究工作流、可扩展科学能力、可追溯研究产物以及用户控制的执行。
 
 有关当前下载和特定版本变更，请查看[最新版本](https://github.com/aipoch/open-science/releases/latest)。有关已交付、部分实现和计划能力，请查看[能力地图](../../ROADMAP.md#capability-map)。
 
-Open Science 辅助研究执行和记录保存；研究人员仍需对方法、解释、隐私和科学有效性负责。
+AIPOCH Open-Science 辅助研究执行和记录保存；研究人员仍需对方法、解释、隐私和科学有效性负责。
 
 ## 开发与打包
 
-Open Science 是使用 React、TypeScript、Prisma/SQLite 和基于 ACP 的智能体运行时构建的 Electron 应用。
+AIPOCH Open-Science 是使用 React、TypeScript、Prisma/SQLite 和基于 ACP 的智能体运行时构建的 Electron 应用。
 
 源代码开发前提条件：
 
@@ -305,7 +303,7 @@ npm run dev:web
 
 ### 移动端远程访问
 
-可以通过 Remote.It 配对，从手机或平板电脑访问同一 localhost Web UI。使用六位 Open Science 代码配对浏览器，并在桌面端批准一次；无需直接暴露回环服务器，工作区即可保持可访问。浏览器信任可撤销，模式变更或服务关闭会立即使活动远程会话失效。
+可以通过 Remote.It 配对，从手机或平板电脑访问同一 localhost Web UI。使用六位 AIPOCH Open-Science 代码配对浏览器，并在桌面端批准一次；无需直接暴露回环服务器，工作区即可保持可访问。浏览器信任可撤销，模式变更或服务关闭会立即使活动远程会话失效。
 
 ### 无界面 CLI 和 SDK
 
@@ -316,7 +314,7 @@ npm run dev:web
 
 ## 常见问题
 
-### 首次打开 Open Science 时应该做什么？
+### 首次打开 AIPOCH Open-Science 时应该做什么？
 
 答：完成五个设置步骤：**Environment**、**Data location**、**Agent runtime**、**Model provider** 和 **Notebook runtime**。修复标记为 `Action needed` 的必需项目；如果提供选项，安装或修复所选智能体；然后测试模型连接。Notebook 设置和自定义数据位置是可选的。
 
@@ -373,7 +371,7 @@ open-science artifacts download <artifact-id> --output ./report.md
 
 ### 如何检查生成结果的来源？
 
-答：打开生成产物并选择 **Provenance**。选择一个版本，以检查内容标识及可用的生成代码、执行历史、输入、环境清单、生成对话上下文和审查证据。Open Science 无法验证的证据会标记为不可用。
+答：打开生成产物并选择 **Provenance**。选择一个版本，以检查内容标识及可用的生成代码、执行历史、输入、环境清单、生成对话上下文和审查证据。AIPOCH Open-Science 无法验证的证据会标记为不可用。
 
 ### 能否修改较早的请求而不丢失后续对话？
 
@@ -385,7 +383,7 @@ open-science artifacts download <artifact-id> --output ./report.md
 
 ## 参与项目
 
-Open Science 通过 GitHub、Discord、X 和 AIPOCH 网站接收缺陷报告、功能建议、设计讨论、社区问题和项目贡献。请选择最符合你目标的渠道，并在公开分享项目详情前查看相关贡献指南与公开发布安全提醒。
+AIPOCH Open-Science 通过 GitHub、Discord、X 和 AIPOCH 网站接收缺陷报告、功能建议、设计讨论、社区问题和项目贡献。请选择最符合你目标的渠道，并在公开分享项目详情前查看相关贡献指南与公开发布安全提醒。
 
 | 渠道                                                                     | 用途                               |
 | ------------------------------------------------------------------------ | ---------------------------------- |
@@ -393,7 +391,7 @@ Open Science 通过 GitHub、Discord、X 和 AIPOCH 网站接收缺陷报告、�
 | [GitHub Discussions](https://github.com/aipoch/open-science/discussions) | 设计问题、路线图提议和较长技术讨论 |
 | [Discord](https://discord.gg/zxQAYjReRv)                                 | 社区帮助、贡献者协调和非正式讨论   |
 | [X / @aipoch_ai](https://x.com/aipoch_ai)                                | 版本公告和公开构建动态             |
-| [Open Science 官网](https://aipoch.com/open-science)                     | 官方产品概览与下载                 |
+| [AIPOCH Open-Science 官网](https://aipoch.com/open-science)              | 官方产品概览与下载                 |
 
 提交公开问题前，从日志和截图中移除 API Key、令牌、私有文件路径、未公开数据、患者标识符和其他敏感材料。开发工作流请参阅[贡献指南](CONTRIBUTING.md)。
 

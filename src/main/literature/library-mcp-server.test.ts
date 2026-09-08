@@ -163,7 +163,10 @@ describe('Literature Library MCP server', () => {
       name: 'save_to_inbox',
       arguments: { candidates: [discovery] }
     })
-    expect(saveToInbox).toHaveBeenCalledWith({ candidates: [discovery] })
+    expect(saveToInbox).toHaveBeenCalledWith({
+      candidates: [discovery],
+      signal: expect.any(AbortSignal)
+    })
     expect(saved.structuredContent).toEqual({
       results: [{ kind: 'candidate', id: 'candidate-1', state: 'pending' }]
     })
@@ -226,8 +229,14 @@ describe('Literature Library MCP server', () => {
       arguments: { filename: 'handoff/literature-inbox-payload.json' }
     })
 
-    expect(readCandidateFile).toHaveBeenCalledWith('handoff/literature-inbox-payload.json')
-    expect(saveToInbox).toHaveBeenCalledWith({ candidates: [discovery] })
+    expect(readCandidateFile).toHaveBeenCalledWith(
+      'handoff/literature-inbox-payload.json',
+      expect.any(AbortSignal)
+    )
+    expect(saveToInbox).toHaveBeenCalledWith({
+      candidates: [discovery],
+      signal: expect.any(AbortSignal)
+    })
     expect(saved.structuredContent).toEqual({ results: [] })
 
     await client.close()
@@ -369,8 +378,14 @@ describe('Literature Library MCP server', () => {
       arguments: { refs: ['pmid:35486828', 'doi:10.1000/example'] }
     })
 
-    expect(resolveSaveReferences).toHaveBeenCalledWith(['pmid:35486828', 'doi:10.1000/example'])
-    expect(saveToInbox).toHaveBeenCalledWith({ candidates: [discovery] })
+    expect(resolveSaveReferences).toHaveBeenCalledWith(
+      ['pmid:35486828', 'doi:10.1000/example'],
+      expect.any(AbortSignal)
+    )
+    expect(saveToInbox).toHaveBeenCalledWith({
+      candidates: [discovery],
+      signal: expect.any(AbortSignal)
+    })
     expect(saved.structuredContent).toEqual({ results: [] })
 
     const ambiguous = await client.callTool({
