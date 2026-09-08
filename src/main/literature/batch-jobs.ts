@@ -175,7 +175,7 @@ export class LiteratureBatchJobs {
             JSON.stringify([...new Set(request.itemIds)])
         )
           throw new Error('Task request identity was already used for different references.')
-        return { jobs: [this.snapshot(existing)] }
+        return { jobs: [await this.readSnapshot(existing)] }
       }
       const nextJobs = [...this.jobs]
       let prunedId: string | undefined

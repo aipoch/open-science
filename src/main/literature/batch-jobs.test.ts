@@ -949,3 +949,20 @@ it('reads a bounded task page without loading later payloads or retaining full r
   await rm(join(directory, 'payloads', `${header.rows[0].payload}.json`))
   await expect(reopened.run({ action: 'get', jobId })).rejects.toThrow()
 })
+
+it.each(['metadata', 'full-text'] as const)(
+  'replays an accepted %s create request with complete review rows after restart',
+  async (mode) => {
+    const { jobs, options } = await setup()
+    const request = { action: 'create' as const, mode, itemIds: ['a'], requestId: randomUUID() }
+    await jobs.run(request)
+    await vi.waitFor(async () =>
+      expect((await state(jobs, request.requestId)).state).toBe('review')
+    )
+    const before = await state(jobs, request.requestId)
+    await jobs.close()
+    const reopened = new LiteratureBatchJobs(options)
+    cleanup.push(() => reopened.close())
+    expect((await reopened.run(request)).jobs).toEqual([before])
+  }
+)
