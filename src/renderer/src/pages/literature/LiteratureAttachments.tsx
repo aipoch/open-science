@@ -97,6 +97,12 @@ export const LiteratureAttachments = ({
             'The attachment operation completed, but details could not be refreshed. Reopen this reference.'
           )
         )
+    } catch (error) {
+      if (action === 'verify') {
+        const updated = await window.api.literature.get(item.id).catch(() => undefined)
+        if (updated) onChanged(updated)
+      }
+      throw error
     } finally {
       busy.current = false
       setPending(false)

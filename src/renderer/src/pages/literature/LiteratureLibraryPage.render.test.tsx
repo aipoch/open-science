@@ -2263,6 +2263,33 @@ describe('LiteratureLibraryPage', () => {
     expect(within(detail).getByText('File integrity verified')).not.toBeNull()
   })
 
+  it('refreshes the diagnosis when attachment verification fails', async () => {
+    const entry = createLibraryItemWithPdf()
+    search.mockImplementation((request: { scope: string }) =>
+      Promise.resolve(request.scope === 'library' ? { entries: [entry] } : { entries: [] })
+    )
+    render(<LiteratureLibraryPage />)
+    fireEvent.click(screen.getByRole('button', { name: 'All references' }))
+    const detail = await openReferenceDetail(await screen.findByText(entry.item.title))
+    const missing = createLibraryItemWithPdf()
+    missing.attachments[0].versions[0].availability = 'unavailable'
+    missing.attachments[0].versions[0].verificationFailure = 'missing'
+    get.mockResolvedValue(missing)
+    transact.mockRejectedValueOnce(new Error('Verification failed'))
+    fireEvent.click(
+      within(detail).getByRole('button', { name: 'Attachment actions for paper.pdf' })
+    )
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Retry file verification' }))
+    expect(
+      await within(detail).findByText('The attachment operation failed. Try again.')
+    ).not.toBeNull()
+    expect(await within(detail).findByText('File missing')).not.toBeNull()
+    expect(within(detail).getByRole('button', { name: 'Preview paper.pdf' })).toHaveProperty(
+      'disabled',
+      true
+    )
+  })
+
   it('retains attachment removal success when content cleanup is pending', async () => {
     const entry = createLibraryItemWithPdf()
     search.mockImplementation((request: { scope: string }) =>

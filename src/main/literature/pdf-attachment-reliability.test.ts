@@ -102,6 +102,9 @@ describe('Literature PDF attachment reliability', () => {
         where: { id: version.id }
       })
       expect(await content.verify(row.contentBlobId)).toMatchObject({ state: 'unavailable' })
+      expect(
+        await client!.contentBlob.findUniqueOrThrow({ where: { id: row.contentBlobId } })
+      ).toMatchObject({ state: 'quarantined' })
       await expect(authority.resolveVersion(version.id)).rejects.toThrow('unavailable')
       const after = await catalog.get(request.itemId)
       expect(after!.attachments[0].versions[0]).toMatchObject({
@@ -138,6 +141,31 @@ describe('Literature PDF attachment reliability', () => {
       await expect(authority.resolveVersion(version.id)).resolves.toBeDefined()
     }
   )
+
+  it('quarantines missing bytes and rejects an unsuccessful attachment verification', async () => {
+    const { importer, request, content, catalog, authority } = await setup()
+    const imported = await importer.import(request)
+    const version = imported.item.attachments[0].versions[0]
+    const resolved = await authority.resolveVersion(version.id)
+    await rm(resolved!.path)
+    await expect(
+      catalog.transact({
+        kind: 'verify-attachment',
+        itemId: request.itemId,
+        versionId: version.id
+      })
+    ).rejects.toThrow()
+    const row = await client!.literatureAttachmentVersion.findUniqueOrThrow({
+      where: { id: version.id }
+    })
+    expect(
+      await client!.contentBlob.findUniqueOrThrow({ where: { id: row.contentBlobId } })
+    ).toMatchObject({
+      state: 'quarantined',
+      lastVerificationFailure: 'missing'
+    })
+    await expect(content.open(row.contentBlobId)).rejects.toThrow()
+  })
 
   it('keeps different same-named PDFs as independent attachments without an explicit version target', async () => {
     const { importer, request, path } = await setup()

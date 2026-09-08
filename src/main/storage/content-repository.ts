@@ -305,11 +305,16 @@ class ContentRepository {
       return { state: 'available', content }
     } catch (error) {
       if (missingFile(error)) {
+        await this.quarantine(contentId)
         await observe('missing')
         return { state: 'unavailable', reason: 'missing' }
       }
       if (!(error instanceof ContentOpenError)) throw error
-      if (error.reason === 'not-file' || error.reason === 'size-mismatch') {
+      if (
+        error.reason === 'missing' ||
+        error.reason === 'not-file' ||
+        error.reason === 'size-mismatch'
+      ) {
         await this.quarantine(contentId)
       }
       // A refusal to open quarantined bytes must not erase the original diagnosis.

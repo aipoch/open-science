@@ -1170,7 +1170,10 @@ class LiteratureCatalog {
       select: { contentBlobId: true }
     })
     if (!version) throw new Error('Literature Attachment is unavailable.')
-    await this.content.verify(version.contentBlobId, { retry: true })
+    const verification = await this.content.verify(version.contentBlobId, { retry: true })
+    if (verification.state === 'unavailable') {
+      throw new Error(`Literature attachment verification failed: ${verification.reason}`)
+    }
     return { kind: 'item', id: command.itemId, state: 'present' }
   }
 
