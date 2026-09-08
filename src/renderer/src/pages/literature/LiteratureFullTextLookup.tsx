@@ -43,6 +43,7 @@ export const LiteratureFullTextLookup = ({
   const [savingCredential, setSavingCredential] = useState(false)
   const [editingUnpaywall, setEditingUnpaywall] = useState(false)
   const contactEmail = useSettingsStore((state) => state.ncbi.contactEmail)
+  const [refreshingItem, setRefreshingItem] = useState(false)
   const [progress, setProgress] = useState<LiteratureFullTextProgress>()
   const [retryAfter, setRetryAfter] = useState<Record<string, number>>({})
   const [now, setNow] = useState(() => Date.now())
@@ -95,9 +96,10 @@ export const LiteratureFullTextLookup = ({
         const task = response.transfer
         if (task.candidate.id !== adding) return
         setProgress(task.progress)
-        if (task.status === 'succeeded') {
+        setRefreshingItem(task.status === 'succeeded' && !response.item)
+        if (task.status === 'succeeded' && response.item) {
           setAdding(undefined)
-          if (response.item) notifyAdded(response.item, task.candidate.id, task.id)
+          notifyAdded(response.item, task.candidate.id, task.id)
         } else if (task.status === 'failed') {
           setAdding(undefined)
           restoreFailure(task.candidate, task.retryAt)
@@ -124,9 +126,10 @@ export const LiteratureFullTextLookup = ({
       if (!active) return
       if (response.mode === 'transfer' && response.transfer) {
         const task = response.transfer
-        if (task.status === 'running') {
+        if (task.status === 'running' || (task.status === 'succeeded' && !response.item)) {
           setResult({ mode: 'search', candidates: [task.candidate], notices: [] })
           setProgress(task.progress)
+          setRefreshingItem(task.status === 'succeeded')
           setAdding(task.candidate.id)
           return
         }
@@ -167,7 +170,9 @@ export const LiteratureFullTextLookup = ({
     const generation = lifecycle.current
     setAdding(candidate.id)
     setProgress(undefined)
+    setRefreshingItem(false)
     setError(undefined)
+    let awaitingItem = false
     try {
       const response = await window.api.literature.fullText({
         mode: 'attach',
@@ -175,6 +180,11 @@ export const LiteratureFullTextLookup = ({
         candidateId: candidate.id
       })
       if (generation !== lifecycle.current) return
+      if (response.mode === 'transfer' && response.transfer?.status === 'succeeded') {
+        awaitingItem = true
+        setRefreshingItem(true)
+        setProgress(response.transfer.progress)
+      }
       if (response.mode === 'attach') notifyAdded(response.item, candidate.id, response.transferId)
       if (response.mode === 'attach-error') {
         setNow(Date.now)
@@ -187,7 +197,7 @@ export const LiteratureFullTextLookup = ({
     } catch {
       if (generation === lifecycle.current) setError('attach')
     } finally {
-      if (generation === lifecycle.current) setAdding(undefined)
+      if (generation === lifecycle.current && !awaitingItem) setAdding(undefined)
     }
   }
 
@@ -424,7 +434,7 @@ export const LiteratureFullTextLookup = ({
               </p>
             </div>
           ) : null}
-          {adding ? (
+          {adding && !refreshingItem ? (
             <p role="status" className="mb-3 text-xs text-muted-foreground">
               {t(
                 'You can close this dialog. The download continues in the background; reopen it to see progress.'
@@ -458,9 +468,11 @@ export const LiteratureFullTextLookup = ({
                   {adding === candidate.id ? (
                     <div role="status" className="mt-4 space-y-2">
                       <p className="text-xs text-muted-foreground">
-                        {progress?.phase === 'saving'
-                          ? t('Checking and saving PDF…')
-                          : t('Downloading PDF…')}
+                        {refreshingItem
+                          ? t('PDF added. Refreshing attachment details…')
+                          : progress?.phase === 'saving'
+                            ? t('Checking and saving PDF…')
+                            : t('Downloading PDF…')}
                       </p>
                       <progress
                         className="block h-1.5 w-full overflow-hidden rounded-full appearance-none bg-muted [&::-webkit-progress-bar]:bg-muted [&::-webkit-progress-value]:rounded-full [&::-webkit-progress-value]:bg-primary [&::-moz-progress-bar]:bg-primary"

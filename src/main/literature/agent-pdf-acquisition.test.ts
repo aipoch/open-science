@@ -1,7 +1,12 @@
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js'
 import { createLiteratureLibraryMcpServer } from './library-mcp-server'
-import { readFile } from 'node:fs/promises'
+import { mkdtemp, readFile, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { createProjectDbClient, migrateApplicationDatabase } from '../projects/prisma-client'
+import { ContentRepository } from '../storage/content-repository'
+import { LiteratureCatalog } from './catalog'
 import { expect, it, vi, type Mock } from 'vitest'
 import { literatureCandidateInputSchema } from '../../shared/literature'
 import { AgentPdfAcquisition } from './agent-pdf-acquisition'
@@ -29,18 +34,22 @@ const setup = (): {
     id: 'inbox',
     state: 'pending' as const
   }))
-  const publish = vi.fn(async ({ sourcePath }: { sourcePath: string }) => {
-    expect((await readFile(sourcePath)).subarray(0, 5).toString()).toBe('%PDF-')
-    return {
-      id: 'blob',
-      path: sourcePath,
-      checksum: 'a'.repeat(64),
-      sizeBytes: 10n,
-      storageKey: 'content/blob',
-      contentType: 'application/pdf',
-      createdAt: new Date()
+  const publish = vi.fn<AcquisitionOptions['content']['publish']>(
+    async ({ sourcePath, commit }) => {
+      expect((await readFile(sourcePath)).subarray(0, 5).toString()).toBe('%PDF-')
+      const content = {
+        id: 'blob',
+        path: sourcePath,
+        checksum: 'a'.repeat(64),
+        sizeBytes: 10n,
+        storageKey: 'content/blob',
+        contentType: 'application/pdf',
+        createdAt: new Date()
+      }
+      await commit?.(content)
+      return content
     }
-  })
+  )
   const discover = vi.fn(async () => ({
     mode: 'search' as const,
     candidates: [
@@ -260,8 +269,9 @@ it.each(['download', 'inspection', 'publication'] as const)(
     if (boundary === 'publication') {
       const original = publish.getMockImplementation()!
       publish.mockImplementationOnce(async (input) => {
-        const result = await original(input)
+        const result = await original({ ...input, commit: undefined })
         cancel()
+        await input.commit?.(result)
         return result
       })
     }
@@ -305,4 +315,40 @@ it('returns the committed receipt when cancellation arrives inside staging', asy
   await expect(
     service.acquire({ candidate, origin: candidate.origin, signal: controller.signal })
   ).resolves.toMatchObject({ status: 'pending-review', candidateId: 'committed' })
+})
+
+it('removes newly published unreferenced bytes when cancellation prevents Inbox admission', async () => {
+  const storageRoot = await mkdtemp(join(tmpdir(), 'cancelled-publication-'))
+  const client = createProjectDbClient(storageRoot)
+  const controller = new AbortController()
+  try {
+    await migrateApplicationDatabase(client)
+    const content = new ContentRepository({ storageRoot, getClient: async () => client })
+    const catalog = new LiteratureCatalog(async () => client)
+    const open = content.open.bind(content)
+    let publishedPath: string | undefined
+    vi.spyOn(content, 'open').mockImplementation(async (id) => {
+      const published = await open(id)
+      publishedPath = published.path
+      controller.abort(new Error('cancelled after publication'))
+      return published
+    })
+    const service = new AgentPdfAcquisition({
+      content,
+      catalog,
+      fullText: { discover: setup().discover },
+      download: async () => Buffer.from('%PDF-1.7\n'),
+      pageCount: async () => 2
+    })
+    await expect(
+      service.acquire({ candidate, origin: { kind: 'agent' }, signal: controller.signal })
+    ).rejects.toThrow('cancelled after publication')
+    expect(publishedPath).toBeDefined()
+    expect(await client.literatureInboxPdf.count()).toBe(0)
+    expect(await client.contentBlob.count()).toBe(0)
+    await expect(readFile(publishedPath!)).rejects.toMatchObject({ code: 'ENOENT' })
+  } finally {
+    await client.$disconnect()
+    await rm(storageRoot, { recursive: true, force: true })
+  }
 })

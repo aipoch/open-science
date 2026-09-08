@@ -63,6 +63,54 @@ describe('LiteratureFullTextLookup', () => {
     })
   })
   afterEach(cleanup)
+  it.each(['attached', 'reopened'])(
+    'retries item refresh after a successful %s transfer without reporting download failure',
+    async (entry) => {
+      const candidate = {
+        id: 'candidate',
+        provider: 'pmc',
+        source: 'PubMed Central',
+        url: 'https://pmc.ncbi.nlm.nih.gov/paper.pdf'
+      }
+      const receipt = {
+        mode: 'transfer',
+        transfer: {
+          id: 'task',
+          itemId: item.id,
+          status: 'succeeded',
+          candidate,
+          attachmentId: 'attachment',
+          versionId: 'version',
+          progress: { phase: 'saving', receivedBytes: 100, totalBytes: 100, bytesPerSecond: 0 }
+        }
+      }
+      fullText.mockResolvedValue({ mode: 'search', candidates: [candidate], notices: [] })
+      if (entry === 'reopened') transfer.mockResolvedValue(receipt)
+      render(<LiteratureFullTextLookup {...props} />)
+      if (entry === 'attached') {
+        const add = await screen.findByRole('button', { name: 'Add attachment' })
+        fullText.mockResolvedValue(receipt)
+        transfer.mockResolvedValue(receipt)
+        fireEvent.click(add)
+      }
+      await waitFor(() =>
+        expect(
+          (screen.getByRole('button', { name: 'Adding PDF…' }) as HTMLButtonElement).disabled
+        ).toBe(true)
+      )
+      const polls = transfer.mock.calls.length
+      await waitFor(() => expect(transfer.mock.calls.length).toBeGreaterThan(polls))
+      expect(screen.queryByText('PDF could not be added')).toBeNull()
+      expect(props.onAdded).not.toHaveBeenCalled()
+      transfer.mockResolvedValue({ ...receipt, item })
+      await waitFor(() => expect(props.onAdded).toHaveBeenCalledOnce())
+      expect(transfer).toHaveBeenCalledWith({
+        mode: 'transfer',
+        itemId: item.id,
+        acknowledgeId: 'task'
+      })
+    }
+  )
   it('reconnects to the running PDF transfer after the lookup is unmounted and reopened', async () => {
     let release!: (bytes: Buffer) => void
     const attachContent = vi.fn(async () => ({ attachmentId: 'attachment', versionId: 'version' }))

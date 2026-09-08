@@ -489,7 +489,17 @@ export class LiteratureBatchJobs {
         row.message = 'Source rate limit reached. Search again later.'
         return
       }
-      if (result.mode !== 'attach') throw new Error('Unexpected attachment response')
+      if (
+        result.mode !== 'attach' &&
+        !(
+          result.mode === 'transfer' &&
+          result.transfer?.status === 'succeeded' &&
+          result.transfer.itemId === row.id &&
+          result.transfer.attachmentId &&
+          result.transfer.versionId
+        )
+      )
+        throw new Error('Unexpected attachment response')
     }
     row.status = 'done'
   }

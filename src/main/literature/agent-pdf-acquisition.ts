@@ -76,11 +76,6 @@ export class AgentPdfAcquisition {
         const pageCount = await (this.options.pageCount ?? inspectPdfPageCount)(path)
         signal?.throwIfAborted()
         downloaded = true
-        const content = await this.options.content.publish({
-          sourcePath: path,
-          contentType: 'application/pdf'
-        })
-        signal?.throwIfAborted()
         const filename = `${
           request.candidate.item.title
             .replace(/[<>:"/\\|?*\p{Cc}]/gu, ' ')
@@ -103,30 +98,38 @@ export class AgentPdfAcquisition {
           version: candidate.version,
           license: candidate.license
         }
-        const receipt = await this.options.catalog.stageAcquiredPdf(
-          {
-            ...request.candidate,
-            source: {
-              ...request.candidate.source,
-              rawMetadata: {
-                metadata: request.candidate.source.rawMetadata,
-                fullText: { ...provenance, downloadUrl: candidate.url }
-              }
-            },
-            origin: request.origin
-          },
-          {
-            contentBlobId: content.id,
-            filename,
-            contentType: 'application/pdf',
-            sizeBytes: Number(content.sizeBytes),
-            checksum: content.checksum,
-            pageCount,
-            provenance,
-            sourceUrl
-          },
-          signal
-        )
+        let receipt!: Awaited<ReturnType<Options['catalog']['stageAcquiredPdf']>>
+        await this.options.content.publish({
+          sourcePath: path,
+          contentType: 'application/pdf',
+          commit: async (content) => {
+            signal?.throwIfAborted()
+            receipt = await this.options.catalog.stageAcquiredPdf(
+              {
+                ...request.candidate,
+                source: {
+                  ...request.candidate.source,
+                  rawMetadata: {
+                    metadata: request.candidate.source.rawMetadata,
+                    fullText: { ...provenance, downloadUrl: candidate.url }
+                  }
+                },
+                origin: request.origin
+              },
+              {
+                contentBlobId: content.id,
+                filename,
+                contentType: 'application/pdf',
+                sizeBytes: Number(content.sizeBytes),
+                checksum: content.checksum,
+                pageCount,
+                provenance,
+                sourceUrl
+              },
+              signal
+            )
+          }
+        })
         return {
           status: receipt.state === 'pending' ? 'pending-review' : 'already-reviewed',
           candidateId: receipt.id,

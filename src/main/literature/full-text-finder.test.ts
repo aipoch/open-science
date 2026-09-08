@@ -819,3 +819,30 @@ it('keeps a failed transfer and its rate limit available when the original calle
     transfer: { status: 'failed', retryAt, candidate: found.candidates[0] }
   })
 })
+
+it('returns the committed transfer even while the refreshed item cannot be read', async () => {
+  const { finder, options, item } = setup()
+  const found = await finder.run({ mode: 'search', itemId: item.id })
+  if (found.mode !== 'search') throw new Error('Expected search')
+  vi.mocked(options.catalog.attachContent).mockImplementationOnce(async () => {
+    vi.mocked(options.catalog.get).mockRejectedValue(new Error('Temporary catalog read failure'))
+    return { attachmentId: 'attachment-1', versionId: 'version-1' }
+  })
+  await expect(
+    finder.run({ mode: 'attach', itemId: item.id, candidateId: found.candidates[0].id })
+  ).resolves.toMatchObject({
+    mode: 'transfer',
+    transfer: { status: 'succeeded', attachmentId: 'attachment-1', versionId: 'version-1' }
+  })
+  await expect(finder.run({ mode: 'transfer', itemId: item.id })).resolves.toMatchObject({
+    mode: 'transfer',
+    transfer: { status: 'succeeded' }
+  })
+  vi.mocked(options.catalog.get).mockResolvedValue(item)
+  await expect(finder.run({ mode: 'transfer', itemId: item.id })).resolves.toMatchObject({
+    transfer: { status: 'succeeded' },
+    item
+  })
+  expect(options.catalog.attachContent).toHaveBeenCalledTimes(1)
+  expect(options.download).toHaveBeenCalledTimes(1)
+})

@@ -662,3 +662,29 @@ it('still applies the selected full text when a supplement PDF appears after sea
   expect(fullText).toHaveBeenCalledWith({ mode: 'attach', itemId: 'a', candidateId: source.id })
   expect((await state(jobs, jobId)).rows[0].status).toBe('done')
 })
+
+it('finishes an attachment from its committed receipt while item refresh is unavailable', async () => {
+  const { jobs, fullText } = await setup()
+  fullText.mockResolvedValue({ mode: 'search', candidates: [source], notices: [] })
+  const jobId = randomUUID()
+  await jobs.run({ action: 'create', mode: 'full-text', itemIds: ['a'], requestId: jobId })
+  await vi.waitFor(async () => expect((await state(jobs, jobId)).state).toBe('review'))
+  fullText.mockImplementation(async (request) =>
+    request.mode === 'search'
+      ? { mode: 'search', candidates: [source], notices: [] }
+      : {
+          mode: 'transfer',
+          transfer: {
+            id: 'task',
+            itemId: 'a',
+            candidate: source,
+            status: 'succeeded',
+            attachmentId: 'attachment',
+            versionId: 'version'
+          }
+        }
+  )
+  await jobs.run({ action: 'apply', jobId, selections: [{ itemId: 'a', candidateId: source.id }] })
+  await vi.waitFor(async () => expect((await state(jobs, jobId)).state).toBe('completed'))
+  expect((await state(jobs, jobId)).rows[0].status).toBe('done')
+})

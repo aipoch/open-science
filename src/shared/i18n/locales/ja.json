@@ -4725,6 +4725,7 @@
     "Select 2–20 references to compare.": "比較する文献を2～20件選択してください。",
     "Selected: {{selected}} / 20": "選択済み：{{selected}} / 20",
     "Compare selected references": "選択した文献を比較",
+    "PDF added. Refreshing attachment details…": "PDF を追加しました。添付ファイルの詳細を更新しています…",
     "You can close this dialog. The download continues in the background; reopen it to see progress.": "このダイアログを閉じても、ダウンロードはバックグラウンドで続行されます。進捗を確認するには、もう一度開いてください。"
   }
 }

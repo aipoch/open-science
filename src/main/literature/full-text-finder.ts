@@ -109,7 +109,9 @@ class LiteratureFullTextFinder {
         return { mode: 'transfer' }
       }
       const item =
-        task?.status === 'succeeded' ? await this.options.catalog.get(request.itemId) : undefined
+        task?.status === 'succeeded'
+          ? await this.options.catalog.get(request.itemId).catch(() => undefined)
+          : undefined
       return {
         mode: 'transfer',
         transfer: task ? { ...task } : undefined,
@@ -417,8 +419,8 @@ class LiteratureFullTextFinder {
       })
       // The receipt is authoritative even if refreshing the item later fails.
       Object.assign(task.snapshot, receipt, { status: 'succeeded' })
-      const updated = await this.options.catalog.get(item.id)
-      if (!updated) throw new Error('Literature Item is unavailable after attaching the PDF.')
+      const updated = await this.options.catalog.get(item.id).catch(() => undefined)
+      if (updated?.id !== item.id) return { mode: 'transfer', transfer: { ...task.snapshot } }
       return { mode: 'attach', item: updated, transferId: task.snapshot.id }
     } catch (error) {
       if (task.snapshot.status !== 'succeeded') task.snapshot.status = 'failed'

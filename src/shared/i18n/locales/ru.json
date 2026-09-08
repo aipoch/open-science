@@ -5171,6 +5171,7 @@
     "Select 2–20 references to compare.": "Выберите от 2 до 20 источников для сравнения.",
     "Selected: {{selected}} / 20": "Выбрано: {{selected}} / 20",
     "Compare selected references": "Сравнить выбранные источники",
+    "PDF added. Refreshing attachment details…": "PDF добавлен. Обновление сведений о вложении…",
     "You can close this dialog. The download continues in the background; reopen it to see progress.": "Можно закрыть это окно. Загрузка продолжится в фоновом режиме; откройте окно снова, чтобы увидеть ход загрузки."
   }
 }

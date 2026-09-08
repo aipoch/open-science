@@ -5039,6 +5039,7 @@
     "Select 2–20 references to compare.": "Seleccione entre 2 y 20 referencias para comparar.",
     "Selected: {{selected}} / 20": "Seleccionadas: {{selected}} / 20",
     "Compare selected references": "Comparar referencias seleccionadas",
+    "PDF added. Refreshing attachment details…": "PDF añadido. Actualizando los detalles del archivo adjunto…",
     "You can close this dialog. The download continues in the background; reopen it to see progress.": "Puede cerrar este diálogo. La descarga continúa en segundo plano; vuelva a abrirlo para ver el progreso."
   }
 }
