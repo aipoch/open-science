@@ -93,21 +93,19 @@ const invalidOutcome = (): ApplicationCommandError =>
     'Application command returned an invalid response.'
   )
 
-export const unwrapApplicationCommandOutcome = <Result>(value: unknown): Result => {
-  if (!value || typeof value !== 'object' || !('ok' in value)) throw invalidOutcome()
-  if (value.ok === true && 'result' in value) return value.result as Result
+export const parseApplicationCommandError = (
+  error: unknown
+): ApplicationCommandError | undefined => {
   if (
-    value.ok === false &&
-    'error' in value &&
-    value.error != null &&
-    typeof value.error === 'object' &&
-    'code' in value.error &&
-    isApplicationCommandErrorCode(value.error.code) &&
-    'message' in value.error &&
-    typeof value.error.message === 'string'
+    error != null &&
+    typeof error === 'object' &&
+    'code' in error &&
+    isApplicationCommandErrorCode(error.code) &&
+    'message' in error &&
+    typeof error.message === 'string'
   ) {
-    const parameters = 'parameters' in value.error ? value.error.parameters : undefined
-    if (value.error.code === 'csl-undefined-macro') {
+    const parameters = 'parameters' in error ? error.parameters : undefined
+    if (error.code === 'csl-undefined-macro') {
       if (
         !parameters ||
         typeof parameters !== 'object' ||
@@ -115,13 +113,22 @@ export const unwrapApplicationCommandOutcome = <Result>(value: unknown): Result 
         typeof parameters.macro !== 'string' ||
         Object.keys(parameters).length !== 1
       )
-        throw invalidOutcome()
-      throw new ApplicationCommandError(value.error.code, value.error.message, {
+        return undefined
+      return new ApplicationCommandError(error.code, error.message, {
         macro: parameters.macro
       })
     }
-    if (parameters !== undefined) throw invalidOutcome()
-    throw new ApplicationCommandError(value.error.code, value.error.message)
+    if (parameters !== undefined) return undefined
+    return new ApplicationCommandError(error.code, error.message)
+  }
+  return undefined
+}
+
+export const unwrapApplicationCommandOutcome = <Result>(value: unknown): Result => {
+  if (!value || typeof value !== 'object' || !('ok' in value)) throw invalidOutcome()
+  if (value.ok === true && 'result' in value) return value.result as Result
+  if (value.ok === false && 'error' in value) {
+    throw parseApplicationCommandError(value.error) ?? invalidOutcome()
   }
   throw invalidOutcome()
 }

@@ -112,7 +112,10 @@ it.each([
   }
 )
 
-const importInvalidStyle = async (content: string): Promise<string> => {
+const importInvalidStyle = async (
+  content: string,
+  transport: 'electron' | 'web' = 'electron'
+): Promise<string> => {
   const root = await mkdtemp(join(tmpdir(), 'literature-i18n-'))
   roots.push(root)
   const library = new LiteratureCitationStyleLibrary(join(root, 'styles'))
@@ -122,15 +125,10 @@ const importInvalidStyle = async (content: string): Promise<string> => {
       await library.import(request.content)
       return { styles: [] }
     } catch (cause) {
-      // Exercise the real command error transport, including loss of custom Error properties.
-      return unwrapApplicationCommandOutcome(
-        JSON.parse(
-          JSON.stringify({
-            ok: false,
-            error: toApplicationCommandErrorEnvelope(cause)
-          })
-        )
-      )
+      const error = JSON.parse(JSON.stringify(toApplicationCommandErrorEnvelope(cause)))
+      // Electron copies plain rejections; Web reconstructs errors in the renderer realm.
+      if (transport === 'electron') throw error
+      return unwrapApplicationCommandOutcome({ ok: false, error })
     }
   })
   window.api = { literature: { citationStyles } } as unknown as Window['api']
@@ -151,7 +149,7 @@ const importInvalidStyle = async (content: string): Promise<string> => {
 
 it.each(locales)('localizes real invalid CSL XML in %s', async (locale) => {
   await switchLanguage(locale)
-  const message = await importInvalidStyle('<')
+  const message = await importInvalidStyle('<', 'web')
   expect(message).not.toBe('The selected file is not valid CSL XML.')
   expect(message).toBe(i18next.t('The selected file is not valid CSL XML.'))
   await switchLanguage('en')

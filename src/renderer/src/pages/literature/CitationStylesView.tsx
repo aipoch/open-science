@@ -4,7 +4,10 @@ import { ArrowLeft, BookOpenText, FileText, LoaderCircle, Trash2, Upload } from 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
-import { ApplicationCommandError } from '../../../../shared/application-command-contract'
+import {
+  ApplicationCommandError,
+  parseApplicationCommandError
+} from '../../../../shared/application-command-contract'
 
 import { Button } from '@/components/ui/button'
 import { Popover, PopoverAnchor, PopoverContent } from '@/components/ui/popover'
@@ -200,7 +203,7 @@ const CitationStylesView = ({
       })
       onStylesChange(result.styles)
     } catch (cause) {
-      setError(cause instanceof ApplicationCommandError ? cause : 'import-failed')
+      setError(parseApplicationCommandError(cause) ?? 'import-failed')
     } finally {
       setImporting(false)
     }

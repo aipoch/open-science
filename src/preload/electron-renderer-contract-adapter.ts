@@ -1,5 +1,9 @@
 import { RENDERER_CONTRACT_CATALOG } from '../shared/renderer-contract-catalog'
-import { unwrapApplicationCommandOutcome } from '../shared/application-command-contract'
+import {
+  ApplicationCommandError,
+  toApplicationCommandErrorEnvelope,
+  unwrapApplicationCommandOutcome
+} from '../shared/application-command-contract'
 import type {
   RendererContractDescriptor,
   RendererParameterCodec
@@ -134,9 +138,21 @@ export const createElectronRendererContractAdapter = (
     )
     if (encodedArgs === null) return null as Result
     const result = await port.invoke(channel, ...encodedArgs)
-    return contract.applicationCommand === 'runtime-validated'
-      ? unwrapApplicationCommandOutcome<Result>(result)
-      : (result as Result)
+    try {
+      return contract.applicationCommand === 'runtime-validated'
+        ? unwrapApplicationCommandOutcome<Result>(result)
+        : (result as Result)
+    } catch (error) {
+      if (
+        publicPath === 'literature.citationStyles' &&
+        error instanceof ApplicationCommandError &&
+        error.code.startsWith('csl-')
+      ) {
+        // contextBridge strips custom Error properties; plain rejections retain CSL diagnostics.
+        throw toApplicationCommandErrorEnvelope(error)
+      }
+      throw error
+    }
   },
   send: (publicPath: string, ...args: unknown[]): void => {
     port.send(requireSendContract(publicPath), ...args)
