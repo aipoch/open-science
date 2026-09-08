@@ -1,3 +1,5 @@
+import type { PrismaClient } from '@prisma/client'
+import { LiteratureAttachmentAuthority } from '../literature/attachment-authority'
 import { describe, expect, it, vi, type Mock } from 'vitest'
 
 import type { NotebookRunInputFile } from '../../shared/notebook'
@@ -86,6 +88,73 @@ const setup = (resolved: NotebookRunInputFile | null = input): SessionPdfContext
 }
 
 describe('SessionPdfContextOwner', () => {
+  it.each(['missing', 'checksum-mismatch', 'authority-mismatch', 'database', 'storage'])(
+    'LR-02 isolates attachment failure but preserves service errors (%s)',
+    async (failure) => {
+      const findUnique = vi.fn(async ({ where: { id } }) => {
+        if (failure === 'database') throw new Error('database read failed')
+        return {
+          id,
+          attachmentId: id,
+          versionNumber: 1,
+          contentBlobId: id,
+          filename: `${id}.pdf`,
+          contentType: 'application/pdf',
+          sizeBytes: 42n,
+          checksum: id,
+          pageCount: 2,
+          attachment: { itemId: id, item: { deletedAt: null } },
+          contentBlob: { storageKey: id }
+        }
+      })
+      const verify = vi.fn(async (id: string) => {
+        if (failure === 'storage') throw new Error('storage offline')
+        if (id === 'bad' && (failure === 'missing' || failure === 'checksum-mismatch')) {
+          return { state: 'unavailable', reason: failure } as const
+        }
+        return {
+          state: 'available' as const,
+          content: {
+            id,
+            path: `/managed/${id}.pdf`,
+            storageKey: id,
+            checksum: id === 'bad' ? 'wrong-checksum' : id,
+            sizeBytes: 42n,
+            contentType: 'application/pdf'
+          }
+        }
+      })
+      const literature = new LiteratureAttachmentAuthority({
+        getClient: async () =>
+          ({ literatureAttachmentVersion: { findUnique } }) as unknown as PrismaClient,
+        content: { verify }
+      })
+      const owner = new SessionPdfContextOwner({
+        sources: new SessionPdfSourceResolver({
+          literature,
+          inputs: { resolveVersion: vi.fn(), openContent: vi.fn() }
+        }),
+        sessions: { readSessionRuntimeContext: vi.fn(), patchSessionRuntimeContext: vi.fn() }
+      })
+      const sources = ['bad', 'good'].map((sourceVersionId) => ({
+        sourceKind: 'literature-attachment-version' as const,
+        sourceVersionId
+      }))
+      const result = owner.filterCandidates({ projectId: 'project-1', sources })
+      if (failure === 'database' || failure === 'storage') {
+        await expect(result).rejects.toThrow(
+          failure === 'database' ? 'database read failed' : 'storage offline'
+        )
+      } else {
+        await expect(result).resolves.toMatchObject({
+          sources: [sources[1]],
+          unavailableSources: [sources[0]]
+        })
+        expect(findUnique).toHaveBeenCalledTimes(2)
+      }
+    }
+  )
+
   it('filters PDF context candidates to multi-page immutable Versions', async () => {
     const harness = setup()
     harness.resolveVersion.mockImplementation(async ({ inputFileVersionId }) =>
@@ -128,7 +197,10 @@ describe('SessionPdfContextOwner', () => {
           sourceVersionId: 'multi-page'
         }
       ],
-      pendingAttachmentIds: []
+      pendingAttachmentIds: [],
+      unavailableSources: [
+        { sourceKind: 'artifact-version', sourceFileId: 'missing', sourceVersionId: 'missing' }
+      ]
     })
   })
 

@@ -196,6 +196,7 @@ export type FilterSessionPdfContextCandidatesRequest = Readonly<{
 export type FilterSessionPdfContextCandidatesResult = Readonly<{
   sources: readonly SessionPdfContextSource[]
   pendingAttachmentIds: readonly string[]
+  unavailableSources?: readonly SessionPdfContextSource[]
 }>
 
 export type LinkSessionPdfContextRequest = Readonly<{

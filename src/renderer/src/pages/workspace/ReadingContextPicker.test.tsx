@@ -13,6 +13,128 @@ afterEach(() => {
 })
 
 describe('ReadingContextPicker', () => {
+  const paper = {
+    id: 'item-101',
+    item: { title: 'older.pdf', creators: [] },
+    attachments: [
+      {
+        kind: 'supplementary',
+        versions: [
+          {
+            id: 'version-101',
+            filename: 'supplement.pdf',
+            contentType: 'application/pdf',
+            sizeBytes: 42,
+            pageCount: 2,
+            versionNumber: 1,
+            createdAt: 1
+          }
+        ]
+      }
+    ]
+  }
+  const openPicker = (): void => {
+    render(
+      <ReadingContextPicker
+        projectId="project-1"
+        linkedSources={[]}
+        atLimit={false}
+        onSelect={vi.fn()}
+      >
+        <button type="button">Reading</button>
+      </ReadingContextPicker>
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'Reading' }))
+  }
+  const installApi = (search = vi.fn().mockResolvedValue({ entries: [paper] })): void => {
+    vi.stubGlobal('api', {
+      literature: { search },
+      projectFiles: { listFiles: vi.fn().mockResolvedValue({ items: [], totalCount: 0 }) },
+      sessions: {
+        filterPdfContextCandidates: vi.fn(async ({ sources }) => ({
+          sources,
+          pendingAttachmentIds: []
+        }))
+      }
+    })
+  }
+
+  it('LR-01 finds a supplementary PDF after 100 metadata-only project records', async () => {
+    const search = vi.fn(async ({ offset = 0 }) =>
+      offset === 0
+        ? {
+            entries: Array.from({ length: 100 }, (_, id) => ({
+              ...paper,
+              id: `metadata-${id}`,
+              attachments: []
+            })),
+            totalCount: 101,
+            nextOffset: 100
+          }
+        : { entries: [paper], totalCount: 101 }
+    )
+    installApi(search)
+    openPicker()
+    fireEvent.change(screen.getByRole('textbox', { name: 'Search PDFs' }), {
+      target: { value: paper.item.title }
+    })
+    expect(await screen.findByRole('option', { name: paper.item.title })).not.toBeNull()
+    expect(search).toHaveBeenLastCalledWith({
+      scope: 'library',
+      projectId: 'project-1',
+      limit: 100,
+      offset: 100
+    })
+  })
+
+  it('LR-02 shows healthy candidates with a partial-failure warning and retry', async () => {
+    installApi()
+    const filter = vi.mocked(window.api.sessions.filterPdfContextCandidates)
+    filter.mockResolvedValueOnce({
+      sources: [{ sourceKind: 'literature-attachment-version', sourceVersionId: 'version-101' }],
+      pendingAttachmentIds: [],
+      unavailableSources: [{ sourceKind: 'literature-attachment-version', sourceVersionId: 'bad' }]
+    })
+    openPicker()
+    expect(await screen.findByRole('option', { name: paper.item.title })).not.toBeNull()
+    expect(screen.getByRole('alert').textContent).toContain('Some PDFs are unavailable')
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }))
+    await screen.findByRole('option', { name: paper.item.title })
+    expect(screen.queryByRole('alert')).toBeNull()
+  })
+
+  it('LR-03 reports a literature database failure and retries project discovery', async () => {
+    const search = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('database read failed'))
+      .mockResolvedValueOnce({ entries: [paper] })
+    installApi(search)
+    openPicker()
+    expect(await screen.findByRole('alert')).not.toBeNull()
+    expect(screen.queryByText('No multi-page PDFs available')).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }))
+    expect(await screen.findByRole('option', { name: paper.item.title })).not.toBeNull()
+  })
+
+  it.each(['Project', 'Library'])(
+    'LR-04 keeps results when clicking the active %s tab',
+    async (tab) => {
+      const search = vi.fn().mockResolvedValue({ entries: [paper] })
+      installApi(search)
+      openPicker()
+      await screen.findByRole('option', { name: paper.item.title })
+      if (tab === 'Library') {
+        fireEvent.click(screen.getByRole('button', { name: tab }))
+        await screen.findByRole('option', { name: paper.item.title })
+      }
+      const calls = search.mock.calls.length
+      fireEvent.click(screen.getByRole('button', { name: tab }))
+      expect(await screen.findByRole('option', { name: paper.item.title })).not.toBeNull()
+      expect(screen.queryByText('Checking PDFs…')).toBeNull()
+      expect(search).toHaveBeenCalledTimes(calls)
+    }
+  )
+
   it('hides stale project PDFs and prevents selection while the next project loads', async () => {
     const file = (projectId: string): ProjectFileItem => ({
       id: projectId,
@@ -36,6 +158,7 @@ describe('ReadingContextPicker', () => {
     const listFiles = vi.fn().mockResolvedValueOnce(first).mockReturnValueOnce(loadingSecond)
     vi.stubGlobal('api', {
       projectFiles: { listFiles },
+      literature: { search: vi.fn().mockResolvedValue({ entries: [] }) },
       sessions: { filterPdfContextCandidates: vi.fn(async ({ sources }) => ({ sources })) }
     })
     const selectFirst = vi.fn().mockResolvedValue(undefined)
@@ -87,6 +210,7 @@ describe('ReadingContextPicker', () => {
       .mockResolvedValueOnce({ items: [], totalCount: 0 })
     vi.stubGlobal('api', {
       projectFiles: { listFiles },
+      literature: { search: vi.fn().mockResolvedValue({ entries: [] }) },
       sessions: { filterPdfContextCandidates: vi.fn() }
     })
 
@@ -165,6 +289,7 @@ describe('ReadingContextPicker', () => {
     })
     vi.stubGlobal('api', {
       projectFiles: { listFiles },
+      literature: { search: vi.fn().mockResolvedValue({ entries: [] }) },
       sessions: { filterPdfContextCandidates }
     })
     const onSelect = vi.fn().mockResolvedValue(undefined)

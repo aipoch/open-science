@@ -104,6 +104,8 @@
     "Search again to refresh this older metadata review.": "再検索して、この古いメタデータの確認内容を更新してください。",
     "The reference was saved, but could not be reloaded.": "文献は保存されましたが、再読み込みできませんでした。",
     "Draft preserved. Escape to discard.": "下書きを保持しました。Escape で破棄。",
+    "Some PDFs are unavailable. Available PDFs are listed below.": "一部の PDF は利用できません。利用可能な PDF を以下に表示しています。",
+    "Selected literature versions are unavailable: {{versions}}. Remove or reselect them before sending.": "選択した文献のバージョンは利用できません：{{versions}}。削除するか、選択し直してから送信してください。",
     "Not answered": "未回答",
     "Automatic contrast": "自動コントラスト",
     "Display range": "表示範囲",
