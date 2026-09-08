@@ -1,3 +1,5 @@
+import type { SearchFileFormat, SearchSort } from './search-text'
+
 export type ProjectFileSource = 'artifact' | 'upload'
 
 export type ProjectFileOriginSession = {
@@ -71,6 +73,11 @@ export type ResolveProjectFileRequest = {
 // The primary Project set is one paged collection. Home searches all active Projects; Workspace
 // pages its current Project and requests a bounded sample from Other Projects.
 export type SearchArtifactsRequest = {
+  updatedAfter?: number
+  format?: SearchFileFormat
+  sort?: SearchSort
+  source?: ProjectFileSource | 'all'
+  sessionId?: string
   primaryProjectIds: string[]
   otherProjectIds: string[]
   filenameContains?: string

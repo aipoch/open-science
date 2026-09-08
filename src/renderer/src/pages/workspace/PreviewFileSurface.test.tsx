@@ -12,6 +12,7 @@ import {
 } from '@/stores/preview-workbench-store'
 import { previewLeaveGuards } from '@/stores/preview-leave-guard'
 import { useNavigationStore } from '@/stores/navigation-store'
+import { useSearchMessageFocusStore } from '@/stores/search-message-focus-store'
 import { useProjectStore } from '@/stores/project-store'
 import { i18next } from '@/i18n'
 import { createNotebookInputPreviewKey } from '../../../../shared/notebook'
@@ -4287,6 +4288,36 @@ const seedWorkspaceStores = (): void => {
 }
 
 describe('PreviewFileSurface View in context entry', () => {
+  it('locates the source message of the selected artifact version after navigation', async () => {
+    seedWorkspaceStores()
+    useSearchMessageFocusStore.setState({ pending: undefined })
+    vi.mocked(window.api.artifacts.getLineage).mockResolvedValue({
+      artifactId: 'artifact-1',
+      filename: 'sin.png',
+      originSession: { sessionId: 'session-1', state: 'active' },
+      versions: [
+        { ...descriptor, messageId: 'version-one-message' },
+        { ...secondDescriptor, messageId: 'version-two-message' }
+      ]
+    })
+    await act(async () => {
+      root.render(
+        <PreviewFileSurface
+          item={{ ...item, selectedVersionId: descriptor.versionId }}
+          provenanceEntry="trailing"
+          onClose={vi.fn()}
+        />
+      )
+    })
+    await click(container.querySelector('[aria-label="View in context for sin.png"]'))
+    expect(useSearchMessageFocusStore.getState().pending).toMatchObject({
+      projectId: 'project-1',
+      sessionId: 'session-1',
+      messageId: 'version-one-message',
+      navigationRevision: useNavigationStore.getState().userNavigationRevision
+    })
+    useSearchMessageFocusStore.setState({ pending: undefined })
+  })
   it('opens managed Artifact capabilities from the preview content context menu', async () => {
     seedWorkspaceStores()
     const onOpenFullScreen = vi.fn()

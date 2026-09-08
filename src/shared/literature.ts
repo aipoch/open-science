@@ -341,12 +341,23 @@ export type LiteratureDuplicateGroup = z.infer<typeof literatureDuplicateGroupSc
 
 const literatureCatalogSearchRequestSchema = z
   .object({
-    scope: z.enum(['library', 'inbox', 'collections', 'project-counts', 'duplicates']),
+    scope: z.enum([
+      'library',
+      'inbox',
+      'collections',
+      'project-counts',
+      'duplicates',
+      'global-search'
+    ]),
     refreshDuplicates: z.boolean().optional(),
+    updatedAfter: z.number().int().nonnegative().optional(),
+    searchSort: z.enum(['relevance', 'recent']).optional(),
+    entryKind: z.enum(['paper', 'collection', 'pdf']).optional(),
     query: optionalTextSchema,
     projectId: optionalTextSchema,
     collectionId: optionalTextSchema,
     parentId: optionalTextSchema,
+    itemId: optionalTextSchema,
     inboxState: z.enum(LITERATURE_INBOX_STATES).optional(),
     lifecycle: z.enum(LITERATURE_LIFECYCLE_STATES).optional(),
     sortBy: z.enum(LITERATURE_SORT_FIELDS).optional(),

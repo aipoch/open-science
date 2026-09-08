@@ -78,6 +78,68 @@ describe('LiteratureCatalog', () => {
     return new LiteratureCatalog(async () => client!)
   }
 
+  it('pages global search across collections and literature without duplicates', async () => {
+    const catalog = await setup()
+    const collection = await catalog.transact({
+      kind: 'create-collection',
+      name: 'Corrective collection'
+    })
+    const paper = await catalog.transact({ kind: 'create-item', item: candidate().item })
+    await client!.literatureCollection.update({
+      where: { id: collection.id },
+      data: { updatedAt: new Date(10) }
+    })
+    await client!.literatureItem.update({
+      where: { id: paper.id },
+      data: { updatedAt: new Date(20) }
+    })
+    const first = await catalog.search({ scope: 'global-search', query: 'Corrective', limit: 1 })
+    expect(first).toMatchObject({ totalCount: 2, nextOffset: 1, entries: [{ id: paper.id }] })
+    const second = await catalog.search({
+      scope: 'global-search',
+      query: 'Corrective',
+      limit: 1,
+      offset: first.nextOffset
+    })
+    expect(second).toMatchObject({ totalCount: 2, entries: [{ id: collection.id }] })
+    expect(second.nextOffset).toBeUndefined()
+    expect(
+      await catalog.search({ scope: 'global-search', query: 'Corrective', entryKind: 'collection' })
+    ).toMatchObject({ totalCount: 1, entries: [{ id: collection.id }] })
+    expect(
+      await catalog.search({ scope: 'global-search', query: 'Corrective', updatedAfter: 15 })
+    ).toMatchObject({ totalCount: 1, entries: [{ id: paper.id }] })
+    expect(
+      await catalog.search({ scope: 'global-search', query: 'Corrective', entryKind: 'pdf' })
+    ).toMatchObject({ totalCount: 0 })
+    await catalog.transact({
+      kind: 'update-collection',
+      collectionId: collection.id,
+      name: 'Corrective',
+      description: ''
+    })
+    await client!.literatureCollection.update({
+      where: { id: collection.id },
+      data: { updatedAt: new Date(10) }
+    })
+    expect(
+      await catalog.search({
+        scope: 'global-search',
+        query: 'Corrective',
+        searchSort: 'relevance',
+        limit: 1
+      })
+    ).toMatchObject({ entries: [{ id: collection.id }] })
+    expect(
+      await catalog.search({
+        scope: 'global-search',
+        query: 'Corrective',
+        searchSort: 'recent',
+        limit: 1
+      })
+    ).toMatchObject({ entries: [{ id: paper.id }] })
+  })
+
   it('shares duplicate scans across count and page requests and invalidates on metadata mutations', async () => {
     const catalog = await setup()
     const findMany = vi.spyOn(client!.literatureItem, 'findMany')
@@ -1291,6 +1353,12 @@ describe('LiteratureCatalog', () => {
         }
       ]
     })
+    await expect(catalog.search({ scope: 'collections', itemId: item.id })).resolves.toMatchObject({
+      entries: [{ id: collection.id }]
+    })
+    await expect(
+      catalog.search({ scope: 'collections', itemId: 'missing-item' })
+    ).resolves.toMatchObject({ entries: [], totalCount: 0 })
 
     await catalog.transact({
       kind: 'update-collection',

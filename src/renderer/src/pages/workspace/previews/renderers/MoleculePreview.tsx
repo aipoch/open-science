@@ -21,11 +21,13 @@ const REACTION_EXTENSIONS = new Set(['rxn'])
 const MoleculePreviewCanvas = ({
   content,
   extension,
-  name
+  name,
+  presentation
 }: {
   content: string
   extension: string
   name: string
+  presentation?: PreviewFileRendererProps['presentation']
 }): React.JSX.Element => {
   const { t } = useTranslation()
   const containerRef = useRef<HTMLDivElement | null>(null)
@@ -101,12 +103,14 @@ const MoleculePreviewCanvas = ({
 
   return (
     <div className="flex size-full flex-col overflow-hidden bg-bg-10">
-      <div className="flex shrink-0 items-center gap-2 border-b border-border-300 bg-bg-000 px-3 py-2 text-[12px] text-text-300">
-        <FlaskConical className="size-3.5 shrink-0 text-text-300" aria-hidden="true" />
-        <span className="truncate" title={name}>
-          {t('Using OpenChemLib viewer')}
-        </span>
-      </div>
+      {presentation !== 'search' && (
+        <div className="flex shrink-0 items-center gap-2 border-b border-border-300 bg-bg-000 px-3 py-2 text-[12px] text-text-300">
+          <FlaskConical className="size-3.5 shrink-0 text-text-300" aria-hidden="true" />
+          <span className="truncate" title={name}>
+            {t('Using OpenChemLib viewer')}
+          </span>
+        </div>
+      )}
       <div className="relative min-h-0 flex-1 overflow-hidden bg-bg-000">
         {error ? (
           <div className="absolute inset-0 flex items-center justify-center px-6 text-center text-[12px] text-danger-000">
@@ -126,7 +130,10 @@ const MoleculePreviewCanvas = ({
   )
 }
 
-export const MoleculePreviewRenderer = ({ item }: PreviewFileRendererProps): React.JSX.Element => {
+export const MoleculePreviewRenderer = ({
+  item,
+  presentation
+}: PreviewFileRendererProps): React.JSX.Element => {
   const { t } = useTranslation()
   const state = usePreviewFileContent(item)
 
@@ -152,6 +159,7 @@ export const MoleculePreviewRenderer = ({ item }: PreviewFileRendererProps): Rea
       content={state.preview.content}
       extension={getFileExtension(item.name)}
       name={item.name}
+      presentation={presentation}
     />
   )
 }

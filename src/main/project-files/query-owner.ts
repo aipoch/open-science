@@ -19,6 +19,7 @@ import {
   decodeGroupCursor,
   decodeSearchArtifactCursor,
   encodeCursor,
+  fileSearchRank,
   getAuthoritativeOverviewCounts,
   listAuthoritativeArtifactGroups,
   listAuthoritativeFiles,
@@ -288,21 +289,34 @@ class ProjectFilesQueryOwner {
       throw new Error('Project files otherLimit must be between 0 and 5.')
     }
 
+    const source = request.source ?? 'artifact'
+    if (!['artifact', 'upload', 'all'].includes(source)) throw new Error('Invalid file source.')
+    if (request.sessionId !== undefined) requireIdentifier(request.sessionId, 'sessionId')
     const primaryLimit = normalizeLimit(request.primaryLimit)
     const search = normalizeSearch({
       filenameContains: request.filenameContains ?? '',
+      updatedAfter: request.updatedAfter,
+      format: request.format,
+      sort: request.sort,
       ...(request.excludedSessionIds === undefined
         ? {}
         : { excludedSessionIds: request.excludedSessionIds })
     })
     const cursor = request.primaryCursor
-      ? decodeSearchArtifactCursor(request.primaryCursor, primaryProjectIds, search)
+      ? decodeSearchArtifactCursor(
+          request.primaryCursor,
+          primaryProjectIds,
+          search,
+          source,
+          request.sessionId
+        )
       : undefined
     const client = await this.getClient()
     const [primaryResult, otherRows] = await Promise.all([
       listAuthoritativeFiles(client, {
         projectIds: primaryProjectIds,
-        source: 'artifact',
+        source: source === 'all' ? undefined : source,
+        sessionId: request.sessionId,
         search,
         cursor,
         limit: primaryLimit + 1
@@ -310,7 +324,8 @@ class ProjectFilesQueryOwner {
       request.otherLimit > 0
         ? queryAuthoritativeFiles(client, {
             projectIds: otherProjectIds,
-            source: 'artifact',
+            source: source === 'all' ? undefined : source,
+            sessionId: request.sessionId,
             search,
             limit: request.otherLimit
           })
@@ -345,9 +360,12 @@ class ProjectFilesQueryOwner {
             ? encodeCursor({
                 version: 2,
                 kind: 'globalArtifacts',
+                source,
+                sessionId: request.sessionId,
                 primaryProjectIds,
                 queryKey: search?.queryKey ?? '',
                 sortAtMs: lastPrimaryRow.sortAtMs.toString(),
+                rank: fileSearchRank(lastPrimaryRow.displayName, search),
                 seq: lastPrimaryRow.seq
               })
             : undefined

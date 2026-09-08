@@ -26,7 +26,10 @@ const parseCsvRows = (
   }
 }
 
-export const CsvPreviewRenderer = ({ item }: PreviewFileRendererProps): React.JSX.Element => {
+export const CsvPreviewRenderer = ({
+  item,
+  presentation
+}: PreviewFileRendererProps): React.JSX.Element => {
   const { t } = useTranslation()
   const state = usePreviewFileContent(item)
 
@@ -54,7 +57,13 @@ export const CsvPreviewRenderer = ({ item }: PreviewFileRendererProps): React.JS
   const totalKnown = !state.preview.truncated && !rowTruncated
 
   return (
-    <div className="flex size-full flex-col overflow-hidden bg-bg-10">
+    <div
+      className={
+        presentation === 'search'
+          ? 'search-csv-preview'
+          : 'flex size-full flex-col overflow-hidden bg-bg-10'
+      }
+    >
       <div className="flex shrink-0 flex-wrap items-center justify-between gap-3 border-b border-border-300 bg-bg-000 px-3 py-2 text-[12px] text-text-300">
         {totalKnown ? (
           <span>

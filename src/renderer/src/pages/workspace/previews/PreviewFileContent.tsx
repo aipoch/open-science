@@ -6,6 +6,7 @@ import type { PreviewFileRendererProps } from './preview-types'
 
 export const PreviewFileContent = ({
   item,
+  presentation,
   downloadVersionContext,
   onRetry,
   annotationVersionId,
@@ -25,6 +26,7 @@ export const PreviewFileContent = ({
 }): React.JSX.Element => {
   const content = renderPreviewFile({
     item,
+    presentation,
     annotationVersionId,
     annotationBlockedByHistoricalVersion,
     annotationVersionPending,

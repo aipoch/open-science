@@ -1,3 +1,5 @@
+import { createMessageSearch } from './message-search'
+import type { MessageSearchRequest, MessageSearchPage } from '../../shared/message-search'
 import { ipcMainHandle } from '../ipc-handler-registry'
 
 import type { ApplicationCommandOutcome } from '../../shared/application-command-contract'
@@ -57,6 +59,7 @@ type SessionPersistenceBackend = {
 }
 
 type SessionPersistenceHandlers = {
+  searchMessages: (request: MessageSearchRequest) => Promise<MessageSearchPage>
   loadAll: () => Promise<LoadAllSessionsResult>
   list: () => Promise<ListSessionSummariesResult>
   loadUsage: () => Promise<SessionUsageProjection>
@@ -173,6 +176,13 @@ const createSessionPersistenceHandlersWithAttributionAuthority = (
   // call it because Reviews belong to retained provenance.
   void reviewRepository
   return {
+    searchMessages: createMessageSearch({
+      list: () => {
+        if (!repository.list) throw new Error('Session summary projection is unavailable.')
+        return repository.list()
+      },
+      loadOne: (request) => repository.loadOne(request)
+    }),
     loadAll: () => repository.loadAll(),
     list: () => {
       if (!repository.list) throw new Error('Session summary projection is unavailable.')
@@ -325,6 +335,9 @@ const registerSessionPersistenceIpcHandlers = (
       if (!handlers.loadUsage) throw new Error('Session usage projection is unavailable.')
       return handlers.loadUsage()
     })
+  )
+  ipcMainHandle('sessions:search-messages', (_event, request: MessageSearchRequest) =>
+    withDataRootWrite(() => handlers.searchMessages(request))
   )
   ipcMainHandle('sessions:load-one', (_event, request: LoadSessionRequest) =>
     withDataRootWrite(() => handlers.loadOne(request))

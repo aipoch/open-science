@@ -3,6 +3,7 @@ import { createHash, randomUUID } from 'node:crypto'
 import { Prisma, type PrismaClient } from '@prisma/client'
 import { findLiteratureDuplicateGroups } from './duplicates'
 import { planLiteratureMerge, supplementLiteratureMetadata } from './duplicate-metadata'
+import { searchTitleRank } from '../../shared/search-text'
 
 import {
   LITERATURE_IDENTITY_SCHEMES,
@@ -609,6 +610,18 @@ class LiteratureCatalog {
     if (request.scope === 'collections') {
       const where = {
         ...(request.parentId ? { parentId: request.parentId } : {}),
+        ...(request.itemId || request.projectId
+          ? {
+              items: {
+                some: {
+                  ...(request.itemId ? { itemId: request.itemId } : {}),
+                  ...(request.projectId
+                    ? { item: { projects: { some: { projectId: request.projectId } } } }
+                    : {})
+                }
+              }
+            }
+          : {}),
         ...(query ? { name: { contains: query } } : {})
       }
       const [totalCount, rows] = await Promise.all([
@@ -695,6 +708,10 @@ class LiteratureCatalog {
     const where: Prisma.LiteratureItemWhereInput = {
       ...(lifecycle === 'deleted' ? { deletedAt: { not: null } } : { deletedAt: null }),
       ...(taggedItemIds ? { id: { in: taggedItemIds } } : {}),
+      ...(request.updatedAfter === undefined
+        ? {}
+        : { updatedAt: { gte: new Date(request.updatedAfter) } }),
+      ...(request.entryKind === 'pdf' ? { attachments: { some: { versions: { some: {} } } } } : {}),
       ...(request.projectId || filter?.projectId
         ? { projects: { some: { projectId: request.projectId ?? filter?.projectId } } }
         : {}),
@@ -740,6 +757,7 @@ class LiteratureCatalog {
                 { title: { contains: text } },
                 { abstract: { contains: text } },
                 { containerTitle: { contains: text } },
+                { identifiers: { some: { normalizedValue: { contains: text.toLowerCase() } } } },
                 {
                   creators: {
                     some: { creator: { normalizedName: { contains: text.toLowerCase() } } }
@@ -749,6 +767,92 @@ class LiteratureCatalog {
             }))
           }
         : {})
+    }
+    if (request.scope === 'global-search') {
+      // Rank lightweight identities across both kinds, then hydrate only the requested page.
+      const [papers, collections] = await Promise.all([
+        request.entryKind === 'collection'
+          ? []
+          : client.literatureItem.findMany({
+              where,
+              select: { id: true, title: true, updatedAt: true }
+            }),
+        request.entryKind && request.entryKind !== 'collection'
+          ? []
+          : client.literatureCollection.findMany({
+              where: {
+                ...(request.updatedAfter === undefined
+                  ? {}
+                  : { updatedAt: { gte: new Date(request.updatedAfter) } }),
+                ...(request.projectId
+                  ? {
+                      items: {
+                        some: {
+                          item: {
+                            deletedAt: null,
+                            projects: { some: { projectId: request.projectId } }
+                          }
+                        }
+                      }
+                    }
+                  : {}),
+                ...(query
+                  ? { OR: [{ name: { contains: query } }, { description: { contains: query } }] }
+                  : {})
+              },
+              include: { _count: { select: { items: true } } }
+            })
+      ])
+      const ranked = [
+        ...papers.map((item) => ({
+          id: item.id,
+          title: item.title,
+          updatedAt: item.updatedAt.getTime(),
+          kind: 'paper' as const
+        })),
+        ...collections.map((item) => ({
+          id: item.id,
+          title: item.name,
+          updatedAt: item.updatedAt.getTime(),
+          kind: 'collection' as const
+        }))
+      ].sort(
+        (a, b) =>
+          (request.searchSort !== 'recent'
+            ? searchTitleRank(b.title, query) - searchTitleRank(a.title, query)
+            : 0) ||
+          b.updatedAt - a.updatedAt ||
+          a.id.localeCompare(b.id)
+      )
+      const page = ranked.slice(offset, offset + limit)
+      const selectedPapers = await client.literatureItem.findMany({
+        where: { id: { in: page.filter((item) => item.kind === 'paper').map((item) => item.id) } },
+        include: itemInclude
+      })
+      const paperViews = new Map(selectedPapers.map((item) => [item.id, toItemView(item)]))
+      const collectionViews = new Map(
+        collections.map((row) => [
+          row.id,
+          {
+            id: row.id,
+            name: row.name,
+            description: row.description,
+            parentId: row.parentId ?? undefined,
+            itemCount: row._count.items,
+            createdAt: row.createdAt.getTime(),
+            updatedAt: row.updatedAt.getTime()
+          }
+        ])
+      )
+      const entries = page.flatMap((item) => {
+        const view = item.kind === 'paper' ? paperViews.get(item.id) : collectionViews.get(item.id)
+        return view ? [view] : []
+      })
+      return {
+        entries,
+        totalCount: ranked.length,
+        nextOffset: offset + limit < ranked.length ? offset + limit : undefined
+      }
     }
     const sortDirection = request.sortDirection ?? (request.sortBy === 'title' ? 'asc' : 'desc')
     const orderBy: Prisma.LiteratureItemOrderByWithRelationInput[] =

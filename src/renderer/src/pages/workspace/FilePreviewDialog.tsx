@@ -19,6 +19,7 @@ type FilePreviewDialogProps = PreviewInteractionPort & {
   allowReadingContext?: boolean
   onReadWithAgent?: (item: PreviewFileItem) => void
   onPdfContextError?: (message: string | null) => void
+  onViewInContextNavigate?: () => void
 }
 
 const hasStreamdownFullscreen = (): boolean =>
@@ -59,6 +60,7 @@ const FilePreviewDialog = ({
   allowReadingContext = true,
   onReadWithAgent,
   onPdfContextError,
+  onViewInContextNavigate,
   ...annotationPort
 }: FilePreviewDialogProps): React.JSX.Element | null => {
   const { t } = useTranslation()
@@ -90,6 +92,15 @@ const FilePreviewDialog = ({
     isBackgroundIsolatedRef.current = false
   }, [])
 
+  // Radix can unmount the portal without animationend when an exit animation is absent or
+  // interrupted. Release the background lock at that boundary as well as after normal animation.
+  const setContentRef = useCallback(
+    (content: HTMLDivElement | null): void => {
+      if (!content) releaseBackgroundIsolation()
+    },
+    [releaseBackgroundIsolation]
+  )
+
   useEffect(() => {
     const observer = new MutationObserver(() => setHasNestedFullscreen(hasStreamdownFullscreen()))
     observer.observe(document.body, { childList: true })
@@ -120,6 +131,7 @@ const FilePreviewDialog = ({
           className={`${dialogOverlayClassName} z-[60]`}
         />
         <Dialog.Content
+          ref={setContentRef}
           data-slot="file-preview-dialog"
           aria-describedby={undefined}
           aria-modal="true"
@@ -147,7 +159,7 @@ const FilePreviewDialog = ({
                   provenanceEntry="trailing"
                   // The modal overlays the conversation panel, so a View in context navigation must
                   // also close the dialog for the switched session to become visible.
-                  onViewInContextNavigate={onClose}
+                  onViewInContextNavigate={onViewInContextNavigate ?? onClose}
                   allowReadingContext={allowReadingContext}
                   onReadWithAgent={onReadWithAgent}
                   onPdfContextError={onPdfContextError}

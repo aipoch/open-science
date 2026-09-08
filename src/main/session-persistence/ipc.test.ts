@@ -472,6 +472,7 @@ describe('session persistence IPC handlers', () => {
     }
     const saveSession = vi.fn(async () => ({ created: false, session }))
     const handlers: SessionPersistenceHandlers = {
+      searchMessages: vi.fn(),
       loadAll: vi.fn(),
       list: vi.fn(),
       loadUsage: vi.fn(),
@@ -753,6 +754,7 @@ describe('session persistence IPC handlers', () => {
       'sessions:load-all',
       'sessions:list',
       'sessions:load-usage',
+      'sessions:search-messages',
       'sessions:load-one',
       'sessions:save-session',
       'sessions:save-manifest',
@@ -802,6 +804,7 @@ describe('session persistence IPC handlers', () => {
       saveManifest: vi.fn()
     }
     const injected: SessionPersistenceHandlers = {
+      searchMessages: vi.fn(),
       loadAll: vi.fn().mockResolvedValue(loadResult),
       list: vi.fn(),
       loadUsage: vi.fn(),
@@ -831,6 +834,7 @@ describe('session persistence IPC handlers', () => {
       saveManifest: vi.fn()
     }
     const injected: SessionPersistenceHandlers = {
+      searchMessages: vi.fn(),
       loadAll: vi.fn(),
       list: vi.fn(),
       loadUsage: vi.fn(),
@@ -865,6 +869,7 @@ describe('session persistence IPC handlers', () => {
       saveManifest: vi.fn()
     }
     const injected: SessionPersistenceHandlers = {
+      searchMessages: vi.fn(),
       loadAll: vi.fn().mockResolvedValue({ sessions: [], manifest: { version: 1 as const } }),
       list: vi.fn(),
       loadUsage: vi.fn(),
@@ -933,6 +938,7 @@ describe('session persistence IPC handlers', () => {
       saveManifest: vi.fn()
     }
     const handlers: SessionPersistenceHandlers = {
+      searchMessages: vi.fn(),
       loadAll: vi.fn(),
       list: vi.fn(),
       loadUsage: vi.fn(),
@@ -967,6 +973,7 @@ describe('session persistence IPC handlers', () => {
       saveManifest: vi.fn()
     }
     const handlers: SessionPersistenceHandlers = {
+      searchMessages: vi.fn(),
       loadAll: vi.fn(),
       list: vi.fn(),
       loadUsage: vi.fn(),

@@ -1,3 +1,4 @@
+import type { MessageSearchRequest, MessageSearchPage } from './message-search'
 import type { ProvenanceReadResult } from './provenance-read-result'
 import type { LiteratureJobRequest, LiteratureJobsResult } from './literature-jobs'
 import type { LiteratureFullTextRequest, LiteratureFullTextResult } from './literature'
@@ -1624,6 +1625,9 @@ export const RENDERER_API_CONTRACT = Object.freeze({
   'sessions.loadAll': callable<() => Promise<LoadAllSessionsResult>>()('sessions', [
     'sessions:load-all'
   ]),
+  'sessions.searchMessages': callable<
+    (request: MessageSearchRequest) => Promise<MessageSearchPage>
+  >()('sessions', ['sessions:search-messages']),
   'sessions.loadOne': callable<
     (request: LoadSessionRequest) => Promise<PersistedChatSession | undefined>
   >()('sessions', ['sessions:load-one']),

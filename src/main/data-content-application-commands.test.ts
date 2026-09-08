@@ -163,6 +163,7 @@ const createDependencies = () => {
     messages: []
   }
   const sessions = {
+    searchMessages: vi.fn(),
     editDetails: vi.fn(async () => session),
     filterPdfContextCandidates: vi.fn(async () => ({
       sources: [],
@@ -259,6 +260,7 @@ const WRAPPED_COMMAND_KEYS = [
   'sessionList',
   'sessionLoadAll',
   'sessionLoadOne',
+  'sessionSearchMessages',
   'sessionLoadUsage',
   'sessionSaveManifest',
   'sessionSave',
@@ -340,6 +342,7 @@ describe('Data and content application commands', () => {
         'sessions:list',
         'sessions:load-all',
         'sessions:load-one',
+        'sessions:search-messages',
         'sessions:load-usage',
         'sessions:save-manifest',
         'sessions:update-archive',
@@ -1565,6 +1568,9 @@ describe('Data and content application commands', () => {
     deps.sessions.list.mockResolvedValueOnce(listResult)
     deps.sessions.loadAll.mockResolvedValueOnce(loadResult)
     deps.sessions.loadOne.mockResolvedValueOnce(loadedSession)
+    const searchRequest = { projectIds: ['project-1'], query: 'needle', limit: 10 }
+    const searchPage = { items: [], totalCount: 0, isComplete: true }
+    deps.sessions.searchMessages.mockResolvedValueOnce(searchPage)
     deps.sessions.loadUsage.mockResolvedValueOnce(usageResult)
     registerDataContentApplicationCommands(router.registrar, deps.dependencies)
     const updateRequest = { id: 'project-1', name: 'Updated project', expectedUpdatedAt: 1 }
@@ -1605,6 +1611,13 @@ describe('Data and content application commands', () => {
       )
     ).resolves.toBe(loadedSession)
     await expect(
+      router.dispatcher.invoke(
+        dataContentApplicationCommands.sessionSearchMessages,
+        invocation([searchRequest])
+      )
+    ).resolves.toBe(searchPage)
+    expect(deps.sessions.searchMessages).toHaveBeenCalledWith(searchRequest)
+    await expect(
       router.dispatcher.invoke(dataContentApplicationCommands.sessionLoadUsage, invocation([]))
     ).resolves.toBe(usageResult)
     await router.dispatcher.invoke(
@@ -1633,7 +1646,7 @@ describe('Data and content application commands', () => {
     expect(deps.sessions.saveManifest).toHaveBeenCalledWith(manifestRequest)
     expect(deps.sessions.deleteSession).toHaveBeenCalledWith(deleteSessionRequest)
     expect(deps.sessions.editDetails).toHaveBeenCalledWith(editDetailsRequest)
-    expect(deps.withDataRootWrite).toHaveBeenCalledTimes(7)
+    expect(deps.withDataRootWrite).toHaveBeenCalledTimes(8)
     expect(deps.events.publish).toHaveBeenCalledWith('project:updated', deps.project)
     expect(deps.events.publish).not.toHaveBeenCalledWith('project:deleted', expect.anything())
     expect(deps.events.publish).toHaveBeenCalledWith('session:deleted', deleteSessionRequest)

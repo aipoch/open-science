@@ -39,6 +39,7 @@ import { errorDetail } from '@/lib/error-detail'
 import type { PreviewFileItem } from '@/stores/preview-workbench-store'
 import { usePreviewWorkbenchStore } from '@/stores/preview-workbench-store'
 import { useNavigationStore } from '@/stores/navigation-store'
+import { useSearchMessageFocusStore } from '@/stores/search-message-focus-store'
 import { useSessionStore } from '@/stores/session-store'
 import { previewLeaveGuards } from '@/stores/preview-leave-guard'
 import type { ArtifactLineageProvenance } from '../../../../shared/artifact-provenance'
@@ -1178,9 +1179,24 @@ const PreviewFileSurface = forwardRef<PreviewFileSurfaceHandle, PreviewFileSurfa
       !originSessionUnavailable
     const viewInContext = (): void => {
       if (!projectId) return
+      const sourceMessageId = lineage
+        ? resolveArtifactVersionDescriptor(lineage, annotationVersionId)?.messageId
+        : undefined
+      // Resolve the visible version's origin only after guarded navigation succeeds.
+      const afterNavigate = sourceMessageId
+        ? (): void => {
+            useSearchMessageFocusStore.getState().request({
+              projectId,
+              sessionId: previewItem.sessionId,
+              messageId: sourceMessageId,
+              navigationRevision: useNavigationStore.getState().userNavigationRevision
+            })
+            onViewInContextNavigate?.()
+          }
+        : onViewInContextNavigate
       useNavigationStore
         .getState()
-        .openSession(projectId, previewItem.sessionId, 'user', onViewInContextNavigate)
+        .openSession(projectId, previewItem.sessionId, 'user', afterNavigate)
     }
     const openProvenance =
       previewItem.source !== 'upload' && previewItem.artifactId && projectId

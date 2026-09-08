@@ -4,7 +4,8 @@ import {
   MessageScrollerButton,
   MessageScrollerContent,
   MessageScrollerProvider,
-  MessageScrollerViewport
+  MessageScrollerViewport,
+  useMessageScroller
 } from '@/components/ui/message-scroller'
 import {
   usePreviewWorkbenchStore,
@@ -18,6 +19,12 @@ import {
   useReviewStore
 } from '@/stores/review-store'
 import { useSettingsStore } from '@/stores/settings-store'
+import { useNavigationStore } from '@/stores/navigation-store'
+import {
+  useSearchMessageFocusStore,
+  type SearchMessageFocus
+} from '@/stores/search-message-focus-store'
+import { findMessageTarget } from './workspace-run-marks'
 import { useSessionStore, type ChatMessage, type ChatSession } from '@/stores/session-store'
 import {
   Fragment,
@@ -184,6 +191,32 @@ const VisibleMessageSnapshotCommit = ({
   useLayoutEffect(() => {
     onCommit(scopeId, new Set(JSON.parse(messageIdsKey)))
   }, [messageIdsKey, onCommit, scopeId])
+  return null
+}
+
+const SearchMessageReveal = ({
+  target,
+  viewport
+}: {
+  target?: SearchMessageFocus
+  viewport: HTMLDivElement | null
+}): null => {
+  const { scrollToMessage } = useMessageScroller()
+  useEffect(() => {
+    if (!target || !viewport || !findMessageTarget(viewport, target.messageId)) return
+    const frame = requestAnimationFrame(() => {
+      if (!scrollToMessage(target.messageId, { align: 'center', behavior: 'instant' })) return
+      const element = findMessageTarget(viewport, target.messageId)
+      if (!window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) {
+        element?.animate?.(
+          [{ backgroundColor: 'var(--bg-200)' }, { backgroundColor: 'transparent' }],
+          { duration: 1800 }
+        )
+      }
+      useSearchMessageFocusStore.getState().consume(target)
+    })
+    return () => cancelAnimationFrame(frame)
+  }, [target, viewport, scrollToMessage])
   return null
 }
 
@@ -658,6 +691,30 @@ const WorkspaceMessageScrollerImpl = ({
     messageScrollerViewportRef
   )
   const revealTranscriptItem = transcriptWindow.revealMessage
+  const searchFocus = useSearchMessageFocusStore((state) => state.pending)
+  const navigationRevision = useNavigationStore((state) => state.userNavigationRevision)
+  useEffect(() => {
+    if (!searchFocus) return
+    if (searchFocus.navigationRevision !== navigationRevision) {
+      useSearchMessageFocusStore.getState().consume(searchFocus)
+      return
+    }
+    if (searchFocus.projectId !== currentProjectId || searchFocus.sessionId !== currentSessionId)
+      return
+    const index = conversationItems.findIndex(
+      (item) => item.type === 'message' && item.message.id === searchFocus.messageId
+    )
+    if (index < 0 || (presentationBarrierIndex >= 0 && index > presentationBarrierIndex)) return
+    revealTranscriptItem(searchFocus.messageId)
+  }, [
+    searchFocus,
+    navigationRevision,
+    currentProjectId,
+    currentSessionId,
+    conversationItems,
+    presentationBarrierIndex,
+    revealTranscriptItem
+  ])
   useEffect(
     () =>
       subscribeAnnotationRevealPreparation((annotation) => {
@@ -1276,6 +1333,19 @@ const WorkspaceMessageScrollerImpl = ({
         scrollPreviousItemPeek={64}
       >
         <MessageScroller className="relative min-h-0 flex-1 bg-bg-10">
+          <SearchMessageReveal
+            target={
+              searchFocus?.navigationRevision === navigationRevision &&
+              searchFocus.projectId === currentProjectId &&
+              searchFocus.sessionId === currentSessionId &&
+              transcriptWindow.entries.some(
+                ({ item }) => item.type === 'message' && item.message.id === searchFocus.messageId
+              )
+                ? searchFocus
+                : undefined
+            }
+            viewport={messageScrollerViewport}
+          />
           <WorkspaceRunMarks
             items={presentedConversationItems}
             viewport={messageScrollerViewport}
