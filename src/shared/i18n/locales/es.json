@@ -399,7 +399,6 @@
     " (control tab falls back to most recent data kernel)": "(la pestaña de control vuelve al kernel de datos más reciente)",
     " or ": " o ",
     "# Instructions\n\nStep-by-step guidance for the agent…": "# Instrucciones\n\nGuía paso a paso para el agente…",
-    "(auto-generated from probe)": "(generado automáticamente a partir de la comprobación)",
     "(optional override)": "(valor alternativo opcional)",
     "(optional)": "(opcional)",
     "(version unavailable)": "(versión no disponible)",

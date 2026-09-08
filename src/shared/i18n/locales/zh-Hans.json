@@ -495,7 +495,6 @@
     " (control tab falls back to most recent data kernel)": "（控制面板标签将回退到最近的数据内核）",
     " or ": " 或 ",
     "# Instructions\n\nStep-by-step guidance for the agent…": "# 说明\n\n给智能体的分步指引…",
-    "(auto-generated from probe)": "（由探测自动生成）",
     "(optional override)": "（可选覆盖）",
     "(optional)": "（选填）",
     "(version unavailable)": "（版本不可用）",

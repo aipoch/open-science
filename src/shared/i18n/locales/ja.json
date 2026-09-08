@@ -430,7 +430,6 @@
     " (control tab falls back to most recent data kernel)": " (コントロールタブは最新のデータカーネルに戻ります)",
     " or ": "または",
     "# Instructions\n\nStep-by-step guidance for the agent…": "# 指示\n\nエージェントのステップバイステップガイダンス…",
-    "(auto-generated from probe)": "(プローブから自動生成)",
     "(optional override)": "(オプションの上書き)",
     "(optional)": "(オプション)",
     "(version unavailable)": "(バージョンは利用できません)",

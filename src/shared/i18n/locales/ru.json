@@ -445,7 +445,6 @@
     " (control tab falls back to most recent data kernel)": "(вкладка управления возвращается к последнему ядру данных)",
     " or ": "или",
     "# Instructions\n\nStep-by-step guidance for the agent…": "# Инструкции\n\nПошаговое руководство для агента…",
-    "(auto-generated from probe)": "(сгенерировано автоматически из пробы)",
     "(optional override)": "(необязательное переопределение)",
     "(optional)": "(необязательно)",
     "(version unavailable)": "(версия недоступна)",

@@ -938,9 +938,9 @@ export const RENDERER_API_CONTRACT = Object.freeze({
   'compute.deletionStatus': callable<
     (request: DeleteComputeHostRequest) => Promise<ComputeHostDeletionStatus>
   >()('compute', ['compute:deletion-status']),
-  'compute.detailsGet': callable<
-    (providerId: string) => Promise<{ doc: string; isSkeleton: boolean }>
-  >()('compute', ['compute:details:get']),
+  'compute.detailsGet': callable<(providerId: string) => Promise<{ doc: string }>>()('compute', [
+    'compute:details:get'
+  ]),
   'compute.detailsSave': callable<
     (providerId: string, text: string, oldText: string, author: DetailsAuthor) => Promise<void>
   >()('compute', ['compute:details:save']),

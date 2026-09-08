@@ -174,8 +174,9 @@ type ComputeHandlers = {
   sshConfigAliases: () => Promise<string[]>
   // Runs the probe bundle against the host and persists the result. Returns the ProbeResult.
   probe: (providerId: string) => Promise<ProbeResult>
-  // Details document: read (with skeleton synthesis) and save (replace with old_text guard).
-  detailsGet: (providerId: string) => Promise<{ doc: string; isSkeleton: boolean }>
+  // Persisted instructions only; resource observations are exposed on the host's probeResult.
+  // The read doc is the exact oldText baseline for a guarded replacement.
+  detailsGet: (providerId: string) => Promise<{ doc: string }>
   detailsSave: (
     providerId: string,
     text: string,
@@ -523,8 +524,8 @@ const createComputeHandlers = (
     sshConfigAliases: () => listSshAliases(),
     probe: (providerId) => service.probe(providerId),
     detailsGet: async (providerId) => {
-      const { doc, isSkeleton } = await service.getDetails(providerId)
-      return { doc, isSkeleton }
+      const { doc } = await service.getDetails(providerId)
+      return { doc }
     },
     detailsSave: (providerId, text, oldText, author) =>
       service.replaceDetails(providerId, { text, oldText, author }),
