@@ -171,7 +171,7 @@ type AcpRuntimeCompositionOptions = AcpRuntimeArtifacts & {
   sessionPersistenceCoordinator?: SessionRuntimeContextCommands & SessionMutation & SessionCatalog
   literatureReader?: Pick<LiteratureDocumentReader, 'readCurrent' | 'searchAttachment'>
   literatureAttachments?: Pick<LiteratureAttachmentAuthority, 'resolveVersion'>
-  literatureCatalog?: Pick<LiteratureCatalog, 'getMany' | 'search' | 'transact'>
+  literatureCatalog?: Pick<LiteratureCatalog, 'getMany' | 'searchForAgent' | 'transact'>
   literaturePdfAcquisition?: Pick<
     import('../literature/agent-pdf-acquisition').AgentPdfAcquisition,
     'acquire'
@@ -528,7 +528,7 @@ const createAcpRuntime = ({
                   const scope = request.scope ?? 'project'
                   const offset = request.offset ?? 0
                   const limit = request.limit ?? LITERATURE_LIBRARY_SEARCH_DEFAULT_LIMIT
-                  const page = await literatureCatalog.search({
+                  const page = await literatureCatalog.searchForAgent({
                     scope: 'library',
                     query: request.query,
                     ...(scope === 'items' ? { itemIds: [...(request.itemIds ?? [])] } : {}),

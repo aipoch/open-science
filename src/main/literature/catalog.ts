@@ -923,9 +923,21 @@ class LiteratureCatalog {
     })
   }
 
+  // The main-process agent adapter applies the existing MCP projection and output budget.
+  // This entry point is not exposed by the renderer/Web search command.
+  async searchForAgent(
+    request: LiteratureCatalogSearchRequest & { scope: 'library' }
+  ): Promise<LiteratureCatalogSearchPage> {
+    const client = await this.getClient()
+    return client.$transaction((transaction) => this.searchLibrary(request, transaction, false), {
+      timeout: 30_000
+    })
+  }
+
   private async searchLibrary(
     request: LiteratureCatalogSearchRequest,
-    client: Pick<LiteratureCatalogClient, 'literatureItem' | '$queryRaw'>
+    client: Pick<LiteratureCatalogClient, 'literatureItem' | '$queryRaw'>,
+    boundResponse = true
   ): Promise<LiteratureCatalogSearchPage> {
     const offset = Math.max(0, request.offset ?? 0)
     const limit = Math.min(100, Math.max(1, request.limit ?? 50))
@@ -1043,13 +1055,19 @@ class LiteratureCatalog {
         })
       : []
     const byId = new Map(rows.map((row) => [row.id, row]))
-    const page = boundedLiteraturePage(
-      ids.map(({ id, requestedId }) => ({ ...toItemView(byId.get(id)!), id: requestedId })),
-      0,
-      limit,
-      (row) =>
-        new ApplicationCommandError('command-failed', LITERATURE_OVERSIZED_REFERENCE + row.id)
-    )
+    const entries = ids.map(({ id, requestedId }) => ({
+      ...toItemView(byId.get(id)!),
+      id: requestedId
+    }))
+    const page = boundResponse
+      ? boundedLiteraturePage(
+          entries,
+          0,
+          limit,
+          (row) =>
+            new ApplicationCommandError('command-failed', LITERATURE_OVERSIZED_REFERENCE + row.id)
+        )
+      : { entries }
     return {
       entries: page.entries,
       totalCount,

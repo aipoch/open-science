@@ -826,7 +826,8 @@ it('recognizes its committed metadata after replaying the pre-commit checkpoint'
   await vi.waitFor(async () => expect((await state(jobs, jobId)).state).toBe('review'))
   await jobs.run({ action: 'apply', jobId, selections: [{ itemId: created.id }] })
   await vi.waitFor(async () => expect((await state(jobs, jobId)).state).toBe('completed'))
-  expect((await state(jobs, jobId)).rows[0]).toMatchObject({ status: 'done', message: undefined })
+  expect((await state(jobs, jobId)).rows[0].status).toBe('done')
+  expect((await state(jobs, jobId)).rows[0].message).toBeUndefined()
   await jobs.close()
   const committed = (await catalog.get(created.id))!
   expect(committed.item.containerTitle).toBe('Committed journal')
@@ -966,3 +967,84 @@ it.each(['metadata', 'full-text'] as const)(
     expect((await reopened.run(request)).jobs).toEqual([before])
   }
 )
+it.each(['review', 'apply'] as const)(
+  'handles a first-page %s without reading unrelated later payloads',
+  async (action) => {
+    const { jobs, options, path, metadata } = await setup()
+    metadata.mockImplementation(async ({ itemId }) => ({
+      ...preview(itemId),
+      filled: [{ field: 'journal', value: 'P'.repeat(6 * 1024 * 1024) }]
+    }))
+    const jobId = randomUUID()
+    await jobs.run({
+      action: 'create',
+      mode: 'metadata',
+      itemIds: ['a', 'b', 'c'],
+      requestId: jobId
+    })
+    await vi.waitFor(
+      async () => expect((await jobs.run({ action: 'list' })).summaries?.[0].state).toBe('review'),
+      { timeout: 5000 }
+    )
+    await jobs.close()
+    const directory = join(`${path}.d`, jobId)
+    const header = JSON.parse(await readFile(join(directory, 'task.json'), 'utf8'))
+    await rm(join(directory, 'payloads', `${header.rows[2].payload}.json`))
+    const reopened = new LiteratureBatchJobs(options)
+    cleanup.push(() => reopened.close())
+    const result = await reopened.run(
+      action === 'review'
+        ? {
+            action,
+            jobId,
+            selections: [{ itemId: 'a', checked: false }]
+          }
+        : { action, jobId, selections: [{ itemId: 'a' }] }
+    )
+    expect(result.jobs[0]).toMatchObject({
+      rowOffset: 0,
+      nextRowOffset: 1,
+      totalRows: 3,
+      rows: [{ id: 'a', metadata: { filled: [{ field: 'journal' }] } }]
+    })
+    expect(result.jobs[0].rows).toHaveLength(1)
+    await expect(reopened.run({ action: 'get', jobId, rowOffset: 2 })).rejects.toThrow()
+    if (action === 'apply')
+      await vi.waitFor(async () =>
+        expect((await reopened.run({ action: 'list' })).summaries?.[0]).toMatchObject({
+          state: 'completed',
+          done: 1
+        })
+      )
+    // A read must not leave large payloads cached on the durable control rows.
+    const committedHeader =
+      action === 'apply'
+        ? await vi.waitFor(async () => {
+            const value = JSON.parse(await readFile(join(directory, 'task.json'), 'utf8'))
+            expect(value.state).toBe('completed')
+            return value
+          })
+        : header
+    await rm(join(directory, 'payloads', `${committedHeader.rows[0].payload}.json`))
+    await expect(reopened.run({ action: 'get', jobId })).rejects.toThrow()
+  }
+)
+
+it('releases worker payloads after their durable checkpoint', async () => {
+  const { jobs, path } = await setup()
+  const jobId = randomUUID()
+  await jobs.run({ action: 'create', mode: 'metadata', itemIds: ['a'], requestId: jobId })
+  await vi.waitFor(async () =>
+    expect((await jobs.run({ action: 'list' })).summaries?.[0].state).toBe('review')
+  )
+  const header = await vi.waitFor(async () => {
+    const value = JSON.parse(await readFile(join(`${path}.d`, jobId, 'task.json'), 'utf8'))
+    expect(value.state).toBe('review')
+    expect(value.rows[0].payload).toEqual(expect.any(String))
+    return value
+  })
+  await rm(join(`${path}.d`, jobId, 'payloads', `${header.rows[0].payload}.json`))
+  await expect(jobs.run({ action: 'get', jobId })).rejects.toThrow(
+    'checkpoint is missing or invalid'
+  )
+})

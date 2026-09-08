@@ -48,7 +48,7 @@ export class LiteratureBatchJobs {
 
   private load(): Promise<void> {
     return (this.loaded ??= (async () => {
-      this.jobs = await this.journal.load()
+      this.jobs = (await this.journal.load()).map((job) => this.journal.controlSnapshot(job))
       for (const job of this.jobs) {
         if (['queued', 'running', 'pausing'].includes(job.state)) job.state = 'paused'
         for (const row of job.rows) {
@@ -68,9 +68,9 @@ export class LiteratureBatchJobs {
     }))
   }
 
-  private save(job: LiteratureJob, payloadChanged = true): Promise<void> {
-    const snapshot = structuredClone(job)
-    const write = (): Promise<void> => this.journal.save(snapshot, payloadChanged)
+  private save(job: LiteratureJob, resetReview = false): Promise<void> {
+    const snapshot = this.journal.controlSnapshot(job)
+    const write = (): Promise<void> => this.journal.save(snapshot, false, resetReview)
     this.writes = this.writes.then(write, write)
     return this.writes
   }
@@ -241,8 +241,7 @@ export class LiteratureBatchJobs {
       if (snapshot && download) snapshot.progress = download
       return { jobs: snapshot ? [snapshot] : [], progress: download }
     }
-    if (request.action !== 'remove') await this.journal.hydrate(publishedJob)
-    const job = structuredClone(publishedJob)
+    const job = this.journal.controlSnapshot(publishedJob)
     if (request.action === 'review') {
       for (const selection of request.selections) {
         const row = job.rows.find((row) => row.id === selection.itemId)
@@ -251,7 +250,9 @@ export class LiteratureBatchJobs {
           row.status !== 'ready' ||
           (job.phase === 'apply' && ['running', 'pausing'].includes(job.state)) ||
           (selection.candidateId &&
-            !row.candidates?.some((candidate) => candidate.id === selection.candidateId))
+            !(await this.journal.readRow(publishedJob, row)).candidates?.some(
+              (candidate) => candidate.id === selection.candidateId
+            ))
         )
           throw new Error('Review the current task results before changing selections.')
       }
@@ -276,7 +277,9 @@ export class LiteratureBatchJobs {
             !row ||
             row.status !== 'ready' ||
             (job.mode === 'full-text' &&
-              !row.candidates?.some(({ id }) => id === selection.candidateId))
+              !(await this.journal.readRow(publishedJob, row)).candidates?.some(
+                ({ id }) => id === selection.candidateId
+              ))
           )
             throw new Error('Review the current task results before applying.')
         }
@@ -338,7 +341,7 @@ export class LiteratureBatchJobs {
       publishedJob.updatedAt = Math.max(publishedJob.updatedAt, job.updatedAt)
     }
     await this.kick()
-    return { jobs: request.action === 'remove' ? [] : [this.snapshot(publishedJob)] }
+    return { jobs: request.action === 'remove' ? [] : [await this.readSnapshot(publishedJob)] }
   }
 
   private currentJobId?: string
@@ -387,7 +390,6 @@ export class LiteratureBatchJobs {
       if (this.closed) break
       const job = [...this.jobs].reverse().find(({ state }) => state === 'running')
       if (!job) break
-      await this.journal.hydrate(job)
       this.currentJobId = job.id
       job.updatedAt = Math.max(Date.now(), job.updatedAt + 1)
       for (const row of job.rows) {
@@ -397,6 +399,7 @@ export class LiteratureBatchJobs {
           job.phase === 'search' ? row.status !== 'pending' : row.status !== 'ready' || !row.checked
         )
           continue
+        await this.journal.hydrate(job, [row])
         row.status = job.phase === 'search' ? 'searching' : 'saving'
         row.message = undefined
         job.updatedAt = Math.max(Date.now(), job.updatedAt + 1)
@@ -420,6 +423,7 @@ export class LiteratureBatchJobs {
         const write = (): Promise<void> => this.journal.saveRow(job, row)
         this.writes = this.writes.then(write, write)
         await this.writes
+        this.journal.release(row)
         if (job.state === 'running' && !this.closed && !isMigrationPending())
           await new Promise((resolve) => setTimeout(resolve, this.options.spacingMs ?? 350))
       }
@@ -439,7 +443,7 @@ export class LiteratureBatchJobs {
       }
       job.updatedAt = Math.max(Date.now(), job.updatedAt + 1)
       this.currentJobId = undefined
-      await this.save(job, false)
+      await this.save(job)
     }
   }
 

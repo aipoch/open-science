@@ -166,6 +166,26 @@ export class LiteratureBatchJobJournal {
     if (!this.hydrated.has(row)) await this.hydrate(job, [copy])
     return copy
   }
+  controlSnapshot(job: LiteratureJob): LiteratureJob {
+    const { rows, ...fields } = job
+    return {
+      ...structuredClone(fields),
+      rows: rows.map(({ id, status, checked, candidateId }) => ({
+        id,
+        status,
+        checked,
+        candidateId
+      }))
+    }
+  }
+  release(row: LiteratureJobRow): void {
+    delete row.item
+    delete row.metadata
+    delete row.candidates
+    delete row.message
+    delete row.notices
+    this.hydrated.delete(row)
+  }
   private async control(
     jobId: string,
     row: LiteratureJobRow,
@@ -184,11 +204,26 @@ export class LiteratureBatchJobJournal {
     }
     return { id, status, checked, candidateId, payload: digest }
   }
-  async save(job: LiteratureJob, payloadChanged = true): Promise<void> {
+  async save(job: LiteratureJob, payloadChanged = true, resetReview = false): Promise<void> {
     const previous = this.records.get(job.id)
     const rows: Control[] = []
     for (let index = 0; index < job.rows.length; index++) {
-      rows.push(await this.control(job.id, job.rows[index], previous?.rows[index], payloadChanged))
+      let row = job.rows[index]
+      const reset = resetReview && row.status !== 'done'
+      if (reset) {
+        // Retry keeps the item snapshot but discards the previous review. Read and rewrite
+        // one immutable payload at a time; unchanged completed rows keep their digest.
+        const { item } = await this.readRow(job, row)
+        row = {
+          ...row,
+          item,
+          metadata: undefined,
+          candidates: undefined,
+          message: undefined,
+          notices: undefined
+        }
+      }
+      rows.push(await this.control(job.id, row, previous?.rows[index], reset || payloadChanged))
     }
     const epoch = randomUUID()
     await mkdir(this.directory(job.id), { recursive: true })

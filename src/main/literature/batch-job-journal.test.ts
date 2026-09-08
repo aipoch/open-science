@@ -164,3 +164,45 @@ it('prunes obsolete payloads only after publishing a replacement checkpoint', as
   await reopened.hydrate(restored)
   expect(restored.rows[0].item!.item.abstract).toBe('Replacement abstract')
 })
+
+it('retries reviews atomically while retaining completed payloads and item snapshots', async () => {
+  const { path, job } = await fixture()
+  job.rows[0].status = 'ready'
+  job.rows[0].metadata = {
+    mode: 'preview',
+    reviewVersion: 1,
+    provider: 'crossref',
+    sourceUrl: 'https://crossref.org',
+    item: job.rows[0].item!,
+    filled: [{ field: 'title', value: 'new title' }],
+    conflicts: []
+  }
+  job.rows.push({ ...structuredClone(job.rows[0]), id: 'done', status: 'done' })
+  const journal = new LiteratureBatchJobJournal(path)
+  await journal.save(job)
+  await journal.saveIndex([job])
+  const headerPath = join(`${path}.d`, job.id, 'task.json')
+  const before = JSON.parse(await readFile(headerPath, 'utf8'))
+  const reopened = new LiteratureBatchJobJournal(path)
+  const [draft] = await reopened.load()
+  draft.rows[0].status = 'pending'
+  const write = durable.writeDurableJsonFile
+  const spy = vi
+    .spyOn(durable, 'writeDurableJsonFile')
+    .mockImplementation(async (target, ...args) => {
+      if (target === headerPath) throw new Error('header unavailable')
+      return write(target, ...args)
+    })
+  await expect(reopened.save(draft, false, true)).rejects.toThrow('header unavailable')
+  expect(JSON.parse(await readFile(headerPath, 'utf8'))).toEqual(before)
+  spy.mockRestore()
+  await reopened.save(draft, false, true)
+  const after = JSON.parse(await readFile(headerPath, 'utf8'))
+  expect(after.rows[1].payload).toBe(before.rows[1].payload)
+  const finalJournal = new LiteratureBatchJobJournal(path)
+  const [restored] = await finalJournal.load()
+  await finalJournal.hydrate(restored)
+  expect(restored.rows[0].item).toEqual(job.rows[0].item)
+  expect(restored.rows[0].metadata).toBeUndefined()
+  expect(restored.rows[1]).toEqual(job.rows[1])
+})

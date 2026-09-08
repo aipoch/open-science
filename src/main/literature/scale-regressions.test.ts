@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, expect, it, vi } from 'vitest'
@@ -21,7 +21,7 @@ vi.mock('electron', () => ({
   protocol: { handle: vi.fn(), unhandle: vi.fn() },
   net: { fetch: vi.fn() }
 }))
-// Observe the existing durable-write boundary, without writing gigabytes to disk.
+// Observe bytes at the durable-write boundary; atomic recovery is covered by the journal suite.
 vi.mock('../storage/durable-json-file', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../storage/durable-json-file')>()),
   writeDurableJsonFile: vi.fn(async () => undefined)
@@ -151,7 +151,9 @@ async function completedJob(count: number): Promise<{
   vi.mocked(writeDurableJsonFile).mockClear()
   let bytes = 0
   let calls = 0
-  vi.mocked(writeDurableJsonFile).mockImplementation(async (_path, contents) => {
+  vi.mocked(writeDurableJsonFile).mockImplementation(async (target, contents) => {
+    // Lazy readers use real fixture files; omit fsync here, not the written checkpoint data.
+    await writeFile(target, contents)
     bytes += Buffer.byteLength(contents)
     calls++
     vi.mocked(writeDurableJsonFile).mockClear()
@@ -174,7 +176,6 @@ async function completedJob(count: number): Promise<{
   // close drains the final durable checkpoint before measuring.
   await jobs.close()
   const measured = { bytes, calls }
-  // Reopen is intentionally not exercised: this fixture observes writes, it does not persist them.
   return { measured, result }
 }
 
