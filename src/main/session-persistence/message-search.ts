@@ -80,16 +80,30 @@ export const createMessageSearch = (backend: SearchBackend) => {
                     continue
                   }
                   if (session.archivedAt !== undefined) continue
+                  const turnHits = new Map<string, { item: MessageSearchItem; rank: number }>()
                   for (const message of session.messages) {
                     if (isHiddenControlMessage(message) || !message.content?.trim()) continue
                     const createdAt = message.createdAt ?? summary.updatedAt
                     if (request.role && message.role !== request.role) continue
                     if (request.updatedAfter !== undefined && createdAt < request.updatedAfter)
                       continue
-                    const hit = request.query.trim()
-                      ? findSearchMatches(message.content, request.query, 1)[0]
-                      : undefined
+                    const matches = findSearchMatches(message.content, request.query, 3)
+                    const hit = matches[0]
                     if (request.query.trim() && !hit) continue
+                    // Only an explicit turn link can combine fragments. Keep the winning Message's
+                    // identity and content together so previews still jump to the actual match.
+                    const turnKey =
+                      message.role === 'agent' && message.responseToMessageId
+                        ? `turn:${message.responseToMessageId}`
+                        : `message:${message.id}`
+                    const previous = turnHits.get(turnKey)
+                    const rank = matches.length
+                    if (
+                      previous &&
+                      (previous.rank > rank ||
+                        (previous.rank === rank && previous.item.createdAt > createdAt))
+                    )
+                      continue
                     const start = Math.max(0, (hit?.start ?? 0) - 4000)
                     const item: MessageSearchItem = {
                       projectId: summary.projectId,
@@ -102,9 +116,11 @@ export const createMessageSearch = (backend: SearchBackend) => {
                       content: message.content.slice(start, Math.max(hit?.end ?? 0, start) + 4000),
                       createdAt
                     }
+                    turnHits.set(turnKey, { item, rank })
+                  }
+                  for (const { item, rank } of turnHits.values()) {
                     items.push(item)
-                    if (request.sort === 'relevance')
-                      ranks.set(item, findSearchMatches(message.content, request.query, 3).length)
+                    if (request.sort === 'relevance') ranks.set(item, rank)
                   }
                 } catch {
                   isComplete = false

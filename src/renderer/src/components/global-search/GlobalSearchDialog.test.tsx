@@ -9,6 +9,7 @@ import { usePreviewWorkbenchStore } from '@/stores/preview-workbench-store'
 import { useSearchMessageFocusStore } from '@/stores/search-message-focus-store'
 import { previewLeaveGuards } from '@/stores/preview-leave-guard'
 import type { PersistedChatSession } from '../../../../shared/session-persistence'
+import { createMessageSearch } from '../../../../main/session-persistence/message-search'
 import {
   artifact,
   upload,
@@ -73,6 +74,87 @@ const selectFilter = async (name: string, option: string): Promise<void> => {
 }
 
 describe('GlobalSearchDialog', () => {
+  it.each([
+    ['sin', 'answer'],
+    ['Checking', 'progress']
+  ])(
+    'pages grouped turn matches for %s and jumps to the selected fragment',
+    async (query, target) => {
+      const session = {
+        ...makeSession(0),
+        contentLoaded: undefined,
+        messages: Array.from({ length: 12 }, (_, index) => {
+          const promptId = `prompt-${index}`
+          return [
+            { id: promptId, role: 'user' as const, content: `Question ${index}` },
+            {
+              id: `progress-${index}`,
+              role: 'agent' as const,
+              responseToMessageId: promptId,
+              content: `Checking sin sources ${index}`
+            },
+            {
+              id: `answer-${index}`,
+              role: 'agent' as const,
+              responseToMessageId: promptId,
+              content: `Answer ${index}\n\nsin evidence and sin conclusion ${index}`
+            }
+          ].map((message, part) => ({
+            ...message,
+            status: 'complete' as const,
+            eventIds: [],
+            createdAt: index * 3 + part,
+            updatedAt: index * 3 + part
+          }))
+        }).flat()
+      }
+      useSessionStore.setState({ sessions: [session] })
+      vi.mocked(window.api.sessions.searchMessages).mockImplementation(
+        createMessageSearch({
+          list: async () => ({
+            sessions: [
+              {
+                ...session,
+                number: 12,
+                pinned: false,
+                revision: 1,
+                artifactCount: 0,
+                filesRevision: 0,
+                activeMessageCount: session.messages.length,
+                presentedStatus: session.status,
+                needsStartupRecovery: false
+              }
+            ]
+          }),
+          loadOne: async () => session
+        })
+      )
+      await renderSearch()
+      await search(query)
+      expect(rows('messages')).toHaveLength(10)
+      act(() => button('Load more10/12').click())
+      await waitFor(() => expect(rows('messages')).toHaveLength(12))
+      expect(new Set(rows('messages').map((row) => row.textContent)).size).toBe(12)
+      clickRow('messages')
+      const expectedContent =
+        target === 'answer' ? 'sin evidence and sin conclusion 11' : 'Checking sin sources 11'
+      await waitFor(() =>
+        expect(detail().querySelector('.search-message-content')?.textContent).toContain(
+          expectedContent
+        )
+      )
+      act(() => button('Jump to message').click())
+      await waitFor(() =>
+        expect(useSearchMessageFocusStore.getState().pending).toMatchObject({
+          projectId: session.projectId,
+          sessionId: session.id,
+          messageId: `${target}-11`
+        })
+      )
+      expect(onClose).toHaveBeenCalledWith(false)
+    }
+  )
+
   it('keeps a body match pinned to the searched file Version', async () => {
     vi.mocked(window.api.projectFiles.searchArtifacts).mockResolvedValue({
       primary: {
