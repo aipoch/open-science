@@ -8930,6 +8930,89 @@ describe('LiteratureLibraryPage', () => {
       }
     )
 
+    it.each(
+      ['notification', 'focus', 'reconnect'].flatMap((trigger) =>
+        [false, true].map((editing) => ({ trigger, editing }))
+      )
+    )(
+      'handles an externally removed reference after $trigger without discarding a draft (editing: $editing)',
+      async ({ trigger, editing }) => {
+        await showLibrary()
+        await openReferenceDetail(screen.getByText(libraryItem.item.title))
+        if (editing) {
+          await editDetail()
+          fireEvent.change(screen.getByLabelText('Title'), {
+            target: { value: 'Keep this unsaved title' }
+          })
+        }
+        get.mockResolvedValue(undefined)
+        search.mockResolvedValue({ entries: [], totalCount: 0 })
+        await act(async () => {
+          if (trigger === 'notification')
+            vi.mocked(window.api.literature.onChanged).mock.calls.forEach(([listener]) =>
+              listener({ revision: 1, itemIds: [libraryItem.id] })
+            )
+          else
+            window.dispatchEvent(
+              new Event(trigger === 'focus' ? 'focus' : 'open-science:web-events-open')
+            )
+        })
+        await (editing ? within(screen.getByRole('dialog')) : screen).findByText(
+          'This reference is no longer in your Library.'
+        )
+        if (editing) {
+          expect(
+            (screen.getByRole('button', { name: 'Save', exact: true }) as HTMLButtonElement)
+              .disabled
+          ).toBe(true)
+          expect((screen.getByLabelText('Title') as HTMLInputElement).value).toBe(
+            'Keep this unsaved title'
+          )
+        } else {
+          await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+        }
+        expect(transact).not.toHaveBeenCalled()
+      }
+    )
+
+    it.each(['edit', 'reopen'] as const)(
+      'does not let a pending removal read discard a later %s',
+      async (interaction) => {
+        await showLibrary()
+        await openReferenceDetail(screen.getByText(libraryItem.item.title))
+        const removal = deferred<LiteratureItemView | undefined>()
+        get.mockReturnValueOnce(removal.promise)
+        await act(async () => {
+          vi.mocked(window.api.literature.onChanged).mock.calls.forEach(([listener]) =>
+            listener({ revision: 1, itemIds: [libraryItem.id] })
+          )
+        })
+        if (interaction === 'edit') {
+          await editDetail()
+          fireEvent.change(screen.getByLabelText('Title'), {
+            target: { value: 'Started editing during refresh' }
+          })
+        } else {
+          closeDetail()
+          get.mockResolvedValue({
+            ...version(1, 'Different reference'),
+            id: 'different-reference'
+          })
+          act(() => useNavigationStore.getState().openLiteratureItem('different-reference', 'user'))
+          await screen.findByRole('heading', { name: 'Different reference' })
+        }
+        await act(async () => removal.resolve(undefined))
+        if (interaction === 'edit') {
+          expect((screen.getByLabelText('Title') as HTMLInputElement).value).toBe(
+            'Started editing during refresh'
+          )
+        } else {
+          expect(screen.getByRole('heading', { name: 'Different reference' })).not.toBeNull()
+          expect(screen.queryByText('This reference is no longer in your Library.')).toBeNull()
+        }
+      }
+    )
+
     it('keeps a reopened reference newer than an earlier save readback', async () => {
       await showLibrary()
       await openReferenceDetail(screen.getByText(libraryItem.item.title))

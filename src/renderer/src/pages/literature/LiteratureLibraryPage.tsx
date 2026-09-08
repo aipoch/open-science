@@ -1560,6 +1560,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
           (document.activeElement instanceof HTMLElement ? document.activeElement : null)
       }
       detailInteractionRef.current += 1
+      setError(undefined)
       detailController.open(item)
     },
     [detailController]
@@ -1947,6 +1948,10 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
   }
   const metadata = useLiteratureMetadata(detailController, updateMetadataItem)
   const { changeMode: changeDetailMode } = metadata
+  const detailModeRef = useRef(metadata.mode)
+  useLayoutEffect(() => {
+    detailModeRef.current = metadata.mode
+  }, [metadata.mode])
 
   const closeSelectedItemDetail = useCallback((): void => {
     if (addingPdfRef.current) return
@@ -1962,35 +1967,6 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
       setCollectionLinkError(undefined)
     })
   }, [changeDetailMode, detailController])
-
-  useEffect(() => {
-    let request = 0
-    const refreshOpenDetail = (): void => {
-      const snapshot = detailController.getSnapshot()
-      if (!snapshot.open || !snapshot.item) return
-      const currentRequest = ++request
-      void window.api.literature.get(snapshot.item.id).then(
-        (item) => {
-          if (
-            currentRequest !== request ||
-            detailController.getSnapshot().generation !== snapshot.generation
-          )
-            return
-          if (!item || item.id !== snapshot.item?.id || item.deletedAt !== undefined) {
-            setPreviewItem(undefined)
-            closeSelectedItemDetail()
-            void reloadEntries(true, true)
-          }
-        },
-        () => undefined
-      )
-    }
-    window.addEventListener('focus', refreshOpenDetail)
-    return () => {
-      request += 1
-      window.removeEventListener('focus', refreshOpenDetail)
-    }
-  }, [closeSelectedItemDetail, detailController, reloadEntries])
 
   const appliedTagRevision = useRef(tagRevision)
   useEffect(() => {
@@ -2033,11 +2009,18 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
       loadInboxPendingCount(),
       loadProjectCounts(),
       (async () => {
-        const { item } = detailController.getSnapshot()
-        if (!item) return
-        const latest = await detailController.read(item.id)
-        if (latest) detailController.replace(latest)
-        else setError(t('This reference is no longer in your Library.'))
+        const snapshot = detailController.getSnapshot()
+        if (!snapshot.open || !snapshot.item) return
+        const latest = await detailController.read(snapshot.item.id)
+        if (detailController.getSnapshot().generation !== snapshot.generation) return
+        if (!latest || latest.id !== snapshot.item.id || latest.deletedAt !== undefined) {
+          // Read the current mode after awaiting: an edit may have started during the refresh.
+          if (detailModeRef.current === 'view') {
+            setPreviewItem(undefined)
+            closeSelectedItemDetail()
+          }
+          setError(t('This reference is no longer in your Library.'))
+        } else detailController.replace(latest)
       })()
     ]).catch(() => setError(t('Literature could not be loaded.')))
   })
@@ -6014,11 +5997,16 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
                         key={`${selectedItem.id}:${metadata.editBase?.metadataRevision}`}
                         item={metadata.editBase?.item ?? selectedItem.item}
                         saving={metadata.saving || metadata.awaitingReload}
-                        saveDisabled={metadata.externallyUpdated()}
+                        saveDisabled={
+                          metadata.externallyUpdated() ||
+                          error === t('This reference is no longer in your Library.')
+                        }
                         error={
-                          metadata.awaitingReload || metadata.externallyUpdated()
-                            ? undefined
-                            : metadata.error
+                          error === t('This reference is no longer in your Library.')
+                            ? error
+                            : metadata.awaitingReload || metadata.externallyUpdated()
+                              ? undefined
+                              : metadata.error
                         }
                         className="min-h-0 flex-1 max-h-none"
                         onCancel={() => changeDetailMode('view')}
