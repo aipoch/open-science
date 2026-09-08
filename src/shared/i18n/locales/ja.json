@@ -4782,6 +4782,16 @@
     "Saving stopped. Completed results are kept.": "保存を停止しました。完了した結果は保持されます。",
     "Could not save reference {{number}}. Earlier results are kept.": "文献 {{number}} を保存できませんでした。それまでの結果は保持されます。",
     "Open Inbox": "受信トレイを開く",
-    "Open existing reference {{number}}": "既存の文献 {{number}} を開く"
+    "Open existing reference {{number}}": "既存の文献 {{number}} を開く",
+    "The selected file is not valid CSL XML.": "選択したファイルは有効な CSL XML ではありません。",
+    "CSL files with a document type declaration are not supported.": "文書型宣言を含む CSL ファイルには対応していません。",
+    "The selected file must be an independent CSL 1.0 style.": "独立した CSL 1.0 スタイルのファイルを選択してください。",
+    "The CSL style must include a title and an id.": "CSL スタイルにはタイトルと ID が必要です。",
+    "Dependent CSL styles are not supported yet. Import an independent style.": "従属 CSL スタイルにはまだ対応していません。独立したスタイルをインポートしてください。",
+    "Open Science requires CSL styles with both citation and bibliography sections.": "Open Science では、引用と参考文献の両方のセクションを含む CSL スタイルが必要です。",
+    "The CSL style references an undefined macro: {{macro}}": "CSL スタイルが未定義のマクロを参照しています：{{macro}}",
+    "Citation styles could not be loaded. Please try again.": "引用スタイルを読み込めませんでした。再試行してください。",
+    "The CSL style could not be imported. Please try again.": "CSL スタイルをインポートできませんでした。再試行してください。",
+    "The CSL style could not be deleted. Please try again.": "CSL スタイルを削除できませんでした。再試行してください。"
   }
 }

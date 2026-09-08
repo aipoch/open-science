@@ -1,6 +1,6 @@
 import { flushSync } from 'react-dom'
 import {
-  ApplicationCommandError,
+  unwrapApplicationCommandOutcome,
   isApplicationCommandErrorCode
 } from '../../shared/application-command-contract'
 import {
@@ -270,7 +270,7 @@ const invoke = async (channel: string, args: unknown[]): Promise<unknown> => {
   }
   if (!payload.ok) {
     if (isApplicationCommandErrorCode(payload.error.code)) {
-      throw new ApplicationCommandError(payload.error.code, payload.error.message)
+      return unwrapApplicationCommandOutcome(payload)
     }
     throw responseError(response, body, payload.error.message)
   }

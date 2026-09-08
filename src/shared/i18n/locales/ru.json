@@ -5228,6 +5228,16 @@
     "Saving stopped. Completed results are kept.": "Сохранение остановлено. Завершённые результаты сохранены.",
     "Could not save reference {{number}}. Earlier results are kept.": "Не удалось сохранить источник {{number}}. Предыдущие результаты сохранены.",
     "Open Inbox": "Открыть входящие",
-    "Open existing reference {{number}}": "Открыть существующий источник {{number}}"
+    "Open existing reference {{number}}": "Открыть существующий источник {{number}}",
+    "The selected file is not valid CSL XML.": "Выбранный файл не является корректным XML-файлом CSL.",
+    "CSL files with a document type declaration are not supported.": "Файлы CSL с объявлением типа документа не поддерживаются.",
+    "The selected file must be an independent CSL 1.0 style.": "Выбранный файл должен содержать независимый стиль CSL 1.0.",
+    "The CSL style must include a title and an id.": "Стиль CSL должен содержать название и идентификатор.",
+    "Dependent CSL styles are not supported yet. Import an independent style.": "Зависимые стили CSL пока не поддерживаются. Импортируйте независимый стиль.",
+    "Open Science requires CSL styles with both citation and bibliography sections.": "Open Science требует наличия в стилях CSL разделов цитирования и библиографии.",
+    "The CSL style references an undefined macro: {{macro}}": "Стиль CSL ссылается на неопределённый макрос: {{macro}}",
+    "Citation styles could not be loaded. Please try again.": "Не удалось загрузить стили цитирования. Повторите попытку.",
+    "The CSL style could not be imported. Please try again.": "Не удалось импортировать стиль CSL. Повторите попытку.",
+    "The CSL style could not be deleted. Please try again.": "Не удалось удалить стиль CSL. Повторите попытку."
   }
 }

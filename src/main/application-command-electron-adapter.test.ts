@@ -145,3 +145,26 @@ describe('Electron Application Command adapter', () => {
     expect(handlers).toEqual(new Map())
   })
 })
+
+it('preserves CSL validation parameters through the Electron command adapter', async () => {
+  registerApplicationCommandElectronAdapter(
+    dispatcher(
+      vi.fn().mockRejectedValue(
+        new ApplicationCommandError('csl-undefined-macro', 'Undefined macro', {
+          macro: 'author-原名'
+        })
+      )
+    ),
+    { warn }
+  )
+  await expect(
+    handlers.get('literature:citation-styles')?.(eventWithLease(), { kind: 'import', content: '<' })
+  ).resolves.toEqual({
+    ok: false,
+    error: {
+      code: 'csl-undefined-macro',
+      message: 'Undefined macro',
+      parameters: { macro: 'author-原名' }
+    }
+  })
+})

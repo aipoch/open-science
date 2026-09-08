@@ -194,6 +194,27 @@ describe('electron renderer contract adapter', () => {
     })
   })
 
+  it.each([
+    { code: 'csl-invalid-xml', message: 'Invalid XML.' },
+    {
+      code: 'csl-undefined-macro',
+      message: 'Undefined macro.',
+      parameters: { macro: 'author-原名' }
+    }
+  ])('preserves $code as a serializable rejection for contextBridge', async (error) => {
+    const port = createPort()
+    port.invoke.mockResolvedValue({ ok: false, error })
+    const adapter = createElectronRendererContractAdapter(port)
+
+    const failure = await adapter
+      .invoke('literature.citationStyles', { kind: 'import', content: '<' })
+      .catch((cause: unknown) => cause)
+
+    expect(failure).not.toBeInstanceOf(Error)
+    expect(failure).toEqual(error)
+    expect(JSON.parse(JSON.stringify(failure))).toEqual(error)
+  })
+
   it('rejects surface-native methods from the IPC request path', async () => {
     const port = createPort()
     const adapter = createElectronRendererContractAdapter(port)
