@@ -973,7 +973,7 @@ function LiteratureNoteControl({
       cancelNextBlurRef.current = false
       return
     }
-    if (savingRef.current) return
+    if (disabled || savingRef.current) return
     const note = draft.trim()
     if (!recoveryRef.current && note === (base.item.personalNote ?? '')) {
       setEdit(undefined)
@@ -1049,7 +1049,7 @@ function LiteratureNoteControl({
           <button
             type="button"
             className="shrink-0 underline"
-            disabled={isSaving}
+            disabled={isSaving || disabled}
             onMouseDown={(event) => event.preventDefault()}
             onClick={() => void commitNote()}
           >

@@ -4385,6 +4385,57 @@ describe('LiteratureLibraryPage', () => {
     }
   )
 
+  it('does not retry a preserved failed note after returning to a cached Trash row', async () => {
+    localStorage.setItem(
+      'open-science:literature-table-preferences',
+      JSON.stringify({ visible: ['notes'] })
+    )
+    search.mockImplementation((request) =>
+      Promise.resolve({
+        entries:
+          request.scope === 'library'
+            ? [{ ...libraryItem, deletedAt: request.lifecycle === 'deleted' ? 2 : undefined }]
+            : []
+      })
+    )
+    render(<LiteratureLibraryPage />)
+    // Another window restores the reference after this first Trash read, then trashes it
+    // again after the failed edit. The prior Trash page remains cached under the same ID.
+    fireEvent.click(screen.getByRole('button', { name: 'Trash' }))
+    await screen.findByText(libraryItem.item.title)
+    fireEvent.click(screen.getByRole('button', { name: 'All references' }))
+    const note = await screen.findByRole('textbox', { name: `Note for ${libraryItem.item.title}` })
+    await waitFor(() => expect((note as HTMLInputElement).readOnly).toBe(false))
+    transact.mockRejectedValueOnce(new Error('Controlled note save failure'))
+    fireEvent.focus(note)
+    fireEvent.change(note, { target: { value: 'Preserved failed draft' } })
+    fireEvent.blur(note)
+    await screen.findByText('Draft preserved. Escape to discard.')
+    expect(transact).toHaveBeenCalledTimes(1)
+    fireEvent.click(screen.getByRole('button', { name: 'Trash' }))
+    const trashNote = await screen.findByRole('textbox', {
+      name: `Note for ${libraryItem.item.title}`
+    })
+    expect((trashNote as HTMLInputElement).readOnly).toBe(true)
+    const retry = within(trashNote.closest('td')!).getByRole('button', { name: 'Retry' })
+    fireEvent.click(retry)
+    expect(transact).toHaveBeenCalledTimes(1)
+    expect((retry as HTMLButtonElement).disabled).toBe(true)
+    fireEvent.click(screen.getByRole('button', { name: 'All references' }))
+    const restoredRetry = within(
+      (await screen.findByRole('textbox', { name: `Note for ${libraryItem.item.title}` })).closest(
+        'td'
+      )!
+    ).getByRole('button', { name: 'Retry' })
+    await waitFor(() => expect((restoredRetry as HTMLButtonElement).disabled).toBe(false))
+    fireEvent.click(restoredRetry)
+    await waitFor(() => expect(transact).toHaveBeenCalledTimes(2))
+    expect(transact.mock.calls[1][0]).toMatchObject({
+      kind: 'update-item',
+      item: { personalNote: 'Preserved failed draft' }
+    })
+  })
+
   it('retries a failed note without losing text and adopts the next clean snapshot', async () => {
     window.localStorage.setItem(
       'open-science:literature-table-preferences',
