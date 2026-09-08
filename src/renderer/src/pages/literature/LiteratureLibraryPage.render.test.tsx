@@ -2138,6 +2138,60 @@ describe('LiteratureLibraryPage', () => {
     expect(screen.getByRole('dialog')).toBe(dialog)
   })
 
+  it.each(['pending', 'failed'] as const)(
+    'reopens a saved Collection with its committed revision while directory reload is %s',
+    async (reload) => {
+      let collection = {
+        id: 'collection-1',
+        name: 'Screening',
+        description: 'Original description',
+        revision: 1,
+        itemCount: 0,
+        createdAt: 1,
+        updatedAt: 1
+      }
+      search.mockImplementation((request: { scope: string }) => {
+        if (request.scope === 'collections') {
+          if (collection.revision > 1) {
+            return reload === 'failed'
+              ? Promise.reject(new Error('Directory unavailable'))
+              : new Promise(() => {})
+          }
+          return Promise.resolve({ entries: [{ ...collection }], totalCount: 1 })
+        }
+        return Promise.resolve(request.scope === 'inbox' ? inboxPage : { entries: [] })
+      })
+      transact.mockImplementation(
+        (command: { expectedRevision?: number; name?: string; description?: string }) => {
+          if (command.expectedRevision !== collection.revision)
+            return Promise.reject(new Error('literature_collection_revision_conflict'))
+          collection = {
+            ...collection,
+            name: command.name ?? collection.name,
+            description: command.description ?? collection.description,
+            revision: collection.revision + 1
+          }
+          return Promise.resolve({ kind: 'collection', id: collection.id })
+        }
+      )
+      render(<LiteratureLibraryPage />)
+      fireEvent.click(await screen.findByRole('button', { name: collection.name }))
+      for (const description of ['First saved description', 'Second saved description']) {
+        await openMenu(screen.getByRole('button', { name: 'Collection actions' }))
+        fireEvent.click(screen.getByRole('menuitem', { name: 'Edit collection' }))
+        const dialog = await screen.findByRole('dialog')
+        fireEvent.change(within(dialog).getByLabelText('Description'), {
+          target: { value: description }
+        })
+        fireEvent.click(within(dialog).getByRole('button', { name: 'Save changes' }))
+        await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+      }
+      expect(collection.revision).toBe(3)
+      expect(collection.description).toBe('Second saved description')
+      expect(transact.mock.calls.map(([command]) => command.expectedRevision)).toEqual([1, 2])
+    }
+  )
+
   it('creates and edits Collections with one shared name and description form', async () => {
     let collection:
       | {

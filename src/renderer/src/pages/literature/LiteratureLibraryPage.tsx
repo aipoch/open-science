@@ -6423,12 +6423,12 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
       </LiteratureDetailBoundary>
       <CollectionEditorDialog
         ref={collectionEditorRef}
-        onSaved={({ id, name, description }) => {
-          if (id) {
+        onSaved={({ id, revision, name, description }) => {
+          if (id && revision !== undefined) {
             setCollections((current) =>
               current.map((collection) =>
-                collection.id === id
-                  ? { ...collection, name, description, updatedAt: Date.now() }
+                collection.id === id && collection.revision <= revision
+                  ? { ...collection, revision, name, description, updatedAt: Date.now() }
                   : collection
               )
             )

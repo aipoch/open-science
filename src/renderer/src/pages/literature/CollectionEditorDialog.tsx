@@ -39,7 +39,12 @@ export type CollectionEditorDialogHandle = {
 }
 
 type CollectionEditorDialogProps = {
-  onSaved: (collection: { id?: string; name: string; description: string }) => void
+  onSaved: (collection: {
+    id?: string
+    revision?: number
+    name: string
+    description: string
+  }) => void
 }
 
 export const CollectionEditorDialog = forwardRef<
@@ -155,6 +160,8 @@ export const CollectionEditorDialog = forwardRef<
       setMode(undefined)
       onSaved({
         id: mode === 'edit' ? editingCollection?.id : undefined,
+        // A successful compare-and-swap increments the submitted revision exactly once.
+        revision: mode === 'edit' && editingCollection ? editingCollection.revision + 1 : undefined,
         name: trimmedName,
         description: trimmedDescription
       })
