@@ -2,7 +2,10 @@
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { LITERATURE_IMPORT_IDENTITY_CONFLICT } from '../../../../shared/literature'
+import {
+  LITERATURE_IMPORT_IDENTITY_CONFLICT,
+  literatureCatalogCommandSchema
+} from '../../../../shared/literature'
 import type {
   LiteratureCatalogSearchPage,
   LiteratureCatalogSearchRequest,
@@ -843,6 +846,457 @@ describe('LiteratureLibraryPage', () => {
         candidateIds: ['candidate-1']
       })
     )
+  })
+
+  describe('Inbox recovery', () => {
+    const mockInbox = (count: number): LiteratureInboxCandidateView[] => {
+      const first = inboxPage.entries[0] as LiteratureInboxCandidateView
+      const rows: LiteratureInboxCandidateView[] = Array.from({ length: count }, (_, index) => ({
+        ...first,
+        id: `candidate-${index + 1}`,
+        candidate: {
+          ...first.candidate,
+          item: { ...first.candidate.item, title: `Discovery ${index + 1}` }
+        }
+      }))
+      search.mockImplementation(async (request: LiteratureCatalogSearchRequest) => {
+        if (request.scope !== 'inbox') return { entries: [] }
+        const matching = rows.filter(
+          ({ state, candidate }) =>
+            state === (request.inboxState ?? 'pending') &&
+            (!request.query || candidate.item.title.includes(request.query))
+        )
+        const offset = request.offset ?? 0
+        const limit = request.limit ?? 50
+        return {
+          entries: matching.slice(offset, offset + limit),
+          totalCount: matching.length,
+          nextOffset: offset + limit < matching.length ? offset + limit : undefined
+        }
+      })
+      transact.mockImplementation(async (input) => {
+        // Exercise the real IPC input limit, including requests accumulated across actions.
+        const command = literatureCatalogCommandSchema.parse(input)
+        if (command.kind === 'settle-candidates' || command.kind === 'restore-candidates') {
+          const required = command.kind === 'restore-candidates' ? 'dismissed' : 'pending'
+          const selected = rows.filter(({ id }) => command.candidateIds.includes(id))
+          if (
+            selected.length !== command.candidateIds.length ||
+            selected.some(({ state }) => state !== required)
+          ) {
+            throw new Error(`One or more Literature Inbox candidates are not ${required}.`)
+          }
+          const state = command.kind === 'restore-candidates' ? 'pending' : command.state
+          selected.forEach((row) => {
+            row.state = state
+          })
+          return { kind: 'candidate', id: command.candidateIds[0], state, count: selected.length }
+        }
+        if (command.kind === 'dismiss-candidate' || command.kind === 'accept-candidate') {
+          const state = command.kind === 'dismiss-candidate' ? 'dismissed' : 'accepted'
+          rows.find(({ id }) => id === command.candidateId)!.state = state
+          return { kind: 'candidate', id: command.candidateId, state }
+        }
+        throw new Error('Unexpected candidate command')
+      })
+      return rows
+    }
+
+    const settlePage = async (action: 'Dismiss' | 'Accept'): Promise<void> => {
+      fireEvent.click(await screen.findByRole('checkbox', { name: 'Select all references' }))
+      await act(async () => fireEvent.click(screen.getAllByRole('button', { name: action })[0]!))
+    }
+
+    it('restores every candidate after dismissing batches of 51 and 50', async () => {
+      const rows = mockInbox(101)
+      render(<LiteratureLibraryPage />)
+      const pageSize = await screen.findByRole('combobox', { name: 'References per page' })
+      fireEvent.keyDown(pageSize, { key: 'ArrowDown' })
+      fireEvent.click(await screen.findByRole('option', { name: '100' }))
+      await waitFor(() => expect(screen.getAllByRole('article')).toHaveLength(100))
+      for (const row of screen.getAllByRole('article').slice(0, 51)) {
+        fireEvent.click(within(row).getByRole('checkbox'))
+      }
+      await act(async () => fireEvent.click(screen.getAllByRole('button', { name: 'Dismiss' })[0]!))
+      await waitFor(() => expect(screen.getAllByRole('article')).toHaveLength(50))
+      await settlePage('Dismiss')
+      expect(rows.filter(({ state }) => state === 'dismissed')).toHaveLength(101)
+      expect(transact.mock.calls.map(([command]) => command.candidateIds.length)).toEqual([51, 50])
+      await act(async () => fireEvent.click(await screen.findByRole('button', { name: 'Undo' })))
+      expect(rows.filter(({ state }) => state === 'dismissed')).toHaveLength(0)
+      expect(screen.queryByText('Literature could not be updated.')).toBeNull()
+    })
+
+    it('keeps accepted candidates removed when project counts fail after the Inbox refresh', async () => {
+      const rows = mockInbox(2)
+      const originalSearch = search.getMockImplementation()!
+      let rejectCounts: (reason: Error) => void = () => {
+        throw new Error('Counts refresh did not start')
+      }
+      let committed = false
+      search.mockImplementation((request: LiteratureCatalogSearchRequest) => {
+        if (request.scope === 'project-counts' && committed) {
+          return new Promise((_resolve, reject) => {
+            rejectCounts = reject
+          })
+        }
+        return originalSearch(request)
+      })
+      render(<LiteratureLibraryPage />)
+      await screen.findByText('Discovery 1')
+      committed = true
+      await settlePage('Accept')
+      expect(rows.every(({ state }) => state === 'accepted')).toBe(true)
+      expect(await screen.findByText('Inbox is clear')).not.toBeNull()
+      await act(async () => rejectCounts(new Error('Project counts unavailable')))
+      expect(screen.queryByText('Discovery 1')).toBeNull()
+      expect(screen.queryByText('Discovery 2')).toBeNull()
+      expect(within(screen.getByRole('button', { name: 'Inbox' })).queryByText('2')).toBeNull()
+      expect(screen.getByText('Project counts could not be refreshed.')).not.toBeNull()
+      search.mockImplementation(originalSearch)
+      await act(async () => fireEvent.click(screen.getByRole('button', { name: 'Retry' })))
+      expect(transact).toHaveBeenCalledTimes(1)
+      expect(screen.queryByText('Project counts could not be refreshed.')).toBeNull()
+    })
+
+    it('retains the failed restore batch and retries only its remaining IDs', async () => {
+      const rows = mockInbox(101)
+      render(<LiteratureLibraryPage />)
+      fireEvent.keyDown(await screen.findByRole('combobox', { name: 'References per page' }), {
+        key: 'ArrowDown'
+      })
+      fireEvent.click(await screen.findByRole('option', { name: '100' }))
+      await waitFor(() => expect(screen.getAllByRole('article')).toHaveLength(100))
+      await settlePage('Dismiss')
+      // Exercise the single-dismiss entry point joining an existing batch Undo.
+      await act(async () => fireEvent.click(await screen.findByRole('button', { name: 'Dismiss' })))
+      const originalTransact = transact.getMockImplementation()!
+      let restoreCalls = 0
+      transact.mockImplementation(async (command) => {
+        if (command.kind === 'restore-candidates' && ++restoreCalls === 2)
+          throw new Error('Database busy')
+        return originalTransact(command)
+      })
+      await act(async () => fireEvent.click(await screen.findByRole('button', { name: 'Undo' })))
+      expect(rows.filter(({ state }) => state === 'pending')).toHaveLength(100)
+      expect(rows[100]!.state).toBe('dismissed')
+      await act(async () => fireEvent.click(await screen.findByRole('button', { name: 'Undo' })))
+      expect(transact.mock.calls.at(-1)?.[0]).toEqual({
+        kind: 'restore-candidates',
+        candidateIds: ['candidate-101']
+      })
+      expect(rows.every(({ state }) => state === 'pending')).toBe(true)
+      expect(screen.queryByTestId('literature-dismiss-undo')).toBeNull()
+    })
+
+    it('rechecks without replaying a stale restore when reconciliation initially fails', async () => {
+      const rows = mockInbox(2)
+      render(<LiteratureLibraryPage />)
+      await settlePage('Dismiss')
+      rows[0]!.state = 'pending'
+      const originalSearch = search.getMockImplementation()!
+      search.mockImplementation(async (request) => {
+        if (request.inboxState === 'dismissed') throw new Error('Offline')
+        return originalSearch(request)
+      })
+      await act(async () => fireEvent.click(await screen.findByRole('button', { name: 'Undo' })))
+      const writes = transact.mock.calls.length
+      search.mockImplementation(originalSearch)
+      await act(async () => fireEvent.click(await screen.findByRole('button', { name: 'Recheck' })))
+      expect(transact).toHaveBeenCalledTimes(writes)
+      await act(async () => fireEvent.click(await screen.findByRole('button', { name: 'Undo' })))
+      expect(transact.mock.calls.at(-1)?.[0]).toEqual({
+        kind: 'restore-candidates',
+        candidateIds: ['candidate-2']
+      })
+      expect(rows[1]!.state).toBe('pending')
+    })
+
+    it('skips accepted and unavailable members without changing another callers decision', async () => {
+      const rows = mockInbox(4)
+      render(<LiteratureLibraryPage />)
+      await settlePage('Dismiss')
+      rows[0]!.state = 'pending'
+      rows[1]!.state = 'accepted'
+      rows.splice(2, 1)
+      await act(async () => fireEvent.click(await screen.findByRole('button', { name: 'Undo' })))
+      expect(
+        await screen.findByText(
+          'Already restored: 1. Accepted or unavailable, skipped: 2. Still dismissed: 1.'
+        )
+      ).not.toBeNull()
+      await act(async () => fireEvent.click(await screen.findByRole('button', { name: 'Undo' })))
+      expect(transact.mock.calls.at(-1)?.[0]).toEqual({
+        kind: 'restore-candidates',
+        candidateIds: ['candidate-4']
+      })
+      expect(rows.find(({ id }) => id === 'candidate-2')!.state).toBe('accepted')
+    })
+
+    it('reconciles a lost acceptance response without inventing a rollback or repeating the write', async () => {
+      const rows = mockInbox(2)
+      render(<LiteratureLibraryPage />)
+      await screen.findByText('Discovery 1')
+      const originalTransact = transact.getMockImplementation()!
+      transact.mockImplementationOnce(async (command) => {
+        await originalTransact(command)
+        throw new Error('Response lost')
+      })
+      await settlePage('Accept')
+      expect(rows.every(({ state }) => state === 'accepted')).toBe(true)
+      expect(screen.queryByText('Discovery 1')).toBeNull()
+      expect(
+        await screen.findByText(
+          'The update could not be confirmed. Check the Inbox before trying again.'
+        )
+      ).not.toBeNull()
+      await act(async () => fireEvent.click(screen.getByRole('button', { name: 'Retry' })))
+      expect(transact).toHaveBeenCalledTimes(1)
+      expect(screen.getByText('Inbox is clear')).not.toBeNull()
+    })
+
+    it.each(['Accept', 'Dismiss'] as const)(
+      'refreshes the global Inbox count after a lost %s response in a filtered view',
+      async (action) => {
+        const rows = mockInbox(2)
+        render(<LiteratureLibraryPage />)
+        await screen.findByText('Discovery 1')
+        expect(screen.getByRole('button', { name: 'Inbox' }).textContent).toBe('Inbox2')
+        fireEvent.change(screen.getByLabelText('Search references'), {
+          target: { value: 'Discovery 1' }
+        })
+        await waitFor(() => expect(screen.queryByText('Discovery 2')).toBeNull())
+        const originalTransact = transact.getMockImplementation()!
+        transact.mockImplementationOnce(async (command) => {
+          await originalTransact(command)
+          throw new Error('Response lost after commit')
+        })
+        await settlePage(action)
+        expect(rows[0]!.state).toBe(action === 'Accept' ? 'accepted' : 'dismissed')
+        expect(screen.queryByText('Discovery 1')).toBeNull()
+        expect(screen.getByRole('button', { name: 'Inbox' }).textContent).toBe('Inbox1')
+        expect(transact).toHaveBeenCalledTimes(1)
+      }
+    )
+
+    it('refreshes the global Inbox count when reconciling a stale Undo from the Library', async () => {
+      const rows = mockInbox(2)
+      render(<LiteratureLibraryPage />)
+      await settlePage('Dismiss')
+      fireEvent.click(screen.getByRole('button', { name: 'All references' }))
+      await waitFor(() =>
+        expect(screen.getByRole('heading', { name: 'All references' })).not.toBeNull()
+      )
+      rows[0]!.state = 'pending'
+      await act(async () => fireEvent.click(screen.getByRole('button', { name: 'Undo' })))
+      expect(rows[1]!.state).toBe('dismissed')
+      expect(screen.getByRole('button', { name: 'Inbox' }).textContent).toBe('Inbox1')
+      await act(async () => fireEvent.click(screen.getByRole('button', { name: 'Undo' })))
+      expect(screen.getByRole('button', { name: 'Inbox' }).textContent).toBe('Inbox2')
+    })
+
+    it('hides an unconfirmed global Inbox count and retries its read without another write', async () => {
+      const rows = mockInbox(3)
+      render(<LiteratureLibraryPage />)
+      await screen.findByText('Discovery 1')
+      fireEvent.change(screen.getByLabelText('Search references'), {
+        target: { value: 'Discovery 1' }
+      })
+      await waitFor(() => expect(screen.queryByText('Discovery 2')).toBeNull())
+      const originalTransact = transact.getMockImplementation()!
+      const originalSearch = search.getMockImplementation()!
+      transact.mockImplementationOnce(async (command) => {
+        await originalTransact(command)
+        search.mockImplementation(async (request) => {
+          if (request.scope === 'inbox' && request.limit === 1) throw new Error('Count unavailable')
+          return originalSearch(request)
+        })
+        throw new Error('Response lost after commit')
+      })
+      await settlePage('Accept')
+      expect(rows[0]!.state).toBe('accepted')
+      expect(screen.getByRole('button', { name: 'Inbox' }).textContent).toBe('Inbox')
+      search.mockImplementation(originalSearch)
+      await act(async () => fireEvent.click(screen.getByRole('button', { name: 'Retry' })))
+      expect(screen.getByRole('button', { name: 'Inbox' }).textContent).toBe('Inbox2')
+      expect(transact).toHaveBeenCalledTimes(1)
+      expect(screen.queryByRole('alert')).toBeNull()
+    })
+
+    it('closes a successfully accepted detail even when the count refresh fails', async () => {
+      const rows = mockInbox(1)
+      render(<LiteratureLibraryPage />)
+      fireEvent.click(await screen.findByRole('button', { name: 'View details: Discovery 1' }))
+      const dialog = await screen.findByRole('dialog')
+      const originalSearch = search.getMockImplementation()!
+      search.mockImplementation(async (request) => {
+        if (request.scope === 'project-counts') throw new Error('Counts unavailable')
+        return originalSearch(request)
+      })
+      await act(async () => fireEvent.click(within(dialog).getByRole('button', { name: 'Accept' })))
+      expect(rows[0]!.state).toBe('accepted')
+      await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+      expect(await screen.findByText('Project counts could not be refreshed.')).not.toBeNull()
+    })
+
+    it('does not show a stale candidate snapshot when both the write response and reconciliation fail', async () => {
+      const rows = mockInbox(2)
+      render(<LiteratureLibraryPage />)
+      await screen.findByText('Discovery 1')
+      const originalTransact = transact.getMockImplementation()!
+      const originalSearch = search.getMockImplementation()!
+      transact.mockImplementationOnce(async (command) => {
+        await originalTransact(command)
+        search.mockRejectedValue(new Error('Offline'))
+        throw new Error('Response lost')
+      })
+      await settlePage('Accept')
+      expect(rows.every(({ state }) => state === 'accepted')).toBe(true)
+      expect(screen.queryByText('Discovery 1')).toBeNull()
+      expect(screen.queryByText('Inbox is clear')).toBeNull()
+      expect(screen.getAllByRole('alert')).toHaveLength(1)
+      expect(screen.getAllByRole('button', { name: 'Retry' })).toHaveLength(1)
+      search.mockImplementation(originalSearch)
+      const warning = screen
+        .getByText('The update could not be confirmed. Check the Inbox before trying again.')
+        .closest('[role="alert"]')!
+      await act(async () =>
+        fireEvent.click(within(warning as HTMLElement).getByRole('button', { name: 'Retry' }))
+      )
+      expect(transact).toHaveBeenCalledTimes(1)
+      expect(await screen.findByText('Inbox is clear')).not.toBeNull()
+    })
+
+    it('pages through dismissed history without restoring references outside this Undo', async () => {
+      const rows = mockInbox(2)
+      render(<LiteratureLibraryPage />)
+      await settlePage('Dismiss')
+      rows[0]!.state = 'pending'
+      rows.unshift(
+        ...Array.from({ length: 100 }, (_, index) => ({ ...rows[1]!, id: `unrelated-${index}` }))
+      )
+      await act(async () => fireEvent.click(await screen.findByRole('button', { name: 'Undo' })))
+      expect(search).toHaveBeenCalledWith({
+        scope: 'inbox',
+        inboxState: 'dismissed',
+        limit: 100,
+        offset: 100
+      })
+      await act(async () => fireEvent.click(await screen.findByRole('button', { name: 'Undo' })))
+      expect(transact.mock.calls.at(-1)?.[0]).toEqual({
+        kind: 'restore-candidates',
+        candidateIds: ['candidate-2']
+      })
+      expect(rows.slice(0, 100).every(({ state }) => state === 'dismissed')).toBe(true)
+    })
+
+    it('keeps the Undo action and dismissal disabled while a restore is pending', async () => {
+      mockInbox(1)
+      render(<LiteratureLibraryPage />)
+      const dismiss = await screen.findByRole('button', { name: 'Dismiss' })
+      await act(async () => fireEvent.click(dismiss))
+      let complete: () => void = () => {
+        throw new Error('Restore did not start')
+      }
+      transact.mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            complete = () =>
+              resolve({ kind: 'candidate', id: 'candidate-1', state: 'pending', count: 1 })
+          })
+      )
+      fireEvent.click(await screen.findByRole('button', { name: 'Undo' }))
+      const toast = screen.getByTestId('literature-dismiss-undo')
+      expect(within(toast).getByRole('button', { name: 'Undo' }).matches(':disabled')).toBe(true)
+      expect(within(toast).getByRole('button', { name: 'Close' }).matches(':disabled')).toBe(true)
+      await act(async () => complete())
+      expect(screen.queryByTestId('literature-dismiss-undo')).toBeNull()
+    })
+
+    it.each([
+      ['single', false],
+      ['batch', false],
+      ['single', true],
+      ['batch', true]
+    ] as const)(
+      'preserves Undo after a lost %s dismissal response (offline recheck: %s)',
+      async (mode, offline) => {
+        const rows = mockInbox(2)
+        render(<LiteratureLibraryPage />)
+        await screen.findByText('Discovery 1')
+        const originalTransact = transact.getMockImplementation()!
+        const originalSearch = search.getMockImplementation()!
+        transact.mockImplementationOnce(async (command) => {
+          await originalTransact(command)
+          if (offline) search.mockRejectedValue(new Error('Offline'))
+          throw new Error('Response lost after commit')
+        })
+        if (mode === 'batch') await settlePage('Dismiss')
+        else
+          await act(async () =>
+            fireEvent.click(screen.getAllByRole('button', { name: 'Dismiss' })[0]!)
+          )
+        expect(rows[0]!.state).toBe('dismissed')
+        if (offline) {
+          expect(screen.queryByText('Discovery 1')).toBeNull()
+          search.mockImplementation(originalSearch)
+          const writes = transact.mock.calls.length
+          await act(async () =>
+            fireEvent.click(await screen.findByRole('button', { name: 'Recheck' }))
+          )
+          expect(transact).toHaveBeenCalledTimes(writes)
+        }
+        await act(async () => fireEvent.click(await screen.findByRole('button', { name: 'Undo' })))
+        expect(rows.every(({ state }) => state === 'pending')).toBe(true)
+      }
+    )
+
+    it('disables Inbox selection and batch controls during a single candidate update', async () => {
+      mockInbox(2)
+      render(<LiteratureLibraryPage />)
+      fireEvent.click(await screen.findByRole('checkbox', { name: 'Select all references' }))
+      let finish: () => void = () => {
+        throw new Error('Dismiss did not start')
+      }
+      transact.mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            finish = () => resolve({ kind: 'candidate', id: 'candidate-1', state: 'dismissed' })
+          })
+      )
+      fireEvent.click(
+        within(screen.getAllByRole('article')[0]!).getByRole('button', { name: 'Dismiss' })
+      )
+      try {
+        expect(
+          screen.getAllByRole('checkbox').every((control) => control.matches(':disabled'))
+        ).toBe(true)
+        for (const name of ['Accept', 'Dismiss', 'Clear selection']) {
+          expect(
+            screen.getAllByRole('button', { name }).every((control) => control.matches(':disabled'))
+          ).toBe(true)
+        }
+      } finally {
+        await act(async () => finish())
+      }
+    })
+
+    it('recovers the remaining dismissed candidate after another window restores one', async () => {
+      const rows = mockInbox(2)
+      render(<LiteratureLibraryPage />)
+      await settlePage('Dismiss')
+      rows[0]!.state = 'pending'
+      const readsBeforeUndo = search.mock.calls.length
+      await act(async () => fireEvent.click(await screen.findByRole('button', { name: 'Undo' })))
+      // A conflict may be reconciled immediately or leave a corrected subset for an explicit retry.
+      const undo = screen.queryByRole('button', { name: 'Undo' })
+      if (undo) await act(async () => fireEvent.click(undo))
+      expect(
+        transact.mock.calls.filter(([command]) => command.kind === 'restore-candidates')
+      ).not.toHaveLength(0)
+      expect(rows[1]!.state).toBe('pending')
+      expect(search.mock.calls.length).toBeGreaterThan(readsBeforeUndo)
+    })
   })
 
   it('shows the total pending Inbox count instead of the loaded page length', async () => {

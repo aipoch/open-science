@@ -1229,6 +1229,40 @@ describe('LiteratureCatalog', () => {
     })
   })
 
+  it('rolls back a stale restore batch and allows its still-dismissed subset', async () => {
+    const catalog = await setup()
+    const first = await catalog.transact({ kind: 'stage-candidate', candidate: candidate() })
+    const second = await catalog.transact({
+      kind: 'stage-candidate',
+      candidate: candidate({ doi: '10.1234/second', externalId: 'second' })
+    })
+    await catalog.transact({
+      kind: 'settle-candidates',
+      candidateIds: [first.id, second.id],
+      state: 'dismissed'
+    })
+    // A second caller uses the same public transaction boundary before the stale Undo arrives.
+    await catalog.transact({ kind: 'restore-candidates', candidateIds: [first.id] })
+    await expect(
+      catalog.transact({ kind: 'restore-candidates', candidateIds: [first.id, second.id] })
+    ).rejects.toThrow('One or more Literature Inbox candidates are not dismissed.')
+    await expect(
+      catalog.search({ scope: 'inbox', inboxState: 'dismissed' })
+    ).resolves.toMatchObject({
+      entries: [expect.objectContaining({ id: second.id, state: 'dismissed' })]
+    })
+    await catalog.transact({ kind: 'accept-candidate', candidateId: first.id })
+    await catalog.transact({ kind: 'restore-candidates', candidateIds: [second.id] })
+    await expect(catalog.search({ scope: 'inbox', inboxState: 'pending' })).resolves.toMatchObject({
+      entries: [expect.objectContaining({ id: second.id, state: 'pending' })]
+    })
+    await expect(catalog.search({ scope: 'inbox', inboxState: 'accepted' })).resolves.toMatchObject(
+      {
+        entries: [expect.objectContaining({ id: first.id, state: 'accepted' })]
+      }
+    )
+  })
+
   it('updates citation metadata atomically with optimistic revision checks', async () => {
     const catalog = await setup()
     const staged = await catalog.transact({ kind: 'stage-candidate', candidate: candidate() })
