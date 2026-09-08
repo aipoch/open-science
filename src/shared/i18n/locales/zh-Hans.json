@@ -4161,7 +4161,7 @@
     "{{count}} of {{limit}} categories used_other": "已使用 {{count}} / {{limit}} 个分类",
     "Add a note…": "添加笔记…",
     "Customize columns": "自定义列",
-    "Drag to reorder. Select columns to show.": "拖动以重新排序。选择要显示的列。",
+    "Drag or use the up and down arrow keys to reorder. Select columns to show.": "拖动或使用上下方向键调整顺序。选择要显示的列。",
     "Move {{column}}": "移动{{column}}",
     "Note for {{title}}": "为“{{title}}”添加备注",
     "Copy note": "复制笔记",

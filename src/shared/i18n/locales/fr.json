@@ -4462,7 +4462,7 @@
     "{{count}} of {{limit}} categories used_other": "{{count}} catégories utilisées sur {{limit}}",
     "Add a note…": "Ajouter une note…",
     "Customize columns": "Personnaliser les colonnes",
-    "Drag to reorder. Select columns to show.": "Faites glisser pour réorganiser. Sélectionnez les colonnes à afficher.",
+    "Drag or use the up and down arrow keys to reorder. Select columns to show.": "Faites glisser ou utilisez les flèches haut et bas pour réorganiser. Sélectionnez les colonnes à afficher.",
     "Move {{column}}": "Déplacer {{column}}",
     "Note for {{title}}": "Note pour {{title}}",
     "Copy note": "Copier la note",

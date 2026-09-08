@@ -2723,11 +2723,14 @@ describe('LiteratureLibraryPage', () => {
     await openReferenceDetail(await screen.findByText('Corrective Retrieval Augmented Generation'))
     fireEvent.click(screen.getByRole('button', { name: 'Preview paper.pdf' }))
     const preview = screen.getByTestId('literature-pdf-preview')
+    const previewClose = within(preview).getByRole('button', { name: 'Close PDF', hidden: true })
+    previewClose.focus()
     const wheel = new WheelEvent('wheel', { bubbles: true, cancelable: true, deltaY: 600 })
     await act(async () => {
       preview.dispatchEvent(wheel)
     })
     expect(wheel.defaultPrevented).toBe(false)
+    expect(document.activeElement).toBe(previewClose)
     fireEvent.click(within(preview).getByRole('button', { name: 'Close PDF', hidden: true }))
     expect(await screen.findByRole('button', { name: 'Preview paper.pdf' })).not.toBeNull()
     const outsideWheel = new WheelEvent('wheel', { bubbles: true, cancelable: true, deltaY: 600 })
@@ -3829,6 +3832,106 @@ describe('LiteratureLibraryPage', () => {
     ).not.toBeNull()
   })
 
+  it.each(['Close', 'Escape'])('returns focus to the reference title after %s', async (method) => {
+    search.mockImplementation((request: { scope: string }) =>
+      Promise.resolve(request.scope === 'library' ? { entries: [libraryItem] } : { entries: [] })
+    )
+    render(<LiteratureLibraryPage />)
+    fireEvent.click(screen.getByRole('button', { name: 'All references' }))
+    const title = await screen.findByRole('button', { name: libraryItem.item.title })
+    title.focus()
+    const detail = await openReferenceDetail(title)
+    await waitFor(() => expect(detail.contains(document.activeElement)).toBe(true))
+    if (method === 'Close') fireEvent.click(within(detail).getByRole('button', { name: 'Close' }))
+    else fireEvent.keyDown(document.activeElement!, { key: 'Escape' })
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+    expect(title.isConnected).toBe(true)
+    await waitFor(() => expect(document.activeElement).toBe(title))
+  })
+
+  it('exposes exactly one current destination across library navigation changes', async () => {
+    search.mockImplementation((request: { scope: string }) =>
+      Promise.resolve({
+        entries:
+          request.scope === 'collections'
+            ? [
+                {
+                  id: 'collection',
+                  name: 'Reading list',
+                  description: '',
+                  itemCount: 0,
+                  createdAt: 1,
+                  updatedAt: 1
+                }
+              ]
+            : []
+      })
+    )
+    render(<LiteratureLibraryPage />)
+    await screen.findByRole('button', { name: 'Reading list' })
+    for (const name of [
+      'Inbox',
+      'All references',
+      'Retrieval research',
+      'Reading list',
+      'Duplicates',
+      'Trash',
+      'Settings',
+      'All references'
+    ]) {
+      const button = screen.getByRole('button', { name })
+      fireEvent.click(button)
+      await act(async () => {})
+      expect(button.getAttribute('aria-current')).toBe('page')
+      expect(document.querySelectorAll('aside [aria-current="page"]')).toHaveLength(1)
+    }
+  })
+
+  it.each([
+    ['Filters', 'Filters'],
+    ['Customize', 'Customize columns']
+  ])('names the %s popover from its visible heading', async (trigger, name) => {
+    render(<LiteratureLibraryPage />)
+    fireEvent.click(screen.getByRole('button', { name: 'All references' }))
+    fireEvent.click(await screen.findByRole('button', { name: trigger }))
+    const dialog = await screen.findByRole('dialog')
+    expect(within(dialog).getByText(name)).toBeTruthy()
+    expect(screen.getByRole('dialog', { name })).toBe(dialog)
+  })
+
+  it('exposes the metadata overwrite selection that is submitted', async () => {
+    search.mockImplementation((request: { scope: string }) =>
+      Promise.resolve(request.scope === 'library' ? { entries: [libraryItem] } : { entries: [] })
+    )
+    render(<LiteratureLibraryPage />)
+    fireEvent.click(screen.getByRole('button', { name: 'All references' }))
+    const detail = await openReferenceDetail(await screen.findByText(libraryItem.item.title))
+    await openMenu(within(detail).getByRole('button', { name: 'More actions' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Complete metadata' }))
+    fireEvent.click(within(detail).getByRole('button', { name: 'Search' }))
+    const choice = await screen.findByRole('button', { name: 'Use Crossref' })
+    expect(choice.getAttribute('aria-pressed')).toBe('false')
+    expect(
+      screen.getByRole('button', { name: 'Use Crossref', description: /Title.*Corrective RAG/ })
+    ).toBe(choice)
+    fireEvent.click(choice)
+    expect(choice.getAttribute('aria-pressed')).toBe('true')
+    fireEvent.click(choice)
+    expect(choice.getAttribute('aria-pressed')).toBe('false')
+    fireEvent.click(choice)
+    const pressed = choice.getAttribute('aria-pressed')
+    fireEvent.click(screen.getByRole('button', { name: 'Apply metadata' }))
+    await waitFor(() =>
+      expect(completeMetadata).toHaveBeenCalledWith(
+        expect.objectContaining({
+          mode: 'commit',
+          overwriteFields: ['title']
+        })
+      )
+    )
+    expect(pressed).toBe('true')
+  })
+
   it('shows identifier-only additions and submits one publication-date conflict choice', async () => {
     search.mockImplementation((request: { scope: string }) =>
       Promise.resolve(request.scope === 'library' ? { entries: [libraryItem] } : { entries: [] })
@@ -4130,9 +4233,10 @@ describe('LiteratureLibraryPage', () => {
     const customizeTitle = await screen.findByText('Customize columns')
     expect(customizeTitle.parentElement?.parentElement?.className).toContain('bg-bg-000')
     expect(customizeTitle.parentElement?.parentElement?.className).toContain('text-foreground')
-    expect(screen.getByText('Drag to reorder. Select columns to show.').className).toContain(
-      'whitespace-nowrap'
-    )
+    expect(
+      screen.getByText('Drag or use the up and down arrow keys to reorder. Select columns to show.')
+        .className
+    ).not.toContain('whitespace-nowrap')
     for (const column of [
       'Abstract',
       'Year',
@@ -6434,7 +6538,9 @@ describe('LiteratureLibraryPage', () => {
     render(<LiteratureLibraryPage />)
     await screen.findByText(entry.item.title)
     fireEvent.click(screen.getByLabelText('Select all references'))
-    await openReferenceDetail(screen.getByText(entry.item.title))
+    const title = screen.getByRole('button', { name: entry.item.title })
+    title.focus()
+    await openReferenceDetail(title)
     fireEvent.click(await screen.findByRole('checkbox', { name: 'Source' }))
     await act(async () => {})
     expect(included).toBe(false)
@@ -6446,7 +6552,10 @@ describe('LiteratureLibraryPage', () => {
     })
     const detail = screen.queryByRole('dialog')
     if (detail) fireEvent.click(within(detail).getByRole('button', { name: 'Close' }))
-    await act(async () => {})
+    await waitFor(() => expect(title.isConnected).toBe(false))
+    await waitFor(() =>
+      expect(document.activeElement).toBe(screen.getByRole('button', { name: 'All references' }))
+    )
     expect.soft(screen.queryByRole('checkbox', { name: `Select ${entry.item.title}` })).toBeNull()
     expect.soft(screen.queryByText('1 selected')).toBeNull()
     expect(within(screen.getByRole('button', { name: 'Source' })).getByText('0')).not.toBeNull()

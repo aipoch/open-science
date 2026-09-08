@@ -177,3 +177,76 @@ it('updates metadata dates with the interface language on an unchanged host', as
     })
   }
 })
+
+it.each([
+  { state: 'running' as const, failed: 0, ready: 1, label: 'Searching' },
+  { state: 'paused' as const, failed: 0, ready: 1, label: 'Paused' },
+  { state: 'completed' as const, failed: 1, ready: 0, label: 'Failed' }
+])(
+  'describes the background task state $label while closed',
+  async ({ state, failed, ready, label }) => {
+    await show([{ ...job, state, failed, ready }])
+    const button = screen.getByRole('button', { name: 'Background tasks' })
+    expect(button.textContent).toContain(label)
+    expect(screen.queryByRole('dialog')).toBeNull()
+    expect(
+      screen.getByRole('button', { name: 'Background tasks', description: new RegExp(label) })
+    ).toBe(button)
+  }
+)
+
+it('describes an unavailable background task list while closed', async () => {
+  Object.defineProperty(window, 'api', {
+    configurable: true,
+    value: { literature: { jobs: vi.fn().mockRejectedValue(new Error('offline')) } }
+  })
+  await act(async () => {
+    render(<LiteratureBackgroundTasks onOpen={vi.fn()} />)
+  })
+  const button = screen.getByRole('button', { name: 'Background tasks' })
+  expect(button.textContent).toContain('Task list unavailable')
+  expect(
+    screen.getByRole('button', { name: 'Background tasks', description: 'Task list unavailable' })
+  ).toBe(button)
+})
+
+it('keeps progress polls quiet and announces important transitions after the indicator disappears', async () => {
+  const request = vi.fn().mockResolvedValue({ jobs: [], summaries: [job] })
+  Object.defineProperty(window, 'api', {
+    configurable: true,
+    value: { literature: { jobs: request } }
+  })
+  await act(async () => {
+    render(<LiteratureBackgroundTasks onOpen={vi.fn()} />)
+  })
+  const status = document.querySelector<HTMLElement>('[aria-live="polite"]')!
+  const mutations: MutationRecord[] = []
+  const observer = new MutationObserver((records) => mutations.push(...records))
+  observer.observe(status, { childList: true, characterData: true, subtree: true })
+  try {
+    const refresh = async (summary: LiteratureJobSummary): Promise<void> => {
+      request.mockResolvedValue({ jobs: [], summaries: [summary] })
+      await act(async () => {
+        window.dispatchEvent(new Event('literature-jobs-changed'))
+      })
+    }
+    await refresh({ ...job, checked: 2 })
+    expect(
+      screen.getByRole('button', { name: 'Background tasks', description: /2\/3/ })
+    ).toBeTruthy()
+    expect(mutations).toHaveLength(0)
+    await refresh({ ...job, state: 'paused' })
+    expect(status.textContent).toBe('Paused')
+    mutations.length = 0
+    await refresh({ ...job, state: 'paused' })
+    expect(mutations).toHaveLength(0)
+    await refresh({ ...job, state: 'completed', failed: 1, ready: 0 })
+    expect(status.textContent).toBe('Failed')
+    await refresh({ ...job, state: 'completed', done: 3, checked: 3, failed: 0, ready: 0 })
+    expect(screen.queryByRole('button')).toBeNull()
+    expect(status.isConnected).toBe(true)
+    expect(status.textContent).toBe('Completed')
+  } finally {
+    observer.disconnect()
+  }
+})

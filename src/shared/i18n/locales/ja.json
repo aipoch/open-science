@@ -4160,7 +4160,7 @@
     "{{count}} of {{limit}} categories used_other": "{{limit}} 件中 {{count}} 件のカテゴリを使用中",
     "Add a note…": "メモを追加…",
     "Customize columns": "列をカスタマイズ",
-    "Drag to reorder. Select columns to show.": "ドラッグして並べ替えます。表示する列を選択してください。",
+    "Drag or use the up and down arrow keys to reorder. Select columns to show.": "ドラッグするか上下の矢印キーで並べ替えます。表示する列を選択してください。",
     "Move {{column}}": "{{column}}を移動",
     "Note for {{title}}": "「{{title}}」のメモ",
     "Copy note": "メモをコピー",
