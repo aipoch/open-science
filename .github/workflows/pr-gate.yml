@@ -853,7 +853,7 @@ jobs:
           if-no-files-found: warn
       - name: Install headless Chromium
         if: ${{ matrix.group == 'presentation' }}
-        run: npx playwright install chromium
+        run: npx playwright install chromium --only-shell
       - name: Run renderer layout pilot
         id: renderer_layout
         if: ${{ matrix.group == 'presentation' }}

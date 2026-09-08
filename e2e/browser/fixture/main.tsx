@@ -5,6 +5,7 @@ import { initI18n } from '@/i18n'
 import { SettingsPage } from '@/pages/settings/SettingsPage'
 import { HomePage } from '@/pages/home/HomePage'
 import { useSettingsStore } from '@/stores/settings-store'
+import { useProjectStore } from '@/stores/project-store'
 import { useTagStore } from '@/stores/tag-store'
 import { useMemoryStore } from '@/stores/memory-store'
 import { useUpdateStore } from '@/stores/update-store'
@@ -31,6 +32,7 @@ useSettingsStore.setState({
   load: async () => true,
   setReasoningEffort: async (reasoningEffort) => useSettingsStore.setState({ reasoningEffort })
 })
+useProjectStore.setState({ isLoaded: true })
 useTagStore.setState({ load: async () => undefined, listen: unsubscribe })
 useMemoryStore.setState({ listen: unsubscribe })
 useUpdateStore.setState({
