@@ -311,6 +311,16 @@ const literatureInboxCandidateViewSchema = z
     id: nonEmptyTextSchema,
     state: z.enum(LITERATURE_INBOX_STATES),
     candidate: literatureCandidateInputSchema,
+    discoveries: z
+      .array(
+        z
+          .object({
+            origin: literatureCandidateOriginSchema,
+            createdAt: z.number().int().nonnegative()
+          })
+          .strict()
+      )
+      .optional(),
     pdfs: z
       .array(
         z
@@ -1137,6 +1147,7 @@ export {
   LITERATURE_RECORD_IMPORT_MAX_BYTES,
   LITERATURE_RECORD_IMPORT_MAX_RECORDS,
   literatureCandidateInputSchema,
+  literatureCandidateOriginSchema,
   literatureAttachmentVersionViewSchema,
   literatureAttachmentViewSchema,
   literatureApplicationCommandContracts,

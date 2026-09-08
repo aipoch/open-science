@@ -12,7 +12,7 @@ import {
   rmSync,
   writeFileSync
 } from 'node:fs'
-import { dirname, join } from 'node:path'
+import { basename, dirname, join } from 'node:path'
 
 import {
   isOwnedPosixProcessGroupAlive,
@@ -391,7 +391,26 @@ class KernelProcessLifecycleOwner {
   private removeIfOwned(path: string, receiptId: string): void {
     try {
       const current = decodeRecord(readFileSync(path, 'utf8'))
-      if (current?.receiptId === receiptId) rmSync(path, { force: true })
+      if (current?.receiptId !== receiptId) return
+      const hostPid = current.pid ?? Number(basename(path).match(/\.active\.(\d+)\./)?.[1])
+      if (isPositivePid(hostPid)) {
+        // A stopped host may have been interrupted before renaming its updated receipt.
+        // Remove its matching temporary receipt first so an interrupted cleanup can retry.
+        const temporary = `${path}.${hostPid}.tmp`
+        try {
+          const pending = decodeRecord(readFileSync(temporary, 'utf8'))
+          if (
+            pending?.receiptId === receiptId &&
+            pending.ownerToken === current.ownerToken &&
+            pending.pid === hostPid
+          ) {
+            rmSync(temporary, { force: true })
+          }
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+        }
+      }
+      rmSync(path, { force: true })
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
     }

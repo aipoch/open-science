@@ -4748,6 +4748,10 @@
     "PDF not validated: exceeds the 50 MiB automatic processing limit.": "PDF 검증 안 됨: 자동 처리 한도 50 MiB를 초과합니다.",
     "PDF structure not yet validated.": "PDF 구조가 아직 검증되지 않았습니다.",
     "Attachment unavailable": "첨부 파일 사용 불가",
-    "This PDF is referenced by a chat or its message history and cannot be removed. Unlinking the current chat does not remove historical references.": "이 PDF는 채팅 또는 메시지 기록에서 참조되고 있어 제거할 수 없습니다. 현재 채팅에서 연결을 해제해도 기록의 참조는 제거되지 않습니다."
+    "This PDF is referenced by a chat or its message history and cannot be removed. Unlinking the current chat does not remove historical references.": "이 PDF는 채팅 또는 메시지 기록에서 참조되고 있어 제거할 수 없습니다. 현재 채팅에서 연결을 해제해도 기록의 참조는 제거되지 않습니다.",
+    "Dismissed": "무시됨",
+    "No dismissed references": "무시한 문헌이 없습니다",
+    "Dismissed references can be restored here.": "무시한 문헌은 여기서 복원할 수 있습니다.",
+    "Accepting will link to: {{projects}}": "수락하면 다음 프로젝트에 연결됩니다: {{projects}}"
   }
 }
