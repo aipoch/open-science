@@ -1115,6 +1115,7 @@ class EnvironmentStateTracker {
         environmentName: target.environmentName,
         runtimeSource: target.runtimeSource,
         runtimeVersion: live?.runtimeVersion ?? inventory?.runtimeVersion,
+        ...(live?.executionContext ? { executionContext: live.executionContext } : {}),
         ...(inventory?.platform ? { platform: inventory.platform } : {}),
         ...(inventory?.architecture ? { architecture: inventory.architecture } : {}),
         inventorySources: [

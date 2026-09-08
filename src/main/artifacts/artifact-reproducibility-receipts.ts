@@ -1,4 +1,5 @@
 import type { Dirent } from 'node:fs'
+import { validOutputComparisonReport } from './output-comparison'
 import { lstat, readFile, readdir } from 'node:fs/promises'
 import { basename, join } from 'node:path'
 import {
@@ -299,7 +300,9 @@ const isComparison = (value: unknown): value is ArtifactReproducibilityReceiptCo
     'actualChecksum',
     'actualSizeBytes',
     'outputCaptured',
-    'outputCaptureReason'
+    'outputCaptureReason',
+    'contentComparison',
+    'contentComparisonUnavailableReason'
   ]
   if (Object.keys(value).some((key) => !allowed.includes(key))) return false
   if (
@@ -314,6 +317,25 @@ const isComparison = (value: unknown): value is ArtifactReproducibilityReceiptCo
   }
   if (value.actualChecksum !== undefined && !isSha256(value.actualChecksum)) return false
   if (value.actualSizeBytes !== undefined && !isSize(value.actualSizeBytes)) return false
+  if (
+    value.contentComparisonUnavailableReason !== undefined &&
+    (value.contentComparison !== undefined ||
+      !['unsupported-format', 'budget-exceeded', 'comparison-failed'].includes(
+        String(value.contentComparisonUnavailableReason)
+      ) ||
+      (value.status === 'different' &&
+        !['size-mismatch', 'checksum-mismatch'].includes(String(value.reason))))
+  )
+    return false
+  if (
+    value.contentComparison !== undefined &&
+    !validOutputComparisonReport(
+      value.contentComparison,
+      String(value.expectedChecksum),
+      value.actualChecksum
+    )
+  )
+    return false
   if (
     value.outputCaptured !== undefined &&
     (value.outputCaptured !== true ||
@@ -444,7 +466,7 @@ const decodeArtifactReproducibilityReceipt = (
     throw new Error(`Invalid reproducibility receipt JSON: ${basename(filePath)}`)
   }
   if (!isRecord(value)) throw new Error(`Invalid reproducibility receipt: ${basename(filePath)}`)
-  if (typeof value.schemaVersion === 'number' && value.schemaVersion > 1) {
+  if (typeof value.schemaVersion === 'number' && value.schemaVersion > 2) {
     throw new DurableJsonRecoveryBarrierError(
       `Unsupported reproducibility receipt version: ${value.schemaVersion}`
     )
@@ -466,7 +488,7 @@ const decodeArtifactReproducibilityReceipt = (
   if (
     !Object.keys(value).every((key) => [...receiptKeys, 'checkLog'].includes(key)) ||
     !receiptKeys.every((key) => key in value) ||
-    value.schemaVersion !== 1 ||
+    (value.schemaVersion !== 1 && value.schemaVersion !== 2) ||
     !isString(value.receiptId) ||
     !isTimestamp(value.startedAt) ||
     !isTimestamp(value.completedAt) ||

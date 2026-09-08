@@ -10,6 +10,31 @@ import {
 } from './kernel-protocol'
 
 describe('parseLoopResponse', () => {
+  it('keeps bounded execution context but never accepts arbitrary environment variables', () => {
+    const observation = {
+      locale: 'C',
+      timezone: 'UTC',
+      threadLimits: { OMP_NUM_THREADS: '2' },
+      randomLibraries: ['numpy']
+    }
+    const context = { schemaVersion: 1, before: observation, after: observation }
+    const wire = {
+      req_id: 'r1',
+      stdout: '',
+      stderr: '',
+      error: null,
+      cwd: '/tmp',
+      figures: [],
+      environment: { packages: [], execution_context: context }
+    }
+    expect(parseLoopResponse(JSON.stringify(wire))?.environmentOverlay?.executionContext).toEqual(
+      context
+    )
+    Object.assign(observation.threadLimits, { API_KEY: 'secret' })
+    expect(
+      parseLoopResponse(JSON.stringify(wire))?.environmentOverlay?.executionContext
+    ).toBeUndefined()
+  })
   it('parses a well-formed snake_case response line into camelCase', () => {
     const line = JSON.stringify({
       req_id: 'r1',

@@ -1,5 +1,7 @@
 import { createHash } from 'node:crypto'
-import { mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises'
+import { execFile } from 'node:child_process'
+import { mkdir, mkdtemp, readdir, rm, symlink, writeFile } from 'node:fs/promises'
+import { promisify } from 'node:util'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -13,6 +15,7 @@ vi.mock('../logger', async (importOriginal) => ({
 
 import type { NotebookEnvironmentManifest } from '../../shared/notebook'
 import { restoreNativeEnvironmentLock } from './native-lock-restoration'
+import { rLibraryDir, rScriptBin } from './runtime-paths'
 import {
   captureNotebookEnvironmentLock,
   decodeNotebookEnvironmentLock,
@@ -71,6 +74,478 @@ const condaInventory = (...names: string[]): string =>
   )
 
 describe('captureNotebookEnvironmentLock', () => {
+  it.each(['python', 'r'] as const)(
+    'does not require a rejected auxiliary %s lock unless native packages are needed',
+    async (language) => {
+      const root = await mkdtemp(join(tmpdir(), 'auxiliary-native-lock-'))
+      try {
+        await writeFile(
+          join(root, language === 'python' ? 'requirements.txt' : 'renv.lock'),
+          language === 'python' ? '-e ../local-package' : '{invalid lock'
+        )
+        const execute = vi.fn(async () =>
+          condaInventory(language === 'python' ? 'numpy' : 'r-base')
+        )
+        const capture = (
+          nativeRequired: boolean
+        ): ReturnType<typeof captureNotebookEnvironmentLock> =>
+          captureNotebookEnvironmentLock(
+            { language, environmentName: 'analysis', runtimeSource: 'managed', condaPrefix: root },
+            manifest({
+              kernelKind: language,
+              packages: nativeRequired
+                ? [
+                    {
+                      name: 'custompkg',
+                      version: '1.0',
+                      versionStatus: 'known',
+                      ecosystem: language,
+                      evidenceSources: [
+                        language === 'python' ? 'python-importlib-metadata' : 'r-installed-packages'
+                      ]
+                    }
+                  ]
+                : []
+            }),
+            {
+              micromamba: 'micromamba',
+              execute,
+              workspace: { sessionRoot: root, searchRoots: [root] }
+            }
+          )
+        const covered = await capture(false)
+        expect(covered).toMatchObject({ state: 'captured', captureStatus: 'complete' })
+        const missing = await capture(true)
+        expect(missing).toMatchObject({
+          state: 'captured',
+          captureStatus: 'partial',
+          partialReasons: expect.arrayContaining(['native-lock-file-rejected']),
+          diagnostics: [
+            expect.objectContaining({ reason: 'package-lock-missing', packageName: 'custompkg' })
+          ]
+        })
+      } finally {
+        await rm(root, { recursive: true, force: true })
+      }
+    }
+  )
+
+  it.each(['python', 'r'] as const)(
+    'uses a complete native %s lock despite a rejected auxiliary file',
+    async (language) => {
+      const root = await mkdtemp(join(tmpdir(), 'selected-native-lock-'))
+      try {
+        await writeFile(join(root, language === 'python' ? 'uv.lock' : 'renv.lock'), '{broken')
+        await writeFile(
+          join(root, language === 'python' ? 'requirements.lock' : 'pkg.lock'),
+          language === 'python'
+            ? `custompkg==1.0 --hash=sha256:${'a'.repeat(64)}\n`
+            : JSON.stringify({ packages: [{ package: 'custompkg', version: '1.0' }] })
+        )
+        const execute = vi.fn(async () => condaInventory(language === 'python' ? 'pip' : 'r-pak'))
+        const result = await captureNotebookEnvironmentLock(
+          { language, environmentName: 'test', runtimeSource: 'managed', condaPrefix: root },
+          manifest({
+            kernelKind: language,
+            packages: [
+              {
+                name: 'custompkg',
+                version: '1.0',
+                versionStatus: 'known',
+                ecosystem: language,
+                evidenceSources: [
+                  language === 'python' ? 'python-importlib-metadata' : 'r-installed-packages'
+                ]
+              }
+            ]
+          }),
+          {
+            micromamba: 'micromamba',
+            execute,
+            workspace: { sessionRoot: root, searchRoots: [root] }
+          }
+        )
+        expect(result).toMatchObject({ state: 'captured', captureStatus: 'complete' })
+        if (result.state !== 'captured') throw new Error('expected lock')
+        const spawn = vi.fn(async () => ({ code: 0, stdout: '', stderr: '' }))
+        await restoreNativeEnvironmentLock({
+          lock: result.lock,
+          prefix: root,
+          locksRoot: join(root, 'restore'),
+          spawn
+        })
+        expect(spawn).toHaveBeenCalledTimes(1)
+        expect(execute).toHaveBeenCalledTimes(1)
+      } finally {
+        await rm(root, { recursive: true, force: true })
+      }
+    }
+  )
+
+  it
+    .skipIf(!process.env.OPEN_SCIENCE_TEST_R_ENV || !process.env.OPEN_SCIENCE_TEST_RENV_LIBRARY)
+    .each(['Repository', 'Bioconductor', 'GitHub'] as const)(
+    'captures real renv %s metadata without changing the package library',
+    async (source) => {
+      const root = await mkdtemp(join(tmpdir(), 'real-renv-capture-'))
+      const library = rLibraryDir(root)
+      const rscript = rScriptBin(process.env.OPEN_SCIENCE_TEST_R_ENV!)
+      const run = promisify(execFile)
+      try {
+        const { stdout } = await run(
+          rscript,
+          [
+            '--vanilla',
+            '-e',
+            'cat(jsonlite::toJSON(list(runtime=as.character(getRversion()), version=packageDescription("MASS")[["Version"]], paths=lapply(c("MASS", "jsonlite"), find.package)), auto_unbox=TRUE))'
+          ],
+          { timeout: 15_000 }
+        )
+        const installed = JSON.parse(stdout) as {
+          runtime: string
+          version: string
+          paths: string[]
+        }
+        await mkdir(library, { recursive: true })
+        await symlink(
+          join(process.env.OPEN_SCIENCE_TEST_RENV_LIBRARY!, 'renv'),
+          join(library, 'renv'),
+          'junction'
+        )
+        await symlink(installed.paths[0]!, join(library, 'MASS'), 'junction')
+        await symlink(installed.paths[1]!, join(library, 'jsonlite'), 'junction')
+        const name = source === 'Repository' ? 'MASS' : 'custompkg'
+        const version = source === 'Repository' ? installed.version : '1.0.0'
+        const commit = 'a'.repeat(40)
+        if (source !== 'Repository') {
+          await mkdir(join(library, name))
+          await writeFile(
+            join(library, name, 'DESCRIPTION'),
+            [
+              'Package: custompkg',
+              'Version: 1.0.0',
+              'Title: Snapshot fixture',
+              'Description: Installed package metadata for the capture test.',
+              'License: MIT',
+              ...(source === 'Bioconductor'
+                ? ['biocViews: Software', 'Repository: Bioconductor 3.20']
+                : [
+                    'RemoteType: github',
+                    'RemoteHost: api.github.com',
+                    'RemoteUsername: org',
+                    'RemoteRepo: custompkg',
+                    `RemoteSha: ${commit}`
+                  ])
+            ].join('\n') + '\n'
+          )
+        }
+        const before = await readdir(library)
+        let probeOutput = ''
+        const result = await captureNotebookEnvironmentLock(
+          { language: 'r', environmentName: 'test-r', runtimeSource: 'managed', condaPrefix: root },
+          manifest({
+            kernelKind: 'r',
+            runtimeVersion: installed.runtime,
+            packages: [
+              {
+                name,
+                version,
+                versionStatus: 'known',
+                ecosystem: 'r',
+                libraryScope: 'environment',
+                loadedState: 'loaded',
+                priority: 'recommended',
+                evidenceSources: ['r-installed-packages', 'r-session-info'],
+                ...(source === 'Bioconductor'
+                  ? { source: { type: 'bioconductor', version: '3.20' } }
+                  : source === 'GitHub'
+                    ? { source: { type: 'github', repository: 'org/custompkg', commit } }
+                    : {})
+              }
+            ]
+          }),
+          {
+            micromamba: 'micromamba',
+            execute: async (argv) =>
+              argv[0] === 'micromamba'
+                ? condaInventory('r-base', 'r-renv', 'r-jsonlite')
+                : await run(rscript, argv.slice(1), { timeout: 30_000 }).then(
+                    (response) => {
+                      probeOutput = response.stdout
+                      return response.stdout
+                    },
+                    (error) => {
+                      probeOutput = String(error)
+                      throw error
+                    }
+                  )
+          }
+        )
+        expect(result, probeOutput).toMatchObject({ state: 'captured', captureStatus: 'complete' })
+        if (result.state !== 'captured') throw new Error('expected lock')
+        const native = result.lock.components.find((component) => component.ecosystem === 'r')
+        if (!native || native.ecosystem !== 'r') throw new Error('expected R lock')
+        const captured = JSON.parse(native.files[0]!.content)
+        expect(captured.Packages[name]).toMatchObject({
+          Package: name,
+          Version: version,
+          Source: source
+        })
+        if (source === 'Bioconductor') expect(captured.Bioconductor.Version).toBe('3.20')
+        if (source === 'GitHub') expect(captured.Packages[name].RemoteSha).toBe(commit)
+        expect(await readdir(library)).toEqual(before)
+        expect(await readdir(root)).not.toContain('renv.lock')
+      } finally {
+        await rm(root, { recursive: true, force: true })
+      }
+    }
+  )
+
+  it.each(['Repository', 'Bioconductor', 'GitHub'] as const)(
+    'captures an installed R %s package using the bound renv without a project lock',
+    async (source) => {
+      const root = await mkdtemp(join(tmpdir(), 'r-auto-snapshot-'))
+      const commit = 'a'.repeat(40)
+      const record = {
+        Package: 'custompkg',
+        Version: '1.0',
+        Source: source,
+        ...(source === 'GitHub'
+          ? {
+              RemoteType: 'github',
+              RemoteHost: 'api.github.com',
+              RemoteUsername: 'org',
+              RemoteRepo: 'custompkg',
+              RemoteSha: commit
+            }
+          : {})
+      }
+      const observed = manifest({
+        kernelKind: 'r',
+        runtimeVersion: '4.4.3',
+        packages: [
+          {
+            name: 'custompkg',
+            version: '1.0',
+            versionStatus: 'known',
+            ecosystem: 'r',
+            loadedState: 'loaded',
+            libraryScope: 'environment',
+            evidenceSources: ['r-installed-packages', 'r-session-info'],
+            ...(source === 'GitHub'
+              ? { source: { type: 'github' as const, repository: 'org/custompkg', commit } }
+              : source === 'Bioconductor'
+                ? { source: { type: 'bioconductor' as const, version: '3.20' } }
+                : {})
+          }
+        ]
+      })
+      const execute = vi.fn(async (argv: string[]) =>
+        argv[0] === 'micromamba'
+          ? condaInventory('r-base', 'r-renv', 'r-jsonlite')
+          : JSON.stringify({
+              R: { Version: '4.4.3' },
+              Bioconductor: { Version: '3.20' },
+              Packages: { custompkg: record }
+            })
+      )
+      try {
+        const result = await captureNotebookEnvironmentLock(
+          {
+            language: 'r',
+            environmentName: 'analysis',
+            runtimeSource: 'managed',
+            condaPrefix: root
+          },
+          observed,
+          { micromamba: 'micromamba', execute }
+        )
+        expect(result).toMatchObject({
+          state: 'captured',
+          captureStatus: 'complete',
+          lock: {
+            components: expect.arrayContaining([
+              expect.objectContaining({ format: 'renv-lock', resolution: 'locked' })
+            ])
+          }
+        })
+        expect(execute).toHaveBeenCalledTimes(2)
+        if (result.state !== 'captured') throw new Error('expected captured lock')
+        expect(decodeNotebookEnvironmentLock(JSON.stringify(result.lock)).status).toBe('valid')
+        const spawn = vi.fn(async () => ({ code: 0, stdout: '', stderr: '' }))
+        await restoreNativeEnvironmentLock({
+          lock: result.lock,
+          prefix: root,
+          locksRoot: join(root, 'restore'),
+          spawn
+        })
+        expect(spawn.mock.calls).toHaveLength(1)
+      } finally {
+        await rm(root, { recursive: true, force: true })
+      }
+    }
+  )
+
+  it.each([
+    'timeout',
+    'oversized',
+    'wrong-runtime',
+    'changed-version',
+    'unsafe-source',
+    'missing-tool',
+    'project-lock',
+    'user-library',
+    'bioc-release-missing',
+    'bioc-release-conflict'
+  ] as const)('does not certify an automatic R snapshot with %s evidence', async (failure) => {
+    const root = await mkdtemp(join(tmpdir(), 'r-snapshot-boundary-'))
+    try {
+      if (failure === 'project-lock')
+        await writeFile(
+          join(root, 'renv.lock'),
+          JSON.stringify({
+            Packages: { custompkg: { Package: 'custompkg', Version: '0.1', Source: 'Repository' } }
+          })
+        )
+      const execute = vi.fn(async (argv: string[]) => {
+        if (argv[0] === 'micromamba')
+          return failure === 'missing-tool'
+            ? condaInventory('r-base')
+            : condaInventory('r-base', 'r-renv')
+        if (failure === 'timeout') throw new Error('snapshot timed out')
+        if (failure === 'oversized') return ' '.repeat(2 * 1024 * 1024 + 1)
+        return JSON.stringify({
+          R: { Version: failure === 'wrong-runtime' ? '4.3.0' : '4.4.3' },
+          Packages: {
+            custompkg: {
+              Package: 'custompkg',
+              Version: failure === 'changed-version' ? '0.1' : '1.0',
+              Source: failure === 'unsafe-source' ? 'Local' : 'Repository',
+              ...(failure === 'unsafe-source' ? { Path: '/private/local-package' } : {})
+            }
+          }
+        })
+      })
+      const result = await captureNotebookEnvironmentLock(
+        { language: 'r', environmentName: 'r-test', runtimeSource: 'managed', condaPrefix: root },
+        manifest({
+          kernelKind: 'r',
+          runtimeVersion: '4.4.3',
+          packages: [
+            {
+              name: 'custompkg',
+              version: '1.0',
+              versionStatus: 'known',
+              ecosystem: 'r',
+              loadedState: 'loaded',
+              libraryScope: failure === 'user-library' ? 'user' : 'environment',
+              evidenceSources: ['r-installed-packages', 'r-session-info'],
+              ...(failure.startsWith('bioc-release')
+                ? {
+                    source: {
+                      type: 'bioconductor' as const,
+                      ...(failure === 'bioc-release-conflict' ? { version: '3.20' } : {})
+                    }
+                  }
+                : {})
+            },
+            ...(failure === 'bioc-release-conflict'
+              ? [
+                  {
+                    name: 'anotherpkg',
+                    version: '1.0',
+                    versionStatus: 'known' as const,
+                    ecosystem: 'r' as const,
+                    evidenceSources: ['r-installed-packages' as const],
+                    source: { type: 'bioconductor' as const, version: '3.21' }
+                  }
+                ]
+              : [])
+          ]
+        }),
+        { micromamba: 'micromamba', execute, workspace: { sessionRoot: root, searchRoots: [root] } }
+      )
+      expect(result).toMatchObject({ state: 'captured', captureStatus: 'partial' })
+      expect(execute).toHaveBeenCalledTimes(
+        [
+          'missing-tool',
+          'project-lock',
+          'user-library',
+          'bioc-release-missing',
+          'bioc-release-conflict'
+        ].includes(failure)
+          ? 1
+          : 2
+      )
+      expect(JSON.stringify(result)).not.toContain('/private/local-package')
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('retries a failed R snapshot after the cooldown and caches the validated native dependency closure', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'r-snapshot-retry-'))
+    let now = 0
+    const clock = vi.spyOn(Date, 'now').mockImplementation(() => now)
+    try {
+      await mkdir(join(root, 'conda-meta'))
+      await writeFile(join(root, 'conda-meta/history'), 'same environment')
+      const owner = new EnvironmentLockCaptureOwner()
+      let probes = 0
+      const execute = vi.fn(async (argv: string[]) => {
+        if (argv[0] === 'micromamba') return condaInventory('r-base', 'r-renv', 'r-cli')
+        if (++probes === 1) throw new Error('temporary snapshot failure')
+        return JSON.stringify({
+          R: { Version: '4.4.3' },
+          Packages: {
+            custompkg: { Package: 'custompkg', Version: '1.0', Source: 'Repository' },
+            helper: { Package: 'helper', Version: '1.0', Source: 'Repository' },
+            cli: { Package: 'cli', Version: '1.0', Source: 'Repository' }
+          }
+        })
+      })
+      const take = (): ReturnType<typeof owner.capture> =>
+        owner.capture(
+          { language: 'r', environmentName: 'r-test', runtimeSource: 'managed', condaPrefix: root },
+          manifest({
+            kernelKind: 'r',
+            runtimeVersion: '4.4.3',
+            packages: ['custompkg', 'helper', 'cli'].map((name) => ({
+              name,
+              version: '1.0',
+              versionStatus: 'known',
+              ecosystem: 'r',
+              loadedState: name === 'helper' ? 'installed-only' : 'loaded',
+              libraryScope: 'environment',
+              evidenceSources: ['r-installed-packages', 'r-session-info']
+            }))
+          }),
+          { micromamba: 'micromamba', execute, environmentFingerprint: 'stable' }
+        )
+      expect(await take()).toMatchObject({ captureStatus: 'partial' })
+      now = 59_999
+      expect(await take()).toMatchObject({ captureStatus: 'partial' })
+      expect(probes).toBe(1)
+      now = 60_001
+      const recovered = await take()
+      expect(recovered).toMatchObject({ captureStatus: 'complete' })
+      expect(probes).toBe(2)
+      if (recovered.state !== 'captured') throw new Error('expected lock')
+      expect(recovered.lock.untrackedPackages).toEqual(['r:custompkg', 'r:helper'])
+      const component = recovered.lock.components.find((component) => component.ecosystem === 'r')
+      if (!component || component.ecosystem !== 'r') throw new Error('expected native component')
+      expect(Object.keys(JSON.parse(component.files[0]!.content).Packages)).toEqual([
+        'custompkg',
+        'helper'
+      ])
+      expect(await take()).toEqual(recovered)
+      expect(probes).toBe(2)
+    } finally {
+      clock.mockRestore()
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
   it.each(['python', 'r'] as const)('records a safe %s lock failure stage', async (language) => {
     diagnosticWarn.mockClear()
     const result = await captureNotebookEnvironmentLock(
@@ -1305,50 +1780,73 @@ describe('captureNotebookEnvironmentLock', () => {
     }
   })
 
-  it('retains an ordinary pip requirements file as best-effort evidence', async () => {
-    const sessionRoot = await mkdtemp(join(tmpdir(), 'open-science-pip-evidence-'))
-    const cwd = join(sessionRoot, 'data', 'nested')
-    await mkdir(cwd, { recursive: true })
-    await writeFile(join(sessionRoot, 'data', 'requirements.txt'), 'scanpy==1.11.4\n')
-    const execute = vi
-      .fn<(argv: string[]) => Promise<string>>()
-      .mockResolvedValue(condaInventory('numpy'))
+  it.each([false, true])(
+    'only requires best-effort pip evidence when a native package is needed: %s',
+    async (nativeRequired) => {
+      const sessionRoot = await mkdtemp(join(tmpdir(), 'open-science-pip-evidence-'))
+      const cwd = join(sessionRoot, 'data', 'nested')
+      await mkdir(cwd, { recursive: true })
+      await writeFile(join(sessionRoot, 'data', 'requirements.txt'), 'scanpy==1.11.4\n')
+      const execute = vi
+        .fn<(argv: string[]) => Promise<string>>()
+        .mockResolvedValue(condaInventory('numpy'))
 
-    try {
-      const result = await captureNotebookEnvironmentLock(
-        {
-          language: 'python',
-          environmentName: 'default-python',
-          runtimeSource: 'managed',
-          condaPrefix: '/runtime/envs/default-python'
-        },
-        manifest(),
-        {
-          micromamba: '/runtime/micromamba',
-          execute,
-          workspace: { sessionRoot, searchRoots: [cwd] }
-        }
-      )
+      try {
+        const result = await captureNotebookEnvironmentLock(
+          {
+            language: 'python',
+            environmentName: 'default-python',
+            runtimeSource: 'managed',
+            condaPrefix: '/runtime/envs/default-python'
+          },
+          manifest({
+            packages: [
+              ...manifest().packages,
+              ...(nativeRequired
+                ? [
+                    {
+                      name: 'scanpy',
+                      version: '1.11.4',
+                      versionStatus: 'known' as const,
+                      ecosystem: 'python' as const,
+                      evidenceSources: ['python-importlib-metadata' as const]
+                    }
+                  ]
+                : [])
+            ]
+          }),
+          {
+            micromamba: '/runtime/micromamba',
+            execute,
+            workspace: { sessionRoot, searchRoots: [cwd] }
+          }
+        )
 
-      expect(result).toEqual({
-        state: 'captured',
-        captureStatus: 'partial',
-        partialReasons: ['native-lock-file-best-effort'],
-        lock: expect.objectContaining({
-          components: expect.arrayContaining([
-            expect.objectContaining({
-              ecosystem: 'python',
-              format: 'pip-requirements',
-              resolution: 'best-effort',
-              files: [expect.objectContaining({ path: 'data/requirements.txt' })]
-            })
-          ])
+        expect(result).toEqual({
+          state: 'captured',
+          captureStatus: nativeRequired ? 'partial' : 'complete',
+          ...(nativeRequired
+            ? {
+                partialReasons: ['non-conda-package-detected', 'native-lock-file-best-effort'],
+                diagnostics: expect.any(Array)
+              }
+            : {}),
+          lock: expect.objectContaining({
+            components: expect.arrayContaining([
+              expect.objectContaining({
+                ecosystem: 'python',
+                format: 'pip-requirements',
+                resolution: 'best-effort',
+                files: [expect.objectContaining({ path: 'data/requirements.txt' })]
+              })
+            ])
+          })
         })
-      })
-    } finally {
-      await rm(sessionRoot, { recursive: true, force: true })
+      } finally {
+        await rm(sessionRoot, { recursive: true, force: true })
+      }
     }
-  })
+  )
 
   it('rejects secret-bearing and symlinked native lockfiles without losing the Conda lock', async () => {
     const sessionRoot = await mkdtemp(join(tmpdir(), 'open-science-unsafe-lock-'))
@@ -1382,8 +1880,7 @@ describe('captureNotebookEnvironmentLock', () => {
 
       expect(result).toEqual({
         state: 'captured',
-        captureStatus: 'partial',
-        partialReasons: ['native-lock-file-rejected'],
+        captureStatus: 'complete',
         lock: expect.any(Object)
       })
       if (result.state === 'captured') {
@@ -1424,8 +1921,7 @@ describe('captureNotebookEnvironmentLock', () => {
 
       expect(result).toEqual({
         state: 'captured',
-        captureStatus: 'partial',
-        partialReasons: ['native-lock-file-rejected'],
+        captureStatus: 'complete',
         lock: expect.any(Object)
       })
       if (result.state === 'captured') expect(result.lock.components).toHaveLength(1)
@@ -1468,8 +1964,7 @@ describe('captureNotebookEnvironmentLock', () => {
 
       expect(result).toEqual({
         state: 'captured',
-        captureStatus: 'partial',
-        partialReasons: ['native-lock-file-rejected'],
+        captureStatus: 'complete',
         lock: expect.any(Object)
       })
       if (result.state === 'captured') expect(result.lock.components).toHaveLength(1)
@@ -1505,8 +2000,7 @@ describe('captureNotebookEnvironmentLock', () => {
 
       expect(result).toEqual({
         state: 'captured',
-        captureStatus: 'partial',
-        partialReasons: ['native-lock-file-rejected'],
+        captureStatus: 'complete',
         lock: expect.any(Object)
       })
       if (result.state === 'captured') expect(result.lock.components).toHaveLength(1)

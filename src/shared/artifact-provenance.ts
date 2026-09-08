@@ -323,6 +323,7 @@ export type ArtifactPackageSourceEvidence =
   | { type: 'bioconductor'; version?: string }
 
 export type ArtifactVersionEnvironmentEvidence = {
+  execution_context?: import('./notebook-execution-context').NotebookExecutionContext
   capture_kind: 'completed-run'
   environment_name: string
   kernel_kind: 'python' | 'r'
@@ -673,6 +674,8 @@ export type ArtifactReproducibilityStartFrontier = {
   downstreamActivityIds: string[]
   reasonCodes: ArtifactReproducibilityBarrierReason[]
   checkReasonCodes?: ArtifactReproducibilityRecipeBarrier[]
+  // File identities with no materialization entry in the saved plan; no live disk inspection.
+  unavailableEntityIds?: string[]
 }
 
 // Read-only renderer projection derived from the immutable graph. It deliberately excludes storage

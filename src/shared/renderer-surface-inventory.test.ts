@@ -67,6 +67,7 @@ const GENERATED_SOURCE_OMISSIONS = [
   'artifacts.listReproducibilityReceipts',
   'artifacts.onReproducibilityCheckChanged',
   'artifacts.startReproducibilityCheck',
+  'artifacts.sessionReproducibility',
   'databaseStartup.getState',
   'databaseStartup.onStateChanged',
   'databaseStartup.quit',

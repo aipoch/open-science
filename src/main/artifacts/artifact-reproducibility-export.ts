@@ -20,7 +20,10 @@ import type {
   ImportArtifactEnvironmentLockRequest,
   ImportArtifactEnvironmentLockResult
 } from '../../shared/artifact-reproducibility'
-import type { PersistedArtifactExecutionSnapshot } from '../../shared/artifact-provenance'
+import type {
+  ArtifactVersionDescriptor,
+  PersistedArtifactExecutionSnapshot
+} from '../../shared/artifact-provenance'
 import type { NotebookEnvironmentLock } from '../../shared/notebook'
 import { englishNativeTranslator, type NativeTranslator } from '../locale/main-process-messages'
 import { parseNotebookEnvironmentLock } from '../notebook/environment-lock'
@@ -29,6 +32,7 @@ import { normalizeRuntimeArchitecture } from '../notebook/runtime-paths'
 import { decodeArtifactReproducibilityReceipt } from './artifact-reproducibility-receipts'
 import { sha256 } from './provenance-canonical'
 import { outputPreview } from './artifact-reproducibility-outputs'
+import { compareReproducedContent } from './output-comparison'
 
 const SHA256 = /^[0-9a-f]{64}$/u
 const WINDOWS_RESERVED_BASENAME = /^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])$/iu
@@ -74,6 +78,12 @@ type OpenDialogOptions = {
 }
 
 type ArtifactReproducibilityReceiptExporterDependencies = {
+  readVersion?: (
+    request: ArtifactReproducibilityReceiptScope
+  ) => Promise<
+    | Pick<ArtifactVersionDescriptor, 'versionId' | 'artifactId' | 'versionNumber' | 'checksum'>
+    | undefined
+  >
   readOutputStorage?: (
     request: ArtifactReproducibilityReceiptScope
   ) => Promise<ArtifactReproducibilityOutputStorage>
@@ -227,7 +237,8 @@ const comparisonResult = (
 
 const buildVerificationReport = (
   receipt: ArtifactReproducibilityReceipt,
-  outputsCleared = false
+  outputsCleared = false,
+  versionNumber?: number
 ): string => {
   const environmentRows = receipt.environmentLocks.length
     ? receipt.environmentLocks.map(
@@ -255,6 +266,7 @@ const buildVerificationReport = (
     `- Project ID: ${markdownCell(receipt.artifactVersion.projectId)}`,
     `- Session ID: ${markdownCell(receipt.artifactVersion.appSessionId)}`,
     `- Artifact ID: ${markdownCell(receipt.artifactVersion.artifactId)}`,
+    ...(versionNumber === undefined ? [] : [`- Version: v${versionNumber}`]),
     `- Version ID: ${markdownCell(receipt.artifactVersion.versionId)}`,
     `- Target checksum: ${receipt.artifactVersion.targetChecksum}`,
     '',
@@ -276,6 +288,17 @@ const buildVerificationReport = (
     '| --- | --- | --- | --- | ---: | ---: | --- |',
     ...comparisonRows,
     '',
+    '## Content comparisons',
+    '',
+    'Byte checks remain exact. Content comparisons are separate assessments.',
+    '',
+    '| File | Content result | Reason |',
+    '| --- | --- | --- |',
+    ...receipt.comparisons.map((comparison) => {
+      const report = comparison.contentComparison
+      return `| ${markdownCell(comparison.relativePath)} | ${markdownCell(report?.outcome ?? (comparison.contentComparisonUnavailableReason ? 'Unavailable' : comparison.status === 'matched' ? 'Not needed (identical bytes)' : 'Not recorded'))} | ${markdownCell(report?.reason ?? comparison.contentComparisonUnavailableReason)} |`
+    }),
+    '',
     outputsCleared
       ? '> Reproduced outputs were cleared by the user. Verification metadata and logs are retained.'
       : receipt.comparisons.some((comparison) => comparison.outputCaptured)
@@ -289,10 +312,14 @@ const buildVerificationArchive = (
   receipt: ArtifactReproducibilityReceipt,
   checkLog?: ArtifactReproducibilityCheckLogRecord,
   outputs: Record<string, Uint8Array> = {},
-  outputsCleared = false
+  outputsCleared = false,
+  versionNumber?: number
 ): Uint8Array => {
   const entries: Zippable = {
-    'report.md': [strToU8(buildVerificationReport(receipt, outputsCleared)), { mtime: ZIP_MTIME }],
+    'report.md': [
+      strToU8(buildVerificationReport(receipt, outputsCleared, versionNumber)),
+      { mtime: ZIP_MTIME }
+    ],
     'verification-receipt.json': [
       strToU8(`${JSON.stringify(receipt, null, 2)}\n`),
       { mtime: ZIP_MTIME }
@@ -712,10 +739,34 @@ const createArtifactReproducibilityReceiptExporter = (
       const original = await dependencies
         .readOriginalOutput?.(scope, entityId)
         .catch(() => undefined)
+      const imageDifference =
+        original &&
+        comparison.contentComparison?.kind === 'image' &&
+        sha256(original) === comparison.expectedChecksum &&
+        sha256(bytes) === comparison.actualChecksum
+          ? await compareReproducedContent({
+              expected: original,
+              actual: bytes,
+              filename: comparison.relativePath,
+              policy: comparison.contentComparison.policy,
+              preview: true
+            })
+          : undefined
       return {
         filename: outputFilename(comparison.relativePath),
-        reproduced: outputPreview(comparison.relativePath, bytes),
-        ...(original ? { original: outputPreview(comparison.relativePath, original) } : {})
+        reproduced: imageDifference?.reproducedImage
+          ? { kind: 'image', dataUrl: imageDifference.reproducedImage }
+          : outputPreview(comparison.relativePath, bytes),
+        ...(imageDifference?.differenceImage
+          ? { differenceImage: imageDifference.differenceImage }
+          : {}),
+        ...(original
+          ? {
+              original: imageDifference?.originalImage
+                ? { kind: 'image' as const, dataUrl: imageDifference.originalImage }
+                : outputPreview(comparison.relativePath, original)
+            }
+          : {})
       }
     },
     export: async (owner, request) => {
@@ -805,9 +856,25 @@ const createArtifactReproducibilityReceiptExporter = (
       }
       if (manifest.length)
         outputs['outputs/manifest.json'] = strToU8(JSON.stringify(manifest, null, 2))
+      const version = await dependencies.readVersion?.(receiptScope(request))
+      if (
+        version &&
+        (version.versionId !== validated.artifactVersion.versionId ||
+          version.artifactId !== validated.artifactVersion.artifactId ||
+          version.checksum !== validated.artifactVersion.targetChecksum ||
+          !Number.isSafeInteger(version.versionNumber) ||
+          version.versionNumber < 1)
+      )
+        throw new Error('Verification report version identity does not match the receipt.')
       await (dependencies.writeArchive ?? writeFile)(
         destination,
-        buildVerificationArchive(validated, checkLog, outputs, outputsCleared)
+        buildVerificationArchive(
+          validated,
+          checkLog,
+          outputs,
+          outputsCleared,
+          version?.versionNumber
+        )
       )
       return { saved: true }
     },

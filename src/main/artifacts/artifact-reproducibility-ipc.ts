@@ -1,4 +1,9 @@
 import type { WebContents } from 'electron'
+import type {
+  SessionReproducibilityCommand,
+  SessionReproducibilityBatch
+} from '../../shared/session-reproducibility'
+import { sessionReproducibilityCommandSchema } from '../../shared/session-reproducibility'
 
 import type {
   ArtifactEnvironmentLockBundleInfo,
@@ -28,7 +33,13 @@ import type { ArtifactReproducibilityAttemptOwner } from './artifact-reproducibi
 
 type ArtifactReproducibilityIpcOwner = Pick<
   ArtifactReproducibilityAttemptOwner,
-  'start' | 'cancel' | 'cancelOwner' | 'getCheck' | 'getCheckLog' | 'listReceipts'
+  | 'start'
+  | 'cancel'
+  | 'cancelOwner'
+  | 'getCheck'
+  | 'getCheckLog'
+  | 'listReceipts'
+  | 'sessionCommand'
 >
 
 type ArtifactReproducibilityIpcDependencies = {
@@ -41,10 +52,10 @@ type ArtifactReproducibilityIpcDependencies = {
   previewOutput: (
     request: ReadArtifactReproducibilityOutputRequest
   ) => Promise<ArtifactReproducibilityOutputPreview>
-  withSessionAvailable: (
-    request: ArtifactReproducibilityCheckRequest,
-    start: () => Promise<ArtifactReproducibilityCheckState>
-  ) => Promise<ArtifactReproducibilityCheckState>
+  withSessionAvailable: <Result>(
+    request: Pick<ArtifactReproducibilityCheckRequest, 'projectId' | 'appSessionId'>,
+    start: () => Promise<Result>
+  ) => Promise<Result>
   describeEnvironmentLock: (
     request: ExportArtifactEnvironmentLockRequest
   ) => Promise<ArtifactEnvironmentLockBundleInfo>
@@ -70,6 +81,26 @@ const registerArtifactReproducibilityIpcHandlers = (
   dependencies: ArtifactReproducibilityIpcDependencies
 ): void => {
   const observedRenderers = new WeakSet<WebContents>()
+  ipcMainHandle(
+    'artifacts:session-reproducibility',
+    (event, raw: SessionReproducibilityCommand) => {
+      const request = sessionReproducibilityCommandSchema.parse(raw)
+      const sender = event.sender
+      if (!observedRenderers.has(sender)) {
+        observedRenderers.add(sender)
+        sender.once('destroyed', () => owner.cancelOwner(sender.id))
+      }
+      const invoke = async (): Promise<SessionReproducibilityBatch | undefined> => {
+        if (sender.isDestroyed()) throw new Error('Reproducibility check owner is unavailable.')
+        return owner.sessionCommand(request, sender.id, (state) => {
+          if (!sender.isDestroyed()) sender.send('artifacts:reproducibility-check-changed', state)
+        })
+      }
+      return request.action === 'prepare' || request.action === 'start'
+        ? dependencies.withSessionAvailable(request, invoke)
+        : invoke()
+    }
+  )
   const assertScope = (value: ArtifactReproducibilityReceiptScope): void => {
     const keys: Array<keyof ArtifactReproducibilityReceiptScope> = [
       'projectId',

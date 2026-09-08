@@ -1,5 +1,7 @@
 import { strFromU8, unzipSync } from 'fflate'
 import { describe, expect, it, vi } from 'vitest'
+import sharp from 'sharp'
+import { compareReproducedContent } from './output-comparison'
 
 import type {
   ArtifactReproducibilityCheckLogRecord,
@@ -222,6 +224,98 @@ const environmentLockExecution = {
 } as PersistedArtifactExecutionSnapshot
 
 describe('Artifact reproducibility verification export', () => {
+  it('returns browser-readable TIFF originals and differences on demand', async () => {
+    const original = await sharp({
+      create: { width: 10, height: 10, channels: 3, background: 'white' }
+    })
+      .tiff({ compression: 'none' })
+      .toBuffer()
+    const actual = await sharp(original).negate().tiff({ compression: 'lzw' }).toBuffer()
+    const { report } = await compareReproducedContent({
+      filename: 'plot.tiff',
+      expected: original,
+      actual
+    })
+    const value = receipt()
+    value.schemaVersion = 2
+    value.comparisons = [
+      {
+        ...value.comparisons[0]!,
+        relativePath: 'plot.tiff',
+        expectedChecksum: sha256(original),
+        actualChecksum: sha256(actual),
+        expectedSizeBytes: original.length,
+        actualSizeBytes: actual.length,
+        reason: 'size-mismatch',
+        outputCaptured: true,
+        contentComparison: report
+      }
+    ]
+    const payload = Object.fromEntries(
+      Object.entries(value).filter(([key]) => key !== 'receiptChecksum')
+    )
+    value.receiptChecksum = sha256(canonicalJson(payload as CanonicalJson))
+    const exporter = createArtifactReproducibilityReceiptExporter({
+      downloadsDirectory: '/downloads',
+      readReceipt: async () => value,
+      readOutput: async () => actual,
+      readOriginalOutput: async () => original,
+      showSaveDialog: async () => ({ canceled: true })
+    })
+    const preview = await exporter.previewOutput({
+      projectId: value.artifactVersion.projectId,
+      appSessionId: value.artifactVersion.appSessionId,
+      artifactId: value.artifactVersion.artifactId,
+      versionId: value.artifactVersion.versionId,
+      receiptChecksum: value.receiptChecksum,
+      entityId: 'file-1'
+    })
+    expect(preview.original).toMatchObject({
+      kind: 'image',
+      dataUrl: expect.stringMatching(/^data:image\/png;base64,/u)
+    })
+    expect(preview.reproduced).toMatchObject({
+      kind: 'image',
+      dataUrl: expect.stringMatching(/^data:image\/png;base64,/u)
+    })
+    expect(preview.differenceImage).toMatch(/^data:image\/png;base64,/u)
+  })
+  it('includes content comparison coverage and a display version without modifying the receipt', () => {
+    const value = receipt()
+    value.comparisons[0]!.contentComparisonUnavailableReason = 'budget-exceeded'
+    const original = structuredClone(value)
+    const files = unzipSync(buildVerificationArchive(value, undefined, {}, false, 3))
+    const report = strFromU8(files['report.md']!)
+    expect(report).toContain('Version: v3')
+    expect(report).toContain(`Version ID: ${value.artifactVersion.versionId}`)
+    expect(report).toContain('Content comparisons')
+    expect(report).toContain('Unavailable | budget-exceeded')
+    expect(JSON.parse(strFromU8(files['verification-receipt.json']!))).toEqual(original)
+    expect(buildVerificationReport(value)).not.toContain('Version: v')
+  })
+
+  it.each(['versionId', 'artifactId', 'checksum'] as const)(
+    'rejects a report display version with a mismatched %s',
+    async (field) => {
+      const value = receipt()
+      const writeArchive = vi.fn()
+      const exporter = createArtifactReproducibilityReceiptExporter({
+        downloadsDirectory: '/downloads',
+        readReceipt: async () => value,
+        readVersion: async () => ({
+          versionId: value.artifactVersion.versionId,
+          artifactId: value.artifactVersion.artifactId,
+          checksum: value.artifactVersion.targetChecksum,
+          versionNumber: 3,
+          [field]: 'wrong'
+        }),
+        showSaveDialog: async () => ({ canceled: false, filePath: '/exports/record.zip' }),
+        writeArchive
+      })
+      await expect(exporter.export(undefined, request(value))).rejects.toThrow('version identity')
+      expect(writeArchive).not.toHaveBeenCalled()
+    }
+  )
   it('previews and exports receipt-bound bytes, with original output remaining optional', async () => {
     const current = receipt()
     const bytes = Buffer.from('group,n\nCtrl,34\n')
@@ -342,22 +436,37 @@ describe('Artifact reproducibility verification export', () => {
 
   it('reloads and validates the selected receipt before saving', async () => {
     const { receipt: value, log } = receiptWithCheckLog()
-    const writeArchive = vi.fn(async () => undefined)
+    const writeArchive = vi.fn<(path: string, bytes: Uint8Array) => Promise<void>>(
+      async () => undefined
+    )
     const showSaveDialog = vi.fn(async () => ({
       canceled: false,
       filePath: '/exports/verification'
     }))
     const readReceipt = vi.fn(async () => value)
     const readCheckLog = vi.fn(async () => log)
+    const readVersion = vi.fn(async () => ({
+      versionId: value.artifactVersion.versionId,
+      artifactId: value.artifactVersion.artifactId,
+      checksum: value.artifactVersion.targetChecksum,
+      versionNumber: 3
+    }))
     const exporter = createArtifactReproducibilityReceiptExporter({
       downloadsDirectory: '/downloads',
       readReceipt,
       readCheckLog,
+      readVersion,
       showSaveDialog,
       writeArchive
     })
 
     await expect(exporter.export({ window: 1 }, request(value))).resolves.toEqual({ saved: true })
+    expect(readVersion).toHaveBeenCalledWith(
+      expect.objectContaining({ versionId: value.artifactVersion.versionId })
+    )
+    const saved = unzipSync(writeArchive.mock.calls[0]![1])
+    expect(strFromU8(saved['report.md']!)).toContain('Version: v3')
+    expect(JSON.parse(strFromU8(saved['verification-receipt.json']!))).toEqual(value)
     expect(readReceipt).toHaveBeenCalledWith(
       {
         projectId: 'project-1',

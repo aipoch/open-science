@@ -18,6 +18,8 @@ import { sandboxedPackageSpawn } from './package-process-sandbox'
 import { withSharedCacheLocks } from './pkgs-cache-lock'
 import type { NotebookProcessSandbox } from './process-sandbox'
 import { runMicromamba, verifyExecutable } from './provisioner-runtime'
+import { verifyRestoredEnvironment } from './restored-environment-verification'
+import { buildManagedRuntimeProcessEnvironment } from './process-environment'
 import { resolveLoopScriptPaths } from './runtime-service'
 import {
   normalizeRuntimeArchitecture,
@@ -80,6 +82,7 @@ type CreateNotebookReproductionRuntimeDependencies = {
   micromamba?: string
   runMicromamba?: typeof runMicromamba
   verifyExecutable?: typeof verifyExecutable
+  verifyEnvironment?: typeof verifyRestoredEnvironment
   createExecutor?: (options: NotebookKernelExecutorOptions) => NotebookSessionExecutor
   restoreNativeLock?: typeof restoreNativeEnvironmentLock
   platform?: NodeJS.Platform
@@ -222,6 +225,7 @@ const restoreEnvironment = async (
   dependencies: CreateNotebookReproductionRuntimeDependencies,
   index: number
 ): Promise<RestoredEnvironment> => {
+  input.signal?.throwIfAborted()
   const progress = (stage: NotebookReproductionEnvironmentProgress['stage']): void =>
     input.onEnvironmentProgress?.({
       requirementId: requirement.requirementId,
@@ -275,8 +279,9 @@ const restoreEnvironment = async (
     outputTimer ??= setTimeout(flushOutput, 100)
   }
   try {
-    await withSharedCacheLocks(cacheLockKeys, () =>
-      (dependencies.runMicromamba ?? runMicromamba)(
+    await withSharedCacheLocks(cacheLockKeys, () => {
+      input.signal?.throwIfAborted()
+      return (dependencies.runMicromamba ?? runMicromamba)(
         // Python attempts are short-lived: compile only modules actually imported during replay,
         // instead of eagerly compiling every Python package in the restored inventory.
         createFromLockArgv(mm, sharedRuntimeRoot, prefix, lockPath, {
@@ -292,8 +297,8 @@ const restoreEnvironment = async (
         undefined,
         bufferOutput
       )
-    )
-    if (input.signal?.aborted) throw new Error('Runtime setup cancelled.')
+    })
+    input.signal?.throwIfAborted()
     const nativeLocksRoot = join(locksRoot, requirement.lockChecksum)
     await (dependencies.restoreNativeLock ?? restoreNativeEnvironmentLock)({
       lock,
@@ -331,11 +336,44 @@ const restoreEnvironment = async (
 
   const command =
     requirement.kernelKind === 'r' ? rScriptBin(prefix, platform) : pythonBin(prefix, platform)
+  input.signal?.throwIfAborted()
   progress('verifying-runtime')
-  await (dependencies.verifyExecutable ?? verifyExecutable)(command, {
+  input.signal?.throwIfAborted()
+  const env = buildManagedRuntimeProcessEnvironment(sharedRuntimeRoot, {
+    language: requirement.kernelKind,
     prefix,
     platform
   })
+  await (dependencies.verifyExecutable ?? verifyExecutable)(command, {
+    prefix,
+    platform,
+    signal: input.signal,
+    env,
+    completeEnv: true
+  })
+  input.signal?.throwIfAborted()
+  await (dependencies.verifyEnvironment ?? verifyRestoredEnvironment)({
+    lock,
+    prefix,
+    env,
+    signal: input.signal,
+    platform,
+    spawn: sandboxedPackageSpawn({
+      processSandbox: input.processSandbox,
+      request: {
+        projectId: input.projectId,
+        sessionId: input.sessionId,
+        language: requirement.kernelKind,
+        packages: [],
+        workspaceCwd: prefix
+      },
+      runtimeRoot: sharedRuntimeRoot,
+      storageRoot: input.storageRoot,
+      interpreter: { command, condaPrefix: prefix },
+      platform
+    })
+  })
+  input.signal?.throwIfAborted()
   progress('completed')
   return {
     environmentName: `repro-${requirement.lockChecksum.slice(0, 12)}`,
@@ -348,6 +386,7 @@ const createNotebookReproductionRuntime = async (
   input: CreateNotebookReproductionRuntimeInput,
   dependencies: CreateNotebookReproductionRuntimeDependencies = {}
 ): Promise<NotebookReproductionRuntime> => {
+  input.signal?.throwIfAborted()
   const restored = new Map<string, RestoredEnvironment>()
   const captured: Array<{
     requirement: ArtifactReproducibilityEnvironmentRequirement
@@ -355,6 +394,7 @@ const createNotebookReproductionRuntime = async (
     identity: ReturnType<typeof restoreIdentity>
   }> = []
   for (const requirement of input.requirements) {
+    input.signal?.throwIfAborted()
     const lock = await loadEnvironmentLock(requirement, input, dependencies)
     captured.push({
       requirement,
@@ -364,6 +404,7 @@ const createNotebookReproductionRuntime = async (
   }
   const restoredByIdentity = new Map<string, RestoredEnvironment>()
   for (const [index, { requirement, lock, identity }] of captured.entries()) {
+    input.signal?.throwIfAborted()
     // Publish validated entries in restoration order; a preflight over all locks must not
     // make the visible environment number jump backwards before restoration begins.
     input.onEnvironmentProgress?.({
@@ -388,6 +429,7 @@ const createNotebookReproductionRuntime = async (
     }
     restored.set(requirement.requirementId, environment)
   }
+  input.signal?.throwIfAborted()
   const executorOptions: NotebookKernelExecutorOptions = {
     ...resolveLoopScriptPaths(),
     processSandbox: input.processSandbox

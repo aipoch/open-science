@@ -140,6 +140,7 @@ describe('Notebook reproduction runtime', () => {
         micromamba: '/tools/micromamba',
         runMicromamba,
         restoreNativeLock: vi.fn(async () => undefined),
+        verifyEnvironment: vi.fn(async () => undefined),
         verifyExecutable: vi.fn(async () => undefined),
         createExecutor: () => ({ execute, shutdown: async () => ({ reaped: true }) })
       }
@@ -358,6 +359,7 @@ describe('Notebook reproduction runtime', () => {
         micromamba: '/tools/micromamba',
         runMicromamba,
         verifyExecutable,
+        verifyEnvironment: vi.fn(async () => undefined),
         createExecutor
       }
     )
@@ -605,6 +607,7 @@ describe('Notebook reproduction runtime', () => {
           micromamba: '/tools/micromamba',
           runMicromamba,
           architecture: runtimeArchitecture,
+          verifyEnvironment: vi.fn(async () => undefined),
           verifyExecutable: vi.fn(async () => undefined)
         }
       )
@@ -653,6 +656,7 @@ describe('Notebook reproduction runtime', () => {
         micromamba: '/tools/micromamba',
         runMicromamba,
         platform: 'linux',
+        verifyEnvironment: vi.fn(async () => undefined),
         verifyExecutable: vi.fn(async () => undefined)
       }
     )
@@ -664,6 +668,93 @@ describe('Notebook reproduction runtime', () => {
     await expect(creating).resolves.toBeDefined()
     expect(runMicromamba).toHaveBeenCalledOnce()
   })
+
+  it.each(['python', 'r'] as const)(
+    'stops %s restoration at cancellation boundaries',
+    async (kernelKind) => {
+      const storageRoot = await mkdtemp(join(tmpdir(), 'reproduction-cancel-'))
+      replayRoots.push(storageRoot)
+      const serialized = serializeLock(process.platform, kernelKind)
+      const lockChecksum = await sha256(serialized)
+      const lockPath = join(
+        storageRoot,
+        'runtime',
+        'provenance',
+        'environment-locks',
+        `${lockChecksum}.json`
+      )
+      await mkdir(dirname(lockPath), { recursive: true })
+      await writeFile(lockPath, serialized)
+      for (const stage of [
+        'initial',
+        'restoring-packages',
+        'conda',
+        'native',
+        'verifying-runtime',
+        'verify',
+        'metadata',
+        'completed'
+      ]) {
+        const controller = new AbortController()
+        const reason = new Error(`cancelled at ${stage}`)
+        const cancelAt = (current: string): void => {
+          if (stage === current) controller.abort(reason)
+        }
+        const runMicromamba = vi.fn(async () => cancelAt('conda'))
+        const restoreNativeLock = vi.fn(async () => cancelAt('native'))
+        const verifyExecutable = vi.fn(async () => cancelAt('verify'))
+        const verifyEnvironment = vi.fn(async () => cancelAt('metadata'))
+        const createExecutor = vi.fn()
+        const progress = vi.fn(({ stage }: { stage: string }) => cancelAt(stage))
+        cancelAt('initial')
+        await expect(
+          createNotebookReproductionRuntime(
+            {
+              requirements: [
+                {
+                  requirementId: 'env',
+                  kernelKind,
+                  environmentName: `default-${kernelKind}`,
+                  lockChecksum,
+                  lockState: 'available'
+                }
+              ],
+              storageRoot,
+              attemptRoot: join(storageRoot, stage),
+              signal: controller.signal,
+              processSandbox: { wrap: vi.fn() },
+              projectId: 'project',
+              sessionId: 'session',
+              onEnvironmentProgress: progress
+            },
+            {
+              micromamba: '/tools/micromamba',
+              runMicromamba,
+              restoreNativeLock,
+              verifyExecutable,
+              verifyEnvironment,
+              createExecutor
+            }
+          )
+        ).rejects.toBe(reason)
+        expect(createExecutor).not.toHaveBeenCalled()
+        expect(runMicromamba).toHaveBeenCalledTimes(
+          ['initial', 'restoring-packages'].includes(stage) ? 0 : 1
+        )
+        expect(restoreNativeLock).toHaveBeenCalledTimes(
+          ['initial', 'restoring-packages', 'conda'].includes(stage) ? 0 : 1
+        )
+        expect(verifyExecutable).toHaveBeenCalledTimes(
+          ['verify', 'metadata', 'completed'].includes(stage) ? 1 : 0
+        )
+        expect(verifyEnvironment).toHaveBeenCalledTimes(
+          ['metadata', 'completed'].includes(stage) ? 1 : 0
+        )
+        if (stage !== 'completed')
+          expect(progress.mock.calls.some(([event]) => event.stage === 'completed')).toBe(false)
+      }
+    }
+  )
 
   it('restores an exact native package lock after the Conda baseline', async () => {
     const storageRoot = await mkdtemp(join(tmpdir(), 'reproduction-storage-'))
@@ -701,7 +792,13 @@ describe('Notebook reproduction runtime', () => {
           projectId: 'artifact-reproducibility',
           sessionId: 'reproduction-native-lock'
         },
-        { micromamba: '/tools/micromamba', runMicromamba, restoreNativeLock, verifyExecutable }
+        {
+          micromamba: '/tools/micromamba',
+          runMicromamba,
+          restoreNativeLock,
+          verifyExecutable,
+          verifyEnvironment: vi.fn(async () => undefined)
+        }
       )
     ).resolves.toBeDefined()
     expect(runMicromamba).toHaveBeenCalledOnce()
@@ -763,6 +860,7 @@ describe('Notebook reproduction runtime', () => {
         micromamba: '/tools/micromamba',
         runMicromamba: async () => undefined,
         verifyExecutable: async () => undefined,
+        verifyEnvironment: vi.fn(async () => undefined),
         createExecutor: () => executor
       }
     )

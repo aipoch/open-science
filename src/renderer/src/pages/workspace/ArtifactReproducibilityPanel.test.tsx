@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
-import { fireEvent } from '@testing-library/react'
+import { fireEvent, within } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { ArtifactReproducibilityProjection } from '../../../../shared/artifact-provenance'
@@ -13,6 +13,10 @@ import { ArtifactReproducibilityPanel } from './ArtifactReproducibilityPanel'
 import { ReproducibilityOutput } from './ReproducibilityOutput'
 import { ReproducibilityOutputStorage } from './ReproducibilityOutputStorage'
 import * as dependencyGraph from './artifact-reproducibility-graph'
+import { DEFAULT_OUTPUT_COMPARISON_POLICY } from '../../../../shared/output-comparison'
+
+Element.prototype.scrollIntoView = Element.prototype.scrollIntoView ?? ((): void => {})
+;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
 const projection = (): ArtifactReproducibilityProjection => ({
   completeness: 'complete',
@@ -330,6 +334,79 @@ describe('ArtifactReproducibilityPanel', () => {
     expect(button('Download output')).toBeUndefined()
   })
 
+  it.each([
+    ['budget-exceeded', 'Content exceeds the comparison limit.'],
+    ['unsupported-format', 'This content format is not supported for comparison.'],
+    ['comparison-failed', 'Content could not be parsed or compared.']
+  ] as const)(
+    'explains unavailable content comparison %s without reading output',
+    async (reason, message) => {
+      const value = receipt('different')
+      const readReproducibilityOutput = vi.fn()
+      ;(window as unknown as { api: unknown }).api = { artifacts: { readReproducibilityOutput } }
+      await act(async () =>
+        root.render(
+          <ReproducibilityOutput
+            receipt={value}
+            comparison={{
+              ...value.comparisons[0]!,
+              contentComparisonUnavailableReason: reason
+            }}
+          />
+        )
+      )
+      expect(container.textContent).toContain('Content comparison unavailable')
+      expect(container.textContent).toContain(message)
+      expect(readReproducibilityOutput).not.toHaveBeenCalled()
+    }
+  )
+
+  it('loads image differences on demand and adjusts overlay opacity without another read', async () => {
+    const value = receipt('different')
+    const comparison = {
+      ...value.comparisons[0]!,
+      outputCaptured: true as const,
+      contentComparison: {
+        schemaVersion: 1 as const,
+        comparator: 'open-science-content-v1' as const,
+        policy: DEFAULT_OUTPUT_COMPARISON_POLICY,
+        policyChecksum: 'a'.repeat(64),
+        expectedChecksum: 'b'.repeat(64),
+        actualChecksum: 'c'.repeat(64),
+        kind: 'image' as const,
+        outcome: 'different' as const,
+        image: {
+          width: 8,
+          height: 8,
+          changedPixels: 64,
+          changedPixelRatio: 1,
+          rmse: 100,
+          maxDifference: 255
+        }
+      }
+    }
+    const readReproducibilityOutput = vi.fn(async () => ({
+      filename: 'plot.png',
+      original: { kind: 'image', dataUrl: 'data:image/png;base64,b3JpZ2luYWw=' },
+      reproduced: { kind: 'image', dataUrl: 'data:image/png;base64,YWN0dWFs' },
+      differenceImage: 'data:image/png;base64,ZGlmZg=='
+    }))
+    ;(window as unknown as { api: unknown }).api = { artifacts: { readReproducibilityOutput } }
+    await act(async () =>
+      root.render(<ReproducibilityOutput receipt={value} comparison={comparison} />)
+    )
+    expect(readReproducibilityOutput).not.toHaveBeenCalled()
+    const button = [...container.querySelectorAll('button')].find(
+      (item) => item.textContent === 'View output'
+    )!
+    await act(async () => fireEvent.click(button))
+    expect(container.textContent).toContain('Difference image')
+    const slider = container.querySelector('input[type="range"]')!
+    await act(async () => fireEvent.change(slider, { target: { value: '75' } }))
+    expect(container.querySelector<HTMLImageElement>('img[style]')?.style.opacity).toBe('0.75')
+    expect(readReproducibilityOutput).toHaveBeenCalledTimes(1)
+  })
+
   it('loads reproduced output on demand, caches previews, and downloads the selected generation', async () => {
     const value = receipt('different')
     const comparison = { ...value.comparisons[0]!, outputCaptured: true as const }
@@ -634,7 +711,7 @@ describe('ArtifactReproducibilityPanel', () => {
       expect(blocker?.textContent).toContain(
         failedDependency
           ? 'A required run did not complete. Rerun it successfully, then regenerate this result.'
-          : 'This version cannot be checked because required execution evidence is missing.'
+          : 'Execution evidence is missing. Rerun the required code to create a new version.'
       )
       expect(blocker?.textContent).not.toContain('Activity file evidence is incomplete.')
       expect(blocker?.textContent).not.toContain('File access evidence is incomplete.')
@@ -1161,7 +1238,8 @@ describe('ArtifactReproducibilityPanel', () => {
     await act(async () => start?.dispatchEvent(new MouseEvent('click', { bubbles: true })))
     expect(startReproducibilityCheck).toHaveBeenCalledWith({
       ...artifactVersion,
-      frontierId: 'original-inputs'
+      frontierId: 'original-inputs',
+      comparisonPolicy: DEFAULT_OUTPUT_COMPARISON_POLICY
     })
     expect(container.querySelector('fieldset')?.disabled).toBe(true)
     expect(container.textContent).toContain('Loading captured evidence…')
@@ -1342,6 +1420,68 @@ describe('ArtifactReproducibilityPanel', () => {
     )
     expect(container.textContent).toContain('Retry check')
     expect(container.textContent).not.toContain('The isolated check could not complete.')
+  })
+
+  it('previews a node without file IO and starts the displayed upstream preparation plan once', async () => {
+    const value = kernelDependencyProjection()
+    value.startFrontiers[0]!.downstreamActivityIds = ['run-1', 'run-2', 'publish-1']
+    value.startFrontiers[1]!.downstreamActivityIds = ['run-2', 'publish-1']
+    value.startFrontiers[1]!.reasonCodes = ['advisory-boundary']
+    value.startFrontiers[1]!.crossingEntityIds = ['input-1']
+    const artifactVersion = {
+      projectId: 'project-1',
+      appSessionId: 'session-1',
+      artifactId: 'artifact-1',
+      versionId: 'version-1'
+    }
+    let rejectStart: (reason: Error) => void = () => {}
+    const start = vi.fn(
+      () =>
+        new Promise((_resolve, reject) => {
+          rejectStart = reject
+        })
+    )
+    const readPreview = vi.fn()
+    ;(window as unknown as { api: unknown }).api = {
+      artifacts: {
+        startReproducibilityCheck: start,
+        readPreview,
+        cancelReproducibilityCheck: vi.fn(),
+        onReproducibilityCheckChanged: () => () => {}
+      }
+    }
+    await act(async () =>
+      root.render(
+        <ArtifactReproducibilityPanel
+          projection={value}
+          executionAvailable
+          artifactVersion={artifactVersion}
+        />
+      )
+    )
+    const node = container.querySelector('[data-graph-node="activity:run-1"]')!
+    await act(async () => fireEvent.click(node))
+    const button = (name: string): HTMLButtonElement =>
+      [...container.querySelectorAll('button')].find((item) => item.textContent === name)!
+    await act(async () => fireEvent.click(button('Check from here')))
+    const preview = container.querySelector('[data-node-start-preview]')!
+    expect(preview.textContent).toContain('Notebook run 2 requires state from Notebook run 1.')
+    expect(preview.textContent).toContain('Preparation')
+    expect(preview.textContent).toContain('End-to-end claim')
+    expect(start).not.toHaveBeenCalled()
+    expect(readPreview).not.toHaveBeenCalled()
+    await act(async () => {
+      fireEvent.click(button('Start check'))
+      fireEvent.click(button('Start check'))
+    })
+    expect(start).toHaveBeenCalledOnce()
+    expect(start).toHaveBeenCalledWith({
+      ...artifactVersion,
+      frontierId: 'original-inputs',
+      comparisonPolicy: DEFAULT_OUTPUT_COMPARISON_POLICY
+    })
+    await act(async () => rejectStart(new Error('failed')))
+    expect(preview.querySelector('[role="alert"]')?.textContent).toBe('Check failed')
   })
 
   it.each(['matched', 'different', 'failed'] as const)(
@@ -1852,6 +1992,24 @@ describe('ArtifactReproducibilityPanel', () => {
     expect(container.textContent).not.toContain('This result has not been checked again yet.')
   })
 
+  it('lifts comparison help and scientific menus above the Preview dialog', async () => {
+    await act(async () =>
+      root.render(
+        <ArtifactReproducibilityPanel projection={projection()} tooltipClassName="z-[70]" />
+      )
+    )
+    const help = container.querySelector<HTMLButtonElement>('[data-slot="field-help"]')!
+    await act(async () => help.focus())
+    expect(document.querySelector('[data-slot="tooltip-content"]')?.className).toContain('z-[70]')
+    await act(async () => {
+      fireEvent.keyDown(help, { key: 'Escape' })
+      help.blur()
+    })
+    const select = container.querySelector('[data-slot="select-trigger"]')!
+    await act(async () => fireEvent.keyDown(select, { key: 'ArrowDown' }))
+    expect(document.querySelector('[data-slot="select-content"]')?.className).toContain('z-[70]')
+  })
+
   it('uses one fitted graph surface and moves activity detail into the node inspector', async () => {
     await act(async () => root.render(<ArtifactReproducibilityPanel projection={projection()} />))
 
@@ -2193,12 +2351,12 @@ describe('ArtifactReproducibilityPanel', () => {
     checkpoint.reasonCodes = []
     await act(async () => root.render(<ArtifactReproducibilityPanel projection={value} />))
 
-    const selector = container.querySelector<HTMLSelectElement>('[data-start-frontier-selector]')
-    await act(async () => {
-      if (!selector) return
-      selector.value = 'checkpoint:run-1'
-      selector.dispatchEvent(new Event('change', { bubbles: true }))
-    })
+    const selector = container.querySelector<HTMLButtonElement>('[data-start-frontier-selector]')!
+    expect(selector.getAttribute('data-slot')).toBe('select-trigger')
+    await act(async () => fireEvent.keyDown(selector, { key: 'ArrowDown' }))
+    await act(async () =>
+      fireEvent.click(within(document.body).getByRole('option', { name: /After Notebook run 1/ }))
+    )
 
     expect(
       container.querySelector('[data-graph-node="activity:run-1"]')?.getAttribute('opacity')
@@ -2250,10 +2408,16 @@ describe('ArtifactReproducibilityPanel', () => {
 
     await act(async () => root.render(<ArtifactReproducibilityPanel projection={value} />))
 
-    const options = [
-      ...container.querySelectorAll<HTMLOptionElement>('[data-start-frontier-selector] option')
-    ]
-    expect(options.map((option) => option.value)).toEqual(['original-inputs', 'checkpoint:run-1'])
+    await act(async () =>
+      fireEvent.keyDown(container.querySelector('[data-start-frontier-selector]')!, {
+        key: 'ArrowDown'
+      })
+    )
+    const options = within(document.body).getAllByRole('option')
+    expect(options.map((option) => option.textContent)).toEqual([
+      'Original captured inputs · Runs to execute: 2',
+      'After Notebook run 1 · Runs to execute: 1'
+    ])
     expect(container.querySelectorAll('input[type="radio"]')).toHaveLength(0)
     expect(container.textContent).not.toContain('After Notebook run 2')
   })

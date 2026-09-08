@@ -37,6 +37,17 @@ import { TransformComponent, TransformWrapper, useControls } from 'react-zoom-pa
 import { Button } from '@/components/ui/button'
 import { ReproducibilityOutput } from './ReproducibilityOutput'
 import { ReproducibilityOutputStorage } from './ReproducibilityOutputStorage'
+import { OutputComparisonSettings } from './OutputComparison'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue
+} from '@/components/ui/select'
+import { ReproducibilityStartPreview } from './ReproducibilityStartPreview'
+import { previewNodeStart } from './artifact-reproducibility-start'
+import { DEFAULT_OUTPUT_COMPARISON_POLICY } from '../../../../shared/output-comparison'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { cn } from '@/lib/utils'
@@ -845,6 +856,8 @@ export const ArtifactReproducibilityPanel = ({
   const markerId = useId().replace(/:/g, '')
   const panelRef = useRef<HTMLDivElement>(null)
   const [selectedFrontierId, setSelectedFrontierId] = useState('original-inputs')
+  const [comparisonPolicy, setComparisonPolicy] = useState(DEFAULT_OUTPUT_COMPARISON_POLICY)
+  const [pendingComparisonRules, setPendingComparisonRules] = useState(false)
   const [selectedNodeKey, setSelectedNodeKey] = useState<string>()
   const [expandedOutputIds, setExpandedOutputIds] = useState<Set<string>>(() => new Set())
   const [showFullGraph, setShowFullGraph] = useState(false)
@@ -872,6 +885,7 @@ export const ArtifactReproducibilityPanel = ({
   const historyRef = useRef<HTMLDetailsElement>(null)
   const [exportingReceiptChecksum, setExportingReceiptChecksum] = useState<string>()
   const [starting, setStarting] = useState(false)
+  const startPendingRef = useRef<{ active: boolean } | undefined>(undefined)
   const [cancelling, setCancelling] = useState(false)
   const [historyRetry, setHistoryRetry] = useState(0)
   const [retryingHistory, setRetryingHistory] = useState(false)
@@ -894,6 +908,8 @@ export const ArtifactReproducibilityPanel = ({
     setStarting(false)
     setCancelling(false)
     setStartError(false)
+    setComparisonPolicy(DEFAULT_OUTPUT_COMPARISON_POLICY)
+    setPendingComparisonRules(false)
   }
   const checkState =
     artifactVersion &&
@@ -981,7 +997,11 @@ export const ArtifactReproducibilityPanel = ({
       if (current?.attemptId === next.attemptId && current.revision > next.revision) return current
       return next
     })
-    if (next.status === 'running') setSelectedFrontierId(next.request.frontierId)
+    if (next.status === 'running') {
+      setSelectedFrontierId(next.request.frontierId)
+      setComparisonPolicy(next.request.comparisonPolicy ?? DEFAULT_OUTPUT_COMPARISON_POLICY)
+      setPendingComparisonRules(false)
+    }
     if (next.receipt) {
       setReceiptHistory((current) => {
         const currentReceipts =
@@ -1257,30 +1277,42 @@ export const ArtifactReproducibilityPanel = ({
   const selectedNode = effectiveSelectedNodeKey
     ? positionedNodes.get(effectiveSelectedNodeKey)
     : undefined
+  const nodeStartPreview = useMemo(
+    () => (projection && selectedNode ? previewNodeStart(projection, selectedNode) : undefined),
+    [projection, selectedNode]
+  )
 
-  const startCheck = async (): Promise<void> => {
+  const startCheck = async (frontierId = selectedFrontier?.frontierId): Promise<void> => {
+    const frontier = projection?.startFrontiers.find((item) => item.frontierId === frontierId)
     if (
+      startPendingRef.current === checkScopeRef.current ||
+      checkState?.status === 'running' ||
       !artifactVersion ||
       restoringSummary ||
-      !selectedFrontier ||
-      selectedFrontier.eligibility !== 'available' ||
+      pendingComparisonRules ||
+      !frontier ||
+      frontier.eligibility !== 'available' ||
       !window.api?.artifacts.startReproducibilityCheck
     ) {
       return
     }
+    const scope = checkScopeRef.current
+    startPendingRef.current = scope
+    setSelectedFrontierId(frontier.frontierId)
     setStarting(true)
     setStartError(false)
-    const scope = checkScopeRef.current
     try {
       const state = await window.api.artifacts.startReproducibilityCheck({
         ...artifactVersion,
-        frontierId: selectedFrontier.frontierId
+        frontierId: frontier.frontierId,
+        comparisonPolicy
       })
       if (!scope.active) return
       applyCheckState(state)
     } catch {
       if (scope.active) setStartError(true)
     } finally {
+      if (startPendingRef.current === scope) startPendingRef.current = undefined
       if (scope.active) setStarting(false)
     }
   }
@@ -1446,7 +1478,7 @@ export const ArtifactReproducibilityPanel = ({
               'A valid environment lock is required. Rerun with locked dependencies to create a new version.'
             )
           : checkIssues.length > 0
-            ? t('This version cannot be checked because required execution evidence is missing.')
+            ? t('Execution evidence is missing. Rerun the required code to create a new version.')
             : checkUnavailableMessage
   const checkBlockerId = `${markerId}-reproducibility-check-blocker`
   const latestReceipt = receipts[0]
@@ -1662,6 +1694,35 @@ export const ArtifactReproducibilityPanel = ({
           <TooltipContent side="left">{t('Close details')}</TooltipContent>
         </PanelTooltip>
       </div>
+      {nodeStartPreview ? (
+        <ReproducibilityStartPreview
+          key={`${artifactVersionKey}:${selectedNode?.key}`}
+          preview={nodeStartPreview}
+          activityLabel={(activity) => activityLabel(activity, t, computeNumbers)}
+          frontierLabel={(frontier) => frontierTitle(frontier, activities, computeNumbers, t)}
+          issues={summarizedIssues(
+            [
+              ...(nodeStartPreview.requested?.reasonCodes ?? []),
+              ...(nodeStartPreview.requested?.checkReasonCodes ?? [])
+            ],
+            t
+          ).map((issue) => issue.description)}
+          busy={starting || checkState?.status === 'running'}
+          disabledReason={
+            restoringSummary
+              ? t('Loading…')
+              : pendingComparisonRules
+                ? t('Apply comparison rules before starting a check.')
+                : !checkApiAvailable
+                  ? t(
+                      'Execution evidence is unavailable, so safe starting points cannot be determined.'
+                    )
+                  : undefined
+          }
+          error={startError}
+          onStart={startCheck}
+        />
+      ) : null}
       {selectedActivity ? (
         <div className="mt-3 space-y-4">
           <div>
@@ -2064,7 +2125,7 @@ export const ArtifactReproducibilityPanel = ({
                     }
                     size="sm"
                     className="min-h-9 shrink-0 whitespace-nowrap self-start sm:self-auto [@media(pointer:coarse)]:min-h-11"
-                    disabled={starting || restoringSummary}
+                    disabled={starting || restoringSummary || pendingComparisonRules}
                     aria-busy={starting || restoringSummary}
                     onClick={() => void startCheck()}
                   >
@@ -2119,7 +2180,7 @@ export const ArtifactReproducibilityPanel = ({
           ) : null}
           {selectedFrontier ? (
             <fieldset
-              className="space-y-1.5 border-t border-border-300/50 px-4 py-3"
+              className="min-w-0 space-y-1.5 border-t border-border-300/50 px-4 py-3"
               disabled={starting || checkState?.status === 'running'}
             >
               <legend className="flex items-center gap-1.5 font-semibold text-text-000">
@@ -2147,22 +2208,34 @@ export const ArtifactReproducibilityPanel = ({
                 </PanelTooltip>
               </legend>
               {selectableFrontiers.length > 1 ? (
-                <select
-                  data-start-frontier-selector
-                  aria-label={t('Start from')}
+                <Select
                   value={selectedFrontier?.frontierId}
-                  className="h-9 w-full rounded-md border border-border-300 bg-bg-000 px-3 text-sm text-text-100 outline-none transition-colors hover:border-border-100/50 focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 active:bg-bg-200"
-                  onChange={(event) => setSelectedFrontierId(event.target.value)}
+                  onValueChange={setSelectedFrontierId}
+                  disabled={starting || checkState?.status === 'running'}
                 >
-                  {selectableFrontiers.map((frontier) => (
-                    <option key={frontier.frontierId} value={frontier.frontierId}>
-                      {frontierTitle(frontier, activities, computeNumbers, t)} ·{' '}
-                      {t('Runs to execute: {{runs}}', {
-                        runs: runnableActivityCount(frontier, activities)
-                      })}
-                    </option>
-                  ))}
-                </select>
+                  <SelectTrigger
+                    data-start-frontier-selector
+                    aria-label={t('Start from')}
+                    className="h-9 min-w-0"
+                  >
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent
+                    className={cn(
+                      'max-w-[calc(100vw-2rem)] [&_[data-slot=select-item]]:break-words [&_[data-slot=select-item]]:whitespace-normal',
+                      tooltipClassName
+                    )}
+                  >
+                    {selectableFrontiers.map((frontier) => (
+                      <SelectItem key={frontier.frontierId} value={frontier.frontierId}>
+                        {frontierTitle(frontier, activities, computeNumbers, t)} ·{' '}
+                        {t('Runs to execute: {{runs}}', {
+                          runs: runnableActivityCount(frontier, activities)
+                        })}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
               ) : null}
               {selectedFrontier ? (
                 <div
@@ -2197,6 +2270,14 @@ export const ArtifactReproducibilityPanel = ({
                   </dl>
                 </div>
               ) : null}
+              <OutputComparisonSettings
+                key={artifactVersionKey}
+                value={comparisonPolicy}
+                onChange={setComparisonPolicy}
+                onPendingChange={setPendingComparisonRules}
+                overlayClassName={tooltipClassName}
+                disabled={starting || checkState?.status === 'running'}
+              />
             </fieldset>
           ) : null}
 
@@ -2631,18 +2712,32 @@ export const ArtifactReproducibilityPanel = ({
                             </summary>
                             <div className="px-3.5 pb-3.5">
                               {receipt.comparisons.some(
-                                (comparison) => comparison.status === 'different'
+                                (comparison) =>
+                                  comparison.status === 'different' ||
+                                  comparison.contentComparison ||
+                                  comparison.contentComparisonUnavailableReason
                               ) ? (
                                 <ul className="mt-3 space-y-1 border-t border-border-300/40 pt-3 text-xs">
                                   {receipt.comparisons
-                                    .filter((comparison) => comparison.status === 'different')
+                                    .filter(
+                                      (comparison) =>
+                                        comparison.status === 'different' ||
+                                        comparison.contentComparison ||
+                                        comparison.contentComparisonUnavailableReason
+                                    )
                                     .map((comparison) => (
                                       <li
                                         key={`${receipt.receiptChecksum}:${comparison.entityId}`}
                                         className="min-w-0 rounded-md border border-border-300/50 p-3"
                                       >
                                         <div className="flex min-w-0 items-center gap-2">
-                                          <span className="size-1.5 shrink-0 rounded-full bg-status-warning-foreground dark:bg-status-warning-dark-foreground" />
+                                          <span
+                                            className={
+                                              comparison.status === 'different'
+                                                ? 'size-1.5 shrink-0 rounded-full bg-status-warning-foreground dark:bg-status-warning-dark-foreground'
+                                                : 'size-1.5 shrink-0 rounded-full bg-text-300'
+                                            }
+                                          />
                                           <span
                                             className="truncate text-text-200"
                                             title={comparison.relativePath}
@@ -2650,7 +2745,9 @@ export const ArtifactReproducibilityPanel = ({
                                             {comparison.relativePath}
                                           </span>
                                           <span className="ml-auto shrink-0 text-text-300">
-                                            {t('Different')}
+                                            {comparison.status === 'different'
+                                              ? t('Different')
+                                              : t('Result reproduced')}
                                           </span>
                                         </div>
                                         <ReproducibilityOutput
@@ -2956,7 +3053,7 @@ export const ArtifactReproducibilityPanel = ({
           {selectedNode ? (
             <aside
               data-dependency-inspector="selected-node"
-              className="max-h-80 overflow-auto border-t border-border-300/60 bg-bg-000 p-4"
+              className="max-h-[min(70vh,40rem)] overflow-auto border-t border-border-300/60 bg-bg-000 p-4"
               aria-label={t('Details')}
             >
               {selectedDetails}

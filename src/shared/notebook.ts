@@ -295,6 +295,7 @@ export const isNotebookEnvironmentOperationLogTruncation = (
 }
 
 export type NotebookEnvironmentManifest = {
+  executionContext?: import('./notebook-execution-context').NotebookExecutionContext
   schemaVersion: 1
   captureKind: 'completed-run'
   capturedAt: string
@@ -415,6 +416,7 @@ export type NotebookRunEnvironmentLockCapture =
     }
 
 export type NotebookLiveEnvironmentOverlay = {
+  executionContext?: import('./notebook-execution-context').NotebookExecutionContext
   runtimeVersion?: string
   packages: NotebookEnvironmentPackage[]
   warnings?: string[]

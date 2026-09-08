@@ -462,8 +462,8 @@ const inputEntity = (input: NotebookRunInputFile): ArtifactProvenanceGraphEntity
   sizeBytes: input.sizeBytes
 })
 
-const pathKey = (relativePath: string, checksum: string): string =>
-  `${relativePath.replaceAll('\\', '/').replace(/^\.\//u, '')}\0${checksum}`
+const pathKey = (relativePath: string): string =>
+  relativePath.replaceAll('\\', '/').replace(/^\.\//u, '')
 
 const edgeTargetId = (edge: ArtifactProvenanceGraphEdge): string =>
   edge.kind === 'depends-on' ? edge.dependencyActivityId : edge.entityId
@@ -827,16 +827,11 @@ const sealArtifactProvenanceGraph = (
   const candidateOutputGroups: ArtifactProvenanceGraphOutputGroup[] = []
 
   for (const candidate of candidates) {
-    const registeredByChecksum = new Map<string, ArtifactProvenanceGraphEntity[]>()
     const registeredByIdentity = new Map<string, ArtifactProvenanceGraphEntity>()
     for (const inputFile of candidate.inputs) {
       const entity = inputEntity(inputFile)
       entities.set(entity.entityId, entity)
       registeredByIdentity.set(`${inputFile.sourceKind}\0${inputFile.inputFileVersionId}`, entity)
-      registeredByChecksum.set(inputFile.checksum, [
-        ...(registeredByChecksum.get(inputFile.checksum) ?? []),
-        entity
-      ])
       if (inputFile.association === 'resolver-accessed') {
         mergeEdge(edges, {
           kind: 'used',
@@ -856,7 +851,8 @@ const sealArtifactProvenanceGraph = (
 
     const resolveUsedEntity = (
       generation: FileGeneration,
-      relation: EvidenceRelation
+      relation: EvidenceRelation,
+      priorGeneration: FileGeneration | undefined
     ): ArtifactProvenanceGraphEntity => {
       const direct = relation.registeredInput
         ? registeredByIdentity.get(
@@ -864,12 +860,12 @@ const sealArtifactProvenanceGraph = (
           )
         : undefined
       if (relation.registeredInput) {
-        return direct?.checksum === generation.checksum ? direct : generation
+        return direct?.checksum === generation.checksum && direct.sizeBytes === generation.sizeBytes
+          ? direct
+          : generation
       }
-      const registered = registeredByChecksum.get(generation.checksum)
-      if (registered?.length === 1) return registered[0]!
-      const prior = priorOutputByPath.get(pathKey(relation.relativePath, generation.checksum))
-      return prior?.generation ?? generation
+      // Equal bytes establish content, not the identity of an uploaded/Artifact Version.
+      return priorGeneration ?? generation
     }
 
     const produced: FileGeneration[] = []
@@ -883,12 +879,15 @@ const sealArtifactProvenanceGraph = (
             ? generations.get(relation.previousGenerationId ?? '')
             : undefined
       if (usedGeneration) {
-        const entity = resolveUsedEntity(usedGeneration, relation)
-        const correlatedGeneration =
-          entity.kind !== 'file-generation' || entity.generationId !== usedGeneration.generationId
-        const correlatedPrior = priorOutputByPath.get(
-          pathKey(relation.relativePath, usedGeneration.checksum)
-        )
+        const key = pathKey(relation.relativePath)
+        const prior = priorOutputByPath.get(key)
+        const correlatedPrior =
+          prior?.generation.checksum === usedGeneration.checksum &&
+          prior.generation.sizeBytes === usedGeneration.sizeBytes
+            ? prior
+            : undefined
+        if (prior && !correlatedPrior) priorOutputByPath.delete(key)
+        const entity = resolveUsedEntity(usedGeneration, relation, correlatedPrior?.generation)
         entities.set(entity.entityId, entity)
         mergeEdge(edges, {
           kind: 'used',
@@ -903,9 +902,13 @@ const sealArtifactProvenanceGraph = (
                     inputFile.association === 'resolver-accessed'
                 ))) ||
             relation.authority === 'explicit-transfer' ||
-            (correlatedGeneration &&
-              correlatedPrior?.writerAttributionComplete === true &&
-              candidate.decodedEvidence.fileReads === 'complete')
+            (entity.kind === 'file-generation' &&
+              candidate.decodedEvidence.fileReads === 'complete' &&
+              // A frozen read can stand alone without inventing a source identity.
+              // Linking it to a prior writer still requires complete attribution.
+              ((!correlatedPrior && entity.generationId === usedGeneration.generationId) ||
+                (entity.generationId === correlatedPrior?.generation.generationId &&
+                  correlatedPrior.writerAttributionComplete)))
               ? 'authoritative'
               : 'advisory',
           evidenceSource:
@@ -947,8 +950,19 @@ const sealArtifactProvenanceGraph = (
         produced.push(generated)
       }
     }
+    for (const relation of candidate.decodedEvidence.relations) {
+      // A later write invalidates the old origin even if freezing the new bytes failed.
+      if (
+        relation.relation === 'created' ||
+        relation.relation === 'modified' ||
+        relation.relation === 'deleted' ||
+        relation.relation === 'harvested-output'
+      ) {
+        priorOutputByPath.delete(pathKey(relation.relativePath))
+      }
+    }
     for (const generation of produced) {
-      priorOutputByPath.set(pathKey(generation.relativePath, generation.checksum), {
+      priorOutputByPath.set(pathKey(generation.relativePath), {
         generation,
         writerAttributionComplete: candidate.decodedEvidence.writerAttribution === 'complete'
       })

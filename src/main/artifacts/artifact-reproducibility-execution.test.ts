@@ -4,6 +4,12 @@ import { tmpdir } from 'node:os'
 import { delimiter, dirname, join } from 'node:path'
 
 import { describe, expect, it, vi } from 'vitest'
+vi.mock('node:fs/promises', async (importOriginal) => {
+  const fs = await importOriginal<typeof import('node:fs/promises')>()
+  return { ...fs, rm: vi.fn(fs.rm), writeFile: vi.fn(fs.writeFile) }
+})
+import sharp from 'sharp'
+import * as outputFiles from './artifact-reproducibility-outputs'
 
 import type {
   ArtifactProvenanceGraph,
@@ -42,14 +48,15 @@ const environmentLock = {
 
 const fixture = async (
   root: string,
-  kernelKind: 'python' | 'r' = 'python'
+  kernelKind: 'python' | 'r' = 'python',
+  filename = 'result.txt',
+  output = Buffer.from('result\n')
 ): Promise<{
   execution: PersistedArtifactExecutionSnapshot
   inputChecksum: string
   output: Buffer
 }> => {
   const input = Buffer.from('source\n')
-  const output = Buffer.from('result\n')
   const inputChecksum = sha256(input)
   const outputChecksum = sha256(output)
   const environmentName = `default-${kernelKind}`
@@ -128,7 +135,7 @@ const fixture = async (
         entityId: 'file-generation:result',
         kind: 'file-generation',
         generationId: 'result',
-        relativePath: 'data/result.txt',
+        relativePath: `data/${filename}`,
         pathPortability: 'relative',
         checksum: outputChecksum,
         sizeBytes: output.byteLength,
@@ -211,20 +218,137 @@ const fixture = async (
 }
 
 const sandbox = { wrap: vi.fn() }
-const systemPython = (process.env.PATH ?? '')
-  .split(delimiter)
-  .map((directory) => join(directory, process.platform === 'win32' ? 'python.exe' : 'python3'))
-  .find((candidate) => existsSync(candidate))
+const systemPython =
+  process.env.OPEN_SCIENCE_TEST_PYTHON ??
+  (process.env.PATH ?? '')
+    .split(delimiter)
+    .map((directory) => join(directory, process.platform === 'win32' ? 'python.exe' : 'python3'))
+    .find((candidate) => existsSync(candidate))
 const reproductionSmokeEnabled =
   process.env.RUN_REPRODUCTION_SMOKE === '1' &&
   process.platform !== 'win32' &&
   systemPython !== undefined
-const systemRscript = (process.env.PATH ?? '')
-  .split(delimiter)
-  .map((directory) => join(directory, 'Rscript'))
-  .find((candidate) => existsSync(candidate))
+const systemRscript = process.env.OPEN_SCIENCE_TEST_R_ENV
+  ? join(process.env.OPEN_SCIENCE_TEST_R_ENV, 'bin', 'Rscript')
+  : (process.env.PATH ?? '')
+      .split(delimiter)
+      .map((directory) => join(directory, 'Rscript'))
+      .find((candidate) => existsSync(candidate))
 
 describe('Artifact reproducibility execution', () => {
+  it.each([
+    ['result.rds', 'unsupported-format'],
+    ['result.h5ad', 'unsupported-format'],
+    ['result.csv', 'budget-exceeded'],
+    ['result.csv', 'comparison-failed']
+  ] as const)('records why %s content comparison is unavailable: %s', async (filename, reason) => {
+    const storageRoot = await mkdtemp(join(tmpdir(), 'reproduction-unavailable-'))
+    const attemptRoot = await mkdtemp(join(tmpdir(), 'reproduction-attempt-'))
+    const readContent = vi.spyOn(outputFiles, 'readReproducibilityOutputFile')
+    try {
+      const { execution } = await fixture(storageRoot, 'python', filename)
+      const runtime: NotebookReproductionRuntime = {
+        execute: async ({ sessionRoot }) => {
+          const path = join(sessionRoot, 'data', filename)
+          await writeFile(path, 'different output\n')
+          if (reason === 'budget-exceeded') {
+            const { truncate } = await import('node:fs/promises')
+            await truncate(path, 32 * 1024 * 1024 + 1)
+          }
+          return {
+            status: 'completed',
+            stdout: '',
+            stderr: '',
+            traceback: '',
+            cwdAfter: join(sessionRoot, 'data'),
+            outputs: []
+          }
+        },
+        shutdown: async () => ({ reaped: true })
+      }
+      // No original blob is available: supported, bounded files must report the read failure.
+      const result = await executeArtifactReproducibility(
+        { execution, frontierId: 'original-inputs', storageRoot, processSandbox: sandbox },
+        { createAttemptRoot: async () => attemptRoot, createRuntime: async () => runtime }
+      )
+      expect(result.matched).toBe(false)
+      expect(result.comparisons[0]).toMatchObject({
+        status: 'different',
+        contentComparisonUnavailableReason: reason
+      })
+      expect(result.comparisons[0]).not.toHaveProperty('contentComparison')
+      if (reason !== 'comparison-failed') expect(readContent).not.toHaveBeenCalled()
+    } finally {
+      readContent.mockRestore()
+      await rm(storageRoot, { recursive: true, force: true })
+      await rm(attemptRoot, { recursive: true, force: true })
+    }
+  })
+  it.runIf(process.env.RUN_REPRODUCTION_SMOKE === '1')(
+    'requires both real kernels when smoke coverage is requested',
+    () => {
+      expect(process.platform).not.toBe('win32')
+      expect(systemPython && existsSync(systemPython)).toBe(true)
+      expect(systemRscript && existsSync(systemRscript)).toBe(true)
+    }
+  )
+  it.each(['csv', 'tif', 'tiff'])(
+    'compares decoded %s outputs without replacing the exact byte result',
+    async (extension) => {
+      const storageRoot = await mkdtemp(join(tmpdir(), 'reproduction-content-'))
+      const attemptRoot = await mkdtemp(join(tmpdir(), 'reproduction-content-attempt-'))
+      try {
+        const filename = `result.${extension}`
+        const expected =
+          extension === 'csv'
+            ? Buffer.from('result\n')
+            : await sharp({
+                create: { width: 10, height: 10, channels: 3, background: 'white' }
+              })
+                .tiff({ compression: 'none' })
+                .toBuffer()
+        const actual =
+          extension === 'csv'
+            ? Buffer.from('"result"\r\n')
+            : await sharp(expected).tiff({ compression: 'lzw' }).toBuffer()
+        const { execution, output } = await fixture(storageRoot, 'python', filename, expected)
+        const blobRoot = join(storageRoot, 'execution-file-evidence', 'blobs')
+        await mkdir(blobRoot, { recursive: true })
+        await writeFile(join(blobRoot, `sha256-${sha256(output)}`), output)
+        const runtime: NotebookReproductionRuntime = {
+          execute: async ({ sessionRoot }) => {
+            await writeFile(join(sessionRoot, 'data', filename), actual)
+            return {
+              status: 'completed',
+              stdout: '',
+              stderr: '',
+              traceback: '',
+              cwdAfter: join(sessionRoot, 'data'),
+              outputs: []
+            }
+          },
+          shutdown: async () => ({ reaped: true })
+        }
+        const result = await executeArtifactReproducibility(
+          { execution, frontierId: 'original-inputs', storageRoot, processSandbox: sandbox },
+          { createAttemptRoot: async () => attemptRoot, createRuntime: async () => runtime }
+        )
+        expect(result.matched).toBe(false)
+        expect(result.comparisons[0]).toMatchObject({
+          status: 'different',
+          contentComparison: {
+            kind: extension === 'csv' ? 'table' : 'image',
+            outcome: 'equal',
+            expectedChecksum: sha256(output),
+            actualChecksum: sha256(actual)
+          }
+        })
+      } finally {
+        await rm(storageRoot, { recursive: true, force: true })
+        await rm(attemptRoot, { recursive: true, force: true })
+      }
+    }
+  )
   it('copies frozen inputs, runs the exact source, compares outputs, and removes the attempt', async () => {
     const storageRoot = await mkdtemp(join(tmpdir(), 'reproduction-storage-'))
     const attemptRoot = await mkdtemp(join(tmpdir(), 'reproduction-attempt-'))
@@ -607,6 +731,144 @@ describe('Artifact reproducibility execution', () => {
     }
   )
 
+  it.each(['ECONNRESET', 'ENOSPC', 'cancelled'])(
+    'cleans up a stopped restore after %s and allows a fresh attempt',
+    async (code) => {
+      const storageRoot = await mkdtemp(join(tmpdir(), 'reproduction-failed-restore-'))
+      const { execution, output } = await fixture(storageRoot)
+      const attemptRoot = join(storageRoot, 'attempt')
+      const failure = Object.assign(new Error(`restore failed: ${code}`), { code })
+      const input = {
+        execution,
+        frontierId: 'original-inputs',
+        storageRoot,
+        processSandbox: sandbox
+      }
+      try {
+        await expect(
+          executeArtifactReproducibility(input, {
+            createAttemptRoot: async () => attemptRoot,
+            createRuntime: async () => {
+              await mkdir(join(attemptRoot, 'environments', 'partial'), { recursive: true })
+              await writeFile(
+                join(attemptRoot, 'environments', 'partial', 'package'),
+                'partial download'
+              )
+              throw failure
+            }
+          })
+        ).rejects.toBe(failure)
+        await expect(access(attemptRoot)).rejects.toMatchObject({ code: 'ENOENT' })
+        await expect(
+          executeArtifactReproducibility(input, {
+            createAttemptRoot: async () => attemptRoot,
+            createRuntime: async () => ({
+              execute: async ({ sessionRoot }) => {
+                await writeFile(join(sessionRoot, 'data', 'result.txt'), output)
+                return {
+                  status: 'completed',
+                  stdout: '',
+                  stderr: '',
+                  traceback: '',
+                  cwdAfter: join(sessionRoot, 'data'),
+                  outputs: []
+                }
+              },
+              shutdown: async () => ({ reaped: true })
+            })
+          })
+        ).resolves.toMatchObject({ matched: true })
+        await expect(access(attemptRoot)).rejects.toMatchObject({ code: 'ENOENT' })
+      } finally {
+        await rm(storageRoot, { recursive: true, force: true })
+      }
+    }
+  )
+
+  it('removes an empty attempt if writing its ownership marker fails', async () => {
+    const storageRoot = await mkdtemp(join(tmpdir(), 'reproduction-marker-error-'))
+    const { execution } = await fixture(storageRoot)
+    const attemptRoot = join(storageRoot, 'attempt')
+    const failure = Object.assign(new Error('disk full'), { code: 'ENOSPC' })
+    const createRuntime = vi.fn()
+    vi.mocked(writeFile).mockRejectedValueOnce(failure)
+    try {
+      await expect(
+        executeArtifactReproducibility(
+          { execution, frontierId: 'original-inputs', storageRoot, processSandbox: sandbox },
+          {
+            createAttemptRoot: async () => attemptRoot,
+            createRuntime
+          }
+        )
+      ).rejects.toBe(failure)
+      await expect(access(attemptRoot)).rejects.toMatchObject({ code: 'ENOENT' })
+      expect(createRuntime).not.toHaveBeenCalled()
+    } finally {
+      vi.mocked(writeFile).mockReset()
+      await rm(storageRoot, { recursive: true, force: true })
+    }
+  })
+
+  it('preserves unknown files when attempt initialization fails', async () => {
+    const storageRoot = await mkdtemp(join(tmpdir(), 'reproduction-marker-existing-'))
+    const { execution } = await fixture(storageRoot)
+    const attemptRoot = join(storageRoot, 'attempt')
+    await mkdir(attemptRoot)
+    await writeFile(join(attemptRoot, 'keep.txt'), 'keep')
+    try {
+      await expect(
+        executeArtifactReproducibility(
+          { execution, frontierId: 'original-inputs', storageRoot, processSandbox: sandbox },
+          {
+            createAttemptRoot: async () => attemptRoot
+          }
+        )
+      ).rejects.toThrow('not empty')
+      await expect(readFile(join(attemptRoot, 'keep.txt'), 'utf8')).resolves.toBe('keep')
+    } finally {
+      await rm(storageRoot, { recursive: true, force: true })
+    }
+  })
+
+  it('preserves the restore failure when temporary workspace cleanup also fails', async () => {
+    const storageRoot = await mkdtemp(join(tmpdir(), 'reproduction-cleanup-error-'))
+    const { execution } = await fixture(storageRoot)
+    const attemptRoot = join(storageRoot, 'attempt')
+    const failure = new Error('package download interrupted')
+    const cleanupFailure = Object.assign(new Error('directory busy'), { code: 'EBUSY' })
+    vi.mocked(rm).mockRejectedValueOnce(cleanupFailure)
+    try {
+      await expect(
+        executeArtifactReproducibility(
+          {
+            execution,
+            frontierId: 'original-inputs',
+            storageRoot,
+            processSandbox: sandbox
+          },
+          {
+            createAttemptRoot: async () => attemptRoot,
+            createRuntime: async () => {
+              throw failure
+            }
+          }
+        )
+      ).rejects.toMatchObject({
+        message: expect.stringContaining('package download interrupted'),
+        errors: [failure, cleanupFailure]
+      })
+      expect(rm).toHaveBeenCalledWith(
+        attemptRoot,
+        expect.objectContaining({ maxRetries: 3, retryDelay: 100 })
+      )
+      await expect(access(attemptRoot)).resolves.toBeUndefined()
+    } finally {
+      vi.mocked(rm).mockReset()
+      await rm(storageRoot, { recursive: true, force: true })
+    }
+  })
+
   it('retains the attempt when kernel teardown cannot be confirmed', async () => {
     const storageRoot = await mkdtemp(join(tmpdir(), 'reproduction-storage-'))
     const attemptRoot = await mkdtemp(join(tmpdir(), 'reproduction-attempt-'))
@@ -834,6 +1096,7 @@ describe('Artifact reproducibility execution', () => {
                   )
                 },
                 verifyExecutable: async () => undefined,
+                verifyEnvironment: async () => undefined,
                 createExecutor: ({ processSandbox }) =>
                   new NotebookKernelExecutor({
                     processSandbox,

@@ -4480,6 +4480,12 @@ const createApplicationModules = async (
     )
     const reproducibilityOwner = artifactReproducibilityAttemptOwnerRef.current
     const receiptExporter = createArtifactReproducibilityReceiptExporter({
+      readVersion: (request) =>
+        withDataRootWrite(
+          async () =>
+            // Read metadata only; exporting a version label must not scan large Artifact contents.
+            (await artifactProvenanceRepository.getLineage(request))?.selectedVersion
+        ),
       readOutputStorage: (request) =>
         withDataRootWrite(() =>
           getArtifactReproducibilityOutputStorage(artifactProvenanceRepository, request)

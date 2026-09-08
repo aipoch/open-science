@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest'
+import { notebookExecutionContextSchema } from '../../shared/notebook-execution-context'
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
 import { createInterface } from 'node:readline'
 import { join } from 'node:path'
@@ -50,6 +51,7 @@ type LoopResponse = {
   cwd: string
   figures: { mime: string; path: string }[]
   environment: {
+    execution_context?: unknown
     runtime_version: string
     packages: Array<{ name: string; version_status: string; loaded_state: string }>
   }
@@ -108,6 +110,22 @@ const startLoop = (
 }
 
 gate('python_loop.py', () => {
+  it('captures execution context before and after a cell without copying credentials', async () => {
+    const { child, send } = startLoop(pyBin!, {
+      OMP_NUM_THREADS: '2',
+      OPEN_SCIENCE_TEST_SECRET: 'private-value'
+    })
+    try {
+      const result = await send('import os\nos.environ["OMP_NUM_THREADS"] = "3"')
+      expect(result.error).toBeNull()
+      const context = notebookExecutionContextSchema.parse(result.environment.execution_context)
+      expect(context.before.threadLimits.OMP_NUM_THREADS).toBe('2')
+      expect(context.after.threadLimits.OMP_NUM_THREADS).toBe('3')
+      expect(JSON.stringify(context)).not.toContain('private-value')
+    } finally {
+      child.kill()
+    }
+  }, 60_000)
   it.each(['Path input and two plots', 'nested subplots'] as const)(
     'captures and replays the reported %s across runs',
     async (scenario) => {

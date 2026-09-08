@@ -1,4 +1,19 @@
 import { randomUUID } from 'node:crypto'
+import { SessionReproducibilityBatches } from './session-reproducibility'
+import { SessionReproducibilityStore } from './session-reproducibility-store'
+import {
+  validateReproductionContext,
+  validateReproductionDiskSpace
+} from './reproduction-preflight'
+import {
+  artifactReproducibilityRecipeMatchesSnapshot,
+  prepareArtifactReproducibilityExecutionPlan
+} from './artifact-reproducibility-recipe'
+import type {
+  SessionReproducibilityCommand,
+  SessionReproducibilityBatch
+} from '../../shared/session-reproducibility'
+import { outputComparisonPolicySchema } from '../../shared/output-comparison'
 
 import type { PersistedArtifactExecutionSnapshot } from '../../shared/artifact-provenance'
 import type {
@@ -21,6 +36,7 @@ import { createLogger, errorLogFields } from '../logger'
 import { startDiagnosticOperation } from '../diagnostics/operation'
 import {
   executeArtifactReproducibility,
+  ReproducibilityCleanupError,
   type ArtifactReproducibilityExecutionEvent,
   type ArtifactReproducibilityExecutionResult
 } from './artifact-reproducibility-execution'
@@ -79,8 +95,8 @@ const requestKey = (request: GetArtifactReproducibilityCheckRequest): string =>
 
 const snapshot = (state: ArtifactReproducibilityCheckState): ArtifactReproducibilityCheckState => ({
   ...state,
-  request: { ...state.request },
-  comparisons: state.comparisons.map((comparison) => ({ ...comparison })),
+  request: structuredClone(state.request),
+  comparisons: structuredClone(state.comparisons),
   ...(state.logs ? { logs: state.logs.map((entry) => ({ ...entry })) } : {}),
   ...(state.receipt
     ? {
@@ -91,7 +107,7 @@ const snapshot = (state: ArtifactReproducibilityCheckState): ArtifactReproducibi
           recipe: { ...state.receipt.recipe },
           environmentLocks: state.receipt.environmentLocks.map((lock) => ({ ...lock })),
           completedStepIds: [...state.receipt.completedStepIds],
-          comparisons: state.receipt.comparisons.map((comparison) => ({ ...comparison })),
+          comparisons: structuredClone(state.receipt.comparisons),
           ...(state.receipt.checkLog ? { checkLog: { ...state.receipt.checkLog } } : {})
         }
       }
@@ -148,13 +164,115 @@ class ArtifactReproducibilityAttemptOwner {
   private stoppingAll = 0
   private disposed = false
 
-  constructor(private readonly dependencies: ArtifactReproducibilityAttemptOwnerDependencies) {}
+  private readonly batches: SessionReproducibilityBatches
+  private readonly batchPublishers = new Map<
+    number,
+    (state: ArtifactReproducibilityCheckState) => void
+  >()
+  constructor(private readonly dependencies: ArtifactReproducibilityAttemptOwnerDependencies) {
+    const store = new SessionReproducibilityStore(dependencies.storageRoot)
+    this.batches = new SessionReproducibilityBatches({
+      store: {
+        load: (scope) =>
+          dependencies.withStorageLease
+            ? dependencies.withStorageLease(() => store.load(scope))
+            : store.load(scope),
+        save: (state) =>
+          dependencies.withStorageLease
+            ? dependencies.withStorageLease(() => store.save(state))
+            : store.save(state)
+      },
+      preflight: async (request, signal) => {
+        const operation = async (): Promise<{
+          recipeId: string
+          steps: number
+          inputBytes: number
+          environmentCount: number
+        }> => {
+          const execution = await dependencies.loadExecution(request)
+          const recipe = execution.reproducibilityRecipe
+          if (
+            !recipe ||
+            !execution.provenanceGraph ||
+            !artifactReproducibilityRecipeMatchesSnapshot(recipe, {
+              ...execution,
+              provenanceGraph: execution.provenanceGraph
+            })
+          )
+            throw new Error('Execution evidence is unavailable.')
+          validateReproductionContext(execution, request.frontierId)
+          await validateReproductionDiskSpace(recipe, request.frontierId)
+          await prepareArtifactReproducibilityExecutionPlan(
+            recipe,
+            request.frontierId,
+            dependencies.storageRoot,
+            signal
+          )
+          const frontier = recipe.frontiers.find((f) => f.frontierId === request.frontierId)!
+          const steps = recipe.steps.filter((step) => frontier.stepIds.includes(step.stepId))
+          return {
+            recipeId: recipe.recipeId,
+            steps: steps.length,
+            inputBytes: frontier.crossingFiles.reduce((sum, f) => sum + f.sizeBytes, 0),
+            environmentCount: new Set(
+              steps.flatMap((step) =>
+                step.kind === 'notebook-run' && step.environmentRequirementId
+                  ? [step.environmentRequirementId]
+                  : []
+              )
+            ).size
+          }
+        }
+        return dependencies.withStorageLease
+          ? dependencies.withStorageLease(operation)
+          : operation()
+      },
+      run: async (request, publish, ownerId) => {
+        if (this.attemptIdsByRequest.has(requestKey(request)))
+          throw new Error('Artifact check is already running.')
+        const state = this.start(request, ownerId, (state) => {
+          publish(state)
+          this.batchPublishers.get(ownerId)?.(state)
+        })
+        // Evidence loading can be slow; publish its identity immediately so batch cancellation
+        // can reach the attempt before the executor emits its first progress event.
+        publish(state)
+        this.batchPublishers.get(ownerId)?.(state)
+        const attempt = this.attemptsById.get(state.attemptId)!
+        await attempt.settled
+        return snapshot(attempt.state)
+      },
+      cancel: (attemptId, ownerId) => this.cancel({ attemptId }, ownerId)
+    })
+  }
+
+  sessionCommand(
+    request: SessionReproducibilityCommand,
+    ownerId: number,
+    publish?: (state: ArtifactReproducibilityCheckState) => void
+  ): Promise<SessionReproducibilityBatch | undefined> {
+    if (
+      (request.action === 'prepare' || request.action === 'start') &&
+      (this.disposed ||
+        this.stoppingAll ||
+        this.stoppingSessions.has(JSON.stringify([request.projectId, request.appSessionId])))
+    )
+      throw new Error('Reproducibility checks are shutting down.')
+    if (publish) this.batchPublishers.set(ownerId, publish)
+    return this.batches.command(request, ownerId)
+  }
 
   start(
     request: ArtifactReproducibilityCheckRequest,
     ownerId: number,
     publish: (state: ArtifactReproducibilityCheckState) => void
   ): ArtifactReproducibilityCheckState {
+    if (request.comparisonPolicy) {
+      request = {
+        ...request,
+        comparisonPolicy: outputComparisonPolicySchema.parse(request.comparisonPolicy)
+      }
+    }
     if (this.disposed || this.stoppingAll) {
       throw new Error('Reproducibility checks are shutting down.')
     }
@@ -176,7 +294,12 @@ class ArtifactReproducibilityAttemptOwner {
     const activeId = this.attemptIdsByRequest.get(key)
     const active = activeId ? this.attemptsById.get(activeId) : undefined
     if (active) {
-      if (active.ownerId !== ownerId || active.state.request.frontierId !== request.frontierId) {
+      if (
+        active.ownerId !== ownerId ||
+        active.state.request.frontierId !== request.frontierId ||
+        JSON.stringify(active.state.request.comparisonPolicy) !==
+          JSON.stringify(request.comparisonPolicy)
+      ) {
         throw new Error('A reproducibility check is already running for this Artifact Version.')
       }
       return snapshot(active.state)
@@ -237,6 +360,12 @@ class ArtifactReproducibilityAttemptOwner {
   }
 
   cancelOwner(ownerId: number): void {
+    this.batchPublishers.delete(ownerId)
+    void this.batches
+      .stopWhere((_scope, owner) => owner === ownerId)
+      .catch((error) => {
+        log.error('Session check shutdown failed', errorLogFields(error))
+      })
     for (const attempt of this.attemptsById.values()) {
       if (attempt.ownerId === ownerId && !attempt.recording) {
         attempt.controller.abort(new Error('Reproduction cancelled.'))
@@ -270,25 +399,39 @@ class ArtifactReproducibilityAttemptOwner {
   }
 
   getActiveSessions(): { projectId: string; sessionId: string }[] {
-    return [...this.attemptsById.values()].map(({ state }) => ({
+    const sessions = [...this.attemptsById.values()].map(({ state }) => ({
       projectId: state.request.projectId,
       sessionId: state.request.appSessionId
     }))
+    return [
+      ...new Map(
+        [...sessions, ...this.batches.activeSessions()].map((scope) => [
+          JSON.stringify(scope),
+          scope
+        ])
+      ).values()
+    ]
   }
 
-  cancelSession(projectId: string, sessionId: string): Promise<void> {
-    return this.drain(
+  async cancelSession(projectId: string, sessionId: string): Promise<void> {
+    const batches = this.batches.stopWhere(
+      (scope) => scope.projectId === projectId && scope.appSessionId === sessionId
+    )
+    const attempts = this.drain(
       [...this.attemptsById.values()].filter(
         ({ state }) =>
           state.request.projectId === projectId && state.request.appSessionId === sessionId
       )
     )
+    await Promise.all([batches, attempts])
   }
 
-  cancelProject(projectId: string): Promise<void> {
-    return this.drain(
+  async cancelProject(projectId: string): Promise<void> {
+    const batches = this.batches.stopWhere((scope) => scope.projectId === projectId)
+    const attempts = this.drain(
       [...this.attemptsById.values()].filter(({ state }) => state.request.projectId === projectId)
     )
+    await Promise.all([batches, attempts])
   }
 
   async withSessionStopped<Result>(
@@ -311,7 +454,10 @@ class ArtifactReproducibilityAttemptOwner {
   async shutdownAll(): Promise<void> {
     this.stoppingAll++
     try {
-      await this.drain([...this.attemptsById.values()])
+      await Promise.all([
+        this.batches.stopWhere(() => true),
+        this.drain([...this.attemptsById.values()])
+      ])
     } finally {
       this.stoppingAll--
     }
@@ -477,7 +623,7 @@ class ArtifactReproducibilityAttemptOwner {
       throw new Error('Artifact reproduction receipt environment identity is unavailable.')
     }
     return {
-      schemaVersion: 1,
+      schemaVersion: 2,
       receiptId: attempt.state.attemptId,
       startedAt: attempt.startedAt,
       completedAt: (this.dependencies.now ?? (() => new Date()))().toISOString(),
@@ -521,6 +667,11 @@ class ArtifactReproducibilityAttemptOwner {
         receipt: ArtifactReproducibilityReceipt
       }> => {
         const execution = await this.dependencies.loadExecution(attempt.state.request)
+        if (
+          attempt.state.request.expectedRecipeId &&
+          execution.reproducibilityRecipe?.recipeId !== attempt.state.request.expectedRecipeId
+        )
+          throw new Error('Execution evidence changed after preflight. Prepare the check again.')
         const frontier = execution.reproducibilityRecipe?.frontiers.find(
           (candidate) => candidate.frontierId === attempt.state.request.frontierId
         )
@@ -534,6 +685,7 @@ class ArtifactReproducibilityAttemptOwner {
           storageRoot: this.dependencies.storageRoot,
           processSandbox: this.dependencies.processSandbox,
           signal: attempt.controller.signal,
+          comparisonPolicy: attempt.state.request.comparisonPolicy,
           retainOutput: this.dependencies.retainOutput
             ? (bytes) => this.dependencies.retainOutput!(attempt.state.request, bytes)
             : undefined,
@@ -590,7 +742,11 @@ class ArtifactReproducibilityAttemptOwner {
       })
     } catch (error) {
       if (isChildUnconfirmedError(error)) attempt.cleanupError = error
-      if (attempt.controller.signal.aborted && !attempt.cleanupError) {
+      if (
+        attempt.controller.signal.aborted &&
+        !attempt.cleanupError &&
+        !(error instanceof ReproducibilityCleanupError)
+      ) {
         diagnostic.cancel({ completedSteps: attempt.state.completedSteps })
         this.update(attempt, {
           status: 'cancelled',

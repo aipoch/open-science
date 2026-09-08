@@ -1,10 +1,19 @@
 import { randomUUID } from 'node:crypto'
-import { lstat, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
+import {
+  validateReproductionContext,
+  validateReproductionDiskSpace
+} from './reproduction-preflight'
+import type { OutputComparisonPolicy, OutputComparisonReport } from '../../shared/output-comparison'
+import { compareReproducedContent } from './output-comparison'
+import { lstat, mkdir, mkdtemp, readFile, readdir, rm, rmdir, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { stripVTControlCharacters } from 'node:util'
 
-import type { ArtifactReproducibilityCheckLog } from '../../shared/artifact-reproducibility'
+import type {
+  ArtifactReproducibilityCheckLog,
+  ArtifactReproducibilityReceiptComparison
+} from '../../shared/artifact-reproducibility'
 import type {
   ArtifactProvenanceGraphEntity,
   ArtifactReproducibilityRecipe,
@@ -37,7 +46,19 @@ import {
   readReproducibilityOutputFile
 } from './artifact-reproducibility-outputs'
 
+export class ReproducibilityCleanupError extends AggregateError {
+  constructor(errors: unknown[], attemptRoot: string) {
+    const details = errors.map((error) => (error instanceof Error ? error.message : String(error)))
+    super(
+      errors,
+      `${details.join('; ')}. Temporary reproducibility workspace could not be removed: ${attemptRoot}`
+    )
+  }
+}
+
 type ArtifactReproducibilityOutputComparison = {
+  contentComparison?: OutputComparisonReport
+  contentComparisonUnavailableReason?: ArtifactReproducibilityReceiptComparison['contentComparisonUnavailableReason']
   stepId: string
   entityId: string
   relativePath: string
@@ -82,6 +103,7 @@ type ExecuteArtifactReproducibilityInput = {
   signal?: AbortSignal
   onEvent?: (event: ArtifactReproducibilityExecutionEvent) => void
   retainOutput?: (bytes: Buffer) => Promise<boolean>
+  comparisonPolicy?: OutputComparisonPolicy
 }
 
 type ExecuteArtifactReproducibilityDependencies = {
@@ -355,6 +377,8 @@ const executeArtifactReproducibility = async (
   ) {
     throw new Error('Artifact reproduction recipe does not match its Execution snapshot.')
   }
+  validateReproductionContext(input.execution, input.frontierId)
+  await validateReproductionDiskSpace(recipe, input.frontierId)
   const plan = await prepareArtifactReproducibilityExecutionPlan(
     recipe,
     input.frontierId,
@@ -364,13 +388,25 @@ const executeArtifactReproducibility = async (
   const createAttemptRoot =
     dependencies.createAttemptRoot ?? (() => mkdtemp(join(tmpdir(), 'open-science-reproduction-')))
   const attemptRoot = await createAttemptRoot()
-  await mkdir(attemptRoot, { recursive: true, mode: 0o700 })
-  if ((await readdir(attemptRoot)).length > 0) {
-    throw new Error('Reproducibility attempt root is not empty.')
-  }
   const markerPath = join(attemptRoot, '.open-science-reproduction-attempt')
   const marker = randomUUID()
-  await writeFile(markerPath, marker, { encoding: 'utf8', flag: 'wx', mode: 0o600 })
+  try {
+    await mkdir(attemptRoot, { recursive: true, mode: 0o700 })
+    if ((await readdir(attemptRoot)).length > 0) {
+      throw new Error('Reproducibility attempt root is not empty.')
+    }
+    await writeFile(markerPath, marker, { encoding: 'utf8', flag: 'wx', mode: 0o600 })
+  } catch (error) {
+    // No ownership marker exists yet: remove only an empty directory, never unknown contents.
+    try {
+      await rmdir(attemptRoot)
+    } catch (cleanupError) {
+      if ((cleanupError as NodeJS.ErrnoException).code !== 'ENOENT') {
+        throw new ReproducibilityCleanupError([error, cleanupError], attemptRoot)
+      }
+    }
+    throw error
+  }
   const workspaceRoot = join(attemptRoot, 'workspace')
   const dataRoot = join(workspaceRoot, 'data')
 
@@ -455,12 +491,51 @@ const executeArtifactReproducibility = async (
         total: plan.steps.length
       })
       for (const entityId of step.outputEntityIds) {
-        const comparison = await compareOutput(
-          workspaceRoot,
-          step.stepId,
-          outputEntity(graph.entities, entityId),
-          input.signal
-        )
+        const entity = outputEntity(graph.entities, entityId)
+        const comparison = await compareOutput(workspaceRoot, step.stepId, entity, input.signal)
+        if (
+          (comparison.status === 'different' &&
+            ['size-mismatch', 'checksum-mismatch'].includes(comparison.reason ?? '')) ||
+          (comparison.status === 'matched' && input.comparisonPolicy?.scientific)
+        ) {
+          if (!/\.(png|jpe?g|tiff?|csv|tsv)$/iu.test(comparison.relativePath)) {
+            comparison.contentComparisonUnavailableReason = 'unsupported-format'
+          } else if (
+            Math.max(entity.sizeBytes, comparison.actualSizeBytes ?? Infinity) >
+            MAX_REPRODUCIBILITY_OUTPUT_BYTES
+          ) {
+            comparison.contentComparisonUnavailableReason = 'budget-exceeded'
+          } else {
+            try {
+              const expected = await readReproducibilityOutputFile(
+                resolveStorageKey(input.storageRoot, entity.contentStorageKey)
+              )
+              const actualPath = workspacePath(workspaceRoot, comparison.relativePath)
+              if (await hasLinkedParent(workspaceRoot, actualPath))
+                throw new Error('Linked output.')
+              const actual = await readReproducibilityOutputFile(actualPath)
+              if (
+                expected.length !== entity.sizeBytes ||
+                sha256(expected) !== entity.checksum ||
+                actual.length !== comparison.actualSizeBytes ||
+                (comparison.actualChecksum && sha256(actual) !== comparison.actualChecksum)
+              )
+                throw new Error('Comparison content identity changed.')
+              const { report } = await compareReproducedContent({
+                filename: comparison.relativePath,
+                expected,
+                actual,
+                policy: input.comparisonPolicy,
+                signal: input.signal
+              })
+              comparison.actualChecksum = report.actualChecksum
+              comparison.contentComparison = report
+            } catch {
+              input.signal?.throwIfAborted()
+              comparison.contentComparisonUnavailableReason = 'comparison-failed'
+            }
+          }
+        }
         if (
           comparison.status === 'different' &&
           input.retainOutput &&
@@ -512,7 +587,14 @@ const executeArtifactReproducibility = async (
       `${CHILD_UNCONFIRMED}: Reproducibility kernel teardown could not be confirmed; attempt retained.`
     )
   }
-  await rm(attemptRoot, { recursive: true, force: true })
+  try {
+    // A stopped installer can leave a short-lived Windows sharing violation. Retry filesystem
+    // cleanup only; never rerun a package transaction after an ambiguous failure.
+    await rm(attemptRoot, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 })
+  } catch (cleanupError) {
+    const errors = executionError === undefined ? [cleanupError] : [executionError, cleanupError]
+    throw new ReproducibilityCleanupError(errors, attemptRoot)
+  }
   if (executionError !== undefined) throw executionError
   if (!result) throw new Error('Reproducibility execution did not produce a result.')
   return result

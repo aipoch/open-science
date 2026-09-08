@@ -1,7 +1,10 @@
 import type { GetArtifactVersionProvenanceRequest } from './artifact-provenance'
+import type { OutputComparisonPolicy, OutputComparisonReport } from './output-comparison'
 
 export type ArtifactReproducibilityCheckRequest = GetArtifactVersionProvenanceRequest & {
   frontierId: string
+  comparisonPolicy?: OutputComparisonPolicy
+  expectedRecipeId?: string
 }
 
 export type CancelArtifactReproducibilityCheckRequest = {
@@ -52,6 +55,7 @@ export type ArtifactReproducibilityOutputPreview = {
   filename: string
   original?: ReproducibilityOutputPreview
   reproduced: ReproducibilityOutputPreview
+  differenceImage?: string
 }
 
 export type ExportArtifactEnvironmentLockRequest = ArtifactReproducibilityReceiptScope & {
@@ -152,6 +156,9 @@ export type ArtifactReproducibilityFailedAttempt = {
 }
 
 export type ArtifactReproducibilityReceiptComparison = ArtifactReproducibilityCheckComparison & {
+  contentComparison?: OutputComparisonReport
+  contentComparisonUnavailableReason?:
+    'unsupported-format' | 'budget-exceeded' | 'comparison-failed'
   stepId: string
   entityId: string
   expectedChecksum: string
@@ -163,7 +170,7 @@ export type ArtifactReproducibilityReceiptComparison = ArtifactReproducibilityCh
 }
 
 export type ArtifactReproducibilityReceipt = {
-  schemaVersion: 1
+  schemaVersion: 1 | 2
   receiptId: string
   startedAt: string
   completedAt: string

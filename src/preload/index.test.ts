@@ -306,6 +306,7 @@ describe('preload bridge — public surface inventory', () => {
       'artifacts.readReproducibilityOutput',
       'artifacts.reconcilePendingArtifacts',
       'artifacts.resolveVersionDescriptors',
+      'artifacts.sessionReproducibility',
       'artifacts.startReproducibilityCheck',
       'backgroundResultDelivery.getProjectActivity',
       'backgroundResultDelivery.getSessionActivity',

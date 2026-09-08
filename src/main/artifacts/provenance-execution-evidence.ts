@@ -486,6 +486,7 @@ const environmentEvidence = (
 ): ArtifactVersionEnvironmentEvidence => ({
   capture_kind: manifest.captureKind,
   environment_name: manifest.environmentName,
+  ...(manifest.executionContext ? { execution_context: manifest.executionContext } : {}),
   kernel_kind: manifest.kernelKind,
   runtime_source: manifest.runtimeSource,
   ...(manifest.runtimeVersion ? { runtime_version: manifest.runtimeVersion } : {}),

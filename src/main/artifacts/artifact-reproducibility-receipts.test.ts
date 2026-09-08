@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 
 import type { ArtifactReproducibilityReceipt } from '../../shared/artifact-reproducibility'
 import { sha256 } from './provenance-canonical'
+import { compareReproducedContent } from './output-comparison'
 import {
   ArtifactReproducibilityReceiptStore,
   validateArtifactReproducibilityReceiptStorage,
@@ -74,6 +75,68 @@ afterEach(async () => {
 })
 
 describe('ArtifactReproducibilityReceiptStore', () => {
+  it.each(['unsupported-format', 'budget-exceeded', 'comparison-failed'] as const)(
+    'persists the unavailable content comparison reason %s',
+    async (reason) => {
+      const { store } = await createStore()
+      const receipt = await store.append(request, {
+        ...draft,
+        schemaVersion: 2,
+        outcome: 'different',
+        comparisons: [
+          {
+            ...draft.comparisons[0]!,
+            status: 'different',
+            reason: 'checksum-mismatch',
+            actualChecksum: 'f'.repeat(64),
+            contentComparisonUnavailableReason: reason
+          }
+        ]
+      })
+      expect((await store.list(request)).receipts[0]).toEqual(receipt)
+    }
+  )
+  it('round-trips v2 content rules and metrics and rejects mismatched evidence', async () => {
+    const { store } = await createStore()
+    const expected = Buffer.from('x\n1\n'),
+      actual = Buffer.from('x\r\n1\r\n')
+    const { report } = await compareReproducedContent({ filename: 'x.csv', expected, actual })
+    const comparison = {
+      ...draft.comparisons[0]!,
+      status: 'different' as const,
+      reason: 'size-mismatch' as const,
+      expectedSizeBytes: expected.length,
+      actualSizeBytes: actual.length,
+      expectedChecksum: report.expectedChecksum,
+      actualChecksum: report.actualChecksum,
+      contentComparison: report
+    }
+    const receipt = await store.append(request, {
+      ...draft,
+      schemaVersion: 2,
+      outcome: 'different',
+      comparisons: [comparison]
+    })
+    expect((await store.list(request)).receipts[0]).toEqual(receipt)
+    await expect(
+      store.append(request, {
+        ...draft,
+        schemaVersion: 2,
+        outcome: 'different',
+        comparisons: [{ ...comparison, contentComparisonUnavailableReason: 'unsupported-format' }]
+      })
+    ).rejects.toThrow('Invalid reproducibility receipt')
+    await expect(
+      store.append(request, {
+        ...draft,
+        schemaVersion: 2,
+        outcome: 'different',
+        comparisons: [
+          { ...comparison, contentComparison: { ...report, actualChecksum: 'f'.repeat(64) } }
+        ]
+      })
+    ).rejects.toThrow('Invalid reproducibility receipt')
+  })
   it('clears deduplicated output without rewriting receipts and preserves that decision after recapture', async () => {
     const { root, store } = await createStore()
     const bytes = Buffer.from('changed output')

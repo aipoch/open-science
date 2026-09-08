@@ -72,6 +72,7 @@ export const killAndConfirmExit = (
 // Builds the subprocess environment. By default extra vars merge over the current process env; callers
 // that already built a sanitized managed-runtime environment set completeEnv to prevent re-inheritance.
 type VerifyExecutableOptions = {
+  signal?: AbortSignal
   prefix?: string
   env?: NodeJS.ProcessEnv
   platform?: NodeJS.Platform
@@ -166,22 +167,37 @@ export const verifyExecutable = async (
   options: VerifyExecutableOptions = {}
 ): Promise<void> => {
   try {
-    const isR = ['r', 'r.exe'].includes(basename(bin).toLowerCase())
-    const { stdout } = await execFileAsync(
-      bin,
-      isR ? ['--vanilla', '--slave', '-e', R_RUNTIME_PATH_PROBE] : ['--version'],
-      {
-        timeout: 15_000,
-        windowsHide: true,
-        env: executableEnv(options),
-        encoding: 'utf8'
+    options.signal?.throwIfAborted()
+    const isR = ['r', 'r.exe', 'rscript', 'rscript.exe'].includes(basename(bin).toLowerCase())
+    let stdout = ''
+    let oversized = false
+    await runMicromamba(
+      [bin, ...(isR ? ['--vanilla', '--slave', '-e', R_RUNTIME_PATH_PROBE] : ['--version'])],
+      executableEnv(options),
+      options.signal,
+      undefined,
+      undefined,
+      15_000,
+      (output) => {
+        if (output.stream !== 'stdout') return
+        oversized ||= stdout.length + output.text.length > 64 * 1024
+        stdout = (stdout + output.text).slice(0, 64 * 1024)
       }
     )
+    options.signal?.throwIfAborted()
+    if (oversized) throw new Error('Interpreter verification output exceeds its limit.')
     if (isR) {
       if (!options.prefix) throw new Error('an expected prefix is required to verify R')
       assertRRuntimePaths(stdout, options.prefix, options.platform)
     }
   } catch (error) {
+    if (isChildUnconfirmedError(error)) {
+      throw new Error(
+        `${CHILD_UNCONFIRMED}: interpreter verification process tree could not be confirmed stopped.`,
+        { cause: error }
+      )
+    }
+    options.signal?.throwIfAborted()
     throw new Error(`interpreter not executable: ${bin} (${(error as Error).message})`)
   }
 }

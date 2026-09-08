@@ -18,6 +18,7 @@ import { createLogger, diagnosticErrorFields } from '../logger'
 import { normalizeExplicitLock } from './micromamba'
 import { lockedPackageVersions, nativeLockRestoreState } from './native-lock-restoration'
 import { capturePipInstallEvidence, recoverPipInstallEvidence } from './pip-install-evidence'
+import { rLibraryDir, rScriptBin } from './runtime-paths'
 import {
   decodeVersionedJson,
   type VersionedJsonDecodeResult
@@ -665,6 +666,89 @@ const discoverNativeLockComponents = async (
   return { components, rejected }
 }
 
+// Use the installed renv reader, rather than inventing repository/commit identity from versions.
+// The native writer uses only R's temporary directory; no project or environment files change.
+const snapshotRNativeLock = async (
+  prefix: string,
+  manifest: NotebookEnvironmentManifest,
+  conda: CondaEnvironmentSnapshot,
+  execute: EnvironmentLockExec
+): Promise<NativeLockComponent | undefined> => {
+  const requested = manifest.packages.filter(
+    (pkg) =>
+      pkg.ecosystem === 'r' &&
+      pkg.libraryScope === 'environment' &&
+      pkg.loadedState !== 'installed-only' &&
+      !packageIsCoveredByConda(pkg, conda.packages)
+  )
+  if (!requested.length || !manifest.runtimeVersion) return undefined
+  // Never ask renv to infer today's release or bootstrap BiocManager while capturing evidence.
+  const bioconductorVersions = new Set(
+    manifest.packages.flatMap((pkg) =>
+      pkg.source?.type === 'bioconductor' ? [pkg.source.version] : []
+    )
+  )
+  if (
+    bioconductorVersions.size > 1 ||
+    [...bioconductorVersions].some((version) => !version || !/^\d+\.\d+$/u.test(version))
+  )
+    return undefined
+  const bioconductorVersion = [...bioconductorVersions][0]
+  const library = JSON.stringify(rLibraryDir(prefix))
+  const packages = requested.map((pkg) => JSON.stringify(pkg.name)).join(',')
+  // Returning the snapshot first avoids renv's online/latest-package validation. The captured
+  // inventory and nativeLockRestoreState below validate our version/source/coverage contract.
+  const script = `local({
+    Sys.setenv(RENV_PATHS_ROOT=file.path(tempdir(), "renv"),
+      RENV_PATHS_CACHE=file.path(tempdir(), "renv-cache"),
+      RENV_CONFIG_CACHE_ENABLED="FALSE", RENV_CONFIG_AUTO_SNAPSHOT="FALSE",
+      RENV_CONFIG_USER_PROFILE="FALSE");
+    .libPaths(${library});
+    options(renv.bioconductor.version=${bioconductorVersion ? JSON.stringify(bioconductorVersion) : 'NA_character_'});
+    loadNamespace("renv", lib.loc=${library});
+    path <- file.path(tempdir(), "renv.lock");
+    invisible(capture.output(lock <- renv::snapshot(project=tempdir(), library=${library},
+      lockfile=NULL, packages=c(${packages}), prompt=FALSE)));
+    invisible(capture.output(renv::lockfile_write(lock, file=path)));
+    size <- file.info(path)$size;
+    if (is.na(size) || size > ${MAX_NATIVE_LOCK_FILE_BYTES}) stop("R lock snapshot exceeds the capture budget");
+    cat(readChar(path, size, useBytes=TRUE))
+  })`
+  try {
+    const raw = await execute([rScriptBin(prefix), '--vanilla', '-e', script])
+    if (Buffer.byteLength(raw) > MAX_NATIVE_LOCK_FILE_BYTES) return undefined
+    const snapshot = recordValue(JSON.parse(raw))
+    const records = recordValue(snapshot?.Packages)
+    if (!snapshot || !records || recordValue(snapshot.R)?.Version !== manifest.runtimeVersion)
+      return undefined
+    // Conda already restores its packages and tools. Keep only the native portion of the
+    // recursive dependency snapshot; do not reinstall Conda's builds from CRAN.
+    for (const [name, record] of Object.entries(records)) {
+      const observed = manifest.packages.find((pkg) => pkg.ecosystem === 'r' && pkg.name === name)
+      const version = recordValue(record)?.Version
+      if (
+        observed &&
+        observed.version &&
+        typeof version === 'string' &&
+        packageVersionsMatch('r', version, observed.version) &&
+        packageIsCoveredByConda(observed, conda.packages)
+      )
+        delete records[name]
+    }
+    const content = `${JSON.stringify(snapshot)}\n`
+    const component: NativeLockComponent = {
+      ecosystem: 'r',
+      format: 'renv-lock',
+      resolution: 'locked',
+      files: [{ path: 'r/renv.lock', content, checksum: sha256(content) }]
+    }
+    return nativeComponentValue(component) ? component : undefined
+  } catch {
+    // A failed snapshot leaves the Conda baseline usable and native dependencies unresolved.
+    return undefined
+  }
+}
+
 const condaHistoryChecksum = async (condaPrefix: string): Promise<string | undefined> => {
   const history = join(condaPrefix, 'conda-meta', 'history')
   try {
@@ -684,6 +768,7 @@ const condaHistoryChecksum = async (condaPrefix: string): Promise<string | undef
 }
 
 const manifestRevision = (manifest: NotebookEnvironmentManifest): unknown => ({
+  runtimeVersion: manifest.runtimeVersion,
   platform: manifest.platform,
   architecture: manifest.architecture,
   complete: manifest.complete,
@@ -755,12 +840,15 @@ const assessEnvironmentLock = (
     ...(unresolvedNative && lock.nonCondaInstallers?.length
       ? (['non-conda-installer-detected'] as const)
       : []),
-    ...(lock.components.some(
+    // Auxiliary files are evidence, not necessarily part of the selected restore plan.
+    // An unused project lock must not downgrade a fully covered Conda/native environment.
+    ...(unresolvedNative &&
+    lock.components.some(
       (component) => component.ecosystem !== 'conda' && component.resolution === 'best-effort'
     )
       ? (['native-lock-file-best-effort'] as const)
       : []),
-    ...(nativeRejected ? (['native-lock-file-rejected'] as const) : [])
+    ...(unresolvedNative && nativeRejected ? (['native-lock-file-rejected'] as const) : [])
   ]
   return {
     captureStatus: partialReasons.length > 0 ? 'partial' : 'complete',
@@ -856,6 +944,23 @@ class EnvironmentLockCaptureOwner {
       ])
       stage = 'validating-conda-inventory'
       const conda = parseCondaEnvironmentSnapshot(inventoryRaw)
+      let recoveryAttempted = false
+      if (
+        target.language === 'r' &&
+        !native.rejected &&
+        native.components.length === 0 &&
+        conda.packages.has('r-renv')
+      ) {
+        stage = 'snapshotting-r-lock'
+        recoveryAttempted = true
+        const snapshot = await snapshotRNativeLock(
+          target.condaPrefix,
+          manifest,
+          conda,
+          options.execute
+        )
+        if (snapshot) native.components.push(snapshot)
+      }
       const untrackedPackages = [
         ...new Set([
           ...manifest.packages
@@ -902,7 +1007,6 @@ class EnvironmentLockCaptureOwner {
       // Older managed pip installs have no installation report. Recover only the required
       // public wheels, by comparing their complete payload with the installed files. Never
       // replace a project-supplied native lock or infer a lock from version numbers alone.
-      let recoveryAttempted = false
       if (
         target.language === 'python' &&
         target.runtimeSource === 'managed' &&

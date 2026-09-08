@@ -520,7 +520,7 @@ const nativeCommand = (
       return {
         command: rScriptBin(prefix, platform),
         args: ['--vanilla', '-e', renvRestoreExpression(primaryPath, rString(library))],
-        env: { ...env, R_LIBS_USER: library }
+        env: { ...env, R_LIBS_USER: library, RENV_CONFIG_CACHE_ENABLED: 'FALSE' }
       }
     case 'pak-lock':
       return {

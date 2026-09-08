@@ -27,8 +27,22 @@ export const projectPublicArtifactExecutionSnapshot = (
         recipeFrontier.stepIds.length > 0
       return {
         ...frontier,
+        crossingEntityIds: [
+          ...new Set([
+            ...frontier.crossingEntityIds,
+            ...(recipeFrontier?.crossingFiles.map((file) => file.entityId) ?? [])
+          ])
+        ],
         eligibility: executable ? 'available' : 'blocked',
-        checkReasonCodes: recipeFrontier?.reasonCodes ?? captureCheckReasonCodes
+        checkReasonCodes: recipeFrontier?.reasonCodes ?? captureCheckReasonCodes,
+        ...(recipeFrontier
+          ? {
+              unavailableEntityIds: frontier.crossingEntityIds.filter(
+                (entityId) =>
+                  !recipeFrontier.crossingFiles.some((file) => file.entityId === entityId)
+              )
+            }
+          : {})
       }
     })
   }

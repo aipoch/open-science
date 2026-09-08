@@ -622,7 +622,23 @@ def _capture_figures():
     return figures, truncated
 
 
-def _capture_environment():
+def _capture_execution_context():
+    import locale
+    import time
+    try:
+        return {
+            "locale": locale.setlocale(locale.LC_ALL, None)[:1024],
+            "timezone": "/".join(time.tzname)[:256],
+            "threadLimits": {name: os.environ[name][:32] for name in (
+                "OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS",
+                "VECLIB_MAXIMUM_THREADS", "NUMEXPR_NUM_THREADS") if name in os.environ},
+            "randomLibraries": [name for name in ("random", "numpy", "torch", "tensorflow") if name in sys.modules],
+        }
+    except Exception:
+        return None
+
+
+def _capture_environment(execution_context=None):
     packages = []
     seen = set()
     modules = list(sys.modules.items())
@@ -727,6 +743,7 @@ def _capture_environment():
     return {
         "runtime_version": ".".join(str(part) for part in sys.version_info[:3]),
         "packages": packages,
+        **({"execution_context": execution_context} if execution_context else {}),
     }
 
 
@@ -734,6 +751,7 @@ def _capture_environment():
 # evals that expression so its repr echoes like a REPL. KeyboardInterrupt (from a SIGINT timeout) is
 # caught so the process survives and the driver can map the reply to a timeout.
 def _run(code):
+    context_before = _capture_execution_context()
     output_budget = _OutputBudget(_text_limit - _diagnostic_limit)
     diagnostic_budget = _OutputBudget(_diagnostic_limit)
     out, err = _BudgetTextIO(output_budget), _BudgetTextIO(output_budget)
@@ -767,7 +785,8 @@ def _run(code):
     return {"stdout": out.getvalue(), "stderr": err.getvalue(), "error": error,
             "result": result, "cwd": os.getcwd(), "figures": figures,
             "output_truncated": output_budget.truncated or diagnostic_budget.truncated or figures_truncated,
-            "environment": _capture_environment()}
+            "environment": _capture_environment({"schemaVersion": 1, "before": context_before,
+                "after": _capture_execution_context()})}
 
 
 def main():

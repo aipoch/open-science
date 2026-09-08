@@ -223,6 +223,21 @@ describe('projectArtifactReproducibility', () => {
     }
 
     const projected = projectPublicArtifactExecutionSnapshot(execution, []).reproducibility
+    expect(projected?.startFrontiers[0]?.unavailableEntityIds).toEqual(['registered-input:input-1'])
+    expect(projected?.startFrontiers[1]?.unavailableEntityIds).toEqual(['file-generation:middle'])
+    execution.reproducibilityRecipe!.frontiers[0]!.crossingFiles.push({
+      entityId: 'file-generation:middle',
+      checksum: checksum('b'),
+      sizeBytes: 200,
+      contentStorageKey: 'private/blob',
+      materializationPath: 'middle.csv'
+    })
+    const withWorkingFile = projectPublicArtifactExecutionSnapshot(execution, []).reproducibility
+    expect(withWorkingFile?.startFrontiers[0]?.crossingEntityIds).toEqual([
+      'registered-input:input-1',
+      'file-generation:middle'
+    ])
+    expect(JSON.stringify(withWorkingFile)).not.toContain('private/blob')
     expect(projected?.checkReasonCodes).toEqual([])
     expect(
       projected?.startFrontiers.map(({ frontierId, eligibility, checkReasonCodes }) => ({

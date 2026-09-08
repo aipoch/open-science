@@ -137,6 +137,27 @@ const installBlankPngMaterializationTrace = (
   ].join('\n')
 
 gate('r_loop.R', () => {
+  it('captures execution context before and after a cell without copying credentials', async () => {
+    const { child, send } = startLoop(rscriptBin(), {
+      OMP_NUM_THREADS: '2',
+      OPEN_SCIENCE_TEST_SECRET: 'private-value'
+    })
+    try {
+      const result = await send('Sys.setenv(OMP_NUM_THREADS = "3")')
+      expect(result.error).toBeNull()
+      expect(result.environmentOverlay?.executionContext?.before.threadLimits.OMP_NUM_THREADS).toBe(
+        '2'
+      )
+      expect(result.environmentOverlay?.executionContext?.after.threadLimits.OMP_NUM_THREADS).toBe(
+        '3'
+      )
+      expect(JSON.stringify(result.environmentOverlay?.executionContext)).not.toContain(
+        'private-value'
+      )
+    } finally {
+      child.kill()
+    }
+  }, 60_000)
   it('keeps the loaded R namespace identity when library search paths change', async () => {
     const library = mkdtempSync(join(tmpdir(), 'r-library-shadow-'))
     cpSync(join(rEnvPrefix!, 'lib/R/library/RColorBrewer'), join(library, 'RColorBrewer'), {

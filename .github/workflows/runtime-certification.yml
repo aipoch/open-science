@@ -66,12 +66,13 @@ jobs:
           "$MICROMAMBA_BIN" create --yes --root-prefix "$root" --prefix "$python_prefix" \
             --channel conda-forge python=3.12 matplotlib-base numpy pandas nomkl
           "$MICROMAMBA_BIN" create --yes --root-prefix "$root" --prefix "$r_prefix" \
-            --channel conda-forge r-base=4.4 r-jsonlite r-ggplot2
+            --channel conda-forge r-base=4.4 r-jsonlite r-ggplot2 r-renv r-mass
 
           echo "OPEN_SCIENCE_TEST_PY_ENV=$python_prefix/bin/python" >> "$GITHUB_ENV"
           echo "OPEN_SCIENCE_TEST_PYTHON=$python_prefix/bin/python" >> "$GITHUB_ENV"
           echo "OPEN_SCIENCE_TEST_RESTORE_PY_ENV=$python_prefix" >> "$GITHUB_ENV"
           echo "OPEN_SCIENCE_TEST_R_ENV=$r_prefix" >> "$GITHUB_ENV"
+          echo "OPEN_SCIENCE_TEST_RENV_LIBRARY=$r_prefix/lib/R/library" >> "$GITHUB_ENV"
           echo "OPEN_SCIENCE_TEST_MICROMAMBA=$MICROMAMBA_BIN" >> "$GITHUB_ENV"
           echo "OPEN_SCIENCE_TEST_SCIENTIFIC_RESTORE=1" >> "$GITHUB_ENV"
 
@@ -110,6 +111,7 @@ jobs:
       - name: Test real source runtime chain
         env:
           RUN_KERNEL: '1'
+          RUN_REPRODUCTION_SMOKE: '1'
         run: >-
           npx vitest run
           src/main/notebook/repl-loop.integration.test.ts
@@ -119,6 +121,9 @@ jobs:
           src/main/notebook/r-loop.integration.test.ts
           src/main/notebook/reproduction-runtime.integration.test.ts
           src/main/notebook/native-lock-restoration.test.ts
+          src/main/notebook/environment-lock.test.ts
+          src/main/notebook/restored-environment-verification.test.ts
+          src/main/artifacts/artifact-reproducibility-execution.test.ts
           src/main/notebook/environment-state-tracker.test.ts
           src/main/notebook/package-manager.test.ts
           src/main/notebook/cross-turn-input-repro.integration.test.ts

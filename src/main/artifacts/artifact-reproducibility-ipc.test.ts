@@ -39,6 +39,7 @@ describe('artifact reproducibility IPC', () => {
       }),
       cancel: vi.fn(),
       cancelOwner: vi.fn(),
+      sessionCommand: vi.fn(async () => undefined),
       getCheck: vi.fn(() => ({ attemptId: 'attempt-1' })),
       getCheckLog: vi.fn(async () => ({ attemptId: 'attempt-1' })),
       listReceipts: vi.fn(async () => ({ receipts: [] }))
@@ -81,6 +82,25 @@ describe('artifact reproducibility IPC', () => {
       artifactId: request.artifactId,
       versionId: request.versionId
     }
+    const batchRequest = {
+      action: 'prepare',
+      projectId: request.projectId,
+      appSessionId: request.appSessionId,
+      targets: [
+        { artifactId: request.artifactId, versionId: request.versionId, name: 'result.csv' }
+      ]
+    }
+    await handlers.get('artifacts:session-reproducibility')?.(
+      { sender } as never,
+      batchRequest as never
+    )
+    expect(owner.sessionCommand).toHaveBeenCalledWith(batchRequest, 17, expect.any(Function))
+    expect(() =>
+      handlers.get('artifacts:session-reproducibility')?.(
+        { sender } as never,
+        { ...batchRequest, arbitraryPath: '/private' } as never
+      )
+    ).toThrow()
     await expect(
       handlers.get('artifacts:get-reproducibility-output-storage')?.(
         { sender } as never,

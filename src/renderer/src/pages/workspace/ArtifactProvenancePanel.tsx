@@ -7,6 +7,7 @@ import {
   useArtifactEnvironmentLockStore
 } from './artifact-environment-lock-store'
 import { useVersionHistoryPages } from './use-version-history-pages'
+import { ExecutionContextDetails } from './ExecutionContextDetails'
 import { VersionHistoryLoadButton } from './VersionHistoryLoadButton'
 import {
   provenanceReadFailure,
@@ -2196,6 +2197,7 @@ const ArtifactProvenancePanel = ({
             </section>
             {environment ? (
               <>
+                <ExecutionContextDetails value={environment.execution_context} />
                 {captureProblems.length > 0 ? (
                   <div
                     role="status"

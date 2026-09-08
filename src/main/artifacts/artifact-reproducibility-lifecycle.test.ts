@@ -18,6 +18,7 @@ import type {
 } from '../../shared/artifact-reproducibility'
 import type { NotebookProcessSandbox } from '../notebook/process-sandbox'
 import { CHILD_UNCONFIRMED } from '../notebook/provisioner-runtime'
+import { ReproducibilityCleanupError } from './artifact-reproducibility-execution'
 import { withReproducibilityNotebookLifecycle } from './reproducibility-notebook-lifecycle'
 import { SessionDeletionOwner } from '../session-deletion/owner'
 import {
@@ -77,6 +78,35 @@ const deferred = (): { promise: Promise<void>; resolve: () => void } => {
 }
 
 describe('reproducibility resource lifecycle', () => {
+  it('reports cleanup failures after cancellation without treating stopped workers as unsafe', async () => {
+    const stopped = deferred()
+    const execute = vi.fn(async () => {
+      await stopped.promise
+      throw new ReproducibilityCleanupError([new Error('directory busy')], '/temporary/attempt')
+    })
+    const persistFailure = vi.fn<ArtifactReproducibilityAttemptOwnerDependencies['persistFailure']>(
+      async (_request, attempt, checkLog) => ({
+        schemaVersion: 1,
+        ...attempt,
+        checkLog: {
+          logChecksum: 'f'.repeat(64),
+          entryCount: checkLog.entries.length,
+          sizeBytes: 1,
+          truncated: checkLog.truncated
+        }
+      })
+    )
+    const owner = createOwner({ execute, persistFailure })
+    const states: ArtifactReproducibilityCheckState[] = []
+    owner.start(request, 1, (state) => states.push(state))
+    await vi.waitFor(() => expect(execute).toHaveBeenCalled())
+    const cancelling = owner.cancelSession(request.projectId, request.appSessionId)
+    stopped.resolve()
+    await cancelling
+    expect(states.at(-1)?.status).toBe('failed')
+    expect(persistFailure).toHaveBeenCalledOnce()
+    expect(owner.getActiveSessions()).toHaveLength(0)
+  })
   it('fences cleanup against active checks and releases the fence after cleanup errors', async () => {
     const executionDone = deferred()
     const owner = createOwner({

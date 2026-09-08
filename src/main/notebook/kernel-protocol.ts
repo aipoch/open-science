@@ -1,4 +1,5 @@
 // Wire protocol shared between the Node kernel driver and the Python/R exec-loop scripts.
+import { notebookExecutionContextSchema } from '../../shared/notebook-execution-context'
 
 import type {
   NotebookEnvironmentPackage,
@@ -95,12 +96,14 @@ const parseEnvironmentPackage = (value: unknown): NotebookEnvironmentPackage | u
 const parseEnvironmentOverlay = (value: unknown): NotebookLiveEnvironmentOverlay | undefined => {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) return undefined
   const environment = value as Record<string, unknown>
+  const context = notebookExecutionContextSchema.safeParse(environment.execution_context)
   const packages = Array.isArray(environment.packages)
     ? environment.packages
         .map(parseEnvironmentPackage)
         .filter((pkg): pkg is NotebookEnvironmentPackage => pkg !== undefined)
     : []
   return {
+    ...(context.success ? { executionContext: context.data } : {}),
     ...(typeof environment.runtime_version === 'string' && environment.runtime_version
       ? { runtimeVersion: environment.runtime_version }
       : {}),

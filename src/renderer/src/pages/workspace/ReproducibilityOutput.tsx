@@ -1,4 +1,5 @@
 import { useContext, useEffect, useState } from 'react'
+import { OutputComparisonDetails } from './OutputComparison'
 import { useTranslation } from 'react-i18next'
 import type {
   ArtifactReproducibilityReceipt,
@@ -55,6 +56,7 @@ const ReproducibilityOutputContent = ({
   const [preview, setPreview] = useState<ArtifactReproducibilityOutputPreview>()
   const [error, setError] = useState<string>()
   const [downloading, setDownloading] = useState(false)
+  const [overlayOpacity, setOverlayOpacity] = useState(50)
   const scope = receipt.artifactVersion
   useEffect(() => {
     if (cleared || !expanded || preview || !window.api.artifacts.readReproducibilityOutput) return
@@ -102,15 +104,30 @@ const ReproducibilityOutputContent = ({
   }
   return (
     <div className="@container mt-2 min-w-0" data-reproduced-output={comparison.entityId}>
-      <p className="text-xs text-text-300">
-        {comparison.reason === 'missing'
-          ? t('Output file was not generated.')
-          : comparison.reason === 'size-mismatch'
-            ? t('File size differs.')
-            : comparison.reason === 'checksum-mismatch'
-              ? t('File contents differ.')
-              : t('Output file could not be compared.')}
-      </p>
+      {comparison.status === 'different' ? (
+        <p className="text-xs text-text-300">
+          {comparison.reason === 'missing'
+            ? t('Output file was not generated.')
+            : comparison.reason === 'size-mismatch'
+              ? t('File size differs.')
+              : comparison.reason === 'checksum-mismatch'
+                ? t('File contents differ.')
+                : t('Output file could not be compared.')}
+        </p>
+      ) : null}
+      {comparison.contentComparison ? (
+        <OutputComparisonDetails report={comparison.contentComparison} />
+      ) : comparison.contentComparisonUnavailableReason ? (
+        <p className="mt-2 text-xs text-text-300">
+          {t('Content comparison unavailable')}
+          {': '}
+          {comparison.contentComparisonUnavailableReason === 'budget-exceeded'
+            ? t('Content exceeds the comparison limit.')
+            : comparison.contentComparisonUnavailableReason === 'unsupported-format'
+              ? t('This content format is not supported for comparison.')
+              : t('Content could not be parsed or compared.')}
+        </p>
+      ) : null}
       {comparison.actualSizeBytes !== undefined && !cleared ? (
         <p className="mt-1 text-xs tabular-nums text-text-300">
           {formatBytes(comparison.actualSizeBytes)}
@@ -144,7 +161,7 @@ const ReproducibilityOutputContent = ({
             </Button>
           ) : null}
         </div>
-      ) : comparison.reason !== 'missing' ? (
+      ) : comparison.status === 'different' && comparison.reason !== 'missing' ? (
         <p className="mt-1 text-xs text-text-300">
           {comparison.outputCaptureReason === 'too-large'
             ? t('Output exceeds the 32 MB retention limit.')
@@ -163,6 +180,46 @@ const ReproducibilityOutputContent = ({
           <div className="mt-3 grid grid-cols-1 gap-3 @lg:grid-cols-2">
             <OutputPreview label={t('Original output')} value={preview.original} />
             <OutputPreview label={t('Reproduced output')} value={preview.reproduced} />
+            {preview.original?.kind === 'image' &&
+            preview.reproduced?.kind === 'image' &&
+            comparison.contentComparison?.image ? (
+              <figure className="min-w-0 rounded-md border border-border-300/60 p-3">
+                <figcaption className="mb-2 text-xs font-medium text-text-200">
+                  {t('Image overlay')}
+                </figcaption>
+                <div className="relative">
+                  <img
+                    src={preview.original.dataUrl}
+                    alt={t('Original output')}
+                    className="max-h-80 w-full object-contain"
+                  />
+                  <img
+                    src={preview.reproduced.dataUrl}
+                    alt={t('Reproduced output')}
+                    className="absolute inset-0 h-full w-full object-contain"
+                    style={{ opacity: overlayOpacity / 100 }}
+                  />
+                </div>
+                <label className="mt-2 flex items-center gap-2 text-xs text-text-300">
+                  {t('Reproduced output')}
+                  <input
+                    type="range"
+                    min={0}
+                    max={100}
+                    value={overlayOpacity}
+                    onChange={(event) => setOverlayOpacity(Number(event.target.value))}
+                    className="min-w-0 flex-1"
+                  />
+                  <span className="tabular-nums">{overlayOpacity}%</span>
+                </label>
+              </figure>
+            ) : null}
+            {preview.differenceImage ? (
+              <OutputPreview
+                label={t('Difference image')}
+                value={{ kind: 'image', dataUrl: preview.differenceImage }}
+              />
+            ) : null}
           </div>
         ) : (
           <p role="status" className="mt-2 text-xs text-text-300">

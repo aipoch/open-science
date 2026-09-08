@@ -761,7 +761,18 @@ emit <- function(obj) {
   flush(stdout())
 }
 
-capture_environment <- function() {
+capture_execution_context <- function() {
+  base::tryCatch({
+    limits <- base::Sys.getenv(c("OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS",
+                               "VECLIB_MAXIMUM_THREADS", "NUMEXPR_NUM_THREADS"), unset = "")
+    base::list(locale = base::substr(base::Sys.getlocale(), 1L, 1024L),
+      timezone = base::substr(base::Sys.getenv("TZ", unset = "system-default"), 1L, 256L),
+      threadLimits = base::lapply(base::as.list(limits), function(v) base::substr(v, 1L, 32L)),
+      randomLibraries = base::as.list(base::paste0("R:", base::RNGkind())))
+  }, error = function(e) NULL)
+}
+
+capture_environment <- function(execution_context = NULL) {
   loaded <- loadedNamespaces()
   attached <- sub("^package:", "", grep("^package:", search(), value = TRUE))
   libraries <- normalizePath(.libPaths(), winslash = "/", mustWork = FALSE)
@@ -831,7 +842,8 @@ capture_environment <- function() {
   }
   list(
     runtime_version = paste(R.version$major, R.version$minor, sep = "."),
-    packages = packages
+    packages = packages,
+    execution_context = execution_context
   )
 }
 
@@ -1333,6 +1345,7 @@ run <- base::local({
   install_capture_wrappers()
 
   function(req) {
+    context_before <- capture_execution_context()
     request_state$sequence <- request_state$sequence + 1L
     request_id <- request_state$sequence
     reset_capture_state(request_id = request_id)
@@ -1481,7 +1494,8 @@ run <- base::local({
          error_line = if (is.na(error_line)) NULL else error_line,
          result = NA, cwd = getwd(), figures = figures,
          output_truncated = isTRUE(capture_state$output_truncated),
-         environment = capture_environment())
+         environment = capture_environment(list(schemaVersion = 1L, before = context_before,
+                                               after = capture_execution_context())))
   }
 }, envir = base::list2env(
   base::list(
@@ -1492,6 +1506,7 @@ run <- base::local({
     figure_count_limit = figure_count_limit,
     figure_total_limit_bytes = figure_total_limit_bytes,
     capture_environment = capture_environment,
+    capture_execution_context = capture_execution_context,
     assert_no_package_mutation = assert_no_package_mutation,
     output_sink_policy_env = output_sink_policy_env,
     namespace_tracker = namespace_tracker

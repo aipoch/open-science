@@ -1006,6 +1006,11 @@ export const RENDERER_API_CONTRACT = Object.freeze({
   'artifacts.startReproducibilityCheck': callable<
     (request: ArtifactReproducibilityCheckRequest) => Promise<ArtifactReproducibilityCheckState>
   >()('artifacts', ['artifacts:start-reproducibility-check', ELECTRON], { optionalMember: true }),
+  'artifacts.sessionReproducibility': callable<
+    (
+      request: import('./session-reproducibility').SessionReproducibilityCommand
+    ) => Promise<import('./session-reproducibility').SessionReproducibilityBatch | undefined>
+  >()('artifacts', ['artifacts:session-reproducibility', ELECTRON], { optionalMember: true }),
   'cli.getStatus': callable<() => Promise<CliLauncherStatus>>()('cli', ['cli:get-status']),
   'cli.install': callable<() => Promise<CliLauncherStatus>>()('cli', ['cli:install', LOCAL]),
   'cli.uninstall': callable<() => Promise<CliLauncherStatus>>()('cli', ['cli:uninstall', LOCAL]),

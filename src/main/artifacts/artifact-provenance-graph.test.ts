@@ -1454,7 +1454,7 @@ describe('artifact provenance graph', () => {
     expect(snapshot.truncation).toBeUndefined()
   })
 
-  it('confirms a turn attachment when complete file evidence observes it being read', () => {
+  it.each(['upload-version', 'artifact-version'] as const)('binds exact %s', (sourceKind) => {
     const producer = notebookActivity(
       'run-2',
       2,
@@ -1466,7 +1466,7 @@ describe('artifact provenance graph', () => {
           authority: 'advisory',
           generation: generation('g-observed-input', 'inputs/input.csv', checksum('a')),
           registeredInput: {
-            sourceKind: 'upload-version',
+            sourceKind,
             inputFileVersionId: 'upload-version-1',
             checksum: checksum('a')
           }
@@ -1484,7 +1484,7 @@ describe('artifact provenance graph', () => {
         inputFiles: [
           {
             inputFileVersionId: 'upload-version-1',
-            sourceKind: 'upload-version',
+            sourceKind,
             sourceFileId: 'upload-1',
             sourceProjectId: 'project-1',
             sourceSessionId: 'source-session-1',
@@ -1497,11 +1497,11 @@ describe('artifact provenance graph', () => {
           },
           {
             inputFileVersionId: 'upload-version-same-content',
-            sourceKind: 'upload-version',
-            sourceFileId: 'upload-2',
+            sourceKind,
+            sourceFileId: 'upload-1',
             sourceProjectId: 'project-1',
             sourceSessionId: 'source-session-1',
-            filename: 'copy.csv',
+            filename: 'input.csv',
             sizeBytes: 10,
             checksum: checksum('a'),
             storageKey: 'uploads/project-1/source-session-1/upload-2/content',
@@ -1540,7 +1540,7 @@ describe('artifact provenance graph', () => {
       expect.objectContaining({
         kind: 'used',
         activityId: 'run-2',
-        entityId: 'registered-input:upload-version:upload-version-1',
+        entityId: `registered-input:${sourceKind}:upload-version-1`,
         authority: 'authoritative',
         evidenceSource: 'runtime-observation'
       })
@@ -1549,7 +1549,7 @@ describe('artifact provenance graph', () => {
       expect.objectContaining({
         kind: 'used',
         activityId: 'run-2',
-        entityId: 'registered-input:upload-version:upload-version-same-content'
+        entityId: `registered-input:${sourceKind}:upload-version-same-content`
       })
     )
     expect(recipe.capture).toEqual({ state: 'sealed', reasonCodes: [] })
@@ -1558,6 +1558,156 @@ describe('artifact provenance graph', () => {
       expect.objectContaining({ inputFileVersionId: 'upload-version-1' })
     ])
   })
+
+  it.each([
+    ['python', 'upload-version', 'copy.csv'],
+    ['r', 'upload-version', 'local.csv'],
+    ['python', 'artifact-version', 'local.csv'],
+    ['r', 'artifact-version', 'copy.csv']
+  ] as const)(
+    'replays the observed file without guessing a %s %s identity from equal bytes (%s)',
+    (kernelKind, sourceKind, filename) => {
+      const producer = notebookActivity(
+        'run-2',
+        2,
+        [
+          {
+            relation: 'present-before',
+            relativePath: 'local.csv',
+            pathPortability: 'relative',
+            authority: 'advisory',
+            generation: generation('g-local', 'local.csv', checksum('a'))
+          },
+          {
+            relation: 'created',
+            relativePath: 'result.csv',
+            pathPortability: 'relative',
+            authority: 'advisory',
+            generation: generation('g-target', 'result.csv', checksum('b'))
+          }
+        ],
+        {
+          kernelKind,
+          script:
+            kernelKind === 'r'
+              ? "write.csv(read.csv('local.csv'), 'result.csv')"
+              : "pd.read_csv('local.csv').to_csv('result.csv')",
+          inputFiles: [
+            {
+              inputFileVersionId: 'unrelated-version',
+              sourceKind,
+              sourceFileId: 'other-file',
+              sourceProjectId: 'project-1',
+              sourceSessionId: 'source-session-1',
+              filename,
+              sizeBytes: 10,
+              checksum: checksum('a'),
+              storageKey: 'other/content',
+              association: 'turn-attached'
+            }
+          ]
+        }
+      )
+      const graph = sealArtifactProvenanceGraph({
+        target: target(),
+        notebookActivities: [producer],
+        computeActivities: []
+      })
+      expect(graph.edges).not.toContainEqual(
+        expect.objectContaining({
+          kind: 'used',
+          entityId: `registered-input:${sourceKind}:unrelated-version`
+        })
+      )
+      expect(graph.edges).toContainEqual(
+        expect.objectContaining({
+          kind: 'used',
+          activityId: 'run-2',
+          entityId: 'file-generation:g-local',
+          authority: 'authoritative'
+        })
+      )
+      const recipe = sealArtifactReproducibilityRecipe({
+        provenanceGraph: graph,
+        inputFiles: producer.run.inputFiles ?? [],
+        runs: [recipeRun('run-2', 2, { kernelKind, script: producer.run.script })]
+      })
+      expect(recipe.capture).toEqual({ state: 'sealed', reasonCodes: [] })
+      expect(resolveArtifactReproducibilityExecutionPlan(recipe, 'original-inputs')).toBeDefined()
+      expect(
+        recipe.frontiers.find((frontier) => frontier.frontierId === 'original-inputs')
+          ?.crossingFiles
+      ).toEqual([
+        expect.objectContaining({
+          entityId: 'file-generation:g-local',
+          materializationPath: 'local.csv',
+          contentStorageKey: `execution-file-evidence/blobs/sha256-${checksum('a')}`,
+          checksum: checksum('a'),
+          sizeBytes: 10
+        })
+      ])
+    }
+  )
+
+  it.each(['modified', 'deleted', 'created', 'harvested-output'] as const)(
+    'does not reconnect an old intermediate after its path was %s',
+    (relation) => {
+      const prepare = notebookActivity('run-0', 0, [
+        {
+          relation: 'created',
+          relativePath: 'local.csv',
+          pathPortability: 'relative',
+          authority: 'advisory',
+          generation: generation('g-old', 'local.csv', checksum('a'))
+        }
+      ])
+      const change = notebookActivity('run-1', 1, [
+        {
+          relation,
+          relativePath: 'local.csv',
+          pathPortability: 'relative',
+          authority: 'advisory',
+          ...(relation === 'modified'
+            ? { generation: generation('g-new', 'local.csv', checksum('c')) }
+            : {})
+        }
+      ])
+      // The file was supplied again outside these runs, with the old bytes.
+      const producer = notebookActivity('run-2', 2, [
+        {
+          relation: 'present-before',
+          relativePath: './local.csv',
+          pathPortability: 'relative',
+          authority: 'advisory',
+          generation: generation('g-local', './local.csv', checksum('a'))
+        },
+        {
+          relation: 'created',
+          relativePath: 'result.csv',
+          pathPortability: 'relative',
+          authority: 'advisory',
+          generation: generation('g-target', 'result.csv', checksum('b'))
+        }
+      ])
+      const graph = sealArtifactProvenanceGraph({
+        target: target(),
+        notebookActivities: [prepare, change, producer],
+        computeActivities: []
+      })
+      expect(graph.edges).toContainEqual(
+        expect.objectContaining({
+          kind: 'used',
+          activityId: 'run-2',
+          entityId: 'file-generation:g-local',
+          authority: 'authoritative'
+        })
+      )
+      expect(graph.activities.map((activity) => activity.activityId)).toEqual([
+        'run-2',
+        'artifact-publication:version-1'
+      ])
+    }
+  )
 
   it('connects a Compute output to its prior Notebook generation', () => {
     const notebook = notebookActivity('run-2', 2, [
