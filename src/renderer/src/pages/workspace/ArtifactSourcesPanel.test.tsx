@@ -335,3 +335,79 @@ it('updates metadata dates with the interface language on an unchanged host', as
     })
   }
 })
+
+it('keeps cited metadata in the detail dialog after the Library entry changes', async () => {
+  const frozen = structuredClone(literature)
+  frozen.references[0]!.item.abstract = 'The findings at citation time.'
+  frozen.references[0]!.item.identifiers = [
+    { scheme: 'doi', value: '10.1234/frozen', isPrimary: true }
+  ]
+  const latest = {
+    id: 'item-1',
+    metadataRevision: 9,
+    item: {
+      ...frozen.references[0]!.item,
+      title: 'Revised Library title',
+      abstract: 'Different findings after citation.',
+      identifiers: [{ scheme: 'doi', value: '10.1234/current', isPrimary: true }]
+    },
+    projectIds: [],
+    collectionIds: [],
+    attachments: [],
+    lifecycle: 'active',
+    createdAt: 1,
+    updatedAt: 9
+  }
+  get.mockResolvedValueOnce(latest)
+  render(<ArtifactSourcesPanel literature={frozen} />)
+  await act(async () => {
+    fireEvent.click(
+      screen.getByRole('button', { name: `View details: ${frozen.references[0]!.item.title}` })
+    )
+  })
+  expect(get).toHaveBeenCalledWith('item-1')
+  const dialog = screen.getByRole('dialog')
+  expect
+    .soft(within(dialog).queryByRole('heading', { name: frozen.references[0]!.item.title }))
+    .not.toBeNull()
+  expect.soft(dialog.textContent).toContain('The findings at citation time.')
+  expect.soft(dialog.textContent).toContain('10.1234/frozen')
+  expect.soft(dialog.textContent).not.toContain('Revised Library title')
+})
+
+it('opens an uncited frozen corpus snapshot and labels older missing snapshots', async () => {
+  const current = structuredClone(literature)
+  current.corpus!.coverage.metadataOnlyCount = 0
+  current.corpus!.coverage.abstractOnlyCount = 2
+  const uncited = {
+    ...current.references[0]!,
+    itemId: 'uncited',
+    item: { ...current.references[0]!.item, title: 'Uncited frozen study' }
+  }
+  current.corpus!.items.push(uncited)
+  render(<ArtifactSourcesPanel literature={current} />)
+  fireEvent.click(screen.getByRole('button', { name: 'View full corpus' }))
+  expect(screen.getByText('PDF passages')).not.toBeNull()
+  expect(screen.getByText('Metadata only')).not.toBeNull()
+  get.mockResolvedValueOnce(undefined)
+  await act(async () =>
+    fireEvent.click(screen.getByRole('button', { name: 'View details: Uncited frozen study' }))
+  )
+  expect(
+    within(screen.getByRole('dialog')).getByRole('heading', { name: 'Uncited frozen study' })
+  ).not.toBeNull()
+})
+
+it('discloses incomplete old corpus snapshots without querying current metadata to fill them', () => {
+  const old = structuredClone(literature)
+  old.corpus!.items.push({ itemId: 'missing-snapshot', metadataRevision: 1 })
+  render(<ArtifactSourcesPanel literature={old} />)
+  expect(
+    screen.getByText(
+      'This older record does not verify delivered evidence or preserve every corpus snapshot.'
+    )
+  ).not.toBeNull()
+  fireEvent.click(screen.getByRole('button', { name: 'View full corpus' }))
+  expect(screen.getByText('Snapshot unavailable')).not.toBeNull()
+  expect(get).not.toHaveBeenCalled()
+})

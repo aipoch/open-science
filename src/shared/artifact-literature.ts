@@ -29,7 +29,8 @@ const artifactCitationManifestSchema = artifactCitationInputSchema.extend({
 const artifactLiteratureItemRevisionSchema = z
   .object({
     itemId: z.string().trim().min(1).max(512),
-    metadataRevision: z.number().int().positive()
+    metadataRevision: z.number().int().positive(),
+    item: literatureItemInputSchema.optional()
   })
   .strict()
 
@@ -77,6 +78,7 @@ const validateRetrievalCriteria = (
 const artifactLiteratureRetrievalSchema = z
   .object({
     ...artifactLiteratureRetrievalCriteriaFields,
+    offset: z.number().int().nonnegative().optional(),
     resultCount: z.number().int().nonnegative(),
     totalCount: z.number().int().nonnegative(),
     complete: z.boolean()
@@ -105,6 +107,8 @@ const artifactLiteratureCoverageSchema = z
     searchedCount: z.number().int().nonnegative(),
     candidateCount: z.number().int().nonnegative(),
     fullTextCount: z.number().int().nonnegative(),
+    // Absence identifies legacy inferred coverage; never default it when reading old manifests.
+    metadataOnlyCount: z.number().int().nonnegative().optional(),
     abstractOnlyCount: z.number().int().nonnegative(),
     unprocessedCount: z.number().int().nonnegative()
   })
@@ -171,10 +175,13 @@ const artifactLiteratureCorpusManifestSchema = z
         path: ['coverage', 'candidateCount']
       })
     }
-    if (coverage.fullTextCount + coverage.abstractOnlyCount !== items.length) {
+    if (
+      coverage.fullTextCount + coverage.abstractOnlyCount + (coverage.metadataOnlyCount ?? 0) !==
+      items.length
+    ) {
       context.addIssue({
         code: 'custom',
-        message: 'Every frozen corpus item must be classified as full text or abstract only.',
+        message: 'Every frozen corpus item must have exactly one evidence classification.',
         path: ['coverage']
       })
     }

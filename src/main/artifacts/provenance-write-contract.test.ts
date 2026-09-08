@@ -76,6 +76,7 @@ const PUBLIC_METHODS = [
   'activateFinalizedRun',
   'listRunVersions',
   'recordLiteratureSearch',
+  'recordLiteratureAbstractRead',
   'recordLiteraturePdfRead',
   'prepareProjectReconciliation',
   'reconcileSession',

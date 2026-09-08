@@ -4704,6 +4704,15 @@
     "Could not update R access.": "R 접근 권한을 업데이트할 수 없습니다.",
     "Allow the sandbox to list names in this R installation's parent folders. Other file contents remain protected. Administrator approval may be required.": "샌드박스가 이 R 설치 경로의 상위 폴더에 있는 이름을 나열하도록 허용합니다. 다른 파일의 내용은 계속 보호됩니다. 관리자 승인이 필요할 수 있습니다.",
     "Authorize and verify": "허용 및 검증",
-    "Remove R access": "R 접근 권한 제거"
+    "Remove R access": "R 접근 권한 제거",
+    "PDF passages": "PDF 발췌문",
+    "Not screened": "미선별",
+    "Metadata only": "메타데이터만",
+    "View cited references": "인용 문헌 보기",
+    "View full corpus": "전체 자료 보기",
+    "Snapshot unavailable": "스냅샷 없음",
+    "This older record does not verify delivered evidence or preserve every corpus snapshot.": "이 이전 기록은 반환된 근거를 검증하거나 전체 자료의 스냅샷을 보존하지 않습니다.",
+    "Evidence counts describe content returned to the Agent, not completed reading. Candidates are Agent-reported and checked against retrieved records. Search counts below describe individual result pages.": "근거 수는 에이전트에 반환된 내용을 나타내며 읽기 완료를 의미하지 않습니다. 후보 수는 에이전트가 보고하며 검색 기록을 기준으로 검증됩니다. 아래 검색 수는 각 응답의 결과 페이지별 수치입니다.",
+    "Saved reference metadata. Attachments reflect the current Library entry.": "저장된 문헌 메타데이터입니다. 첨부 파일은 현재 라이브러리 항목의 파일입니다."
   }
 }

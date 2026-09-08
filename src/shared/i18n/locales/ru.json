@@ -5152,6 +5152,15 @@
     "Could not update R access.": "Не удалось обновить доступ R.",
     "Allow the sandbox to list names in this R installation's parent folders. Other file contents remain protected. Administrator approval may be required.": "Разрешить песочнице перечислять имена в родительских папках этой установки R. Содержимое других файлов останется защищённым. Может потребоваться разрешение администратора.",
     "Authorize and verify": "Разрешить и проверить",
-    "Remove R access": "Удалить доступ R"
+    "Remove R access": "Удалить доступ R",
+    "PDF passages": "Фрагменты PDF",
+    "Not screened": "Не рассмотрено",
+    "Metadata only": "Только метаданные",
+    "View cited references": "Показать цитируемые источники",
+    "View full corpus": "Показать весь корпус",
+    "Snapshot unavailable": "Снимок недоступен",
+    "This older record does not verify delivered evidence or preserve every corpus snapshot.": "Эта старая запись не подтверждает предоставленные материалы и не содержит снимков всех источников корпуса.",
+    "Evidence counts describe content returned to the Agent, not completed reading. Candidates are Agent-reported and checked against retrieved records. Search counts below describe individual result pages.": "Числа отражают содержимое, переданное Агенту, а не завершённое чтение. Число кандидатов указано Агентом и проверено по найденным записям. Числа поиска ниже относятся к отдельным страницам результатов.",
+    "Saved reference metadata. Attachments reflect the current Library entry.": "Сохранённые метаданные источника. Вложения относятся к текущей записи библиотеки."
   }
 }

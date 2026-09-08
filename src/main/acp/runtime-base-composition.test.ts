@@ -205,7 +205,10 @@ describe('ACP Runtime base composition', () => {
     } as unknown as AgentMcpHttpHost
     const searchLibrary = vi.fn(async () => ({ items: [], totalCount: 0, hasMore: false }))
     const readAbstract = vi.fn(async () => undefined)
-    const readPdf = vi.fn(async () => ({ itemTitle: 'Paper', evidence: {} }))
+    const readPdf = vi.fn(async () => ({
+      itemTitle: 'Paper',
+      evidence: { passages: [{ content: 'Findings.' }] }
+    }))
     const resolveSaveReferences = vi.fn(async () => [])
     const formatReferences = vi.fn(async () => ({
       references: [

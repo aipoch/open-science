@@ -4859,6 +4859,15 @@
     "Could not update R access.": "Der R-Zugriff konnte nicht aktualisiert werden.",
     "Allow the sandbox to list names in this R installation's parent folders. Other file contents remain protected. Administrator approval may be required.": "Der Sandbox erlauben, Namen in den übergeordneten Ordnern dieser R-Installation aufzulisten. Andere Dateiinhalte bleiben geschützt. Möglicherweise ist eine Freigabe durch einen Administrator erforderlich.",
     "Authorize and verify": "Genehmigen und überprüfen",
-    "Remove R access": "R-Zugriff entfernen"
+    "Remove R access": "R-Zugriff entfernen",
+    "PDF passages": "PDF-Auszüge",
+    "Not screened": "Nicht gesichtet",
+    "Metadata only": "Nur Metadaten",
+    "View cited references": "Zitierte Quellen anzeigen",
+    "View full corpus": "Gesamten Korpus anzeigen",
+    "Snapshot unavailable": "Snapshot nicht verfügbar",
+    "This older record does not verify delivered evidence or preserve every corpus snapshot.": "Dieser ältere Datensatz bestätigt keine bereitgestellten Belege und enthält nicht alle Korpus-Snapshots.",
+    "Evidence counts describe content returned to the Agent, not completed reading. Candidates are Agent-reported and checked against retrieved records. Search counts below describe individual result pages.": "Die Belegzahlen beschreiben Inhalte, die dem Agenten bereitgestellt wurden, keine abgeschlossene Lektüre. Kandidatenzahlen werden vom Agenten angegeben und mit den Suchergebnissen abgeglichen. Die folgenden Suchzahlen gelten jeweils für einzelne Ergebnisseiten.",
+    "Saved reference metadata. Attachments reflect the current Library entry.": "Gespeicherte Referenzmetadaten. Anhänge stammen aus dem aktuellen Bibliothekseintrag."
   }
 }
