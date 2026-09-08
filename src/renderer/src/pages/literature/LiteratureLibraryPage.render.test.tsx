@@ -2834,6 +2834,43 @@ describe('LiteratureLibraryPage', () => {
     ).not.toBeNull()
   })
 
+  it('shows identifier-only additions and submits one publication-date conflict choice', async () => {
+    search.mockImplementation((request: { scope: string }) =>
+      Promise.resolve(request.scope === 'library' ? { entries: [libraryItem] } : { entries: [] })
+    )
+    completeMetadata.mockResolvedValue({
+      mode: 'preview',
+      provider: 'crossref',
+      reviewVersion: 1,
+      reviewToken: '9323d39a-2ae2-49c8-8826-a589c78f1f5d',
+      sourceUrl: 'https://api.crossref.org/works/10.0000/example',
+      item: libraryItem,
+      filled: [{ field: 'identifiers', value: 'DOI: 10.0000/example ★; PMID: 12345678' }],
+      conflicts: [{ field: 'publicationDate', currentValue: '2020', value: '2021-02-03' }]
+    })
+    render(<LiteratureLibraryPage />)
+    fireEvent.click(screen.getByRole('button', { name: 'All references' }))
+    await openReferenceDetail(await screen.findByText('Corrective Retrieval Augmented Generation'))
+    const detail = screen.getByRole('dialog')
+    await openMenu(within(detail).getByRole('button', { name: 'More actions' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Complete metadata' }))
+    fireEvent.click(within(detail).getByRole('button', { name: 'Search' }))
+    expect(await screen.findByText('Identifiers (★ primary)')).toBeTruthy()
+    expect(screen.getByText('DOI: 10.0000/example ★; PMID: 12345678')).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Apply metadata' })).toBeTruthy()
+    expect(screen.getAllByRole('button', { name: 'Use Crossref' })).toHaveLength(1)
+    fireEvent.click(screen.getByRole('button', { name: 'Use Crossref' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Apply metadata' }))
+    await waitFor(() =>
+      expect(completeMetadata).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          mode: 'commit',
+          overwriteFields: ['publicationDate']
+        })
+      )
+    )
+  })
+
   it('previews and applies missing publication metadata from Crossref', async () => {
     search.mockImplementation((request: { scope: string }) =>
       Promise.resolve(request.scope === 'library' ? { entries: [libraryItem] } : { entries: [] })

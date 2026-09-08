@@ -100,6 +100,8 @@
     "Import Connector configuration": "커넥터 구성 가져오기"
   },
   "renderer": {
+    "Identifiers (★ primary)": "식별자(★ 기본)",
+    "Search again to refresh this older metadata review.": "다시 검색하여 이전 메타데이터 검토 내용을 새로 고치세요.",
     "Not answered": "미응답",
     "Automatic contrast": "자동 대비",
     "Display range": "표시 범위",
