@@ -4792,6 +4792,24 @@
     "The CSL style references an undefined macro: {{macro}}": "CSL スタイルが未定義のマクロを参照しています：{{macro}}",
     "Citation styles could not be loaded. Please try again.": "引用スタイルを読み込めませんでした。再試行してください。",
     "The CSL style could not be imported. Please try again.": "CSL スタイルをインポートできませんでした。再試行してください。",
-    "The CSL style could not be deleted. Please try again.": "CSL スタイルを削除できませんでした。再試行してください。"
+    "The CSL style could not be deleted. Please try again.": "CSL スタイルを削除できませんでした。再試行してください。",
+    "Deletion blocked": "削除がブロックされました",
+    "Saved conversations could not be checked completely. No attachments were deleted. Review the recovery details before trying again.": "保存済みの会話を完全に確認できませんでした。添付ファイルは削除されていません。復元の詳細を確認してから再試行してください。",
+    "Hide details": "詳細を隠す",
+    "View recovery details": "復元の詳細を表示",
+    "Current chat context": "現在のチャットコンテキスト",
+    "Historical message": "過去のメッセージ",
+    "Message: {{messageId}}": "メッセージ：{{messageId}}",
+    "Branch: {{branchId}}": "ブランチ：{{branchId}}",
+    "This conversation is unavailable here. It may be archived or not loaded.": "この会話はここでは開けません。アーカイブ済みか、まだ読み込まれていない可能性があります。",
+    "View conversation": "会話を表示",
+    "Conversation data is damaged.": "会話データが破損しています。",
+    "Conversation data requires a newer app version.": "会話データには新しいバージョンのアプリが必要です。",
+    "Conversation data exceeds the storage limit.": "会話データがストレージの上限を超えています。",
+    "Conversation data could not be read.": "会話データを読み取れませんでした。",
+    "The damaged file was moved aside; its references are still unknown.": "破損したファイルは退避されましたが、参照の有無はまだ不明です。",
+    "Inspect or recover the affected conversation files. Retrying deletion alone will not repair them.": "影響を受けた会話ファイルを確認または復元してください。削除を再試行するだけでは修復されません。",
+    "Complete locations are unavailable. Check conversation storage diagnostics; deletion remains blocked.": "すべての場所を表示できません。会話ストレージの診断を確認してください。削除は引き続きブロックされています。",
+    "Conversation folder": "会話フォルダー"
   }
 }

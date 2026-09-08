@@ -4792,6 +4792,24 @@
     "The CSL style references an undefined macro: {{macro}}": "CSL 樣式參照了未定義的巨集：{{macro}}",
     "Citation styles could not be loaded. Please try again.": "無法載入引用樣式。請重試。",
     "The CSL style could not be imported. Please try again.": "無法匯入 CSL 樣式。請重試。",
-    "The CSL style could not be deleted. Please try again.": "無法刪除 CSL 樣式。請重試。"
+    "The CSL style could not be deleted. Please try again.": "無法刪除 CSL 樣式。請重試。",
+    "Deletion blocked": "刪除已遭阻止",
+    "Saved conversations could not be checked completely. No attachments were deleted. Review the recovery details before trying again.": "無法完整檢查已儲存的對話。未刪除任何附件。請先查看復原詳細資訊，再重試。",
+    "Hide details": "收合詳細資訊",
+    "View recovery details": "查看復原詳細資訊",
+    "Current chat context": "目前聊天上下文",
+    "Historical message": "歷史訊息",
+    "Message: {{messageId}}": "訊息：{{messageId}}",
+    "Branch: {{branchId}}": "分支：{{branchId}}",
+    "This conversation is unavailable here. It may be archived or not loaded.": "無法在此開啟該對話。它可能已封存或尚未載入。",
+    "View conversation": "查看對話",
+    "Conversation data is damaged.": "對話資料已損毀。",
+    "Conversation data requires a newer app version.": "對話資料需要更新版本的應用程式。",
+    "Conversation data exceeds the storage limit.": "對話資料超出儲存限制。",
+    "Conversation data could not be read.": "無法讀取對話資料。",
+    "The damaged file was moved aside; its references are still unknown.": "損毀的檔案已移至一旁，但其參照仍無法確定。",
+    "Inspect or recover the affected conversation files. Retrying deletion alone will not repair them.": "請檢查或復原受影響的對話檔案。僅重試刪除無法修復這些檔案。",
+    "Complete locations are unavailable. Check conversation storage diagnostics; deletion remains blocked.": "無法提供完整位置資訊。請檢查對話儲存診斷；刪除仍遭阻止。",
+    "Conversation folder": "對話資料夾"
   }
 }

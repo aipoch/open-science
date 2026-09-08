@@ -5106,6 +5106,24 @@
     "The CSL style references an undefined macro: {{macro}}": "Le style CSL fait référence à une macro non définie : {{macro}}",
     "Citation styles could not be loaded. Please try again.": "Impossible de charger les styles de citation. Réessayez.",
     "The CSL style could not be imported. Please try again.": "Impossible d’importer le style CSL. Réessayez.",
-    "The CSL style could not be deleted. Please try again.": "Impossible de supprimer le style CSL. Réessayez."
+    "The CSL style could not be deleted. Please try again.": "Impossible de supprimer le style CSL. Réessayez.",
+    "Deletion blocked": "Suppression bloquée",
+    "Saved conversations could not be checked completely. No attachments were deleted. Review the recovery details before trying again.": "Les conversations enregistrées n’ont pas pu être vérifiées entièrement. Aucune pièce jointe n’a été supprimée. Consultez les détails de récupération avant de réessayer.",
+    "Hide details": "Masquer les détails",
+    "View recovery details": "Voir les détails de récupération",
+    "Current chat context": "Contexte actuel du chat",
+    "Historical message": "Message historique",
+    "Message: {{messageId}}": "Message : {{messageId}}",
+    "Branch: {{branchId}}": "Branche : {{branchId}}",
+    "This conversation is unavailable here. It may be archived or not loaded.": "Cette conversation n’est pas disponible ici. Elle est peut-être archivée ou pas encore chargée.",
+    "View conversation": "Voir la conversation",
+    "Conversation data is damaged.": "Les données de conversation sont endommagées.",
+    "Conversation data requires a newer app version.": "Les données de conversation nécessitent une version plus récente de l’application.",
+    "Conversation data exceeds the storage limit.": "Les données de conversation dépassent la limite de stockage.",
+    "Conversation data could not be read.": "Les données de conversation n’ont pas pu être lues.",
+    "The damaged file was moved aside; its references are still unknown.": "Le fichier endommagé a été mis de côté ; ses références restent inconnues.",
+    "Inspect or recover the affected conversation files. Retrying deletion alone will not repair them.": "Examinez ou récupérez les fichiers de conversation concernés. Réessayer la suppression ne suffit pas à les réparer.",
+    "Complete locations are unavailable. Check conversation storage diagnostics; deletion remains blocked.": "Les emplacements complets ne sont pas disponibles. Consultez le diagnostic du stockage des conversations ; la suppression reste bloquée.",
+    "Conversation folder": "Dossier des conversations"
   }
 }
