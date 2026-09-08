@@ -1517,6 +1517,7 @@ describe('App startup routing', () => {
     const alert = container.querySelector('[data-testid="session-persistence-alert"]')
     expect(alert?.textContent).toContain('Conversation storage limit reached')
     expect(container.querySelector('[data-testid="session-persistence-retry"]')).toBeNull()
+    expect(alert?.querySelector('[data-testid="session-persistence-dismiss"]')).toBeNull()
 
     container
       .querySelector<HTMLButtonElement>('[data-testid="session-persistence-action"]')
