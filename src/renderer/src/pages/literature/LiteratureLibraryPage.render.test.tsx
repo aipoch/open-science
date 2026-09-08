@@ -366,6 +366,7 @@ describe('LiteratureLibraryPage', () => {
         literature: {
           exportRecord: vi.fn(),
           sources: vi.fn(async () => []),
+          onChanged: vi.fn(() => () => undefined),
           lookupMetadata: vi.fn(async () => libraryItem.item),
           jobs: vi.fn(async () => ({ jobs: [], summaries: [] })),
           search: async (request: LiteratureCatalogSearchRequest) => {
@@ -611,6 +612,59 @@ describe('LiteratureLibraryPage', () => {
       vi.useRealTimers()
     }
   })
+
+  it.each(['focus', 'visibility', 'scope return', 'remount'] as const)(
+    'reads externally committed references after %s',
+    async (recovery) => {
+      const original = {
+        ...libraryItem,
+        item: { ...libraryItem.item, title: 'Original from server' }
+      }
+      let records = [original]
+      search.mockImplementation(async (request: LiteratureCatalogSearchRequest) => ({
+        entries: request.scope === 'library' ? records : [],
+        totalCount: request.scope === 'library' ? records.length : 0
+      }))
+      const mounted = render(<LiteratureLibraryPage />)
+      fireEvent.click(screen.getByRole('button', { name: 'All references' }))
+      await screen.findByText('Original from server')
+      const libraryQueries = (): number =>
+        search.mock.calls.filter(([request]) => request.scope === 'library' && !request.allItemIds)
+          .length
+      const before = libraryQueries()
+      records = [
+        {
+          ...original,
+          metadataRevision: 2,
+          item: { ...original.item, title: 'Updated by another client' }
+        },
+        {
+          ...original,
+          id: 'external-new-item',
+          item: { ...original.item, title: 'Added by another client' }
+        }
+      ]
+      if (recovery === 'remount') {
+        mounted.unmount()
+        render(<LiteratureLibraryPage />)
+        fireEvent.click(screen.getByRole('button', { name: 'All references' }))
+      } else {
+        await act(async () => {
+          if (recovery !== 'visibility') window.dispatchEvent(new Event('focus'))
+          if (recovery !== 'focus') document.dispatchEvent(new Event('visibilitychange'))
+        })
+        if (recovery === 'scope return') {
+          fireEvent.click(screen.getByRole('button', { name: 'Inbox' }))
+          await screen.findByRole('heading', { name: 'Inbox' })
+          fireEvent.click(screen.getByRole('button', { name: 'All references' }))
+        }
+      }
+      await waitFor(() => expect(libraryQueries()).toBeGreaterThan(before))
+      expect(await screen.findByText('Updated by another client')).not.toBeNull()
+      expect(await screen.findByText('Added by another client')).not.toBeNull()
+      expect(screen.queryByText('Original from server')).toBeNull()
+    }
+  )
 
   it('trashes all 26 members despite an update between target reads', async () => {
     const { mkdtemp, rm } = await import('node:fs/promises')
@@ -2021,6 +2075,7 @@ describe('LiteratureLibraryPage', () => {
   it('opens an explicitly scoped Collection view', async () => {
     const collection = {
       id: 'collection-1',
+      revision: 1,
       name: 'TP53 evidence',
       description: 'Curated TP53 studies.',
       itemCount: 1,
@@ -2090,6 +2145,7 @@ describe('LiteratureLibraryPage', () => {
           name: string
           description: string
           itemCount: number
+          revision: number
           createdAt: number
           updatedAt: number
         }
@@ -2108,6 +2164,7 @@ describe('LiteratureLibraryPage', () => {
         if (command.kind === 'create-collection') {
           collection = {
             id: 'collection-1',
+            revision: 1,
             name: command.name ?? '',
             description: command.description ?? '',
             itemCount: 0,
@@ -2175,6 +2232,7 @@ describe('LiteratureLibraryPage', () => {
     await waitFor(() =>
       expect(transact).toHaveBeenCalledWith({
         kind: 'update-collection',
+        expectedRevision: 1,
         collectionId: 'collection-1',
         name: 'Included studies',
         description: 'Final synthesis set.'
@@ -2208,6 +2266,7 @@ describe('LiteratureLibraryPage', () => {
     async (nameConflict) => {
       const collection = {
         id: 'collection-1',
+        revision: 1,
         name: 'Screening',
         description: 'Papers awaiting review.',
         itemCount: 1,
@@ -4147,6 +4206,7 @@ describe('LiteratureLibraryPage', () => {
           entries: [
             {
               id: 'collection-1',
+              revision: 1,
               name: 'Retrieval methods',
               itemCount: 0,
               createdAt: 1,
@@ -4207,6 +4267,7 @@ describe('LiteratureLibraryPage', () => {
           entries: [
             {
               id: 'collection-1',
+              revision: 1,
               name: 'Retrieval methods',
               itemCount: 0,
               createdAt: 1,
@@ -5237,6 +5298,7 @@ describe('LiteratureLibraryPage', () => {
   it('links a manually created reference to the current Collection', async () => {
     const collection = {
       id: 'collection-1',
+      revision: 1,
       name: 'Review set',
       description: '',
       itemCount: 0,
@@ -7510,6 +7572,7 @@ describe('LiteratureLibraryPage', () => {
                 entries: [
                   {
                     id: 'collection-1',
+                    revision: 1,
                     name: 'Review queue',
                     description: '',
                     itemCount: 0,
@@ -8780,6 +8843,38 @@ describe('LiteratureLibraryPage', () => {
     const closeDetail = (): void => {
       fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Close' }))
     }
+
+    it.each(['notification', 'reconnect'] as const)(
+      'refreshes external metadata after %s while retaining an open draft',
+      async (trigger) => {
+        await showLibrary()
+        await openReferenceDetail(screen.getByText(libraryItem.item.title))
+        await editDetail()
+        fireEvent.change(screen.getByLabelText('Title'), { target: { value: 'My unsaved title' } })
+        const latest = version(2, 'Externally saved title')
+        get.mockResolvedValue(latest)
+        search.mockImplementation(async (request: LiteratureCatalogSearchRequest) => ({
+          entries: request.scope === 'library' ? [latest] : [],
+          totalCount: request.scope === 'library' ? 1 : 0
+        }))
+        await act(async () => {
+          if (trigger === 'reconnect')
+            window.dispatchEvent(new Event('open-science:web-events-open'))
+          else
+            vi.mocked(window.api.literature.onChanged).mock.calls.forEach(([listener]) =>
+              listener({ revision: 1, itemIds: [latest.id] })
+            )
+        })
+        await waitFor(() =>
+          expect(
+            document.querySelector('[data-slot="literature-table-scroll"]')!.textContent
+          ).toContain(latest.item.title)
+        )
+        expect((screen.getByLabelText('Title') as HTMLInputElement).value).toBe('My unsaved title')
+        expect(transact).not.toHaveBeenCalled()
+        expect(screen.getByRole('button', { name: 'Load latest version' })).not.toBeNull()
+      }
+    )
 
     it('keeps a reopened reference newer than an earlier save readback', async () => {
       await showLibrary()

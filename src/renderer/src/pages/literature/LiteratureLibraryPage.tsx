@@ -9,6 +9,7 @@ import {
 import { LiteratureDeletionNotice } from './LiteratureDeletionNotice'
 import { readLiteratureSelectionPage } from './literature-read-pages'
 import { LiteratureOversizedNotice } from './LiteratureOversizedNotice'
+import { useLiteratureChanges } from './useLiteratureChanges'
 import type { TFunction } from 'i18next'
 import { LiteratureSources } from './LiteratureSources'
 import { LiteratureAttachments } from './LiteratureAttachments'
@@ -1655,7 +1656,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
       clearSelection()
       setError(undefined)
       setLinkedItemError(undefined)
-      void window.api.literature.get(itemId).then(
+      void detailController.read(itemId).then(
         (item) => {
           if (!active) return
           if (detailInteractionRef.current !== interaction) {
@@ -1681,7 +1682,14 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
     return () => {
       active = false
     }
-  }, [clearSelection, consumeLiteratureItem, openSelectedItemDetail, pendingLiteratureItemId, t])
+  }, [
+    clearSelection,
+    consumeLiteratureItem,
+    detailController,
+    openSelectedItemDetail,
+    pendingLiteratureItemId,
+    t
+  ])
 
   useEffect(() => {
     if (!pendingLiteratureProjectId) return
@@ -1723,13 +1731,16 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
     setCollections(collections)
   }, [])
 
+  const inboxCountGeneration = useRef(0)
   const loadInboxPendingCount = useCallback(async (): Promise<void> => {
+    const generation = ++inboxCountGeneration.current
     const page = await window.api.literature.search({
       scope: 'inbox',
       inboxState: 'pending',
       limit: 1
     })
-    setInboxPendingCount(page.totalCount ?? page.entries.length)
+    if (generation === inboxCountGeneration.current)
+      setInboxPendingCount(page.totalCount ?? page.entries.length)
   }, [])
 
   const projectCountsGenerationRef = useRef(0)
@@ -1902,6 +1913,12 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
     (failed: boolean): void => setError(failed ? t('Literature could not be loaded.') : undefined),
     [t]
   )
+  const receiveItems = useCallback(
+    (updated: LiteratureItemView[]): void => {
+      updated.forEach((item) => detailController.replace(item))
+    },
+    [detailController]
+  )
   const entriesRequest = useMemo(() => buildEntriesRequest(), [buildEntriesRequest])
   const {
     oversizedItemId,
@@ -1915,6 +1932,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
     request: entriesRequest,
     scopeKey: entriesKey,
     onPage: receiveEntries,
+    onItems: receiveItems,
     onEmptyPage: setEntriesOffset,
     onError: receiveEntriesError
   })
@@ -1991,31 +2009,38 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
   const loadEntries = useCallback(
     (force = false, preservePage = false): Promise<void> => {
       if (force) {
+        detailController.invalidate()
         setDuplicatesRevision((value) => value + 1)
         setLibraryCountRevision((value) => value + 1)
       }
       return reloadEntries(force, preservePage)
     },
-    [reloadEntries]
+    [detailController, reloadEntries]
   )
   const receiveBackgroundItems = useCallback(
     (itemIds: string[]): void => {
       setDuplicatesRevision((value) => value + 1)
-      void Promise.allSettled(itemIds.map((id) => window.api.literature.get(id))).then(
-        (results) => {
-          const updated = results.flatMap((result) =>
-            result.status === 'fulfilled' && result.value ? [result.value] : []
-          )
-          void refreshItems(itemIds, updated)
-          // Data publication follows item identity/revision, not the opening that started the read.
-          updated.forEach((item) => detailController.replace(item))
-          if (results.some((result) => result.status === 'rejected'))
-            setError(t('Literature could not be loaded.'))
-        }
-      )
+      void refreshItems(itemIds, undefined, true)
     },
-    [detailController, refreshItems, t]
+    [refreshItems]
   )
+
+  useLiteratureChanges(() => {
+    // Starting the new reads invalidates outstanding list/navigation requests immediately.
+    void Promise.all([
+      loadEntries(true, true),
+      loadCollections(),
+      loadInboxPendingCount(),
+      loadProjectCounts(),
+      (async () => {
+        const { item } = detailController.getSnapshot()
+        if (!item) return
+        const latest = await detailController.read(item.id)
+        if (latest) detailController.replace(latest)
+        else setError(t('This reference is no longer in your Library.'))
+      })()
+    ]).catch(() => setError(t('Literature could not be loaded.')))
+  })
 
   useEffect(() => {
     const loadNavigation = async (): Promise<void> => {
@@ -2492,7 +2517,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
       })
       // An attachment receipt may predate metadata edits in a reopened detail. Re-read rather
       // than using metadataRevision as an attachment version or rolling metadata backwards.
-      const updated = await window.api.literature.get(current.id).catch(() => undefined)
+      const updated = await detailController.read(current.id).catch(() => undefined)
       detailController.replace(updated ?? receipt.item)
       await loadEntries(true)
     } catch (error) {
@@ -2653,7 +2678,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
       persisted = true
       const reload = async (): Promise<LiteratureItemView> => {
         try {
-          const updated = await window.api.literature.get(entry.id)
+          const updated = await detailController.read(entry.id)
           if (!updated) throw new Error('Literature Item is unavailable after updating.')
           await refreshItems([updated.id], [updated])
           detailController.replace(updated)
@@ -2789,7 +2814,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
           await window.api.literature.importPdf({ itemId: pending.id, attachment: staged })
         ).item
       }
-      const created = pending.pdfItem ?? (await window.api.literature.get(pending.id))
+      const created = pending.pdfItem ?? (await detailController.read(pending.id))
       if (!created) throw new Error('Literature Item is unavailable after creating.')
       setItems((entries) =>
         entries.some((entry) => entry.id === created.id)
@@ -2805,7 +2830,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
       // Retain the existing PDF-error detail recovery only once destination linking has completed.
       const created =
         pending?.file && !pending.destination && !pending.pdfItem
-          ? await window.api.literature.get(pending.id).catch(() => undefined)
+          ? await detailController.read(pending.id).catch(() => undefined)
           : undefined
       if (created) {
         closeItemEditor()
@@ -3259,8 +3284,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
       if (!selection.allMatchingSelected) {
         entries = await Promise.all(
           [...selection.selectedIds].map(async (id) => {
-            const entry =
-              items.find((item) => item.id === id) ?? (await window.api.literature.get(id))
+            const entry = items.find((item) => item.id === id) ?? (await detailController.read(id))
             if (!entry || !isItem(entry)) throw new Error('Selected reference unavailable')
             return entry
           })
@@ -3312,7 +3336,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
         const activeIds: string[] = []
         for (let offset = 0; offset < resolvedIds.length; offset += LITERATURE_BATCH_COMMAND_SIZE) {
           const batch = resolvedIds.slice(offset, offset + LITERATURE_BATCH_COMMAND_SIZE)
-          const entries = await Promise.all(batch.map((id) => window.api.literature.get(id)))
+          const entries = await Promise.all(batch.map((id) => detailController.read(id)))
           entries.forEach((entry, index) => {
             // get resolves merged aliases; never redirect the original association intent.
             if (
@@ -6339,6 +6363,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
                           </p>
                         ) : null}
                         <LiteratureAttachments
+                          readItem={detailController.read}
                           key={selectedItem.id}
                           item={selectedItem}
                           onPreview={(version) =>

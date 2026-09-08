@@ -69,7 +69,7 @@ describe('Literature inbox integrity migration', () => {
       expect(await migrateApplicationDatabase(client)).toMatchObject({
         applied: expect.arrayContaining([
           '0037_literature_inbox_integrity',
-          '0039_literature_metadata_commit_receipt'
+          '0040_literature_collection_revision'
         ])
       })
       expect(await client.literatureSourceRecord.findMany()).toEqual(sources)

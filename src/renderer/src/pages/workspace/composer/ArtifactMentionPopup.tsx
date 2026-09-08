@@ -1,3 +1,4 @@
+import { useLiteratureChanges } from '@/pages/literature/useLiteratureChanges'
 import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { BookOpenText, FolderOpen } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
@@ -110,6 +111,10 @@ export const ArtifactMentionPopup = ({
   const [fileRetry, setFileRetry] = useState(0)
   const [libraryRetry, setLibraryRetry] = useState(0)
   const [collectionRetry, setCollectionRetry] = useState(0)
+  useLiteratureChanges(() => {
+    setLibraryRetry((value) => value + 1)
+    setCollectionRetry((value) => value + 1)
+  })
 
   useEffect(() => {
     let cancelled = false

@@ -5011,6 +5011,10 @@
     "Retry unfinished": "Unfertige erneut versuchen",
     "PDFs are attached to matching references. Identical attachments are reused; different PDFs are kept separately.": "PDFs werden passenden Referenzen angehängt. Identische Anhänge werden wiederverwendet; unterschiedliche PDFs werden separat aufbewahrt.",
     "{{completed}} / {{total}} completed": "{{completed}} / {{total}} abgeschlossen",
-    "Finishing the current operation before stopping. Completed references are kept.": "Der aktuelle Vorgang wird vor dem Stoppen abgeschlossen. Abgeschlossene Referenzen bleiben erhalten."
+    "Finishing the current operation before stopping. Completed references are kept.": "Der aktuelle Vorgang wird vor dem Stoppen abgeschlossen. Abgeschlossene Referenzen bleiben erhalten.",
+    "This collection changed. Your edits have been kept.": "Diese Sammlung wurde geändert. Ihre Eingaben wurden beibehalten.",
+    "This collection no longer exists. Your edits have been kept.": "Diese Sammlung existiert nicht mehr. Ihre Eingaben wurden beibehalten.",
+    "The latest collection could not be loaded. Your edits have been kept.": "Die aktuelle Sammlung konnte nicht geladen werden. Ihre Eingaben wurden beibehalten.",
+    "Replace your unsaved edits with the latest saved collection.": "Ersetzen Sie Ihre ungespeicherten Änderungen durch die zuletzt gespeicherte Sammlung."
   }
 }

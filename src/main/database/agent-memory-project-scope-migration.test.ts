@@ -17,7 +17,7 @@ const COMPUTE_ANALYSIS_CONSTRAINTS_MIGRATION_ID = '0021_compute_job_analysis_con
 const MEMORY_GLOBAL_CONTENT_UNIQUE_MIGRATION_ID = '0022_memory_global_content_unique'
 const COMPUTE_JOB_OPERATION_MIGRATION_ID = '0023_compute_job_operation'
 const COMPUTE_JOB_FILE_EVIDENCE_MIGRATION_ID = '0024_compute_job_file_evidence'
-const CURRENT_MIGRATION_ID = '0039_literature_metadata_commit_receipt'
+const CURRENT_MIGRATION_ID = '0040_literature_collection_revision'
 const MEMORY_AUXILIARY_SCHEMA_NAMES = [
   'MemoryEntryFts',
   'MemoryEntry_fts_insert',
@@ -310,7 +310,7 @@ describe('agent memory project scope migration', () => {
     await client.$executeRawUnsafe('ALTER TABLE "ComputeHost" DROP COLUMN "executionMode"')
     await client.$executeRawUnsafe('DROP TABLE IF EXISTS "LiteratureMetadataCommitReceipt"')
     await client.$executeRawUnsafe(
-      `DELETE FROM "_open_science_migrations" WHERE "id" IN (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `DELETE FROM "_open_science_migrations" WHERE "id" IN (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       CURRENT_AGENT_MEMORY_MIGRATION_ID,
       SESSION_AUXILIARY_USAGE_MIGRATION_ID,
       SESSION_USAGE_ATTRIBUTION_MIGRATION_ID,
@@ -333,6 +333,7 @@ describe('agent memory project scope migration', () => {
       '0036_content_verification_observation',
       '0037_literature_inbox_integrity',
       '0038_literature_search_text',
+      '0039_literature_metadata_commit_receipt',
       CURRENT_MIGRATION_ID
     )
 
@@ -360,6 +361,7 @@ describe('agent memory project scope migration', () => {
         '0036_content_verification_observation',
         '0037_literature_inbox_integrity',
         '0038_literature_search_text',
+        '0039_literature_metadata_commit_receipt',
         CURRENT_MIGRATION_ID
       ],
       to: CURRENT_MIGRATION_ID

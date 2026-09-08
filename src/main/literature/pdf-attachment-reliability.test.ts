@@ -74,6 +74,7 @@ describe('Literature PDF attachment reliability', () => {
     bytes = pdf()
   ): Promise<{
     catalog: LiteratureCatalog
+    changed: ReturnType<typeof vi.fn>
     content: ContentRepository
     importer: LiteraturePdfImporter
     request: LiteraturePdfImportRequest
@@ -90,11 +91,13 @@ describe('Literature PDF attachment reliability', () => {
     const coordinator = new SessionPersistenceCoordinator(sessions, {
       syncSession: async () => []
     } as unknown as SessionFileIndex)
+    const changed = vi.fn()
     const catalog = new LiteratureCatalog(
       async () => client!,
       undefined,
       content,
-      (remove) => coordinator.withLiteratureAttachmentRemoval(remove)
+      (remove) => coordinator.withLiteratureAttachmentRemoval(remove),
+      changed
     )
     const item = await catalog.transact({
       kind: 'create-item',
@@ -120,6 +123,7 @@ describe('Literature PDF attachment reliability', () => {
       }
     }
     return {
+      changed,
       catalog,
       sessions,
       coordinator,
@@ -781,6 +785,33 @@ describe('Literature PDF attachment reliability', () => {
       })
     }
   )
+
+  it('invalidates other clients after attachment verification persists a changed observation', async () => {
+    const { catalog, importer, request, authority, changed } = await setup()
+    const imported = await importer.import(request)
+    const version = imported.item.attachments[0].versions[0]
+    const resolved = await authority.resolveVersion(version.id)
+    await rm(resolved!.path)
+    changed.mockClear()
+    await expect(
+      catalog.transact({ kind: 'verify-attachment', itemId: request.itemId, versionId: version.id })
+    ).rejects.toThrow()
+    expect((await catalog.get(request.itemId))!.attachments[0].versions[0].availability).toBe(
+      'unavailable'
+    )
+    expect(changed).toHaveBeenCalledWith(expect.objectContaining({ itemIds: [request.itemId] }))
+    changed.mockClear()
+    await writeFile(resolved!.path, pdf())
+    await catalog.transact({
+      kind: 'verify-attachment',
+      itemId: request.itemId,
+      versionId: version.id
+    })
+    expect(changed).toHaveBeenCalledTimes(1)
+    expect((await catalog.get(request.itemId))!.attachments[0].versions[0].availability).toBe(
+      'available'
+    )
+  })
 
   it('rejects a header-only corrupt PDF before creating an attachment', async () => {
     const { importer, request, path } = await setup(Buffer.from('%PDF-1.7\nnot a document'))

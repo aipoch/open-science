@@ -487,6 +487,7 @@ const RUNTIME_SCHEMA_TABLE_DDLS = [
     CONSTRAINT "LiteratureSourceRecord_shape_check" CHECK ((("itemId" IS NOT NULL AND "inboxCandidateId" IS NULL) OR ("itemId" IS NULL AND "inboxCandidateId" IS NOT NULL)) AND length(trim("provider")) > 0 AND ("externalId" IS NULL OR length(trim("externalId")) > 0) AND ("sourceUrl" IS NULL OR length(trim("sourceUrl")) > 0) AND length(trim("metadataChecksum")) > 0 AND json_valid("rawMetadataJson") AND json_type("rawMetadataJson") = 'object')
 );`,
   `CREATE TABLE IF NOT EXISTS "LiteratureCollection" (
+    "revision" INTEGER NOT NULL DEFAULT 1,
     "id" TEXT NOT NULL PRIMARY KEY,
     "name" TEXT NOT NULL,
     "nameKey" TEXT NOT NULL,

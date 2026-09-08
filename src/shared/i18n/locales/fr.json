@@ -5173,6 +5173,10 @@
     "Retry unfinished": "Réessayer les éléments inachevés",
     "PDFs are attached to matching references. Identical attachments are reused; different PDFs are kept separately.": "Les PDF sont joints aux références correspondantes. Les pièces jointes identiques sont réutilisées ; les PDF différents sont conservés séparément.",
     "{{completed}} / {{total}} completed": "{{completed}} / {{total}} terminés",
-    "Finishing the current operation before stopping. Completed references are kept.": "L’opération en cours se terminera avant l’arrêt. Les références terminées sont conservées."
+    "Finishing the current operation before stopping. Completed references are kept.": "L’opération en cours se terminera avant l’arrêt. Les références terminées sont conservées.",
+    "This collection changed. Your edits have been kept.": "Cette collection a été modifiée. Vos modifications ont été conservées.",
+    "This collection no longer exists. Your edits have been kept.": "Cette collection n’existe plus. Vos modifications ont été conservées.",
+    "The latest collection could not be loaded. Your edits have been kept.": "La dernière version de la collection n’a pas pu être chargée. Vos modifications ont été conservées.",
+    "Replace your unsaved edits with the latest saved collection.": "Remplacer les modifications non enregistrées par la dernière version enregistrée de la collection."
   }
 }

@@ -5306,6 +5306,10 @@
     "Retry unfinished": "Повторить незавершённые",
     "PDFs are attached to matching references. Identical attachments are reused; different PDFs are kept separately.": "PDF прикрепляются к соответствующим ссылкам. Одинаковые вложения используются повторно, а разные PDF сохраняются отдельно.",
     "{{completed}} / {{total}} completed": "Завершено {{completed}} / {{total}}",
-    "Finishing the current operation before stopping. Completed references are kept.": "Остановка после завершения текущей операции. Завершённые ссылки сохраняются."
+    "Finishing the current operation before stopping. Completed references are kept.": "Остановка после завершения текущей операции. Завершённые ссылки сохраняются.",
+    "This collection changed. Your edits have been kept.": "Эта коллекция изменена. Ваши правки сохранены в форме.",
+    "This collection no longer exists. Your edits have been kept.": "Эта коллекция больше не существует. Ваши правки сохранены в форме.",
+    "The latest collection could not be loaded. Your edits have been kept.": "Не удалось загрузить последнюю версию коллекции. Ваши правки сохранены в форме.",
+    "Replace your unsaved edits with the latest saved collection.": "Заменить несохранённые правки последней сохранённой версией коллекции."
   }
 }

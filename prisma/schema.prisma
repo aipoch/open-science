@@ -639,6 +639,7 @@ model LiteratureSourceRecord {
 }
 
 model LiteratureCollection {
+  revision    Int                        @default(1)
   id          String                     @id @default(cuid())
   name        String
   nameKey     String

@@ -138,9 +138,11 @@ const AttachmentPreview = ({
 
 export const LiteratureAttachments = ({
   item,
+  readItem,
   onPreview
 }: {
   item: LiteratureItemView
+  readItem: (id: string) => Promise<LiteratureItemView | undefined>
   onPreview: (version: Version) => void
 }): React.JSX.Element => {
   const { t, i18n } = useTranslation()

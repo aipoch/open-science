@@ -2,6 +2,7 @@ import { expect, test as base } from '@playwright/test'
 import { spawn } from 'node:child_process'
 import { chmod, copyFile, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
+import { fileURLToPath } from 'node:url'
 import { delimiter, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { _electron as electron, type ElectronApplication, type Page } from 'playwright'
 import {
@@ -115,6 +116,8 @@ const closeElectronApplicationForCleanup = async (
 
 type ElectronApp = {
   readonly page: Page
+  openAdditionalRenderer: () => Promise<Page>
+  authenticatedWebUrl: () => Promise<string>
   allowRendererConsoleError: (text: string) => void
   captureMainLog: (name: string) => Promise<string>
   armDelegatedHandoffCleanupSabotage: (childName: string) => Promise<void>
@@ -547,6 +550,62 @@ class ElectronAppHarness implements ElectronApp {
       })
       await bridge.api.compute.bookmarksSet('ssh:a11y-fixture', ['/scratch/fixture/pinned'])
     })
+  }
+
+  async openAdditionalRenderer(): Promise<Page> {
+    const next = this.runningApplication.waitForEvent('window')
+    await this.runningApplication.evaluate(
+      ({ BrowserWindow }, preload) => {
+        const source = BrowserWindow.getAllWindows().find((window) =>
+          window.webContents.getURL().includes('index.html')
+        )!
+        const window = new BrowserWindow({
+          show: false,
+          webPreferences: {
+            preload,
+            contextIsolation: true,
+            nodeIntegration: false,
+            sandbox: true
+          }
+        })
+        void window.loadURL(source.webContents.getURL())
+      },
+      fileURLToPath(new URL('../preload/index.js', this.page.url()))
+    )
+    const page = await next
+    await page.waitForFunction(() => Boolean(window.api?.databaseStartup))
+    await waitForRendererReady(page)
+    return page
+  }
+
+  async authenticatedWebUrl(): Promise<string> {
+    const target = electronLaunchTarget(this.roots.userDataRoot)
+    const child = spawn(
+      target.executablePath ?? ((await import('electron')).default as unknown as string),
+      [...target.args, '--serve=0'],
+      { env: launchEnvironment(this.roots.storageRoot), stdio: 'ignore' }
+    )
+    await new Promise<void>((resolve, reject) => {
+      child.once('error', reject)
+      child.once('exit', () => resolve())
+    })
+    let port: number | undefined
+    await expect
+      .poll(async () => {
+        try {
+          port = (
+            JSON.parse(
+              await readFile(join(this.roots.storageRoot, 'web-service.json'), 'utf8')
+            ) as { port: number }
+          ).port
+        } catch {
+          return false
+        }
+        return Boolean(port)
+      })
+      .toBe(true)
+    const token = (await readFile(join(this.roots.storageRoot, 'web-token'), 'utf8')).trim()
+    return `http://127.0.0.1:${port}/?token=${encodeURIComponent(token)}`
   }
 
   async completeOnboarding(): Promise<Page> {
