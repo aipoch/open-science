@@ -17,6 +17,12 @@ const literatureInboxIntegrityIndexes = [
   }
 ] as const
 
+const literatureDiscoveryBackfillStatement = `INSERT OR IGNORE INTO "LiteratureCandidateDiscovery"
+      ("id", "candidateId", "contextKey", "origin", "projectId", "sessionId", "createdAt")
+      SELECT 'legacy:' || "id", "id", json_array("origin", "sourceProjectId", "sourceSessionId"),
+        "origin", "sourceProjectId", "sourceSessionId", "createdAt"
+      FROM "LiteratureInboxCandidate"`
+
 const literatureInboxIntegrityMigration = {
   id: '0037_literature_inbox_integrity',
   statements: [
@@ -35,11 +41,7 @@ const literatureInboxIntegrityMigration = {
     `CREATE UNIQUE INDEX IF NOT EXISTS "LiteratureCandidateDiscovery_candidateId_contextKey_key" ON "LiteratureCandidateDiscovery"("candidateId", "contextKey");`,
     `CREATE UNIQUE INDEX IF NOT EXISTS "LiteratureSourceRecord_itemId_provider_externalId_key" ON "LiteratureSourceRecord"("itemId", "provider", "externalId");`,
     `CREATE UNIQUE INDEX IF NOT EXISTS "LiteratureSourceRecord_inboxCandidateId_provider_externalId_key" ON "LiteratureSourceRecord"("inboxCandidateId", "provider", "externalId");`,
-    `INSERT OR IGNORE INTO "LiteratureCandidateDiscovery"
-      ("id", "candidateId", "contextKey", "origin", "projectId", "sessionId", "createdAt")
-      SELECT 'legacy:' || "id", "id", json_array("origin", "sourceProjectId", "sourceSessionId"),
-        "origin", "sourceProjectId", "sourceSessionId", "createdAt"
-      FROM "LiteratureInboxCandidate"`
+    literatureDiscoveryBackfillStatement
   ] as const,
   operations: [] as const,
   verifiers: [
@@ -54,4 +56,4 @@ const literatureInboxIntegrityMigration = {
   ] as const
 }
 
-export { literatureInboxIntegrityMigration }
+export { literatureInboxIntegrityMigration, literatureDiscoveryBackfillStatement }

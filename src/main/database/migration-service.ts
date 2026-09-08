@@ -1,5 +1,8 @@
 import { literaturePdfProvenanceMigration } from './migrations/0035-literature-pdf-provenance'
-import { literatureInboxIntegrityMigration } from './migrations/0037-literature-inbox-integrity'
+import {
+  literatureInboxIntegrityMigration,
+  literatureDiscoveryBackfillStatement
+} from './migrations/0037-literature-inbox-integrity'
 import { permissionApprovalSummaryMigration } from './migrations/0032-permission-approval-summary'
 import { computeJobHarvestRetryMigration } from './migrations/0033-compute-job-harvest-retry'
 import { projectArchiveRevisionMigration } from './migrations/0031-project-archive-revision'
@@ -1799,6 +1802,15 @@ const applyManifestMigration = async (
         for (const statement of literatureContentBlobBackfillStatements) {
           await migrationSqlExecutor.execute(transaction, statement)
         }
+      }
+      if (
+        contractAlreadySatisfied &&
+        migration.id === literatureInboxIntegrityMigration.id &&
+        MIGRATION_MANIFEST.some(
+          (entry) => entry.id === migration.id && entry.checksum === migration.checksum
+        )
+      ) {
+        await migrationSqlExecutor.execute(transaction, literatureDiscoveryBackfillStatement)
       }
       if (!contractAlreadySatisfied) {
         if (canVerifyAsCurrentSchema && migration.id === projectPreviewStateOwnerFkMigration.id) {
