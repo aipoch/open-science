@@ -330,6 +330,8 @@ const RUNTIME_SCHEMA_TABLE_DDLS = [
     "state" TEXT NOT NULL DEFAULT 'staging',
     "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "verifiedAt" DATETIME,
+    "lastVerificationFailure" TEXT,
+    "lastVerificationAttemptAt" DATETIME,
     CONSTRAINT "ContentBlob_state_check" CHECK ("state" IN ('staging', 'available', 'quarantined')),
     CONSTRAINT "ContentBlob_sizeBytes_check" CHECK ("sizeBytes" >= 0)
 );`,

@@ -58,7 +58,7 @@ type SearchResult = Extract<LiteratureFullTextResult, { mode: 'search' }>
 type Candidate = Omit<LiteratureFullTextCandidate, 'id'>
 type Options = {
   catalog: Pick<LiteratureCatalog, 'get' | 'attachContent'>
-  content: Pick<ContentRepository, 'publish'>
+  content: Pick<ContentRepository, 'withPublishedContent'>
   openAlexKey: () => Promise<string | undefined>
   contactEmail?: () => Promise<string | undefined>
   fetch?: typeof fetch
@@ -389,39 +389,40 @@ class LiteratureFullTextFinder {
       const current = await this.options.catalog.get(item.id)
       if (!current || current.id !== item.id || current.metadataRevision !== selected.revision)
         throw new Error('The reference changed during download. Search again.')
-      const content = await this.options.content.publish({
-        sourcePath: path,
-        contentType: 'application/pdf'
-      })
-      const filename = `${
-        item.item.title
-          .replace(/[<>:"/\\|?*\p{Cc}]/gu, ' ')
-          .trim()
-          .slice(0, 120) || 'paper'
-      }.pdf`
-      const receipt = await this.options.catalog.attachContent({
-        itemId: item.id,
-        expectedMetadataRevision: selected.revision,
-        contentBlobId: content.id,
-        filename,
-        contentType: 'application/pdf',
-        sizeBytes: Number(content.sizeBytes),
-        checksum: content.checksum,
-        pageCount,
-        provenance: {
-          provider: selected.candidate.provider,
-          source: selected.candidate.source,
-          sourceUrl: selected.candidate.sourceUrl ?? new URL(selected.candidate.url).origin,
-          acquiredAt: Date.now(),
-          version: selected.candidate.version,
-          license: selected.candidate.license
+      return await this.options.content.withPublishedContent(
+        { sourcePath: path, contentType: 'application/pdf' },
+        async (content) => {
+          const filename = `${
+            item.item.title
+              .replace(/[<>:"/\\|?*\p{Cc}]/gu, ' ')
+              .trim()
+              .slice(0, 120) || 'paper'
+          }.pdf`
+          const receipt = await this.options.catalog.attachContent({
+            itemId: item.id,
+            expectedMetadataRevision: selected.revision,
+            contentBlobId: content.id,
+            filename,
+            contentType: 'application/pdf',
+            sizeBytes: Number(content.sizeBytes),
+            checksum: content.checksum,
+            pageCount,
+            provenance: {
+              provider: selected.candidate.provider,
+              source: selected.candidate.source,
+              sourceUrl: selected.candidate.sourceUrl ?? new URL(selected.candidate.url).origin,
+              acquiredAt: Date.now(),
+              version: selected.candidate.version,
+              license: selected.candidate.license
+            }
+          })
+          // The receipt is authoritative even if refreshing the item later fails.
+          Object.assign(task.snapshot, receipt, { status: 'succeeded' })
+          const updated = await this.options.catalog.get(item.id).catch(() => undefined)
+          if (updated?.id !== item.id) return { mode: 'transfer', transfer: { ...task.snapshot } }
+          return { mode: 'attach', item: updated, transferId: task.snapshot.id }
         }
-      })
-      // The receipt is authoritative even if refreshing the item later fails.
-      Object.assign(task.snapshot, receipt, { status: 'succeeded' })
-      const updated = await this.options.catalog.get(item.id).catch(() => undefined)
-      if (updated?.id !== item.id) return { mode: 'transfer', transfer: { ...task.snapshot } }
-      return { mode: 'attach', item: updated, transferId: task.snapshot.id }
+      )
     } catch (error) {
       if (task.snapshot.status !== 'succeeded') task.snapshot.status = 'failed'
       if (error instanceof FullTextRateLimitError) task.snapshot.retryAt = error.retryAt

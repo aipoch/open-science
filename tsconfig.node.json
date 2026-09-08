@@ -8,11 +8,18 @@
     "vite.web.config.*",
     "src/main/**/*",
     "src/preload/**/*",
-    "src/shared/**/*"
+    "src/shared/**/*",
+    "playwright.browser.config.ts",
+    "vite.browser-test.config.ts"
   ],
   "compilerOptions": {
     "composite": true,
     "noImplicitAny": true,
-    "types": ["electron-vite/node"]
-  }
+    "types": [
+      "electron-vite/node"
+    ]
+  },
+  "exclude": [
+    "e2e/browser/fixture"
+  ]
 }

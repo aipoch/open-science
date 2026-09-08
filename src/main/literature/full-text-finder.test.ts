@@ -34,16 +34,16 @@ const setup = (): {
       attachContent: vi.fn(async () => ({ attachmentId: 'attachment-1', versionId: 'version-1' }))
     },
     content: {
-      publish: vi.fn(async ({ sourcePath }) => {
+      withPublishedContent: vi.fn(async ({ sourcePath }, acquire) => {
         const bytes = await readFile(sourcePath)
-        return {
+        return acquire({
           id: 'blob-1',
           path: sourcePath,
           storageKey: 'blob-1',
           sizeBytes: BigInt(bytes.length),
           checksum: 'a'.repeat(64),
           contentType: 'application/pdf'
-        }
+        })
       })
     },
     openAlexKey: vi.fn(async () => undefined),
@@ -225,7 +225,7 @@ describe('Literature full-text discovery and attachment', () => {
       reason: 'rate-limited',
       retryAt
     })
-    expect(options.content.publish).not.toHaveBeenCalled()
+    expect(options.content.withPublishedContent).not.toHaveBeenCalled()
     await expect(finder.run({ mode: 'progress', itemId: item.id, candidateId })).resolves.toEqual({
       mode: 'progress'
     })
@@ -253,7 +253,7 @@ describe('Literature full-text discovery and attachment', () => {
         checksum: 'a'.repeat(64)
       })
     )
-    const path = vi.mocked(options.content.publish).mock.calls[0][0].sourcePath
+    const path = vi.mocked(options.content.withPublishedContent).mock.calls[0][0].sourcePath
     await expect(readFile(path)).rejects.toThrow()
   })
   it.each([
@@ -351,7 +351,7 @@ describe('Literature full-text discovery and attachment', () => {
       return Buffer.from('%PDF-1.7\nexample')
     })
     await expect(finder.run(request)).rejects.toThrow('changed during download')
-    expect(options.content.publish).not.toHaveBeenCalled()
+    expect(options.content.withPublishedContent).not.toHaveBeenCalled()
     expect(options.catalog.attachContent).not.toHaveBeenCalled()
   })
 

@@ -117,14 +117,15 @@ describe('LiteratureFullTextLookup', () => {
     const finder = new LiteratureFullTextFinder({
       catalog: { get: async () => item, attachContent },
       content: {
-        publish: async () => ({
-          id: 'blob',
-          path: 'unused',
-          storageKey: 'blob',
-          sizeBytes: 10n,
-          checksum: 'a'.repeat(64),
-          contentType: 'application/pdf'
-        })
+        withPublishedContent: async (_request, acquire) =>
+          acquire({
+            id: 'blob',
+            path: 'unused',
+            storageKey: 'blob',
+            sizeBytes: 10n,
+            checksum: 'a'.repeat(64),
+            contentType: 'application/pdf'
+          })
       },
       openAlexKey: async () => undefined,
       fetch: async (input) =>

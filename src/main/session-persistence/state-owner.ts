@@ -52,7 +52,7 @@ type PatchSessionRuntimeContextCommand = Readonly<{
   patch: SessionRuntimeContextPatch
   archivePlanProjection?: ActivePlanProjection
   sessionStatus?: PersistedSessionStatus
-  beforePersist?: () => void
+  beforePersist?: () => void | Promise<void>
 }>
 
 type AppendUserMessageToInteractionCommand = Readonly<{
@@ -377,7 +377,7 @@ class SessionPersistenceStateOwner {
     if (current.revision !== expectedRevision) {
       throw new SessionRuntimeContextRevisionConflictError(expectedRevision, current.revision)
     }
-    command.beforePersist?.()
+    await command.beforePersist?.()
 
     const candidate: Record<string, unknown> = { ...current }
     for (const [owner, value] of Object.entries(patch)) {
