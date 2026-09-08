@@ -521,7 +521,7 @@ describe('workspace Agent Runtime hook contract', () => {
     })
   })
 
-  it('falls back to the Settings Active Model instead of the provider base model', async () => {
+  it('preserves the unavailable legacy preference instead of replacing it with the Settings Active Model', async () => {
     useSettingsStore.setState({
       activeProviderId: 'custom',
       activeModel: 'settings-selected',
@@ -564,12 +564,12 @@ describe('workspace Agent Runtime hook contract', () => {
     await render()
 
     expect(latest.resolveSessionRuntimeSelection('session-1')).toMatchObject({
-      agentBackendId: 'claude-code:custom',
-      agentModel: 'settings-selected',
+      agentBackendId: undefined,
+      agentModel: 'gone',
       agentTarget: {
         frameworkId: 'claude-code',
-        providerId: 'custom',
-        model: 'settings-selected',
+        providerId: 'deleted-provider',
+        model: 'gone',
         reasoningEffort: 'low'
       }
     })

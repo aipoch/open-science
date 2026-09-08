@@ -308,6 +308,7 @@ const FORMAT_OPTIONS: Record<TableAction, Array<{ id: TableFormat; label: string
 }
 
 let activeTableMenu: HTMLElement | null = null
+let activeTableMenuAnchor: HTMLButtonElement | null = null
 
 const findTableSurface = (from: Element): HTMLTableElement | null => {
   const wrapper = from.closest('[data-streamdown="table-wrapper"]')
@@ -380,9 +381,13 @@ const runTableAction = async (
   }
 }
 
-const closeActiveTableMenu = (): void => {
+const closeActiveTableMenu = (restoreFocus = false): void => {
+  const anchor = activeTableMenuAnchor
   activeTableMenu?.remove()
   activeTableMenu = null
+  activeTableMenuAnchor = null
+  anchor?.setAttribute('aria-expanded', 'false')
+  if (restoreFocus && anchor?.isConnected) anchor.focus()
 }
 
 const showInlineFormatMenu = (
@@ -396,15 +401,19 @@ const showInlineFormatMenu = (
   const menu = document.createElement('div')
   menu.setAttribute('data-sd-table-format-menu', 'true')
   menu.className = 'sd-table-format-menu'
+  menu.setAttribute('role', 'menu')
+  anchor.setAttribute('aria-haspopup', 'menu')
+  anchor.setAttribute('aria-expanded', 'true')
 
   for (const option of FORMAT_OPTIONS[action]) {
     const item = document.createElement('button')
     item.type = 'button'
     item.textContent = option.label
-    item.addEventListener('mousedown', (event) => {
+    item.setAttribute('role', 'menuitem')
+    item.addEventListener('click', (event) => {
       event.preventDefault()
       event.stopPropagation()
-      closeActiveTableMenu()
+      closeActiveTableMenu(true)
       void runTableAction(table, action, option.id).catch((error) => {
         console.error('[streamdown-table] action failed:', error)
       })
@@ -425,6 +434,8 @@ const showInlineFormatMenu = (
   menu.style.left = `${Math.round(left)}px`
 
   activeTableMenu = menu
+  activeTableMenuAnchor = anchor
+  menu.querySelector('button')?.focus()
 }
 
 const onFullscreenMenuPointer = (event: Event): void => {
@@ -466,7 +477,7 @@ const onFullscreenMenuPointer = (event: Event): void => {
   })
 }
 
-const onInlineToolbarPointer = (event: Event): void => {
+const onInlineToolbarClick = (event: Event): void => {
   if (!(event instanceof MouseEvent) || event.button !== 0) return
 
   const target = event.target
@@ -488,7 +499,8 @@ const onInlineToolbarPointer = (event: Event): void => {
   event.preventDefault()
   event.stopImmediatePropagation()
 
-  showInlineFormatMenu(button, action, table)
+  if (activeTableMenuAnchor === button) closeActiveTableMenu(true)
+  else showInlineFormatMenu(button, action, table)
 }
 
 const onDismissTableMenu = (event: Event): void => {
@@ -505,23 +517,53 @@ const onDismissTableMenu = (event: Event): void => {
   closeActiveTableMenu()
 }
 
-const onTableMenuEscape = (event: KeyboardEvent): void => {
-  if (event.key === 'Escape') {
-    closeActiveTableMenu()
+const onTableMenuKeyDown = (event: KeyboardEvent): void => {
+  if (!activeTableMenu) return
+  if (event.key === 'Escape' || event.key === 'Tab') {
+    if (event.key === 'Escape') {
+      event.preventDefault()
+      event.stopPropagation()
+    }
+    // Let native Tab continue from the trigger in the document's normal tab order.
+    closeActiveTableMenu(true)
+    return
   }
+  const items = [...activeTableMenu.querySelectorAll('button')]
+  const index = items.findIndex((item) => item === document.activeElement)
+  let next: number
+  switch (event.key) {
+    case 'ArrowDown':
+      next = (index + 1) % items.length
+      break
+    case 'ArrowUp':
+      next = (index - 1 + items.length) % items.length
+      break
+    case 'Home':
+      next = 0
+      break
+    case 'End':
+      next = items.length - 1
+      break
+    default:
+      return
+  }
+  event.preventDefault()
+  items[next]?.focus()
 }
 
 const installTableActions = (): (() => void) => {
   document.addEventListener('mousedown', onFullscreenMenuPointer, true)
-  document.addEventListener('mousedown', onInlineToolbarPointer, true)
-  document.addEventListener('mousedown', onDismissTableMenu, true)
-  document.addEventListener('keydown', onTableMenuEscape)
+  document.addEventListener('click', onInlineToolbarClick, true)
+  document.addEventListener('pointerdown', onDismissTableMenu, true)
+  document.addEventListener('focusin', onDismissTableMenu)
+  document.addEventListener('keydown', onTableMenuKeyDown, true)
 
   return () => {
     document.removeEventListener('mousedown', onFullscreenMenuPointer, true)
-    document.removeEventListener('mousedown', onInlineToolbarPointer, true)
-    document.removeEventListener('mousedown', onDismissTableMenu, true)
-    document.removeEventListener('keydown', onTableMenuEscape)
+    document.removeEventListener('click', onInlineToolbarClick, true)
+    document.removeEventListener('pointerdown', onDismissTableMenu, true)
+    document.removeEventListener('focusin', onDismissTableMenu)
+    document.removeEventListener('keydown', onTableMenuKeyDown, true)
     closeActiveTableMenu()
   }
 }

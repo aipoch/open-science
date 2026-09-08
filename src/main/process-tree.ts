@@ -92,6 +92,11 @@ const isProcessGroupAlive = (groupId: number): boolean => {
   }
 }
 
+// Durable kernel recovery addresses a previously-owned detached group by its persisted group id,
+// without a live ChildProcess handle from the crashed application instance.
+export const isOwnedPosixProcessGroupAlive = (groupId: number): boolean =>
+  Number.isSafeInteger(groupId) && groupId > 0 && isProcessGroupAlive(groupId)
+
 const signalProcessGroup = (groupId: number, signal: NodeJS.Signals): void => {
   try {
     process.kill(-groupId, signal)
@@ -381,6 +386,19 @@ const terminateOwnedPosixProcessGroup = async (
   ])
   return { reaped: snapshot.complete && forcedExit.every(Boolean) }
 }
+
+export const terminateOwnedPosixProcessGroupById = (
+  groupId: number,
+  signal?: NodeJS.Signals,
+  log?: ProcessTreeLogger
+): Promise<ProcessTreeKillResult> =>
+  Number.isSafeInteger(groupId) && groupId > 0
+    ? terminateOwnedPosixProcessGroup(
+        { kind: 'owned-posix-process-group', id: groupId },
+        signal,
+        log
+      )
+    : Promise.resolve({ reaped: false })
 
 // Terminates a child process and every descendant it spawned, then waits for the direct child to actually
 // exit — escalating to SIGKILL anything still alive. On Windows the tree is reaped with taskkill /T /F

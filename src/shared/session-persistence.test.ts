@@ -315,6 +315,65 @@ const createHistoricalPlan = (): ActivePlanProjection => ({
 })
 
 describe('conversation graph materialization diagnostics', () => {
+  it('preserves durable graph identities even when they retain a provisional prefix', () => {
+    const pendingSessionId = 'pending-session-123-1'
+    const messages: PersistedChatMessage[] = [
+      {
+        id: 'message-1',
+        role: 'user',
+        content: 'Persist me',
+        status: 'complete',
+        eventIds: [],
+        createdAt: 1,
+        updatedAt: 1
+      }
+    ]
+    const graph = createLinearConversationGraph({
+      sessionId: pendingSessionId,
+      messages,
+      createdAt: 1,
+      updatedAt: 1
+    })
+    graph.frames.push({
+      id: 'child-frame',
+      parentFrameId: graph.rootFrameId,
+      originMessageId: 'message-1',
+      originBindingState: 'validated',
+      kind: 'delegate',
+      status: 'completed',
+      activeBranchId: 'child-branch',
+      createdAt: 2,
+      completedAt: 3
+    })
+    graph.branches.push(
+      {
+        id: 'inactive-branch',
+        agentFrameId: graph.rootFrameId,
+        parentBranchId: graph.branches[0].id,
+        forkMessageId: 'message-1',
+        headMessageId: 'message-1',
+        createdAt: 2,
+        updatedAt: 2
+      },
+      { id: 'child-branch', agentFrameId: 'child-frame', createdAt: 2, updatedAt: 3 }
+    )
+    const restored = normalizeSessionFile({
+      ...createSessionWithActivity(undefined),
+      id: 'runtime-session-1',
+      messages,
+      conversationGraph: graph
+    })
+    expect(restored?.conversationGraph?.frames).toEqual(graph.frames)
+    expect(restored?.conversationGraph?.branches).toEqual(graph.branches)
+    expect(restored?.conversationGraph?.runtimeSegments).toEqual(graph.runtimeSegments)
+
+    expect(restored?.conversationGraph).toMatchObject({
+      rootFrameId: graph.rootFrameId,
+      activeFrameId: graph.activeFrameId,
+      messages: graph.messages
+    })
+  })
+
   it('preserves a conversation written by a not-yet-known Agent framework', () => {
     const messages: PersistedChatMessage[] = [
       {
@@ -837,6 +896,21 @@ describe('message attribution persistence', () => {
         jobIds: ['job-1'],
         rendererClaim: true
       })
+    ).toBeUndefined()
+  })
+
+  it('keeps strict durable Agent result delivery attribution', () => {
+    const attribution = {
+      kind: 'application' as const,
+      feature: 'background-results' as const,
+      purpose: 'agent-result-delivery' as const,
+      deliveryKey: 'agent-result-delivery:continuation-1',
+      deliveryIds: ['local-run:run-1']
+    }
+
+    expect(sanitizeMessageAttribution(attribution)).toEqual(attribution)
+    expect(
+      sanitizeMessageAttribution({ ...attribution, deliveryIds: [], rendererClaim: true })
     ).toBeUndefined()
   })
 

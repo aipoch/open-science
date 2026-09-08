@@ -114,6 +114,39 @@ const RuntimesPanel = ({
     (state) => state.setAgentEnvironmentCreationEnabled
   )
   const updatePackageCount = useRuntimeSettingsStore((state) => state.updatePackageCount)
+  const [runtimeAccessMessage, setRuntimeAccessMessage] = useState<Record<string, string>>({})
+  const setSandboxAccess = async (
+    env: DiscoveredInterpreter,
+    authorized: boolean
+  ): Promise<void> => {
+    setBusy(true)
+    setError(null)
+    setRuntimeAccessMessage((current) => ({ ...current, [env.envId]: '' }))
+    try {
+      const result = await window.api.runtime.setSandboxAccess('r', env.envId, authorized)
+      if (!result.cancelled)
+        setRuntimeAccessMessage((current) => ({
+          ...current,
+          [env.envId]: authorized ? t('R access verified') : t('R access removed')
+        }))
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : t('Could not update R access.')
+      setError(
+        authorized
+          ? `${t('R access was not verified. Permission may already be granted. Use Remove R access to revoke it.')} ${detail}`
+          : detail
+      )
+    } finally {
+      if (!authorized) {
+        try {
+          setEnablement('r', await window.api.runtime.getEnablement('r'))
+        } catch {
+          setError(t('Could not re-check runtimes.'))
+        }
+      }
+      setBusy(false)
+    }
+  }
   const [managedOperations, setManagedOperations] = useState<
     Partial<Record<NotebookLanguage, boolean>>
   >({})
@@ -210,6 +243,7 @@ const RuntimesPanel = ({
     if (languageOperationActive(language)) return
     setBusy(true)
     setError(null)
+    setRuntimeAccessMessage((current) => ({ ...current, [env.envId]: '' }))
     try {
       // set-environment-enabled rejects when it would disable the LAST enabled env for a language
       // (the ">= 1 usable" invariant); surface that reason inline instead of silently no-op'ing.
@@ -544,6 +578,41 @@ const RuntimesPanel = ({
                   {t('Reinstall')}
                 </Button>
               )
+            ) : null}
+          </div>
+        ) : null}
+
+        {external && language === 'r' && window.api.platform === 'win32' ? (
+          <div className="mt-3 border-t border-border pt-3">
+            <p className="text-xs text-muted-foreground">
+              {t(
+                "Allow the sandbox to list names in this R installation's parent folders. Other file contents remain protected. Administrator approval may be required."
+              )}
+            </p>
+            <div className="mt-2 flex flex-wrap gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                disabled={busy || !enabled || !env.runnable}
+                onClick={() => void setSandboxAccess(env, true)}
+              >
+                {t('Authorize and verify')}
+              </Button>
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                disabled={busy}
+                onClick={() => void setSandboxAccess(env, false)}
+              >
+                {t('Remove R access')}
+              </Button>
+            </div>
+            {runtimeAccessMessage[env.envId] ? (
+              <p role="status" className="mt-2 text-xs">
+                {runtimeAccessMessage[env.envId]}
+              </p>
             ) : null}
           </div>
         ) : null}

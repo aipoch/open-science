@@ -21,6 +21,8 @@ type LiteratureAttachmentAuthorityOptions = Readonly<{
   content: Pick<ContentRepository, 'verify'>
 }>
 
+class LiteratureAttachmentUnavailableError extends Error {}
+
 class LiteratureAttachmentAuthority {
   constructor(private readonly options: LiteratureAttachmentAuthorityOptions) {}
 
@@ -39,7 +41,7 @@ class LiteratureAttachmentAuthority {
 
     const verification = await this.options.content.verify(version.contentBlobId)
     if (verification.state !== 'available') {
-      throw new Error(
+      throw new LiteratureAttachmentUnavailableError(
         `Literature attachment content is unavailable: ${versionId} (${verification.reason})`
       )
     }
@@ -50,7 +52,9 @@ class LiteratureAttachmentAuthority {
       content.storageKey !== version.contentBlob.storageKey ||
       (content.contentType !== undefined && content.contentType !== version.contentType)
     ) {
-      throw new Error('Literature Attachment Version does not match its Content Blob authority.')
+      throw new LiteratureAttachmentUnavailableError(
+        'Literature Attachment Version does not match its Content Blob authority.'
+      )
     }
 
     return {
@@ -69,5 +73,5 @@ class LiteratureAttachmentAuthority {
   }
 }
 
-export { LiteratureAttachmentAuthority }
+export { LiteratureAttachmentAuthority, LiteratureAttachmentUnavailableError }
 export type { LiteratureAttachmentAuthorityOptions, ResolvedLiteratureAttachmentVersion }

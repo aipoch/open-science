@@ -6,6 +6,7 @@ import { dirname, join } from 'node:path'
 import type { PrismaClient } from '@prisma/client'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
+import { literatureItemInputSchema } from '../../shared/literature'
 import { LiteratureCatalog } from '../literature/catalog'
 import { createProjectDbClient, migrateApplicationDatabase } from '../projects/prisma-client'
 import { markContentBlobAvailable, registerContentBlob } from './content-blob-registry'
@@ -61,6 +62,35 @@ describe('content repository', () => {
     })
   }
 
+  it.each([false, true])(
+    'retains overlapping publications across repositories and releases them on failure=%s',
+    async (fail) => {
+      const publisher = await createRepository()
+      const other = new ContentRepository({
+        storageRoot: storageRoot!,
+        getClient: async () => client!
+      })
+      const sourcePath = join(storageRoot!, 'source.pdf')
+      await writeFile(sourcePath, 'shared publication')
+      let contentId = ''
+      const sweep = (): ReturnType<ContentRepository['sweep']> =>
+        other.sweep({ createdBefore: new Date(Date.now() + 1) })
+      const acquisition = publisher.withPublishedContent({ sourcePath }, async (first) => {
+        contentId = first.id
+        await other.withPublishedContent({ sourcePath }, async (second) => {
+          expect(second.id).toBe(first.id)
+          expect((await sweep()).retainedIds).toContain(first.id)
+          await expect(other.verify(first.id)).resolves.toMatchObject({ state: 'available' })
+        })
+        expect((await sweep()).retainedIds).toContain(first.id)
+        if (fail) throw new Error('Reference insertion failed')
+      })
+      if (fail) await expect(acquisition).rejects.toThrow('Reference insertion failed')
+      else await acquisition
+      expect((await sweep()).removedIds).toContain(contentId)
+    }
+  )
+
   it('opens and verifies available immutable bytes', async () => {
     const repository = await createRepository()
     const content = Buffer.from('verified literature bytes')
@@ -100,6 +130,130 @@ describe('content repository', () => {
     })
     await expect(readFile(first.path)).resolves.toEqual(content)
     await expect(client!.contentBlob.count()).resolves.toBe(1)
+  })
+
+  it('serializes cancellation cleanup with another publisher of the same bytes', async () => {
+    const repository = await createRepository()
+    const other = new ContentRepository({
+      storageRoot: storageRoot!,
+      getClient: async () => client!
+    })
+    const sourcePath = join(storageRoot!, 'shared-paper.pdf')
+    const bytes = Buffer.from('concurrent publication')
+    await writeFile(sourcePath, bytes)
+    let release!: () => void
+    let entered!: () => void
+    const ready = new Promise<void>((resolve) => {
+      entered = resolve
+    })
+    const gate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const cancelled = repository
+      .publish({
+        sourcePath,
+        commit: async () => {
+          entered()
+          await gate
+          throw new Error('cancelled before commit')
+        }
+      })
+      .then(
+        () => undefined,
+        (error: unknown) => error
+      )
+    await ready
+    const concurrent = other.publish({ sourcePath })
+    release()
+    expect(await cancelled).toMatchObject({ message: 'cancelled before commit' })
+    const kept = await concurrent
+    expect(await readFile(kept.path)).toEqual(bytes)
+    expect(await client!.contentBlob.count()).toBe(1)
+  })
+
+  it('retains reused unreferenced bytes and newly committed references on callback failure', async () => {
+    const repository = await createRepository()
+    const sourcePath = join(storageRoot!, 'shared-paper.pdf')
+    await writeFile(sourcePath, 'already published')
+    const existing = await repository.publish({ sourcePath })
+    await expect(
+      repository.publish({
+        sourcePath,
+        commit: async () => {
+          throw new Error('cancelled')
+        }
+      })
+    ).rejects.toThrow('cancelled')
+    expect(await repository.open(existing.id)).toEqual(existing)
+
+    await writeFile(sourcePath, 'newly committed')
+    const catalog = new LiteratureCatalog(async () => client!)
+    const item = await catalog.transact({
+      kind: 'create-item',
+      item: literatureItemInputSchema.parse({
+        itemType: 'journalArticle',
+        title: 'Committed paper'
+      })
+    })
+    let committedId = ''
+    await expect(
+      repository.publish({
+        sourcePath,
+        contentType: 'application/pdf',
+        commit: async (content) => {
+          committedId = content.id
+          await catalog.attachContent({
+            itemId: item.id,
+            contentBlobId: content.id,
+            filename: 'paper.pdf',
+            contentType: 'application/pdf',
+            checksum: content.checksum,
+            sizeBytes: Number(content.sizeBytes),
+            pageCount: 1
+          })
+          throw new Error('caller failed after commit')
+        }
+      })
+    ).rejects.toThrow('caller failed after commit')
+    expect((await repository.open(committedId)).id).toBe(committedId)
+    expect((await catalog.get(item.id))!.attachments).toHaveLength(1)
+  })
+
+  it('keeps a sweep outside the publication-to-commit window', async () => {
+    const repository = await createRepository()
+    const sourcePath = join(storageRoot!, 'sweep-paper.pdf')
+    await writeFile(sourcePath, 'publication under sweep')
+    const catalog = new LiteratureCatalog(async () => client!)
+    const item = await catalog.transact({
+      kind: 'create-item',
+      item: literatureItemInputSchema.parse({ itemType: 'journalArticle', title: 'Paper' })
+    })
+    let sweep!: ReturnType<ContentRepository['sweep']>
+    const published = await repository.publish({
+      sourcePath,
+      contentType: 'application/pdf',
+      commit: async (content) => {
+        sweep = repository.sweep({
+          createdBefore: new Date(Date.now() + 1000),
+          contentIds: [content.id]
+        })
+        await catalog.attachContent({
+          itemId: item.id,
+          contentBlobId: content.id,
+          filename: 'paper.pdf',
+          contentType: 'application/pdf',
+          checksum: content.checksum,
+          sizeBytes: Number(content.sizeBytes),
+          pageCount: 1
+        })
+      }
+    })
+    expect(await sweep).toMatchObject({
+      removedIds: [],
+      retainedIds: [published.id],
+      failedIds: []
+    })
+    expect((await repository.open(published.id)).id).toBe(published.id)
   })
 
   it.each(['broken', 'selected literature byte!'])(
@@ -202,6 +356,58 @@ describe('content repository', () => {
     ).resolves.toMatchObject({ contentBlobId: published.id })
     await expect(sweeper.verify(published.id)).resolves.toMatchObject({ state: 'available' })
     await expect(readFile(published.path)).resolves.toEqual(bytes)
+  })
+
+  it('orders a failed verification before repair across repository instances', async () => {
+    const verifier = await createRepository()
+    const sourcePath = join(storageRoot!, 'verification-repair.pdf')
+    await writeFile(sourcePath, 'original bytes')
+    const published = await verifier.publish({ sourcePath, contentType: 'application/pdf' })
+    await writeFile(published.path, 'broken')
+    const publisher = new ContentRepository({
+      storageRoot: storageRoot!,
+      getClient: async () => client!
+    })
+    let observe!: () => void
+    let release!: () => void
+    const observing = new Promise<void>((resolve) => {
+      observe = resolve
+    })
+    const gate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const update = client!.contentBlob.updateMany.bind(client!.contentBlob)
+    const spy = vi.spyOn(client!.contentBlob, 'updateMany').mockImplementation((async (
+      args: Parameters<typeof update>[0]
+    ) => {
+      if (args?.data.lastVerificationFailure === 'size-mismatch') {
+        observe()
+        await gate
+      }
+      return update(args)
+    }) as unknown as typeof update)
+    const verification = verifier.verify(published.id)
+    await observing
+    const publishing = publisher.publish({ sourcePath, contentType: 'application/pdf' })
+    try {
+      release()
+      await expect(verification).resolves.toMatchObject({
+        state: 'unavailable',
+        reason: 'size-mismatch'
+      })
+      await publishing
+      await expect(
+        client!.contentBlob.findUnique({ where: { id: published.id } })
+      ).resolves.toMatchObject({
+        state: 'available',
+        lastVerificationFailure: null,
+        lastVerificationAttemptAt: expect.any(Date)
+      })
+      await expect(verifier.verify(published.id)).resolves.toMatchObject({ state: 'available' })
+    } finally {
+      release()
+      spy.mockRestore()
+    }
   })
 
   it('sweeps only old unreferenced blobs and leaves referenced bytes intact', async () => {

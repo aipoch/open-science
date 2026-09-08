@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from 'react'
+import { useCallback, useLayoutEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import type {
@@ -19,6 +19,11 @@ const useLiteratureMetadata = (
   mode: DetailMode
   changeMode: (mode: DetailMode) => void
   saving: boolean
+  editBase?: LiteratureItemView
+  awaitingReload: boolean
+  externallyUpdated: () => boolean
+  reloadSaved: () => Promise<void>
+  loadLatest: () => void
   error?: string
   completion?: LiteratureMetadataCompletionResult
   completing: boolean
@@ -30,6 +35,10 @@ const useLiteratureMetadata = (
   complete: (mode: 'commit' | 'preview', identifier?: LiteratureMetadataIdentifier) => Promise<void>
 } => {
   const { t } = useTranslation()
+  const [editBase, setEditBase] = useState<LiteratureItemView>()
+  const [awaitingReload, setAwaitingReload] = useState(false)
+  const requestRef = useRef(0)
+  const completionRequestRef = useRef(0)
   const [mode, setMode] = useState<DetailMode>('view')
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string>()
@@ -42,6 +51,8 @@ const useLiteratureMetadata = (
   const identifierRef = useRef<LiteratureMetadataIdentifier>(undefined)
 
   const resetCompletion = useCallback((): void => {
+    completionRequestRef.current += 1
+    setCompleting(false)
     setCompletion(undefined)
     setCompletionError(undefined)
     setOverwriteFields((current) => (current.size === 0 ? current : new Set()))
@@ -50,18 +61,72 @@ const useLiteratureMetadata = (
 
   const changeMode = useCallback(
     (next: DetailMode): void => {
+      requestRef.current += 1
+      setSaving(false)
+      setAwaitingReload(false)
+      setEditBase(next === 'edit' ? controller.getSnapshot().item : undefined)
       setError(undefined)
       if (next === 'complete' || next === 'view') resetCompletion()
       setMode(next)
     },
-    [resetCompletion]
+    [controller, resetCompletion]
   )
 
+  useLayoutEffect(() => {
+    let previous = controller.getSnapshot()
+    const unsubscribe = controller.subscribe(() => {
+      const next = controller.getSnapshot()
+      const openingChanged = next.generation !== previous.generation
+      const revisionChanged = next.item?.metadataRevision !== previous.item?.metadataRevision
+      previous = next
+      if (openingChanged) changeMode('view')
+      else if (revisionChanged) resetCompletion()
+    })
+    return () => {
+      unsubscribe()
+      requestRef.current += 1
+      completionRequestRef.current += 1
+    }
+  }, [controller, changeMode, resetCompletion])
+
+  const externallyUpdated = (): boolean =>
+    Boolean(
+      editBase &&
+      (controller.getSnapshot().item?.metadataRevision ?? -1) > editBase.metadataRevision
+    )
+
+  const reloadSaved = async (): Promise<void> => {
+    const current = controller.getSnapshot()
+    if (!current.item || saving) return
+    const request = ++requestRef.current
+    const active = (): boolean =>
+      controller.getSnapshot().generation === current.generation && requestRef.current === request
+    setSaving(true)
+    try {
+      const updated = await window.api.literature.get(current.item.id)
+      if (!updated) throw new Error('Literature Item is unavailable after updating.')
+      onItemChange(updated)
+      controller.replace(updated)
+      if (active()) changeMode('view')
+    } catch {
+      if (active()) setError(t('The reference was saved, but could not be reloaded.'))
+    } finally {
+      if (active()) setSaving(false)
+    }
+  }
+
   const save = async (item: LiteratureItemInput): Promise<void> => {
-    const current = controller.getSnapshot().item
-    if (!current || saving) return
+    const current = editBase
+    if (!current || saving || awaitingReload || externallyUpdated()) return
+    const generation = controller.getSnapshot().generation
+    const request = ++requestRef.current
+    const active = (): boolean =>
+      controller.getSnapshot().generation === generation &&
+      controller.getSnapshot().item?.id === current.id &&
+      requestRef.current === request
     setSaving(true)
     setError(undefined)
+    let persisted = false
     try {
       await window.api.literature.transact({
         kind: 'update-item',
@@ -69,17 +134,35 @@ const useLiteratureMetadata = (
         expectedMetadataRevision: current.metadataRevision,
         item
       })
+      persisted = true
       const updated = await window.api.literature.get(current.id)
       if (!updated) throw new Error('Literature Item is unavailable after updating.')
-      controller.replace(updated)
       onItemChange(updated)
-      if (controller.getSnapshot().item?.id === current.id) setMode('view')
+      controller.replace(updated)
+      if (active()) changeMode('view')
     } catch {
-      if (controller.getSnapshot().item?.id === current.id) {
-        setError(t('Literature could not be updated.'))
+      if (active()) {
+        setAwaitingReload(persisted)
+        setError(
+          persisted
+            ? t('The reference was saved, but could not be reloaded.')
+            : t('Literature could not be updated.')
+        )
+      }
+      if (!persisted) {
+        // Read the conflicting version without rebasing the user's whole draft onto it.
+        try {
+          const latest = await window.api.literature.get(current.id)
+          if (latest) {
+            onItemChange(latest)
+            controller.replace(latest)
+          }
+        } catch {
+          /* Keep the draft and original error when the follow-up read also fails. */
+        }
       }
     } finally {
-      setSaving(false)
+      if (active()) setSaving(false)
     }
   }
 
@@ -90,6 +173,13 @@ const useLiteratureMetadata = (
     const current = controller.getSnapshot().item
     const identifier = nextIdentifier ?? identifierRef.current
     if (!current || !identifier?.value || completing) return
+    const generation = controller.getSnapshot().generation
+    const request = ++completionRequestRef.current
+    const active = (): boolean =>
+      controller.getSnapshot().generation === generation &&
+      controller.getSnapshot().item?.id === current.id &&
+      controller.getSnapshot().item?.metadataRevision === current.metadataRevision &&
+      completionRequestRef.current === request
     identifierRef.current = identifier
     setCompleting(true)
     setCompletionError(undefined)
@@ -106,23 +196,41 @@ const useLiteratureMetadata = (
               overwriteFields: [...overwriteFields]
             }
       )
-      if (controller.getSnapshot().item?.id === current.id) {
-        setCompletion(result)
-        if (result.mode === 'preview') setOverwriteFields(new Set())
-      }
       if (result.mode === 'commit') {
+        const showResult = active()
+        // Publishing the saved revision invalidates its preview; retain the successful receipt.
         controller.replace(result.item)
         onItemChange(result.item)
+        const published = controller.getSnapshot()
+        if (
+          showResult &&
+          published.generation === generation &&
+          published.item?.id === current.id &&
+          published.item.metadataRevision === result.item.metadataRevision
+        )
+          setCompletion(result)
+      } else if (active()) {
+        setCompletion(result)
+        setOverwriteFields(new Set())
       }
     } catch {
-      setCompletionError({ itemId: current.id, message: t('Metadata could not be completed.') })
+      if (active())
+        setCompletionError({ itemId: current.id, message: t('Metadata could not be completed.') })
     } finally {
-      setCompleting(false)
+      if (active()) setCompleting(false)
     }
   }
 
   return {
     mode,
+    editBase,
+    awaitingReload,
+    externallyUpdated,
+    reloadSaved,
+    loadLatest: () => {
+      setEditBase(controller.getSnapshot().item)
+      setError(undefined)
+    },
     changeMode,
     saving,
     error,

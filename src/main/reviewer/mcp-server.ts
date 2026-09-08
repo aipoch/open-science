@@ -509,7 +509,7 @@ export class ReviewerMcpServer {
         log.error('reviewer MCP request failed', { error })
         if (!res.headersSent) {
           res.writeHead(500, { 'content-type': 'application/json' })
-          res.end(JSON.stringify({ error: toErrorMessage(error) }))
+          res.end(JSON.stringify({ error: 'Internal reviewer request failure.' }))
         } else {
           res.destroy(error instanceof Error ? error : undefined)
         }
@@ -1044,7 +1044,11 @@ export class ReviewerMcpServer {
           res.once('finish', () => req.destroy())
         }
         res.writeHead(exceeded ? 413 : 400, { 'content-type': 'application/json' })
-        res.end(JSON.stringify({ error: toErrorMessage(error) }))
+        res.end(
+          JSON.stringify({
+            error: exceeded ? 'Request body exceeds the size limit.' : 'Invalid JSON body'
+          })
+        )
         return
       }
     }

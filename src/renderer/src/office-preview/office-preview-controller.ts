@@ -41,6 +41,8 @@ const connectOfficePreviewRuntime = (
           container: options.container,
           fetchFile: fetch,
           reportState: (state) => {
+            if (disconnected || currentGeneration !== generation) return
+            if (state.phase === 'error') options.container.dataset.officePreviewReady = 'false'
             if (state.phase === 'ready') options.container.dataset.officePreviewReady = 'true'
             options.bridge.reportState(state)
           }

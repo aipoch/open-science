@@ -118,6 +118,7 @@ const mocks = vi.hoisted(() => {
       persistenceBlockedSessionIds: [] as string[],
       reportSessionSizeLimit: vi.fn(),
       dismissLoadWarning: vi.fn(),
+      dismissWriteWarning: vi.fn(),
       startNewConversationAfterSizeLimit: vi.fn(),
       retryLoad: vi.fn(),
       retryWrites: vi.fn()
@@ -488,6 +489,7 @@ describe('App startup routing', () => {
     mocks.update.status.state = 'idle'
     mocks.update.closeDialog.mockClear()
     mocks.sessionPersistence.dismissLoadWarning.mockClear()
+    mocks.sessionPersistence.dismissWriteWarning.mockClear()
     mocks.sessionPersistence.startNewConversationAfterSizeLimit.mockClear()
     mocks.sessionPersistence.retryLoad.mockClear()
     mocks.sessionPersistence.retryWrites.mockClear()
@@ -737,6 +739,34 @@ describe('App startup routing', () => {
     })
     expect(document.querySelector('[data-testid="global-search"]')).toBeNull()
   })
+
+  it.each(['metaKey', 'ctrlKey'] as const)(
+    'ignores repeated global search shortcuts with %s and permits a fresh press',
+    async (modifier) => {
+      mocks.settings.isLoaded = true
+      await render()
+      const press = async (repeat: boolean): Promise<void> => {
+        await act(async () => {
+          window.dispatchEvent(
+            new KeyboardEvent('keydown', {
+              key: 'k',
+              [modifier]: true,
+              repeat,
+              cancelable: true
+            })
+          )
+        })
+      }
+      await press(false)
+      expect(document.querySelector('[data-testid="global-search"]')).not.toBeNull()
+      for (let index = 0; index < 2; index++) {
+        await press(true)
+        expect(document.querySelector('[data-testid="global-search"]')).not.toBeNull()
+      }
+      await press(false)
+      expect(document.querySelector('[data-testid="global-search"]')).toBeNull()
+    }
+  )
 
   it('opens global search without rerendering the active Literature library page', async () => {
     mocks.settings.isLoaded = true
@@ -1466,6 +1496,9 @@ describe('App startup routing', () => {
       'Open Science could not save the latest conversation changes. Retry before closing the app.'
     )
     expect(alert?.textContent).not.toContain('could not confirm')
+    expect(alert?.querySelector('[data-testid="session-persistence-dismiss"]')).not.toBeNull()
+    alert?.querySelector<HTMLButtonElement>('[data-testid="session-persistence-dismiss"]')?.click()
+    expect(mocks.sessionPersistence.dismissWriteWarning).toHaveBeenCalledOnce()
 
     container.querySelector<HTMLButtonElement>('[data-testid="session-persistence-retry"]')?.click()
     expect(mocks.sessionPersistence.retryWrites).toHaveBeenCalledOnce()
@@ -1484,6 +1517,7 @@ describe('App startup routing', () => {
     const alert = container.querySelector('[data-testid="session-persistence-alert"]')
     expect(alert?.textContent).toContain('Conversation storage limit reached')
     expect(container.querySelector('[data-testid="session-persistence-retry"]')).toBeNull()
+    expect(alert?.querySelector('[data-testid="session-persistence-dismiss"]')).toBeNull()
 
     container
       .querySelector<HTMLButtonElement>('[data-testid="session-persistence-action"]')

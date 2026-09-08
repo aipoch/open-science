@@ -226,6 +226,15 @@ const createAppWindow = (options: BrowserWindowConstructorOptions): BrowserWindo
     }
   )
   window.webContents.on(
+    'did-navigate-in-page',
+    (_event, url, _isMainFrame, processId, routingId) => {
+      sourcePreviewLoadMonitor.navigateInPage(
+        webFrameMain.fromId(processId, routingId) ?? { processId, routingId },
+        url
+      )
+    }
+  )
+  window.webContents.on(
     'did-frame-navigate',
     (_event, url, httpResponseCode, httpStatusText, _isMainFrame, processId, routingId) => {
       sourcePreviewLoadMonitor.finishNavigation(

@@ -8,7 +8,11 @@ import type { PreviewFileSource } from '@/stores/preview-workbench-store'
 
 import { PreviewErrorCard, PreviewLoadingContent } from '../PreviewFallback'
 import { usePreviewResourceKey } from '../usePreviewResourceGeneration'
-import { DEFAULT_TIFF_PREVIEW_LIMITS, type DecodedTiffPage } from '../tiff-preview-types'
+import {
+  DEFAULT_TIFF_PREVIEW_LIMITS,
+  TiffPageDecodeError,
+  type DecodedTiffPage
+} from '../tiff-preview-types'
 import { createTiffDecodeSession, type TiffDecodeSession } from '../tiff-preview-worker-client'
 import type { PreviewFileRendererProps } from '../preview-types'
 import { useManagedPreviewResource } from '../useManagedPreviewResource'
@@ -151,7 +155,6 @@ const TiffPreviewContent = ({
   const resourceEnabled =
     resourceAdmission.resourceKey === resourceKey ? resourceAdmission.enabled : true
   const sessionCacheRef = useRef<CachedTiffSession | null>(null)
-  const lastDecodedPageRef = useRef<{ resourceKey: string; pageCount: number } | null>(null)
   const resourceState = useManagedPreviewResource(
     {
       projectId,
@@ -184,7 +187,6 @@ const TiffPreviewContent = ({
   )
 
   useEffect(() => {
-    lastDecodedPageRef.current = null
     return () => {
       sessionCacheRef.current?.session.dispose()
       sessionCacheRef.current = null
@@ -197,7 +199,6 @@ const TiffPreviewContent = ({
     const resource = resourceState.resource
     const controller = new AbortController()
     const dataKey = `${resourceKey}:${resource.id}:${resource.version}`
-    let decodeStarted = false
 
     void Promise.resolve()
       .then(async () => {
@@ -227,12 +228,10 @@ const TiffPreviewContent = ({
           session = createTiffDecodeSession(data)
           sessionCacheRef.current = { resourceKey: dataKey, session }
         }
-        decodeStarted = true
         return session.decodePage(pageIndex, controller.signal)
       })
       .then((page) => {
         if (!controller.signal.aborted) {
-          lastDecodedPageRef.current = { resourceKey, pageCount: page.pageCount }
           setResult({ requestKey, status: 'ready', page })
         }
       })
@@ -241,14 +240,13 @@ const TiffPreviewContent = ({
         sessionCacheRef.current?.session.dispose()
         sessionCacheRef.current = null
         const normalizedError = error instanceof Error ? error : new Error(String(error))
-        const lastDecodedPage = lastDecodedPageRef.current
-        if (decodeStarted && lastDecodedPage?.resourceKey === resourceKey) {
+        if (normalizedError instanceof TiffPageDecodeError) {
           setResult({
             scope: 'page',
             requestKey,
             status: 'error',
             error: normalizedError,
-            pageCount: lastDecodedPage.pageCount
+            pageCount: normalizedError.pageCount
           })
           return
         }
@@ -334,6 +332,15 @@ const TiffPreviewContent = ({
 
   return (
     <div className="relative size-full overflow-hidden p-4">
+      {result.page.displayRange ? (
+        <div className="absolute left-4 top-4 z-10 rounded-md bg-background/90 px-2 py-1 text-xs text-muted-foreground">
+          {result.page.autoContrast ? t('Automatic contrast') : t('Display range')}
+          {': '}
+          {result.page.displayRange.minimum}
+          {' – '}
+          {result.page.displayRange.maximum}
+        </div>
+      ) : null}
       <ZoomablePreview>
         <TiffCanvas page={result.page} name={name} onError={handleDrawError} />
       </ZoomablePreview>

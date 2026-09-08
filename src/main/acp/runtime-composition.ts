@@ -410,6 +410,7 @@ const createAcpRuntime = ({
                         literaturePdfAcquisition.acquire({
                           candidate: request.candidate,
                           pdfUrl: request.pdfUrl,
+                          signal: request.signal,
                           origin: {
                             kind: 'agent',
                             projectId: request.projectId,

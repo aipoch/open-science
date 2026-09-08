@@ -2,6 +2,7 @@ import { useCallback, useMemo } from 'react'
 
 import type { AcpSessionAgentTarget } from '../../../../shared/acp'
 import { buildConfiguredModelCatalog } from '../../../../shared/configured-model-catalog'
+import { resolveProviderEffectiveModel } from '../../../../shared/provider-reasoning-effort'
 import { resolveModelContextWindow } from '../../../../shared/provider-registry'
 import type { SessionAgentConfiguration } from '../../../../shared/settings'
 import { useSessionStore } from '../../stores/session-store'
@@ -82,7 +83,7 @@ const useWorkspaceRuntimeSelectionOwner = (): {
       const provider = configuration
         ? providers.find((candidate) => candidate.id === configuration.providerId)
         : activeProvider
-      const model = configuration?.model ?? provider?.model ?? provider?.models[0]
+      const model = configuration?.model ?? resolveProviderEffectiveModel(provider, undefined)
       const modelOption = configuredModelCatalog.find(
         (option) => option.providerId === provider?.id && option.model === (model ?? '')
       )
@@ -121,6 +122,7 @@ const useWorkspaceRuntimeSelectionOwner = (): {
         .sessions.find((candidate) => candidate.id === sessionId)
       if (!session) return undefined
       return resolveSessionAgentConfiguration({
+        providers,
         session,
         catalog: configuredModelCatalog,
         activeProviderId: activeProvider?.id,
@@ -128,7 +130,7 @@ const useWorkspaceRuntimeSelectionOwner = (): {
         activeReasoningEffort: reasoningEffort
       })
     },
-    [activeModel, activeProvider, configuredModelCatalog, reasoningEffort]
+    [activeModel, activeProvider, configuredModelCatalog, reasoningEffort, providers]
   )
   const resolveStoredSessionConfiguration = useCallback(
     (sessionId: string | undefined): SessionAgentConfiguration | undefined =>
@@ -173,7 +175,7 @@ const useWorkspaceRuntimeSelectionOwner = (): {
         ? undefined
         : resolveStoredSessionResolution(input.sessionId)
       const agentConfiguration = input.agentConfiguration
-        ? isConfigurationSelectable(input.agentConfiguration, configuredModelCatalog)
+        ? isConfigurationSelectable(input.agentConfiguration, configuredModelCatalog, providers)
           ? input.agentConfiguration
           : undefined
         : storedResolution?.status === 'ready'
@@ -185,7 +187,7 @@ const useWorkspaceRuntimeSelectionOwner = (): {
       }
       return agentConfiguration
     },
-    [agentFrameworkId, configuredModelCatalog, resolveStoredSessionResolution]
+    [agentFrameworkId, configuredModelCatalog, resolveStoredSessionResolution, providers]
   )
 
   return {

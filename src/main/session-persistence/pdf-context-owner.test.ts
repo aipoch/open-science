@@ -1,7 +1,12 @@
+import type { PrismaClient } from '@prisma/client'
+import { LiteratureAttachmentAuthority } from '../literature/attachment-authority'
 import { describe, expect, it, vi, type Mock } from 'vitest'
 
 import type { NotebookRunInputFile } from '../../shared/notebook'
-import type { SessionRuntimeContext } from '../../shared/session-persistence'
+import {
+  sessionApplicationCommandContracts,
+  type SessionRuntimeContext
+} from '../../shared/session-persistence'
 import { ImmutableInputAuthority } from '../immutable-input-authority'
 import { SessionPdfSourceResolver } from '../literature/session-pdf-source-resolver'
 import { inspectPdfPageCount, MAX_AUTO_EXTRACT_PDF_BYTES } from '../uploads/attachment-media'
@@ -86,6 +91,92 @@ const setup = (resolved: NotebookRunInputFile | null = input): SessionPdfContext
 }
 
 describe('SessionPdfContextOwner', () => {
+  it.each(['missing', 'checksum-mismatch', 'authority-mismatch', 'database', 'storage'])(
+    'LR-02 isolates attachment failure but preserves service errors (%s)',
+    async (failure) => {
+      const findUnique = vi.fn(async ({ where: { id } }) => {
+        if (failure === 'database') throw new Error('database read failed')
+        return {
+          id,
+          attachmentId: id,
+          versionNumber: 1,
+          contentBlobId: id,
+          filename: `${id}.pdf`,
+          contentType: 'application/pdf',
+          sizeBytes: 42n,
+          checksum: id,
+          pageCount: 2,
+          attachment: { itemId: id, item: { deletedAt: null } },
+          contentBlob: { storageKey: id }
+        }
+      })
+      const verify = vi.fn(async (id: string) => {
+        if (failure === 'storage') throw new Error('storage offline')
+        if (id === 'bad' && (failure === 'missing' || failure === 'checksum-mismatch')) {
+          return { state: 'unavailable', reason: failure } as const
+        }
+        return {
+          state: 'available' as const,
+          content: {
+            id,
+            path: `/managed/${id}.pdf`,
+            storageKey: id,
+            checksum: id === 'bad' ? 'wrong-checksum' : id,
+            sizeBytes: 42n,
+            contentType: 'application/pdf'
+          }
+        }
+      })
+      const literature = new LiteratureAttachmentAuthority({
+        getClient: async () =>
+          ({ literatureAttachmentVersion: { findUnique } }) as unknown as PrismaClient,
+        content: { verify }
+      })
+      const owner = new SessionPdfContextOwner({
+        sources: new SessionPdfSourceResolver({
+          literature,
+          inputs: { resolveVersion: vi.fn(), openContent: vi.fn() }
+        }),
+        sessions: { readSessionRuntimeContext: vi.fn(), patchSessionRuntimeContext: vi.fn() }
+      })
+      const sources = ['bad', 'good'].map((sourceVersionId) => ({
+        sourceKind: 'literature-attachment-version' as const,
+        sourceVersionId
+      }))
+      const result = owner
+        .filterCandidates({ projectId: 'project-1', sources })
+        .then((result) =>
+          sessionApplicationCommandContracts.filterPdfContextCandidates.result.parse(result)
+        )
+      if (failure === 'database' || failure === 'storage') {
+        await expect(result).rejects.toThrow(
+          failure === 'database' ? 'database read failed' : 'storage offline'
+        )
+      } else {
+        await expect(result).resolves.toMatchObject({
+          sources: [sources[1]],
+          unavailableSources: [sources[0]]
+        })
+        expect(findUnique).toHaveBeenCalledTimes(2)
+      }
+    }
+  )
+
+  it('bounds and validates unavailable sources at the candidate result boundary', () => {
+    const parse = sessionApplicationCommandContracts.filterPdfContextCandidates.result.parse
+    const source = { sourceKind: 'literature-attachment-version', sourceVersionId: 'missing' }
+    const result = { sources: [], pendingAttachmentIds: [] }
+    expect(parse(result)).toEqual(result)
+    expect(parse({ ...result, unavailableSources: Array(100).fill(source) })).toHaveProperty(
+      'unavailableSources.length',
+      100
+    )
+    expect(() => parse({ ...result, unavailableSources: Array(101).fill(source) })).toThrow()
+    expect(() =>
+      parse({ ...result, unavailableSources: [{ ...source, sourceVersionId: '' }] })
+    ).toThrow()
+  })
+
   it('filters PDF context candidates to multi-page immutable Versions', async () => {
     const harness = setup()
     harness.resolveVersion.mockImplementation(async ({ inputFileVersionId }) =>
@@ -128,7 +219,10 @@ describe('SessionPdfContextOwner', () => {
           sourceVersionId: 'multi-page'
         }
       ],
-      pendingAttachmentIds: []
+      pendingAttachmentIds: [],
+      unavailableSources: [
+        { sourceKind: 'artifact-version', sourceFileId: 'missing', sourceVersionId: 'missing' }
+      ]
     })
   })
 
@@ -156,6 +250,49 @@ describe('SessionPdfContextOwner', () => {
         ]
       })
     ).resolves.toEqual({ sources: [], pendingAttachmentIds: ['multi-page'] })
+  })
+
+  it('rejects a literature source removed after inspection but before the binding is persisted', async () => {
+    const resolveVersion = vi
+      .fn()
+      .mockResolvedValueOnce({
+        sourceKind: 'literature-attachment-version',
+        sourceFileId: 'attachment',
+        sourceVersionId: 'version',
+        filename: 'paper.pdf',
+        contentType: 'application/pdf',
+        sizeBytes: 42,
+        checksum: 'a'.repeat(64),
+        path: '/managed/paper.pdf'
+      })
+      .mockResolvedValue(undefined)
+    const persist = vi.fn()
+    const owner = new SessionPdfContextOwner({
+      sources: { resolveVersion },
+      sessions: {
+        readSessionRuntimeContext: async () => ({ version: 1, revision: 0 }),
+        patchSessionRuntimeContext: async (request) => {
+          await request.beforePersist?.()
+          persist()
+          return { version: 1, revision: 1, ...request.patch }
+        }
+      }
+    })
+    await expect(
+      owner.link({
+        projectId: 'project',
+        sessionId: 'session',
+        expectedRevision: 0,
+        sources: [
+          {
+            sourceKind: 'literature-attachment-version',
+            sourceFileId: 'attachment',
+            sourceVersionId: 'version'
+          }
+        ]
+      })
+    ).rejects.toThrow('unavailable')
+    expect(persist).not.toHaveBeenCalled()
   })
 
   it('resolves immutable bytes before installing one revision-fenced PDF binding', async () => {

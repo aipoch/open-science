@@ -1,5 +1,5 @@
 import { spawnSync } from 'node:child_process'
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { readFileSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -68,3 +68,38 @@ describe('Electron Playwright concurrency', () => {
     }
   )
 })
+
+it('partitions the selected Electron suites across three shards without losing or repeating tests', () => {
+  const collect = (files: string[], shard?: string): string[] => {
+    const run = spawnSync(
+      process.execPath,
+      [
+        require.resolve('@playwright/test/cli'),
+        'test',
+        '--list',
+        '--reporter=json',
+        '--fully-parallel',
+        ...(shard ? [`--shard=${shard}`] : []),
+        ...files
+      ],
+      { encoding: 'utf8', timeout: 20_000 }
+    )
+    expect(run.status, run.stderr).toBe(0)
+    const report = JSON.parse(run.stdout) as JSONReport
+    const visit = (suites: JSONReport['suites']): string[] =>
+      suites.flatMap((suite) => [
+        ...suite.specs.map((spec) => spec.id),
+        ...visit(suite.suites ?? [])
+      ])
+    return visit(report.suites)
+  }
+  const scripts = JSON.parse(readFileSync('package.json', 'utf8')).scripts
+  for (const command of ['test:e2e:journey', 'test:e2e:workspace']) {
+    const files = scripts[command].split(' ').slice(2)
+    const expected = collect(files)
+    expect(expected.length).toBeGreaterThan(0)
+    const actual = [1, 2, 3].flatMap((index) => collect(files, `${index}/3`))
+    expect(new Set(actual).size).toBe(actual.length)
+    expect(actual.sort()).toEqual(expected.sort())
+  }
+}, 90_000)

@@ -90,6 +90,8 @@ describe('Host SDK help', () => {
     expect(help).toMatchObject({
       kind: 'operation',
       id: 'host.viewImage',
+      backgroundSafety: 'unsafe',
+      backgroundSafetyReason: expect.stringMatching(/foreground/u),
       availability: { status: 'available' },
       callForms: [{ signature: 'await host.viewImage(source, options?)' }]
     })
@@ -147,6 +149,7 @@ describe('Host SDK help', () => {
     expect(help).toMatchObject({
       kind: 'operation',
       id: 'host.llm',
+      backgroundSafety: 'safe',
       availability: { status: 'available' },
       callForms: [{ signature: 'await host.llm(request, options?)' }]
     })

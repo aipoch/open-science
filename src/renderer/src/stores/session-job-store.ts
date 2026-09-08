@@ -54,6 +54,7 @@ const mergeJob = (existing: JobSummary | undefined, incoming: JobSummary): JobSu
 
   return {
     ...base,
+    result_delivery_path: existing.result_delivery_path ?? incoming.result_delivery_path,
     notified_at: mergeTimestamp(existing.notified_at, incoming.notified_at),
     notification_consumed_at: mergeTimestamp(
       existing.notification_consumed_at,

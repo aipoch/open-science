@@ -26,6 +26,7 @@ const createRuntime = (
   overrides: Partial<NotebookCommandRuntime> = {}
 ): NotebookCommandRuntime => ({
   state: unavailable('state'),
+  getProjectActivity: vi.fn(() => ({ kernels: [], backgroundRuns: [] })),
   inspectNamespace: unavailable('inspectNamespace'),
   getSessionReference: unavailable('getSessionReference'),
   beginCodeCell: unavailable('beginCodeCell'),
@@ -38,6 +39,8 @@ const createRuntime = (
   exportIpynbAll: unavailable('exportIpynbAll'),
   restart: unavailable('restart'),
   shutdown: unavailable('shutdown'),
+  getBackgroundRun: unavailable('getBackgroundRun'),
+  cancelBackgroundRun: unavailable('cancelBackgroundRun'),
   ...overrides
 })
 
@@ -61,6 +64,21 @@ const runSummary = (runId: string): NotebookRunSummary => ({
 })
 
 describe('Notebook command workflows', () => {
+  it('reads in-memory Project activity while data-root writes are blocked', async () => {
+    const getProjectActivity = vi.fn<NotebookCommandRuntime['getProjectActivity']>(() => ({
+      kernels: [],
+      backgroundRuns: []
+    }))
+    const workflows = createNotebookCommandWorkflows(createRuntime({ getProjectActivity }))
+    beginMigration()
+
+    await expect(workflows.projectActivity({ projectId: 'project-1' })).resolves.toEqual({
+      kernels: [],
+      backgroundRuns: []
+    })
+    expect(getProjectActivity).toHaveBeenCalledWith({ projectId: 'project-1' })
+  })
+
   it('waits for missing-root acceptance before state inspection can create a session', async () => {
     const state = vi.fn<NotebookCommandRuntime['state']>().mockResolvedValue({} as never)
     const inspectNamespace = vi

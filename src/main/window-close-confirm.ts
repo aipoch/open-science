@@ -1,9 +1,16 @@
-import { BrowserWindow, dialog, ipcMain } from 'electron'
+import {
+  BrowserWindow,
+  dialog,
+  ipcMain,
+  type IpcMainEvent,
+  type WebContentsDidStartNavigationEventParams
+} from 'electron'
 import { randomUUID } from 'node:crypto'
 
 import { hasDelegatedActiveSession, type ActiveSessionInfo } from '../shared/storage'
 import { englishNativeTranslator, type NativeTranslator } from './locale/main-process-messages'
 import {
+  WINDOW_CLOSE_CONFIRM_DISMISS_CHANNEL,
   WINDOW_CLOSE_CONFIRM_REQUEST_CHANNEL,
   WINDOW_CLOSE_CONFIRM_RESPONSE_CHANNEL,
   type CloseActionPreference,
@@ -29,6 +36,10 @@ export type CloseConfirmDeps = {
   isRendererAvailable: () => boolean
   // Subscribe to render-process-gone for the confirm window; returns an unsubscribe.
   onRenderGone: (cb: () => void) => () => void
+  // Destruction or cross-document main-frame navigation invalidates this page's request.
+  onPageLost?: (cb: () => void) => () => void
+  // Withdraw only this request from the renderer, including when native UI takes ownership.
+  dismiss?: (requestId: string) => void
   // Subscribe to the confirm window's paired 'unresponsive'/'responsive' events; returns an
   // unsubscribe. Lets the coordinator fall back only on a SUSTAINED hang (renderer alive but wedged,
   // so render-process-gone never fires), never on a slow-but-alive renderer. Optional: absent in
@@ -118,6 +129,14 @@ export const createCloseConfirm = (
       let fallbackStarted = false
       let hangTimer: ReturnType<typeof setTimeout> | undefined
 
+      const dismiss = (): void => {
+        try {
+          deps.dismiss?.(requestId)
+        } catch {
+          // A disappearing renderer must not retain the confirmation lock.
+        }
+      }
+
       const finish = (choice: CloseConfirmChoice, remember = false): void => {
         if (settled) return
         settled = true
@@ -126,25 +145,24 @@ export const createCloseConfirm = (
         offResponse()
         offGone()
         offHang?.()
+        offPageLost?.()
+        dismiss()
         const enforcedChoice = enforceDelegatedBlock(choice)
         void persistPreference(enforcedChoice, remember).then(() => resolve(enforcedChoice))
       }
 
-      // Known limitation (cosmetic): when a fallback settles the confirm, a modal the renderer had
-      // already shown (ack path) stays on screen. A late click on it is dropped — the response
-      // listener is removed and `settled` guards it — so it merely closes locally with no effect.
-      // Fully dismissing it would need a main->renderer dismiss message; not worth the protocol
-      // surface for a rare hang/timeout case.
+      // Native UI owns the decision as soon as fallback starts, even if the renderer recovers.
       const startFallback = (): void => {
-        if (fallbackStarted) return
+        if (settled || fallbackStarted) return
         fallbackStarted = true
         clearTimeout(ackTimer)
         clearTimeout(hangTimer)
+        dismiss()
         void safeFallback().then(finish)
       }
 
       const offResponse = deps.onResponse((payload) => {
-        if (payload.requestId !== requestId) return
+        if (settled || fallbackStarted || payload.requestId !== requestId) return
         if (payload.ack) {
           acked = true
           clearTimeout(ackTimer)
@@ -154,18 +172,24 @@ export const createCloseConfirm = (
       })
 
       const offGone = deps.onRenderGone(startFallback)
+      const offPageLost = deps.onPageLost?.(() => {
+        // Once a native dialog is open, page navigation no longer owns its decision.
+        if (!fallbackStarted) finish('cancel')
+      })
 
       // A sustained hang AFTER ack: the pre-ack window is already covered by ackTimer, and the modal
       // legitimately waits on the user, so only arm the grace timer once the renderer actually reports
-      // 'unresponsive'; a paired 'responsive' cancels it. This chain is deliberately separate from
-      // onRenderGone: a crash/reload never emits 'responsive' (recovery is same-process only), so a
-      // reloaded renderer is covered by render-process-gone -> startFallback, not by this timer.
+      // 'unresponsive'; a paired 'responsive' cancels it. Crashes use onRenderGone; reloads and
+      // normal destruction use onPageLost, independently of this timer.
       const offHang = deps.onRendererUnresponsive?.({
         onHang: () => {
-          if (!acked || settled) return
+          if (!acked || settled || fallbackStarted || hangTimer !== undefined) return
           hangTimer = setTimeout(startFallback, hangGraceMs)
         },
-        onRecover: () => clearTimeout(hangTimer)
+        onRecover: () => {
+          clearTimeout(hangTimer)
+          hangTimer = undefined
+        }
       })
 
       const ackTimer = setTimeout(() => {
@@ -258,54 +282,75 @@ const nativeFallback = async (
 
 // Wires createCloseConfirm to Electron IPC + the current main window (via getWindow, since the window
 // can be recreated). Response listeners are per-confirm and removed when it settles.
-export const createElectronCloseConfirm = (
-  getWindow: () => BrowserWindow | undefined,
-  preferences: ClosePreferenceAccess,
-  translate: NativeTranslator = englishNativeTranslator
-): ((
-  variant: CloseConfirmVariant,
-  sessions: ActiveSessionInfo[],
-  unlistedWorkActive?: boolean
-) => Promise<CloseConfirmChoice>) =>
-  createCloseConfirm({
-    // Reveal the window before asking: a tray/Ctrl+Q quit can arrive while the window is hidden
-    // (minimized to tray), and a modal sent to a hidden window would never be seen — leaving the
-    // confirm (and thus the quit) stuck. Restoring/showing/focusing guarantees the modal is visible.
-    send: (payload) => {
-      const window = getWindow()
-      if (!window || window.isDestroyed()) return
-      if (window.isMinimized()) window.restore()
-      if (!window.isVisible()) window.show()
-      window.focus()
-      window.webContents.send(WINDOW_CLOSE_CONFIRM_REQUEST_CHANNEL, payload)
-    },
-    onResponse: (cb) => {
-      const listener = (_event: unknown, payload: CloseConfirmResponse): void => cb(payload)
-      ipcMain.on(WINDOW_CLOSE_CONFIRM_RESPONSE_CHANNEL, listener)
-      return () => ipcMain.removeListener(WINDOW_CLOSE_CONFIRM_RESPONSE_CHANNEL, listener)
-    },
-    isRendererAvailable: () => {
-      const window = getWindow()
-      return Boolean(window && !window.isDestroyed() && !window.webContents.isDestroyed())
-    },
-    onRenderGone: (cb) => {
-      const window = getWindow()
-      if (!window) return () => undefined
-      window.webContents.on('render-process-gone', cb)
-      return () => window.webContents.off('render-process-gone', cb)
-    },
-    onRendererUnresponsive: ({ onHang, onRecover }) => {
-      const window = getWindow()
-      if (!window) return () => undefined
-      window.webContents.on('unresponsive', onHang)
-      window.webContents.on('responsive', onRecover)
-      return () => {
-        window.webContents.off('unresponsive', onHang)
-        window.webContents.off('responsive', onRecover)
-      }
-    },
-    nativeFallback: (variant, sessions) => nativeFallback(getWindow, variant, sessions, translate),
-    getClosePreference: preferences.get,
-    setClosePreference: preferences.set,
-    newRequestId: () => randomUUID()
-  })
+export const createElectronCloseConfirm =
+  (
+    getWindow: () => BrowserWindow | undefined,
+    preferences: ClosePreferenceAccess,
+    translate: NativeTranslator = englishNativeTranslator
+  ): ((
+    variant: CloseConfirmVariant,
+    sessions: ActiveSessionInfo[],
+    unlistedWorkActive?: boolean
+  ) => Promise<CloseConfirmChoice>) =>
+  (variant, sessions, unlistedWorkActive) => {
+    const window = getWindow()
+    const webContents = window?.webContents
+    return createCloseConfirm({
+      // Reveal the window before asking: a tray/Ctrl+Q quit can arrive while the window is hidden
+      // (minimized to tray), and a modal sent to a hidden window would never be seen — leaving the
+      // confirm (and thus the quit) stuck. Restoring/showing/focusing guarantees the modal is visible.
+      send: (payload) => {
+        if (!window || window.isDestroyed()) return
+        if (window.isMinimized()) window.restore()
+        if (!window.isVisible()) window.show()
+        window.focus()
+        window.webContents.send(WINDOW_CLOSE_CONFIRM_REQUEST_CHANNEL, payload)
+      },
+      onResponse: (cb) => {
+        const listener = (event: IpcMainEvent, payload: CloseConfirmResponse): void => {
+          if (event.sender === webContents) cb(payload)
+        }
+        ipcMain.on(WINDOW_CLOSE_CONFIRM_RESPONSE_CHANNEL, listener)
+        return () => ipcMain.removeListener(WINDOW_CLOSE_CONFIRM_RESPONSE_CHANNEL, listener)
+      },
+      isRendererAvailable: () => {
+        return Boolean(window && !window.isDestroyed() && !window.webContents.isDestroyed())
+      },
+      onRenderGone: (cb) => {
+        if (!window) return () => undefined
+        window.webContents.on('render-process-gone', cb)
+        return () => window.webContents.off('render-process-gone', cb)
+      },
+      onPageLost: (cb) => {
+        if (!webContents) return () => undefined
+        const onNavigation = (details: WebContentsDidStartNavigationEventParams): void => {
+          if (details.isMainFrame && !details.isSameDocument) cb()
+        }
+        webContents.on('destroyed', cb)
+        webContents.on('did-start-navigation', onNavigation)
+        return () => {
+          webContents.off('destroyed', cb)
+          webContents.off('did-start-navigation', onNavigation)
+        }
+      },
+      dismiss: (requestId) => {
+        if (webContents && !webContents.isDestroyed()) {
+          webContents.send(WINDOW_CLOSE_CONFIRM_DISMISS_CHANNEL, { requestId })
+        }
+      },
+      onRendererUnresponsive: ({ onHang, onRecover }) => {
+        if (!window) return () => undefined
+        window.webContents.on('unresponsive', onHang)
+        window.webContents.on('responsive', onRecover)
+        return () => {
+          window.webContents.off('unresponsive', onHang)
+          window.webContents.off('responsive', onRecover)
+        }
+      },
+      nativeFallback: (variant, sessions) =>
+        nativeFallback(() => window, variant, sessions, translate),
+      getClosePreference: preferences.get,
+      setClosePreference: preferences.set,
+      newRequestId: () => randomUUID()
+    })(variant, sessions, unlistedWorkActive)
+  }

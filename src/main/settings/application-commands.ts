@@ -49,6 +49,7 @@ import {
   readVisionModel
 } from './transport-validation'
 import type { AppearanceSettingsWorkflows } from './workflows/appearance'
+import type { RuntimeSettingsWorkflows } from './workflows/runtime'
 
 type CoreSettingsCommandStore = Pick<
   SettingsService,
@@ -400,6 +401,7 @@ const settingsCoreApplicationCommandGroup = defineApplicationCommandGroup('setti
 
 type CoreSettingsApplicationCommandDependencies = Readonly<{
   service: CoreSettingsCommandStore
+  runtime: Pick<RuntimeSettingsWorkflows, 'refreshProviderModels'>
   appearance: Pick<AppearanceSettingsWorkflows, 'setAppIconVariant'>
   snapshotCommits: SettingsSnapshotCommitOwner
   emitInstallEvent: (event: ClaudeInstallEvent) => void
@@ -501,7 +503,7 @@ const registerCoreSettingsApplicationCommands = (
       'settings:preview-skill-zip': ({ args }) => dependencies.service.previewSkillZip(args[0]),
       'settings:refresh-provider-models': ({ args }) =>
         dependencies.snapshotCommits.projectAfter(
-          dependencies.service.refreshProviderModels(args[0])
+          dependencies.runtime.refreshProviderModels(args[0])
         ),
       'settings:scan-repo-skills': ({ args }) => dependencies.service.scanRepoSkills(args[0]),
       'settings:save-github-token': ({ args, callerContext }) => {

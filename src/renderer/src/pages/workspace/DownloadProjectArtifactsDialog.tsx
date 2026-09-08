@@ -38,6 +38,10 @@ type FileGroup = {
   files: ProjectFileItem[]
 }
 
+type DownloadError =
+  | { kind: 'partial'; downloaded: number; total: number; failed: number }
+  | { kind: 'raw'; message: string }
+
 const EMPTY_FILES: ProjectFileItem[] = []
 
 const getFileType = (file: ProjectFileItem): string => {
@@ -50,12 +54,6 @@ const getFileType = (file: ProjectFileItem): string => {
 
 const getErrorMessage = (error: unknown): string =>
   error instanceof Error ? error.message : String(error)
-
-const projectFileKey = (file: Pick<ProjectFileItem, 'source' | 'sourceFileId'>): string =>
-  `${file.source}\u0000${file.sourceFileId}`
-
-const failedFileKey = (file: { source: ProjectFileItem['source']; fileId: string }): string =>
-  `${file.source}\u0000${file.fileId}`
 
 // Generated output is the primary product of a Project, so it leads; Uploads follow. Empty groups
 // are dropped entirely, and rows stay flat inside a group — no per-session nesting.
@@ -74,7 +72,7 @@ const DownloadProjectArtifactsDialog = ({
   const dialogProject = useRetainedDialogValue(project)
   const [settledFileList, setSettledFileList] = useState<SettledFileList>()
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
-  const [downloadError, setDownloadError] = useState<string>()
+  const [downloadError, setDownloadError] = useState<DownloadError>()
   const [isDownloading, setIsDownloading] = useState(false)
   const [retryVersion, setRetryVersion] = useState(0)
   const projectId = project?.id
@@ -90,7 +88,7 @@ const DownloadProjectArtifactsDialog = ({
 
     void listAllProjectFiles({
       getOverview: window.api.projectFiles.getOverview,
-      listFiles: window.api.projectFiles.listFiles,
+      readExportFiles: window.api.projectFiles.readExportFiles,
       repairIndex: window.api.projectFiles.repairIndex,
       projectId
     }).then(
@@ -175,20 +173,18 @@ const DownloadProjectArtifactsDialog = ({
       })
       if (!result.saved) return
       if (result.failures?.length) {
-        const failedKeys = new Set(result.failures.map(failedFileKey))
-        setSelectedIds(
-          new Set(
-            files.filter((file) => failedKeys.has(projectFileKey(file))).map((file) => file.id)
-          )
-        )
-        setDownloadError(
-          `Downloaded ${selectedFiles.length - result.failures.length} of ${selectedFiles.length} artifacts. ${result.failures.length} failed.`
-        )
+        // A retry replaces the whole ZIP, so retain successful files in the selection too.
+        setDownloadError({
+          kind: 'partial',
+          downloaded: selectedFiles.length - result.failures.length,
+          total: selectedFiles.length,
+          failed: result.failures.length
+        })
         return
       }
       onClose()
     } catch (error) {
-      setDownloadError(getErrorMessage(error))
+      setDownloadError({ kind: 'raw', message: getErrorMessage(error) })
     } finally {
       setIsDownloading(false)
       onDownloadingChange?.(false)
@@ -326,7 +322,12 @@ const DownloadProjectArtifactsDialog = ({
             <div className="flex min-w-0 items-center gap-3">
               {status === 'ready' && downloadError ? (
                 <p role="alert" className="truncate text-xs text-danger-000">
-                  {downloadError}
+                  {downloadError.kind === 'partial'
+                    ? t(
+                        'Downloaded {{downloaded}} of {{total}} artifacts. {{failed}} failed.',
+                        downloadError
+                      )
+                    : downloadError.message}
                 </p>
               ) : null}
               <Button

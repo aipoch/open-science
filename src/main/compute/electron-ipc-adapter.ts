@@ -113,7 +113,8 @@ const computeApprovalResponseSchema = z
 
 const computeJobsListFilterSchema = z.union([
   z.object({ sessionId: z.string(), status: stringArraySchema.optional() }).strict(),
-  z.object({ nonTerminal: z.literal(true) }).strict()
+  z.object({ nonTerminal: z.literal(true) }).strict(),
+  z.object({ projectId: z.string(), since: finiteNumberSchema }).strict()
 ]) satisfies z.ZodType<ComputeJobsListFilter>
 
 const computeJobsPendingNotificationFilterSchema = z.union([

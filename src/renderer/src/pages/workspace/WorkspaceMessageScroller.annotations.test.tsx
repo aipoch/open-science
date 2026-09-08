@@ -429,11 +429,15 @@ describe('WorkspaceMessageScroller annotation prop sync', () => {
       container.querySelector<HTMLButtonElement>('[data-testid="tool-group-header"]')?.click()
     )
     await render([target, ...fillers])
-    expect(container.querySelector('[data-message-id="activity-group-target-group"]')).toBeNull()
+    expect(
+      container.querySelector('[data-message-id="activity-group-notebook-reveal-target"]')
+    ).toBeNull()
 
     await act(async () => requestAnnotationReveal(annotation))
 
-    const targetGroup = container.querySelector('[data-message-id="activity-group-target-group"]')!
+    const targetGroup = container.querySelector(
+      '[data-message-id="activity-group-notebook-reveal-target"]'
+    )!
     expect(
       targetGroup.querySelector('[data-testid="tool-group-header"]')?.getAttribute('aria-expanded')
     ).toBe('true')

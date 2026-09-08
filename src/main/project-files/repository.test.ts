@@ -1,3 +1,5 @@
+import { listAllSessionArtifacts } from '../../renderer/src/pages/workspace/session-artifact-download-data'
+import { listAllProjectFiles } from '../../renderer/src/pages/workspace/project-artifact-download-data'
 import { createHash } from 'node:crypto'
 import { mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -74,6 +76,179 @@ describe('ManagedFileIndexRepository', () => {
     await client.$disconnect()
     await rm(storageRoot, { recursive: true, force: true })
   }, WINDOWS_SQLITE_HOOK_TIMEOUT_MS)
+
+  it.each([
+    { source: 'upload', updateDuringRead: false },
+    { source: 'upload', updateDuringRead: true },
+    { source: 'artifact', updateDuringRead: false },
+    { source: 'artifact', updateDuringRead: true }
+  ] as const)(
+    'keeps every $source export member and version when updating during read: $updateDuringRead',
+    async ({ source, updateDuringRead }) => {
+      await client.fileOriginSession.create({
+        data: { projectId: PROJECT_ID, sessionId: SESSION_ID }
+      })
+      const files = Array.from({ length: 101 }, (_, index) => ({
+        id: `export-${source}-${index}`,
+        filename: `file-${index}.txt`,
+        createdAt: new Date(1_710_000_000_000 + index * 1000)
+      }))
+      if (source === 'upload') {
+        await client.uploadFile.createMany({
+          data: files.map((file) => ({
+            id: file.id,
+            projectId: PROJECT_ID,
+            sessionId: SESSION_ID,
+            filename: file.filename,
+            originalFilename: file.filename
+          }))
+        })
+        await client.uploadVersion.createMany({
+          data: files.map((file) => ({
+            id: `${file.id}-v1`,
+            uploadFileId: file.id,
+            versionNumber: 1,
+            state: 'ready',
+            filename: file.filename,
+            originalFilename: file.filename,
+            contentStorageKey: `uploads/${file.id}/v1`,
+            sizeBytes: 1n,
+            checksum: 'a'.repeat(64),
+            createdAt: file.createdAt
+          }))
+        })
+        await client.$transaction(
+          files.map((file) =>
+            client.uploadFile.update({
+              where: { id: file.id },
+              data: { currentVersionId: `${file.id}-v1` }
+            })
+          )
+        )
+      } else {
+        await client.artifactLineage.createMany({
+          data: files.map((file) => ({
+            id: file.id,
+            projectId: PROJECT_ID,
+            sessionId: SESSION_ID,
+            filename: file.filename,
+            normalizedFilename: file.filename
+          }))
+        })
+        await client.artifactVersion.createMany({
+          data: files.map((file) => ({
+            id: `${file.id}-v1`,
+            artifactId: file.id,
+            versionNumber: 1,
+            state: 'finalized',
+            originKind: 'legacy',
+            filename: file.filename,
+            contentStorageKey: `artifacts/${file.id}/v1`,
+            sizeBytes: 1n,
+            checksum: 'a'.repeat(64),
+            createdAt: file.createdAt
+          }))
+        })
+        await client.$transaction(
+          files.map((file) =>
+            client.artifactLineage.update({
+              where: { id: file.id },
+              data: { currentVersionId: `${file.id}-v1` }
+            })
+          )
+        )
+      }
+      const promote = async (): Promise<void> => {
+        const version = {
+          id: `${files[0].id}-v2`,
+          versionNumber: 2,
+          originKind: 'user_edit',
+          basedOnVersionId: `${files[0].id}-v1`,
+          storageTag: 'v00000002',
+          storedFilename: 'v00000002_file-0.txt',
+          filename: files[0].filename,
+          contentStorageKey: `${source}/${files[0].id}/v2`,
+          sizeBytes: 1n,
+          checksum: 'b'.repeat(64),
+          createdAt: new Date(1_710_001_000_000)
+        }
+        if (source === 'upload') {
+          await client.uploadVersion.create({
+            data: {
+              ...version,
+              uploadFileId: files[0].id,
+              state: 'ready',
+              originalFilename: files[0].filename
+            }
+          })
+          await client.uploadFile.update({
+            where: { id: files[0].id },
+            data: { currentVersionId: version.id }
+          })
+        } else {
+          await client.artifactVersion.create({
+            data: { ...version, artifactId: files[0].id, state: 'finalized' }
+          })
+          await client.artifactLineage.update({
+            where: { id: files[0].id },
+            data: { currentVersionId: version.id }
+          })
+        }
+      }
+      // Let SQLite perform the real read, then publish a new head before the caller receives it.
+      // The old paginated collector loses file-0 when it moves ahead of the first page's cursor.
+      const queryRaw = client.$queryRaw.bind(client)
+      let promoted = false
+      const querySpy = vi.spyOn(client, '$queryRaw').mockImplementation((async (
+        query: TemplateStringsArray | Prisma.Sql,
+        ...values: unknown[]
+      ) => {
+        const rows = await queryRaw(query, ...values)
+        const sql = 'strings' in query ? query.strings.join('?') : query.join('?')
+        if (updateDuringRead && !promoted && sql.includes('SELECT file.*')) {
+          promoted = true
+          await promote()
+        }
+        return rows
+      }) as typeof client.$queryRaw)
+      try {
+        const options = {
+          projectId: PROJECT_ID,
+          getOverview: ({ projectId }: { projectId: string }) => repository.getOverview(projectId),
+          repairIndex: async () => {},
+          readExportFiles: (request: { projectId: string; sessionId?: string }) =>
+            repository.readExportFiles(request)
+        }
+        const collected =
+          source === 'upload'
+            ? await listAllProjectFiles(options)
+            : await listAllSessionArtifacts({ ...options, sessionId: SESSION_ID })
+        expect(promoted).toBe(updateDuringRead)
+        expect(collected.map((item) => item.sourceFileId).sort()).toEqual(
+          files.map((file) => file.id).sort()
+        )
+        expect(collected.find((item) => item.sourceFileId === files[0].id)?.sourceVersionId).toBe(
+          `${files[0].id}-v1`
+        )
+        const refreshed = await repository.readExportFiles({ projectId: PROJECT_ID })
+        expect(refreshed).toHaveLength(101)
+        expect(refreshed.find((item) => item.sourceFileId === files[0].id)?.sourceVersionId).toBe(
+          `${files[0].id}-${updateDuringRead ? 'v2' : 'v1'}`
+        )
+        if (source === 'upload') {
+          await expect(
+            repository.readExportFiles({ projectId: PROJECT_ID, sessionId: SESSION_ID })
+          ).resolves.toEqual([])
+        }
+        await expect(repository.readExportFiles({ projectId: 'project-b' })).resolves.toEqual([])
+        await expect(
+          repository.readExportFiles({ projectId: PROJECT_ID, sessionId: 'another-session' })
+        ).resolves.toEqual([])
+      } finally {
+        querySpy.mockRestore()
+      }
+    }
+  )
 
   it('adopts a path-only legacy Artifact into an immutable v1 before indexing it', async () => {
     const artifactPath = join(
@@ -3064,6 +3239,9 @@ describe('ManagedFileIndexRepository', () => {
     await expect(repository.syncSession(session)).resolves.toEqual([])
     expect((await repository.getOverview(PROJECT_ID)).isIndexComplete).toBe(false)
     expect((await repository.getOverview(PROJECT_ID)).totalCount).toBe(0)
+    await expect(repository.readExportFiles({ projectId: PROJECT_ID })).rejects.toThrow(
+      'could not be indexed'
+    )
 
     await writeManagedFile(missingPath, 'ready')
     await repository.syncSession(session)
@@ -3524,6 +3702,12 @@ describe('ManagedFileIndexRepository', () => {
   })
 
   it('rejects an empty session scope instead of returning every project artifact', async () => {
+    await expect(
+      repository.readExportFiles({ projectId: PROJECT_ID, sessionId: '' })
+    ).rejects.toThrow(/sessionId.*required/)
+    await expect(repository.readExportFiles({ projectId: '' })).rejects.toThrow(
+      /projectId.*required/
+    )
     await expect(
       repository.listFiles({
         projectId: PROJECT_ID,

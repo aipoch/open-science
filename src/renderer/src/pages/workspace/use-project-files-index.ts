@@ -133,6 +133,22 @@ const appendUnique = <Item>(
   return [...current, ...incoming.filter((item) => !ids.has(getId(item)))]
 }
 
+// Rebuild a previously loaded range using only fresh cursors. Callers retain the old snapshot until
+// every page succeeds, so a failed continuation never publishes a shortened or mixed collection.
+const readPageRange = async <Item>(
+  read: (cursor?: string) => Promise<{ items: Item[]; totalCount: number; nextCursor?: string }>,
+  minimumCount: number,
+  cursor?: string
+): Promise<{ items: Item[]; totalCount: number; nextCursor?: string }> => {
+  let page = await read(cursor)
+  const items = [...page.items]
+  while (page.nextCursor && items.length < minimumCount) {
+    page = await read(page.nextCursor)
+    items.push(...page.items)
+  }
+  return { ...page, items }
+}
+
 type InitialProjectFilesLoad = {
   projectId: string
   filenameContains?: string
@@ -248,6 +264,9 @@ const useProjectFilesIndex = (
   const [artifactsBySession, setArtifactsBySession] = useState<
     Record<string, PageState<ProjectFileItem> | undefined>
   >({})
+  // Event subscriptions read the last rendered range without resubscribing for every loaded page.
+  const pagesRef = useRef({ uploads, groups, artifactsBySession })
+  pagesRef.current = { uploads, groups, artifactsBySession }
   const [refreshVersion, setRefreshVersion] = useState(0)
   // generation invalidates the whole project view; the per-layer counters invalidate only one first
   // page. Per-session versions allow artifact requests for different groups to remain independent.
@@ -419,12 +438,8 @@ const useProjectFilesIndex = (
       if (!projectId || event.projectId !== projectId) return
 
       onChanged?.(event)
-      if (event.kind === 'reset' || (event.sources.includes('artifact') && !event.sessionId)) {
-        // Scope is unknown, so all three cursor layers must restart together.
-        generationRef.current += 1
-        setRefreshVersion((version) => version + 1)
-        return
-      }
+      const refreshAll =
+        event.kind === 'reset' || (event.sources.includes('artifact') && !event.sessionId)
 
       const generation = generationRef.current
       if (scopeKind === 'all') {
@@ -461,24 +476,36 @@ const useProjectFilesIndex = (
           })
       }
 
-      if (event.sources.includes('upload') && (scopeKind === 'all' || scopeKind === 'uploads')) {
-        // Upload mutations replace the first page and cursor. Appending here would retain deleted rows
-        // or preserve an order captured before the mutation.
+      if (
+        (refreshAll || event.sources.includes('upload')) &&
+        (scopeKind === 'all' || scopeKind === 'uploads')
+      ) {
+        // Rebuild the loaded upload range from a fresh cursor without hiding the previous snapshot.
         const uploadsRequest = ++uploadsRequestRef.current
         const requestKey = `${generation}:${uploadsRequest}:first`
         loadingUploadsRef.current = requestKey
-        setUploads({ ...emptyPage(), isLoading: true })
-        void requestLimiterRef
-          .current(() =>
-            generation === generationRef.current && uploadsRequest === uploadsRequestRef.current
-              ? window.api.projectFiles.listFiles({
-                  projectId,
-                  collection: { kind: 'uploads' },
-                  ...withProjectFilesSearch(filenameContains, excludedSessionIds),
-                  limit: FILE_PAGE_SIZE
-                })
-              : Promise.reject(new Error('Stale project files request.'))
-          )
+        setUploads((current) => ({
+          ...current,
+          nextCursor: undefined,
+          isLoading: true,
+          error: undefined,
+          failedCursor: undefined
+        }))
+        void readPageRange(
+          (cursor) =>
+            requestLimiterRef.current(() =>
+              generation === generationRef.current && uploadsRequest === uploadsRequestRef.current
+                ? window.api.projectFiles.listFiles({
+                    projectId,
+                    collection: { kind: 'uploads' },
+                    ...withProjectFilesSearch(filenameContains, excludedSessionIds),
+                    cursor,
+                    limit: FILE_PAGE_SIZE
+                  })
+                : Promise.reject(new Error('Stale project files request.'))
+            ),
+          pagesRef.current.uploads.items.length
+        )
           .then((page) => {
             if (
               generation !== generationRef.current ||
@@ -495,16 +522,21 @@ const useProjectFilesIndex = (
             ) {
               return
             }
-            setUploads({ ...emptyPage(), isLoaded: true, error: getErrorMessage(error) })
+            setUploads((current) => ({
+              ...current,
+              isLoading: false,
+              isLoaded: true,
+              error: getErrorMessage(error)
+            }))
           })
           .finally(() => {
             if (loadingUploadsRef.current === requestKey) loadingUploadsRef.current = undefined
           })
       }
 
-      if (event.sources.includes('artifact') && event.sessionId) {
+      if (refreshAll || (event.sources.includes('artifact') && event.sessionId)) {
         // The group list shares the same DB projection. Invalidate any page captured before this
-        // session mutation, then rebuild its first page and cursor from the updated projection.
+        // session mutation, then rebuild its loaded range from the updated projection.
         if (scopeKind === 'all' || scopeKind === 'artifactGroups') {
           const groupsRequest = ++groupsRequestRef.current
           const groupsRequestKey = `${generation}:${groupsRequest}:first`
@@ -516,16 +548,20 @@ const useProjectFilesIndex = (
             error: undefined,
             failedCursor: undefined
           }))
-          void requestLimiterRef
-            .current(() =>
-              generation === generationRef.current && groupsRequest === groupsRequestRef.current
-                ? window.api.projectFiles.listArtifactGroups({
-                    projectId,
-                    ...withProjectFilesSearch(filenameContains, excludedSessionIds),
-                    limit: GROUP_PAGE_SIZE
-                  })
-                : Promise.reject(new Error('Stale project files request.'))
-            )
+          void readPageRange(
+            (cursor) =>
+              requestLimiterRef.current(() =>
+                generation === generationRef.current && groupsRequest === groupsRequestRef.current
+                  ? window.api.projectFiles.listArtifactGroups({
+                      projectId,
+                      ...withProjectFilesSearch(filenameContains, excludedSessionIds),
+                      cursor,
+                      limit: GROUP_PAGE_SIZE
+                    })
+                  : Promise.reject(new Error('Stale project files request.'))
+              ),
+            pagesRef.current.groups.items.length
+          )
             .then((page) => {
               if (
                 generation !== generationRef.current ||
@@ -562,74 +598,96 @@ const useProjectFilesIndex = (
             })
         }
 
-        const sessionId = event.sessionId
-        if (
-          scopeKind === 'uploads' ||
-          scopeKind === 'artifactGroups' ||
-          (scopeKind === 'sessionArtifacts' && scopeSessionId !== sessionId)
-        ) {
-          return
-        }
-        // Session files refresh independently from the group list. Their response never edits group
-        // ordering; only listArtifactGroups owns groupSortAtMs ordering and its continuation cursor.
-        const artifactRequest = (artifactRequestVersionsRef.current.get(sessionId) ?? 0) + 1
-        artifactRequestVersionsRef.current.set(sessionId, artifactRequest)
-        const requestKey = `${generation}:${artifactRequest}:first`
-        loadingArtifactsRef.current.set(sessionId, requestKey)
-        setArtifactsBySession((current) => ({
-          ...current,
-          [sessionId]: { ...emptyPage(), isLoading: true }
-        }))
-        void requestLimiterRef
-          .current(() =>
-            generation === generationRef.current &&
-            artifactRequest === artifactRequestVersionsRef.current.get(sessionId)
-              ? window.api.projectFiles.listFiles({
-                  projectId,
-                  collection: { kind: 'sessionArtifacts', sessionId },
-                  ...withProjectFilesSearch(filenameContains, excludedSessionIds),
-                  limit: FILE_PAGE_SIZE
-                })
-              : Promise.reject(new Error('Stale project files request.'))
+        const sessionIds = refreshAll
+          ? [
+              ...new Set([
+                ...Object.keys(pagesRef.current.artifactsBySession),
+                // Requests register synchronously, before React commits their loading pages.
+                ...loadingArtifactsRef.current.keys(),
+                ...(scopeSessionId ? [scopeSessionId] : [])
+              ])
+            ]
+          : [event.sessionId!]
+        for (const sessionId of sessionIds) {
+          if (
+            scopeKind === 'uploads' ||
+            scopeKind === 'artifactGroups' ||
+            (scopeKind === 'sessionArtifacts' && scopeSessionId !== sessionId)
+          ) {
+            continue
+          }
+          // Session files refresh independently from the group list. Their response never edits group
+          // ordering; only listArtifactGroups owns groupSortAtMs ordering and its continuation cursor.
+          const artifactRequest = (artifactRequestVersionsRef.current.get(sessionId) ?? 0) + 1
+          artifactRequestVersionsRef.current.set(sessionId, artifactRequest)
+          const requestKey = `${generation}:${artifactRequest}:first`
+          loadingArtifactsRef.current.set(sessionId, requestKey)
+          setArtifactsBySession((current) => ({
+            ...current,
+            [sessionId]: {
+              ...(current[sessionId] ?? emptyPage()),
+              nextCursor: undefined,
+              isLoading: true,
+              error: undefined,
+              failedCursor: undefined
+            }
+          }))
+          void readPageRange(
+            (cursor) =>
+              requestLimiterRef.current(() =>
+                generation === generationRef.current &&
+                artifactRequest === artifactRequestVersionsRef.current.get(sessionId)
+                  ? window.api.projectFiles.listFiles({
+                      projectId,
+                      collection: { kind: 'sessionArtifacts', sessionId },
+                      ...withProjectFilesSearch(filenameContains, excludedSessionIds),
+                      cursor,
+                      limit: FILE_PAGE_SIZE
+                    })
+                  : Promise.reject(new Error('Stale project files request.'))
+              ),
+            pagesRef.current.artifactsBySession[sessionId]?.items.length ?? 0
           )
-          .then((page) => {
-            if (
-              generation !== generationRef.current ||
-              artifactRequest !== artifactRequestVersionsRef.current.get(sessionId)
-            ) {
-              return
-            }
-            setArtifactsBySession((current) => ({
-              ...current,
-              [sessionId]: {
-                ...page,
-                isLoading: false,
-                isLoaded: true,
-                failedCursor: undefined
+            .then((page) => {
+              if (
+                generation !== generationRef.current ||
+                artifactRequest !== artifactRequestVersionsRef.current.get(sessionId)
+              ) {
+                return
               }
-            }))
-          })
-          .catch((error: unknown) => {
-            if (
-              generation !== generationRef.current ||
-              artifactRequest !== artifactRequestVersionsRef.current.get(sessionId)
-            ) {
-              return
-            }
-            setArtifactsBySession((current) => ({
-              ...current,
-              [sessionId]: {
-                ...emptyPage(),
-                isLoaded: true,
-                error: getErrorMessage(error)
+              setArtifactsBySession((current) => ({
+                ...current,
+                [sessionId]: {
+                  ...page,
+                  isLoading: false,
+                  isLoaded: true,
+                  failedCursor: undefined
+                }
+              }))
+            })
+            .catch((error: unknown) => {
+              if (
+                generation !== generationRef.current ||
+                artifactRequest !== artifactRequestVersionsRef.current.get(sessionId)
+              ) {
+                return
               }
-            }))
-          })
-          .finally(() => {
-            if (loadingArtifactsRef.current.get(sessionId) === requestKey) {
-              loadingArtifactsRef.current.delete(sessionId)
-            }
-          })
+              setArtifactsBySession((current) => ({
+                ...current,
+                [sessionId]: {
+                  ...(current[sessionId] ?? emptyPage()),
+                  isLoading: false,
+                  isLoaded: true,
+                  error: getErrorMessage(error)
+                }
+              }))
+            })
+            .finally(() => {
+              if (loadingArtifactsRef.current.get(sessionId) === requestKey) {
+                loadingArtifactsRef.current.delete(sessionId)
+              }
+            })
+        }
       }
     },
     [excludedSessionIds, filenameContains, onChanged, projectId, scopeKind, scopeSessionId]
@@ -681,23 +739,28 @@ const useProjectFilesIndex = (
     setUploads((page) => ({ ...page, isLoading: true, error: undefined }))
 
     try {
-      const page = await requestLimiterRef.current(() =>
-        generation === generationRef.current
-          ? window.api.projectFiles.listFiles({
-              projectId,
-              collection: { kind: 'uploads' },
-              ...withProjectFilesSearch(filenameContains, excludedSessionIds),
-              cursor,
-              limit: FILE_PAGE_SIZE
-            })
-          : Promise.reject(new Error('Stale project files request.'))
+      const page = await readPageRange(
+        (nextCursor) =>
+          requestLimiterRef.current(() =>
+            generation === generationRef.current && uploadsRequest === uploadsRequestRef.current
+              ? window.api.projectFiles.listFiles({
+                  projectId,
+                  collection: { kind: 'uploads' },
+                  ...withProjectFilesSearch(filenameContains, excludedSessionIds),
+                  cursor: nextCursor,
+                  limit: FILE_PAGE_SIZE
+                })
+              : Promise.reject(new Error('Stale project files request.'))
+          ),
+        cursor ? 0 : uploads.items.length,
+        cursor
       )
       if (generation !== generationRef.current || uploadsRequest !== uploadsRequestRef.current) {
         return
       }
       setUploads((current) => ({
         ...page,
-        items: appendUnique(current.items, page.items, (item) => item.id),
+        items: cursor ? appendUnique(current.items, page.items, (item) => item.id) : page.items,
         isLoading: false,
         isLoaded: true,
         error: undefined,
@@ -736,15 +799,20 @@ const useProjectFilesIndex = (
     setGroups((page) => ({ ...page, isLoading: true, error: undefined }))
 
     try {
-      const page = await requestLimiterRef.current(() =>
-        generation === generationRef.current
-          ? window.api.projectFiles.listArtifactGroups({
-              projectId,
-              ...withProjectFilesSearch(filenameContains, excludedSessionIds),
-              cursor,
-              limit: GROUP_PAGE_SIZE
-            })
-          : Promise.reject(new Error('Stale project files request.'))
+      const page = await readPageRange(
+        (nextCursor) =>
+          requestLimiterRef.current(() =>
+            generation === generationRef.current && groupsRequest === groupsRequestRef.current
+              ? window.api.projectFiles.listArtifactGroups({
+                  projectId,
+                  ...withProjectFilesSearch(filenameContains, excludedSessionIds),
+                  cursor: nextCursor,
+                  limit: GROUP_PAGE_SIZE
+                })
+              : Promise.reject(new Error('Stale project files request.'))
+          ),
+        cursor ? 0 : groups.items.length,
+        cursor
       )
       if (generation !== generationRef.current || groupsRequest !== groupsRequestRef.current) return
       setGroups((current) => ({
@@ -795,16 +863,22 @@ const useProjectFilesIndex = (
       }))
 
       try {
-        const page = await requestLimiterRef.current(() =>
-          generation === generationRef.current
-            ? window.api.projectFiles.listFiles({
-                projectId,
-                collection: { kind: 'sessionArtifacts', sessionId },
-                ...withProjectFilesSearch(filenameContains, excludedSessionIds),
-                cursor,
-                limit: FILE_PAGE_SIZE
-              })
-            : Promise.reject(new Error('Stale project files request.'))
+        const page = await readPageRange(
+          (nextCursor) =>
+            requestLimiterRef.current(() =>
+              generation === generationRef.current &&
+              artifactRequest === (artifactRequestVersionsRef.current.get(sessionId) ?? 0)
+                ? window.api.projectFiles.listFiles({
+                    projectId,
+                    collection: { kind: 'sessionArtifacts', sessionId },
+                    ...withProjectFilesSearch(filenameContains, excludedSessionIds),
+                    cursor: nextCursor,
+                    limit: FILE_PAGE_SIZE
+                  })
+                : Promise.reject(new Error('Stale project files request.'))
+            ),
+          cursor ? 0 : (currentPage?.items.length ?? 0),
+          cursor
         )
         if (
           generation !== generationRef.current ||
@@ -816,7 +890,9 @@ const useProjectFilesIndex = (
           ...current,
           [sessionId]: {
             ...page,
-            items: appendUnique(current[sessionId]?.items ?? [], page.items, (item) => item.id),
+            items: cursor
+              ? appendUnique(current[sessionId]?.items ?? [], page.items, (item) => item.id)
+              : page.items,
             isLoading: false,
             isLoaded: true,
             error: undefined,

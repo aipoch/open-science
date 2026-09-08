@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 
 import { buildConfiguredModelCatalog } from '../../../../shared/configured-model-catalog'
+import { resolveProviderEffectiveModel } from '../../../../shared/provider-reasoning-effort'
 import type { SessionAgentConfiguration } from '../../../../shared/settings'
 import {
   isConfigurationSelectable,
@@ -62,14 +63,16 @@ const useWorkspaceSessionAgentConfiguration = (
         configuredModelCatalog,
         activeProviderId,
         activeModel,
-        activeReasoningEffort
+        activeReasoningEffort,
+        providers
       ),
-    [activeModel, activeProviderId, activeReasoningEffort, configuredModelCatalog]
+    [activeModel, activeProviderId, activeReasoningEffort, configuredModelCatalog, providers]
   )
   const sessionAgentConfiguration = useMemo(
     () =>
       activeSession
         ? resolveSessionAgentConfiguration({
+            providers,
             session: activeSession,
             catalog: configuredModelCatalog,
             activeProviderId,
@@ -77,7 +80,14 @@ const useWorkspaceSessionAgentConfiguration = (
             activeReasoningEffort
           })
         : undefined,
-    [activeModel, activeProviderId, activeReasoningEffort, activeSession, configuredModelCatalog]
+    [
+      activeModel,
+      activeProviderId,
+      activeReasoningEffort,
+      activeSession,
+      configuredModelCatalog,
+      providers
+    ]
   )
   useEffect(() => {
     if (
@@ -99,13 +109,17 @@ const useWorkspaceSessionAgentConfiguration = (
     : (newConversationAgentConfiguration ?? defaultAgentConfiguration)
   const agentConfigurationUnavailable = activeSession
     ? sessionAgentConfiguration?.status === 'unavailable'
-    : !isConfigurationSelectable(activeAgentConfiguration, configuredModelCatalog)
+    : !isConfigurationSelectable(activeAgentConfiguration, configuredModelCatalog, providers)
+  const effectiveModel =
+    activeAgentConfiguration?.model ??
+    resolveProviderEffectiveModel(
+      providers.find((provider) => provider.id === activeAgentConfiguration?.providerId),
+      undefined
+    )
   const activeModelOption = configuredModelCatalog.find(
     (option) =>
       option.providerId === activeAgentConfiguration?.providerId &&
-      (activeAgentConfiguration?.model === undefined
-        ? option.selectable
-        : option.model === activeAgentConfiguration.model)
+      (effectiveModel === undefined ? option.selectable : option.model === effectiveModel)
   )
   const supportsImageInput = activeModelOption?.supportsImageInput === true || visionRelayAvailable
   const changeAgentConfiguration = useCallback(

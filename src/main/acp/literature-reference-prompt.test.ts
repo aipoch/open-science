@@ -1,8 +1,33 @@
 import { describe, expect, it } from 'vitest'
 
+import { sanitizeMessageParts } from '../../shared/session-persistence'
+import {
+  docFromMessageParts,
+  docToMessageParts,
+  docArtifactCount
+} from '../../renderer/src/pages/workspace/composer/composer-doc'
+
 import { buildLiteratureReferencePrompt } from './literature-reference-prompt'
 
 describe('buildLiteratureReferencePrompt', () => {
+  it.each([5, 6, 10])(
+    'preserves exact retrieval identities for %i composer Collections',
+    (count) => {
+      const scopes = Array.from({ length: count }, (_, index) => ({
+        type: 'literature-scope' as const,
+        scope: 'collection' as const,
+        collectionId: `collection-exact-${index + 1}`,
+        name: `Study set ${index + 1}`
+      }))
+      const doc = docFromMessageParts(scopes)
+      expect(docArtifactCount(doc)).toBe(count)
+      const parts = sanitizeMessageParts(docToMessageParts(doc))
+      expect(parts).toEqual(scopes)
+      const prompt = buildLiteratureReferencePrompt(parts)
+      for (const scope of scopes) expect(prompt).toContain(JSON.stringify(scope.collectionId))
+    }
+  )
+
   it('serializes an immutable metadata snapshot without local file paths', () => {
     const prompt = buildLiteratureReferencePrompt([
       {

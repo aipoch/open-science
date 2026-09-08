@@ -1,3 +1,4 @@
+import { i18next } from '../../i18n'
 import type { AcpMessageImage, AcpRuntimeEvent } from '../../../../shared/acp'
 import type { FileReference } from '../../../../shared/artifacts'
 import * as annotationProtocol from '../../../../shared/annotations'
@@ -495,6 +496,23 @@ const filterPendingPdfContext = async (
     sources: uniqueVersions,
     ...(pendingAttachments.length > 0 ? { pendingAttachments } : {})
   })
+  const missingLiterature = (request.pendingPdfContextVersions ?? []).filter(
+    (source) =>
+      source.sourceKind === 'literature-attachment-version' &&
+      !eligible.sources.some(
+        (available) =>
+          available.sourceKind === source.sourceKind &&
+          available.sourceVersionId === source.sourceVersionId
+      )
+  )
+  if (missingLiterature.length) {
+    throw new Error(
+      i18next.t(
+        'Selected literature versions are unavailable: {{versions}}. Remove or reselect them before sending.',
+        { versions: missingLiterature.map(({ sourceVersionId }) => sourceVersionId).join(', ') }
+      )
+    )
+  }
   return {
     attachmentIds: [...eligible.pendingAttachmentIds],
     versions: [...eligible.sources]
@@ -740,6 +758,20 @@ const sendWorkspaceMessage = async (
           toRuntimeUploadedAttachment(upload, replaySession?.projectId)
         )
   if (!content && effectiveAttachments.length === 0 && annotations.length === 0) return undefined
+
+  // Validate explicit library choices before adding a message or creating a pending Session,
+  // so the composer's existing rejection path preserves the draft and selection.
+  const selectedLiterature = input.pendingPdfContextVersions?.filter(
+    ({ sourceKind }) => sourceKind === 'literature-attachment-version'
+  )
+  if (selectedLiterature?.length) {
+    await filterPendingPdfContext({
+      projectId: input.projectId ?? replaySession?.projectId,
+      attachments: [],
+      pendingPdfContextVersions: selectedLiterature
+    })
+    if (lifecycle.isCurrent?.() === false) return undefined
+  }
 
   if (input.branchSourceSessionId) {
     const pending = useSessionStore.getState().branchInNewSession({

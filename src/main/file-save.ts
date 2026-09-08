@@ -338,7 +338,7 @@ const writeProjectArtifactArchive = async (options: {
           takenNames,
           `${categoryDirectory}/${getSafeZipEntryName(file.suggestedName)}`
         )
-        takenNames.add(entryName.toLowerCase())
+        takenNames.add(zipEntryNameKey(entryName))
         const zipEntry = new ZipDeflate(entryName, { level: 6 })
         zip.add(zipEntry)
         entryStarted = true
@@ -412,10 +412,12 @@ const addFilenameCollisionSuffix = (filename: string, suffix: number): string =>
   return `${stem} (${suffix})${extension}`
 }
 
+const zipEntryNameKey = (name: string): string => name.normalize('NFC').toLowerCase()
+
 // Zip entries share one archive-wide namespace; claim the first free name with the same collision
 // suffix scheme used for on-disk batch exports. The suffix applies to the file name part only so
 // category prefixes like 'generated/' survive renaming. Name claims compare case-insensitively
-// because the archive may be extracted onto case-insensitive file systems.
+// and canonically equivalent Unicode spellings because extraction may equate those paths.
 const claimZipEntryName = (takenNames: ReadonlySet<string>, entryName: string): string => {
   const slashIndex = entryName.lastIndexOf('/')
   const directory = slashIndex === -1 ? '' : entryName.slice(0, slashIndex + 1)
@@ -423,7 +425,7 @@ const claimZipEntryName = (takenNames: ReadonlySet<string>, entryName: string): 
   for (let suffix = 1; ; suffix += 1) {
     const candidate =
       suffix === 1 ? entryName : `${directory}${addFilenameCollisionSuffix(fileName, suffix)}`
-    if (!takenNames.has(candidate.toLowerCase())) return candidate
+    if (!takenNames.has(zipEntryNameKey(candidate))) return candidate
   }
 }
 

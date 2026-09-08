@@ -22,6 +22,7 @@ type PrismaOwnerModel = Readonly<{
 }>
 
 type ProjectDeletionPath =
+  | 'background-result-delivery-target-delete'
   | 'compute-job-project-delete'
   | 'delegated-runtime-quiescence'
   | 'notification-session-invalidation'
@@ -238,6 +239,24 @@ const PROJECT_OWNED_DATA_CATALOG: readonly ProjectOwnedDataCatalogEntry[] = [
     }
   },
   {
+    id: 'background-result-delivery',
+    medium: 'sqlite',
+    resources: ['BackgroundResultDelivery'],
+    prismaModels: [
+      {
+        name: 'BackgroundResultDelivery',
+        ownerFields: [requiredOwner('projectId'), requiredOwner('sessionId')]
+      }
+    ],
+    policy: {
+      kind: 'coordinator-cleanup',
+      effect: 'hard-delete',
+      path: 'background-result-delivery-target-delete',
+      operation: 'BackgroundResultDeliveryOwner.commitProjectDeletion',
+      note: 'Delivery obligations and replay tombstones are removed only after Project authority deletion.'
+    }
+  },
+  {
     id: 'notification-inbox-history',
     medium: 'sqlite',
     resources: ['NotificationInboxItem'],
@@ -259,11 +278,15 @@ const PROJECT_OWNED_DATA_CATALOG: readonly ProjectOwnedDataCatalogEntry[] = [
   {
     id: 'literature-inbox-provenance',
     medium: 'sqlite',
-    resources: ['LiteratureInboxCandidate'],
+    resources: ['LiteratureInboxCandidate', 'LiteratureCandidateDiscovery'],
     prismaModels: [
       {
         name: 'LiteratureInboxCandidate',
         ownerFields: [optionalOwner('sourceProjectId'), optionalOwner('sourceSessionId')]
+      },
+      {
+        name: 'LiteratureCandidateDiscovery',
+        ownerFields: [optionalOwner('projectId'), optionalOwner('sessionId')]
       }
     ],
     policy: {

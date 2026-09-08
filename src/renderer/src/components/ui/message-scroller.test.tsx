@@ -102,6 +102,55 @@ describe('MessageScrollerItem', () => {
     expect(scrollTo).toHaveBeenCalledWith({ top: 0, behavior: 'smooth' })
   })
 
+  it('hides the end button at the native scroll limit despite fractional layout geometry', async () => {
+    container = document.createElement('div')
+    document.body.appendChild(container)
+    root = createRoot(container)
+
+    await act(async () => {
+      root?.render(
+        <MessageScrollerProvider>
+          <MessageScroller>
+            <MessageScrollerViewport>
+              <MessageScrollerContent>
+                <MessageScrollerItem messageId="last-message">Last message</MessageScrollerItem>
+              </MessageScrollerContent>
+            </MessageScrollerViewport>
+            <MessageScrollerButton />
+          </MessageScroller>
+        </MessageScrollerProvider>
+      )
+    })
+
+    const viewport = container.querySelector<HTMLElement>('[data-slot="message-scroller-viewport"]')
+    const item = container.querySelector<HTMLElement>('[data-message-id="last-message"]')
+    const button = container.querySelector<HTMLButtonElement>(
+      '[data-slot="message-scroller-button"]'
+    )
+    expect(viewport).not.toBeNull()
+    expect(item).not.toBeNull()
+    expect(button).not.toBeNull()
+
+    Object.defineProperties(viewport, {
+      clientHeight: { configurable: true, value: 100 },
+      scrollHeight: { configurable: true, value: 200 },
+      scrollTop: { configurable: true, writable: true, value: 100 },
+      getBoundingClientRect: {
+        configurable: true,
+        value: () => ({ top: 0, bottom: 100, height: 100 })
+      }
+    })
+    Object.defineProperty(item, 'getBoundingClientRect', {
+      configurable: true,
+      value: () => ({ top: -99.75, bottom: 100.25, height: 200 })
+    })
+
+    await act(async () => viewport?.dispatchEvent(new Event('scroll', { bubbles: true })))
+
+    expect(viewport?.scrollTop).toBe(100)
+    expect(button?.dataset.active).toBe('false')
+  })
+
   it('releases bottom following for a small scrollbar drag before animated content grows', async () => {
     const resizeCallbacks = new Map<Element, ResizeObserverCallback>()
     vi.stubGlobal(

@@ -94,17 +94,24 @@ export const searchLiteraturePdfOptions = async (
   query: string,
   { projectId }: { projectId?: string } = {}
 ): Promise<LiteraturePdfOption[]> => {
-  const page = await window.api.literature.search({
-    scope: 'library',
-    ...(query.trim() ? { query: query.trim() } : {}),
-    ...(projectId ? { projectId } : {}),
-    limit: 100
-  })
-  return page.entries.flatMap((entry) => {
-    if (!isItem(entry)) return []
-    const option = literatureItemToPdfOption(entry)
-    return option ? [option] : []
-  })
+  const options: LiteraturePdfOption[] = []
+  let offset: number | undefined
+  do {
+    const page = await window.api.literature.search({
+      scope: 'library',
+      ...(query.trim() ? { query: query.trim() } : {}),
+      ...(projectId ? { projectId } : {}),
+      ...(offset !== undefined ? { offset } : {}),
+      limit: 100
+    })
+    for (const entry of page.entries) {
+      if (!isItem(entry)) continue
+      const option = literatureItemToPdfOption(entry)
+      if (option) options.push(option)
+    }
+    offset = page.nextOffset
+  } while (offset !== undefined)
+  return options
 }
 
 export const literatureItemToMentionOption = (

@@ -424,6 +424,8 @@ model ContentBlob {
   state                        String                        @default("staging")
   createdAt                    DateTime                      @default(now())
   verifiedAt                   DateTime?
+  lastVerificationFailure      String?
+  lastVerificationAttemptAt    DateTime?
   literatureAttachmentVersions LiteratureAttachmentVersion[]
   literatureInboxPdfs           LiteratureInboxPdf[]
 
@@ -497,6 +499,7 @@ model LiteratureAttachmentVersion {
   filename      String
   contentType   String
   sizeBytes     BigInt
+  provenanceJson String?
   checksum      String
   pageCount     Int?
   createdAt     DateTime             @default(now())
@@ -569,11 +572,27 @@ model LiteratureInboxCandidate {
   updatedAt        DateTime                 @updatedAt
   acceptedItem     LiteratureItem?          @relation("AcceptedLiteratureItem", fields: [acceptedItemId], references: [id], onDelete: Restrict)
   sourceRecords    LiteratureSourceRecord[]
+  discoveries      LiteratureCandidateDiscovery[]
   pdfs             LiteratureInboxPdf[]
 
   @@index([state, createdAt])
   @@index([sourceProjectId, sourceSessionId])
   @@index([acceptedItemId])
+}
+
+// Distinct discovery contexts survive global candidate deduplication and acceptance.
+model LiteratureCandidateDiscovery {
+  id          String @id @default(cuid())
+  candidateId String
+  contextKey  String
+  origin      String
+  projectId   String?
+  sessionId   String?
+  createdAt   DateTime @default(now())
+  candidate   LiteratureInboxCandidate @relation(fields: [candidateId], references: [id], onDelete: Cascade)
+
+  @@unique([candidateId, contextKey])
+  @@index([projectId, sessionId])
 }
 
 // Agent-acquired PDFs stay in Inbox until their reference is accepted.
@@ -583,6 +602,7 @@ model LiteratureInboxPdf {
   contentBlobId String
   filename      String
   sizeBytes     BigInt
+  provenanceJson String?
   checksum      String
   pageCount     Int
   sourceUrl     String
@@ -607,7 +627,8 @@ model LiteratureSourceRecord {
   item             LiteratureItem?           @relation(fields: [itemId], references: [id], onDelete: Cascade)
   inboxCandidate   LiteratureInboxCandidate? @relation(fields: [inboxCandidateId], references: [id], onDelete: Cascade)
 
-  @@unique([provider, externalId])
+  @@unique([itemId, provider, externalId])
+  @@unique([inboxCandidateId, provider, externalId])
   @@index([itemId, provider])
   @@index([inboxCandidateId, provider])
 }
@@ -1124,4 +1145,26 @@ model MemoryEntry {
   @@unique([projectId, contentKey])
   @@index([categoryId, updatedAt])
   @@index([projectId, updatedAt])
+}
+
+// Main-owned delivery facts for terminal background outcomes. This table records only delivery
+// workflow state; Notebook Run and Compute Job records remain the execution authorities.
+model BackgroundResultDelivery {
+  id                    String   @id
+  sourceKind            String
+  sourceId              String
+  projectId             String
+  sessionId             String
+  agentFrameId          String?
+  state                 String
+  attemptCount          Int      @default(0)
+  claimToken            String?
+  claimExpiresAt        DateTime?
+  continuationMessageId String?
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+
+  @@unique([sourceKind, sourceId])
+  @@index([sessionId, state, createdAt, id])
+  @@index([sourceKind, state, createdAt, id])
 }

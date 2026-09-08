@@ -29,6 +29,21 @@ describe('AgentMarkdown streaming presentation', () => {
     container.remove()
   })
 
+  it('renders fenced alert examples as their original source text', async () => {
+    vi.useRealTimers()
+    const literal = '> [!NOTE]\n> This is literal example source.'
+    await act(async () => {
+      root.render(<PresentedAgentMarkdown content={'```markdown\n' + literal + '\n```'} />)
+    })
+    // Highlighted lines are separate elements, so textContent may omit their visual line breaks.
+    await vi.waitFor(() =>
+      expect(container.querySelector('pre')?.textContent?.replace(/\n/g, '')).toBe(
+        literal.replace(/\n/g, '')
+      )
+    )
+    expect(container.querySelector('pre')?.textContent).not.toContain('<aside')
+  })
+
   it('continues painting while target content grows faster than animation frames', async () => {
     await act(async () => {
       root.render(<AgentMarkdown content="流" isAnimating />)

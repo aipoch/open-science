@@ -603,9 +603,19 @@ class ManagedFileVersionService {
       const after = await this.readTextForDiff(selected)
       assertNotCancelled()
       active.workerStarted = true
-      const lines = await this.diffTaskRunner.run({ requestId, before, after })
+      const lines = await this.diffTaskRunner.run({
+        requestId,
+        before: before.text,
+        after: after.text
+      })
       assertNotCancelled()
-      return { baseVersionId: ownedBaseVersionId, selectedVersionId: selected.version.id, lines }
+      return {
+        baseVersionId: ownedBaseVersionId,
+        selectedVersionId: selected.version.id,
+        lines,
+        baseFormat: { hasUtf8Bom: before.format.hasUtf8Bom },
+        selectedFormat: { hasUtf8Bom: after.format.hasUtf8Bom }
+      }
     } finally {
       if (this.activeDiffs.get(requestId) === active) {
         this.activeDiffs.delete(requestId)
@@ -1403,7 +1413,9 @@ class ManagedFileVersionService {
     }
   }
 
-  private async readTextForDiff(resolved: ResolvedManagedFileVersion): Promise<string> {
+  private async readTextForDiff(
+    resolved: ResolvedManagedFileVersion
+  ): Promise<Extract<ReturnType<typeof inspectManagedTextEditEligibility>, { editable: true }>> {
     if (resolved.version.sizeBytes > BigInt(MANAGED_DIFF_MAX_INPUT_BYTES)) {
       operationError('DIFF_INPUT_LIMIT_EXCEEDED', 'Managed file exceeds the diff input limit.')
     }
@@ -1414,7 +1426,7 @@ class ManagedFileVersionService {
       }
       operationError(eligibility.reason, 'Managed file is not eligible for text diff.')
     }
-    return (eligibility as Extract<typeof eligibility, { editable: true }>).text
+    return eligibility as Extract<typeof eligibility, { editable: true }>
   }
 
   private async verifyResolvedVersion(resolved: ResolvedManagedFileVersion): Promise<void> {

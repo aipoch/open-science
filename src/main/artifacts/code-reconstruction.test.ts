@@ -2,14 +2,20 @@ import { execFile } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { promisify } from 'node:util'
 
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
+import {
+  ArtifactCodeReconstructionRunner,
+  type ArtifactCodeReconstructionRunResult
+} from '../acp/artifact-code-reconstruction-runner'
+import { RestrictedInferenceRunner } from '../acp/restricted-inference-runner'
 import type { ExplicitAgentBackendTarget } from '../settings/backend-resolver'
 import { notebookHelperEvidenceKey } from '../notebook/helper-evidence'
 import type { ArtifactVersionReconstructionProvenance } from './provenance-read-model'
 import {
   ArtifactCodeReconstructionService,
   CONTEXT_MAX_BYTES,
+  PROMPT_VERSION,
   normalizeResponse
 } from './code-reconstruction'
 
@@ -183,15 +189,20 @@ const makeHarness = (value = provenance(), frameworkId: 'codex' | 'codebuddy' = 
       cache = serialized
     }
   )
-  const run = vi.fn(async (prompt: string, target: ExplicitAgentBackendTarget) => {
-    void prompt
-    void target
-    return {
-      text: '```python\nimport pandas as pd\ndf = pd.read_csv("groups.csv")\nplot(df)\n```',
-      frameworkId,
-      model: 'model-a'
+  const run = vi.fn(
+    async (
+      prompt: string,
+      target: ExplicitAgentBackendTarget
+    ): Promise<ArtifactCodeReconstructionRunResult> => {
+      void prompt
+      void target
+      return {
+        text: '```python\nimport pandas as pd\ndf = pd.read_csv("groups.csv")\nplot(df)\n```',
+        frameworkId,
+        model: 'model-a'
+      }
     }
-  })
+  )
   const captureTarget = vi.fn(async () => ({
     frameworkId,
     providerId: 'provider-a',
@@ -220,7 +231,221 @@ const makeHarness = (value = provenance(), frameworkId: 'codex' | 'codebuddy' = 
   }
 }
 
+afterEach(() => vi.restoreAllMocks())
+
 describe('ArtifactCodeReconstructionService', () => {
+  it.each([undefined, true])(
+    'refuses replay when an earlier failed cell may have mutated kernel state (dispatched: %s)',
+    async (kernelDispatched) => {
+      const value = provenance()
+      const helperSource = 'def offset(value):\n    return value + 2'
+      const helper = {
+        helperId: 'offset-helper',
+        skillIdentity: 'skill:offset-helper',
+        packageOrigin: 'built-in',
+        interfaceRevision: '1',
+        registeredGeneration: 'generation-1',
+        exports: ['offset'],
+        source: helperSource,
+        sourceDigest: digest(helperSource)
+      }
+      const first = value.execution!.runs[0]!
+      const producer = value.execution!.runs[1]!
+      first.script = 'baseline = 0'
+      first.kernelEpochId = producer.kernelEpochId = 'epoch-1'
+      producer.runIndex = 3
+      producer.script = 'print(offset(baseline))'
+      producer.helperModuleKeys = [notebookHelperEvidenceKey(helper)]
+      value.execution!.producerRunIndex = 3
+      if ('run_index' in value.evidence.producer) value.evidence.producer.run_index = 3
+      const failed = {
+        ...first,
+        runId: 'failed-run',
+        runIndex: 2,
+        status: 'failed' as const,
+        ...(kernelDispatched === undefined ? {} : { kernelDispatched }),
+        script: 'baseline = 40\nraise ValueError("after mutation")',
+        outputs: [{ type: 'error' as const, name: 'ValueError', message: 'after mutation' }]
+      }
+      value.execution!.runs = [first, failed, producer]
+      value.execution!.helperModules = [helper]
+      value.execution!.helperEvidenceStatus = { state: 'complete' }
+      const original = await execFileAsync('python3', [
+        '-c',
+        [
+          helperSource,
+          first.script,
+          'try:',
+          ...failed.script.split('\n').map((line) => `    ${line}`),
+          'except ValueError:',
+          '    pass',
+          producer.script
+        ].join('\n')
+      ])
+      expect(original.stdout.trim()).toBe('42')
+      const harness = makeHarness(value)
+      const generated = await harness.service.generate(request)
+      // On the broken implementation, demonstrate the semantic mismatch before the guard assertion.
+      if (generated.state === 'cached') {
+        const replay = await execFileAsync('python3', ['-c', generated.value.code])
+        expect.soft(replay.stdout.trim()).toBe(original.stdout.trim())
+        expect(generated.value).toMatchObject({ origin: 'app-replay', sourceTruncated: false })
+      }
+      expect(generated).toEqual({ state: 'unavailable', reason: 'supporting-code-incomplete' })
+      await expect(harness.service.get(request)).resolves.toEqual(generated)
+      expect(harness.run).not.toHaveBeenCalled()
+      expect(harness.writeCodeReconstructionCache).not.toHaveBeenCalled()
+    }
+  )
+
+  it.each(['app-replay', 'llm'] as const)(
+    'allows %s after an explicitly non-dispatched failure and caches the result',
+    async (origin) => {
+      const value = provenance()
+      const first = value.execution!.runs[0]!
+      const producer = value.execution!.runs[1]!
+      Object.assign(first, {
+        status: 'failed',
+        kernelDispatched: false,
+        script: 'raise RuntimeError("must not replay")'
+      })
+      first.kernelEpochId = producer.kernelEpochId = 'epoch-1'
+      producer.script = 'print(2)'
+      if (origin === 'app-replay') {
+        const source = 'def offset(value):\n    return value + 2'
+        const helper = {
+          helperId: 'offset-helper',
+          skillIdentity: 'skill:offset-helper',
+          packageOrigin: 'built-in',
+          interfaceRevision: '1',
+          registeredGeneration: 'generation-1',
+          exports: ['offset'],
+          source,
+          sourceDigest: digest(source)
+        }
+        value.execution!.helperModules = [helper]
+        value.execution!.helperEvidenceStatus = { state: 'complete' }
+        producer.helperModuleKeys = [notebookHelperEvidenceKey(helper)]
+        producer.script = 'print(offset(0))'
+      }
+      const harness = makeHarness(value)
+      harness.run.mockResolvedValue({ text: 'print(2)', frameworkId: 'codex', model: 'model-a' })
+      await expect(harness.service.get(request)).resolves.toMatchObject({ state: 'ready', origin })
+      const generated = await harness.service.generate(request)
+      expect(generated).toMatchObject({ state: 'cached', value: { origin } })
+      if (generated.state !== 'cached') throw new Error('expected cached reconstruction')
+      expect(generated.value.code).not.toContain('must not replay')
+      if (origin === 'app-replay') {
+        expect(harness.run).not.toHaveBeenCalled()
+        const replay = await execFileAsync('python3', ['-c', generated.value.code])
+        expect(replay.stdout.trim()).toBe('2')
+      }
+      await expect(harness.service.get(request)).resolves.toEqual(generated)
+    }
+  )
+
+  it('does not accept an undispatched failed producer as evidence of an artifact computation', async () => {
+    const value = provenance()
+    Object.assign(value.execution!.runs[1]!, { status: 'failed', kernelDispatched: false })
+    const harness = makeHarness(value)
+    await expect(harness.service.generate(request)).resolves.toEqual({
+      state: 'unavailable',
+      reason: 'supporting-code-incomplete'
+    })
+    expect(harness.run).not.toHaveBeenCalled()
+  })
+
+  it.each(['max_tokens', 'cancelled', 'refusal'] as const)(
+    'does not cache a reconstruction terminated by %s and allows retry without losing usage',
+    async (stopReason) => {
+      const usage = { inputTokens: 13, cacheTokens: 3, outputTokens: 5, turnCount: 1 }
+      const inference = vi.spyOn(RestrictedInferenceRunner.prototype, 'run').mockResolvedValue({
+        text: 'print("unfinished',
+        frameworkId: 'codex',
+        model: 'model-a',
+        stopReason,
+        usage
+      })
+      const recordUsage = vi.fn(async () => undefined)
+      const harness = makeHarness()
+      const runner = new ArtifactCodeReconstructionRunner({
+        appVersion: '0.11.0',
+        configRoot: '/unused-mocked-inference',
+        captureTarget: harness.captureTarget,
+        resolveTarget: vi.fn(),
+        recordUsage
+      })
+      harness.run.mockImplementation((prompt, target) =>
+        runner.run(prompt, target, {
+          projectId: request.projectId,
+          sessionId: request.appSessionId
+        })
+      )
+      const result = await harness.service.generate(request).then(
+        (value) => value,
+        (error: unknown) => error
+      )
+      // Verify that the existing cache read path exposes the same incorrect success on baseline.
+      if (!(result instanceof Error)) {
+        await expect(harness.service.get(request)).resolves.toEqual(result)
+        expect(inference).toHaveBeenCalledOnce()
+      }
+      expect(result).toBeInstanceOf(Error)
+      expect(harness.writeCodeReconstructionCache).not.toHaveBeenCalled()
+      expect(recordUsage).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ usage }))
+      await expect(harness.service.get(request)).resolves.toMatchObject({
+        state: 'ready',
+        origin: 'llm'
+      })
+      inference.mockResolvedValue({
+        text: 'print("complete")',
+        frameworkId: 'codex',
+        model: 'model-a',
+        stopReason: 'end_turn',
+        usage
+      })
+      await expect(harness.service.generate(request)).resolves.toMatchObject({
+        state: 'cached',
+        value: { code: 'print("complete")' }
+      })
+      expect(inference).toHaveBeenCalledTimes(2)
+      expect(recordUsage).toHaveBeenCalledTimes(2)
+    }
+  )
+
+  it('budgets the actual escaped prompt including its evidence envelope', async () => {
+    const value = provenance()
+    const earlier = value.execution!.runs[0]!
+    const producer = value.execution!.runs[1]!
+    producer.runIndex = 31
+    value.execution!.producerRunIndex = 31
+    if ('run_index' in value.evidence.producer) value.evidence.producer.run_index = 31
+    value.execution!.runs = [
+      ...Array.from({ length: 30 }, (_, index) => ({
+        ...earlier,
+        runId: `history-${index}`,
+        runIndex: index + 1,
+        script: `# ${'<'.repeat(15_000)}`,
+        outputs: []
+      })),
+      producer
+    ]
+    const harness = makeHarness(value)
+    const generated = await harness.service.generate(request)
+    const prompt = harness.run.mock.calls[0]![0]
+    const envelope = prompt.match(
+      /<artifact_execution_evidence>\n([\s\S]*)\n<\/artifact_execution_evidence>/u
+    )![1]!
+    expect(envelope).not.toContain('<')
+    expect(envelope).toContain('\\u003c')
+    expect(Buffer.byteLength(prompt, 'utf8')).toBeLessThanOrEqual(CONTEXT_MAX_BYTES)
+    const context = JSON.parse(envelope)
+    expect(context.execution.runs[0].runId).toBe(producer.runId)
+    expect(context.omissions.omittedRuns).toBe(31 - context.execution.runs.length)
+    expect(context.omissions.reasons).toContain('context-byte-limit')
+    expect(generated).toMatchObject({ state: 'cached', value: { sourceTruncated: true } })
+  })
+
   it('checks only durable evidence and cache until generation is explicitly requested', async () => {
     const harness = makeHarness()
 
@@ -275,38 +500,134 @@ describe('ArtifactCodeReconstructionService', () => {
     expect(harness.run).toHaveBeenCalledOnce()
   })
 
-  it('reads legacy model-generated cache entries without mislabeling their origin', async () => {
-    const harness = makeHarness()
-    const code = 'print("legacy")'
-    harness.seedCache(
-      JSON.stringify({
-        schemaVersion: 1,
-        artifactVersionId: 'version-1',
-        sourceExecutionChecksum: 'b'.repeat(64),
-        contextChecksum: 'context-checksum',
-        promptVersion: 'artifact-code-reconstruction-v2',
-        frameworkId: 'codex',
-        model: 'legacy-model',
-        language: 'python',
-        generatedAt: '2026-08-06T00:30:00.000Z',
-        sourceTruncated: false,
-        codeChecksum: digest(code),
-        code
+  it.each([
+    { schemaVersion: 1, origin: undefined },
+    { schemaVersion: 2, origin: 'llm' },
+    { schemaVersion: 2, origin: 'app-replay' }
+  ])(
+    'invalidates old $origin schema $schemaVersion caches without generating on read',
+    async (identity) => {
+      const harness = makeHarness()
+      const code = 'print("legacy")'
+      harness.seedCache(
+        JSON.stringify({
+          ...identity,
+          artifactVersionId: 'version-1',
+          sourceExecutionChecksum: 'b'.repeat(64),
+          contextChecksum: 'context-checksum',
+          promptVersion: 'artifact-code-reconstruction-v2',
+          frameworkId: 'codex',
+          model: 'legacy-model',
+          language: 'python',
+          generatedAt: '2026-08-06T00:30:00.000Z',
+          sourceTruncated: false,
+          codeChecksum: digest(code),
+          code
+        })
+      )
+      await expect(harness.service.get(request)).resolves.toMatchObject({
+        state: 'ready',
+        origin: 'llm'
       })
-    )
+      expect(harness.run).not.toHaveBeenCalled()
+      expect(harness.writeCodeReconstructionCache).not.toHaveBeenCalled()
+      const generated = await harness.service.generate(request)
+      expect(generated).toMatchObject({
+        state: 'cached',
+        value: { origin: 'llm', model: 'model-a' }
+      })
+      expect(JSON.parse(harness.writeCodeReconstructionCache.mock.calls[0]![1])).toMatchObject({
+        promptVersion: PROMPT_VERSION
+      })
+      await expect(harness.service.get(request)).resolves.toEqual(generated)
+      expect(harness.run).toHaveBeenCalledOnce()
+    }
+  )
 
-    await expect(harness.service.get(request)).resolves.toEqual({
+  it.each([
+    { status: 'failed', kernelKind: 'python' },
+    { status: 'timeout', kernelKind: 'python' },
+    { status: 'interrupted', kernelKind: 'r' },
+    { status: 'cancelled', kernelKind: 'repl' }
+  ] as const)(
+    'rejects $status $kernelKind history before reading even a current cache',
+    async ({ status, kernelKind }) => {
+      const value = provenance()
+      const first = value.execution!.runs[0]!
+      const producer = value.execution!.runs[1]!
+      first.status = status
+      first.kernelKind = producer.kernelKind = kernelKind
+      if ('kernel_kind' in value.evidence.producer) value.evidence.producer.kernel_kind = kernelKind
+      // Legacy evidence has no epoch IDs, so isolation cannot be established.
+      const harness = makeHarness(value)
+      const code = 'print("cached")'
+      harness.seedCache(
+        JSON.stringify({
+          schemaVersion: 2,
+          origin: 'llm',
+          artifactVersionId: 'version-1',
+          sourceExecutionChecksum: 'b'.repeat(64),
+          promptVersion: PROMPT_VERSION,
+          language: 'python',
+          frameworkId: 'codex',
+          model: 'model-a',
+          generatedAt: '2026-08-06T00:30:00.000Z',
+          codeChecksum: digest(code),
+          code
+        })
+      )
+      const expected = { state: 'unavailable', reason: 'supporting-code-incomplete' }
+      await expect(harness.service.get(request)).resolves.toEqual(expected)
+      await expect(harness.service.generate(request)).resolves.toEqual(expected)
+      expect(harness.readCodeReconstructionCache).not.toHaveBeenCalled()
+      expect(harness.run).not.toHaveBeenCalled()
+    }
+  )
+
+  it.each(['different-epoch', 'later-run', 'other-kernel', 'stateless-shell'] as const)(
+    'does not block reconstruction for failed history outside retained kernel state: %s',
+    async (scope) => {
+      const value = provenance()
+      const first = value.execution!.runs[0]!
+      const producer = value.execution!.runs[1]!
+      first.status = 'failed'
+      first.kernelEpochId = producer.kernelEpochId = 'epoch-1'
+      if (scope === 'different-epoch') first.kernelEpochId = 'epoch-0'
+      if (scope === 'later-run') first.runIndex = producer.runIndex + 1
+      if (scope === 'other-kernel') first.kernelKind = 'r'
+      if (scope === 'stateless-shell') first.kernelKind = producer.kernelKind = 'bash'
+      const harness = makeHarness(value)
+      await expect(harness.service.get(request)).resolves.toMatchObject({ state: 'ready' })
+    }
+  )
+
+  it('accounts for removed producer outputs after escaping and refuses oversized required evidence', async () => {
+    const value = provenance()
+    value.execution!.runs[1]!.outputs = Array.from({ length: 20 }, () => ({
+      type: 'text',
+      text: '<'.repeat(4_000)
+    }))
+    const harness = makeHarness(value)
+    await expect(harness.service.generate(request)).resolves.toMatchObject({
       state: 'cached',
-      value: {
-        origin: 'llm',
-        code,
-        language: 'python',
-        generatedAt: '2026-08-06T00:30:00.000Z',
-        frameworkId: 'codex',
-        model: 'legacy-model',
-        sourceTruncated: false
-      }
+      value: { sourceTruncated: true }
     })
+    const prompt = harness.run.mock.calls[0]![0]
+    expect(Buffer.byteLength(prompt)).toBeLessThanOrEqual(CONTEXT_MAX_BYTES)
+    const context = JSON.parse(
+      prompt.match(
+        /<artifact_execution_evidence>\n([\s\S]*)\n<\/artifact_execution_evidence>/u
+      )![1]!
+    )
+    expect(context.execution.runs).toHaveLength(1)
+    expect(context.omissions).toMatchObject({ omittedRuns: 1, omittedOutputs: 21 })
+    value.execution!.runs[1]!.script = `# ${'<'.repeat(60_000)}`
+    const tooLarge = makeHarness(value)
+    await expect(tooLarge.service.generate(request)).rejects.toThrow(
+      'too large to reconstruct safely'
+    )
+    expect(tooLarge.run).not.toHaveBeenCalled()
+    expect(tooLarge.writeCodeReconstructionCache).not.toHaveBeenCalled()
   })
 
   it('keeps the inert evidence envelope under the byte limit and puts the producer first', async () => {

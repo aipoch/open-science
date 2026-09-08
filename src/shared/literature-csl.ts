@@ -1,6 +1,7 @@
 import {
   literatureItemInputSchema,
   normalizeLiteratureIdentifierValue,
+  preferredLiteratureIdentifier,
   type LiteratureCreatorInput,
   type LiteratureIdentifierInput,
   type LiteratureItemInput,
@@ -72,6 +73,9 @@ type CslItem = Readonly<{
   abstract?: string
   language?: string
   URL?: string
+  PMID?: string
+  PMCID?: string
+  arXiv?: string
   DOI?: string
   ISBN?: string
   ISSN?: string
@@ -101,6 +105,29 @@ const creatorsFor = (
   return names.length > 0 ? names : undefined
 }
 
+const issuedDate = (item: LiteratureItemInput): CslDate | undefined => {
+  const match = /^(\d{4})(?:-(\d{1,2})(?:-(\d{1,2}))?)?$/u.exec(item.issuedText.trim())
+  if (match) {
+    const year = Number(match[1])
+    const month = match[2] ? Number(match[2]) : undefined
+    const day = match[3] ? Number(match[3]) : undefined
+    const leap = year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0)
+    const days = [31, leap ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
+    if (
+      year > 0 &&
+      (month === undefined || (month >= 1 && month <= 12)) &&
+      (day === undefined || (day >= 1 && day <= days[month! - 1]!))
+    ) {
+      return {
+        'date-parts': [
+          [year, ...(month === undefined ? [] : [month]), ...(day === undefined ? [] : [day])]
+        ]
+      }
+    }
+  }
+  return item.issuedYear === undefined ? undefined : { 'date-parts': [[item.issuedYear]] }
+}
+
 const accessedDate = (accessedAt: number | undefined): CslDate | undefined => {
   if (accessedAt === undefined) return undefined
   const date = new Date(accessedAt)
@@ -111,10 +138,9 @@ const accessedDate = (accessedAt: number | undefined): CslDate | undefined => {
 
 const identifierFor = (
   item: LiteratureItemInput,
-  scheme: 'doi' | 'isbn' | 'issn'
+  scheme: 'doi' | 'isbn' | 'issn' | 'pmid' | 'pmcid' | 'arxiv'
 ): string | undefined => {
-  const identifiers = item.identifiers.filter((identifier) => identifier.scheme === scheme)
-  const identifier = identifiers.find(({ isPrimary }) => isPrimary) ?? identifiers[0]
+  const identifier = preferredLiteratureIdentifier(item.identifiers, scheme)
   return identifier
     ? normalizeLiteratureIdentifierValue(identifier.scheme, identifier.value)
     : undefined
@@ -130,6 +156,10 @@ const toCslItem = (id: string, item: LiteratureItemInput): CslItem => {
   const editor = creatorsFor(item.creators, 'editor')
   const translator = creatorsFor(item.creators, 'translator')
   const accessed = accessedDate(item.accessedAt)
+  const issued = issuedDate(item)
+  const PMID = identifierFor(item, 'pmid')
+  const PMCID = identifierFor(item, 'pmcid')
+  const arXiv = identifierFor(item, 'arxiv')
   const DOI = identifierFor(item, 'doi')
   const ISBN = identifierFor(item, 'isbn')
   const ISSN = identifierFor(item, 'issn')
@@ -147,13 +177,16 @@ const toCslItem = (id: string, item: LiteratureItemInput): CslItem => {
     ...(author ? { author } : {}),
     ...(editor ? { editor } : {}),
     ...(translator ? { translator } : {}),
-    ...(item.issuedYear !== undefined ? { issued: { 'date-parts': [[item.issuedYear]] } } : {}),
+    ...(issued ? { issued } : {}),
     ...(accessed ? { accessed } : {}),
     ...(item.containerTitle ? { 'container-title': item.containerTitle } : {}),
     ...(item.shortTitle ? { 'title-short': item.shortTitle } : {}),
     ...(item.abstract ? { abstract: item.abstract } : {}),
     ...(item.language ? { language: item.language } : {}),
     ...(item.url ? { URL: item.url } : {}),
+    ...(PMID ? { PMID } : {}),
+    ...(PMCID ? { PMCID } : {}),
+    ...(arXiv ? { arXiv } : {}),
     ...(DOI ? { DOI } : {}),
     ...(ISBN ? { ISBN } : {}),
     ...(ISSN ? { ISSN } : {}),
@@ -178,10 +211,20 @@ const dateParts = (value: unknown): readonly number[] | undefined => {
   if (!value || typeof value !== 'object') return undefined
   const parts = (value as { 'date-parts'?: unknown })['date-parts']
   if (!Array.isArray(parts) || !Array.isArray(parts[0])) return undefined
-  const normalized = parts[0].filter(
-    (part): part is number => typeof part === 'number' && Number.isInteger(part) && part >= 0
+  const date = parts[0]
+  const [year, month, day] = date
+  const leap = year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0)
+  const days = [31, leap ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
+  if (
+    date.length < 1 ||
+    date.length > 3 ||
+    !date.every((part) => typeof part === 'number' && Number.isInteger(part)) ||
+    year < 0 ||
+    (month !== undefined && (month < 1 || month > 12)) ||
+    (day !== undefined && (day < 1 || day > days[month - 1]!))
   )
-  return normalized.length > 0 ? normalized : undefined
+    throw new Error('Invalid bibliographic date.')
+  return date
 }
 
 const creatorsFromCsl = (

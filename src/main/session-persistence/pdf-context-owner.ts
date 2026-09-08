@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto'
+import { LiteratureAttachmentUnavailableError } from '../literature/attachment-authority'
 
 import {
   type FilterSessionPdfContextCandidatesRequest,
@@ -48,19 +49,31 @@ class SessionPdfContextOwner {
   ): Promise<FilterSessionPdfContextCandidatesResult> {
     const sources: SessionPdfContextSource[] = []
     const pendingAttachmentIds: string[] = []
+    const unavailableSources: SessionPdfContextSource[] = []
     const seen = new Set<string>()
     for (const source of request.sources) {
       const identity = `${source.sourceKind}:${source.sourceVersionId}`
       if (seen.has(identity)) continue
       seen.add(identity)
-      const input = await this.options.sources.resolveVersion({
-        projectId: request.projectId,
-        sourceKind: source.sourceKind,
-        sourceVersionId: source.sourceVersionId,
-        expectedSourceFileId: source.sourceFileId
-      })
+      let input: ResolvedSessionPdfVersion | undefined
+      try {
+        input = await this.options.sources.resolveVersion({
+          projectId: request.projectId,
+          sourceKind: source.sourceKind,
+          sourceVersionId: source.sourceVersionId,
+          expectedSourceFileId: source.sourceFileId
+        })
+      } catch (error) {
+        // Only an identified attachment integrity failure is local to this candidate.
+        // Database and storage service failures must retain the picker's retry surface.
+        if (!(error instanceof LiteratureAttachmentUnavailableError)) throw error
+        log.warn('PDF context candidate resolution failed', errorLogFields(error))
+      }
+      if (!input) {
+        unavailableSources.push(source)
+        continue
+      }
       if (
-        !input ||
         !isPdf(input.filename, input.contentType) ||
         input.sizeBytes > MAX_AUTO_EXTRACT_PDF_BYTES
       ) {
@@ -69,6 +82,7 @@ class SessionPdfContextOwner {
       try {
         if ((await this.pageCount(input)) > 1) sources.push(source)
       } catch (error) {
+        unavailableSources.push(source)
         log.warn('PDF context candidate inspection failed', {
           sourceKind: source.sourceKind,
           ...errorLogFields(error)
@@ -95,7 +109,11 @@ class SessionPdfContextOwner {
       eligibleCount: sources.length,
       pendingEligibleCount: pendingAttachmentIds.length
     })
-    return { sources, pendingAttachmentIds }
+    return {
+      sources,
+      pendingAttachmentIds,
+      ...(unavailableSources.length ? { unavailableSources } : {})
+    }
   }
 
   async link(request: LinkSessionPdfContextRequest): Promise<SessionRuntimeContext> {
@@ -195,7 +213,24 @@ class SessionPdfContextOwner {
       projectId: request.projectId,
       sessionId: request.sessionId,
       expectedRevision: request.expectedRevision,
-      patch: { pdfContext }
+      patch: { pdfContext },
+      ...(bindings.some((binding) => binding.sourceKind === 'literature-attachment-version')
+        ? {
+            beforePersist: async () => {
+              // Runs inside the Session mutation barrier, after any earlier attachment removal.
+              for (const binding of bindings) {
+                if (binding.sourceKind !== 'literature-attachment-version') continue
+                const source = await this.options.sources.resolveVersion({
+                  projectId: request.projectId,
+                  sourceKind: binding.sourceKind,
+                  sourceVersionId: binding.sourceVersionId,
+                  expectedSourceFileId: binding.sourceFileId
+                })
+                if (!source) throw new Error('PDF context Version is unavailable in this Project.')
+              }
+            }
+          }
+        : {})
     })
     log.info('PDF context linked', {
       projectId: request.projectId,

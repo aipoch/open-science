@@ -104,8 +104,8 @@ describe('Session agent target', () => {
     })
   })
 
-  it('falls back to the Settings Active Model when the Session target is gone', () => {
-    expect(
+  it('rejects an unavailable Session target despite an available Settings Active Model', () => {
+    expect(() =>
       resolveValidatedSessionAgentTarget(
         {
           agentConfiguration: {
@@ -119,12 +119,54 @@ describe('Session agent target', () => {
           activeModel: 'settings-model'
         })
       )
-    ).toEqual({
+    ).toThrow('Session agent target is unavailable')
+  })
+
+  it('validates the actual provider default without pinning it or accepting another available model', () => {
+    const configuration = { providerId: 'ready', reasoningEffort: 'high' as const }
+    const source = { agentConfiguration: configuration }
+    const originalProvider = {
+      ...provider('ready', 'default-model'),
+      models: ['other-model', 'default-model']
+    }
+    const snapshot = settings({ providers: [originalProvider] })
+    expect(resolveValidatedSessionAgentTarget(source, snapshot)).toEqual({
       frameworkId: 'opencode',
-      providerId: 'ready',
-      model: 'settings-model',
-      reasoningEffort: 'high'
+      ...configuration
     })
+    const failed = settings({
+      providers: [
+        {
+          ...originalProvider,
+          lastValidationFailure: {
+            at: 1,
+            category: 'network',
+            target: { model: 'default-model', endpoint: 'openai' }
+          }
+        }
+      ]
+    })
+    expect(() => resolveValidatedSessionAgentTarget(source, failed)).toThrow(
+      'Session agent target is unavailable'
+    )
+    expect(resolveValidatedSessionAgentTarget(source, snapshot)).toEqual({
+      frameworkId: 'opencode',
+      ...configuration
+    })
+    expect(
+      resolveValidatedSessionAgentTarget(
+        source,
+        settings({
+          providers: [
+            {
+              ...failed.providers[0],
+              model: 'other-model'
+            }
+          ]
+        })
+      )
+    ).toEqual({ frameworkId: 'opencode', ...configuration })
+    expect(source.agentConfiguration).toEqual(configuration)
   })
 
   it('fails closed when neither the Session target nor Settings is selectable', () => {

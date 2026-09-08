@@ -67,6 +67,27 @@ export const PREVIEW_CODE_LANGUAGES: Record<string, string> = {
   tsx: 'tsx'
 }
 
+type MoleculeFormat = 'smiles' | 'mol' | 'sdf' | 'rxn'
+
+const MOLECULE_EXTENSIONS: Record<string, MoleculeFormat> = {
+  smi: 'smiles',
+  smiles: 'smiles',
+  mol: 'mol',
+  sdf: 'sdf',
+  rxn: 'rxn'
+}
+const MOLECULE_MIME_TYPES: Record<string, MoleculeFormat> = {
+  'chemical/x-daylight-smiles': 'smiles',
+  'chemical/x-mdl-molfile': 'mol',
+  'chemical/x-mdl-sdfile': 'sdf',
+  'chemical/x-mdl-rxnfile': 'rxn'
+}
+
+// Explicit extensions win; extensionless/unknown names use the same MIME fallback as routing.
+export const getMoleculeFormat = (extension: string, mimeType = ''): MoleculeFormat | undefined =>
+  MOLECULE_EXTENSIONS[extension.toLowerCase()] ??
+  MOLECULE_MIME_TYPES[mimeType.toLowerCase().split(';')[0].trim()]
+
 // Keeps MIME fallback narrow so unknown binary formats still land in the unsupported state.
 const getPreviewFormatForMimeType = (mimeType: string): PreviewFileFormat => {
   const normalizedMimeType = mimeType.toLowerCase().split(';')[0]?.trim() ?? ''
@@ -89,14 +110,7 @@ const getPreviewFormatForMimeType = (mimeType: string): PreviewFileFormat => {
   ) {
     return 'pdb'
   }
-  if (
-    normalizedMimeType === 'chemical/x-mdl-molfile' ||
-    normalizedMimeType === 'chemical/x-mdl-sdfile' ||
-    normalizedMimeType === 'chemical/x-mdl-rxnfile' ||
-    normalizedMimeType === 'chemical/x-daylight-smiles'
-  ) {
-    return 'molecule'
-  }
+  if (getMoleculeFormat('', normalizedMimeType)) return 'molecule'
   if (normalizedMimeType === 'application/pdf') return 'pdf'
   // Office MIME fallback covers extensionless uploads while preserving explicit format routing.
   if (

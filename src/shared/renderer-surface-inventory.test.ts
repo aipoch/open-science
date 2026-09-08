@@ -50,6 +50,9 @@ const INSTALLED_BUT_NOT_DELIVERED_EVENTS = {} as const satisfies Record<
 // These functions exist on the real Electron preload API but the current AST generator does not
 // recognize their implementation shape or channel constants. T1b must make each omission explicit.
 const GENERATED_SOURCE_OMISSIONS = [
+  'backgroundResultDelivery.getProjectActivity',
+  'backgroundResultDelivery.getSessionActivity',
+  'backgroundResultDelivery.onChanged',
   'databaseStartup.getState',
   'databaseStartup.onStateChanged',
   'databaseStartup.quit',
@@ -104,7 +107,6 @@ const GENERATED_SOURCE_OMISSIONS = [
   'specialist.addMarketplaceSource',
   'specialist.cancelHandoff',
   'specialist.cancelMarketplaceCandidate',
-  'specialist.cancelPackage',
   'specialist.create',
   'specialist.delete',
   'specialist.duplicate',
@@ -114,10 +116,7 @@ const GENERATED_SOURCE_OMISSIONS = [
   'specialist.getMarketplaceRelease',
   'specialist.inspectGitHubMarketplaceSource',
   'specialist.installMarketplace',
-  'specialist.installPackage',
-  'specialist.list',
   'specialist.listMarketplace',
-  'specialist.onCatalogChanged',
   'specialist.onHandoffLifecycleEvent',
   'specialist.onMarketplaceDownloadProgress',
   'specialist.onPendingSwitch',
@@ -129,9 +128,7 @@ const GENERATED_SOURCE_OMISSIONS = [
   'specialist.retryHandoff',
   'specialist.savePackageReport',
   'specialist.selectPackage',
-  'specialist.setEnabled',
   'specialist.setSessionSpecialist',
-  'specialist.update',
   'uploads.onTransferProgress',
   'window.announceWindowFindAppearance',
   'window.announceWindowFindContentReady',
@@ -140,6 +137,7 @@ const GENERATED_SOURCE_OMISSIONS = [
   'window.closeFind',
   'window.findInPage',
   'window.onCloseActivePane',
+  'window.onCloseConfirmDismiss',
   'window.onCloseConfirmRequest',
   'window.onFindInPageResult',
   'window.onHideWindowFind',
@@ -202,6 +200,7 @@ const REMOTE_LOCAL_ONLY_CHANNELS: GroupedInventory = {
     'set-agent-environment-creation-enabled',
     'set-environment-enabled',
     'set-install-authorized',
+    'set-sandbox-access',
     'unregister-interpreter'
   ],
   settings: [

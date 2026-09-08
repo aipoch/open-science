@@ -3,8 +3,13 @@ import { Copy, LoaderCircle, RotateCcw } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { Button } from '@/components/ui/button'
 import { LiteratureErrorNotice } from './LiteratureErrorNotice'
+import { LiteratureDuplicateMembers } from './LiteratureDuplicateMembers'
 import { LiteratureDuplicateBatch } from './LiteratureDuplicateBatch'
-import type { LiteratureDuplicateGroup, LiteratureItemView } from '../../../../shared/literature'
+import type {
+  LiteratureCatalogReceipt,
+  LiteratureDuplicateGroup,
+  LiteratureItemView
+} from '../../../../shared/literature'
 
 export type LiteratureDuplicateCountHandle = { setCount: (count: number | undefined) => void }
 
@@ -59,7 +64,23 @@ export const LiteratureDuplicatesView = ({
   const reviewRequest = useRef(0)
   const [selected, setSelected] = useState<string[]>([])
   const [batchBusy, setBatchBusy] = useState(false)
+  const [completed, setCompleted] = useState<{
+    selection: string
+    groups: LiteratureDuplicateGroup[]
+    batch: NonNullable<LiteratureCatalogReceipt['batch']>
+  }>()
+  const completedResult = completed?.selection === JSON.stringify(selected) ? completed : undefined
+  const selectGroups: typeof setSelected = (value) => {
+    setCompleted(undefined)
+    setSelected(value)
+  }
   const refreshed = useRef(0)
+  const [expanded, setExpanded] = useState<{ id: string; requestKey: string }>()
+  const refreshList = (): void => {
+    selectGroups([])
+    setCompleted(undefined)
+    setRefresh((value) => value + 1)
+  }
 
   useEffect(() => {
     let cancelled = false
@@ -116,7 +137,7 @@ export const LiteratureDuplicatesView = ({
       reviewRequest.current += 1
       window.clearTimeout(timer)
     }
-  }, [active])
+  }, [requestKey])
 
   const review = async (group: LiteratureDuplicateGroup): Promise<void> => {
     const request = ++reviewRequest.current
@@ -154,10 +175,7 @@ export const LiteratureDuplicatesView = ({
         <Button
           variant="outline"
           disabled={pending || Boolean(reviewing) || batchBusy}
-          onClick={() => {
-            setSelected([])
-            setRefresh((value) => value + 1)
-          }}
+          onClick={refreshList}
         >
           <RotateCcw className="size-4" aria-hidden="true" />
           {t('Refresh')}
@@ -186,18 +204,38 @@ export const LiteratureDuplicatesView = ({
               checked={groups.every((group) => selected.includes(group.id))}
               disabled={batchBusy}
               onChange={(event) =>
-                setSelected(event.target.checked ? groups.map((group) => group.id) : [])
+                selectGroups(event.target.checked ? groups.map((group) => group.id) : [])
               }
             />
             {t('Select groups on this page')}
           </label>
         ) : null}
-        {selected.length > 0 ? (
+        {completedResult || (!pending && !error && selected.length > 0) ? (
           <LiteratureDuplicateBatch
-            key={selected.join(':')}
-            groups={groups.filter((group) => selected.includes(group.id))}
+            key={
+              completedResult
+                ? 'completed'
+                : JSON.stringify([
+                    requestKey,
+                    groups
+                      .filter((group) => selected.includes(group.id))
+                      .map((group) => group.itemIds)
+                  ])
+            }
+            groups={
+              completedResult?.groups ?? groups.filter((group) => selected.includes(group.id))
+            }
+            result={completedResult?.batch}
+            onCompleted={(batch) =>
+              setCompleted({
+                selection: JSON.stringify(selected),
+                groups: groups.filter((group) => selected.includes(group.id)),
+                batch
+              })
+            }
             onBusy={setBatchBusy}
             onMerged={onMerged}
+            onRefresh={refreshList}
           />
         ) : null}
         {pending ? (
@@ -228,7 +266,7 @@ export const LiteratureDuplicatesView = ({
                     checked={selected.includes(group.id)}
                     disabled={batchBusy || Boolean(reviewing)}
                     onChange={(event) =>
-                      setSelected((ids) =>
+                      selectGroups((ids) =>
                         event.target.checked
                           ? [...ids, group.id]
                           : ids.filter((id) => id !== group.id)
@@ -256,7 +294,10 @@ export const LiteratureDuplicatesView = ({
                   <Button
                     variant="outline"
                     disabled={Boolean(reviewing) || batchBusy}
-                    onClick={() => void review(group)}
+                    onClick={() => {
+                      if (group.itemIds.length > 20) setExpanded({ id: group.id, requestKey })
+                      else void review(group)
+                    }}
                   >
                     {reviewing === group.id ? (
                       <LoaderCircle
@@ -266,6 +307,15 @@ export const LiteratureDuplicatesView = ({
                     ) : null}
                     {t('Review duplicates')}
                   </Button>
+                  {expanded?.id === group.id && expanded.requestKey === requestKey ? (
+                    <LiteratureDuplicateMembers
+                      key={JSON.stringify([requestKey, group.itemIds])}
+                      group={group}
+                      busy={Boolean(reviewing) || batchBusy}
+                      onReview={(itemIds) => void review({ ...group, itemIds })}
+                      onClose={() => setExpanded(undefined)}
+                    />
+                  ) : null}
                 </div>
               ))}
             </div>
@@ -284,7 +334,7 @@ export const LiteratureDuplicatesView = ({
                 variant="outline"
                 disabled={offset === 0 || Boolean(reviewing) || batchBusy}
                 onClick={() => {
-                  setSelected([])
+                  selectGroups([])
                   setOffset(Math.max(0, offset - 20))
                 }}
               >
@@ -294,7 +344,7 @@ export const LiteratureDuplicatesView = ({
                 variant="outline"
                 disabled={nextOffset === undefined || Boolean(reviewing) || batchBusy}
                 onClick={() => {
-                  setSelected([])
+                  selectGroups([])
                   setOffset(nextOffset ?? offset)
                 }}
               >

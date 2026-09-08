@@ -66,6 +66,21 @@ const snapshot = (runs: NotebookRunRecord[]): PersistedArtifactExecutionSnapshot
   )
 
 describe('Artifact helper execution evidence', () => {
+  it('preserves explicit non-dispatch evidence through immutable snapshot serialization', () => {
+    const failed = {
+      ...run('failed-run', 'seed = 40', []),
+      status: 'failed' as const,
+      kernelDispatched: false
+    }
+    const legacy = run('legacy-run', 'seed = 0', [])
+    delete legacy.kernelDispatched
+    const value = snapshot([failed, run('producer', 'print(2)', []), legacy])
+    const decoded = parseArtifactExecutionSnapshot(JSON.stringify(value))
+    expect(decoded.runs[0]).toHaveProperty('kernelDispatched', false)
+    expect(decoded.runs[1]).toHaveProperty('kernelDispatched', true)
+    expect(decoded.runs[2]).not.toHaveProperty('kernelDispatched')
+  })
+
   it('freezes and deterministically deduplicates sticky helper generations', () => {
     const first = helper('helper-a')
     const value = snapshot([

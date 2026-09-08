@@ -67,6 +67,8 @@ describe('contextUsageMcpSections', () => {
     // Baseline before deduplication was about 5.2k cl100k tokens (3.6k schema + 1.6k prompt).
     // Project Memory adds three bounded tools and their structured analysis contract (~305 tokens).
     // Network approval adds one bounded tool plus its denial/retry contract (~200 tokens).
+    // Background execution adds one bounded query/cancel tool plus durable receipt and delivery
+    // guidance (~450 tokens); retain the established Notebook guidance rather than trading it away.
     for (const { frameworkId, codexBridgeAliases } of frameworks) {
       const [{ text: schema }] = contextUsageMcpSections(frameworkId, {
         artifacts: false,
@@ -77,7 +79,7 @@ describe('contextUsageMcpSections', () => {
       expect(
         tokenCount(`${NOTEBOOK_SYSTEM_PROMPT_APPEND}\n${schema}`) + bashHeadroom,
         `${frameworkId}${codexBridgeAliases ? ' (bridge aliases)' : ''}`
-      ).toBeLessThanOrEqual(4_175)
+      ).toBeLessThanOrEqual(4_650)
     }
   })
 

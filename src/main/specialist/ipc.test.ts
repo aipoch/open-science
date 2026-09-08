@@ -7,6 +7,7 @@ import { SessionBindingService } from './session-binding'
 import { registerSpecialistIpcHandlers } from './ipc'
 import type { SpecialistService } from './service'
 import { SessionSpecialistReconfiguration } from './session-reconfiguration'
+import type { SpecialistApplicationOwner } from './application-commands'
 
 const handlers = new Map<string, (event: unknown, payload: unknown) => unknown>()
 const broadcastToRenderers = vi.hoisted(() => vi.fn())
@@ -46,6 +47,45 @@ const createReconfigurationStub = (): Pick<SessionSpecialistReconfiguration, 're
 })
 
 describe('specialist session IPC', () => {
+  it('forwards the Electron upload adapters with one caller lease and composition-owned subscription', async () => {
+    handlers.clear()
+    const service = createSpecialistService()
+    const beginUpload = vi.fn().mockResolvedValue({ receivedBytes: 0 })
+    const previewUpload = vi.fn().mockResolvedValue({ candidateToken: 'preview' })
+    const abortUpload = vi.fn().mockResolvedValue(undefined)
+    registerSpecialistIpcHandlers(
+      service,
+      new SessionBindingService(service),
+      createReconfigurationStub(),
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      { beginUpload, previewUpload, abortUpload } as unknown as SpecialistApplicationOwner
+    )
+    const event = { sender: { id: 2119, once: vi.fn() } }
+    const request = { transferId: 'upload', name: 'research.zip', size: 50 }
+    await handlers.get('specialist:package-upload-begin')!(event, request)
+    await handlers.get('specialist:package-upload-preview')!(event, { transferId: 'upload' })
+    await handlers.get('specialist:package-upload-abort')!(event, { transferId: 'upload' })
+    const invocation = beginUpload.mock.calls[0][0]
+    expect(invocation).toMatchObject({
+      callerContext: { surface: 'electron', clientId: '2119' },
+      args: [request]
+    })
+    expect(invocation.callerLease.isCurrent()).toBe(true)
+    for (const method of [previewUpload, abortUpload]) {
+      expect(method).toHaveBeenCalledWith({
+        callerContext: invocation.callerContext,
+        callerLease: invocation.callerLease,
+        args: [{ transferId: 'upload' }]
+      })
+    }
+    expect(service.subscribe).not.toHaveBeenCalled()
+    event.sender.once.mock.calls.find(([name]) => name === 'destroyed')![1]()
+    expect(invocation.callerLease.signal.aborted).toBe(true)
+  })
+
   it('adds exact Marketplace provenance to the Settings catalog without persisting it', async () => {
     handlers.clear()
     const importedProfile: SpecialistView = {

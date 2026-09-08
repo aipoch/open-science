@@ -6,8 +6,9 @@ license: Apache-2.0
 
 This skill covers remote compute over SSH, including direct execution and Slurm submission:
 listing hosts, creating handles, running short remote commands (callCommand), reading/writing host
-knowledge docs, and the full async job lifecycle — submit → harvest → analysis turn → publish
-artifacts.
+knowledge docs, and the full async job lifecycle — submit → save `job_id` → read non-blocking
+snapshots by that ID →
+harvest → analysis turn → publish artifacts.
 
 **Where host.compute runs:** `host.compute` lives ONLY on the control-plane REPL kernel — run
 every example below with the `repl_execute` tool (JavaScript), the same kernel that hosts
@@ -86,8 +87,10 @@ are reported through the normal command result/error behavior.
 
 Use `submitJob` for long-running computations (minutes to hours). It returns immediately with a
 `job_id`; the job runs on the remote host in the background. When the job finishes, the app
-automatically harvests the outputs and initiates a new analysis turn. Do not poll for completion;
-perform only the single bounded immediate-failure check below, then return control to the user.
+automatically harvests the outputs and initiates a new analysis turn if you have not already read
+the terminal result. Save the exact `job_id` from the submission result in your working context;
+there is intentionally no historical Job scan for rediscovering it. Status and result reads use
+only that saved ID and return non-blocking local snapshots.
 
 For a local input, `src` is relative to the Agent Session workspace—the same workspace used by file
 writing tools. Write a script or small generated input there, then pass its relative path. Open
@@ -126,22 +129,38 @@ const job = await c.submitJob(
   }
 )
 // job → { job_id, provider_id, status: 'submitted' | 'queued', remote_workdir }
-// Give dispatch enough time to expose an immediately broken script, then fetch one result snapshot.
-await new Promise((resolve) => setTimeout(resolve, 2000))
-// result() is a non-blocking local DB/directory read in every state; it never waits for completion,
-// triggers SSH, or starts another harvest. Fetching it once exposes immediate stderr/error details.
-const initial = await c.attachJob(job.job_id).result()
-return initial
+const savedJobId = job.job_id // retain this exact id for the later dependent step
+return { ...job, job_id: savedJobId }
 ```
 
-### Immediate failure check after submission
+### Read a saved Job snapshot
 
-Wait exactly once for 2 seconds (`setTimeout(..., 2000)`), then call `.result()` exactly once. The
-result read is non-blocking for `submitted` and `running` jobs and includes status, stdout, stderr,
-and error details already persisted by dispatch. This catches syntax errors, missing executables,
-and other scripts that fail as soon as they start without waiting for a long-running job or starting
-a second harvest. **Do not wait again** and do not turn this into a polling loop: after printing the
-snapshot, end the cell and let the app own the rest of the lifecycle.
+Use the saved ID when the Job's state or result is relevant. `.status()` and `.result()` are
+non-blocking local reads in every state; neither waits for completion, triggers SSH, or starts
+another harvest. `.result()` also includes harvested file lists. Both calls report
+`follow_up_delivery`. A final `.result()` read returns `suppressed` when it prevents the fallback,
+or `committed` when that fallback already crossed its dispatch fence. A `.status()` snapshot remains
+`pending` because it omits harvested file lists. Use the submission's exact ID rather than searching
+old Jobs.
+
+```javascript
+const snapshot = await c.attachJob(savedJobId).result()
+if (!snapshot.result_final) {
+  return {
+    job_id: savedJobId,
+    status: snapshot.status,
+    result_final: false,
+    follow_up_delivery: snapshot.follow_up_delivery
+  }
+}
+return snapshot
+```
+
+Treat only `result_final: true` as the final result; a provider-terminal status can still be waiting
+for local harvest. The app owns provider polling and harvest in the background. An unread final
+result is delivered in a later Agent Turn. A final `.result()` snapshot reports
+`follow_up_delivery: 'suppressed'` when it suppresses that fallback, or `committed` if automatic
+delivery already won the race and remains authoritative. `.status()` never consumes the full result.
 
 ### Direct SSH or Slurm
 
@@ -188,10 +207,6 @@ to run outside Open Science. Validate the user-managed activation after they app
 retry. Do not guess a conda name, add an inline install to the science job, or hide activation in
 `.bashrc`. Omit `environment` when the command deliberately uses the host's default environment.
 
-**End the cell after that one check. Do NOT write a polling loop.** The app runs the poller and harvest in the
-background. When the job finishes, the app automatically starts a new analysis turn in this
-conversation — the conversation is NOT locked while the job runs, so the user can keep chatting.
-
 ### Harvest safety boundaries
 
 - Declared output files are selected before `stdout` and `stderr`; logs use the remaining per-job budget.
@@ -201,12 +216,9 @@ conversation — the conversation is NOT locked while the job runs, so the user 
 ### Behavior boundaries
 
 - **While the job runs:** the conversation is open. The user can send messages; you can handle
-  other tasks. No blocking wait.
-- **When the job finishes:** the app initiates a new analysis turn automatically. You do not
-  trigger this — it happens without any action on your part.
-- **Do NOT write** a loop calling `attachJob().status()` to wait for completion. That is the
-  app's job, not yours. Writing such a loop would block the conversation for the entire job
-  duration.
+  other tasks. Each status/result query returns immediately with the current local snapshot.
+- **When the job finishes:** if you did not actively read its terminal result, the app initiates a
+  new analysis turn automatically. You do not trigger this fallback.
 
 ### Check job status (non-blocking read, for informational use)
 
@@ -215,10 +227,12 @@ conversation — the conversation is NOT locked while the job runs, so the user 
 const handle = c.attachJob(job.job_id)
 const s = await handle.status()
 // s → {
-//   job_id, scheduler_job_id?, status, cancellation_status?, exit_code,
-//   error_code?, last_poll_error?, stdout_tail, stderr_tail, remote_workdir
+//   job_id, scheduler_job_id?, status, result_final, cancellation_status?, exit_code,
+//   error_code?, last_poll_error?, stdout_tail, stderr_tail, remote_workdir,
+//   follow_up_delivery: 'pending'
 // }
 // status: 'queued' | 'submitted' | 'running' | 'success' | 'failed' | 'timeout' | 'error'
+// result_final is the authority for whether local harvest is complete; status alone is not.
 ```
 
 To stop one active job, request durable cancellation through the same handle:
@@ -255,7 +269,7 @@ When the app initiates the analysis turn, it provides the `job_id`, `status`, an
 const c = host.compute.create('ssh:<alias>')
 const r = await c.attachJob(job_id).result()
 // r → {
-//   job_id, status, exit_code,
+//   job_id, status, result_final, exit_code,
 //   local_output_root: '/absolute/path/to/this/notebook/session',
 //   producer_run_id: 'notebook-run-...',
 //   featured_files: ['hpc/<job_id>/featured/out.result', ...],   // Notebook Session-relative
@@ -358,12 +372,11 @@ for (const seed of [0, 1, 2, 3, 4]) {
   )
   jobs.push(job.job_id)
 }
-return jobs // end the cell — no waiting, no loop
+return jobs // preserve every exact ID for later status/result reads
 ```
 
-The app triggers one analysis turn per job completion (or a merged turn for simultaneous
-completions). **Do NOT write a loop collecting all results** — each analysis turn handles
-its job independently.
+The app may trigger an analysis turn for each unread completion (or a merged turn for simultaneous
+completions). A final result read reports whether that Job's follow-up was suppressed or committed.
 
 ## Session concurrency control
 

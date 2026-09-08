@@ -74,7 +74,11 @@
           "src/renderer/src/stores/session-job-store.test.ts"
         ],
         "contract": ["src/shared/session-persistence.test.ts"],
-        "consumer": ["src/renderer/src/lib/acp/useWorkspaceAgentRuntime.test.ts"]
+        "consumer": [
+          "src/renderer/src/lib/acp/useWorkspaceAgentRuntime.test.ts",
+          "src/renderer/src/pages/workspace/WorkspaceElicitationCard.interaction.test.tsx",
+          "src/renderer/src/pages/workspace/ConversationPanel.interaction.test.tsx"
+        ]
       },
       "capabilityOverlays": ["renderer_state"],
       "fallbackCapability": "renderer_view"
@@ -200,6 +204,7 @@
           "src/renderer/src/pages/workspace/WorkspacePage.image-staging.test.tsx",
           "src/renderer/src/pages/workspace/WorkspacePage.pending-switch.test.tsx",
           "src/renderer/src/pages/workspace/WorkspacePage.preview-panel-resize.test.tsx",
+          "src/renderer/src/pages/workspace/preview-draft-lifecycle.test.tsx",
           "src/renderer/src/pages/workspace/WorkspacePage.send-gate.test.tsx",
           "src/renderer/src/pages/workspace/WorkspacePage.specialist-barrier.test.tsx",
           "src/renderer/src/pages/workspace/ComposerMessageQueue.interaction.test.tsx",

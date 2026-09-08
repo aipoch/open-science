@@ -171,16 +171,6 @@ const useProjectFilesQueryModel = (activeProjectId: string | undefined): Project
 
   const handleIndexChanged = useCallback(
     (event: ProjectFilesChangedEvent): void => {
-      const currentSessions = useSessionStore.getState().sessions
-      const changedSession = event.sessionId
-        ? currentSessions.find(
-            (session) => session.projectId === activeProjectId && session.id === event.sessionId
-          )
-        : undefined
-      const changedSessionHasArtifacts = (changedSession?.artifacts ?? []).some(
-        (artifact) => artifact.kind === 'managed-file' && Boolean(artifact.path)
-      )
-
       if (
         event.kind === 'delete' &&
         event.sessionId &&
@@ -188,21 +178,9 @@ const useProjectFilesQueryModel = (activeProjectId: string | undefined): Project
       ) {
         setSelectedFilterId('all')
         setSelectedSessionFallback(undefined)
-      } else if (
-        event.kind === 'upsert' &&
-        event.sources.includes('artifact') &&
-        event.sessionId &&
-        changedSession &&
-        selectedFilterId === `session:${event.sessionId}` &&
-        !changedSessionHasArtifacts
-      ) {
-        // Removing the final artifact is a session upsert, so clear a selected session only after the
-        // authoritative renderer session confirms that no managed artifact references remain.
-        setSelectedFilterId('all')
-        setSelectedSessionFallback(undefined)
       }
     },
-    [activeProjectId, selectedFilterId]
+    [selectedFilterId]
   )
 
   useEffect(() => {
@@ -365,7 +343,16 @@ const useProjectFilesQueryModel = (activeProjectId: string | undefined): Project
   ])
 
   useEffect(() => {
-    if (!selectedSessionId || selectedSessionStillExists || selectedSessionIsLoaded) return
+    if (!selectedSessionId) return
+
+    if (
+      !catalogIndex.isOverviewLoaded ||
+      catalogIndex.overviewError ||
+      !catalogIndex.overview.isIndexComplete ||
+      catalogIndex.isRepairing ||
+      catalogIndex.repairError
+    )
+      return
 
     const groupsSettled =
       catalogIndex.groups.isLoaded && !catalogIndex.groups.isLoading && !catalogIndex.groups.error
@@ -376,8 +363,8 @@ const useProjectFilesQueryModel = (activeProjectId: string | undefined): Project
     if (!groupsSettled || !sessionPageSettled || selectedCatalogSessionPage.totalCount > 0) return
 
     let canceled = false
-    // A DB-only session can remain in the selected fallback after reset. Clear it only after both the
-    // refreshed group headers and its independent file page confirm that no artifact rows remain.
+    // Session summaries do not carry authoritative artifact contents. Clear selection only when
+    // the unsearched file query succeeds against a complete index, including after a reset.
     void Promise.resolve().then(() => {
       if (canceled) return
       setSelectedFilterId('all')
@@ -391,8 +378,11 @@ const useProjectFilesQueryModel = (activeProjectId: string | undefined): Project
     catalogIndex.groups,
     selectedCatalogSessionPage,
     selectedSessionId,
-    selectedSessionIsLoaded,
-    selectedSessionStillExists
+    catalogIndex.isOverviewLoaded,
+    catalogIndex.overviewError,
+    catalogIndex.overview.isIndexComplete,
+    catalogIndex.isRepairing,
+    catalogIndex.repairError
   ])
 
   const effectiveFilterId =

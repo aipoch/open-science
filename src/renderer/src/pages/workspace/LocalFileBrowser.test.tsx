@@ -399,3 +399,135 @@ it('regression: local directory children match their ARIA container role', async
     result.violations.map(({ id, nodes }) => ({ id, html: nodes.map((node) => node.html) }))
   ).toEqual([])
 })
+
+describe('local browser initialization and persistence regressions', () => {
+  it('regression: starts browsing while optional bookmarks are pending', async () => {
+    const bookmarks = deferred<string[]>()
+    window.api.compute.bookmarksGet = vi.fn().mockReturnValue(bookmarks.promise)
+    await act(async () => root.render(<LocalFileBrowser />))
+    await flush()
+    try {
+      expect(listDir).toHaveBeenCalledWith(HOME)
+    } finally {
+      await act(async () => bookmarks.resolve([]))
+    }
+  })
+
+  it('regression: keeps browsing and reports a bookmark read failure', async () => {
+    window.api.compute.bookmarksGet = vi.fn().mockRejectedValue(new Error('Bookmark read failed'))
+    await act(async () => root.render(<LocalFileBrowser />))
+    await flush()
+    expect.soft(listDir).toHaveBeenCalledWith(HOME)
+    expect(document.body.textContent).toContain('Bookmark read failed')
+  })
+
+  it('regression: displays a roots initialization failure instead of remaining in loading', async () => {
+    window.api.localFs.getRoots = vi.fn().mockRejectedValue(new Error('Roots unavailable'))
+    await act(async () => root.render(<LocalFileBrowser />))
+    await flush()
+    expect(document.body.textContent).toContain('Roots unavailable')
+  })
+
+  it.each([false, true])(
+    'regression: preserves the saved bookmark state when a write fails (pinned=%s)',
+    async (pinned) => {
+      window.api.compute.bookmarksGet = vi.fn().mockResolvedValue(pinned ? [HOME] : [])
+      window.api.compute.bookmarksSet = vi
+        .fn()
+        .mockRejectedValue(new Error('Bookmark write failed'))
+      await act(async () => root.render(<LocalFileBrowser />))
+      await flush()
+      const label = pinned ? 'Remove bookmark' : 'Pin this folder'
+      await act(async () =>
+        document.querySelector<HTMLButtonElement>(`[aria-label="${label}"]`)!.click()
+      )
+      await flush()
+      expect(window.api.compute.bookmarksSet).toHaveBeenCalled()
+      expect.soft(document.querySelector(`[aria-label="${label}"]`)).not.toBeNull()
+      expect(document.body.textContent).toContain('Bookmark write failed')
+    }
+  )
+})
+
+it('retries roots initialization and opens Home', async () => {
+  vi.mocked(window.api.localFs.getRoots).mockRejectedValueOnce(new Error('Roots unavailable'))
+  await act(async () => root.render(<LocalFileBrowser />))
+  await flush()
+  await act(async () =>
+    Array.from(document.querySelectorAll('button'))
+      .find((b) => b.textContent === 'Retry')!
+      .click()
+  )
+  await flush()
+  expect(listDir).toHaveBeenCalledWith(HOME)
+  expect(document.body.textContent).not.toContain('Roots unavailable')
+})
+
+it('blocks writes until bookmark recovery preserves the saved list', async () => {
+  vi.mocked(window.api.compute.bookmarksGet)
+    .mockRejectedValueOnce(new Error('Bookmark read failed'))
+    .mockResolvedValueOnce([GRANTED])
+  await act(async () => root.render(<LocalFileBrowser />))
+  await flush()
+  expect(
+    document.querySelector<HTMLButtonElement>('[aria-label="Pin this folder"]')?.disabled
+  ).toBe(true)
+  expect(window.api.compute.bookmarksSet).not.toHaveBeenCalled()
+  await act(async () =>
+    Array.from(document.querySelectorAll('button'))
+      .find((b) => b.textContent === 'Retry')!
+      .click()
+  )
+  await flush()
+  await act(async () =>
+    document.querySelector<HTMLButtonElement>('[aria-label="Pin this folder"]')!.click()
+  )
+  expect(window.api.compute.bookmarksSet).toHaveBeenCalledWith(expect.any(String), [GRANTED, HOME])
+})
+
+it('serializes bookmark mutations and updates the pin only after saving', async () => {
+  const save = deferred<void>()
+  vi.mocked(window.api.compute.bookmarksSet).mockReturnValue(save.promise)
+  await act(async () => root.render(<LocalFileBrowser />))
+  await flush()
+  const pin = document.querySelector<HTMLButtonElement>('[aria-label="Pin this folder"]')!
+  await act(async () => {
+    pin.click()
+    pin.click()
+  })
+  expect(window.api.compute.bookmarksSet).toHaveBeenCalledTimes(1)
+  expect(pin.disabled).toBe(true)
+  expect(document.querySelector('[aria-label="Remove bookmark"]')).toBeNull()
+  await act(async () => save.resolve())
+  expect(document.querySelector('[aria-label="Remove bookmark"]')).not.toBeNull()
+})
+
+it('preserves a bookmark when removal from the Go to menu fails', async () => {
+  vi.mocked(window.api.compute.bookmarksGet).mockResolvedValue([GRANTED])
+  vi.mocked(window.api.compute.bookmarksSet).mockRejectedValue(new Error('Bookmark write failed'))
+  await act(async () => root.render(<LocalFileBrowser />))
+  await flush()
+  await act(async () =>
+    document.querySelector<HTMLButtonElement>(`[aria-label="Unpin ${GRANTED}"]`)!.click()
+  )
+  await flush()
+  expect(document.querySelector(`[aria-label="Unpin ${GRANTED}"]`)).not.toBeNull()
+  expect(document.body.textContent).toContain('Bookmark write failed')
+})
+
+it('keeps Home selected when an older folder request completes later', async () => {
+  await act(async () => root.render(<LocalFileBrowser />))
+  await flush()
+  const older = deferred<LocalDirListing>()
+  listDir.mockImplementation((path: string) =>
+    path === GRANTED
+      ? older.promise
+      : Promise.resolve({ entries: [], truncated: false, resolvedPath: path })
+  )
+  await act(async () =>
+    root.render(<LocalFileBrowser requestedPath={{ path: GRANTED, nonce: 1 }} />)
+  )
+  await act(async () => root.render(<LocalFileBrowser requestedPath={{ nonce: 2 }} />))
+  await act(async () => older.resolve({ entries: [], truncated: false, resolvedPath: GRANTED }))
+  expect(addressInput()?.value).toBe(HOME)
+})

@@ -47,6 +47,109 @@ afterEach(async () => {
 })
 
 describe('ComputeJob repository (SQLite integration)', () => {
+  it('lists project overview jobs using active and recent-terminal visibility rules newest-first', async () => {
+    storageRoot = await mkdtemp(join(tmpdir(), 'open-science-project-job-overview-'))
+
+    const client = createProjectDbClient(storageRoot)
+    disconnect = () => client.$disconnect()
+    await migrateApplicationDatabase(client)
+    const repo = makeJobRepository(client)
+    const since = new Date('2026-09-05T12:00:00.000Z')
+
+    const createJob = async (
+      id: string,
+      projectId: string,
+      status: 'queued' | 'submitted' | 'running' | 'success' | 'failed' | 'timeout' | 'error',
+      createdAt: string,
+      finishedAt?: string
+    ): Promise<void> => {
+      await repo.create({
+        id,
+        providerId: 'ssh:overview-host',
+        shape: 'direct_ssh',
+        sessionId: `${projectId}-session`,
+        projectId,
+        intent: id,
+        command: 'true',
+        commandHash: id,
+        initialStatus: 'submitted'
+      })
+      if (status !== 'submitted') {
+        await repo.update(id, {
+          status,
+          ...(status === 'error' ? { errorCode: 'dispatch_failed' } : {})
+        })
+      }
+      await client.computeJob.update({
+        where: { id },
+        data: {
+          createdAt: new Date(createdAt),
+          finishedAt: finishedAt === undefined ? null : new Date(finishedAt)
+        }
+      })
+    }
+
+    await createJob('old-running', 'project-1', 'running', '2026-08-01T00:00:00.000Z')
+    await createJob('old-submitted', 'project-1', 'submitted', '2026-08-02T00:00:00.000Z')
+    await createJob('old-queued', 'project-1', 'queued', '2026-08-03T00:00:00.000Z')
+    await createJob(
+      'recent-finished',
+      'project-1',
+      'success',
+      '2026-09-04T00:00:00.000Z',
+      '2026-09-06T00:00:00.000Z'
+    )
+    await createJob('recent-fallback', 'project-1', 'success', '2026-09-06T12:00:00.000Z')
+    await createJob(
+      'old-finished',
+      'project-1',
+      'failed',
+      '2026-09-06T18:00:00.000Z',
+      '2026-09-04T00:00:00.000Z'
+    )
+    await createJob('old-fallback', 'project-1', 'timeout', '2026-09-04T12:00:00.000Z')
+    await createJob('other-project', 'project-2', 'running', '2026-09-07T00:00:00.000Z')
+
+    await expect(repo.findProjectOverview('project-1', since)).resolves.toEqual([
+      expect.objectContaining({ job_id: 'recent-fallback' }),
+      expect.objectContaining({ job_id: 'recent-finished' }),
+      expect.objectContaining({ job_id: 'old-queued' }),
+      expect.objectContaining({ job_id: 'old-submitted' }),
+      expect.objectContaining({ job_id: 'old-running' })
+    ])
+  })
+
+  it('bounds the project overview to the newest 200 jobs', async () => {
+    storageRoot = await mkdtemp(join(tmpdir(), 'open-science-project-job-overview-limit-'))
+
+    const client = createProjectDbClient(storageRoot)
+    disconnect = () => client.$disconnect()
+    await migrateApplicationDatabase(client)
+    const repo = makeJobRepository(client)
+
+    await client.computeJob.createMany({
+      data: Array.from({ length: 201 }, (_, index) => ({
+        id: `job-${String(index).padStart(3, '0')}`,
+        providerId: 'ssh:overview-host',
+        shape: 'direct_ssh',
+        sessionId: 'project-1-session',
+        projectId: 'project-1',
+        status: 'running',
+        intent: `job ${index}`,
+        command: 'true',
+        commandHash: `hash-${index}`,
+        sensitiveDataEncrypted: false,
+        createdAt: new Date(Date.UTC(2026, 0, 1, 0, index))
+      }))
+    })
+
+    const jobs = await repo.findProjectOverview('project-1', new Date('2026-09-05T12:00:00Z'))
+
+    expect(jobs).toHaveLength(200)
+    expect(jobs[0]?.job_id).toBe('job-200')
+    expect(jobs.at(-1)?.job_id).toBe('job-001')
+  })
+
   it('persists credential conflicts reported while dispatching a migrated job', async () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open-science-job-credential-conflict-'))
 

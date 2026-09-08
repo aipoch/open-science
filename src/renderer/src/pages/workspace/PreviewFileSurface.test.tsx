@@ -87,6 +87,7 @@ vi.mock('./ManagedVersionDiffContent', () => ({
 }))
 
 import { PreviewFileSurface } from './PreviewFileSurface'
+import { PreviewPanelSurface } from './PreviewPanel'
 import { createPreviewFileItemFromPdfContext } from './preview-file-item'
 import { FOCUS_COMPOSER_EVENT } from './composer-focus-events'
 
@@ -1088,6 +1089,43 @@ describe('PreviewFileSurface managed text versions', () => {
       fileId: 'dialog-file',
       versionId: 'dialog-v3'
     })
+  })
+
+  it('preserves fullscreen editor focus on updates and guards Escape until discard is approved', async () => {
+    usePreviewWorkbenchStore.getState().upsertAndActivateItem(managedUploadItem)
+    await act(async () => root.render(<PreviewPanelSurface activeAnnotations={[]} />))
+    await click(container.querySelector('[aria-label="Open full screen preview of README.md"]'))
+    const fullscreen = container.querySelector<HTMLElement>('[role="dialog"]')!
+    await click(container.querySelector('[aria-label="Edit README.md"]'))
+    const textarea = container.querySelector<HTMLTextAreaElement>('textarea')!
+    await changeTextarea(textarea, '# Unsaved draft\n')
+    textarea.focus()
+    await act(async () => root.render(<PreviewPanelSurface activeAnnotations={[]} />))
+    expect(container.querySelector('textarea')).toBe(textarea)
+    expect(document.activeElement).toBe(textarea)
+    expect(textarea.value).toBe('# Unsaved draft\n')
+
+    const escape = async (): Promise<void> => {
+      await act(async () =>
+        textarea.dispatchEvent(
+          new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })
+        )
+      )
+    }
+    await escape()
+    expect(discardConfirmation()).not.toBeNull()
+    expect(fullscreen.getAttribute('role')).toBe('dialog')
+    await cancelDiscard()
+    expect(discardConfirmation()).toBeNull()
+    expect(fullscreen.getAttribute('role')).toBe('dialog')
+    expect(textarea.value).toBe('# Unsaved draft\n')
+    textarea.focus()
+    await escape()
+    await confirmDiscard()
+    expect(discardConfirmation()).toBeNull()
+    expect(container.querySelector('[role="dialog"]')).toBeNull()
+    expect(document.activeElement).toBe(container.querySelector('[role="tab"]'))
+    expect(usePreviewWorkbenchStore.getState().items).toHaveLength(1)
   })
 
   it('inspects uploads with the database file id and edits raw Markdown in a plain textarea', async () => {

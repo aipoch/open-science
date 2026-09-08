@@ -1555,7 +1555,9 @@ const startWebHttpServer = async (options: WebServerOptions): Promise<RunningWeb
             response,
             400,
             'invalid_request',
-            error instanceof SyntaxError ? 'Request body must be valid JSON.' : String(error)
+            error instanceof SyntaxError
+              ? 'Request body must be valid JSON.'
+              : 'Failed to read request body.'
           )
           return
         }

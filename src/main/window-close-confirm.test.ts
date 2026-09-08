@@ -1,9 +1,13 @@
+import { EventEmitter } from 'node:events'
+import { installAppLifecycle } from './app-lifecycle'
+import { clearApplicationShutdownTrigger } from './application-shutdown-trigger'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { BrowserWindow } from 'electron'
 import type { ActiveSessionInfo } from '../shared/storage'
 import type { CloseConfirmRequest, CloseConfirmResponse } from '../shared/window-controls'
 import {
+  WINDOW_CLOSE_CONFIRM_DISMISS_CHANNEL,
   WINDOW_CLOSE_CONFIRM_REQUEST_CHANNEL,
   WINDOW_CLOSE_CONFIRM_RESPONSE_CHANNEL
 } from '../shared/window-controls'
@@ -524,7 +528,11 @@ describe('createElectronCloseConfirm — send path', () => {
     expect(window.restore).not.toHaveBeenCalled() // not minimized
     expect(window.show).toHaveBeenCalledTimes(1)
     expect(window.focus).toHaveBeenCalledTimes(1)
-    expect(window.webContents.send).toHaveBeenCalledTimes(1)
+    expect(
+      window.webContents.send.mock.calls.filter(
+        ([channel]) => channel === WINDOW_CLOSE_CONFIRM_REQUEST_CHANNEL
+      )
+    ).toHaveLength(1)
   })
 
   it('focuses the window and forwards the payload to the renderer', async () => {
@@ -788,5 +796,251 @@ describe('createElectronCloseConfirm — nativeFallback', () => {
     ]
     expect(onlyArg.buttons).toEqual(['Cancel', 'Quit'])
     expect(electronMocks.showMessageBox.mock.calls[0]).toHaveLength(1)
+  })
+})
+
+describe('close confirmation page lifetime', () => {
+  it.each(['destroyed', 'did-start-navigation'])(
+    'releases an acknowledged confirmation after %s',
+    async (eventName) => {
+      vi.useFakeTimers()
+      electronMocks.ipcMainListeners.clear()
+      electronMocks.showMessageBox.mockReset()
+      electronMocks.showMessageBox.mockResolvedValue({ response: 0, checkboxChecked: false })
+      const window = createFakeWindow()
+      const confirm = createElectronCloseConfirm(
+        () => window as unknown as BrowserWindow,
+        emptyPreferences
+      )
+      const completed = vi.fn()
+      const pending = confirm('quit', [session]).then(completed)
+      const payload = window.webContents.send.mock.calls[0][1] as CloseConfirmRequest
+      const respond = (response: CloseConfirmResponse): void => {
+        for (const listener of electronMocks.ipcMainListeners.get(
+          WINDOW_CLOSE_CONFIRM_RESPONSE_CHANNEL
+        ) ?? []) {
+          listener({ sender: window.webContents }, response)
+        }
+      }
+      try {
+        respond({ requestId: payload.requestId, ack: true })
+        if (eventName === 'destroyed') {
+          window.isDestroyed.mockReturnValue(true)
+          window.webContents.isDestroyed.mockReturnValue(true)
+        }
+        for (const listener of window.webContents.__listeners.get(eventName) ?? []) {
+          listener(
+            {
+              url: 'file:///app/index.html',
+              isSameDocument: false,
+              isMainFrame: true,
+              frame: null
+            },
+            'file:///app/index.html',
+            false,
+            true,
+            1,
+            1
+          )
+        }
+        await vi.advanceTimersByTimeAsync(60_000)
+        expect
+          .soft(completed, 'lost page must not retain the confirmation promise')
+          .toHaveBeenCalledWith('cancel')
+        expect
+          .soft(
+            electronMocks.ipcMainListeners.get(WINDOW_CLOSE_CONFIRM_RESPONSE_CHANNEL) ?? [],
+            'settled confirmation must release its response listener'
+          )
+          .toHaveLength(0)
+      } finally {
+        // Cleanup only: the lost page cannot naturally send this response.
+        respond({ requestId: payload.requestId, choice: 'cancel' })
+        await pending
+        vi.useRealTimers()
+      }
+    }
+  )
+})
+
+describe('confirmation decision ownership', () => {
+  it('keeps native ownership after transfer even when the renderer recovers and chooses quit', async () => {
+    let resolveNative!: (result: NativeCloseConfirmResult) => void
+    const dismiss = vi.fn()
+    const h = makeHarness({
+      dismiss,
+      nativeFallback: () =>
+        new Promise((resolve) => {
+          resolveNative = resolve
+        })
+    })
+    const completed = vi.fn()
+    const pending = h.confirm('quit', [session]).then(completed)
+    h.ack()
+    h.fireGone()
+    expect(dismiss).toHaveBeenCalledWith('req-1')
+    h.fireRecover()
+    h.choose('quit')
+    await flushPreferenceRead()
+    expect(completed).not.toHaveBeenCalled()
+    resolveNative({ choice: 'cancel' })
+    await pending
+    expect(completed).toHaveBeenCalledWith('cancel')
+  })
+
+  it('releases the request even when dismissal delivery throws', async () => {
+    const h = makeHarness({
+      dismiss: () => {
+        throw new Error('page unavailable')
+      }
+    })
+    const pending = h.confirm('quit', [session])
+    h.ack()
+    h.choose('cancel')
+    await expect(pending).resolves.toBe('cancel')
+  })
+
+  it.each([
+    { isMainFrame: false, isSameDocument: false },
+    { isMainFrame: true, isSameDocument: true }
+  ])(
+    'preserves an acknowledged modal for navigation $isMainFrame/$isSameDocument',
+    async (details) => {
+      vi.useFakeTimers()
+      electronMocks.ipcMainListeners.clear()
+      electronMocks.showMessageBox.mockReset()
+      const window = createFakeWindow()
+      const confirm = createElectronCloseConfirm(
+        () => window as unknown as BrowserWindow,
+        emptyPreferences
+      )
+      const completed = vi.fn()
+      const pending = confirm('quit', [session]).then(completed)
+      const payload = window.webContents.send.mock.calls[0][1] as CloseConfirmRequest
+      const respond = (response: CloseConfirmResponse): void => {
+        for (const listener of electronMocks.ipcMainListeners.get(
+          WINDOW_CLOSE_CONFIRM_RESPONSE_CHANNEL
+        ) ?? [])
+          listener({ sender: window.webContents }, response)
+      }
+      try {
+        respond({ requestId: payload.requestId, ack: true })
+        for (const listener of window.webContents.__listeners.get('did-start-navigation') ?? [])
+          listener(details)
+        await vi.advanceTimersByTimeAsync(60_000)
+        expect(completed).not.toHaveBeenCalled()
+        expect(electronMocks.showMessageBox).not.toHaveBeenCalled()
+      } finally {
+        respond({ requestId: payload.requestId, choice: 'cancel' })
+        await pending
+        vi.useRealTimers()
+      }
+    }
+  )
+
+  it('keeps pending listeners and dismissal bound to the original window', async () => {
+    electronMocks.ipcMainListeners.clear()
+    const original = createFakeWindow()
+    const replacement = createFakeWindow()
+    let current = original
+    const confirm = createElectronCloseConfirm(
+      () => current as unknown as BrowserWindow,
+      emptyPreferences
+    )
+    const completed = vi.fn()
+    const pending = confirm('quit', [session]).then(completed)
+    const payload = original.webContents.send.mock.calls[0][1] as CloseConfirmRequest
+    const respond = (sender: FakeWebContents, response: CloseConfirmResponse): void => {
+      for (const listener of electronMocks.ipcMainListeners.get(
+        WINDOW_CLOSE_CONFIRM_RESPONSE_CHANNEL
+      ) ?? [])
+        listener({ sender }, response)
+    }
+    respond(original.webContents, { requestId: payload.requestId, ack: true })
+    current = replacement
+    respond(replacement.webContents, { requestId: payload.requestId, choice: 'quit' })
+    await flushPreferenceRead()
+    expect(completed).not.toHaveBeenCalled()
+    for (const listener of original.webContents.__listeners.get('did-start-navigation') ?? [])
+      listener({ isMainFrame: true, isSameDocument: false })
+    await pending
+    expect(completed).toHaveBeenCalledWith('cancel')
+    expect(original.webContents.send).toHaveBeenCalledWith(WINDOW_CLOSE_CONFIRM_DISMISS_CHANNEL, {
+      requestId: payload.requestId
+    })
+    expect(replacement.webContents.send).not.toHaveBeenCalled()
+    expect(
+      [...original.webContents.__listeners.values()].every((listeners) => listeners.size === 0)
+    ).toBe(true)
+  })
+
+  it('allows another normal quit after the acknowledged window is destroyed and reopened', async () => {
+    electronMocks.ipcMainListeners.clear()
+    const app = Object.assign(new EventEmitter(), { exit: vi.fn() })
+    const windows: FakeWindow[] = []
+    const quit = vi.fn()
+    const owner = installAppLifecycle({
+      app: app as unknown as Parameters<typeof installAppLifecycle>[0]['app'],
+      platform: 'darwin',
+      createMainWindow: () => {
+        const window = Object.assign(createFakeWindow(), { on: vi.fn() })
+        windows.push(window)
+        return window as unknown as BrowserWindow
+      },
+      createTray: () => undefined,
+      quit,
+      countWindows: () => windows.filter((window) => !window.isDestroyed()).length,
+      shutdownBackends: async () => undefined,
+      prepareForQuit: async () => undefined,
+      holdSettingsInstallAdmission: () => () => undefined,
+      abortQuitPreparation: () => undefined,
+      flushSessionPersistence: async () => 'completed',
+      isMigrationInProgress: () => false,
+      detectActiveSessions: () => [session],
+      hasActiveReviewerWork: () => false,
+      getActiveSettingsInstallId: () => undefined,
+      createConfirmClose: (getWindow) => createElectronCloseConfirm(getWindow, emptyPreferences)
+    })
+    const requestQuit = (): void => {
+      app.emit('before-quit', { preventDefault: vi.fn(), defaultPrevented: false })
+    }
+    const respond = (window: FakeWindow, response: CloseConfirmResponse): void => {
+      for (const listener of electronMocks.ipcMainListeners.get(
+        WINDOW_CLOSE_CONFIRM_RESPONSE_CHANNEL
+      ) ?? [])
+        listener({ sender: window.webContents }, response)
+    }
+    try {
+      requestQuit()
+      const first = windows[0]
+      const firstPayload = first.webContents.send.mock.calls[0][1] as CloseConfirmRequest
+      respond(first, { requestId: firstPayload.requestId, ack: true })
+      first.isDestroyed.mockReturnValue(true)
+      first.webContents.isDestroyed.mockReturnValue(true)
+      for (const listener of first.webContents.__listeners.get('destroyed') ?? []) listener()
+      // Flush the coordinator settlement and the lifecycle owner's finally.
+      await new Promise((resolve) => setTimeout(resolve, 0))
+      expect(
+        electronMocks.ipcMainListeners.get(WINDOW_CLOSE_CONFIRM_RESPONSE_CHANNEL)
+      ).toHaveLength(0)
+      owner.showMainWindow()
+      requestQuit()
+      const second = windows[1]
+      expect(second.webContents.send).toHaveBeenCalledWith(
+        WINDOW_CLOSE_CONFIRM_REQUEST_CHANNEL,
+        expect.any(Object)
+      )
+      const secondPayload = second.webContents.send.mock.calls[0][1] as CloseConfirmRequest
+      expect(secondPayload.requestId).not.toBe(firstPayload.requestId)
+      respond(first, { requestId: firstPayload.requestId, choice: 'quit' })
+      respond(second, { requestId: secondPayload.requestId, choice: 'cancel' })
+      await new Promise((resolve) => setTimeout(resolve, 0))
+      expect(quit).not.toHaveBeenCalled()
+      expect(
+        electronMocks.ipcMainListeners.get(WINDOW_CLOSE_CONFIRM_RESPONSE_CHANNEL)
+      ).toHaveLength(0)
+    } finally {
+      clearApplicationShutdownTrigger()
+    }
   })
 })

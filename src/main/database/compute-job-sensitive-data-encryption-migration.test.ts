@@ -80,10 +80,14 @@ describe('Compute Job sensitive data encryption migration', () => {
         '0030_literature_foundation',
         '0031_project_archive_revision',
         '0032_permission_approval_summary',
-        '0033_compute_job_harvest_retry'
+        '0033_compute_job_harvest_retry',
+        '0034_background_result_delivery',
+        '0035_literature_pdf_provenance',
+        '0036_content_verification_observation',
+        '0037_literature_inbox_integrity'
       ],
       from: '0015_session_model_call_usage',
-      to: '0033_compute_job_harvest_retry'
+      to: '0037_literature_inbox_integrity'
     })
     await expect(
       access(`${databasePath}.before-0016_compute_job_sensitive_data_encryption.backup`)
@@ -108,6 +112,9 @@ describe('Compute Job sensitive data encryption migration', () => {
     ).rejects.toMatchObject({ code: 'ENOENT' })
     await expect(
       access(`${databasePath}.before-0025_managed_file_version_foundation.backup`)
+    ).rejects.toMatchObject({ code: 'ENOENT' })
+    await expect(
+      access(`${databasePath}.before-0037_literature_inbox_integrity.backup`)
     ).rejects.toMatchObject({ code: 'ENOENT' })
     await expect(
       client.$queryRaw<

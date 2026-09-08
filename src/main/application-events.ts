@@ -17,6 +17,7 @@ import type { NotebookAvailableEvent, NotebookChangedEvent } from '../shared/not
 import type { ProvisionProgress } from '../shared/notebook-env'
 import type { NotificationInboxChanged } from '../shared/notifications'
 import type { PermissionGrantsChangedEvent } from '../shared/permission-grants'
+import type { ProjectBackgroundActivityChangedEvent } from '../shared/background-result-delivery'
 import type { ProjectFilesChangedEvent } from '../shared/project-files'
 import type {
   ReviewSessionRequest,
@@ -59,6 +60,7 @@ export type ApplicationEventMap = {
   'notebook:changed': NotebookChangedEvent
   'notebook-env:progress': ProvisionProgress
   'notifications:changed': NotificationInboxChanged
+  'background-result-delivery:changed': ProjectBackgroundActivityChangedEvent
   'project:created': Project
   'project:updated': Project
   'project:deleted': ProjectDeletedEvent

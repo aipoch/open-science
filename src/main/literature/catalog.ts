@@ -1,15 +1,22 @@
+import type { ContentRepository } from '../storage/content-repository'
 import { createHash, randomUUID } from 'node:crypto'
 
 import { Prisma, type PrismaClient } from '@prisma/client'
+import { createLogger } from '../logger'
 import { findLiteratureDuplicateGroups } from './duplicates'
 import { planLiteratureMerge, supplementLiteratureMetadata } from './duplicate-metadata'
 
 import {
   LITERATURE_IDENTITY_SCHEMES,
+  LITERATURE_IMPORT_IDENTITY_CONFLICT,
   LITERATURE_COLLECTION_NAME_CONFLICT,
   literatureCandidateInputSchema,
+  literaturePdfProvenanceSchema,
+  type LiteraturePdfProvenance,
+  literatureCandidateOriginSchema,
   literatureItemInputSchema,
   normalizeLiteratureIdentifierValue,
+  normalizeLiteratureIdentifierPreferences,
   type LiteratureCatalogCommand,
   type LiteratureDuplicatePolicy,
   type LiteratureCollectionView,
@@ -35,12 +42,15 @@ type LiteratureCatalogClient = Pick<
   | '$transaction'
   | 'contentBlob'
   | 'literatureAttachment'
+  | 'literatureAttachmentVersion'
   | 'literatureCollection'
   | 'literatureInboxCandidate'
   | 'literatureItem'
   | 'projectLiterature'
   | 'tagAssignment'
 >
+
+const log = createLogger('literature-catalog')
 
 type LiteratureCatalogClientProvider = () => Promise<LiteratureCatalogClient>
 const duplicateGroups = new WeakMap<
@@ -51,6 +61,7 @@ const duplicateGroups = new WeakMap<
 type AttachLiteratureContentInput = Readonly<{
   itemId: string
   expectedMetadataRevision?: number
+  provenance?: LiteraturePdfProvenance
   attachmentId?: string
   kind?: string
   title?: string
@@ -122,15 +133,15 @@ const sha256 = (value: string): string => createHash('sha256').update(value).dig
 const normalizedIdentifiers = (
   identifiers: readonly LiteratureIdentifierInput[]
 ): Array<LiteratureIdentifierInput & { normalizedValue: string }> => {
-  const seen = new Set<string>()
-  return identifiers.flatMap((identifier) => {
+  const unique = new Map<string, LiteratureIdentifierInput & { normalizedValue: string }>()
+  for (const identifier of identifiers) {
     const normalizedValue = normalizeIdentifier(identifier.scheme, identifier.value)
     if (!normalizedValue) throw new Error(`Literature ${identifier.scheme} identifier is empty.`)
     const key = `${identifier.scheme}:${normalizedValue}`
-    if (seen.has(key)) return []
-    seen.add(key)
-    return [{ ...identifier, normalizedValue }]
-  })
+    if (!unique.has(key) || identifier.isPrimary)
+      unique.set(key, { ...identifier, normalizedValue })
+  }
+  return normalizeLiteratureIdentifierPreferences([...unique.values()])
 }
 
 const candidateDedupeKey = (candidate: LiteratureCandidateInput): string => {
@@ -157,7 +168,16 @@ const itemInclude = {
   projects: { select: { projectId: true }, orderBy: { addedAt: 'asc' as const } },
   collections: { select: { collectionId: true }, orderBy: { addedAt: 'asc' as const } },
   attachments: {
-    include: { versions: { orderBy: { versionNumber: 'desc' as const } } },
+    include: {
+      versions: {
+        include: {
+          contentBlob: {
+            select: { state: true, lastVerificationFailure: true, lastVerificationAttemptAt: true }
+          }
+        },
+        orderBy: { versionNumber: 'desc' as const }
+      }
+    },
     orderBy: [{ sortOrder: 'asc' as const }, { createdAt: 'asc' as const }]
   }
 } satisfies Prisma.LiteratureItemInclude
@@ -210,11 +230,22 @@ const toItemView = (row: LiteratureItemRow): LiteratureItemView => ({
     versions: attachment.versions.map((version) => ({
       id: version.id,
       versionNumber: version.versionNumber,
+      provenance: version.provenanceJson
+        ? literaturePdfProvenanceSchema.parse(JSON.parse(version.provenanceJson))
+        : undefined,
       filename: version.filename,
       contentType: version.contentType,
       sizeBytes: Number(version.sizeBytes),
       checksum: version.checksum,
       pageCount: version.pageCount ?? undefined,
+      availability:
+        version.contentBlob.state !== 'available' || version.contentBlob.lastVerificationFailure
+          ? 'unavailable'
+          : version.contentBlob.lastVerificationAttemptAt
+            ? 'available'
+            : 'unknown',
+      verificationFailure: version.contentBlob.lastVerificationFailure ?? undefined,
+      verificationAttemptAt: version.contentBlob.lastVerificationAttemptAt?.getTime(),
       createdAt: version.createdAt.getTime()
     })),
     createdAt: attachment.createdAt.getTime(),
@@ -236,11 +267,25 @@ const toCandidateView = (row: {
   acceptedItemId: string | null
   createdAt: Date
   updatedAt: Date
+  discoveries: {
+    origin: string
+    projectId: string | null
+    sessionId: string | null
+    createdAt: Date
+  }[]
   pdfs?: { id: string; filename: string; sizeBytes: bigint; pageCount: number; sourceUrl: string }[]
 }): LiteratureInboxCandidateView => ({
   id: row.id,
   state: row.state as LiteratureInboxState,
   candidate: literatureCandidateInputSchema.parse(JSON.parse(row.candidateJson)),
+  discoveries: row.discoveries.map((discovery) => ({
+    origin: literatureCandidateOriginSchema.parse({
+      kind: discovery.origin,
+      projectId: discovery.projectId ?? undefined,
+      sessionId: discovery.sessionId ?? undefined
+    }),
+    createdAt: discovery.createdAt.getTime()
+  })),
   pdfs: row.pdfs?.map((pdf) => ({ ...pdf, sizeBytes: Number(pdf.sizeBytes) })),
   acceptedItemId: row.acceptedItemId ?? undefined,
   createdAt: row.createdAt.getTime(),
@@ -294,43 +339,127 @@ const restoreExistingItem = (
 
 const identityKey = (scheme: string, value: string): string => `${scheme}:${value}`
 
-// Inspect identifiers in bounded queries instead of opening one request per reference.
+type ImportIdentityIndex = {
+  byIdentifier: Map<string, Set<string | number>>
+  records: Map<string | number, Pick<LiteratureItemInput, 'title' | 'identifiers'>>
+}
+
+const rememberImportIdentity = (
+  index: ImportIdentityIndex,
+  target: string | number,
+  item: Pick<LiteratureItemInput, 'title' | 'identifiers'>
+): void => {
+  index.records.set(target, item)
+  for (const { scheme, normalizedValue } of normalizedIdentifiers(item.identifiers)) {
+    if (!identitySchemes.has(scheme)) continue
+    const key = identityKey(scheme, normalizedValue)
+    const targets = index.byIdentifier.get(key) ?? new Set<string | number>()
+    targets.add(target)
+    index.byIdentifier.set(key, targets)
+  }
+}
+
+// Include all owners, including Trash and explicitly independent duplicates.
 const importIdentityMap = async (
   transaction: Prisma.TransactionClient,
   items: readonly LiteratureItemInput[]
-): Promise<Map<string, string>> => {
+): Promise<ImportIdentityIndex> => {
   const identifiers = items.flatMap((item) =>
     normalizedIdentifiers(item.identifiers).filter(({ scheme }) => identitySchemes.has(scheme))
   )
-  const result = new Map<string, string>()
+  const result: ImportIdentityIndex = { byIdentifier: new Map(), records: new Map() }
   for (let offset = 0; offset < identifiers.length; offset += 200) {
-    const matches = await transaction.literatureIdentifier.findMany({
+    const matches = await transaction.literatureItem.findMany({
       where: {
-        item: { mergedIntoItemId: null },
-        OR: identifiers.slice(offset, offset + 200).map(({ scheme, normalizedValue }) => ({
-          scheme,
-          normalizedValue
-        }))
+        mergedIntoItemId: null,
+        identifiers: {
+          some: {
+            OR: identifiers
+              .slice(offset, offset + 200)
+              .map(({ scheme, normalizedValue }) => ({ scheme, normalizedValue }))
+          }
+        }
       },
-      select: { scheme: true, normalizedValue: true, itemId: true },
-      orderBy: [{ item: { deletedAt: 'asc' } }, { item: { createdAt: 'asc' } }, { itemId: 'asc' }]
+      select: { id: true, title: true, identifiers: true }
     })
     for (const match of matches) {
-      const key = identityKey(match.scheme, match.normalizedValue)
-      if (!result.has(key)) result.set(key, match.itemId)
+      rememberImportIdentity(result, match.id, {
+        title: match.title,
+        identifiers: match.identifiers.map((identifier) => ({
+          scheme: identifier.scheme as LiteratureIdentifierScheme,
+          value: identifier.rawValue,
+          isPrimary: identifier.isPrimary
+        }))
+      })
     }
   }
   return result
 }
 
 const importIdentity = (
-  identities: ReadonlyMap<string, string>,
+  index: ImportIdentityIndex,
   item: LiteratureItemInput
-): string | undefined =>
-  normalizedIdentifiers(item.identifiers)
-    .filter(({ scheme }) => identitySchemes.has(scheme))
-    .map(({ scheme, normalizedValue }) => identities.get(identityKey(scheme, normalizedValue)))
-    .find((id) => id !== undefined)
+): { target?: string | number; conflict?: LiteratureRecordImportEntry['conflict'] } => {
+  const identifiers = normalizedIdentifiers(item.identifiers).filter(({ scheme }) =>
+    identitySchemes.has(scheme)
+  )
+  const targets = [
+    ...new Set(
+      identifiers.flatMap(({ scheme, normalizedValue }) => [
+        ...(index.byIdentifier.get(identityKey(scheme, normalizedValue)) ?? [])
+      ])
+    )
+  ]
+  const contradictory = identifiers.some((identifier) =>
+    identifiers.some(
+      (other) =>
+        other.scheme === identifier.scheme && other.normalizedValue !== identifier.normalizedValue
+    )
+  )
+  const target = targets[0]
+  const existing =
+    target === undefined ? [] : normalizedIdentifiers(index.records.get(target)!.identifiers)
+  const disagrees = identifiers.some((identifier) => {
+    const sameScheme = existing.filter(({ scheme }) => scheme === identifier.scheme)
+    return (
+      sameScheme.length > 0 &&
+      !sameScheme.some(({ normalizedValue }) => normalizedValue === identifier.normalizedValue)
+    )
+  })
+  if (targets.length > 1 || contradictory || disagrees)
+    return {
+      conflict: {
+        identifiers: identifiers.map(({ scheme, value, isPrimary }) => ({
+          scheme,
+          value,
+          isPrimary
+        })),
+        matches: targets.map((target) => ({
+          ...(typeof target === 'string' ? { itemId: target } : { inputIndex: target }),
+          title: index.records.get(target)!.title
+        }))
+      }
+    }
+  return { target }
+}
+
+// Plan the entire batch before any write. Virtual targets retain input indexes,
+// so bridges between earlier rows are checked identically in preview and commit.
+const resolveImportItems = (
+  identities: ImportIdentityIndex,
+  items: readonly LiteratureItemInput[]
+): ReturnType<typeof importIdentity>[] =>
+  items.map((item, inputIndex) => {
+    const resolution = importIdentity(identities, item)
+    if (resolution.conflict) return resolution
+    const target = resolution.target ?? inputIndex
+    const previous = identities.records.get(target)
+    rememberImportIdentity(identities, target, {
+      title: previous?.title ?? item.title,
+      identifiers: [...(previous?.identifiers ?? []), ...item.identifiers]
+    })
+    return resolution
+  })
 
 const createItem = async (
   transaction: Prisma.TransactionClient,
@@ -485,12 +614,53 @@ const replaceItemMetadata = async (
   }
 }
 
+const transferSourceRecords = async (
+  transaction: Prisma.TransactionClient,
+  where: Prisma.LiteratureSourceRecordWhereInput,
+  itemId: string
+): Promise<void> => {
+  const sources = await transaction.literatureSourceRecord.findMany({
+    where,
+    orderBy: [{ fetchedAt: 'asc' }, { id: 'asc' }]
+  })
+  for (const source of sources) {
+    const existing = await transaction.literatureSourceRecord.findFirst({
+      where: {
+        itemId,
+        provider: source.provider,
+        externalId: source.externalId,
+        ...(source.externalId ? {} : { sourceUrl: source.sourceUrl })
+      }
+    })
+    if (existing) {
+      if (source.fetchedAt > existing.fetchedAt) {
+        await transaction.literatureSourceRecord.update({
+          where: { id: existing.id },
+          data: {
+            rawMetadataJson: source.rawMetadataJson,
+            metadataChecksum: source.metadataChecksum,
+            sourceUrl: source.sourceUrl,
+            fetchedAt: source.fetchedAt
+          }
+        })
+      }
+      await transaction.literatureSourceRecord.delete({ where: { id: source.id } })
+    } else {
+      await transaction.literatureSourceRecord.update({
+        where: { id: source.id },
+        data: { inboxCandidateId: null, itemId }
+      })
+    }
+  }
+}
+
 const acceptInboxCandidate = async (
   transaction: Prisma.TransactionClient,
   candidateId: string
 ): Promise<LiteratureCatalogReceipt> => {
   const row = await transaction.literatureInboxCandidate.findUnique({
-    where: { id: candidateId }
+    where: { id: candidateId },
+    include: { discoveries: true }
   })
   if (!row) throw new Error('Literature Inbox candidate not found.')
   if (row.state === 'accepted' && row.acceptedItemId) {
@@ -503,16 +673,15 @@ const acceptInboxCandidate = async (
     (await findIdentityItem(transaction, identifiers)) ??
     (await createItem(transaction, candidate.item))
   await restoreExistingItem(transaction, itemId)
-  await transaction.literatureSourceRecord.updateMany({
-    where: { inboxCandidateId: row.id },
-    data: { inboxCandidateId: null, itemId }
-  })
-  await attachProjectIfPresent(
-    transaction,
-    candidate.origin.projectId,
-    itemId,
-    candidate.origin.kind
-  )
+  await transferSourceRecords(transaction, { inboxCandidateId: row.id }, itemId)
+  for (const discovery of row.discoveries) {
+    await attachProjectIfPresent(
+      transaction,
+      discovery.projectId ?? undefined,
+      itemId,
+      discovery.origin
+    )
+  }
   await transaction.literatureInboxCandidate.update({
     where: { id: row.id },
     data: { state: 'accepted', acceptedItemId: itemId, settledAt: new Date() }
@@ -537,6 +706,7 @@ const acceptInboxCandidate = async (
               checksum: pdf.checksum,
               pageCount: pdf.pageCount,
               contentType: 'application/pdf',
+              provenanceJson: pdf.provenanceJson,
               versionNumber: 1
             }
           }
@@ -548,7 +718,24 @@ const acceptInboxCandidate = async (
 }
 
 class LiteratureCatalog {
-  constructor(private readonly getClient: LiteratureCatalogClientProvider) {}
+  constructor(
+    private readonly getClient: LiteratureCatalogClientProvider,
+    private readonly onTagAssignmentsChanged?: () => Promise<void>,
+    private readonly content?: Pick<ContentRepository, 'verify' | 'sweep'>,
+    private readonly withAttachmentRemoval?: (
+      attachmentId: string,
+      remove: () => Promise<LiteratureCatalogReceipt>
+    ) => Promise<LiteratureCatalogReceipt>
+  ) {}
+
+  private async publishTagAssignmentsChanged(): Promise<void> {
+    try {
+      await this.onTagAssignmentsChanged?.()
+    } catch (error) {
+      // Delivery cannot roll back an already committed catalog transaction.
+      log.warn('Could not publish committed tag assignment changes', { error })
+    }
+  }
 
   async search(request: LiteratureCatalogSearchRequest): Promise<LiteratureCatalogSearchPage> {
     const client = await this.getClient()
@@ -595,6 +782,7 @@ class LiteratureCatalog {
     if (request.scope === 'project-counts') {
       const rows = await client.projectLiterature.groupBy({
         by: ['projectId'],
+        where: { item: { deletedAt: null, mergedIntoItemId: null } },
         _count: { itemId: true },
         orderBy: { projectId: 'asc' }
       })
@@ -615,7 +803,11 @@ class LiteratureCatalog {
         client.literatureCollection.count({ where }),
         client.literatureCollection.findMany({
           where,
-          include: { _count: { select: { items: true } } },
+          include: {
+            _count: {
+              select: { items: { where: { item: { deletedAt: null, mergedIntoItemId: null } } } }
+            }
+          },
           orderBy: [{ sortOrder: 'asc' }, { name: 'asc' }],
           skip: offset,
           take: limit + 1
@@ -649,6 +841,7 @@ class LiteratureCatalog {
         client.literatureInboxCandidate.findMany({
           where,
           include: {
+            discoveries: { orderBy: [{ createdAt: 'asc' }, { id: 'asc' }] },
             pdfs: {
               select: {
                 id: true,
@@ -670,6 +863,19 @@ class LiteratureCatalog {
         nextOffset: rows.length > limit ? offset + limit : undefined
       }
     }
+    if (request.allItemIds) {
+      return client.$transaction((transaction) => this.searchLibrary(request, transaction))
+    }
+    return this.searchLibrary(request, client)
+  }
+
+  private async searchLibrary(
+    request: LiteratureCatalogSearchRequest,
+    client: Pick<LiteratureCatalogClient, 'literatureItem' | 'tagAssignment'>
+  ): Promise<LiteratureCatalogSearchPage> {
+    const offset = Math.max(0, request.offset ?? 0)
+    const limit = Math.min(100, Math.max(1, request.limit ?? 50))
+    const query = normalizeSpace(request.query ?? '')
     const filter = request.filter
     const tagIds = [
       ...new Set([...(filter?.tagIds ?? []), ...(request.tagId ? [request.tagId] : [])])
@@ -765,6 +971,10 @@ class LiteratureCatalog {
             : request.sortBy === 'created'
               ? [{ createdAt: sortDirection }, { id: 'asc' }]
               : [{ updatedAt: sortDirection }, { id: 'asc' }]
+    if (request.allItemIds) {
+      const rows = await client.literatureItem.findMany({ where, orderBy, select: { id: true } })
+      return { entries: [], itemIds: rows.map(({ id }) => id), totalCount: rows.length }
+    }
     const [totalCount, rows] = await Promise.all([
       client.literatureItem.count({ where }),
       client.literatureItem.findMany({
@@ -848,6 +1058,9 @@ class LiteratureCatalog {
   }
 
   async attachContent(input: AttachLiteratureContentInput): Promise<AttachedLiteratureContent> {
+    const provenanceJson = input.provenance
+      ? canonicalJson(literaturePdfProvenanceSchema.parse(input.provenance))
+      : null
     const itemId = normalizeSpace(input.itemId)
     const kind = normalizeSpace(input.kind ?? 'fullText')
     const filename = normalizeSpace(input.filename)
@@ -944,7 +1157,8 @@ class LiteratureCatalog {
           contentType,
           sizeBytes: BigInt(input.sizeBytes),
           checksum: input.checksum,
-          pageCount: input.pageCount
+          pageCount: input.pageCount,
+          provenanceJson
         },
         select: { id: true }
       })
@@ -972,8 +1186,73 @@ class LiteratureCatalog {
         duplicateGroups.delete(await this.getClient())
     }
   }
+  private deleteAttachment(
+    command: Extract<LiteratureCatalogCommand, { kind: 'delete-attachment' }>
+  ): Promise<LiteratureCatalogReceipt> {
+    if (!this.withAttachmentRemoval)
+      throw new Error('Literature attachment removal is unavailable.')
+    return this.withAttachmentRemoval(command.attachmentId, () =>
+      this.deleteUnreferencedAttachment(command)
+    )
+  }
+
+  private async deleteUnreferencedAttachment(
+    command: Extract<LiteratureCatalogCommand, { kind: 'delete-attachment' }>
+  ): Promise<LiteratureCatalogReceipt> {
+    if (!this.content) throw new Error('Literature content operations are unavailable.')
+    const client = await this.getClient()
+    const contentIds = await client.$transaction(async (transaction) => {
+      const attachment = await transaction.literatureAttachment.findFirst({
+        where: {
+          id: command.attachmentId,
+          itemId: command.itemId,
+          item: { deletedAt: null, mergedIntoItemId: null }
+        },
+        select: { versions: { select: { contentBlobId: true } } }
+      })
+      if (!attachment) throw new Error('Literature Attachment is unavailable.')
+      await transaction.literatureAttachment.delete({ where: { id: command.attachmentId } })
+      return attachment.versions.map(({ contentBlobId }) => contentBlobId)
+    })
+    let cleanupPending = false
+    try {
+      const sweep = await this.content.sweep({
+        contentIds,
+        createdBefore: new Date(Date.now() + 1)
+      })
+      cleanupPending = sweep.failedIds.length > 0
+    } catch {
+      cleanupPending = true
+    }
+    return { kind: 'item', id: command.itemId, state: 'unlinked', cleanupPending }
+  }
+
+  private async verifyAttachment(
+    command: Extract<LiteratureCatalogCommand, { kind: 'verify-attachment' }>
+  ): Promise<LiteratureCatalogReceipt> {
+    if (!this.content) throw new Error('Literature content operations are unavailable.')
+    const client = await this.getClient()
+    const version = await client.literatureAttachmentVersion.findFirst({
+      where: {
+        id: command.versionId,
+        attachment: { itemId: command.itemId, item: { deletedAt: null, mergedIntoItemId: null } }
+      },
+      select: { contentBlobId: true }
+    })
+    if (!version) throw new Error('Literature Attachment is unavailable.')
+    const verification = await this.content.verify(version.contentBlobId, { retry: true })
+    if (verification.state === 'unavailable') {
+      throw new Error(`Literature attachment verification failed: ${verification.reason}`)
+    }
+    return { kind: 'item', id: command.itemId, state: 'present' }
+  }
+
   private execute(command: LiteratureCatalogCommand): Promise<LiteratureCatalogReceipt> {
     switch (command.kind) {
+      case 'delete-attachment':
+        return this.deleteAttachment(command)
+      case 'verify-attachment':
+        return this.verifyAttachment(command)
       case 'stage-candidate':
         return this.stageCandidate(command.candidate)
       case 'create-item':
@@ -1039,35 +1318,33 @@ class LiteratureCatalog {
           }
 
           const identities = await importIdentityMap(transaction, items)
+          const resolutions =
+            duplicatePolicy === 'separate' ? [] : resolveImportItems(identities, items)
+          if (resolutions.some(({ conflict }) => conflict))
+            throw new Error(LITERATURE_IMPORT_IDENTITY_CONFLICT)
+          const importedTargets = new Map<number, string>()
           const itemIds: string[] = []
           let createdCount = 0
           let reusedCount = 0
-          for (const item of items) {
-            const identifiers = normalizedIdentifiers(item.identifiers)
+          for (const [inputIndex, item] of items.entries()) {
+            const target = resolutions[inputIndex]?.target
             const existingId =
-              duplicatePolicy === 'separate' ? undefined : importIdentity(identities, item)
+              typeof target === 'string'
+                ? target
+                : target === undefined
+                  ? undefined
+                  : importedTargets.get(target)
             const itemId = existingId ?? (await createItem(transaction, item))
             if (existingId) {
               await restoreExistingItem(transaction, existingId)
               if (duplicatePolicy === 'fill-missing') {
-                const filled = await supplementExistingItem(transaction, existingId, item)
-                for (const { scheme, normalizedValue } of normalizedIdentifiers(
-                  filled.identifiers
-                )) {
-                  const key = identityKey(scheme, normalizedValue)
-                  if (identitySchemes.has(scheme) && !identities.has(key))
-                    identities.set(key, existingId)
-                }
+                await supplementExistingItem(transaction, existingId, item)
               }
               reusedCount += 1
             } else {
               createdCount += 1
-              for (const { scheme, normalizedValue } of identifiers) {
-                if (identitySchemes.has(scheme)) {
-                  identities.set(identityKey(scheme, normalizedValue), itemId)
-                }
-              }
             }
+            importedTargets.set(inputIndex, itemId)
             if (!itemIds.includes(itemId)) itemIds.push(itemId)
             if (collectionId) {
               await transaction.literatureCollectionItem.upsert({
@@ -1089,25 +1366,20 @@ class LiteratureCatalog {
 
   async inspectImportItems(
     inputs: readonly LiteratureItemInput[],
-    errors: readonly LiteratureRecordImportError[]
+    errors: readonly LiteratureRecordImportError[],
+    parserWarnings: readonly LiteratureRecordImportEntry['warnings'][] = []
   ): Promise<LiteratureRecordImportEntry[]> {
     const items = inputs.map((item) => literatureItemInputSchema.parse(item))
     const client = await this.getClient()
     const entries: LiteratureRecordImportEntry[] = []
     await client.$transaction(async (transaction) => {
       const identities = await importIdentityMap(transaction, items)
+      const resolutions = resolveImportItems(identities, items)
       for (const [index, item] of items.entries()) {
-        const match = importIdentity(identities, item)
-        const existingItemId = match || undefined
-        if (match === undefined) {
-          for (const { scheme, normalizedValue } of normalizedIdentifiers(item.identifiers)) {
-            if (identitySchemes.has(scheme)) {
-              // An empty ID marks an earlier reference in this file, not a persisted Item.
-              identities.set(identityKey(scheme, normalizedValue), '')
-            }
-          }
-        }
+        const { target, conflict } = resolutions[index]!
+        const existingItemId = !conflict && typeof target === 'string' ? target : undefined
         const warnings: LiteratureRecordImportEntry['warnings'] = [
+          ...(parserWarnings[index] ?? []),
           ...(item.creators.length === 0 ? (['missing-authors'] as const) : []),
           ...(item.issuedYear === undefined && !item.issuedText ? (['missing-year'] as const) : []),
           ...(!item.containerTitle &&
@@ -1118,7 +1390,14 @@ class LiteratureCatalog {
         entries.push({
           index,
           title: item.title,
-          status: match !== undefined ? 'existing' : warnings.length > 0 ? 'warning' : 'ready',
+          status: conflict
+            ? 'conflict'
+            : target !== undefined
+              ? 'existing'
+              : warnings.length > 0
+                ? 'warning'
+                : 'ready',
+          ...(conflict ? { conflict } : {}),
           warnings,
           item,
           ...(existingItemId ? { existingItemId } : {})
@@ -1164,15 +1443,27 @@ class LiteratureCatalog {
 
   private async stageCandidate(
     input: LiteratureCandidateInput,
-    pdf?: Omit<AttachLiteratureContentInput, 'itemId'> & { pageCount: number; sourceUrl: string }
+    pdf?: Omit<AttachLiteratureContentInput, 'itemId'> & { pageCount: number; sourceUrl: string },
+    signal?: AbortSignal
   ): Promise<LiteratureCatalogReceipt> {
     const candidate = literatureCandidateInputSchema.parse(input)
+    const provenanceJson = pdf?.provenance
+      ? canonicalJson(literaturePdfProvenanceSchema.parse(pdf.provenance))
+      : null
     const identifiers = normalizedIdentifiers(candidate.item.identifiers)
     const client = await this.getClient()
     return client.$transaction(async (transaction) => {
+      signal?.throwIfAborted()
       const existingItemId = await findIdentityItem(transaction, identifiers)
-      if (existingItemId && !pdf) {
-        await restoreExistingItem(transaction, existingItemId)
+      const existingItem = existingItemId
+        ? await transaction.literatureItem.findUnique({
+            where: { id: existingItemId },
+            select: { deletedAt: true }
+          })
+        : undefined
+      signal?.throwIfAborted()
+      // From the first write onward this transaction settles atomically, even if cancelled.
+      if (existingItemId && existingItem?.deletedAt === null && !pdf) {
         await attachProjectIfPresent(
           transaction,
           candidate.origin.projectId,
@@ -1185,6 +1476,17 @@ class LiteratureCatalog {
       const dedupeKey = pdf
         ? sha256(`pdf:${candidateDedupeKey(candidate)}:${pdf.checksum}`)
         : candidateDedupeKey(candidate)
+      const previous = await transaction.literatureInboxCandidate.findUnique({
+        where: { dedupeKey },
+        include: { acceptedItem: { select: { deletedAt: true } } }
+      })
+      if (previous?.state === 'accepted' && previous.acceptedItem?.deletedAt) {
+        // Keep the accepted review history while giving this deletion a new review opportunity.
+        await transaction.literatureInboxCandidate.update({
+          where: { id: previous.id },
+          data: { dedupeKey: `accepted:${previous.id}` }
+        })
+      }
       const candidateJson = canonicalJson(candidate)
       const metadataChecksum = sha256(candidateJson)
       const persisted = await transaction.literatureInboxCandidate.upsert({
@@ -1203,6 +1505,22 @@ class LiteratureCatalog {
         },
         update: {},
         select: { id: true, state: true }
+      })
+      const contextKey = canonicalJson([
+        candidate.origin.kind,
+        candidate.origin.projectId ?? null,
+        candidate.origin.sessionId ?? null
+      ])
+      await transaction.literatureCandidateDiscovery.upsert({
+        where: { candidateId_contextKey: { candidateId: persisted.id, contextKey } },
+        create: {
+          candidateId: persisted.id,
+          contextKey,
+          origin: candidate.origin.kind,
+          projectId: candidate.origin.projectId,
+          sessionId: candidate.origin.sessionId
+        },
+        update: {}
       })
       if (persisted.state === 'pending') {
         if (pdf) {
@@ -1226,7 +1544,8 @@ class LiteratureCatalog {
               sizeBytes: blob.sizeBytes,
               checksum: blob.checksum,
               pageCount: pdf.pageCount,
-              sourceUrl: pdf.sourceUrl
+              sourceUrl: pdf.sourceUrl,
+              provenanceJson
             },
             update: {}
           })
@@ -1251,9 +1570,10 @@ class LiteratureCatalog {
 
   async stageAcquiredPdf(
     candidate: LiteratureCandidateInput,
-    pdf: Omit<AttachLiteratureContentInput, 'itemId'> & { pageCount: number; sourceUrl: string }
+    pdf: Omit<AttachLiteratureContentInput, 'itemId'> & { pageCount: number; sourceUrl: string },
+    signal?: AbortSignal
   ): Promise<LiteratureCatalogReceipt> {
-    return this.stageCandidate(candidate, pdf)
+    return this.stageCandidate(candidate, pdf, signal)
   }
 
   private async dismissCandidate(candidateId: string): Promise<LiteratureCatalogReceipt> {
@@ -1402,6 +1722,10 @@ class LiteratureCatalog {
       return { kind: 'item', id: command.itemId, state: 'unlinked' }
     }
     await client.$transaction(async (transaction) => {
+      const available = await transaction.literatureItem.count({
+        where: { id: command.itemId, deletedAt: null, mergedIntoItemId: null }
+      })
+      if (!available) throw new Error('One or more Literature Items are unavailable.')
       const last = await transaction.literatureCollectionItem.findFirst({
         where: { collectionId: command.collectionId },
         orderBy: { sortOrder: 'desc' },
@@ -1425,25 +1749,11 @@ class LiteratureCatalog {
   private async setProjectItem(
     command: Extract<LiteratureCatalogCommand, { kind: 'set-project-item' }>
   ): Promise<LiteratureCatalogReceipt> {
-    const client = await this.getClient()
-    if (!command.included) {
-      await client.$transaction((transaction) =>
-        transaction.projectLiterature.deleteMany({
-          where: { projectId: command.projectId, itemId: command.itemId }
-        })
-      )
-      return { kind: 'item', id: command.itemId, state: 'unlinked' }
-    }
-    const source = normalizeSpace(command.source)
-    if (!source) throw new Error('Project Literature source is required.')
-    await client.$transaction((transaction) =>
-      transaction.projectLiterature.upsert({
-        where: { projectId_itemId: { projectId: command.projectId, itemId: command.itemId } },
-        create: { projectId: command.projectId, itemId: command.itemId, source },
-        update: { source }
-      })
-    )
-    return { kind: 'item', id: command.itemId, state: 'linked' }
+    return this.setProjectItems({
+      ...command,
+      kind: 'set-project-items',
+      itemIds: [command.itemId]
+    })
   }
 
   private async setProjectItems(
@@ -1461,8 +1771,13 @@ class LiteratureCatalog {
     }
     const source = normalizeSpace(command.source)
     if (!source) throw new Error('Project Literature source is required.')
-    await client.$transaction((transaction) =>
-      Promise.all(
+    await client.$transaction(async (transaction) => {
+      const available = await transaction.literatureItem.count({
+        where: { id: { in: itemIds }, deletedAt: null, mergedIntoItemId: null }
+      })
+      if (available !== itemIds.length)
+        throw new Error('One or more Literature Items are unavailable.')
+      await Promise.all(
         itemIds.map((itemId) =>
           transaction.projectLiterature.upsert({
             where: { projectId_itemId: { projectId: command.projectId, itemId } },
@@ -1471,7 +1786,7 @@ class LiteratureCatalog {
           })
         )
       )
-    )
+    })
     return { kind: 'item', id: itemIds[0]!, state: 'linked' }
   }
 
@@ -1481,13 +1796,15 @@ class LiteratureCatalog {
     const itemIds = [...new Set(command.itemIds)]
     const client = await this.getClient()
     const now = new Date()
-    const updated = await client.literatureItem.updateMany({
-      where: { id: { in: itemIds }, mergedIntoItemId: null },
-      data: command.state === 'deleted' ? { deletedAt: now } : { deletedAt: null }
+    await client.$transaction(async (transaction) => {
+      const updated = await transaction.literatureItem.updateMany({
+        where: { id: { in: itemIds }, mergedIntoItemId: null },
+        data: command.state === 'deleted' ? { deletedAt: now } : { deletedAt: null }
+      })
+      if (updated.count !== itemIds.length) {
+        throw new Error('One or more Literature Items are unavailable.')
+      }
     })
-    if (updated.count !== itemIds.length) {
-      throw new Error('One or more Literature Items are unavailable.')
-    }
     return { kind: 'item', id: itemIds[0]!, state: command.state }
   }
 
@@ -1517,7 +1834,8 @@ class LiteratureCatalog {
   ): Promise<LiteratureCatalogReceipt> {
     const itemIds = [...new Set(command.itemIds)]
     const client = await this.getClient()
-    return client.$transaction(async (transaction) => {
+    let tagsChanged = false
+    const receipt = await client.$transaction<LiteratureCatalogReceipt>(async (transaction) => {
       const requestedItems = await transaction.literatureItem.findMany({
         where: { id: { in: itemIds } },
         select: { id: true, deletedAt: true }
@@ -1542,9 +1860,10 @@ class LiteratureCatalog {
       await transaction.literatureInboxCandidate.deleteMany({
         where: { acceptedItemId: { in: deletionIds } }
       })
-      await transaction.tagAssignment.deleteMany({
+      const removedTags = await transaction.tagAssignment.deleteMany({
         where: { resourceType: 'literature.item', resourceId: { in: deletionIds } }
       })
+      tagsChanged = removedTags.count > 0
       await transaction.literatureItem.updateMany({
         where: { id: { in: deletionIds } },
         data: { mergedIntoItemId: null }
@@ -1559,6 +1878,8 @@ class LiteratureCatalog {
       }
       return { kind: 'item', id: itemIds[0]!, state: 'deleted-permanently' }
     })
+    if (tagsChanged) await this.publishTagAssignmentsChanged()
+    return receipt
   }
 
   private async moveCollectionItems(
@@ -1604,7 +1925,11 @@ class LiteratureCatalog {
     command: Extract<LiteratureCatalogCommand, { kind: 'merge-items' }>
   ): Promise<LiteratureCatalogReceipt> {
     const client = await this.getClient()
-    return client.$transaction((transaction) => this.mergeItemsInTransaction(transaction, command))
+    const result = await client.$transaction((transaction) =>
+      this.mergeItemsInTransaction(transaction, command)
+    )
+    if (result.tagsChanged) await this.publishTagAssignmentsChanged()
+    return result.receipt
   }
 
   private async mergeDuplicates(
@@ -1637,6 +1962,7 @@ class LiteratureCatalog {
       }
       ids.forEach((id) => seen.add(id))
       try {
+        let tagsChanged = false
         const merged = await client.$transaction(async (transaction) => {
           const rows = await transaction.literatureItem.findMany({
             where: { id: { in: ids }, deletedAt: null, mergedIntoItemId: null },
@@ -1679,7 +2005,7 @@ class LiteratureCatalog {
             updatedAt
           }))
           if (command.mode === 'commit') {
-            await this.mergeItemsInTransaction(transaction, {
+            const result = await this.mergeItemsInTransaction(transaction, {
               kind: 'merge-items',
               survivorId: plan.survivor.id,
               duplicateIds: rows.filter((row) => row.id !== plan.survivor.id).map((row) => row.id),
@@ -1687,6 +2013,7 @@ class LiteratureCatalog {
               expectedItems: items,
               item: plan.item
             })
+            tagsChanged = result.tagsChanged
           }
           return {
             survivorId: plan.survivor.id,
@@ -1697,6 +2024,7 @@ class LiteratureCatalog {
         })
         if (merged) {
           // Publish the result only after the transaction commits successfully.
+          if (tagsChanged) await this.publishTagAssignmentsChanged()
           batch.groups!.push(merged)
           detail.status = command.mode === 'commit' ? 'merged' : 'ready'
           batch.eligible += 1
@@ -1718,7 +2046,7 @@ class LiteratureCatalog {
   private async mergeItemsInTransaction(
     transaction: Prisma.TransactionClient,
     command: Extract<LiteratureCatalogCommand, { kind: 'merge-items' }>
-  ): Promise<LiteratureCatalogReceipt> {
+  ): Promise<{ receipt: LiteratureCatalogReceipt; tagsChanged: boolean }> {
     const duplicateIds = [...new Set(command.duplicateIds)].filter(
       (itemId) => itemId !== command.survivorId
     )
@@ -1832,22 +2160,23 @@ class LiteratureCatalog {
         where: { itemId: { in: duplicateIds } },
         data: { itemId: command.survivorId }
       }),
-      transaction.literatureSourceRecord.updateMany({
-        where: { itemId: { in: duplicateIds } },
-        data: { itemId: command.survivorId }
-      }),
+
       transaction.literatureInboxCandidate.updateMany({
         where: { acceptedItemId: { in: duplicateIds } },
         data: { acceptedItemId: command.survivorId }
       })
     ])
+    await transferSourceRecords(transaction, { itemId: { in: duplicateIds } }, command.survivorId)
     await transaction.literatureItem.updateMany({
       where: {
         OR: [{ id: { in: duplicateIds } }, { mergedIntoItemId: { in: duplicateIds } }]
       },
       data: { deletedAt: new Date(), mergedIntoItemId: command.survivorId }
     })
-    return { kind: 'item', id: command.survivorId, state: 'merged' }
+    return {
+      receipt: { kind: 'item', id: command.survivorId, state: 'merged' },
+      tagsChanged: assignments.length > 0
+    }
   }
 
   private async attachSource(
@@ -1869,7 +2198,21 @@ class LiteratureCatalog {
     if (data.externalId) {
       await transaction.literatureSourceRecord.upsert({
         where: {
-          provider_externalId: { provider: data.provider, externalId: data.externalId }
+          ...(input.itemId !== undefined
+            ? {
+                itemId_provider_externalId: {
+                  itemId: input.itemId,
+                  provider: data.provider,
+                  externalId: data.externalId
+                }
+              }
+            : {
+                inboxCandidateId_provider_externalId: {
+                  inboxCandidateId: input.candidateId,
+                  provider: data.provider,
+                  externalId: data.externalId
+                }
+              })
         },
         create: data,
         update: {
@@ -1884,6 +2227,7 @@ class LiteratureCatalog {
     const existing = await transaction.literatureSourceRecord.findFirst({
       where: {
         provider: data.provider,
+        externalId: null,
         sourceUrl: data.sourceUrl ?? null,
         itemId: data.itemId ?? null,
         inboxCandidateId: data.inboxCandidateId ?? null

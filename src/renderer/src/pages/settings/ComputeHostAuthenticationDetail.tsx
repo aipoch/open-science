@@ -1,6 +1,7 @@
 import { KeyRound } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+import { useDateTimeFormat } from '@/hooks/useDateTimeFormat'
 
 import type {
   ComputeAuthenticationMode,
@@ -48,6 +49,7 @@ export function ComputeHostAuthenticationDetail({
   changeAuthentication
 }: Props): React.JSX.Element {
   const { t } = useTranslation()
+  const formatDate = useDateTimeFormat()
   const currentMode = host.authentication?.mode ?? 'ssh_config'
   const currentRevision = host.authentication?.revision ?? 1
   const [mode, setMode] = useState<ComputeAuthenticationMode>(currentMode)
@@ -282,7 +284,7 @@ export function ComputeHostAuthenticationDetail({
             <dt className="text-muted-foreground">{t('Last verified')}</dt>
             <dd className="col-span-2">
               {host.authentication?.lastVerifiedAt
-                ? new Date(host.authentication.lastVerifiedAt).toLocaleString()
+                ? formatDate(host.authentication.lastVerifiedAt, 'dateTime')
                 : t('Not yet verified')}
             </dd>
           </dl>

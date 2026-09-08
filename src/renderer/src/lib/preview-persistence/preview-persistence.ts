@@ -154,7 +154,7 @@ const indexAuthoritativeArtifactIds = (sessions: ChatSession[]): ReadonlyMap<str
 }
 
 // Applies only the changes made after `base` to the authoritative state. This preserves remote tabs
-// while retaining user actions that happened after the conflicting save had already started.
+// while retaining local actions since the last accepted snapshot, including the rejected write.
 const rebasePreviewState = (
   base: PersistedPreviewState,
   local: PersistedPreviewState,
@@ -249,7 +249,10 @@ const createPreviewSaveScheduler = (
       try {
         while (queue.pendingState) {
           const nextState = queue.pendingState
-          const nextBaseState = queue.pendingBaseState
+          const nextBaseState =
+            queue.pendingBaseState ??
+            acceptedStates.get(projectId) ??
+            createEmptyPersistedPreviewState()
           queue.pendingState = undefined
           queue.pendingBaseState = undefined
           queue.inFlightState = nextState
@@ -263,8 +266,8 @@ const createPreviewSaveScheduler = (
             if (result.status === 'conflict') {
               const authoritativeState =
                 result.snapshot?.state ?? createEmptyPersistedPreviewState()
-              const localState = queue.pendingState ?? (nextBaseState ? nextState : undefined)
-              const localBaseState = queue.pendingState ? nextState : nextBaseState
+              const localState = queue.pendingState ?? nextState
+              const localBaseState = nextBaseState
               const revision = result.snapshot?.revision ?? 0
               revisions.set(projectId, revision)
               acceptedStates.set(projectId, authoritativeState)
@@ -484,6 +487,15 @@ const toRestoredSlice = (
 
 const suppressedConflictRestoreSaves = new Set<string>()
 
+const applyPreviewRestore = (projectId: string, apply: () => boolean): boolean => {
+  suppressedConflictRestoreSaves.add(projectId)
+  try {
+    return apply()
+  } finally {
+    suppressedConflictRestoreSaves.delete(projectId)
+  }
+}
+
 const restorePreviewConflict = (projectId: string, snapshot: PreviewStateSnapshot | null): void => {
   const store = usePreviewWorkbenchStore.getState()
   // The next activation will merge a fresh durable snapshot into the cached runtime-owned tabs.
@@ -492,15 +504,12 @@ const restorePreviewConflict = (projectId: string, snapshot: PreviewStateSnapsho
   const projectSessions = useSessionStore
     .getState()
     .sessions.filter((session) => session.projectId === projectId)
-  suppressedConflictRestoreSaves.add(projectId)
-  try {
-    store.activateProject(
-      projectId,
-      snapshot ? toRestoredSlice(snapshot.state, projectSessions) : { items: [] }
-    )
-  } finally {
-    suppressedConflictRestoreSaves.delete(projectId)
-  }
+  store.activateProject(
+    projectId,
+    snapshot ? toRestoredSlice(snapshot.state, projectSessions) : { items: [] },
+    false,
+    (apply) => applyPreviewRestore(projectId, apply)
+  )
 }
 
 // WorkspacePage can unmount while an IPC save is still in flight. Keep one renderer-lifetime scheduler
@@ -573,7 +582,9 @@ export const usePreviewPersistence = (
         .getState()
         .activateProject(
           activeProjectId,
-          snapshot ? toRestoredSlice(snapshot.state, projectSessions) : undefined
+          snapshot ? toRestoredSlice(snapshot.state, projectSessions) : undefined,
+          false,
+          (apply) => !cancelled && applyPreviewRestore(activeProjectId, apply)
         )
     }
 

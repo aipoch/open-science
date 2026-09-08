@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 
 import type { ChatMessage, ChatSession, ToolActivity } from '@/stores/session-store'
 import { ACP_CONTEXT_COMPACTION_ACTIVITY_TOOL_NAME } from '../../../../shared/acp'
@@ -51,6 +51,51 @@ const timelineIds = (
 ): string[] => createWorkspaceConversationTimeline(input, handoffEvents).map(({ id }) => id)
 
 describe('workspace conversation timeline', () => {
+  it('avoids a full prompt-array scan for every completed turn', () => {
+    const turnCount = 250
+    const messages = Array.from({ length: turnCount }, (_, index) => [
+      message({ id: `prompt-${index}`, createdAt: index * 2, sortIndex: index * 2 }),
+      message({
+        id: `reply-${index}`,
+        role: 'agent',
+        responseToMessageId: `prompt-${index}`,
+        createdAt: index * 2 + 1,
+        sortIndex: index * 2 + 1,
+        completedAt: index * 2 + 2
+      })
+    ]).flat()
+    // Count the reported repeated scan, rather than imposing a hardware-dependent time limit.
+    // The production projection remains unmocked; restore instrumentation before assertions.
+    const originalForEach = Array.prototype.forEach
+    let promptVisits = 0
+    const scan = vi.spyOn(Array.prototype, 'forEach').mockImplementation(function (
+      this: unknown[],
+      callback,
+      thisArg
+    ) {
+      const isPromptArray =
+        this.length === messages.length &&
+        typeof this[0] === 'string' &&
+        this[0].startsWith('prompt-')
+      if (isPromptArray) promptVisits += this.length
+      return originalForEach.call(this, callback, thisArg)
+    })
+    let result: ReturnType<typeof createWorkspaceConversationTimeline>
+    try {
+      result = createWorkspaceConversationTimeline(session({ messages }))
+    } finally {
+      scan.mockRestore()
+    }
+    expect(result.map((item) => item.id)).toEqual(
+      Array.from({ length: turnCount }, (_, index) => [
+        `prompt-${index}`,
+        `reply-${index}`,
+        `turn-completion-reply-${index}`
+      ]).flat()
+    )
+    expect(promptVisits).toBeLessThanOrEqual(messages.length)
+  })
+
   it('places one turn completion after a tool that follows the final Agent fragment', () => {
     const input = session({
       messages: [

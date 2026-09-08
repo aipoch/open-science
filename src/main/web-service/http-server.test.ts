@@ -1,7 +1,7 @@
 // @ts-expect-error The published ESM entry uses a sibling index.d.ts.
 import { OpenScienceClient } from '../../../packages/open-science/index.mjs'
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
-import { request as httpRequest, type IncomingMessage, ServerResponse } from 'node:http'
+import { request as httpRequest, IncomingMessage, ServerResponse } from 'node:http'
 import { connect } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -142,6 +142,39 @@ const startBudgetTestServer = async (
   servers.push(server)
   return server
 }
+it('does not expose unexpected RPC body stream errors', async () => {
+  const original = IncomingMessage.prototype[Symbol.asyncIterator]
+  const iterator = vi
+    .spyOn(IncomingMessage.prototype, Symbol.asyncIterator)
+    .mockImplementation(function (this: IncomingMessage) {
+      if (this.url?.startsWith('/rpc/')) {
+        return (async function* () {
+          yield Buffer.from('{')
+          throw new Error('private-stream-path/secret')
+        })()
+      }
+      return original.call(this)
+    })
+  try {
+    const server = await startBudgetTestServer({
+      perRequestBytes: 1024,
+      perClientInFlightBytes: 2048,
+      serverInFlightBytes: 4096
+    })
+    const response = await fetch(`http://127.0.0.1:${server.port}/rpc/projects%3Alist`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: '{}'
+    })
+    expect(response.status).toBe(400)
+    expect(await response.json()).toMatchObject({
+      error: { code: 'invalid_request', message: 'Failed to read request body.' }
+    })
+  } finally {
+    iterator.mockRestore()
+  }
+})
+
 const runWithCallerContext = <Result>(_context: CallerContext, operation: () => Result): Result =>
   operation()
 
@@ -2428,60 +2461,84 @@ describe('startWebHttpServer', () => {
     ).toHaveLength(1)
   })
 
-  it('releases an HTTP-only caller when its connection closes during command execution', async () => {
-    let markInvocationStarted: (() => void) | undefined
-    const invocationStarted = new Promise<void>((resolve) => {
-      markInvocationStarted = resolve
-    })
-    let finishInvocation: (() => void) | undefined
-    const invocationGate = new Promise<void>((resolve) => {
-      finishInvocation = resolve
-    })
-    let callerSignal: AbortSignal | undefined
-    const directInvoke = vi.fn(async (_channel, invocation) => {
-      callerSignal = invocation.callerLease.signal
-      markInvocationStarted?.()
-      await invocationGate
-      return []
-    })
-    const server = await startTestWebHttpServer({
-      host: '127.0.0.1',
-      port: 0,
-      token: 'test-token',
-      staticRoot: '/unused',
-      rpc: { channels: () => ['projects:list'], invoke: vi.fn() },
-      applicationCommands: {
-        localWeb: { commandNames: () => ['projects:list'], invoke: directInvoke },
-        remoteWeb: { commandNames: () => [], rejectedCommandNames: () => [], invoke: vi.fn() }
-      },
-      bootstrap: {
-        appName: 'Open Science',
-        appVersion: '0.0.0',
-        configRoot: '/fake/root',
-        platform: 'test',
-        versions: { electron: '1', chrome: '1', node: '1' }
+  it.each([false, true])(
+    'releases a caller when its pending HTTP request closes (event socket: %s)',
+    async (withEventSocket) => {
+      let markInvocationStarted: (() => void) | undefined
+      const invocationStarted = new Promise<void>((resolve) => {
+        markInvocationStarted = resolve
+      })
+      let finishInvocation: (() => void) | undefined
+      const invocationGate = new Promise<void>((resolve) => {
+        finishInvocation = resolve
+      })
+      let callerSignal: AbortSignal | undefined
+      const directInvoke = vi.fn(async (_channel, invocation) => {
+        callerSignal = invocation.callerLease.signal
+        markInvocationStarted?.()
+        await invocationGate
+        return []
+      })
+      const server = await startTestWebHttpServer({
+        host: '127.0.0.1',
+        port: 0,
+        token: 'test-token',
+        staticRoot: '/unused',
+        rpc: { channels: () => ['projects:list'], invoke: vi.fn() },
+        applicationCommands: {
+          localWeb: { commandNames: () => ['projects:list'], invoke: directInvoke },
+          remoteWeb: { commandNames: () => [], rejectedCommandNames: () => [], invoke: vi.fn() }
+        },
+        bootstrap: {
+          appName: 'Open Science',
+          appVersion: '0.0.0',
+          configRoot: '/fake/root',
+          platform: 'test',
+          versions: { electron: '1', chrome: '1', node: '1' }
+        }
+      })
+      servers.push(server)
+      let socket: WebSocket | undefined
+      if (withEventSocket) {
+        socket = new WebSocket(`ws://127.0.0.1:${server.port}/events?client=http-only-client`, {
+          headers: { authorization: 'Bearer test-token' }
+        })
+        await new Promise<void>((resolve, reject) => {
+          socket!.once('open', () => resolve())
+          socket!.once('error', reject)
+        })
       }
-    })
-    servers.push(server)
-    const request = httpRequest({
-      host: '127.0.0.1',
-      port: server.port,
-      path: '/rpc/projects%3Alist',
-      method: 'POST',
-      headers: {
-        authorization: 'Bearer test-token',
-        'content-type': 'application/json',
-        'x-open-science-client': 'http-only-client'
-      }
-    })
-    request.once('error', () => undefined)
-    request.end(JSON.stringify({ protocolVersion: WEB_RPC_PROTOCOL_VERSION, args: [] }))
-    await invocationStarted
+      const request = httpRequest({
+        host: '127.0.0.1',
+        port: server.port,
+        path: '/rpc/projects%3Alist',
+        method: 'POST',
+        headers: {
+          authorization: 'Bearer test-token',
+          'content-type': 'application/json',
+          'x-open-science-client': 'http-only-client'
+        }
+      })
+      request.once('error', () => undefined)
+      request.end(JSON.stringify({ protocolVersion: WEB_RPC_PROTOCOL_VERSION, args: [] }))
+      await invocationStarted
 
-    request.destroy()
-    await vi.waitFor(() => expect(callerSignal?.aborted).toBe(true))
-    finishInvocation?.()
-  })
+      try {
+        if (socket) {
+          const closed = new Promise<void>((resolve) => socket!.once('close', () => resolve()))
+          socket.close()
+          await closed
+          expect(callerSignal?.aborted).toBe(false)
+        }
+        request.destroy()
+        await vi.waitFor(() => expect(callerSignal?.aborted).toBe(true))
+      } finally {
+        socket?.close()
+        request.destroy()
+        finishInvocation?.()
+      }
+    }
+  )
 
   it('releases an HTTP-only caller after its idle retention window', async () => {
     let callerSignal: AbortSignal | undefined
@@ -3020,8 +3077,11 @@ describe('startWebHttpServer', () => {
       'notebook:abort-code-cell',
       'notebook:append-code-cell',
       'notebook:begin-code-cell',
+      'notebook:cancel-background-run',
       'notebook:execute',
       'notebook:finish-code-cell',
+      'notebook:background-run',
+      'notebook:project-activity',
       'notebook:reference',
       'notebook:inspect-namespace',
       'notebook:read-input-preview',
@@ -3044,6 +3104,7 @@ describe('startWebHttpServer', () => {
       'runtime:set-agent-environment-creation-enabled',
       'runtime:set-environment-enabled',
       'runtime:set-install-authorized',
+      'runtime:set-sandbox-access',
       'runtime:unregister-interpreter'
     ])
     expect(
@@ -3099,14 +3160,26 @@ describe('startWebHttpServer', () => {
       'compute:scratch:set',
       'compute:ssh-config-aliases'
     ]
+    const specialistChannels = [
+      'specialist:list',
+      'specialist:update',
+      'specialist:set-enabled',
+      'specialist:package-upload-begin',
+      'specialist:package-upload-preview',
+      'specialist:package-upload-abort',
+      'specialist:package-install',
+      'specialist:package-cancel'
+    ]
     const remoteDeniedComputeChannels = ['compute:download', 'compute:reveal-in-folder']
     const remoteAllowedChannels = [
+      ...specialistChannels,
       ...acpChannels,
       ...permissionChannels,
       ...computeChannels.filter((channel) => !remoteDeniedComputeChannels.includes(channel))
     ]
     const rpcChannels = [
-      'specialist:list',
+      'specialist:package-select',
+      ...specialistChannels,
       ...acpChannels,
       ...permissionChannels,
       ...computeChannels
@@ -3182,14 +3255,15 @@ describe('startWebHttpServer', () => {
     }
     expect(localBootstrapBody.webCallerLocation).toBe('local')
     expect(localBootstrapBody.rpcChannels).toEqual([
+      ...specialistChannels,
       ...acpChannels,
       ...permissionChannels,
       ...computeChannels
     ])
     expect(localBootstrapBody.restrictedRpcChannels).toEqual([])
 
-    expect((await invoke('specialist:list')).status).toBe(404)
-    expect((await invoke('specialist:list', true)).status).toBe(404)
+    expect((await invoke('specialist:package-select')).status).toBe(404)
+    expect((await invoke('specialist:package-select', true)).status).toBe(404)
     expect(rpc.invoke.mock.calls.map(([channel]) => channel)).toEqual([
       ...remoteAllowedChannels,
       ...remoteDeniedComputeChannels

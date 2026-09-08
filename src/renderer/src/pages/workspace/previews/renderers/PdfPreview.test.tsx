@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { act } from 'react'
+import { act, Component, type ReactNode } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -9,6 +9,7 @@ import {
 } from '../../../../../../shared/web-event-connection'
 import { createManagedPdfLoadingTask } from '../managed-pdf-document'
 import { PdfPreviewContent, PdfPreviewRenderer } from './PdfPreview'
+import { PdfOutlineSidebar } from './PdfOutlineSidebar'
 import { requestAnnotationReveal } from '../../annotations/annotation-reveal'
 
 vi.mock('../managed-pdf-document', () => ({ createManagedPdfLoadingTask: vi.fn() }))
@@ -128,6 +129,15 @@ describe('PdfPreviewContent', () => {
     document.body.appendChild(container)
     root = createRoot(container)
     Element.prototype.scrollIntoView = vi.fn()
+    // jsdom implements DOM ranges but has no layout engine.
+    vi.stubGlobal(
+      'Range',
+      class extends Range {
+        getBoundingClientRect(): DOMRect {
+          return new DOMRect()
+        }
+      }
+    )
     window.api = {
       previewResources: {
         acquire: vi.fn().mockResolvedValue({
@@ -713,6 +723,334 @@ describe('PdfPreviewContent', () => {
     await vi.waitFor(() => expect(input.parentElement?.textContent).toContain('1/1'))
     await vi.waitFor(() => expect(highlights.set).toHaveBeenCalledWith('pdf-search-results', {}))
     expect(constructedHighlights.some((ranges) => ranges.length > 0)).toBe(true)
+  })
+
+  const openSearch = async (query: string): Promise<HTMLInputElement> => {
+    const scroll = container.querySelector<HTMLElement>('[role="region"]')!
+    await act(async () =>
+      scroll.dispatchEvent(
+        new KeyboardEvent('keydown', {
+          key: 'f',
+          metaKey: true,
+          bubbles: true,
+          cancelable: true
+        })
+      )
+    )
+    const input = container.querySelector<HTMLInputElement>('[aria-label="Search document"]')!
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set?.call(input, query)
+      input.dispatchEvent(new Event('input', { bubbles: true }))
+    })
+    await act(async () => vi.advanceTimersByTimeAsync(180))
+    return input
+  }
+
+  describe.each([true, false])('Intl.Segmenter available: %s', (available) => {
+    it.each([
+      { text: ['İA'], query: 'a', expected: ['A'] },
+      { text: ['İA', 'B'], query: 'ab', expected: ['AB'] },
+      { text: ['AA'], query: 'a', expected: ['A', 'A'] },
+      { text: ['A', 'B'], query: 'ab', expected: ['AB'] },
+      { text: ['İ'], query: 'i', expected: ['İ'] },
+      { text: ['İΟΣ'], query: 'ος', expected: ['ΟΣ'] },
+      { text: ['😀İA'], query: 'a', expected: ['A'] },
+      { text: ['I\u0307A'], query: 'a', expected: ['A'], locale: 'tr' },
+      { text: ['I\u0301A'], query: 'a', expected: ['A'], locale: 'lt' }
+    ])(
+      'highlights original DOM characters for $text searching $query',
+      async ({ text, query, expected, locale = 'en' }) => {
+        vi.useFakeTimers()
+        if (!available)
+          vi.stubGlobal('Intl', Object.create(Intl, { Segmenter: { value: undefined } }))
+        const lower = String.prototype.toLocaleLowerCase
+        vi.spyOn(String.prototype, 'toLocaleLowerCase').mockImplementation(function (this: string) {
+          return lower.call(this, locale)
+        })
+        const highlights = new Map<string, Set<Range>>()
+        vi.stubGlobal('CSS', { highlights })
+        vi.stubGlobal(
+          'Highlight',
+          class extends Set<Range> {
+            constructor(...ranges: Range[]) {
+              super(ranges)
+            }
+          }
+        )
+        const errors: Error[] = []
+        class SearchBoundary extends Component<{ children: ReactNode }, { failed: boolean }> {
+          state = { failed: false }
+          static getDerivedStateFromError(): { failed: boolean } {
+            return { failed: true }
+          }
+          componentDidCatch(error: Error): void {
+            errors.push(error)
+          }
+          render(): ReactNode {
+            return this.state.failed ? null : this.props.children
+          }
+        }
+        vi.spyOn(console, 'error').mockImplementation(() => undefined)
+        getPage.mockResolvedValue({
+          getViewport: () => ({ width: 600, height: 800 }),
+          getTextContent: async () => ({ items: text.map((str) => ({ str })), styles: {} }),
+          render: () => ({ promise: Promise.resolve(), cancel: vi.fn() }),
+          cleanup: vi.fn()
+        })
+        await act(async () =>
+          root.render(
+            <SearchBoundary>
+              <PdfPreviewContent path="/workspace/unicode.pdf" name="unicode.pdf" />
+            </SearchBoundary>
+          )
+        )
+        expect(container.querySelector('[data-pdf-text-layer]')?.textContent).toBe(text.join(''))
+        const input = await openSearch(query)
+        expect(errors.map((error) => error.name)).toEqual([])
+        expect(input.parentElement?.textContent).toContain(`1/${expected.length}`)
+        expect(
+          Array.from(highlights.get('pdf-search-results') ?? [], (range) => range.toString())
+        ).toEqual(expected)
+      }
+    )
+  })
+
+  it.each(['first', 'next'])('reveals the %s match inside a tall PDF page', async (target) => {
+    vi.useFakeTimers()
+    const highlights = new Map<string, Set<Range>>()
+    vi.stubGlobal('CSS', { highlights })
+    vi.stubGlobal(
+      'Highlight',
+      class extends Set<Range> {
+        constructor(...ranges: Range[]) {
+          super(ranges)
+        }
+      }
+    )
+    getPage.mockResolvedValue({
+      getViewport: () => ({ width: 600, height: 1800 }),
+      getTextContent: async () => ({
+        items: [{ str: target === 'next' ? 'needle needle' : 'needle' }],
+        styles: {}
+      }),
+      render: () => ({ promise: Promise.resolve(), cancel: vi.fn() }),
+      cleanup: vi.fn()
+    })
+    await act(async () =>
+      root.render(<PdfPreviewContent path="/workspace/tall.pdf" name="tall.pdf" />)
+    )
+    const scroll = container.querySelector<HTMLElement>('[role="region"]')!
+    vi.spyOn(scroll, 'getBoundingClientRect').mockReturnValue(new DOMRect(0, 0, 800, 600))
+    vi.spyOn(scroll, 'clientHeight', 'get').mockReturnValue(600)
+    vi.spyOn(scroll, 'clientWidth', 'get').mockReturnValue(800)
+    vi.stubGlobal(
+      'Range',
+      class extends Range {
+        getBoundingClientRect(): DOMRect {
+          const top = target === 'first' || this.startOffset > 0 ? 1800 : 100
+          return new DOMRect(40, top - scroll.scrollTop, 60, 20)
+        }
+        getClientRects(): DOMRectList {
+          return [this.getBoundingClientRect()] as unknown as DOMRectList
+        }
+      }
+    )
+    const input = await openSearch('needle')
+    expect(input.parentElement?.textContent).toContain(target === 'next' ? '1/2' : '1/1')
+    if (target === 'next') {
+      expect(scroll.scrollTop).toBe(0)
+      await act(async () =>
+        container.querySelector<HTMLButtonElement>('[aria-label="Next match"]')!.click()
+      )
+      expect(input.parentElement?.textContent).toContain('2/2')
+    }
+    const current = Array.from(highlights.get('pdf-search-current') ?? [])[0]
+    expect(current?.toString()).toBe('needle')
+    const bounds = current.getBoundingClientRect()
+    expect(bounds.top).toBeGreaterThanOrEqual(0)
+    expect(bounds.bottom).toBeLessThanOrEqual(600)
+  })
+
+  it.each(['ready', 'query cleared', 'document replaced'])(
+    'finishes a deferred match reveal only while its request is current: %s',
+    async (outcome) => {
+      vi.useFakeTimers()
+      let intersectionCallback: IntersectionObserverCallback | undefined
+      const observed: Element[] = []
+      vi.stubGlobal(
+        'IntersectionObserver',
+        class {
+          observe = (element: Element): void => {
+            observed.push(element)
+          }
+          unobserve = vi.fn()
+          disconnect = vi.fn()
+          constructor(callback: IntersectionObserverCallback) {
+            intersectionCallback = callback
+          }
+        }
+      )
+      getPage.mockImplementation(async () => ({
+        getViewport: () => ({ width: 600, height: 1800 }),
+        getTextContent: async () => ({ items: [{ str: 'needle needle' }], styles: {} }),
+        render: () => ({ promise: Promise.resolve(), cancel: vi.fn() }),
+        cleanup: vi.fn()
+      }))
+      await act(async () =>
+        root.render(<PdfPreviewContent path="/workspace/deferred.pdf" name="deferred.pdf" />)
+      )
+      const scroll = container.querySelector<HTMLElement>('[role="region"]')!
+      vi.spyOn(scroll, 'getBoundingClientRect').mockReturnValue(new DOMRect(0, 0, 800, 600))
+      vi.spyOn(scroll, 'clientHeight', 'get').mockReturnValue(600)
+      vi.spyOn(scroll, 'clientWidth', 'get').mockReturnValue(800)
+      vi.stubGlobal(
+        'Range',
+        class extends Range {
+          getBoundingClientRect(): DOMRect {
+            return new DOMRect(40, 1800 - scroll.scrollTop, 60, 20)
+          }
+        }
+      )
+      const input = await openSearch('needle')
+      expect(input.parentElement?.textContent).toContain('1/2')
+      await act(async () =>
+        container.querySelector<HTMLButtonElement>('[aria-label="Next match"]')!.click()
+      )
+      expect(input.parentElement?.textContent).toContain('2/2')
+      expect(container.querySelector('[data-pdf-text-layer]')).toBeNull()
+      expect(Element.prototype.scrollIntoView).toHaveBeenCalledWith({
+        block: 'start',
+        behavior: 'auto'
+      })
+      expect(scroll.scrollTop).toBe(0)
+      if (outcome === 'query cleared') {
+        await act(async () => {
+          Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set?.call(input, '')
+          input.dispatchEvent(new Event('input', { bubbles: true }))
+        })
+      } else if (outcome === 'document replaced') {
+        await act(async () =>
+          root.render(
+            <PdfPreviewContent path="/workspace/replacement.pdf" name="replacement.pdf" />
+          )
+        )
+      }
+      await act(async () => {
+        intersectionCallback?.(
+          [{ isIntersecting: true, target: observed.at(-1) } as IntersectionObserverEntry],
+          {} as IntersectionObserver
+        )
+      })
+      expect(container.querySelector('[data-pdf-text-layer]')?.textContent).toBe('needle needle')
+      expect(scroll.scrollTop).toBe(outcome === 'ready' ? 1510 : 0)
+      // A later text-layer render must not pull the reader back to a completed result.
+      scroll.scrollTop = 400
+      await act(async () =>
+        container.querySelector<HTMLButtonElement>('[aria-label="Zoom in"]')!.click()
+      )
+      expect(scroll.scrollTop).toBe(400)
+    }
+  )
+
+  it.each(['mouse', 'keyboard'])(
+    'allows collapsing the active section parent using $0',
+    async (method) => {
+      vi.stubGlobal(
+        'IntersectionObserver',
+        class {
+          observe = vi.fn()
+          unobserve = vi.fn()
+          disconnect = vi.fn()
+        }
+      )
+      vi.mocked(createManagedPdfLoadingTask).mockReturnValue({
+        promise: Promise.resolve({
+          numPages: 2,
+          getPage,
+          destroy: destroyDocument,
+          getOutline: async () => [
+            { title: 'Chapter', dest: [0], items: [{ title: 'Section', dest: [1], items: [] }] }
+          ]
+        }),
+        destroy: vi.fn().mockResolvedValue(undefined)
+      } as never)
+      await act(async () =>
+        root.render(<PdfPreviewContent path="/workspace/outline-collapse.pdf" name="outline.pdf" />)
+      )
+      await act(async () =>
+        container.querySelector<HTMLButtonElement>('[aria-label="Show navigation"]')!.click()
+      )
+      await act(async () =>
+        container.querySelector<HTMLButtonElement>('[title="Section"]')!.click()
+      )
+      expect(container.querySelector('[title="Section"]')?.getAttribute('aria-selected')).toBe(
+        'true'
+      )
+      const parent = container.querySelector<HTMLButtonElement>('[title="Chapter"]')!
+      await act(async () => {
+        if (method === 'mouse')
+          container.querySelector<HTMLButtonElement>('[aria-label="Collapse"]')!.click()
+        else parent.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowLeft', bubbles: true }))
+      })
+      expect(parent.getAttribute('aria-expanded')).toBe('false')
+      expect(container.querySelector('[title="Section"]')).toBeNull()
+      expect(container.querySelector('[role="treeitem"][tabindex="0"]')).toBe(parent)
+      await act(async () => parent.click())
+      await act(async () =>
+        container.querySelector<HTMLButtonElement>('[aria-label="Expand"]')!.click()
+      )
+      await act(async () =>
+        container.querySelector<HTMLButtonElement>('[title="Section"]')!.click()
+      )
+      expect(parent.getAttribute('aria-expanded')).toBe('true')
+    }
+  )
+
+  it('reopens active ancestors only when the section changes or the outline is first shown', async () => {
+    const items = [
+      {
+        id: 'chapter',
+        title: 'Chapter',
+        pageNumber: 1,
+        children: [
+          {
+            id: 'section',
+            title: 'Section',
+            pageNumber: 2,
+            children: [{ id: 'subsection', title: 'Subsection', pageNumber: 3, children: [] }]
+          }
+        ]
+      }
+    ]
+    const renderOutline = async (currentPage: number): Promise<void> => {
+      await act(async () =>
+        root.render(
+          <PdfOutlineSidebar
+            document={{ getPage } as never}
+            items={items}
+            pageCount={4}
+            currentPage={currentPage}
+            width={240}
+            onWidthChange={vi.fn()}
+            onClose={vi.fn()}
+            onNavigate={vi.fn()}
+          />
+        )
+      )
+    }
+    await renderOutline(3)
+    expect(container.querySelector('[title="Subsection"]')).not.toBeNull()
+    const chapter = container.querySelector<HTMLButtonElement>('[title="Chapter"]')!
+    await act(async () =>
+      chapter.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowLeft', bubbles: true }))
+    )
+    await renderOutline(4)
+    expect(chapter.getAttribute('aria-expanded')).toBe('false')
+    expect(container.querySelector('[title="Subsection"]')).toBeNull()
+    expect(container.querySelector('[role="treeitem"][tabindex="0"]')).toBe(chapter)
+    await renderOutline(2)
+    expect(chapter.getAttribute('aria-expanded')).toBe('true')
+    expect(container.querySelector('[title="Section"]')?.getAttribute('aria-selected')).toBe('true')
   })
 
   it('stops a stale full-document search before parsing the remaining pages', async () => {

@@ -177,7 +177,11 @@ import type {
   NotebookLanguage,
   NotebookNamespaceRequest,
   NotebookNamespaceSnapshot,
+  NotebookProjectActivity,
+  NotebookProjectActivityRequest,
   NotebookRestartRequest,
+  NotebookBackgroundRunLookupRequest,
+  NotebookBackgroundRunResult,
   NotebookRunSummary,
   NotebookSessionReference,
   NotebookSessionRequest,
@@ -186,6 +190,13 @@ import type {
   RunNotebookCellRequest
 } from './notebook'
 import type { ProvisionProgress, ProvisionStatus } from './notebook-env'
+import type {
+  BackgroundResultDeliveryProjectRequest,
+  BackgroundResultDeliverySessionRequest,
+  ProjectBackgroundActivity,
+  ProjectBackgroundActivityChangedEvent,
+  SessionBackgroundResultActivity
+} from './background-result-delivery'
 import type {
   DiscoveredInterpreter,
   EnvPackage,
@@ -270,6 +281,7 @@ import type {
   GetProjectFilesOverviewRequest,
   ListArtifactGroupsRequest,
   ListProjectFilesRequest,
+  ReadProjectExportFilesRequest,
   ProjectFileItem,
   ProjectFilesChangedEvent,
   ProjectFilesOverview,
@@ -485,6 +497,7 @@ import type {
   RemoveMarketplaceSourceRequest
 } from './specialist-marketplace'
 import type {
+  CloseConfirmDismissal,
   CloseConfirmRequest,
   CloseConfirmResponse,
   WindowFindAppearance,
@@ -746,6 +759,15 @@ export type RendererApiFromContract<
 }
 
 export const RENDERER_API_CONTRACT = Object.freeze({
+  'backgroundResultDelivery.getSessionActivity': callable<
+    (request: BackgroundResultDeliverySessionRequest) => Promise<SessionBackgroundResultActivity>
+  >()('background-result-delivery', ['background-result-delivery:session-activity', ELECTRON]),
+  'backgroundResultDelivery.getProjectActivity': callable<
+    (request: BackgroundResultDeliveryProjectRequest) => Promise<ProjectBackgroundActivity>
+  >()('background-result-delivery', ['background-result-delivery:project-activity', ELECTRON]),
+  'backgroundResultDelivery.onChanged': callable<
+    (listener: AcpListener<ProjectBackgroundActivityChangedEvent>) => RemoveListener
+  >()('background-result-delivery', ['background-result-delivery:changed', ELECTRON_EVENT]),
   'acp.cancel': callable<(request: AcpCancelPromptRequest) => Promise<AcpStateCommandResponse>>()(
     'acp',
     ['acp:cancel']
@@ -1227,6 +1249,15 @@ export const RENDERER_API_CONTRACT = Object.freeze({
   'notebook.execute': callable<
     (request: ExecuteNotebookCodeRequest) => Promise<NotebookRunSummary>
   >()('notebook', ['notebook:execute']),
+  'notebook.getBackgroundRun': callable<
+    (request: NotebookBackgroundRunLookupRequest) => Promise<NotebookBackgroundRunResult>
+  >()('notebook', ['notebook:background-run']),
+  'notebook.getProjectActivity': callable<
+    (request: NotebookProjectActivityRequest) => Promise<NotebookProjectActivity>
+  >()('notebook', ['notebook:project-activity']),
+  'notebook.cancelBackgroundRun': callable<
+    (request: NotebookBackgroundRunLookupRequest) => Promise<NotebookBackgroundRunResult>
+  >()('notebook', ['notebook:cancel-background-run']),
   'notebook.exportIpynb': callable<
     (request: ExportNotebookKernelRequest) => Promise<ExportNotebookResult>
   >()('notebook', ['notebook:export-ipynb', LOCAL]),
@@ -1410,6 +1441,9 @@ export const RENDERER_API_CONTRACT = Object.freeze({
   'projectFiles.listFiles': callable<
     (request: ListProjectFilesRequest) => Promise<ProjectFilesPage>
   >()('project-files', ['project-files:list-files']),
+  'projectFiles.readExportFiles': callable<
+    (request: ReadProjectExportFilesRequest) => Promise<ProjectFileItem[]>
+  >()('project-files', ['project-files:read-export-files']),
   'projectFiles.resolveFile': callable<
     (request: ResolveProjectFileRequest) => Promise<ProjectFileItem | undefined>
   >()('project-files', ['project-files:resolve-file']),
@@ -1569,6 +1603,13 @@ export const RENDERER_API_CONTRACT = Object.freeze({
   'runtime.registerInterpreter': callable<
     (language: NotebookLanguage, path: string) => Promise<string[]>
   >()('runtime', ['runtime:register-interpreter', LOCAL, RUNTIME_INTERPRETER]),
+  'runtime.setSandboxAccess': callable<
+    (
+      language: NotebookLanguage,
+      envId: string,
+      authorized: boolean
+    ) => Promise<{ cancelled: boolean }>
+  >()('runtime', ['runtime:set-sandbox-access', LOCAL, RUNTIME_INSTALL_AUTH]),
   'runtime.setAgentEnvironmentCreationEnabled': callable<
     (request: { enabled: boolean }) => Promise<boolean>
   >()('runtime', ['runtime:set-agent-environment-creation-enabled', LOCAL]),
@@ -2131,6 +2172,16 @@ export const RENDERER_API_CONTRACT = Object.freeze({
   'specialist.addMarketplaceSource': callable<
     (request: AddMarketplaceSourceRequest) => Promise<MarketplaceSourceView>
   >()('specialist', ['specialist:marketplace-source-add', ELECTRON]),
+  'specialist.beginPackageUpload': callable<
+    (request: BeginUploadTransferRequest) => Promise<UploadTransferStatus>
+  >()('specialist', ['specialist:package-upload-begin']),
+  'specialist.previewPackageUpload': callable<
+    (request: UploadTransferRequest) => Promise<SpecialistPackageCandidatePreview>
+  >()('specialist', ['specialist:package-upload-preview']),
+  'specialist.abortPackageUpload': callable<(request: UploadTransferRequest) => Promise<void>>()(
+    'specialist',
+    ['specialist:package-upload-abort']
+  ),
   'specialist.cancelHandoff': callable<(request: CompletionHandoffCommand) => Promise<void>>()(
     'specialist',
     ['specialist:cancel-handoff', ELECTRON]
@@ -2140,7 +2191,7 @@ export const RENDERER_API_CONTRACT = Object.freeze({
   >()('specialist', ['specialist:marketplace-candidate-cancel', ELECTRON]),
   'specialist.cancelPackage': callable<
     (request: SpecialistPackageInstallRequest) => Promise<void>
-  >()('specialist', ['specialist:package-cancel', ELECTRON]),
+  >()('specialist', ['specialist:package-cancel', WEB]),
   'specialist.create': callable<(request: CreateSpecialistRequest) => Promise<SpecialistView>>()(
     'specialist',
     ['specialist:create', ELECTRON]
@@ -2171,17 +2222,17 @@ export const RENDERER_API_CONTRACT = Object.freeze({
   >()('specialist', ['specialist:marketplace-install', ELECTRON]),
   'specialist.installPackage': callable<
     (request: SpecialistPackageInstallRequest) => Promise<SpecialistPackageInstallResult>
-  >()('specialist', ['specialist:package-install', ELECTRON]),
+  >()('specialist', ['specialist:package-install', WEB]),
   'specialist.list': callable<() => Promise<SpecialistCatalogSnapshot>>()('specialist', [
     'specialist:list',
-    ELECTRON
+    WEB
   ]),
   'specialist.listMarketplace': callable<
     (request?: ListMarketplaceRequest) => Promise<MarketplaceSnapshot>
   >()('specialist', ['specialist:marketplace-list', ELECTRON]),
   'specialist.onCatalogChanged': callable<(listener: () => void) => RemoveListener>()(
     'specialist',
-    ['specialist:catalog-changed', ELECTRON_EVENT]
+    ['specialist:catalog-changed', EVENT]
   ),
   'specialist.onHandoffLifecycleEvent': callable<
     (listener: AcpListener<CompletionHandoffLifecycleEvent>) => RemoveListener
@@ -2222,13 +2273,13 @@ export const RENDERER_API_CONTRACT = Object.freeze({
   >()('specialist', ['specialist:package-select', ELECTRON]),
   'specialist.setEnabled': callable<
     (request: SetSpecialistEnabledRequest) => Promise<SpecialistView>
-  >()('specialist', ['specialist:set-enabled', ELECTRON]),
+  >()('specialist', ['specialist:set-enabled', WEB]),
   'specialist.setSessionSpecialist': callable<
     (request: SetSessionSpecialistRequest) => Promise<SetSessionSpecialistResponse>
   >()('specialist', ['specialist:set-session-specialist', ELECTRON]),
   'specialist.update': callable<(request: UpdateSpecialistRequest) => Promise<SpecialistView>>()(
     'specialist',
-    ['specialist:update', ELECTRON]
+    ['specialist:update', WEB]
   ),
   'storage.acceptMissingDataRoot': callable<() => Promise<void>>()('storage', [
     'storage:accept-missing-data-root',
@@ -2414,6 +2465,9 @@ export const RENDERER_API_CONTRACT = Object.freeze({
     ['shortcut:close-active-pane', CLOSE_PANE_EVENT],
     { optionalMember: true }
   ),
+  'window.onCloseConfirmDismiss': callable<
+    (listener: (payload: CloseConfirmDismissal) => void) => RemoveListener
+  >()('window', ['window:close-confirm-dismiss', ELECTRON_EVENT], { optionalMember: true }),
   'window.onCloseConfirmRequest': callable<
     (listener: (payload: CloseConfirmRequest) => void) => RemoveListener
   >()('window', ['window:close-confirm-request', ELECTRON_EVENT], { optionalMember: true }),

@@ -9,6 +9,7 @@ import {
   type ExecuteShellRequest,
   type AbortNotebookCodeCellRequest,
   type FinishNotebookCodeCellRequest,
+  type NotebookBackgroundRunLookupRequest,
   type NotebookLanguage,
   type NotebookRestartRequest,
   type NotebookSessionRequest,
@@ -98,6 +99,7 @@ const notebookLocalRpcRequestSchemas = {
   }),
   execute: notebookSessionRequestSchema.extend({
     code: z.string(),
+    background: z.boolean().optional(),
     kernelSkillIds: z.array(z.string().min(1).max(128)).optional(),
     artifactVersionInputs: z.array(z.string().min(1).max(256)).max(64).optional(),
     timeoutMs: positiveTimeoutSchema.optional(),
@@ -107,12 +109,26 @@ const notebookLocalRpcRequestSchemas = {
     language: notebookLanguageSchema.optional(),
     environment: z.string().optional()
   }),
+  getBackgroundRun: notebookSessionRequestSchema.extend({
+    runId: z.string().min(1).optional(),
+    submissionIdentity: z.string().min(1).optional(),
+    agentFrameId: z.string().min(1).optional(),
+    action: z.enum(['query', 'cancel']).optional()
+  }),
+  cancelBackgroundRun: notebookSessionRequestSchema.extend({
+    runId: z.string().min(1).optional(),
+    submissionIdentity: z.string().min(1).optional(),
+    agentFrameId: z.string().min(1).optional(),
+    action: z.enum(['query', 'cancel']).optional()
+  }),
   executeControl: notebookSessionRequestSchema.extend({
     code: z.string(),
+    background: z.boolean().optional(),
     timeoutMs: positiveTimeoutSchema.optional()
   }),
   executeShell: notebookSessionRequestSchema.extend({
     command: z.string(),
+    background: z.boolean().optional(),
     timeoutMs: positiveTimeoutSchema.optional()
   }),
   requestNetworkAccess: notebookSessionRequestSchema.extend({
@@ -205,8 +221,23 @@ type NotebookLocalRpcCapability = {
   finishCodeCell(request: FinishNotebookCodeCellRequest): Promise<unknown>
   runCell(request: RunNotebookCellRequest, signal?: AbortSignal): Promise<unknown>
   execute(request: ExecuteNotebookCodeRequest, signal?: AbortSignal): Promise<unknown>
-  executeControl(request: ExecuteNotebookControlRequest): Promise<unknown>
+  executeBackground(request: ExecuteNotebookCodeRequest, signal?: AbortSignal): Promise<unknown>
+  getBackgroundRun(
+    request: NotebookBackgroundRunLookupRequest,
+    observation?: Readonly<{ consumer: 'agent' }>
+  ): Promise<unknown>
+  cancelBackgroundRun(
+    request: NotebookBackgroundRunLookupRequest,
+    observation?: Readonly<{ consumer: 'agent' }>
+  ): Promise<unknown>
+  waitForBackgroundRun(runId: string): Promise<void>
+  executeControlBackground(
+    request: ExecuteNotebookControlRequest,
+    signal?: AbortSignal
+  ): Promise<unknown>
+  executeControl(request: ExecuteNotebookControlRequest, signal?: AbortSignal): Promise<unknown>
   executeShell(request: ExecuteShellRequest, signal?: AbortSignal): Promise<unknown>
+  executeShellBackground(request: ExecuteShellRequest, signal?: AbortSignal): Promise<unknown>
   requestNetworkAccess(
     request: RequestNotebookNetworkAccessRequest,
     signal?: AbortSignal
@@ -232,6 +263,8 @@ const NOTEBOOK_LOCAL_RPC_METHODS = [
   'finishCodeCell',
   'runCell',
   'execute',
+  'getBackgroundRun',
+  'cancelBackgroundRun',
   'executeControl',
   'executeShell',
   'requestNetworkAccess',
@@ -313,14 +346,36 @@ const resolveNotebookLocalRpcHandler = (
     case 'execute':
       return (request, signal) => {
         const parsed = parseNotebookLocalRpcRequest('execute', request)
-        return capability.execute(toExecuteNotebookCodeRequest(parsed), signal)
+        const runtimeRequest = toExecuteNotebookCodeRequest(parsed)
+        return runtimeRequest.background
+          ? capability.executeBackground(runtimeRequest, signal)
+          : capability.execute(runtimeRequest, signal)
       }
     case 'executeControl':
+      return (request, signal) => {
+        const parsed = parseNotebookLocalRpcRequest('executeControl', request)
+        return parsed.background
+          ? capability.executeControlBackground(parsed, signal)
+          : capability.executeControl(parsed, signal)
+      }
+    case 'getBackgroundRun':
       return (request) =>
-        capability.executeControl(parseNotebookLocalRpcRequest('executeControl', request))
+        capability.getBackgroundRun(parseNotebookLocalRpcRequest('getBackgroundRun', request), {
+          consumer: 'agent'
+        })
+    case 'cancelBackgroundRun':
+      return (request) =>
+        capability.cancelBackgroundRun(
+          parseNotebookLocalRpcRequest('cancelBackgroundRun', request),
+          { consumer: 'agent' }
+        )
     case 'executeShell':
-      return (request, signal) =>
-        capability.executeShell(parseNotebookLocalRpcRequest('executeShell', request), signal)
+      return (request, signal) => {
+        const parsed = parseNotebookLocalRpcRequest('executeShell', request)
+        return parsed.background
+          ? capability.executeShellBackground(parsed, signal)
+          : capability.executeShell(parsed, signal)
+      }
     case 'requestNetworkAccess':
       return (request, signal) =>
         capability.requestNetworkAccess(

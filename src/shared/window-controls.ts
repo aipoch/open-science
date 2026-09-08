@@ -178,6 +178,10 @@ export const isFindInPageChord = (input: KeyChordInput, platform: string): boole
 // Main -> renderer: show the close/quit confirmation modal for `variant`, listing `sessions`.
 export const WINDOW_CLOSE_CONFIRM_REQUEST_CHANNEL = 'window:close-confirm-request'
 
+// Main -> renderer: withdraw this request after settlement or transfer to native UI.
+export const WINDOW_CLOSE_CONFIRM_DISMISS_CHANNEL = 'window:close-confirm-dismiss'
+export type CloseConfirmDismissal = { requestId: string }
+
 // Renderer -> main: modal mounted (ack) or the user chose an action (choice), keyed by requestId.
 export const WINDOW_CLOSE_CONFIRM_RESPONSE_CHANNEL = 'window:close-confirm-response'
 

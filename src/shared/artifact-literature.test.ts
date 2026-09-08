@@ -49,3 +49,31 @@ describe('artifactLiteratureRequestSchema', () => {
     expect(() => artifactLiteratureRequestSchema.parse({ corpus, citations })).toThrow()
   })
 })
+
+it('reads legacy corpus counts without inventing missing evidence and validates explicit metadata counts', async () => {
+  const { artifactLiteratureCorpusManifestSchema } = await import('./artifact-literature')
+  const legacy = {
+    items: [{ itemId: 'item-1', metadataRevision: 1 }],
+    retrievals: [{ scope: 'project', resultCount: 1, totalCount: 1, complete: true }],
+    coverage: {
+      searchedCount: 1,
+      candidateCount: 1,
+      fullTextCount: 0,
+      abstractOnlyCount: 1,
+      unprocessedCount: 0
+    },
+    capturedAt: '2026-09-08T00:00:00.000Z'
+  }
+  expect(artifactLiteratureCorpusManifestSchema.parse(legacy)).toEqual(legacy)
+  const current = {
+    ...legacy,
+    coverage: { ...legacy.coverage, abstractOnlyCount: 0, metadataOnlyCount: 1 }
+  }
+  expect(artifactLiteratureCorpusManifestSchema.parse(current)).toEqual(current)
+  expect(() =>
+    artifactLiteratureCorpusManifestSchema.parse({
+      ...current,
+      coverage: { ...current.coverage, metadataOnlyCount: 0 }
+    })
+  ).toThrow('evidence classification')
+})

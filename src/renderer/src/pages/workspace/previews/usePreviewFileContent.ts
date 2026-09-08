@@ -15,6 +15,13 @@ const PUBLICATION_RETRY_LIMIT = 4
 
 type PreviewPagination = {
   pageNumber: number
+  pageKey?: string
+  startingLineNumber?: number
+  startsMidLine?: boolean
+  endsMidLine?: boolean
+  byteStart?: number
+  byteEnd?: number
+  showLastLines?: boolean
   hasPrevious: boolean
   hasNext: boolean
   previousPage: () => void
@@ -130,6 +137,14 @@ const readManagedPreviewPage = async (
         contentBytesRead += 1
       }
     }
+    // Keep CRLF together, using the same bounded lookahead as UTF-8 completion.
+    if (
+      request.encoding === 'utf8' &&
+      bytes[contentBytesRead - 1] === 13 &&
+      bytes[contentBytesRead] === 10
+    ) {
+      contentBytesRead += 1
+    }
     const contentBytes = bytes.subarray(0, contentBytesRead)
     const nextOffset = request.offset + contentBytesRead
 
@@ -180,18 +195,21 @@ export const usePreviewFileContent = ({
     maxBytes,
     path
   ])
-  // Keep byte offsets, not prior page contents, so only the active page remains in memory.
-  const [pageState, setPageState] = useState<{ fileKey: string; offsets: number[]; index: number }>(
-    {
-      fileKey,
-      offsets: [0],
-      index: 0
-    }
-  )
+  // Retain locations, not previous page contents, for the pinned resource sequence.
+  const firstPage = { offset: 0, startingLineNumber: 1, startsMidLine: false }
+  const [pageState, setPageState] = useState<{
+    fileKey: string
+    pages: (typeof firstPage)[]
+    index: number
+    showLastLines: boolean
+  }>({ fileKey, pages: [firstPage], index: 0, showLastLines: false })
   const activePageState =
-    pageState.fileKey === fileKey ? pageState : { fileKey, offsets: [0], index: 0 }
+    pageState.fileKey === fileKey
+      ? pageState
+      : { fileKey, pages: [firstPage], index: 0, showLastLines: false }
   if (pageState.fileKey !== fileKey) setPageState(activePageState)
-  const offset = activePageState.offsets[activePageState.index] ?? 0
+  const page = activePageState.pages[activePageState.index] ?? firstPage
+  const offset = page.offset
   const requestKey = `${fileKey}:${offset}`
   const [state, setState] = useState<PreviewFileContentInternalState>({
     status: 'loading',
@@ -271,7 +289,7 @@ export const usePreviewFileContent = ({
   const previousPage = (): void => {
     setPageState((current) => {
       const active = current.fileKey === fileKey ? current : activePageState
-      return { ...active, index: Math.max(0, active.index - 1) }
+      return { ...active, index: Math.max(0, active.index - 1), showLastLines: true }
     })
   }
   const nextPage = (): void => {
@@ -280,9 +298,15 @@ export const usePreviewFileContent = ({
     setPageState((current) => {
       const active = current.fileKey === fileKey ? current : activePageState
       // Discard forward history when navigation continues from an earlier page.
-      const nextOffsets = active.offsets.slice(0, active.index + 1)
-      nextOffsets.push(state.preview.nextOffset as number)
-      return { fileKey, offsets: nextOffsets, index: active.index + 1 }
+      const pages = active.pages.slice(0, active.index + 1)
+      pages.push({
+        offset: state.preview.nextOffset as number,
+        startingLineNumber:
+          page.startingLineNumber +
+          (encoding === 'utf8' ? (state.preview.content.match(/\n/g)?.length ?? 0) : 0),
+        startsMidLine: encoding === 'utf8' && !state.preview.content.endsWith('\n')
+      })
+      return { fileKey, pages, index: active.index + 1, showLastLines: false }
     })
   }
 
@@ -290,6 +314,14 @@ export const usePreviewFileContent = ({
     ...state,
     pagination: {
       pageNumber: activePageState.index + 1,
+      pageKey: requestKey,
+      startingLineNumber: page.startingLineNumber,
+      startsMidLine: page.startsMidLine,
+      endsMidLine:
+        encoding === 'utf8' && state.preview.truncated && !state.preview.content.endsWith('\n'),
+      byteStart: offset,
+      byteEnd: state.preview.nextOffset ?? state.preview.size,
+      showLastLines: activePageState.showLastLines,
       hasPrevious: activePageState.index > 0,
       hasNext: state.preview.nextOffset !== undefined,
       previousPage,

@@ -22,7 +22,10 @@ import {
 } from '@/components/ui/dialog-chrome'
 import type { LiteratureItemView, LiteratureMetadataField } from '../../../../shared/literature'
 import { formatBytes } from '../../../../shared/update'
-import { literatureJobProgress } from '../../../../shared/literature-jobs'
+import {
+  literatureJobProgress,
+  type LiteratureJobRequest
+} from '../../../../shared/literature-jobs'
 
 type BatchLookupMode = 'metadata' | 'full-text'
 const progressClassName =
@@ -61,6 +64,7 @@ export const LiteratureBatchLookupDialog = ({
   const [error, setError] = useState(false)
   const [sending, setSending] = useState(false)
   const jobRef = useRef<Job | undefined>(undefined)
+  const failedCommand = useRef<LiteratureJobRequest | undefined>(undefined)
   const draftWrites = useRef(Promise.resolve())
   const pendingDrafts = useRef(
     new Map<string, { itemId: string; checked: boolean; candidateId?: string }>()
@@ -117,7 +121,7 @@ export const LiteratureBatchLookupDialog = ({
         } else if (!jobRef.current) throw new Error('Task unavailable')
         else if (result.progress || jobRef.current.progress)
           setJob((current) => (current ? { ...current, progress: result.progress } : current))
-        if (pendingDrafts.current.size === 0) setError(false)
+        if (pendingDrafts.current.size === 0 && !failedCommand.current) setError(false)
       } catch {
         if (active) setError(true)
       } finally {
@@ -172,6 +176,7 @@ export const LiteratureBatchLookupDialog = ({
   const update = (id: string, patch: Partial<Row>): void => {
     const row = rows.find((row) => row.id === id)
     if (!job || !row) return
+    failedCommand.current = undefined
     const selected = { ...row, ...patch }
     setRows((current) => current.map((row) => (row.id === id ? { ...row, ...patch } : row)))
     pendingDrafts.current.set(id, {
@@ -184,23 +189,15 @@ export const LiteratureBatchLookupDialog = ({
       () => setError(true)
     )
   }
-  const command = async (action: 'apply' | 'retry' | 'resume' | 'pause'): Promise<void> => {
-    if (!job || sending) return
+  const sendCommand = async (request: LiteratureJobRequest): Promise<void> => {
+    if (sending) return
     setSending(true)
     try {
+      failedCommand.current = request
       await saveDrafts()
-      const result = await window.api.literature.jobs(
-        action === 'apply'
-          ? {
-              action,
-              jobId: job.id,
-              selections: rows
-                .filter((row) => row.status === 'ready' && row.checked)
-                .map((row) => ({ itemId: row.id, candidateId: row.candidateId }))
-            }
-          : { action, jobId: job.id }
-      )
+      const result = await window.api.literature.jobs(request)
       if (result.jobs[0]) receive(result.jobs[0])
+      failedCommand.current = undefined
       setError(false)
     } catch {
       setError(true)
@@ -208,7 +205,24 @@ export const LiteratureBatchLookupDialog = ({
       setSending(false)
     }
   }
+  const command = async (action: 'apply' | 'retry' | 'resume' | 'pause'): Promise<void> => {
+    if (!job) return
+    await sendCommand(
+      action === 'apply'
+        ? {
+            action,
+            jobId: job.id,
+            selections: rows
+              .filter((row) => row.status === 'ready' && row.checked)
+              .map((row) => ({ itemId: row.id, candidateId: row.candidateId }))
+          }
+        : { action, jobId: job.id }
+    )
+  }
   const messageLabels: Record<string, string> = {
+    'Search again to refresh this older metadata review.': t(
+      'Search again to refresh this older metadata review.'
+    ),
     'Needs identifiers': t('Needs identifiers'),
     'No missing metadata was found.': t('No missing metadata was found.'),
     'PDF already attached': t('PDF already attached'),
@@ -286,7 +300,12 @@ export const LiteratureBatchLookupDialog = ({
                 title={t('Background task could not be updated. Try again.')}
                 primaryButton={{
                   label: t('Retry'),
+                  disabled: sending,
                   onClick: () => {
+                    if (failedCommand.current) {
+                      void sendCommand(failedCommand.current)
+                      return
+                    }
                     void saveDrafts().then(
                       () => window.dispatchEvent(new Event('literature-job-refresh')),
                       () => setError(true)

@@ -108,8 +108,8 @@ export class LiteratureBatchJobs {
     this.writes = this.writes.then(write, write)
     return this.writes
   }
-  private saveIndex(): Promise<void> {
-    const contents = JSON.stringify({ version: 2, jobIds: this.jobs.map((job) => job.id) })
+  private saveIndex(jobs = this.jobs): Promise<void> {
+    const contents = JSON.stringify({ version: 2, jobIds: jobs.map((job) => job.id) })
     const write = (): Promise<void> => writeDurableJsonFile(this.options.path, contents)
     this.writes = this.writes.then(write, write)
     return this.writes
@@ -159,7 +159,7 @@ export class LiteratureBatchJobs {
           throw new Error('Task request identity was already used for different references.')
         return { jobs: [this.snapshot(existing)] }
       }
-      const previousJobs = [...this.jobs]
+      const nextJobs = [...this.jobs]
       let prunedId: string | undefined
       if (this.jobs.length >= 50) {
         const settled = this.jobs.findLastIndex(
@@ -168,7 +168,7 @@ export class LiteratureBatchJobs {
             job.rows.every(({ status }) => status !== 'ready' && status !== 'error')
         )
         if (settled < 0) throw new Error('Remove completed Literature tasks before adding more.')
-        prunedId = this.jobs.splice(settled, 1)[0]?.id
+        prunedId = nextJobs.splice(settled, 1)[0]?.id
       }
       const now = Date.now()
       const job: LiteratureJob = {
@@ -180,20 +180,17 @@ export class LiteratureBatchJobs {
         updatedAt: now,
         rows: [...new Set(request.itemIds)].map((id) => ({ id, status: 'pending', checked: true }))
       }
-      this.jobs.unshift(job)
-      try {
-        await this.save(job)
-        await this.saveIndex()
-      } catch (error) {
-        this.jobs = previousJobs
-        throw error
-      }
+      nextJobs.unshift(job)
+      await this.save(job)
+      await this.saveIndex(nextJobs)
+      this.jobs = nextJobs
       if (prunedId) await rm(this.jobPath(prunedId), { force: true }).catch(this.options.onError)
       this.kick()
       return { jobs: [this.snapshot(job)] }
     }
-    const job = this.jobs.find(({ id }) => id === request.jobId)
-    if (!job) throw new Error('Literature task not found.')
+    const publishedJob = this.jobs.find(({ id }) => id === request.jobId)
+    if (!publishedJob) throw new Error('Literature task not found.')
+    const job = request.action === 'get' ? publishedJob : structuredClone(publishedJob)
     if (request.action === 'get') {
       const snapshot = request.ifUpdatedAt === job.updatedAt ? undefined : this.snapshot(job)
       let download: LiteratureJob['progress']
@@ -232,8 +229,7 @@ export class LiteratureBatchJobs {
     } else {
       if (job.state === 'running' || job.state === 'pausing')
         throw new Error('Pause this Literature task first.')
-      if (request.action === 'remove') this.jobs = this.jobs.filter(({ id }) => id !== job.id)
-      else if (request.action === 'apply') {
+      if (request.action === 'apply') {
         if (
           new Set(request.selections.map(({ itemId }) => itemId)).size !== request.selections.length
         )
@@ -286,11 +282,26 @@ export class LiteratureBatchJobs {
     }
     job.updatedAt = Math.max(Date.now(), job.updatedAt + 1)
     if (request.action === 'remove') {
-      await this.saveIndex()
-      await rm(this.jobPath(job.id), { force: true })
-    } else await this.save(job)
+      const nextJobs = this.jobs.filter(({ id }) => id !== job.id)
+      await this.saveIndex(nextJobs)
+      this.jobs = nextJobs
+      await rm(this.jobPath(job.id), { force: true }).catch(this.options.onError)
+    } else {
+      await this.save(job)
+      // Active provider calls retain these objects. Publish only command-owned fields so a
+      // completed row is not replaced by the earlier draft while its checkpoint is waiting.
+      if (request.action === 'pause') publishedJob.state = job.state
+      else if (request.action === 'review') {
+        for (const selection of request.selections) {
+          const row = publishedJob.rows.find(({ id }) => id === selection.itemId)!
+          row.checked = selection.checked
+          row.candidateId = selection.candidateId
+        }
+      } else Object.assign(publishedJob, job)
+      publishedJob.updatedAt = Math.max(publishedJob.updatedAt, job.updatedAt)
+    }
     this.kick()
-    return { jobs: request.action === 'remove' ? [] : [this.snapshot(job)] }
+    return { jobs: request.action === 'remove' ? [] : [this.snapshot(publishedJob)] }
   }
 
   private currentJobId?: string
@@ -321,11 +332,14 @@ export class LiteratureBatchJobs {
 
   private async drain(): Promise<void> {
     while (!this.closed) {
+      await this.commands
+      if (this.closed) break
       const job = [...this.jobs].reverse().find(({ state }) => state === 'running')
       if (!job) break
       this.currentJobId = job.id
       job.updatedAt = Math.max(Date.now(), job.updatedAt + 1)
       for (const row of job.rows) {
+        await this.commands
         if (this.closed || job.state !== 'running') break
         if (
           job.phase === 'search' ? row.status !== 'pending' : row.status !== 'ready' || !row.checked
@@ -349,11 +363,13 @@ export class LiteratureBatchJobs {
         } finally {
           this.active = undefined
         }
+        await this.commands
         job.updatedAt = Math.max(Date.now(), job.updatedAt + 1)
         await this.save(job)
         if (job.state === 'running' && !this.closed)
           await new Promise((resolve) => setTimeout(resolve, this.options.spacingMs ?? 350))
       }
+      await this.commands
       job.state =
         this.closed || job.state !== 'running'
           ? 'paused'
@@ -386,8 +402,10 @@ export class LiteratureBatchJobs {
       if (!row.metadata.filled.length) row.message = 'No missing metadata was found.'
     } else {
       if (
-        item.attachments.some((attachment) =>
-          attachment.versions.some(({ contentType }) => contentType === 'application/pdf')
+        item.attachments.some(
+          (attachment) =>
+            attachment.kind === 'fullText' &&
+            attachment.versions.some(({ contentType }) => contentType === 'application/pdf')
         )
       ) {
         row.status = 'skipped'
@@ -422,14 +440,21 @@ export class LiteratureBatchJobs {
       throw new Error('Reference changed')
     if (job.mode === 'metadata') {
       if (!row.metadata) throw new Error('Metadata review unavailable')
+      if (row.metadata.reviewVersion !== 1) {
+        row.status = 'error'
+        row.message = 'Search again to refresh this older metadata review.'
+        return
+      }
       await this.options.metadata.applyReviewed(row.metadata)
     } else {
       const candidate = row.candidates?.find(({ id }) => id === row.candidateId)
       if (!candidate) throw new Error('No source selected')
       // A previous attempt may have committed before its completion checkpoint was saved.
       if (
-        current.attachments.some((attachment) =>
-          attachment.versions.some(({ contentType }) => contentType === 'application/pdf')
+        current.attachments.some(
+          (attachment) =>
+            attachment.kind === 'fullText' &&
+            attachment.versions.some(({ contentType }) => contentType === 'application/pdf')
         )
       ) {
         row.status = 'skipped'
@@ -464,7 +489,17 @@ export class LiteratureBatchJobs {
         row.message = 'Source rate limit reached. Search again later.'
         return
       }
-      if (result.mode !== 'attach') throw new Error('Unexpected attachment response')
+      if (
+        result.mode !== 'attach' &&
+        !(
+          result.mode === 'transfer' &&
+          result.transfer?.status === 'succeeded' &&
+          result.transfer.itemId === row.id &&
+          result.transfer.attachmentId &&
+          result.transfer.versionId
+        )
+      )
+        throw new Error('Unexpected attachment response')
     }
     row.status = 'done'
   }

@@ -372,9 +372,13 @@ describe('D02/D04 persisted database boundaries', () => {
           '0030_literature_foundation',
           '0031_project_archive_revision',
           '0032_permission_approval_summary',
-          '0033_compute_job_harvest_retry'
+          '0033_compute_job_harvest_retry',
+          '0034_background_result_delivery',
+          '0035_literature_pdf_provenance',
+          '0036_content_verification_observation',
+          '0037_literature_inbox_integrity'
         ],
-        to: '0033_compute_job_harvest_retry'
+        to: '0037_literature_inbox_integrity'
       })
       // Literature adds contentBlobId to version rows while preserving their original fields.
       expect(await Promise.all(tables.map(readRows))).toMatchObject(before)

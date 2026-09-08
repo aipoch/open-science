@@ -3,7 +3,7 @@
 import { renderToStaticMarkup } from 'react-dom/server'
 import { createRoot } from 'react-dom/client'
 import { act, Children, isValidElement, type ReactElement, type ReactNode } from 'react'
-import { Toolbox } from 'lucide-react'
+import { Cpu, Toolbox } from 'lucide-react'
 import {
   resolveActionMenuEntries,
   type ActionMenuSpec,
@@ -2318,11 +2318,12 @@ describe('WorkspaceSidebar accessible render', () => {
     expect(onDeleteSession).toHaveBeenCalledWith(sessions[0])
   })
 
-  it('renders Customize, Files, and Literature after New and wires their entries', async () => {
+  it('renders Customize, Files, Compute, and Literature after New and wires their entries', async () => {
     const { WorkspaceSidebarView } = await import('./WorkspaceSidebar')
     const onOpenFiles = vi.fn()
     const onOpenLiterature = vi.fn()
     const onOpenSettings = vi.fn()
+    const onOpenCompute = vi.fn()
     const tree = WorkspaceSidebarView({
       now: Date.now(),
       projectName: 'Example project',
@@ -2336,6 +2337,8 @@ describe('WorkspaceSidebar accessible render', () => {
       isFilesOpen: true,
       onOpenFiles,
       onOpenLiterature,
+      isComputeOpen: false,
+      onOpenCompute,
       onOpenSession: vi.fn(),
       onRenameSession: vi.fn(),
       canDownloadArtifacts: true,
@@ -2355,14 +2358,18 @@ describe('WorkspaceSidebar accessible render', () => {
     const customizeButton = buttons.find((button) => getTextContent(button).trim() === 'Customize')
     const filesButton = buttons.find((button) => getTextContent(button).trim() === 'Files')
     const literatureButton = buttons.find((button) => getTextContent(button).trim() === 'Library')
+    const computeButton = buttons.find((button) => getTextContent(button).trim() === 'Compute')
 
     expect(newButtonIndex).toBeGreaterThanOrEqual(0)
     expect(buttons[newButtonIndex + 1]).toBe(customizeButton)
     expect(buttons[newButtonIndex + 2]).toBe(filesButton)
-    expect(buttons[newButtonIndex + 3]).toBe(literatureButton)
+    expect(buttons[newButtonIndex + 3]).toBe(computeButton)
+    expect(buttons[newButtonIndex + 4]).toBe(literatureButton)
     expect(collectElements(customizeButton).some((element) => element.type === Toolbox)).toBe(true)
     expect(filesButton?.props['aria-controls']).toBe('right-panel')
     expect(filesButton?.props['aria-pressed']).toBe(true)
+    expect(collectElements(computeButton).some((element) => element.type === Cpu)).toBe(true)
+    expect(computeButton?.props['aria-pressed']).toBe(false)
 
     expect(customizeButton?.props.onClick).toBeTypeOf('function')
     ;(customizeButton?.props.onClick as () => void)()
@@ -2371,10 +2378,46 @@ describe('WorkspaceSidebar accessible render', () => {
     expect(filesButton?.props.onClick).toBeTypeOf('function')
     ;(filesButton?.props.onClick as () => void)()
     expect(onOpenFiles).toHaveBeenCalledTimes(1)
+    ;(computeButton?.props.onClick as () => void)()
+    expect(onOpenCompute).toHaveBeenCalledTimes(1)
 
     expect(literatureButton?.props.onClick).toBeTypeOf('function')
     ;(literatureButton?.props.onClick as () => void)()
     expect(onOpenLiterature).toHaveBeenCalledTimes(1)
+  })
+
+  it('disables the Project Compute entry when its read capability is unavailable', async () => {
+    const { WorkspaceSidebarView } = await import('./WorkspaceSidebar')
+    const tree = WorkspaceSidebarView({
+      now: Date.now(),
+      projectName: 'Example project',
+      sessions: [],
+      activeSessionId: undefined,
+      canCreateConversation: true,
+      canMutateConversations: true,
+      canDeleteConversations: true,
+      onGoHome: vi.fn(),
+      onNewConversation: vi.fn(),
+      isFilesOpen: false,
+      onOpenFiles: vi.fn(),
+      onOpenSession: vi.fn(),
+      onRenameSession: vi.fn(),
+      canDownloadArtifacts: false,
+      onDownloadArtifacts: vi.fn(),
+      onViewNotebook: vi.fn(),
+      onTogglePin: vi.fn(),
+      onDeleteSession: vi.fn(),
+      onOpenSettings: vi.fn(),
+      onOpenProjectSettings: vi.fn(),
+      onNewProject: vi.fn(),
+      canDownloadProjectArtifacts: false,
+      onDownloadProjectArtifacts: vi.fn()
+    })
+    const computeButton = collectElements(tree)
+      .filter((element) => element.type === 'button')
+      .find((button) => getTextContent(button).trim() === 'Compute')
+
+    expect(computeButton?.props.disabled).toBe(true)
   })
 
   it('wires the View notebook menu item to the matching session', async () => {

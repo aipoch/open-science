@@ -8,7 +8,8 @@ import { useUpdateStore } from '@/stores/update-store'
 
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
-vi.mock('radix-ui', () => ({
+vi.mock('radix-ui', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('radix-ui')>()),
   Dialog: {
     Root: ({ open, children }: PropsWithChildren<{ open?: boolean }>) => (
       <div data-testid="dialog-root" data-open={String(open)}>

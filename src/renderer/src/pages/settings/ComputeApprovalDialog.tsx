@@ -5,6 +5,7 @@ import { useTranslation } from 'react-i18next'
 
 import type { ComputeApprovalDecision } from '../../../../shared/compute'
 import { Button } from '@/components/ui/button'
+import { ScrollArea } from '@/components/ui/scroll-area'
 import {
   dialogBodyClassName,
   dialogDescriptionClassName,
@@ -115,10 +116,10 @@ export function ComputeApprovalDialog({
           onInteractOutside={(event) => event.preventDefault()}
           onEscapeKeyDown={(event) => event.preventDefault()}
           className={dialogPanelClassName(
-            'z-[60] w-[min(480px,calc(100vw-2rem))] overscroll-contain p-0'
+            'z-[60] flex max-h-[calc(100svh-2rem)] w-[min(480px,calc(100vw-2rem))] flex-col overscroll-contain p-0'
           )}
         >
-          <div className={cn(dialogHeaderClassName, 'items-start justify-start')}>
+          <div className={cn(dialogHeaderClassName, 'shrink-0 items-start justify-start')}>
             <ShieldAlert className="mt-0.5 size-5 shrink-0 text-amber-500" aria-hidden="true" />
             <div className="min-w-0">
               <Dialog.Title className={dialogTitleClassName}>{title}</Dialog.Title>
@@ -130,137 +131,145 @@ export function ComputeApprovalDialog({
             </div>
           </div>
 
-          <div className={dialogBodyClassName}>
-            <div className="space-y-1.5 rounded-lg border border-border bg-muted/40 p-3 text-xs">
-              <div className="flex gap-2">
-                <span className="w-16 shrink-0 text-muted-foreground">{t('Host')}</span>
-                <span className="min-w-0 truncate font-medium text-foreground">
-                  {dialogRequest.providerName}
-                </span>
-              </div>
-              <div className="flex gap-2">
-                <span className="w-16 shrink-0 text-muted-foreground">{t('Intent')}</span>
-                <span className="min-w-0 break-words text-foreground">{dialogRequest.intent}</span>
-              </div>
-              {hasCommand ? (
+          <ScrollArea
+            key={dialogRequest.id}
+            className="grid min-h-0 flex-1 [&>[data-slot=scroll-area-viewport]]:h-auto [&>[data-slot=scroll-area-viewport]]:min-h-0"
+          >
+            <div className={dialogBodyClassName}>
+              <div className="space-y-1.5 rounded-lg border border-border bg-muted/40 p-3 text-xs">
                 <div className="flex gap-2">
-                  <span className="w-20 shrink-0 text-muted-foreground">{t('Command')}</span>
-                  <div className="min-w-0 flex-1">
-                    <span className="break-all font-mono text-muted-foreground">
-                      {showFull ? dialogRequest.commandFull : dialogRequest.commandPreview}
-                    </span>
-                    {isLongCommand && (
-                      <button
-                        type="button"
-                        onClick={() =>
-                          setExpandedRequestId((id) =>
-                            id === dialogRequest.id ? null : dialogRequest.id
-                          )
-                        }
-                        className="mt-1 flex items-center gap-0.5 text-xs text-primary hover:underline"
-                        aria-expanded={showFull}
-                      >
-                        {showFull ? (
-                          <>
-                            <ChevronUp className="size-3" aria-hidden="true" /> {t('Show less')}
-                          </>
-                        ) : (
-                          <>
-                            <ChevronDown className="size-3" aria-hidden="true" />{' '}
-                            {t('Show full command')}
-                          </>
-                        )}
-                      </button>
-                    )}
-                  </div>
-                </div>
-              ) : (
-                <div className="flex gap-2">
-                  <span className="w-20 shrink-0 text-muted-foreground">{t('Remote path')}</span>
-                  <span className="min-w-0 break-all font-mono text-muted-foreground">
-                    {dialogRequest.remotePath}
+                  <span className="w-16 shrink-0 text-muted-foreground">{t('Host')}</span>
+                  <span className="min-w-0 truncate font-medium text-foreground">
+                    {dialogRequest.providerName}
                   </span>
                 </div>
-              )}
-              {dialogRequest.operation === 'submit_job' && dialogRequest.inputsSummary && (
                 <div className="flex gap-2">
-                  <span className="w-20 shrink-0 text-muted-foreground">{t('Inputs')}</span>
+                  <span className="w-16 shrink-0 text-muted-foreground">{t('Intent')}</span>
                   <span className="min-w-0 break-words text-foreground">
-                    {dialogRequest.inputsSummary}
+                    {dialogRequest.intent}
                   </span>
                 </div>
-              )}
-              {dialogRequest.operation === 'submit_job' && dialogRequest.executionMode && (
-                <div className="flex gap-2">
-                  <span className="w-20 shrink-0 text-muted-foreground">{t('Execution mode')}</span>
-                  <span className="min-w-0 text-foreground">
-                    {dialogRequest.executionMode === 'slurm' ? t('Slurm') : t('Direct SSH')}
-                  </span>
-                </div>
-              )}
-              {dialogRequest.operation === 'submit_job' && dialogRequest.environment && (
-                <div className="flex gap-2">
-                  <span className="w-20 shrink-0 text-muted-foreground">{t('Environment')}</span>
-                  <span className="min-w-0 break-all font-mono text-muted-foreground">
-                    {dialogRequest.environment}
-                  </span>
-                </div>
-              )}
-              {dialogRequest.operation === 'submit_job' && dialogRequest.resources && (
-                <div className="flex gap-2">
-                  <span className="w-20 shrink-0 text-muted-foreground">{t('Resources')}</span>
-                  <span className="min-w-0 break-all font-mono text-muted-foreground">
-                    {dialogRequest.resources}
-                  </span>
-                </div>
-              )}
-              {dialogRequest.operation === 'submit_job' && (
-                <>
+                {hasCommand ? (
                   <div className="flex gap-2">
-                    <span className="w-20 shrink-0 text-muted-foreground">{t('Timeout')}</span>
-                    <span className="min-w-0 text-foreground">
-                      {t('{{count}} seconds', {
-                        count: dialogRequest.timeoutSeconds,
-                        defaultValue_one: '{{count}} second'
-                      })}
+                    <span className="w-20 shrink-0 text-muted-foreground">{t('Command')}</span>
+                    <div className="min-w-0 flex-1">
+                      <span className="break-all font-mono text-muted-foreground">
+                        {showFull ? dialogRequest.commandFull : dialogRequest.commandPreview}
+                      </span>
+                      {isLongCommand && (
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setExpandedRequestId((id) =>
+                              id === dialogRequest.id ? null : dialogRequest.id
+                            )
+                          }
+                          className="mt-1 flex items-center gap-0.5 text-xs text-primary hover:underline"
+                          aria-expanded={showFull}
+                        >
+                          {showFull ? (
+                            <>
+                              <ChevronUp className="size-3" aria-hidden="true" /> {t('Show less')}
+                            </>
+                          ) : (
+                            <>
+                              <ChevronDown className="size-3" aria-hidden="true" />{' '}
+                              {t('Show full command')}
+                            </>
+                          )}
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                ) : (
+                  <div className="flex gap-2">
+                    <span className="w-20 shrink-0 text-muted-foreground">{t('Remote path')}</span>
+                    <span className="min-w-0 break-all font-mono text-muted-foreground">
+                      {dialogRequest.remotePath}
                     </span>
                   </div>
+                )}
+                {dialogRequest.operation === 'submit_job' && dialogRequest.inputsSummary && (
+                  <div className="flex gap-2">
+                    <span className="w-20 shrink-0 text-muted-foreground">{t('Inputs')}</span>
+                    <span className="min-w-0 break-words text-foreground">
+                      {dialogRequest.inputsSummary}
+                    </span>
+                  </div>
+                )}
+                {dialogRequest.operation === 'submit_job' && dialogRequest.executionMode && (
                   <div className="flex gap-2">
                     <span className="w-20 shrink-0 text-muted-foreground">
-                      {t('Remote workdir')}
+                      {t('Execution mode')}
                     </span>
-                    <span className="min-w-0 break-all font-mono text-muted-foreground">
-                      {dialogRequest.remoteWorkdir}
+                    <span className="min-w-0 text-foreground">
+                      {dialogRequest.executionMode === 'slurm' ? t('Slurm') : t('Direct SSH')}
                     </span>
                   </div>
-                </>
-              )}
+                )}
+                {dialogRequest.operation === 'submit_job' && dialogRequest.environment && (
+                  <div className="flex gap-2">
+                    <span className="w-20 shrink-0 text-muted-foreground">{t('Environment')}</span>
+                    <span className="min-w-0 break-all font-mono text-muted-foreground">
+                      {dialogRequest.environment}
+                    </span>
+                  </div>
+                )}
+                {dialogRequest.operation === 'submit_job' && dialogRequest.resources && (
+                  <div className="flex gap-2">
+                    <span className="w-20 shrink-0 text-muted-foreground">{t('Resources')}</span>
+                    <span className="min-w-0 break-all font-mono text-muted-foreground">
+                      {dialogRequest.resources}
+                    </span>
+                  </div>
+                )}
+                {dialogRequest.operation === 'submit_job' && (
+                  <>
+                    <div className="flex gap-2">
+                      <span className="w-20 shrink-0 text-muted-foreground">{t('Timeout')}</span>
+                      <span className="min-w-0 text-foreground">
+                        {t('{{count}} seconds', {
+                          count: dialogRequest.timeoutSeconds,
+                          defaultValue_one: '{{count}} second'
+                        })}
+                      </span>
+                    </div>
+                    <div className="flex gap-2">
+                      <span className="w-20 shrink-0 text-muted-foreground">
+                        {t('Remote workdir')}
+                      </span>
+                      <span className="min-w-0 break-all font-mono text-muted-foreground">
+                        {dialogRequest.remoteWorkdir}
+                      </span>
+                    </div>
+                  </>
+                )}
+              </div>
+              {dialogRequest.willPersistUnencrypted ? (
+                <div
+                  role="alert"
+                  className="mt-3 flex items-start gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-300"
+                >
+                  <AlertTriangle className="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
+                  <span>
+                    {t(
+                      "Secure storage is unavailable. This job's command, paths, and output may be stored without encryption."
+                    )}
+                  </span>
+                </div>
+              ) : null}
+              {responseErrorRequestId === dialogRequest.id ? (
+                <div
+                  role="alert"
+                  className="mt-3 flex items-start gap-2 rounded-lg border border-danger-000/30 bg-danger-000/10 px-3 py-2 text-xs text-danger-000"
+                >
+                  <AlertTriangle className="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
+                  <span>{t('Could not submit this approval. Try again.')}</span>
+                </div>
+              ) : null}
             </div>
-            {dialogRequest.willPersistUnencrypted ? (
-              <div
-                role="alert"
-                className="mt-3 flex items-start gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-300"
-              >
-                <AlertTriangle className="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
-                <span>
-                  {t(
-                    "Secure storage is unavailable. This job's command, paths, and output may be stored without encryption."
-                  )}
-                </span>
-              </div>
-            ) : null}
-            {responseErrorRequestId === dialogRequest.id ? (
-              <div
-                role="alert"
-                className="mt-3 flex items-start gap-2 rounded-lg border border-danger-000/30 bg-danger-000/10 px-3 py-2 text-xs text-danger-000"
-              >
-                <AlertTriangle className="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
-                <span>{t('Could not submit this approval. Try again.')}</span>
-              </div>
-            ) : null}
-          </div>
-
-          <div className={cn(dialogFooterClassName, 'flex-wrap')}>
+          </ScrollArea>
+          <div className={cn(dialogFooterClassName, 'shrink-0 flex-wrap')}>
             <Button type="button" variant="destructive" disabled={responding} onClick={deny}>
               {t('Deny')}
             </Button>

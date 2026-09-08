@@ -62,6 +62,10 @@ const dependencies = (): ApplicationCommandCompositionDependencies =>
     compute: EMPTY_OWNER,
     permissionGrants: EMPTY_OWNER,
     tags: EMPTY_OWNER,
+    specialist: {
+      dispose: vi.fn()
+    } as unknown as ApplicationCommandCompositionDependencies['specialist'],
+    memory: EMPTY_OWNER,
     literature: EMPTY_OWNER,
     dataContent: EMPTY_OWNER,
     host: EMPTY_OWNER

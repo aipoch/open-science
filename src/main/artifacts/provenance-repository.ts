@@ -607,6 +607,10 @@ class ArtifactProvenanceRepository {
     this.literatureManifestOwner.recordSearch(request)
   }
 
+  recordLiteratureAbstractRead(request: RecordArtifactLiteraturePdfReadRequest): void {
+    this.literatureManifestOwner.recordAbstractRead(request)
+  }
+
   recordLiteraturePdfRead(request: RecordArtifactLiteraturePdfReadRequest): void {
     this.literatureManifestOwner.recordPdfRead(request)
   }

@@ -387,7 +387,8 @@ describe('NotebookPreview per-kernel tabs', () => {
     environments: NotebookEnvironmentStatus[] = [],
     runStaleness: NotebookSessionState['runStaleness'] = {},
     kernelStatus: NotebookSessionState['kernelStatus'] = 'idle',
-    stateOverrides: Partial<NotebookSessionState> = {}
+    stateOverrides: Partial<NotebookSessionState> = {},
+    previewItem: NotebookPreviewItem = item
   ): Promise<void> => {
     const readyStatus: ProvisionStatus = {
       pythonReady: true,
@@ -486,7 +487,7 @@ describe('NotebookPreview per-kernel tabs', () => {
     } as never
 
     await act(async () => {
-      root.render(<NotebookPreview item={item} />)
+      root.render(<NotebookPreview item={previewItem} />)
     })
     // Flush the mount-deferred setTimeout(0) that kicks off loadNotebookState(), plus its state()
     // promise resolution and the resulting re-render — React's passive effects also queue via a
@@ -522,6 +523,28 @@ describe('NotebookPreview per-kernel tabs', () => {
     expect(divider?.className).toContain('before:opacity-60')
     expect(container.querySelector('[data-slot="message-scroller-button"]')).toBeNull()
     expect(container.querySelector('[aria-label="Scroll to end"]')).toBeNull()
+  })
+
+  it('focuses the exact Run requested by Session activity', async () => {
+    const scrollIntoView = vi.spyOn(Element.prototype, 'scrollIntoView')
+    const targetItem: NotebookPreviewItem = {
+      ...item,
+      notebookRunId: 'run-target',
+      notebookRunFocusRequest: 1
+    }
+    await mountWithRuns(
+      [makeRun({ runId: 'run-first' }), makeRun({ runId: 'run-target' })],
+      [],
+      {},
+      'idle',
+      {},
+      targetItem
+    )
+
+    const target = container.querySelector('[data-run-id="run-target"]')
+    expect(target).not.toBeNull()
+    expect(scrollIntoView.mock.instances).toContain(target)
+    expect(scrollIntoView).toHaveBeenCalledWith({ block: 'center' })
   })
 
   it('opens a bounded live namespace snapshot and reloads when private names are shown', async () => {

@@ -40,6 +40,8 @@ import { usePdfContextAction } from './use-pdf-context-action'
 import { requestComposerFocus } from './composer-focus-events'
 
 type PreviewPanelProps = PreviewInteractionPort & {
+  children?: React.ReactNode
+  isMobile?: boolean
   panelRef: React.Ref<PanelImperativeHandle>
   defaultSize: string
   minSize: string
@@ -496,19 +498,23 @@ const usePreviewModalSurface = ({
     surface?.focus()
 
     const handleKeyDown = (event: KeyboardEvent): void => {
+      if (event.defaultPrevented || event.isComposing) return
+      // A portal may restore focus here while handling this same event. Its original target
+      // still belongs to the upper layer, so do not close or trap focus in the layer below.
+      if (
+        !surface ||
+        !(event.target instanceof Node) ||
+        !surface.contains(event.target) ||
+        !surface.contains(document.activeElement)
+      ) {
+        return
+      }
       if (event.key === 'Escape') {
-        if (
-          surface &&
-          document.activeElement !== surface &&
-          !surface.contains(document.activeElement)
-        ) {
-          return
-        }
         event.preventDefault()
         onClose()
         return
       }
-      if (event.key !== 'Tab' || !surface) return
+      if (event.key !== 'Tab') return
 
       const focusable = Array.from(
         surface.querySelectorAll<HTMLElement>(PREVIEW_MODAL_FOCUSABLE_SELECTOR)
@@ -521,7 +527,10 @@ const usePreviewModalSurface = ({
 
       const first = focusable[0]
       const last = focusable.at(-1)
-      if (event.shiftKey && document.activeElement === first) {
+      if (
+        event.shiftKey &&
+        (document.activeElement === surface || document.activeElement === first)
+      ) {
         event.preventDefault()
         last?.focus()
       } else if (!event.shiftKey && document.activeElement === last) {
@@ -530,9 +539,9 @@ const usePreviewModalSurface = ({
       }
     }
 
-    document.addEventListener('keydown', handleKeyDown, true)
+    document.addEventListener('keydown', handleKeyDown)
     return () => {
-      document.removeEventListener('keydown', handleKeyDown, true)
+      document.removeEventListener('keydown', handleKeyDown)
       document.body.style.overflow = previousOverflow
       document.getElementById(getPreviewTabId(itemId))?.focus()
     }
@@ -571,7 +580,7 @@ const PreviewFilePanel = ({
 
   usePreviewModalSurface({
     isOpen: isFullScreenOpen,
-    onClose: () => closeFullScreen(true),
+    onClose: closeFullScreen,
     surfaceRef,
     itemId: item.id
   })
@@ -937,6 +946,8 @@ const PreviewPanelSurface = ({
 
 // Desktop right-side workbench: a tab strip over every previewed file, plus active content.
 const PreviewPanel = ({
+  children,
+  isMobile = false,
   panelRef,
   defaultSize,
   minSize,
@@ -952,7 +963,7 @@ const PreviewPanel = ({
     _panelId: string | number | undefined,
     previousPanelSize: PanelSize | undefined
   ): void => {
-    onResize(panelSize, previousPanelSize)
+    if (!isMobile) onResize(panelSize, previousPanelSize)
   }
 
   return (
@@ -961,18 +972,22 @@ const PreviewPanel = ({
       // The parent drives expand/collapse in response to store open requests and header toggles.
       panelRef={panelRef}
       defaultSize={defaultSize}
-      minSize={minSize}
+      minSize={isMobile ? '0%' : minSize}
+      maxSize={isMobile ? '0%' : undefined}
+      disabled={isMobile}
       collapsible
       collapsedSize="0%"
       onResize={handleResize}
     >
-      <PreviewPanelSurface
-        restoredPlanResponder={restoredPlanResponder}
-        onPdfContextError={onPdfContextError}
-        onLinkReadingContext={onLinkReadingContext}
-        onUnlinkReadingContext={onUnlinkReadingContext}
-        {...annotationPort}
-      />
+      {children ?? (
+        <PreviewPanelSurface
+          restoredPlanResponder={restoredPlanResponder}
+          onPdfContextError={onPdfContextError}
+          onLinkReadingContext={onLinkReadingContext}
+          onUnlinkReadingContext={onUnlinkReadingContext}
+          {...annotationPort}
+        />
+      )}
     </ResizablePanel>
   )
 }

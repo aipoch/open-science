@@ -32,6 +32,7 @@ import {
   readBoundedJsonBody
 } from '../resource-budget'
 import { toErrorMessage } from '../error-message'
+import { createLogger, diagnosticErrorFields } from '../logger'
 import { extractPdfTextPages } from '../uploads/attachment-media'
 import {
   readBoundedPptx,
@@ -390,7 +391,10 @@ type ArtifactVerificationEntry = {
   verification: Promise<ArtifactVerification>
 }
 
-class ArtifactVersionChecksumMismatchError extends Error {}
+// Only owner-authored request errors may cross the compatibility HTTP boundary verbatim.
+class ReviewerRequestError extends Error {}
+class ArtifactVersionChecksumMismatchError extends ReviewerRequestError {}
+const log = createLogger('reviewer:host')
 
 // The complete set of RPC methods the host exposes. Single-sourced so the unknown-method error can
 // tell a guessing reviewer exactly what IS available (it likes to try e.g. `list_artifacts`).
@@ -470,7 +474,14 @@ export class ReviewerHostServer {
         res.writeHead(error instanceof ResourceBudgetExceededError ? 413 : 500, {
           'content-type': 'application/json'
         })
-        res.end(JSON.stringify({ error: toErrorMessage(error) }))
+        log.error('reviewer host request failed', diagnosticErrorFields(error))
+        const message =
+          error instanceof ReviewerRequestError ||
+          error instanceof ArtifactTargetRangeError ||
+          error instanceof ResourceBudgetExceededError
+            ? error.message
+            : 'Failed to read reviewer evidence.'
+        res.end(JSON.stringify({ error: message }))
       })
     })
   }
@@ -600,7 +611,7 @@ export class ReviewerHostServer {
 
     // Out-of-scope id: reject rather than silently returning empty.
     if (activityId !== undefined && target.length === 0) {
-      throw new Error(
+      throw new ReviewerRequestError(
         `Activity id ${JSON.stringify(activityId)} is not in this turn's scope. ` +
           `Allowed ids: ${[...activityIds].join(', ')}`
       )
@@ -632,7 +643,7 @@ export class ReviewerHostServer {
       ...this.sourceDocumentEvidenceByVersionId.keys()
     ]
     if (!allowedVersionIds.includes(id)) {
-      throw new Error(
+      throw new ReviewerRequestError(
         `File Version id ${JSON.stringify(id)} is not in this turn's scope. ` +
           `Allowed ids: ${allowedVersionIds.join(', ')}`
       )
@@ -648,7 +659,7 @@ export class ReviewerHostServer {
     // as an error, not degrade to empty content — otherwise the reviewer cannot distinguish "could
     // not read" from "the file is genuinely empty", which produces false "empty artifact" findings.
     if (options.offset !== undefined && hasStructuredTargets(options)) {
-      throw new Error(
+      throw new ReviewerRequestError(
         'Reviewer Artifact offset cannot be combined with structured content targets.'
       )
     }
@@ -675,10 +686,10 @@ export class ReviewerHostServer {
       const offset = options.offset ?? 0
       const requestedBytes = options.maxBytes ?? this.resourceBudget.readBytes
       if (!Number.isSafeInteger(offset) || offset < 0) {
-        throw new Error('Reviewer Artifact offset must be a non-negative integer.')
+        throw new ReviewerRequestError('Reviewer Artifact offset must be a non-negative integer.')
       }
       if (!Number.isSafeInteger(requestedBytes) || requestedBytes <= 0) {
-        throw new Error('Reviewer Artifact maxBytes must be a positive integer.')
+        throw new ReviewerRequestError('Reviewer Artifact maxBytes must be a positive integer.')
       }
       const remainingSessionBytes = this.resourceBudget.sessionBytes - this.reviewerBytesReturned
       if (remainingSessionBytes <= 0) {
@@ -724,14 +735,13 @@ export class ReviewerHostServer {
       } catch (error) {
         if (signal?.aborted) throw error
         if (error instanceof ArtifactVersionChecksumMismatchError) throw error
-        throw new Error(
-          `Failed to read artifact ${JSON.stringify(id)} at ${artifactPath}: ` +
-            `${toErrorMessage(error)}`
-        )
+        throw new ReviewerRequestError(`Failed to read artifact ${JSON.stringify(id)}.`, {
+          cause: error
+        })
       }
 
       if (offset > verification.sizeBytes) {
-        throw new Error(
+        throw new ReviewerRequestError(
           `Reviewer Artifact offset ${offset} exceeds file size ${verification.sizeBytes}.`
         )
       }
@@ -743,7 +753,7 @@ export class ReviewerHostServer {
       )
       if (structuredFormat) {
         if (!artifactPath) {
-          throw new Error(
+          throw new ReviewerRequestError(
             `Managed Artifact ${JSON.stringify(id)} does not expose a verified structured-content path.`
           )
         }
@@ -826,7 +836,9 @@ export class ReviewerHostServer {
               error instanceof ArtifactTargetRangeError ||
               (error instanceof Error && error.message.startsWith('Requested PDF page must'))
             ) {
-              throw error
+              throw error instanceof ArtifactTargetRangeError
+                ? error
+                : new ReviewerRequestError(error.message, { cause: error })
             }
             structured = {
               id,
@@ -897,9 +909,9 @@ export class ReviewerHostServer {
             sample: verification.sample
           }
         } catch (error) {
-          throw new Error(
-            `Failed to read managed Artifact ${JSON.stringify(id)}: ${toErrorMessage(error)}`
-          )
+          throw new ReviewerRequestError(`Failed to read managed Artifact ${JSON.stringify(id)}.`, {
+            cause: error
+          })
         }
       } else {
         try {
@@ -917,10 +929,9 @@ export class ReviewerHostServer {
           }
         } catch (error) {
           this.artifactVerifications.delete(id)
-          throw new Error(
-            `Failed to read artifact ${JSON.stringify(id)} at ${artifactPath}: ` +
-              `${toErrorMessage(error)}`
-          )
+          throw new ReviewerRequestError(`Failed to read artifact ${JSON.stringify(id)}.`, {
+            cause: error
+          })
         }
       }
       let result: ArtifactContent
@@ -929,7 +940,7 @@ export class ReviewerHostServer {
 
       if (imageMimeType) {
         if (offset !== 0) {
-          throw new Error('Reviewer image content reads do not accept an offset.')
+          throw new ReviewerRequestError('Reviewer image content reads do not accept an offset.')
         }
         const sourceComplete = read.returnedBytes === read.sizeBytes
         const baseMetadataBytes = Buffer.byteLength(
@@ -1080,11 +1091,11 @@ export class ReviewerHostServer {
     options: ReviewerArtifactReadOptions
   ): Promise<ArtifactTraceResult> {
     if (options.offset !== undefined) {
-      throw new Error('Reviewer Artifact offset is only valid for content reads.')
+      throw new ReviewerRequestError('Reviewer Artifact offset is only valid for content reads.')
     }
     const requestedBytes = options.maxBytes ?? this.resourceBudget.readBytes
     if (!Number.isSafeInteger(requestedBytes) || requestedBytes <= 0) {
-      throw new Error('Reviewer Artifact maxBytes must be a positive integer.')
+      throw new ReviewerRequestError('Reviewer Artifact maxBytes must be a positive integer.')
     }
     const remainingSessionBytes = this.resourceBudget.sessionBytes - this.reviewerBytesReturned
     if (remainingSessionBytes <= 0) {
@@ -1102,7 +1113,9 @@ export class ReviewerHostServer {
     const sourceEvidence = this.sourceDocumentEvidenceByVersionId.get(id)
     if (this.fileRole(id) === 'source_document') {
       if (!sourceEvidence) {
-        throw new Error(`Trusted Source Document provenance is unavailable for Version ${id}.`)
+        throw new ReviewerRequestError(
+          `Trusted Source Document provenance is unavailable for Version ${id}.`
+        )
       }
       const limitations: ReviewLimitation[] =
         sourceEvidence.contentStatus === 'available'
@@ -1314,7 +1327,9 @@ export class ReviewerHostServer {
   fileRole(id: string): 'work_product' | 'source_document' {
     if (this.sourceDocumentEvidenceByVersionId.has(id)) return 'source_document'
     if (this.scope.artifactVersionIds.includes(id)) return 'work_product'
-    throw new Error(`File Version ${JSON.stringify(id)} is not in this turn's scope.`)
+    throw new ReviewerRequestError(
+      `File Version ${JSON.stringify(id)} is not in this turn's scope.`
+    )
   }
 
   private commitStructuredResponse(
@@ -1674,7 +1689,7 @@ export const resolveArtifactPath = (
   const secondColon = versionId.indexOf(':', firstColon + 1)
 
   if (firstColon === -1 || secondColon === -1) {
-    throw new Error(`Malformed artifact version id ${JSON.stringify(versionId)}`)
+    throw new ReviewerRequestError(`Malformed artifact version id ${JSON.stringify(versionId)}`)
   }
 
   const sessionId = versionId.slice(0, firstColon)
@@ -1990,7 +2005,7 @@ host = _ReviewerHost(${JSON.stringify(endpoint)}, ${JSON.stringify(token)})
 // Verifies that a given block id is within the scope. Used by submit_findings to validate locators.
 export const assertBlockInScope = (block: ScopeBlock | undefined, id: string): ScopeBlock => {
   if (!block) {
-    throw new Error(`Block ${JSON.stringify(id)} is not in the turn scope.`)
+    throw new ReviewerRequestError(`Block ${JSON.stringify(id)} is not in the turn scope.`)
   }
   return block
 }

@@ -47,7 +47,7 @@ const assertNotAborted = (signal?: AbortSignal): void => {
 }
 
 const appendChunkWithRecovery = async (
-  api: UploadStagingApi,
+  api: Pick<UploadStagingApi, 'appendTransfer' | 'getTransferStatus'>,
   request: AppendUploadTransferRequest,
   signal?: AbortSignal
 ): Promise<UploadTransferStatus> => {
@@ -71,6 +71,42 @@ const appendChunkWithRecovery = async (
   }
 
   throw lastError
+}
+
+// Shared bounded browser transfer; callers own finalization and cleanup of their resulting resource.
+export const uploadFileChunks = async (
+  file: File,
+  api: Pick<UploadStagingApi, 'beginTransfer' | 'appendTransfer' | 'getTransferStatus'>,
+  options: StageComposerFileOptions
+): Promise<void> => {
+  const request: BeginUploadTransferRequest = {
+    transferId: options.transferId,
+    name: options.name,
+    mimeType: file.type || undefined,
+    size: file.size
+  }
+  const chunkBytes = options.chunkBytes ?? MAX_UPLOAD_CHUNK_BYTES
+  if (!Number.isSafeInteger(chunkBytes) || chunkBytes <= 0 || chunkBytes > MAX_UPLOAD_CHUNK_BYTES) {
+    throw new Error('Invalid upload chunk size.')
+  }
+  assertNotAborted(options.signal)
+  let status = await api.beginTransfer(request)
+  if (status.receivedBytes > 0) options.onProgress?.(status)
+
+  while (status.receivedBytes < request.size) {
+    assertNotAborted(options.signal)
+    const end = Math.min(status.receivedBytes + chunkBytes, request.size)
+    const chunk = new Uint8Array(await file.slice(status.receivedBytes, end).arrayBuffer())
+    assertNotAborted(options.signal)
+    status = await appendChunkWithRecovery(
+      api,
+      { transferId: request.transferId, offset: status.receivedBytes, chunk },
+      options.signal
+    )
+    options.onProgress?.(status)
+  }
+
+  assertNotAborted(options.signal)
 }
 
 // Stages one File through the desktop path adapter when possible, otherwise through bounded chunks.
@@ -118,23 +154,8 @@ export const stageComposerFile = async (
       }
     }
 
-    let status = await api.beginTransfer(request)
-    if (status.receivedBytes > 0) options.onProgress?.(status)
+    await uploadFileChunks(file, api, options)
 
-    while (status.receivedBytes < request.size) {
-      assertNotAborted(options.signal)
-      const end = Math.min(status.receivedBytes + chunkBytes, request.size)
-      const chunk = new Uint8Array(await file.slice(status.receivedBytes, end).arrayBuffer())
-      assertNotAborted(options.signal)
-      status = await appendChunkWithRecovery(
-        api,
-        { transferId: request.transferId, offset: status.receivedBytes, chunk },
-        options.signal
-      )
-      options.onProgress?.(status)
-    }
-
-    assertNotAborted(options.signal)
     const attachment = await api.finishTransfer({ transferId: request.transferId })
     if (options.signal?.aborted) {
       await api.deleteUpload({ path: attachment.path }).catch(() => undefined)

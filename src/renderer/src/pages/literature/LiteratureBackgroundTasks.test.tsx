@@ -1,4 +1,6 @@
 // @vitest-environment jsdom
+import { setI18nLocale } from '@/i18n'
+import { useLocaleStore } from '@/stores/locale-store'
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, expect, it, vi } from 'vitest'
 import type { LiteratureJobSummary } from '../../../../shared/literature-jobs'
@@ -145,3 +147,33 @@ it.each([
     expect(button.textContent).not.toContain('Searching…')
   }
 )
+
+// Exercise live app-language changes while Intl retains the host's default locale.
+it('updates metadata dates with the interface language on an unchanged host', async () => {
+  const timestamp = '2026-09-02T12:00:00.000Z'
+  const options: Intl.DateTimeFormatOptions = { dateStyle: 'medium', timeStyle: 'short' }
+  const hostLocale = new Intl.DateTimeFormat().resolvedOptions().locale
+  await show([{ ...job, createdAt: Date.parse(timestamp) }])
+  fireEvent.click(screen.getByRole('button', { name: 'Background tasks' }))
+  try {
+    for (const locale of ['en', 'zh-Hans', 'zh-Hant', 'de'] as const) {
+      await act(async () => {
+        setI18nLocale(locale)
+        useLocaleStore.setState({ locale })
+      })
+      const expected = new Intl.DateTimeFormat(locale, options).format(new Date(timestamp))
+      expect(document.body.textContent).toContain(expected)
+      expect(new Intl.DateTimeFormat().resolvedOptions().locale).toBe(hostLocale)
+      if (locale === 'zh-Hans') {
+        expect(expected).not.toBe(
+          new Intl.DateTimeFormat('en-US', options).format(new Date(timestamp))
+        )
+      }
+    }
+  } finally {
+    await act(async () => {
+      setI18nLocale('en')
+      useLocaleStore.setState({ locale: 'en' })
+    })
+  }
+})

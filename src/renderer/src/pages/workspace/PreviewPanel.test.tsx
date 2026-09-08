@@ -172,6 +172,170 @@ describe('PreviewPanel', () => {
     expect(content.dataset.annotationCount).toBe('1')
   })
 
+  const openFullscreenFile = async (): Promise<HTMLElement> => {
+    usePreviewWorkbenchStore.getState().upsertAndActivateItem(createFileItem({}))
+    await renderPanel({ activeAnnotations: [] })
+    await act(async () => {
+      container
+        .querySelector<HTMLButtonElement>('[aria-label="Open full screen preview of file-1.png"]')!
+        .click()
+    })
+    const dialog = container.querySelector<HTMLElement>('[role="dialog"]')!
+    expect(dialog).not.toBeNull()
+    expect(document.activeElement).toBe(dialog)
+    return dialog
+  }
+
+  it('preserves fullscreen content focus when annotation props change', async () => {
+    const dialog = await openFullscreenFile()
+    const content = dialog.querySelector<HTMLButtonElement>('[data-testid="file-content"]')!
+    content.focus()
+    expect(document.activeElement).toBe(content)
+    await act(async () => {
+      root.render(
+        <PreviewPanel
+          panelRef={{ current: null }}
+          defaultSize="40%"
+          minSize="30%"
+          onResize={vi.fn()}
+          activeAnnotations={[]}
+        />
+      )
+    })
+    expect(container.querySelector('[role="dialog"]')).toBe(dialog)
+    expect(dialog.querySelector('[data-testid="file-content"]')).toBe(content)
+    expect(document.activeElement).toBe(content)
+  })
+
+  it('keeps fullscreen open for Escape during composition', async () => {
+    const dialog = await openFullscreenFile()
+    const content = dialog.querySelector<HTMLButtonElement>('[data-testid="file-content"]')!
+    content.focus()
+    await act(async () => {
+      content.dispatchEvent(
+        new KeyboardEvent('keydown', {
+          key: 'Escape',
+          bubbles: true,
+          cancelable: true,
+          isComposing: true
+        })
+      )
+    })
+    expect(container.querySelector('[role="dialog"]')).toBe(dialog)
+    expect(document.activeElement).toBe(content)
+  })
+
+  it.each(['preventDefault', 'stopPropagation'] as const)(
+    'keeps fullscreen open when content consumes Escape with %s',
+    async (consume) => {
+      const dialog = await openFullscreenFile()
+      const content = dialog.querySelector<HTMLButtonElement>('[data-testid="file-content"]')!
+      content.focus()
+      const handler = vi.fn((event: KeyboardEvent) => event[consume]())
+      content.addEventListener('keydown', handler)
+      try {
+        await act(async () => {
+          content.dispatchEvent(
+            new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })
+          )
+        })
+        expect(handler).toHaveBeenCalledOnce()
+        expect(container.querySelector('[role="dialog"]')).toBe(dialog)
+      } finally {
+        content.removeEventListener('keydown', handler)
+      }
+    }
+  )
+
+  it('wraps backward tab navigation from the initial fullscreen surface', async () => {
+    const dialog = await openFullscreenFile()
+    const buttons = dialog.querySelectorAll<HTMLButtonElement>('button:not([disabled])')
+    expect(buttons.length).toBeGreaterThan(0)
+    const event = new KeyboardEvent('keydown', {
+      key: 'Tab',
+      shiftKey: true,
+      bubbles: true,
+      cancelable: true
+    })
+    await act(async () => {
+      dialog.dispatchEvent(event)
+    })
+    expect(event.defaultPrevented).toBe(true)
+    expect(document.activeElement).toBe(buttons[buttons.length - 1])
+  })
+
+  it.each(['file', 'tool'] as const)(
+    'keeps %s fullscreen Tab boundaries local and restores its tab after Escape',
+    async (kind) => {
+      let dialog: HTMLElement
+      if (kind === 'file') dialog = await openFullscreenFile()
+      else {
+        usePreviewWorkbenchStore.getState().upsertAndActivateItem(createToolItem({}))
+        await renderPanel()
+        await act(async () => usePreviewWorkbenchStore.getState().setToolItemExpanded('tool-1'))
+        dialog = container.querySelector<HTMLElement>('[role="dialog"]')!
+      }
+      // Tool content may supply its own controls; no private hook export is needed.
+      const first = document.createElement('input')
+      const last = document.createElement('button')
+      dialog.prepend(first)
+      dialog.append(last)
+      const tab = async (start: HTMLElement, shiftKey: boolean): Promise<void> => {
+        start.focus()
+        const event = new KeyboardEvent('keydown', {
+          key: 'Tab',
+          shiftKey,
+          bubbles: true,
+          cancelable: true
+        })
+        await act(async () => {
+          start.dispatchEvent(event)
+        })
+        expect(event.defaultPrevented).toBe(true)
+      }
+      await tab(dialog, true)
+      expect(document.activeElement).toBe(last)
+      await tab(last, false)
+      expect(document.activeElement).toBe(first)
+      await tab(first, true)
+      expect(document.activeElement).toBe(last)
+
+      const upper = document.createElement('button')
+      document.body.append(upper)
+      try {
+        upper.focus()
+        const upperTab = new KeyboardEvent('keydown', {
+          key: 'Tab',
+          shiftKey: true,
+          bubbles: true,
+          cancelable: true
+        })
+        upper.dispatchEvent(upperTab)
+        expect(upperTab.defaultPrevented).toBe(false)
+        expect(document.activeElement).toBe(upper)
+        upper.addEventListener('keydown', () => first.focus(), { once: true })
+        await act(async () =>
+          upper.dispatchEvent(
+            new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })
+          )
+        )
+        expect(dialog.getAttribute('role')).toBe('dialog')
+        expect(document.activeElement).toBe(first)
+      } finally {
+        upper.remove()
+      }
+      await act(async () =>
+        first.dispatchEvent(
+          new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })
+        )
+      )
+      expect(container.querySelector('[role="dialog"]')).toBeNull()
+      expect(document.activeElement).toBe(container.querySelector('[role="tab"]'))
+      first.remove()
+      last.remove()
+    }
+  )
+
   const renderTwoFileTabs = async (): Promise<void> => {
     usePreviewWorkbenchStore.getState().upsertAndActivateItem(createFileItem({}))
     usePreviewWorkbenchStore.getState().upsertItem(
@@ -359,6 +523,87 @@ describe('PreviewPanel', () => {
     expect(container.querySelector('[data-source-preview-frame]')).toBe(iframe)
     expect(iframe?.closest<HTMLElement>('[role="tabpanel"]')?.hidden).toBe(false)
   })
+
+  it.each([
+    ['loaded', '[data-source-preview-header-external]'],
+    ['failed', '[data-source-preview-header-external]'],
+    ['failed', '[data-source-preview-error] button']
+  ] as const)(
+    'opens the displayed source URL after a %s navigation via %s',
+    async (phase, selector) => {
+      const sourceItem = createSourceItem()
+      const currentUrl = 'https://example.com/supplement'
+      usePreviewWorkbenchStore.getState().upsertAndActivateItem(sourceItem)
+      await renderPanel()
+      const iframe = container.querySelector('[data-source-preview-frame]')
+      const open = vi.spyOn(window, 'open').mockReturnValue(null)
+      try {
+        await act(async () => {
+          sourcePreviewListener!({
+            sourceUrl: sourceItem.url,
+            currentUrl,
+            navigationId: 2,
+            phase,
+            httpStatusCode: phase === 'failed' ? 404 : 200,
+            httpStatusText: phase === 'failed' ? 'Not Found' : 'OK',
+            ...(phase === 'failed' ? { failure: 'http' } : {})
+          })
+        })
+        expect(container.querySelector('[data-source-preview-header-url]')?.textContent).toBe(
+          currentUrl
+        )
+        const button = [...container.querySelectorAll<HTMLButtonElement>(selector)].find(
+          (candidate) =>
+            candidate.getAttribute('aria-label') === 'Open source in browser' ||
+            candidate.textContent === 'Open source in browser'
+        )
+        expect(button).toBeDefined()
+        await act(async () => button!.click())
+        expect(open).toHaveBeenLastCalledWith(currentUrl, '_blank', 'noreferrer')
+        expect(container.querySelector('[data-source-preview-frame]')).toBe(iframe)
+        expect(iframe?.getAttribute('src')).toBe(sourceItem.url)
+        await act(async () => {
+          container.querySelector<HTMLButtonElement>('[data-source-preview-header-close]')!.click()
+        })
+        expect(releaseSourcePreview).toHaveBeenCalledWith(sourceItem.url)
+      } finally {
+        open.mockRestore()
+      }
+    }
+  )
+
+  it.each(['http://example.com/paper', 'javascript:alert(1)', 'invalid'])(
+    'keeps the HTTPS fallback for an invalid current source URL: %s',
+    async (currentUrl) => {
+      const sourceItem = createSourceItem()
+      usePreviewWorkbenchStore.getState().upsertAndActivateItem(sourceItem)
+      await renderPanel()
+      const open = vi.spyOn(window, 'open').mockReturnValue(null)
+      try {
+        await act(async () => {
+          sourcePreviewListener!({
+            sourceUrl: sourceItem.url,
+            currentUrl,
+            navigationId: 1,
+            phase: 'loaded',
+            httpStatusCode: 200,
+            httpStatusText: 'OK'
+          })
+        })
+        expect(container.querySelector('[data-source-preview-header-url]')?.textContent).toBe(
+          sourceItem.url
+        )
+        await act(async () => {
+          container
+            .querySelector<HTMLButtonElement>('[data-source-preview-header-external]')!
+            .click()
+        })
+        expect(open).toHaveBeenCalledWith(sourceItem.url, '_blank', 'noreferrer')
+      } finally {
+        open.mockRestore()
+      }
+    }
+  )
 
   it('does not grant remote source previews permission to open popup windows', async () => {
     usePreviewWorkbenchStore.getState().upsertAndActivateItem(createSourceItem())

@@ -56,8 +56,10 @@ import {
   sendWorkspaceMessage
 } from './workspace-runtime-command-owner'
 import { respondToWorkspaceElicitation } from './workspace-elicitation-runtime'
+import { acceptAcpRuntimeSnapshotRevision } from './runtime-snapshot-revision-owner'
 import {
   resetWorkspaceRuntimeEventOwnerForTests,
+  syncWorkspaceAgentFirstOutputState,
   syncWorkspaceElicitationState,
   syncWorkspacePermissionState
 } from './workspace-runtime-event-owner'
@@ -1349,6 +1351,62 @@ describe('workspace durable elicitation', () => {
       status: 'running',
       agentPromptInFlight: true,
       awaitingFirstAgentOutput: true
+    })
+  })
+
+  it('does not revive prompt ownership from a stale elicitation response', async () => {
+    const request = {
+      requestId: 'choice-1',
+      sessionId: 'session-choice-1',
+      toolCallId: 'tool-choice-1',
+      message: 'Choose an approach',
+      fields: [{ id: 'question_0', label: 'Approach', kind: 'text' as const }]
+    }
+    const initialSnapshot = {
+      ...createSnapshot(['session-choice-1']),
+      revision: 1,
+      pendingElicitations: [request]
+    }
+    const responseSnapshot = {
+      ...createSnapshot(['session-choice-1']),
+      revision: 2,
+      promptInFlight: true,
+      promptInFlightSessionIds: ['session-choice-1'],
+      agentPromptInFlightSessionIds: ['session-choice-1']
+    }
+    const terminalSnapshot = {
+      ...createSnapshot(['session-choice-1']),
+      revision: 3
+    }
+    const responseDeferred = createDeferred<AcpStateSnapshot>()
+    const respondToElicitation = vi.fn(() => responseDeferred.promise)
+
+    expect(acceptAcpRuntimeSnapshotRevision(initialSnapshot)).toBe(true)
+    syncWorkspaceElicitationState([request])
+    const responsePromise = respondToWorkspaceElicitation(
+      {
+        state: initialSnapshot,
+        resumeSession: vi.fn(),
+        respondToElicitation
+      },
+      {
+        requestId: request.requestId,
+        action: 'accept',
+        answers: [{ fieldId: 'question_0', value: 'Minimal' }],
+        request
+      }
+    )
+    await vi.waitFor(() => expect(respondToElicitation).toHaveBeenCalledOnce())
+
+    expect(acceptAcpRuntimeSnapshotRevision(terminalSnapshot)).toBe(true)
+    syncWorkspaceAgentFirstOutputState([])
+    syncWorkspaceElicitationState([])
+    responseDeferred.resolve(responseSnapshot)
+    await responsePromise
+
+    expect(useSessionStore.getState().sessions[0]).toMatchObject({
+      agentPromptInFlight: undefined,
+      awaitingFirstAgentOutput: undefined
     })
   })
 
@@ -3600,6 +3658,78 @@ describe('workspace agent message sending', () => {
     ).toBe(false)
   })
 
+  it.each(['new', 'existing', 'new-partial', 'existing-partial'] as const)(
+    'LR-05 blocks an unavailable selected literature version (%s)',
+    async (kind) => {
+      if (kind.startsWith('existing')) {
+        useSessionStore.getState().appendUserMessage({
+          sessionId: 'transport-session-1',
+          content: 'Existing prompt',
+          cwd: '/workspace/project',
+          projectId: 'project-1'
+        })
+        useSessionStore.getState().finishRun('transport-session-1')
+      }
+      const linkPdfContext = vi.fn()
+      vi.stubGlobal('window', {
+        api: {
+          sessions: {
+            filterPdfContextCandidates: vi.fn().mockResolvedValue({
+              sources: kind.endsWith('partial')
+                ? [
+                    {
+                      sourceKind: 'literature-attachment-version',
+                      sourceVersionId: 'healthy-version'
+                    }
+                  ]
+                : [],
+              pendingAttachmentIds: []
+            }),
+            linkPdfContext,
+            saveSession: vi.fn(async (session: PersistedChatSession) => session)
+          }
+        }
+      })
+      const runtime = {
+        state: createSnapshot(kind.startsWith('existing') ? ['transport-session-1'] : []),
+        createSession: vi
+          .fn()
+          .mockResolvedValue({ sessionId: 'transport-session-1', cwd: '/workspace/project' }),
+        resumeSession: vi.fn(),
+        resetSessionContext: vi.fn(),
+        sendPrompt: vi.fn().mockResolvedValue(createSnapshot(['transport-session-1']))
+      }
+      const before = useSessionStore.getState().sessions
+      const result = await sendWorkspaceMessage(
+        runtime,
+        {
+          ...(kind.startsWith('existing') ? { sessionId: 'transport-session-1' } : {}),
+          text: 'Read the selected paper',
+          cwd: '/workspace/project',
+          projectId: 'project-1',
+          pendingPdfContextVersions: [
+            { sourceKind: 'literature-attachment-version', sourceVersionId: 'deleted-version' },
+            ...(kind.endsWith('partial')
+              ? [
+                  {
+                    sourceKind: 'literature-attachment-version' as const,
+                    sourceVersionId: 'healthy-version'
+                  }
+                ]
+              : [])
+          ]
+        },
+        { awaitPendingPreparation: true }
+      ).catch((error) => error)
+      expect(runtime.sendPrompt).not.toHaveBeenCalled()
+      expect(linkPdfContext).not.toHaveBeenCalled()
+      expect(runtime.createSession).not.toHaveBeenCalled()
+      expect(result).toBeInstanceOf(Error)
+      expect(result.message).toContain('deleted-version')
+      expect(useSessionStore.getState().sessions).toEqual(before)
+    }
+  )
+
   it('keeps an ineligible follow-up PDF as an ordinary attachment', async () => {
     useSessionStore.getState().appendUserMessage({
       sessionId: 'transport-session-1',
@@ -4713,7 +4843,13 @@ describe('workspace agent message sending', () => {
       undefined,
       undefined,
       undefined,
-      expect.objectContaining({ promptMessageId: expect.any(String) }),
+      expect.objectContaining({
+        rootFrameId: 'root-frame-transport-session-1',
+        agentFrameId: 'root-frame-transport-session-1',
+        messageBranchId: 'message-branch-transport-session-1',
+        runtimeSegmentId: 'runtime-segment-transport-session-1',
+        promptMessageId: expect.any(String)
+      }),
       false,
       undefined,
       true
@@ -8243,6 +8379,131 @@ describe('resuming an interrupted session on demand', () => {
     expect(
       useSessionStore.getState().sessions[0].messages.filter((message) => message.role === 'user')
     ).toHaveLength(2)
+  })
+
+  it.each(['claude-code', 'opencode', 'codex-response', 'codex-bridge'] as const)(
+    'sends frozen historical Literature identities during %s application replay',
+    async (target) => {
+      useSessionStore.getState().appendUserMessage({
+        sessionId: 'session-1',
+        content: 'Compare @Study set with @Repeated title',
+        cwd: '/workspace/project',
+        projectId: 'default-project',
+        parts: [
+          {
+            type: 'literature-scope',
+            scope: 'collection',
+            collectionId: 'frozen-collection',
+            name: 'Study set'
+          },
+          {
+            type: 'literature',
+            itemId: 'frozen-item',
+            metadataRevision: 7,
+            item: {
+              itemType: 'journalArticle',
+              title: 'Repeated title',
+              abstract: 'Frozen evidence abstract',
+              issuedText: '2025',
+              containerTitle: '',
+              shortTitle: '',
+              language: '',
+              rights: '',
+              url: '',
+              extra: '',
+              typeFields: {},
+              creators: [],
+              identifiers: [{ scheme: 'doi', value: '10.1234/history', isPrimary: true }]
+            }
+          }
+        ]
+      })
+      useSessionStore.getState().finishRun('session-1')
+      const runtime = {
+        state: createSnapshot([]),
+        createSession: vi.fn(),
+        resumeSession: vi.fn().mockResolvedValue({
+          sessionId: 'session-1',
+          cwd: '/workspace/project',
+          contextReset: true
+        }),
+        resetSessionContext: vi.fn(),
+        sendPrompt: vi.fn().mockResolvedValue(createSnapshot(['session-1']))
+      }
+      await sendWorkspaceMessage(runtime, {
+        sessionId: 'session-1',
+        text: 'Continue using these references',
+        cwd: '/workspace/project',
+        projectId: 'default-project',
+        historyReplayDescriptor: { target }
+      })
+      await flushRuntimeTasks()
+      const preamble = runtime.sendPrompt.mock.calls[0]?.[5]
+      for (const value of [
+        'frozen-collection',
+        'frozen-item',
+        '10.1234/history',
+        'Frozen evidence abstract'
+      ])
+        expect(preamble).toContain(value)
+      expect(preamble).toMatch(/metadataRevision[^0-9]*7/)
+      expect(preamble).not.toContain('Continue using these references')
+    }
+  )
+
+  it('replays Literature scopes from the active Branch without leaking the replaced Branch', async () => {
+    for (const id of ['shared-scope', 'replaced-scope']) {
+      useSessionStore.getState().appendUserMessage({
+        sessionId: 'session-1',
+        content: `Use @${id}`,
+        cwd: '/workspace/project',
+        projectId: 'default-project',
+        parts: [{ type: 'literature-scope', scope: 'collection', collectionId: id, name: id }]
+      })
+      useSessionStore.getState().finishRun('session-1')
+    }
+    const second = useSessionStore.getState().sessions[0].messages.at(-1)!
+    const runtime = {
+      state: createSnapshot(['session-1']),
+      createSession: vi.fn(),
+      resumeSession: vi.fn(),
+      resetSessionContext: vi.fn().mockResolvedValue({ contextReset: true }),
+      sendPrompt: vi.fn().mockResolvedValue(createSnapshot(['session-1']))
+    }
+    await resendEditedWorkspaceMessage(runtime, {
+      sessionId: 'session-1',
+      messageId: second.id,
+      text: 'Use @active-scope',
+      parts: [
+        {
+          type: 'literature-scope',
+          scope: 'collection',
+          collectionId: 'active-scope',
+          name: 'active-scope'
+        }
+      ]
+    })
+    await flushRuntimeTasks()
+    useSessionStore.getState().finishRun('session-1')
+    runtime.state = createSnapshot([])
+    runtime.resumeSession.mockResolvedValue({
+      sessionId: 'session-1',
+      cwd: '/workspace/project',
+      contextReset: true
+    })
+    runtime.sendPrompt.mockClear()
+    await sendWorkspaceMessage(runtime, {
+      sessionId: 'session-1',
+      text: 'Continue',
+      cwd: '/workspace/project',
+      projectId: 'default-project'
+    })
+    await flushRuntimeTasks()
+    const preamble = runtime.sendPrompt.mock.calls[0]?.[5]
+    expect(preamble).toContain('"collectionId":"shared-scope"')
+    expect(preamble).toContain('"collectionId":"active-scope"')
+    expect(preamble).not.toContain('replaced-scope')
+    expect(useSessionStore.getState().sessions[0].conversationGraph?.branches.length).toBe(2)
   })
 
   it('replays a history preamble when a resume resets agent context', async () => {

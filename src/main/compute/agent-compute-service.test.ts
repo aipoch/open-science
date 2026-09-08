@@ -32,7 +32,8 @@ const host = (providerId: string, overrides: Partial<ComputeHost> = {}): Compute
 })
 
 const createHarness = (
-  access = { enabled: ['ssh:available', 'ssh:selected'], selected: ['ssh:selected'] }
+  access = { enabled: ['ssh:available', 'ssh:selected'], selected: ['ssh:selected'] },
+  onFinalJobObserved = vi.fn(async () => 'suppressed' as const)
 ): AgentComputeHarness => {
   const raw = {
     list: vi.fn(async () => [host('ssh:available'), host('ssh:selected'), host('ssh:hidden')]),
@@ -62,7 +63,11 @@ const createHarness = (
     getEnabled: vi.fn(() => access.enabled),
     getSelected: vi.fn(() => access.selected)
   }
-  return { raw, registry, service: new AgentComputeService(raw as never, registry) }
+  return {
+    raw,
+    registry,
+    service: new AgentComputeService(raw as never, registry, { onFinalJobObserved })
+  }
 }
 
 describe('AgentComputeService', () => {
@@ -193,6 +198,78 @@ describe('AgentComputeService', () => {
     })
     expect(raw.getJobStatus).toHaveBeenCalledTimes(1)
     expect(raw.getJobResult).toHaveBeenCalledTimes(1)
+  })
+
+  it('acknowledges a final full Job result before returning it to the Agent', async () => {
+    const onFinalJobObserved = vi.fn(async () => 'suppressed' as const)
+    const { raw, service } = createHarness(undefined, onFinalJobObserved)
+    const context = { sessionId: 'session-1', projectId: 'project-1' }
+    raw.getJobResult.mockResolvedValueOnce({
+      status: 'success',
+      job_id: 'job-1',
+      result_final: true
+    })
+
+    await expect(service.getJobResult(context, 'ssh:selected', 'job-1')).resolves.toMatchObject({
+      follow_up_delivery: 'suppressed'
+    })
+
+    expect(onFinalJobObserved).toHaveBeenCalledWith(
+      context,
+      'ssh:selected',
+      expect.objectContaining({ job_id: 'job-1', result_final: true })
+    )
+  })
+
+  it('keeps fallback pending for a final status snapshot that omits harvested files', async () => {
+    const onFinalJobObserved = vi.fn(async () => 'suppressed' as const)
+    const { raw, service } = createHarness(undefined, onFinalJobObserved)
+    const context = { sessionId: 'session-1', projectId: 'project-1' }
+    raw.getJobStatus.mockResolvedValueOnce({
+      status: 'success',
+      job_id: 'job-1',
+      result_final: true
+    })
+
+    await expect(service.getJobStatus(context, 'ssh:selected', 'job-1')).resolves.toMatchObject({
+      follow_up_delivery: 'pending'
+    })
+
+    expect(onFinalJobObserved).not.toHaveBeenCalled()
+  })
+
+  it('does not claim suppression when acknowledging a final Job snapshot fails', async () => {
+    const onFinalJobObserved = vi.fn(async () => {
+      throw new Error('acknowledgement failed')
+    })
+    const { raw, service } = createHarness(undefined, onFinalJobObserved)
+    const context = { sessionId: 'session-1', projectId: 'project-1' }
+    raw.getJobResult.mockResolvedValueOnce({
+      status: 'success',
+      job_id: 'job-1',
+      result_final: true
+    })
+
+    await expect(service.getJobResult(context, 'ssh:selected', 'job-1')).rejects.toThrow(
+      'acknowledgement failed'
+    )
+    expect(onFinalJobObserved).toHaveBeenCalledOnce()
+  })
+
+  it.each([
+    { status: 'running', result_final: false },
+    { status: 'success', result_final: false }
+  ] as const)('does not acknowledge a non-final Job status snapshot', async (snapshot) => {
+    const onFinalJobObserved = vi.fn(async () => 'suppressed' as const)
+    const { raw, service } = createHarness(undefined, onFinalJobObserved)
+    const context = { sessionId: 'session-1', projectId: 'project-1' }
+    raw.getJobStatus.mockResolvedValueOnce({ ...snapshot, job_id: 'job-1' })
+
+    await expect(service.getJobStatus(context, 'ssh:selected', 'job-1')).resolves.toMatchObject({
+      follow_up_delivery: 'pending'
+    })
+
+    expect(onFinalJobObserved).not.toHaveBeenCalled()
   })
 
   it('scopes cancellation to the trusted owner tuple without revealing disabled jobs', async () => {

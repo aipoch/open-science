@@ -51,11 +51,11 @@ const artifacts: ProjectFileItem[] = [
 
 let container: HTMLElement
 let root: Root
-let listFiles: ReturnType<typeof vi.fn>
+let readExportFiles: ReturnType<typeof vi.fn>
 let saveSessionArtifacts: ReturnType<typeof vi.fn>
 
 beforeEach(() => {
-  listFiles = vi.fn().mockResolvedValue({ items: artifacts, totalCount: artifacts.length })
+  readExportFiles = vi.fn().mockResolvedValue(artifacts)
   saveSessionArtifacts = vi.fn().mockResolvedValue({
     saved: true,
     filePaths: ['/downloads/report.csv']
@@ -69,7 +69,7 @@ beforeEach(() => {
         artifactGroupCount: 1,
         isIndexComplete: true
       }),
-      listFiles,
+      readExportFiles,
       repairIndex: vi.fn().mockResolvedValue(undefined)
     },
     saveSessionArtifacts
@@ -86,6 +86,40 @@ afterEach(() => {
 })
 
 describe('DownloadSessionArtifactsDialog', () => {
+  it('blocks stale version submission while a reopened session refreshes', async () => {
+    const render = async (value: ChatSession | undefined): Promise<void> => {
+      await act(async () => {
+        root.render(<DownloadSessionArtifactsDialog session={value} onClose={vi.fn()} />)
+      })
+    }
+    await render(session)
+    await render(undefined)
+    let resolveList!: (files: ProjectFileItem[]) => void
+    readExportFiles.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveList = resolve
+        })
+    )
+    await render(session)
+    expect(readExportFiles).toHaveBeenCalledTimes(2)
+    const button = document.body.querySelector<HTMLButtonElement>(
+      '[data-testid="download-session-artifacts-confirm"]'
+    )!
+    await act(async () => {
+      button.click()
+    })
+    expect(saveSessionArtifacts).not.toHaveBeenCalled()
+    expect(button.disabled).toBe(true)
+    await act(async () => {
+      resolveList([{ ...artifacts[0], sourceVersionId: 'updated-version' }])
+    })
+    await act(async () => {
+      button.click()
+    })
+    expect(saveSessionArtifacts.mock.calls[0][0].files[0].versionId).toBe('updated-version')
+  })
+
   it('selects every Artifact by default and downloads only the checked rows', async () => {
     const onClose = vi.fn()
     await act(async () => {
@@ -160,15 +194,15 @@ describe('DownloadSessionArtifactsDialog', () => {
       await Promise.resolve()
     })
 
-    expect(listFiles).toHaveBeenCalledTimes(1)
+    expect(readExportFiles).toHaveBeenCalledTimes(1)
     expect(document.body.textContent).toContain('1 of 2 selected')
   })
 
   it('offers Retry when the Artifact snapshot cannot be loaded', async () => {
-    listFiles
+    readExportFiles
       .mockReset()
       .mockRejectedValueOnce(new Error('file index unavailable'))
-      .mockResolvedValueOnce({ items: artifacts, totalCount: artifacts.length })
+      .mockResolvedValueOnce(artifacts)
     await act(async () => {
       root.render(<DownloadSessionArtifactsDialog session={session} onClose={vi.fn()} />)
       await Promise.resolve()
@@ -188,7 +222,7 @@ describe('DownloadSessionArtifactsDialog', () => {
       await Promise.resolve()
     })
 
-    expect(listFiles).toHaveBeenCalledTimes(2)
+    expect(readExportFiles).toHaveBeenCalledTimes(2)
     expect(document.body.textContent).toContain('report.csv')
     expect(document.body.textContent).toContain('2 of 2 selected')
   })

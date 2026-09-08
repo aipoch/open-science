@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto'
 
 import { strFromU8, strToU8, unzipSync, zipSync } from 'fflate'
+import { parseFragment, type DefaultTreeAdapterMap } from 'parse5'
 
 import type {
   ArtifactCitationInput,
@@ -78,17 +79,82 @@ const xmlUnescape = (value: string): string =>
     .replaceAll('&lt;', '<')
     .replaceAll('&amp;', '&')
 
-const runProperties = (body: string): string => /<w:rPr\b[\s\S]*?<\/w:rPr>/u.exec(body)?.[0] ?? ''
+const runProperties = (body: string): string =>
+  /<w:rPr\b[^>]*(?:\/>|>[\s\S]*?<\/w:rPr>)/u.exec(body)?.[0] ?? ''
 
 const visibleRun = (text: string, properties = ''): string =>
   text ? `<w:r>${properties}<w:t xml:space="preserve">${xmlEscape(text)}</w:t></w:r>` : ''
 
+// Interpret only inline emphasis from the citation engine, never arbitrary HTML as Word XML.
+const citationSpans = (html: string): { text: string; properties: Record<string, string> }[] => {
+  const spans: { text: string; properties: Record<string, string> }[] = []
+  const visit = (node: DefaultTreeAdapterMap['node'], inherited: Record<string, string>): void => {
+    if (node.nodeName === '#text') {
+      spans.push({ text: (node as DefaultTreeAdapterMap['textNode']).value, properties: inherited })
+      return
+    }
+    if (!('childNodes' in node)) return
+    const properties = { ...inherited }
+    if ('tagName' in node) {
+      const tag = node.tagName
+      if (tag === 'i' || tag === 'em') properties.i = '<w:i/>'
+      if (tag === 'b' || tag === 'strong') properties.b = '<w:b/>'
+      if (tag === 'sup' || tag === 'sub')
+        properties.vertAlign = `<w:vertAlign w:val="${tag === 'sup' ? 'superscript' : 'subscript'}"/>`
+      for (const declaration of (
+        node.attrs.find(({ name }) => name === 'style')?.value ?? ''
+      ).split(';')) {
+        const [name, value] = declaration.split(':').map((part) => part.trim().toLowerCase())
+        if (name === 'font-style' && (value === 'italic' || value === 'normal'))
+          properties.i = `<w:i w:val="${value === 'italic' ? 'true' : 'false'}"/>`
+        if (name === 'font-weight' && (value === 'bold' || value === 'normal'))
+          properties.b = `<w:b w:val="${value === 'bold' ? 'true' : 'false'}"/>`
+        if (name === 'font-variant' && value === 'small-caps')
+          properties.smallCaps = '<w:smallCaps/>'
+        if (name === 'text-decoration' && value === 'underline')
+          properties.u = '<w:u w:val="single"/>'
+        if (name === 'vertical-align' && (value === 'super' || value === 'sub'))
+          properties.vertAlign = `<w:vertAlign w:val="${value === 'super' ? 'superscript' : 'subscript'}"/>`
+      }
+    }
+    for (const child of node.childNodes) visit(child, properties)
+  }
+  visit(parseFragment(html), {})
+  return spans
+}
+
+const citationRuns = (html: string, baseProperties: string): string =>
+  citationSpans(html)
+    .map(({ text, properties }) => {
+      if (!Object.keys(properties).length) return visibleRun(text, baseProperties)
+      let body = baseProperties.replace(/^<w:rPr[^>]*>|<\/w:rPr>$/gu, '')
+      for (const [tag, xml] of Object.entries(properties)) {
+        body = body.replace(new RegExp(`<w:${tag}\\b[^>]*(?:/>|>[\\s\\S]*?</w:${tag}>)`, 'gu'), '')
+        body += xml
+      }
+      return visibleRun(text, `<w:rPr>${body}</w:rPr>`)
+    })
+    .join('')
+
+const fieldProperties = (field: string, displayRuns: string): string => {
+  // New fields retain their base formatting on the begin run, separately from CSL emphasis.
+  // Older fields have no properties there; their first display run held the uniform formatting.
+  const firstRun = /<w:r\b[^>]*>([\s\S]*?)<\/w:r>/u
+  return (
+    runProperties(firstRun.exec(field)?.[1] ?? '') ||
+    runProperties(firstRun.exec(displayRuns)?.[1] ?? '')
+  )
+}
+
+const UNSUPPORTED_CITATION_CONTEXT =
+  'Cannot reformat citations with locators, affixes, or suppressed authors.'
+
 const fieldRuns = (instruction: string, display: string, properties = ''): string =>
   [
-    '<w:r><w:fldChar w:fldCharType="begin" w:dirty="true"/></w:r>',
+    `<w:r>${properties || '<w:rPr/>'}<w:fldChar w:fldCharType="begin" w:dirty="true"/></w:r>`,
     `<w:r><w:instrText xml:space="preserve"> ${xmlEscape(instruction)} </w:instrText></w:r>`,
     '<w:r><w:fldChar w:fldCharType="separate"/></w:r>',
-    visibleRun(display, properties),
+    citationRuns(display, properties),
     '<w:r><w:fldChar w:fldCharType="end"/></w:r>'
   ].join('')
 
@@ -101,7 +167,9 @@ const zoteroCitationInstruction = (
     citationID: citation.citationId,
     properties: {
       formattedCitation,
-      plainCitation: formattedCitation,
+      plainCitation: citationSpans(formattedCitation)
+        .map(({ text }) => text)
+        .join(''),
       noteIndex: 0
     },
     citationItems: [
@@ -118,16 +186,16 @@ const bibliographyField = (references: readonly string[], properties = ''): stri
   const rendered = references
     .map(
       (reference, index) =>
-        `${index > 0 ? '<w:br/>' : ''}<w:t xml:space="preserve">${xmlEscape(reference)}</w:t>`
+        `${index > 0 ? '<w:r><w:br/></w:r>' : ''}${citationRuns(reference, properties)}`
     )
     .join('')
   return [
-    '<w:r><w:fldChar w:fldCharType="begin" w:dirty="true"/></w:r>',
+    `<w:r>${properties || '<w:rPr/>'}<w:fldChar w:fldCharType="begin" w:dirty="true"/></w:r>`,
     `<w:r><w:instrText xml:space="preserve"> ${xmlEscape(
       'ADDIN ZOTERO_BIBL {"uncited":[],"omitted":[],"custom":[]}'
     )} CSL_BIBLIOGRAPHY </w:instrText></w:r>`,
     '<w:r><w:fldChar w:fldCharType="separate"/></w:r>',
-    `<w:r>${properties}${rendered}</w:r>`,
+    rendered,
     '<w:r><w:fldChar w:fldCharType="end"/></w:r>'
   ].join('')
 }
@@ -136,11 +204,20 @@ const replaceRunText = (
   xml: string,
   replace: (text: string, properties: string) => string | undefined
 ): string =>
-  xml.replace(WORD_RUN_PATTERN, (run, _attributes: string, body: string) => {
+  xml.replace(WORD_RUN_PATTERN, (run, attributes: string, body: string) => {
     const textNodes = [...body.matchAll(WORD_TEXT_PATTERN)]
     if (textNodes.length !== 1) return run
-    const replacement = replace(xmlUnescape(textNodes[0]![1]!), runProperties(body))
-    return replacement ?? run
+    const node = textNodes[0]!
+    const properties = runProperties(body)
+    const replacement = replace(xmlUnescape(node[1]!), properties)
+    if (replacement === undefined) return run
+    const preserve = (fragment: string): string =>
+      fragment.trim() ? `<w:r${attributes}>${properties}${fragment}</w:r>` : ''
+    return (
+      preserve(body.slice(0, node.index).replace(properties, '')) +
+      replacement.replaceAll('<w:r>', `<w:r${attributes}>`) +
+      preserve(body.slice(node.index + node[0].length))
+    )
   })
 
 const sha256 = (content: Uint8Array): string => createHash('sha256').update(content).digest('hex')
@@ -190,7 +267,8 @@ class LiteratureCitationDocument {
     const formatted = await this.formatter.formatReferences(
       uniqueItemIds.map((id) => ({ id, item: itemsById.get(id)!.item })),
       request.styleId,
-      request.locale
+      request.locale,
+      'html'
     )
     const formattedById = new Map(formatted.map((entry) => [entry.itemId, entry]))
     const citations: ArtifactCitationInput[] = []
@@ -267,6 +345,14 @@ class LiteratureCitationDocument {
 
   async reformat(request: ReformatCitationDocumentRequest): Promise<ReformattedCitationDocument> {
     const literature = artifactLiteratureManifestSchema.parse(request.literature)
+    if (
+      literature.citations.some(
+        ({ locator, prefix, suffix, suppressAuthor }) =>
+          locator || prefix || suffix || suppressAuthor
+      )
+    ) {
+      throw new Error(UNSUPPORTED_CITATION_CONTEXT)
+    }
     const archive = this.openDocument(request.content)
     const documentXml = strFromU8(archive[DOCX_DOCUMENT_PATH]!)
     const referencesById = new Map(
@@ -275,7 +361,8 @@ class LiteratureCitationDocument {
     const formatted = await this.formatter.formatReferences(
       literature.references.map((reference) => ({ id: reference.itemId, item: reference.item })),
       request.styleId,
-      request.locale
+      request.locale,
+      'html'
     )
     const formattedById = new Map(formatted.map((entry) => [entry.itemId, entry]))
     const citationsById = new Map(
@@ -294,18 +381,26 @@ class LiteratureCitationDocument {
             literature.references.map(
               (reference) => formattedById.get(reference.itemId)!.reference
             ),
-            runProperties(displayRuns)
+            fieldProperties(field, displayRuns)
           )
         }
         const marker = /^ADDIN ZOTERO_ITEM CSL_CITATION (\{[\s\S]*\})$/u.exec(instruction)
         if (!marker) return field
-        let citationId: string | undefined
+        let parsed: { citationID?: unknown; citationItems?: Record<string, unknown>[] }
         try {
-          const parsed = JSON.parse(marker[1]!) as { citationID?: unknown }
-          citationId = typeof parsed.citationID === 'string' ? parsed.citationID : undefined
+          parsed = JSON.parse(marker[1]!) as typeof parsed
         } catch {
           throw new Error('Citation document contains an invalid Zotero citation field.')
         }
+        if (
+          Array.isArray(parsed.citationItems) &&
+          parsed.citationItems.some(
+            (item) => item.locator || item.prefix || item.suffix || item['suppress-author']
+          )
+        ) {
+          throw new Error(UNSUPPORTED_CITATION_CONTEXT)
+        }
+        const citationId = typeof parsed.citationID === 'string' ? parsed.citationID : undefined
         const citation = citationId ? citationsById.get(citationId) : undefined
         if (!citation || replacedCitationIds.has(citation.citationId)) {
           throw new Error('Citation document does not match its Literature manifest.')
@@ -319,7 +414,7 @@ class LiteratureCitationDocument {
         return fieldRuns(
           zoteroCitationInstruction(citation, reference.item, result.inText),
           result.inText,
-          runProperties(displayRuns)
+          fieldProperties(field, displayRuns)
         )
       }
     )

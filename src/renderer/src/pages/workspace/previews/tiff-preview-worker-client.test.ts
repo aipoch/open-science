@@ -45,3 +45,44 @@ describe('TIFF decode worker session', () => {
     expect(worker.terminate).toHaveBeenCalledOnce()
   })
 })
+
+it('transports a real Worker page error and decodes the next page in the same session', async () => {
+  const { createUnsupportedFirstPageTiff } = await import('./tiff-test-fixtures')
+  type Request = import('./tiff-preview-worker-protocol').TiffDecodeWorkerRequest
+  type Response = import('./tiff-preview-worker-protocol').TiffDecodeWorkerResponse
+  let handleRequest: (event: MessageEvent<Request>) => void
+  const listeners = new Set<EventListener>()
+  vi.stubGlobal('self', {
+    addEventListener: (_type: string, listener: typeof handleRequest) => {
+      handleRequest = listener
+    },
+    postMessage: (response: Response) => {
+      for (const listener of listeners) listener({ data: response } as MessageEvent<Response>)
+    }
+  })
+  await import('./tiff-preview-worker')
+  const session = createTiffDecodeSession(createUnsupportedFirstPageTiff(), {
+    createWorker: () => ({
+      addEventListener: (type: string, listener: EventListener) => {
+        if (type === 'message') listeners.add(listener)
+      },
+      removeEventListener: (_type: string, listener: EventListener) => {
+        listeners.delete(listener)
+      },
+      postMessage: (request) =>
+        queueMicrotask(() => handleRequest({ data: request } as MessageEvent<Request>)),
+      terminate: () => {}
+    })
+  })
+  try {
+    await expect(session.decodePage(0)).rejects.toMatchObject({
+      message: 'Unsupported TIFF compression: 32773',
+      pageCount: 2
+    })
+    const page = await session.decodePage(1)
+    expect(Array.from(page.rgba)).toEqual([0, 0, 255, 255])
+  } finally {
+    session.dispose()
+    vi.unstubAllGlobals()
+  }
+})

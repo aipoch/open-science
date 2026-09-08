@@ -563,6 +563,10 @@ describe('renderOfficeFile', () => {
           onProgressiveRender: expect.any(Function),
           options: {
             locale: 'en-US',
+            messages: {
+              'state.empty.title': 'This workbook has no worksheets.',
+              'state.empty.message': 'This workbook has no visible worksheets.'
+            },
             spreadsheet: {
               worker: true,
               workerUrl: new URL('local-sheet-worker.js', document.baseURI).href

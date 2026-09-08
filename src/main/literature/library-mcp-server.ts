@@ -161,6 +161,7 @@ type LiteratureLibraryMcpHandler = Readonly<{
   acquirePdf?: (request: {
     candidate: LiteratureLibraryDiscovery
     pdfUrl?: string
+    signal?: AbortSignal
   }) => Promise<AgentPdfAcquisitionResult>
   searchLibrary: (request: LiteratureLibrarySearchRequest) => Promise<LiteratureLibrarySearchResult>
   readAbstract: (
@@ -704,13 +705,15 @@ const createLiteratureLibraryMcpServer = (
           pdfUrl: z.string().url().max(4096).optional()
         }
       },
-      async ({ ref, candidate, pdfUrl }) => {
+      async ({ ref, candidate, pdfUrl }, { signal }) => {
+        signal.throwIfAborted()
         const candidates = await resolveSaveCandidates(
           { refs: ref ? [ref] : undefined, candidates: candidate ? [candidate] : undefined },
           handler
         )
         if (candidates.length !== 1) throw new Error('Exactly one reference must be resolved.')
-        const result = await handler.acquirePdf!({ candidate: candidates[0]!, pdfUrl })
+        signal.throwIfAborted()
+        const result = await handler.acquirePdf!({ candidate: candidates[0]!, pdfUrl, signal })
         return {
           structuredContent: result,
           content: [

@@ -5,6 +5,7 @@ import type {
   NotebookKernelMetadata,
   NotebookLanguage,
   NotebookRunRecord,
+  NotebookRunDocument,
   NotebookRunCursor,
   NotebookRunStaleness,
   NotebookRunSummary,
@@ -313,6 +314,25 @@ class NotebookSessionReadModel<Session extends NotebookSessionReadSource> {
     }
   }
 
+  toRunSummaryFromDocument(
+    document: NotebookRunDocument,
+    run: NotebookRunRecord
+  ): NotebookRunSummary {
+    const inputFiles = (run.inputFiles ?? []).map((input) => {
+      const publicInput = { ...input } as Partial<typeof input>
+      delete publicInput.storageKey
+      return publicInput as NotebookRunSummary['inputFiles'][number]
+    })
+    return {
+      ...this.toPublicRunRecord(run),
+      inputFiles,
+      notebookSessionRoot: document.notebookSessionRoot,
+      dataRoot: document.dataRoot,
+      runtimeRoot: getRuntimeRoot(this.options.storageRoot),
+      kernelName: document.kernel.kernelName ?? 'python3'
+    }
+  }
+
   private environmentStatuses(
     session: Session,
     terminatedKernelInstances: NotebookKernelInstanceIdentity[] | undefined
@@ -340,6 +360,11 @@ class NotebookSessionReadModel<Session extends NotebookSessionReadSource> {
     delete publicRun.kernelDispatched
     delete publicRun.runtimeId
     delete publicRun.helperModules
+    delete publicRun.submissionIdentity
+    delete publicRun.submissionFingerprint
+    delete publicRun.admittedAt
+    delete publicRun.frozenRuntimeTarget
+    delete publicRun.frozenPermissionScope
     const inputFiles = (run.inputFiles ?? []).map((input) => {
       const publicInput = { ...input } as Partial<typeof input>
       delete publicInput.storageKey

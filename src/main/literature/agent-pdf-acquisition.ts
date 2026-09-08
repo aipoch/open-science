@@ -12,6 +12,7 @@ import { inspectPdfPageCount, MAX_AUTO_EXTRACT_PDF_BYTES } from '../uploads/atta
 type Request = {
   candidate: LiteratureLibraryDiscovery
   pdfUrl?: string
+  signal?: AbortSignal
   origin: LiteratureCandidateOrigin
 }
 export type AgentPdfAcquisitionResult = {
@@ -31,25 +32,39 @@ type Options = {
 export class AgentPdfAcquisition {
   constructor(private readonly options: Options) {}
   async acquire(request: Request): Promise<AgentPdfAcquisitionResult> {
+    const { signal } = request
+    signal?.throwIfAborted()
     const search = request.pdfUrl
       ? {
           candidates: [
             {
               url: fullTextUrl(request.pdfUrl).href,
               sourceUrl: request.candidate.source.sourceUrl,
-              provider: request.candidate.source.provider
+              provider: request.candidate.source.provider,
+              source: request.candidate.source.provider,
+              version: undefined,
+              license: undefined
             }
           ],
           notices: []
         }
       : await this.options.fullText.discover(request.candidate.item)
+    signal?.throwIfAborted()
     if (!search.candidates.length) return { status: 'not-found', notices: search.notices }
     let failure: unknown
     for (const candidate of search.candidates.slice(0, 3)) {
+      signal?.throwIfAborted()
       let directory: string | undefined
       let downloaded = false
       try {
-        const bytes = await this.options.download(candidate.url, MAX_AUTO_EXTRACT_PDF_BYTES)
+        const bytes = await this.options.download(
+          candidate.url,
+          MAX_AUTO_EXTRACT_PDF_BYTES,
+          undefined,
+          undefined,
+          signal
+        )
+        signal?.throwIfAborted()
         if (
           bytes.length > MAX_AUTO_EXTRACT_PDF_BYTES ||
           bytes.subarray(0, 5).toString('ascii') !== '%PDF-'
@@ -59,11 +74,8 @@ export class AgentPdfAcquisition {
         const path = join(directory, 'paper.pdf')
         await writeFile(path, bytes, { mode: 0o600 })
         const pageCount = await (this.options.pageCount ?? inspectPdfPageCount)(path)
+        signal?.throwIfAborted()
         downloaded = true
-        const content = await this.options.content.publish({
-          sourcePath: path,
-          contentType: 'application/pdf'
-        })
         const filename = `${
           request.candidate.item.title
             .replace(/[<>:"/\\|?*\p{Cc}]/gu, ' ')
@@ -78,28 +90,46 @@ export class AgentPdfAcquisition {
             /* Use the public download host. */
           }
         }
-        const receipt = await this.options.catalog.stageAcquiredPdf(
-          {
-            ...request.candidate,
-            source: {
-              ...request.candidate.source,
-              rawMetadata: {
-                metadata: request.candidate.source.rawMetadata,
-                fullText: { provider: candidate.provider, sourceUrl, downloadUrl: candidate.url }
-              }
-            },
-            origin: request.origin
-          },
-          {
-            contentBlobId: content.id,
-            filename,
-            contentType: 'application/pdf',
-            sizeBytes: Number(content.sizeBytes),
-            checksum: content.checksum,
-            pageCount,
-            sourceUrl
+        const provenance = {
+          provider: candidate.provider,
+          source: candidate.source,
+          sourceUrl,
+          acquiredAt: Date.now(),
+          version: candidate.version,
+          license: candidate.license
+        }
+        let receipt!: Awaited<ReturnType<Options['catalog']['stageAcquiredPdf']>>
+        await this.options.content.publish({
+          sourcePath: path,
+          contentType: 'application/pdf',
+          commit: async (content) => {
+            signal?.throwIfAborted()
+            receipt = await this.options.catalog.stageAcquiredPdf(
+              {
+                ...request.candidate,
+                source: {
+                  ...request.candidate.source,
+                  rawMetadata: {
+                    metadata: request.candidate.source.rawMetadata,
+                    fullText: { ...provenance, downloadUrl: candidate.url }
+                  }
+                },
+                origin: request.origin
+              },
+              {
+                contentBlobId: content.id,
+                filename,
+                contentType: 'application/pdf',
+                sizeBytes: Number(content.sizeBytes),
+                checksum: content.checksum,
+                pageCount,
+                provenance,
+                sourceUrl
+              },
+              signal
+            )
           }
-        )
+        })
         return {
           status: receipt.state === 'pending' ? 'pending-review' : 'already-reviewed',
           candidateId: receipt.id,
@@ -107,6 +137,7 @@ export class AgentPdfAcquisition {
           sourceUrl
         }
       } catch (error) {
+        signal?.throwIfAborted()
         if (downloaded) throw error
         failure = error
       } finally {

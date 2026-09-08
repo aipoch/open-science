@@ -256,6 +256,10 @@ const dataContentApplicationCommands = Object.freeze({
     'listArtifactGroups'
   ),
   projectFilesListFiles: projectFilesCommand('project-files:list-files', 'listFiles'),
+  projectFilesReadExportFiles: projectFilesCommand(
+    'project-files:read-export-files',
+    'readExportFiles'
+  ),
   projectFilesRepairIndex: projectFilesCommand('project-files:repair-index', 'repairIndex'),
   projectFilesResolveFile: projectFilesCommand('project-files:resolve-file', 'resolveFile'),
   projectFilesSearchArtifacts: projectFilesCommand(
@@ -439,6 +443,7 @@ const dataContentApplicationCommandGroups = Object.freeze([
     dataContentApplicationCommands.projectFilesGetOverview,
     dataContentApplicationCommands.projectFilesListArtifactGroups,
     dataContentApplicationCommands.projectFilesListFiles,
+    dataContentApplicationCommands.projectFilesReadExportFiles,
     dataContentApplicationCommands.projectFilesRepairIndex,
     dataContentApplicationCommands.projectFilesResolveFile,
     dataContentApplicationCommands.projectFilesSearchArtifacts
@@ -619,6 +624,8 @@ const registerDataContentApplicationCommands = (
       'project-files:list-artifact-groups': ({ args }) =>
         dependencies.projectFiles.listArtifactGroups(args[0]),
       'project-files:list-files': ({ args }) => dependencies.projectFiles.listFiles(args[0]),
+      'project-files:read-export-files': ({ args }) =>
+        dependencies.projectFiles.readExportFiles(args[0]),
       'project-files:repair-index': ({ args }) => dependencies.projectFiles.repairIndex(args[0]),
       'project-files:resolve-file': ({ args }) => dependencies.projectFiles.resolveFile(args[0]),
       'project-files:search-artifacts': ({ args }) =>

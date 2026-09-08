@@ -21,7 +21,7 @@ import {
   resolveMessageBranchPath
 } from '../../shared/conversation-graph'
 import { hasCurrentRunningDelegatedAttempt } from '../../shared/delegated-work-projection'
-import { buildSessionHistoryReplay } from '../../shared/session-history-replay'
+import { buildSaveAsSkillHistoryReplay } from './save-as-skill-history'
 import type { HistoryReplayDescriptor, HistoryReplayTarget } from '../../shared/history-preamble'
 import type { AcpBackendGenerationView } from './backend-generation-owner'
 
@@ -126,6 +126,7 @@ const prepareSaveAsSkillContinuation = (
   // A simultaneous replay is accepted only when it passes the verified context-reset checks below.
   const recoveredPreparedControlRun =
     session.resumeRecovery?.kind === 'resume-required' &&
+    session.resumeRecovery.cause !== 'cancelled' &&
     session.resumeRecovery.promptMessageId === request.promptMessageId &&
     runtime.hasLiveSession(session.projectId, session.id)
   const graph = session.conversationGraph
@@ -184,10 +185,10 @@ const prepareSaveAsSkillContinuation = (
     throw new Error('Save as skill requires a prepared control turn.')
   }
 
-  const historyReplay = buildSessionHistoryReplay(
+  const historyReplay = buildSaveAsSkillHistoryReplay(
+    session,
     activeBranchMessages.slice(0, -1).filter((message) => !isHiddenControlMessage(message)),
     replayDescriptor,
-    session.projectId,
     sessionBackend.context.supportsImageInput || request.supportsImageRelay === true
   )
   if (!historyReplay) {

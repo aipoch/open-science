@@ -121,12 +121,12 @@ const NotificationBellContent = ({
     const { unit, count } = relativeTimeParts(timestamp)
     if (unit === 'now') return t('just now')
     const labels = {
-      minute: t('{{count}} minutes ago', { count }),
-      hour: t('{{count}} hours ago', { count }),
-      day: t('{{count}} days ago', { count }),
-      week: t('{{count}} weeks ago', { count }),
-      month: t('{{count}} months ago', { count }),
-      year: t('{{count}} years ago', { count })
+      minute: t('{{count}} minutes ago', { count, defaultValue_one: '{{count}} minute ago' }),
+      hour: t('{{count}} hours ago', { count, defaultValue_one: '{{count}} hour ago' }),
+      day: t('{{count}} days ago', { count, defaultValue_one: '{{count}} day ago' }),
+      week: t('{{count}} weeks ago', { count, defaultValue_one: '{{count}} week ago' }),
+      month: t('{{count}} months ago', { count, defaultValue_one: '{{count}} month ago' }),
+      year: t('{{count}} years ago', { count, defaultValue_one: '{{count}} year ago' })
     }
     return labels[unit]
   }

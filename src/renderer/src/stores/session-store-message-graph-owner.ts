@@ -3,6 +3,7 @@ import {
   activateConversationBranch,
   forkEditedConversationMessage,
   projectConversationMessage,
+  rebindConversationGraphSessionId,
   resolveActiveConversationActivities,
   resolveActiveConversationMessages
 } from '../../../shared/conversation-graph'
@@ -562,6 +563,15 @@ export const createSessionMessageGraphOwner = <
               ...session,
               id: sessionId,
               isPending: false,
+              ...(session.conversationGraph
+                ? {
+                    conversationGraph: rebindConversationGraphSessionId(
+                      session.conversationGraph,
+                      pendingSessionId,
+                      sessionId
+                    )
+                  }
+                : {}),
               cwd: cwd ?? session.cwd,
               agentFrameworkId: agentFrameworkId ?? session.agentFrameworkId,
               agentBackendId: agentBackendId ?? session.agentBackendId,

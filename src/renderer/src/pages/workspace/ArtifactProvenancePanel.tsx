@@ -179,7 +179,9 @@ const codeReconstructionUnavailableLabel = (
     case 'helper-evidence-incomplete':
       return t('Helper source evidence is incomplete for this version.')
     case 'supporting-code-incomplete':
-      return t('Supporting code evidence is incomplete for this version.')
+      return t(
+        'Supporting code is incomplete. Failed or interrupted cells may have changed kernel state before stopping.'
+      )
   }
 }
 
@@ -251,7 +253,24 @@ const toNotebookOutputs = (value: unknown): Array<Record<string, unknown>> => {
     if (type === 'table') {
       outputs.push({
         output_type: 'display_data',
-        data: { 'application/json': output.previewRows ?? [], 'text/plain': ['[Table preview]'] },
+        data: {
+          'application/json': {
+            columns: output.columns,
+            rowCount: output.rowCount,
+            previewRows: output.previewRows
+          },
+          'text/plain': [
+            `Table preview: showing first ${Array.isArray(output.previewRows) ? output.previewRows.length : 0} of ${output.rowCount} rows.\n`,
+            ...(Array.isArray(output.columns) ? [output.columns.join('\t') + '\n'] : []),
+            ...(Array.isArray(output.previewRows)
+              ? output.previewRows.map((row) =>
+                  Array.isArray(row)
+                    ? row.map((cell) => JSON.stringify(cell)).join('\t') + '\n'
+                    : ''
+                )
+              : [])
+          ]
+        },
         metadata: {}
       })
       continue
@@ -263,7 +282,7 @@ const toNotebookOutputs = (value: unknown): Array<Record<string, unknown>> => {
 }
 
 const buildExecutionNotebook = (
-  runs: unknown[],
+  execution: NonNullable<ArtifactVersionProvenance['execution']>,
   kernel: 'python' | 'r',
   metadata: {
     artifactId: string
@@ -271,41 +290,73 @@ const buildExecutionNotebook = (
     producerRunId?: string
     runtimeVersion?: string
   }
-): Record<string, unknown> => ({
-  cells: runs.flatMap((candidate) => {
-    const run = asRecord(candidate)
-    if (!run || asString(run.kernelKind) !== kernel) return []
-    const script = asString(run.script)
-    if (script === undefined) return []
-    return [
-      {
-        cell_type: 'code',
-        execution_count: typeof run.executionCount === 'number' ? run.executionCount : null,
-        metadata: { open_science_run_id: asString(run.runId) },
-        outputs: toNotebookOutputs(run.outputs),
-        source: toSourceLines(script)
+): Record<string, unknown> => {
+  const kernels = [...new Set(execution.runs.map((run) => run.kernelKind))]
+  const notices: string[] = []
+  if (execution.truncation) {
+    const { omittedLeadingRunCount, omittedOutputCount, omittedInputCount } = execution.truncation
+    notices.push(
+      `Execution evidence was bounded for storage: omitted ${omittedLeadingRunCount} earlier runs, ${omittedOutputCount} outputs, and ${omittedInputCount} inputs. Missing earlier code may define values used by retained cells.`
+    )
+  }
+  if (kernels.length > 1) {
+    notices.push(
+      `This notebook contains only ${kernel} runs from a snapshot containing ${kernels.join(', ')} kernels. Omission counts describe the original snapshot, not this kernel alone.`
+    )
+  }
+  return {
+    cells: [
+      ...(notices.length
+        ? [{ cell_type: 'markdown', metadata: {}, source: toSourceLines(notices.join('\n\n')) }]
+        : []),
+      ...execution.runs.flatMap((candidate) => {
+        const run = asRecord(candidate)
+        if (!run || asString(run.kernelKind) !== kernel) return []
+        const script = asString(run.script)
+        if (script === undefined) return []
+        return [
+          {
+            cell_type: 'code',
+            execution_count: typeof run.executionCount === 'number' ? run.executionCount : null,
+            metadata: { open_science_run_id: asString(run.runId) },
+            outputs: toNotebookOutputs(run.outputs),
+            source: toSourceLines(script)
+          }
+        ]
+      })
+    ],
+    metadata: {
+      kernelspec:
+        kernel === 'python'
+          ? { display_name: 'Python 3', language: 'python', name: 'python3' }
+          : { display_name: 'R', language: 'R', name: 'ir' },
+      language_info: {
+        name: kernel,
+        ...(metadata.runtimeVersion ? { version: metadata.runtimeVersion } : {})
+      },
+      open_science: {
+        artifact_id: metadata.artifactId,
+        artifact_version_id: metadata.versionId,
+        producer_run_id: metadata.producerRunId,
+        provenance_snapshot: true,
+        ...(execution.truncation ? { truncation: execution.truncation } : {}),
+        snapshot_scope: {
+          created_at: execution.createdAt,
+          root_frame_id: execution.rootFrameId,
+          agent_frame_id: execution.agentFrameId,
+          message_branch_id: execution.messageBranchId,
+          terminal_prompt_message_id: execution.terminalPromptMessageId,
+          producer_run_index: execution.producerRunIndex,
+          retained_run_count: execution.runs.length,
+          kernels
+        },
+        kernel_filter: kernel
       }
-    ]
-  }),
-  metadata: {
-    kernelspec:
-      kernel === 'python'
-        ? { display_name: 'Python 3', language: 'python', name: 'python3' }
-        : { display_name: 'R', language: 'R', name: 'ir' },
-    language_info: {
-      name: kernel,
-      ...(metadata.runtimeVersion ? { version: metadata.runtimeVersion } : {})
     },
-    open_science: {
-      artifact_id: metadata.artifactId,
-      artifact_version_id: metadata.versionId,
-      producer_run_id: metadata.producerRunId,
-      provenance_snapshot: true
-    }
-  },
-  nbformat: 4,
-  nbformat_minor: 5
-})
+    nbformat: 4,
+    nbformat_minor: 5
+  }
+}
 
 type AvailableProvenanceMessages = Extract<
   ArtifactVersionProvenance['messages'],
@@ -526,7 +577,7 @@ const ArtifactProvenancePanel = ({
     versionId: string
   }>()
   const requestedVersionId =
-    selectedVersion && selectedVersion.artifactId === item.artifactId
+    !onVersionChange && selectedVersion && selectedVersion.artifactId === item.artifactId
       ? selectedVersion.versionId
       : item.selectedVersionId
   const lineageRequestKey = `${lineageKey}:${requestedVersionId ?? ''}`
@@ -811,6 +862,32 @@ const ArtifactProvenancePanel = ({
     ? deferredSectionResults[deferredSectionKey]
     : undefined
   const deferredSectionState = deferredSectionResult?.state
+  const retryDeferredSection = (): void => {
+    setDeferredSectionResults((current) => {
+      if (!deferredSectionKey || !current[deferredSectionKey]) return current
+      const next = { ...current }
+      delete next[deferredSectionKey]
+      return next
+    })
+  }
+  // Pending is a successful read of temporary unavailability, not an immutable snapshot.
+  // Recheck on tab navigation or file refresh; a ready snapshot keeps its version cache.
+  useEffect(() => {
+    const key = `${provenanceKey}:messages:0`
+    setDeferredSectionResults((current) => {
+      const result = current[key]
+      if (
+        result?.state !== 'loaded' ||
+        !('messages' in result.section) ||
+        result.section.messages?.state !== 'unavailable' ||
+        result.section.messages.reason !== 'message-snapshot-pending'
+      )
+        return current
+      const next = { ...current }
+      delete next[key]
+      return next
+    })
+  }, [activeTab, item.mtimeMs, item.versionNumber, provenanceKey])
   const provenance = useMemo(
     () =>
       coreProvenance && deferredSectionResult?.state === 'loaded'
@@ -887,6 +964,8 @@ const ArtifactProvenancePanel = ({
   }, [
     activeTab,
     deferredSectionState,
+    item.mtimeMs,
+    item.versionNumber,
     item.artifactId,
     item.sessionId,
     hasLoadedProvenance,
@@ -1032,18 +1111,24 @@ const ArtifactProvenancePanel = ({
       ? onVersionChange(nextItem)
       : usePreviewWorkbenchStore.getState().upsertItem(nextItem)
     if (!committed) return
-    setSelectedVersion({ artifactId: item.artifactId, versionId })
+    if (!onVersionChange) setSelectedVersion({ artifactId: item.artifactId, versionId })
   }
 
   const downloadExecutionNotebook = async (): Promise<void> => {
-    if (executionKernels.length === 0 || !item.artifactId || !selectedVersionId) return
+    if (
+      executionKernels.length === 0 ||
+      !item.artifactId ||
+      !selectedVersionId ||
+      !provenance?.execution
+    )
+      return
     setExportingNotebook(true)
     setNotebookExportFailure(undefined)
     try {
       const baseName = item.name.replace(/\.[^.]+$/u, '') || 'artifact'
       const versionNumber = selectedVersionDescriptor?.versionNumber ?? 1
       for (const kernel of executionKernels) {
-        const notebook = buildExecutionNotebook(rawExecutionRuns, kernel, {
+        const notebook = buildExecutionNotebook(provenance.execution, kernel, {
           artifactId: item.artifactId,
           versionId: selectedVersionId,
           producerRunId: asString(producer?.producer_run_id),
@@ -1333,14 +1418,7 @@ const ArtifactProvenancePanel = ({
             failure={deferredSectionResult}
             diagnostics={diagnosticsFor(deferredSectionResult, activeTab)}
             onRetry={
-              deferredSectionResult.kind === 'integrity-failed'
-                ? undefined
-                : () =>
-                    setDeferredSectionResults((current) => {
-                      const next = { ...current }
-                      if (deferredSectionKey) delete next[deferredSectionKey]
-                      return next
-                    })
+              deferredSectionResult.kind === 'integrity-failed' ? undefined : retryDeferredSection
             }
           />
         ) : null}
@@ -1441,7 +1519,7 @@ const ArtifactProvenancePanel = ({
                   {codeReconstructionResult.message}
                 </p>
               ) : codeReconstructionState?.state === 'unavailable' ? (
-                <p className="min-w-0 flex-1 truncate text-sm text-text-200">
+                <p className="min-w-0 flex-1 text-sm text-text-200">
                   {codeReconstructionUnavailableLabel(codeReconstructionState.reason, t)}
                 </p>
               ) : codeReconstructionResult?.status === 'generating' ? (
@@ -1601,8 +1679,20 @@ const ArtifactProvenancePanel = ({
                 <p className="px-4 py-2 text-xs text-danger-000">{notebookExportError}</p>
               ) : null}
               <div className="divide-y divide-border-300/50">
-                {executionRuns.map(({ run, index }) => (
-                  <NotebookDialogCell key={run.runId} run={run} index={index} />
+                {executionRuns.map(({ run, index }, runOffset) => (
+                  <div key={run.runId}>
+                    {rawExecutionRuns[runOffset]?.outputs.map((output, outputIndex) =>
+                      output.type === 'table' ? (
+                        <p key={outputIndex} className="px-4 py-2 text-xs text-text-200">
+                          {t('Table preview: showing first {{shown}} of {{total}} rows.', {
+                            shown: output.previewRows.length,
+                            total: output.rowCount
+                          })}
+                        </p>
+                      ) : null
+                    )}
+                    <NotebookDialogCell run={run} index={index} />
+                  </div>
                 ))}
               </div>
             </div>
@@ -1621,16 +1711,23 @@ const ArtifactProvenancePanel = ({
               sessionId={item.sessionId}
             />
           ) : (
-            <p className="p-5 text-sm text-text-300">
-              {provenance.messages.reason === 'message-snapshot-unsupported'
-                ? t(
-                    'This message snapshot was created by a newer version of Open Science. Update the app to view it.'
-                  )
-                : t(
-                    'The immutable message snapshot is not available for this version ({{reason}}).',
-                    { reason: provenance.messages.reason }
-                  )}
-            </p>
+            <div className="space-y-3 p-5 text-sm text-text-300">
+              <p>
+                {provenance.messages.reason === 'message-snapshot-unsupported'
+                  ? t(
+                      'This message snapshot was created by a newer version of Open Science. Update the app to view it.'
+                    )
+                  : t(
+                      'The immutable message snapshot is not available for this version ({{reason}}).',
+                      { reason: provenance.messages.reason }
+                    )}
+              </p>
+              {provenance.messages.reason === 'message-snapshot-pending' ? (
+                <Button type="button" size="sm" variant="outline" onClick={retryDeferredSection}>
+                  {t('Recheck message snapshot')}
+                </Button>
+              ) : null}
+            </div>
           )
         ) : null}
         {provenance && activeTab === 'environment' ? (
@@ -1655,7 +1752,10 @@ const ArtifactProvenancePanel = ({
                   <dt className="text-text-300">{t('Capture')}</dt>
                   <dd className="text-text-100">
                     {asString(environment.capture_status) ?? t('partial')} ·{' '}
-                    {t('{{count}} packages', { count: environmentPackages.length })}
+                    {t('{{count}} packages', {
+                      count: environmentPackages.length,
+                      defaultValue_one: '{{count}} package'
+                    })}
                   </dd>
                 </dl>
                 {environmentWarnings.length > 0 ? (

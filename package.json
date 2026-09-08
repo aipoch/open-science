@@ -3,7 +3,7 @@
   "productName": "Open Science",
   "desktopName": "open-science.desktop",
   "version": "0.26.0",
-  "description": "Open Science — an open-source, model-agnostic AI workbench for scientific discovery.",
+  "description": "Open Science \u2014 an open-source, model-agnostic AI workbench for scientific discovery.",
   "main": "./out/main/index.js",
   "author": "aipoch",
   "license": "Apache-2.0",
@@ -57,7 +57,8 @@
     "build:linux": "npm run build:web && electron-vite build && electron-builder --linux",
     "build:win": "npm run build:web && electron-vite build && electron-builder --win",
     "stage-default-envs": "node scripts/stage-default-envs.mjs",
-    "predev": "node scripts/check-prisma-client.mjs && node scripts/dev-app-branding.cjs"
+    "predev": "node scripts/check-prisma-client.mjs && node scripts/dev-app-branding.cjs",
+    "test:e2e:browser": "playwright test --config playwright.browser.config.ts"
   },
   "dependencies": {
     "@agentclientprotocol/claude-agent-acp": "^0.70.0",
