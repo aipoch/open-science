@@ -15,7 +15,12 @@ import { TooltipProvider } from '@/components/ui/tooltip'
 // Missing APIs fail normally: do not use a catch-all proxy that could hide accidental dependencies.
 const unsubscribe = (): (() => void) => () => undefined
 const nativeApi = {
-  platform: 'darwin',
+  platform: navigator.platform.startsWith('Win')
+    ? 'win32'
+    : navigator.platform.startsWith('Mac')
+      ? 'darwin'
+      : 'linux',
+  window: { onCloseConfirmRequest: unsubscribe },
   settings: {},
   notifications: { getDesktopAvailability: async () => 'supported' },
   cli: {

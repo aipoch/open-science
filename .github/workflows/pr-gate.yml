@@ -968,6 +968,17 @@ jobs:
         id: build_electron
         continue-on-error: true
         run: npm run build:e2e
+      - name: Install headless Chromium
+        if: ${{ matrix.shard == 1 }}
+        run: npx playwright install chromium --only-shell
+      - name: Run renderer layout pilot
+        id: renderer_layout
+        if: ${{ matrix.shard == 1 }}
+        continue-on-error: true
+        env:
+          PLAYWRIGHT_BLOB_OUTPUT_DIR: blob-report/renderer-layout-windows
+          PLAYWRIGHT_JSON_OUTPUT_NAME: test-results/renderer-layout-windows.json
+        run: npm run test:e2e:browser -- --fail-on-flaky-tests --global-timeout=180000
       - name: Run functional journeys
         id: e2e_functional_windows
         if: ${{ steps.build_electron.outcome == 'success' && contains(fromJSON(needs.preflight.outputs.plan).lanes, 'e2e_functional_windows') }}
@@ -1040,6 +1051,7 @@ jobs:
         if: ${{ always() }}
         shell: bash
         env:
+          RENDERER_LAYOUT_OUTCOME: ${{ steps.renderer_layout.outcome }}
           BUILD_ELECTRON_OUTCOME: ${{ steps.build_electron.outcome }}
           E2E_ACCESSIBILITY_OUTCOME: ${{ steps.e2e_accessibility_windows.outcome }}
           E2E_FUNCTIONAL_OUTCOME: ${{ steps.e2e_functional_windows.outcome }}
@@ -1053,6 +1065,7 @@ jobs:
               failed=1
             fi
           }
+          check renderer_layout "$RENDERER_LAYOUT_OUTCOME"
           check build_electron "$BUILD_ELECTRON_OUTCOME"
           check e2e_functional_windows "$E2E_FUNCTIONAL_OUTCOME"
           check e2e_workspace_windows "$E2E_WORKSPACE_OUTCOME"

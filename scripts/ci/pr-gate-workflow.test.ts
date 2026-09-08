@@ -973,6 +973,17 @@ describe('E2E throughput contracts', () => {
     }
   })
 
+  it('retains native-platform font coverage in one Windows browser pilot', () => {
+    const job = workflow.jobs.windows_e2e
+    expect(job.steps?.find(({ id }) => id === 'renderer_layout')).toMatchObject({
+      if: '${{ matrix.shard == 1 }}',
+      run: 'npm run test:e2e:browser -- --fail-on-flaky-tests --global-timeout=180000'
+    })
+    expect(
+      job.steps?.find(({ name }) => name === 'Enforce selected Windows E2E checks')?.run
+    ).toContain('check renderer_layout "$RENDERER_LAYOUT_OUTCOME"')
+  })
+
   it('partitions macOS groups while preserving the stable aggregate gate', () => {
     const job = workflow.jobs.macos_e2e
     expect(job.strategy?.matrix?.group).toEqual(['journeys', 'presentation'])
