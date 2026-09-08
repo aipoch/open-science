@@ -2737,7 +2737,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
 
   const previewFirstAttachment = (entry: LiteratureItemView): void => {
     const version = entry.attachments.find((attachment) => attachment.versions[0])?.versions[0]
-    if (!version) return
+    if (!version || version.availability === 'unavailable') return
     setPreviewItem({
       id: `literature:${version.id}`,
       sessionId: LITERATURE_PREVIEW_SESSION_ID,
@@ -4598,6 +4598,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
                                       aria-label={t('Preview {{title}}', {
                                         title: attachmentVersion.filename
                                       })}
+                                      disabled={attachmentVersion.availability === 'unavailable'}
                                       onClick={() => previewFirstAttachment(entry)}
                                     >
                                       <Paperclip

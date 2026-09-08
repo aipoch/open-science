@@ -2235,6 +2235,10 @@ describe('LiteratureLibraryPage', () => {
     render(<LiteratureLibraryPage />)
     fireEvent.click(screen.getByRole('button', { name: 'All references' }))
     await screen.findByText('Attachment unavailable')
+    const tablePreview = screen.getByRole('button', { name: 'Preview paper.pdf' })
+    expect(tablePreview).toHaveProperty('disabled', true)
+    fireEvent.click(tablePreview)
+    expect(screen.queryByTestId('literature-pdf-preview')).toBeNull()
     const detail = await openReferenceDetail(await screen.findByText(entry.item.title))
     expect(within(detail).getByText('File missing')).not.toBeNull()
     expect(
