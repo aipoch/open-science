@@ -22,6 +22,7 @@ import type { PreviewFileItem } from '@/stores/preview-workbench-store'
 import { createInitialProjectState, useProjectStore } from '@/stores/project-store'
 import { createInitialTagState, useTagStore } from '@/stores/tag-store'
 import { LiteratureLibraryPage } from './LiteratureLibraryPage'
+import { useAttachmentOperations } from './literature-attachment-operations'
 
 if (!Element.prototype.scrollIntoView) {
   Element.prototype.scrollIntoView = (): void => undefined
@@ -204,6 +205,7 @@ describe('LiteratureLibraryPage', () => {
   const saveBlobFile = vi.fn()
 
   beforeEach(() => {
+    useAttachmentOperations.setState({ operations: [] })
     // Failed assertions must not leak unused one-shot IPC replies into another scenario.
     search.mockReset()
     get.mockReset()
@@ -3080,6 +3082,222 @@ describe('LiteratureLibraryPage', () => {
       ]
     })
   })
+
+  describe.each(['Retry file verification', 'Remove attachment'])(
+    'pending attachment action: %s',
+    (action) => {
+      const startPendingAction = async (): Promise<{
+        detail: HTMLElement
+        finish: (error?: Error) => Promise<void>
+      }> => {
+        const entry = createLibraryItemWithPdf()
+        search.mockImplementation((request: { scope: string }) =>
+          Promise.resolve(
+            request.scope === 'library'
+              ? { entries: [entry, createLibraryItem(2)] }
+              : { entries: [] }
+          )
+        )
+        get.mockResolvedValue(entry)
+        let resolve!: (value: unknown) => void
+        let reject!: (error: Error) => void
+        const pending = new Promise((done, fail) => {
+          resolve = done
+          reject = fail
+        })
+        transact.mockImplementation(() => pending)
+        render(<LiteratureLibraryPage />)
+        fireEvent.click(screen.getByRole('button', { name: 'All references' }))
+        const detail = await openReferenceDetail(
+          await within(await screen.findByRole('table')).findByText(entry.item.title)
+        )
+        fireEvent.click(
+          within(detail).getByRole('button', { name: 'Attachment actions for paper.pdf' })
+        )
+        fireEvent.click(await screen.findByRole('menuitem', { name: action }))
+        if (action === 'Remove attachment' && screen.queryByRole('alertdialog')) {
+          fireEvent.click(screen.getByRole('button', { name: 'Permanently delete attachment' }))
+        }
+        await waitFor(() => expect(transact).toHaveBeenCalledTimes(1))
+        return {
+          detail,
+          finish: async (error) => {
+            await act(async () => {
+              if (error) reject(error)
+              else
+                resolve({
+                  kind: 'item',
+                  id: entry.id,
+                  state: action === 'Remove attachment' ? 'unlinked' : 'present'
+                })
+              await pending.catch(() => undefined)
+            })
+          }
+        }
+      }
+
+      it('does not submit the same operation again after closing and reopening details', async () => {
+        const { detail, finish } = await startPendingAction()
+        try {
+          const original = transact.mock.calls[0][0]
+          fireEvent.click(within(detail).getByRole('button', { name: 'Close' }))
+          await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+          fireEvent.click(
+            await within(await screen.findByRole('table')).findByText(libraryItem.item.title)
+          )
+          const reopened = await screen.findByRole('dialog')
+          fireEvent.click(
+            await within(reopened).findByRole('button', {
+              name: 'Attachment actions for paper.pdf'
+            })
+          )
+          fireEvent.click(await screen.findByRole('menuitem', { name: action }))
+          if (action === 'Remove attachment' && screen.queryByRole('alertdialog')) {
+            fireEvent.click(screen.getByRole('button', { name: 'Permanently delete attachment' }))
+          }
+          await act(async () => {
+            await Promise.resolve()
+          })
+          expect(transact.mock.calls.map(([command]) => command)).toEqual([original])
+        } finally {
+          await finish()
+        }
+      })
+
+      it('keeps progress and the completed result visible after details close', async () => {
+        const { detail, finish } = await startPendingAction()
+        try {
+          fireEvent.click(within(detail).getByRole('button', { name: 'Close' }))
+          await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+          expect(await screen.findByRole('status')).not.toBeNull()
+          expect(screen.getByRole('button', { name: 'Preview paper.pdf' })).toHaveProperty(
+            'disabled',
+            true
+          )
+          expect(
+            screen.getByText(
+              action === 'Remove attachment' ? 'Removing attachment…' : 'Verifying file…'
+            )
+          ).not.toBeNull()
+          await finish()
+          expect(
+            await screen.findByText(
+              action === 'Remove attachment' ? 'Attachment removed.' : 'File integrity verified'
+            )
+          ).not.toBeNull()
+          fireEvent.click(
+            screen.getByRole('button', { name: 'Dismiss attachment result for paper.pdf' })
+          )
+          expect(screen.queryByRole('status')).toBeNull()
+        } finally {
+          await finish()
+        }
+      })
+
+      it('retains admission when the entire library page remounts', async () => {
+        const { finish } = await startPendingAction()
+        try {
+          cleanup()
+          render(<LiteratureLibraryPage />)
+          fireEvent.click(screen.getByRole('button', { name: 'All references' }))
+          fireEvent.click(
+            await within(await screen.findByRole('table')).findByText(libraryItem.item.title)
+          )
+          const detail = await screen.findByRole('dialog')
+          fireEvent.click(
+            await within(detail).findByRole('button', { name: 'Attachment actions for paper.pdf' })
+          )
+          fireEvent.click(await screen.findByRole('menuitem', { name: action }))
+          if (action === 'Remove attachment' && screen.queryByRole('alertdialog')) {
+            fireEvent.click(screen.getByRole('button', { name: 'Permanently delete attachment' }))
+          }
+          expect(transact).toHaveBeenCalledTimes(1)
+          await finish()
+          await waitFor(() => expect(detail.querySelector('[aria-busy="true"]')).toBeNull())
+        } finally {
+          await finish()
+        }
+      })
+
+      it('does not replace a different reference when the operation completes', async () => {
+        const { detail, finish } = await startPendingAction()
+        try {
+          fireEvent.click(within(detail).getByRole('button', { name: 'Close' }))
+          await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+          const other = createLibraryItem(2)
+          get.mockResolvedValue(other)
+          const otherDetail = await openReferenceDetail(
+            await within(await screen.findByRole('table')).findByText(other.item.title)
+          )
+          get.mockResolvedValue(createLibraryItemWithPdf())
+          await finish()
+          expect(within(otherDetail).getByText(other.item.title)).not.toBeNull()
+          expect(
+            within(otherDetail).queryByRole('button', { name: 'Preview paper.pdf' })
+          ).toBeNull()
+        } finally {
+          await finish()
+        }
+      })
+
+      it('shows a failure after closing and permits a deliberate retry', async () => {
+        const { detail, finish } = await startPendingAction()
+        try {
+          fireEvent.click(within(detail).getByRole('button', { name: 'Close' }))
+          await finish(new Error('Storage unavailable'))
+          expect(await screen.findByRole('alert')).not.toBeNull()
+          fireEvent.click(
+            await within(await screen.findByRole('table')).findByText(libraryItem.item.title)
+          )
+          const reopened = await screen.findByRole('dialog')
+          transact.mockResolvedValue({ kind: 'item', id: 'item-1', state: 'present' })
+          fireEvent.click(
+            await within(reopened).findByRole('button', {
+              name: 'Attachment actions for paper.pdf'
+            })
+          )
+          fireEvent.click(await screen.findByRole('menuitem', { name: action }))
+          if (action === 'Remove attachment' && screen.queryByRole('alertdialog')) {
+            fireEvent.click(screen.getByRole('button', { name: 'Permanently delete attachment' }))
+          }
+          await waitFor(() => expect(transact).toHaveBeenCalledTimes(2))
+        } finally {
+          await finish()
+        }
+      })
+
+      it('blocks conflicting actions within the same opening', async () => {
+        const { detail, finish } = await startPendingAction()
+        try {
+          fireEvent.click(
+            within(detail).getByRole('button', { name: 'Attachment actions for paper.pdf' })
+          )
+          fireEvent.click(
+            await screen.findByRole('menuitem', {
+              name: action === 'Remove attachment' ? 'Retry file verification' : 'Remove attachment'
+            })
+          )
+          expect(transact).toHaveBeenCalledTimes(1)
+        } finally {
+          await finish()
+        }
+      })
+
+      it('exposes waiting feedback and disables preview while the operation is pending', async () => {
+        const { detail, finish } = await startPendingAction()
+        try {
+          expect.soft(within(detail).queryByRole('status')).not.toBeNull()
+          expect.soft(detail.querySelector('[aria-busy="true"]')).not.toBeNull()
+          expect
+            .soft(within(detail).getByRole('button', { name: 'Preview paper.pdf' }))
+            .toHaveProperty('disabled', true)
+          expect.soft(within(detail).queryByText('File integrity verified')).toBeNull()
+        } finally {
+          await finish()
+        }
+      })
+    }
+  )
 
   it.each(['deletion', 'merge'] as const)(
     'closes an open reference and its preview when returning after %s in another window',

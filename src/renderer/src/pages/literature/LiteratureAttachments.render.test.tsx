@@ -3,6 +3,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testi
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { literatureItemInputSchema, type LiteratureItemView } from '../../../../shared/literature'
 import { literatureDeletionError } from '../../../../shared/literature-deletion'
+import { useAttachmentOperations } from './literature-attachment-operations'
 import { LiteratureAttachments } from './LiteratureAttachments'
 
 const version = (
@@ -46,6 +47,7 @@ const makeItem = (count: number, missing = false): LiteratureItemView => ({
 
 const transact = vi.fn()
 beforeEach(() => {
+  useAttachmentOperations.setState({ operations: [] })
   transact.mockReset().mockResolvedValue({ state: 'unlinked' })
   Object.defineProperty(window, 'api', {
     configurable: true,
@@ -81,7 +83,7 @@ describe('Attachment safety and version access', () => {
           truncated: false
         })
       )
-      render(<LiteratureAttachments item={makeItem(2)} onChanged={vi.fn()} onPreview={vi.fn()} />)
+      render(<LiteratureAttachments item={makeItem(2)} onPreview={vi.fn()} />)
       await openRemoval()
       fireEvent.click(screen.getByRole('button', { name: 'Permanently delete attachment' }))
       await waitFor(() => expect(screen.queryByRole('alertdialog')).toBeNull())
@@ -107,7 +109,7 @@ describe('Attachment safety and version access', () => {
   it.each(['cancel', 'escape'])(
     'does not delete on %s and returns focus to the attachment menu',
     async (close) => {
-      render(<LiteratureAttachments item={makeItem(2)} onChanged={vi.fn()} onPreview={vi.fn()} />)
+      render(<LiteratureAttachments item={makeItem(2)} onPreview={vi.fn()} />)
       const trigger = screen.getByRole('button', { name: 'Attachment actions for paper-v2.pdf' })
       trigger.focus()
       await openRemoval()
@@ -134,8 +136,7 @@ describe('Attachment safety and version access', () => {
           finish = resolve
         })
     )
-    const onChanged = vi.fn()
-    render(<LiteratureAttachments item={makeItem(2)} onChanged={onChanged} onPreview={vi.fn()} />)
+    render(<LiteratureAttachments item={makeItem(2)} onPreview={vi.fn()} />)
     await openRemoval()
     const confirm = screen.getByRole('button', { name: 'Permanently delete attachment' })
     fireEvent.click(confirm)
@@ -146,32 +147,34 @@ describe('Attachment safety and version access', () => {
       itemId: 'paper',
       attachmentId: 'attachment'
     })
-    expect((confirm as HTMLButtonElement).disabled).toBe(true)
-    fireEvent.keyDown(screen.getByRole('alertdialog'), { key: 'Escape' })
-    expect(screen.getByRole('alertdialog')).toBeDefined()
+    expect(screen.queryByRole('alertdialog')).toBeNull()
+    expect(screen.getByRole('status').textContent).toContain('Removing attachment…')
+    expect(screen.getByRole('button', { name: 'Preview paper-v2.pdf' })).toHaveProperty(
+      'disabled',
+      true
+    )
     await act(async () => finish({ state: 'unlinked' }))
-    expect(onChanged).toHaveBeenCalledWith(expect.objectContaining({ attachments: [] }))
+    expect(useAttachmentOperations.getState().operations[0].item?.attachments).toEqual([])
     expect(screen.getByRole('alert').textContent).toContain('details could not be refreshed')
   })
 
   it('preserves the attachment and explains saved chat references when deletion is refused', async () => {
     transact.mockRejectedValue(new Error('LITERATURE_ATTACHMENT_IN_USE'))
-    const onChanged = vi.fn()
-    render(<LiteratureAttachments item={makeItem(2)} onChanged={onChanged} onPreview={vi.fn()} />)
+    render(<LiteratureAttachments item={makeItem(2)} onPreview={vi.fn()} />)
     await openRemoval()
     fireEvent.click(screen.getByRole('button', { name: 'Permanently delete attachment' }))
     await waitFor(() => expect(screen.queryByRole('alertdialog')).toBeNull())
     expect(screen.getByRole('alert').textContent).toContain(
       'referenced by a chat or its message history'
     )
-    expect(onChanged).not.toHaveBeenCalled()
+    expect(useAttachmentOperations.getState().operations[0].item).toBeUndefined()
     expect(screen.getByRole('button', { name: 'Preview paper-v2.pdf' })).toBeDefined()
   })
 
   it.each(['reference', 'versions'])(
     'invalidates confirmation when the %s changes',
     async (change) => {
-      const props = { onChanged: vi.fn(), onPreview: vi.fn() }
+      const props = { onPreview: vi.fn() }
       const view = render(<LiteratureAttachments item={makeItem(2)} {...props} />)
       await openRemoval()
       view.rerender(
@@ -187,9 +190,7 @@ describe('Attachment safety and version access', () => {
 
   it('shows version metadata and prevents previewing a missing version', async () => {
     const onPreview = vi.fn()
-    render(
-      <LiteratureAttachments item={makeItem(2, true)} onChanged={vi.fn()} onPreview={onPreview} />
-    )
+    render(<LiteratureAttachments item={makeItem(2, true)} onPreview={onPreview} />)
     fireEvent.click(screen.getByRole('button', { name: 'Attachment actions for paper-v2.pdf' }))
     fireEvent.click(await screen.findByRole('menuitem', { name: 'Version history' }))
     const dialog = screen.getByRole('dialog')
@@ -210,9 +211,7 @@ describe('Attachment safety and version access', () => {
   it.each([1, 2])(
     'requires confirmation before deleting an attachment with %i versions',
     async (count) => {
-      render(
-        <LiteratureAttachments item={makeItem(count)} onChanged={vi.fn()} onPreview={vi.fn()} />
-      )
+      render(<LiteratureAttachments item={makeItem(count)} onPreview={vi.fn()} />)
       fireEvent.click(
         screen.getByRole('button', { name: `Attachment actions for paper-v${count}.pdf` })
       )
@@ -232,7 +231,7 @@ describe('Attachment safety and version access', () => {
       render(
         <LiteratureAttachments
           item={makeItem(2, missing)}
-          onChanged={vi.fn()}
+
           onPreview={onPreview}
         />
       )

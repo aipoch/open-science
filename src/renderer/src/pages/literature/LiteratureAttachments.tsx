@@ -1,8 +1,3 @@
-import {
-  parseLiteratureDeletionError,
-  type LiteratureDeletionDiagnostic
-} from '../../../../shared/literature-deletion'
-import { LiteratureDeletionNotice } from './LiteratureDeletionNotice'
 import { useRef, useState } from 'react'
 import { FileText, History, MoreHorizontal, RotateCcw, Trash2 } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
@@ -30,14 +25,16 @@ import {
 } from '@/components/action-menu'
 
 type Version = LiteratureItemView['attachments'][number]['versions'][number]
+import { useAttachmentOperations, type AttachmentAction } from './literature-attachment-operations'
+import { AttachmentOperationStatus } from './LiteratureAttachmentOperations'
 type Attachment = LiteratureItemView['attachments'][number]
-type AttachmentAction = 'verify' | 'remove' | 'history'
-const attachmentActionCatalog: Record<AttachmentAction, ActionMenuDefinition> = {
+type AttachmentMenuAction = AttachmentAction | 'history'
+const attachmentActionCatalog: Record<AttachmentMenuAction, ActionMenuDefinition> = {
   history: { labelKey: 'Version history', icon: History },
   verify: { labelKey: 'Retry file verification', icon: RotateCcw },
   remove: { labelKey: 'Remove attachment', icon: Trash2, danger: true }
 }
-const attachmentActionRecipe: readonly ActionMenuRecipeEntry<AttachmentAction>[] = [
+const attachmentActionRecipe: readonly ActionMenuRecipeEntry<AttachmentMenuAction>[] = [
   { kind: 'action', action: 'history' },
   { kind: 'action', action: 'verify' },
   { kind: 'separator' },
@@ -78,9 +75,11 @@ const AttachmentMenuButton = ({
 const AttachmentPreview = ({
   version,
   title,
+  pending = false,
   onPreview
 }: {
   version?: Version
+  pending?: boolean
   title: string
   onPreview: (version: Version) => void
 }): React.JSX.Element => {
@@ -104,7 +103,7 @@ const AttachmentPreview = ({
   return (
     <button
       type="button"
-      disabled={!version || version.availability === 'unavailable'}
+      disabled={pending || !version || version.availability === 'unavailable'}
       aria-label={t('Preview {{title}}', { title })}
       className="flex min-w-0 flex-1 items-center gap-3 rounded-lg px-3 py-2 text-left hover:bg-muted disabled:cursor-default disabled:hover:bg-transparent"
       onClick={() => version && onPreview(version)}
@@ -124,7 +123,7 @@ const AttachmentPreview = ({
               : 'block text-xs text-muted-foreground'
           }
         >
-          {health}
+          {pending ? null : health}
         </span>
         {version && !version.pageCount ? (
           <span className="block text-xs text-muted-foreground">
@@ -140,11 +139,9 @@ const AttachmentPreview = ({
 
 export const LiteratureAttachments = ({
   item,
-  onChanged,
   onPreview
 }: {
   item: LiteratureItemView
-  onChanged: (item: LiteratureItemView) => void
   onPreview: (version: Version) => void
 }): React.JSX.Element => {
   const { t, i18n } = useTranslation()
@@ -173,68 +170,25 @@ export const LiteratureAttachments = ({
     history?.itemId === item.id
       ? item.attachments.find((entry) => entry.id === history.attachmentId)
       : undefined
-  const [error, setError] = useState<string>()
-  const [deletionDiagnostic, setDeletionDiagnostic] = useState<LiteratureDeletionDiagnostic>()
-  const busy = useRef(false)
-  const [pending, setPending] = useState(false)
-  const run = async (
-    action: 'verify' | 'remove',
-    attachmentId: string,
-    versionId?: string
-  ): Promise<void> => {
-    if (busy.current) return
-    busy.current = true
-    setPending(true)
-    try {
-      setError(undefined)
-      setDeletionDiagnostic(undefined)
-      const receipt = await window.api.literature.transact(
-        action === 'remove'
-          ? { kind: 'delete-attachment', itemId: item.id, attachmentId }
-          : { kind: 'verify-attachment', itemId: item.id, versionId: versionId! }
-      )
-      if (action === 'remove') {
-        // The command committed; preserve that result even if the subsequent refresh fails.
-        onChanged({
-          ...item,
-          attachments: item.attachments.filter((entry) => entry.id !== attachmentId)
-        })
-      }
-      if (receipt.cleanupPending)
-        setError(t('Attachment removed. Storage cleanup could not finish.'))
-      const updated = await window.api.literature.get(item.id).catch(() => undefined)
-      if (updated) onChanged(updated)
-      else
-        setError(
-          t(
-            'The attachment operation completed, but details could not be refreshed. Reopen this reference.'
-          )
-        )
-    } catch (error) {
-      if (action === 'verify') {
-        const updated = await window.api.literature.get(item.id).catch(() => undefined)
-        if (updated) onChanged(updated)
-      }
-      throw error
-    } finally {
-      busy.current = false
-      setPending(false)
-    }
-  }
-  const showError = (error: unknown): void => {
-    const diagnostic = parseLiteratureDeletionError(error)
-    setDeletionDiagnostic(diagnostic)
-    if (!diagnostic) setError(t('The attachment operation failed. Try again.'))
-  }
+  const operations = useAttachmentOperations((state) => state.operations)
+  const itemOperations = operations.filter((operation) => operation.itemId === item.id)
+  const pending = itemOperations.some((operation) => operation.pending)
+  const run = (action: AttachmentAction, attachmentId: string, versionId?: string): Promise<void> =>
+    useAttachmentOperations.getState().run(item, attachmentId, action, versionId)
   return (
-    <ActionMenuProvider onActionError={showError}>
+    <ActionMenuProvider>
       <div className="mt-2 space-y-2">
-        {deletionDiagnostic ? <LiteratureDeletionNotice diagnostic={deletionDiagnostic} /> : null}
-        {error ? (
-          <p role="alert" className="text-sm text-danger-000">
-            {error}
-          </p>
-        ) : null}
+        {itemOperations
+          .filter(
+            (operation) =>
+              operation.pending ||
+              operation.error ||
+              operation.receipt?.cleanupPending ||
+              operation.refreshFailed
+          )
+          .map((operation) => (
+            <AttachmentOperationStatus key={operation.attachmentId} operation={operation} />
+          ))}
         {item.attachments.map((attachment) => {
           const version = attachment.versions[0]
           const title = version?.filename ?? attachment.title
@@ -270,8 +224,16 @@ export const LiteratureAttachments = ({
                 }
               }}
             >
-              <div className="flex items-center rounded-lg border border-border bg-background">
-                <AttachmentPreview version={version} title={title} onPreview={onPreview} />
+              <div
+                aria-busy={pending}
+                className="flex items-center rounded-lg border border-border bg-background"
+              >
+                <AttachmentPreview
+                  pending={pending}
+                  version={version}
+                  title={title}
+                  onPreview={onPreview}
+                />
                 <AttachmentMenuButton
                   targetId={targetId}
                   title={title}
@@ -311,10 +273,9 @@ export const LiteratureAttachments = ({
         onCloseAutoFocus={restoreFocus}
         onCancel={() => setRemoval(undefined)}
         onConfirm={() => {
-          if (!removalAttachment || busy.current) return
+          if (!removalAttachment || pending) return
           void run('remove', removalAttachment.id)
-            .catch(showError)
-            .finally(() => setRemoval(undefined))
+          setRemoval(undefined)
         }}
       />
       <Dialog.Root
@@ -350,6 +311,7 @@ export const LiteratureAttachments = ({
                   </div>
                   <div className="flex">
                     <AttachmentPreview
+                      pending={pending}
                       version={version}
                       title={version.filename}
                       onPreview={(selected) => {

@@ -69,7 +69,9 @@ describe('Literature PDF attachment reliability', () => {
     await migrateApplicationDatabase(client)
     const content = new ContentRepository({ storageRoot: root, getClient: async () => client! })
     const sessions = new SessionRepository(join(root, 'sessions'))
-    const coordinator = new SessionPersistenceCoordinator(sessions, {} as SessionFileIndex)
+    const coordinator = new SessionPersistenceCoordinator(sessions, {
+      syncSession: async () => []
+    } as unknown as SessionFileIndex)
     const catalog = new LiteratureCatalog(
       async () => client!,
       undefined,
@@ -884,6 +886,128 @@ describe('Literature PDF attachment reliability', () => {
       authority.resolveVersion(second.item.attachments[0].versions[0].id)
     ).resolves.toBeDefined()
     expect(await client!.contentBlob.count()).toBe(1)
+  })
+
+  it('allows another project to read its session after attachment deletion commits while cleanup waits', async () => {
+    const { importer, request, catalog, content, sessions, coordinator } = await setup()
+    const imported = await importer.import(request)
+    const attachment = imported.item.attachments[0]
+    const version = attachment.versions[0]
+    const pdfContext = {
+      version: 1 as const,
+      bindings: [
+        {
+          version: 1 as const,
+          bindingId: 'stale-binding',
+          sourceKind: 'literature-attachment-version' as const,
+          sourceFileId: attachment.id,
+          sourceVersionId: version.id,
+          name: version.filename,
+          mimeType: 'application/pdf' as const,
+          sizeBytes: version.sizeBytes,
+          checksum: version.checksum,
+          linkedAt: 1
+        }
+      ]
+    }
+    const stale = await sessions.saveSession({
+      id: 'reading-session',
+      projectId: 'project',
+      title: 'Reading paper',
+      cwd: root,
+      status: 'idle',
+      filesRevision: 0,
+      createdAt: 1,
+      updatedAt: 1,
+      messages: [
+        {
+          id: 'read-paper',
+          role: 'user',
+          content: 'Read this paper',
+          status: 'complete',
+          eventIds: [],
+          createdAt: 1,
+          updatedAt: 1,
+          pdfContext
+        }
+      ],
+      runtimeContext: { version: 1, revision: 0, pdfContext }
+    })
+    const current = await sessions.saveSession({
+      ...stale,
+      messages: [],
+      conversationGraph: undefined,
+      runtimeContext: { version: 1, revision: 1 }
+    })
+    await sessions.saveSession({
+      id: 'other-session',
+      projectId: 'other-project',
+      title: 'Other project',
+      cwd: root,
+      status: 'idle',
+      messages: [],
+      filesRevision: 0,
+      createdAt: 1,
+      updatedAt: 1,
+      runtimeContext: { version: 1, revision: 7 }
+    })
+    let release!: () => void
+    let entered!: () => void
+    const gate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const started = new Promise<void>((resolve) => {
+      entered = resolve
+    })
+    const sweep = content.sweep.bind(content)
+    vi.spyOn(content, 'sweep').mockImplementationOnce(async (input) => {
+      entered()
+      await gate
+      return sweep(input)
+    })
+    const removal = catalog.transact({
+      kind: 'delete-attachment',
+      itemId: request.itemId,
+      attachmentId: attachment.id
+    })
+    let read: ReturnType<typeof coordinator.readSessionRuntimeContext> | undefined
+    try {
+      await started
+      expect(
+        await client!.literatureAttachmentVersion.count({
+          where: { attachmentId: attachment.id }
+        })
+      ).toBe(0)
+      let completed = false
+      read = coordinator.readSessionRuntimeContext('other-project', 'other-session')
+      void read.then(() => {
+        completed = true
+      })
+      // The gate stays closed throughout this assertion; the timeout is a deadlock guard,
+      // not a disk-performance threshold.
+      await vi.waitFor(() => expect(completed).toBe(true), { timeout: 2000 })
+      await expect(read).resolves.toMatchObject({ revision: 7 })
+      // A real stale transcript cannot reintroduce deleted bindings after the barrier releases.
+      await expect(coordinator.saveSession(stale)).rejects.toMatchObject({
+        code: 'session-revision-conflict'
+      })
+      // Even a current-revision renderer save cannot restore its stale main-owned PDF context.
+      const saved = await coordinator.saveSession({
+        ...current,
+        runtimeContext: stale.runtimeContext
+      })
+      expect(saved.runtimeContext?.pdfContext).toBeUndefined()
+      expect(saved.messages).toEqual([])
+      const stored = await sessions.loadSessionWithDiagnostics('project', 'reading-session')
+      expect(stored.status).toBe('found')
+      if (stored.status !== 'found') throw new Error('Saved session missing')
+      expect(stored.session.runtimeContext?.pdfContext).toBeUndefined()
+      expect(stored.session.conversationGraph?.messages ?? stored.session.messages).toEqual([])
+    } finally {
+      release()
+      await removal
+      await read
+    }
   })
 
   it('reports incomplete cleanup without undoing the committed attachment removal', async () => {

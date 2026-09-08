@@ -1,3 +1,4 @@
+import { readFile } from 'node:fs/promises'
 import { expect } from '@playwright/test'
 import type { Page } from 'playwright'
 import { test } from './fixtures/electron-app'
@@ -69,6 +70,8 @@ test('creates a project through the desktop stack and reloads it after relaunch'
   await expect(page.getByRole('button', { name: 'All projects' })).toBeVisible()
 
   page = await app.restart()
+  const mainLog = await app.captureMainLog('startup-diagnostics.log')
+  expect(await readFile(mainLog, 'utf8')).toContain('"operation":"application-startup"')
 
   const projects = page.getByRole('region', { name: 'Projects' })
   await expect(projects.getByRole('button', { name: PROJECT_NAME, exact: true })).toBeVisible()
