@@ -62,6 +62,7 @@ it.each([
         ref.current!.openEdit({
           id: 'collection-a',
           name: 'Existing',
+          revision: 1,
           description: '',
           itemCount: 0,
           createdAt: 1,
@@ -106,6 +107,7 @@ it.each([
     expect(transact.mock.calls[1]).toEqual(transact.mock.calls[0])
     expect(onSaved).toHaveBeenCalledWith({
       id: mode === 'edit' ? 'collection-a' : undefined,
+      revision: mode === 'edit' ? 2 : undefined,
       name: 'Research 北京',
       description: 'Draft description'
     })

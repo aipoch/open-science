@@ -8961,10 +8961,9 @@ describe('LiteratureLibraryPage', () => {
           'This reference is no longer in your Library.'
         )
         if (editing) {
-          expect(
-            (screen.getByRole('button', { name: 'Save', exact: true }) as HTMLButtonElement)
-              .disabled
-          ).toBe(true)
+          expect((screen.getByRole('button', { name: 'Save' }) as HTMLButtonElement).disabled).toBe(
+            true
+          )
           expect((screen.getByLabelText('Title') as HTMLInputElement).value).toBe(
             'Keep this unsaved title'
           )
