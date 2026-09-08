@@ -110,7 +110,8 @@ test('searches projects, sessions, message bodies and Library with paged disclos
   const projectId = await page.evaluate(async () => {
     const project = await window.api.projects.create({
       name: 'Search research',
-      description: 'Search fixture project'
+      description: 'Search fixture project',
+      agentContext: 'Cite primary sources in every answer.'
     })
     const now = Date.now()
     for (let i = 0; i < 23; i++) {
@@ -130,7 +131,12 @@ test('searches projects, sessions, message bodies and Library with paged disclos
                 status: 'complete' as const,
                 content:
                   index === 8
-                    ? 'First context line\nSecond context line\nThird context line\nHistorical needle in the message body\nFifth context line\nSixth context line\nSeventh context line'
+                    ? [
+                        'First context line',
+                        ...Array.from({ length: 70 }, (_, line) => `Background paragraph ${line}.`),
+                        '**Historical needle** in the message body',
+                        'Final context paragraph.'
+                      ].join('\n\n')
                     : `Transcript entry ${index}`,
                 eventIds: [],
                 createdAt: now - 120 + index,
@@ -221,6 +227,11 @@ test('searches projects, sessions, message bodies and Library with paged disclos
   await expect(details.locator('.search-detail-context')).toContainText('23 sessions')
   await expect(details.locator('.search-detail-context')).toContainText('0 files')
   await expect(details.getByRole('tabpanel').getByRole('button')).toHaveCount(10)
+  await details.getByRole('tab', { name: 'Recent files' }).click()
+  await expect(details.getByRole('tabpanel')).toContainText('Recent files')
+  await details.getByRole('tab', { name: 'Details', exact: true }).click()
+  await expect(details.getByRole('tabpanel')).toContainText('Search fixture project')
+  await expect(details.getByRole('tabpanel')).toContainText('Cite primary sources in every answer.')
   await dialog.getByRole('button', { name: 'Collapse details' }).click()
   await dialog.locator('[data-category="sessions"]').click()
   await expect.poll(() => sessions.getByRole('option').count()).toBeGreaterThanOrEqual(10)
@@ -241,19 +252,26 @@ test('searches projects, sessions, message bodies and Library with paged disclos
   await expect(details.getByRole('heading', { level: 3 })).toHaveText('First context line')
   await expect(details.locator('.search-detail-context')).toContainText('Search session 00')
   await expect(details.locator('.search-detail-context time')).toBeVisible()
-  const excerpt = details.getByTestId('search-message-excerpt')
-  await expect(excerpt.locator('mark')).toHaveText('Historical needle')
-  const geometry = await excerpt.evaluate((element) => {
-    const content = element.firstElementChild!
-    const lineHeight = parseFloat(getComputedStyle(content).lineHeight)
-    const top =
-      element.querySelector('mark')!.getBoundingClientRect().top -
-      element.getBoundingClientRect().top
-    return { height: element.clientHeight, lineHeight, top }
-  })
-  expect(geometry.height).toBe(geometry.lineHeight * 7)
-  expect(geometry.top).toBeGreaterThanOrEqual(geometry.lineHeight * 3)
-  expect(geometry.top).toBeLessThan(geometry.lineHeight * 4)
+  const message = details.locator('.search-message-content')
+  await expect(message).toContainText('Final context paragraph.')
+  await expect(message).toHaveAttribute('data-search-match-count', '1')
+  await expect
+    .poll(() => details.locator('.search-detail-content').evaluate((element) => element.scrollTop))
+    .toBeGreaterThan(100)
+  await expect
+    .poll(() =>
+      message.evaluate((element) => {
+        const range = [...CSS.highlights.get('global-search-content')!][0] as Range
+        const rect = range.getBoundingClientRect()
+        const viewport = element.closest('.search-detail-content')!.getBoundingClientRect()
+        return (
+          range.toString() === 'Historical needle' &&
+          rect.top >= viewport.top &&
+          rect.bottom <= viewport.bottom
+        )
+      })
+    )
+    .toBe(true)
   await page.screenshot({ path: testInfo.outputPath('global-search-desktop.png') })
   await page.setViewportSize({ width: 390, height: 844 })
   await expect(details.getByRole('button', { name: 'Back to results' })).toBeVisible()
@@ -304,9 +322,47 @@ test('opens uploaded files from search using the existing file preview dialog', 
   await expect(
     dialog.getByTestId('global-search-detail').getByText('Verified file preview content.')
   ).toBeVisible()
+  await dialog.getByRole('combobox', { name: 'Global search' }).fill('Verified file preview')
+  await dialog.getByRole('listbox').getByRole('option').click()
+  const content = dialog
+    .getByTestId('global-search-detail')
+    .getByText('Verified file preview content.')
+  await expect(dialog.locator('.search-file-preview [data-search-match-count]')).toHaveAttribute(
+    'data-search-match-count',
+    '1'
+  )
+  await content.click()
+  await expect(page.getByRole('dialog', { name: 'Preview search-notes.md' })).toBeHidden()
+  const bounds = (await content.boundingBox())!
+  await page.mouse.move(bounds.x + 2, bounds.y + bounds.height / 2)
+  await page.mouse.down()
+  await page.mouse.move(bounds.x + Math.min(bounds.width - 2, 160), bounds.y + bounds.height / 2, {
+    steps: 10
+  })
+  await page.mouse.up()
+  expect(await page.evaluate(() => window.getSelection()?.toString().length)).toBeGreaterThan(0)
+  await dialog.getByRole('button', { name: 'Open full screen preview' }).click()
+  const unhighlightedPreview = page.getByRole('dialog', { name: 'Preview search-notes.md' })
+  await expect(unhighlightedPreview.getByText('Verified file preview content.')).toBeVisible()
+  expect(
+    await unhighlightedPreview.evaluate((element) =>
+      [...(CSS.highlights.get('global-search-content') ?? [])].some((range) =>
+        element.contains(range.startContainer)
+      )
+    )
+  ).toBe(false)
+  await unhighlightedPreview
+    .getByRole('button', { name: 'Close preview of search-notes.md' })
+    .click()
+  await expect(dialog.locator('.search-file-preview [data-search-match-count]')).toHaveAttribute(
+    'data-search-match-count',
+    '1'
+  )
+  await dialog.getByRole('combobox', { name: 'Global search' }).fill('search-notes')
+  await dialog.getByRole('listbox').getByRole('option').click()
   await dialog
     .getByTestId('global-search-detail')
-    .getByRole('button', { name: 'Open full screen preview' })
+    .getByText('Verified file preview content.')
     .click({ button: 'right' })
   await expect(page.getByTestId('search-preview-context-menu')).toBeVisible()
   await page.keyboard.press('Escape')
@@ -314,7 +370,7 @@ test('opens uploaded files from search using the existing file preview dialog', 
   await expect(dialog.getByTestId('global-search-detail')).toHaveAttribute('data-open', 'true')
   await dialog.getByRole('tab', { name: 'File information' }).click()
   await expect(dialog.getByText('File size', { exact: true })).toBeVisible()
-  await dialog.getByRole('button', { name: 'Open file' }).click()
+  await dialog.getByRole('button', { name: 'Open full screen preview' }).click()
   await expect(page.getByRole('dialog', { name: 'Preview search-notes.md' })).toBeVisible()
   await expect(
     page
@@ -322,6 +378,7 @@ test('opens uploaded files from search using the existing file preview dialog', 
       .getByText('Verified file preview content.')
   ).toBeVisible()
   const preview = page.getByRole('dialog', { name: 'Preview search-notes.md' })
+  expect(await preview.locator('[data-search-match-count]').count()).toBe(0)
   const menu = page.getByTestId('preview-content-context-menu')
   for (const outsidePreview of [false, true]) {
     await preview.getByText('Verified file preview content.').click({ button: 'right' })
@@ -457,6 +514,6 @@ test('uses the same preview and information tabs for generated files', async ({
   await dialog.screenshot({ path: testInfo.outputPath('search-generated-file.png') })
   await dialog.getByRole('tab', { name: 'File information' }).click()
   await expect(dialog.getByRole('tabpanel')).toContainText('Generated files')
-  await dialog.getByRole('button', { name: 'Open file' }).click()
+  await dialog.getByRole('button', { name: 'Open full screen preview' }).click()
   await expect(page.getByRole('dialog', { name: 'Preview context-menu.html' })).toBeVisible()
 })

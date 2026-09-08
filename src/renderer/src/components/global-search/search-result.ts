@@ -69,6 +69,8 @@ export const filePreviewItem = (file: ProjectFileItem): ReturnType<typeof create
     mtimeMs: file.mtimeMs,
     artifactId: file.source === 'artifact' ? file.sourceFileId : undefined,
     managedFileId: file.sourceFileId,
+    // A text match refers to bytes in this immutable Version, even if the file head advances.
+    selectedVersionId: file.contentMatch ? file.sourceVersionId : undefined,
     originSession: file.originSession
   })
 export const literaturePreviewItem = (

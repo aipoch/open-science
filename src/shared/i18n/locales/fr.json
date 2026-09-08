@@ -5081,6 +5081,7 @@
     "Selected: {{selected}} / 20": "Sélectionnées : {{selected}} / 20",
     "Compare selected references": "Comparer les références sélectionnées",
     "PDF added. Refreshing attachment details…": "PDF ajouté. Actualisation des détails de la pièce jointe…",
-    "You can close this dialog. The download continues in the background; reopen it to see progress.": "Vous pouvez fermer cette fenêtre. Le téléchargement continue en arrière-plan; rouvrez-la pour voir sa progression."
+    "You can close this dialog. The download continues in the background; reopen it to see progress.": "Vous pouvez fermer cette fenêtre. Le téléchargement continue en arrière-plan; rouvrez-la pour voir sa progression.",
+    "Local computer": "Ordinateur local"
   }
 }

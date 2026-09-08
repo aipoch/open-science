@@ -484,6 +484,8 @@
 }
 .search-detail-actions {
   display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
   flex-shrink: 0;
   justify-content: flex-end;
   padding: 10px 22px 14px;
@@ -496,7 +498,15 @@
   font-size: 11px;
 }
 .search-message-content {
-  padding-top: 22px;
+  padding-top: 6px;
+  overflow-wrap: anywhere;
+}
+::highlight(global-search-content) {
+  background-color: color-mix(in oklab, var(--color-amber-200) 65%, var(--bg-000));
+  color: var(--foreground);
+}
+.dark ::highlight(global-search-content) {
+  background-color: var(--color-amber-900);
 }
 .search-file-preview {
   width: 100%;
@@ -559,31 +569,6 @@
 .search-file-preview .saved-notebook-preview pre {
   font-size: 11px;
 }
-.search-message-text {
-  font-size: 13px;
-  line-height: 25px;
-}
-.search-message-excerpt {
-  position: relative;
-  height: 175px;
-  overflow: hidden;
-  mask-image: linear-gradient(
-    to bottom,
-    transparent,
-    black 36px,
-    black calc(100% - 36px),
-    transparent
-  );
-}
-@media (min-width: 1400px) {
-  .search-message-text {
-    font-size: 14px;
-    line-height: 27px;
-  }
-  .search-message-excerpt {
-    height: 189px;
-  }
-}
 .search-details-metadata {
   display: grid;
   grid-template-columns: 64px minmax(0, 1fr);
@@ -616,13 +601,6 @@
   .search-category-chip svg {
     display: none;
   }
-  .search-message-text {
-    font-size: 12px;
-    line-height: 24px;
-  }
-  .search-message-excerpt {
-    height: 168px;
-  }
   .search-detail-header {
     padding: 11px 18px 9px;
   }
@@ -648,13 +626,6 @@
   }
 }
 @media (max-width: 740px) {
-  .search-message-text {
-    font-size: 13px;
-    line-height: 25px;
-  }
-  .search-message-excerpt {
-    height: 175px;
-  }
   .search-recent-file-thumb {
     height: 96px;
   }

@@ -5,6 +5,7 @@ import {
   File,
   Folder,
   MessageCircle,
+  Monitor,
   PanelRightClose,
   Upload
 } from 'lucide-react'
@@ -13,6 +14,7 @@ import { formatDateTime, formatRelativeTime } from '@/lib/format-datetime'
 import { resolveLocaleFromTags } from '../../../../shared/locale'
 import { formatBytes } from '../../../../shared/update'
 import type { Project } from '../../../../shared/projects'
+import { STANDALONE_UPLOAD_SESSION_ID } from '../../../../shared/uploads'
 import {
   resultTitle,
   messageTitle,
@@ -80,7 +82,7 @@ export const SearchDetailHeader = ({
           ? result.item.originSession?.title
           : undefined
   const fileCountLabel = fileCountUnavailable
-    ? t('Some results are unavailable.')
+    ? undefined
     : fileCount === undefined
       ? t('Loading…')
       : t('{{count}} files', { count: fileCount, defaultValue_one: '{{count}} file' })
@@ -136,8 +138,12 @@ export const SearchDetailHeader = ({
                 defaultValue_one: '{{count}} session'
               })}
             </span>
-            <span aria-hidden="true">·</span>
-            <span>{fileCountLabel}</span>
+            {fileCountLabel && (
+              <>
+                <span aria-hidden="true">·</span>
+                <span>{fileCountLabel}</span>
+              </>
+            )}
             <span aria-hidden="true">·</span>
             <time
               dateTime={new Date(result.item.updatedAt).toISOString()}
@@ -160,11 +166,18 @@ export const SearchDetailHeader = ({
             <span>{t('Library')}</span>
           </span>
         )}
-        {sessionLabel && (
-          <span className="search-detail-context-part" title={sessionLabel}>
-            <MessageCircle aria-hidden="true" />
-            <span>{sessionLabel}</span>
+        {result.kind === 'uploads' && result.item.sessionId === STANDALONE_UPLOAD_SESSION_ID ? (
+          <span className="search-detail-context-part">
+            <Monitor aria-hidden="true" />
+            <span>{t('Local computer')}</span>
           </span>
+        ) : (
+          sessionLabel && (
+            <span className="search-detail-context-part" title={sessionLabel}>
+              <MessageCircle aria-hidden="true" />
+              <span>{sessionLabel}</span>
+            </span>
+          )
         )}
         {result.kind === 'messages' && (
           <span>
@@ -199,7 +212,7 @@ export const SearchDetailHeader = ({
               defaultValue_one: '{{count}} message'
             })}
           </span>
-          <span>{fileCountLabel}</span>
+          {fileCountLabel && <span>{fileCountLabel}</span>}
         </div>
       )}
     </header>

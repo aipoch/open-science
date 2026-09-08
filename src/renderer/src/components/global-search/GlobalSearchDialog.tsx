@@ -489,7 +489,7 @@ export const GlobalSearchDialog = ({
       typeof fileCount === 'number'
         ? t('{{count}} files', { count: fileCount, defaultValue_one: '{{count}} file' })
         : fileCount === null
-          ? t('Some results are unavailable.')
+          ? undefined
           : t('Loading…')
     if (result.kind === 'projects')
       return [
@@ -499,7 +499,9 @@ export const GlobalSearchDialog = ({
         }),
         fileSummary,
         formatRelativeTime(result.item.updatedAt, locale)
-      ].join(' · ')
+      ]
+        .filter(Boolean)
+        .join(' · ')
     if (result.kind === 'library')
       return 'item' in result.item
         ? [
@@ -528,7 +530,9 @@ export const GlobalSearchDialog = ({
               defaultValue_one: '{{count}} message'
             }),
             fileSummary
-          ].join(' · ')
+          ]
+            .filter(Boolean)
+            .join(' · ')
         : [
             project,
             (() => {

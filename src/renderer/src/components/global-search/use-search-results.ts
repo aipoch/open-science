@@ -136,6 +136,7 @@ export const useSearchResults = (
             otherProjectIds: [],
             excludedSessionIds,
             filenameContains: query,
+            searchContent: category === 'uploads',
             updatedAfter,
             sort,
             format,

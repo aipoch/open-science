@@ -32,8 +32,12 @@ vi.mock('@/pages/workspace/previews/PreviewFileContent', async () => {
   const { usePreviewActions } =
     await import('@/pages/workspace/preview-actions/preview-action-hooks')
   return {
-    PreviewFileContent: ({ item }: { item: { name: string } }) => (
-      <div data-testid="file-content" data-preview-context={!!usePreviewActions()}>
+    PreviewFileContent: ({ item }: { item: { name: string; selectedVersionId?: string } }) => (
+      <div
+        data-testid="file-content"
+        data-preview-context={!!usePreviewActions()}
+        data-version-id={item.selectedVersionId}
+      >
         {item.name}
       </div>
     )
@@ -69,6 +73,81 @@ const selectFilter = async (name: string, option: string): Promise<void> => {
 }
 
 describe('GlobalSearchDialog', () => {
+  it('keeps a body match pinned to the searched file Version', async () => {
+    vi.mocked(window.api.projectFiles.searchArtifacts).mockResolvedValue({
+      primary: {
+        items: [
+          { ...upload, name: 'notes.md', contentMatch: { offset: 0, startingLineNumber: 1 } }
+        ],
+        totalCount: 1
+      },
+      other: [],
+      isIndexComplete: true
+    })
+    await renderSearch()
+    clickRow('uploads')
+    expect(
+      detail().querySelector('[data-testid="file-content"]')?.getAttribute('data-version-id')
+    ).toBe('version-1')
+  })
+  it('labels standalone uploads as Local computer without a message navigation action', async () => {
+    vi.mocked(window.api.projectFiles.searchArtifacts).mockResolvedValue({
+      primary: {
+        items: [{ ...upload, sessionId: 'standalone-uploads', originSession: undefined }],
+        totalCount: 1
+      },
+      other: [],
+      isIndexComplete: true
+    })
+    await renderSearch()
+    clickRow('uploads')
+    expect(detail().querySelector('.search-detail-context')?.textContent).toContain(
+      'AlphaLocal computer'
+    )
+    expect(screen.queryByRole('button', { name: 'Jump to message' })).toBeNull()
+    act(() => screen.getByRole('tab', { name: 'File information' }).click())
+    expect(detail().querySelector('[role="tabpanel"]')?.textContent).toContain('Local computer')
+  })
+  it('shows recent project files and the project agent instructions in separate tabs', async () => {
+    useProjectStore.setState((state) => ({
+      projects: state.projects.map((project) => ({
+        ...project,
+        agentContext: 'Cite primary sources.'
+      }))
+    }))
+    await renderSearch()
+    clickRow('projects')
+    act(() => screen.getByRole('tab', { name: 'Recent files' }).click())
+    await waitFor(() => expect(detail().querySelector('.search-recent-file')).not.toBeNull())
+    act(() => screen.getByRole('tab', { name: 'Details' }).click())
+    expect(detail().textContent).toContain('Wave research')
+    expect(detail().textContent).toContain('Cite primary sources.')
+  })
+  it('renders the complete matched message as Markdown', async () => {
+    vi.mocked(window.api.sessions.searchMessages).mockResolvedValue({
+      items: [{ ...message, content: '## Research\n\n**sin** matched\n\nFinal paragraph.' }],
+      totalCount: 1,
+      isComplete: true
+    })
+    await renderSearch()
+    clickRow('messages')
+    await waitFor(() => expect(detail().querySelector('h2')?.textContent).toBe('Research'))
+    expect(detail().querySelector('.search-message-content')?.textContent).toContain('sin matched')
+    expect(detail().textContent).toContain('Final paragraph.')
+    expect(detail().querySelector('.search-message-excerpt')).toBeNull()
+  })
+  it('keeps file preview content selectable and exposes full screen and context actions as buttons', async () => {
+    await renderSearch()
+    clickRow('uploads')
+    expect(detail().querySelector('.search-file-preview-open')).toBeNull()
+    fireEvent.click(detail().querySelector('[data-testid="file-content"]')!)
+    expect(document.querySelector('[data-testid="library-file-dialog"]')).toBeNull()
+    expect(screen.getByRole('button', { name: 'Jump to message' }).textContent).toContain(
+      'Jump to message'
+    )
+    act(() => screen.getByRole('button', { name: 'Open full screen preview' }).click())
+    expect(document.querySelector('[data-testid="library-file-dialog"]')).not.toBeNull()
+  })
   it('opens a recent file in a large dialog while retaining the search and selected session', async () => {
     await renderSearch()
     clickRow('sessions')
@@ -134,7 +213,7 @@ describe('GlobalSearchDialog', () => {
     window.api.sessions.loadOne = vi.fn().mockResolvedValue(session)
     await renderSearch()
     clickRow('uploads')
-    act(() => screen.getByRole('button', { name: 'View in context for input.csv' }).click())
+    act(() => screen.getByRole('button', { name: 'Jump to message' }).click())
     await waitFor(() =>
       expect(useSearchMessageFocusStore.getState().pending?.messageId).toBe('upload-message')
     )
@@ -144,7 +223,7 @@ describe('GlobalSearchDialog', () => {
     window.api.sessions.loadOne = vi.fn().mockResolvedValue(undefined)
     await renderSearch()
     clickRow('uploads')
-    act(() => screen.getByRole('button', { name: 'View in context for input.csv' }).click())
+    act(() => screen.getByRole('button', { name: 'Jump to message' }).click())
     await waitFor(() =>
       expect(screen.getByRole('alert').textContent).toBe(
         'The source message is no longer available.'
@@ -351,11 +430,12 @@ describe('GlobalSearchDialog', () => {
       await renderSearch()
       clickRow('projects')
       await waitFor(() =>
-        expect(detail().querySelector('header')?.textContent).toContain(
-          'Some results are unavailable.'
-        )
+        expect(detail().querySelector('header')?.textContent).not.toContain('Loading…')
       )
       expect(detail().querySelector('header')?.textContent).not.toContain('0 files')
+      expect(detail().querySelector('header')?.textContent).not.toContain(
+        'Some results are unavailable.'
+      )
       expect(detail().querySelector('[role="tabpanel"]')?.textContent).toContain('Alpha session 0')
     }
   )
@@ -592,7 +672,9 @@ describe('GlobalSearchDialog', () => {
     await renderSearch()
     await search('sin')
     clickRow('messages')
-    expect(detail().querySelector('mark')?.textContent).toBe('sin')
+    expect(
+      detail().querySelector('.search-message-content')?.getAttribute('data-search-match-count')
+    ).toBe('1')
     expect(detail().querySelectorAll('[role="tab"]')).toHaveLength(0)
     act(() => button('Jump to message').click())
     expect(useSearchMessageFocusStore.getState().pending).toMatchObject({
@@ -611,7 +693,7 @@ describe('GlobalSearchDialog', () => {
       act(() => button('File information').click())
       expect(detail().querySelector('[data-testid="file-content"]')).toBeNull()
       expect(detail().textContent).toContain('File size')
-      act(() => button('Open file').click())
+      act(() => button('Open full screen preview').click())
       expect(document.querySelector('[data-testid="library-file-dialog"]')?.textContent).toBe(
         category === 'uploads' ? upload.name : artifact.name
       )

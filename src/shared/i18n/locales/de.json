@@ -4919,6 +4919,7 @@
     "Selected: {{selected}} / 20": "Ausgewählt: {{selected}} / 20",
     "Compare selected references": "Ausgewählte Literaturangaben vergleichen",
     "PDF added. Refreshing attachment details…": "PDF hinzugefügt. Anhangdetails werden aktualisiert…",
-    "You can close this dialog. The download continues in the background; reopen it to see progress.": "Sie können diesen Dialog schließen. Der Download läuft im Hintergrund weiter. Öffnen Sie ihn erneut, um den Fortschritt zu sehen."
+    "You can close this dialog. The download continues in the background; reopen it to see progress.": "Sie können diesen Dialog schließen. Der Download läuft im Hintergrund weiter. Öffnen Sie ihn erneut, um den Fortschritt zu sehen.",
+    "Local computer": "Lokaler Computer"
   }
 }

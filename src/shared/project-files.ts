@@ -26,6 +26,7 @@ export type ProjectFileItem = {
   mtimeMs?: number
   sortAtMs: number
   originSession?: ProjectFileOriginSession
+  contentMatch?: { offset: number; startingLineNumber: number }
 }
 
 export type ProjectFilesSearch = {
@@ -79,6 +80,7 @@ export type ResolveProjectFileRequest = {
 // The primary Project set is one paged collection. Home searches all active Projects; Workspace
 // pages its current Project and requests a bounded sample from Other Projects.
 export type SearchArtifactsRequest = {
+  searchContent?: boolean
   updatedAfter?: number
   format?: SearchFileFormat
   sort?: SearchSort

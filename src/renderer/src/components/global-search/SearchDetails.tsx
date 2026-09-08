@@ -20,6 +20,8 @@ import type { PreviewFileItem } from '@/stores/preview-workbench-store'
 import type { ProjectFileItem } from '../../../../shared/project-files'
 import type { LiteratureItemView } from '../../../../shared/literature'
 import type { Project } from '../../../../shared/projects'
+import { STANDALONE_UPLOAD_SESSION_ID } from '../../../../shared/uploads'
+import { AgentMarkdown } from '@/components/streamdown/AgentMarkdown'
 import {
   filePreviewItem,
   literaturePreviewItem,
@@ -28,7 +30,8 @@ import {
   type SearchResult,
   type SearchSession
 } from './search-result'
-import { MessageSearchExcerpt, SearchHighlight } from './SearchHighlight'
+import { SearchHighlight } from './SearchHighlight'
+import { SearchContentHighlight } from './SearchContentHighlight'
 
 type Props = {
   result: SearchResult
@@ -58,7 +61,10 @@ export const SearchDetails = ({
   const [previewDialog, setPreviewDialog] = useState<PreviewFileItem>()
   const [files, setFiles] = useState<ProjectFileItem[]>([])
   const previewReader = useProjectFilePreviewReader()
-  const visibleFiles = useMemo(() => (tab === 'content' ? files : []), [files, tab])
+  const visibleFiles = useMemo(
+    () => (tab === 'files' || (tab === 'content' && result.kind === 'sessions') ? files : []),
+    [files, tab, result.kind]
+  )
   const filePreviews = useProjectFilePreviews(visibleFiles, previewReader)
   const [fileCount, setFileCount] = useState<number>()
   const [fileCountUnavailable, setFileCountUnavailable] = useState(false)
@@ -105,8 +111,8 @@ export const SearchDetails = ({
           .slice(0, 10)
       : []
   useLayoutEffect(() => {
-    if (contentRef.current) contentRef.current.scrollTop = 0
-  }, [identity, tab])
+    if (contentRef.current && result.kind !== 'messages') contentRef.current.scrollTop = 0
+  }, [identity, tab, result.kind])
 
   useEffect(() => {
     let active = true
@@ -121,6 +127,21 @@ export const SearchDetails = ({
         })
         .catch(() => {
           if (active) setFileCountUnavailable(true)
+        })
+      void window.api.projectFiles
+        .searchArtifacts({
+          primaryProjectIds: [result.item.id],
+          otherProjectIds: [],
+          source: 'all',
+          sort: 'recent',
+          primaryLimit: 10,
+          otherLimit: 0
+        })
+        .then((page) => {
+          if (active) setFiles(page.primary.items)
+        })
+        .catch(() => {
+          if (active) setFiles([])
         })
     } else if (result.kind === 'sessions') {
       void window.api.projectFiles
@@ -212,6 +233,7 @@ export const SearchDetails = ({
                       : t('Abstract')
                     : t('Content preview')
           },
+          ...(result.kind === 'projects' ? [{ id: 'files', label: t('Recent files') }] : []),
           {
             id: 'details',
             label:
@@ -238,7 +260,7 @@ export const SearchDetails = ({
             ? isCollection
               ? t('Open collection')
               : t('Open literature')
-            : t('Open file')
+            : t('Open full screen preview')
   const renderFiles = (): React.JSX.Element => (
     <div className="search-recent-file-grid">
       {files.map((file) => (
@@ -274,8 +296,16 @@ export const SearchDetails = ({
     </div>
   )
   // Preview and source navigation are separate controls so opening a file retains the search.
-  const renderLocateFile = (file: ProjectFileItem): React.JSX.Element | null => {
+  const renderLocateFile = (file: ProjectFileItem, compact = true): React.JSX.Element | null => {
+    if (file.sessionId === STANDALONE_UPLOAD_SESSION_ID) return null
     if (file.originSession && file.originSession.state !== 'active') return null
+    if (!compact)
+      return (
+        <Button size="sm" variant="secondary" onClick={() => onLocateFile(file)}>
+          {t('Jump to message')}
+          <ArrowUpRight className="ml-1 size-3.5" />
+        </Button>
+      )
     return (
       <TooltipProvider delayDuration={300}>
         <Tooltip>
@@ -302,9 +332,23 @@ export const SearchDetails = ({
         return <></>
       case 'projects':
         return (
-          <p className="search-detail-abstract">
-            <SearchHighlight text={result.item.description || t('No description')} query={query} />
-          </p>
+          <div className="space-y-5">
+            <div>
+              <p className="text-xs text-muted-foreground">{t('Description')}</p>
+              <p className="search-detail-abstract">
+                <SearchHighlight
+                  text={result.item.description || t('No description')}
+                  query={query}
+                />
+              </p>
+            </div>
+            {result.item.agentContext && (
+              <div>
+                <p className="mb-2 text-xs text-muted-foreground">{t('Agent Context')}</p>
+                <AgentMarkdown content={result.item.agentContext} />
+              </div>
+            )}
+          </div>
         )
       case 'sessions':
         return (
@@ -330,7 +374,11 @@ export const SearchDetails = ({
             <dt>{t('Project')}</dt>
             <dd>{project?.name}</dd>
             <dt>{t('Session')}</dt>
-            <dd>{session?.title ?? result.item.originSession?.title}</dd>
+            <dd>
+              {result.item.sessionId === STANDALONE_UPLOAD_SESSION_ID
+                ? t('Local computer')
+                : (session?.title ?? result.item.originSession?.title)}
+            </dd>
             <dt>{t('Source')}</dt>
             <dd>{result.kind === 'uploads' ? t('Uploaded files') : t('Generated files')}</dd>
             <dt>{t('Updated')}</dt>
@@ -438,15 +486,27 @@ export const SearchDetails = ({
         aria-labelledby={tabs.length ? `search-detail-tab-${tab}` : undefined}
       >
         {result.kind === 'messages' ? (
-          <div className="search-message-content">
-            <MessageSearchExcerpt text={result.item.content} query={query} />
-          </div>
+          <SearchContentHighlight query={query} className="search-message-content">
+            <AgentMarkdown content={result.item.content} />
+          </SearchContentHighlight>
         ) : tab === 'details' ? (
           details()
         ) : tab === 'preview' ||
           (preview && (result.kind === 'uploads' || result.kind === 'generated')) ? (
-          preview && <SearchFilePreview key={preview.id} item={preview} onOpen={openPreview} />
-        ) : result.kind === 'projects' ? (
+          preview && (
+            <SearchFilePreview
+              key={preview.id}
+              item={preview}
+              query={query}
+              contentMatch={
+                result.kind === 'uploads' || result.kind === 'generated'
+                  ? result.item.contentMatch
+                  : undefined
+              }
+              onOpen={openPreview}
+            />
+          )
+        ) : result.kind === 'projects' && tab === 'content' ? (
           <div>
             <div className="search-recent-caption">
               <span>{t('Recent sessions')}</span>
@@ -474,7 +534,7 @@ export const SearchDetails = ({
               <p className="search-recent-empty">{t('No recent content')}</p>
             )}
           </div>
-        ) : result.kind === 'sessions' ? (
+        ) : result.kind === 'sessions' || (result.kind === 'projects' && tab === 'files') ? (
           <>
             <div className="search-recent-caption">
               <span>{t('Recent files')}</span>
@@ -527,7 +587,7 @@ export const SearchDetails = ({
       </div>
       <footer className="search-detail-actions">
         {(result.kind === 'uploads' || result.kind === 'generated') &&
-          renderLocateFile(result.item)}
+          renderLocateFile(result.item, false)}
         <Button
           size="sm"
           className="search-detail-open"
