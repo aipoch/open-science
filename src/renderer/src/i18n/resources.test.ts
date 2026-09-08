@@ -1732,7 +1732,7 @@ describe('mandatory product glossary', () => {
       readFileSync(join(__dirname, '..', '..', '..', '..', 'package.json'), 'utf8')
     ) as { version: string }
     // The banner assertion tracks the repo version instead of a hardcoded bump target.
-    expect(readme).toContain(`Open Science v${rootPackage.version} veröffentlicht`)
+    expect(readme).toContain(`AIPOCH Open-Science v${rootPackage.version} veröffentlicht`)
     expect(readme).toContain('30-Tage-Aktivitäts-Heatmap')
     expect(readme).toContain('10 GB')
     expect(readme).toContain('22 hervorgehobenen')
