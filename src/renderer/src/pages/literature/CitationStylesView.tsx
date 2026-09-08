@@ -34,6 +34,7 @@ const CitationStylesView = ({
   const [loading, setLoading] = useState(styles === undefined)
   const [importing, setImporting] = useState(false)
   const [deletingId, setDeletingId] = useState<string>()
+  const mutating = importing || deletingId !== undefined
   const [previewStates, setPreviewStates] = useState<Record<string, CitationStylePreviewState>>({})
   const [error, setError] = useState<string>()
   const previewRequestsRef = useRef(new Set<string>())
@@ -172,6 +173,7 @@ const CitationStylesView = ({
   )
 
   const importStyle = async (file: File): Promise<void> => {
+    if (mutating) return
     setError(undefined)
     if (!file.name.toLowerCase().endsWith('.csl')) {
       setError(t('Choose a .csl file.'))
@@ -196,6 +198,7 @@ const CitationStylesView = ({
   }
 
   const deleteStyle = async (styleId: string): Promise<void> => {
+    if (mutating) return
     setError(undefined)
     setDeletingId(styleId)
     try {
@@ -363,7 +366,7 @@ const CitationStylesView = ({
             type="button"
             variant="ghost"
             size="icon-sm"
-            disabled={deletingId !== undefined}
+            disabled={mutating}
             aria-label={t('Delete {{style}}', { style: style.title })}
             title={t('Delete')}
             onClick={() => void deleteStyle(style.id)}
@@ -403,6 +406,7 @@ const CitationStylesView = ({
             <input
               ref={inputRef}
               type="file"
+              disabled={mutating}
               accept=".csl,application/xml,text/xml"
               className="sr-only"
               aria-label={t('Import CSL')}
@@ -412,7 +416,7 @@ const CitationStylesView = ({
                 if (file) void importStyle(file)
               }}
             />
-            <Button type="button" disabled={importing} onClick={() => inputRef.current?.click()}>
+            <Button type="button" disabled={mutating} onClick={() => inputRef.current?.click()}>
               {importing ? (
                 <LoaderCircle
                   className="size-4 animate-spin motion-reduce:animate-none"
@@ -435,7 +439,7 @@ const CitationStylesView = ({
           </p>
         ) : null}
 
-        {loading ? (
+        {loading && styles === undefined ? (
           <div role="status" className="mt-8 flex items-center gap-2 text-sm text-muted-foreground">
             <LoaderCircle
               className="size-4 animate-spin motion-reduce:animate-none"
