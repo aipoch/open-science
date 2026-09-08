@@ -18,7 +18,7 @@ describe('Literature inbox integrity migration', () => {
     if (root) await rm(root, { recursive: true, force: true })
   })
 
-  it.each(['released', 'current unledgered'] as const)(
+  it.each(['released', 'current unledgered', 'pre-ledger released'] as const)(
     'preserves known origins and dismissal when upgrading %s schema',
     async (schema) => {
       root = await mkdtemp(join(tmpdir(), 'literature-inbox-upgrade-'))
@@ -44,7 +44,7 @@ describe('Literature inbox integrity migration', () => {
       const before = await client.literatureInboxCandidate.findUniqueOrThrow({
         where: { id: staged.id }
       })
-      if (schema === 'released') {
+      if (schema !== 'current unledgered') {
         // Reconstruct the released source/context shape; migration history fixtures live here.
         await client.$executeRawUnsafe('DROP TABLE "LiteratureCandidateDiscovery"')
         await client.$executeRawUnsafe(
@@ -60,11 +60,13 @@ describe('Literature inbox integrity migration', () => {
         await client.literatureCandidateDiscovery.deleteMany()
       }
       await client.$executeRawUnsafe(
-        'DELETE FROM "_open_science_migrations" WHERE id = \'0037_literature_inbox_integrity\''
+        schema === 'pre-ledger released'
+          ? 'DELETE FROM "_open_science_migrations"'
+          : 'DELETE FROM "_open_science_migrations" WHERE id = \'0037_literature_inbox_integrity\''
       )
 
       expect(await migrateApplicationDatabase(client)).toMatchObject({
-        applied: ['0037_literature_inbox_integrity']
+        applied: expect.arrayContaining(['0037_literature_inbox_integrity'])
       })
       expect(await client.literatureSourceRecord.findMany()).toEqual(sources)
       expect(

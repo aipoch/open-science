@@ -2093,6 +2093,10 @@ const migrateApplicationDatabaseWithManifest = async (
       allowedSuffixChecks,
       adoptsManagedFileVersionFoundation,
       {
+        // The frozen Literature foundation verifies this released index before its replacement.
+        ...(adoptsLiteratureFoundation
+          ? { indexNames: ['LiteratureSourceRecord_provider_externalId_key'] }
+          : {}),
         ...(adoptsAgentMemoryProjectScope || adoptsBackgroundResultDelivery
           ? {
               tableNames: [
