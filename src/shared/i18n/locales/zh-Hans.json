@@ -4699,6 +4699,15 @@
     "File reference {{number}}: {{title}}": "文件中的第 {{number}} 篇文献：{{title}}",
     "Check author names. Original text is kept in Extra.": "请核对作者姓名。原文已保留在附加信息中。",
     "Preferred for {{scheme}}": "{{scheme}} 首选值",
-    "All identifiers are kept. Preferred values come from the kept reference when available.": "所有标识符均会保留。如有可用值，将优先采用保留文献中的首选值。"
+    "All identifiers are kept. Preferred values come from the kept reference when available.": "所有标识符均会保留。如有可用值，将优先采用保留文献中的首选值。",
+    "PDF passages": "PDF 片段",
+    "Not screened": "未筛选",
+    "Metadata only": "仅元数据",
+    "View cited references": "查看引用文献",
+    "View full corpus": "查看全部语料",
+    "Snapshot unavailable": "快照不可用",
+    "This older record does not verify delivered evidence or preserve every corpus snapshot.": "此旧记录未核实返回的证据，也未保存全部语料快照。",
+    "Evidence counts describe content returned to the Agent, not completed reading. Candidates are Agent-reported and checked against retrieved records. Search counts below describe individual result pages.": "证据数量表示返回给智能体的内容，不代表已完成阅读。候选数量由智能体申报，并根据检索记录校验。下方检索数量分别对应各次返回的结果页。",
+    "Saved reference metadata. Attachments reflect the current Library entry.": "已保存的文献元数据。附件来自当前文献库条目。"
   }
 }

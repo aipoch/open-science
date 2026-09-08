@@ -97,7 +97,7 @@ const ArtifactLiteratureDetailDialog = ({
   const resolvedReference =
     reference && liveReference.itemId === reference.itemId ? liveReference : undefined
   const loadStatus = resolvedReference?.status ?? (reference ? 'loading' : 'idle')
-  const item = resolvedReference?.item?.item ?? reference?.item
+  const item = reference?.item
   const attachments = resolvedReference?.item?.attachments ?? []
   const itemTypeLabels: Record<LiteratureItemType, string> = {
     journalArticle: t('Journal article'),
@@ -166,6 +166,9 @@ const ArtifactLiteratureDetailDialog = ({
             </div>
 
             <div className="min-h-0 flex-1 divide-y divide-border-300/80 overflow-y-auto px-5 text-sm">
+              <p className="py-3 text-xs text-muted-foreground">
+                {t('Saved reference metadata. Attachments reflect the current Library entry.')}
+              </p>
               {loadStatus === 'missing' || loadStatus === 'error' ? (
                 <p
                   role="alert"

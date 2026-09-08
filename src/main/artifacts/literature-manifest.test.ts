@@ -2,6 +2,7 @@ import type { PrismaClient } from '@prisma/client'
 import { describe, expect, it, vi } from 'vitest'
 
 import { ArtifactLiteratureManifestOwner } from './literature-manifest'
+import type { ArtifactLiteratureRequest } from '../../shared/artifact-literature'
 
 const literatureRow = (metadataRevision = 3): Record<string, unknown> => ({
   id: 'item-1',
@@ -124,9 +125,18 @@ describe('ArtifactLiteratureManifestOwner', () => {
           {
             scope: 'project',
             query: 'retrieval augmented generation',
-            resultCount: 2,
+            offset: 0,
+            resultCount: 1,
             totalCount: 2,
-            complete: true
+            complete: false
+          },
+          {
+            scope: 'project',
+            query: 'retrieval augmented generation',
+            offset: 1,
+            resultCount: 1,
+            totalCount: 2,
+            complete: false
           }
         ],
         coverage: {
@@ -179,4 +189,137 @@ describe('ArtifactLiteratureManifestOwner', () => {
       citations: [{ citationId: 'citation-1', itemId: 'item-1', metadataRevision: 4 }]
     })
   })
+})
+
+const evidenceContext = {
+  projectId: 'project-1',
+  appSessionId: 'session-1',
+  promptMessageId: 'message-1'
+}
+
+const corpusRequest = (itemIds = ['item-1']): ArtifactLiteratureRequest => ({
+  styleId: 'apa',
+  locale: 'en-US',
+  corpus: { itemIds, candidateCount: itemIds.length },
+  citations: [{ citationId: 'citation-1', itemId: 'item-1' }]
+})
+
+const recordResults = (
+  manifestOwner: ArtifactLiteratureManifestOwner,
+  itemIds: string[],
+  totalCount = itemIds.length
+): void => {
+  manifestOwner.recordSearch({
+    ...evidenceContext,
+    scope: 'project',
+    query: 'retrieval',
+    offset: 0,
+    limit: 20,
+    result: {
+      items: itemIds.map((id) => ({
+        id,
+        metadataRevision: 3,
+        item: {
+          itemType: 'journalArticle' as const,
+          title: 'A cited paper',
+          abstract: '',
+          issuedText: '2026',
+          containerTitle: 'Journal',
+          shortTitle: '',
+          language: 'en',
+          rights: '',
+          url: '',
+          extra: '',
+          typeFields: {},
+          creators: [],
+          identifiers: []
+        },
+        projectIds: ['project-1'],
+        collectionIds: [],
+        attachments: [],
+        lifecycle: 'active' as const,
+        createdAt: 1,
+        updatedAt: 2
+      })),
+      totalCount,
+      hasMore: totalCount > itemIds.length
+    }
+  })
+}
+
+describe('Literature evidence delivered to a review', () => {
+  it('does not count a metadata-only search result as delivered abstract content', async () => {
+    const manifestOwner = owner()
+    recordResults(manifestOwner, ['item-1'])
+    const prepared = await manifestOwner.prepare(corpusRequest(), evidenceContext)
+    const manifest = JSON.parse(prepared!.manifestJson)
+
+    expect(manifest.corpus.coverage.abstractOnlyCount).toBe(0)
+    expect(manifest.corpus.coverage.fullTextCount).toBe(0)
+  })
+
+  it('retains bibliographic content for included papers that are not cited', async () => {
+    const uncited = {
+      ...literatureRow(),
+      id: 'item-2',
+      title: 'Uncited included study',
+      abstract: 'Frozen uncited findings.'
+    }
+    const manifestOwner = new ArtifactLiteratureManifestOwner(
+      async () =>
+        ({
+          literatureItem: { findMany: vi.fn(async () => [literatureRow(), uncited]) }
+        }) as unknown as PrismaClient
+    )
+    recordResults(manifestOwner, ['item-1', 'item-2'])
+    const prepared = await manifestOwner.prepare(
+      corpusRequest(['item-1', 'item-2']),
+      evidenceContext
+    )
+    // Observe the serialized artifact boundary, without prescribing where snapshots are stored.
+    uncited.title = 'Later catalog title'
+    uncited.abstract = 'Later catalog findings.'
+    expect(prepared!.manifestJson).toContain('Uncited included study')
+    expect(prepared!.manifestJson).toContain('Frozen uncited findings.')
+  })
+
+  it('recognizes a newly returned paper after repeated identical searches', async () => {
+    const manifestOwner = owner()
+    const freshOwner = owner()
+    recordResults(freshOwner, ['item-1'])
+    await expect(freshOwner.prepare(corpusRequest(), evidenceContext)).resolves.toBeDefined()
+    for (let i = 0; i < 100; i++) recordResults(manifestOwner, ['item-2'])
+    recordResults(manifestOwner, ['item-1'])
+    await expect(manifestOwner.prepare(corpusRequest(), evidenceContext)).resolves.toBeDefined()
+  })
+
+  it('can freeze a still-existing paper when repeated query results change membership', async () => {
+    const manifestOwner = owner()
+    recordResults(manifestOwner, ['item-1'], 1)
+    recordResults(manifestOwner, ['item-2'], 1)
+    await expect(manifestOwner.prepare(corpusRequest(), evidenceContext)).resolves.toBeDefined()
+  })
+})
+
+it('counts delivered abstracts, keeps PDF precedence, and refuses unrecorded distinct searches', async () => {
+  const manifestOwner = owner()
+  recordResults(manifestOwner, ['item-1'])
+  manifestOwner.recordAbstractRead({ ...evidenceContext, itemId: 'item-1' })
+  let prepared = await manifestOwner.prepare(corpusRequest(), evidenceContext)
+  expect(JSON.parse(prepared!.manifestJson).corpus.coverage).toMatchObject({
+    abstractOnlyCount: 1,
+    fullTextCount: 0,
+    metadataOnlyCount: 0
+  })
+  manifestOwner.recordPdfRead({ ...evidenceContext, itemId: 'item-1' })
+  prepared = await manifestOwner.prepare(corpusRequest(), evidenceContext)
+  expect(JSON.parse(prepared!.manifestJson).corpus.coverage).toMatchObject({
+    abstractOnlyCount: 0,
+    fullTextCount: 1,
+    metadataOnlyCount: 0
+  })
+  for (let i = 1; i < 100; i++) recordResults(manifestOwner, [`other-${i}`])
+  expect(() => recordResults(manifestOwner, ['one-too-many'])).toThrow('LITERATURE_EVIDENCE_LIMIT')
+  expect(() => recordResults(manifestOwner, ['item-1'])).not.toThrow()
+  await expect(manifestOwner.prepare(corpusRequest(), evidenceContext)).resolves.toBeDefined()
 })

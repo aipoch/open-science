@@ -5013,6 +5013,15 @@
     "File reference {{number}}: {{title}}": "Référence {{number}} du fichier : {{title}}",
     "Check author names. Original text is kept in Extra.": "Vérifiez les noms des auteurs. Le texte original est conservé dans les informations supplémentaires.",
     "Preferred for {{scheme}}": "Valeur préférée pour {{scheme}}",
-    "All identifiers are kept. Preferred values come from the kept reference when available.": "Tous les identifiants sont conservés. Les valeurs préférées proviennent de la référence conservée, si elles sont disponibles."
+    "All identifiers are kept. Preferred values come from the kept reference when available.": "Tous les identifiants sont conservés. Les valeurs préférées proviennent de la référence conservée, si elles sont disponibles.",
+    "PDF passages": "Extraits PDF",
+    "Not screened": "Non examinés",
+    "Metadata only": "Métadonnées seules",
+    "View cited references": "Voir les références citées",
+    "View full corpus": "Voir tout le corpus",
+    "Snapshot unavailable": "Instantané indisponible",
+    "This older record does not verify delivered evidence or preserve every corpus snapshot.": "Cet ancien enregistrement ne vérifie pas les éléments fournis et ne conserve pas tous les instantanés du corpus.",
+    "Evidence counts describe content returned to the Agent, not completed reading. Candidates are Agent-reported and checked against retrieved records. Search counts below describe individual result pages.": "Les nombres décrivent le contenu fourni à l’Agent, pas une lecture achevée. Le nombre de candidats est déclaré par l’Agent et vérifié par rapport aux résultats récupérés. Les nombres ci-dessous correspondent à chaque page de résultats.",
+    "Saved reference metadata. Attachments reflect the current Library entry.": "Métadonnées de la référence enregistrées. Les pièces jointes proviennent de la notice actuelle de la bibliothèque."
   }
 }

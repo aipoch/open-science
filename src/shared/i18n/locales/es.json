@@ -5013,6 +5013,15 @@
     "File reference {{number}}: {{title}}": "Referencia {{number}} del archivo: {{title}}",
     "Check author names. Original text is kept in Extra.": "Revise los nombres de los autores. El texto original se conserva en la información adicional.",
     "Preferred for {{scheme}}": "Valor preferido para {{scheme}}",
-    "All identifiers are kept. Preferred values come from the kept reference when available.": "Se conservan todos los identificadores. Se utilizan los valores preferidos de la referencia conservada cuando están disponibles."
+    "All identifiers are kept. Preferred values come from the kept reference when available.": "Se conservan todos los identificadores. Se utilizan los valores preferidos de la referencia conservada cuando están disponibles.",
+    "PDF passages": "Pasajes del PDF",
+    "Not screened": "Sin evaluar",
+    "Metadata only": "Solo metadatos",
+    "View cited references": "Ver referencias citadas",
+    "View full corpus": "Ver corpus completo",
+    "Snapshot unavailable": "Instantánea no disponible",
+    "This older record does not verify delivered evidence or preserve every corpus snapshot.": "Este registro anterior no verifica las evidencias devueltas ni conserva todas las instantáneas del corpus.",
+    "Evidence counts describe content returned to the Agent, not completed reading. Candidates are Agent-reported and checked against retrieved records. Search counts below describe individual result pages.": "Los recuentos de evidencias describen el contenido devuelto al Agente, no una lectura completada. El Agente declara el número de candidatos, que se comprueba con los registros recuperados. Los recuentos siguientes corresponden a cada página de resultados.",
+    "Saved reference metadata. Attachments reflect the current Library entry.": "Metadatos guardados de la referencia. Los adjuntos corresponden a la entrada actual de la biblioteca."
   }
 }
