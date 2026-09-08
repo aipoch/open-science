@@ -678,9 +678,6 @@
   .global-search-searchbar input {
     font-size: 18px;
   }
-  .search-scope-select {
-    max-width: 96px;
-  }
   .global-search-chips {
     padding: 0 13px 10px;
   }

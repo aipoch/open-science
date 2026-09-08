@@ -17,13 +17,6 @@ import { useShallow } from 'zustand/react/shallow'
 import * as Dialog from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue
-} from '@/components/ui/select'
 import { dialogOverlayClassName, dialogPanelClassName } from '@/components/ui/dialog-chrome'
 import { cn } from '@/lib/utils'
 import { useNavigationStore } from '@/stores/navigation-store'
@@ -635,26 +628,6 @@ export const GlobalSearchDialog = ({
                   <X className="size-4" />
                 </Button>
               )}
-              <Select
-                value={restrictToProject ? 'current' : 'all'}
-                onValueChange={(value) => {
-                  setCurrentProjectOnly(value === 'current')
-                  resetSelection()
-                }}
-              >
-                <SelectTrigger
-                  aria-label={t('Search scope')}
-                  className="search-scope-select w-auto min-w-0 text-xs"
-                >
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent align="end">
-                  <SelectItem value="all">{t('All projects and Library')}</SelectItem>
-                  {view === 'workspace' && activeProjectId && (
-                    <SelectItem value="current">{t('Current project')}</SelectItem>
-                  )}
-                </SelectContent>
-              </Select>
               <Dialog.Close asChild>
                 <Button variant="ghost" size="icon" aria-label={t('Close')} className="size-7">
                   <X className="size-4" />
@@ -711,12 +684,18 @@ export const GlobalSearchDialog = ({
             >
               <SearchResultFilters
                 category={category}
+                scope={restrictToProject ? 'current' : 'all'}
+                canScopeToProject={view === 'workspace' && !!activeProjectId}
                 sort={sort}
                 days={days}
                 subtype={subtype}
                 total={total}
                 shown={rows.length}
                 loading={anyLoading}
+                onScope={(value) => {
+                  setCurrentProjectOnly(value === 'current')
+                  resetSelection()
+                }}
                 onSort={(value) => {
                   setSort(value)
                   resetSelection()
