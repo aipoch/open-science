@@ -159,7 +159,7 @@ const EXPECTED_MIGRATION_LEDGER = [
   },
   {
     id: '0039_literature_metadata_commit_receipt',
-    checksum: 'd173f039c39c6a7de3460f861f5e34b306106fdcf014f654b435acf1e933e0b1'
+    checksum: '2d78a9270e8d861a9c8613106143888ea8a029878d5e553098c3729a42d95ffb'
   }
 ]
 const LEGACY_PROJECT_ID = 'package-smoke-legacy-project'

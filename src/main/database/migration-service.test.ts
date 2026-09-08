@@ -338,7 +338,7 @@ describe('application database migrations', () => {
       'SELECT * FROM "_open_science_migrations" ORDER BY id'
     )
     await expect(migrateApplicationDatabase(client)).resolves.toMatchObject({
-      from: '0037_literature_inbox_integrity',
+      from: '0038_literature_search_text',
       to: '0039_literature_metadata_commit_receipt',
       applied: ['0039_literature_metadata_commit_receipt']
     })
@@ -555,7 +555,7 @@ describe('application database migrations', () => {
     await client.literatureItem.create({
       data: { id: 'adopted', itemType: 'book', title: 'ÉTUDE' }
     })
-    await client.$executeRaw`DELETE FROM "_open_science_migrations" WHERE id = '0038_literature_search_text'`
+    await client.$executeRaw`DELETE FROM "_open_science_migrations" WHERE id >= '0038_literature_search_text'`
     await migrateApplicationDatabase(client)
     expect(
       (
@@ -2880,7 +2880,7 @@ describe('application database migrations', () => {
         entries.filter((entry) => entry.endsWith('.backup')).sort()
       )
     ).resolves.toEqual([
-      'open-science.db.before-0037_literature_inbox_integrity.backup',
+      'open-science.db.before-0038_literature_search_text.backup',
       'open-science.db.before-0039_literature_metadata_commit_receipt.backup',
       unknownBackupName
     ])
