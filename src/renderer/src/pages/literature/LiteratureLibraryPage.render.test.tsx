@@ -3144,6 +3144,8 @@ describe('LiteratureLibraryPage', () => {
       within(detail).getByRole('button', { name: 'Attachment actions for paper.pdf' })
     )
     fireEvent.click(await screen.findByRole('menuitem', { name: 'Remove attachment' }))
+    expect(screen.getByRole('alertdialog').textContent).toContain('paper.pdf')
+    fireEvent.click(screen.getByRole('button', { name: 'Permanently delete attachment' }))
     await waitFor(() =>
       expect(transact).toHaveBeenCalledWith({
         kind: 'delete-attachment',
@@ -3210,6 +3212,8 @@ describe('LiteratureLibraryPage', () => {
       within(detail).getByRole('button', { name: 'Attachment actions for paper.pdf' })
     )
     fireEvent.click(await screen.findByRole('menuitem', { name: 'Remove attachment' }))
+    expect(screen.getByRole('alertdialog').textContent).toContain('paper.pdf')
+    fireEvent.click(screen.getByRole('button', { name: 'Permanently delete attachment' }))
     expect(
       await within(detail).findByText(
         'This PDF is referenced by a chat or its message history and cannot be removed. Unlinking the current chat does not remove historical references.'
@@ -3237,6 +3241,8 @@ describe('LiteratureLibraryPage', () => {
       within(detail).getByRole('button', { name: 'Attachment actions for paper.pdf' })
     )
     fireEvent.click(await screen.findByRole('menuitem', { name: 'Remove attachment' }))
+    expect(screen.getByRole('alertdialog').textContent).toContain('paper.pdf')
+    fireEvent.click(screen.getByRole('button', { name: 'Permanently delete attachment' }))
     const alert = await within(detail).findByRole('alert')
     expect(within(detail).getByRole('button', { name: 'Preview paper.pdf' })).not.toBeNull()
     expect.soft(alert.textContent).not.toBe('The attachment operation failed. Try again.')
@@ -3299,6 +3305,9 @@ describe('LiteratureLibraryPage', () => {
         if (entryPoint === 'permanent item') {
           container = screen.getByRole('alertdialog')
           fireEvent.click(within(container).getByRole('button', { name: 'Delete permanently' }))
+        } else {
+          expect(screen.getByRole('alertdialog').textContent).toContain('paper.pdf')
+          fireEvent.click(screen.getByRole('button', { name: 'Permanently delete attachment' }))
         }
         fireEvent.click(await screen.findByRole('button', { name: 'View affected conversations' }))
         expect(screen.getByText('Retained history')).not.toBeNull()
@@ -3356,6 +3365,8 @@ describe('LiteratureLibraryPage', () => {
       within(detail).getByRole('button', { name: 'Attachment actions for paper.pdf' })
     )
     fireEvent.click(await screen.findByRole('menuitem', { name: 'Remove attachment' }))
+    expect(screen.getByRole('alertdialog').textContent).toContain('paper.pdf')
+    fireEvent.click(screen.getByRole('button', { name: 'Permanently delete attachment' }))
     fireEvent.click(await screen.findByRole('button', { name: 'View recovery details' }))
     expect(screen.getByText('damaged-session.json')).not.toBeNull()
     expect(
@@ -3416,6 +3427,8 @@ describe('LiteratureLibraryPage', () => {
       within(detail).getByRole('button', { name: 'Attachment actions for paper.pdf' })
     )
     fireEvent.click(await screen.findByRole('menuitem', { name: 'Remove attachment' }))
+    expect(screen.getByRole('alertdialog').textContent).toContain('paper.pdf')
+    fireEvent.click(screen.getByRole('button', { name: 'Permanently delete attachment' }))
     expect(await within(detail).findByRole('alert')).not.toBeNull()
     expect(
       within(detail).getByText('Attachment removed. Storage cleanup could not finish.')
@@ -6273,7 +6286,9 @@ describe('LiteratureLibraryPage', () => {
 
     fireEvent.change(screen.getByLabelText('Import references'), { target: { files: [file] } })
     await screen.findByRole('dialog')
-    expect(screen.getByText('Only the first 1,000 references will be imported.')).not.toBeNull()
+    expect(
+      await screen.findByText('Only the first 1,000 references will be imported.')
+    ).not.toBeNull()
     fireEvent.click(screen.getByRole('button', { name: 'Import references' }))
     expect(await screen.findByText('Created')).not.toBeNull()
     expect(screen.getByText('Skipped').parentElement?.textContent).toContain('1001Skipped')

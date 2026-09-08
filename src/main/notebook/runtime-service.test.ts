@@ -4114,7 +4114,8 @@ describe('notebook runtime service', () => {
         command: 'first',
         provenanceContext: rootContext
       })
-      await vi.waitFor(() => expect(entered).toEqual(['first']))
+      // Filesystem preparation can exceed waitFor's default 1s under CI coverage.
+      await firstStarted.promise
       const second = service.executeShell({
         sessionId: 'session-1',
         workspaceCwd: root,
@@ -4123,9 +4124,6 @@ describe('notebook runtime service', () => {
       })
 
       try {
-        // Filesystem preparation can exceed waitFor's default 1s under CI coverage.
-        // Observe process admission directly before checking the second call is still queued.
-        await firstStarted.promise
         await vi.waitFor(
           async () => {
             const state = await service.state({ sessionId: 'session-1', workspaceCwd: root })

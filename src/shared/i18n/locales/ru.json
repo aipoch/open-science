@@ -5277,6 +5277,16 @@
     "Search again resets unfinished results and their selections.": "Повторный поиск сбрасывает незавершённые результаты и их выбор.",
     "Apply selected": "Применить выбранное",
     "Add selected": "Добавить выбранное",
-    "Some references failed. Search again to retry unfinished references.": "Не удалось обработать некоторые источники. Повторите поиск, чтобы снова обработать незавершённые источники."
+    "Some references failed. Search again to retry unfinished references.": "Не удалось обработать некоторые источники. Повторите поиск, чтобы снова обработать незавершённые источники.",
+    "Version history": "История версий",
+    "Permanently delete attachment": "Удалить вложение навсегда",
+    "Permanently delete “{{filename}}”?": "Удалить «{{filename}}» навсегда?",
+    "Files saved by the application will be deleted when no other references use them. This cannot be undone and does not move the attachment to Trash. Original files imported from your computer are not deleted.": "Файлы, сохранённые приложением, будут удалены, если их не используют другие записи. Это действие нельзя отменить, и вложение не будет перемещено в корзину. Исходные файлы, импортированные с компьютера, не будут удалены.",
+    "Previewing an older version does not change the latest version.": "Предпросмотр старой версии не изменяет последнюю версию.",
+    "Version {{number}}": "Версия {{number}}",
+    "All {{count}} versions will be deleted._one": "Будет удалена {{count}} версия.",
+    "All {{count}} versions will be deleted._few": "Будут удалены все {{count}} версии.",
+    "All {{count}} versions will be deleted._many": "Будут удалены все {{count}} версий.",
+    "All {{count}} versions will be deleted._other": "Будут удалены все {{count}} версии."
   }
 }

@@ -4831,6 +4831,13 @@
     "Search again resets unfinished results and their selections.": "重新檢索會重設未完成的結果及其選取項目。",
     "Apply selected": "套用所選",
     "Add selected": "新增所選",
-    "Some references failed. Search again to retry unfinished references.": "部分文獻處理失敗。重新檢索可重試未完成的文獻。"
+    "Some references failed. Search again to retry unfinished references.": "部分文獻處理失敗。重新檢索可重試未完成的文獻。",
+    "Version history": "版本歷史",
+    "Permanently delete attachment": "永久刪除附件",
+    "Permanently delete “{{filename}}”?": "永久刪除「{{filename}}」？",
+    "Files saved by the application will be deleted when no other references use them. This cannot be undone and does not move the attachment to Trash. Original files imported from your computer are not deleted.": "沒有其他參照使用這些檔案時，應用程式儲存的檔案將被刪除。此操作無法復原，附件不會移至垃圾桶。從您的電腦匯入的原始檔案不會被刪除。",
+    "Previewing an older version does not change the latest version.": "預覽舊版本不會變更最新版本。",
+    "Version {{number}}": "版本 {{number}}",
+    "All {{count}} versions will be deleted._other": "全部 {{count}} 個版本都將被刪除。"
   }
 }

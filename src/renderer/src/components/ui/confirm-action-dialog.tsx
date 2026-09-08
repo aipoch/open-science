@@ -25,6 +25,7 @@ type ConfirmActionDialogProps = {
   testId?: string
   onCancel: () => void
   onConfirm: () => void
+  onCloseAutoFocus?: React.ComponentProps<typeof AlertDialog.Content>['onCloseAutoFocus']
 }
 
 const ConfirmActionDialog = ({
@@ -38,7 +39,8 @@ const ConfirmActionDialog = ({
   destructive = false,
   testId,
   onCancel,
-  onConfirm
+  onConfirm,
+  onCloseAutoFocus
 }: ConfirmActionDialogProps): React.JSX.Element => (
   <AlertDialog.Root
     open={open}
@@ -51,6 +53,7 @@ const ConfirmActionDialog = ({
       <AlertDialog.Content
         className={dialogPanelClassName('z-[70] w-[min(420px,calc(100vw-2rem))] p-0')}
         data-testid={testId}
+        onCloseAutoFocus={onCloseAutoFocus}
         onEscapeKeyDown={(event) => {
           if (loading) event.preventDefault()
         }}

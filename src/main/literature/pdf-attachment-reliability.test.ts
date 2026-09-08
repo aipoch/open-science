@@ -10,6 +10,7 @@ import {
   literatureCatalogCommandSchema,
   literatureCatalogReceiptSchema,
   literatureItemInputSchema,
+  literaturePdfImportRequestSchema,
   type LiteraturePdfImportRequest
 } from '../../shared/literature'
 import { createTestPdf as pdf } from '../../../test/fixtures/literature-pdf'
@@ -784,6 +785,63 @@ describe('Literature PDF attachment reliability', () => {
     expect(
       result.item.attachments.map((entry) => entry.versions.map((version) => version.versionNumber))
     ).toEqual([[1], [1]])
+  })
+
+  it('keeps old versions resolvable and removes the entire version chain without trashing the reference', async () => {
+    const { importer, request, path, catalog, content, authority } = await setup()
+    const first = await importer.import(request)
+    const attachment = first.item.attachments[0]
+    const oldVersion = attachment.versions[0]
+    const oldContent = await authority.resolveVersion(oldVersion.id)
+    expect(
+      literaturePdfImportRequestSchema.safeParse({ ...request, attachmentId: attachment.id })
+        .success
+    ).toBe(false)
+
+    // Version chains currently require the internal Catalog boundary, not normal local import.
+    await writeFile(path, pdf('second'))
+    await content.withPublishedContent(
+      { sourcePath: path, contentType: 'application/pdf' },
+      async (blob) => {
+        await catalog.attachContent({
+          itemId: request.itemId,
+          attachmentId: attachment.id,
+          contentBlobId: blob.id,
+          filename: 'second.pdf',
+          contentType: 'application/pdf',
+          checksum: blob.checksum,
+          sizeBytes: Number(blob.sizeBytes),
+          pageCount: 1
+        })
+      }
+    )
+    const versions = (await catalog.get(request.itemId))!.attachments[0].versions
+    expect(versions.map((entry) => entry.versionNumber)).toEqual([2, 1])
+    const latestContent = await authority.resolveVersion(versions[0].id)
+    await expect(authority.resolveVersion(oldVersion.id)).resolves.toMatchObject({
+      path: oldContent!.path
+    })
+    await writeFile(path, pdf())
+    const deduplicated = await importer.import(request)
+    expect(deduplicated.item.attachments).toHaveLength(1)
+    expect(deduplicated.item.attachments[0].versions.map((entry) => entry.id)).toEqual(
+      versions.map((entry) => entry.id)
+    )
+
+    await catalog.transact({
+      kind: 'delete-attachment',
+      itemId: request.itemId,
+      attachmentId: attachment.id
+    })
+    expect(await client!.literatureAttachmentVersion.count()).toBe(0)
+    expect(await client!.contentBlob.count()).toBe(0)
+    await expect(access(oldContent!.path)).rejects.toThrow()
+    await expect(access(latestContent!.path)).rejects.toThrow()
+    await expect(access(path)).resolves.toBeUndefined()
+    expect((await catalog.get(request.itemId))!.deletedAt).toBeUndefined()
+    expect((await catalog.search({ scope: 'library', lifecycle: 'deleted' })).entries).toHaveLength(
+      0
+    )
   })
 
   it('retains a PDF above the automatic processing limit without claiming a page count', async () => {

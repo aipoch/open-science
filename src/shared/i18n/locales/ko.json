@@ -4829,6 +4829,13 @@
     "Search again resets unfinished results and their selections.": "다시 검색하면 완료되지 않은 결과와 선택 사항이 초기화됩니다.",
     "Apply selected": "선택 항목 적용",
     "Add selected": "선택 항목 추가",
-    "Some references failed. Search again to retry unfinished references.": "일부 문헌 처리에 실패했습니다. 다시 검색하여 미완료 문헌을 재시도하세요."
+    "Some references failed. Search again to retry unfinished references.": "일부 문헌 처리에 실패했습니다. 다시 검색하여 미완료 문헌을 재시도하세요.",
+    "Version history": "버전 기록",
+    "Permanently delete attachment": "첨부 파일 영구 삭제",
+    "Permanently delete “{{filename}}”?": "“{{filename}}”을(를) 영구 삭제하시겠습니까?",
+    "Files saved by the application will be deleted when no other references use them. This cannot be undone and does not move the attachment to Trash. Original files imported from your computer are not deleted.": "다른 참조에서 사용하지 않는 경우 앱에 저장된 파일이 삭제됩니다. 이 작업은 실행 취소할 수 없으며 첨부 파일은 휴지통으로 이동하지 않습니다. 컴퓨터에서 가져온 원본 파일은 삭제되지 않습니다.",
+    "Previewing an older version does not change the latest version.": "이전 버전을 미리 보아도 최신 버전은 변경되지 않습니다.",
+    "Version {{number}}": "버전 {{number}}",
+    "All {{count}} versions will be deleted._other": "모든 {{count}}개 버전이 삭제됩니다."
   }
 }
