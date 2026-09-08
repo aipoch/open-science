@@ -106,7 +106,7 @@
     "Identifiers (★ primary)": "Идентификаторы (★ основной)",
     "Search again to refresh this older metadata review.": "Повторите поиск, чтобы обновить эти устаревшие данные для проверки.",
     "The reference was saved, but could not be reloaded.": "Источник сохранён, но его не удалось загрузить повторно.",
-    "Your note draft is preserved. Retry saving or press Escape to discard.": "Черновик заметки сохранён в редакторе. Повторите сохранение или нажмите Escape, чтобы отменить изменения.",
+    "Draft preserved. Escape to discard.": "Черновик сохранён. Escape — отменить.",
     "Not answered": "Нет ответа",
     "Automatic contrast": "Автоматическая контрастность",
     "Display range": "Диапазон отображения",

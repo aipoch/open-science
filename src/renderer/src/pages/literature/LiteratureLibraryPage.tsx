@@ -985,13 +985,13 @@ function LiteratureNoteControl({
         onBlur={() => void commitNote()}
       />
       {failed ? (
-        <div className="px-2 text-xs text-status-warning-foreground">
-          <p role="alert">
-            {t('Your note draft is preserved. Retry saving or press Escape to discard.')}
+        <div className="flex items-center gap-2 px-2 text-xs text-status-warning-foreground">
+          <p role="alert" className="truncate" title={t('Draft preserved. Escape to discard.')}>
+            {t('Draft preserved. Escape to discard.')}
           </p>
           <button
             type="button"
-            className="underline"
+            className="shrink-0 underline"
             disabled={isSaving}
             onMouseDown={(event) => event.preventDefault()}
             onClick={() => void commitNote()}

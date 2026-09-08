@@ -3389,15 +3389,11 @@ describe('LiteratureLibraryPage', () => {
     })) as HTMLInputElement
     fireEvent.change(input, { target: { value: 'Retry this draft' } })
     fireEvent.blur(input)
-    await screen.findByText(
-      'Your note draft is preserved. Retry saving or press Escape to discard.'
-    )
+    await screen.findByText('Draft preserved. Escape to discard.')
     fireEvent.click(screen.getByRole('button', { name: 'Retry' }))
     await waitFor(() => expect(get).toHaveBeenCalledTimes(1))
     await waitFor(() =>
-      expect(
-        screen.queryByText('Your note draft is preserved. Retry saving or press Escape to discard.')
-      ).toBeNull()
+      expect(screen.queryByText('Draft preserved. Escape to discard.')).toBeNull()
     )
     expect(input.value).toBe('Retry this draft')
     expect(transact.mock.calls[1][0]).toEqual(transact.mock.calls[0][0])
