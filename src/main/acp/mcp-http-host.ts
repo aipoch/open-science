@@ -3,6 +3,7 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 
 import type { McpServer as ModelContextProtocolServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js'
+import { CancelledNotificationSchema, isJSONRPCRequest } from '@modelcontextprotocol/sdk/types.js'
 
 import { createArtifactMcpServer, type ArtifactMcpEnvironment } from '../artifacts/mcp-server'
 import { ArtifactRepository } from '../artifacts/repository'
@@ -84,6 +85,16 @@ class AgentMcpHttpHost {
   private startPromise: Promise<HostConnection> | undefined
   private endpoint: string | undefined
   private readonly sessions = new Map<string, SessionEntry>()
+  // HTTP POSTs are stateless, but cancellation must reach the still-running Library POST.
+  // Entries live only until that response closes; request IDs are scoped to the bound route.
+  private readonly libraryRequests = new Map<
+    string,
+    {
+      routingId: string
+      receive: NonNullable<StreamableHTTPServerTransport['onmessage']>
+      response: ServerResponse
+    }
+  >()
 
   constructor(options: { token?: string; host?: string; requestBytes?: number } = {}) {
     this.token = options.token ?? randomUUID()
@@ -125,7 +136,7 @@ class AgentMcpHttpHost {
     this.server = undefined
     this.startPromise = undefined
     this.endpoint = undefined
-    this.sessions.clear()
+    this.clear()
 
     if (!server) return
 
@@ -183,11 +194,18 @@ class AgentMcpHttpHost {
   // Drops a routing id's registered environments once its session is gone.
   unregister(routingId: string): void {
     this.sessions.delete(routingId)
+    for (const [key, active] of this.libraryRequests) {
+      if (active.routingId !== routingId) continue
+      this.libraryRequests.delete(key)
+      active.response.destroy()
+    }
   }
 
   // Drops every registered environment (e.g. on runtime disconnect); the server keeps running for reuse.
   clear(): void {
     this.sessions.clear()
+    for (const active of this.libraryRequests.values()) active.response.destroy()
+    this.libraryRequests.clear()
   }
 
   // Builds the per-session MCP endpoint URL the agent connects to for one kind.
@@ -286,6 +304,36 @@ class AgentMcpHttpHost {
 
     try {
       await server.connect(transport)
+      if (kind === 'library') {
+        const receive = transport.onmessage!
+        transport.onmessage = (message, extra) => {
+          if (isJSONRPCRequest(message) && message.method === 'tools/call') {
+            const key = JSON.stringify([routingId, message.id])
+            if (this.libraryRequests.has(key)) {
+              writeJson(response, 409, { error: 'Duplicate active Literature request id.' })
+              return
+            }
+            const active = { routingId, receive, response }
+            this.libraryRequests.set(key, active)
+            response.once('close', () => {
+              if (this.libraryRequests.get(key) === active) this.libraryRequests.delete(key)
+            })
+          } else {
+            const cancellation = CancelledNotificationSchema.safeParse(message)
+            if (cancellation.success) {
+              const key = JSON.stringify([routingId, cancellation.data.params.requestId])
+              const active = this.libraryRequests.get(key)
+              if (active) {
+                active.receive(message, extra)
+                // Cancelled MCP handlers intentionally send no result. End the original POST
+                // as well so its transport, server, and route entry can be released.
+                active.response.end()
+              }
+            }
+          }
+          receive(message, extra)
+        }
+      }
       const body =
         request.method === 'POST'
           ? await readBoundedJsonBody<unknown>(request, this.requestBytes, {

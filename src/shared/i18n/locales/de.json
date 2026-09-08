@@ -4921,6 +4921,17 @@
     "The saved year and publication date disagree. Editing either field will reconcile them.": "Das gespeicherte Jahr und Veröffentlichungsdatum stimmen nicht überein. Beim Bearbeiten eines Feldes werden beide abgeglichen.",
     "Enter a valid access date on or after 1970-01-01, or leave it blank.": "Geben Sie ein gültiges Zugriffsdatum ab 1970-01-01 ein oder lassen Sie das Feld leer.",
     "The reference was created, but linking it to the destination failed. Retry to finish linking. Closing leaves it in your library without that link.": "Die Referenz wurde erstellt, konnte aber nicht mit dem Ziel verknüpft werden. Versuchen Sie es erneut, um die Verknüpfung abzuschließen. Beim Schließen bleibt sie ohne diese Verknüpfung in Ihrer Bibliothek.",
-    "The reference was created, but the remaining steps failed. Retry to finish. If you close, the reference remains in your library.": "Die Referenz wurde erstellt, aber die folgenden Schritte sind fehlgeschlagen. Versuchen Sie es erneut, um den Vorgang abzuschließen. Beim Schließen bleibt die Referenz in Ihrer Bibliothek."
+    "The reference was created, but the remaining steps failed. Retry to finish. If you close, the reference remains in your library.": "Die Referenz wurde erstellt, aber die folgenden Schritte sind fehlgeschlagen. Versuchen Sie es erneut, um den Vorgang abzuschließen. Beim Schließen bleibt die Referenz in Ihrer Bibliothek.",
+    "Add author": "Autor hinzufügen",
+    "Remove author": "Autor entfernen",
+    "Pending review: {{total}}": "Zur Prüfung: {{total}}",
+    "Already in library: {{total}}": "Bereits in der Bibliothek: {{total}}",
+    "Repeated inputs: {{total}}": "Wiederholte Eingaben: {{total}}",
+    "Other results: {{total}}": "Andere Ergebnisse: {{total}}",
+    "Not attempted: {{total}}": "Nicht versucht: {{total}}",
+    "Saving stopped. Completed results are kept.": "Speichern gestoppt. Abgeschlossene Ergebnisse bleiben erhalten.",
+    "Could not save reference {{number}}. Earlier results are kept.": "Quelle {{number}} konnte nicht gespeichert werden. Frühere Ergebnisse bleiben erhalten.",
+    "Open Inbox": "Posteingang öffnen",
+    "Open existing reference {{number}}": "Vorhandene Quelle {{number}} öffnen"
   }
 }

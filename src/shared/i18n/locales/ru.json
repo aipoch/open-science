@@ -5214,6 +5214,17 @@
     "The saved year and publication date disagree. Editing either field will reconcile them.": "Сохранённые год и дата публикации не совпадают. При изменении любого из полей они будут согласованы.",
     "Enter a valid access date on or after 1970-01-01, or leave it blank.": "Введите допустимую дату доступа не ранее 1970-01-01 или оставьте поле пустым.",
     "The reference was created, but linking it to the destination failed. Retry to finish linking. Closing leaves it in your library without that link.": "Ссылка создана, но связать её с выбранным местом не удалось. Повторите попытку, чтобы завершить связывание. При закрытии ссылка останется в библиотеке без этой связи.",
-    "The reference was created, but the remaining steps failed. Retry to finish. If you close, the reference remains in your library.": "Ссылка создана, но последующие шаги завершились ошибкой. Повторите попытку для завершения. При закрытии ссылка останется в библиотеке."
+    "The reference was created, but the remaining steps failed. Retry to finish. If you close, the reference remains in your library.": "Ссылка создана, но последующие шаги завершились ошибкой. Повторите попытку для завершения. При закрытии ссылка останется в библиотеке.",
+    "Add author": "Добавить автора",
+    "Remove author": "Удалить автора",
+    "Pending review: {{total}}": "Ожидают проверки: {{total}}",
+    "Already in library: {{total}}": "Уже в библиотеке: {{total}}",
+    "Repeated inputs: {{total}}": "Повторные входные записи: {{total}}",
+    "Other results: {{total}}": "Другие результаты: {{total}}",
+    "Not attempted: {{total}}": "Не обработано: {{total}}",
+    "Saving stopped. Completed results are kept.": "Сохранение остановлено. Завершённые результаты сохранены.",
+    "Could not save reference {{number}}. Earlier results are kept.": "Не удалось сохранить источник {{number}}. Предыдущие результаты сохранены.",
+    "Open Inbox": "Открыть входящие",
+    "Open existing reference {{number}}": "Открыть существующий источник {{number}}"
   }
 }

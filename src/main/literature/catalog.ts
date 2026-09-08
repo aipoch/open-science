@@ -923,6 +923,13 @@ class LiteratureCatalog {
         ? Prisma.sql`i."deletedAt" IS NOT NULL`
         : Prisma.sql`i."deletedAt" IS NULL`
     ]
+    if (request.itemIds !== undefined) {
+      predicates.push(
+        request.itemIds.length
+          ? Prisma.sql`i.id IN (${Prisma.join(request.itemIds)})`
+          : Prisma.sql`0 = 1`
+      )
+    }
     const contains = (column: Prisma.Sql, text: string): Prisma.Sql =>
       Prisma.sql`instr(${column}, ${normalizeSearchText(text)}) > 0`
     const creatorMatches = (text: string): Prisma.Sql => Prisma.sql`EXISTS (

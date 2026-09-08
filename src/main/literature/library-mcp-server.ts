@@ -8,9 +8,12 @@ import {
   literatureSourceInputSchema,
   type LiteratureCitationLocale,
   type LiteratureCitationStyle,
-  type LiteratureCatalogReceipt,
   type LiteratureItemView
 } from '../../shared/literature'
+import {
+  summarizeLiteratureSaveReceipts,
+  type LiteratureLibrarySaveResult
+} from '../../shared/literature-save'
 import { literatureReadPresentation } from './mcp-server'
 import type { AgentPdfAcquisitionResult } from './agent-pdf-acquisition'
 
@@ -56,6 +59,7 @@ type LiteratureLibraryDiscovery = z.infer<typeof literatureDiscoverySchema>
 
 type LiteratureLibrarySaveRequest = Readonly<{
   candidates: readonly LiteratureLibraryDiscovery[]
+  signal?: AbortSignal
 }>
 
 type LiteratureLibrarySearchResult = Readonly<{
@@ -103,6 +107,7 @@ type LiteratureLibrarySearchOutputItem = Readonly<{
   itemType: LiteratureItemView['item']['itemType']
   title: string
   authors: string
+  /** All contributors, including editors and translators. authors contains only authors. */
   creatorCount: number
   issuedText: string
   issuedYear?: number
@@ -120,10 +125,6 @@ type LiteratureLibrarySearchOutputItem = Readonly<{
 
 type LiteratureLibrarySearchOutputResult = Omit<LiteratureLibrarySearchResult, 'items'> &
   Readonly<{ items: readonly LiteratureLibrarySearchOutputItem[] }>
-
-type LiteratureLibrarySaveResult = Readonly<{
-  results: readonly LiteratureCatalogReceipt[]
-}>
 
 type LiteratureLibraryFormatDocumentRequest = Readonly<{
   filename: string
@@ -171,9 +172,10 @@ type LiteratureLibraryMcpHandler = Readonly<{
     request: LiteratureLibraryReadPdfRequest
   ) => Promise<LiteratureLibraryReadPdfResult | undefined>
   resolveSaveReferences?: (
-    references: readonly string[]
+    references: readonly string[],
+    signal?: AbortSignal
   ) => Promise<readonly LiteratureLibraryDiscovery[]>
-  readCandidateFile?: (filename: string) => Promise<string>
+  readCandidateFile?: (filename: string, signal?: AbortSignal) => Promise<string>
   formatReferences?: (
     request: LiteratureLibraryFormatReferencesRequest
   ) => Promise<LiteratureLibraryFormatReferencesResult>
@@ -212,12 +214,6 @@ const presentationContent = (
   text: JSON.stringify({ openScienceLiteraturePresentation: presentation })
 })
 
-const itemTitles = (items: readonly LiteratureItemView[]): string[] =>
-  items
-    .map(({ item }) => item.title.trim())
-    .filter(Boolean)
-    .slice(0, 3)
-
 const compactText = (value: string, limit: number): string =>
   value.length <= limit ? value : `${value.slice(0, Math.max(0, limit - 1))}…`
 
@@ -252,14 +248,21 @@ const compactSearchItem = (
         scheme === 'arxiv'
     )
     .slice(0, 2)
-    .map(({ scheme, value }) => ({ scheme, value: compactText(value, 200) }))
+    .map(({ scheme, value }) => ({ scheme, value }))
 
   return {
     id: view.id,
     metadataRevision: view.metadataRevision,
     itemType: view.item.itemType,
     title: compactText(view.item.title, 400),
-    authors: compactText(view.item.creators.map(creatorName).filter(Boolean).join(', '), 400),
+    authors: compactText(
+      view.item.creators
+        .filter(({ creatorType }) => creatorType === 'author')
+        .map(creatorName)
+        .filter(Boolean)
+        .join(', '),
+      400
+    ),
     creatorCount: view.item.creators.length,
     issuedText: compactText(view.item.issuedText, 100),
     ...(view.item.issuedYear === undefined ? {} : { issuedYear: view.item.issuedYear }),
@@ -280,26 +283,65 @@ const compactSearchItem = (
 }
 
 const compactSearchResult = (
-  result: LiteratureLibrarySearchResult
-): LiteratureLibrarySearchOutputResult => {
+  result: LiteratureLibrarySearchResult,
+  request: LiteratureLibrarySearchRequest
+): {
+  structuredContent: LiteratureLibrarySearchOutputResult
+  content: { type: 'text'; text: string }[]
+} => {
   let abstractLimit = LITERATURE_LIBRARY_SEARCH_ABSTRACT_MAX_CHARACTERS
-  let searchResult = { ...result, items: result.items.map((item) => compactSearchItem(item)) }
-  while (
-    JSON.stringify(searchResult).length > LITERATURE_LIBRARY_SEARCH_OUTPUT_MAX_CHARACTERS &&
-    abstractLimit > LITERATURE_LIBRARY_SEARCH_ABSTRACT_MIN_CHARACTERS
-  ) {
-    const overflow =
-      JSON.stringify(searchResult).length - LITERATURE_LIBRARY_SEARCH_OUTPUT_MAX_CHARACTERS
-    abstractLimit = Math.max(
-      LITERATURE_LIBRARY_SEARCH_ABSTRACT_MIN_CHARACTERS,
-      abstractLimit - Math.ceil(overflow / Math.max(1, result.items.length)) - 16
-    )
-    searchResult = {
-      ...result,
-      items: result.items.map((item) => compactSearchItem(item, abstractLimit))
+  let itemCount = result.items.length
+  while (true) {
+    const items = result.items
+      .slice(0, itemCount)
+      .map((item) => compactSearchItem(item, abstractLimit))
+    const hasMore = itemCount < result.items.length || result.hasMore
+    const nextOffset =
+      itemCount < result.items.length ? (request.offset ?? 0) + itemCount : result.nextOffset
+    const searchResult: LiteratureLibrarySearchOutputResult = {
+      items,
+      totalCount: result.totalCount,
+      hasMore,
+      ...(nextOffset !== undefined ? { nextOffset } : {})
+    }
+    const content = [
+      presentationContent({
+        libraryAction: 'search',
+        libraryScope: request.scope,
+        ...(items.length
+          ? {
+              itemTitles: items
+                .map(({ title }) => title)
+                .filter(Boolean)
+                .slice(0, 3)
+            }
+          : {}),
+        resultCount: items.length,
+        totalCount: result.totalCount,
+        offset: request.offset ?? 0,
+        limit: request.limit,
+        ...(nextOffset !== undefined ? { nextOffset } : {}),
+        hasMore
+      }),
+      { type: 'text' as const, text: JSON.stringify(searchResult) }
+    ]
+    // Include JSON escaping and the presentation block in the emitted text budget.
+    if (JSON.stringify(content).length <= LITERATURE_LIBRARY_SEARCH_OUTPUT_MAX_CHARACTERS) {
+      return { structuredContent: searchResult, content }
+    }
+    if (abstractLimit > LITERATURE_LIBRARY_SEARCH_ABSTRACT_MIN_CHARACTERS) {
+      abstractLimit = Math.max(
+        LITERATURE_LIBRARY_SEARCH_ABSTRACT_MIN_CHARACTERS,
+        Math.floor(abstractLimit / 2)
+      )
+    } else if (itemCount > 1) {
+      itemCount--
+    } else {
+      throw new Error(
+        'SEARCH_RESULT_TOO_LARGE: A record exceeds the search response budget. Narrow the query; exact identifiers have not been truncated.'
+      )
     }
   }
-  return searchResult
 }
 
 const compactBatchAbstract = (
@@ -330,8 +372,10 @@ const resolveSaveCandidates = async (
     candidates?: readonly LiteratureLibraryDiscovery[]
     filename?: string
   },
-  handler: LiteratureLibraryMcpHandler
+  handler: LiteratureLibraryMcpHandler,
+  signal?: AbortSignal
 ): Promise<readonly LiteratureLibraryDiscovery[]> => {
+  signal?.throwIfAborted()
   const inputCount = [request.refs, request.candidates, request.filename].filter(
     (value) => value !== undefined
   ).length
@@ -342,17 +386,35 @@ const resolveSaveCandidates = async (
     if (!handler.resolveSaveReferences) {
       throw new Error('REFERENCE_RESOLUTION_UNAVAILABLE: Identifier lookup is not configured.')
     }
-    return handler.resolveSaveReferences(request.refs)
+    return handler.resolveSaveReferences(request.refs, signal)
   }
   if (request.candidates) return request.candidates
   if (!handler.readCandidateFile) {
     throw new Error('CANDIDATE_FILE_UNAVAILABLE: Candidate file loading is not configured.')
   }
 
+  let content: string
   try {
-    return literatureDiscoveryBatchSchema.parse(
-      JSON.parse(await handler.readCandidateFile(request.filename!))
-    ).candidates
+    content = await handler.readCandidateFile(request.filename!, signal)
+  } catch (error) {
+    signal?.throwIfAborted()
+    const code =
+      typeof error === 'object' && error !== null && 'code' in error ? error.code : undefined
+    if (code === 'CANDIDATE_FILE_TOO_LARGE') {
+      throw new Error('CANDIDATE_FILE_TOO_LARGE: The candidate file exceeds the 2 MB limit.', {
+        cause: error
+      })
+    }
+    throw new Error(
+      code === 'EACCES' || code === 'EPERM'
+        ? 'CANDIDATE_FILE_UNREADABLE: Permission denied. Choose a readable candidate file.'
+        : 'CANDIDATE_FILE_UNREADABLE: Could not read the candidate file. Check that it exists and is accessible in this workspace.',
+      { cause: error }
+    )
+  }
+  signal?.throwIfAborted()
+  try {
+    return literatureDiscoveryBatchSchema.parse(JSON.parse(content)).candidates
   } catch (error) {
     throw new Error('INVALID_CANDIDATE_FILE: The candidate file is not valid Literature JSON.', {
       cause: error
@@ -373,7 +435,7 @@ const createLiteratureLibraryMcpServer = (
     {
       title: 'Search literature library',
       description:
-        "Browse or search the user's Open Science literature metadata library. Results use a compact projection with abstractPreview, abstractLength, and abstractTruncated so a 20-record page stays within the Agent response budget. This does not search external providers or read PDF full text. Omit query to browse records. Scope defaults to project and only returns records linked to the trusted current Project. Use library only when the user explicitly requests their global Library, collection with collectionId for an explicitly selected Collection, or items with the exact itemIds explicitly selected by the user. Each page defaults to 20 records, which is also the maximum. When nextOffset is returned, pass it as offset to continue.",
+        "Browse or search the user's Open Science literature metadata library. Results use a compact projection with abstractPreview, abstractLength, and abstractTruncated so a 20-record page stays within the Agent response budget. authors lists only authors; creatorCount counts all contributors. This does not search external providers or read PDF full text. Omit query to browse records. Scope defaults to project and only returns records linked to the trusted current Project. Use library only when the user explicitly requests their global Library, collection with collectionId for an explicitly selected Collection, or items with the exact itemIds explicitly selected by the user. Each page defaults to 20 records, which is also the maximum. When nextOffset is returned, pass it as offset to continue.",
       inputSchema: {
         query: z.string().trim().min(1).max(2_000).optional(),
         scope: z.enum(LITERATURE_LIBRARY_SCOPES).optional(),
@@ -402,25 +464,7 @@ const createLiteratureLibraryMcpServer = (
         throw new Error('DUPLICATE_ITEM_IDS: Items scope does not accept duplicate itemIds.')
       }
       const result = await handler.searchLibrary({ ...request, scope, limit })
-      const searchResult = compactSearchResult(result)
-      const titles = itemTitles(result.items)
-      return {
-        structuredContent: searchResult,
-        content: [
-          presentationContent({
-            libraryAction: 'search',
-            libraryScope: scope,
-            ...(titles.length > 0 ? { itemTitles: titles } : {}),
-            resultCount: searchResult.items.length,
-            totalCount: result.totalCount,
-            offset: request.offset ?? 0,
-            limit,
-            ...(result.nextOffset !== undefined ? { nextOffset: result.nextOffset } : {}),
-            hasMore: result.hasMore
-          }),
-          { type: 'text' as const, text: JSON.stringify(searchResult) }
-        ]
-      }
+      return compactSearchResult(result, { ...request, scope, limit })
     }
   )
 
@@ -651,7 +695,7 @@ const createLiteratureLibraryMcpServer = (
     {
       title: 'Save literature discoveries',
       description:
-        'Save one to ten literature records discovered by the Agent to the user-level Literature Inbox for review. Open Science supplies the trusted current Project and Session origin; do not include origin fields. Prefer refs with pmid:<id> or doi:<id> so Open Science can retrieve the metadata. Use candidates only for records without a supported identifier. filename remains available for a prepared Notebook batch.',
+        'Save one to ten literature records discovered by the Agent to the user-level Literature Inbox for review. Open Science supplies the trusted current Project and Session origin; do not include origin fields. Each receipt in results corresponds to the completed input prefix; failure.inputIndex is zero-based and later inputs were not attempted. Reused receipts are not newly created rows. Prefer refs with pmid:<id> or doi:<id> so Open Science can retrieve the metadata. Use candidates only for records without a supported identifier. filename remains available for a prepared Notebook batch.',
       inputSchema: {
         refs: z
           .array(z.string().trim().min(1).max(512))
@@ -673,18 +717,21 @@ const createLiteratureLibraryMcpServer = (
           )
       }
     },
-    async (request) => {
-      const candidates = await resolveSaveCandidates(request, handler)
-      const result = await handler.saveToInbox({ candidates })
+    async (request, { signal }) => {
+      const candidates = await resolveSaveCandidates(request, handler, signal)
+      signal.throwIfAborted()
+      const result = await handler.saveToInbox({ candidates, signal })
+      const summary = summarizeLiteratureSaveReceipts(result.results)
       const titles = candidateTitles(candidates)
       return {
+        ...(result.failure || result.cancelled ? { isError: true } : {}),
         structuredContent: result,
         content: [
           presentationContent({
             libraryAction: 'save',
             ...(titles.length > 0 ? { itemTitles: titles } : {}),
             candidateCount: candidates.length,
-            savedCount: result.results.length
+            savedCount: summary.pendingCount
           }),
           { type: 'text' as const, text: JSON.stringify(result) }
         ]
@@ -709,7 +756,8 @@ const createLiteratureLibraryMcpServer = (
         signal.throwIfAborted()
         const candidates = await resolveSaveCandidates(
           { refs: ref ? [ref] : undefined, candidates: candidate ? [candidate] : undefined },
-          handler
+          handler,
+          signal
         )
         if (candidates.length !== 1) throw new Error('Exactly one reference must be resolved.')
         signal.throwIfAborted()

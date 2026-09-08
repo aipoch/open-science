@@ -5082,6 +5082,17 @@
     "The saved year and publication date disagree. Editing either field will reconcile them.": "L’année et la date de publication enregistrées ne correspondent pas. Modifier l’un des champs les rendra cohérentes.",
     "Enter a valid access date on or after 1970-01-01, or leave it blank.": "Saisissez une date de consultation valide à partir du 1970-01-01, ou laissez le champ vide.",
     "The reference was created, but linking it to the destination failed. Retry to finish linking. Closing leaves it in your library without that link.": "La référence a été créée, mais son association à la destination a échoué. Réessayez pour terminer l’association. Si vous fermez, elle restera dans votre bibliothèque sans cette association.",
-    "The reference was created, but the remaining steps failed. Retry to finish. If you close, the reference remains in your library.": "La référence a été créée, mais les étapes suivantes ont échoué. Réessayez pour terminer. Si vous fermez, la référence restera dans votre bibliothèque."
+    "The reference was created, but the remaining steps failed. Retry to finish. If you close, the reference remains in your library.": "La référence a été créée, mais les étapes suivantes ont échoué. Réessayez pour terminer. Si vous fermez, la référence restera dans votre bibliothèque.",
+    "Add author": "Ajouter un auteur",
+    "Remove author": "Supprimer l’auteur",
+    "Pending review: {{total}}": "À examiner : {{total}}",
+    "Already in library: {{total}}": "Déjà dans la bibliothèque : {{total}}",
+    "Repeated inputs: {{total}}": "Entrées répétées : {{total}}",
+    "Other results: {{total}}": "Autres résultats : {{total}}",
+    "Not attempted: {{total}}": "Non tentées : {{total}}",
+    "Saving stopped. Completed results are kept.": "Enregistrement arrêté. Les résultats terminés sont conservés.",
+    "Could not save reference {{number}}. Earlier results are kept.": "Impossible d’enregistrer la référence {{number}}. Les résultats précédents sont conservés.",
+    "Open Inbox": "Ouvrir la boîte de réception",
+    "Open existing reference {{number}}": "Ouvrir la référence existante {{number}}"
   }
 }

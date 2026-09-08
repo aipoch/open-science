@@ -1,7 +1,9 @@
 /* Hallmark · pre-emit critique: P5 H5 E5 S5 R5 V5 */
-import { BookOpenText, ExternalLink, FileText, Inbox, Search } from 'lucide-react'
+import { BookOpenText, FileText, Inbox, Search, TriangleAlert } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 
+import { Button } from '@/components/ui/button'
+import { ErrorNotice } from '@/components/error-notice'
 import { useNavigationStore } from '@/stores/navigation-store'
 
 import type { LiteratureToolSummary } from './literature-tool-presentation'
@@ -14,7 +16,7 @@ const WorkspaceLiteratureToolCard = ({
 }): React.JSX.Element => {
   const { t } = useTranslation()
   const isLibrary = summary.libraryScope !== undefined
-  const canOpenInbox = summary.action === 'save' && summary.savedCount !== undefined
+  const canOpenInbox = summary.action === 'save' && (summary.savedCount ?? 0) > 0
   const Icon =
     summary.action === 'save'
       ? Inbox
@@ -36,7 +38,7 @@ const WorkspaceLiteratureToolCard = ({
       ? [summary.styleId?.toUpperCase(), summary.locale].filter(Boolean).join(' · ') ||
         t('Citation')
       : summary.action === 'save'
-        ? t('Inbox')
+        ? t('Literature library')
         : summary.libraryScope === 'project'
           ? t('This project')
           : summary.libraryScope === 'collection'
@@ -90,12 +92,14 @@ const WorkspaceLiteratureToolCard = ({
               {searchRangeLabel}
             </span>
           ) : null}
-          {isLibrary && summary.action === 'save' && summary.itemCount !== undefined ? (
-            <span className="rounded-md bg-bg-200 px-1.5 py-0.5 text-[10px] tabular-nums text-text-200">
-              {t('{{count}} references', {
-                count: summary.savedCount ?? summary.itemCount,
-                defaultValue_one: '{{count}} reference'
-              })}
+          {isLibrary && summary.action === 'save' && summary.savedCount !== undefined ? (
+            <span className="text-[11px] tabular-nums text-text-200">
+              {t('Pending review: {{total}}', { total: summary.savedCount })}
+            </span>
+          ) : null}
+          {summary.existingItemIds && summary.existingItemIds.length > 0 ? (
+            <span className="text-[11px] tabular-nums text-text-200">
+              {t('Already in library: {{total}}', { total: summary.existingItemIds.length })}
             </span>
           ) : null}
           {isLibrary &&
@@ -106,12 +110,6 @@ const WorkspaceLiteratureToolCard = ({
                 count: summary.itemCount,
                 defaultValue_one: '{{count}} reference'
               })}
-            </span>
-          ) : null}
-          {canOpenInbox ? (
-            <span className="inline-flex items-center gap-1 text-[11px] font-medium text-primary">
-              {t('Open')}
-              <ExternalLink className="size-3" aria-hidden="true" />
             </span>
           ) : null}
           {summary.retrievalMode === 'bm25' ? (
@@ -138,6 +136,62 @@ const WorkspaceLiteratureToolCard = ({
           ) : null}
         </div>
       </div>
+
+      {summary.action === 'save' ? (
+        <>
+          {summary.duplicateCount ? (
+            <p className="text-[11px] text-text-300">
+              {t('Repeated inputs: {{total}}', { total: summary.duplicateCount })}
+            </p>
+          ) : null}
+          {summary.otherCount ? (
+            <p className="text-[11px] text-text-300">
+              {t('Other results: {{total}}', { total: summary.otherCount })}
+            </p>
+          ) : null}
+          {summary.notAttemptedCount ? (
+            <p className="text-[11px] text-text-300">
+              {t('Not attempted: {{total}}', { total: summary.notAttemptedCount })}
+            </p>
+          ) : null}
+          {summary.failedInputIndex !== undefined || summary.cancelled ? (
+            <ErrorNotice
+              icon={TriangleAlert}
+              tone="amber"
+              description={
+                summary.cancelled
+                  ? t('Saving stopped. Completed results are kept.')
+                  : t('Could not save reference {{number}}. Earlier results are kept.', {
+                      number: summary.failedInputIndex! + 1
+                    })
+              }
+            />
+          ) : null}
+          {canOpenInbox || summary.existingItemIds?.length ? (
+            <div className="flex flex-wrap gap-2">
+              {canOpenInbox ? (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => useNavigationStore.getState().openLibrary('user')}
+                >
+                  {t('Open Inbox')}
+                </Button>
+              ) : null}
+              {summary.existingItemIds?.map((id, index) => (
+                <Button
+                  key={id}
+                  variant="outline"
+                  size="sm"
+                  onClick={() => useNavigationStore.getState().openLiteratureItem(id, 'user')}
+                >
+                  {t('Open existing reference {{number}}', { number: index + 1 })}
+                </Button>
+              ))}
+            </div>
+          ) : null}
+        </>
+      ) : null}
 
       {summary.query ? (
         <div className="min-w-0 rounded-md bg-bg-200 px-2.5 py-2">
@@ -198,16 +252,7 @@ const WorkspaceLiteratureToolCard = ({
   const className =
     'flex min-w-0 flex-col gap-2.5 rounded-lg border border-border-200 bg-bg-000 p-3 text-left'
 
-  return canOpenInbox ? (
-    <button
-      type="button"
-      data-testid="literature-tool-card"
-      className={`${className} cursor-pointer transition-colors hover:border-primary/40 hover:bg-bg-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40`}
-      onClick={() => useNavigationStore.getState().openLibrary('user')}
-    >
-      {content}
-    </button>
-  ) : (
+  return (
     <section
       data-testid="literature-tool-card"
       aria-label={isLibrary ? t('Literature library') : t('Reading')}
