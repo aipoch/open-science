@@ -193,11 +193,11 @@ export const LiteratureBatchLookupDialog = ({
     if (sending) return
     setSending(true)
     try {
-      await saveDrafts()
       failedCommand.current = request
+      await saveDrafts()
       const result = await window.api.literature.jobs(request)
-      failedCommand.current = undefined
       if (result.jobs[0]) receive(result.jobs[0])
+      failedCommand.current = undefined
       setError(false)
     } catch {
       setError(true)

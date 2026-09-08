@@ -247,8 +247,6 @@ it('retries failed review saves without losing the selected source or applying a
   await act(async () => {})
   expect(screen.queryByRole('alert')).toBeNull()
   expect(job.rows[0]).toMatchObject({ checked: true, candidateId: 'chosen-source' })
-  fireEvent.click(screen.getByRole('button', { name: 'Add attachment (1)' }))
-  await act(async () => {})
   expect(jobs.mock.calls.filter(([request]) => request.action === 'apply')).toEqual([
     [
       {

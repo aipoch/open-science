@@ -129,17 +129,17 @@ const reviewIdentifiers = (
   current: LiteratureItemInput,
   merged: ReturnType<typeof mergeCrossrefMetadata>
 ): void => {
+  const key = ({ scheme, value, isPrimary }: LiteratureItemInput['identifiers'][number]): string =>
+    JSON.stringify([scheme, normalizeIdentifier(scheme, value), Boolean(isPrimary)])
+  const existingKeys = new Set(current.identifiers.map(key))
+  const incomingKeys = new Set(merged.item.identifiers.map(key))
+  const onlyAdded = [...existingKeys].every((value) => incomingKeys.has(value))
+  if (onlyAdded && existingKeys.size === incomingKeys.size) {
+    merged.item.identifiers = structuredClone(current.identifiers)
+    return
+  }
   const existing = identifierText(current)
   const value = identifierText(merged.item)
-  if (existing === value) return
-  const onlyAdded = current.identifiers.every((identifier) =>
-    merged.item.identifiers.some(
-      (next) =>
-        next.scheme === identifier.scheme &&
-        next.value === identifier.value &&
-        next.isPrimary === identifier.isPrimary
-    )
-  )
   if (onlyAdded) merged.filled.push({ field: 'identifiers', value })
   else merged.conflicts.push({ field: 'identifiers', currentValue: existing, value })
 }

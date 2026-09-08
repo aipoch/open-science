@@ -490,14 +490,15 @@ it.each(['review', 'retry', 'resume', 'remove'] as const)(
     const jobId = randomUUID()
     await jobs.run({ action: 'create', mode: 'metadata', itemIds: ['a'], requestId: jobId })
     await vi.waitFor(async () => expect((await state(jobs, jobId)).state).toBe('review'))
+    // Finish the search checkpoint before injecting a command-only write failure.
+    await jobs.close()
     if (action === 'resume') {
-      await jobs.close()
       const record = JSON.parse(await readFile(join(`${path}.d`, `${jobId}.json`), 'utf8'))
       record.state = 'paused'
       await writeFile(join(`${path}.d`, `${jobId}.json`), JSON.stringify(record))
-      jobs = new LiteratureBatchJobs(options)
-      cleanup.push(() => jobs.close())
     }
+    jobs = new LiteratureBatchJobs(options)
+    cleanup.push(() => jobs.close())
     const before = await state(jobs, jobId)
     // Block the real write destination, retaining all original files for restoration.
     const target = action === 'remove' ? path : `${path}.d`

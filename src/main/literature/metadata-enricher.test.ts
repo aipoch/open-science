@@ -538,3 +538,25 @@ it('accepts a valid JSON response exactly at the byte limit', async () => {
   )
   expect((await enricher.complete({ mode: 'preview', itemId: view.id })).source).toBeDefined()
 })
+
+it.each(['10.1000/example', 'https://doi.org/10.1000/EXAMPLE'])(
+  'preserves unchanged identifier values and order after an explicit lookup: %s',
+  async (doi) => {
+    const original = {
+      ...item,
+      identifiers: [
+        { scheme: 'doi' as const, value: doi, isPrimary: true },
+        { scheme: 'pmid' as const, value: '12345678', isPrimary: false }
+      ]
+    }
+    const { enricher } = regressionEnricher(original, crossref({ DOI: '10.1000/example' }))
+    const review = await enricher.complete({
+      mode: 'preview',
+      itemId: view.id,
+      identifier: { scheme: 'doi', value: '10.1000/example' }
+    })
+    expect(review.filled).toEqual([])
+    expect(review.conflicts).toEqual([])
+    expect(review.item.item.identifiers).toEqual(original.identifiers)
+  }
+)
