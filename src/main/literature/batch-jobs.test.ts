@@ -886,3 +886,35 @@ it('restores a historically completed partial search without repeating completed
   await vi.waitFor(async () => expect((await state(reopened, jobId)).state).toBe('review'))
   expect(metadata).toHaveBeenCalledExactlyOnceWith({ mode: 'preview', itemId: 'b' })
 })
+
+it.each(['missing', 'corrupt'] as const)(
+  'removes a task with %s payloads without discarding other indexed tasks',
+  async (damage) => {
+    const { jobs, options, path } = await setup()
+    const removed = randomUUID()
+    const retained = randomUUID()
+    for (const jobId of [removed, retained]) {
+      await jobs.run({ action: 'create', mode: 'metadata', itemIds: ['a'], requestId: jobId })
+      await vi.waitFor(async () => expect((await state(jobs, jobId)).state).toBe('review'))
+    }
+    await jobs.close()
+    const directory = join(`${path}.d`, removed)
+    const header = JSON.parse(await readFile(join(directory, 'task.json'), 'utf8'))
+    const payload = join(directory, 'payloads', `${header.rows[0].payload}.json`)
+    if (damage === 'missing') await rm(payload)
+    else await writeFile(payload, '{invalid')
+    const reopened = new LiteratureBatchJobs(options)
+    cleanup.push(() => reopened.close())
+    expect((await reopened.run({ action: 'list' })).summaries).toHaveLength(2)
+    await expect(reopened.run({ action: 'get', jobId: removed })).rejects.toThrow()
+    await expect(reopened.run({ action: 'remove', jobId: removed })).resolves.toEqual({ jobs: [] })
+    await expect(stat(directory)).rejects.toMatchObject({ code: 'ENOENT' })
+    await reopened.close()
+    const restored = new LiteratureBatchJobs(options)
+    cleanup.push(() => restored.close())
+    expect((await restored.run({ action: 'list' })).summaries?.map(({ id }) => id)).toEqual([
+      retained
+    ])
+    expect((await state(restored, retained)).rows[0].status).toBe('ready')
+  }
+)

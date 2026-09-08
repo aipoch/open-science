@@ -187,7 +187,7 @@ export class LiteratureBatchJobs {
       const hydrated = this.commands.then(() => this.journal.hydrate(publishedJob))
       this.commands = hydrated.catch(() => undefined)
       await hydrated
-    } else await this.journal.hydrate(publishedJob)
+    } else if (request.action !== 'remove') await this.journal.hydrate(publishedJob)
     const job = request.action === 'get' ? publishedJob : structuredClone(publishedJob)
     if (request.action === 'get') {
       if (request.expectedUpdatedAt !== undefined && request.expectedUpdatedAt !== job.updatedAt)
