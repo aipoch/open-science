@@ -219,7 +219,7 @@ const dateParts = (value: unknown): readonly number[] | undefined => {
     date.length < 1 ||
     date.length > 3 ||
     !date.every((part) => typeof part === 'number' && Number.isInteger(part)) ||
-    year < 1 ||
+    year < 0 ||
     (month !== undefined && (month < 1 || month > 12)) ||
     (day !== undefined && (day < 1 || day > days[month - 1]!))
   )

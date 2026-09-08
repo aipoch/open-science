@@ -159,6 +159,11 @@ describe('toCslItem', () => {
 })
 
 describe('fromCslItem', () => {
+  it('accepts model-valid year zero through the CSL projection', () => {
+    const projected = toCslItem('year-zero', item({ issuedYear: 0 }))
+    expect(fromCslItem(projected).issuedYear).toBe(0)
+  })
+
   it.each([
     [2024, 0],
     [2024, 13],

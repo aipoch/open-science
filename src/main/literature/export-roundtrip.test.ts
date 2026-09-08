@@ -187,4 +187,41 @@ describe('Literature export round trips', () => {
       { nameMode: 'person', creatorType: 'translator', givenName: 'Li', familyName: 'Translator' }
     ])
   })
+  it('preserves comma-containing organization editors and translators in RIS', async () => {
+    const formatter = new LiteratureCitationFormatter()
+    const creators = [
+      {
+        nameMode: 'organization' as const,
+        literalName: 'Department, University',
+        creatorType: 'editor' as const
+      },
+      {
+        nameMode: 'person' as const,
+        familyName: 'Editor',
+        givenName: 'Ada',
+        creatorType: 'editor' as const
+      },
+      {
+        nameMode: 'organization' as const,
+        literalName: 'Translation,$&Group',
+        creatorType: 'translator' as const
+      }
+    ]
+    const content = await formatter.exportReferences(
+      [{ id: 'book', item: { ...reference, itemType: 'book', creators } }],
+      'ris'
+    )
+    const parsed = await formatter.parseReferences(content)
+    expect(parsed.errors).toEqual([])
+    expect(parsed.items[0]?.creators).toEqual(creators)
+    const edited = await formatter.parseReferences(
+      content.replace('A3  - Department, University', 'A3  - Updated, Person')
+    )
+    expect(edited.items[0]?.creators[0]).toEqual({
+      nameMode: 'person',
+      familyName: 'Updated',
+      givenName: 'Person',
+      creatorType: 'editor'
+    })
+  })
 })
