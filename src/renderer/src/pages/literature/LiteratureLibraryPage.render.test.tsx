@@ -447,6 +447,147 @@ describe('LiteratureLibraryPage', () => {
     vi.unstubAllGlobals()
   })
 
+  it.each(['Edit metadata', 'New collection'])(
+    'preserves the %s draft when Escape cancels composition',
+    async (action) => {
+      search.mockImplementation((request: { scope: string }) =>
+        Promise.resolve(request.scope === 'library' ? { entries: [libraryItem] } : { entries: [] })
+      )
+      render(<LiteratureLibraryPage />)
+      if (action === 'Edit metadata') {
+        fireEvent.click(screen.getByRole('button', { name: 'All references' }))
+        await openReferenceDetail(await screen.findByText(libraryItem.item.title))
+        await openMenu(screen.getByRole('button', { name: 'More actions' }))
+        fireEvent.click(screen.getByRole('menuitem', { name: action }))
+      } else {
+        fireEvent.click(screen.getByRole('button', { name: action }))
+      }
+      const dialog = screen.getByRole('dialog')
+      const input = within(dialog).getByLabelText(action === 'Edit metadata' ? 'Title' : 'Name')
+      fireEvent.change(input, { target: { value: 'Existing draft' } })
+      fireEvent.compositionStart(input)
+      // Move beyond the unrelated child-menu dismissal grace period.
+      vi.useFakeTimers()
+      try {
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(1000)
+        })
+        fireEvent.keyDown(input, { key: 'Escape', isComposing: true })
+        expect(transact).not.toHaveBeenCalled()
+        expect(screen.queryByRole('dialog')).toBe(dialog)
+        expect((input as HTMLInputElement).value).toBe('Existing draft')
+        fireEvent.compositionEnd(input)
+        fireEvent.keyDown(input, { key: 'Escape', isComposing: false })
+        expect(screen.queryByRole('dialog')).toBeNull()
+      } finally {
+        vi.useRealTimers()
+      }
+    }
+  )
+
+  it('waits for an explicit Enter after metadata identifier composition before querying', async () => {
+    search.mockImplementation((request: { scope: string }) =>
+      Promise.resolve(request.scope === 'library' ? { entries: [libraryItem] } : { entries: [] })
+    )
+    render(<LiteratureLibraryPage />)
+    fireEvent.click(screen.getByRole('button', { name: 'All references' }))
+    await openReferenceDetail(await screen.findByText(libraryItem.item.title))
+    await openMenu(screen.getByRole('button', { name: 'More actions' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Complete metadata' }))
+    const input = screen.getByRole('textbox', { name: 'DOI' })
+    fireEvent.change(input, { target: { value: '' } })
+    fireEvent.keyDown(input, { key: 'Enter', isComposing: false })
+    expect(completeMetadata).not.toHaveBeenCalled()
+    fireEvent.compositionStart(input)
+    fireEvent.change(input, { target: { value: '10.1234/zhong' } })
+    fireEvent.keyDown(input, { key: 'Enter', isComposing: true })
+    expect(completeMetadata).not.toHaveBeenCalled()
+    expect(transact).not.toHaveBeenCalled()
+    fireEvent.compositionEnd(input)
+    fireEvent.keyDown(input, { key: 'Enter', isComposing: false })
+    expect(screen.getByRole('button', { name: 'Search', hidden: true }).matches(':disabled')).toBe(
+      true
+    )
+    fireEvent.keyDown(input, { key: 'Enter', isComposing: false })
+    await waitFor(() =>
+      expect(completeMetadata).toHaveBeenCalledExactlyOnceWith({
+        mode: 'preview',
+        itemId: libraryItem.id,
+        identifier: { scheme: 'doi', value: '10.1234/zhong' }
+      })
+    )
+  })
+
+  it.each([
+    ['zhong', '中文'],
+    ['にほん', '日本'],
+    ['ㅎ', '한']
+  ])('defers catalog search until composition ends: %s → %s', async (intermediate, final) => {
+    render(<LiteratureLibraryPage />)
+    fireEvent.click(screen.getByRole('button', { name: 'All references' }))
+    await waitFor(() =>
+      expect(search).toHaveBeenCalledWith(expect.objectContaining({ scope: 'library' }))
+    )
+    const input = screen.getByLabelText('Search references')
+    vi.useFakeTimers()
+    try {
+      search.mockClear()
+      fireEvent.compositionStart(input)
+      fireEvent.change(input, { target: { value: intermediate } })
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(301)
+      })
+      expect(search).not.toHaveBeenCalledWith(expect.objectContaining({ query: intermediate }))
+      fireEvent.compositionEnd(input, { data: final, target: { value: final } })
+      // Some browsers send a final input/change after compositionend.
+      fireEvent.change(input, { target: { value: final } })
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(299)
+      })
+      expect(search).not.toHaveBeenCalledWith(expect.objectContaining({ query: final }))
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(1)
+      })
+      expect(search).toHaveBeenCalledWith(
+        expect.objectContaining({ scope: 'library', query: final })
+      )
+      expect(search.mock.calls.filter(([request]) => request.query === final)).toHaveLength(1)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('cancels a pending catalog search when composition starts before another change', async () => {
+    render(<LiteratureLibraryPage />)
+    fireEvent.click(screen.getByRole('button', { name: 'All references' }))
+    await waitFor(() =>
+      expect(search).toHaveBeenCalledWith(expect.objectContaining({ scope: 'library' }))
+    )
+    const input = screen.getByLabelText('Search references')
+    vi.useFakeTimers()
+    try {
+      search.mockClear()
+      fireEvent.change(input, { target: { value: 'draft' } })
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(200)
+      })
+      fireEvent.compositionStart(input)
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(301)
+      })
+      expect(search).not.toHaveBeenCalledWith(expect.objectContaining({ query: 'draft' }))
+      fireEvent.compositionEnd(input)
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(301)
+      })
+      expect(search).toHaveBeenCalledWith(
+        expect.objectContaining({ scope: 'library', query: 'draft' })
+      )
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('trashes all 26 members despite an update between target reads', async () => {
     const { mkdtemp, rm } = await import('node:fs/promises')
     const { tmpdir } = await import('node:os')
