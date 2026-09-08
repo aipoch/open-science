@@ -4790,6 +4790,24 @@
     "The CSL style references an undefined macro: {{macro}}": "CSL 스타일이 정의되지 않은 매크로를 참조합니다: {{macro}}",
     "Citation styles could not be loaded. Please try again.": "인용 스타일을 불러오지 못했습니다. 다시 시도하세요.",
     "The CSL style could not be imported. Please try again.": "CSL 스타일을 가져오지 못했습니다. 다시 시도하세요.",
-    "The CSL style could not be deleted. Please try again.": "CSL 스타일을 삭제하지 못했습니다. 다시 시도하세요."
+    "The CSL style could not be deleted. Please try again.": "CSL 스타일을 삭제하지 못했습니다. 다시 시도하세요.",
+    "Deletion blocked": "삭제 차단됨",
+    "Saved conversations could not be checked completely. No attachments were deleted. Review the recovery details before trying again.": "저장된 대화를 완전히 확인하지 못했습니다. 첨부 파일은 삭제되지 않았습니다. 복구 세부 정보를 확인한 후 다시 시도하세요.",
+    "Hide details": "세부 정보 숨기기",
+    "View recovery details": "복구 세부 정보 보기",
+    "Current chat context": "현재 채팅 컨텍스트",
+    "Historical message": "이전 메시지",
+    "Message: {{messageId}}": "메시지: {{messageId}}",
+    "Branch: {{branchId}}": "브랜치: {{branchId}}",
+    "This conversation is unavailable here. It may be archived or not loaded.": "여기서 이 대화를 열 수 없습니다. 보관되었거나 아직 불러오지 않았을 수 있습니다.",
+    "View conversation": "대화 보기",
+    "Conversation data is damaged.": "대화 데이터가 손상되었습니다.",
+    "Conversation data requires a newer app version.": "대화 데이터에 더 최신 버전의 앱이 필요합니다.",
+    "Conversation data exceeds the storage limit.": "대화 데이터가 저장 한도를 초과합니다.",
+    "Conversation data could not be read.": "대화 데이터를 읽지 못했습니다.",
+    "The damaged file was moved aside; its references are still unknown.": "손상된 파일은 따로 옮겨졌지만 참조 여부는 아직 알 수 없습니다.",
+    "Inspect or recover the affected conversation files. Retrying deletion alone will not repair them.": "영향을 받은 대화 파일을 확인하거나 복구하세요. 삭제를 다시 시도하는 것만으로는 복구되지 않습니다.",
+    "Complete locations are unavailable. Check conversation storage diagnostics; deletion remains blocked.": "전체 위치 정보를 제공할 수 없습니다. 대화 저장소 진단을 확인하세요. 삭제는 계속 차단됩니다.",
+    "Conversation folder": "대화 폴더"
   }
 }

@@ -5238,6 +5238,24 @@
     "The CSL style references an undefined macro: {{macro}}": "Стиль CSL ссылается на неопределённый макрос: {{macro}}",
     "Citation styles could not be loaded. Please try again.": "Не удалось загрузить стили цитирования. Повторите попытку.",
     "The CSL style could not be imported. Please try again.": "Не удалось импортировать стиль CSL. Повторите попытку.",
-    "The CSL style could not be deleted. Please try again.": "Не удалось удалить стиль CSL. Повторите попытку."
+    "The CSL style could not be deleted. Please try again.": "Не удалось удалить стиль CSL. Повторите попытку.",
+    "Deletion blocked": "Удаление заблокировано",
+    "Saved conversations could not be checked completely. No attachments were deleted. Review the recovery details before trying again.": "Не удалось полностью проверить сохранённые диалоги. Вложения не удалены. Просмотрите сведения о восстановлении перед повторной попыткой.",
+    "Hide details": "Скрыть подробности",
+    "View recovery details": "Сведения о восстановлении",
+    "Current chat context": "Текущий контекст чата",
+    "Historical message": "Сообщение из истории",
+    "Message: {{messageId}}": "Сообщение: {{messageId}}",
+    "Branch: {{branchId}}": "Ветка: {{branchId}}",
+    "This conversation is unavailable here. It may be archived or not loaded.": "Этот диалог здесь недоступен. Возможно, он архивирован или ещё не загружен.",
+    "View conversation": "Открыть диалог",
+    "Conversation data is damaged.": "Данные диалога повреждены.",
+    "Conversation data requires a newer app version.": "Для данных диалога требуется более новая версия приложения.",
+    "Conversation data exceeds the storage limit.": "Данные диалога превышают лимит хранилища.",
+    "Conversation data could not be read.": "Не удалось прочитать данные диалога.",
+    "The damaged file was moved aside; its references are still unknown.": "Повреждённый файл перемещён отдельно, но его ссылки по-прежнему неизвестны.",
+    "Inspect or recover the affected conversation files. Retrying deletion alone will not repair them.": "Проверьте или восстановите затронутые файлы диалогов. Повторная попытка удаления сама по себе их не восстановит.",
+    "Complete locations are unavailable. Check conversation storage diagnostics; deletion remains blocked.": "Полные сведения о расположении недоступны. Проверьте диагностику хранилища диалогов; удаление остаётся заблокированным.",
+    "Conversation folder": "Папка диалогов"
   }
 }

@@ -1,3 +1,8 @@
+import {
+  parseLiteratureDeletionError,
+  type LiteratureDeletionDiagnostic
+} from '../../../../shared/literature-deletion'
+import { LiteratureDeletionNotice } from './LiteratureDeletionNotice'
 import { useRef, useState } from 'react'
 import { FileText, MoreHorizontal, RotateCcw, Trash2 } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
@@ -63,6 +68,7 @@ export const LiteratureAttachments = ({
 }): React.JSX.Element => {
   const { t } = useTranslation()
   const [error, setError] = useState<string>()
+  const [deletionDiagnostic, setDeletionDiagnostic] = useState<LiteratureDeletionDiagnostic>()
   const busy = useRef(false)
   const [pending, setPending] = useState(false)
   const run = async (
@@ -75,6 +81,7 @@ export const LiteratureAttachments = ({
     setPending(true)
     try {
       setError(undefined)
+      setDeletionDiagnostic(undefined)
       const receipt = await window.api.literature.transact(
         action === 'remove'
           ? { kind: 'delete-attachment', itemId: item.id, attachmentId }
@@ -110,17 +117,14 @@ export const LiteratureAttachments = ({
   }
   return (
     <ActionMenuProvider
-      onActionError={(error) =>
-        setError(
-          error instanceof Error && error.message.includes('LITERATURE_ATTACHMENT_IN_USE')
-            ? t(
-                'This PDF is referenced by a chat or its message history and cannot be removed. Unlinking the current chat does not remove historical references.'
-              )
-            : t('The attachment operation failed. Try again.')
-        )
-      }
+      onActionError={(error) => {
+        const diagnostic = parseLiteratureDeletionError(error)
+        setDeletionDiagnostic(diagnostic)
+        if (!diagnostic) setError(t('The attachment operation failed. Try again.'))
+      }}
     >
       <div className="mt-2 space-y-2">
+        {deletionDiagnostic ? <LiteratureDeletionNotice diagnostic={deletionDiagnostic} /> : null}
         {error ? (
           <p role="alert" className="text-sm text-danger-000">
             {error}

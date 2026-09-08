@@ -1,3 +1,4 @@
+import { parseLiteratureDeletionError } from '../../shared/literature-deletion'
 import { transactLiterature } from './transact'
 import { mkdtemp, rm, writeFile, truncate, access, readFile, readdir } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -72,8 +73,7 @@ describe('Literature PDF attachment reliability', () => {
       async () => client!,
       undefined,
       content,
-      (attachmentId, remove) =>
-        coordinator.withUnreferencedLiteratureAttachment(attachmentId, remove)
+      (remove) => coordinator.withLiteratureAttachmentRemoval(remove)
     )
     const item = await catalog.transact({
       kind: 'create-item',
@@ -286,7 +286,20 @@ describe('Literature PDF attachment reliability', () => {
       }
       const outcome = await catalog.transact(remove).then(
         () => 'removed',
-        () => 'blocked'
+        (error) => {
+          expect(parseLiteratureDeletionError(error)).toMatchObject({
+            reason: 'scan-incomplete',
+            issues: [
+              {
+                projectId: 'other-project',
+                fileName: 'reading-history.json',
+                kind: 'corrupt',
+                recovered: true
+              }
+            ]
+          })
+          return 'blocked'
+        }
       )
       expect.soft(outcome).toBe('blocked')
       expect.soft(await client!.literatureAttachmentVersion.count()).toBe(1)
@@ -337,13 +350,11 @@ describe('Literature PDF attachment reliability', () => {
           ).id
         )
       await catalog.transact({ kind: 'set-item-lifecycle', itemIds, state: 'deleted' })
-      // Exercise the public Catalog command, then the same public cleanup boundary used by IPC.
-      const contentIds = await catalog.contentBlobIdsForItems(itemIds)
-      const outcome = await catalog.transact({ kind: 'delete-items-permanently', itemIds }).then(
-        async () => {
-          await content.sweep({ contentIds, createdBefore: new Date(Date.now() + 1) })
-          return 'removed'
-        },
+      const outcome = await transactLiterature(catalog, content, {
+        kind: 'delete-items-permanently',
+        itemIds
+      }).then(
+        () => 'removed',
         () => 'blocked'
       )
       expect.soft(outcome).toBe('blocked')
@@ -367,6 +378,45 @@ describe('Literature PDF attachment reliability', () => {
       )
     }
   )
+
+  it('checks attachments retained on cascade aliases before deleting a trashed survivor', async () => {
+    const { importer, request, catalog, content, sessions } = await setup()
+    const attachment = (await importer.import(request)).item.attachments[0]
+    await saveReadingHistory(sessions, attachment)
+    const survivor = await catalog.transact({
+      kind: 'create-item',
+      item: literatureItemInputSchema.parse({ title: 'Survivor', itemType: 'journalArticle' })
+    })
+    // Model the Catalog's supported retained alias relation with its own attachment rows.
+    await client!.literatureItem.update({
+      where: { id: request.itemId },
+      data: { mergedIntoItemId: survivor.id, deletedAt: new Date() }
+    })
+    await catalog.transact({ kind: 'set-item-lifecycle', itemIds: [survivor.id], state: 'deleted' })
+    await expect(
+      transactLiterature(catalog, content, {
+        kind: 'delete-items-permanently',
+        itemIds: [survivor.id]
+      })
+    ).rejects.toThrow('LITERATURE_ATTACHMENT_IN_USE')
+    expect(await client!.literatureItem.count()).toBe(2)
+    expect(await client!.literatureAttachmentVersion.count()).toBe(1)
+  })
+
+  it('fails closed for attachment deletion when the Catalog has no session guard', async () => {
+    const { importer, request, content } = await setup()
+    await importer.import(request)
+    const unguarded = new LiteratureCatalog(async () => client!, undefined, content)
+    await unguarded.transact({
+      kind: 'set-item-lifecycle',
+      itemIds: [request.itemId],
+      state: 'deleted'
+    })
+    await expect(
+      unguarded.transact({ kind: 'delete-items-permanently', itemIds: [request.itemId] })
+    ).rejects.toThrow('attachment removal is unavailable')
+    expect(await client!.literatureAttachmentVersion.count()).toBe(1)
+  })
 
   it('rejects a header-only corrupt PDF before creating an attachment', async () => {
     const { importer, request, path } = await setup(Buffer.from('%PDF-1.7\nnot a document'))
@@ -699,6 +749,28 @@ describe('Literature PDF attachment reliability', () => {
         })
       ).rejects.toThrow('LITERATURE_ATTACHMENT_IN_USE')
       await expect(authority.resolveVersion(version.id)).resolves.toBeDefined()
+      const error = await catalog
+        .transact({
+          kind: 'delete-attachment',
+          itemId: request.itemId,
+          attachmentId: attachment.id
+        })
+        .catch((error) => error)
+      expect(parseLiteratureDeletionError(error)).toMatchObject({
+        reason: 'referenced',
+        references: [
+          {
+            location: 'message-history',
+            sessionId: 'history-session',
+            projectId: 'project',
+            messageId: message.id,
+            versionId: version.id,
+            ...(kind === 'inactive branch'
+              ? { frameId: expect.any(String), branchId: expect.any(String) }
+              : {})
+          }
+        ]
+      })
     }
   )
 

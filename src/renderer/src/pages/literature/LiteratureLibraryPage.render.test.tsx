@@ -1,3 +1,4 @@
+import { literatureDeletionError } from '../../../../shared/literature-deletion'
 // @vitest-environment jsdom
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -2909,6 +2910,130 @@ describe('LiteratureLibraryPage', () => {
     expect(
       [...within(alert).queryAllByRole('button'), ...within(alert).queryAllByRole('link')].length
     ).toBeGreaterThan(0)
+  })
+
+  it.each(['attachment', 'permanent item'] as const)(
+    'shows historical locations and handles unavailable navigation after %s deletion is blocked',
+    async (entryPoint) => {
+      const entry = createLibraryItemWithPdf()
+      const navigate = vi.spyOn(useNavigationStore.getState(), 'openSession').mockReturnValue(false)
+      search.mockImplementation((request: { scope: string }) =>
+        Promise.resolve(request.scope === 'library' ? { entries: [entry] } : { entries: [] })
+      )
+      try {
+        render(<LiteratureLibraryPage />)
+        fireEvent.click(
+          screen.getByRole('button', {
+            name: entryPoint === 'attachment' ? 'All references' : 'Trash'
+          })
+        )
+        let container: HTMLElement
+        if (entryPoint === 'attachment') {
+          container = await openReferenceDetail(await screen.findByText(entry.item.title))
+          fireEvent.click(
+            within(container).getByRole('button', { name: 'Attachment actions for paper.pdf' })
+          )
+        } else {
+          const row = (await screen.findByText(entry.item.title)).closest('tr')!
+          await openMenu(within(row).getByRole('button', { name: 'More actions' }))
+        }
+        transact.mockRejectedValueOnce(
+          literatureDeletionError({
+            reason: 'referenced',
+            issues: [],
+            truncated: false,
+            references: [
+              {
+                attachmentId: 'attachment-1',
+                versionId: 'version-1',
+                projectId: 'project-1',
+                sessionId: 'history-session',
+                sessionTitle: 'Retained history',
+                location: 'message-history',
+                messageId: 'historical-message',
+                branchId: 'inactive-branch',
+                frameId: 'root-frame'
+              }
+            ]
+          })
+        )
+        fireEvent.click(
+          await screen.findByRole('menuitem', {
+            name: entryPoint === 'attachment' ? 'Remove attachment' : 'Delete permanently'
+          })
+        )
+        if (entryPoint === 'permanent item') {
+          container = screen.getByRole('alertdialog')
+          fireEvent.click(within(container).getByRole('button', { name: 'Delete permanently' }))
+        }
+        fireEvent.click(await screen.findByRole('button', { name: 'View affected conversations' }))
+        expect(screen.getByText('Retained history')).not.toBeNull()
+        expect(screen.getByText('Project: Retrieval research')).not.toBeNull()
+        expect(screen.getByText('Historical message')).not.toBeNull()
+        expect(screen.getByText('Message: historical-message')).not.toBeNull()
+        expect(screen.getByText('Branch: inactive-branch')).not.toBeNull()
+        fireEvent.click(screen.getByRole('button', { name: 'View conversation' }))
+        expect(navigate.mock.calls[0]?.slice(0, 3)).toEqual([
+          'project-1',
+          'history-session',
+          'user'
+        ])
+        expect(
+          screen.getByText(
+            'This conversation is unavailable here. It may be archived or not loaded.'
+          )
+        ).not.toBeNull()
+        expect(transact).toHaveBeenCalledTimes(1)
+      } finally {
+        navigate.mockRestore()
+      }
+    }
+  )
+
+  it('opens the diagnosed recovery folder and reports folder access failure without retrying deletion', async () => {
+    const entry = createLibraryItemWithPdf()
+    const openRecovery = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('Folder unavailable'))
+      .mockResolvedValue(undefined)
+    window.api.sessions.openRecoveryFolder = openRecovery
+    search.mockImplementation((request: { scope: string }) =>
+      Promise.resolve(request.scope === 'library' ? { entries: [entry] } : { entries: [] })
+    )
+    render(<LiteratureLibraryPage />)
+    fireEvent.click(screen.getByRole('button', { name: 'All references' }))
+    const detail = await openReferenceDetail(await screen.findByText(entry.item.title))
+    transact.mockRejectedValueOnce(
+      literatureDeletionError({
+        reason: 'scan-incomplete',
+        references: [],
+        truncated: false,
+        issues: [
+          {
+            projectId: 'project-1',
+            fileName: 'damaged-session.json',
+            kind: 'corrupt',
+            recovered: true
+          }
+        ]
+      })
+    )
+    fireEvent.click(
+      within(detail).getByRole('button', { name: 'Attachment actions for paper.pdf' })
+    )
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Remove attachment' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'View recovery details' }))
+    expect(screen.getByText('damaged-session.json')).not.toBeNull()
+    expect(
+      screen.getByText('The damaged file was moved aside; its references are still unknown.')
+    ).not.toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: 'Open recovery folder' }))
+    expect(await screen.findByText('Could not open that folder.')).not.toBeNull()
+    expect(openRecovery).toHaveBeenCalledWith({ projectId: 'project-1' })
+    fireEvent.click(screen.getByRole('button', { name: 'Open recovery folder' }))
+    await waitFor(() => expect(screen.queryByText('Could not open that folder.')).toBeNull())
+    expect(transact).toHaveBeenCalledTimes(1)
+    expect(within(detail).getByRole('button', { name: 'Preview paper.pdf' })).not.toBeNull()
   })
 
   it('refreshes the diagnosis when attachment verification fails', async () => {

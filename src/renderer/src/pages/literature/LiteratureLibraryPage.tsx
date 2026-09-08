@@ -1,3 +1,8 @@
+import {
+  parseLiteratureDeletionError,
+  type LiteratureDeletionDiagnostic
+} from '../../../../shared/literature-deletion'
+import { LiteratureDeletionNotice } from './LiteratureDeletionNotice'
 import type { TFunction } from 'i18next'
 import { LiteratureAttachments } from './LiteratureAttachments'
 import { LITERATURE_JOB_MAX_ITEMS } from '../../../../shared/literature-jobs'
@@ -1305,6 +1310,8 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
   }>()
   const [permanentDeleteIds, setPermanentDeleteIds] = useState<string[]>([])
   const [permanentDeleteFailed, setPermanentDeleteFailed] = useState(false)
+  const [permanentDeletionDiagnostic, setPermanentDeletionDiagnostic] =
+    useState<LiteratureDeletionDiagnostic>()
   const [permanentDeleteResult, setPermanentDeleteResult] = useState<{
     scope: string
     cleanupPending: boolean
@@ -2960,6 +2967,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
 
   const requestPermanentDeletion = (itemIds: string[]): void => {
     setPermanentDeleteFailed(false)
+    setPermanentDeletionDiagnostic(undefined)
     setPermanentDeleteIds(itemIds)
   }
 
@@ -2997,7 +3005,8 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
         kind: 'delete-items-permanently',
         itemIds: permanentDeleteIds
       })
-    } catch {
+    } catch (error) {
+      setPermanentDeletionDiagnostic(parseLiteratureDeletionError(error))
       setPermanentDeleteFailed(true)
       setIsBatching(false)
       return
@@ -6364,7 +6373,14 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
                   'Search indexes expire separately after inactivity. Historical outputs are kept. This is not secure erasure.'
                 )}
               </p>
-              {permanentDeleteFailed ? (
+              {permanentDeletionDiagnostic ? (
+                <div className="mt-3">
+                  <LiteratureDeletionNotice
+                    diagnostic={permanentDeletionDiagnostic}
+                    onNavigate={() => setPermanentDeleteIds([])}
+                  />
+                </div>
+              ) : permanentDeleteFailed ? (
                 <div className="mt-3">
                   <LiteratureErrorNotice
                     title={t('Literature could not be deleted permanently.')}
