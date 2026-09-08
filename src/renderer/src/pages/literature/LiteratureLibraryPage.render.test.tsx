@@ -914,7 +914,9 @@ describe('LiteratureLibraryPage', () => {
     const dialog = await screen.findByRole('dialog')
     expect(within(dialog).queryByRole('button', { name: 'Accept' })).toBeNull()
     fireEvent.click(within(dialog).getByRole('button', { name: 'Restore' }))
-    await screen.findByText('Literature could not be updated.')
+    await screen.findByText(
+      'Already restored: 0. Accepted or unavailable, skipped: 0. Still dismissed: 1.'
+    )
     expect(screen.getByRole('dialog')).toBe(dialog)
     fireEvent.click(within(dialog).getByRole('button', { name: 'Restore' }))
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
@@ -1044,6 +1046,47 @@ describe('LiteratureLibraryPage', () => {
       fireEvent.click(await screen.findByRole('checkbox', { name: 'Select all references' }))
       await act(async () => fireEvent.click(screen.getAllByRole('button', { name: action })[0]!))
     }
+
+    it('preserves unrelated Undo members when restoring from the dismissed list', async () => {
+      const rows = mockInbox(2)
+      render(<LiteratureLibraryPage />)
+      await settlePage('Dismiss')
+      fireEvent.click(screen.getByRole('button', { name: 'Dismissed' }))
+      const first = (await screen.findByText('Discovery 1')).closest('article')!
+      await act(async () => fireEvent.click(within(first).getByRole('button', { name: 'Restore' })))
+      expect(rows[0]!.state).toBe('pending')
+      expect(rows[1]!.state).toBe('dismissed')
+      await act(async () => fireEvent.click(screen.getByRole('button', { name: 'Undo' })))
+      expect(transact.mock.calls.at(-1)?.[0]).toEqual({
+        kind: 'restore-candidates',
+        candidateIds: ['candidate-2']
+      })
+      expect(rows.every(({ state }) => state === 'pending')).toBe(true)
+    })
+
+    it('recovers a stale dismissed-list restore without an existing Undo', async () => {
+      const rows = mockInbox(2)
+      rows.forEach((row) => {
+        row.state = 'dismissed'
+      })
+      render(<LiteratureLibraryPage />)
+      fireEvent.click(await screen.findByRole('button', { name: 'Dismissed' }))
+      await screen.findByText('Discovery 1')
+      fireEvent.click(screen.getByRole('checkbox', { name: 'Select all references' }))
+      rows[0]!.state = 'pending'
+      await act(async () => fireEvent.click(screen.getAllByRole('button', { name: 'Restore' })[0]!))
+      expect(
+        await screen.findByText(
+          'Already restored: 1. Accepted or unavailable, skipped: 0. Still dismissed: 1.'
+        )
+      ).not.toBeNull()
+      await act(async () => fireEvent.click(screen.getByRole('button', { name: 'Undo' })))
+      expect(transact.mock.calls.at(-1)?.[0]).toEqual({
+        kind: 'restore-candidates',
+        candidateIds: ['candidate-2']
+      })
+      expect(rows.every(({ state }) => state === 'pending')).toBe(true)
+    })
 
     it('restores every candidate after dismissing batches of 51 and 50', async () => {
       const rows = mockInbox(101)
