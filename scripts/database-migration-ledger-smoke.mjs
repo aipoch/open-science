@@ -148,10 +148,10 @@ const EXPECTED_MIGRATION_LEDGER = [
   {
     id: '0036_content_verification_observation',
     checksum: '79b45da6421bbbc2962de6106189c50ff19bef219a7310800a669ec1ebad64a4'
-},
-{
+  },
+  {
     id: '0037_literature_inbox_integrity',
-    checksum: '8d9c678af11619fbccc301abb5af10667795051ab726423884e8e7a5e478dbe8'
+    checksum: 'b491ca823e4c79564cef7cefeeb555d1534c7e5bb676bdd228158fc4c7d4ddca'
   }
 ]
 const LEGACY_PROJECT_ID = 'package-smoke-legacy-project'

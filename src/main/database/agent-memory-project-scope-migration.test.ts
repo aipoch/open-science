@@ -309,7 +309,7 @@ describe('agent memory project scope migration', () => {
     await client.$executeRawUnsafe('ALTER TABLE "ComputeJob" DROP COLUMN "executionMode"')
     await client.$executeRawUnsafe('ALTER TABLE "ComputeHost" DROP COLUMN "executionMode"')
     await client.$executeRawUnsafe(
-      `DELETE FROM "_open_science_migrations" WHERE "id" IN (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `DELETE FROM "_open_science_migrations" WHERE "id" IN (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       CURRENT_AGENT_MEMORY_MIGRATION_ID,
       SESSION_AUXILIARY_USAGE_MIGRATION_ID,
       SESSION_USAGE_ATTRIBUTION_MIGRATION_ID,
@@ -329,6 +329,7 @@ describe('agent memory project scope migration', () => {
       '0033_compute_job_harvest_retry',
       '0034_background_result_delivery',
       '0035_literature_pdf_provenance',
+      '0036_content_verification_observation',
       CURRENT_MIGRATION_ID
     )
 
@@ -353,6 +354,7 @@ describe('agent memory project scope migration', () => {
         '0033_compute_job_harvest_retry',
         '0034_background_result_delivery',
         '0035_literature_pdf_provenance',
+        '0036_content_verification_observation',
         CURRENT_MIGRATION_ID
       ],
       to: CURRENT_MIGRATION_ID

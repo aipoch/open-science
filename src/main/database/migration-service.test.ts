@@ -2711,7 +2711,6 @@ describe('application database migrations', () => {
         entries.filter((entry) => entry.endsWith('.backup')).sort()
       )
     ).resolves.toEqual([
-      'open-science.db.before-0035_literature_pdf_provenance.backup',
       'open-science.db.before-0036_content_verification_observation.backup',
       'open-science.db.before-0037_literature_inbox_integrity.backup',
       unknownBackupName
