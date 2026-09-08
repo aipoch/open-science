@@ -10339,6 +10339,7 @@ describe('notebook runtime service', () => {
       const root = await createStorageRoot()
       const events: string[] = []
       let releaseInstall: (() => void) | undefined
+      const installStarted = Promise.withResolvers<void>()
       const service = new NotebookRuntimeService({
         configRoot: root,
         dataRoot: root,
@@ -10373,6 +10374,7 @@ describe('notebook runtime service', () => {
           events.push('install:start')
           await new Promise<void>((resolve) => {
             releaseInstall = resolve
+            installStarted.resolve()
           })
           events.push('install:end')
           return { ok: true, needsRestart: false, log: '' }
@@ -10380,7 +10382,7 @@ describe('notebook runtime service', () => {
       })
 
       const install = service.managePackages({ language: 'python', packages: ['numpy'] })
-      await vi.waitFor(() => expect(releaseInstall).toBeDefined())
+      await installStarted.promise
 
       const run = service.execute({
         sessionId: 's',
@@ -10400,6 +10402,7 @@ describe('notebook runtime service', () => {
     it('rechecks the repair gate after a queued run acquires the environment lock', async () => {
       const root = await createStorageRoot()
       let releaseInstall: (() => void) | undefined
+      const installStarted = Promise.withResolvers<void>()
       const execute = vi.fn(async (request): Promise<NotebookExecutionResult> => ({
         status: 'completed',
         stdout: '',
@@ -10422,6 +10425,7 @@ describe('notebook runtime service', () => {
         installPackagesImpl: async () => {
           await new Promise<void>((resolve) => {
             releaseInstall = resolve
+            installStarted.resolve()
           })
           return {
             ok: false,
@@ -10434,7 +10438,7 @@ describe('notebook runtime service', () => {
       })
 
       const install = service.managePackages({ language: 'python', packages: ['numpy'] })
-      await vi.waitFor(() => expect(releaseInstall).toBeDefined())
+      await installStarted.promise
       const run = service.execute({
         sessionId: 's',
         workspaceCwd: root,

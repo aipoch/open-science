@@ -23,6 +23,7 @@ import { createInitialProjectState, useProjectStore } from '@/stores/project-sto
 import { createInitialTagState, useTagStore } from '@/stores/tag-store'
 import { LiteratureLibraryPage } from './LiteratureLibraryPage'
 import { useAttachmentOperations } from './literature-attachment-operations'
+import { i18next } from '@/i18n'
 
 if (!Element.prototype.scrollIntoView) {
   Element.prototype.scrollIntoView = (): void => undefined
@@ -8973,6 +8974,48 @@ describe('LiteratureLibraryPage', () => {
         expect(transact).not.toHaveBeenCalled()
       }
     )
+
+    it('keeps a removed reference unsaveable after switching locale without losing its draft', async () => {
+      await showLibrary()
+      await openReferenceDetail(screen.getByText(libraryItem.item.title))
+      await editDetail()
+      fireEvent.change(screen.getByLabelText('Title'), {
+        target: { value: 'Keep this unsaved title' }
+      })
+      get.mockResolvedValue(undefined)
+      search.mockResolvedValue({ entries: [], totalCount: 0 })
+      await act(async () => {
+        vi.mocked(window.api.literature.onChanged).mock.calls.forEach(([listener]) =>
+          listener({ revision: 1, itemIds: [libraryItem.id] })
+        )
+      })
+      await within(screen.getByRole('dialog')).findByText(
+        'This reference is no longer in your Library.'
+      )
+      try {
+        await act(async () => {
+          await i18next.changeLanguage('zh-Hans')
+        })
+        const save = screen.getByRole('button', { name: i18next.t('Save') }) as HTMLButtonElement
+        expect.soft(save.disabled).toBe(true)
+        expect
+          .soft(
+            within(screen.getByRole('dialog')).queryByText(
+              i18next.t('This reference is no longer in your Library.')
+            )
+          )
+          .not.toBeNull()
+        expect((screen.getByLabelText(i18next.t('Title')) as HTMLInputElement).value).toBe(
+          'Keep this unsaved title'
+        )
+        fireEvent.click(save)
+        expect(transact).not.toHaveBeenCalled()
+      } finally {
+        await act(async () => {
+          await i18next.changeLanguage('en')
+        })
+      }
+    })
 
     it.each(['edit', 'reopen'] as const)(
       'does not let a pending removal read discard a later %s',

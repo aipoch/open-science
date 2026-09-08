@@ -2579,20 +2579,13 @@ describe('LiteratureCatalog', () => {
     const catalog = await setup()
     const source = await catalog.transact({ kind: 'create-collection', name: 'Source' })
     const target = await catalog.transact({ kind: 'create-collection', name: 'Target' })
-    const ids: string[] = []
-    for (let index = 0; index < 201; index++) {
-      const item = await catalog.transact({
-        kind: 'create-item',
-        item: candidate({ doi: `10.1234/batch-${index}`, title: `Reference ${index}` }).item
-      })
-      ids.push(item.id)
-      await catalog.transact({
-        kind: 'set-collection-item',
-        collectionId: source.id,
-        itemId: item.id,
-        included: true
-      })
-    }
+    const { itemIds: ids } = await catalog.importItems(
+      Array.from(
+        { length: 201 },
+        (_, index) => candidate({ doi: `10.1234/batch-${index}`, title: `Reference ${index}` }).item
+      ),
+      source.id
+    )
     await catalog.transact({
       kind: 'move-collection-items',
       sourceCollectionId: source.id,

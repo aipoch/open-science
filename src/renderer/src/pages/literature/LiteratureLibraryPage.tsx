@@ -1550,6 +1550,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
       0
     )
 
+  const [removedDetailItemId, setRemovedDetailItemId] = useState<string>()
   const detailInteractionRef = useRef(0)
   const openSelectedItemDetail = useCallback(
     (item: LiteratureItemView, initiator?: HTMLElement): void => {
@@ -1560,6 +1561,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
           (document.activeElement instanceof HTMLElement ? document.activeElement : null)
       }
       detailInteractionRef.current += 1
+      setRemovedDetailItemId(undefined)
       setError(undefined)
       detailController.open(item)
     },
@@ -1960,6 +1962,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
     detailSelectOpenRef.current = false
     childLayerDismissGuardUntilRef.current = 0
     detailController.close()
+    setRemovedDetailItemId(undefined)
     startTransition(() => {
       setPdfError(undefined)
       changeDetailMode('view')
@@ -2018,9 +2021,12 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
           if (detailModeRef.current === 'view') {
             setPreviewItem(undefined)
             closeSelectedItemDetail()
-          }
+          } else setRemovedDetailItemId(snapshot.item.id)
           setError(t('This reference is no longer in your Library.'))
-        } else detailController.replace(latest)
+        } else {
+          setRemovedDetailItemId((id) => (id === latest.id ? undefined : id))
+          detailController.replace(latest)
+        }
       })()
     ]).catch(() => setError(t('Literature could not be loaded.')))
   })
@@ -5998,12 +6004,11 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
                         item={metadata.editBase?.item ?? selectedItem.item}
                         saving={metadata.saving || metadata.awaitingReload}
                         saveDisabled={
-                          metadata.externallyUpdated() ||
-                          error === t('This reference is no longer in your Library.')
+                          metadata.externallyUpdated() || removedDetailItemId === selectedItem.id
                         }
                         error={
-                          error === t('This reference is no longer in your Library.')
-                            ? error
+                          removedDetailItemId === selectedItem.id
+                            ? t('This reference is no longer in your Library.')
                             : metadata.awaitingReload || metadata.externallyUpdated()
                               ? undefined
                               : metadata.error
