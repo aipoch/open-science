@@ -1838,7 +1838,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
             detailController.getSnapshot().generation !== snapshot.generation
           )
             return
-          if (!item || item.deletedAt !== undefined) {
+          if (!item || item.id !== snapshot.item?.id || item.deletedAt !== undefined) {
             setPreviewItem(undefined)
             closeSelectedItemDetail()
             void reloadEntries(true, true)
