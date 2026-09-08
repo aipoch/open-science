@@ -2,6 +2,7 @@ import type { LiteratureItemView } from '../../../../shared/literature'
 
 export type LiteratureDetailSnapshot = Readonly<{
   item?: LiteratureItemView
+  generation: number
   open: boolean
 }>
 
@@ -14,7 +15,7 @@ export type LiteratureDetailController = Readonly<{
 }>
 
 const createLiteratureDetailController = (): LiteratureDetailController => {
-  let snapshot: LiteratureDetailSnapshot = { open: false }
+  let snapshot: LiteratureDetailSnapshot = { open: false, generation: 0 }
   const listeners = new Set<() => void>()
   const publish = (next: LiteratureDetailSnapshot): void => {
     snapshot = next
@@ -28,12 +29,12 @@ const createLiteratureDetailController = (): LiteratureDetailController => {
       return () => listeners.delete(listener)
     },
     close: () => {
-      if (!snapshot.open && !snapshot.item) return
-      publish({ open: false })
+      publish({ open: false, generation: snapshot.generation + 1 })
     },
-    open: (item) => publish({ item, open: true }),
+    open: (item) => publish({ item, open: true, generation: snapshot.generation + 1 }),
     replace: (item) => {
-      if (snapshot.item?.id !== item.id) return
+      if (snapshot.item?.id !== item.id || item.metadataRevision < snapshot.item.metadataRevision)
+        return
       publish({ ...snapshot, item })
     }
   }

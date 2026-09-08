@@ -101,6 +101,8 @@
   },
   "renderer": {
     "Select no more than {{limit}} references for this task.": "このタスクでは {{limit}} 件以下の文献を選択してください。",
+    "This reference changed while you were editing. Your draft has been kept.": "編集中にこの文献が変更されました。下書きは保持されています。",
+    "Discard this draft and load the latest saved metadata.": "この下書きを破棄して、最後に保存されたメタデータを読み込みます。",
     "Identifiers (★ primary)": "識別子（★ 主要）",
     "Search again to refresh this older metadata review.": "再検索して、この古いメタデータの確認内容を更新してください。",
     "The reference was saved, but could not be reloaded.": "文献は保存されましたが、再読み込みできませんでした。",

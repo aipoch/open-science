@@ -60,6 +60,7 @@ import { useTranslation } from 'react-i18next'
 import { FileDropOverlay } from '@/components/FileDropOverlay'
 import { ExternalTextLink } from '@/components/ExternalTextLink'
 import { ActionToast } from '@/components/ActionToast'
+import { ErrorNotice } from '@/components/error-notice'
 import { LiteratureErrorNotice } from './LiteratureErrorNotice'
 import { Button } from '@/components/ui/button'
 import { ScrollArea } from '@/components/ui/scroll-area'
@@ -1310,12 +1311,6 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
   const [detailController] = useState(createLiteratureDetailController)
   const selectedItem = detailController.getSnapshot().item
   const selectedItemId = selectedItem?.id
-  const updateMetadataItem = useCallback((updated: LiteratureItemView): void => {
-    setItems((entries) => entries.map((entry) => (entry.id === updated.id ? updated : entry)))
-    setDuplicatesRevision((value) => value + 1)
-  }, [])
-  const metadata = useLiteratureMetadata(detailController, updateMetadataItem)
-  const { changeMode: changeDetailMode } = metadata
   const [isCreatingItem, setIsCreatingItem] = useState(false)
   const [isSavingNewItem, setIsSavingNewItem] = useState(false)
   const [createItemError, setCreateItemError] = useState<string>()
@@ -1405,21 +1400,10 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
       0
     )
 
-  const closeSelectedItemDetail = useCallback((): void => {
-    detailTagMenuOpenRef.current = false
-    detailSelectOpenRef.current = false
-    childLayerDismissGuardUntilRef.current = 0
-    detailController.close()
-    startTransition(() => {
-      setPdfError(undefined)
-      changeDetailMode('view')
-      setProjectLinkError(undefined)
-      setCollectionLinkError(undefined)
-    })
-  }, [changeDetailMode, detailController])
-
+  const detailInteractionRef = useRef(0)
   const openSelectedItemDetail = useCallback(
     (item: LiteratureItemView): void => {
+      detailInteractionRef.current += 1
       detailController.open(item)
     },
     [detailController]
@@ -1505,6 +1489,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
   useEffect(() => {
     if (!pendingLiteratureItemId) return
     const itemId = pendingLiteratureItemId
+    const interaction = ++detailInteractionRef.current
     let active = true
     queueMicrotask(() => {
       if (!active) return
@@ -1518,12 +1503,20 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
       void window.api.literature.get(itemId).then(
         (item) => {
           if (!active) return
+          if (detailInteractionRef.current !== interaction) {
+            consumeLiteratureItem(itemId)
+            return
+          }
           if (item) openSelectedItemDetail(item)
           else setLinkedItemError(t('This reference is no longer in your Library.'))
           consumeLiteratureItem(itemId)
         },
         () => {
           if (!active) return
+          if (detailInteractionRef.current !== interaction) {
+            consumeLiteratureItem(itemId)
+            return
+          }
           setLinkedItemError(undefined)
           setError(t('Literature could not be loaded.'))
           consumeLiteratureItem(itemId)
@@ -1765,6 +1758,32 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
     onEmptyPage: setEntriesOffset,
     onError: receiveEntriesError
   })
+  const updateMetadataItem = (updated: LiteratureItemView): void => {
+    const current = detailController.getSnapshot().item
+    const latest =
+      current?.id === updated.id && current.metadataRevision > updated.metadataRevision
+        ? current
+        : updated
+    void refreshItems([updated.id], [latest])
+    setDuplicatesRevision((value) => value + 1)
+  }
+  const metadata = useLiteratureMetadata(detailController, updateMetadataItem)
+  const { changeMode: changeDetailMode } = metadata
+
+  const closeSelectedItemDetail = useCallback((): void => {
+    detailInteractionRef.current += 1
+    detailTagMenuOpenRef.current = false
+    detailSelectOpenRef.current = false
+    childLayerDismissGuardUntilRef.current = 0
+    detailController.close()
+    startTransition(() => {
+      setPdfError(undefined)
+      changeDetailMode('view')
+      setProjectLinkError(undefined)
+      setCollectionLinkError(undefined)
+    })
+  }, [changeDetailMode, detailController])
+
   const appliedTagRevision = useRef(tagRevision)
   useEffect(() => {
     if (appliedTagRevision.current === tagRevision) return
@@ -1792,9 +1811,19 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
   const receiveBackgroundItems = useCallback(
     (itemIds: string[]): void => {
       setDuplicatesRevision((value) => value + 1)
-      void refreshItems(itemIds)
+      const generation = detailController.getSnapshot().generation
+      void Promise.all(itemIds.map((id) => window.api.literature.get(id))).then(
+        (results) => {
+          const updated = results.filter((item): item is LiteratureItemView => Boolean(item))
+          void refreshItems(itemIds, updated)
+          if (detailController.getSnapshot().generation === generation) {
+            updated.forEach((item) => detailController.replace(item))
+          }
+        },
+        () => setError(t('Literature could not be loaded.'))
+      )
     },
-    [refreshItems]
+    [detailController, refreshItems, t]
   )
 
   useEffect(() => {
@@ -2237,7 +2266,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
   }
 
   const addPdf = async (file: File): Promise<void> => {
-    const current = detailController.getSnapshot().item
+    const { item: current, generation } = detailController.getSnapshot()
     if (!current || isAddingPdf) return
     setIsAddingPdf(true)
     setPdfError(undefined)
@@ -2253,10 +2282,12 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
         itemId: current.id,
         attachment: staged
       })
-      detailController.replace(receipt.item)
+      if (detailController.getSnapshot().generation === generation)
+        detailController.replace(receipt.item)
       await loadEntries(true)
     } catch (error) {
-      setPdfError(pdfImportErrorMessage(error, t))
+      if (detailController.getSnapshot().generation === generation)
+        setPdfError(pdfImportErrorMessage(error, t))
     } finally {
       if (staged)
         await window.api.uploads.deleteUpload({ path: staged.path }).catch(() => undefined)
@@ -2380,6 +2411,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
       (item.rating ?? 0) === (entry.item.rating ?? 0)
     )
       return
+    const generation = detailController.getSnapshot().generation
     let persisted = false
     try {
       await window.api.literature.transact({
@@ -2394,7 +2426,8 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
           const updated = await window.api.literature.get(entry.id)
           if (!updated) throw new Error('Literature Item is unavailable after updating.')
           await refreshItems([updated.id], [updated])
-          detailController.replace(updated)
+          if (detailController.getSnapshot().generation === generation)
+            detailController.replace(updated)
           setError(undefined)
           return updated
         } catch (error) {
@@ -5084,7 +5117,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
       </Dialog.Root>
 
       <LiteratureDetailBoundary controller={detailController}>
-        {({ item: selectedItem, open }) => (
+        {({ item: selectedItem, open, generation }) => (
           // The portaled file preview owns focus while open. A lower modal's scroll lock would
           // reject its wheel/touch events because the preview is outside the detail content.
           <Dialog.Root open={open} modal={!previewItem}>
@@ -5288,25 +5321,61 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
                         requestAnimationFrame(() => pdfInputRef.current?.click())
                       }}
                       onAdded={(updated) => {
-                        detailController.replace(updated)
                         updateMetadataItem(updated)
-                        if (detailController.getSnapshot().item?.id === updated.id)
+                        if (detailController.getSnapshot().generation === generation) {
+                          detailController.replace(updated)
                           changeDetailMode('view')
+                        }
                         void loadEntries(true)
                       }}
                     />
                   ) : metadata.mode === 'edit' ? (
-                    <LiteratureMetadataEditor
-                      key={`${selectedItem.id}:${selectedItem.metadataRevision}`}
-                      item={selectedItem.item}
-                      saving={metadata.saving}
-                      error={metadata.error}
-                      className="min-h-0 flex-1 max-h-none"
-                      onCancel={() => {
-                        changeDetailMode('view')
-                      }}
-                      onSave={(item) => void metadata.save(item)}
-                    />
+                    <>
+                      {metadata.awaitingReload || metadata.externallyUpdated() ? (
+                        <ErrorNotice
+                          className="mx-5 mt-4 w-auto shrink-0"
+                          role="alert"
+                          tone="amber"
+                          description={
+                            metadata.awaitingReload
+                              ? t('The reference was saved, but could not be reloaded.')
+                              : t(
+                                  'This reference changed while you were editing. Your draft has been kept.'
+                                )
+                          }
+                          primaryButton={
+                            metadata.awaitingReload
+                              ? {
+                                  label: t('Retry'),
+                                  loading: metadata.saving,
+                                  onClick: () => void metadata.reloadSaved()
+                                }
+                              : {
+                                  label: t('Load latest version'),
+                                  disabled: metadata.saving,
+                                  description: t(
+                                    'Discard this draft and load the latest saved metadata.'
+                                  ),
+                                  onClick: metadata.loadLatest
+                                }
+                          }
+                        />
+                      ) : null}
+                      <LiteratureMetadataEditor
+                        key={`${selectedItem.id}:${metadata.editBase?.metadataRevision}`}
+                        item={metadata.editBase?.item ?? selectedItem.item}
+                        saving={metadata.saving || metadata.awaitingReload}
+                        saveDisabled={metadata.externallyUpdated()}
+                        error={
+                          metadata.awaitingReload || metadata.externallyUpdated()
+                            ? undefined
+                            : metadata.error
+                        }
+                        className="min-h-0 flex-1 max-h-none"
+                        onCancel={() => changeDetailMode('view')}
+                        onSave={(item) => void metadata.save(item)}
+                      />
+                    </>
                   ) : metadata.mode === 'complete' ? (
                     <div className="min-h-0 flex-1 overflow-y-auto px-5 py-5 text-sm">
                       <LiteratureMetadataLookup
