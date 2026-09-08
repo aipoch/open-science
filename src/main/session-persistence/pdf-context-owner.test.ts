@@ -3,7 +3,10 @@ import { LiteratureAttachmentAuthority } from '../literature/attachment-authorit
 import { describe, expect, it, vi, type Mock } from 'vitest'
 
 import type { NotebookRunInputFile } from '../../shared/notebook'
-import type { SessionRuntimeContext } from '../../shared/session-persistence'
+import {
+  sessionApplicationCommandContracts,
+  type SessionRuntimeContext
+} from '../../shared/session-persistence'
 import { ImmutableInputAuthority } from '../immutable-input-authority'
 import { SessionPdfSourceResolver } from '../literature/session-pdf-source-resolver'
 import { inspectPdfPageCount, MAX_AUTO_EXTRACT_PDF_BYTES } from '../uploads/attachment-media'
@@ -140,7 +143,11 @@ describe('SessionPdfContextOwner', () => {
         sourceKind: 'literature-attachment-version' as const,
         sourceVersionId
       }))
-      const result = owner.filterCandidates({ projectId: 'project-1', sources })
+      const result = owner
+        .filterCandidates({ projectId: 'project-1', sources })
+        .then((result) =>
+          sessionApplicationCommandContracts.filterPdfContextCandidates.result.parse(result)
+        )
       if (failure === 'database' || failure === 'storage') {
         await expect(result).rejects.toThrow(
           failure === 'database' ? 'database read failed' : 'storage offline'
@@ -154,6 +161,21 @@ describe('SessionPdfContextOwner', () => {
       }
     }
   )
+
+  it('bounds and validates unavailable sources at the candidate result boundary', () => {
+    const parse = sessionApplicationCommandContracts.filterPdfContextCandidates.result.parse
+    const source = { sourceKind: 'literature-attachment-version', sourceVersionId: 'missing' }
+    const result = { sources: [], pendingAttachmentIds: [] }
+    expect(parse(result)).toEqual(result)
+    expect(parse({ ...result, unavailableSources: Array(100).fill(source) })).toHaveProperty(
+      'unavailableSources.length',
+      100
+    )
+    expect(() => parse({ ...result, unavailableSources: Array(101).fill(source) })).toThrow()
+    expect(() =>
+      parse({ ...result, unavailableSources: [{ ...source, sourceVersionId: '' }] })
+    ).toThrow()
+  })
 
   it('filters PDF context candidates to multi-page immutable Versions', async () => {
     const harness = setup()
