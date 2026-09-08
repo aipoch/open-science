@@ -447,7 +447,7 @@ describe('LiteratureLibraryPage', () => {
     vi.unstubAllGlobals()
   })
 
-  it('TB-E1 trashes all 26 members despite an update between target reads', async () => {
+  it('trashes all 26 members despite an update between target reads', async () => {
     const { mkdtemp, rm } = await import('node:fs/promises')
     const { tmpdir } = await import('node:os')
     const { join } = await import('node:path')
@@ -457,6 +457,10 @@ describe('LiteratureLibraryPage', () => {
     const { LiteratureCatalog } = await import('../../../../main/literature/catalog')
     const root = await mkdtemp(join(tmpdir(), 'literature-batch-membership-'))
     const client = createProjectDbClient(root)
+    let recordWrite!: (result: Promise<unknown>) => void
+    const written = new Promise<unknown>((resolve) => {
+      recordWrite = resolve
+    })
     try {
       await migrateApplicationDatabase(client)
       const catalog = new LiteratureCatalog(async () => client)
@@ -489,7 +493,16 @@ describe('LiteratureLibraryPage', () => {
         if (resolving && !edited && request.allItemIds) await edit()
         return page
       }
-      transact.mockImplementation((command) => catalog.transact(command))
+      transact.mockImplementation((command) => {
+        const operation = (async () => {
+          const result = await catalog.transact(command)
+          // Model a slow IPC response after the real SQLite write has committed.
+          await new Promise((resolve) => setTimeout(resolve, 1500))
+          return result
+        })()
+        recordWrite(operation)
+        return operation
+      })
       render(<LiteratureLibraryPage />)
       fireEvent.click(screen.getByRole('button', { name: 'All references' }))
       fireEvent.click(await screen.findByLabelText('Select all references'))
@@ -500,12 +513,14 @@ describe('LiteratureLibraryPage', () => {
       )!
       await openMenu(within(toolbar).getByRole('button', { name: 'More actions' }))
       fireEvent.click(screen.getByRole('menuitem', { name: 'Move to Trash' }))
+      await written
       await waitFor(() => expect(screen.queryByText('26 selected')).toBeNull())
       expect(edited).toBe(true)
       const deleted = await client.literatureItem.findMany({ where: { deletedAt: { not: null } } })
       expect(deleted.map(({ id }) => id).sort()).toEqual([...itemIds].sort())
       expect(await client.literatureItem.count({ where: { deletedAt: null } })).toBe(0)
     } finally {
+      await Promise.allSettled(transact.mock.results.map(({ value }) => value))
       cleanup()
       await client.$disconnect()
       await rm(root, { recursive: true, force: true })
