@@ -19,7 +19,7 @@ import type { UploadRepository } from '../uploads/repository'
 
 type LiteraturePdfImporterOptions = Readonly<{
   uploads: Pick<UploadRepository, 'deleteUpload' | 'resolveManagedUploadPath'>
-  content: Pick<ContentRepository, 'publish' | 'verify' | 'sweep'>
+  content: Pick<ContentRepository, 'withPublishedContent' | 'verify' | 'sweep'>
   catalog: Pick<LiteratureCatalog, 'attachContent' | 'get'>
 }>
 
@@ -63,44 +63,50 @@ class LiteraturePdfImporter {
         throw new Error('Selected PDF size is invalid.')
       }
 
-      const content = await this.options.content.publish({
-        sourcePath,
-        contentType: 'application/pdf'
-      })
-      publishedId = content.id
-      let pageCount: number | undefined
-      if (content.sizeBytes <= BigInt(MAX_AUTO_EXTRACT_PDF_BYTES)) {
-        try {
-          pageCount = await inspectPdfPageCount(content.path)
-        } catch (error) {
-          const name =
-            error && typeof error === 'object' && 'name' in error ? error.name : undefined
-          if (name === 'PasswordException')
-            throw new Error('[pdf-password] PDF requires a password.', { cause: error })
-          if (name === 'InvalidPDFException')
-            throw new Error('[pdf-invalid] PDF is damaged or invalid.', { cause: error })
-          throw new Error('[pdf-unreadable] PDF could not be parsed by this application.', {
-            cause: error
+      return await this.options.content.withPublishedContent(
+        {
+          sourcePath,
+          contentType: 'application/pdf'
+        },
+        async (content) => {
+          publishedId = content.id
+          let pageCount: number | undefined
+          if (content.sizeBytes <= BigInt(MAX_AUTO_EXTRACT_PDF_BYTES)) {
+            try {
+              pageCount = await inspectPdfPageCount(content.path)
+            } catch (error) {
+              const name =
+                error && typeof error === 'object' && 'name' in error ? error.name : undefined
+              if (name === 'PasswordException')
+                throw new Error('[pdf-password] PDF requires a password.', { cause: error })
+              if (name === 'InvalidPDFException')
+                throw new Error('[pdf-invalid] PDF is damaged or invalid.', { cause: error })
+              throw new Error('[pdf-unreadable] PDF could not be parsed by this application.', {
+                cause: error
+              })
+            }
+          }
+          // Validate the published identity again after parsing, not only the mutable staging path.
+          if ((await this.options.content.verify(content.id)).state !== 'available') {
+            throw new Error('[pdf-invalid] PDF content changed during import.')
+          }
+          await this.options.catalog.attachContent({
+            itemId: request.itemId,
+            contentBlobId: content.id,
+            filename,
+            contentType: 'application/pdf',
+            sizeBytes: Number(content.sizeBytes),
+            checksum: content.checksum,
+            pageCount
           })
+          attached = true
+          const item: LiteratureItemView | undefined = await this.options.catalog.get(
+            request.itemId
+          )
+          if (!item) throw new Error('Literature Item is unavailable after importing its PDF.')
+          return { item }
         }
-      }
-      // Validate the published identity again after parsing, not only the mutable staging path.
-      if ((await this.options.content.verify(content.id)).state !== 'available') {
-        throw new Error('[pdf-invalid] PDF content changed during import.')
-      }
-      await this.options.catalog.attachContent({
-        itemId: request.itemId,
-        contentBlobId: content.id,
-        filename,
-        contentType: 'application/pdf',
-        sizeBytes: Number(content.sizeBytes),
-        checksum: content.checksum,
-        pageCount
-      })
-      attached = true
-      const item: LiteratureItemView | undefined = await this.options.catalog.get(request.itemId)
-      if (!item) throw new Error('Literature Item is unavailable after importing its PDF.')
-      return { item }
+      )
     } finally {
       if (publishedId && !attached) {
         await this.options.content

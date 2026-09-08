@@ -95,13 +95,18 @@ const fileFingerprint = (file: Awaited<ReturnType<typeof stat>>): string =>
 // Different repositories share the same immutable files. Keep a sweep's claim and unlink
 // indivisible with publication so it cannot delete bytes that were just made available again.
 const contentLifecycles = new Map<string, Promise<void>>()
+// Reservations bridge publication and reference insertion without holding a database transaction.
+// All content publishers and sweepers in the application process share these counts.
+const pendingContentReferences = new Map<string, number>()
+const contentLifecycleKey = (storageRoot: string, contentId: string): string =>
+  JSON.stringify([resolve(storageRoot), contentId])
 
 const withContentLifecycle = async <T>(
   storageRoot: string,
   contentId: string,
   operation: () => Promise<T>
 ): Promise<T> => {
-  const key = JSON.stringify([resolve(storageRoot), contentId])
+  const key = contentLifecycleKey(storageRoot, contentId)
   const previous = contentLifecycles.get(key)
   let release!: () => void
   const current = new Promise<void>((resolve) => {
@@ -123,6 +128,28 @@ class ContentRepository {
   constructor(private readonly options: ContentRepositoryOptions) {}
 
   async publish(request: PublishContentRequest): Promise<OpenedContent> {
+    return this.publishContent(request)
+  }
+
+  async withPublishedContent<T>(
+    request: PublishContentRequest,
+    acquireReference: (content: OpenedContent) => Promise<T>
+  ): Promise<T> {
+    const content = await this.publishContent(request, true)
+    const key = contentLifecycleKey(this.options.storageRoot, content.id)
+    try {
+      return await acquireReference(content)
+    } finally {
+      const remaining = pendingContentReferences.get(key)! - 1
+      if (remaining) pendingContentReferences.set(key, remaining)
+      else pendingContentReferences.delete(key)
+    }
+  }
+
+  private async publishContent(
+    request: PublishContentRequest,
+    reserve = false
+  ): Promise<OpenedContent> {
     const sourceBefore = await stat(request.sourcePath)
     if (!sourceBefore.isFile()) throw new Error('Content source is not a file.')
     const sourceFingerprint = fileFingerprint(sourceBefore)
@@ -135,11 +162,18 @@ class ContentRepository {
     const id = `sha256:${checksum}:${sizeBytes}`
     const storageKey = `content/blobs/${checksum.slice(0, 2)}/${checksum}`
     return withContentLifecycle(this.options.storageRoot, id, async () => {
+      const retain = (content: OpenedContent): OpenedContent => {
+        if (reserve) {
+          const key = contentLifecycleKey(this.options.storageRoot, id)
+          pendingContentReferences.set(key, (pendingContentReferences.get(key) ?? 0) + 1)
+        }
+        return content
+      }
       const client = await this.options.getClient()
       const existing = await client.contentBlob.findUnique({ where: { id } })
       if (existing?.state === 'available') {
         const verification = await this.verifyLocked(id)
-        if (verification.state === 'available') return verification.content
+        if (verification.state === 'available') return retain(verification.content)
       }
 
       await client.contentBlob.upsert({
@@ -204,7 +238,7 @@ class ContentRepository {
         fingerprint: fileFingerprint(destinationFile),
         checksum
       })
-      return this.open(id)
+      return retain(await this.open(id))
     })
   }
 
@@ -381,6 +415,12 @@ class ContentRepository {
           this.options.storageRoot,
           candidate.id,
           async () => {
+            if (
+              pendingContentReferences.has(
+                contentLifecycleKey(this.options.storageRoot, candidate.id)
+              )
+            )
+              return false
             const claimed = await client.$transaction(async (transaction) => {
               const current = await transaction.contentBlob.findUnique({
                 where: { id: candidate.id }

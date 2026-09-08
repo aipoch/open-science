@@ -81,14 +81,16 @@ describe('LiteraturePdfImporter', () => {
           }
         })),
         sweep: vi.fn(async () => ({ removedIds: [], retainedIds: [], failedIds: [] })),
-        publish: vi.fn(async () => ({
-          id: 'blob-1',
-          path,
-          storageKey: 'content/blobs/aa/blob-1',
-          checksum: 'a'.repeat(64),
-          sizeBytes: BigInt(bytes.byteLength),
-          contentType: 'application/pdf'
-        }))
+        withPublishedContent: vi.fn(async (_request, acquire) =>
+          acquire({
+            id: 'blob-1',
+            path,
+            storageKey: 'content/blobs/aa/blob-1',
+            checksum: 'a'.repeat(64),
+            sizeBytes: BigInt(bytes.byteLength),
+            contentType: 'application/pdf'
+          })
+        )
       },
       catalog: {
         attachContent: vi.fn(async () => ({
@@ -112,10 +114,13 @@ describe('LiteraturePdfImporter', () => {
       { path },
       { projectId: 'default-project', sessionId: PENDING_UPLOAD_SESSION_ID }
     )
-    expect(options.content.publish).toHaveBeenCalledWith({
-      sourcePath: path,
-      contentType: 'application/pdf'
-    })
+    expect(options.content.withPublishedContent).toHaveBeenCalledWith(
+      {
+        sourcePath: path,
+        contentType: 'application/pdf'
+      },
+      expect.any(Function)
+    )
     expect(options.catalog.attachContent).toHaveBeenCalledWith(
       expect.objectContaining({
         itemId: item.id,
@@ -166,7 +171,7 @@ describe('LiteraturePdfImporter', () => {
     await expect(
       importer.import({ itemId: item.id, attachment: attachment(path) })
     ).rejects.toThrow('Selected file is not a PDF.')
-    expect(options.content.publish).not.toHaveBeenCalled()
+    expect(options.content.withPublishedContent).not.toHaveBeenCalled()
     expect(options.uploads.deleteUpload).toHaveBeenCalledWith({ path })
   })
 })

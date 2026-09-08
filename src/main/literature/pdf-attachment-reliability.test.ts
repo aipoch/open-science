@@ -16,6 +16,8 @@ import { ContentRepository } from '../storage/content-repository'
 import { inspectPdfPageCount } from '../uploads/attachment-media'
 import { LiteratureAttachmentAuthority } from './attachment-authority'
 import { LiteratureCatalog } from './catalog'
+import { AgentPdfAcquisition } from './agent-pdf-acquisition'
+import { LiteratureFullTextFinder } from './full-text-finder'
 import { LiteraturePdfImporter } from './pdf-importer'
 
 describe('Literature PDF attachment reliability', () => {
@@ -166,6 +168,101 @@ describe('Literature PDF attachment reliability', () => {
     })
     await expect(content.open(row.contentBlobId)).rejects.toThrow()
   })
+
+  it.each(['local', 'full-text', 'agent'] as const)(
+    'preserves published bytes while %s acquisition awaits its reference',
+    async (kind) => {
+      const { importer, request, content, catalog } = await setup()
+      const imported = await importer.import(request)
+      let resume!: () => void
+      let reached!: () => void
+      const paused = new Promise<void>((resolve) => {
+        reached = resolve
+      })
+      const release = new Promise<void>((resolve) => {
+        resume = resolve
+      })
+      const attach = catalog.attachContent.bind(catalog)
+      const stage = catalog.stageAcquiredPdf.bind(catalog)
+      if (kind === 'agent')
+        vi.spyOn(catalog, 'stageAcquiredPdf').mockImplementationOnce(async (...args) => {
+          reached()
+          await release
+          return stage(...args)
+        })
+      else
+        vi.spyOn(catalog, 'attachContent').mockImplementationOnce(async (input) => {
+          reached()
+          await release
+          return attach(input)
+        })
+      let acquire: () => Promise<unknown> = () => importer.import(request)
+      if (kind === 'full-text') {
+        const finder = new LiteratureFullTextFinder({
+          catalog: {
+            get: async (id) => {
+              const item = await catalog.get(id)
+              return (
+                item && {
+                  ...item,
+                  item: {
+                    ...item.item,
+                    identifiers: [
+                      { scheme: 'arxiv' as const, value: '2401.12345', isPrimary: true }
+                    ]
+                  }
+                }
+              )
+            },
+            attachContent: (input) => catalog.attachContent(input)
+          },
+          content,
+          openAlexKey: async () => undefined,
+          fetch: async () => Response.json({}),
+          download: async () => pdf()
+        })
+        const found = await finder.run({ mode: 'search', itemId: request.itemId })
+        if (found.mode !== 'search' || !found.candidates[0]) throw new Error('No PDF candidate')
+        acquire = () =>
+          finder.run({
+            mode: 'attach',
+            itemId: request.itemId,
+            candidateId: found.candidates[0].id
+          })
+      } else if (kind === 'agent') {
+        const service = new AgentPdfAcquisition({
+          catalog,
+          content,
+          fullText: { discover: async () => ({ mode: 'search', candidates: [], notices: [] }) },
+          download: async () => pdf()
+        })
+        acquire = () =>
+          service.acquire({
+            candidate: {
+              item: imported.item.item,
+              source: { provider: 'crossref', rawMetadata: {} }
+            },
+            origin: { kind: 'agent', projectId: 'project', sessionId: 'session' },
+            pdfUrl: 'https://example.org/paper.pdf'
+          })
+      }
+      const outcome = acquire().then(
+        (value) => ({ value }),
+        (error) => ({ error })
+      )
+      await paused
+      try {
+        await catalog.transact({
+          kind: 'delete-attachment',
+          itemId: request.itemId,
+          attachmentId: imported.item.attachments[0].id
+        })
+      } finally {
+        resume()
+      }
+      expect(await outcome).toHaveProperty('value')
+    }
+  )
 
   it('keeps different same-named PDFs as independent attachments without an explicit version target', async () => {
     const { importer, request, path } = await setup()

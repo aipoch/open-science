@@ -58,7 +58,7 @@ type SearchResult = Extract<LiteratureFullTextResult, { mode: 'search' }>
 type Candidate = Omit<LiteratureFullTextCandidate, 'id'>
 type Options = {
   catalog: Pick<LiteratureCatalog, 'get' | 'attachContent'>
-  content: Pick<ContentRepository, 'publish'>
+  content: Pick<ContentRepository, 'withPublishedContent'>
   openAlexKey: () => Promise<string | undefined>
   contactEmail?: () => Promise<string | undefined>
   fetch?: typeof fetch
@@ -389,10 +389,7 @@ class LiteratureFullTextFinder {
       const current = await this.options.catalog.get(item.id)
       if (!current || current.id !== item.id || current.metadataRevision !== selected.revision)
         throw new Error('The reference changed during download. Search again.')
-      const content = await this.options.content.publish({
-        sourcePath: path,
-        contentType: 'application/pdf'
-      })
+      return await this.options.content.withPublishedContent({sourcePath: path, contentType: 'application/pdf'}, async (content) => {
       const filename = `${
         item.item.title
           .replace(/[<>:"/\\|?*\p{Cc}]/gu, ' ')
@@ -422,6 +419,7 @@ class LiteratureFullTextFinder {
       const updated = await this.options.catalog.get(item.id).catch(() => undefined)
       if (updated?.id !== item.id) return { mode: 'transfer', transfer: { ...task.snapshot } }
       return { mode: 'attach', item: updated, transferId: task.snapshot.id }
+      })
     } catch (error) {
       if (task.snapshot.status !== 'succeeded') task.snapshot.status = 'failed'
       if (error instanceof FullTextRateLimitError) task.snapshot.retryAt = error.retryAt

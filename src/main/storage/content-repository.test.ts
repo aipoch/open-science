@@ -62,6 +62,35 @@ describe('content repository', () => {
     })
   }
 
+  it.each([false, true])(
+    'retains overlapping publications across repositories and releases them on failure=%s',
+    async (fail) => {
+      const publisher = await createRepository()
+      const other = new ContentRepository({
+        storageRoot: storageRoot!,
+        getClient: async () => client!
+      })
+      const sourcePath = join(storageRoot!, 'source.pdf')
+      await writeFile(sourcePath, 'shared publication')
+      let contentId = ''
+      const sweep = (): ReturnType<ContentRepository['sweep']> =>
+        other.sweep({ createdBefore: new Date(Date.now() + 1) })
+      const acquisition = publisher.withPublishedContent({ sourcePath }, async (first) => {
+        contentId = first.id
+        await other.withPublishedContent({ sourcePath }, async (second) => {
+          expect(second.id).toBe(first.id)
+          expect((await sweep()).retainedIds).toContain(first.id)
+          await expect(other.verify(first.id)).resolves.toMatchObject({ state: 'available' })
+        })
+        expect((await sweep()).retainedIds).toContain(first.id)
+        if (fail) throw new Error('Reference insertion failed')
+      })
+      if (fail) await expect(acquisition).rejects.toThrow('Reference insertion failed')
+      else await acquisition
+      expect((await sweep()).removedIds).toContain(contentId)
+    }
+  )
+
   it('opens and verifies available immutable bytes', async () => {
     const repository = await createRepository()
     const content = Buffer.from('verified literature bytes')
