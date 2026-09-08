@@ -18,7 +18,7 @@ const normalize = (value: string): string =>
 
 const identitySchemes = new Set<string>(LITERATURE_IDENTITY_SCHEMES)
 
-// Indexed exact matches keep the scan linear in the number of records and identifiers.
+// Index exact matches by key, retaining incompatible components for later candidates.
 // Deliberately leave fuzzy titles and publication-year differences for manual review.
 export const findLiteratureDuplicateGroups = (
   candidates: DuplicateCandidate[]
@@ -41,7 +41,7 @@ export const findLiteratureDuplicateGroups = (
     }
     return index
   }
-  const keys = new Map<string, number>()
+  const keys = new Map<string, Set<number>>()
   const join = (left: number, right: number): void => {
     left = root(left)
     right = root(right)
@@ -68,9 +68,10 @@ export const findLiteratureDuplicateGroups = (
       )
     }
     for (const key of itemKeys) {
-      const previous = keys.get(key)
-      if (previous !== undefined) join(previous, index)
-      else keys.set(key, index)
+      const representatives = new Set([...(keys.get(key) ?? [])].map(root))
+      for (const previous of representatives) join(previous, index)
+      representatives.add(index)
+      keys.set(key, new Set([...representatives].map(root)))
     }
   })
   const groups = new Map<number, DuplicateCandidate[]>()

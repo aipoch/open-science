@@ -4718,6 +4718,9 @@
     "Snapshot unavailable": "スナップショットなし",
     "This older record does not verify delivered evidence or preserve every corpus snapshot.": "この古い記録では、返された根拠の確認や全資料のスナップショットの保存は行われていません。",
     "Evidence counts describe content returned to the Agent, not completed reading. Candidates are Agent-reported and checked against retrieved records. Search counts below describe individual result pages.": "根拠の件数はエージェントに返された内容を示し、読了を意味しません。候補数はエージェントが申告し、検索記録に照らして検証されます。以下の検索件数は、各応答の結果ページごとの値です。",
-    "Saved reference metadata. Attachments reflect the current Library entry.": "保存された文献メタデータです。添付ファイルは現在のライブラリ項目のものです。"
+    "Saved reference metadata. Attachments reflect the current Library entry.": "保存された文献メタデータです。添付ファイルは現在のライブラリ項目のものです。",
+    "Select 2–20 references to compare.": "比較する文献を2～20件選択してください。",
+    "Selected: {{selected}} / 20": "選択済み：{{selected}} / 20",
+    "Compare selected references": "選択した文献を比較"
   }
 }
