@@ -3241,6 +3241,8 @@ describe('LiteratureLibraryPage', () => {
       within(detail).getByRole('button', { name: 'Attachment actions for paper.pdf' })
     )
     fireEvent.click(await screen.findByRole('menuitem', { name: 'Remove attachment' }))
+    expect(screen.getByRole('alertdialog').textContent).toContain('paper.pdf')
+    fireEvent.click(screen.getByRole('button', { name: 'Permanently delete attachment' }))
     const alert = await within(detail).findByRole('alert')
     expect(within(detail).getByRole('button', { name: 'Preview paper.pdf' })).not.toBeNull()
     expect.soft(alert.textContent).not.toBe('The attachment operation failed. Try again.')
@@ -3303,6 +3305,9 @@ describe('LiteratureLibraryPage', () => {
         if (entryPoint === 'permanent item') {
           container = screen.getByRole('alertdialog')
           fireEvent.click(within(container).getByRole('button', { name: 'Delete permanently' }))
+        } else {
+          expect(screen.getByRole('alertdialog').textContent).toContain('paper.pdf')
+          fireEvent.click(screen.getByRole('button', { name: 'Permanently delete attachment' }))
         }
         fireEvent.click(await screen.findByRole('button', { name: 'View affected conversations' }))
         expect(screen.getByText('Retained history')).not.toBeNull()
@@ -3360,6 +3365,8 @@ describe('LiteratureLibraryPage', () => {
       within(detail).getByRole('button', { name: 'Attachment actions for paper.pdf' })
     )
     fireEvent.click(await screen.findByRole('menuitem', { name: 'Remove attachment' }))
+    expect(screen.getByRole('alertdialog').textContent).toContain('paper.pdf')
+    fireEvent.click(screen.getByRole('button', { name: 'Permanently delete attachment' }))
     fireEvent.click(await screen.findByRole('button', { name: 'View recovery details' }))
     expect(screen.getByText('damaged-session.json')).not.toBeNull()
     expect(
