@@ -20,6 +20,7 @@ import {
 type LiteratureMetadataEditorProps = Readonly<{
   item: LiteratureItemInput
   saving: boolean
+  saveDisabled?: boolean
   error?: string
   className?: string
   beforeFields?: React.ReactNode
@@ -52,6 +53,7 @@ const ADVANCED_FIELD_KEYS = [
 const LiteratureMetadataEditor = ({
   item,
   saving,
+  saveDisabled = false,
   error,
   className,
   beforeFields,
@@ -124,7 +126,7 @@ const LiteratureMetadataEditor = ({
   }
 
   const submit = (): void => {
-    if (saving) return
+    if (saving || saveDisabled) return
     const creators = draft.creators.filter((creator) =>
       creator.nameMode === 'organization'
         ? creator.literalName.trim()
@@ -416,7 +418,11 @@ const LiteratureMetadataEditor = ({
         <Button type="button" variant="outline" disabled={saving} onClick={onCancel}>
           {t('Cancel')}
         </Button>
-        <Button type="button" disabled={saving || !draft.title.trim()} onClick={submit}>
+        <Button
+          type="button"
+          disabled={saving || saveDisabled || !draft.title.trim()}
+          onClick={submit}
+        >
           {t('Save')}
         </Button>
       </div>

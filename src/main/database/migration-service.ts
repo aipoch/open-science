@@ -1,4 +1,8 @@
 import { literaturePdfProvenanceMigration } from './migrations/0035-literature-pdf-provenance'
+import {
+  literatureInboxIntegrityMigration,
+  literatureDiscoveryBackfillStatement
+} from './migrations/0037-literature-inbox-integrity'
 import { permissionApprovalSummaryMigration } from './migrations/0032-permission-approval-summary'
 import { computeJobHarvestRetryMigration } from './migrations/0033-compute-job-harvest-retry'
 import { projectArchiveRevisionMigration } from './migrations/0031-project-archive-revision'
@@ -63,6 +67,7 @@ import { computeJobRemoteCleanupMigration } from './migrations/0026-compute-job-
 import { projectSessionDefaultsMigration } from './migrations/0027-project-session-defaults'
 import { numericAndNullConstraintsMigration } from './migrations/0028-database-numeric-and-null-constraints'
 import { computeHostExecutionModeMigration } from './migrations/0029-compute-host-execution-mode'
+import { contentVerificationObservationMigration } from './migrations/0036-content-verification-observation'
 import { backgroundResultDeliveryMigration } from './migrations/0034-background-result-delivery'
 import {
   applySqliteMigrationOperations,
@@ -738,6 +743,28 @@ const MIGRATION_MANIFEST = [
     ),
     backupOnApply: 'required',
     backupRetention: 'retain'
+  },
+  {
+    ...contentVerificationObservationMigration,
+    checksum: checksumMigrationPayload(
+      contentVerificationObservationMigration.id,
+      contentVerificationObservationMigration.statements,
+      contentVerificationObservationMigration.verifiers,
+      contentVerificationObservationMigration.operations
+    ),
+    backupOnApply: 'required',
+    backupRetention: 'retain'
+  },
+  {
+    ...literatureInboxIntegrityMigration,
+    checksum: checksumMigrationPayload(
+      literatureInboxIntegrityMigration.id,
+      literatureInboxIntegrityMigration.statements,
+      literatureInboxIntegrityMigration.verifiers,
+      literatureInboxIntegrityMigration.operations
+    ),
+    backupOnApply: 'required',
+    backupRetention: 'retain'
   }
 ] as const satisfies readonly MigrationManifestEntry[]
 // schema-locality: begin frozen-0001-repairs
@@ -1146,10 +1173,18 @@ const verifyCurrentApplicationSchema = async (client: PrismaClient): Promise<voi
     NUMERIC_AND_NULL_ALLOWED_SUFFIX_CHECKS
   )
   await runMigrationVerifiers(client, computeJobFileEvidenceMigration.verifiers)
-  await runMigrationVerifiers(client, literatureFoundationMigration.verifiers)
+  // The generated contract verifies the owner-scoped source indexes introduced by the suffix.
+  await runMigrationVerifiers(
+    client,
+    literatureFoundationMigration.verifiers,
+    {},
+    new Set(['LiteratureSourceRecord'])
+  )
+  await runMigrationVerifiers(client, literatureInboxIntegrityMigration.verifiers)
   await runMigrationVerifiers(client, computeJobRemoteCleanupMigration.verifiers)
   await runMigrationVerifiers(client, backgroundResultDeliveryMigration.verifiers)
   await runMigrationVerifiers(client, literaturePdfProvenanceMigration.verifiers)
+  await runMigrationVerifiers(client, contentVerificationObservationMigration.verifiers)
 }
 
 const readLedger = async (client: PrismaClient): Promise<LedgerRow[]> => {
@@ -1685,6 +1720,33 @@ const applyManifestMigration = async (
       ? NUMERIC_AND_NULL_ALLOWED_SUFFIX_CHECKS
       : {}
   const verifyMigrationTarget = async (targetClient: PrismaClient): Promise<void> => {
+    if (
+      migration.id === literatureFoundationMigration.id &&
+      migration.checksum === LITERATURE_FOUNDATION_CHECKSUM
+    ) {
+      // An unledgered current database may already use the successor's source ownership keys.
+      // Verify that exact generated table contract before accepting the frozen foundation.
+      let currentSources = false
+      try {
+        await verifyCurrentRuntimeSchemaTables(targetClient, ['LiteratureSourceRecord'])
+        currentSources = true
+      } catch (error) {
+        if (
+          classifyDatabaseFailure(error, 'validation', migration.id).code !==
+          'database_validation_failed'
+        )
+          throw error
+      }
+      if (currentSources) {
+        await runMigrationVerifiers(
+          targetClient,
+          migration.verifiers,
+          allowedCheckUpgrades,
+          new Set(['LiteratureSourceRecord'])
+        )
+        return
+      }
+    }
     if (!canVerifyAsCurrentSchema) {
       await runMigrationVerifiers(targetClient, migration.verifiers, allowedCheckUpgrades)
       return
@@ -1740,6 +1802,15 @@ const applyManifestMigration = async (
         for (const statement of literatureContentBlobBackfillStatements) {
           await migrationSqlExecutor.execute(transaction, statement)
         }
+      }
+      if (
+        contractAlreadySatisfied &&
+        migration.id === literatureInboxIntegrityMigration.id &&
+        MIGRATION_MANIFEST.some(
+          (entry) => entry.id === migration.id && entry.checksum === migration.checksum
+        )
+      ) {
+        await migrationSqlExecutor.execute(transaction, literatureDiscoveryBackfillStatement)
       }
       if (!contractAlreadySatisfied) {
         if (canVerifyAsCurrentSchema && migration.id === projectPreviewStateOwnerFkMigration.id) {
@@ -2022,6 +2093,10 @@ const migrateApplicationDatabaseWithManifest = async (
       allowedSuffixChecks,
       adoptsManagedFileVersionFoundation,
       {
+        // The frozen Literature foundation verifies this released index before its replacement.
+        ...(adoptsLiteratureFoundation
+          ? { indexNames: ['LiteratureSourceRecord_provider_externalId_key'] }
+          : {}),
         ...(adoptsAgentMemoryProjectScope || adoptsBackgroundResultDelivery
           ? {
               tableNames: [

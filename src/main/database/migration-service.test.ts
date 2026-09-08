@@ -327,7 +327,13 @@ describe('application database migrations', () => {
     )
     await client.$executeRawUnsafe('ALTER TABLE "LiteratureInboxPdf" DROP COLUMN "provenanceJson"')
     await client.$executeRawUnsafe(
-      `DELETE FROM "_open_science_migrations" WHERE "id" = '0035_literature_pdf_provenance'`
+      'ALTER TABLE "ContentBlob" DROP COLUMN "lastVerificationFailure"'
+    )
+    await client.$executeRawUnsafe(
+      'ALTER TABLE "ContentBlob" DROP COLUMN "lastVerificationAttemptAt"'
+    )
+    await client.$executeRawUnsafe(
+      `DELETE FROM "_open_science_migrations" WHERE "id" >= '0035_literature_pdf_provenance'`
     )
     const checksum = 'a'.repeat(64)
     const oldCandidate = literatureCandidateInputSchema.parse({
@@ -544,10 +550,12 @@ describe('application database migrations', () => {
         '0032_permission_approval_summary',
         '0033_compute_job_harvest_retry',
         '0034_background_result_delivery',
-        '0035_literature_pdf_provenance'
+        '0035_literature_pdf_provenance',
+        '0036_content_verification_observation',
+        '0037_literature_inbox_integrity'
       ],
       from: null,
-      to: '0035_literature_pdf_provenance'
+      to: '0037_literature_inbox_integrity'
     })
     expect(compatibility).toEqual([{ sqliteVersion: expect.stringMatching(/^\d+\.\d+\.\d+$/) }])
     await expect(
@@ -560,8 +568,8 @@ describe('application database migrations', () => {
     await expect(migrateApplicationDatabase(client)).resolves.toEqual({
       adoptedLegacy: false,
       applied: [],
-      from: '0035_literature_pdf_provenance',
-      to: '0035_literature_pdf_provenance'
+      from: '0037_literature_inbox_integrity',
+      to: '0037_literature_inbox_integrity'
     })
   })
 
@@ -580,18 +588,19 @@ describe('application database migrations', () => {
     await migrateApplicationDatabase(client)
     await client.$executeRawUnsafe('DROP TABLE "BackgroundResultDelivery"')
     await client.$executeRawUnsafe(
-      'ALTER TABLE "LiteratureAttachmentVersion" DROP COLUMN "provenanceJson"'
-    )
-    await client.$executeRawUnsafe('ALTER TABLE "LiteratureInboxPdf" DROP COLUMN "provenanceJson"')
-    await client.$executeRawUnsafe(
       `DELETE FROM "_open_science_migrations" WHERE "id" >= '0034_background_result_delivery'`
     )
 
     await expect(migrateApplicationDatabase(client)).resolves.toEqual({
       adoptedLegacy: false,
-      applied: ['0034_background_result_delivery', '0035_literature_pdf_provenance'],
+      applied: [
+        '0034_background_result_delivery',
+        '0035_literature_pdf_provenance',
+        '0036_content_verification_observation',
+        '0037_literature_inbox_integrity'
+      ],
       from: '0033_compute_job_harvest_retry',
-      to: '0035_literature_pdf_provenance'
+      to: '0037_literature_inbox_integrity'
     })
     await expect(
       client.$queryRaw<Array<{ name: string }>>`
@@ -694,7 +703,9 @@ describe('application database migrations', () => {
         '0032_permission_approval_summary',
         '0033_compute_job_harvest_retry',
         '0034_background_result_delivery',
-        '0035_literature_pdf_provenance'
+        '0035_literature_pdf_provenance',
+        '0036_content_verification_observation',
+        '0037_literature_inbox_integrity'
       ]
     })
     await expect(
@@ -783,7 +794,9 @@ describe('application database migrations', () => {
         '0032_permission_approval_summary',
         '0033_compute_job_harvest_retry',
         '0034_background_result_delivery',
-        '0035_literature_pdf_provenance'
+        '0035_literature_pdf_provenance',
+        '0036_content_verification_observation',
+        '0037_literature_inbox_integrity'
       ]
     })
     await expect(migrateApplicationDatabase(client)).resolves.toMatchObject({ applied: [] })
@@ -828,7 +841,7 @@ describe('application database migrations', () => {
 
     await expect(migrateApplicationDatabase(client)).resolves.toMatchObject({
       applied: expect.arrayContaining(['0010_compute_password_auth']),
-      to: '0035_literature_pdf_provenance'
+      to: '0037_literature_inbox_integrity'
     })
     await expect(
       client.$executeRawUnsafe(
@@ -886,10 +899,12 @@ describe('application database migrations', () => {
         '0032_permission_approval_summary',
         '0033_compute_job_harvest_retry',
         '0034_background_result_delivery',
-        '0035_literature_pdf_provenance'
+        '0035_literature_pdf_provenance',
+        '0036_content_verification_observation',
+        '0037_literature_inbox_integrity'
       ],
       from: '0005_project_preview_state_owner_fk',
-      to: '0035_literature_pdf_provenance'
+      to: '0037_literature_inbox_integrity'
     })
     await expect(verifyCurrentApplicationSchema(client)).resolves.toBeUndefined()
   })
@@ -975,10 +990,12 @@ describe('application database migrations', () => {
         '0032_permission_approval_summary',
         '0033_compute_job_harvest_retry',
         '0034_background_result_delivery',
-        '0035_literature_pdf_provenance'
+        '0035_literature_pdf_provenance',
+        '0036_content_verification_observation',
+        '0037_literature_inbox_integrity'
       ],
       from: '0005_project_preview_state_owner_fk',
-      to: '0035_literature_pdf_provenance'
+      to: '0037_literature_inbox_integrity'
     })
     await expect(
       client.$queryRaw<
@@ -1101,7 +1118,7 @@ describe('application database migrations', () => {
       })
     ).rejects.toMatchObject({
       code: 'database_validation_failed',
-      migrationId: '0035_literature_pdf_provenance'
+      migrationId: '0037_literature_inbox_integrity'
     })
     expect(retired).toEqual([])
     await expect(access(backupPath)).resolves.toBeUndefined()
@@ -1118,7 +1135,7 @@ describe('application database migrations', () => {
     ).resolves.toEqual({
       adoptedLegacy: false,
       applied: ['9997_test_suffix'],
-      from: '0035_literature_pdf_provenance',
+      from: '0037_literature_inbox_integrity',
       to: '9997_test_suffix'
     })
     await expect(
@@ -1161,6 +1178,8 @@ describe('application database migrations', () => {
       { id: '0033_compute_job_harvest_retry' },
       { id: '0034_background_result_delivery' },
       { id: '0035_literature_pdf_provenance' },
+      { id: '0036_content_verification_observation' },
+      { id: '0037_literature_inbox_integrity' },
       { id: '9997_test_suffix' }
     ])
   })
@@ -1248,10 +1267,12 @@ describe('application database migrations', () => {
         '0032_permission_approval_summary',
         '0033_compute_job_harvest_retry',
         '0034_background_result_delivery',
-        '0035_literature_pdf_provenance'
+        '0035_literature_pdf_provenance',
+        '0036_content_verification_observation',
+        '0037_literature_inbox_integrity'
       ],
       from: '0001_runtime_schema_baseline',
-      to: '0035_literature_pdf_provenance'
+      to: '0037_literature_inbox_integrity'
     })
     expect(backupEvents).toEqual([
       {
@@ -1340,7 +1361,9 @@ describe('application database migrations', () => {
       { id: '0032_permission_approval_summary' },
       { id: '0033_compute_job_harvest_retry' },
       { id: '0034_background_result_delivery' },
-      { id: '0035_literature_pdf_provenance' }
+      { id: '0035_literature_pdf_provenance' },
+      { id: '0036_content_verification_observation' },
+      { id: '0037_literature_inbox_integrity' }
     ])
   })
 
@@ -1469,6 +1492,8 @@ describe('application database migrations', () => {
         '0033_compute_job_harvest_retry',
         '0034_background_result_delivery',
         '0035_literature_pdf_provenance',
+        '0036_content_verification_observation',
+        '0037_literature_inbox_integrity',
         '9997_test_suffix'
       ],
       to: '9997_test_suffix'
@@ -1606,7 +1631,7 @@ describe('application database migrations', () => {
       adoptedLegacy: false,
       applied: MIGRATION_MANIFEST.slice(computePasswordAuthIndex).map(({ id }) => id),
       from: '0009_vision_evidence',
-      to: '0035_literature_pdf_provenance'
+      to: '0037_literature_inbox_integrity'
     })
     await expect(
       client.$queryRaw<Array<{ projectId: string }>>`
@@ -1729,7 +1754,9 @@ describe('application database migrations', () => {
         '0032_permission_approval_summary',
         '0033_compute_job_harvest_retry',
         '0034_background_result_delivery',
-        '0035_literature_pdf_provenance'
+        '0035_literature_pdf_provenance',
+        '0036_content_verification_observation',
+        '0037_literature_inbox_integrity'
       ]
     })
     await expect(
@@ -1861,7 +1888,9 @@ describe('application database migrations', () => {
         '0032_permission_approval_summary',
         '0033_compute_job_harvest_retry',
         '0034_background_result_delivery',
-        '0035_literature_pdf_provenance'
+        '0035_literature_pdf_provenance',
+        '0036_content_verification_observation',
+        '0037_literature_inbox_integrity'
       ]
     })
     await expect(migrateApplicationDatabase(client)).resolves.toMatchObject({ applied: [] })
@@ -1945,7 +1974,9 @@ describe('application database migrations', () => {
         '0032_permission_approval_summary',
         '0033_compute_job_harvest_retry',
         '0034_background_result_delivery',
-        '0035_literature_pdf_provenance'
+        '0035_literature_pdf_provenance',
+        '0036_content_verification_observation',
+        '0037_literature_inbox_integrity'
       ]
     })
     await expect(
@@ -2032,7 +2063,9 @@ describe('application database migrations', () => {
         '0032_permission_approval_summary',
         '0033_compute_job_harvest_retry',
         '0034_background_result_delivery',
-        '0035_literature_pdf_provenance'
+        '0035_literature_pdf_provenance',
+        '0036_content_verification_observation',
+        '0037_literature_inbox_integrity'
       ]
     })
     await expect(verifyCurrentApplicationSchema(client)).resolves.toBeUndefined()
@@ -2153,7 +2186,9 @@ describe('application database migrations', () => {
         '0032_permission_approval_summary',
         '0033_compute_job_harvest_retry',
         '0034_background_result_delivery',
-        '0035_literature_pdf_provenance'
+        '0035_literature_pdf_provenance',
+        '0036_content_verification_observation',
+        '0037_literature_inbox_integrity'
       ]
     })
     await expect(
@@ -2676,8 +2711,8 @@ describe('application database migrations', () => {
         entries.filter((entry) => entry.endsWith('.backup')).sort()
       )
     ).resolves.toEqual([
-      'open-science.db.before-0034_background_result_delivery.backup',
-      'open-science.db.before-0035_literature_pdf_provenance.backup',
+      'open-science.db.before-0036_content_verification_observation.backup',
+      'open-science.db.before-0037_literature_inbox_integrity.backup',
       unknownBackupName
     ])
     expect(retired).toHaveLength(MIGRATION_MANIFEST.length - 2)
@@ -2981,10 +3016,12 @@ describe('application database migrations', () => {
         '0032_permission_approval_summary',
         '0033_compute_job_harvest_retry',
         '0034_background_result_delivery',
-        '0035_literature_pdf_provenance'
+        '0035_literature_pdf_provenance',
+        '0036_content_verification_observation',
+        '0037_literature_inbox_integrity'
       ],
       from: '0024_compute_job_file_evidence',
-      to: '0035_literature_pdf_provenance'
+      to: '0037_literature_inbox_integrity'
     })
     await expect(
       client.$queryRawUnsafe<Array<{ currentVersionId: string | null }>>(
@@ -3043,7 +3080,7 @@ describe('application database migrations', () => {
         MIGRATION_MANIFEST.findIndex(({ id }) => id === '0009_vision_evidence')
       ).map(({ id }) => id),
       from: '0008_database_json_constraints',
-      to: '0035_literature_pdf_provenance'
+      to: '0037_literature_inbox_integrity'
     })
     await expect(verifyCurrentApplicationSchema(client)).resolves.toBeUndefined()
   })
@@ -3110,10 +3147,12 @@ describe('application database migrations', () => {
         '0032_permission_approval_summary',
         '0033_compute_job_harvest_retry',
         '0034_background_result_delivery',
-        '0035_literature_pdf_provenance'
+        '0035_literature_pdf_provenance',
+        '0036_content_verification_observation',
+        '0037_literature_inbox_integrity'
       ],
       from: '0024_compute_job_file_evidence',
-      to: '0035_literature_pdf_provenance'
+      to: '0037_literature_inbox_integrity'
     })
     await expect(
       client.$queryRaw<Array<{ uploadVersionId: string }>>`

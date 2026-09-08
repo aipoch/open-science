@@ -96,13 +96,18 @@ const fileFingerprint = (file: Awaited<ReturnType<typeof stat>>): string =>
 // Different repositories share the same immutable files. Keep a sweep's claim and unlink
 // indivisible with publication so it cannot delete bytes that were just made available again.
 const contentLifecycles = new Map<string, Promise<void>>()
+// Reservations bridge publication and reference insertion without holding a database transaction.
+// All content publishers and sweepers in the application process share these counts.
+const pendingContentReferences = new Map<string, number>()
+const contentLifecycleKey = (storageRoot: string, contentId: string): string =>
+  JSON.stringify([resolve(storageRoot), contentId])
 
 const withContentLifecycle = async <T>(
   storageRoot: string,
   contentId: string,
   operation: () => Promise<T>
 ): Promise<T> => {
-  const key = JSON.stringify([resolve(storageRoot), contentId])
+  const key = contentLifecycleKey(storageRoot, contentId)
   const previous = contentLifecycles.get(key)
   let release!: () => void
   const current = new Promise<void>((resolve) => {
@@ -124,6 +129,28 @@ class ContentRepository {
   constructor(private readonly options: ContentRepositoryOptions) {}
 
   async publish(request: PublishContentRequest): Promise<OpenedContent> {
+    return this.publishContent(request)
+  }
+
+  async withPublishedContent<T>(
+    request: PublishContentRequest,
+    acquireReference: (content: OpenedContent) => Promise<T>
+  ): Promise<T> {
+    const content = await this.publishContent(request, true)
+    const key = contentLifecycleKey(this.options.storageRoot, content.id)
+    try {
+      return await acquireReference(content)
+    } finally {
+      const remaining = pendingContentReferences.get(key)! - 1
+      if (remaining) pendingContentReferences.set(key, remaining)
+      else pendingContentReferences.delete(key)
+    }
+  }
+
+  private async publishContent(
+    request: PublishContentRequest,
+    reserve = false
+  ): Promise<OpenedContent> {
     const sourceBefore = await stat(request.sourcePath)
     if (!sourceBefore.isFile()) throw new Error('Content source is not a file.')
     const sourceFingerprint = fileFingerprint(sourceBefore)
@@ -136,13 +163,20 @@ class ContentRepository {
     const id = `sha256:${checksum}:${sizeBytes}`
     const storageKey = `content/blobs/${checksum.slice(0, 2)}/${checksum}`
     return withContentLifecycle(this.options.storageRoot, id, async () => {
+      const retain = (content: OpenedContent): OpenedContent => {
+        if (reserve) {
+          const key = contentLifecycleKey(this.options.storageRoot, content.id)
+          pendingContentReferences.set(key, (pendingContentReferences.get(key) ?? 0) + 1)
+        }
+        return content
+      }
       const client = await this.options.getClient()
       const existing = await client.contentBlob.findUnique({ where: { id } })
       if (existing?.state === 'available') {
-        const verification = await this.verify(id)
+        const verification = await this.verifyLocked(id)
         if (verification.state === 'available') {
           await request.commit?.(verification.content)
-          return verification.content
+          return retain(verification.content)
         }
       }
 
@@ -198,7 +232,12 @@ class ContentRepository {
         }
         await client.contentBlob.update({
           where: { id },
-          data: { state: 'available', verifiedAt: new Date() }
+          data: {
+            state: 'available',
+            verifiedAt: new Date(),
+            lastVerificationFailure: null,
+            lastVerificationAttemptAt: new Date()
+          }
         })
         this.verifiedContent.set(id, {
           fingerprint: fileFingerprint(destinationFile),
@@ -206,7 +245,7 @@ class ContentRepository {
         })
         const content = await this.open(id)
         await request.commit?.(content)
-        return content
+        return retain(content)
       } catch (error) {
         // Only this publisher can own a newly created row. Reused bytes may still be
         // awaiting another caller's reference, so never reclaim them on callback failure.
@@ -217,6 +256,10 @@ class ContentRepository {
   }
 
   async open(contentId: string): Promise<OpenedContent> {
+    return this.readContent(contentId)
+  }
+
+  private async readContent(contentId: string, retry = false): Promise<OpenedContent> {
     const client = await this.options.getClient()
     const blob = await client.contentBlob.findUnique({ where: { id: contentId } })
     if (!blob) {
@@ -225,7 +268,7 @@ class ContentRepository {
         `Content blob authority is missing: ${contentId}`
       )
     }
-    if (blob.state !== 'available') {
+    if (blob.state !== 'available' && !(retry && blob.state === 'quarantined')) {
       throw new ContentOpenError('not-available', `Content blob is not available: ${contentId}`)
     }
     const path = resolveContentStorageKey(this.options.storageRoot, blob.storageKey)
@@ -256,33 +299,74 @@ class ContentRepository {
 
   async verify(
     contentId: string,
-    options: { maxBytes?: number } = {}
+    options: { maxBytes?: number; retry?: boolean } = {}
   ): Promise<ContentVerification> {
+    return withContentLifecycle(this.options.storageRoot, contentId, () =>
+      this.verifyLocked(contentId, options)
+    )
+  }
+
+  private async verifyLocked(
+    contentId: string,
+    options: { maxBytes?: number; retry?: boolean } = {}
+  ): Promise<ContentVerification> {
+    const observe = async (failure: string | null): Promise<void> => {
+      if (failure) this.verifiedContent.delete(contentId)
+      const client = await this.options.getClient()
+      await client.contentBlob.updateMany({
+        where: { id: contentId },
+        data: {
+          lastVerificationFailure: failure,
+          lastVerificationAttemptAt: new Date(),
+          ...(failure === null ? { state: 'available', verifiedAt: new Date() } : {})
+        }
+      })
+    }
     try {
-      const content = await this.open(contentId)
+      const content = await this.readContent(contentId, options.retry)
       if (options.maxBytes !== undefined && content.sizeBytes > BigInt(options.maxBytes)) {
         return { state: 'unavailable', reason: 'size-limit' }
       }
       const beforeRead = await stat(content.path)
       const fingerprint = fileFingerprint(beforeRead)
       const cached = this.verifiedContent.get(content.id)
-      if (cached?.fingerprint === fingerprint && cached.checksum === content.checksum) {
+      if (
+        !options.retry &&
+        cached?.fingerprint === fingerprint &&
+        cached.checksum === content.checksum
+      ) {
         return { state: 'available', content }
       }
       if ((await sha256File(content.path)) !== content.checksum) {
         await this.quarantine(contentId)
+        await observe('checksum-mismatch')
         return { state: 'unavailable', reason: 'checksum-mismatch' }
       }
       if (fileFingerprint(await stat(content.path)) !== fingerprint) {
         await this.quarantine(contentId)
+        await observe('changed-during-verification')
         return { state: 'unavailable', reason: 'changed-during-verification' }
       }
       this.verifiedContent.set(content.id, { fingerprint, checksum: content.checksum })
+      await observe(null)
       return { state: 'available', content }
     } catch (error) {
-      if (!(error instanceof ContentOpenError)) throw error
-      if (error.reason === 'not-file' || error.reason === 'size-mismatch') {
+      if (missingFile(error)) {
         await this.quarantine(contentId)
+        await observe('missing')
+        return { state: 'unavailable', reason: 'missing' }
+      }
+      if (!(error instanceof ContentOpenError)) throw error
+      if (
+        error.reason === 'missing' ||
+        error.reason === 'not-file' ||
+        error.reason === 'size-mismatch'
+      ) {
+        await this.quarantine(contentId)
+      }
+      // A refusal to open quarantined bytes must not erase the original diagnosis.
+      if (error.reason !== 'not-available' && error.reason !== 'missing-authority') {
+        await observe(error.reason)
       }
       return { state: 'unavailable', reason: error.reason }
     }
@@ -358,6 +442,8 @@ class ContentRepository {
     contentId: string,
     createdBefore?: Date
   ): Promise<boolean> {
+    if (pendingContentReferences.has(contentLifecycleKey(this.options.storageRoot, contentId)))
+      return false
     const claimed = await client.$transaction(async (transaction) => {
       const current = await transaction.contentBlob.findUnique({ where: { id: contentId } })
       if (!current || (createdBefore && current.createdAt >= createdBefore)) return undefined

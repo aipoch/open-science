@@ -272,6 +272,9 @@ const literatureAttachmentVersionViewSchema = z
     sizeBytes: z.number().int().nonnegative(),
     checksum: z.string().regex(/^[a-f0-9]{64}$/u),
     pageCount: z.number().int().positive().optional(),
+    availability: z.enum(['unknown', 'available', 'unavailable']).optional(),
+    verificationFailure: z.string().optional(),
+    verificationAttemptAt: z.number().int().nonnegative().optional(),
     createdAt: z.number().int().nonnegative()
   })
   .strict()
@@ -308,6 +311,16 @@ const literatureInboxCandidateViewSchema = z
     id: nonEmptyTextSchema,
     state: z.enum(LITERATURE_INBOX_STATES),
     candidate: literatureCandidateInputSchema,
+    discoveries: z
+      .array(
+        z
+          .object({
+            origin: literatureCandidateOriginSchema,
+            createdAt: z.number().int().nonnegative()
+          })
+          .strict()
+      )
+      .optional(),
     pdfs: z
       .array(
         z
@@ -435,6 +448,20 @@ const mergeGroupPreviewSchema = z
   .strict()
 
 const literatureCatalogCommandSchema = z.discriminatedUnion('kind', [
+  z
+    .object({
+      kind: z.literal('delete-attachment'),
+      itemId: nonEmptyTextSchema,
+      attachmentId: nonEmptyTextSchema
+    })
+    .strict(),
+  z
+    .object({
+      kind: z.literal('verify-attachment'),
+      itemId: nonEmptyTextSchema,
+      versionId: nonEmptyTextSchema
+    })
+    .strict(),
   z
     .object({ kind: z.literal('stage-candidate'), candidate: literatureCandidateInputSchema })
     .strict(),
@@ -568,6 +595,7 @@ const literatureCatalogCommandSchema = z.discriminatedUnion('kind', [
 
 const literatureCatalogReceiptSchema = z
   .object({
+    cleanupPending: z.boolean().optional(),
     kind: z.enum(['candidate', 'collection', 'item']),
     id: nonEmptyTextSchema,
     state: z
@@ -1130,6 +1158,7 @@ export {
   LITERATURE_RECORD_IMPORT_MAX_BYTES,
   LITERATURE_RECORD_IMPORT_MAX_RECORDS,
   literatureCandidateInputSchema,
+  literatureCandidateOriginSchema,
   literatureAttachmentVersionViewSchema,
   literatureAttachmentViewSchema,
   literatureApplicationCommandContracts,

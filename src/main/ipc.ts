@@ -1782,7 +1782,10 @@ const createApplicationModules = async (
   )
   const literatureCatalog = new LiteratureCatalog(
     () => getProjectDbClient(configRoot),
-    () => tagService.notifyAssignmentsChanged()
+    () => tagService.notifyAssignmentsChanged(),
+    contentRepository,
+    (attachmentId, remove) =>
+      sessionPersistenceCoordinator.withUnreferencedLiteratureAttachment(attachmentId, remove)
   )
   const literatureCitationStyles = new LiteratureCitationStyleLibrary(
     join(resolveDataRoot(), 'literature', 'citation-styles')

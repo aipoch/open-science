@@ -1094,6 +1094,209 @@ describe('LiteratureCatalog', () => {
     })
   })
 
+  it('keeps a rediscovered trashed reference pending until explicit acceptance', async () => {
+    const catalog = await setup()
+    const item = await catalog.transact({ kind: 'create-item', item: candidate().item })
+    await catalog.transact({ kind: 'set-item-lifecycle', itemIds: [item.id], state: 'deleted' })
+    const staged = await catalog.transact({ kind: 'stage-candidate', candidate: candidate() })
+    expect.soft(staged).toMatchObject({ kind: 'candidate', state: 'pending' })
+    expect.soft((await catalog.search({ scope: 'inbox' })).entries).toHaveLength(1)
+    expect
+      .soft(
+        (await catalog.search({ scope: 'library', lifecycle: 'deleted' })).entries.map((entry) =>
+          'id' in entry ? entry.id : undefined
+        )
+      )
+      .toContain(item.id)
+    expect.soft((await catalog.get(item.id))?.projectIds ?? []).toEqual([])
+    expect.soft(await client!.literatureSourceRecord.count({ where: { itemId: item.id } })).toBe(0)
+    if (staged.kind !== 'candidate') return
+    const accepted = await catalog.transact({ kind: 'accept-candidate', candidateId: staged.id })
+    expect(accepted.id).toBe(item.id)
+    expect((await catalog.get(item.id))!.projectIds).toEqual(['project-1'])
+  })
+
+  it('retains provenance when accepting the second PDF from the same provider record', async () => {
+    const catalog = await setup()
+    const staged = []
+    for (const letter of ['a', 'b']) {
+      const checksum = letter.repeat(64)
+      const blob = await client!.contentBlob.create({
+        data: {
+          id: `inbox-${letter}`,
+          checksum,
+          storageKey: `content/${letter}`,
+          sizeBytes: 128n,
+          contentType: 'application/pdf',
+          state: 'available'
+        }
+      })
+      staged.push(
+        await catalog.stageAcquiredPdf(candidate(), {
+          contentBlobId: blob.id,
+          checksum,
+          sizeBytes: 128,
+          contentType: 'application/pdf',
+          filename: `${letter}.pdf`,
+          pageCount: 8,
+          sourceUrl: 'https://example.test/paper'
+        })
+      )
+    }
+    expect(staged[0].id).not.toBe(staged[1].id)
+    const accepted = await catalog.transact({ kind: 'accept-candidate', candidateId: staged[1].id })
+    expect((await catalog.get(accepted.id))!.attachments).toHaveLength(1)
+    expect
+      .soft(await client!.literatureSourceRecord.count({ where: { itemId: accepted.id } }))
+      .toBe(1)
+    expect
+      .soft(
+        await client!.literatureSourceRecord.count({ where: { inboxCandidateId: staged[0].id } })
+      )
+      .toBe(1)
+    await catalog.transact({ kind: 'dismiss-candidate', candidateId: staged[0].id })
+    expect
+      .soft(await client!.literatureSourceRecord.count({ where: { itemId: accepted.id } }))
+      .toBe(1)
+    await catalog.transact({ kind: 'restore-candidates', candidateIds: [staged[0].id] })
+    expect(
+      (await catalog.transact({ kind: 'accept-candidate', candidateId: staged[0].id })).id
+    ).toBe(accepted.id)
+    expect((await catalog.get(accepted.id))!.attachments).toHaveLength(2)
+    expect(await client!.literatureSourceRecord.count({ where: { itemId: accepted.id } })).toBe(1)
+  })
+
+  it('preserves both discovery projects when accepting a globally deduplicated candidate', async () => {
+    const catalog = await setup()
+    await client!.project.create({ data: { id: 'project-2', name: 'Second research project' } })
+    const first = await catalog.transact({ kind: 'stage-candidate', candidate: candidate() })
+    const second = await catalog.transact({
+      kind: 'stage-candidate',
+      candidate: {
+        ...candidate(),
+        origin: { kind: 'agent', projectId: 'project-2', sessionId: 'session-2' }
+      }
+    })
+    expect(second.id).toBe(first.id)
+    const accepted = await catalog.transact({ kind: 'accept-candidate', candidateId: second.id })
+    expect([...(await catalog.get(accepted.id))!.projectIds].sort()).toEqual([
+      'project-1',
+      'project-2'
+    ])
+  })
+
+  it('stages a fresh review when a previously accepted reference is rediscovered in Trash', async () => {
+    const catalog = await setup()
+    const first = await catalog.transact({ kind: 'stage-candidate', candidate: candidate() })
+    const accepted = await catalog.transact({ kind: 'accept-candidate', candidateId: first.id })
+    await catalog.transact({ kind: 'set-item-lifecycle', itemIds: [accepted.id], state: 'deleted' })
+    const next = await catalog.transact({ kind: 'stage-candidate', candidate: candidate() })
+    expect(next).toMatchObject({ kind: 'candidate', state: 'pending' })
+    expect(next.id).not.toBe(first.id)
+    expect(
+      (await catalog.search({ scope: 'inbox', inboxState: 'accepted' })).entries
+    ).toMatchObject([{ id: first.id }])
+    expect(
+      (await catalog.search({ scope: 'library', lifecycle: 'deleted' })).entries
+    ).toMatchObject([{ id: accepted.id }])
+    expect((await catalog.transact({ kind: 'accept-candidate', candidateId: next.id })).id).toBe(
+      accepted.id
+    )
+  })
+
+  it('keeps distinct sessions idempotently while preserving a dismissed candidate and skipping deleted projects on acceptance', async () => {
+    const catalog = await setup()
+    await client!.project.create({ data: { id: 'project-2', name: 'Second project' } })
+    const first = await catalog.transact({ kind: 'stage-candidate', candidate: candidate() })
+    await catalog.transact({ kind: 'dismiss-candidate', candidateId: first.id })
+    const incoming = {
+      ...candidate(),
+      origin: { kind: 'agent', projectId: 'project-2', sessionId: 'session-2' }
+    }
+    for (let index = 0; index < 2; index++) {
+      expect(
+        await catalog.transact({ kind: 'stage-candidate', candidate: incoming })
+      ).toMatchObject({ id: first.id, state: 'dismissed' })
+    }
+    const page = await catalog.search({ scope: 'inbox', inboxState: 'dismissed' })
+    expect(page.entries).toMatchObject([
+      {
+        discoveries: [
+          { origin: candidate().origin, createdAt: expect.any(Number) },
+          { origin: incoming.origin, createdAt: expect.any(Number) }
+        ]
+      }
+    ])
+    expect(await client!.projectLiterature.count()).toBe(0)
+    await client!.project.delete({ where: { id: 'project-2' } })
+    await catalog.transact({ kind: 'restore-candidates', candidateIds: [first.id] })
+    const accepted = await catalog.transact({ kind: 'accept-candidate', candidateId: first.id })
+    expect((await catalog.get(accepted.id))!.projectIds).toEqual(['project-1'])
+    expect(
+      (await catalog.search({ scope: 'inbox', inboxState: 'accepted' })).entries
+    ).toMatchObject([
+      {
+        discoveries: [{ origin: candidate().origin }, { origin: incoming.origin }]
+      }
+    ])
+  })
+
+  it.each([true, false])(
+    'merges repeated owner-scoped source snapshots into the survivor (external id: %s)',
+    async (identified) => {
+      const catalog = await setup()
+      const itemIds: string[] = []
+      const source = { ...candidate().source, externalId: identified ? 'shared-source' : undefined }
+      for (const title of ['First', 'Second']) {
+        const created = await catalog.transact({
+          kind: 'create-item',
+          item: candidate({ title, doi: `10.1234/${title.toLowerCase()}` }).item
+        })
+        const view = (await catalog.get(created.id))!
+        await catalog.applyMetadata({
+          itemId: created.id,
+          expectedMetadataRevision: view.metadataRevision,
+          item: view.item,
+          source
+        })
+        itemIds.push(created.id)
+      }
+      const current = await Promise.all(itemIds.map(async (id) => (await catalog.get(id))!))
+      await catalog.transact({
+        kind: 'merge-items',
+        survivorId: itemIds[0],
+        duplicateIds: [itemIds[1]],
+        expectedMetadataRevision: current[0].metadataRevision,
+        expectedItems: current.map(({ id, metadataRevision, updatedAt }) => ({
+          id,
+          metadataRevision,
+          updatedAt
+        })),
+        item: current[0].item
+      })
+      expect(await client!.literatureSourceRecord.count({ where: { itemId: itemIds[0] } })).toBe(1)
+      expect(await client!.literatureSourceRecord.count({ where: { itemId: itemIds[1] } })).toBe(0)
+    }
+  )
+
+  it('preserves dismissal across service recreation and supports explicit restoration', async () => {
+    const catalog = await setup()
+    const staged = await catalog.transact({ kind: 'stage-candidate', candidate: candidate() })
+    await catalog.transact({ kind: 'dismiss-candidate', candidateId: staged.id })
+    const restarted = new LiteratureCatalog(async () => client!)
+    expect(await restarted.transact({ kind: 'stage-candidate', candidate: candidate() })).toEqual({
+      kind: 'candidate',
+      id: staged.id,
+      state: 'dismissed'
+    })
+    expect((await restarted.search({ scope: 'inbox' })).entries).toEqual([])
+    expect(
+      (await restarted.search({ scope: 'inbox', inboxState: 'dismissed' })).entries
+    ).toHaveLength(1)
+    await restarted.transact({ kind: 'restore-candidates', candidateIds: [staged.id] })
+    expect((await restarted.search({ scope: 'inbox' })).entries).toHaveLength(1)
+  })
+
   it('keeps acquired PDFs in Inbox until acceptance and reuses an existing library reference', async () => {
     const catalog = await setup()
     const existing = await catalog.transact({ kind: 'create-item', item: candidate().item })
@@ -1428,7 +1631,11 @@ describe('LiteratureCatalog', () => {
     await expect(
       client!.literatureSourceRecord.findUnique({
         where: {
-          provider_externalId: { provider: 'crossref', externalId: '10.1234/crag' }
+          itemId_provider_externalId: {
+            itemId: accepted.id,
+            provider: 'crossref',
+            externalId: '10.1234/crag'
+          }
         }
       })
     ).resolves.toMatchObject({
