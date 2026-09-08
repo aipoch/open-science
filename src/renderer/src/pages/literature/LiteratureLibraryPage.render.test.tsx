@@ -3144,6 +3144,8 @@ describe('LiteratureLibraryPage', () => {
       within(detail).getByRole('button', { name: 'Attachment actions for paper.pdf' })
     )
     fireEvent.click(await screen.findByRole('menuitem', { name: 'Remove attachment' }))
+    expect(screen.getByRole('alertdialog').textContent).toContain('paper.pdf')
+    fireEvent.click(screen.getByRole('button', { name: 'Permanently delete attachment' }))
     await waitFor(() =>
       expect(transact).toHaveBeenCalledWith({
         kind: 'delete-attachment',
@@ -3210,6 +3212,8 @@ describe('LiteratureLibraryPage', () => {
       within(detail).getByRole('button', { name: 'Attachment actions for paper.pdf' })
     )
     fireEvent.click(await screen.findByRole('menuitem', { name: 'Remove attachment' }))
+    expect(screen.getByRole('alertdialog').textContent).toContain('paper.pdf')
+    fireEvent.click(screen.getByRole('button', { name: 'Permanently delete attachment' }))
     expect(
       await within(detail).findByText(
         'This PDF is referenced by a chat or its message history and cannot be removed. Unlinking the current chat does not remove historical references.'
@@ -3416,6 +3420,8 @@ describe('LiteratureLibraryPage', () => {
       within(detail).getByRole('button', { name: 'Attachment actions for paper.pdf' })
     )
     fireEvent.click(await screen.findByRole('menuitem', { name: 'Remove attachment' }))
+    expect(screen.getByRole('alertdialog').textContent).toContain('paper.pdf')
+    fireEvent.click(screen.getByRole('button', { name: 'Permanently delete attachment' }))
     expect(await within(detail).findByRole('alert')).not.toBeNull()
     expect(
       within(detail).getByText('Attachment removed. Storage cleanup could not finish.')

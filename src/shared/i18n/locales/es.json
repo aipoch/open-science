@@ -5145,6 +5145,15 @@
     "Search again resets unfinished results and their selections.": "Volver a buscar restablece los resultados pendientes y sus selecciones.",
     "Apply selected": "Aplicar selección",
     "Add selected": "Añadir selección",
-    "Some references failed. Search again to retry unfinished references.": "Algunas referencias fallaron. Repita la búsqueda para reintentar las referencias pendientes."
+    "Some references failed. Search again to retry unfinished references.": "Algunas referencias fallaron. Repita la búsqueda para reintentar las referencias pendientes.",
+    "Version history": "Historial de versiones",
+    "Permanently delete attachment": "Eliminar permanentemente el archivo adjunto",
+    "Permanently delete “{{filename}}”?": "¿Eliminar permanentemente «{{filename}}»?",
+    "Files saved by the application will be deleted when no other references use them. This cannot be undone and does not move the attachment to Trash. Original files imported from your computer are not deleted.": "Los archivos guardados por la aplicación se eliminarán cuando ninguna otra referencia los utilice. Esta acción no se puede deshacer y no mueve el archivo adjunto a la papelera. Los archivos originales importados desde su equipo no se eliminarán.",
+    "Previewing an older version does not change the latest version.": "La vista previa de una versión anterior no cambia la versión más reciente.",
+    "Version {{number}}": "Versión {{number}}",
+    "All {{count}} versions will be deleted._one": "Se eliminará la única versión ({{count}}).",
+    "All {{count}} versions will be deleted._many": "Se eliminarán las {{count}} versiones.",
+    "All {{count}} versions will be deleted._other": "Se eliminarán las {{count}} versiones."
   }
 }

@@ -4984,6 +4984,14 @@
     "Search again resets unfinished results and their selections.": "Eine erneute Suche setzt nicht abgeschlossene Ergebnisse und deren Auswahl zurück.",
     "Apply selected": "Auswahl anwenden",
     "Add selected": "Auswahl hinzufügen",
-    "Some references failed. Search again to retry unfinished references.": "Einige Literaturstellen sind fehlgeschlagen. Suchen Sie erneut, um nicht abgeschlossene Literaturstellen erneut zu versuchen."
+    "Some references failed. Search again to retry unfinished references.": "Einige Literaturstellen sind fehlgeschlagen. Suchen Sie erneut, um nicht abgeschlossene Literaturstellen erneut zu versuchen.",
+    "Version history": "Versionsverlauf",
+    "Permanently delete attachment": "Anhang endgültig löschen",
+    "Permanently delete “{{filename}}”?": "„{{filename}}“ endgültig löschen?",
+    "Files saved by the application will be deleted when no other references use them. This cannot be undone and does not move the attachment to Trash. Original files imported from your computer are not deleted.": "Von der Anwendung gespeicherte Dateien werden gelöscht, wenn keine anderen Referenzen sie verwenden. Dies kann nicht rückgängig gemacht werden und verschiebt den Anhang nicht in den Papierkorb. Vom Computer importierte Originaldateien werden nicht gelöscht.",
+    "Previewing an older version does not change the latest version.": "Die Vorschau einer älteren Version ändert die neueste Version nicht.",
+    "Version {{number}}": "Version {{number}}",
+    "All {{count}} versions will be deleted._one": "Die einzige Version ({{count}}) wird gelöscht.",
+    "All {{count}} versions will be deleted._other": "Alle {{count}} Versionen werden gelöscht."
   }
 }

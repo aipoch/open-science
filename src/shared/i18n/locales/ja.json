@@ -4831,6 +4831,13 @@
     "Search again resets unfinished results and their selections.": "再検索すると、未完了の結果とその選択内容がリセットされます。",
     "Apply selected": "選択項目を適用",
     "Add selected": "選択項目を追加",
-    "Some references failed. Search again to retry unfinished references.": "一部の文献の処理に失敗しました。再検索して未完了の文献を再試行してください。"
+    "Some references failed. Search again to retry unfinished references.": "一部の文献の処理に失敗しました。再検索して未完了の文献を再試行してください。",
+    "Version history": "バージョン履歴",
+    "Permanently delete attachment": "添付ファイルを完全に削除",
+    "Permanently delete “{{filename}}”?": "「{{filename}}」を完全に削除しますか？",
+    "Files saved by the application will be deleted when no other references use them. This cannot be undone and does not move the attachment to Trash. Original files imported from your computer are not deleted.": "他の参照で使用されていない場合、アプリに保存されたファイルは削除されます。この操作は取り消せず、添付ファイルはゴミ箱に移動されません。コンピューターからインポートした元のファイルは削除されません。",
+    "Previewing an older version does not change the latest version.": "古いバージョンをプレビューしても、最新バージョンは変わりません。",
+    "Version {{number}}": "バージョン {{number}}",
+    "All {{count}} versions will be deleted._other": "すべての {{count}} バージョンが削除されます。"
   }
 }
