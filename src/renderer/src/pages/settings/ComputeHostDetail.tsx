@@ -303,7 +303,7 @@ export function ComputeHostDetail({
     setDetailsSaving(true)
     setDetailsError(undefined)
     try {
-      await saveDetails(providerId, detailsDoc, originalDoc)
+      await saveDetails(providerId, detailsDoc, isSkeleton ? '' : originalDoc)
       setDetailsConflict(false)
       setMergeBase(undefined)
       setOriginalDoc(detailsDoc)

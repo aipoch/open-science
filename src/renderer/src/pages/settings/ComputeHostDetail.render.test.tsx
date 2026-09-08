@@ -1391,6 +1391,38 @@ it('keeps the draft and reloads a merge base after a details conflict', async ()
   expect(saveDetails).toHaveBeenLastCalledWith('ssh:biowulf', 'my draft', 'other writer')
 })
 
+it('saves edits to auto-generated details against the empty stored document', async () => {
+  stubDetailsGet('## Resources\ncpus: 128', true)
+  const saveDetails = vi.fn().mockResolvedValue(undefined)
+  useComputeStore.setState({ hosts: [host({ detailsDoc: '' })], saveDetails })
+  await act(async () => root.render(<ComputeHostDetail providerId="ssh:biowulf" />))
+  const section = Array.from(
+    container.querySelectorAll<HTMLElement>('[data-slot="settings-section"]')
+  ).find((section) => section.querySelector('h3')?.textContent === 'Details')!
+  const click = async (text: string): Promise<void> => {
+    await act(async () =>
+      Array.from(section.querySelectorAll('button'))
+        .find((button) => button.textContent?.trim() === text)!
+        .click()
+    )
+  }
+  await click('Edit')
+  const draft = section.querySelector('textarea')!
+  act(() => {
+    Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!.call(
+      draft,
+      '## Resources\ncpus: 128\n\n## Usage Policy\nUse direct SSH.'
+    )
+    draft.dispatchEvent(new Event('input', { bubbles: true }))
+  })
+  await click('Save')
+  expect(saveDetails).toHaveBeenCalledWith(
+    'ssh:biowulf',
+    '## Resources\ncpus: 128\n\n## Usage Policy\nUse direct SSH.',
+    ''
+  )
+})
+
 // Exercise live app-language changes while Intl retains the host's default locale.
 it('updates metadata dates with the interface language on an unchanged host', async () => {
   const timestamp = '2026-09-02T12:00:00.000Z'
