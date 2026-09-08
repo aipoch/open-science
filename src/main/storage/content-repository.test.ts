@@ -62,6 +62,35 @@ describe('content repository', () => {
     })
   }
 
+  it.each([false, true])(
+    'retains overlapping publications across repositories and releases them on failure=%s',
+    async (fail) => {
+      const publisher = await createRepository()
+      const other = new ContentRepository({
+        storageRoot: storageRoot!,
+        getClient: async () => client!
+      })
+      const sourcePath = join(storageRoot!, 'source.pdf')
+      await writeFile(sourcePath, 'shared publication')
+      let contentId = ''
+      const sweep = (): ReturnType<ContentRepository['sweep']> =>
+        other.sweep({ createdBefore: new Date(Date.now() + 1) })
+      const acquisition = publisher.withPublishedContent({ sourcePath }, async (first) => {
+        contentId = first.id
+        await other.withPublishedContent({ sourcePath }, async (second) => {
+          expect(second.id).toBe(first.id)
+          expect((await sweep()).retainedIds).toContain(first.id)
+          await expect(other.verify(first.id)).resolves.toMatchObject({ state: 'available' })
+        })
+        expect((await sweep()).retainedIds).toContain(first.id)
+        if (fail) throw new Error('Reference insertion failed')
+      })
+      if (fail) await expect(acquisition).rejects.toThrow('Reference insertion failed')
+      else await acquisition
+      expect((await sweep()).removedIds).toContain(contentId)
+    }
+  )
+
   it('opens and verifies available immutable bytes', async () => {
     const repository = await createRepository()
     const content = Buffer.from('verified literature bytes')
@@ -327,6 +356,58 @@ describe('content repository', () => {
     ).resolves.toMatchObject({ contentBlobId: published.id })
     await expect(sweeper.verify(published.id)).resolves.toMatchObject({ state: 'available' })
     await expect(readFile(published.path)).resolves.toEqual(bytes)
+  })
+
+  it('orders a failed verification before repair across repository instances', async () => {
+    const verifier = await createRepository()
+    const sourcePath = join(storageRoot!, 'verification-repair.pdf')
+    await writeFile(sourcePath, 'original bytes')
+    const published = await verifier.publish({ sourcePath, contentType: 'application/pdf' })
+    await writeFile(published.path, 'broken')
+    const publisher = new ContentRepository({
+      storageRoot: storageRoot!,
+      getClient: async () => client!
+    })
+    let observe!: () => void
+    let release!: () => void
+    const observing = new Promise<void>((resolve) => {
+      observe = resolve
+    })
+    const gate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const update = client!.contentBlob.updateMany.bind(client!.contentBlob)
+    const spy = vi.spyOn(client!.contentBlob, 'updateMany').mockImplementation((async (
+      args: Parameters<typeof update>[0]
+    ) => {
+      if (args?.data.lastVerificationFailure === 'size-mismatch') {
+        observe()
+        await gate
+      }
+      return update(args)
+    }) as unknown as typeof update)
+    const verification = verifier.verify(published.id)
+    await observing
+    const publishing = publisher.publish({ sourcePath, contentType: 'application/pdf' })
+    try {
+      release()
+      await expect(verification).resolves.toMatchObject({
+        state: 'unavailable',
+        reason: 'size-mismatch'
+      })
+      await publishing
+      await expect(
+        client!.contentBlob.findUnique({ where: { id: published.id } })
+      ).resolves.toMatchObject({
+        state: 'available',
+        lastVerificationFailure: null,
+        lastVerificationAttemptAt: expect.any(Date)
+      })
+      await expect(verifier.verify(published.id)).resolves.toMatchObject({ state: 'available' })
+    } finally {
+      release()
+      spy.mockRestore()
+    }
   })
 
   it('sweeps only old unreferenced blobs and leaves referenced bytes intact', async () => {

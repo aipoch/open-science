@@ -213,7 +213,24 @@ class SessionPdfContextOwner {
       projectId: request.projectId,
       sessionId: request.sessionId,
       expectedRevision: request.expectedRevision,
-      patch: { pdfContext }
+      patch: { pdfContext },
+      ...(bindings.some((binding) => binding.sourceKind === 'literature-attachment-version')
+        ? {
+            beforePersist: async () => {
+              // Runs inside the Session mutation barrier, after any earlier attachment removal.
+              for (const binding of bindings) {
+                if (binding.sourceKind !== 'literature-attachment-version') continue
+                const source = await this.options.sources.resolveVersion({
+                  projectId: request.projectId,
+                  sourceKind: binding.sourceKind,
+                  sourceVersionId: binding.sourceVersionId,
+                  expectedSourceFileId: binding.sourceFileId
+                })
+                if (!source) throw new Error('PDF context Version is unavailable in this Project.')
+              }
+            }
+          }
+        : {})
     })
     log.info('PDF context linked', {
       projectId: request.projectId,

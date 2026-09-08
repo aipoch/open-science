@@ -7111,6 +7111,68 @@ describe('SessionPersistenceCoordinator', () => {
   })
 })
 
+describe('literature attachment removal and session persistence ordering', () => {
+  it('fails closed when existing session references cannot be read completely', async () => {
+    const coordinator = new SessionPersistenceCoordinator(
+      createSessionRepository({
+        loadAllWithDiagnostics: vi.fn().mockResolvedValue({
+          result: { sessions: [], manifest: { version: 1 } },
+          isComplete: false
+        })
+      }),
+      createFileIndex()
+    )
+    const remove = vi.fn()
+    await expect(
+      coordinator.withUnreferencedLiteratureAttachment('attachment', remove)
+    ).rejects.toThrow('complete Session catalog')
+    expect(remove).not.toHaveBeenCalled()
+  })
+
+  it('checks a queued binding after an earlier attachment removal completes', async () => {
+    const save = vi.fn()
+    const coordinator = new SessionPersistenceCoordinator(
+      createSessionRepository({
+        loadSessionWithDiagnostics: vi
+          .fn()
+          .mockResolvedValue({ status: 'found', session: createSession() }),
+        saveSession: save
+      }),
+      createFileIndex()
+    )
+    let release!: () => void
+    let entered!: () => void
+    const gate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const started = new Promise<void>((resolve) => {
+      entered = resolve
+    })
+    let removed = false
+    const removal = coordinator.withUnreferencedLiteratureAttachment('attachment', async () => {
+      entered()
+      await gate
+      removed = true
+    })
+    await started
+    const patch = coordinator.patchSessionRuntimeContext({
+      projectId: 'project-1',
+      sessionId: 'session-1',
+      expectedRevision: 0,
+      patch: { pdfContext: undefined },
+      beforePersist: async () => {
+        await Promise.resolve()
+        if (removed) throw new Error('Source unavailable')
+      }
+    })
+    const rejected = expect(patch).rejects.toThrow('Source unavailable')
+    release()
+    await removal
+    await rejected
+    expect(save).not.toHaveBeenCalled()
+  })
+})
+
 const createSessionRepository = (
   overrides: Partial<SessionMutationRepository> = {}
 ): SessionMutationRepository => ({

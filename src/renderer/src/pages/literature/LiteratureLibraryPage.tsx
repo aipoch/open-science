@@ -1,3 +1,5 @@
+import type { TFunction } from 'i18next'
+import { LiteratureAttachments } from './LiteratureAttachments'
 import {
   LITERATURE_COLLECTION_NAME_CONFLICT,
   LITERATURE_IMPORT_IDENTITY_CONFLICT
@@ -95,7 +97,6 @@ import { cn } from '@/lib/utils'
 import { useNavigationStore, type PdfReadingDocument } from '@/stores/navigation-store'
 import { useProjectStore } from '@/stores/project-store'
 import { useTagStore } from '@/stores/tag-store'
-import { formatBytes } from '../../../../shared/update'
 import { LiteratureMergeReview } from './LiteratureMergeReview'
 import { LiteratureBatchLookupDialog, type BatchLookupMode } from './LiteratureBatchLookupDialog'
 import { LiteratureBackgroundTasks } from './LiteratureBackgroundTasks'
@@ -194,6 +195,19 @@ type DismissedCandidateUndo = Readonly<{
 const OPEN_DIALOG_SELECTOR =
   '[role="dialog"]:not([data-state="closed"]), [role="alertdialog"]:not([data-state="closed"])'
 const CHILD_LAYER_DISMISS_GUARD_MS = 1_000
+
+const pdfImportErrorMessage = (error: unknown, t: TFunction): string => {
+  const message = error instanceof Error ? error.message : String(error)
+  if (message.includes('[pdf-password]'))
+    return t('This PDF requires a password. Add an unlocked copy.')
+  if (message.includes('[pdf-invalid]'))
+    return t('This PDF is damaged or invalid. Select another file.')
+  if (message.includes('[pdf-unreadable]'))
+    return t(
+      'This PDF could not be parsed. It may use unsupported features. Select another file or try again.'
+    )
+  return t('PDF could not be added.')
+}
 
 const hasLiteratureDetailChildLayer = (): boolean =>
   Boolean(
@@ -2190,8 +2204,8 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
       })
       detailController.replace(receipt.item)
       await loadEntries(true)
-    } catch {
-      setPdfError(t('PDF could not be added.'))
+    } catch (error) {
+      setPdfError(pdfImportErrorMessage(error, t))
     } finally {
       if (staged)
         await window.api.uploads.deleteUpload({ path: staged.path }).catch(() => undefined)
@@ -2470,7 +2484,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
       setPendingImportPdf(undefined)
       setPendingImportDraft(undefined)
       openSelectedItemDetail(created)
-    } catch {
+    } catch (error) {
       if (file && createdItemId) {
         const created = await window.api.literature.get(createdItemId).catch(() => undefined)
         if (created) {
@@ -2478,7 +2492,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
           setPendingImportPdf(undefined)
           setPendingImportDraft(undefined)
           openSelectedItemDetail(created)
-          setPdfError(t('PDF could not be added.'))
+          setPdfError(pdfImportErrorMessage(error, t))
         } else {
           setCreateItemError(t('Literature could not be created.'))
         }
@@ -2723,7 +2737,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
 
   const previewFirstAttachment = (entry: LiteratureItemView): void => {
     const version = entry.attachments.find((attachment) => attachment.versions[0])?.versions[0]
-    if (!version) return
+    if (!version || version.availability === 'unavailable') return
     setPreviewItem({
       id: `literature:${version.id}`,
       sessionId: LITERATURE_PREVIEW_SESSION_ID,
@@ -4382,6 +4396,11 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
                           const attachmentVersion = entry.attachments.find(
                             (attachment) => attachment.versions[0]
                           )?.versions[0]
+                          const hasUnavailableAttachment = entry.attachments.some((attachment) =>
+                            attachment.versions.some(
+                              (version) => version.availability === 'unavailable'
+                            )
+                          )
                           const rowNumber = entriesOffset + itemIndex + 1
                           return (
                             <tr
@@ -4579,6 +4598,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
                                       aria-label={t('Preview {{title}}', {
                                         title: attachmentVersion.filename
                                       })}
+                                      disabled={attachmentVersion.availability === 'unavailable'}
                                       onClick={() => previewFirstAttachment(entry)}
                                     >
                                       <Paperclip
@@ -4590,6 +4610,15 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
                                 ) : (
                                   <span className="text-muted-foreground">—</span>
                                 )}
+                                {hasUnavailableAttachment ? (
+                                  <button
+                                    type="button"
+                                    className="block w-full text-xs text-danger-000"
+                                    onClick={() => openSelectedItemDetail(entry)}
+                                  >
+                                    {t('Attachment unavailable')}
+                                  </button>
+                                ) : null}
                               </td>
                               <td className="sticky right-0 z-20 w-12 min-w-12 max-w-12 bg-inherit px-2 py-2 align-middle">
                                 <div className="flex items-center justify-end">
@@ -5542,47 +5571,32 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
                             {pdfError}
                           </p>
                         ) : null}
-                        {selectedItem.attachments.length > 0 ? (
-                          <div className="mt-2 space-y-2">
-                            {selectedItem.attachments.map((attachment) => {
-                              const version = attachment.versions[0]
-                              return version ? (
-                                <button
-                                  key={attachment.id}
-                                  type="button"
-                                  className="flex w-full items-center gap-3 rounded-lg border border-border-300/80 bg-bg-100 px-3 py-2 text-left transition-colors hover:bg-bg-200"
-                                  aria-label={t('Preview {{title}}', { title: version.filename })}
-                                  onClick={() =>
-                                    setPreviewItem({
-                                      id: `literature:${version.id}`,
-                                      sessionId: LITERATURE_PREVIEW_SESSION_ID,
-                                      title: version.filename,
-                                      type: 'file',
-                                      source: 'literature',
-                                      path: createLiteratureAttachmentVersionReference(version.id),
-                                      format: 'pdf',
-                                      name: version.filename,
-                                      mimeType: version.contentType,
-                                      size: version.sizeBytes,
-                                      versionNumber: version.versionNumber
-                                    })
-                                  }
-                                >
-                                  <FileText
-                                    className="size-4 shrink-0 text-primary"
-                                    aria-hidden="true"
-                                  />
-                                  <div className="min-w-0 flex-1">
-                                    <p className="truncate font-medium">{version.filename}</p>
-                                    <p className="text-xs text-muted-foreground">
-                                      {formatBytes(version.sizeBytes)}
-                                    </p>
-                                  </div>
-                                </button>
-                              ) : null
-                            })}
-                          </div>
-                        ) : (
+                        <LiteratureAttachments
+                          key={selectedItem.id}
+                          item={selectedItem}
+                          onChanged={(updated) => {
+                            if (detailController.getSnapshot().item?.id === updated.id)
+                              detailController.replace(updated)
+                            updateMetadataItem(updated)
+                            void loadEntries(true)
+                          }}
+                          onPreview={(version) =>
+                            setPreviewItem({
+                              id: `literature:${version.id}`,
+                              sessionId: LITERATURE_PREVIEW_SESSION_ID,
+                              title: version.filename,
+                              type: 'file',
+                              source: 'literature',
+                              path: createLiteratureAttachmentVersionReference(version.id),
+                              format: 'pdf',
+                              name: version.filename,
+                              mimeType: version.contentType,
+                              size: version.sizeBytes,
+                              versionNumber: version.versionNumber
+                            })
+                          }
+                        />
+                        {selectedItem.attachments.length === 0 ? (
                           <button
                             type="button"
                             data-slot="literature-pdf-drop-zone"
@@ -5611,7 +5625,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
                               {t('Drag and drop or click to upload')}
                             </span>
                           </button>
-                        )}
+                        ) : null}
                       </section>
                     </div>
                   )}
@@ -5918,7 +5932,20 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
         item={previewItem}
         allowReadingContext={false}
         onReadWithAgent={requestReadWithAgent}
-        onClose={() => setPreviewItem(undefined)}
+        onClose={() => {
+          setPreviewItem(undefined)
+          const current = detailController.getSnapshot().item
+          if (current)
+            void window.api.literature
+              .get(current.id)
+              .then((updated) => {
+                if (!updated) return
+                if (detailController.getSnapshot().item?.id === updated.id)
+                  detailController.replace(updated)
+                updateMetadataItem(updated)
+              })
+              .catch(() => undefined)
+        }}
       />
       {dismissedCandidateUndo ? (
         <fieldset

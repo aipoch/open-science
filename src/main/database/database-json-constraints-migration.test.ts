@@ -174,10 +174,11 @@ describe('database JSON constraints migration', () => {
           '0032_permission_approval_summary',
           '0033_compute_job_harvest_retry',
           '0034_background_result_delivery',
-          '0035_literature_pdf_provenance'
+          '0035_literature_pdf_provenance',
+          '0036_content_verification_observation'
         ],
         from: '0007_notification_attention_metadata',
-        to: '0035_literature_pdf_provenance'
+        to: '0036_content_verification_observation'
       })
       await expect(access(`${databasePath}.before-${MIGRATION_ID}.backup`)).resolves.toBeUndefined()
       await expect(

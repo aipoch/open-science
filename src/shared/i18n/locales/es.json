@@ -5044,6 +5044,23 @@
     "Selected: {{selected}} / 20": "Seleccionadas: {{selected}} / 20",
     "Compare selected references": "Comparar referencias seleccionadas",
     "PDF added. Refreshing attachment details…": "PDF añadido. Actualizando los detalles del archivo adjunto…",
-    "You can close this dialog. The download continues in the background; reopen it to see progress.": "Puede cerrar este diálogo. La descarga continúa en segundo plano; vuelva a abrirlo para ver el progreso."
+    "You can close this dialog. The download continues in the background; reopen it to see progress.": "Puede cerrar este diálogo. La descarga continúa en segundo plano; vuelva a abrirlo para ver el progreso.",
+    "Retry file verification": "Volver a verificar el archivo",
+    "Remove attachment": "Eliminar adjunto",
+    "This PDF requires a password. Add an unlocked copy.": "Este PDF requiere una contraseña. Añada una copia desbloqueada.",
+    "This PDF is damaged or invalid. Select another file.": "Este PDF está dañado o no es válido. Seleccione otro archivo.",
+    "This PDF could not be parsed. It may use unsupported features. Select another file or try again.": "No se pudo analizar este PDF. Puede que utilice funciones no compatibles. Seleccione otro archivo o vuelva a intentarlo.",
+    "Attachment actions for {{title}}": "Acciones del adjunto {{title}}",
+    "Attachment removed. Storage cleanup could not finish.": "Adjunto eliminado. No se pudo completar la limpieza del almacenamiento.",
+    "The attachment operation completed, but details could not be refreshed. Reopen this reference.": "La operación del adjunto se completó, pero no se pudieron actualizar los detalles. Vuelva a abrir esta referencia.",
+    "The attachment operation failed. Try again.": "La operación del adjunto falló. Vuelva a intentarlo.",
+    "File missing": "Archivo no encontrado",
+    "File damaged": "Archivo dañado",
+    "File integrity verified": "Integridad del archivo verificada",
+    "File integrity not yet verified": "Integridad del archivo aún no verificada",
+    "PDF not validated: exceeds the 50 MiB automatic processing limit.": "PDF no validado: supera el límite de procesamiento automático de 50 MiB.",
+    "PDF structure not yet validated.": "Estructura del PDF aún no validada.",
+    "Attachment unavailable": "Adjunto no disponible",
+    "This PDF is referenced by a chat or its message history and cannot be removed. Unlinking the current chat does not remove historical references.": "Un chat o su historial de mensajes hace referencia a este PDF, por lo que no se puede eliminar. Desvincularlo del chat actual no elimina las referencias del historial."
   }
 }

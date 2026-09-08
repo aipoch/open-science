@@ -424,6 +424,8 @@ model ContentBlob {
   state                        String                        @default("staging")
   createdAt                    DateTime                      @default(now())
   verifiedAt                   DateTime?
+  lastVerificationFailure      String?
+  lastVerificationAttemptAt    DateTime?
   literatureAttachmentVersions LiteratureAttachmentVersion[]
   literatureInboxPdfs           LiteratureInboxPdf[]
 
