@@ -103,4 +103,34 @@ describe('reproduction preflight', () => {
       validateReproductionDiskSpace(recipe, 'original-inputs', async () => undefined)
     ).resolves.toBeUndefined()
   })
+  it('rejects unavailable RNG state before restoring environments, only for selected R steps', () => {
+    const execution = fixture('r')
+    const observation = { locale: 'C', timezone: 'UTC', threadLimits: {}, randomLibraries: [] }
+    execution.runs[0]!.executionContext = {
+      schemaVersion: 1,
+      before: { ...observation, rRandomState: { state: 'unavailable', reason: 'unsupported-rng' } },
+      after: observation
+    }
+    expect(() => validateReproductionContext(execution, 'original-inputs')).toThrow(
+      'unsupported-rng'
+    )
+    execution.reproducibilityRecipe!.frontiers[0]!.stepIds = ['two']
+    expect(() => validateReproductionContext(execution, 'original-inputs')).not.toThrow()
+  })
+
+  it('rejects unavailable Python RNG state only when its step will be replayed', () => {
+    const execution = fixture('python')
+    const observation = { locale: 'C', timezone: 'UTC', threadLimits: {}, randomLibraries: [] }
+    execution.runs[0]!.executionContext = {
+      schemaVersion: 1,
+      before: {
+        ...observation,
+        pythonRandomState: { state: 'unavailable', reason: 'modified-rng' }
+      },
+      after: observation
+    }
+    expect(() => validateReproductionContext(execution, 'original-inputs')).toThrow('modified-rng')
+    execution.reproducibilityRecipe!.frontiers[0]!.stepIds = ['two']
+    expect(() => validateReproductionContext(execution, 'original-inputs')).not.toThrow()
+  })
 })

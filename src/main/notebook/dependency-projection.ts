@@ -3,6 +3,7 @@ import type {
   NotebookRunRecord,
   NotebookRunStaleness
 } from '../../shared/notebook'
+import { notebookExecutionContextSchema } from '../../shared/notebook-execution-context'
 import type {
   AnalyzedNotebookRun,
   NotebookDependencyAlias,
@@ -13,6 +14,8 @@ import type {
 import {
   PYTHON_LIBRARY_EFFECTS,
   pythonUnpackedReturnType,
+  pythonArgumentShapeReturnType,
+  type PythonArgumentShape,
   type PythonLibraryMethodEffect
 } from './python-library-effects'
 
@@ -21,6 +24,15 @@ const DYNAMIC_NAMESPACE_ROOTS = new Set([
   '__builtins__',
   '.GlobalEnv',
   '.BaseNamespaceEnv'
+])
+const R_DEFAULT_PACKAGES = new Set([
+  'base',
+  'utils',
+  'stats',
+  'graphics',
+  'grDevices',
+  'methods',
+  'datasets'
 ])
 const R_STATIC_DISPATCH_MEMBERS = new Set([
   'altExp',
@@ -113,6 +125,7 @@ const incompleteRunFacts = (
       typeSummaries: [],
       typeBindings: [],
       receiverCalls: facts.receiverCalls ?? [],
+      ...(facts.pythonPlottingState ? { pythonPlottingState: facts.pythonPlottingState } : {}),
       memberWrites: facts.memberWrites ?? []
     },
     affectedNames
@@ -200,6 +213,11 @@ const linkAliasClass = (left: string, right: string, aliases: Map<string, Set<st
 class NotebookDependencyProjector {
   private readonly stalenessByRunId: Record<string, NotebookRunStaleness> = {}
   private readonly invalidatedByRunId: Record<string, NotebookInvalidatedRun[]> = {}
+  private readonly rPackageLoadsByNamespace = new Map<string, Map<string, string>>()
+  private readonly pythonPlottingStateByNamespace = new Map<string, string>()
+  private readonly rThemeStateByNamespace = new Map<string, string>()
+  private readonly rOptionWritesByNamespace = new Map<string, Map<string, string>>()
+  private readonly rGraphicsStateByNamespace = new Map<string, string>()
   private readonly latestDefinitionsByNamespace = new Map<string, Map<string, string>>()
   private readonly referenceTokensByNamespace = new Map<string, Map<string, string>>()
   private readonly possibleAliasesByNamespace = new Map<string, Map<string, Set<string>>>()
@@ -492,8 +510,13 @@ class NotebookDependencyProjector {
     const returnTypeForCall = (
       fallback: string | null | undefined,
       effect: PythonLibraryMethodEffect | undefined,
-      keywords: Array<{ name: string; staticBoolean?: boolean | null }> | undefined
+      keywords:
+        | Array<{ name: string; staticBoolean?: boolean | null; staticShape?: PythonArgumentShape }>
+        | undefined,
+      positionalShapes?: PythonArgumentShape[]
     ): string | null | undefined => {
+      if (effect?.returnTypeByArgumentShape)
+        return pythonArgumentShapeReturnType(effect, positionalShapes, keywords)
       const conditional = effect?.returnTypeWhenKeywordNotTrue
       if (!conditional) return fallback
       const keyword = keywords?.find((candidate) => candidate.name === conditional.keyword)
@@ -501,6 +524,47 @@ class NotebookDependencyProjector {
       return (keyword && keyword.staticBoolean !== true) || unpacked
         ? conditional.returnType
         : fallback
+    }
+
+    const ownedPropertyEffect = (
+      alias: NotebookDependencyAlias,
+      sourceType: NotebookDependencyTypeSummary | undefined
+    ): PythonLibraryMethodEffect | undefined => {
+      if (incompleteRun || alias.access !== 'attribute' || !alias.member || !sourceType)
+        return undefined
+      const token = referenceTokens.get(alias.source)
+      const shadow = token ? shadowedMembers.get(token) : undefined
+      const typeShadow = shadowedTypeMembers.get(sourceType)
+      if (
+        shadow?.has('*') ||
+        shadow?.has(alias.member) ||
+        typeShadow?.has('*') ||
+        typeShadow?.has(alias.member) ||
+        (facts.memberWrites ?? []).some(
+          (write) =>
+            receiversMayAlias(write.receiver, alias.source) &&
+            (write.member === undefined || write.member === alias.member)
+        )
+      )
+        return undefined
+      const effect = libraryEffectFor(sourceType, `@${alias.member}`)
+      return effect?.returnsAliasOfReceiver ? effect : undefined
+    }
+    for (const alias of facts.aliases ?? []) {
+      if (alias.access !== 'attribute' || !alias.member) continue
+      const sourceType =
+        pendingTypeBindings.get(alias.source) ??
+        ((facts.definedNames ?? []).includes(alias.source)
+          ? undefined
+          : objectTypes.get(alias.source))
+      if (!libraryEffectFor(sourceType, `@${alias.member}`)?.returnsAliasOfReceiver) continue
+      const property = ownedPropertyEffect(alias, sourceType)
+      const type = property?.returnType ? typeSummaries.get(property.returnType) : undefined
+      if (type) pendingTypeBindings.set(alias.target, type)
+      else {
+        typeAwareReasons.push('opaque-call')
+        typeAwarePossiblyMutatedNames.push(alias.source, alias.target)
+      }
     }
 
     for (const call of facts.receiverCalls ?? []) {
@@ -555,12 +619,21 @@ class NotebookDependencyProjector {
       let projectedReceiverValueNames = [call.receiver]
       let chainProvenanceResolved = false
       for (const [chainIndex, chainedMember] of (call.receiverChain ?? []).entries()) {
+        const accessedMember = chainedMember.startsWith('@')
+          ? chainedMember.slice(1)
+          : chainedMember
         const typeShadow = typeSummary ? shadowedTypeMembers.get(typeSummary) : undefined
         if (
           priorShadow?.has('*') === true ||
-          priorShadow?.has(chainedMember) === true ||
+          priorShadow?.has(accessedMember) === true ||
+          (facts.memberWrites ?? []).some(
+            (write) =>
+              write.scope !== 'type' &&
+              receiversMayAlias(write.receiver, call.receiver) &&
+              (write.member === undefined || write.member === accessedMember)
+          ) ||
           typeShadow?.has('*') === true ||
-          typeShadow?.has(chainedMember) === true
+          typeShadow?.has(accessedMember) === true
         ) {
           chainWasShadowed = true
           typeSummary = undefined
@@ -629,7 +702,8 @@ class NotebookDependencyProjector {
         const chainedReturnType = returnTypeForCall(
           chainedMethod?.returnType,
           chainedEffect,
-          chainKeywords
+          chainKeywords,
+          call.receiverChainPositionalStaticShapes?.[chainIndex]
         )
         typeSummary = chainedReturnType ? typeSummaries.get(chainedReturnType) : undefined
         if (!typeSummary) break
@@ -654,7 +728,10 @@ class NotebookDependencyProjector {
         : typeSummary?.methods.find((candidate) => candidate.name === methodName)
       const libraryEffect = methodWasShadowed
         ? undefined
-        : libraryEffectFor(typeSummary, methodName)
+        : (libraryEffectFor(typeSummary, methodName) ??
+          (!typeSummary && knownBuiltinContainers.has(call.receiver)
+            ? PYTHON_LIBRARY_EFFECTS['python.container']?.methods[methodName]
+            : undefined))
       const receiverTypeRule = libraryEffect?.receiverTypeWhenKeywordNotTrue
       const receiverTypeKeyword = receiverTypeRule
         ? call.keywordArguments?.find((keyword) => keyword.name === receiverTypeRule.keyword)
@@ -690,7 +767,8 @@ class NotebookDependencyProjector {
       const returnedType = returnTypeForCall(
         method?.returnType,
         libraryEffect,
-        call.keywordArguments
+        call.keywordArguments,
+        call.positionalStaticShapes
       )
       const returnedTypes = method?.destructuredReturnTypes?.length
         ? method.destructuredReturnTypes
@@ -869,6 +947,17 @@ class NotebookDependencyProjector {
           if (!summary) {
             return reference.member !== undefined || libraryEffect?.callbackAllKeywords !== true
           }
+          if (
+            !reference.member &&
+            libraryEffect?.callbackAllKeywords === true &&
+            [
+              'python.string',
+              'python.strings',
+              'python.scalar',
+              'python.calculated-sequence'
+            ].includes(summary.name)
+          )
+            return false
           if (reference.member) {
             const writtenInThisRun = (facts.memberWrites ?? []).some(
               (write) =>
@@ -987,6 +1076,58 @@ class NotebookDependencyProjector {
         }
       }
     }
+    const packageUpstreamRunIds = new Set<string>()
+    const packageReasons: string[] = []
+    if (run.kernelKind === 'r') {
+      const packages = this.rPackageLoadsByNamespace.get(namespace) ?? new Map<string, string>()
+      const captured = run.environmentManifest?.executionContext?.rPackages
+      const parsed = notebookExecutionContextSchema.shape.rPackages.safeParse(captured)
+      const observed = parsed.success ? parsed.data : undefined
+      if (captured && (!observed || !observed.complete))
+        packageReasons.push('package-binding-capture-incomplete')
+      if (observed?.complete) {
+        for (const pkg of packages.keys()) if (!observed.before.includes(pkg)) packages.delete(pkg)
+      }
+      for (const pkg of facts.rPackageReads ?? []) {
+        const producer = packages.get(pkg)
+        if (producer) packageUpstreamRunIds.add(producer)
+      }
+      for (const { package: pkg } of observed?.reads ?? []) {
+        if (R_DEFAULT_PACKAGES.has(pkg) || !observed?.before.includes(pkg)) continue
+        // A local explicit load before the use can restore this package even
+        // when the beginning of the original kernel history is unavailable.
+        if (facts.rPackageLoads?.includes(pkg) && !facts.rPackageReads?.includes(pkg)) continue
+        const producer = packages.get(pkg)
+        if (producer) packageUpstreamRunIds.add(producer)
+        else packageReasons.push(`missing-package-load:${pkg}`)
+      }
+      if (observed) {
+        if (observed.complete) {
+          for (const pkg of packages.keys()) if (!observed.after.includes(pkg)) packages.delete(pkg)
+        }
+        for (const pkg of observed.after) {
+          if (!observed.before.includes(pkg)) packages.set(pkg, run.runId)
+        }
+      }
+      // Failed cells may have attached a package before stopping; their producer
+      // remains uncertain until a successful explicit load replaces it.
+      for (const pkg of analyzedFacts.rPackageLoads ?? []) {
+        if (!observed || observed.after.includes(pkg)) packages.set(pkg, run.runId)
+      }
+      this.rPackageLoadsByNamespace.set(namespace, packages)
+    }
+    const plottingProvider =
+      run.kernelKind === 'python' && facts.pythonPlottingState?.reads
+        ? this.pythonPlottingStateByNamespace.get(namespace)
+        : undefined
+    const themeProvider =
+      run.kernelKind === 'r' && facts.rThemeState?.reads
+        ? this.rThemeStateByNamespace.get(namespace)
+        : undefined
+    const graphicsProvider =
+      run.kernelKind === 'r' && facts.rGraphicsState?.readsPrior
+        ? this.rGraphicsStateByNamespace.get(namespace)
+        : undefined
     const currentSafeCallNames = incompleteRun
       ? []
       : [...new Set([...(facts.safeCallNames ?? []), ...typeAwareSafeCallNames])]
@@ -995,15 +1136,33 @@ class NotebookDependencyProjector {
       incompleteRun
         ? ['incomplete-run']
         : [
-            ...(facts.state === 'unknown' ? facts.reasons : []),
+            ...(facts.state === 'unknown'
+              ? facts.reasons.filter(
+                  (reason) => !(reason === 'graphics-state-unavailable' && graphicsProvider)
+                )
+              : []),
             ...(safeCallShadowed ? ['opaque-call'] : []),
-            ...typeAwareReasons
+            ...typeAwareReasons,
+            ...(facts.pythonRandomStateReads &&
+            run.environmentManifest?.executionContext?.before.pythonRandomState?.state !==
+              'available'
+              ? ['random-state-unavailable']
+              : []),
+            ...packageReasons
           ]
     ).filter((reason, index, reasons) => reasons.indexOf(reason) === index)
     const currentRunReasons = analysisReasons.filter(
       (reason) => reason !== 'opaque-mutation' && reason !== 'external-state'
     )
-    const upstreamRunIds = new Set<string>()
+    const upstreamRunIds = new Set(packageUpstreamRunIds)
+    // Formatting options are implicit inputs to R printing and plot labels.
+    if (run.kernelKind === 'r') {
+      for (const provider of this.rOptionWritesByNamespace.get(namespace)?.values() ?? [])
+        upstreamRunIds.add(provider)
+    }
+    if (graphicsProvider) upstreamRunIds.add(graphicsProvider)
+    if (themeProvider) upstreamRunIds.add(themeProvider)
+    if (plottingProvider) upstreamRunIds.add(plottingProvider)
     const usedNames = incompleteRun
       ? []
       : [...(facts.priorUsedNames ?? facts.usedNames ?? []), ...typeAwareUsedNames]
@@ -1055,6 +1214,36 @@ class NotebookDependencyProjector {
               ? { ...staleUpstream, path: [...staleUpstream.path, run.runId] }
               : { state: 'clear' }
 
+    if (run.kernelKind === 'python' && facts.pythonPlottingState?.writes) {
+      // Preserve the provider even when failed: downstream consumers must inherit
+      // its uncertainty, rather than silently using a previous successful setup.
+      this.pythonPlottingStateByNamespace.set(namespace, run.runId)
+    }
+    if (run.kernelKind === 'r' && analyzedFacts.rThemeState?.writes) {
+      // A failed theme change must remain an uncertain dependency of later plots.
+      this.rThemeStateByNamespace.set(namespace, run.runId)
+    }
+    if (run.kernelKind === 'r' && analyzedFacts.rOptionWrites?.length) {
+      const providers = this.rOptionWritesByNamespace.get(namespace) ?? new Map<string, string>()
+      for (const option of analyzedFacts.rOptionWrites) providers.set(option, run.runId)
+      this.rOptionWritesByNamespace.set(namespace, providers)
+    }
+    if (run.kernelKind === 'r') {
+      // Failed or opaque cells may change package configuration. Only a known,
+      // successful chain, starting with an explicit reset, can supply it.
+      if (stalenessByRunId[run.runId]?.state !== 'clear' || analysisReasons.length > 0) {
+        this.rGraphicsStateByNamespace.delete(namespace)
+      } else if (facts.rGraphicsState && (facts.rGraphicsState.resets || graphicsProvider)) {
+        this.rGraphicsStateByNamespace.set(namespace, run.runId)
+      } else if (
+        facts.rGraphicsState ||
+        currentSafeCallNames.some((name) => /^(circlize::|circos\.|chordDiagram$)/.test(name))
+      ) {
+        // A locally safe wrapper/tryCatch may alter the package without proving
+        // the configuration left behind. Do not keep an older provider alive.
+        this.rGraphicsStateByNamespace.delete(namespace)
+      }
+    }
     const mayRewriteExistingBindings = analysisReasons.some(
       (reason) =>
         [
@@ -1239,6 +1428,19 @@ class NotebookDependencyProjector {
       (name) => !conditionallyDefinedNames.has(name)
     )
     for (const name of definedNames) {
+      const previousModule = objectTypes.get(name)
+      const nextModule = pendingTypeBindings.get(name)
+      // Re-importing an unchanged module binds the same sys.modules object. It
+      // does not invalidate configuration set through that module in earlier cells.
+      if (
+        run.kernelKind === 'python' &&
+        previousModule?.kind === 'python-module' &&
+        previousModule === nextModule &&
+        !uncertainBindings.has(name) &&
+        !typeBehaviorChanges.has(name) &&
+        !analysisReasons.length
+      )
+        continue
       invalidateName(name, 'stale')
       uncertainBindings.delete(name)
       referenceTokens.set(name, `${run.runId}\0${name}`)
@@ -1333,6 +1535,14 @@ class NotebookDependencyProjector {
         (field) => field.name === alias.member
       )?.relationship
       if (fieldRelationship === 'value') continue
+      const propertyEffect = ownedPropertyEffect(alias, sourceType)
+      // An owned plotting property (for example ClusterGrid.ax_heatmap) is a
+      // confirmed reference. Preserve its own type while sharing mutation history.
+      const ownedProperty = propertyEffect?.returnsAliasOfReceiver === true
+      if (ownedProperty && propertyEffect.returnType) {
+        const propertyType = typeSummaries.get(propertyEffect.returnType)
+        if (propertyType) objectTypes.set(alias.target, propertyType)
+      }
       const isKnownRReferenceAlias =
         run.kernelKind === 'r' &&
         alias.access === undefined &&
@@ -1340,6 +1550,7 @@ class NotebookDependencyProjector {
         sourceType.name !== 'data.table'
       const isDefiniteReference =
         alias.kind === 'reference' ||
+        ownedProperty ||
         isKnownRReferenceAlias ||
         (alias.access === 'subscript' && builtinContainers.has(alias.source)) ||
         fieldRelationship === 'reference'

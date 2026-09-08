@@ -1,4 +1,6 @@
 import { statfs } from 'node:fs/promises'
+import { restoreRRandomState } from '../notebook/r-random-replay'
+import { validatePythonRandomState } from '../notebook/python-random-replay'
 import { tmpdir } from 'node:os'
 import type {
   ArtifactReproducibilityRecipe,
@@ -33,6 +35,9 @@ export const validateReproductionContext = (
   for (const step of recipe.steps) {
     if (!frontier.stepIds.includes(step.stepId) || step.kind !== 'notebook-run') continue
     const run = runs.get(step.runId)
+    if (run?.kernelKind === 'r') restoreRRandomState('', run.executionContext?.before.rRandomState)
+    if (run?.kernelKind === 'python')
+      validatePythonRandomState(run.executionContext?.before.pythonRandomState)
     const lock = step.environmentRequirementId
       ? locks.get(step.environmentRequirementId)
       : undefined

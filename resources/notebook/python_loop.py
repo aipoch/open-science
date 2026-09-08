@@ -11,6 +11,103 @@ import reprlib
 import sys
 import traceback
 import types
+import math
+import random as _stdlib_random
+
+# Bind native RNG APIs before user code. NumPy is optional; initializing its
+# global RNG once at kernel startup also captures unseeded first-cell draws.
+# No user objects, Generator instances or data files are traversed.
+_standard_getstate = _stdlib_random.getstate
+_standard_setstate = _stdlib_random.setstate
+_finite_number = math.isfinite
+_standard_rng_api = dict(vars(_stdlib_random))
+try:
+    import numpy as _numpy
+    import numpy.random as _numpy_random
+    _numpy_getstate = _numpy_random.get_state
+    _numpy_setstate = _numpy_random.set_state
+    _numpy_asarray = _numpy.asarray
+    _numpy_array_type = _numpy.ndarray
+    _numpy_rng_api = dict(vars(_numpy_random))
+except Exception:
+    _numpy = _numpy_random = None
+    _numpy_rng_api = {}
+
+
+def _rng_api_unchanged():
+    for name, module, baseline in (("random", _stdlib_random, _standard_rng_api),
+                                   ("numpy.random", _numpy_random, _numpy_rng_api)):
+        if module is None:
+            if name in sys.modules:
+                return False
+            continue
+        if sys.modules.get(name) is not module:
+            return False
+        current = vars(module)
+        if any(current.get(key) is not value for key, value in baseline.items()
+               if not key.startswith("__")):
+            return False
+    return True
+
+
+def _validate_python_random_state(value):
+    def gaussian(x, nullable=False):
+        return (nullable and x is None) or (type(x) in (int, float) and _finite_number(x))
+
+    def words(x, count):
+        return type(x) is list and len(x) == count and all(
+            type(word) is int and 0 <= word <= 4294967295 for word in x)
+
+    if type(value) is not dict or value.get("state") != "available" or set(value) - {"state", "standard", "numpy"}:
+        raise ValueError("Captured Python random state is unavailable or invalid")
+    standard = value.get("standard")
+    if (type(standard) is not dict or set(standard) != {"words", "gaussian"}
+            or not words(standard["words"], 625) or standard["words"][-1] > 624
+            or not gaussian(standard["gaussian"], True)):
+        raise ValueError("Invalid standard-library random state")
+    numpy_state = value.get("numpy")
+    if "numpy" in value and (
+            type(numpy_state) is not dict or set(numpy_state) != {"words", "position", "hasGaussian", "gaussian"}
+            or not words(numpy_state["words"], 624)
+            or type(numpy_state["position"]) is not int or not 0 <= numpy_state["position"] <= 624
+            or type(numpy_state["hasGaussian"]) is not int or numpy_state["hasGaussian"] not in (0, 1)
+            or not gaussian(numpy_state["gaussian"])):
+        raise ValueError("Invalid NumPy random state")
+    return standard, numpy_state
+
+
+def _capture_python_random_state():
+    try:
+        if not _rng_api_unchanged():
+            return {"state": "unavailable", "reason": "modified-rng"}
+        version, words, gaussian = _standard_getstate()
+        if version != 3:
+            return {"state": "unavailable", "reason": "invalid-state"}
+        value = {"state": "available", "standard": {"words": list(words), "gaussian": gaussian}}
+        if _numpy_random is not None:
+            name, words, position, has_gaussian, gaussian = _numpy_getstate()
+            if name != "MT19937" or type(words) is not _numpy_array_type or words.shape != (624,):
+                return {"state": "unavailable", "reason": "invalid-state"}
+            value["numpy"] = {"words": words.tolist(), "position": position,
+                              "hasGaussian": has_gaussian, "gaussian": gaussian}
+        _validate_python_random_state(value)
+        return value
+    except Exception:
+        return {"state": "unavailable", "reason": "capture-failed"}
+
+
+def _restore_python_random_state(value):
+    standard, numpy_state = _validate_python_random_state(value)
+    if not _rng_api_unchanged():
+        raise ValueError("Cannot restore modified Python RNG APIs")
+    if numpy_state is not None and _numpy_random is None:
+        raise ValueError("Captured random state requires NumPy")
+    # Validate both snapshots before changing either RNG. No pickle or object deserialization.
+    numpy_words = _numpy_asarray(numpy_state["words"], dtype="uint32") if numpy_state is not None else None
+    _standard_setstate((3, tuple(standard["words"]), standard["gaussian"]))
+    if numpy_state is not None:
+        _numpy_setstate(("MT19937", numpy_words,
+                         numpy_state["position"], numpy_state["hasGaussian"], numpy_state["gaussian"]))
 
 # Protocol output must survive user code that reassigns fd 1; keep a private handle to the real stdout.
 _protocol_out = os.fdopen(os.dup(1), "w", buffering=1)
@@ -633,6 +730,7 @@ def _capture_execution_context():
                 "OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS",
                 "VECLIB_MAXIMUM_THREADS", "NUMEXPR_NUM_THREADS") if name in os.environ},
             "randomLibraries": [name for name in ("random", "numpy", "torch", "tensorflow") if name in sys.modules],
+            "pythonRandomState": _capture_python_random_state(),
         }
     except Exception:
         return None
@@ -750,7 +848,9 @@ def _capture_environment(execution_context=None):
 # Runs one request against the persistent namespace: execs all but a trailing bare expression, then
 # evals that expression so its repr echoes like a REPL. KeyboardInterrupt (from a SIGINT timeout) is
 # caught so the process survives and the driver can map the reply to a timeout.
-def _run(code):
+def _run(code, replay_random_state=None):
+    if replay_random_state is not None:
+        _restore_python_random_state(replay_random_state)
     context_before = _capture_execution_context()
     output_budget = _OutputBudget(_text_limit - _diagnostic_limit)
     diagnostic_budget = _OutputBudget(_diagnostic_limit)
@@ -819,7 +919,7 @@ def main():
                 response = {"namespace": _inspect_namespace(request.get("include_private") is True)}
             else:
                 install_protected_paths_policy(request.get("protected_dirs", []))
-                response = _run(request.get("code", ""))
+                response = _run(request.get("code", ""), request.get("python_random_state"))
             response["req_id"] = req_id
             _protocol_out.write(json.dumps(response, separators=(",", ":")) + "\n")
             _protocol_out.flush()

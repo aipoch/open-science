@@ -191,12 +191,13 @@ describe('reported Python call tracking regressions', () => {
     ])
     expect(projection.stalenessByRunId['run-2']).toMatchObject({ state: 'stale' })
   })
-  it('does not assume the type of an arithmetic operand from an earlier run', async () => {
+  it('retains a proven arithmetic operand type from an earlier run', async () => {
     const projection = await project([
       'import pandas as pd\ncounts = pd.Series([1, 2])',
       'percent = (counts / counts.sum() * 100).round(1)'
     ])
-    expect(projection.stalenessByRunId['run-2']).toMatchObject({ state: 'unknown' })
+    expect(projection.stalenessByRunId['run-2']).toEqual({ state: 'clear' })
+    expect(projection.dependenciesByRunId?.['run-2']).toContain('run-1')
   })
   it.each([
     'percent = (counts + unknown).round(1)',
@@ -294,7 +295,7 @@ describe('reported Python call tracking regressions', () => {
     const projection = await project(['for item in []:\n    value = item', 'unrelated = 1'])
 
     expect(projection.stalenessByRunId).toEqual({
-      'run-1': { state: 'unknown', reasons: ['control-flow'] },
+      'run-1': { state: 'clear' },
       'run-2': { state: 'clear' }
     })
   })

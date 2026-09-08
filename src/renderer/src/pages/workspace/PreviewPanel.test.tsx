@@ -19,7 +19,11 @@ import { FOCUS_COMPOSER_EVENT } from './composer-focus-events'
 vi.mock('@/components/ui/resizable', () => ({
   ResizablePanel: ({ children }: { children: React.ReactNode }): React.JSX.Element => (
     <div>{children}</div>
-  )
+  ),
+  ResizablePanelGroup: ({ children }: { children: React.ReactNode }): React.JSX.Element => (
+    <div>{children}</div>
+  ),
+  ResizableHandle: (): React.JSX.Element => <div data-testid="resize-handle" />
 }))
 
 const pdfPreviewReport = vi.hoisted(() => ({ pageCount: 2 as number | undefined, props: vi.fn() }))

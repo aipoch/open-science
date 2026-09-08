@@ -1227,7 +1227,7 @@ const WorkspacePage = ({
             canDownloadArtifacts={typeof window.api?.saveSessionArtifacts === 'function'}
             onDownloadArtifacts={sessionController.actions.openDownloadArtifacts}
             onCheckArtifacts={
-              window.api.artifacts.sessionReproducibility ? setCheckSession : undefined
+              window.api.artifacts?.sessionReproducibility ? setCheckSession : undefined
             }
             onViewNotebook={sessionController.actions.openNotebook}
             onExportSession={
@@ -1306,7 +1306,7 @@ const WorkspacePage = ({
               sessionController.actions.openDownloadArtifacts(session)
             }}
             onCheckArtifacts={
-              window.api.artifacts.sessionReproducibility
+              window.api.artifacts?.sessionReproducibility
                 ? (session) => {
                     close()
                     setCheckSession(session)

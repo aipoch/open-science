@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto'
+import type { PythonArgumentShape } from './python-library-effects'
 import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 
@@ -30,6 +31,7 @@ import {
 } from './dependency-analysis-python'
 import { analyzeRFileAccesses, analyzeRNotebookSource } from './dependency-analysis-r'
 import { projectNotebookFileContext, type FileContextEntry } from './dependency-file-context'
+import { serializedFileContext, serializedValueDescriptors } from './serialized-file-provenance'
 import {
   NotebookDependencyProjector,
   projectNotebookDependencies,
@@ -38,8 +40,10 @@ import {
 import { getNotebookSessionRoot, getRuntimeRoot, type NotebookRunRepository } from './repository'
 import { envPrefix, pythonBin, resolveEnvName, rScriptBin } from './runtime-paths'
 
-const ANALYZER_VERSION = 1 as const
-const ANALYZER_REVISION = 'tree-sitter-in-process-36'
+import {
+  NOTEBOOK_ANALYZER_VERSION as ANALYZER_VERSION,
+  NOTEBOOK_ANALYZER_REVISION as ANALYZER_REVISION
+} from './analysis-version'
 const SIDECAR_FILE = 'dependency-analysis.json'
 const MAX_NAMES_PER_RUN = 512
 const MAX_STATIC_STRING_LENGTH = 4_096
@@ -316,6 +320,12 @@ const fileContextValue = (value: unknown): NotebookSourceFileAccessContext | und
         typeof binding.qualifiedName !== 'string' ||
         !binding.qualifiedName ||
         binding.qualifiedName.length > MAX_STATIC_STRING_LENGTH ||
+        (binding.filePath !== undefined &&
+          (binding.kind !== 'object' ||
+            binding.qualifiedName !== 'pandas.ExcelFile' ||
+            typeof binding.filePath !== 'string' ||
+            !binding.filePath ||
+            binding.filePath.length > MAX_STATIC_STRING_LENGTH)) ||
         (binding.kind !== 'import' && binding.kind !== 'object') ||
         names.has(binding.name)
       )
@@ -324,7 +334,8 @@ const fileContextValue = (value: unknown): NotebookSourceFileAccessContext | und
       pythonBindings.push({
         name: binding.name,
         qualifiedName: binding.qualifiedName,
-        kind: binding.kind
+        kind: binding.kind,
+        ...(typeof binding.filePath === 'string' ? { filePath: binding.filePath } : {})
       })
     }
   }
@@ -466,6 +477,8 @@ const typeSummaryArray = (
       if (
         !usedNames ||
         !safeCallNames ||
+        (methodRecord.returnCopyArguments !== undefined &&
+          typeof methodRecord.returnCopyArguments !== 'boolean') ||
         (methodRecord.returnType !== undefined &&
           methodRecord.returnType !== null &&
           typeof methodRecord.returnType !== 'string') ||
@@ -490,6 +503,7 @@ const typeSummaryArray = (
         safeCallNames,
         unknownScope: methodRecord.unknownScope === 'namespace' ? 'namespace' : 'receiver',
         returnType: typeof methodRecord.returnType === 'string' ? methodRecord.returnType : null,
+        ...(methodRecord.returnCopyArguments === true ? { returnCopyArguments: true } : {}),
         destructuredReturnTypes: destructuredReturnTypes ?? [],
         mutatesKeyword:
           typeof methodRecord.mutatesKeyword === 'string' ? methodRecord.mutatesKeyword : null
@@ -563,6 +577,14 @@ const memberWriteArray = (
   return writes
 }
 
+const isPythonArgumentShape = (value: unknown): value is PythonArgumentShape =>
+  typeof value === 'string' && ['none', 'list', 'scalar', 'unknown'].includes(value)
+
+const pythonArgumentShapes = (value: unknown): PythonArgumentShape[] | undefined =>
+  Array.isArray(value) && value.length <= MAX_NAMES_PER_RUN && value.every(isPythonArgumentShape)
+    ? value
+    : undefined
+
 const receiverCallArray = (
   value: unknown,
   requireArgumentNames = false
@@ -608,6 +630,21 @@ const receiverCallArray = (
       })
       return steps.every((step) => step !== undefined) ? (steps as string[][][]) : false
     })()
+    const positionalStaticShapes =
+      record.positionalStaticShapes === undefined
+        ? undefined
+        : pythonArgumentShapes(record.positionalStaticShapes)
+    const receiverChainPositionalStaticShapes = (() => {
+      if (
+        !Array.isArray(record.receiverChainPositionalStaticShapes) ||
+        record.receiverChainPositionalStaticShapes.length > MAX_NAMES_PER_RUN
+      )
+        return undefined
+      const steps = record.receiverChainPositionalStaticShapes.map(pythonArgumentShapes)
+      return steps.every((step): step is PythonArgumentShape[] => step !== undefined)
+        ? steps
+        : undefined
+    })()
     const receiverChainPositionalStaticBooleans = (() => {
       if (record.receiverChainPositionalStaticBooleans === undefined) return undefined
       if (
@@ -636,7 +673,12 @@ const receiverCallArray = (
         return false
       }
       const steps: Array<
-        Array<{ name: string; argumentNames: string[]; staticBoolean: boolean | null }>
+        Array<{
+          name: string
+          argumentNames: string[]
+          staticBoolean: boolean | null
+          staticShape?: PythonArgumentShape
+        }>
       > = []
       for (const step of record.receiverChainKeywordArguments) {
         if (!Array.isArray(step) || step.length > MAX_NAMES_PER_RUN) return false
@@ -644,6 +686,7 @@ const receiverCallArray = (
           name: string
           argumentNames: string[]
           staticBoolean: boolean | null
+          staticShape?: PythonArgumentShape
         }> = []
         for (const candidate of step) {
           if (!candidate || typeof candidate !== 'object') return false
@@ -652,6 +695,7 @@ const receiverCallArray = (
           if (
             typeof keyword.name !== 'string' ||
             !names ||
+            (keyword.staticShape !== undefined && !isPythonArgumentShape(keyword.staticShape)) ||
             (keyword.staticBoolean !== null && typeof keyword.staticBoolean !== 'boolean')
           ) {
             return false
@@ -659,6 +703,9 @@ const receiverCallArray = (
           parsed.push({
             name: keyword.name,
             argumentNames: names,
+            ...(isPythonArgumentShape(keyword.staticShape)
+              ? { staticShape: keyword.staticShape }
+              : {}),
             staticBoolean: typeof keyword.staticBoolean === 'boolean' ? keyword.staticBoolean : null
           })
         }
@@ -723,6 +770,7 @@ const receiverCallArray = (
         argumentNames: string[]
         possibleArgumentNames: string[]
         staticBoolean: boolean | null
+        staticShape?: PythonArgumentShape
         callableReferences: Array<{
           root: string
           member?: string
@@ -781,6 +829,8 @@ const receiverCallArray = (
           !keywordArgumentNames ||
           (requireArgumentNames && keywordRecord.possibleArgumentNames === undefined) ||
           !possibleArgumentNames ||
+          (keywordRecord.staticShape !== undefined &&
+            !isPythonArgumentShape(keywordRecord.staticShape)) ||
           (requireArgumentNames && keywordRecord.staticBoolean === undefined) ||
           (keywordRecord.staticBoolean !== undefined &&
             keywordRecord.staticBoolean !== null &&
@@ -795,6 +845,9 @@ const receiverCallArray = (
           argumentNames: keywordArgumentNames,
           possibleArgumentNames,
           staticBoolean,
+          ...(isPythonArgumentShape(keywordRecord.staticShape)
+            ? { staticShape: keywordRecord.staticShape }
+            : {}),
           callableReferences
         })
       }
@@ -823,6 +876,18 @@ const receiverCallArray = (
       (requireArgumentNames && record.keywordArguments === undefined) ||
       (record.argumentNames !== undefined && !argumentNames) ||
       (record.receiverChain !== undefined && !receiverChain) ||
+      (record.positionalStaticShapes !== undefined &&
+        (!positionalStaticShapes ||
+          !Array.isArray(positionalArgumentNames) ||
+          positionalStaticShapes.length !== positionalArgumentNames.length)) ||
+      (record.receiverChainPositionalStaticShapes !== undefined &&
+        (!receiverChainPositionalStaticShapes ||
+          !Array.isArray(receiverChainPositionalArgumentNames) ||
+          receiverChainPositionalStaticShapes.length !==
+            receiverChainPositionalArgumentNames.length ||
+          receiverChainPositionalStaticShapes.some(
+            (step, index) => step.length !== receiverChainPositionalArgumentNames[index]?.length
+          ))) ||
       receiverChainFirstArgumentNames === false ||
       receiverChainPositionalArgumentNames === false ||
       receiverChainPositionalStaticBooleans === false ||
@@ -868,10 +933,12 @@ const receiverCallArray = (
       receiverChain: receiverChain ?? [],
       receiverChainFirstArgumentNames: receiverChainFirstArgumentNames || [],
       receiverChainPositionalArgumentNames: receiverChainPositionalArgumentNames || [],
+      ...(receiverChainPositionalStaticShapes ? { receiverChainPositionalStaticShapes } : {}),
       receiverChainPositionalStaticBooleans: receiverChainPositionalStaticBooleans || [],
       receiverChainKeywordArguments: receiverChainKeywordArguments || [],
       receiverValueNames: receiverValueNames ?? [],
       positionalArgumentNames: positionalArgumentNames || [],
+      ...(positionalStaticShapes ? { positionalStaticShapes } : {}),
       positionalStaticBooleans: positionalStaticBooleans || [],
       resultNames: resultNames ?? [],
       ...(resultPaths ? { resultPaths } : {}),
@@ -881,9 +948,49 @@ const receiverCallArray = (
   return calls
 }
 
+const rGraphicsState = (value: unknown): NotebookRunDependencyFacts['rGraphicsState'] => {
+  if (
+    !value ||
+    typeof value !== 'object' ||
+    !('readsPrior' in value) ||
+    !('resets' in value) ||
+    typeof value.readsPrior !== 'boolean' ||
+    typeof value.resets !== 'boolean'
+  )
+    return undefined
+  return { readsPrior: value.readsPrior, resets: value.resets }
+}
+
+const plottingState = (value: unknown): NotebookRunDependencyFacts['pythonPlottingState'] => {
+  if (
+    !value ||
+    typeof value !== 'object' ||
+    !('reads' in value) ||
+    !('writes' in value) ||
+    typeof value.reads !== 'boolean' ||
+    typeof value.writes !== 'boolean'
+  )
+    return undefined
+  return { reads: value.reads, writes: value.writes }
+}
+
 const normalizeFacts = (value: unknown): NotebookRunDependencyFacts => {
   if (!value || typeof value !== 'object') return unknownFacts('invalid-parser-result')
   const record = value as Record<string, unknown>
+  if (
+    record.pythonRandomStateReads !== undefined &&
+    typeof record.pythonRandomStateReads !== 'boolean'
+  )
+    return unknownFacts('invalid-parser-result')
+  const plotting = plottingState(record.pythonPlottingState)
+  if (record.pythonPlottingState !== undefined && !plotting)
+    return unknownFacts('invalid-parser-result')
+  const theme = plottingState(record.rThemeState)
+  const optionWrites = stringArray(record.rOptionWrites ?? [])
+  if (!optionWrites) return unknownFacts('invalid-parser-result')
+  if (record.rThemeState !== undefined && !theme) return unknownFacts('invalid-parser-result')
+  const graphics = rGraphicsState(record.rGraphicsState)
+  if (record.rGraphicsState !== undefined && !graphics) return unknownFacts('invalid-parser-result')
   if (record.state === 'unknown') {
     const reasons = stringArray(record.reasons)
     const typeSummaries = typeSummaryArray(record.typeSummaries ?? [])
@@ -891,6 +998,11 @@ const normalizeFacts = (value: unknown): NotebookRunDependencyFacts => {
     const receiverCalls = receiverCallArray(record.receiverCalls ?? [])
     const memberWrites = memberWriteArray(record.memberWrites ?? [])
     const copyOnModifyNames = stringArray(record.copyOnModifyNames ?? [])
+    const rAtomicValueNames = stringArray(record.rAtomicValueNames ?? [])
+    const serializedValueWrites = serializedValueDescriptors(record.serializedValueWrites ?? [])
+    const serializedValueReads = stringArray(record.serializedValueReads ?? [])
+    const rPackageLoads = stringArray(record.rPackageLoads ?? [])
+    const rPackageReads = stringArray(record.rPackageReads ?? [])
     const copyOnModifyBindings = copyBindingArray(record.copyOnModifyBindings ?? [])
     const priorUsedNames = stringArray(record.priorUsedNames ?? record.usedNames ?? [])
     const possiblyUsedNames = stringArray(record.possiblyUsedNames ?? [])
@@ -902,6 +1014,11 @@ const normalizeFacts = (value: unknown): NotebookRunDependencyFacts => {
       !receiverCalls ||
       !memberWrites ||
       !copyOnModifyNames ||
+      !rAtomicValueNames ||
+      !serializedValueWrites ||
+      !serializedValueReads ||
+      !rPackageLoads ||
+      !rPackageReads ||
       !copyOnModifyBindings ||
       !priorUsedNames ||
       !possiblyUsedNames ||
@@ -932,6 +1049,16 @@ const normalizeFacts = (value: unknown): NotebookRunDependencyFacts => {
         ? { builtinContainerNames: stringArray(record.builtinContainerNames) }
         : {}),
       copyOnModifyNames,
+      ...(rAtomicValueNames.length ? { rAtomicValueNames } : {}),
+      ...(serializedValueWrites.length ? { serializedValueWrites } : {}),
+      ...(serializedValueReads.length ? { serializedValueReads } : {}),
+      ...(rPackageLoads.length ? { rPackageLoads } : {}),
+      ...(rPackageReads.length ? { rPackageReads } : {}),
+      ...(graphics ? { rGraphicsState: graphics } : {}),
+      ...(theme ? { rThemeState: theme } : {}),
+      ...(optionWrites.length ? { rOptionWrites: optionWrites } : {}),
+      ...(plotting ? { pythonPlottingState: plotting } : {}),
+      ...(record.pythonRandomStateReads === true ? { pythonRandomStateReads: true } : {}),
       copyOnModifyBindings,
       copyOnModifyInvalidatedNames,
       ...(stringArray(record.safeCallNames)
@@ -957,6 +1084,11 @@ const normalizeFacts = (value: unknown): NotebookRunDependencyFacts => {
   const aliases = aliasArray(record.aliases ?? [])
   const builtinContainerNames = stringArray(record.builtinContainerNames ?? [])
   const copyOnModifyNames = stringArray(record.copyOnModifyNames ?? [])
+  const rAtomicValueNames = stringArray(record.rAtomicValueNames ?? [])
+  const serializedValueWrites = serializedValueDescriptors(record.serializedValueWrites ?? [])
+  const serializedValueReads = stringArray(record.serializedValueReads ?? [])
+  const rPackageLoads = stringArray(record.rPackageLoads ?? [])
+  const rPackageReads = stringArray(record.rPackageReads ?? [])
   const copyOnModifyBindings = copyBindingArray(record.copyOnModifyBindings ?? [])
   const copyOnModifyInvalidatedNames = stringArray(record.copyOnModifyInvalidatedNames ?? [])
   const safeCallNames = stringArray(record.safeCallNames ?? [])
@@ -977,6 +1109,11 @@ const normalizeFacts = (value: unknown): NotebookRunDependencyFacts => {
     safeCallArgumentNames &&
     builtinContainerNames &&
     copyOnModifyNames &&
+    rAtomicValueNames &&
+    serializedValueWrites &&
+    serializedValueReads &&
+    rPackageLoads &&
+    rPackageReads &&
     copyOnModifyBindings &&
     copyOnModifyInvalidatedNames &&
     typeSummaries &&
@@ -995,6 +1132,16 @@ const normalizeFacts = (value: unknown): NotebookRunDependencyFacts => {
         ...(aliases?.length ? { aliases } : {}),
         ...(builtinContainerNames?.length ? { builtinContainerNames } : {}),
         copyOnModifyNames,
+        ...(rAtomicValueNames.length ? { rAtomicValueNames } : {}),
+        ...(serializedValueWrites.length ? { serializedValueWrites } : {}),
+        ...(serializedValueReads.length ? { serializedValueReads } : {}),
+        ...(rPackageLoads.length ? { rPackageLoads } : {}),
+        ...(rPackageReads.length ? { rPackageReads } : {}),
+        ...(graphics ? { rGraphicsState: graphics } : {}),
+        ...(theme ? { rThemeState: theme } : {}),
+        ...(optionWrites.length ? { rOptionWrites: optionWrites } : {}),
+        ...(plotting ? { pythonPlottingState: plotting } : {}),
+        ...(record.pythonRandomStateReads === true ? { pythonRandomStateReads: true } : {}),
         copyOnModifyBindings,
         copyOnModifyInvalidatedNames,
         ...(safeCallNames?.length ? { safeCallNames } : {}),
@@ -1051,14 +1198,15 @@ const boundedFileContext = (
   const wrapperNames = new Set(localFileWrappers.map(({ name }) => name))
   const pythonBindings = (context.pythonBindings ?? [])
     .filter(
-      ({ name, qualifiedName }) =>
-        definedNames.has(name) &&
+      ({ name, qualifiedName, filePath }) =>
+        (definedNames.has(name) || (qualifiedName === 'pandas.ExcelFile' && Boolean(filePath))) &&
         !conditionalNames.has(name) &&
         !staticNames.has(name) &&
         !collectionNames.has(name) &&
         !wrapperNames.has(name) &&
         name.length <= MAX_STATIC_STRING_LENGTH &&
-        qualifiedName.length <= MAX_STATIC_STRING_LENGTH
+        qualifiedName.length <= MAX_STATIC_STRING_LENGTH &&
+        (!filePath || filePath.length <= MAX_STATIC_STRING_LENGTH)
     )
     .slice(0, MAX_NAMES_PER_RUN)
   const namespaces = context.pythonTaintedNamespaces ?? []
@@ -1092,7 +1240,8 @@ const checksumFor = (run: NotebookRunRecord): string =>
         run.environment,
         run.kernelEpochId,
         run.runtimeId,
-        run.script
+        run.script,
+        run.fileEvidence?.checksum
       ])
     )
     .digest('hex')
@@ -1100,6 +1249,7 @@ const checksumFor = (run: NotebookRunRecord): string =>
 const emptySidecar = (): NotebookDependencyAnalysisSidecar => ({
   version: 1,
   analyzerVersion: ANALYZER_VERSION,
+  analyzerRevision: ANALYZER_REVISION,
   runs: {},
   projectionSnapshots: {}
 })
@@ -1135,9 +1285,22 @@ const sourceFileAccessContextNeedsRefresh = (
 ): boolean => {
   for (const run of runs) {
     if (run.runId === request.currentRunId) break
-    if (!isSourceFileAccessContextRun(run, request)) continue
+    if (
+      !isSourceFileAccessContextRun(run, request) &&
+      // Serialized file evidence can originate in another kernel epoch.
+      !(
+        ['r', 'python'].includes(request.language) &&
+        ['r', 'python'].includes(run.kernelKind) &&
+        run.fileEvidence?.state === 'available'
+      )
+    )
+      continue
     if (run.status !== 'completed' && run.kernelDispatched === false) continue
-    if (!cachedAnalysisIsReusable(sidecar.runs[run.runId], checksumFor(run))) return true
+    if (
+      !cachedAnalysisIsReusable(sidecar.runs[run.runId], checksumFor(run)) ||
+      sidecar.runs[run.runId]?.facts.serializedValueReads?.length
+    )
+      return true
   }
   return false
 }
@@ -1187,6 +1350,7 @@ const projectionChecksumFor = ({ run, facts }: AnalyzedNotebookRun): string =>
         run.kernelEpochId,
         run.status,
         run.kernelDispatched,
+        run.environmentManifest?.executionContext?.rPackages,
         facts
       ])
     )
@@ -1290,10 +1454,46 @@ class NotebookDependencyAnalyzer {
       this.incrementalProjections.get(sessionKey) ?? new Map<string, IncrementalProjectionGroup>()
     const groups = new Map<string, AnalyzedNotebookRun[]>()
     const latestGroupByRuntime = new Map<string, string>()
+    const observedNames = new Set<string>()
+    const bindingsByGroup = new Map<string, Set<string>>()
     for (const analyzedRun of analyzedRuns) {
       const groupKey = projectionGroupKey(analyzedRun)
       const group = groups.get(groupKey) ?? []
-      group.push(analyzedRun)
+      const bindings = bindingsByGroup.get(groupKey) ?? new Set<string>()
+      const { facts, run } = analyzedRun
+      // Validate memory provenance before splitting projections by kernel. File
+      // generations bridge kernels; a same-named variable from another one cannot.
+      const missing =
+        run.status === 'completed'
+          ? (facts.priorUsedNames ?? facts.usedNames ?? []).filter(
+              (name) =>
+                observedNames.has(name) &&
+                !bindings.has(name) &&
+                !facts.safeCallNames?.includes(name)
+            )
+          : []
+      group.push(
+        missing.length
+          ? {
+              ...analyzedRun,
+              facts: {
+                ...facts,
+                state: 'unknown',
+                reasons: [
+                  ...(facts.state === 'unknown' ? facts.reasons : []),
+                  ...missing.map((name) => `kernel-binding-unavailable:${name}`)
+                ]
+              }
+            }
+          : analyzedRun
+      )
+      if (run.status === 'completed')
+        for (const name of facts.definedNames ?? []) {
+          if (facts.conditionallyDefinedNames?.includes(name)) continue
+          bindings.add(name)
+          observedNames.add(name)
+        }
+      bindingsByGroup.set(groupKey, bindings)
       groups.set(groupKey, group)
       const runtimeKey = projectionRuntimeKey(analyzedRun)
       if (runtimeKey) latestGroupByRuntime.set(runtimeKey, groupKey)
@@ -1388,7 +1588,19 @@ class NotebookDependencyAnalyzer {
         { runs, sidecar }
       )
     }
-    return projectSourceFileAccessContext(runs, sidecar, request)
+    const context = projectSourceFileAccessContext(runs, sidecar, request)
+    return ['r', 'python'].includes(request.language)
+      ? serializedFileContext(
+          this.options.storageRoot,
+          runs,
+          (run) =>
+            cachedAnalysisIsReusable(sidecar.runs[run.runId], checksumFor(run))
+              ? sidecar.runs[run.runId]?.facts
+              : undefined,
+          request.currentRunId,
+          context
+        )
+      : context
   }
 
   private async projectExclusive(
@@ -1451,7 +1663,8 @@ class NotebookDependencyAnalyzer {
       const checksum = checksumFor(run)
       if (
         attemptedRunIds.has(run.runId) ||
-        cachedAnalysisIsReusable(sidecar.runs[run.runId], checksum)
+        (cachedAnalysisIsReusable(sidecar.runs[run.runId], checksum) &&
+          !sidecar.runs[run.runId]?.facts.serializedValueReads?.length)
       ) {
         continue
       }
@@ -1509,7 +1722,9 @@ class NotebookDependencyAnalyzer {
     sessionRuns: readonly NotebookRunRecord[] = runs
   ): Promise<boolean> {
     const pending = runs.filter(
-      (run) => !cachedAnalysisIsReusable(sidecar.runs[run.runId], checksumFor(run))
+      (run) =>
+        !cachedAnalysisIsReusable(sidecar.runs[run.runId], checksumFor(run)) ||
+        Boolean(sidecar.runs[run.runId]?.facts.serializedValueReads?.length)
     )
     if (pending.length === 0) return false
     const language = pending[0]?.kernelKind
@@ -1523,7 +1738,7 @@ class NotebookDependencyAnalyzer {
           )
         : undefined
     for (const [index, run] of pending.entries()) {
-      const priorContext = run.kernelEpochId
+      let priorContext = run.kernelEpochId
         ? projectSourceFileAccessContext(sessionRuns, sidecar, {
             currentRunId: run.runId,
             language,
@@ -1531,6 +1746,17 @@ class NotebookDependencyAnalyzer {
             kernelEpochId: run.kernelEpochId
           })
         : undefined
+      if (language === 'r' || language === 'python')
+        priorContext = await serializedFileContext(
+          this.options.storageRoot,
+          sessionRuns,
+          (previous) =>
+            cachedAnalysisIsReusable(sidecar.runs[previous.runId], checksumFor(previous))
+              ? sidecar.runs[previous.runId]?.facts
+              : undefined,
+          run.runId,
+          priorContext
+        )
       const analysis = externalFacts
         ? {
             facts: externalFacts[index] ?? unknownFacts('analysis-unavailable'),
@@ -1590,6 +1816,9 @@ class NotebookDependencyAnalyzer {
       const parsed: unknown = JSON.parse(await readFile(path, 'utf8'))
       if (!parsed || typeof parsed !== 'object') return emptySidecar()
       const candidate = parsed as Partial<NotebookDependencyAnalysisSidecar>
+      // An older app may inspect a newer cache, but must not overwrite its format.
+      if (Number(candidate.version) > 1 || Number(candidate.analyzerVersion) > ANALYZER_VERSION)
+        return { ...emptySidecar(), readOnly: true }
       if (
         candidate.version !== 1 ||
         candidate.analyzerVersion !== ANALYZER_VERSION ||
@@ -1629,6 +1858,22 @@ class NotebookDependencyAnalyzer {
               (factsRecord.builtinContainerNames === undefined ||
                 stringArray(factsRecord.builtinContainerNames) !== undefined) &&
               stringArray(factsRecord.copyOnModifyNames) !== undefined &&
+              (factsRecord.rPackageLoads === undefined ||
+                stringArray(factsRecord.rPackageLoads) !== undefined) &&
+              (factsRecord.pythonRandomStateReads === undefined ||
+                typeof factsRecord.pythonRandomStateReads === 'boolean') &&
+              (factsRecord.pythonPlottingState === undefined ||
+                plottingState(factsRecord.pythonPlottingState) !== undefined) &&
+              (factsRecord.rOptionWrites === undefined ||
+                stringArray(factsRecord.rOptionWrites) !== undefined) &&
+              (factsRecord.rThemeState === undefined ||
+                plottingState(factsRecord.rThemeState) !== undefined) &&
+              (factsRecord.rGraphicsState === undefined ||
+                rGraphicsState(factsRecord.rGraphicsState) !== undefined) &&
+              (factsRecord.rPackageReads === undefined ||
+                stringArray(factsRecord.rPackageReads) !== undefined) &&
+              (factsRecord.rAtomicValueNames === undefined ||
+                stringArray(factsRecord.rAtomicValueNames) !== undefined) &&
               copyBindingArray(factsRecord.copyOnModifyBindings) !== undefined &&
               stringArray(factsRecord.copyOnModifyInvalidatedNames) !== undefined &&
               (factsRecord.safeCallNames === undefined ||
@@ -1658,6 +1903,22 @@ class NotebookDependencyAnalyzer {
               (factsRecord.builtinContainerNames === undefined ||
                 stringArray(factsRecord.builtinContainerNames) !== undefined) &&
               stringArray(factsRecord.copyOnModifyNames) !== undefined &&
+              (factsRecord.rPackageLoads === undefined ||
+                stringArray(factsRecord.rPackageLoads) !== undefined) &&
+              (factsRecord.pythonRandomStateReads === undefined ||
+                typeof factsRecord.pythonRandomStateReads === 'boolean') &&
+              (factsRecord.pythonPlottingState === undefined ||
+                plottingState(factsRecord.pythonPlottingState) !== undefined) &&
+              (factsRecord.rOptionWrites === undefined ||
+                stringArray(factsRecord.rOptionWrites) !== undefined) &&
+              (factsRecord.rThemeState === undefined ||
+                plottingState(factsRecord.rThemeState) !== undefined) &&
+              (factsRecord.rGraphicsState === undefined ||
+                rGraphicsState(factsRecord.rGraphicsState) !== undefined) &&
+              (factsRecord.rPackageReads === undefined ||
+                stringArray(factsRecord.rPackageReads) !== undefined) &&
+              (factsRecord.rAtomicValueNames === undefined ||
+                stringArray(factsRecord.rAtomicValueNames) !== undefined) &&
               copyBindingArray(factsRecord.copyOnModifyBindings) !== undefined &&
               stringArray(factsRecord.copyOnModifyInvalidatedNames) !== undefined &&
               (factsRecord.safeCallNames === undefined ||
@@ -1686,6 +1947,7 @@ class NotebookDependencyAnalyzer {
       return {
         version: 1,
         analyzerVersion: ANALYZER_VERSION,
+        analyzerRevision: ANALYZER_REVISION,
         runs,
         projectionSnapshots
       }
@@ -1698,6 +1960,7 @@ class NotebookDependencyAnalyzer {
     path: string,
     sidecar: NotebookDependencyAnalysisSidecar
   ): Promise<void> {
+    if (sidecar.readOnly) return
     await mkdir(dirname(path), { recursive: true })
     const temporaryPath = `${path}.${randomUUID()}.tmp`
     try {

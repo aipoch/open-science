@@ -602,6 +602,75 @@ describe('EnvironmentStateTracker', () => {
     }
   )
 
+  it('activates the Windows Conda DLL path when capturing a native R lock', async () => {
+    dataRoot = await mkdtemp(join(tmpdir(), 'r-lock-activation-'))
+    const prefix = join(dataRoot, 'env')
+    await mkdir(join(prefix, 'conda-meta'), { recursive: true })
+    await writeFile(join(prefix, 'conda-meta/history'), 'baseline')
+    const rTarget = {
+      language: 'r' as const,
+      runtimeSource: 'managed' as const,
+      environmentName: 'default-r',
+      command: join(prefix, 'bin/Rscript'),
+      condaPrefix: prefix
+    }
+    const packages: NotebookEnvironmentPackage[] = [
+      {
+        name: 'custompkg',
+        version: '1.0',
+        ecosystem: 'r',
+        versionStatus: 'known',
+        evidenceSources: ['r-installed-packages'],
+        libraryScope: 'environment',
+        loadedState: 'loaded'
+      }
+    ]
+    let snapshotPath: string | undefined
+    const execute = vi.fn(
+      async (_command: string, args: string[], options: { env?: NodeJS.ProcessEnv }) => {
+        if (args.includes('--vanilla')) snapshotPath = options.env?.PATH
+        return {
+          stdout: JSON.stringify(
+            args.includes('list')
+              ? ['r-base', 'r-renv'].map((name) => ({
+                  name,
+                  version: '1.0',
+                  url: `https://conda.example/${name}.conda`,
+                  md5: 'a'.repeat(32)
+                }))
+              : {
+                  R: { Version: '4.4.3' },
+                  Packages: {
+                    custompkg: { Package: 'custompkg', Version: '1.0', Source: 'Repository' }
+                  }
+                }
+          ),
+          stderr: ''
+        }
+      }
+    )
+    const tracker = new EnvironmentStateTracker({
+      dataRoot,
+      platform: 'win32',
+      execFile: execute,
+      resolveMicromamba: async () => 'micromamba',
+      captureFingerprint: async () => 'stable',
+      inspectInstalled: async () => ({ runtimeVersion: '4.4.3', packages })
+    })
+    const captured = await tracker.captureCompletedRun(rTarget, {
+      runtimeVersion: '4.4.3',
+      packages
+    })
+    expect(captured.environmentLock.state).toBe('available')
+    const snapshotCall = execute.mock.calls.find(([, args]) => args.includes('--vanilla'))
+    expect(snapshotCall?.[1]).toEqual([
+      '--vanilla',
+      '-e',
+      expect.stringContaining('renv::snapshot')
+    ])
+    expect(snapshotPath).toBe(environmentCaptureProcessEnv(rTarget, process.env, 'win32').PATH)
+  })
+
   it('activates the complete Windows Conda DLL path for managed R probes', () => {
     const inherited = { Path: 'C:\\Windows\\System32', KEEP_ME: 'yes' }
     const prefix = 'C:\\Users\\Helix\\OpenScience\\runtime\\envs\\.r'

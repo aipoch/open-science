@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto'
+import type { NotebookExecutionContext } from '../../shared/notebook-execution-context'
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
@@ -80,7 +81,8 @@ describe('Notebook reproduction runtime', () => {
     replay: (
       index: number,
       kernelEpochId?: string,
-      defineValues?: boolean
+      defineValues?: boolean,
+      executionContext?: NotebookExecutionContext
     ) => ReturnType<NotebookSessionExecutor['execute']>
     runMicromamba: Mock<() => Promise<undefined>>
     execute: Mock<NotebookSessionExecutor['execute']>
@@ -113,7 +115,8 @@ describe('Notebook reproduction runtime', () => {
     }
     const definedInKernels = new Set<string>()
     const execute = vi.fn<NotebookSessionExecutor['execute']>(async (request) => {
-      if (request.code.startsWith('values')) definedInKernels.add(request.environment!)
+      if (request.code.includes('values <-') || request.code.startsWith('values'))
+        definedInKernels.add(request.environment!)
       else if (!definedInKernels.has(request.environment!)) throw new Error('values is not defined')
       return {
         status: 'completed',
@@ -148,7 +151,8 @@ describe('Notebook reproduction runtime', () => {
     const replay = (
       index: number,
       kernelEpochId = 'unchanged-epoch',
-      defineValues = index === 0
+      defineValues = index === 0,
+      executionContext?: NotebookExecutionContext
     ): ReturnType<NotebookSessionExecutor['execute']> =>
       runtime.execute({
         step: {
@@ -170,10 +174,57 @@ describe('Notebook reproduction runtime', () => {
             : 'values = [1, 2]'
           : 'print(values)',
         sessionRoot: join(attemptRoot, 'workspace'),
-        kernelEpochId
+        kernelEpochId,
+        executionContext
       })
     return { replay, runMicromamba, execute, environmentProgress, requirements }
   }
+
+  it('restores the captured state at each R runtime step', async () => {
+    const lock: NotebookEnvironmentLock = JSON.parse(serializeLock(process.platform, 'r'))
+    const { replay, execute } = await replayAcrossLocks([lock])
+    const observation = {
+      locale: 'C',
+      timezone: 'UTC',
+      threadLimits: {},
+      randomLibraries: [],
+      rRandomState: {
+        state: 'available' as const,
+        kinds: ["L'Ecuyer-CMRG", 'Inversion', 'Rejection'] as [
+          "L'Ecuyer-CMRG",
+          'Inversion',
+          'Rejection'
+        ],
+        seed: [10407, 1, 2, 3, 4, 5, 6]
+      }
+    }
+    await replay(0, 'r-epoch', true, { schemaVersion: 1, before: observation, after: observation })
+    expect(execute.mock.calls[0]![0].code).toContain('base::RNGkind(')
+    expect(execute.mock.calls[0]![0].code).toContain('10407L,1L,2L,3L,4L,5L,6L')
+    expect(execute.mock.calls[0]![0].code).toMatch(/values <- c\(1, 2\)$/)
+  })
+
+  it('passes Python random state through the kernel protocol without rewriting source', async () => {
+    const lock: NotebookEnvironmentLock = JSON.parse(serializeLock())
+    const { replay, execute } = await replayAcrossLocks([lock])
+    const observation = {
+      locale: 'C',
+      timezone: 'UTC',
+      threadLimits: {},
+      randomLibraries: [],
+      pythonRandomState: {
+        state: 'available' as const,
+        standard: { words: [...Array<number>(624).fill(1), 624], gaussian: null }
+      }
+    }
+    await replay(0, 'python-epoch', true, {
+      schemaVersion: 1,
+      before: observation,
+      after: observation
+    })
+    expect(execute.mock.calls[0]![0].pythonRandomState).toEqual(observation.pythonRandomState)
+    expect(execute.mock.calls[0]![0].code).toBe('values = [1, 2]')
+  })
 
   it('does not assume that a newly locked omitted package had the same prior installation identity', async () => {
     const full = JSON.parse(

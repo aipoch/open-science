@@ -353,9 +353,16 @@ describe('Artifact reproducibility execution', () => {
     const storageRoot = await mkdtemp(join(tmpdir(), 'reproduction-storage-'))
     const attemptRoot = await mkdtemp(join(tmpdir(), 'reproduction-attempt-'))
     const { execution, inputChecksum, output } = await fixture(storageRoot)
+    const observation = { locale: 'C', timezone: 'UTC', threadLimits: {}, randomLibraries: [] }
+    execution.runs[0]!.executionContext = {
+      schemaVersion: 1,
+      before: observation,
+      after: observation
+    }
     const events: ArtifactReproducibilityExecutionEvent[] = []
     const execute = vi.fn<NotebookReproductionRuntime['execute']>(
-      async ({ source, sessionRoot }) => {
+      async ({ source, sessionRoot, executionContext }) => {
+        expect(executionContext).toEqual(execution.runs[0]!.executionContext)
         expect(source).toBe(execution.runs[0]!.script)
         expect(
           await readFile(
@@ -1068,7 +1075,11 @@ describe('Artifact reproducibility execution', () => {
             args: invocation.args,
             env: invocation.env,
             annotateStderr: (stderr) => stderr,
-            cleanup: () => undefined
+            cleanup: async (_reason, outcome) => ({
+              processesTerminated: outcome.processesTerminated,
+              networkClosed: true,
+              temporaryResourcesRemoved: true
+            })
           })
         }
 

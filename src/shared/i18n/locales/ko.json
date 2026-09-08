@@ -5218,7 +5218,6 @@
     "Output retention limit reached.": "출력 보관 한도에 도달했습니다.",
     "Reproduced output was not retained.": "재현된 출력이 보관되지 않았습니다.",
     "Includes the report, logs, and retained differing outputs. Source data is not included.": "보고서, 로그, 보관된 차이 출력을 포함합니다. 원본 데이터는 포함되지 않습니다.",
-    "Reproduced outputs": "재현 출력",
     "Clear reproduced outputs": "재현 출력 정리",
     "Clearing…": "정리 중…",
     "Output cleared": "출력 정리됨",
@@ -5340,6 +5339,20 @@
     "Showing the first 100 changed cells. Totals include the complete comparison.": "변경된 셀의 처음 100개를 표시합니다. 합계에는 전체 비교 결과가 포함됩니다.",
     "These rules compare saved outputs; they do not establish scientific equivalence.": "이 규칙은 저장된 출력을 비교하며 과학적 동등성을 입증하지 않습니다.",
     "Difference image": "차이 이미지",
-    "Execution evidence is missing. Rerun the required code to create a new version.": "실행 증거가 누락되었습니다. 필요한 코드를 다시 실행하여 새 버전을 생성하세요."
+    "Execution evidence is missing. Rerun the required code to create a new version.": "실행 증거가 누락되었습니다. 필요한 코드를 다시 실행하여 새 버전을 생성하세요.",
+    "Retained reproduced outputs": "보관된 재현 출력",
+    "View comparison": "비교 보기",
+    "Byte-for-byte match": "바이트 단위로 일치",
+    "Bytes differ": "바이트 단위로 다름",
+    "Not compared": "비교하지 않음",
+    "Checked at": "확인 시간",
+    "Output comparison incomplete": "출력 비교가 완료되지 않음",
+    "Package setup is missing": "패키지 로드 단계 누락",
+    "Package loading steps were not captured for {{packageNames}}. Run the package setup cells again, then rerun this cell to capture its dependencies.": "{{packageNames}}의 패키지 로드 단계가 기록되지 않았습니다. 패키지를 로드하는 셀을 다시 실행한 다음 이 셀을 다시 실행하여 의존 관계를 기록하세요.",
+    "Plot setup is incomplete": "그리기 준비 불완전",
+    "Earlier circlize plotting parameters were not captured. Call circlize::circos.clear() before configuring and drawing the plot, then rerun the cell.": "이전 circlize 그리기 매개변수가 기록되지 않았습니다. 설정 및 그리기 전에 circlize::circos.clear()를 호출한 다음 셀을 다시 실행하세요.",
+    "Analysis rules: {{revision}}": "분석 규칙: {{revision}}",
+    "Analysis rules were not recorded for this version.": "이 버전의 분석 규칙은 기록되지 않았습니다.",
+    "Recorded when this Artifact Version was created. Later analysis updates do not change this verification evidence.": "이 아티팩트 버전을 만들 때 기록되었습니다. 이후 분석 업데이트는 이 검증 근거를 변경하지 않습니다."
   }
 }

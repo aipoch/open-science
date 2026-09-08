@@ -1,7 +1,10 @@
+import { serializedSourcePath } from './serialized-file-provenance'
 import { notebookWriteOption, notebookWriteDisposition } from './notebook-write-semantics'
 import {
   PYTHON_LIBRARY_EFFECTS,
   pythonLibraryMethodEffect,
+  pythonArgumentShapeReturnType,
+  type PythonArgumentShape,
   pythonUnpackedReturnType,
   type PythonLibraryMethodEffect
 } from './python-library-effects'
@@ -9,6 +12,7 @@ import {
   isPotentialPythonFileWriteCall,
   PYTHON_FILE_CALL_EFFECTS,
   PYTHON_UNSUPPORTED_EXTERNAL_STATE_CALLS,
+  PYTHON_FILESYSTEM_OBSERVATIONS,
   PYTHON_UNSUPPORTED_EXTERNAL_STATE_NAMESPACES,
   type NotebookFileCallEffect
 } from './notebook-call-effects'
@@ -19,6 +23,7 @@ import {
   type Node
 } from './dependency-analysis-parser'
 import type {
+  NotebookSerializedValue,
   NotebookDependencyAlias,
   NotebookDependencyMemberWrite,
   NotebookDependencyReceiverCall,
@@ -95,6 +100,22 @@ const SAFE_CALLS = new Set([
   'zip'
 ])
 const EXTERNAL_READ_CALLS = new Set(['open'])
+// Builtin type objects also occur as values (e.g. numpy dtype=object).
+const BUILTIN_TYPE_VALUES = new Set([
+  'bool',
+  'bytes',
+  'complex',
+  'dict',
+  'float',
+  'frozenset',
+  'int',
+  'list',
+  'object',
+  'set',
+  'str',
+  'tuple',
+  'type'
+])
 const SCOPED_MUTATION_CALLS = new Set(['next'])
 const SCOPED_OPAQUE_CALLS = new Set(['getattr', 'hasattr', 'isinstance', 'issubclass'])
 const SAFE_LITERAL_METHODS = new Set([
@@ -122,7 +143,7 @@ type ConstKind = 'int' | 'float' | 'bool' | 'str' | 'bytes' | 'none' | 'complex'
 type PyArg = { type: 'arg'; arg: string }
 type PyKeyword = { type: 'keyword'; arg: string | null; value: PyNode; _fields: string[] }
 type PyAlias = { type: 'alias'; name: string; asname: string | null }
-type PyComprehension = { target: PyNode; iter: PyNode; ifs: PyNode[] }
+type PyComprehension = { target: PyNode; iter: PyNode; ifs: PyNode[]; isAsync?: boolean }
 type PyArguments = {
   posonlyargs: PyArg[]
   args: PyArg[]
@@ -136,6 +157,7 @@ type PyArguments = {
 type PyNode = {
   type: string
   lineno?: number
+  col_offset?: number
   end_lineno?: number
   _fields: string[]
   id?: string
@@ -179,6 +201,7 @@ type PyNode = {
   optional_vars?: PyNode
   items?: PyNode[]
   formatSafe?: boolean
+  discardedExpression?: boolean
 }
 
 const isPyNode = (value: unknown): value is PyNode =>
@@ -195,6 +218,7 @@ const py = (
 })
 
 const locate = (node: Node, result: PyNode): PyNode => {
+  result.col_offset = node.startPosition.column
   result.lineno = node.startPosition.row + 1
   result.end_lineno = node.endPosition.row + 1
   return result
@@ -218,8 +242,355 @@ const pyChildren = (node: PyNode): PyNode[] => {
 
 const walkPy = (node: PyNode): PyNode[] => [node, ...pyChildren(node).flatMap(walkPy)]
 
+const pythonRedirectsConsole = (node: PyNode): boolean =>
+  (node.type === 'Call' &&
+    ['redirect_stdout', 'redirect_stderr'].includes(
+      pythonDottedName(node.func)?.split('.').at(-1) ?? ''
+    )) ||
+  (node.type === 'Attribute' && ['stdout', 'stderr'].includes(node.attr ?? '')) ||
+  pyChildren(node).some(pythonRedirectsConsole)
+
+// A closed expression of builtin values and known filesystem observations can
+// be printed without making that diagnostic part of an artifact's data inputs.
+type PythonDiagnosticKind =
+  'value' | 'string' | 'path' | 'stat' | 'strings' | 'walk' | 'package' | 'module'
+
+const pythonDiagnosticValue = (
+  expression: PyNode,
+  imports: ReadonlyMap<string, string>,
+  shadowed: ReadonlySet<string>,
+  tainted: ReadonlySet<string>,
+  knownValue: (name: string) => PythonDiagnosticKind | undefined,
+  allowImportProbe = false
+):
+  | { kind: PythonDiagnosticKind; observed: boolean; names: string[]; safeCalls: string[] }
+  | undefined => {
+  if (tainted.has('*') || tainted.has('builtins')) return undefined
+  const dependencies = new Set<string>()
+  const safeCalls = new Set<string>()
+  let observed = false
+  const inspect = (node: PyNode | undefined): PythonDiagnosticKind | undefined => {
+    if (!node) return undefined
+    if (node.type === 'Constant') return node.constKind === 'str' ? 'string' : 'value'
+    if (node.type === 'Name' && node.id) {
+      const kind = knownValue(node.id)
+      if (!kind || (kind === 'path' && tainted.has('pathlib'))) return undefined
+      dependencies.add(node.id)
+      return kind
+    }
+    if (
+      allowImportProbe &&
+      node.type === 'Attribute' &&
+      node.attr === '__version__' &&
+      inspect(node.value as PyNode) === 'module'
+    )
+      return 'string'
+    if (node.type === 'JoinedStr' || node.type === 'FormattedValue') {
+      return pyChildren(node).every((child) => inspect(child)) ? 'string' : undefined
+    }
+    if (['Compare', 'BoolOp', 'UnaryOp'].includes(node.type))
+      return pyChildren(node).every((child) => inspect(child)) ? 'value' : undefined
+    if (node.type === 'BinOp') {
+      if (node.children?.length)
+        return node.children.every((child) => inspect(child)) ? 'value' : undefined
+      const left = inspect(node.left)
+      const right = inspect(node.right)
+      if (['Eq', 'NotEq', 'Lt', 'LtE', 'Gt', 'GtE'].includes(node.op ?? '') && left && right)
+        return 'value'
+      if (node.op === 'Add' && left === 'string' && right === 'string') return 'string'
+      if (node.op === 'Div' && left === 'path' && right === 'string') return 'path'
+      return undefined
+    }
+    if (
+      node.type === 'Attribute' &&
+      node.attr?.startsWith('st_') &&
+      inspect(node.value as PyNode) === 'stat'
+    )
+      return 'value'
+    if (node.type !== 'Call' || !isPyNode(node.func)) return undefined
+    const args = Array.isArray(node.args) ? node.args : []
+    if ((node.keywords ?? []).some((keyword) => !keyword.arg)) return undefined
+    if (
+      !args.every((arg) => inspect(arg)) ||
+      !(node.keywords ?? []).every((keyword) => inspect(keyword.value))
+    )
+      return undefined
+    const raw = pythonDottedName(node.func)
+    const [root, ...members] = raw?.split('.') ?? []
+    const imported = root ? imports.get(root) : undefined
+    const canonical = imported ? [imported, ...members].join('.') : undefined
+    // A literal standard-library lookup used only for console diagnostics does not
+    // read file contents. Keep the importer as a dependency so rebinding it is detected.
+    if (!canonical && !imports.has('__import__') && !shadowed.has('__import__')) {
+      const attributes: string[] = []
+      let receiver = node.func
+      while (receiver.type === 'Attribute' && isPyNode(receiver.value)) {
+        attributes.unshift(receiver.attr ?? '')
+        receiver = receiver.value
+      }
+      const importArgs = Array.isArray(receiver.args) ? receiver.args : []
+      if (
+        receiver.type === 'Call' &&
+        receiver.func?.type === 'Name' &&
+        receiver.func.id === '__import__' &&
+        importArgs.length === 1 &&
+        importArgs[0].type === 'Constant' &&
+        importArgs[0].value === 'os' &&
+        !receiver.keywords?.length &&
+        !tainted.has('os')
+      ) {
+        const candidate = ['os', ...attributes].join('.')
+        if (PYTHON_FILESYSTEM_OBSERVATIONS.has(candidate)) {
+          dependencies.add('__import__')
+          safeCalls.add('__import__')
+          observed = true
+          return ['os.stat', 'os.lstat'].includes(candidate) ? 'stat' : 'value'
+        }
+      }
+    }
+    if (
+      allowImportProbe &&
+      ((canonical === 'importlib.import_module' && !tainted.has('importlib')) ||
+        (raw === '__import__' && !imports.has('__import__') && !shadowed.has('__import__'))) &&
+      args.length === 1 &&
+      !node.keywords?.length &&
+      inspect(args[0]) === 'package'
+    ) {
+      dependencies.add(root!)
+      if (raw === '__import__') safeCalls.add('__import__')
+      observed = true
+      return 'module'
+    }
+    if (
+      allowImportProbe &&
+      root === 'getattr' &&
+      !shadowed.has(root) &&
+      !imports.has(root) &&
+      args.length >= 2 &&
+      args.length <= 3 &&
+      !node.keywords?.length &&
+      inspect(args[0]) === 'module' &&
+      args[1]?.type === 'Constant' &&
+      args[1].value === '__version__'
+    ) {
+      dependencies.add(root)
+      safeCalls.add(root)
+      return 'string'
+    }
+    if (canonical && !tainted.has(canonical.split('.')[0]!)) {
+      if (canonical === 'os.listdir' || canonical === 'os.walk') {
+        if ((node.keywords ?? []).some((keyword) => keyword.arg === 'onerror')) return undefined
+        dependencies.add(root!)
+        observed = true
+        return canonical === 'os.walk' ? 'walk' : 'strings'
+      }
+      if (['pathlib.Path', 'pathlib.PosixPath', 'pathlib.WindowsPath'].includes(canonical)) {
+        dependencies.add(root!)
+        return 'path'
+      }
+      if (PYTHON_FILESYSTEM_OBSERVATIONS.has(canonical)) {
+        observed = true
+        dependencies.add(root!)
+        return ['os.stat', 'os.lstat'].includes(canonical) ? 'stat' : 'value'
+      }
+      if (
+        ['os.path.join', 'os.path.basename', 'os.path.dirname', 'os.fspath'].includes(canonical)
+      ) {
+        dependencies.add(root!)
+        return 'string'
+      }
+    }
+    if (
+      node.func.type === 'Name' &&
+      ['print', 'str', 'repr', 'format'].includes(root ?? '') &&
+      !imports.has(root!) &&
+      !shadowed.has(root!)
+    ) {
+      if (root === 'print') {
+        const output = (node.keywords ?? []).find((keyword) => keyword.arg === 'file')?.value
+        if (output && !(output.type === 'Constant' && output.value === null)) return undefined
+      }
+      dependencies.add(root!)
+      safeCalls.add(root!)
+      return root === 'print' ? 'value' : 'string'
+    }
+    if (
+      node.func.type === 'Attribute' &&
+      inspect(node.func.value as PyNode) === 'string' &&
+      [
+        'lower',
+        'upper',
+        'casefold',
+        'strip',
+        'lstrip',
+        'rstrip',
+        'replace',
+        'startswith',
+        'endswith'
+      ].includes(node.func.attr ?? '')
+    )
+      return ['startswith', 'endswith'].includes(node.func.attr ?? '') ? 'value' : 'string'
+    if (node.func.type === 'Attribute' && inspect(node.func.value as PyNode) === 'path') {
+      const member = node.func.attr ?? ''
+      if (
+        [
+          'resolve',
+          'absolute',
+          'stat',
+          'lstat',
+          'exists',
+          'is_file',
+          'is_dir',
+          'is_symlink'
+        ].includes(member)
+      ) {
+        observed = true
+        return ['resolve', 'absolute'].includes(member)
+          ? 'path'
+          : ['stat', 'lstat'].includes(member)
+            ? 'stat'
+            : 'value'
+      }
+      if (['joinpath', 'with_name', 'with_suffix'].includes(member)) return 'path'
+      if (member === 'as_posix') return 'string'
+    }
+    return undefined
+  }
+  const kind = inspect(expression)
+  return kind ? { kind, observed, names: [...dependencies], safeCalls: [...safeCalls] } : undefined
+}
+
+const pythonConsoleDiagnostic = (
+  ...args: Parameters<typeof pythonDiagnosticValue>
+): ReturnType<typeof pythonDiagnosticValue> => {
+  if (!args[0].discardedExpression) return undefined
+  const value = pythonDiagnosticValue(...args)
+  return value?.observed ? value : undefined
+}
+
+// Recognize closed, console-only directory inspection without treating filenames
+// printed during exploration as data inputs. Any computation or mutation falls back.
+const pythonConsoleControlDiagnostic = (
+  node: PyNode,
+  imports: ReadonlyMap<string, string>,
+  shadowed: ReadonlySet<string>,
+  tainted: ReadonlySet<string>,
+  knownValue: (name: string) => PythonDiagnosticKind | undefined
+): { names: string[]; safeCalls: string[]; locals: string[] } | undefined => {
+  if (!['For', 'If'].includes(node.type)) return undefined
+  const locals = new Set<string>(),
+    names = new Set<string>(),
+    safeCalls = new Set<string>()
+  let budget = 300,
+    observed = false
+  const expression = (
+    value: PyNode | undefined,
+    scope: Map<string, PythonDiagnosticKind>
+  ): ReturnType<typeof pythonDiagnosticValue> => {
+    if (!value || --budget < 0) return undefined
+    const result = pythonDiagnosticValue(
+      value,
+      imports,
+      shadowed,
+      tainted,
+      (name) => scope.get(name) ?? knownValue(name),
+      true
+    )
+    if (result) {
+      observed ||= result.observed
+      for (const name of result.names) if (!scope.has(name)) names.add(name)
+      for (const name of result.safeCalls) safeCalls.add(name)
+    }
+    return result
+  }
+  const inspect = (item: PyNode, scope: Map<string, PythonDiagnosticKind>): boolean => {
+    if (--budget < 0) return false
+    if (item.type === 'For') {
+      const packages =
+        ['List', 'Tuple'].includes(item.iter?.type ?? '') &&
+        Boolean(item.iter?.elts?.length) &&
+        item.iter!.elts!.length <= 64 &&
+        item.iter!.elts!.every(
+          (value) =>
+            value.type === 'Constant' &&
+            value.constKind === 'str' &&
+            /^[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*$/.test(String(value.value))
+        )
+      const iterable = packages ? undefined : expression(item.iter, scope)
+      const targets = loopTargetNames(item.target)
+      const kinds: PythonDiagnosticKind[] = packages
+        ? ['package']
+        : iterable?.kind === 'walk'
+          ? ['string', 'strings', 'strings']
+          : iterable?.kind === 'strings'
+            ? ['string']
+            : []
+      if (!kinds.length || targets.length !== kinds.length || !simpleLoopTarget(item.target))
+        return false
+      const nested = new Map(scope)
+      for (const [index, name] of targets.entries()) {
+        if (imports.has(name)) return false
+        locals.add(name)
+        nested.set(name, kinds[index]!)
+      }
+      return (
+        (Array.isArray(item.body) ? item.body : []).every((child) => inspect(child, nested)) &&
+        (item.orelse ?? []).every((child) => inspect(child, scope))
+      )
+    }
+    if (item.type === 'Assign' && item.targets?.length === 1 && item.targets[0].type === 'Name') {
+      const name = item.targets[0].id!
+      if (imports.has(name) || expression(item.value as PyNode, scope)?.kind !== 'module')
+        return false
+      scope.set(name, 'module')
+      locals.add(name)
+      return true
+    }
+    if (item.type === 'Try') {
+      const children = item.children ?? []
+      if (
+        children.length !== 2 ||
+        children[0]?.type !== 'Module' ||
+        children[1]?.type !== 'ExceptHandler' ||
+        children[1].test?.type !== 'Name' ||
+        children[1].test.id !== 'ImportError' ||
+        imports.has('ImportError') ||
+        shadowed.has('ImportError')
+      )
+        return false
+      names.add('ImportError')
+      safeCalls.add('ImportError')
+      return children.every((clause) => {
+        const nested = new Map(scope)
+        return (Array.isArray(clause.body) ? clause.body : []).every((statement) =>
+          inspect(statement, nested)
+        )
+      })
+    }
+    if (item.type === 'If') {
+      if (!expression(item.test, scope)) return false
+      return [...(Array.isArray(item.body) ? item.body : []), ...(item.orelse ?? [])].every(
+        (child) => inspect(child, new Map(scope))
+      )
+    }
+    if (item.type !== 'Call') return false
+    const result = expression(item, scope)
+    return Boolean(
+      result &&
+      ((item.func?.type === 'Name' && item.func.id === 'print') ||
+        (item.discardedExpression && result.kind === 'module'))
+    )
+  }
+  return inspect(node, new Map()) && observed
+    ? { names: [...names], safeCalls: [...safeCalls], locals: [...locals] }
+    : undefined
+}
+
 const summarizeInlineCallback = (
-  node: PyNode | undefined
+  node: PyNode | undefined,
+  containers: ReadonlySet<string> = new Set(),
+  scalarParameters: ReadonlySet<string> = new Set(),
+  readOnlyProperty: (node: PyNode) => boolean = () => false
 ): NotebookDependencyTypeSummary['methods'][number] | undefined => {
   if (node?.type !== 'Lambda' || !isPyNode(node.body)) return undefined
   const args = node.args as PyArguments | undefined
@@ -238,10 +609,94 @@ const summarizeInlineCallback = (
     'Yield',
     'YieldFrom'
   ])
-  if (walkPy(node.body).some((child) => unsafeNodes.has(child.type))) return undefined
+  if (walkPy(node.body).some((child) => unsafeNodes.has(child.type))) {
+    const parameters = new Set(
+      [...args.posonlyargs, ...args.args, ...args.kwonlyargs].map((arg) => arg.arg)
+    )
+    if (args.vararg || args.kwarg) return undefined
+    const nodes = walkPy(node.body)
+    const localNames = new Set([
+      ...parameters,
+      ...nodes.flatMap((child) =>
+        (child.generators ?? []).flatMap((generator) => loopTargetNames(generator.target))
+      )
+    ])
+    const allowed = new Set(['Attribute', 'ListComp', 'SetComp', 'DictComp'])
+    if (
+      nodes.length > 300 ||
+      nodes.some((child) => unsafeNodes.has(child.type) && !allowed.has(child.type))
+    )
+      return undefined
+    for (const child of nodes) {
+      if (
+        child.type === 'Attribute' &&
+        !(readOnlyProperty(child) && !localNames.has(rootName(child) ?? '')) &&
+        !(
+          child.value &&
+          isPyNode(child.value) &&
+          child.value.type === 'Name' &&
+          ((containers.has(child.value.id ?? '') &&
+            !localNames.has(child.value.id ?? '') &&
+            ['index', 'count'].includes(child.attr ?? '')) ||
+            (parameters.has(child.value.id ?? '') &&
+              scalarParameters.has(child.value.id ?? '') &&
+              [
+                'replace',
+                'lstrip',
+                'rstrip',
+                'strip',
+                'lower',
+                'upper',
+                'startswith',
+                'endswith'
+              ].includes(child.attr ?? '')))
+        )
+      )
+        return undefined
+      if (
+        child.type === 'Call' &&
+        !(
+          child.func?.type === 'Attribute' ||
+          (child.func?.type === 'Name' &&
+            SAFE_CALLS.has(child.func.id ?? '') &&
+            !localNames.has(child.func.id ?? ''))
+        )
+      )
+        return undefined
+      for (const generator of child.generators ?? []) {
+        if (
+          generator.isAsync ||
+          generator.iter?.type !== 'Name' ||
+          !(parameters.has(generator.iter.id ?? '') || containers.has(generator.iter.id ?? ''))
+        )
+          return undefined
+      }
+    }
+    const loads = new NamespaceLoadLineVisitor()
+    loads.visit(node)
+    return {
+      name: '__call__',
+      effect: 'read',
+      usedNames: [...loads.loaded.keys()].sort(),
+      safeCallNames: [
+        ...new Set(
+          nodes
+            .filter((child) => child.type === 'Call' && child.func?.type === 'Name')
+            .map((child) => child.func!.id!)
+        )
+      ].sort()
+    }
+  }
   // Reuse the function effect summary: parameters stay local, while closure
   // reads and builtin calls become dependencies of the invocation.
   return summarizeLambda(node, '<inline-callback>')?.methods[0]
+}
+
+const pythonArgumentShape = (node: PyNode): PythonArgumentShape => {
+  if (node.type === 'List') return 'list'
+  if (node.type !== 'Constant') return 'unknown'
+  if (node.value === null) return 'none'
+  return ['str', 'int'].includes(node.constKind ?? '') ? 'scalar' : 'unknown'
 }
 
 const staticBoolean = (node: PyNode | null | undefined): boolean | undefined =>
@@ -292,17 +747,21 @@ const convertPattern = (node: Node, ctx: PyCtx): PyNode => {
   if (node.type === 'pattern_list' || node.type === 'tuple_pattern' || node.type === 'tuple') {
     return locate(
       node,
-      py('Tuple', { elts: node.namedChildren.map((child) => convertPattern(child, ctx)), ctx }, [
-        'elts'
-      ])
+      py(
+        'Tuple',
+        { elts: pythonSyntaxChildren(node).map((child) => convertPattern(child, ctx)), ctx },
+        ['elts']
+      )
     )
   }
   if (node.type === 'list_pattern' || node.type === 'list') {
     return locate(
       node,
-      py('List', { elts: node.namedChildren.map((child) => convertPattern(child, ctx)), ctx }, [
-        'elts'
-      ])
+      py(
+        'List',
+        { elts: pythonSyntaxChildren(node).map((child) => convertPattern(child, ctx)), ctx },
+        ['elts']
+      )
     )
   }
   return convertExpr(node, ctx)
@@ -321,7 +780,7 @@ const convertParameters = (node: Node | null): PyArguments => {
   if (!node) {
     return { posonlyargs, args, vararg, kwonlyargs, kwarg, defaults, kw_defaults }
   }
-  for (const child of node.namedChildren) {
+  for (const child of pythonSyntaxChildren(node)) {
     if (child.type === 'positional_separator') {
       posonlyargs.push(...args.splice(0, args.length))
       continue
@@ -359,6 +818,10 @@ const convertParameters = (node: Node | null): PyArguments => {
   return { posonlyargs, args, vararg, kwonlyargs, kwarg, defaults, kw_defaults }
 }
 
+// Tree-sitter exposes comments as named nodes; Python AST does not treat them as values.
+const pythonSyntaxChildren = (node: Node): Node[] =>
+  node.namedChildren.filter((child) => child.type !== 'comment')
+
 const convertCallArgs = (node: Node | null): { args: PyNode[]; keywords: PyKeyword[] } => {
   const args: PyNode[] = []
   const keywords: PyKeyword[] = []
@@ -367,7 +830,7 @@ const convertCallArgs = (node: Node | null): { args: PyNode[]; keywords: PyKeywo
     args.push(convertExpr(node, 'Load'))
     return { args, keywords }
   }
-  for (const child of node.namedChildren) {
+  for (const child of pythonSyntaxChildren(node)) {
     if (child.type === 'keyword_argument') {
       const name = fieldChild(child, 'name')?.text ?? null
       const value = fieldChild(child, 'value')
@@ -405,7 +868,7 @@ const convertCallArgs = (node: Node | null): { args: PyNode[]; keywords: PyKeywo
 
 const convertComprehensions = (node: Node): PyComprehension[] => {
   const generators: PyComprehension[] = []
-  for (const child of node.namedChildren) {
+  for (const child of pythonSyntaxChildren(node)) {
     if (child.type === 'for_in_clause') {
       const left = fieldChild(child, 'left')
       const rights = fieldChildren(child, 'right')
@@ -414,7 +877,8 @@ const convertComprehensions = (node: Node): PyComprehension[] => {
         iter: rights[0]
           ? convertExpr(rights[0], 'Load')
           : py('Constant', { value: null, constKind: 'none' }, []),
-        ifs: []
+        ifs: [],
+        isAsync: child.children.some((token) => token.type === 'async')
       })
       continue
     }
@@ -429,7 +893,7 @@ const convertComprehensions = (node: Node): PyComprehension[] => {
 
 const convertBlock = (node: Node | null): PyNode[] =>
   node
-    ? node.namedChildren
+    ? pythonSyntaxChildren(node)
         .map((child) => convertStmt(child))
         .filter((child): child is PyNode => Boolean(child))
     : []
@@ -519,7 +983,10 @@ const arithmeticOperators: Record<string, string> = {
   '/': 'Div',
   '//': 'FloorDiv',
   '%': 'Mod',
-  '**': 'Pow'
+  '**': 'Pow',
+  '&': 'BitAnd',
+  '|': 'BitOr',
+  '^': 'BitXor'
 }
 
 const convertExpr = (node: Node, ctx: PyCtx = 'Load'): PyNode => {
@@ -539,7 +1006,7 @@ const convertExpr = (node: Node, ctx: PyCtx = 'Load'): PyNode => {
     case 'float':
       return locate(node, py('Constant', { value: Number(node.text), constKind: 'float' }, []))
     case 'string': {
-      if (node.namedChildren.some((child) => child.type === 'interpolation')) {
+      if (pythonSyntaxChildren(node).some((child) => child.type === 'interpolation')) {
         return locate(
           node,
           py(
@@ -592,9 +1059,11 @@ const convertExpr = (node: Node, ctx: PyCtx = 'Load'): PyNode => {
     case 'concatenated_string':
       return locate(
         node,
-        py('JoinedStr', { children: node.namedChildren.map((child) => convertExpr(child, ctx)) }, [
-          'children'
-        ])
+        py(
+          'JoinedStr',
+          { children: pythonSyntaxChildren(node).map((child) => convertExpr(child, ctx)) },
+          ['children']
+        )
       )
     case 'attribute':
       return locate(
@@ -675,21 +1144,33 @@ const convertExpr = (node: Node, ctx: PyCtx = 'Load'): PyNode => {
     case 'list':
       return locate(
         node,
-        py('List', { elts: node.namedChildren.map((child) => convertExpr(child, ctx)), ctx }, [
-          'elts'
-        ])
+        py(
+          'List',
+          { elts: pythonSyntaxChildren(node).map((child) => convertExpr(child, ctx)), ctx },
+          ['elts']
+        )
       )
+    case 'list_splat':
+      return locate(
+        node,
+        py('Starred', { value: convertExpr(pythonSyntaxChildren(node)[0], ctx), ctx }, ['value'])
+      )
+    case 'expression_list':
     case 'tuple':
       return locate(
         node,
-        py('Tuple', { elts: node.namedChildren.map((child) => convertExpr(child, ctx)), ctx }, [
-          'elts'
-        ])
+        py(
+          'Tuple',
+          { elts: pythonSyntaxChildren(node).map((child) => convertExpr(child, ctx)), ctx },
+          ['elts']
+        )
       )
     case 'set':
       return locate(
         node,
-        py('Set', { elts: node.namedChildren.map((child) => convertExpr(child, 'Load')) }, ['elts'])
+        py('Set', { elts: pythonSyntaxChildren(node).map((child) => convertExpr(child, 'Load')) }, [
+          'elts'
+        ])
       )
     case 'dictionary':
       return locate(
@@ -697,10 +1178,10 @@ const convertExpr = (node: Node, ctx: PyCtx = 'Load'): PyNode => {
         py(
           'Dict',
           {
-            keys: node.namedChildren.map((child) =>
+            keys: pythonSyntaxChildren(node).map((child) =>
               child.type === 'pair' ? convertExpr(fieldChild(child, 'key') ?? child, 'Load') : null
             ),
-            values: node.namedChildren.map((child) =>
+            values: pythonSyntaxChildren(node).map((child) =>
               child.type === 'pair'
                 ? convertExpr(fieldChild(child, 'value') ?? child, 'Load')
                 : convertExpr(child.namedChildren[0] ?? child, 'Load')
@@ -710,9 +1191,9 @@ const convertExpr = (node: Node, ctx: PyCtx = 'Load'): PyNode => {
         )
       )
     case 'parenthesized_expression':
-      return convertExpr(node.namedChildren[0] ?? node, ctx)
+      return convertExpr(pythonSyntaxChildren(node)[0] ?? node, ctx)
     case 'conditional_expression': {
-      const [body, test, orelse] = node.namedChildren
+      const [body, test, orelse] = pythonSyntaxChildren(node)
       return locate(
         node,
         py(
@@ -756,7 +1237,14 @@ const convertExpr = (node: Node, ctx: PyCtx = 'Load'): PyNode => {
         py(
           'UnaryOp',
           {
-            op: operator === '+' ? 'UAdd' : operator === '-' ? 'USub' : operator,
+            op:
+              operator === '+'
+                ? 'UAdd'
+                : operator === '-'
+                  ? 'USub'
+                  : operator === '~'
+                    ? 'Invert'
+                    : operator,
             operand: argument
               ? convertExpr(argument, 'Load')
               : py('Constant', { value: 0, constKind: 'int' }, [])
@@ -795,8 +1283,32 @@ const convertExpr = (node: Node, ctx: PyCtx = 'Load'): PyNode => {
           ['values']
         )
       )
+    case 'comparison_operator': {
+      const operands = pythonSyntaxChildren(node).map((child) => convertExpr(child, 'Load'))
+      const comparison = (
+        { '==': 'Eq', '!=': 'NotEq', '<': 'Lt', '<=': 'LtE', '>': 'Gt', '>=': 'GtE' } as Record<
+          string,
+          string
+        >
+      )[node.child(1)?.text ?? '']
+      // Preserve all reads for chained comparisons, but only a single comparison
+      // produces a reusable vector mask (Python chains use scalar truth testing).
+      return locate(
+        node,
+        py(
+          'BinOp',
+          operands.length === 2 && comparison
+            ? {
+                op: comparison,
+                left: operands[0],
+                right: operands[1]
+              }
+            : { op: '', children: operands },
+          operands.length === 2 && comparison ? ['left', 'right'] : ['children']
+        )
+      )
+    }
     case 'binary_operator':
-    case 'comparison_operator':
       return locate(
         node,
         py(
@@ -809,10 +1321,7 @@ const convertExpr = (node: Node, ctx: PyCtx = 'Load'): PyNode => {
             right: fieldChild(node, 'right')
               ? convertExpr(fieldChild(node, 'right')!, 'Load')
               : undefined,
-            children:
-              node.type === 'comparison_operator'
-                ? node.namedChildren.map((child) => convertExpr(child, 'Load'))
-                : []
+            children: []
           },
           ['left', 'right', 'children']
         )
@@ -862,7 +1371,7 @@ const convertExpr = (node: Node, ctx: PyCtx = 'Load'): PyNode => {
               : py('Constant', { value: null, constKind: 'none' }, []),
             value: py('Constant', { value: null, constKind: 'none' }, []),
             generators: convertComprehensions(node),
-            children: node.namedChildren.map((child) => convertExpr(child, 'Load'))
+            children: pythonSyntaxChildren(node).map((child) => convertExpr(child, 'Load'))
           },
           ['key', 'value', 'generators', 'children']
         )
@@ -888,9 +1397,11 @@ const convertExpr = (node: Node, ctx: PyCtx = 'Load'): PyNode => {
     default:
       return locate(
         node,
-        py('Generic', { children: node.namedChildren.map((child) => convertExpr(child, ctx)) }, [
-          'children'
-        ])
+        py(
+          'Generic',
+          { children: pythonSyntaxChildren(node).map((child) => convertExpr(child, ctx)) },
+          ['children']
+        )
       )
   }
 }
@@ -946,8 +1457,13 @@ const convertStmt = (node: Node): PyNode | undefined => {
   switch (node.type) {
     case 'comment':
       return undefined
-    case 'expression_statement':
-      return node.namedChildren[0] ? convertExpr(node.namedChildren[0], 'Load') : undefined
+    case 'expression_statement': {
+      const expression = pythonSyntaxChildren(node)[0]
+        ? convertExpr(pythonSyntaxChildren(node)[0], 'Load')
+        : undefined
+      if (expression) expression.discardedExpression = true
+      return expression
+    }
     case 'assignment':
     case 'augmented_assignment':
       return convertExpr(node, 'Load')
@@ -1035,6 +1551,26 @@ const convertStmt = (node: Node): PyNode | undefined => {
         py('With', { items, body: convertBlock(fieldChild(node, 'body')) }, ['items', 'body'])
       )
     }
+    case 'block':
+      return locate(node, py('Module', { body: convertBlock(node) }, ['body']))
+    case 'except_clause':
+      return locate(
+        node,
+        py(
+          'ExceptHandler',
+          {
+            test: fieldChild(node, 'value')
+              ? convertExpr(fieldChild(node, 'value')!, 'Load')
+              : undefined,
+            body: convertBlock(
+              fieldChild(node, 'body') ??
+                node.namedChildren.find((child) => child.type === 'block') ??
+                null
+            )
+          },
+          ['test', 'body']
+        )
+      )
     case 'try_statement':
     case 'match_statement':
     case 'async_for_statement':
@@ -1047,7 +1583,7 @@ const convertStmt = (node: Node): PyNode | undefined => {
               ? 'Match'
               : 'Try',
           {
-            children: node.namedChildren.map(
+            children: pythonSyntaxChildren(node).map(
               (child) => convertStmt(child) ?? convertExpr(child, 'Load')
             )
           },
@@ -1057,9 +1593,11 @@ const convertStmt = (node: Node): PyNode | undefined => {
     case 'delete_statement':
       return locate(
         node,
-        py('Delete', { targets: node.namedChildren.map((child) => convertPattern(child, 'Del')) }, [
-          'targets'
-        ])
+        py(
+          'Delete',
+          { targets: pythonSyntaxChildren(node).map((child) => convertPattern(child, 'Del')) },
+          ['targets']
+        )
       )
     case 'import_statement':
       return locate(
@@ -1087,7 +1625,7 @@ const convertStmt = (node: Node): PyNode | undefined => {
           'ImportFrom',
           {
             module: fieldChild(node, 'module_name')?.text ?? null,
-            names: node.namedChildren.some((child) => child.type === 'wildcard_import')
+            names: pythonSyntaxChildren(node).some((child) => child.type === 'wildcard_import')
               ? [{ type: 'alias' as const, name: '*', asname: null }]
               : fieldChildren(node, 'name').map((alias) =>
                   alias.type === 'aliased_import'
@@ -1105,19 +1643,23 @@ const convertStmt = (node: Node): PyNode | undefined => {
     case 'global_statement':
       return locate(
         node,
-        py('Global', { names: node.namedChildren.map((child) => child.text) }, [])
+        py('Global', { names: pythonSyntaxChildren(node).map((child) => child.text) }, [])
       )
     case 'nonlocal_statement':
       return locate(
         node,
-        py('Nonlocal', { names: node.namedChildren.map((child) => child.text) }, [])
+        py('Nonlocal', { names: pythonSyntaxChildren(node).map((child) => child.text) }, [])
       )
     case 'return_statement':
       return locate(
         node,
         py(
           'Return',
-          { value: node.namedChildren[0] ? convertExpr(node.namedChildren[0], 'Load') : null },
+          {
+            value: pythonSyntaxChildren(node)[0]
+              ? convertExpr(pythonSyntaxChildren(node)[0], 'Load')
+              : null
+          },
           ['value']
         )
       )
@@ -1246,6 +1788,9 @@ const staticScalar = (node: PyNode | null | undefined): boolean => {
   return staticInteger(node) !== undefined
 }
 
+const immutableLiteral = (node: PyNode | null | undefined): boolean =>
+  staticScalar(node) || (node?.type === 'Tuple' && (node.elts ?? []).every(immutableLiteral))
+
 const staticNonemptyIterable = (
   node: PyNode | null | undefined,
   contextualNames: ReadonlySet<string> = new Set()
@@ -1365,6 +1910,56 @@ class DeterministicLoopBody extends EffectOnlyLoopBody {
   visit_AugAssign = this.visit_Assign
   visit_If = this.visit_Assign
   visit_For = this.visit_Assign
+  // Lambda invocation and captures are checked separately by Analyzer.
+  visit_Lambda = this.visit_Assign
+}
+
+// Early exits do not make loop-local values escape. Scope and definite-assignment
+// checks below still reject values consumed after the loop or before initialization.
+class IsolatedLoopBody extends DeterministicLoopBody {
+  visit_FunctionDef = (node?: PyNode): void => {
+    if (!node) return
+    if (node.decorator_list?.length) {
+      this.reject()
+      return
+    }
+    const args = node.args as PyArguments
+    for (const value of [...args.defaults, ...args.kw_defaults.filter(isPyNode)]) this.visit(value)
+  }
+  visit_Call(node: PyNode): void {
+    const args = Array.isArray(node.args) ? node.args : []
+    // These builtins consume the generator in this invocation. Deferred
+    // generators still fail the structural check; shadowing is checked by Analyzer.
+    if (
+      ((node.func?.type === 'Name' &&
+        ['sum', 'min', 'max', 'list', 'tuple', 'set', 'sorted', 'next'].includes(
+          node.func.id ?? ''
+        )) ||
+        (node.func?.type === 'Attribute' &&
+          node.func.attr === 'join' &&
+          isPyNode(node.func.value) &&
+          node.func.value.type === 'Constant' &&
+          node.func.value.constKind === 'str')) &&
+      args.length === 1 &&
+      args[0]?.type === 'GeneratorExp' &&
+      !node.keywords?.length
+    ) {
+      this.genericVisit(args[0])
+      return
+    }
+    this.genericVisit(node)
+  }
+  visit_NamedExpr = this.visit_Assign
+  visit_Continue = (): void => {}
+  visit_Break = (): void => {}
+  // Invocation effects are checked by the main analyzer. A lambda inside an
+  // eager, verified callback does not itself make loop temporaries escape.
+  visit_Lambda = this.visit_Assign
+  visit_IfExp = this.visit_Assign
+  visit_BoolOp = this.visit_Assign
+  visit_ListComp = this.visit_Assign
+  visit_SetComp = this.visit_Assign
+  visit_DictComp = this.visit_Assign
 }
 
 class LocalAggregationLoopBody extends EffectOnlyLoopBody {
@@ -1430,8 +2025,17 @@ const loopBodyWithTemporaryValues = (statements: PyNode[]): boolean =>
     )
   })
 
-const deterministicLoopBody = (statements: PyNode[]): boolean => {
+const deterministicLoopBody = (statements: PyNode[], calculatedReturnName?: string): boolean => {
   const visitor = new DeterministicLoopBody()
+  if (calculatedReturnName)
+    visitor.visit_Return = (node?: PyNode): void => {
+      if (
+        !isPyNode(node?.value) ||
+        node.value.type !== 'Name' ||
+        node.value.id !== calculatedReturnName
+      )
+        visitor.reject()
+    }
   for (const statement of statements) {
     visitor.visit(statement)
     if (!visitor.safe) return false
@@ -1530,6 +2134,36 @@ class NamespaceLoadLineVisitor extends NodeVisitor {
     this.localScopes.pop()
   }
 
+  visit_Assign(node: PyNode): void {
+    if (isPyNode(node.value)) this.visit(node.value)
+    for (const target of node.targets ?? []) {
+      if (simpleLoopTarget(target) && this.branchDepth === 0) {
+        for (const name of loopTargetNames(target)) this.localScopes.at(-1)?.add(name)
+      } else this.visit(target)
+    }
+  }
+
+  private branchDepth = 0
+  visit_If(node: PyNode): void {
+    if (node.test) this.visit(node.test)
+    const assignedByBranch: Set<string>[] = []
+    for (const branch of [Array.isArray(node.body) ? node.body : [], node.orelse ?? []]) {
+      this.localScopes.push(new Set())
+      for (const statement of branch) this.visit(statement)
+      assignedByBranch.push(this.localScopes.pop()!)
+    }
+    // Both branches replace this value before subsequent reads in the same
+    // loop/function. Those reads do not consume an earlier loop's temporary.
+    for (const name of assignedByBranch[0]!)
+      if (assignedByBranch[1]!.has(name)) this.localScopes.at(-1)?.add(name)
+  }
+  visit_Try(node: PyNode): void {
+    this.branchDepth += 1
+    this.genericVisit(node)
+    this.branchDepth -= 1
+  }
+  visit_While = this.visit_Try
+
   visit_For(node: PyNode): void {
     if (node.iter) this.visit(node.iter)
     this.localScopes.push(new Set(loopTargetNames(node.target)))
@@ -1610,19 +2244,32 @@ const isolatedConditionalLoopNames = (tree: PyNode): Map<PyNode, Set<string>> =>
   for (const candidate of walkPy(tree)) {
     if (
       candidate.type !== 'For' ||
+      (candidate.orelse?.length && walkPy(candidate).some((node) => node.type === 'Break')) ||
       !simpleLoopTarget(candidate.target) ||
       knownNonemptyIterableShape(candidate.iter)
     ) {
       continue
     }
     const body = Array.isArray(candidate.body) ? candidate.body : []
-    if (!deterministicLoopBody(body)) continue
+    const visitor = new IsolatedLoopBody()
+    for (const statement of body) visitor.visit(statement)
+    if (!visitor.safe) continue
+    // Function bodies execute in a separate namespace. Their local stores must
+    // not become loop temporaries (or collide with a callback's parameter names).
+    const loopNodes = (node: PyNode): PyNode[] => [
+      node,
+      ...(node.type === 'FunctionDef' ? [] : pyChildren(node).flatMap(loopNodes))
+    ]
     const assignedNames = new Set([
       ...loopTargetNames(candidate.target),
       ...body
-        .flatMap(walkPy)
+        .flatMap(loopNodes)
         .filter((child) => child.type === 'Name' && child.ctx === 'Store' && child.id)
-        .map((child) => child.id as string)
+        .map((child) => child.id as string),
+      ...body
+        .flatMap(loopNodes)
+        .filter((child) => child.type === 'FunctionDef' && child.name)
+        .map((child) => child.name!)
     ])
     const endLine = candidate.end_lineno ?? candidate.lineno ?? 0
     if (
@@ -1635,6 +2282,78 @@ const isolatedConditionalLoopNames = (tree: PyNode): Map<PyNode, Set<string>> =>
     }
   }
   return result
+}
+
+// Loop-local names must be assigned on every path reaching a read. Otherwise a
+// successful run may have borrowed a value left in the kernel by an earlier cell.
+const loopReadsUninitializedTemporary = (
+  body: PyNode[],
+  candidates: Set<string>,
+  initialized: Set<string>
+): boolean => {
+  let unsafe = false
+  const visit = (node: PyNode, assigned: Set<string>): void => {
+    if (node.type === 'FunctionDef') {
+      const args = node.args as PyArguments
+      for (const value of [
+        ...(node.decorator_list ?? []),
+        ...args.defaults,
+        ...args.kw_defaults.filter(isPyNode)
+      ])
+        visit(value, assigned)
+      if (node.name) assigned.add(node.name)
+      return
+    }
+    if (node.type === 'Name') {
+      if (node.ctx === 'Load' && candidates.has(node.id ?? '') && !assigned.has(node.id!))
+        unsafe = true
+      return
+    }
+    if (['Assign', 'AnnAssign', 'NamedExpr'].includes(node.type)) {
+      if (isPyNode(node.value)) visit(node.value, assigned)
+      for (const target of node.type === 'Assign'
+        ? (node.targets ?? [])
+        : node.target
+          ? [node.target]
+          : []) {
+        if (simpleLoopTarget(target)) for (const name of loopTargetNames(target)) assigned.add(name)
+        else visit(target, assigned)
+      }
+      return
+    }
+    if (node.type === 'If') {
+      if (node.test) visit(node.test, assigned)
+      const yes = new Set(assigned),
+        no = new Set(assigned)
+      for (const statement of Array.isArray(node.body) ? node.body : []) visit(statement, yes)
+      for (const statement of node.orelse ?? []) visit(statement, no)
+      for (const name of yes) if (no.has(name)) assigned.add(name)
+      return
+    }
+    if (node.type === 'For') {
+      if (node.iter) visit(node.iter, assigned)
+      const iteration = new Set([...assigned, ...loopTargetNames(node.target)])
+      for (const statement of Array.isArray(node.body) ? node.body : []) visit(statement, iteration)
+      for (const statement of node.orelse ?? []) visit(statement, assigned)
+      return
+    }
+    if (['ListComp', 'SetComp', 'DictComp', 'GeneratorExp'].includes(node.type)) {
+      const scope = new Set(assigned)
+      for (const generator of node.generators ?? []) {
+        visit(generator.iter, scope)
+        for (const name of loopTargetNames(generator.target)) scope.add(name)
+        for (const condition of generator.ifs) visit(condition, scope)
+      }
+      for (const value of [node.elt, node.key, isPyNode(node.value) ? node.value : undefined]) {
+        if (value) visit(value, scope)
+      }
+      return
+    }
+    for (const child of pyChildren(node)) visit(child, assigned)
+  }
+  const assigned = new Set(initialized)
+  for (const statement of body) visit(statement, assigned)
+  return unsafe
 }
 
 class MethodEffectVisitor extends NodeVisitor {
@@ -2074,7 +2793,209 @@ const summarizeLambda = (
   }
 }
 
+const serializationSite = (node: PyNode): string => `${node.lineno}:${node.col_offset}`
+const PYTHON_SERIALIZED_TYPES = new Set(['pandas.DataFrame', 'pandas.Series', 'numpy.ndarray'])
+
 class Analyzer extends NodeVisitor {
+  serializedValueWrites = new Map<string, NotebookSerializedValue>()
+  serializedValueReads = new Set<string>()
+  serializedValues = new Map<string, NotebookSerializedValue>()
+  serializedPathBindings = new Map<string, string>()
+  serializedConnections = new Map<string, string>()
+  acceptedSerializedReads = new Map<string, string>()
+
+  serializationPath(node: PyNode | undefined): string | undefined {
+    const raw =
+      pythonStaticString(node, this.serializedPathBindings, {
+        collections: new Map(),
+        importedNames: this.importedCanonicalNames,
+        shadowedNames: this.defined
+      }) ?? (node?.type === 'Name' ? this.serializedConnections.get(node.id ?? '') : undefined)
+    return raw === undefined ? undefined : serializedSourcePath(raw)
+  }
+
+  serializationCallName(node: PyNode): string | undefined {
+    if (this.taintedNamespaces.has('*')) return undefined
+    const receiver = rootName(node.func)
+    if (this.memberWrites.some((write) => write.receiver === receiver)) return undefined
+    if (node.func?.type === 'Attribute' && isPyNode(node.func.value)) {
+      const owner = this.libraryTypeName(node.func.value)
+      return owner && !this.taintedNamespaces.has(owner.split('.')[0]!)
+        ? `${owner}.${node.func.attr}`
+        : undefined
+    }
+    if (node.func?.type === 'Name' && this.importedFunctions.has(node.func.id ?? ''))
+      return this.importedCanonicalNames.get(node.func.id ?? '')
+    return undefined
+  }
+
+  serializedReadType(node: PyNode): string | undefined {
+    if (this.checkingFunction || this.functionDepth > 0 || this.controlDepth > 0) return undefined
+    const accepted = this.acceptedSerializedReads.get(serializationSite(node))
+    if (accepted) return accepted
+    const name = this.serializationCallName(node)
+    const format =
+      name === 'numpy.load'
+        ? 'npy'
+        : name === 'joblib.load'
+          ? 'joblib'
+          : ['pandas.read_pickle', 'pickle.load'].includes(name ?? '')
+            ? 'python-pickle'
+            : undefined
+    if (!format) return undefined
+    const mmap =
+      node.keywords?.find((k) => k.arg === 'mmap_mode')?.value ??
+      (['joblib.load', 'numpy.load'].includes(name ?? '') && Array.isArray(node.args)
+        ? node.args[1]
+        : undefined)
+    if (mmap && !(mmap.type === 'Constant' && mmap.value === null)) return undefined
+    const path = this.serializationPath(
+      pythonFileCallArgument(node, {
+        kind: 'read',
+        position: 0,
+        keywords: ['filepath_or_buffer', 'file', 'filename']
+      })
+    )
+    const value = path ? this.serializedValues.get(path) : undefined
+    return value?.format === format && PYTHON_SERIALIZED_TYPES.has(value.valueType)
+      ? value.valueType
+      : undefined
+  }
+
+  trackSerializationCall(node: PyNode): void {
+    if (this.checkingFunction || this.functionDepth > 0) return
+    const name = this.serializationCallName(node)
+    const member = memberName(node.func) ?? ''
+    const effect = PYTHON_FILE_CALL_EFFECTS.get(name ?? '') ?? PYTHON_FILE_CALL_EFFECTS.get(member)
+    const pathArgument = effect ? pythonFileCallArgument(node, effect) : undefined
+    let path = this.serializationPath(pathArgument)
+    const connection =
+      pathArgument?.type === 'Name' && this.serializedConnections.has(pathArgument.id ?? '')
+    if (path && effect?.appendedSuffix && !connection && !path.endsWith(effect.appendedSuffix))
+      path += effect.appendedSuffix
+    const reader = ['pandas.read_pickle', 'pickle.load', 'joblib.load', 'numpy.load'].includes(
+      name ?? ''
+    )
+    if (reader) this.serializedValueReads.add(path ?? '<dynamic>')
+    const readType = this.serializedReadType(node)
+    if (readType) this.acceptedSerializedReads.set(serializationSite(node), readType)
+    const raw = pythonDottedName(node.func)
+    const openCall = raw === 'open' && !this.defined.has('open')
+    const modeArgument =
+      node.keywords?.find((k) => k.arg === 'mode')?.value ??
+      (Array.isArray(node.args) ? node.args[1] : undefined)
+    const readMode = modeArgument
+      ? pythonStaticString(modeArgument, this.serializedPathBindings)
+      : 'r'
+    const writes =
+      effect?.kind === 'write' ||
+      ((openCall || member === 'open') &&
+        (!openCall || !['r', 'rb', 'rt'].includes(readMode ?? ''))) ||
+      [
+        'write',
+        'write_text',
+        'write_bytes',
+        'truncate',
+        'remove',
+        'unlink',
+        'rename',
+        'replace',
+        'copy',
+        'copyfile'
+      ].includes(member)
+    if (writes) {
+      if (path) {
+        this.serializedValueWrites.delete(path)
+        this.serializedValues.delete(path)
+      } else {
+        this.serializedValueWrites.clear()
+        this.serializedValues.clear()
+      }
+    }
+    const pandasMethod = name === 'pandas.DataFrame.to_pickle' || name === 'pandas.Series.to_pickle'
+    const format =
+      name === 'numpy.save'
+        ? 'npy'
+        : name === 'joblib.dump'
+          ? 'joblib'
+          : pandasMethod || ['pandas.to_pickle', 'pickle.dump'].includes(name ?? '')
+            ? 'python-pickle'
+            : undefined
+    const object =
+      name === 'numpy.save'
+        ? (node.keywords?.find((k) => k.arg === 'arr')?.value ??
+          (Array.isArray(node.args) ? node.args[1] : undefined))
+        : pandasMethod
+          ? (node.func?.value as PyNode)
+          : (node.keywords?.find((k) => ['obj', 'value'].includes(k.arg ?? ''))?.value ??
+            (Array.isArray(node.args) ? node.args[0] : undefined))
+    const valueType = object
+      ? (this.libraryTypeName(object) ?? this.arithmeticResultType(object))
+      : undefined
+    if (
+      format &&
+      path &&
+      valueType &&
+      (format !== 'npy' || valueType === 'numpy.ndarray') &&
+      PYTHON_SERIALIZED_TYPES.has(valueType) &&
+      this.controlDepth === 0
+    ) {
+      const value: NotebookSerializedValue = {
+        path,
+        format,
+        valueType: valueType as NotebookSerializedValue['valueType']
+      }
+      this.serializedValueWrites.set(path, value)
+      this.serializedValues.set(path, value)
+    }
+  }
+
+  visit_With(node: PyNode): void {
+    const names: string[] = []
+    for (const item of node.items ?? []) {
+      this.visit(item.context_expr)
+      this.visit(item.optional_vars)
+      const call = item.context_expr
+      if (
+        call?.type !== 'Call' ||
+        pythonDottedName(call.func) !== 'open' ||
+        this.defined.has('open')
+      )
+        continue
+      const path = this.serializationPath(
+        pythonFileCallArgument(call, { kind: 'read', position: 0, keywords: ['file'] })
+      )
+      const target = item.optional_vars
+      if (path && target?.type === 'Name' && target.id) {
+        this.serializedConnections.set(target.id, path)
+        names.push(target.id)
+      }
+    }
+    for (const statement of Array.isArray(node.body) ? node.body : []) this.visit(statement)
+    for (const name of names) this.serializedConnections.delete(name)
+  }
+
+  comprehensionDepth = 0
+  contextualKernelNames = new Set<string>()
+  freshCalculatedNames = new Set<string>()
+  calculatedValueTypes = new WeakMap<PyNode, string>()
+  calculatedReturnName?: string
+  literalBindings = new Map<string, PyNode>()
+  localFunctions = new Map<string, PyNode>()
+  assignmentVersions = new Map<string, number>()
+  localFunctionDefaultVersions = new Map<PyNode, Map<string, number>>()
+  checkingFunction = false
+  functionDepth = 0
+  procedureBudget = { remaining: 6000 }
+  procedureReturnTypes = new Map<PyNode, string>()
+  procedureReturnShapes = new Map<PyNode, string[]>()
+  procedureReturnAliases = new Map<PyNode, Map<number, string[]>>()
+  unresolvedFunctionCall = false
+  consoleRedirected = false
+  pythonRandomStateReads = false
+  pythonPlottingState = { reads: false, writes: false }
+  diagnosticValues = new Map<string, PythonDiagnosticKind>()
+  namespaceLoads = new Map<string, number[]>()
   defined = new Set<string>()
   conditionallyDefined = new Set<string>()
   isolatedConditionallyDefined = new Set<string>()
@@ -2099,8 +3020,15 @@ class Analyzer extends NodeVisitor {
   unknown = new Set<string>()
   controlDepth = 0
   localAggregationDepth = 0
+  isolatedLoopEffects: Array<{
+    depth: number
+    localNames: Set<string>
+    assignmentDepth: number
+    initializedNames: Set<string>
+  }> = []
   localScopes: Array<Record<string, string | undefined>> = []
   localLibraryTypeScopes: Array<Record<string, string | undefined>> = []
+  concatenatedIterationSources: string[][] = []
   builtinModuleNames = new Set(['builtins', '__builtins__'])
   importedModules = new Map<string, string>()
   importedFunctions = new Map<string, string>()
@@ -2114,6 +3042,68 @@ class Analyzer extends NodeVisitor {
     private readonly contextualStaticCollections: Set<string> = new Set()
   ) {
     super()
+  }
+
+  visit(node: PyNode | null | undefined): void {
+    if (!node) return
+    const consoleControl =
+      !this.consoleRedirected &&
+      pythonConsoleControlDiagnostic(
+        node,
+        this.importedCanonicalNames,
+        this.defined,
+        this.taintedNamespaces,
+        (name) => this.diagnosticValues.get(name)
+      )
+    if (
+      consoleControl &&
+      consoleControl.locals.every(
+        (name) =>
+          !(this.namespaceLoads.get(name) ?? []).some((line) => line > (node.end_lineno ?? 0))
+      )
+    ) {
+      for (const name of consoleControl.names) this.addUsed(name)
+      for (const name of consoleControl.safeCalls) this.safeCallNames.add(name)
+      this.controlDepth += 1
+      this.prepareAssignment(consoleControl.locals, true)
+      for (const name of consoleControl.locals) {
+        this.defined.add(name)
+        this.isolatedConditionallyDefined.add(name)
+      }
+      this.controlDepth -= 1
+      return
+    }
+    if (node.type === 'For' && node.iter?.type === 'BinOp' && node.iter.op === 'Add') {
+      const sources = this.concatenatedSources(node.iter)
+      if (sources.length > 1) {
+        const start = this.receiverCalls.length
+        this.concatenatedIterationSources.push(sources)
+        super.visit(node)
+        this.concatenatedIterationSources.pop()
+        for (const record of this.receiverCalls.slice(start)) {
+          if (record.receiver === sources[0])
+            for (const receiver of sources.slice(1))
+              this.receiverCalls.push({ ...record, receiver })
+        }
+        return
+      }
+    }
+    const diagnostic =
+      !this.consoleRedirected &&
+      this.localScopes.length === 0 &&
+      pythonConsoleDiagnostic(
+        node,
+        this.importedCanonicalNames,
+        this.defined,
+        this.taintedNamespaces,
+        (name) => this.diagnosticValues.get(name)
+      )
+    if (!diagnostic) {
+      super.visit(node)
+      return
+    }
+    for (const name of diagnostic.names) this.addUsed(name)
+    for (const name of diagnostic.safeCalls) this.safeCallNames.add(name)
   }
 
   addUsed(name: string): void {
@@ -2131,12 +3121,33 @@ class Analyzer extends NodeVisitor {
   }
 
   addMutation(name: string): void {
-    if (this.controlDepth > 0) this.possiblyMutated.add(name)
+    this.literalBindings.delete(name)
+    for (const [binding, value] of this.literalBindings)
+      if (!staticScalar(value)) this.literalBindings.delete(binding)
+    for (const sources of this.concatenatedIterationSources) {
+      if (sources[0] === name)
+        for (const source of sources.slice(1)) {
+          if (this.controlDepth > 0 && !this.isolatedLoopEffects.at(-1)?.localNames.has(source))
+            this.possiblyMutated.add(source)
+          else this.mutated.add(source)
+        }
+    }
+    this.diagnosticValues.delete(name)
+    const scoped = this.isolatedLoopEffects.at(-1)
+    if (
+      this.controlDepth > 0 &&
+      !scoped?.localNames.has(name) &&
+      !this.freshCalculatedNames.has(name)
+    )
+      this.possiblyMutated.add(name)
     else this.mutated.add(name)
+    this.freshCalculatedNames.delete(name)
   }
 
   conditionalFact(): { conditional?: true } {
-    return this.controlDepth > 0 ? { conditional: true } : {}
+    return this.controlDepth > (this.isolatedLoopEffects.at(-1)?.depth ?? 0)
+      ? { conditional: true }
+      : {}
   }
 
   addPossibleAlias(target: string, source: string, access?: string, member?: string): void {
@@ -2180,6 +3191,15 @@ class Analyzer extends NodeVisitor {
   }
 
   libraryTypeName(node: PyNode | null | undefined): string | undefined {
+    if (node?.type === 'Constant' && node.constKind === 'str') return 'python.string'
+    if (node?.type === 'Subscript') {
+      const type = this.librarySubscriptType(node)
+      if (type) return type
+    }
+    if (node?.type === 'Attribute') {
+      const property = this.libraryPropertyEffect(node)
+      if (property?.returnType) return property.returnType
+    }
     const localName = rootName(node)
     for (let index = this.localScopes.length - 1; index >= 0; index -= 1) {
       if (localName && localName in this.localScopes[index]!) {
@@ -2190,6 +3210,58 @@ class Analyzer extends NodeVisitor {
     return visibleName
       ? (this.importedModules.get(visibleName) ?? this.localLibraryTypes.get(visibleName))
       : undefined
+  }
+
+  librarySubscriptType(node: PyNode): string | undefined {
+    if (node.type !== 'Subscript' || !isPyNode(node.value)) return undefined
+    const owner =
+      node.value.type === 'Call'
+        ? this.libraryCallEffect(node.value)?.returnType
+        : this.libraryTypeName(node.value)
+    if (
+      node.value.type === 'Attribute' &&
+      ['loc', 'iloc'].includes(node.value.attr ?? '') &&
+      this.libraryTypeName(node.value.value as PyNode) === 'pandas.DataFrame'
+    ) {
+      const selectors =
+        node.slice?.type === 'Tuple' ? (node.slice.elts ?? []) : node.slice ? [node.slice] : []
+      const scalar = (selector: PyNode): boolean =>
+        selector.type === 'Constant' ||
+        ['python.string', 'python.scalar'].includes(this.arithmeticResultType(selector) ?? '')
+      const multiple = (selector: PyNode): boolean =>
+        ['List', 'Tuple', 'Slice'].includes(selector.type) ||
+        ['python.strings', 'python.container', 'numpy.ndarray', 'pandas.Series'].includes(
+          this.libraryTypeName(selector) ?? ''
+        )
+      if (selectors.length === 2 && selectors.every(scalar)) return 'python.scalar'
+      if (
+        selectors.length === 2 &&
+        selectors.every((selector) => scalar(selector) || multiple(selector))
+      )
+        return selectors.some(scalar) ? 'pandas.Series' : 'pandas.DataFrame'
+      if (selectors.length === 1 && scalar(selectors[0]!)) return 'pandas.Series'
+      if (selectors.length === 1 && multiple(selectors[0]!)) return 'pandas.DataFrame'
+      return undefined
+    }
+    if (owner === 'python.string') return 'python.string'
+    if (owner === 'python.numbers') return node.slice?.type === 'Slice' ? owner : 'python.scalar'
+    if (
+      owner === 'numpy.ndarray' &&
+      node.slice &&
+      ((node.slice.type === 'Constant' && node.slice.constKind === 'int') ||
+        (node.slice.type === 'Name' && this.libraryTypeName(node.slice) === 'python.scalar'))
+    )
+      return 'numpy.ndarray'
+    if (owner === 'python.strings')
+      return node.slice?.type === 'Slice' ? 'python.strings' : 'python.string'
+    if (
+      owner === 'pandas.DataFrame' &&
+      ((node.slice?.type === 'Constant' && node.slice.constKind === 'str') ||
+        (node.slice?.type === 'Name' &&
+          ['python.string', 'python.scalar'].includes(this.libraryTypeName(node.slice) ?? '')))
+    )
+      return 'pandas.Series'
+    return undefined
   }
 
   iterationSource(node: PyNode | null | undefined): string | undefined {
@@ -2226,18 +3298,43 @@ class Analyzer extends NodeVisitor {
   }
 
   iterationTypes(node: PyNode | null | undefined): string[] {
+    if (node?.type === 'ListComp') {
+      const generator = node.generators?.[0]
+      if (
+        generator &&
+        node.elt?.type === 'Name' &&
+        generator.target.type === 'Name' &&
+        node.elt.id === generator.target.id
+      )
+        return this.iterationTypes(generator.iter)
+      const element = this.arithmeticResultType(node.elt)
+      if (element) return [element]
+    }
+
     if (node?.type === 'Call' && isPyNode(node.func) && node.func.type === 'Name') {
       const args = Array.isArray(node.args) ? node.args : []
+      if (node.func.id === 'range' && !this.defined.has('range')) return ['python.scalar']
       if (node.func.id === 'enumerate') return ['python.scalar', ...this.iterationTypes(args[0])]
       const sourceIndex = node.func.id === 'filter' ? 1 : 0
       if (['filter', 'list', 'reversed', 'sorted', 'tuple'].includes(node.func.id ?? '')) {
         return this.iterationTypes(args[sourceIndex])
       }
     }
+    if (
+      node &&
+      ['List', 'Tuple'].includes(node.type) &&
+      node.elts?.length &&
+      node.elts.every((value) => this.arithmeticResultType(value) === 'python.scalar')
+    )
+      return ['python.scalar']
     const source = this.iterationSource(node)
     const sourceType = source ? this.localLibraryTypes.get(source) : undefined
     const directType =
-      node?.type === 'Call' ? this.libraryCallEffect(node)?.returnType : this.libraryTypeName(node)
+      node?.type === 'Call'
+        ? this.libraryCallEffect(node)?.returnType
+        : node && ['BinOp', 'List', 'Tuple'].includes(node.type)
+          ? this.arithmeticResultType(node)
+          : this.libraryTypeName(node)
     return PYTHON_LIBRARY_EFFECTS[sourceType ?? directType ?? '']?.iterationTypes ?? []
   }
 
@@ -2255,7 +3352,18 @@ class Analyzer extends NodeVisitor {
     return targetNames.map((_, index) => types[index] ?? (types.length === 1 ? types[0]! : ''))
   }
 
+  concatenatedSources(node: PyNode | undefined): string[] {
+    if (!node) return []
+    if (node.type === 'Name' && this.builtinContainers.has(node.id ?? ''))
+      return this.expressionVisibleRoots(node)
+    if (node.type !== 'BinOp' || node.op !== 'Add') return []
+    const left = this.concatenatedSources(node.left),
+      right = this.concatenatedSources(node.right)
+    return left.length && right.length ? [...new Set([...left, ...right])] : []
+  }
+
   loopSourceNames(node: PyNode | null | undefined): Array<string | undefined> {
+    if (node?.type === 'BinOp') return this.concatenatedSources(node)
     if (
       node?.type === 'Call' &&
       isPyNode(node.func) &&
@@ -2279,6 +3387,25 @@ class Analyzer extends NodeVisitor {
     return this.expressionVisibleRoots(node)
   }
 
+  bindTypedLoopValues(
+    iterator: PyNode | undefined,
+    names: string[],
+    sources: Array<string | undefined>,
+    types: string[]
+  ): void {
+    const aliases = this.receiverValueRoots(iterator)
+    const primarySource = sources[0]
+    for (const [index, name] of names.entries()) {
+      const typeName = types[index]
+      if (!typeName || sources[index] || primarySource) continue
+      sources[index] = name
+      this.addLibrarySummaries()
+      this.typeBindings.push({ target: name, typeName, argumentNames: [] })
+      if (typeName !== 'python.scalar')
+        for (const source of aliases) this.addPossibleAlias(name, source)
+    }
+  }
+
   receiverRootName(node: PyNode | null | undefined): string | undefined {
     const name = this.visibleRootName(node)
     if (name) return name
@@ -2295,6 +3422,10 @@ class Analyzer extends NodeVisitor {
   }
 
   receiverCallChain(node: PyNode | null | undefined): string[] {
+    if (node?.type === 'Attribute' && this.libraryPropertyEffect(node))
+      return [...this.receiverCallChain(node.value as PyNode), `@${node.attr}`]
+    if (node?.type === 'Subscript' && this.librarySubscriptType(node) === 'pandas.Series')
+      return [...this.receiverCallChain(node.value as PyNode), '@column']
     if (node?.type === 'Subscript') return this.receiverCallChain(node.value as PyNode)
     if (node?.type === 'Call' && isPyNode(node.func) && node.func.type === 'Attribute') {
       return [...this.receiverCallChain(node.func.value as PyNode), node.func.attr ?? '']
@@ -2305,6 +3436,10 @@ class Analyzer extends NodeVisitor {
   }
 
   receiverChainFirstArguments(node: PyNode | null | undefined): string[][] {
+    if (node?.type === 'Attribute' && this.libraryPropertyEffect(node))
+      return [...this.receiverChainFirstArguments(node.value as PyNode), []]
+    if (node?.type === 'Subscript' && this.librarySubscriptType(node) === 'pandas.Series')
+      return [...this.receiverChainFirstArguments(node.value as PyNode), []]
     if (node?.type === 'Subscript') return this.receiverChainFirstArguments(node.value as PyNode)
     if (node?.type === 'Call') {
       const prior =
@@ -2319,9 +3454,30 @@ class Analyzer extends NodeVisitor {
 
   receiverChainArguments(node: PyNode | null | undefined): Array<{
     positionalArgumentNames: string[][]
+    positionalStaticShapes: PythonArgumentShape[]
     positionalStaticBooleans: Array<boolean | null>
     keywordArguments: ReturnType<Analyzer['keywordArgumentRecord']>[]
   }> {
+    if (node?.type === 'Attribute' && this.libraryPropertyEffect(node))
+      return [
+        ...this.receiverChainArguments(node.value as PyNode),
+        {
+          positionalArgumentNames: [],
+          positionalStaticShapes: [],
+          positionalStaticBooleans: [],
+          keywordArguments: []
+        }
+      ]
+    if (node?.type === 'Subscript' && this.librarySubscriptType(node) === 'pandas.Series')
+      return [
+        ...this.receiverChainArguments(node.value as PyNode),
+        {
+          positionalArgumentNames: [],
+          positionalStaticShapes: [],
+          positionalStaticBooleans: [],
+          keywordArguments: []
+        }
+      ]
     if (node?.type === 'Subscript') return this.receiverChainArguments(node.value as PyNode)
     if (node?.type === 'Call') {
       const prior =
@@ -2333,14 +3489,13 @@ class Analyzer extends NodeVisitor {
         ...prior,
         {
           positionalArgumentNames: args.map((argument) => this.expressionVisibleRoots(argument)),
+          positionalStaticShapes: args.map(pythonArgumentShape),
           positionalStaticBooleans: args.map((argument) =>
             argument.type === 'Constant' && argument.constKind === 'bool'
               ? Boolean(argument.value)
               : null
           ),
-          keywordArguments: (node.keywords ?? []).map((keyword) =>
-            this.keywordArgumentRecord(keyword)
-          )
+          keywordArguments: this.callKeywordArgumentRecords(node)
         }
       ]
     }
@@ -2460,6 +3615,7 @@ class Analyzer extends NodeVisitor {
     node: PyNode | null | undefined,
     container?: 'list' | 'dict'
   ): Array<{ root: string; member?: string; container?: 'list' | 'dict' }> {
+    if (node && this.pureInlineCallbacks.has(node)) return []
     const suffix = container ? { container } : {}
     if (node?.type === 'Name' && node.id) {
       const alias = this.aliases.get(node.id) ?? node.id
@@ -2479,6 +3635,21 @@ class Analyzer extends NodeVisitor {
     return []
   }
 
+  callKeywordArgumentRecords(
+    node: PyNode,
+    trackLocal = false
+  ): ReturnType<Analyzer['keywordArgumentRecord']>[] {
+    const keywords = [...(node.keywords ?? [])]
+    const args = Array.isArray(node.args) ? node.args : []
+    for (const [position, name] of Object.entries(
+      this.libraryCallEffect(node)?.callbackPositionalKeywords ?? {}
+    )) {
+      const value = args[Number(position)]
+      if (value) keywords.push({ type: 'keyword', arg: name, value, _fields: ['value'] })
+    }
+    return keywords.map((keyword) => this.keywordArgumentRecord(keyword, trackLocal))
+  }
+
   keywordArgumentRecord(
     keyword: PyKeyword,
     trackLocal = false
@@ -2494,6 +3665,7 @@ class Analyzer extends NodeVisitor {
       argumentNames: local ? [] : roots,
       possibleArgumentNames: local ? roots : [],
       staticBoolean,
+      staticShape: pythonArgumentShape(keyword.value),
       callableReferences: this.callableReferences(keyword.value)
     }
   }
@@ -2581,12 +3753,39 @@ class Analyzer extends NodeVisitor {
 
   arithmeticResultType(node: PyNode | null | undefined): string | undefined {
     if (!node) return undefined
+    if (node.type === 'JoinedStr') return 'python.string'
+    if (node.type === 'Constant' && node.constKind === 'str') return 'python.string'
+    if (node.type === 'Subscript') return this.librarySubscriptType(node)
+    const elements =
+      node.type === 'Dict'
+        ? node.values
+        : ['List', 'Tuple'].includes(node.type)
+          ? node.elts
+          : undefined
+    if (
+      (node.type !== 'Dict' ||
+        node.keys?.every((key) => key && this.arithmeticResultType(key) === 'python.string')) &&
+      elements?.length &&
+      elements.every((element) => this.arithmeticResultType(element) === 'python.string')
+    )
+      return 'python.strings'
+    if (
+      ['List', 'Tuple'].includes(node.type) &&
+      node.elts?.length &&
+      node.elts.every((value) => this.arithmeticResultType(value) === 'python.scalar')
+    )
+      return 'python.numbers'
+    if (node.type === 'ListComp' && this.arithmeticResultType(node.elt) === 'python.string')
+      return 'python.strings'
+    if (node.type === 'ListComp' && this.iterationTypes(node)[0] === 'python.scalar')
+      return 'python.numbers'
     if (
       node.type === 'Constant' &&
       ['int', 'float', 'complex', 'bool'].includes(node.constKind ?? '')
     )
       return 'python.scalar'
     if (node.type === 'Name') return this.libraryTypeName(node)
+    if (node.type === 'Attribute') return this.libraryPropertyEffect(node)?.returnType
     if (node.type === 'Call') {
       const effect = this.libraryCallEffect(node)
       if (effect?.returnType) return effect.returnType
@@ -2599,24 +3798,141 @@ class Analyzer extends NodeVisitor {
         return 'python.scalar'
       return undefined
     }
-    if (node.type === 'UnaryOp' && ['UAdd', 'USub'].includes(node.op ?? ''))
+    if (
+      node.type === 'BinOp' &&
+      ['Eq', 'NotEq', 'Lt', 'LtE', 'Gt', 'GtE'].includes(node.op ?? '')
+    ) {
+      const left = this.arithmeticResultType(node.left)
+      const right = this.arithmeticResultType(node.right)
+      const arrays = ['pandas.Series', 'pandas.DataFrame', 'numpy.ndarray']
+      if (
+        left &&
+        arrays.includes(left) &&
+        (right === left || ['python.scalar', 'python.string'].includes(right ?? ''))
+      )
+        return left
+      if (
+        right &&
+        arrays.includes(right) &&
+        ['python.scalar', 'python.string'].includes(left ?? '')
+      )
+        return right
+    }
+    if (node.type === 'UnaryOp' && ['UAdd', 'USub', 'Invert'].includes(node.op ?? ''))
       return this.arithmeticResultType(node.operand)
     if (
       node.type !== 'BinOp' ||
-      !['Add', 'Sub', 'Mult', 'Div', 'FloorDiv', 'Mod', 'Pow'].includes(node.op ?? '')
+      ![
+        'Add',
+        'Sub',
+        'Mult',
+        'Div',
+        'FloorDiv',
+        'Mod',
+        'Pow',
+        'BitAnd',
+        'BitOr',
+        'BitXor'
+      ].includes(node.op ?? '')
     )
       return undefined
     const left = this.arithmeticResultType(node.left)
     const right = this.arithmeticResultType(node.right)
     const arrays = ['pandas.Series', 'pandas.DataFrame', 'numpy.ndarray']
+    if (
+      node.op === 'Add' &&
+      left === right &&
+      ['python.string', 'python.strings'].includes(left ?? '')
+    )
+      return left
     if (left === 'python.scalar' && right === 'python.scalar') return left
     if (left && arrays.includes(left) && (right === left || right === 'python.scalar')) return left
     if (right && arrays.includes(right) && left === 'python.scalar') return right
     return undefined
   }
 
+  libraryPropertyEffect(node: PyNode): PythonLibraryMethodEffect | undefined {
+    if (node.type !== 'Attribute') return undefined
+    const receiver = node.value as PyNode
+    const owner =
+      receiver.type === 'Call'
+        ? this.libraryCallEffect(receiver)?.returnType
+        : this.libraryTypeName(receiver)
+    return owner ? PYTHON_LIBRARY_EFFECTS[owner]?.methods[`@${node.attr}`] : undefined
+  }
+
+  specializeLibraryReturn(
+    effect: PythonLibraryMethodEffect,
+    node: PyNode
+  ): PythonLibraryMethodEffect {
+    if (
+      effect.preservesPandasType &&
+      Array.isArray(node.args) &&
+      node.args.length === 1 &&
+      !node.keywords?.some((keyword) => keyword.arg === 'out' || !keyword.arg)
+    ) {
+      const inputType = this.arithmeticResultType(node.args[0])
+      if (inputType === 'pandas.DataFrame' || inputType === 'pandas.Series')
+        return { ...effect, returnType: inputType }
+    }
+    if (
+      effect.scalarInputReturnType &&
+      Array.isArray(node.args) &&
+      node.args.length === 1 &&
+      !node.keywords?.some((keyword) => keyword.arg === 'out' || !keyword.arg) &&
+      this.arithmeticResultType(node.args[0]) === 'python.scalar'
+    )
+      return { ...effect, returnType: effect.scalarInputReturnType }
+    if (!effect.returnTypeByArgumentShape) return effect
+    return {
+      ...effect,
+      returnType: pythonArgumentShapeReturnType(
+        effect,
+        (Array.isArray(node.args) ? node.args : []).map(pythonArgumentShape),
+        (node.keywords ?? []).map((keyword) => ({
+          name: keyword.arg ?? '**',
+          staticShape: pythonArgumentShape(keyword.value)
+        }))
+      )
+    }
+  }
+
   libraryCallEffect(node: PyNode): PythonLibraryMethodEffect | undefined {
+    const serializedType = this.serializedReadType(node)
+    if (serializedType) return { effect: 'read', returnType: serializedType }
+    if (this.serializationCallName(node) === 'numpy.load') {
+      const pickle =
+        node.keywords?.find((k) => k.arg === 'allow_pickle')?.value ??
+        (Array.isArray(node.args) ? node.args[2] : undefined)
+      return {
+        effect: 'read',
+        unsafeNamespace: Boolean(pickle && !(pickle.type === 'Constant' && pickle.value === false))
+      }
+    }
+    const specialized = this.procedureReturnTypes.get(node)
+    if (specialized)
+      return {
+        effect: 'read',
+        returnType: specialized,
+        destructuredReturnTypes: this.procedureReturnShapes.get(node)
+      }
     if (isPyNode(node.func) && node.func.type === 'Name' && node.func.id) {
+      if (!this.defined.has(node.func.id) && !this.importedFunctions.has(node.func.id)) {
+        if (['sorted', 'list', 'tuple', 'dict', 'set'].includes(node.func.id))
+          return { effect: 'read', returnType: 'python.container' }
+        if (['float', 'int', 'len', 'bool'].includes(node.func.id))
+          return { effect: 'read', returnType: 'python.scalar' }
+        if (node.func.id === 'str') return { effect: 'read', returnType: 'python.string' }
+        if (
+          ['sum', 'min', 'max'].includes(node.func.id) &&
+          Array.isArray(node.args) &&
+          node.args.length === 1 &&
+          !node.keywords?.length
+        ) {
+          const type = this.arithmeticResultType(node.args[0])
+          if (type === 'numpy.ndarray') return { effect: 'read', returnType: type }
+        }
+      }
       const callableType = this.importedFunctions.get(node.func.id) ?? ''
       const prefix = 'python-callable:'
       if (!callableType.startsWith(prefix)) return undefined
@@ -2626,20 +3942,42 @@ class Analyzer extends NodeVisitor {
         .sort((left, right) => right[0].length - left[0].length)
       const module = modules[0]?.[0]
       if (!module) return undefined
-      return PYTHON_LIBRARY_EFFECTS[module]?.methods[canonical.slice(module.length + 1)]
+      const effect = pythonLibraryMethodEffect(module, canonical.slice(module.length + 1))
+      return effect ? this.specializeLibraryReturn(effect, node) : undefined
     }
     if (!isPyNode(node.func) || node.func.type !== 'Attribute') return undefined
-    const receiverNode = node.func.value as PyNode
+    let receiverNode = node.func.value as PyNode
+    while (
+      receiverNode.type === 'Subscript' &&
+      isPyNode(receiverNode.value) &&
+      !this.librarySubscriptType(receiverNode)
+    )
+      receiverNode = receiverNode.value
     const typeName =
       receiverNode.type === 'Call'
         ? this.libraryCallEffect(receiverNode)?.returnType
-        : receiverNode.type === 'BinOp' || receiverNode.type === 'UnaryOp'
+        : ['BinOp', 'UnaryOp'].includes(receiverNode.type)
           ? this.arithmeticResultType(receiverNode)
-          : this.libraryTypeName(receiverNode)
+          : (this.libraryTypeName(receiverNode) ??
+            (this.builtinContainers.has(rootName(receiverNode) ?? '')
+              ? 'python.container'
+              : undefined))
     if (!typeName) return undefined
     const member = node.func.attr ?? ''
-    const registered = pythonLibraryMethodEffect(typeName, member)
-    if (registered) return registered
+    const effect = pythonLibraryMethodEffect(typeName, member)
+    const registered = effect ? this.specializeLibraryReturn(effect, node) : undefined
+    if (
+      registered &&
+      typeName === 'numpy.ndarray' &&
+      ['sum', 'min', 'max', 'mean'].includes(member) &&
+      !(Array.isArray(node.args) && node.args.length) &&
+      !node.keywords?.length
+    )
+      return { ...registered, returnType: 'python.scalar' }
+    if (registered)
+      return member === 'to_dict' && ['pandas.DataFrame', 'pandas.Series'].includes(typeName)
+        ? { ...registered, returnType: 'python.container' }
+        : registered
     const args = Array.isArray(node.args) ? node.args : []
     const callback = args[0]
     if (!summarizeInlineCallback(callback)) return undefined
@@ -2654,15 +3992,21 @@ class Analyzer extends NodeVisitor {
     if (node.type !== 'Call' || node.func?.type !== 'Attribute' || !isPyNode(node.func.value))
       return false
     const effect = this.libraryCallEffect(node)
+    const args = Array.isArray(node.args) ? node.args : []
     if (
       effect?.effect !== 'read' ||
       effect.callbackKeywords?.length ||
       effect.callbackAllKeywords ||
       effect.callbackContainerKeywords?.length ||
       effect.externalState ||
-      effect.mutatesKeyword ||
+      (effect.mutatesKeyword &&
+        node.keywords?.some(
+          (keyword) => keyword.arg === null || keyword.arg === effect.mutatesKeyword
+        )) ||
       effect.mutatesReceiverUnlessKeywordFalse ||
-      effect.mutatesPositionalArgument !== undefined ||
+      (effect.mutatesPositionalArgument !== undefined &&
+        (args.length > effect.mutatesPositionalArgument ||
+          args.some((arg) => arg.type === 'Starred'))) ||
       effect.possiblyMutatesFirstArgument ||
       effect.possiblyMutatesKeyword ||
       effect.possiblyMutatesPositionalArgument !== undefined ||
@@ -2693,7 +4037,10 @@ class Analyzer extends NodeVisitor {
     else this.removeUsed(source)
   }
 
-  prepareAssignment(targetNames: string[]): void {
+  prepareAssignment(targetNames: string[], isolated = false): void {
+    const loop = this.isolatedLoopEffects.at(-1)
+    if (loop && this.controlDepth === loop.assignmentDepth)
+      for (const name of targetNames) loop.initializedNames.add(name)
     const conditional = this.controlDepth > 0
     for (const name of targetNames) this.isolatedConditionallyDefined.delete(name)
     if (conditional) {
@@ -2703,6 +4050,21 @@ class Analyzer extends NodeVisitor {
       for (const name of targetNames) this.conditionallyDefined.delete(name)
     }
     for (const name of targetNames) {
+      this.assignmentVersions.set(name, (this.assignmentVersions.get(name) ?? 0) + 1)
+      this.freshCalculatedNames.delete(name)
+      this.literalBindings.delete(name)
+      this.serializedPathBindings.delete(name)
+      this.serializedConnections.delete(name)
+      if (
+        conditional &&
+        !isolated &&
+        !loop?.initializedNames.has(name) &&
+        !this.defined.has(name) &&
+        this.contextualKernelNames.has(name)
+      )
+        this.addUsed(name)
+      this.localFunctions.delete(name)
+      this.diagnosticValues.delete(name)
       this.contextualStaticCollections.delete(name)
       if (!conditional) this.clearPossibleAliases(name)
       this.importedModules.delete(name)
@@ -2728,12 +4090,27 @@ class Analyzer extends NodeVisitor {
     this.controlDepth += 1
     this.genericVisit(node)
     this.controlDepth -= 1
+    // A conservatively analyzed loop can still leave an element alias in the kernel.
+    // Retain literal-container sources so later mutations cannot lose that dependency.
+    if (node.type === 'For' && ['List', 'Tuple', 'Set'].includes(node.iter?.type ?? '')) {
+      for (const target of loopTargetNames(node.target))
+        for (const source of this.expressionVisibleRoots(node.iter))
+          this.addPossibleAlias(target, source)
+    }
   }
 
   visit_Name(node: PyNode): void {
     if (!node.id || this.localScopes.some((scope) => node.id! in scope)) return
-    if (node.ctx === 'Load') this.addUsed(node.id)
-    else if (node.ctx === 'Store') {
+    if (node.ctx === 'Load') {
+      this.addUsed(node.id)
+      if (
+        BUILTIN_TYPE_VALUES.has(node.id) &&
+        !this.defined.has(node.id) &&
+        !this.taintedNamespaces.has('*') &&
+        !this.taintedNamespaces.has('builtins')
+      )
+        this.safeCallNames.add(node.id)
+    } else if (node.ctx === 'Store') {
       this.defined.add(node.id)
       if (this.controlDepth > 0) this.conditionallyDefined.add(node.id)
     } else if (node.ctx === 'Del') {
@@ -2789,6 +4166,23 @@ class Analyzer extends NodeVisitor {
     value: PyNode | undefined,
     targetNames: string[]
   ): void {
+    if (value?.type === 'IfExp') {
+      const selected = staticBoolean(value.test)
+      if (selected !== undefined) {
+        const branch = selected ? value.body : value.alternate
+        if (isPyNode(branch)) value = branch
+      }
+    }
+    const diagnosticValue =
+      value && this.localScopes.length === 0 && this.controlDepth === 0
+        ? pythonDiagnosticValue(
+            value,
+            this.importedCanonicalNames,
+            this.defined,
+            this.taintedNamespaces,
+            (name) => this.diagnosticValues.get(name)
+          )
+        : undefined
     const lambdaSummary =
       target?.type === 'Name' && target.id && value?.type === 'Lambda'
         ? summarizeLambda(value, target.id)
@@ -2860,22 +4254,97 @@ class Analyzer extends NodeVisitor {
     } else if (value) this.visit(value)
     const libraryEffect = value?.type === 'Call' ? this.libraryCallEffect(value) : undefined
     const arithmeticValue =
+      ['python.string', 'python.strings', 'python.numbers'].includes(
+        this.arithmeticResultType(value) ?? ''
+      ) ||
+      (value?.type === 'Name' && this.arithmeticResultType(value) === 'python.scalar') ||
+      (value?.type === 'Constant' &&
+        ['int', 'float', 'complex', 'bool'].includes(value.constKind ?? '')) ||
       value?.type === 'BinOp' ||
       value?.type === 'UnaryOp' ||
       (value && this.isReadOnlyArithmeticCall(value))
     const returnType =
-      libraryEffect?.returnType ?? (arithmeticValue ? this.arithmeticResultType(value) : undefined)
+      libraryEffect?.returnType ??
+      (value?.type === 'Attribute' ? this.libraryPropertyEffect(value)?.returnType : undefined) ??
+      (value?.type === 'Subscript' ? this.librarySubscriptType(value) : undefined) ??
+      (arithmeticValue ? this.arithmeticResultType(value) : undefined)
     const destructuredReturnTypes = libraryEffect?.destructuredReturnTypes
+    // Preserve fresh containers and scalars in simultaneous unpacking. Resolve all
+    // RHS types before rebinding any target (including swaps and repeated names).
+    const literalParts =
+      ['Tuple', 'List'].includes(target?.type ?? '') &&
+      ['Tuple', 'List'].includes(value?.type ?? '') &&
+      target?.elts?.every((item) => item.type === 'Name') &&
+      target.elts.length === value?.elts?.length
+        ? value.elts.map((item) =>
+            ['List', 'Tuple', 'Dict', 'Set'].includes(item.type)
+              ? 'python.container'
+              : this.arithmeticResultType(item) === 'python.scalar'
+                ? 'python.scalar'
+                : undefined
+          )
+        : undefined
+    if (value && ['BinOp', 'UnaryOp'].includes(value.type)) {
+      const type = this.arithmeticResultType(value)
+      if (type) this.calculatedValueTypes.set(value, type)
+    }
+    const literalBinding =
+      value?.type === 'Name'
+        ? this.literalBindings.get(value.id ?? '')
+        : staticScalar(value) || staticNonemptyIterable(value)
+          ? value
+          : undefined
     const preservedIterationSource = this.iterationSource(value)
     const preservedIterationType = preservedIterationSource
       ? this.localLibraryTypes.get(preservedIterationSource)
       : undefined
     const unpackedTypes =
       target?.type === 'Tuple' || target?.type === 'List' ? this.iterationTypes(value) : []
+    const freshCalculatedAlias =
+      value?.type === 'Name' && this.freshCalculatedNames.has(value.id ?? '')
+    const freshCallResult =
+      libraryEffect?.returnsFreshValue &&
+      value &&
+      !(value.keywords ?? []).some(
+        (keyword) => !keyword.arg || keyword.arg === libraryEffect.mutatesKeyword
+      ) &&
+      (libraryEffect.mutatesPositionalArgument === undefined ||
+        (Array.isArray(value.args) ? value.args.length : 0) <=
+          libraryEffect.mutatesPositionalArgument)
+
     const subscriptType =
       value?.type === 'Subscript' ? this.iterationTypes(value.value as PyNode)[0] : undefined
     if (node.type === 'AnnAssign' && node.annotation) this.visit(node.annotation)
     this.prepareAssignment(targetNames)
+    if (
+      target?.type === 'Name' &&
+      target.id &&
+      value &&
+      (['BinOp', 'UnaryOp', 'Constant'].includes(value.type) ||
+        freshCalculatedAlias ||
+        freshCallResult ||
+        (libraryEffect?.effect === 'read' && returnType === 'python.scalar'))
+    )
+      this.freshCalculatedNames.add(target.id)
+    if (target?.type === 'Name' && target.id && literalBinding && this.controlDepth === 0)
+      this.literalBindings.set(target.id, literalBinding)
+    if (literalParts?.every(Boolean)) {
+      this.addLibrarySummaries()
+      for (const [index, name] of targetNames.entries()) {
+        const typeName = literalParts[index]!
+        this.localLibraryTypes.set(name, typeName)
+        this.builtinContainers.delete(name)
+        if (typeName === 'python.container') {
+          this.builtinContainers.add(name)
+          for (const source of this.expressionVisibleRoots(value!.elts![index]))
+            this.addPossibleAlias(name, source)
+        }
+        this.typeBindings.push({ target: name, typeName, argumentNames: [] })
+      }
+    }
+    if (diagnosticValue && !diagnosticValue.observed && target?.type === 'Name' && target.id) {
+      this.diagnosticValues.set(target.id, diagnosticValue.kind)
+    }
     if (
       this.controlDepth === 0 &&
       target?.type === 'Name' &&
@@ -2895,7 +4364,13 @@ class Analyzer extends NodeVisitor {
     ) {
       this.addLibrarySummaries()
       this.localLibraryTypes.set(target.id, returnType)
-      if (arithmeticValue)
+      if (['python.container', 'python.strings', 'python.numbers'].includes(returnType))
+        this.builtinContainers.add(target.id)
+      if (
+        arithmeticValue ||
+        value?.type === 'Attribute' ||
+        (value && this.procedureReturnTypes.has(value))
+      )
         this.typeBindings.push({ target: target.id, typeName: returnType, argumentNames: [] })
     } else if (destructuredReturnTypes?.length) {
       this.addLibrarySummaries()
@@ -2906,6 +4381,7 @@ class Analyzer extends NodeVisitor {
         )
         if (typeName && PYTHON_LIBRARY_EFFECTS[typeName]) {
           this.localLibraryTypes.set(targetName, typeName)
+          if (typeName === 'python.container') this.builtinContainers.add(targetName)
         }
       }
     } else if (unpackedTypes.length) {
@@ -2929,9 +4405,33 @@ class Analyzer extends NodeVisitor {
         argumentNames: []
       })
     } else if (target?.type === 'Name' && target.id && conditionalSources.size) {
-      this.unknown.add('conditional-expression')
+      const localSources = [...conditionalSources].every((source) => {
+        const pending = [source],
+          seen = new Set<string>()
+        while (pending.length) {
+          const name = pending.pop()!
+          if (seen.has(name)) continue
+          seen.add(name)
+          if (!this.defined.has(name)) return false
+          const alias = this.aliases.get(name)
+          if (alias) pending.push(alias)
+          for (const possible of this.possibleAliases) {
+            const [target, source] = possible.split('\0')
+            if (target === name) pending.push(source!)
+          }
+        }
+        return true
+      })
+      if (!this.isolatedLoopEffects.length || !localSources)
+        this.unknown.add('conditional-expression')
       for (const source of conditionalSources) this.addPossibleAlias(target.id, source)
-    } else if (target?.type === 'Name' && target.id && value?.type === 'Name' && aliasSource) {
+    } else if (
+      target?.type === 'Name' &&
+      target.id &&
+      value?.type === 'Name' &&
+      aliasSource &&
+      returnType !== 'python.scalar'
+    ) {
       if (this.controlDepth > 0) this.addPossibleAlias(target.id, aliasSource)
       else this.aliases.set(target.id, aliasSource)
     } else if (
@@ -2950,6 +4450,7 @@ class Analyzer extends NodeVisitor {
       }
     } else if (
       constructor &&
+      !(value && this.procedureReturnTypes.has(value)) &&
       target?.type === 'Name' &&
       target.id &&
       isPyNode(value?.func) &&
@@ -2964,13 +4465,28 @@ class Analyzer extends NodeVisitor {
       target?.type === 'Name' &&
       target.id &&
       value &&
-      (value.type === 'Dict' || value.type === 'List' || value.type === 'Tuple')
+      ['Dict', 'List', 'Tuple', 'Set', 'ListComp', 'DictComp', 'SetComp'].includes(value.type)
     ) {
       this.builtinContainers.add(target.id)
+    }
+    if (value && this.procedureReturnAliases.has(value)) {
+      for (const [index, sources] of this.procedureReturnAliases.get(value)!) {
+        const name = target?.type === 'Name' ? target.id : targetNames[index]
+        if (name) for (const source of sources) this.addPossibleAlias(name, source)
+      }
     }
   }
 
   visit_Assign(node: PyNode): void {
+    const pathValue = pythonStaticString(
+      isPyNode(node.value) ? node.value : undefined,
+      this.serializedPathBindings,
+      {
+        collections: new Map(),
+        importedNames: this.importedCanonicalNames,
+        shadowedNames: this.defined
+      }
+    )
     const targetNames = (node.targets ?? []).flatMap((target) => this.assignedNames(target))
     const target = (node.targets ?? []).length === 1 ? node.targets![0] : undefined
     this.bindAssignmentValue(
@@ -2980,6 +4496,10 @@ class Analyzer extends NodeVisitor {
       targetNames
     )
     for (const assigned of node.targets ?? []) this.visit(assigned)
+    if (pathValue !== undefined && this.controlDepth === 0)
+      for (const assigned of node.targets ?? [])
+        if (assigned.type === 'Name' && assigned.id)
+          this.serializedPathBindings.set(assigned.id, pathValue)
   }
 
   visit_AnnAssign(node: PyNode): void {
@@ -2993,7 +4513,7 @@ class Analyzer extends NodeVisitor {
   }
 
   visit_NamedExpr(node: PyNode): void {
-    if (this.localScopes.length) this.unknown.add('comprehension-scope')
+    if (this.comprehensionDepth) this.unknown.add('comprehension-scope')
     this.bindAssignmentValue(
       node,
       node.target,
@@ -3011,7 +4531,92 @@ class Analyzer extends NodeVisitor {
       for (const statement of Array.isArray(statements) ? statements : []) this.visit(statement)
       return
     }
+    // Conditional replacement of an existing scalar retains a definite scalar
+    // binding on either path. Visit the condition and RHS normally so their
+    // dependencies and any unsupported effects are still recorded.
+    const replacements = [...(Array.isArray(node.body) ? node.body : []), ...(node.orelse ?? [])]
+    if (
+      this.controlDepth === 0 &&
+      replacements.length > 0 &&
+      replacements.every((statement) => {
+        const target = statement.targets?.[0]
+        return (
+          statement.type === 'Assign' &&
+          statement.targets?.length === 1 &&
+          target?.type === 'Name' &&
+          this.defined.has(target.id ?? '') &&
+          !this.conditionallyDefined.has(target.id ?? '') &&
+          !this.aliases.has(target.id ?? '') &&
+          ![...this.possibleAliases].some((alias) => alias.split('\0')[0] === target.id) &&
+          this.arithmeticResultType(target) === 'python.scalar' &&
+          this.arithmeticResultType(statement.value as PyNode) === 'python.scalar'
+        )
+      })
+    ) {
+      if (node.test) this.visit(node.test)
+      for (const statement of replacements) this.visit(statement)
+      return
+    }
     if (this.localAggregationDepth === 0) {
+      const branchValue = (
+        branch: PyNode | PyNode[] | undefined
+      ): { name: string; type: string } | undefined => {
+        if (!Array.isArray(branch) || branch.length !== 1) return undefined
+        const assignment = branch[0]!
+        const target = assignment.targets?.[0]
+        if (
+          assignment.type !== 'Assign' ||
+          assignment.targets?.length !== 1 ||
+          target?.type !== 'Name' ||
+          !target.id ||
+          !isPyNode(assignment.value) ||
+          assignment.value.type !== 'Call'
+        )
+          return undefined
+        const effect = this.libraryCallEffect(assignment.value)
+        const readOnly = walkPy(assignment.value)
+          .filter((value) => value.type === 'Call')
+          .every((value) => {
+            const call = this.libraryCallEffect(value)
+            return (
+              call?.effect === 'read' &&
+              !call.unsafeNamespace &&
+              !call.externalState &&
+              !call.scopedOpaque &&
+              !call.callbackKeywords?.length &&
+              !call.callbackAllKeywords &&
+              !call.callbackContainerKeywords?.length &&
+              !call.mutatesKeyword &&
+              !call.mutatesReceiverUnlessKeywordFalse &&
+              call.mutatesPositionalArgument === undefined &&
+              !call.possiblyMutatesFirstArgument &&
+              !call.possiblyMutatesKeyword &&
+              call.possiblyMutatesPositionalArgument === undefined
+            )
+          })
+        return readOnly && effect?.returnType
+          ? { name: target.id, type: effect.returnType }
+          : undefined
+      }
+      const yes = branchValue(node.body),
+        no = branchValue(node.orelse)
+      // Both alternatives produce the same known value type. The selected value
+      // still depends on the condition and both possible inputs, but never on an
+      // earlier kernel binding. Keep call effects and possible aliases intact.
+      if (this.controlDepth === 0 && yes && no && yes.name === no.name && yes.type === no.type) {
+        if (node.test) this.visit(node.test)
+        const firstCall = this.receiverCalls.length
+        this.controlDepth += 1
+        for (const statement of [
+          ...(Array.isArray(node.body) ? node.body : []),
+          ...(node.orelse ?? [])
+        ])
+          this.visit(statement)
+        this.controlDepth -= 1
+        this.conditionallyDefined.delete(yes.name)
+        for (const call of this.receiverCalls.slice(firstCall)) delete call.conditional
+        return
+      }
       this.visit_control(node)
       return
     }
@@ -3021,12 +4626,64 @@ class Analyzer extends NodeVisitor {
     for (const statement of [...body, ...alternative]) this.visit(statement)
   }
 
+  knownProcedureIterator(node: PyNode | undefined): boolean {
+    if (!node) return false
+    if (['List', 'Tuple', 'Set', 'Dict'].includes(node.type)) return true
+    if (this.builtinContainers.has(rootName(node) ?? '')) return true
+    if (
+      node.type === 'Call' &&
+      node.func?.type === 'Attribute' &&
+      BUILTIN_CONTAINER_VIEW_METHODS.has(node.func.attr ?? '') &&
+      this.builtinContainers.has(rootName(node.func.value as PyNode) ?? '') &&
+      !(Array.isArray(node.args) && node.args.length) &&
+      !node.keywords?.length
+    )
+      return true
+    if (
+      node.type === 'Call' &&
+      node.func?.type === 'Name' &&
+      !this.defined.has(node.func.id ?? '')
+    ) {
+      const args = Array.isArray(node.args) ? node.args : []
+      if (node.func.id === 'range') return true
+      if (node.func.id === 'enumerate') return this.knownProcedureIterator(args[0])
+      if (node.func.id === 'zip') return args.every((arg) => this.knownProcedureIterator(arg))
+    }
+    return this.iterationTypes(node).length > 0
+  }
+
   visit_For(node: PyNode): void {
-    const deterministic = staticNonemptyIterable(node.iter, this.contextualStaticCollections)
+    if (this.checkingFunction && !this.knownProcedureIterator(node.iter))
+      this.unresolvedFunctionCall = true
+    const deterministic = staticNonemptyIterable(
+      node.iter?.type === 'Name'
+        ? (this.literalBindings.get(node.iter.id ?? '') ?? node.iter)
+        : node.iter,
+      this.contextualStaticCollections
+    )
     const structurallyNonempty = knownNonemptyIterableShape(node.iter)
     const scoped = this.scopedLoops.has(node)
     const isolatedConditionalNames = this.isolatedConditionalLoops.get(node)
     const body = Array.isArray(node.body) ? node.body : []
+    if (
+      isolatedConditionalNames &&
+      loopReadsUninitializedTemporary(
+        body,
+        isolatedConditionalNames,
+        new Set(
+          [...this.defined]
+            .filter((name) => !this.conditionallyDefined.has(name))
+            .concat(
+              this.assignedNames(node.target),
+              this.isolatedLoopEffects.flatMap((loop) => [...loop.initializedNames]),
+              this.checkingFunction ? [] : [...this.contextualKernelNames]
+            )
+        )
+      )
+    ) {
+      this.visit_control(node)
+      return
+    }
     const localAggregationNames = scoped ? localAggregationLoopMutationNames(body) : undefined
     const localAggregation =
       localAggregationNames &&
@@ -3039,10 +4696,36 @@ class Analyzer extends NodeVisitor {
     const effectOnly = effectOnlyLoopBody(body)
     const bodyIsSafe =
       effectOnly ||
-      ((deterministic || structurallyNonempty) && deterministicLoopBody(body)) ||
+      ((deterministic || structurallyNonempty) &&
+        deterministicLoopBody(body, this.calculatedReturnName)) ||
       Boolean(localAggregation)
-    if (!deterministic && isolatedConditionalNames && !localAggregation && !effectOnly) {
+    // A statically nonempty iterator still needs scoped effects when an early
+    // exit prevents treating its body as unconditional.
+    const needsScopedControl =
+      !bodyIsSafe &&
+      body.some(
+        (statement) =>
+          statement.type === 'For' ||
+          walkPy(statement).some((child) => ['Break', 'Continue'].includes(child.type))
+      )
+    if (isolatedConditionalNames && !localAggregation && (!deterministic || needsScopedControl)) {
       const temporaryValuesOnly = loopBodyWithTemporaryValues(body)
+      const localNames = new Set(
+        [...this.defined].filter((name) => {
+          const seen = new Set<string>()
+          while (!seen.has(name)) {
+            seen.add(name)
+            if (!this.defined.has(name) || this.conditionallyDefined.has(name)) return false
+            const source = this.aliases.get(name)
+            if (!source || this.importedModules.has(name) || this.importedFunctions.has(name))
+              return true
+            name = source
+          }
+          return false
+        })
+      )
+      for (const loop of this.isolatedLoopEffects)
+        for (const name of loop.initializedNames) localNames.add(name)
       if (node.iter) this.visit(node.iter)
       const targetNames = this.assignedNames(node.target)
       this.controlDepth += 1
@@ -3050,12 +4733,19 @@ class Analyzer extends NodeVisitor {
       for (const name of targetNames) this.defined.add(name)
       const sources = this.loopSourceNames(node.iter)
       const targetTypes = this.loopLibraryTypes(node.iter, targetNames)
+      this.bindTypedLoopValues(node.iter, targetNames, sources, targetTypes)
       this.localScopes.push(
         Object.fromEntries(targetNames.map((name, index) => [name, sources[index] ?? sources[0]]))
       )
       this.localLibraryTypeScopes.push(
         Object.fromEntries(targetNames.map((name, index) => [name, targetTypes[index]]))
       )
+      this.isolatedLoopEffects.push({
+        depth: this.controlDepth + 1,
+        localNames,
+        assignmentDepth: this.controlDepth,
+        initializedNames: new Set(targetNames)
+      })
       for (const statement of body) {
         const scopedEffect =
           temporaryValuesOnly && !['Assign', 'AnnAssign'].includes(statement.type)
@@ -3063,6 +4753,7 @@ class Analyzer extends NodeVisitor {
         this.visit(statement)
         if (scopedEffect) this.controlDepth += 1
       }
+      this.isolatedLoopEffects.pop()
       this.localLibraryTypeScopes.pop()
       this.localScopes.pop()
       this.controlDepth -= 1
@@ -3084,6 +4775,7 @@ class Analyzer extends NodeVisitor {
     }
     const sources = this.loopSourceNames(node.iter)
     const targetTypes = this.loopLibraryTypes(node.iter, targetNames)
+    this.bindTypedLoopValues(node.iter, targetNames, sources, targetTypes)
     this.localScopes.push(
       Object.fromEntries(targetNames.map((name, index) => [name, sources[index] ?? sources[0]]))
     )
@@ -3098,16 +4790,47 @@ class Analyzer extends NodeVisitor {
     for (const statement of node.orelse ?? []) this.visit(statement)
   }
 
+  visit_Return(node: PyNode): void {
+    if (
+      this.calculatedReturnName &&
+      (!['python.scalar', 'numpy.ndarray'].includes(
+        this.arithmeticResultType(node.value as PyNode) ?? ''
+      ) ||
+        this.conditionallyDefined.has(this.calculatedReturnName))
+    )
+      this.unresolvedFunctionCall = true
+    this.genericVisit(node)
+  }
+
   visit_AsyncFor = this.visit_control
   visit_While = this.visit_control
   visit_Try = this.visit_control
   visit_Match = this.visit_control
 
+  knownLibraryPredicate(node: PyNode | undefined): boolean | undefined {
+    if (
+      node?.type !== 'Call' ||
+      node.func?.type !== 'Name' ||
+      node.func.id !== 'hasattr' ||
+      this.defined.has('hasattr') ||
+      this.importedFunctions.has('hasattr') ||
+      node.keywords?.length
+    )
+      return undefined
+    const args = Array.isArray(node.args) ? node.args : []
+    if (args.length !== 2 || args[1]?.type !== 'Constant' || args[1].value !== 'iloc')
+      return undefined
+    const type = this.libraryTypeName(args[0])
+    if (type === 'numpy.ndarray') return false
+    if (type === 'pandas.DataFrame' || type === 'pandas.Series') return true
+    return undefined
+  }
+
   visit_IfExp(node: PyNode): void {
-    const selected = staticBoolean(node.test)
+    const selected = staticBoolean(node.test) ?? this.knownLibraryPredicate(node.test)
     if (selected !== undefined) {
       if (node.test) this.visit(node.test)
-      const branch = selected ? node.body : node.orelse
+      const branch = selected ? node.body : node.alternate
       if (isPyNode(branch)) this.visit(branch)
       return
     }
@@ -3120,6 +4843,35 @@ class Analyzer extends NodeVisitor {
     if (node.name) {
       this.prepareAssignment([node.name])
       this.defined.add(node.name)
+    }
+    if (
+      node.name &&
+      node.type === 'FunctionDef' &&
+      (this.controlDepth === 0 || this.isolatedLoopEffects.length > 0)
+    ) {
+      const signature = node.args as PyArguments
+      this.localFunctions.set(node.name, {
+        ...node,
+        args: {
+          ...signature,
+          defaults: (signature.defaults ?? []).map((value) =>
+            value.type === 'Name' ? (this.literalBindings.get(value.id ?? '') ?? value) : value
+          )
+        }
+      })
+      const definition = this.localFunctions.get(node.name)!
+      this.localFunctionDefaultVersions.set(
+        definition,
+        new Map(
+          (signature.defaults ?? []).flatMap((value) =>
+            value.type === 'Name' &&
+            this.freshCalculatedNames.has(value.id ?? '') &&
+            ['python.scalar', 'numpy.ndarray'].includes(this.arithmeticResultType(value) ?? '')
+              ? [[value.id!, this.assignmentVersions.get(value.id!) ?? 0]]
+              : []
+          )
+        )
+      )
     }
     const summary = summarizeFunction(node)
     if (node.name && summary) {
@@ -3165,11 +4917,14 @@ class Analyzer extends NodeVisitor {
   }
 
   visitComprehension(node: PyNode, values: Array<PyNode | undefined>): void {
+    this.comprehensionDepth += 1
     const scope: Record<string, string | undefined> = {}
     const typeScope: Record<string, string | undefined> = {}
     this.localScopes.push(scope)
     this.localLibraryTypeScopes.push(typeScope)
     for (const generator of node.generators ?? []) {
+      if (this.checkingFunction && !this.knownProcedureIterator(generator.iter))
+        this.unresolvedFunctionCall = true
       this.visit(generator.iter)
       const sources = this.loopSourceNames(generator.iter)
       const targetNames = this.assignedNames(generator.target)
@@ -3181,6 +4936,7 @@ class Analyzer extends NodeVisitor {
       for (const condition of generator.ifs) this.visit(condition)
     }
     for (const value of values) this.visit(value)
+    this.comprehensionDepth -= 1
     this.localLibraryTypeScopes.pop()
     this.localScopes.pop()
   }
@@ -3201,6 +4957,12 @@ class Analyzer extends NodeVisitor {
   visit_AugAssign(node: PyNode): void {
     const name = this.visibleRootName(node.target)
     if (name) {
+      if (node.target?.type === 'Name')
+        this.assignmentVersions.set(name, (this.assignmentVersions.get(name) ?? 0) + 1)
+      const retainsFreshValue =
+        node.target?.type === 'Name' &&
+        this.freshCalculatedNames.has(name) &&
+        staticScalar(isPyNode(node.value) ? node.value : undefined)
       this.addUsed(name)
       const patchedMember = node.target ? dynamicMemberWrite(node.target) : undefined
       if (!patchedMember || !patchedMember[1]) this.addMutation(name)
@@ -3214,6 +4976,7 @@ class Analyzer extends NodeVisitor {
         })
       }
       if (this.builtinModuleNames.has(name)) this.unknown.add('dynamic-namespace')
+      if (retainsFreshValue) this.freshCalculatedNames.add(name)
     } else {
       this.unknown.add('dynamic-assignment')
       if (node.target) this.visit(node.target)
@@ -3222,6 +4985,16 @@ class Analyzer extends NodeVisitor {
   }
 
   visit_Subscript(node: PyNode): void {
+    if (isPyNode(node.value) && this.libraryTypeName(node.value) === 'matplotlib.RcParams') {
+      if (!this.checkingFunction) {
+        this.pythonPlottingState.reads = true
+        if (node.ctx === 'Store' || node.ctx === 'Del') this.pythonPlottingState.writes = true
+      } else if (node.ctx === 'Store' || node.ctx === 'Del') this.unresolvedFunctionCall = true
+      // Updating a configuration mapping does not replace methods on its owning module.
+      this.visit(node.value)
+      if (node.slice) this.visit(node.slice)
+      return
+    }
     if (node.ctx === 'Store' || node.ctx === 'Del') {
       const name = this.visibleRootName(node)
       if (name) {
@@ -3252,6 +5025,13 @@ class Analyzer extends NodeVisitor {
     if (node.ctx === 'Store' || node.ctx === 'Del') {
       const name = this.visibleRootName(node)
       if (name) {
+        const imported = this.importedCanonicalNames.get(name)
+        if (imported) {
+          this.taintedNamespaces.add(imported.split('.')[0]!)
+          this.unknown.add('dynamic-namespace')
+        }
+        if (this.diagnosticValues.get(name) === 'path') this.taintedNamespaces.add('pathlib')
+        this.diagnosticValues.delete(name)
         this.addUsed(name)
         const patchedMember = dynamicMemberWrite(node)
         const [member, typeWide] = patchedMember ?? [node.attr, false]
@@ -3272,16 +5052,719 @@ class Analyzer extends NodeVisitor {
     this.genericVisit(node)
   }
 
+  // Specialize a same-cell helper against its actual argument types and fresh return values.
+  // The ordinary conservative callable summary remains valid for other calls/cells.
+  // No function body is executed and no live kernel objects enter this analysis.
+  analyzeLocalProcedure(call: PyNode): boolean {
+    if (this.functionDepth >= 3 || call.func?.type !== 'Name') return false
+    const definition = this.localFunctions.get(call.func.id ?? '')
+    if (!definition || (definition.decorator_list ?? []).length || this.memberWrites.length)
+      return false
+    const signature = definition.args as PyArguments
+    if (
+      signature.vararg ||
+      signature.kwarg ||
+      signature.kwonlyargs?.length ||
+      signature.posonlyargs?.length
+    )
+      return false
+    const parameters = signature.args ?? []
+    const args = Array.isArray(call.args) ? call.args : []
+    if (args.length > parameters.length || args.some((arg) => arg.type === 'Starred')) return false
+    const supplied = new Map<string, PyNode>()
+    parameters.forEach((parameter, index) => {
+      if (args[index]) supplied.set(parameter.arg, args[index]!)
+    })
+    for (const keyword of call.keywords ?? []) {
+      if (
+        !keyword.arg ||
+        supplied.has(keyword.arg) ||
+        !parameters.some((parameter) => parameter.arg === keyword.arg)
+      )
+        return false
+      supplied.set(keyword.arg, keyword.value)
+    }
+    const defaults = signature.defaults ?? []
+    for (const [index, parameter] of parameters.entries()) {
+      if (supplied.has(parameter.arg)) continue
+      const fallback = defaults[index - (parameters.length - defaults.length)]
+      // Mutable/captured defaults have definition-time identity; do not rebind them at invocation.
+      const capturedVersion =
+        fallback?.type === 'Name'
+          ? this.localFunctionDefaultVersions.get(definition)?.get(fallback.id ?? '')
+          : undefined
+      // Keep definition-time identity only while that binding has not been replaced.
+      // The actual name/type is retained so mutation of an array default is exported.
+      if (
+        !fallback ||
+        (!immutableLiteral(fallback) &&
+          (capturedVersion === undefined ||
+            this.assignmentVersions.get(fallback.id!) !== capturedVersion))
+      )
+        return false
+      supplied.set(parameter.arg, fallback)
+    }
+    const body = Array.isArray(definition.body) ? definition.body : []
+    const scopedNodes = (node: PyNode): PyNode[] => [
+      node,
+      ...(node.type === 'FunctionDef' ? [] : pyChildren(node).flatMap(scopedNodes))
+    ]
+    const nodes = body.flatMap(scopedNodes)
+    this.procedureBudget.remaining -= nodes.length
+    if (this.procedureBudget.remaining < 0) return false
+    if (
+      nodes.some((node) =>
+        [
+          'Global',
+          'Nonlocal',
+          'Import',
+          'ImportFrom',
+          'AsyncFunctionDef',
+          'ClassDef',
+          'Lambda',
+          'Yield',
+          'YieldFrom',
+          'Await',
+          'With',
+          'AsyncWith',
+          'Try',
+          'While',
+          'Delete',
+          'Raise',
+          'Break'
+        ].includes(node.type)
+      )
+    )
+      return false
+    const parameterTypes = new Map(
+      [...supplied].flatMap(([name, value]) => {
+        const type =
+          value.type === 'Call'
+            ? this.libraryCallEffect(value)?.returnType
+            : (this.arithmeticResultType(value) ?? this.libraryTypeName(value))
+        return type ? [[name, type] as const] : []
+      })
+    )
+    const returns = nodes.filter((node) => node.type === 'Return')
+    const finalReturn = returns.at(-1)
+    const sameCalculatedReturns =
+      returns.length > 1 &&
+      finalReturn === body.at(-1) &&
+      isPyNode(finalReturn?.value) &&
+      finalReturn.value.type === 'Name' &&
+      returns.every(
+        (node) =>
+          isPyNode(node.value) &&
+          node.value.type === 'Name' &&
+          node.value.id === (finalReturn!.value as PyNode).id
+      )
+    if (
+      (returns.length > 1 && !sameCalculatedReturns) ||
+      (returns.length === 1 && returns[0] !== body.at(-1))
+    )
+      return false
+    if (!returns.length && !parameterTypes.size) return false
+    const tree = py('Module', { body }, ['body'])
+    const child = new Analyzer(scopedEffectLoops(tree), isolatedConditionalLoopNames(tree))
+    child.calculatedReturnName = sameCalculatedReturns
+      ? (finalReturn!.value as PyNode).id
+      : undefined
+    child.checkingFunction = true
+    child.namespaceLoads = namespaceLoadLines(tree)
+    child.consoleRedirected = this.consoleRedirected || pythonRedirectsConsole(tree)
+    child.functionDepth = this.functionDepth + 1
+    child.procedureBudget = this.procedureBudget
+    child.localFunctions = new Map(this.localFunctions)
+    child.assignmentVersions = new Map(this.assignmentVersions)
+    child.localFunctionDefaultVersions = new Map(this.localFunctionDefaultVersions)
+    child.literalBindings = new Map(this.literalBindings)
+    child.localFunctions.delete(call.func.id ?? '')
+    child.importedModules = new Map(this.importedModules)
+    child.importedFunctions = new Map(this.importedFunctions)
+    child.importedCanonicalNames = new Map(this.importedCanonicalNames)
+    child.localLibraryTypes = new Map(this.localLibraryTypes)
+    child.builtinContainers = new Set(this.builtinContainers)
+    child.taintedNamespaces = new Set(this.taintedNamespaces)
+    // Globals are captured at call time; parameters shadow them.
+    for (const [name] of supplied) {
+      child.prepareAssignment([name])
+      child.defined.add(name)
+      if (parameterTypes.has(name)) child.localLibraryTypes.set(name, parameterTypes.get(name)!)
+      if (
+        ['python.container', 'python.strings', 'python.numbers'].includes(
+          parameterTypes.get(name) ?? ''
+        )
+      )
+        child.builtinContainers.add(name)
+    }
+    const locals = new MethodNameVisitor()
+    for (const statement of body) locals.visit(statement)
+    for (const node of nodes)
+      if (node.type === 'FunctionDef' && node.name) locals.locals.add(node.name)
+    if (
+      [...locals.locals].some(
+        (name) =>
+          supplied.has(name) &&
+          !['python.string', 'python.scalar'].includes(parameterTypes.get(name) ?? '')
+      )
+    )
+      return false
+    for (const name of locals.locals) if (!supplied.has(name)) child.prepareAssignment([name])
+    for (const statement of body) child.visit(statement)
+    if (
+      child.unresolvedFunctionCall ||
+      child.memberWrites.length ||
+      [...child.unknown].some((reason) => reason !== 'control-flow')
+    )
+      return false
+    if (
+      [...child.aliases.values()].some(
+        (source) => !locals.locals.has(source) && !supplied.has(source)
+      ) ||
+      [...child.possibleAliases].some((alias) => {
+        const [target, source] = alias.split('\0')
+        if (locals.locals.has(source!)) return false
+        // A borrowed global may be read while constructing a fresh result. The
+        // return checks below still reject escaped views; mutations remain unknown.
+        return (
+          child.mutated.has(target!) ||
+          child.possiblyMutated.has(target!) ||
+          child.receiverCalls.some((record) => record.receiver === target)
+        )
+      })
+    )
+      return false
+    let returnedType: string | undefined
+    let returnedShape: string[] | undefined
+    const returnedAliases = new Map<number, string[]>()
+    if (returns.length) {
+      const returned = isPyNode(returns[0]?.value) ? returns[0].value : undefined
+      // Eager value aggregates are common in geometry helpers. Only accept freshly
+      // calculated leaves; returning an argument or a view still needs alias analysis.
+      const freshValue = (value: PyNode | undefined, seen = new Set<string>()): boolean => {
+        if (--this.procedureBudget.remaining < 0) return false
+        if (!value) return false
+        if (staticScalar(value)) return true
+        if (
+          value.type === 'Name' &&
+          ['python.scalar', 'python.string'].includes(child.arithmeticResultType(value) ?? '')
+        )
+          return true
+        if (value.type === 'Starred') return freshValue(value.value as PyNode, seen)
+        if (value.type === 'Name' && locals.locals.has(value.id ?? '') && !seen.has(value.id!)) {
+          const assignments = nodes.filter(
+            (item) =>
+              item.type === 'Assign' &&
+              item.targets?.some((target) => target.type === 'Name' && target.id === value.id)
+          )
+          if (assignments.length !== 1 || child.conditionallyDefined.has(value.id!)) return false
+          const aliases = new Set([value.id!])
+          for (let size = 0; size !== aliases.size;) {
+            size = aliases.size
+            for (const [target, source] of child.aliases)
+              if (aliases.has(source)) aliases.add(target)
+          }
+          if (
+            nodes.some(
+              (item) =>
+                (item.type === 'Call' &&
+                  item.func?.type === 'Attribute' &&
+                  aliases.has(rootName(item.func.value as PyNode) ?? '')) ||
+                (['Assign', 'AnnAssign', 'AugAssign'].includes(item.type) &&
+                  [...(item.targets ?? []), item.target].some(
+                    (target) =>
+                      target && target.type !== 'Name' && aliases.has(rootName(target) ?? '')
+                  ))
+            )
+          )
+            return false
+          return freshValue(assignments[0]!.value as PyNode, new Set([...seen, value.id!]))
+        }
+        if (value.type === 'Tuple' || value.type === 'List')
+          return (value.elts ?? []).every((item) => freshValue(item, seen))
+        if (value.type === 'ListComp') return freshValue(value.elt, seen)
+        if (value.type === 'BinOp' || value.type === 'UnaryOp') {
+          return ['python.scalar', 'numpy.ndarray'].includes(
+            child.calculatedValueTypes.get(value) ?? child.arithmeticResultType(value) ?? ''
+          )
+        }
+        if (value.type !== 'Call') return false
+        const eagerArgs = Array.isArray(value.args) ? value.args : []
+        if (
+          value.func?.type === 'Name' &&
+          ['tuple', 'list'].includes(value.func.id ?? '') &&
+          !child.defined.has(value.func.id ?? '') &&
+          !value.keywords?.length &&
+          eagerArgs.length === 1 &&
+          eagerArgs[0]?.type === 'GeneratorExp'
+        )
+          return freshValue(eagerArgs[0].elt, seen)
+        const effect = child.libraryCallEffect(value)
+        return Boolean(
+          effect?.returnType &&
+          [
+            'python.scalar',
+            'python.string',
+            'python.calculated-sequence',
+            'numpy.ndarray'
+          ].includes(effect.returnType) &&
+          effect.effect === 'read' &&
+          !effect.returnsPossibleAliasOf &&
+          !effect.returnsAliasOfReceiver &&
+          !effect.returnsAliasOfKeyword &&
+          !(
+            effect.returnsPossibleAliasWhenKeywordFalse &&
+            value.keywords?.some(
+              (keyword) =>
+                keyword.arg === effect.returnsPossibleAliasWhenKeywordFalse!.keyword &&
+                !(keyword.value.type === 'Constant' && keyword.value.value === true)
+            )
+          ) &&
+          !(
+            effect.mutatesKeyword &&
+            value.keywords?.some((keyword) => keyword.arg === effect.mutatesKeyword)
+          ) &&
+          !(
+            effect.mutatesPositionalArgument !== undefined &&
+            Array.isArray(value.args) &&
+            value.args.length > effect.mutatesPositionalArgument
+          )
+        )
+      }
+      const returnedExpression =
+        returned?.type === 'Name' && locals.locals.has(returned.id ?? '')
+          ? (nodes.find(
+              (item) =>
+                item.type === 'Assign' &&
+                item.targets?.some((target) => target.type === 'Name' && target.id === returned.id)
+            )?.value as PyNode | undefined)
+          : returned
+      const ownedContainer = (value: PyNode): boolean => {
+        if (
+          value.type !== 'Name' ||
+          !locals.locals.has(value.id ?? '') ||
+          child.conditionallyDefined.has(value.id!)
+        )
+          return false
+        const assignments = nodes.filter(
+          (item) =>
+            item.type === 'Assign' &&
+            item.targets?.some((target) => target.type === 'Name' && target.id === value.id)
+        )
+        const initial = assignments[0]?.value as PyNode | undefined
+        if (assignments.length !== 1 || initial?.type !== 'List' || initial.elts?.length)
+          return false
+        if (
+          [...child.aliases.values()].includes(value.id!) ||
+          [...child.possibleAliases].some((alias) => alias.split('\0')[1] === value.id)
+        )
+          return false
+        return child.receiverCalls
+          .filter((record) => record.receiver === value.id)
+          .every((record) => record.member === 'append' && !record.receiverChain?.length)
+      }
+      const parts = returned?.type === 'Tuple' ? returned.elts : undefined
+      const borrowedContainerSources = (): string[] => [
+        ...new Set([
+          ...[...supplied.values()].flatMap((value) => this.expressionVisibleRoots(value)),
+          ...[...child.used.keys()].filter(
+            (name) =>
+              !locals.locals.has(name) &&
+              !supplied.has(name) &&
+              !child.importedModules.has(name) &&
+              !child.importedFunctions.has(name) &&
+              !child.safeCallNames.has(name)
+          )
+        ])
+      ]
+      if (returned && ownedContainer(returned)) {
+        returnedType = 'python.container'
+        returnedAliases.set(0, borrowedContainerSources())
+      } else if (
+        parts?.some(ownedContainer) &&
+        parts.every(
+          (part) => ownedContainer(part) || child.arithmeticResultType(part) === 'python.scalar'
+        )
+      ) {
+        returnedType = 'python.calculated-sequence'
+        returnedShape = parts.map((part, index) => {
+          if (!ownedContainer(part)) return 'python.scalar'
+          // The outer list is new, but its entries may contain caller-owned objects.
+          // Preserve these relationships rather than treating a builder as a deep copy.
+          returnedAliases.set(index, borrowedContainerSources())
+          return 'python.container'
+        })
+      } else if (
+        returned &&
+        ['python.scalar', 'python.string', 'numpy.ndarray'].includes(
+          child.arithmeticResultType(returned) ?? ''
+        ) &&
+        freshValue(returned)
+      ) {
+        returnedType = child.arithmeticResultType(returned)
+      } else if (
+        returnedExpression &&
+        (['Tuple', 'List', 'ListComp'].includes(returnedExpression.type) ||
+          (returnedExpression.type === 'Call' &&
+            returnedExpression.func?.type === 'Name' &&
+            ['tuple', 'list'].includes(returnedExpression.func.id ?? ''))) &&
+        freshValue(returned)
+      ) {
+        returnedType = 'python.calculated-sequence'
+        if (returned?.type === 'Tuple') {
+          const types = (returned.elts ?? []).map((part) =>
+            part.type === 'Call'
+              ? child.libraryCallEffect(part)?.returnType
+              : child.arithmeticResultType(part)
+          )
+          if (types.every((type): type is string => Boolean(type))) returnedShape = types
+        }
+      } else if (
+        returned &&
+        ['BinOp', 'UnaryOp'].includes(returned.type) &&
+        walkPy(returned).every((item) =>
+          ['BinOp', 'UnaryOp', 'Name', 'Constant'].includes(item.type)
+        )
+      ) {
+        // The helper's arithmetic is understood even when a lookup's value type
+        // is not. Do not invent a numeric type or discard possible returned aliases.
+        returnedType = 'python.calculated-sequence'
+        returnedAliases.set(
+          0,
+          [...supplied.values()].flatMap((value) => this.expressionVisibleRoots(value))
+        )
+      } else {
+        // A helper may return a factory's complete destructured result (figure, axes).
+        // Keep the shape only when every binding still comes from that one allocation.
+        const tupleAllocation =
+          returned?.type === 'Tuple'
+            ? [...child.callResultNames].find(
+                ([, names]) =>
+                  names.length === returned.elts?.length &&
+                  names.every(
+                    (name, index) =>
+                      returned.elts?.[index]?.type === 'Name' &&
+                      returned.elts[index]?.id === name &&
+                      locals.locals.has(name) &&
+                      !child.conditionallyDefined.has(name) &&
+                      nodes.filter(
+                        (item) =>
+                          ['Assign', 'AnnAssign', 'AugAssign', 'NamedExpr'].includes(item.type) &&
+                          [...(item.targets ?? []), item.target].some(
+                            (target) => target && loopTargetNames(target).includes(name)
+                          )
+                      ).length === 1
+                  )
+              )?.[0]
+            : undefined
+        const allocation =
+          tupleAllocation ??
+          (returned?.type === 'Call'
+            ? returned
+            : returned?.type === 'Name' &&
+                locals.locals.has(returned.id ?? '') &&
+                !child.conditionallyDefined.has(returned.id ?? '')
+              ? [...child.callResultNames].find(([, names]) => names.includes(returned.id!))?.[0]
+              : undefined)
+        if (!allocation) return false
+        const allocationRoot = rootName(allocation.func)
+        if (
+          !child.importedModules.has(allocationRoot ?? '') &&
+          !child.importedFunctions.has(allocationRoot ?? '') &&
+          !child.procedureReturnTypes.has(allocation)
+        )
+          return false
+        const effect = child.libraryCallEffect(allocation)
+        if (
+          !(
+            effect?.returnType ||
+            (effect?.destructuredReturnTypes && (tupleAllocation || returned?.type === 'Call'))
+          ) ||
+          effect.effect !== 'read' ||
+          effect.returnsPossibleAliasOf ||
+          effect.returnsAliasOfReceiver ||
+          effect.returnsAliasOfKeyword ||
+          effect.returnsPossibleAliasWhenKeywordFalse
+        )
+          return false
+        // Output buffers transfer caller-owned identity back into the return value.
+        if (
+          (effect.mutatesKeyword &&
+            allocation.keywords?.some((keyword) => keyword.arg === effect.mutatesKeyword)) ||
+          (effect.mutatesPositionalArgument !== undefined &&
+            Array.isArray(allocation.args) &&
+            allocation.args.length > effect.mutatesPositionalArgument)
+        )
+          return false
+        if (
+          effect.returnType === 'matplotlib.path.Path' &&
+          child
+            .visibleRoots(Array.isArray(allocation.args) ? allocation.args : [])
+            .some((name) => !locals.locals.has(name) || child.aliases.has(name))
+        )
+          return false
+        returnedType = effect.returnType ?? 'python.calculated-sequence'
+        returnedShape = effect.destructuredReturnTypes
+      }
+    }
+    if (sameCalculatedReturns && !['python.scalar', 'numpy.ndarray'].includes(returnedType ?? ''))
+      return false
+    const localNames = new Set([...locals.locals, ...supplied.keys()])
+    const exported = (names: string[] = []): string[] => [
+      ...new Set(
+        names.flatMap((name) => {
+          const seen = new Set<string>()
+          while (locals.locals.has(name) && child.aliases.has(name) && !seen.has(name)) {
+            seen.add(name)
+            name = child.aliases.get(name)!
+          }
+          const value = supplied.get(name)
+          return value ? this.expressionVisibleRoots(value) : localNames.has(name) ? [] : [name]
+        })
+      )
+    ]
+    // Preserve calls on captured objects/parameters so later monkeypatches and mutations
+    // still flow through the normal type-aware projection instead of being declared pure.
+    for (const record of child.receiverCalls) {
+      if (localNames.has(record.receiver) && !supplied.has(record.receiver)) {
+        if (!child.builtinContainers.has(record.receiver)) {
+          const effect = pythonLibraryMethodEffect(
+            child.localLibraryTypes.get(record.receiver) ?? '',
+            record.member
+          )
+          const borrowed = (names: string[] = []): boolean =>
+            names.some(
+              (name) =>
+                !locals.locals.has(name) ||
+                supplied.has(name) ||
+                child.aliases.has(name) ||
+                [...child.possibleAliases].some((alias) => alias.split('\0')[0] === name)
+            )
+          // Only local receiver effects can disappear at the function boundary. Calls
+          // that may write caller-owned arguments still require the exported record.
+          if (
+            record.receiverChain?.length ||
+            !effect ||
+            effect.effect === 'unknown' ||
+            record.keywordArguments?.some(
+              (keyword) =>
+                keyword.name === '**' ||
+                ((keyword.name === effect.mutatesKeyword ||
+                  keyword.name === effect.possiblyMutatesKeyword) &&
+                  borrowed([...keyword.argumentNames, ...(keyword.possibleArgumentNames ?? [])]))
+            ) ||
+            [
+              effect.mutatesPositionalArgument,
+              effect.possiblyMutatesPositionalArgument,
+              ...(effect.possiblyMutatesFirstArgument ? [0] : [])
+            ].some(
+              (position) =>
+                position !== undefined && borrowed(record.positionalArgumentNames?.[position])
+            )
+          )
+            return false
+        }
+        continue
+      }
+      const receivers = exported([record.receiver])
+      if (receivers.length !== 1) return false
+    }
+    for (const name of exported([...child.used.keys()])) this.addUsed(name)
+    for (const name of child.safeCallNames) this.safeCallNames.add(name)
+    for (const record of child.receiverCalls) {
+      if (localNames.has(record.receiver) && !supplied.has(record.receiver)) continue
+      this.receiverCalls.push({
+        ...record,
+        // Summarize every possible effect of this checked invocation. A branch
+        // inside the helper does not make the caller's invocation conditional.
+        conditional: undefined,
+        receiver: exported([record.receiver])[0]!,
+        ...this.conditionalFact(),
+        argumentNames: exported(record.argumentNames),
+        receiverValueNames: exported(record.receiverValueNames),
+        positionalArgumentNames: record.positionalArgumentNames?.map(exported),
+        receiverChainFirstArgumentNames: record.receiverChainFirstArgumentNames?.map(exported),
+        receiverChainPositionalArgumentNames: record.receiverChainPositionalArgumentNames?.map(
+          (argumentsList) => argumentsList.map(exported)
+        ),
+        receiverChainKeywordArguments: record.receiverChainKeywordArguments?.map((keywords) =>
+          keywords.map((keyword) => ({
+            ...keyword,
+            argumentNames: exported(keyword.argumentNames)
+          }))
+        ),
+        keywordArguments: record.keywordArguments?.map((keyword) => ({
+          ...keyword,
+          argumentNames: exported(keyword.argumentNames),
+          possibleArgumentNames: exported(keyword.possibleArgumentNames)
+        })),
+        resultNames: [],
+        resultPaths: []
+      })
+    }
+    for (const name of exported([...child.mutated])) this.addMutation(name)
+    this.pythonRandomStateReads ||= child.pythonRandomStateReads
+    this.pythonPlottingState.reads ||= child.pythonPlottingState.reads
+    this.pythonPlottingState.writes ||= child.pythonPlottingState.writes
+    for (const name of exported([...child.possiblyMutated])) this.possiblyMutated.add(name)
+    if (returnedType) this.procedureReturnTypes.set(call, returnedType)
+    if (returnedShape) this.procedureReturnShapes.set(call, returnedShape)
+    if (returnedAliases.size) this.procedureReturnAliases.set(call, returnedAliases)
+    this.genericVisit(call)
+    return true
+  }
   visit_Call(node: PyNode): void {
+    // A call can expose or mutate a local collection through aliases. Keep only immutable literals.
+    for (const [name, value] of this.literalBindings)
+      if (!staticScalar(value)) this.literalBindings.delete(name)
+    if (this.knownLibraryPredicate(node) !== undefined) {
+      this.safeCallNames.add('hasattr')
+      this.genericVisit(node)
+      return
+    }
+    if (this.analyzeLocalProcedure(node)) return
+    this.trackSerializationCall(node)
     const rawCallName = pythonDottedName(node.func)
     if (rawCallName) {
       const [root, ...members] = rawCallName.split('.')
       const canonicalCallName = [this.importedCanonicalNames.get(root ?? '') ?? root, ...members]
         .filter(Boolean)
         .join('.')
-      if (pythonHasUnsupportedExternalState(canonicalCallName)) this.unknown.add('external-state')
+      if (
+        !this.acceptedSerializedReads.has(serializationSite(node)) &&
+        pythonHasUnsupportedExternalState(canonicalCallName, node)
+      ) {
+        this.unknown.add('external-state')
+        if (
+          ['random', 'numpy.random'].some((namespace) =>
+            canonicalCallName.startsWith(`${namespace}.`)
+          )
+        )
+          this.unknown.add('scoped-opaque-call')
+      }
+      if (canonicalCallName === 'os.walk') {
+        const callback =
+          node.keywords?.find((keyword) => keyword.arg === 'onerror')?.value ??
+          (Array.isArray(node.args) ? node.args[2] : undefined)
+        if (callback && !(callback.type === 'Constant' && callback.value === null))
+          this.unknown.add('scoped-opaque-call')
+      }
     }
     const libraryEffect = this.libraryCallEffect(node)
+    // Set operations iterate their inputs. A known container receiver alone
+    // must not certify an arbitrary user-defined iterator's side effects.
+    if (
+      node.func?.type === 'Attribute' &&
+      ['union', 'intersection', 'difference', 'symmetric_difference'].includes(
+        node.func.attr ?? ''
+      ) &&
+      libraryEffect?.returnType === 'python.container' &&
+      (Array.isArray(node.args) ? node.args : []).some(
+        (arg) => !this.knownProcedureIterator(arg.type === 'Starred' ? (arg.value as PyNode) : arg)
+      )
+    )
+      this.unknown.add('opaque-call')
+    if (libraryEffect?.globalRandomState) {
+      if (!this.checkingFunction) this.pythonRandomStateReads = true
+      else this.unresolvedFunctionCall = true
+    }
+    const plottingOwner =
+      node.func?.type === 'Attribute' && isPyNode(node.func.value)
+        ? this.libraryTypeName(node.func.value)
+        : undefined
+    const plottingCall =
+      libraryEffect?.plottingState ||
+      plottingOwner?.startsWith('matplotlib.') ||
+      plottingOwner === 'matplotlib' ||
+      plottingOwner === 'seaborn'
+    if (plottingCall && !this.checkingFunction) {
+      this.pythonPlottingState.reads = true
+      if (libraryEffect?.plottingState === 'write' || libraryEffect?.plottingState === 'style')
+        this.pythonPlottingState.writes = true
+    }
+    if (libraryEffect?.plottingState === 'style') {
+      const style =
+        node.keywords?.find((keyword) => keyword.arg === 'style')?.value ??
+        (Array.isArray(node.args) ? node.args[0] : undefined)
+      // Named bundled styles need no extra file. Custom paths, URLs and package styles
+      // require their own captured evidence; do not silently treat them as configuration only.
+      if (
+        style?.type !== 'Constant' ||
+        ![
+          'default',
+          'classic',
+          'ggplot',
+          'dark_background',
+          'bmh',
+          'fast',
+          'fivethirtyeight',
+          'grayscale',
+          'Solarize_Light2',
+          'tableau-colorblind10'
+        ].includes(String(style.value))
+      )
+        this.unknown.add('scoped-opaque-call')
+    }
+    // Unregistered accessor operations may invoke extensions or user code.
+    // Do not let the known DataFrame root certify an unknown string method.
+    if (
+      node.func?.type === 'Attribute' &&
+      isPyNode(node.func.value) &&
+      node.func.value.type === 'Attribute' &&
+      node.func.value.attr === 'str' &&
+      !libraryEffect
+    )
+      this.unknown.add('opaque-call')
+    if (
+      node.func?.type === 'Attribute' &&
+      isPyNode(node.func.value) &&
+      (node.func.value.type === 'Call'
+        ? ['python.string', 'python.scalar', 'python.container']
+        : ['python.string', 'python.scalar']
+      ).includes(
+        (node.func.value.type === 'Call'
+          ? this.libraryCallEffect(node.func.value)?.returnType
+          : this.libraryTypeName(node.func.value)) ?? ''
+      ) &&
+      libraryEffect?.effect === 'read'
+    ) {
+      this.genericVisit(node)
+      return
+    }
+    if (this.checkingFunction) {
+      if (libraryEffect?.plottingState === 'write' || libraryEffect?.plottingState === 'style')
+        this.unresolvedFunctionCall = true
+      const builtin =
+        node.func?.type === 'Name' &&
+        SAFE_CALLS.has(node.func.id ?? '') &&
+        !this.defined.has(node.func.id ?? '')
+      const localContainer =
+        node.func?.type === 'Attribute' &&
+        this.builtinContainers.has(rootName(node.func.value as PyNode) ?? '') &&
+        MUTATING_METHODS.has(node.func.attr ?? '')
+      const known =
+        libraryEffect &&
+        libraryEffect.effect !== 'unknown' &&
+        !libraryEffect.unsafeNamespace &&
+        !libraryEffect.externalState &&
+        !libraryEffect.scopedOpaque &&
+        !libraryEffect.callbackKeywords?.length &&
+        !libraryEffect.callbackAllKeywords &&
+        !libraryEffect.callbackContainerKeywords?.length
+      if (!builtin && !localContainer && !known) {
+        this.unresolvedFunctionCall = true
+      }
+      if (
+        builtin &&
+        (['map', 'filter'].includes(node.func?.id ?? '') ||
+          node.keywords?.some(
+            (keyword) =>
+              keyword.arg === 'key' &&
+              !(keyword.value.type === 'Constant' && keyword.value.value === null)
+          ))
+      )
+        this.unresolvedFunctionCall = true
+    }
     const fileCallName =
       isPyNode(node.func) && node.func.type === 'Name'
         ? node.func.id
@@ -3340,7 +5823,47 @@ class Analyzer extends NodeVisitor {
       }
     }
     for (const callback of callbackCandidates) {
-      const summary = summarizeInlineCallback(callback)
+      const eagerSort =
+        node.func?.type === 'Attribute' &&
+        node.func.attr === 'sort' &&
+        ['python.scalar', 'python.string'].includes(
+          this.iterationTypes(node.func.value as PyNode)[0] ?? ''
+        )
+      if (eagerSort && callback.type === 'Name' && this.localFunctions.has(callback.id ?? '')) {
+        const probe = py(
+          'Call',
+          {
+            func: callback,
+            args: [py('Constant', { value: 0, constKind: 'int' }, [])],
+            keywords: []
+          },
+          ['func', 'args', 'keywords']
+        )
+        if (this.analyzeLocalProcedure(probe) && this.procedureReturnTypes.has(probe)) {
+          this.pureInlineCallbacks.set(callback, { name: '__call__', effect: 'read' })
+          continue
+        }
+      }
+      const summary = summarizeInlineCallback(
+        callback,
+        new Set([...this.builtinContainers, ...this.contextualStaticCollections]),
+        node.func?.type === 'Name' &&
+          ['sorted', 'min', 'max'].includes(node.func.id ?? '') &&
+          !this.defined.has(node.func.id ?? '') &&
+          ['python.string', 'python.scalar'].includes(this.iterationTypes(args[0])[0] ?? '')
+          ? new Set(((callback.args as PyArguments | undefined)?.args ?? []).map((arg) => arg.arg))
+          : new Set(),
+        (value) => {
+          const receiver = rootName(value)
+          const module = receiver ? this.importedModules.get(receiver) : undefined
+          return Boolean(
+            module &&
+            !this.taintedNamespaces.has(module.split('.')[0]!) &&
+            !this.memberWrites.some((write) => write.receiver === receiver) &&
+            this.libraryPropertyEffect(value)?.returnType === 'python.scalar'
+          )
+        }
+      )
       if (!summary || summary.safeCallNames?.some((name) => this.defined.has(name))) continue
       // map/filter defer invocation. Until iterator lifetimes are modeled, a
       // captured value cannot be attributed to the run creating the iterator.
@@ -3365,6 +5888,7 @@ class Analyzer extends NodeVisitor {
           receiverChainKeywordArguments: [],
           receiverValueNames: [],
           positionalArgumentNames: args.map((argument) => this.expressionVisibleRoots(argument)),
+          positionalStaticShapes: args.map(pythonArgumentShape),
           positionalStaticBooleans: args.map((argument) =>
             argument.type === 'Constant' && argument.constKind === 'bool'
               ? Boolean(argument.value)
@@ -3374,9 +5898,7 @@ class Analyzer extends NodeVisitor {
           ...(this.callResultPaths.has(node)
             ? { resultPaths: this.callResultPaths.get(node)! }
             : {}),
-          keywordArguments: (node.keywords ?? []).map((keyword) =>
-            this.keywordArgumentRecord(keyword)
-          )
+          keywordArguments: this.callKeywordArgumentRecords(node)
         })
       }
       this.genericVisit(node)
@@ -3462,6 +5984,7 @@ class Analyzer extends NodeVisitor {
         receiverChainKeywordArguments: [],
         receiverValueNames: [],
         positionalArgumentNames: args.map((argument) => this.expressionVisibleRoots(argument)),
+        positionalStaticShapes: args.map(pythonArgumentShape),
         positionalStaticBooleans: args.map((argument) =>
           argument.type === 'Constant' && argument.constKind === 'bool'
             ? Boolean(argument.value)
@@ -3469,9 +5992,7 @@ class Analyzer extends NodeVisitor {
         ),
         resultNames: this.callResultNames.get(node) ?? [],
         ...(this.callResultPaths.has(node) ? { resultPaths: this.callResultPaths.get(node)! } : {}),
-        keywordArguments: (node.keywords ?? []).map((keyword) =>
-          this.keywordArgumentRecord(keyword)
-        )
+        keywordArguments: this.callKeywordArgumentRecords(node)
       })
     } else if (
       isPyNode(node.func) &&
@@ -3495,6 +6016,7 @@ class Analyzer extends NodeVisitor {
         receiverChainKeywordArguments: [],
         receiverValueNames: [],
         positionalArgumentNames: args.map((argument) => this.expressionVisibleRoots(argument)),
+        positionalStaticShapes: args.map(pythonArgumentShape),
         positionalStaticBooleans: args.map((argument) =>
           argument.type === 'Constant' && argument.constKind === 'bool'
             ? Boolean(argument.value)
@@ -3502,9 +6024,7 @@ class Analyzer extends NodeVisitor {
         ),
         resultNames: this.callResultNames.get(node) ?? [],
         ...(this.callResultPaths.has(node) ? { resultPaths: this.callResultPaths.get(node)! } : {}),
-        keywordArguments: (node.keywords ?? []).map((keyword) =>
-          this.keywordArgumentRecord(keyword)
-        )
+        keywordArguments: this.callKeywordArgumentRecords(node)
       })
     }
     if (isPyNode(node.func) && node.func.type === 'Attribute') {
@@ -3557,12 +6077,16 @@ class Analyzer extends NodeVisitor {
             receiverChainPositionalArgumentNames: chainArguments.map(
               (step) => step.positionalArgumentNames
             ),
+            receiverChainPositionalStaticShapes: chainArguments.map(
+              (step) => step.positionalStaticShapes
+            ),
             receiverChainPositionalStaticBooleans: chainArguments.map(
               (step) => step.positionalStaticBooleans
             ),
             receiverChainKeywordArguments: chainArguments.map((step) => step.keywordArguments),
             receiverValueNames: this.receiverValueRoots(node.func.value as PyNode),
             positionalArgumentNames: args.map((argument) => this.expressionVisibleRoots(argument)),
+            positionalStaticShapes: args.map(pythonArgumentShape),
             positionalStaticBooleans: args.map((argument) =>
               argument.type === 'Constant' && argument.constKind === 'bool'
                 ? Boolean(argument.value)
@@ -3572,9 +6096,7 @@ class Analyzer extends NodeVisitor {
             ...(this.callResultPaths.has(node)
               ? { resultPaths: this.callResultPaths.get(node)! }
               : {}),
-            keywordArguments: (node.keywords ?? []).map((keyword) =>
-              this.keywordArgumentRecord(keyword, true)
-            )
+            keywordArguments: this.callKeywordArgumentRecords(node, true)
           })
           if (libraryEffect?.mutatesKeyword) {
             for (const keyword of node.keywords ?? []) {
@@ -3668,6 +6190,16 @@ const factsFromAnalyzer = (
     })
   ]
   return {
+    ...(analyzer.serializedValueWrites.size
+      ? { serializedValueWrites: [...analyzer.serializedValueWrites.values()] }
+      : {}),
+    ...(analyzer.serializedValueReads.size
+      ? { serializedValueReads: [...analyzer.serializedValueReads] }
+      : {}),
+    ...(analyzer.pythonRandomStateReads ? { pythonRandomStateReads: true } : {}),
+    ...(analyzer.pythonPlottingState.reads || analyzer.pythonPlottingState.writes
+      ? { pythonPlottingState: analyzer.pythonPlottingState }
+      : {}),
     definedNames: [...analyzer.defined].sort(),
     conditionallyDefinedNames: [...analyzer.conditionallyDefined].sort(),
     usedNames: [...analyzer.used.keys()].sort(),
@@ -3680,7 +6212,17 @@ const factsFromAnalyzer = (
     safeCallNames: [...analyzer.safeCallNames].sort(),
     safeCallArgumentNames: [...analyzer.safeCallArgumentNames].sort(),
     typeSummaries: analyzer.typeSummaries,
-    typeBindings: analyzer.typeBindings,
+    typeBindings: [
+      ...analyzer.typeBindings,
+      ...[...analyzer.localLibraryTypes]
+        .filter(
+          ([name]) =>
+            analyzer.defined.has(name) &&
+            !analyzer.conditionallyDefined.has(name) &&
+            !analyzer.memberWrites.some((write) => write.receiver === name)
+        )
+        .map(([target, typeName]) => ({ target, typeName, argumentNames: [] }))
+    ],
     receiverCalls: analyzer.receiverCalls,
     memberWrites: analyzer.memberWrites
   }
@@ -3690,7 +6232,11 @@ const analyzePythonTree = (
   root: Node,
   contextualStaticCollections: readonly { name: string }[] = [],
   pythonBindings: NotebookSourceFileAccessContext['pythonBindings'] = [],
-  pythonTaintedNamespaces: readonly string[] = []
+  pythonTaintedNamespaces: readonly string[] = [],
+  staticStrings: NotebookSourceFileAccessContext['staticStrings'] = [],
+  resolvedKernelNames: readonly string[] = [],
+  verifiedSerializedValues: readonly NotebookSerializedValue[] = [],
+  acceptedSerializedReads = new Map<string, string>()
 ): NotebookRunDependencyFacts => {
   const tree = convertModule(root)
   const analyzer = new Analyzer(
@@ -3698,7 +6244,17 @@ const analyzePythonTree = (
     isolatedConditionalLoopNames(tree),
     new Set(contextualStaticCollections.map(({ name }) => name))
   )
+  analyzer.serializedValues = new Map(verifiedSerializedValues.map((value) => [value.path, value]))
+  analyzer.serializedPathBindings = new Map(staticStrings.map(({ name, value }) => [name, value]))
+  analyzer.acceptedSerializedReads = acceptedSerializedReads
   analyzer.taintedNamespaces = new Set(pythonTaintedNamespaces)
+  analyzer.contextualKernelNames = new Set(resolvedKernelNames)
+  for (const { name } of staticStrings) {
+    const binding = pythonBindings.find((item) => item.name === name && item.kind === 'object')
+    if (!binding || binding.qualifiedName === 'pathlib.PurePath') {
+      analyzer.diagnosticValues.set(name, binding ? 'path' : 'string')
+    }
+  }
   for (const { name, qualifiedName, kind } of pythonBindings) {
     if (
       analyzer.taintedNamespaces.has('*') ||
@@ -3720,6 +6276,8 @@ const analyzePythonTree = (
       }
     }
   }
+  analyzer.consoleRedirected = pythonRedirectsConsole(tree)
+  analyzer.namespaceLoads = namespaceLoadLines(tree)
   analyzer.visit(tree)
   const facts = factsFromAnalyzer(analyzer)
   const reasons = new Set(analyzer.unknown)
@@ -3730,7 +6288,11 @@ const analyzePythonTree = (
     analyzer.possiblyMutated.size > 0 ||
     [...analyzer.possibleAliases].some((alias) => {
       const [target, source] = alias.split('\0')
-      return [target, source].some((name) => analyzer.conditionallyDefined.has(name))
+      return [target, source].some(
+        (name) =>
+          analyzer.conditionallyDefined.has(name) &&
+          !analyzer.isolatedConditionallyDefined.has(name)
+      )
     }) ||
     analyzer.receiverCalls.some(
       (call) =>
@@ -3746,10 +6308,30 @@ const analyzePythonTree = (
   return { state: 'available', ...facts }
 }
 
-const pythonHasUnsupportedExternalState = (canonicalName: string): boolean =>
-  PYTHON_UNSUPPORTED_EXTERNAL_STATE_NAMESPACES.some(
-    (namespace) => canonicalName === namespace || canonicalName.startsWith(`${namespace}.`)
-  ) || PYTHON_UNSUPPORTED_EXTERNAL_STATE_CALLS.has(canonicalName)
+const pythonHasUnsupportedExternalState = (canonicalName: string, node?: PyNode): boolean => {
+  const member = canonicalName.split('.').at(-1) ?? ''
+  const effect = pythonLibraryMethodEffect(canonicalName.slice(0, -(member.length + 1)), member)
+  // Entropy-seeding and independent Generator/Random instances remain external.
+  // Only global draws are covered by the bounded per-run kernel snapshot.
+  if (effect?.globalRandomState) {
+    if (member !== 'seed') return false
+    const seed =
+      node?.keywords?.find((keyword) => ['seed', 'a'].includes(keyword.arg ?? ''))?.value ??
+      (Array.isArray(node?.args) ? node.args[0] : undefined)
+    if (
+      seed?.type === 'Constant' &&
+      (typeof seed.value === 'number' ||
+        typeof seed.value === 'string' ||
+        typeof seed.value === 'boolean')
+    )
+      return false
+  }
+  return (
+    PYTHON_UNSUPPORTED_EXTERNAL_STATE_NAMESPACES.some(
+      (namespace) => canonicalName === namespace || canonicalName.startsWith(`${namespace}.`)
+    ) || PYTHON_UNSUPPORTED_EXTERNAL_STATE_CALLS.has(canonicalName)
+  )
+}
 
 const pythonDottedName = (node: PyNode | null | undefined): string | undefined => {
   if (node?.type === 'Name') return node.id
@@ -4359,9 +6941,12 @@ const pythonLocalFileWrappers = (
 
 const analyzePythonFileAccessTree = (
   root: Node,
-  context?: NotebookSourceFileAccessContext
+  context?: NotebookSourceFileAccessContext,
+  acceptedSerializedReads = new Map<string, string>()
 ): NotebookSourceFileAccessExtraction => {
   const tree = convertModule(root)
+  const diagnosticNamespaceLoads = namespaceLoadLines(tree)
+  const consoleRedirected = pythonRedirectsConsole(tree)
   const localWrappers = pythonLocalFileWrappers(tree)
   const bindings = new Map(context?.staticStrings.map(({ name, value }) => [name, value]) ?? [])
   const collections = new Map(
@@ -4374,7 +6959,7 @@ const analyzePythonFileAccessTree = (
   const partialCollectionRows = new Map<string, Array<Array<string | undefined>>>()
   const possibleAliases = [...(context?.staticCollectionAliases ?? [])]
   const activeStaticLoops: Array<{ names: Set<string>; invalidated: boolean }> = []
-  const invalidateStaticValue = (name: string | undefined): void => {
+  const invalidateStaticValue = (name: string | undefined, taintIdentity = true): void => {
     if (!name) return
     const affectedNames = new Set([name])
     for (const affected of affectedNames) {
@@ -4395,7 +6980,7 @@ const analyzePythonFileAccessTree = (
         if (loop.names.has(affected)) loop.invalidated = true
       }
       const identity = importedNames.get(affected) ?? scientificObjectTypes.get(affected)
-      if (identity) {
+      if (identity && identity !== 'python.container' && taintIdentity) {
         pythonTaintedNamespaces.add(identity.split('.')[0]!)
         unsupportedExternalState = true
       }
@@ -4424,7 +7009,13 @@ const analyzePythonFileAccessTree = (
       shadowedNames: shadowedStaticCalls
     })
   const inMemoryInputs = new Set<string>()
-  const fileConnections = new Map<string, string>()
+  const fileConnections = new Map<string, string>(
+    (context?.pythonBindings ?? []).flatMap((binding) =>
+      binding.kind === 'object' && binding.qualifiedName === 'pandas.ExcelFile' && binding.filePath
+        ? [[binding.name, binding.filePath] as const]
+        : []
+    )
+  )
   const archiveNames = new Set<string>()
   const scientificObjectTypes = new Map<string, string>(
     (context?.pythonBindings ?? [])
@@ -4433,6 +7024,12 @@ const analyzePythonFileAccessTree = (
   )
   const reads = new Set<string>()
   const pythonTaintedNamespaces = new Set(context?.pythonTaintedNamespaces ?? [])
+  const knownDiagnosticValue = (name: string): PythonDiagnosticKind | undefined =>
+    bindings.has(name)
+      ? scientificObjectTypes.get(name) === 'pathlib.PurePath'
+        ? 'path'
+        : 'string'
+      : undefined
   const writes = new Set<string>()
   const definitelyWritten = new Set<string>()
   const writeScopes = new Map<string, NotebookSourceFileWriteScope>()
@@ -4454,6 +7051,10 @@ const analyzePythonFileAccessTree = (
   ])
 
   const canonicalCallName = (node: PyNode): string | undefined => {
+    if (node.func?.type === 'Attribute' && isPyNode(node.func.value)) {
+      const owner = scientificObjectType(node.func.value)
+      if (owner && node.func.attr) return `${owner}.${node.func.attr}`
+    }
     const rawName = pythonDottedName(node.func)
     if (!rawName) return undefined
     const [rootName, ...members] = rawName.split('.')
@@ -4512,6 +7113,26 @@ const analyzePythonFileAccessTree = (
 
   const scientificObjectType = (node: PyNode | null | undefined): string | undefined => {
     if (node?.type === 'Name' && node.id) return scientificObjectTypes.get(node.id)
+    if (node && ['List', 'Tuple', 'ListComp'].includes(node.type)) return 'python.container'
+    if (
+      node?.type === 'Subscript' &&
+      isPyNode(node.value) &&
+      node.value.type === 'Attribute' &&
+      ['loc', 'iloc'].includes(node.value.attr ?? '') &&
+      scientificObjectType(node.value.value as PyNode) === 'pandas.DataFrame'
+    ) {
+      const selectors =
+        node.slice?.type === 'Tuple' ? (node.slice.elts ?? []) : node.slice ? [node.slice] : []
+      const multiple = (selector: PyNode): boolean =>
+        ['List', 'Tuple', 'Slice'].includes(selector.type) ||
+        (selector.type === 'Name' && collections.has(selector.id ?? '')) ||
+        scientificObjectType(selector) === 'python.container'
+      // Only two-dimensional selections retain a DataFrame. A scalar or an
+      // unknown selector might produce a string path instead.
+      if (selectors.length > 0 && selectors.length <= 2 && selectors.every(multiple))
+        return 'pandas.DataFrame'
+      return undefined
+    }
     if (node?.type !== 'Call') return undefined
     const name = canonicalCallName(node)
     if (name === 'astropy.table.Table' || name === 'astropy.table.Table.read') {
@@ -4625,8 +7246,38 @@ const analyzePythonFileAccessTree = (
       member
     )
     const libraryFileEffect = libraryMethodEffect?.file
+    // Callback containers can introduce I/O beyond the reader's explicit source.
+    // Only a closed, read-only inline callback proves that no extra files are involved.
+    for (const keyword of node.keywords ?? []) {
+      if (!libraryMethodEffect?.callbackContainerKeywords?.includes(keyword.arg ?? '')) continue
+      if (keyword.value.type === 'Constant' && keyword.value.value === null) continue
+      const knownStrings = libraryMethodEffect.callbackStringValues?.[keyword.arg ?? '']
+      if (knownStrings?.includes(resolveStaticString(keyword.value, bindings) ?? '')) continue
+      const callbacks =
+        keyword.value.type === 'Dict'
+          ? keyword.value.values
+          : ['List', 'Tuple'].includes(keyword.value.type)
+            ? keyword.value.elts
+            : undefined
+      if (
+        !callbacks ||
+        callbacks.some((callback) => {
+          if (knownStrings?.includes(resolveStaticString(callback, bindings) ?? '')) return false
+          const summary = summarizeInlineCallback(callback)
+          return !summary || summary.effect !== 'read' || Boolean(summary.usedNames?.length)
+        })
+      ) {
+        unresolvedReads = true
+        unresolvedWrites = true
+        unsupportedExternalState = true
+      }
+    }
     if (libraryMethodEffect?.externalState) unsupportedExternalState = true
-    if (pythonHasUnsupportedExternalState(canonicalName)) unsupportedExternalState = true
+    if (
+      !acceptedSerializedReads.has(serializationSite(node)) &&
+      pythonHasUnsupportedExternalState(canonicalName, node)
+    )
+      unsupportedExternalState = true
     if (
       ['cyvcf2.VCF', 'cyvcf2.Writer', 'cyvcf2.Writer.from_string', 'cyvcf2.VCF.set_index'].includes(
         canonicalName
@@ -5057,13 +7708,22 @@ const analyzePythonFileAccessTree = (
       return
     }
 
+    if (canonicalName === 'pandas.ExcelFile.parse' && node.func?.type === 'Attribute') {
+      // Parsing reads from the workbook, not from the sheet name argument.
+      // A handle without a captured source path cannot prove its input file.
+      const path = fileConnectionPath(node.func.value as PyNode)
+      if (path) {
+        if (!definitelyWritten.has(path)) reads.add(path)
+      } else unresolvedReads = true
+      return
+    }
     let call: NotebookFileCallEffect | undefined = localWrappers.effects.get(rawName)
     let writeScopeKind: NotebookSourceFileWriteScope['kind'] | undefined
     if (!call && !localWrappers.names.has(rawName)) {
       call =
         contextualWrappers.get(rawName) ??
-        libraryFileEffect ??
         PYTHON_FILE_CALL_EFFECTS.get(canonicalName) ??
+        libraryFileEffect ??
         PYTHON_FILE_CALL_EFFECTS.get(member)
       if (!call && member === 'to_zarr' && rawName.includes('.')) {
         call = { kind: 'write', position: 0, keywords: ['store'] }
@@ -5075,8 +7735,6 @@ const analyzePythonFileAccessTree = (
     }
     if (member === 'save' && /^(?:nibabel|torch)(?:\.|$)/u.test(canonicalName)) {
       call = { kind: 'write', position: 1, keywords: ['file', 'filename', 'f'] }
-    } else if (member === 'save' && /^numpy(?:\.|$)/u.test(canonicalName)) {
-      call = { kind: 'write', position: 0, keywords: ['file'] }
     } else if (canonicalName === 'scipy.io.wavfile.write') {
       call = { kind: 'write', position: 0, keywords: ['filename'] }
     } else if (canonicalName === 'soundfile.write') {
@@ -5194,6 +7852,7 @@ const analyzePythonFileAccessTree = (
     }
     const argument = pythonFileCallArgument(node, effect)
     if (!argument && effect.pathOptional) return
+    if (effect.inMemoryTypes?.includes(scientificObjectType(argument) ?? '')) return
     if (pythonInMemoryInput(argument, importedNames, inMemoryInputs)) return
     if (effect.inputForm) {
       const collection = pythonStaticStringCollection(argument, bindings, collections, {
@@ -5216,10 +7875,64 @@ const analyzePythonFileAccessTree = (
     if (!path) {
       if (effect.kind === 'read') unresolvedReads = true
       else unresolvedWrites = true
-    } else recordPath(path)
+    } else {
+      const connection = argument?.type === 'Name' && fileConnections.has(argument.id ?? '')
+      recordPath(
+        effect.appendedSuffix && !connection && !path.endsWith(effect.appendedSuffix)
+          ? path + effect.appendedSuffix
+          : path
+      )
+    }
   }
 
   const visit = (node: PyNode): void => {
+    const consoleControl =
+      !consoleRedirected &&
+      pythonConsoleControlDiagnostic(
+        node,
+        importedNames,
+        shadowedStaticCalls,
+        pythonTaintedNamespaces,
+        knownDiagnosticValue
+      )
+    if (
+      consoleControl &&
+      consoleControl.locals.every(
+        (name) =>
+          !(diagnosticNamespaceLoads.get(name) ?? []).some((line) => line > (node.end_lineno ?? 0))
+      )
+    ) {
+      // Later uses must not reuse a pre-loop static binding for a diagnostic temporary.
+      for (const name of consoleControl.locals) {
+        invalidateStaticValue(name, false)
+        inMemoryInputs.delete(name)
+        fileConnections.delete(name)
+        scientificObjectTypes.delete(name)
+        importedNames.delete(name)
+      }
+      return
+    }
+
+    if (node.type === 'IfExp') {
+      const selected = staticBoolean(node.test)
+      if (selected !== undefined) {
+        if (node.test) visit(node.test)
+        const branch = selected ? node.body : node.alternate
+        if (isPyNode(branch)) visit(branch)
+        return
+      }
+    }
+    if (
+      !consoleRedirected &&
+      pythonConsoleDiagnostic(
+        node,
+        importedNames,
+        shadowedStaticCalls,
+        pythonTaintedNamespaces,
+        knownDiagnosticValue
+      )
+    )
+      return
     if (
       node.type === 'FunctionDef' ||
       node.type === 'AsyncFunctionDef' ||
@@ -5240,10 +7953,28 @@ const analyzePythonFileAccessTree = (
         importedNames.delete(node.id)
         scientificObjectTypes.delete(node.id)
       }
-      invalidateStaticValue(rootName(node.type === 'AugAssign' ? node.target : node))
+      const target = node.type === 'AugAssign' ? node.target : node
+      const mapping =
+        target?.type === 'Subscript' && isPyNode(target.value)
+          ? canonicalCallName({ type: 'Call', _fields: ['func'], func: target.value })
+          : undefined
+      const configurationMapping =
+        mapping && pythonLibraryMethodEffect(mapping, 'update')?.plottingState === 'write'
+      invalidateStaticValue(rootName(target), !configurationMapping)
     }
     if (node.type === 'Call' && MUTATING_METHODS.has(memberName(node.func) ?? '')) {
-      invalidateStaticValue(rootName(node.func))
+      const canonical = canonicalCallName(node)
+      const member = memberName(node.func) ?? ''
+      const owner = canonical?.slice(0, -(member.length + 1)) ?? ''
+      const effect = pythonLibraryMethodEffect(owner, member)
+      const instanceMutation =
+        PYTHON_LIBRARY_EFFECTS[owner]?.kind === 'type' &&
+        effect?.effect === 'mutate' &&
+        !effect.unsafeNamespace
+      invalidateStaticValue(
+        rootName(node.func),
+        !instanceMutation && effect?.plottingState !== 'write'
+      )
     }
     if (node.type === 'For') {
       if (node.iter) visit(node.iter)
@@ -5475,7 +8206,19 @@ const analyzePythonFileAccessTree = (
           : undefined)
       const inMemoryInput = pythonInMemoryInput(valueNode, importedNames, inMemoryInputs)
       const connectionPath = fileConnectionPath(valueNode)
-      const objectType = scientificObjectType(valueNode)
+      const diagnosticValue =
+        valueNode &&
+        pythonDiagnosticValue(
+          valueNode,
+          importedNames,
+          shadowedStaticCalls,
+          pythonTaintedNamespaces,
+          knownDiagnosticValue
+        )
+      const objectType =
+        diagnosticValue?.kind === 'path' && !diagnosticValue.observed
+          ? 'pathlib.PurePath'
+          : scientificObjectType(valueNode)
       const importedAlias =
         valueNode?.type === 'Name' && valueNode.id ? importedNames.get(valueNode.id) : undefined
       pyChildren(node).forEach(visit)
@@ -5527,7 +8270,8 @@ const analyzePythonFileAccessTree = (
           collections.delete(target.id)
           inMemoryInputs.delete(target.id)
           fileConnections.delete(target.id)
-          scientificObjectTypes.delete(target.id)
+          if (objectType === 'pathlib.PurePath') scientificObjectTypes.set(target.id, objectType)
+          else scientificObjectTypes.delete(target.id)
         } else if (collection) {
           bindings.delete(target.id)
           collections.set(target.id, collection)
@@ -5546,6 +8290,7 @@ const analyzePythonFileAccessTree = (
           inMemoryInputs.delete(target.id)
           fileConnections.set(target.id, connectionPath)
           scientificObjectTypes.delete(target.id)
+          if (objectType === 'pandas.ExcelFile') scientificObjectTypes.set(target.id, objectType)
         } else if (objectType) {
           bindings.delete(target.id)
           collections.delete(target.id)
@@ -5589,7 +8334,14 @@ const analyzePythonFileAccessTree = (
         })),
         ...[...scientificObjectTypes]
           .filter(([, type]) => Boolean(PYTHON_LIBRARY_EFFECTS[type]))
-          .map(([name, qualifiedName]) => ({ name, qualifiedName, kind: 'object' as const }))
+          .map(([name, qualifiedName]) => ({
+            name,
+            qualifiedName,
+            kind: 'object' as const,
+            ...(qualifiedName === 'pandas.ExcelFile' && fileConnections.has(name)
+              ? { filePath: fileConnections.get(name)! }
+              : {})
+          }))
       ].sort((a, b) => a.name.localeCompare(b.name)),
       staticStrings: [...bindings]
         .map(([name, value]) => ({ name, value }))
@@ -5614,7 +8366,15 @@ const analyzePythonSources = async (
   const results: NotebookRunDependencyFacts[] = []
   for (const source of sources) {
     const parsed = await withParsedNotebookSource('python', source, (root) =>
-      analyzePythonTree(root, context?.staticCollections)
+      analyzePythonTree(
+        root,
+        context?.staticCollections,
+        context?.pythonBindings,
+        context?.pythonTaintedNamespaces,
+        context?.staticStrings,
+        context?.resolvedKernelNames,
+        context?.verifiedSerializedValues
+      )
     )
     results.push(
       parsed.state === 'ok' ? parsed.value : { state: 'unknown', reasons: [parsed.reason] }
@@ -5635,15 +8395,21 @@ const analyzePythonNotebookSource = async (
   fileAccess?: NotebookSourceFileAccessExtraction
 }> => {
   const parsed = await withParsedNotebookSource('python', source, (root) => {
+    const acceptedSerializedReads = new Map<string, string>()
     const facts = analyzePythonTree(
       root,
       context?.staticCollections,
       context?.pythonBindings,
-      context?.pythonTaintedNamespaces
+      context?.pythonTaintedNamespaces,
+      context?.staticStrings,
+      context?.resolvedKernelNames,
+      context?.verifiedSerializedValues,
+      acceptedSerializedReads
     )
     const fileAccess = analyzePythonFileAccessTree(
       root,
-      fileContextForFacts ? fileContextForFacts(facts) : context
+      fileContextForFacts ? fileContextForFacts(facts) : context,
+      acceptedSerializedReads
     )
     // Static subscripting only produces a collection here for a slice of flat
     // strings. It owns its sequence; keep the read dependency without linking
@@ -5672,10 +8438,7 @@ const analyzePythonFileAccesses = async (
 ): Promise<Array<NotebookSourceFileAccessExtraction | undefined>> => {
   const results: Array<NotebookSourceFileAccessExtraction | undefined> = []
   for (const source of sources) {
-    const parsed = await withParsedNotebookSource('python', source, (root) =>
-      analyzePythonFileAccessTree(root, context)
-    )
-    results.push(parsed.state === 'ok' ? parsed.value : undefined)
+    results.push((await analyzePythonNotebookSource(source, context)).fileAccess)
   }
   return results
 }

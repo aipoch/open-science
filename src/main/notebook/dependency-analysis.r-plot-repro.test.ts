@@ -22,6 +22,7 @@ import { startWorkingFileObservation } from './working-file-observer'
 import { rCallbackPlot } from './reported-r-callback.fixture'
 import { combinedPlot } from './reported-r-composition.fixture'
 import { rBasePlots } from './reported-r-base-plots.fixture'
+import { rThemePlots } from './reported-r-theme-plots.fixture'
 
 const sineSource = String.raw`library(ggplot2)
 x <- seq(0, 2 * pi, length.out = 1000)
@@ -87,6 +88,61 @@ ggsave("group_bar_r.png", p, width = 6, height = 4.5, dpi = 150)
 cat("saved group_bar_r.png\\n")`
 
 describe('reported R CSV pie chart capture', () => {
+  it.each(['margin', 'margin_auto', 'margin_part', 'rel'])(
+    'analyzes the theme dimension constructor %s and its argument dependencies',
+    async (name) => {
+      for (const source of [
+        `library(ggplot2); result <- ${name}(10)`,
+        `result <- ggplot2::${name}(10)`
+      ]) {
+        expect((await analyzeRSources([source]))[0]).toMatchObject({ state: 'available' })
+        expect(await analyzeNotebookSourceFileAccess('r', source)).toMatchObject({
+          readState: 'complete',
+          writeState: 'complete',
+          externalState: 'complete'
+        })
+      }
+      expect(
+        await analyzeNotebookSourceFileAccess(
+          'r',
+          `ggplot2::${name}(as.numeric(readLines("inputs/dimensions.txt")))`
+        )
+      ).toMatchObject({
+        reads: ['inputs/dimensions.txt']
+      })
+      for (const source of [
+        `library(ggplot2); ${name} <- custom; ${name}(10)`,
+        `other::${name}(10)`,
+        `ggplot2::${name}(custom())`
+      ]) {
+        expect(await analyzeNotebookSourceFileAccess('r', source)).toMatchObject({
+          externalState: 'partial'
+        })
+      }
+    }
+  )
+  it('captures the reported themed pie and bar plots', async () => {
+    // The only external state is the CSV read, resolved by the captured input.
+    expect((await analyzeRSources([rThemePlots]))[0]).toMatchObject({
+      state: 'unknown',
+      reasons: ['external-state']
+    })
+    expect(await analyzeNotebookSourceFileAccess('r', rThemePlots)).toMatchObject({
+      readState: 'complete',
+      writeState: 'complete',
+      externalState: 'complete',
+      reads: ['inputs/sample-groups-666666666666.csv'],
+      writes: ['synthetic_groups_bar_ggplot.png', 'synthetic_groups_pie_ggplot.png']
+    })
+  })
+  it.each([
+    'library(ggplot2); theme(plot.margin = margin(10,10,10,10))',
+    'suppressPackageStartupMessages({library(ggplot2)}); theme(plot.margin = margin(10,10,10,10))',
+    'pretty(c(0,33*1.2),6)',
+    'print(list.files(pattern="ggplot"))'
+  ])('isolates the reported theme analysis: %s', async (source) => {
+    expect((await analyzeRSources([source]))[0]).toMatchObject({ state: 'available' })
+  })
   it.each([
     'graphics::text(1, 1, labels="a")',
     'mtext("caption")',
@@ -475,22 +531,52 @@ it('captures the complete data-mask and delayed-layer pipeline', async () => {
   })
 })
 
-it.skipIf(!process.env.RUN_KERNEL || !process.env.OPEN_SCIENCE_TEST_R_COMMAND)(
-  'captures and replays the real dplyr and ggplot2 pipeline',
-  async () => {
+it.skipIf(!process.env.RUN_KERNEL || !process.env.OPEN_SCIENCE_TEST_R_COMMAND).each([
+  {
+    name: 'dplyr and ggplot2 pipeline',
+    code: dataMaskPipelineSource,
+    inputName: 'counts.csv',
+    outputNames: ['counts.csv', 'counts.png']
+  },
+  {
+    name: 'reported theme dimensions and two plots',
+    code: rThemePlots,
+    inputName: 'sample-groups-666666666666.csv',
+    outputNames: ['synthetic_groups_bar_ggplot.png', 'synthetic_groups_pie_ggplot.png']
+  },
+  {
+    name: 'theme variants, grid units, legends and transparent colours',
+    code: rThemePlots
+      .replace('p_pie <-', 'cols <- scales::alpha(cols, 0.8)\np_pie <-')
+      .replaceAll('theme_minimal', 'theme_dark')
+      .replaceAll('margin(10, 10, 10, 10)', 'margin_auto(10)')
+      .replaceAll(
+        'legend.position = "right"',
+        'legend.position = "right", legend.key.size = grid::unit(5, "mm")'
+      )
+      .replaceAll(
+        'scale_fill_manual(values = cols)',
+        'scale_fill_manual(values = cols, guide = guide_legend(nrow = 2))'
+      ),
+    inputName: 'sample-groups-666666666666.csv',
+    outputNames: ['synthetic_groups_bar_ggplot.png', 'synthetic_groups_pie_ggplot.png']
+  }
+])(
+  'captures and replays the real $name',
+  async ({ code, inputName, outputNames }) => {
     const root = await mkdtemp(join(tmpdir(), 'r-evaluation-pipeline-'))
     try {
-      const content = 'group\nCtrl\nCtrl\nIRI\nIRI\n'
+      const content = `group\n${Array(33).fill('Ctrl\nIRI\n').join('')}`
       const run = async (directory: string): Promise<string[]> => {
         const dataRoot = join(directory, 'data')
         await mkdir(join(dataRoot, 'inputs'), { recursive: true })
-        await writeFile(join(dataRoot, 'inputs/counts.csv'), content)
+        await writeFile(join(dataRoot, 'inputs', inputName), content)
         const observation = await startWorkingFileObservation({
           dataRoot,
           notebookSessionRoot: directory,
           fileEvidenceStorageRoot: directory,
           cwd: dataRoot,
-          code: dataMaskPipelineSource,
+          code,
           registeredInputFiles: [
             {
               inputFileVersionId: 'input-v1',
@@ -498,10 +584,10 @@ it.skipIf(!process.env.RUN_KERNEL || !process.env.OPEN_SCIENCE_TEST_R_COMMAND)(
               sourceFileId: 'input',
               sourceProjectId: 'project',
               sourceSessionId: 'session',
-              filename: 'counts.csv',
+              filename: inputName,
               sizeBytes: Buffer.byteLength(content),
               checksum: createHash('sha256').update(content).digest('hex'),
-              storageKey: 'data/inputs/counts.csv',
+              storageKey: `data/inputs/${inputName}`,
               association: 'turn-attached'
             }
           ],
@@ -513,7 +599,7 @@ it.skipIf(!process.env.RUN_KERNEL || !process.env.OPEN_SCIENCE_TEST_R_COMMAND)(
           [join(__dirname, '../../../resources/notebook/r_loop.R')],
           {
             cwd: dataRoot,
-            input: frameRRequest('pipeline', dataMaskPipelineSource),
+            input: frameRRequest('pipeline', code),
             encoding: 'utf8',
             timeout: 30000
           }
@@ -533,9 +619,12 @@ it.skipIf(!process.env.RUN_KERNEL || !process.env.OPEN_SCIENCE_TEST_R_COMMAND)(
           writerAttribution: 'complete',
           reasonCodes: []
         })
-        expect(captured.confirmedReadPaths).toEqual(['data/inputs/counts.csv'])
+        expect(captured.confirmedReadPaths).toEqual([`data/inputs/${inputName}`])
+        expect(captured.workingFiles.map((file) => file.relativePath)).toEqual(
+          expect.arrayContaining(outputNames.map((file) => `data/${file}`))
+        )
         return Promise.all(
-          ['counts.csv', 'counts.png'].map(async (file) =>
+          outputNames.map(async (file) =>
             createHash('sha256')
               .update(await readFile(join(dataRoot, file)))
               .digest('hex')

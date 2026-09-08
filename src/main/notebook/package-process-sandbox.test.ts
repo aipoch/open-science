@@ -446,10 +446,12 @@ describe('sandboxedPackageSpawn', () => {
           cleanup
         }))
       }
+      const runtimeRoot = mkdtempSync(join(tmpdir(), 'package-tree-'))
+      temporaryDirectories.push(runtimeRoot)
       const spawn = sandboxedPackageSpawn({
         processSandbox,
         request: { language: 'python', packages: ['example'] },
-        runtimeRoot: join(process.cwd(), '.open-science-test-runtime'),
+        runtimeRoot,
         storageRoot: process.cwd(),
         platform,
         terminateTree
@@ -487,10 +489,12 @@ describe('sandboxedPackageSpawn', () => {
           cleanup
         }))
       }
+      const runtimeRoot = mkdtempSync(join(tmpdir(), 'package-tree-'))
+      temporaryDirectories.push(runtimeRoot)
       const spawn = sandboxedPackageSpawn({
         processSandbox,
         request: { language: 'python', packages: ['example'] },
-        runtimeRoot: join(process.cwd(), '.open-science-test-runtime'),
+        runtimeRoot,
         storageRoot: process.cwd()
       })
       let helperPid: number | undefined

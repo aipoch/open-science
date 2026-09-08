@@ -564,7 +564,8 @@ class NotebookKernelExecutor implements NotebookExecutor {
           {
             ...request,
             code: notebookHelperInitializationCode(helperModules),
-            helperModules: undefined
+            helperModules: undefined,
+            pythonRandomState: undefined
           },
           () => undefined
         )
@@ -1363,7 +1364,8 @@ class NotebookKernelExecutor implements NotebookExecutor {
               reqId,
               request.code,
               request.controlInvocationId,
-              protectedDirAdditions
+              protectedDirAdditions,
+              request.language === 'python' ? request.pythonRandomState : undefined
             )
           )
           for (const directory of protectedDirAdditions) proc.protectedDirs.add(directory)

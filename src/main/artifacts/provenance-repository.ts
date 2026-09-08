@@ -377,7 +377,8 @@ class ArtifactProvenanceRepository {
                     producerRunId,
                     id: { in: prioritized }
                   },
-                  select
+                  select,
+                  orderBy: [{ createdAt: 'asc' }, { id: 'asc' }]
                 })
               : []
           const jobs = await client.computeJob.findMany({
@@ -388,10 +389,18 @@ class ArtifactProvenanceRepository {
               ...(prioritized.length > 0 ? { id: { notIn: prioritized } } : {})
             },
             select,
-            orderBy: { createdAt: 'asc' },
+            orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
             take: 101 - priorityJobs.length
           })
-          const activities = [...priorityJobs, ...jobs].slice(0, 100).map((job) => {
+          // Priority controls inclusion in the bound, not the causal order of selected jobs.
+          const selectedJobs = [...priorityJobs, ...jobs]
+            .slice(0, 100)
+            .sort(
+              (left, right) =>
+                left.createdAt.getTime() - right.createdAt.getTime() ||
+                (left.id < right.id ? -1 : left.id > right.id ? 1 : 0)
+            )
+          const activities = selectedJobs.map((job) => {
             let fileEvidence
             try {
               fileEvidence = job.fileEvidence

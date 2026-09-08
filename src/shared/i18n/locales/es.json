@@ -5542,7 +5542,6 @@
     "Output retention limit reached.": "Se alcanzó el límite de conservación de salidas.",
     "Reproduced output was not retained.": "La salida reproducida no se conservó.",
     "Includes the report, logs, and retained differing outputs. Source data is not included.": "Incluye el informe, los registros y las salidas diferentes conservadas. No incluye los datos de origen.",
-    "Reproduced outputs": "Resultados reproducidos",
     "Clear reproduced outputs": "Eliminar resultados reproducidos",
     "Clearing…": "Eliminando…",
     "Output cleared": "Resultado eliminado",
@@ -5664,6 +5663,20 @@
     "Showing the first 100 changed cells. Totals include the complete comparison.": "Se muestran las primeras 100 celdas modificadas. Los totales incluyen toda la comparación.",
     "These rules compare saved outputs; they do not establish scientific equivalence.": "Estas reglas comparan resultados guardados; no establecen equivalencia científica.",
     "Difference image": "Imagen de diferencias",
-    "Execution evidence is missing. Rerun the required code to create a new version.": "Faltan pruebas de ejecución. Vuelva a ejecutar el código necesario para crear una nueva versión."
+    "Execution evidence is missing. Rerun the required code to create a new version.": "Faltan pruebas de ejecución. Vuelva a ejecutar el código necesario para crear una nueva versión.",
+    "Retained reproduced outputs": "Salidas reproducidas conservadas",
+    "View comparison": "Ver comparación",
+    "Byte-for-byte match": "Coincidencia byte por byte",
+    "Bytes differ": "Los bytes difieren",
+    "Not compared": "Sin comparar",
+    "Checked at": "Fecha de comprobación",
+    "Output comparison incomplete": "Comparación de salidas incompleta",
+    "Package setup is missing": "Faltan pasos de carga de paquetes",
+    "Package loading steps were not captured for {{packageNames}}. Run the package setup cells again, then rerun this cell to capture its dependencies.": "No se registraron los pasos de carga de {{packageNames}}. Vuelva a ejecutar las celdas de carga de paquetes y, después, esta celda para registrar sus dependencias.",
+    "Plot setup is incomplete": "Preparación del gráfico incompleta",
+    "Earlier circlize plotting parameters were not captured. Call circlize::circos.clear() before configuring and drawing the plot, then rerun the cell.": "No se registraron los parámetros gráficos anteriores de circlize. Llame a circlize::circos.clear() antes de configurar y dibujar el gráfico y, después, vuelva a ejecutar la celda.",
+    "Analysis rules: {{revision}}": "Reglas de análisis: {{revision}}",
+    "Analysis rules were not recorded for this version.": "No se registraron las reglas de análisis de esta versión.",
+    "Recorded when this Artifact Version was created. Later analysis updates do not change this verification evidence.": "Se registraron al crear esta versión del artefacto. Las actualizaciones posteriores del análisis no modifican estas evidencias de verificación."
   }
 }

@@ -3962,9 +3962,13 @@ describe('notebook runtime service', () => {
         const root = await createStorageRoot()
         const entered: string[] = []
         const releaseFirst = createDeferred<void>()
+        const firstStarted = createDeferred<void>()
         const execute = vi.fn<NotebookShellProcess['execute']>(async ({ command }) => {
           entered.push(command)
-          if (command === 'first') await releaseFirst.promise
+          if (command === 'first') {
+            firstStarted.resolve()
+            await releaseFirst.promise
+          }
           return { stdout: command, stderr: '', exitCode: 0 }
         })
         const service = new NotebookRuntimeService({
@@ -3990,20 +3994,19 @@ describe('notebook runtime service', () => {
         }
         const second = await service.executeShellBackground(secondRequest)
 
-        await vi.waitFor(async () => {
-          const state = await service.state(scope)
-          expect(state.runs.find((run) => run.runId === first.runId)).toMatchObject({
-            status: 'running',
-            executionMode: 'background',
-            shellConcurrency: { limit: 1, slot: 1 }
-          })
-          expect(state.runs.find((run) => run.runId === second.runId)).toMatchObject({
-            status: 'queued',
-            executionMode: 'background',
-            shellConcurrency: { limit: 1 }
-          })
+        await firstStarted.promise
+        const state = await service.state(scope)
+        expect(state.runs.find((run) => run.runId === first.runId)).toMatchObject({
+          status: 'running',
+          executionMode: 'background',
+          shellConcurrency: { limit: 1, slot: 1 }
         })
-        await vi.waitFor(() => expect(entered).toEqual(['first']))
+        expect(state.runs.find((run) => run.runId === second.runId)).toMatchObject({
+          status: 'queued',
+          executionMode: 'background',
+          shellConcurrency: { limit: 1 }
+        })
+        expect(entered).toEqual(['first'])
 
         const cancelled = await service.cancelBackgroundRun({
           ...secondRequest,
@@ -7037,6 +7040,11 @@ describe('notebook runtime service', () => {
       executionInvocationId: 'shared-submission',
       provenanceContext: provenance('frame-b')
     })
+    // Finish execution-time dependency capture before measuring the query/cancel reads.
+    await Promise.all([
+      service.waitForBackgroundRun(first.runId),
+      service.waitForBackgroundRun(second.runId)
+    ])
     readSessionRuns.mockClear()
 
     await expect(

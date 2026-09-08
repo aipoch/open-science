@@ -272,6 +272,59 @@ describe('ArtifactReproducibilityPanel', () => {
     vi.restoreAllMocks()
   })
 
+  it.each([
+    ['equal', 'Decoded content is identical'],
+    ['within-tolerance', 'Content is within the selected tolerance'],
+    ['different', 'Result differs'],
+    ['missing', 'Output comparison incomplete']
+  ] as const)(
+    'summarizes the comparison result %s separately from execution completion',
+    async (outcome, title) => {
+      const value = receipt('different')
+      const comparison = value.comparisons[0]!
+      if (outcome === 'missing') {
+        comparison.reason = 'missing'
+        delete comparison.actualSizeBytes
+        delete comparison.actualChecksum
+      } else {
+        comparison.contentComparison = {
+          schemaVersion: 1,
+          comparator: 'open-science-content-v1',
+          policy: DEFAULT_OUTPUT_COMPARISON_POLICY,
+          policyChecksum: 'a'.repeat(64),
+          expectedChecksum: comparison.expectedChecksum,
+          actualChecksum: comparison.actualChecksum!,
+          kind: 'table',
+          outcome
+        }
+      }
+      const readReproducibilityOutput = vi.fn()
+      ;(window as unknown as { api: unknown }).api = {
+        artifacts: {
+          listReproducibilityReceipts: vi.fn(async () => ({ receipts: [value] })),
+          readReproducibilityOutput
+        }
+      }
+      await act(async () =>
+        root.render(
+          <ArtifactReproducibilityPanel
+            projection={projection()}
+            executionAvailable
+            artifactVersion={value.artifactVersion}
+          />
+        )
+      )
+      const entry = container.querySelector<HTMLDetailsElement>(
+        '[data-reproducibility-history-entry]'
+      )
+      expect(entry?.querySelector(':scope > summary')?.textContent).toContain(title)
+      expect(entry?.textContent).toContain(outcome === 'missing' ? 'Not compared' : 'Bytes differ')
+      expect(entry?.textContent).toContain('Original output')
+      expect(entry?.textContent).toContain('Reproduced output')
+      expect(readReproducibilityOutput).not.toHaveBeenCalled()
+    }
+  )
+
   it('shows retained size, confirms cleanup, and removes previews and actions after cleanup', async () => {
     const value = receipt('different')
     const comparison = {
@@ -329,7 +382,7 @@ describe('ArtifactReproducibilityPanel', () => {
       expect.objectContaining({ versionId: value.artifactVersion.versionId })
     )
     expect(container.textContent).toContain('Output cleared')
-    expect(container.textContent).toContain('0 B')
+    expect(container.querySelector('[data-reproducibility-output-storage]')).toBeNull()
     expect(container.querySelectorAll('figure')).toHaveLength(0)
     expect(button('Download output')).toBeUndefined()
   })
@@ -621,10 +674,34 @@ describe('ArtifactReproducibilityPanel', () => {
     expect(container.textContent).not.toContain('The Execution Log remains available')
   })
 
+  it('shows the sealed rule revision rather than inventing the current revision', async () => {
+    await act(async () =>
+      root.render(
+        <ArtifactReproducibilityPanel
+          projection={projection()}
+          analysisRevision={{
+            schemaVersion: 1,
+            revisionId: 'a'.repeat(64),
+            graphChecksum: 'b'.repeat(64),
+            dependencyAnalyzer: { version: 1, revision: 'historical-rules-7' },
+            lineageBuilder: { version: 1, revision: 'historical-lineage-2' }
+          }}
+        />
+      )
+    )
+    expect(container.textContent).toContain(
+      'Analysis rules: historical-rules-7 / historical-lineage-2'
+    )
+    expect(container.textContent).not.toContain(
+      'Analysis rules were not recorded for this version.'
+    )
+  })
+
   it('renders only a meaningful safe start, lineage, and unavailable future action', async () => {
     await act(async () => root.render(<ArtifactReproducibilityPanel projection={projection()} />))
 
     expect(container.textContent).toContain('Captured evidence')
+    expect(container.textContent).toContain('Analysis rules were not recorded for this version.')
     expect(container.textContent).toContain('Complete capture')
     expect(container.textContent).not.toContain('This result has not been checked again yet.')
     expect(container.querySelector('#reproducibility-check-title')?.textContent).toBe(
@@ -1731,11 +1808,15 @@ describe('ArtifactReproducibilityPanel', () => {
     const logDisclosure = container.querySelector<HTMLDetailsElement>(
       '[data-reproducibility-history-entry="different"]'
     )
-    expect(logDisclosure?.querySelector(':scope > summary')?.textContent).toContain('View details')
+    expect(logDisclosure?.querySelector(':scope > summary')?.textContent).toContain(
+      'View comparison'
+    )
+    expect(getReproducibilityCheckLog).not.toHaveBeenCalled()
+    const receiptLog = logDisclosure?.querySelector<HTMLDetailsElement>('[data-receipt-log]')
     await act(async () => {
-      if (logDisclosure) {
-        logDisclosure.open = true
-        logDisclosure.dispatchEvent(new Event('toggle', { bubbles: true }))
+      if (receiptLog) {
+        receiptLog.open = true
+        receiptLog.dispatchEvent(new Event('toggle', { bubbles: true }))
       }
     })
     expect(getReproducibilityCheckLog).toHaveBeenCalledWith({
@@ -1943,6 +2024,13 @@ describe('ArtifactReproducibilityPanel', () => {
     expect(
       receiptDetails?.querySelector('[data-verification-result-icon="matched"]')?.className
     ).toContain('text-primary')
+    expect(receiptDetails?.open).toBe(true)
+    expect(receiptDetails?.textContent).toContain('Byte-for-byte match')
+    expect(receiptDetails?.textContent).toContain('result.csv')
+    expect(receiptDetails?.textContent).toContain('Original output')
+    expect(receiptDetails?.textContent).toContain('Reproduced output')
+    expect(receiptDetails?.textContent).toContain('Checked at')
+    expect(receiptDetails?.querySelectorAll('dd')).toHaveLength(2)
     await act(async () => {
       if (receiptDetails) receiptDetails.open = true
     })

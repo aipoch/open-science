@@ -5678,7 +5678,6 @@
     "Output retention limit reached.": "Достигнут лимит сохранения результатов.",
     "Reproduced output was not retained.": "Воспроизведённый результат не сохранён.",
     "Includes the report, logs, and retained differing outputs. Source data is not included.": "Содержит отчёт, журналы и сохранённые отличающиеся результаты. Исходные данные не включены.",
-    "Reproduced outputs": "Воспроизведённые результаты",
     "Clear reproduced outputs": "Удалить воспроизведённые результаты",
     "Clearing…": "Удаление…",
     "Output cleared": "Результат удалён",
@@ -5800,6 +5799,20 @@
     "Showing the first 100 changed cells. Totals include the complete comparison.": "Показаны первые 100 изменённых ячеек. Итоги охватывают всё сравнение.",
     "These rules compare saved outputs; they do not establish scientific equivalence.": "Эти правила сравнивают сохранённые результаты, но не устанавливают научную эквивалентность.",
     "Difference image": "Изображение различий",
-    "Execution evidence is missing. Rerun the required code to create a new version.": "Отсутствуют свидетельства выполнения. Повторно выполните необходимый код, чтобы создать новую версию."
+    "Execution evidence is missing. Rerun the required code to create a new version.": "Отсутствуют свидетельства выполнения. Повторно выполните необходимый код, чтобы создать новую версию.",
+    "Retained reproduced outputs": "Сохранённые воспроизведённые результаты",
+    "View comparison": "Посмотреть сравнение",
+    "Byte-for-byte match": "Побайтовое совпадение",
+    "Bytes differ": "Байты различаются",
+    "Not compared": "Не сравнивалось",
+    "Checked at": "Время проверки",
+    "Output comparison incomplete": "Сравнение результатов неполное",
+    "Package setup is missing": "Отсутствуют шаги загрузки пакетов",
+    "Package loading steps were not captured for {{packageNames}}. Run the package setup cells again, then rerun this cell to capture its dependencies.": "Шаги загрузки {{packageNames}} не были записаны. Повторно выполните ячейки загрузки пакетов, а затем эту ячейку, чтобы записать её зависимости.",
+    "Plot setup is incomplete": "Подготовка графика не завершена",
+    "Earlier circlize plotting parameters were not captured. Call circlize::circos.clear() before configuring and drawing the plot, then rerun the cell.": "Предыдущие параметры графика circlize не были записаны. Вызовите circlize::circos.clear() перед настройкой и построением графика, затем повторно выполните ячейку.",
+    "Analysis rules: {{revision}}": "Правила анализа: {{revision}}",
+    "Analysis rules were not recorded for this version.": "Правила анализа для этой версии не записаны.",
+    "Recorded when this Artifact Version was created. Later analysis updates do not change this verification evidence.": "Записано при создании этой версии артефакта. Последующие обновления анализа не изменяют эти свидетельства проверки."
   }
 }

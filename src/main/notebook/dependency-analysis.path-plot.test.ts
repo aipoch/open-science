@@ -76,12 +76,12 @@ it('captures the exact Path input and both reported outputs', async () => {
 })
 
 it.each(['unknown_operation', 'unlink', 'resolve', 'exists'])(
-  'does not turn Path.%s filesystem effects into complete file evidence',
+  'retains Path.%s filesystem effects when the result is consumed',
   async (method) => {
     expect(
       await analyzeNotebookSourceFileAccess(
         'python',
-        `from pathlib import Path\np = Path("data.csv")\np.${method}()`
+        `from pathlib import Path\np = Path("data.csv")\nresult = p.${method}()\nopen("result.txt", "w").write(str(result))`
       )
     ).toMatchObject({
       readState: 'partial'

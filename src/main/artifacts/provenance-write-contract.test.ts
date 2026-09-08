@@ -875,13 +875,14 @@ describe('artifact provenance producer and source validation', () => {
     })
     await value.client.computeJob.createMany({
       data: Array.from({ length: 100 }, (_, index) => ({
-        id: `compute-job-noise-${String(index).padStart(3, '0')}`,
+        id: `compute-job-noise-${String(99 - index).padStart(3, '0')}`,
         providerId: 'ssh:test',
         shape: 'scheduler_cluster',
         executionMode: 'slurm',
         sessionId: 'session-1',
         projectId: 'project-1',
         status: 'success',
+        createdAt: new Date(1000),
         intent: 'unrelated output',
         command: 'true',
         commandHash: sha256('true'),
@@ -897,6 +898,7 @@ describe('artifact provenance producer and source validation', () => {
         sessionId: 'session-1',
         projectId: 'project-1',
         status: 'success',
+        createdAt: new Date(2000),
         intent: 'produce binary results',
         command: 'generate-results',
         commandHash: sha256('generate-results'),
@@ -993,6 +995,17 @@ describe('artifact provenance producer and source validation', () => {
       producer: { producer_run_id: producerRunId },
       compute_executions: expect.arrayContaining([expect.objectContaining({ activity_id: jobId })])
     })
+    expect(
+      JSON.parse(versionRow.evidenceJson).compute_executions.map(
+        (activity: { activity_id: string }) => activity.activity_id
+      )
+    ).toEqual([
+      ...Array.from(
+        { length: 99 },
+        (_, index) => `compute-job-noise-${String(index).padStart(3, '0')}`
+      ),
+      jobId
+    ])
     expect(JSON.parse(versionRow.executionSnapshotJson!)).toMatchObject({
       provenanceGraph: {
         reasonCodes: expect.arrayContaining(['history-truncated'])

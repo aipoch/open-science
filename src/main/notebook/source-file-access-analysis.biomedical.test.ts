@@ -169,7 +169,8 @@ saveRDS(list(exposure, outcome), "mr-inputs.rds")`
       writes: ['mr-inputs.rds'],
       // Missing ID columns may trigger internal RNG even with clumping disabled.
       readState: 'partial',
-      writeState: 'complete',
+      // Known paths do not rule out additional effects of unsupported execution.
+      writeState: 'partial',
       externalState: 'partial'
     })
   })

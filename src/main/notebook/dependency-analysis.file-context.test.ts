@@ -13,6 +13,24 @@ import { projectNotebookFileContext, type FileContextEntry } from './dependency-
 import { analyzeNotebookSourceFileAccess } from './source-file-access-analysis'
 
 const roots: string[] = []
+
+it('restores writer paths from sliced collections after cache reload', async () => {
+  const context = await fileContext('r', [
+    'paths <- c("a.csv","b.csv","unused.csv")',
+    'selected <- paths[1:2]'
+  ])
+  expect(
+    await analyzeNotebookSourceFileAccess(
+      'r',
+      'list(data.frame(n=1)) |> purrr::walk2(selected,utils::write.csv)',
+      context
+    )
+  ).toMatchObject({
+    writes: ['a.csv', 'b.csv'],
+    writeState: 'complete',
+    externalState: 'complete'
+  })
+})
 afterEach(async () => {
   vi.restoreAllMocks()
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })))
@@ -72,6 +90,49 @@ const fileContext = async (
 }
 
 describe('file context after mutable path collections', () => {
+  it.each(['python', 'r'] as const)(
+    'restores %s diagnostic path bindings after cache reload',
+    async (language) => {
+      const context = await fileContext(language, [
+        language === 'python'
+          ? 'import os\nfrom pathlib import Path\nfolder="out"\npath=Path(folder)/"plot.png"'
+          : 'folder <- "out"; path <- file.path(folder,"plot.png")'
+      ])
+      const diagnostic =
+        language === 'python'
+          ? 'print(f"Saved: {path} ({os.path.getsize(path)} bytes)")'
+          : 'cat(sprintf("Saved: %s (%s bytes)",path,file.size(path)))'
+      expect(await analyzeNotebookSourceFileAccess(language, diagnostic, context)).toMatchObject({
+        readState: 'complete',
+        writeState: 'complete',
+        externalState: 'complete'
+      })
+      const rebind = language === 'python' ? 'path=custom_path()\n' : 'path <- custom_path(); '
+      expect(
+        (await analyzeNotebookSourceFileAccess(language, rebind + diagnostic, context))
+          .externalState
+      ).toBe('partial')
+    }
+  )
+
+  it('retains Python console observation identities after cache reload', async () => {
+    const context = await fileContext('python', ['import os as fs\nfrom pathlib import Path'])
+    expect(
+      await analyzeNotebookSourceFileAccess(
+        'python',
+        'print(fs.getcwd())\nprint(Path("plot.png").stat().st_size)',
+        context
+      )
+    ).toMatchObject({ readState: 'complete', writeState: 'complete', externalState: 'complete' })
+    expect(
+      await analyzeNotebookSourceFileAccess(
+        'python',
+        'open("report.txt","w").write(fs.getcwd())',
+        context
+      )
+    ).toMatchObject({ externalState: 'partial' })
+  })
+
   it('retains R logical subsets across blocks and cache reloads', async () => {
     const context = await fileContext('r', [
       'paths <- c("keep.txt", "skip.txt", "last.txt")',
@@ -209,7 +270,12 @@ describe('file context after mutable path collections', () => {
     ['formatter <- function(x) round(x)', 'round <- function(x) readRDS("hidden.rds")']
   ])('discards unsafe R callable knowledge after replacement: %s', async (...scripts) => {
     const context = await fileContext('r', scripts)
-    expect(context?.rFunctions?.map(({ name }) => name) ?? []).not.toContain('formatter')
+    // An opaque replacement can retain its identity, but never the old read-only contract.
+    expect(
+      context?.rFunctions
+        ?.filter(({ summary }) => summary.methods.every((method) => method.effect === 'read'))
+        .map(({ name }) => name) ?? []
+    ).not.toContain('formatter')
     expect(
       await analyzeNotebookSourceFileAccess('r', 'result <- lapply(1:3, formatter)', context)
     ).toMatchObject({ readState: 'partial' })
@@ -781,4 +847,72 @@ it('does not invalidate a module merely printed for inspection', async () => {
   expect(
     await analyzeNotebookSourceFileAccess('python', 'sitk.ReadImage("inputs/ct.nii.gz")', context)
   ).toMatchObject({ reads: ['inputs/ct.nii.gz'], externalState: 'complete' })
+})
+
+it('restores sliced R map inputs after loading the dependency cache', async () => {
+  const context = await fileContext('r', [
+    'paths <- c("a.csv","skip.csv","b.csv")',
+    'selected <- paths[-2]',
+    'paths <- c("replacement.csv")'
+  ])
+  expect(
+    await analyzeNotebookSourceFileAccess(
+      'r',
+      'result <- purrr::map(selected,readr::read_csv)',
+      context
+    )
+  ).toMatchObject({ reads: ['a.csv', 'b.csv'], readState: 'complete', externalState: 'complete' })
+})
+
+it('does not reuse static R paths constructed by a replaced builtin', async () => {
+  const context = await fileContext('r', ['c <- custom_builder', 'paths <- c("wrong.csv")'])
+  const result = await analyzeNotebookSourceFileAccess(
+    'r',
+    'result <- purrr::map(paths,utils::read.csv)',
+    context
+  )
+  expect(result.readState).toBe('partial')
+  expect(result.reads).not.toContain('wrong.csv')
+})
+
+it('captures matrix chord output while its input remains on the prior DataFrame run', async () => {
+  const source = await readFile(join(__dirname, 'reported-python-matrix-chord.fixture.py'), 'utf8')
+  const context = await fileContext('python', [
+    "import pandas as pd\ndf = pd.read_excel('inputs/edge-weights-222222222222.xlsx')"
+  ])
+  const access = await analyzeNotebookSourceFileAccess('python', source, context)
+  expect(access).toMatchObject({
+    readState: 'complete',
+    writeState: 'complete',
+    externalState: 'complete',
+    writes: ['chord_diagram.png']
+  })
+})
+
+it('reports missing DataFrame context for the matrix chord rather than inventing an input file', async () => {
+  const source = await readFile(join(__dirname, 'reported-python-matrix-chord.fixture.py'), 'utf8')
+  const access = await analyzeNotebookSourceFileAccess('python', source)
+  expect(access.readState).toBe('partial')
+  expect(access.reads).toEqual([])
+})
+
+it('restores bounded R atomic value knowledge from the analysis cache', async () => {
+  const context = await fileContext('r', ['source <- 0.5'])
+  expect(context?.rAtomicValueNames).toContain('source')
+  expect(
+    await analyzeNotebookSourceFileAccess(
+      'r',
+      'value <- sin(source); if (value > 0) value <- value - 1; write.csv(data.frame(value), "out.csv")',
+      context
+    )
+  ).toMatchObject({ readState: 'complete', writeState: 'complete', writes: ['out.csv'] })
+})
+
+it('drops R atomic knowledge across an interrupted kernel operation', async () => {
+  const context = await fileContext(
+    'r',
+    ['source <- 0.5', 'stop("interrupted")'],
+    [{}, { status: 'failed' }]
+  )
+  expect(context?.rAtomicValueNames ?? []).not.toContain('source')
 })

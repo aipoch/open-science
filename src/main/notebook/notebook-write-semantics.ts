@@ -3,6 +3,7 @@
 type WriteOption = {
   keyword: 'mode' | 'append' | 'file_mode'
   position?: number
+  precedingArguments?: readonly string[]
   defaultValue: string | boolean
 }
 type WriteDisposition = 'replace' | 'update' | 'unknown'
@@ -18,12 +19,25 @@ const writeOptions: Record<'python' | 'r', ReadonlyMap<string, WriteOption>> = {
     ['to_zarr', { keyword: 'mode', position: 2, defaultValue: 'w-' }],
     ['to_netcdf', { keyword: 'mode', position: 1, defaultValue: 'w' }]
   ]),
-  r: new Map([
-    ['write.table', { keyword: 'append', position: 2, defaultValue: false }],
+  r: new Map<string, WriteOption>([
+    ['write.table', { keyword: 'append', precedingArguments: ['x', 'file'], defaultValue: false }],
     ['fwrite', { keyword: 'append', defaultValue: false }],
-    ['write_csv', { keyword: 'append', defaultValue: false }],
-    ['write_tsv', { keyword: 'append', defaultValue: false }],
-    ['write_delim', { keyword: 'append', defaultValue: false }]
+    ...['write_csv', 'write_csv2', 'write_tsv'].map(
+      (name) =>
+        [
+          name,
+          { keyword: 'append', precedingArguments: ['x', 'file', 'na'], defaultValue: false }
+        ] as const
+    ),
+    [
+      'write_lines',
+      { keyword: 'append', precedingArguments: ['x', 'file', 'sep', 'na'], defaultValue: false }
+    ],
+    ['write_file', { keyword: 'append', precedingArguments: ['x', 'file'], defaultValue: false }],
+    [
+      'write_delim',
+      { keyword: 'append', precedingArguments: ['x', 'file', 'delim', 'na'], defaultValue: false }
+    ]
     // utils::write.csv/write.csv2 deliberately ignore append; they replace the file.
   ])
 }

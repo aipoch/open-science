@@ -6,7 +6,11 @@ type NotebookFileCallEffect = {
   // Formats whose conventional representation is one file; other formats need
   // header/companion evidence before a single path can represent the whole input.
   singleFileSuffixes?: readonly string[]
+  // Added by path-based writers only; file handles retain their exact filename.
+  appendedSuffix?: '.npy' | '.npz'
   pathOptional?: boolean
+  // Some APIs accept a file path or an already loaded scientific value.
+  inMemoryTypes?: readonly string[]
   inputForm?: 'paths' | 'lines'
 }
 
@@ -23,6 +27,13 @@ const PYTHON_FILE_CALL_EFFECTS: ReadonlyMap<string, NotebookFileCallEffect> = ne
     (name) =>
       [name, { kind: 'read', position: 0, keywords: ['paths'], inputForm: 'paths' }] as const
   ),
+  ['numpy.save', { kind: 'write', position: 0, keywords: ['file'], appendedSuffix: '.npy' }],
+  ...['numpy.savez', 'numpy.savez_compressed'].map(
+    (name) =>
+      [name, { kind: 'write', position: 0, keywords: ['file'], appendedSuffix: '.npz' }] as const
+  ),
+  ['pandas.to_pickle', { kind: 'write', position: 1, keywords: ['filepath_or_buffer'] }],
+  ['pandas.read_pickle', { kind: 'read', position: 0, keywords: ['filepath_or_buffer'] }],
   ['pandas.ExcelFile', { kind: 'read', position: 0, keywords: ['path_or_buffer'] }],
   ['scanpy.read_10x_h5', { kind: 'read', position: 0, keywords: ['filename'] }],
   ...[
@@ -178,7 +189,27 @@ const PYTHON_UNSUPPORTED_EXTERNAL_STATE_NAMESPACES = [
   'urllib'
 ] as const
 
+const PYTHON_FILESYSTEM_OBSERVATIONS = new Set([
+  'os.getcwd',
+  'os.getcwdb',
+  'os.stat',
+  'os.lstat',
+  'os.listdir',
+  'os.path.getsize',
+  'os.path.getmtime',
+  'os.path.getatime',
+  'os.path.getctime',
+  'os.path.exists',
+  'os.path.lexists',
+  'os.path.isfile',
+  'os.path.isdir',
+  'os.path.islink',
+  'os.path.abspath',
+  'os.path.realpath'
+])
+
 const PYTHON_UNSUPPORTED_EXTERNAL_STATE_CALLS = new Set([
+  ...PYTHON_FILESYSTEM_OBSERVATIONS,
   'datetime.datetime.now',
   'datetime.datetime.today',
   'datetime.date.today',
@@ -190,7 +221,7 @@ const PYTHON_UNSUPPORTED_EXTERNAL_STATE_CALLS = new Set([
 ])
 
 // File-producing grDevices entry points share identity between dependency and
-// file analysis. Device copying/printing accepts callbacks and is not covered here.
+// file analysis. Explicit device-copy targets are normalized to these calls by the R analyzer.
 const R_GRAPHICS_FILE_DEVICES = new Set([
   'bmp',
   'cairo_pdf',
@@ -209,6 +240,8 @@ const R_FILE_CALL_EFFECTS: ReadonlyMap<string, NotebookFileCallEffect> = new Map
   string,
   NotebookFileCallEffect
 >([
+  ['excel_sheets', { kind: 'read', position: 0, keywords: ['path'] }],
+  ['getSheetNames', { kind: 'read', position: 0, keywords: ['file'] }],
   ['read.FCS', { kind: 'read', position: 0, keywords: ['filename'] }],
   ['read.flowSet', { kind: 'read', position: 0, keywords: ['files'], inputForm: 'paths' }],
   ['write.FCS', { kind: 'write', position: 1, keywords: ['filename'] }],
@@ -295,6 +328,7 @@ const R_FILE_CALL_EFFECTS: ReadonlyMap<string, NotebookFileCallEffect> = new Map
     'write.table',
     'write.xlsx',
     'write_csv',
+    'write_csv2',
     'write_csv_arrow',
     'write_dataset',
     'write_delim',
@@ -385,6 +419,7 @@ const R_FILE_CALL_EFFECTS: ReadonlyMap<string, NotebookFileCallEffect> = new Map
     (name) => [name, { kind: 'read', position: 0, keywords: ['con'] }] as const
   ),
   ['fromJSON', { kind: 'read', position: 0, keywords: ['txt'] }],
+  ['parse_json', { kind: 'read', position: 0, keywords: ['json'] }],
   ['st_read', { kind: 'read', position: 0, keywords: ['dsn'] }],
   ['nc_open', { kind: 'read', position: 0, keywords: ['filename'] }],
   ...['rast', 'vect'].map((name) => [name, { kind: 'read', position: 0, keywords: ['x'] }] as const)
@@ -400,6 +435,7 @@ export {
   PYTHON_FILE_CALL_EFFECTS,
   isPotentialPythonFileWriteCall,
   PYTHON_UNSUPPORTED_EXTERNAL_STATE_CALLS,
+  PYTHON_FILESYSTEM_OBSERVATIONS,
   PYTHON_UNSUPPORTED_EXTERNAL_STATE_NAMESPACES,
   R_FILE_CALL_EFFECTS,
   R_GRAPHICS_FILE_DEVICES,

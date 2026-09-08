@@ -17,6 +17,7 @@ import {
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve, win32 } from 'node:path'
 import { promisify } from 'node:util'
+import volcanoCells from './reported-r-diagonal-volcano.fixture.json'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import type { ProvenanceNotebookRun } from '../../shared/artifact-provenance'
@@ -776,13 +777,13 @@ describe('working-file evidence', () => {
     ) as { relations: Array<{ relation: string; relativePath: string }> }
 
     expect(result.fileEvidence).toMatchObject({
-      state: 'partial',
+      state: 'available',
       fileReads: 'complete',
-      externalPaths: 'partial',
+      externalPaths: 'complete',
       writerAttribution: 'complete',
       relationCount: 2,
       generationCount: 2,
-      reasonCodes: ['external-paths-not-observed', 'source-analysis-unsupported-call']
+      reasonCodes: []
     })
     expect(
       evidence.relations.map(({ relation, relativePath }) => [relation, relativePath])
@@ -1048,6 +1049,55 @@ describe('working-file evidence', () => {
     expect(evidence.relations[0]).not.toHaveProperty('previousGenerationId')
   })
 
+  it.each(volcanoCells.filter((cell) => ['20', '21', '22', '25'].includes(cell.runId)))(
+    'captures the RDS input without chaining earlier PNG generations for volcano run $runId',
+    async ({ script, runId }) => {
+      const { sessionRoot, dataRoot } = await createRoots()
+      // The observer snapshots bytes; the analyzer must never deserialize RDS.
+      await writeFile(join(dataRoot, 'diff_final.rds'), 'tiny synthetic frozen input')
+      await writeFile(join(dataRoot, 'diagonal_volcano.png'), 'earlier plot')
+      const observation = await startWorkingFileObservation(
+        {
+          dataRoot,
+          notebookSessionRoot: sessionRoot,
+          cwd: dataRoot,
+          code: script,
+          language: 'r',
+          runId: `volcano-${runId}`
+        },
+        { watchDirectory: watcherUnavailable }
+      )
+      await writeFile(join(dataRoot, 'diagonal_volcano.png'), 'new plot')
+      const result = await observation.finish()
+      const evidence = JSON.parse(
+        await readFile(join(storageRoot!, ...result.fileEvidence.storageKey!.split('/')), 'utf8')
+      ) as { relations: Array<Record<string, unknown>> }
+      expect(result.fileEvidence).toMatchObject({
+        state: 'available',
+        fileReads: 'complete',
+        writerAttribution: 'complete'
+      })
+      expect(evidence.relations).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            relativePath: 'data/diff_final.rds',
+            relation: 'present-before'
+          }),
+          expect.objectContaining({
+            relativePath: 'data/diagonal_volcano.png',
+            relation: 'modified'
+          })
+        ])
+      )
+      expect(
+        evidence.relations.find((relation) => relation.relation === 'modified')
+      ).not.toHaveProperty('previousGenerationId')
+      expect(
+        evidence.relations.filter((relation) => relation.relation === 'present-before')
+      ).toHaveLength(1)
+    }
+  )
+
   it('does not treat a URL reader argument as a frozen local input', async () => {
     const { sessionRoot, dataRoot } = await createRoots()
     const observation = await startWorkingFileObservation(
@@ -1292,7 +1342,8 @@ describe('working-file evidence', () => {
     const result = await observation.finish()
 
     expect(result.fileEvidence).toMatchObject({
-      writerAttribution: 'complete',
+      // Keep the observed file group, without certifying unmodeled R dispatch.
+      writerAttribution: language === 'r' ? 'partial' : 'complete',
       scientificOutputCount: 1
     })
   })

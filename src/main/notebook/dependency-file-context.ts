@@ -1,3 +1,4 @@
+import { PYTHON_LIBRARY_EFFECTS } from './python-library-effects'
 import type {
   NotebookRunDependencyFacts,
   NotebookSourceFileAccessContext
@@ -31,6 +32,8 @@ const projectNotebookFileContext = (
     NotebookSourceFileAccessContext['localFileWrappers'][number]
   >()
   const resolvedKernelNames = new Set<string>()
+  const rAtomicValueNames = new Set<string>()
+  const rCopyOnModifyNames = new Set<string>()
   const pythonTaintedNamespaces = new Set<string>()
   const pythonBindings = new Map<
     string,
@@ -77,6 +80,8 @@ const projectNotebookFileContext = (
       staticCollections.clear()
       localFileWrappers.clear()
       resolvedKernelNames.clear()
+      rAtomicValueNames.clear()
+      rCopyOnModifyNames.clear()
       rFunctions.clear()
       pythonBindings.clear()
       // These names convey uncertainty only; they must not regain trusted library
@@ -114,6 +119,7 @@ const projectNotebookFileContext = (
       }
     }
     const invalidatedNames = new Set([...definedNames, ...mutatedNames])
+    const priorCopyOnModifyNames = new Set(rCopyOnModifyNames)
     for (const [name, wrapper] of localFileWrappers) {
       if (wrapper.dependencyNames.some((dependency) => invalidatedNames.has(dependency))) {
         localFileWrappers.delete(name)
@@ -124,6 +130,8 @@ const projectNotebookFileContext = (
       staticCollections.delete(name)
       localFileWrappers.delete(name)
       rFunctions.delete(name)
+      rAtomicValueNames.delete(name)
+      rCopyOnModifyNames.delete(name)
       const binding = pythonBindings.get(name)
       if (
         definedNames.has(name) ||
@@ -143,6 +151,34 @@ const projectNotebookFileContext = (
         rFunctions.delete(name)
     }
     if (language === 'r') {
+      const uncertainMutations = new Set([
+        ...(facts.possiblyMutatedNames ?? []),
+        ...(facts.receiverCalls ?? []).flatMap((call) => [
+          call.receiver,
+          ...(call.argumentNames ?? [])
+        ])
+      ])
+      const safeValue = (name: string): boolean =>
+        !conditionalNames.has(name) &&
+        !uncertainMutations.has(name) &&
+        !facts.copyOnModifyInvalidatedNames?.includes(name)
+      // Known R column/metadata replacements copy ordinary values. Their final
+      // ownership facts remain valid across cells; unresolved method effects do not.
+      for (const name of facts.copyOnModifyNames ?? [])
+        if (safeValue(name)) rCopyOnModifyNames.add(name)
+      for (const { target, sourceNames } of facts.copyOnModifyBindings ?? [])
+        if (
+          safeValue(target) &&
+          sourceNames.every(
+            (name) =>
+              priorCopyOnModifyNames.has(name) &&
+              (!invalidatedNames.has(name) || (name === target && !definedNames.has(name)))
+          )
+        )
+          rCopyOnModifyNames.add(target)
+      for (const name of facts.rAtomicValueNames ?? [])
+        if (definedNames.has(name) && !conditionalNames.has(name) && !mutatedNames.has(name))
+          rAtomicValueNames.add(name)
       for (const binding of facts.typeBindings ?? []) {
         const summary = facts.typeSummaries?.find((item) => item.name === binding.typeName)
         if (
@@ -194,6 +230,23 @@ const projectNotebookFileContext = (
     for (const binding of fileContext.pythonBindings ?? []) {
       if (!conditionalNames.has(binding.name)) pythonBindings.set(binding.name, binding)
     }
+    if (language === 'python') {
+      for (const binding of facts.typeBindings ?? []) {
+        if (
+          PYTHON_LIBRARY_EFFECTS[binding.typeName]?.kind === 'type' &&
+          !conditionalNames.has(binding.target)
+        )
+          pythonBindings.set(binding.target, {
+            name: binding.target,
+            qualifiedName: binding.typeName,
+            kind: 'object',
+            ...(pythonBindings.get(binding.target)?.qualifiedName === binding.typeName &&
+            pythonBindings.get(binding.target)?.filePath
+              ? { filePath: pythonBindings.get(binding.target)!.filePath }
+              : {})
+          })
+      }
+    }
     boundPythonState()
   }
   if (!available && !pythonTaintedNamespaces.size) return undefined
@@ -225,6 +278,8 @@ const projectNotebookFileContext = (
     localFileWrappers: [...localFileWrappers.values()].sort((left, right) =>
       left.name.localeCompare(right.name)
     ),
+    ...(rAtomicValueNames.size ? { rAtomicValueNames: [...rAtomicValueNames].sort() } : {}),
+    ...(rCopyOnModifyNames.size ? { rCopyOnModifyNames: [...rCopyOnModifyNames].sort() } : {}),
     ...(remainingKernelNames.length ? { resolvedKernelNames: remainingKernelNames } : {}),
     ...(pythonTaintedNamespaces.size
       ? { pythonTaintedNamespaces: [...pythonTaintedNamespaces].sort() }

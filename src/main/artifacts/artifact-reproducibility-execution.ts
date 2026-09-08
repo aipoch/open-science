@@ -469,6 +469,7 @@ const executeArtifactReproducibility = async (
       const result = await runtime.execute({
         step,
         source: run.script,
+        executionContext: run.executionContext,
         sessionRoot: workspaceRoot,
         kernelEpochId: run.kernelEpochId,
         helperModules: helpersForRun(run, input.execution.helperModules),

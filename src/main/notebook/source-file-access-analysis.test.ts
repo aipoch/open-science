@@ -751,7 +751,7 @@ describe('analyzeNotebookSourceFileAccess', () => {
     })
   })
 
-  it('does not treat an R directory listing as reading every file', async () => {
+  it('does not treat a standalone R directory listing as an artifact input', async () => {
     const result = await analyzeNotebookSourceFileAccess(
       'r',
       [
@@ -769,10 +769,10 @@ describe('analyzeNotebookSourceFileAccess', () => {
     expect(result).toEqual({
       readState: 'complete',
       writeState: 'complete',
-      externalState: 'partial',
+      externalState: 'complete',
       reads: [],
       writes: ['cos_plot_r.png', 'sin_plot_r.png'],
-      reasonCodes: ['source-analysis-unsupported-call']
+      reasonCodes: []
     })
   })
 
@@ -2570,7 +2570,7 @@ describe('analyzeNotebookSourceFileAccess', () => {
     ['R GeoTIFF', 'r' as const, "terra::writeRaster(raster, 'raster.tif')", 'raster.tif', 'geotiff']
   ])('extracts a scoped %s target', async (_name, language, source, path, kind) => {
     await expect(analyzeNotebookSourceFileAccess(language, source)).resolves.toMatchObject({
-      writeState: 'complete',
+      writeState: _name === 'R Shapefile' || _name === 'R GeoTIFF' ? 'partial' : 'complete',
       writes: [path],
       writeScopes: [{ kind, path }]
     })
@@ -2580,7 +2580,7 @@ describe('analyzeNotebookSourceFileAccess', () => {
     await expect(
       analyzeNotebookSourceFileAccess('r', "sf::st_write(layer, 'shape.gpkg')")
     ).resolves.toMatchObject({
-      writeState: 'complete',
+      writeState: 'partial',
       writes: ['shape.gpkg']
     })
   })
@@ -2755,7 +2755,8 @@ describe('analyzeNotebookSourceFileAccess', () => {
     ['workspace image', "save.image(file = 'workspace.RData')", 'workspace.RData']
   ])('extracts common R %s output paths', async (_name, source, output) => {
     await expect(analyzeNotebookSourceFileAccess('r', source)).resolves.toMatchObject({
-      writeState: 'complete',
+      // Source/evaluation uncertainty can hide additional writes; paths still survive.
+      writeState: _name === 'binary file' || _name === 'workspace image' ? 'partial' : 'complete',
       writes: [output]
     })
   })
@@ -2937,7 +2938,7 @@ describe('analyzeNotebookSourceFileAccess', () => {
 
     expect(result).toMatchObject({
       readState: 'partial',
-      writeState: 'complete',
+      writeState: 'partial',
       externalState: 'partial',
       reads: [],
       writes: ['summary.csv'],
@@ -2948,7 +2949,7 @@ describe('analyzeNotebookSourceFileAccess', () => {
     })
   })
 
-  it('keeps unseeded random state conservative', async () => {
+  it('separates captured global RNG state from file access evidence', async () => {
     const result = await analyzeNotebookSourceFileAccess(
       'python',
       [
@@ -2959,11 +2960,11 @@ describe('analyzeNotebookSourceFileAccess', () => {
     )
 
     expect(result).toMatchObject({
-      readState: 'partial',
+      readState: 'complete',
       writeState: 'complete',
-      externalState: 'partial',
+      externalState: 'complete',
       writes: ['samples.csv'],
-      reasonCodes: expect.arrayContaining(['source-analysis-unsupported-call'])
+      reasonCodes: []
     })
   })
 

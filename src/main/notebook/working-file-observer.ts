@@ -28,6 +28,7 @@ import { createRootNotebookLane } from './lane-identity'
 import { getNotebookFileEvidenceLocation } from './repository'
 import { notebookPromptInputPath } from './prompt-input-materialization'
 import { analyzeNotebookSourceFileAccess } from './source-file-access-analysis'
+import { verifiedSerializedValues } from './serialized-file-provenance'
 import { reportNotebookFileAnalysis } from './evidence-diagnostics'
 import type {
   NotebookSourceFileAccessContext,
@@ -296,6 +297,7 @@ type ActiveEvidenceCapture = {
   maxActivityBytes: number
   maxEvidenceBytes: number
   diskReserveBytes: number
+  initialGenerationChecksums: Map<string, string>
   initialGenerationPaths: Set<string>
   initialFilePaths: Set<string>
 }
@@ -1381,6 +1383,7 @@ const beginEvidenceCapture = async (
     maxEvidenceBytes:
       dependencies.maxEvidenceBytes ?? LOCAL_RESOURCE_BUDGETS.notebookEvidenceProjectBytes,
     diskReserveBytes: dependencies.diskReserveBytes ?? LOCAL_RESOURCE_BUDGETS.diskReserveBytes,
+    initialGenerationChecksums: new Map(),
     initialGenerationPaths: new Set(),
     initialFilePaths: new Set(
       observations.flatMap((observation) =>
@@ -1473,6 +1476,9 @@ const beginEvidenceCapture = async (
     if (!('capturedInitialGenerations' in result)) {
       throw new Error('File-evidence initial capture returned an invalid result.')
     }
+    capture.initialGenerationChecksums = new Map(
+      (result.initialGenerations ?? []).map((g) => [g.relativePath, g.checksum])
+    )
     capture.initialGenerationPaths = new Set(
       (result.initialGenerations ?? []).map((generation) => generation.relativePath)
     )
@@ -1576,6 +1582,13 @@ const companionStemMatches = (
 
 const matchesWriteScope = (scope: NotebookSourceFileWriteScope, candidate: string): boolean => {
   if (scope.kind === 'directory') return candidate.startsWith(`${scope.path}/`)
+  if (scope.kind === 'timestamped-log')
+    return (
+      candidate.startsWith(scope.path) &&
+      /^\.\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}(?:\.\d+)?\.log$/.test(
+        candidate.slice(scope.path.length)
+      )
+    )
   const lowerPath = scope.path.toLocaleLowerCase('en-US')
   if (scope.kind === 'shapefile') {
     if (!lowerPath.endsWith('.shp')) return false
@@ -1861,7 +1874,12 @@ const startWorkingFileObservation = async (
 ): Promise<WorkingFileObservation> => {
   const preparedRequest = {
     ...request,
-    sourceFileAccess: await prepareSourceFileAccess(request).catch(() => ({
+    sourceFileAccess: await prepareSourceFileAccess({
+      ...request,
+      sourceFileAccessContext: request.sourceFileAccessContext
+        ? { ...request.sourceFileAccessContext, verifiedSerializedValues: [] }
+        : undefined
+    }).catch(() => ({
       readState: 'unavailable' as const,
       writeState: 'unavailable' as const,
       externalState: 'unavailable' as const,
@@ -1892,6 +1910,28 @@ const startWorkingFileObservation = async (
       return undefined
     }
   )
+  // Reuse the generations already frozen by the evidence worker; no extra file read/hash.
+  if (
+    capture &&
+    (request.language === 'r' || request.language === 'python') &&
+    request.sourceFileAccessContext?.serializedValueFiles?.length
+  ) {
+    const executionRoot = toPortableNotebookRelativePath(
+      relative(logicalSessionRoot, resolve(request.cwd ?? request.dataRoot))
+    )
+    const verified = verifiedSerializedValues(
+      request.sourceFileAccessContext.serializedValueFiles,
+      [...capture.initialGenerationChecksums].map(([path, checksum]) => ({ path, checksum })),
+      executionRoot
+    )
+    preparedRequest.sourceFileAccess = await prepareSourceFileAccess({
+      ...request,
+      sourceFileAccessContext: {
+        ...request.sourceFileAccessContext,
+        verifiedSerializedValues: verified
+      }
+    }).catch(() => preparedRequest.sourceFileAccess)
+  }
   let finished = false
   return {
     finish: async (signal) => {

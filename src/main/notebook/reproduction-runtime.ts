@@ -1,4 +1,7 @@
 import { createHash } from 'node:crypto'
+import { restoreRRandomState } from './r-random-replay'
+import { validatePythonRandomState } from './python-random-replay'
+import type { NotebookExecutionContext } from '../../shared/notebook-execution-context'
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 
@@ -41,6 +44,7 @@ type NotebookReproductionRuntime = {
   execute(input: {
     step: NotebookReproductionStep
     source: string
+    executionContext?: NotebookExecutionContext
     sessionRoot: string
     kernelEpochId?: string
     helperModules?: NotebookHelperModuleEvidence[]
@@ -463,7 +467,15 @@ const createNotebookReproductionRuntime = async (
   }
 
   return {
-    execute: async ({ step, source, sessionRoot, kernelEpochId, helperModules = [], signal }) => {
+    execute: async ({
+      step,
+      source,
+      executionContext,
+      sessionRoot,
+      kernelEpochId,
+      helperModules = [],
+      signal
+    }) => {
       const requirementId = step.environmentRequirementId
       const environment = requirementId ? restored.get(requirementId) : undefined
       if (!environment) {
@@ -497,7 +509,17 @@ const createNotebookReproductionRuntime = async (
       }
       const dataRoot = join(sessionRoot, 'data')
       const result = await executor.execute({
-        code: source,
+        ...(step.kernelKind === 'python'
+          ? {
+              pythonRandomState: validatePythonRandomState(
+                executionContext?.before.pythonRandomState
+              )
+            }
+          : {}),
+        code:
+          step.kernelKind === 'r'
+            ? restoreRRandomState(source, executionContext?.before.rRandomState)
+            : source,
         ...(helperPlan?.injections.length ? { helperModules: helperPlan.injections } : {}),
         cwd: dataRoot,
         notebookSessionRoot: sessionRoot,

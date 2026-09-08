@@ -55,6 +55,7 @@ export const projectPublicArtifactExecutionSnapshot = (
     producerRunId: persisted.producerRunId,
     producerRunIndex: persisted.producerRunIndex,
     createdAt: persisted.createdAt,
+    ...(persisted.analysisRevision ? { analysisRevision: persisted.analysisRevision } : {}),
     inputFiles,
     runs: persisted.runs,
     ...(reproducibility ? { reproducibility } : {}),

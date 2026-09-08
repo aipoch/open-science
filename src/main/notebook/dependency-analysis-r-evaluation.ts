@@ -1,12 +1,101 @@
 // Argument evaluation contracts, separate from AST traversal and file effects.
 // A known name identifies a contract; it does not certify the supplied callback.
+// With exclusively unclassed atomic inputs, these base operations produce atomic
+// data (possibly empty), not callbacks. Classed/unknown arguments and shadowed
+// functions do not satisfy this contract. This says nothing about vector length.
+export const R_ATOMIC_VECTOR_CALLS = new Set([
+  'c',
+  'character',
+  'integer',
+  'logical',
+  'numeric',
+  'seq',
+  'seq_along',
+  'seq_len',
+  'rep',
+  'as.character',
+  'as.integer',
+  'as.logical',
+  'as.numeric',
+  'abs',
+  'ceiling',
+  'floor',
+  'round',
+  'signif',
+  'sign',
+  'trunc',
+  'exp',
+  'expm1',
+  'log1p',
+  'log',
+  'log2',
+  'log10',
+  'min',
+  'max',
+  'pmin',
+  'pmax',
+  'range',
+  'is.finite',
+  'is.infinite',
+  'is.nan',
+  'sqrt',
+  'sin',
+  'cos',
+  'tan',
+  'sort',
+  'rev',
+  'unique',
+  'paste',
+  'paste0',
+  'sprintf'
+])
+
 // See dplyr's programming/across guides and ggplot2's layer documentation.
 // These constructors evaluate ordinary values; callbacks and unknown expressions in their
 // arguments still go through the normal walker. They do not render or load plot inputs.
 export const R_PLOT_COMPOSITION_CONSTRUCTORS = new Map([
   ['plot_annotation', 'patchwork'],
-  ['plot_layout', 'patchwork']
+  ['plot_layout', 'patchwork'],
+  ['plot_spacer', 'patchwork'],
+  ['area', 'patchwork']
 ])
+
+// Constructors/configuration values, not a prefix allowlist. In particular,
+// theme_set/update, guide_custom and device-dependent unit conversion are absent.
+export const R_PLOT_VALUE_CALLS = new Map<string, readonly string[]>([
+  // Eager set-data plot constructor; interactive mode and argument ownership are
+  // checked by the walker before accepting this package contract.
+  ['ggVennDiagram', ['ggVennDiagram']],
+  ['brewer.pal', ['RColorBrewer']],
+  ...[
+    'margin',
+    'margin_auto',
+    'margin_part',
+    'rel',
+    'theme_dark',
+    'theme_linedraw',
+    'theme_test',
+    'theme_grey',
+    'element_point',
+    'element_polygon',
+    'element_geom',
+    'guide_legend',
+    'guide_colourbar',
+    'guide_colorbar',
+    'guide_coloursteps',
+    'guide_colorsteps',
+    'guide_bins',
+    'guide_axis',
+    'guide_none'
+  ].map((name): [string, readonly string[]] => [name, ['ggplot2']]),
+  ...['unit.c', 'unit.pmax', 'unit.pmin', 'unit.psum', 'unit.rep'].map(
+    (name): [string, readonly string[]] => [name, ['grid']]
+  ),
+  ['unit', ['grid', 'ggplot2']],
+  ['alpha', ['scales', 'ggplot2']]
+])
+
+export const R_SET_OPERATIONS = new Set(['union', 'intersect', 'setdiff', 'setequal'])
 
 export interface RCallbackEvaluation {
   phase: 'immediate' | 'deferred'
@@ -26,6 +115,8 @@ export interface RFunctionalCall {
 }
 
 export const R_FUNCTIONAL_CALLS = new Map<string, RFunctionalCall>([
+  ['aggregate', { package: 'stats', precedingArguments: ['x', 'by'], keywords: ['FUN'] }],
+  ['apply', { package: 'base', precedingArguments: ['X', 'MARGIN'], keywords: ['FUN'] }],
   ['lapply', { package: 'base', precedingArguments: ['X'], keywords: ['FUN'] }],
   ['sapply', { package: 'base', precedingArguments: ['X'], keywords: ['FUN'] }],
   ['vapply', { package: 'base', precedingArguments: ['X'], keywords: ['FUN'] }],
@@ -33,7 +124,7 @@ export const R_FUNCTIONAL_CALLS = new Map<string, RFunctionalCall>([
   ['Filter', { package: 'base', precedingArguments: [], keywords: ['f'] }],
   ['Reduce', { package: 'base', precedingArguments: [], keywords: ['f'] }],
   ['mapply', { package: 'base', precedingArguments: [], keywords: ['FUN'] }],
-  ...['map', 'map_chr', 'map_dbl', 'map_int', 'map_lgl', 'map_raw', 'map_vec'].map(
+  ...['walk', 'map', 'map_chr', 'map_dbl', 'map_int', 'map_lgl', 'map_raw', 'map_vec'].map(
     (name) =>
       [
         name,
@@ -45,7 +136,7 @@ export const R_FUNCTIONAL_CALLS = new Map<string, RFunctionalCall>([
         }
       ] as const
   ),
-  ...['map2', 'map2_chr', 'map2_dbl', 'map2_int', 'map2_lgl', 'map2_raw', 'map2_vec'].map(
+  ...['walk2', 'map2', 'map2_chr', 'map2_dbl', 'map2_int', 'map2_lgl', 'map2_raw', 'map2_vec'].map(
     (name) =>
       [
         name,
@@ -190,6 +281,14 @@ export const R_GGPLOT_GEOMS = new Set([
   'geom_vline'
 ])
 
+// Package identity and deferred-argument rules are shared by core and registered
+// extension layers. An arbitrary geom_* name is not evidence of a known layer.
+export const R_PLOT_LAYER_PACKAGES = new Map<string, string>([
+  ...[...R_GGPLOT_GEOMS].map((name): [string, string] => [name, 'ggplot2']),
+  ['geom_text_repel', 'ggrepel'],
+  ['geom_label_repel', 'ggrepel']
+])
+
 export const R_GGPLOT_STATS = new Set([
   'identity',
   'count',
@@ -236,4 +335,132 @@ export const R_TABLE_SELECTION_VALUE_ARGUMENTS = new Map<string, readonly string
   ['relocate', []]
 ])
 
-export const R_DPLYR_VALUE_CALLS = new Set(['coalesce', 'na_if'])
+export const R_DPLYR_VALUE_CALLS = new Set([
+  'coalesce',
+  'na_if',
+  'case_when',
+  'bind_rows',
+  'bind_cols'
+])
+
+// Unlike selected columns, these tidyr options are evaluated in the calling
+// environment. Positional lists stop at `...`; later options must be named.
+// Callback options invoke functions (or lists of functions) immediately.
+export const R_TIDYR_ARGUMENTS = new Map<
+  string,
+  {
+    positional: readonly string[]
+    values: readonly string[]
+    callbacks?: readonly string[]
+  }
+>([
+  [
+    'pivot_longer',
+    {
+      positional: ['data', 'cols'],
+      values: [
+        'cols_vary',
+        'names_to',
+        'names_prefix',
+        'names_sep',
+        'names_pattern',
+        'names_ptypes',
+        'names_repair',
+        'values_to',
+        'values_drop_na',
+        'values_ptypes'
+      ],
+      callbacks: ['names_transform', 'values_transform']
+    }
+  ],
+  [
+    'pivot_wider',
+    {
+      positional: ['data'],
+      values: [
+        'id_expand',
+        'names_prefix',
+        'names_sep',
+        'names_sort',
+        'names_vary',
+        'names_expand',
+        'names_repair',
+        'values_fill'
+      ],
+      callbacks: ['values_fn', 'unused_fn']
+    }
+  ],
+  ['complete', { positional: ['data'], values: ['fill', 'explicit'] }],
+  ['fill', { positional: ['data'], values: ['.direction'] }],
+  ['replace_na', { positional: ['data', 'replace'], values: ['replace'] }],
+  [
+    'separate',
+    {
+      positional: ['data', 'col', 'into', 'sep', 'remove', 'convert', 'extra', 'fill'],
+      values: ['into', 'sep', 'remove', 'convert', 'extra', 'fill']
+    }
+  ],
+  [
+    'separate_wider_delim',
+    {
+      positional: ['data', 'cols', 'delim'],
+      values: ['delim', 'names', 'names_sep', 'names_repair', 'too_few', 'too_many', 'cols_remove']
+    }
+  ],
+  [
+    'extract',
+    {
+      positional: ['data', 'col', 'into', 'regex', 'remove', 'convert'],
+      values: ['into', 'regex', 'remove', 'convert']
+    }
+  ],
+  ['unite', { positional: ['data', 'col'], values: ['sep', 'remove', 'na.rm'] }],
+  [
+    'unnest',
+    { positional: ['data', 'cols'], values: ['keep_empty', 'ptype', 'names_sep', 'names_repair'] }
+  ],
+  [
+    'unnest_longer',
+    {
+      positional: [
+        'data',
+        'col',
+        'values_to',
+        'indices_to',
+        'indices_include',
+        'keep_empty',
+        'names_repair',
+        'simplify',
+        'ptype',
+        'transform'
+      ],
+      values: [
+        'values_to',
+        'indices_to',
+        'indices_include',
+        'keep_empty',
+        'names_repair',
+        'simplify',
+        'ptype'
+      ],
+      callbacks: ['transform']
+    }
+  ],
+  [
+    'unnest_wider',
+    {
+      positional: [
+        'data',
+        'col',
+        'names_sep',
+        'simplify',
+        'strict',
+        'names_repair',
+        'ptype',
+        'transform'
+      ],
+      values: ['names_sep', 'simplify', 'strict', 'names_repair', 'ptype'],
+      callbacks: ['transform']
+    }
+  ]
+])

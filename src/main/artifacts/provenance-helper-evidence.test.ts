@@ -66,6 +66,77 @@ const snapshot = (runs: NotebookRunRecord[]): PersistedArtifactExecutionSnapshot
   )
 
 describe('Artifact helper execution evidence', () => {
+  it.each(['r', 'python'] as const)(
+    'preserves bounded per-run %s random state in immutable snapshot round trips',
+    (language) => {
+      const producer = run(
+        'random-run',
+        language === 'r' ? 'cat(runif(5))' : 'import random\nprint(random.random())',
+        []
+      )
+      const observation = { locale: 'C', timezone: 'UTC', threadLimits: {}, randomLibraries: [] }
+      producer.kernelKind = language
+      producer.environmentManifest = {
+        schemaVersion: 1,
+        captureKind: 'completed-run',
+        capturedAt: '2026-09-09T00:00:00Z',
+        installedInventory: {
+          capturedAt: '2026-09-09T00:00:00Z',
+          source: 'full-scan',
+          validation: 'full-scan'
+        },
+        kernelKind: language,
+        environmentName: `default-${language}`,
+        runtimeSource: 'managed',
+        inventorySources: ['kernel-native'],
+        packages: [],
+        complete: true,
+        captureStatus: 'complete',
+        executionContext: {
+          schemaVersion: 1,
+          before: {
+            ...observation,
+            ...(language === 'r'
+              ? {
+                  rRandomState: {
+                    state: 'available' as const,
+                    kinds: ["L'Ecuyer-CMRG", 'Inversion', 'Rejection'] as [
+                      "L'Ecuyer-CMRG",
+                      'Inversion',
+                      'Rejection'
+                    ],
+                    seed: [10407, 1, 2, 3, 4, 5, 6]
+                  }
+                }
+              : {
+                  pythonRandomState: {
+                    state: 'available' as const,
+                    standard: { words: [...Array<number>(624).fill(1), 624], gaussian: 0.7 },
+                    numpy: {
+                      words: Array<number>(624).fill(1),
+                      position: 2,
+                      hasGaussian: 1,
+                      gaussian: -0.3
+                    }
+                  }
+                })
+          },
+          after: observation
+        }
+      }
+      const value = snapshot([producer])
+      const decoded = parseArtifactExecutionSnapshot(JSON.stringify(value))
+      expect(decoded.runs[0]?.executionContext).toEqual(
+        producer.environmentManifest.executionContext
+      )
+      expect(decoded.runs[0]?.script).toBe(producer.script)
+      const damaged = JSON.parse(JSON.stringify(value))
+      if (language === 'r') damaged.runs[0].executionContext.before.rRandomState.seed = [10407]
+      else damaged.runs[0].executionContext.before.pythonRandomState.standard.words = [1]
+      expect(() => parseArtifactExecutionSnapshot(JSON.stringify(damaged))).toThrow()
+    }
+  )
+
   it('preserves explicit non-dispatch evidence through immutable snapshot serialization', () => {
     const failed = {
       ...run('failed-run', 'seed = 40', []),

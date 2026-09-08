@@ -1168,7 +1168,12 @@ describe('projectNotebookDependencies', { timeout: 60_000 }, () => {
       'dependency-analysis.json'
     )
     const sidecar = JSON.parse(await readFile(sidecarPath, 'utf8')) as Record<string, unknown>
-    expect(sidecar).toMatchObject({ version: 1, analyzerVersion: 1 })
+    expect(sidecar).toMatchObject({
+      version: 1,
+      analyzerVersion: 1,
+      analyzerRevision: expect.any(String)
+    })
+    delete sidecar.analyzerRevision
     delete sidecar.projectionSnapshots
     await writeFile(sidecarPath, JSON.stringify(sidecar))
 
@@ -1958,7 +1963,8 @@ describe('projectNotebookDependencies', { timeout: 60_000 }, () => {
     ).resolves.toEqual({
       staticStrings: [{ name: 'output_path', value: 'result.png' }],
       staticCollections: [],
-      localFileWrappers: []
+      localFileWrappers: [],
+      pythonBindings: [{ kind: 'object', name: 'output_path', qualifiedName: 'python.string' }]
     })
   })
 
@@ -2000,7 +2006,8 @@ describe('projectNotebookDependencies', { timeout: 60_000 }, () => {
     ).resolves.toEqual({
       staticStrings: [{ name: 'output_path', value: 'result.png' }],
       staticCollections: [],
-      localFileWrappers: []
+      localFileWrappers: [],
+      pythonBindings: [{ kind: 'object', name: 'output_path', qualifiedName: 'python.string' }]
     })
   })
 
@@ -8732,4 +8739,28 @@ describe('projectNotebookDependencies', { timeout: 60_000 }, () => {
       reasons: ['dynamic-assignment']
     })
   })
+})
+
+it.each([
+  { version: 2, analyzerVersion: 1 },
+  { version: 1, analyzerVersion: 2 }
+])('does not overwrite a future analysis cache: %j', async (versions) => {
+  const storageRoot = await mkdtemp(join(tmpdir(), 'analysis-future-cache-'))
+  temporaryRoots.push(storageRoot)
+  const cacheRoot = join(storageRoot, 'notebooks', 'p', 's', 'cache')
+  await mkdir(cacheRoot, { recursive: true })
+  const path = join(cacheRoot, 'dependency-analysis.json')
+  const original = JSON.stringify({ ...versions, futureEvidence: { preserve: true } })
+  await writeFile(path, original)
+  const runs = [run('run-1', 'cell', 'x=1', 1)]
+  const before = JSON.stringify(runs)
+  const analyzer = new NotebookDependencyAnalyzer({
+    storageRoot,
+    repository: { readSessionRuns: async () => runs }
+  })
+  expect(
+    (await analyzer.project({ projectId: 'p', sessionId: 's' })).stalenessByRunId['run-1']
+  ).toEqual({ state: 'clear' })
+  expect(await readFile(path, 'utf8')).toBe(original)
+  expect(JSON.stringify(runs)).toBe(before)
 })

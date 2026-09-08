@@ -128,11 +128,20 @@ const ReproducibilityOutputContent = ({
               : t('Content could not be parsed or compared.')}
         </p>
       ) : null}
-      {comparison.actualSizeBytes !== undefined && !cleared ? (
-        <p className="mt-1 text-xs tabular-nums text-text-300">
-          {formatBytes(comparison.actualSizeBytes)}
-        </p>
-      ) : null}
+      <dl className="mt-2 flex flex-wrap gap-x-6 gap-y-1 text-xs tabular-nums text-text-300">
+        <div className="flex gap-2">
+          <dt>{t('Original output')}</dt>
+          <dd>{formatBytes(comparison.expectedSizeBytes)}</dd>
+        </div>
+        <div className="flex gap-2">
+          <dt>{t('Reproduced output')}</dt>
+          <dd>
+            {comparison.actualSizeBytes === undefined
+              ? '—'
+              : formatBytes(comparison.actualSizeBytes)}
+          </dd>
+        </div>
+      </dl>
       {cleared ? (
         <p className="mt-1 text-xs text-text-300">{t('Output cleared')}</p>
       ) : comparison.outputCaptured ? (

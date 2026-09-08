@@ -37,7 +37,11 @@ const passThroughSandbox: NotebookProcessSandbox = {
     args,
     env,
     annotateStderr: (stderr) => stderr,
-    cleanup: () => undefined
+    cleanup: async (_reason, outcome) => ({
+      processesTerminated: outcome.processesTerminated,
+      networkClosed: true,
+      temporaryResourcesRemoved: true
+    })
   })
 }
 

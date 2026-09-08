@@ -5220,7 +5220,6 @@
     "Output retention limit reached.": "已达到输出保留上限。",
     "Reproduced output was not retained.": "未保留复现输出。",
     "Includes the report, logs, and retained differing outputs. Source data is not included.": "包含报告、日志及保留的差异输出，不包含源数据。",
-    "Reproduced outputs": "复现输出",
     "Clear reproduced outputs": "清理复现输出",
     "Clearing…": "正在清理…",
     "Output cleared": "输出已清理",
@@ -5342,6 +5341,20 @@
     "Showing the first 100 changed cells. Totals include the complete comparison.": "显示前 100 个变化单元格，统计包含完整比较结果。",
     "These rules compare saved outputs; they do not establish scientific equivalence.": "这些规则用于比较保存的输出，不代表科学等价性。",
     "Difference image": "差异图",
-    "Execution evidence is missing. Rerun the required code to create a new version.": "缺少执行证据。请重新运行所需代码以生成新版本。"
+    "Execution evidence is missing. Rerun the required code to create a new version.": "缺少执行证据。请重新运行所需代码以生成新版本。",
+    "Retained reproduced outputs": "保留的复现输出",
+    "View comparison": "查看比较",
+    "Byte-for-byte match": "字节完全一致",
+    "Bytes differ": "字节不同",
+    "Not compared": "未进行比较",
+    "Checked at": "检查时间",
+    "Output comparison incomplete": "输出比较不完整",
+    "Package setup is missing": "缺少包加载步骤",
+    "Package loading steps were not captured for {{packageNames}}. Run the package setup cells again, then rerun this cell to capture its dependencies.": "未捕获 {{packageNames}} 的包加载步骤。请重新运行加载包的单元，然后重新运行此单元，以捕获其依赖关系。",
+    "Plot setup is incomplete": "绘图准备不完整",
+    "Earlier circlize plotting parameters were not captured. Call circlize::circos.clear() before configuring and drawing the plot, then rerun the cell.": "未捕获先前的 circlize 绘图参数。请在配置和绘图之前调用 circlize::circos.clear()，然后重新运行此单元。",
+    "Analysis rules: {{revision}}": "分析规则：{{revision}}",
+    "Analysis rules were not recorded for this version.": "此版本未记录分析规则。",
+    "Recorded when this Artifact Version was created. Later analysis updates do not change this verification evidence.": "记录于创建此 Artifact 版本时。后续分析更新不会更改这些验证证据。"
   }
 }

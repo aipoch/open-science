@@ -275,7 +275,7 @@ const RuntimesPanel = ({
   }
 
   const importEnvironmentLock = async (): Promise<void> => {
-    const importBundle = window.api?.artifacts.importEnvironmentLock
+    const importBundle = window.api?.artifacts?.importEnvironmentLock
     if (!importBundle || importingEnvironmentLock) return
     setImportingEnvironmentLock(true)
     setEnvironmentLockImportResult(undefined)
@@ -739,7 +739,7 @@ const RuntimesPanel = ({
         action={
           <div className="flex flex-col items-end gap-1.5">
             <div className="flex flex-wrap justify-end gap-2">
-              {window.api?.artifacts.importEnvironmentLock ? (
+              {window.api?.artifacts?.importEnvironmentLock ? (
                 <Button
                   type="button"
                   variant="outline"

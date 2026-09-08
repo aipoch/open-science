@@ -10,6 +10,38 @@ import {
 } from './kernel-protocol'
 
 describe('parseLoopResponse', () => {
+  it('accepts bounded R package evidence and rejects oversized or non-metadata payloads', () => {
+    const observation = { locale: 'C', timezone: 'UTC', threadLimits: {}, randomLibraries: [] }
+    const rPackages = {
+      before: ['readxl'],
+      after: ['readxl'],
+      reads: [{ name: 'read_excel', package: 'readxl' }],
+      complete: true
+    }
+    const wire = {
+      req_id: 'r',
+      stdout: '',
+      stderr: '',
+      error: null,
+      cwd: '/tmp',
+      figures: [],
+      environment: {
+        execution_context: { schemaVersion: 1, before: observation, after: observation, rPackages }
+      }
+    }
+    expect(
+      parseLoopResponse(JSON.stringify(wire))?.environmentOverlay?.executionContext?.rPackages
+    ).toEqual(rPackages)
+    rPackages.before = Array.from({ length: 129 }, () => 'readxl')
+    expect(
+      parseLoopResponse(JSON.stringify(wire))?.environmentOverlay?.executionContext
+    ).toBeUndefined()
+    rPackages.before = []
+    Object.assign(rPackages, { dataframe: ['must not capture user data'] })
+    expect(
+      parseLoopResponse(JSON.stringify(wire))?.environmentOverlay?.executionContext
+    ).toBeUndefined()
+  })
   it('keeps bounded execution context but never accepts arbitrary environment variables', () => {
     const observation = {
       locale: 'C',

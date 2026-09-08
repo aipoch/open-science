@@ -88,14 +88,14 @@ export const ReproducibilityOutputStorage = ({
   }
   return (
     <StorageContext.Provider value={storage}>
-      {available ? (
+      {available && (!storage || storage.fileCount > 0 || error) ? (
         <div
           data-reproducibility-output-storage
           className="space-y-2 border-b border-border-300/50 px-3.5 py-3"
         >
           <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
             <p className="text-text-200">
-              {t('Reproduced outputs')}
+              {t('Retained reproduced outputs')}
               {storage ? (
                 <>
                   {' '}

@@ -43,6 +43,7 @@ import {
   resolveRunEnvironmentCapture
 } from './provenance-execution-evidence'
 import { resolveStorageKey } from './provenance-storage'
+import { sealArtifactAnalysisRevision } from './provenance-analysis-revision'
 
 const CONNECTOR_ARGUMENTS_MAX_BYTES = 64 * 1024
 const CONNECTOR_IDENTITY_MAX_LENGTH = 256
@@ -496,7 +497,11 @@ class ArtifactProvenanceProducerCapture {
         producerRunId,
         producerRunIndex,
         createdAt: createdAt.toISOString(),
-        provenanceGraph
+        provenanceGraph,
+        analysisRevision: sealArtifactAnalysisRevision(
+          provenanceGraph,
+          notebookDependencies !== undefined
+        )
       },
       eligibleRuns
     )

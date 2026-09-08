@@ -14,7 +14,7 @@ package_mutation_call_name <- function(expr) {
     return(paste(as.character(expr[[2L]]), as.character(expr[[3L]]), sep = "::"))
   }
   if (is.symbol(head)) return(as.character(head))
-  if (is.call(head) && length(head) >= 3L &&
+  if (is.call(head) && length(head) >= 3L && is.symbol(head[[1L]]) &&
       as.character(head[[1L]]) %in% c("::", ":::")) {
     return(paste(as.character(head[[2L]]), as.character(head[[3L]]), sep = "::"))
   }
@@ -57,7 +57,7 @@ assert_no_package_mutation <- function(expr) {
       call. = FALSE
     )
   }
-  if (is.call(expr) && call_name %in% c("get", "match.fun", "do.call")) {
+  if (is.call(expr) && isTRUE(call_name %in% c("get", "match.fun", "do.call"))) {
     strings <- unlist(lapply(as.list(expr)[-1L], function(value) {
       if (is.character(value)) value else character()
     }), use.names = FALSE)
@@ -761,16 +761,106 @@ emit <- function(obj) {
   flush(stdout())
 }
 
-capture_execution_context <- function() {
+# Observe package bindings without evaluating functions, promises, or user data.
+# These are potential calls in each top-level expression, not an execution trace.
+new_package_observer <- function() {
+  complete <- TRUE
+  reads <- list()
+  seen <- new.env(parent = emptyenv())
+  attached <- function() {
+    names <- sub("^package:", "", grep("^package:", search(), value = TRUE))
+    if (length(names) > 128L || any(nchar(names) > 128L)) complete <<- FALSE
+    names[seq_len(min(length(names), 128L))]
+  }
+  before <- attached()
+  visited <- 0L
+  record <- function(expr) tryCatch({
+    positions <- seq_along(search())
+    if (length(positions) > 128L) { complete <<- FALSE; return(invisible(NULL)) }
+    walk <- function(node, depth = 0L) {
+      visited <<- visited + 1L
+      if (visited > 4096L || depth > 64L) { complete <<- FALSE; return(invisible(NULL)) }
+      if (!is.call(node)) return(invisible(NULL))
+      op <- if (is.symbol(node[[1L]])) as.character(node[[1L]]) else ""
+      if (op %in% c("quote", "substitute", "expression", "function", "~")) return(invisible(NULL))
+      if (nzchar(op) && nchar(op) <= 256L) {
+        # mode="any" never forces a promise. A non-package or active binding
+        # remains unresolved; the static analyzer retains its conservative rules.
+        for (pos in positions) {
+          env <- as.environment(pos)
+          if (!exists(op, envir = env, inherits = FALSE)) next
+          label <- environmentName(env)
+          if (startsWith(label, "package:") && !bindingIsActive(op, env)) {
+            pkg <- substring(label, 9L)
+            key <- paste(pkg, op, sep = ":")
+            if (!exists(key, envir = seen, inherits = FALSE)) {
+              if (length(reads) >= 256L) { complete <<- FALSE; break }
+              assign(key, TRUE, envir = seen)
+              reads[[length(reads) + 1L]] <<- list(name = op, package = pkg)
+            }
+          }
+          break
+        }
+      }
+      # Do not force missing arguments (e.g. matrix[, 1]).
+      args <- as.list(node)
+      for (i in seq_along(args)) {
+        if (i > 1L && !identical(args[[i]], quote(expr = ))) walk(args[[i]], depth + 1L)
+        if (visited > 4096L) break
+      }
+    }
+    walk(expr)
+  }, error = function(e) { complete <<- FALSE })
+  list(record = record, finish = function() {
+    after <- attached()
+    list(before = as.list(before), after = as.list(after), reads = reads, complete = complete)
+  })
+}
+environment(new_package_observer) <- baseenv()
+
+capture_r_random_state <- function() {
+  tryCatch({
+    if (!exists(".Random.seed", envir = globalenv(), inherits = FALSE) ||
+        bindingIsActive(".Random.seed", globalenv()) ||
+        ".Random.seed" %in% namespace_state$lazy_names)
+      return(list(state = "unavailable", reason = "seed-unavailable"))
+    kinds <- RNGkind()
+    if (kinds[[1L]] == "user-supplied" || kinds[[2L]] %in% c("Box-Muller", "user-supplied"))
+      return(list(state = "unavailable", reason = "unsupported-rng"))
+    seed <- get(".Random.seed", envir = globalenv(), inherits = FALSE)
+    sizes <- c(4L, 3L, 3L, 626L, 102L, 0L, 102L, 7L)
+    names(sizes) <- c("Wichmann-Hill", "Marsaglia-Multicarry", "Super-Duper",
+      "Mersenne-Twister", "Knuth-TAOCP", "user-supplied", "Knuth-TAOCP-2002", "L'Ecuyer-CMRG")
+    if (!is.integer(seed) || is.object(seed) || !is.null(attributes(seed)) ||
+        length(seed) != sizes[[kinds[[1L]]]])
+      return(list(state = "unavailable", reason = "invalid-seed"))
+    normal <- match(kinds[[2L]], c("Buggy Kinderman-Ramage", "Ahrens-Dieter", "Box-Muller",
+      "user-supplied", "Inversion", "Kinderman-Ramage")) - 1L
+    sample <- match(kinds[[3L]], c("Rounding", "Rejection")) - 1L
+    header <- match(kinds[[1L]], names(sizes)) - 1L + 100L * normal + 10000L * sample
+    if (!identical(seed[[1L]], header))
+      return(list(state = "unavailable", reason = "invalid-seed"))
+    list(state = "available", kinds = as.list(kinds), seed = as.list(seed))
+  }, error = function(e) list(state = "unavailable", reason = "seed-unavailable"))
+}
+environment(capture_r_random_state) <- list2env(list(namespace_state = namespace_state), parent = baseenv())
+
+capture_execution_context <- local({
+  capture_rng <- capture_r_random_state
+  function() {
   base::tryCatch({
     limits <- base::Sys.getenv(c("OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS",
                                "VECLIB_MAXIMUM_THREADS", "NUMEXPR_NUM_THREADS"), unset = "")
+    rng <- capture_rng()
     base::list(locale = base::substr(base::Sys.getlocale(), 1L, 1024L),
       timezone = base::substr(base::Sys.getenv("TZ", unset = "system-default"), 1L, 256L),
       threadLimits = base::lapply(base::as.list(limits), function(v) base::substr(v, 1L, 32L)),
-      randomLibraries = base::as.list(base::paste0("R:", base::RNGkind())))
+      randomLibraries = if (base::identical(rng$state, "available"))
+        base::as.list(base::paste0("R:", base::unlist(rng$kinds))) else base::list(),
+      rRandomState = rng)
   }, error = function(e) NULL)
-}
+  }
+})
 
 capture_environment <- function(execution_context = NULL) {
   loaded <- loadedNamespaces()
@@ -1345,7 +1435,12 @@ run <- base::local({
   install_capture_wrappers()
 
   function(req) {
+    # Initialize once, without consuming a random draw, so an unseeded first
+    # cell also has a reproducible starting sequence. Explicit set.seed wins.
+    if (!base::exists(".Random.seed", envir = base::globalenv(), inherits = FALSE))
+      base::set.seed(NULL)
     context_before <- capture_execution_context()
+    package_observer <- new_package_observer()
     request_state$sequence <- request_state$sequence + 1L
     request_id <- request_state$sequence
     reset_capture_state(request_id = request_id)
@@ -1407,7 +1502,7 @@ run <- base::local({
       # top-level statement that failed (the R equivalent of a Python traceback's last user frame).
       exprs <- tryCatch(parse(text = req$code, keep.source = TRUE), error = function(cnd) cnd)
       if (inherits(exprs, "condition")) {
-        error <<- conditionMessage(exprs)
+        error <- conditionMessage(exprs)
       } else {
         policy_error <- tryCatch({
           lapply(exprs, assert_no_package_mutation)
@@ -1420,6 +1515,7 @@ run <- base::local({
           idx <- 0L
           tryCatch({
             for (idx in seq_along(exprs)) {
+              package_observer$record(exprs[[idx]])
               namespace_tracker$prepare(exprs[[idx]])
               res <- withVisible(eval(exprs[[idx]], envir = globalenv()))
               namespace_tracker$commit(exprs[[idx]])
@@ -1495,7 +1591,8 @@ run <- base::local({
          result = NA, cwd = getwd(), figures = figures,
          output_truncated = isTRUE(capture_state$output_truncated),
          environment = capture_environment(list(schemaVersion = 1L, before = context_before,
-                                               after = capture_execution_context())))
+                                               after = capture_execution_context(),
+                                               rPackages = package_observer$finish())))
   }
 }, envir = base::list2env(
   base::list(
@@ -1507,6 +1604,7 @@ run <- base::local({
     figure_total_limit_bytes = figure_total_limit_bytes,
     capture_environment = capture_environment,
     capture_execution_context = capture_execution_context,
+    new_package_observer = new_package_observer,
     assert_no_package_mutation = assert_no_package_mutation,
     output_sink_policy_env = output_sink_policy_env,
     namespace_tracker = namespace_tracker

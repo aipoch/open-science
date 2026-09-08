@@ -1,4 +1,5 @@
 import type { ArtifactFile, ArtifactSourceFileObservation, ArtifactWriteSource } from './artifacts'
+import type { NotebookExecutionContext } from './notebook-execution-context'
 import type { ArtifactLiteratureManifest, ArtifactLiteratureRequest } from './artifact-literature'
 import type {
   NotebookInputAssociation,
@@ -467,6 +468,7 @@ export type ProvenanceNotebookOutput =
   | { type: 'omitted-media'; mimeType: string; byteLength?: number }
 
 export type ProvenanceNotebookRun = {
+  executionContext?: NotebookExecutionContext
   runId: string
   runIndex: number
   agentFrameId: string
@@ -783,6 +785,14 @@ export type ArtifactReproducibilityRecipe = {
 
 // Persisted only in main-process SQLite/immutable execution.json. storageKey is required to verify and
 // resolve the exact input Version, but this type must never cross the renderer IPC seam.
+export type ArtifactAnalysisRevision = {
+  schemaVersion: 1
+  revisionId: string
+  dependencyAnalyzer?: { version: 1; revision: string }
+  lineageBuilder: { version: 1; revision: string }
+  graphChecksum: string
+}
+
 export type PersistedArtifactExecutionSnapshot = {
   schemaVersion: 2
   rootFrameId: string
@@ -795,6 +805,8 @@ export type PersistedArtifactExecutionSnapshot = {
   inputFiles: NotebookRunInputFile[]
   runs: ProvenanceNotebookRun[]
   provenanceGraph?: ArtifactProvenanceGraph
+  // Absent on historical snapshots; never fill it with today's rules on read.
+  analysisRevision?: ArtifactAnalysisRevision
   reproducibilityRecipe?: ArtifactReproducibilityRecipe
   helperModules?: NotebookHelperModuleEvidence[]
   helperEvidenceStatus?: ArtifactHelperEvidenceStatus

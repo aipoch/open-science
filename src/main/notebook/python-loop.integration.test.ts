@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { notebookExecutionContextSchema } from '../../shared/notebook-execution-context'
-import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
+import { execFileSync, spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
 import { createInterface } from 'node:readline'
 import { join } from 'node:path'
 import { createHash, randomUUID } from 'node:crypto'
@@ -22,6 +22,9 @@ import {
 import { startWorkingFileObservation } from './working-file-observer'
 import type { NotebookRunRecord } from '../../shared/notebook'
 import { NotebookDependencyAnalyzer } from './dependency-analysis'
+import withVolcanoCells from './reported-with-volcano.fixture.json'
+import mixedVennCells from './reported-mixed-venn.fixture.json'
+import vennCounterCells from './reported-mixed-venn-counter.fixture.json'
 import { sealArtifactProvenanceGraph } from '../artifacts/artifact-provenance-graph'
 import { notebookPromptInputPath } from './prompt-input-materialization'
 import { reportedPathInput, reportedPathPlots } from './reported-python-path-plot.fixture'
@@ -76,7 +79,7 @@ const startLoop = (
   env: NodeJS.ProcessEnv
 ): {
   child: ChildProcessWithoutNullStreams
-  send: (code: string) => Promise<LoopResponse>
+  send: (code: string, pythonRandomState?: unknown) => Promise<LoopResponse>
   inspect: (includePrivate?: boolean) => Promise<LoopResponse>
 } => {
   const child = spawn(python, [LOOP], { env: { ...process.env, ...env } })
@@ -94,11 +97,13 @@ const startLoop = (
       /* non-JSON loop noise ignored in the test */
     }
   })
-  const send = (code: string): Promise<LoopResponse> =>
+  const send = (code: string, pythonRandomState?: unknown): Promise<LoopResponse> =>
     new Promise((resolve) => {
       const reqId = randomUUID()
       waiters.set(reqId, resolve)
-      child.stdin.write(`${JSON.stringify({ req_id: reqId, code })}\n`)
+      child.stdin.write(
+        `${JSON.stringify({ req_id: reqId, code, python_random_state: pythonRandomState })}\n`
+      )
     })
   const inspect = (includePrivate = false): Promise<LoopResponse> =>
     new Promise((resolve) => {
@@ -110,6 +115,614 @@ const startLoop = (
 }
 
 gate('python_loop.py', () => {
+  it('replays the reported pycirclize workflow from its necessary upstream cell', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'pycirclize-replay-'))
+    const scripts = readFileSync(join(__dirname, 'reported-pycirclize.fixture.py'), 'utf8').split(
+      '\n# %%\n'
+    )
+    const runs: NotebookRunRecord[] = []
+    const analyzer = new NotebookDependencyAnalyzer({
+      storageRoot: root,
+      repository: { readSessionRuns: async () => runs }
+    })
+    let selected = new Set(['0', '1', '2'])
+    try {
+      for (const phase of ['original', 'replay']) {
+        const sessionRoot = join(root, phase)
+        const dataRoot = join(sessionRoot, 'data')
+        mkdirSync(join(dataRoot, 'inputs'), { recursive: true })
+        execFileSync(pyBin!, [
+          '-c',
+          `from openpyxl import Workbook
+import sys
+w = Workbook()
+s = w.active
+s.append(["from", "to", "value"])
+for i in range(1, 7):
+    for j in range(1, 11):
+        s.append([f"Gene{i}", f"S{j}", i + j / 2])
+w.save(sys.argv[1])`,
+          join(dataRoot, 'inputs/edge-weights-222222222222.xlsx')
+        ])
+        const loop = startLoop(pyBin!, { MPLBACKEND: 'Agg' })
+        try {
+          expect(
+            (await loop.send(`import os\nos.chdir(${JSON.stringify(dataRoot)})`)).error
+          ).toBeNull()
+          for (const [index, script] of scripts.entries()) {
+            if (!selected.has(String(index))) continue
+            const context =
+              phase === 'original'
+                ? await analyzer.sourceFileAccessContext({
+                    projectId: 'p',
+                    sessionId: phase,
+                    currentRunId: String(index),
+                    language: 'python',
+                    environment: 'python',
+                    kernelEpochId: phase
+                  })
+                : undefined
+            const observation =
+              phase === 'original'
+                ? await startWorkingFileObservation({
+                    dataRoot,
+                    notebookSessionRoot: sessionRoot,
+                    cwd: dataRoot,
+                    language: 'python',
+                    code: script,
+                    runId: String(index),
+                    sourceFileAccessContext: context
+                  })
+                : undefined
+            const response = await loop.send(script)
+            const evidence = await observation?.finish()
+            expect(response.error, response.stderr).toBeNull()
+            if (phase === 'original') {
+              expect(evidence!.fileEvidence).toMatchObject({
+                state: 'available',
+                fileReads: 'complete',
+                writerAttribution: 'complete',
+                reasonCodes: []
+              })
+              if (index < 2)
+                expect(evidence!.confirmedReadPaths).toContain('data/inputs/edge-weights-222222222222.xlsx')
+              runs.push({
+                runId: String(index),
+                cellId: String(index),
+                source: 'agent',
+                kernelKind: 'python',
+                kernelEpochId: phase,
+                environment: 'python',
+                script,
+                status: 'completed',
+                kernelDispatched: true,
+                startedAt: index,
+                endedAt: index + 1,
+                text: {
+                  stdout: response.stdout,
+                  stderr: response.stderr,
+                  traceback: '',
+                  plain: []
+                },
+                outputs: [],
+                ...evidence!
+              })
+            }
+          }
+          if (phase === 'original') {
+            const projection = await analyzer.project({
+              projectId: 'p',
+              sessionId: phase,
+              completedRun: runs[2]!
+            })
+            expect(projection.stalenessByRunId['2']).toEqual({ state: 'clear' })
+            selected = new Set(['2'])
+            for (const id of selected)
+              for (const upstream of projection.dependenciesByRunId?.[id] ?? [])
+                selected.add(upstream)
+            expect([...selected].sort()).toEqual(['1', '2'])
+          }
+          expect(readFileSync(join(dataRoot, 'chord_diagram.pdf')).subarray(0, 5).toString()).toBe(
+            '%PDF-'
+          )
+        } finally {
+          loop.child.kill()
+        }
+      }
+      expect(readFileSync(join(root, 'replay/data/chord_diagram.png'))).toEqual(
+        readFileSync(join(root, 'original/data/chord_diagram.png'))
+      )
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  }, 60000)
+
+  it('captures serialized intermediates and replays them across fresh Python kernels', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'serialized-python-native-'))
+    const outputs: string[] = []
+    const scripts = [
+      'import pandas as pd\nd=pd.read_csv("inputs/source.csv")\nd.to_pickle("middle.pkl")',
+      'import pickle\nimport numpy as np\nwith open("middle.pkl","rb") as f:\n    d=pickle.load(f)\nvalues=d["x"].to_numpy()\nnp.save("middle",values)',
+      'import numpy as np\nvalues=np.load("middle.npy")\nnp.savetxt("out.csv",values*2,delimiter=",")'
+    ]
+    try {
+      for (const sessionId of ['original', 'replay']) {
+        const sessionRoot = join(root, sessionId),
+          dataRoot = join(sessionRoot, 'data')
+        mkdirSync(join(dataRoot, 'inputs'), { recursive: true })
+        writeFileSync(join(dataRoot, 'inputs/source.csv'), 'x\n1\n2\n3\n')
+        const runs: NotebookRunRecord[] = []
+        const analyzer = new NotebookDependencyAnalyzer({
+          storageRoot: root,
+          repository: { readSessionRuns: async () => runs }
+        })
+        for (const [index, script] of scripts.entries()) {
+          const runId = `${sessionId}-${index}`
+          const loop = startLoop(pyBin!, { PYTHONDONTWRITEBYTECODE: '1', MPLBACKEND: 'Agg' })
+          try {
+            expect(
+              (await loop.send(`import os\nos.chdir(${JSON.stringify(dataRoot)})`)).error
+            ).toBeNull()
+            const context = await analyzer.sourceFileAccessContext({
+              projectId: 'p',
+              sessionId,
+              currentRunId: runId,
+              language: 'python',
+              environment: 'python',
+              kernelEpochId: runId
+            })
+            const observation = await startWorkingFileObservation({
+              dataRoot,
+              notebookSessionRoot: sessionRoot,
+              cwd: dataRoot,
+              language: 'python',
+              code: script,
+              runId,
+              sourceFileAccessContext: context
+            })
+            const result = await loop.send(script)
+            expect(result.error).toBeNull()
+            const evidence = await observation.finish()
+            expect(evidence.fileEvidence, `${sessionId} step ${index}`).toMatchObject({
+              state: 'available',
+              fileReads: 'complete',
+              writerAttribution: 'complete',
+              reasonCodes: []
+            })
+            expect(evidence.confirmedReadPaths).toEqual([
+              `data/${['inputs/source.csv', 'middle.pkl', 'middle.npy'][index]}`
+            ])
+            runs.push({
+              runId,
+              cellId: runId,
+              kernelKind: 'python',
+              kernelEpochId: runId,
+              environment: 'python',
+              source: 'agent',
+              status: 'completed',
+              kernelDispatched: true,
+              startedAt: index,
+              endedAt: index + 1,
+              script,
+              text: { stdout: '', stderr: '', traceback: '', plain: [] },
+              outputs: [],
+              workingFiles: evidence.workingFiles,
+              fileEvidence: evidence.fileEvidence
+            })
+            const projection = await analyzer.project({
+              projectId: 'p',
+              sessionId,
+              throughRunId: runId
+            })
+            expect(projection.stalenessByRunId[runId]).toEqual({ state: 'clear' })
+          } finally {
+            loop.child.kill()
+          }
+        }
+        outputs.push(readFileSync(join(dataRoot, 'out.csv'), 'utf8'))
+      }
+      expect(outputs[1]).toBe(outputs[0])
+      expect(outputs[0]).toContain('6.000000000000000000e+00')
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  }, 120000)
+
+  it('captures comparison reductions and streaming CSV counts in the reported inspection', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'comparison-inspection-'))
+    const sessionRoot = join(root, 'session')
+    const dataRoot = join(sessionRoot, 'data')
+    mkdirSync(join(dataRoot, 'inputs'), { recursive: true })
+    const loop = startLoop(pyBin!, { PYTHONDONTWRITEBYTECODE: '1', MPLBACKEND: 'Agg' })
+    try {
+      const setup = await loop.send(
+        `import os\nos.chdir(${JSON.stringify(dataRoot)})\nimport pandas as pd\npd.DataFrame({'id':['A','B','C'],'log2FoldChange':[-1,0,1],'pvalue':[0,.5,.01]}).to_excel('inputs/differential-results-333333333333.xlsx',index=False,sheet_name='Sheet 1')\nwith open('inputs/expression-matrix-444444444444.csv','w') as f:\n    f.write('id,value\\nA,1\\nB,2\\nC,3\\n')`
+      )
+      expect(setup.error).toBeNull()
+      const observer = await startWorkingFileObservation({
+        dataRoot,
+        notebookSessionRoot: sessionRoot,
+        cwd: dataRoot,
+        language: 'python',
+        code: withVolcanoCells[4].script,
+        runId: 'inspect'
+      })
+      const result = await loop.send(withVolcanoCells[4].script)
+      expect(result.error).toBeNull()
+      expect(result.stdout).toContain('Zero p-value count: 1')
+      expect(result.stdout).toContain('CSV data rows: 3')
+      const evidence = await observer.finish()
+      expect(evidence.fileEvidence).toMatchObject({
+        state: 'available',
+        fileReads: 'complete',
+        writerAttribution: 'complete',
+        reasonCodes: []
+      })
+      expect(evidence.confirmedReadPaths?.sort()).toEqual(
+        ['data/inputs/expression-matrix-444444444444.csv', 'data/inputs/differential-results-333333333333.xlsx'].sort()
+      )
+    } finally {
+      loop.child.kill()
+      rmSync(root, { recursive: true, force: true })
+    }
+  }, 60000)
+
+  it.each([
+    {
+      label: 'cleaned IDs',
+      cells: mixedVennCells,
+      expectedText: 'Total distinct IDs: 7',
+      canonical: false
+    },
+    {
+      label: 'set Counter regions',
+      cells: [
+        vennCounterCells[0],
+        'import pandas as pd\ndf=pd.read_excel("inputs/set-membership-111111111111.xlsx",sheet_name="5组")\n' +
+          vennCounterCells[1] +
+          '\nimport json\nprint("REGIONS:"+json.dumps(dict(reg),sort_keys=True))'
+      ],
+      expectedText: 'union 7',
+      canonical: true
+    }
+  ])(
+    'captures mixed Venn workbook inspection and replays $label in a fresh kernel',
+    async (scenario) => {
+      const root = mkdtempSync(join(tmpdir(), 'mixed-venn-python-'))
+      const results: string[] = []
+      try {
+        for (const name of ['original', 'replay']) {
+          const dataRoot = join(root, name, 'data')
+          mkdirSync(join(dataRoot, 'inputs'), { recursive: true })
+          execFileSync(
+            pyBin!,
+            [
+              '-c',
+              'import pandas as pd\npd.DataFrame({"A":[" a ",None,"b"],"B":["b","c",None],"C":["a","d",None],"D":["d"," e ",None],"E":["e","f","g"]}).to_excel("inputs/set-membership-111111111111.xlsx",sheet_name="5组",index=False)'
+            ],
+            { cwd: dataRoot, timeout: 20000 }
+          )
+          const loop = startLoop(pyBin!, { PYTHONDONTWRITEBYTECODE: '1' })
+          const runs: NotebookRunRecord[] = []
+          const analyzer = new NotebookDependencyAnalyzer({
+            storageRoot: root,
+            repository: { readSessionRuns: async () => runs }
+          })
+          try {
+            expect(
+              (await loop.send(`import os\nos.chdir(${JSON.stringify(dataRoot)})`)).error
+            ).toBeNull()
+            for (const index of name === 'original' ? [0, 1] : [1]) {
+              const script = scenario.cells[index],
+                runId = `${name}-${index}`
+              const observer = await startWorkingFileObservation({
+                dataRoot,
+                notebookSessionRoot: join(root, name),
+                cwd: dataRoot,
+                language: 'python',
+                code: script,
+                runId,
+                sourceFileAccessContext: await analyzer.sourceFileAccessContext({
+                  projectId: 'p',
+                  sessionId: name,
+                  currentRunId: runId,
+                  language: 'python',
+                  environment: 'python',
+                  kernelEpochId: name
+                })
+              })
+              const response = await loop.send(script)
+              expect(response.error).toBeNull()
+              const evidence = await observer.finish()
+              expect(evidence.confirmedReadPaths).toEqual(['data/inputs/set-membership-111111111111.xlsx'])
+              expect(evidence.fileEvidence).toMatchObject({
+                state: 'available',
+                fileReads: 'complete',
+                writerAttribution: 'complete',
+                reasonCodes: []
+              })
+              runs.push({
+                runId,
+                cellId: runId,
+                script,
+                kernelKind: 'python',
+                kernelEpochId: name,
+                environment: 'python',
+                source: 'agent',
+                status: 'completed',
+                kernelDispatched: true,
+                startedAt: index,
+                endedAt: index + 1,
+                text: {
+                  stdout: response.stdout,
+                  stderr: response.stderr,
+                  traceback: '',
+                  plain: []
+                },
+                outputs: [],
+                ...evidence
+              })
+              if (index === 1) {
+                expect(response.stdout).toContain(scenario.expectedText)
+                results.push(
+                  scenario.canonical
+                    ? response.stdout.split('\n').find((line) => line.startsWith('REGIONS:'))!
+                    : response.stdout
+                )
+              }
+            }
+            const result = await analyzer.project({
+              projectId: 'p',
+              sessionId: name,
+              completedRun: runs.at(-1)!
+            })
+            for (const run of runs)
+              expect(result.stalenessByRunId[run.runId]).toEqual({ state: 'clear' })
+            expect(result.dependenciesByRunId?.[`${name}-1`]).toEqual([])
+          } finally {
+            loop.child.kill()
+          }
+        }
+        expect(results[0]).toBeTruthy()
+        expect(results[1]).toBe(results[0])
+      } finally {
+        rmSync(root, { recursive: true, force: true })
+      }
+    },
+    60000
+  )
+
+  it('captures workbook reads across ExcelFile cells and replays the table output', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'excel-cells-native-'))
+    const outputs: Buffer[] = []
+    try {
+      for (const name of ['original', 'replay']) {
+        const sessionRoot = join(root, name)
+        const dataRoot = join(sessionRoot, 'data')
+        mkdirSync(join(dataRoot, 'inputs'), { recursive: true })
+        const loop = startLoop(pyBin!, { PYTHONDONTWRITEBYTECODE: '1', MPLBACKEND: 'Agg' })
+        try {
+          const setup = await loop.send(
+            `import os\nos.chdir(${JSON.stringify(dataRoot)})\nimport pandas as pd\npd.DataFrame({"gene":["A","B"],"value":[1,2]}).to_excel("inputs/book.xlsx",index=False)`
+          )
+          expect(setup.error).toBeNull()
+          const scripts = [
+            'import pandas as pd\nxl=pd.ExcelFile("inputs/book.xlsx")',
+            'df=xl.parse(sheet_name=0)\nprint(df.head())',
+            'df=xl.parse(sheet_name=0)\ndf.to_csv("result.csv",index=False)\nxl.close()'
+          ]
+          const runs: NotebookRunRecord[] = []
+          const analyzer = new NotebookDependencyAnalyzer({
+            storageRoot: root,
+            repository: { readSessionRuns: async () => runs }
+          })
+          for (const [index, script] of (name === 'original'
+            ? scripts
+            : [scripts.join('\n')]
+          ).entries()) {
+            const runId = `${name}-${index}`
+            const observer = await startWorkingFileObservation({
+              dataRoot,
+              notebookSessionRoot: sessionRoot,
+              cwd: dataRoot,
+              language: 'python',
+              code: script,
+              runId,
+              sourceFileAccessContext: await analyzer.sourceFileAccessContext({
+                projectId: 'p',
+                sessionId: name,
+                currentRunId: runId,
+                language: 'python',
+                environment: 'python',
+                kernelEpochId: name
+              })
+            })
+            const response = await loop.send(script)
+            expect(response.error).toBeNull()
+            const evidence = await observer.finish()
+            expect(evidence.fileEvidence).toMatchObject({
+              state: 'available',
+              fileReads: 'complete',
+              writerAttribution: 'complete',
+              reasonCodes: []
+            })
+            expect(evidence.confirmedReadPaths).toEqual(['data/inputs/book.xlsx'])
+            runs.push({
+              runId,
+              cellId: runId,
+              script,
+              kernelKind: 'python',
+              environment: 'python',
+              kernelEpochId: name,
+              source: 'agent',
+              status: 'completed',
+              kernelDispatched: true,
+              startedAt: index,
+              endedAt: index + 1,
+              text: { stdout: response.stdout, stderr: response.stderr, traceback: '', plain: [] },
+              outputs: [],
+              ...evidence
+            })
+          }
+          const projection = await analyzer.project({
+            projectId: 'p',
+            sessionId: name,
+            completedRun: runs.at(-1)!
+          })
+          expect(projection.stalenessByRunId[runs.at(-1)!.runId]).toEqual({ state: 'clear' })
+          outputs.push(readFileSync(join(dataRoot, 'result.csv')))
+        } finally {
+          loop.child.kill()
+        }
+      }
+      expect(outputs[0].toString()).toBe('gene,value\nA,1\nB,2\n')
+      expect(outputs[1]).toEqual(outputs[0])
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  }, 60000)
+
+  it('replays the selected plotting configuration cells and reproduces identical PNG bytes', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'python-style-replay-'))
+    const original = startLoop(pyBin!, { MPLBACKEND: 'Agg' })
+    const replay = startLoop(pyBin!, { MPLBACKEND: 'Agg' })
+    const scripts = [
+      'import matplotlib.pyplot as plt',
+      'plt.style.use("ggplot")',
+      'unrelated = 42',
+      'plt.rcParams["font.size"] = 17',
+      'import matplotlib.pyplot as plt\nfig, ax = plt.subplots()\nax.plot([1, 2], [3, 4])\nax.set_title("Configuration replay")\nfig.savefig("plot.png")\nplt.close(fig)'
+    ]
+    const runs: NotebookRunRecord[] = scripts.map((script, index) => ({
+      runId: String(index),
+      cellId: String(index),
+      source: 'agent',
+      kernelKind: 'python',
+      kernelEpochId: 'epoch',
+      script,
+      status: 'completed',
+      startedAt: index,
+      endedAt: index + 1,
+      text: { stdout: '', stderr: '', traceback: '', plain: [] },
+      outputs: [],
+      workingFiles: []
+    }))
+    try {
+      for (const [loop, name] of [
+        [original, 'original'],
+        [replay, 'replay']
+      ] as const) {
+        const dir = join(root, name)
+        mkdirSync(dir)
+        expect((await loop.send(`import os\nos.chdir(${JSON.stringify(dir)})`)).error).toBeNull()
+      }
+      for (const source of scripts) expect((await original.send(source)).error).toBeNull()
+      const projection = await new NotebookDependencyAnalyzer({
+        storageRoot: root,
+        repository: { readSessionRuns: async () => runs }
+      }).project({ projectId: 'p', sessionId: 's', completedRun: runs[4]! })
+      const selected = new Set<string>(['4'])
+      expect(projection.stalenessByRunId['4']).toEqual({ state: 'clear' })
+      for (const id of selected)
+        for (const upstream of projection.dependenciesByRunId?.[id] ?? []) selected.add(upstream)
+      expect([...selected].sort()).toEqual(['0', '1', '3', '4'])
+      for (const run of runs.filter((run) => selected.has(run.runId)))
+        expect((await replay.send(run.script)).error).toBeNull()
+      expect(readFileSync(join(root, 'replay', 'plot.png'))).toEqual(
+        readFileSync(join(root, 'original', 'plot.png'))
+      )
+    } finally {
+      original.child.kill()
+      replay.child.kill()
+      rmSync(root, { recursive: true, force: true })
+    }
+  }, 60_000)
+  it.each([false, true])(
+    'replays unseeded and cached Gaussian sequences (cached: %s)',
+    async (cached) => {
+      const original = startLoop(pyBin!, {})
+      const replay = startLoop(pyBin!, {})
+      try {
+        if (cached)
+          await original.send(
+            'import random\nimport numpy as np\nrandom.seed(17)\nnp.random.seed(29)\nrandom.gauss(0, 1)\nnp.random.normal()'
+          )
+        const source =
+          'from __future__ import annotations\nimport random\nimport numpy as np\nprint([random.random(), random.gauss(0, 1), random.gauss(0, 1)])\nprint(np.random.normal(size=7).tolist())'
+        const first = await original.send(source)
+        const state = notebookExecutionContextSchema.parse(first.environment.execution_context)
+          .before.pythonRandomState
+        if (cached && state?.state === 'available') {
+          expect(state.standard.gaussian).not.toBeNull()
+          expect(state.numpy?.hasGaussian).toBe(1)
+        }
+        await replay.send(
+          'import random\nimport numpy as np\nrandom.random()\nnp.random.normal(size=13)'
+        )
+        const restored = await replay.send(source, state)
+        expect(first.error).toBeNull()
+        expect(restored.error).toBeNull()
+        expect(restored.stdout).toBe(first.stdout)
+        expect(
+          notebookExecutionContextSchema.parse(restored.environment.execution_context).before
+            .pythonRandomState
+        ).toEqual(state)
+        const failed = await replay.send('x = 1\nraise ValueError("original line")', state)
+        expect(failed.error).toContain('line 2')
+      } finally {
+        original.child.kill()
+        replay.child.kill()
+      }
+    },
+    60_000
+  )
+
+  it('rejects malformed state before executing source and never invokes a patched RNG hook', async () => {
+    const loop = startLoop(pyBin!, {})
+    try {
+      const before = await loop.send('import random\nimport numpy as np')
+      const state = notebookExecutionContextSchema.parse(before.environment.execution_context).after
+        .pythonRandomState
+      if (state?.state !== 'available') throw new Error('Expected native RNG state')
+      const rejected = await loop.send('print("must not execute")', {
+        ...state,
+        numpy: { ...state.numpy, words: [0] }
+      })
+      expect(rejected.error).toContain('Invalid NumPy')
+      expect(rejected.stdout).not.toContain('must not execute')
+      const unchanged = await loop.send('pass')
+      expect(
+        notebookExecutionContextSchema.parse(unchanged.environment.execution_context).before
+          .pythonRandomState
+      ).toEqual(state)
+      const patched = await loop.send(
+        'def hook():\n    print("must not call hook")\n    raise RuntimeError()\nrandom.getstate = hook'
+      )
+      expect(patched.stdout).not.toContain('must not call hook')
+      expect(
+        notebookExecutionContextSchema.parse(patched.environment.execution_context).after
+          .pythonRandomState
+      ).toEqual({ state: 'unavailable', reason: 'modified-rng' })
+      expect((await loop.send('pass', state)).error).toContain('modified Python RNG')
+    } finally {
+      loop.child.kill()
+    }
+  }, 60_000)
+  it('captures Python and NumPy random sequences including Gaussian caches', async () => {
+    const { child, send } = startLoop(pyBin!, {})
+    try {
+      const first = await send(
+        'import random\nimport numpy as np\nrandom.gauss(0,1)\nnp.random.normal()'
+      )
+      const context = notebookExecutionContextSchema.parse(first.environment.execution_context)
+      expect(context.before).toHaveProperty('pythonRandomState.state', 'available')
+      expect(context.before).toHaveProperty('pythonRandomState.numpy.words')
+      expect(context.after).not.toEqual(context.before)
+    } finally {
+      child.kill()
+    }
+  })
+
   it('captures execution context before and after a cell without copying credentials', async () => {
     const { child, send } = startLoop(pyBin!, {
       OMP_NUM_THREADS: '2',

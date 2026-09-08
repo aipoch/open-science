@@ -57,6 +57,7 @@ import type {
   ArtifactReproducibilityEntity,
   ArtifactReproducibilityOutputGroup,
   ArtifactReproducibilityProjection,
+  ArtifactAnalysisRevision,
   ArtifactReproducibilityRecipeBarrier,
   ArtifactReproducibilityStartFrontier,
   GetArtifactVersionProvenanceRequest,
@@ -94,6 +95,7 @@ import {
 
 type ArtifactReproducibilityPanelProps = {
   projection?: ArtifactReproducibilityProjection
+  analysisRevision?: ArtifactAnalysisRevision
   executionAvailable?: boolean
   artifactVersion?: GetArtifactVersionProvenanceRequest
   artifactName?: string
@@ -846,6 +848,7 @@ const DependencyGraphCanvas = memo(function DependencyGraphCanvas({
 
 export const ArtifactReproducibilityPanel = ({
   projection,
+  analysisRevision,
   executionAvailable = false,
   artifactVersion,
   artifactName,
@@ -2636,24 +2639,47 @@ export const ArtifactReproducibilityPanel = ({
                         </details>
                       </li>
                     ) : null}
-                    {receipts.map((receipt) => {
+                    {receipts.map((receipt, receiptIndex) => {
                       const hasLog = Boolean(
                         receipt.checkLog &&
                         (receipt.checkLog.entryCount > 0 || receipt.checkLog.truncated)
                       )
+                      const allBytesMatch =
+                        receipt.comparisons.length > 0 &&
+                        receipt.comparisons.every((comparison) => comparison.status === 'matched')
+                      const allContentMatches =
+                        receipt.comparisons.length > 0 &&
+                        receipt.comparisons.every(
+                          (comparison) =>
+                            comparison.status === 'matched' ||
+                            comparison.contentComparison?.outcome === 'equal' ||
+                            comparison.contentComparison?.outcome === 'within-tolerance'
+                        )
+                      const comparisonTitle = allBytesMatch
+                        ? t('Byte-for-byte match')
+                        : allContentMatches
+                          ? receipt.comparisons.some(
+                              (comparison) =>
+                                comparison.contentComparison?.outcome === 'within-tolerance'
+                            )
+                            ? t('Content is within the selected tolerance')
+                            : t('Decoded content is identical')
+                          : receipt.comparisons.length === 0 ||
+                              receipt.comparisons.some(
+                                (comparison) =>
+                                  comparison.status === 'different' &&
+                                  comparison.reason !== 'size-mismatch' &&
+                                  comparison.reason !== 'checksum-mismatch'
+                              )
+                            ? t('Output comparison incomplete')
+                            : t('Result differs')
                       return (
                         <li key={receipt.receiptChecksum}>
                           <details
                             data-reproducibility-history-entry={receipt.outcome}
                             data-receipt-checksum={receipt.receiptChecksum}
                             className="group/history-item"
-                            onToggle={(event) => {
-                              if (event.currentTarget.open && hasLog) {
-                                void loadPersistedCheckLog(`receipt:${receipt.receiptChecksum}`, {
-                                  receiptChecksum: receipt.receiptChecksum
-                                })
-                              }
-                            }}
+                            open={receiptIndex === 0}
                           >
                             <summary className="grid cursor-pointer list-none grid-cols-[minmax(0,1fr)_auto] items-center gap-3 px-3.5 py-3 outline-none hover:bg-bg-200/35 focus-visible:ring-[3px] focus-visible:ring-inset focus-visible:ring-ring/50">
                               <span className="flex min-w-0 items-center gap-2.5">
@@ -2674,11 +2700,9 @@ export const ArtifactReproducibilityPanel = ({
                                 </span>
                                 <span className="min-w-0">
                                   <span className="block font-medium text-text-000">
-                                    {receipt.outcome === 'matched'
-                                      ? t('Result reproduced')
-                                      : t('Result differs')}
+                                    {comparisonTitle}
                                   </span>
-                                  <span className="mt-0.5 block truncate text-xs text-text-300">
+                                  <span className="mt-0.5 flex flex-wrap gap-x-1 text-xs text-text-300">
                                     {receipt.frontier.claimScope === 'end-to-end'
                                       ? t('End-to-end claim')
                                       : t('Downstream-only claim')}
@@ -2696,14 +2720,8 @@ export const ArtifactReproducibilityPanel = ({
                                 </span>
                               </span>
                               <span className="flex min-h-8 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-md border border-border-300/70 bg-bg-000 px-2.5 text-xs font-medium text-text-200">
-                                {hasLog ? (
-                                  <TerminalSquare className="size-3.5" aria-hidden="true" />
-                                ) : (
-                                  <Info className="size-3.5" aria-hidden="true" />
-                                )}
-                                {hasLog && receipt.outcome !== 'different'
-                                  ? t('View log')
-                                  : t('View details')}
+                                <Info className="size-3.5" aria-hidden="true" />
+                                {t('View comparison')}
                                 <ChevronDown
                                   className="size-3.5 text-text-300 transition-transform duration-200 group-open/history-item:rotate-180 motion-reduce:transition-none"
                                   aria-hidden="true"
@@ -2711,60 +2729,70 @@ export const ArtifactReproducibilityPanel = ({
                               </span>
                             </summary>
                             <div className="px-3.5 pb-3.5">
-                              {receipt.comparisons.some(
-                                (comparison) =>
-                                  comparison.status === 'different' ||
-                                  comparison.contentComparison ||
-                                  comparison.contentComparisonUnavailableReason
-                              ) ? (
+                              {receipt.comparisons.length > 0 ? (
                                 <ul className="mt-3 space-y-1 border-t border-border-300/40 pt-3 text-xs">
-                                  {receipt.comparisons
-                                    .filter(
-                                      (comparison) =>
-                                        comparison.status === 'different' ||
-                                        comparison.contentComparison ||
-                                        comparison.contentComparisonUnavailableReason
-                                    )
-                                    .map((comparison) => (
-                                      <li
-                                        key={`${receipt.receiptChecksum}:${comparison.entityId}`}
-                                        className="min-w-0 rounded-md border border-border-300/50 p-3"
-                                      >
-                                        <div className="flex min-w-0 items-center gap-2">
-                                          <span
-                                            className={
-                                              comparison.status === 'different'
-                                                ? 'size-1.5 shrink-0 rounded-full bg-status-warning-foreground dark:bg-status-warning-dark-foreground'
-                                                : 'size-1.5 shrink-0 rounded-full bg-text-300'
-                                            }
-                                          />
-                                          <span
-                                            className="truncate text-text-200"
-                                            title={comparison.relativePath}
-                                          >
-                                            {comparison.relativePath}
-                                          </span>
-                                          <span className="ml-auto shrink-0 text-text-300">
-                                            {comparison.status === 'different'
-                                              ? t('Different')
-                                              : t('Result reproduced')}
-                                          </span>
-                                        </div>
-                                        <ReproducibilityOutput
-                                          receipt={receipt}
-                                          comparison={comparison}
+                                  {receipt.comparisons.map((comparison) => (
+                                    <li
+                                      key={`${receipt.receiptChecksum}:${comparison.entityId}`}
+                                      className="min-w-0 rounded-md border border-border-300/50 p-3"
+                                    >
+                                      <div className="flex min-w-0 items-center gap-2">
+                                        <span
+                                          className={
+                                            comparison.status === 'different'
+                                              ? 'size-1.5 shrink-0 rounded-full bg-status-warning-foreground dark:bg-status-warning-dark-foreground'
+                                              : 'size-1.5 shrink-0 rounded-full bg-primary'
+                                          }
                                         />
-                                      </li>
-                                    ))}
+                                        <span
+                                          className="truncate text-text-200"
+                                          title={comparison.relativePath}
+                                        >
+                                          {comparison.relativePath}
+                                        </span>
+                                        <span className="ml-auto shrink-0 text-text-300">
+                                          {comparison.status === 'matched'
+                                            ? t('Byte-for-byte match')
+                                            : comparison.reason === 'size-mismatch' ||
+                                                comparison.reason === 'checksum-mismatch'
+                                              ? t('Bytes differ')
+                                              : t('Not compared')}
+                                        </span>
+                                      </div>
+                                      <ReproducibilityOutput
+                                        receipt={receipt}
+                                        comparison={comparison}
+                                      />
+                                    </li>
+                                  ))}
                                 </ul>
                               ) : null}
-                              {hasLog
-                                ? persistedLogContent(`receipt:${receipt.receiptChecksum}`)
-                                : null}
+                              {hasLog ? (
+                                <details
+                                  data-receipt-log
+                                  className="mt-3 text-xs text-text-300"
+                                  onToggle={(event) => {
+                                    if (
+                                      event.target !== event.currentTarget ||
+                                      !event.currentTarget.open
+                                    )
+                                      return
+                                    void loadPersistedCheckLog(
+                                      `receipt:${receipt.receiptChecksum}`,
+                                      {
+                                        receiptChecksum: receipt.receiptChecksum
+                                      }
+                                    )
+                                  }}
+                                >
+                                  <summary className="cursor-pointer py-2">{t('View log')}</summary>
+                                  {persistedLogContent(`receipt:${receipt.receiptChecksum}`)}
+                                </details>
+                              ) : null}
                               <div className="mt-3 flex flex-wrap items-center justify-between gap-2 border-t border-border-300/40 pt-3">
                                 <span className="flex items-center gap-1.5 text-xs text-text-300">
                                   <Clock3 className="size-3.5" aria-hidden="true" />
-                                  <span>{t('Completed')}</span>
+                                  <span>{t('Checked at')}</span>
                                   <time dateTime={receipt.completedAt} className="tabular-nums">
                                     {receiptDate(receipt.completedAt)}
                                   </time>
@@ -2838,6 +2866,27 @@ export const ArtifactReproducibilityPanel = ({
                 {t('Captured evidence')}
               </h3>
             </div>
+            <PanelTooltip>
+              <TooltipTrigger asChild>
+                <span tabIndex={0} className="max-w-full truncate text-xs text-text-300">
+                  {analysisRevision
+                    ? t('Analysis rules: {{revision}}', {
+                        revision: [
+                          analysisRevision.dependencyAnalyzer?.revision,
+                          analysisRevision.lineageBuilder.revision
+                        ]
+                          .filter(Boolean)
+                          .join(' / ')
+                      })
+                    : t('Analysis rules were not recorded for this version.')}
+                </span>
+              </TooltipTrigger>
+              <TooltipContent className={tooltipClassName}>
+                {t(
+                  'Recorded when this Artifact Version was created. Later analysis updates do not change this verification evidence.'
+                )}
+              </TooltipContent>
+            </PanelTooltip>
             <p className="min-w-0 text-xs text-text-300">
               {t(
                 '{{included}} of {{total}} Notebook runs are required for this Artifact Version.',

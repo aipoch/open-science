@@ -574,7 +574,11 @@ gate('NotebookKernelExecutor (fake loop)', () => {
         env: invocation.env,
         beginExecution: () => () => undefined,
         annotateStderr: (stderr: string) => stderr,
-        cleanup: () => undefined
+        cleanup: async (_reason: unknown, outcome: { processesTerminated: boolean }) => ({
+          processesTerminated: outcome.processesTerminated,
+          networkClosed: true,
+          temporaryResourcesRemoved: true
+        })
       }))
     }
     const executor = new NotebookKernelExecutor({

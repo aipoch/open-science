@@ -41,6 +41,14 @@ const analyzeNotebookSourceFileAccess = async (
             ...(context.resolvedKernelNames
               ? {
                   resolvedKernelNames: context.resolvedKernelNames.filter(
+                    (name) =>
+                      !shadowedNames.has(name) || dependencyFacts?.priorUsedNames?.includes(name)
+                  )
+                }
+              : {}),
+            ...(context.rCopyOnModifyNames
+              ? {
+                  rCopyOnModifyNames: context.rCopyOnModifyNames.filter(
                     (name) => !shadowedNames.has(name)
                   )
                 }
@@ -78,9 +86,16 @@ const analyzeNotebookSourceFileAccess = async (
       dependencyFacts.reasons.some(
         (reason) =>
           reason !== 'external-state' &&
+          // Known drawing calls can read uncaptured plotting parameters without
+          // hiding their explicit input/output paths or introducing extra I/O.
+          reason !== 'graphics-state-unavailable' &&
           reason !== 'control-flow' &&
           !(reason === 'function-scope' && fileAccess.localFileWrappersComplete)
       ))
+  const unresolvedCalls =
+    dependencyFacts?.receiverCalls?.some(
+      (call) => call.kind === 'callable' && unresolvedPriorNames.has(call.receiver)
+    ) ?? false
   if (dependencyAnalysisUnavailable || unresolvedPriorNames.size > 0) {
     reasonCodes.push('source-analysis-unsupported-call')
   }
@@ -98,9 +113,14 @@ const analyzeNotebookSourceFileAccess = async (
       fileAccess.unsupportedExternalState
         ? 'partial'
         : 'complete',
-    writeState: fileAccess.unresolvedWrites ? 'partial' : 'complete',
+    // Unknown execution effects cannot establish an empty, complete output set.
+    writeState:
+      dependencyAnalysisUnavailable || unresolvedCalls || fileAccess.unresolvedWrites
+        ? 'partial'
+        : 'complete',
     externalState:
       dependencyAnalysisUnavailable ||
+      unresolvedCalls ||
       fileAccess.unresolvedReads ||
       fileAccess.unresolvedWrites ||
       fileAccess.unsupportedExternalState ||

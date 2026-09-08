@@ -1155,7 +1155,7 @@ class EnvironmentStateTracker {
             await this.execute(command, args, {
               timeout: INSPECTION_TIMEOUT_MS,
               maxBuffer: 32 * 1024 * 1024,
-              env: process.env
+              env: environmentCaptureProcessEnv(target, process.env, this.platform)
             })
           ).stdout
         }

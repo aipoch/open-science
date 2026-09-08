@@ -51,7 +51,8 @@ describe('model format file access coverage', () => {
 
     await expect(analyzeNotebookSourceFileAccess('python', source)).resolves.toEqual({
       readState: 'partial',
-      writeState: 'complete',
+      // Known paths do not rule out additional effects of unsupported execution.
+      writeState: 'partial',
       externalState: 'partial',
       reads: ['source.joblib'],
       writes: ['result.joblib'],

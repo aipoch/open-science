@@ -1,5 +1,7 @@
 import type { NotebookFileCallEffect } from './notebook-call-effects'
 
+export type PythonArgumentShape = 'none' | 'list' | 'scalar' | 'unknown'
+
 export type PythonLibraryMethodEffect = {
   effect: 'read' | 'mutate' | 'unknown'
   // A library call's namespace effect and file arguments are independent facts.
@@ -9,13 +11,26 @@ export type PythonLibraryMethodEffect = {
   unsafeNamespace?: boolean
   scopedOpaque?: boolean
   externalState?: boolean
+  plottingState?: 'read' | 'write' | 'style'
+  globalRandomState?: true
   returnType?: string
+  scalarInputReturnType?: string
+  preservesPandasType?: true
+  // Allocates its result unless an explicit output argument is supplied.
+  returnsFreshValue?: boolean
+  returnTypeByArgumentShape?: {
+    keyword: string
+    position: number
+    types: Partial<Record<PythonArgumentShape, string>>
+  }
   destructuredReturnTypes?: string[]
   mutatesReceiverUnlessKeywordFalse?: string
   mutatesKeyword?: string
   mutatesPositionalArgument?: number
   callbackKeywords?: string[]
+  callbackPositionalKeywords?: Record<number, string>
   callbackContainerKeywords?: string[]
+  callbackStringValues?: Record<string, readonly string[]>
   callbackAllKeywords?: boolean
   possiblyMutatesFirstArgument?: boolean
   possiblyMutatesPositionalArgument?: number
@@ -81,7 +96,68 @@ const medicalSingleFileSuffixes = [
 
 // Static effects are deliberately limited to stable, documented behavior used by ordinary
 // scientific Notebook code. Unknown methods continue through the conservative receiver-call path.
+const containerMethods: Record<string, PythonLibraryMethodEffect> = {
+  union: { effect: 'read', returnType: 'python.container' },
+  intersection: { effect: 'read', returnType: 'python.container' },
+  difference: { effect: 'read', returnType: 'python.container' },
+  symmetric_difference: { effect: 'read', returnType: 'python.container' },
+  sort: { effect: 'mutate', callbackKeywords: ['key'] }
+}
+
+// Both Excel entry points share sheet selection and converter callback semantics.
+const excelReadResult = (sheetPosition: number): Partial<PythonLibraryMethodEffect> => ({
+  returnType: 'pandas.DataFrame',
+  callbackContainerKeywords: ['converters'],
+  returnTypeByArgumentShape: {
+    keyword: 'sheet_name',
+    position: sheetPosition,
+    types: {
+      none: 'pandas.ExcelSheets',
+      list: 'pandas.ExcelSheets',
+      scalar: 'pandas.DataFrame'
+    }
+  }
+})
+
 const PYTHON_LIBRARY_EFFECTS: PythonLibraryEffects = {
+  'pycirclize.Circos': {
+    kind: 'module',
+    methods: Object.fromEntries(
+      ['chord_diagram', 'initialize_from_matrix'].map((name) => [
+        name,
+        {
+          effect: 'read',
+          returnType: 'pycirclize.circos.Circos',
+          callbackKeywords: ['link_kws_handler'],
+          plottingState: 'read',
+          file: {
+            kind: 'read',
+            position: 0,
+            keywords: ['matrix'],
+            inMemoryTypes: ['pandas.DataFrame']
+          }
+        }
+      ])
+    )
+  },
+  'pycirclize.circos.Circos': {
+    kind: 'type',
+    unknownMethodsHaveExternalState: true,
+    methods: {
+      plotfig: {
+        effect: 'mutate',
+        returnType: 'matplotlib.figure.Figure',
+        plottingState: 'read',
+        possiblyMutatesKeyword: 'ax',
+        returnsAliasOfKeyword: 'ax'
+      },
+      savefig: {
+        effect: 'mutate',
+        plottingState: 'read',
+        file: { kind: 'write', position: 0, keywords: ['savefile'] }
+      }
+    }
+  },
   pathlib: {
     kind: 'module',
     methods: Object.fromEntries(
@@ -125,6 +201,7 @@ const PYTHON_LIBRARY_EFFECTS: PythonLibraryEffects = {
   pickle: {
     kind: 'module',
     methods: {
+      dump: { effect: 'read' },
       load: { effect: 'read', unsafeNamespace: true },
       loads: { effect: 'read', unsafeNamespace: true }
     }
@@ -146,6 +223,7 @@ const PYTHON_LIBRARY_EFFECTS: PythonLibraryEffects = {
   joblib: {
     kind: 'module',
     methods: {
+      dump: { effect: 'read' },
       load: { effect: 'read', unsafeNamespace: true }
     }
   },
@@ -222,21 +300,153 @@ const PYTHON_LIBRARY_EFFECTS: PythonLibraryEffects = {
       write: { effect: 'mutate' }
     }
   },
+  random: {
+    kind: 'module',
+    methods: {
+      ...Object.fromEntries(
+        [
+          'random',
+          'uniform',
+          'triangular',
+          'randint',
+          'randrange',
+          'getrandbits',
+          'gauss',
+          'normalvariate',
+          'lognormvariate',
+          'expovariate',
+          'vonmisesvariate',
+          'gammavariate',
+          'betavariate',
+          'paretovariate',
+          'weibullvariate'
+        ].map((name) => [
+          name,
+          { effect: 'read' as const, globalRandomState: true as const, returnType: 'python.scalar' }
+        ])
+      ),
+      seed: { effect: 'read', globalRandomState: true },
+      shuffle: {
+        effect: 'read',
+        globalRandomState: true,
+        mutatesPositionalArgument: 0,
+        mutatesKeyword: 'x'
+      },
+      sample: {
+        effect: 'read',
+        globalRandomState: true,
+        returnType: 'python.container',
+        returnsPossibleAliasOf: 'firstArgument'
+      },
+      choices: {
+        effect: 'read',
+        globalRandomState: true,
+        returnType: 'python.container',
+        returnsPossibleAliasOf: 'firstArgument'
+      },
+      choice: { effect: 'read', globalRandomState: true, returnsPossibleAliasOf: 'firstArgument' }
+    }
+  },
+  'numpy.random': {
+    kind: 'module',
+    methods: {
+      ...Object.fromEntries(
+        [
+          'random',
+          'random_sample',
+          'sample',
+          'ranf',
+          'rand',
+          'randn',
+          'randint',
+          'normal',
+          'standard_normal',
+          'uniform',
+          'poisson',
+          'binomial',
+          'multinomial',
+          'multivariate_normal',
+          'beta',
+          'gamma',
+          'exponential',
+          'lognormal',
+          'chisquare',
+          'standard_t',
+          'dirichlet',
+          'permutation',
+          'choice'
+        ].map((name) => [
+          name,
+          {
+            effect: 'read' as const,
+            globalRandomState: true as const,
+            returnType: 'numpy.ndarray',
+            returnsFreshValue: true
+          }
+        ])
+      ),
+      seed: { effect: 'read', globalRandomState: true },
+      shuffle: {
+        effect: 'read',
+        globalRandomState: true,
+        mutatesPositionalArgument: 0,
+        mutatesKeyword: 'x'
+      }
+    }
+  },
   numpy: {
     kind: 'module',
     methods: {
+      save: { effect: 'read' },
+      load: { effect: 'read', unsafeNamespace: true },
+      '@random': { effect: 'read', returnType: 'numpy.random' },
+      '@pi': { effect: 'read', returnType: 'python.scalar' },
+      ...Object.fromEntries(
+        [
+          'floor',
+          'ceil',
+          'log10',
+          'degrees',
+          'radians',
+          'rad2deg',
+          'deg2rad',
+          'sin',
+          'cos',
+          'tan',
+          'sqrt',
+          'exp',
+          'expm1',
+          'log',
+          'log1p',
+          'log2',
+          'abs',
+          'absolute',
+          'fabs'
+        ].map((name) => [
+          name,
+          {
+            effect: 'read',
+            returnType: 'numpy.ndarray',
+            scalarInputReturnType: 'python.scalar',
+            preservesPandasType: true,
+            returnsFreshValue: true,
+            mutatesKeyword: 'out',
+            mutatesPositionalArgument: 1
+          }
+        ])
+      ),
+      cumsum: {
+        effect: 'read',
+        returnType: 'numpy.ndarray',
+        mutatesKeyword: 'out',
+        mutatesPositionalArgument: 3
+      },
       arange: { effect: 'read', returnType: 'numpy.ndarray' },
       atleast_1d: {
         effect: 'read',
         returnType: 'numpy.ndarray',
         preservesIterationTypesFrom: 'firstArgument',
         returnsPossibleAliasOf: 'firstArgument'
-      },
-      abs: {
-        effect: 'read',
-        returnType: 'numpy.ndarray',
-        mutatesKeyword: 'out',
-        mutatesPositionalArgument: 1
       },
       absolute: {
         effect: 'read',
@@ -267,12 +477,6 @@ const PYTHON_LIBRARY_EFFECTS: PythonLibraryEffects = {
         mutatesKeyword: 'out',
         mutatesPositionalArgument: 2
       },
-      cos: {
-        effect: 'read',
-        returnType: 'numpy.ndarray',
-        mutatesKeyword: 'out',
-        mutatesPositionalArgument: 1
-      },
       clip: {
         effect: 'read',
         returnType: 'numpy.ndarray',
@@ -280,13 +484,8 @@ const PYTHON_LIBRARY_EFFECTS: PythonLibraryEffects = {
         mutatesPositionalArgument: 3
       },
       diff: { effect: 'read', returnType: 'numpy.ndarray' },
-      exp: {
-        effect: 'read',
-        returnType: 'numpy.ndarray',
-        mutatesKeyword: 'out',
-        mutatesPositionalArgument: 1
-      },
       full: { effect: 'read', returnType: 'numpy.ndarray' },
+      full_like: { effect: 'read', returnType: 'numpy.ndarray' },
       fromfile: {
         effect: 'read',
         returnType: 'numpy.ndarray',
@@ -319,18 +518,6 @@ const PYTHON_LIBRARY_EFFECTS: PythonLibraryEffects = {
         mutatesKeyword: 'out',
         mutatesPositionalArgument: 1
       },
-      log: {
-        effect: 'read',
-        returnType: 'numpy.ndarray',
-        mutatesKeyword: 'out',
-        mutatesPositionalArgument: 1
-      },
-      log1p: {
-        effect: 'read',
-        returnType: 'numpy.ndarray',
-        mutatesKeyword: 'out',
-        mutatesPositionalArgument: 1
-      },
       max: { effect: 'read', mutatesKeyword: 'out', mutatesPositionalArgument: 2 },
       mean: { effect: 'read', mutatesKeyword: 'out', mutatesPositionalArgument: 3 },
       min: { effect: 'read', mutatesKeyword: 'out', mutatesPositionalArgument: 2 },
@@ -351,18 +538,6 @@ const PYTHON_LIBRARY_EFFECTS: PythonLibraryEffects = {
         effect: 'read',
         possiblyMutatesFirstArgument: true,
         possiblyMutatesKeyword: 'fname'
-      },
-      sin: {
-        effect: 'read',
-        returnType: 'numpy.ndarray',
-        mutatesKeyword: 'out',
-        mutatesPositionalArgument: 1
-      },
-      sqrt: {
-        effect: 'read',
-        returnType: 'numpy.ndarray',
-        mutatesKeyword: 'out',
-        mutatesPositionalArgument: 1
       },
       stack: {
         effect: 'read',
@@ -416,7 +591,7 @@ const PYTHON_LIBRARY_EFFECTS: PythonLibraryEffects = {
       sort: { effect: 'mutate' },
       std: { effect: 'read', mutatesKeyword: 'out', mutatesPositionalArgument: 2 },
       sum: { effect: 'read', mutatesKeyword: 'out', mutatesPositionalArgument: 2 },
-      tolist: { effect: 'read' }
+      tolist: { effect: 'read', returnType: 'python.container', returnsPossibleAliasOf: 'receiver' }
     }
   },
   pandas: {
@@ -448,13 +623,20 @@ const PYTHON_LIBRARY_EFFECTS: PythonLibraryEffects = {
       },
       read_csv: {
         effect: 'read',
+        callbackContainerKeywords: ['converters'],
         returnType: 'pandas.DataFrame',
         possiblyMutatesFirstArgument: true,
         firstArgumentKeyword: 'filepath_or_buffer'
       },
+      ExcelFile: {
+        effect: 'read',
+        returnType: 'pandas.ExcelFile',
+        possiblyMutatesFirstArgument: true,
+        firstArgumentKeyword: 'path_or_buffer'
+      },
       read_excel: {
         effect: 'read',
-        returnType: 'pandas.DataFrame',
+        ...excelReadResult(1),
         possiblyMutatesFirstArgument: true,
         firstArgumentKeyword: 'io'
       },
@@ -494,6 +676,7 @@ const PYTHON_LIBRARY_EFFECTS: PythonLibraryEffects = {
         possiblyMutatesFirstArgument: true,
         firstArgumentKeyword: 'path'
       },
+      to_pickle: { effect: 'read' },
       read_pickle: { effect: 'read', unsafeNamespace: true },
       read_sas: {
         effect: 'read',
@@ -577,10 +760,212 @@ const PYTHON_LIBRARY_EFFECTS: PythonLibraryEffects = {
       }
     }
   },
-  'python.scalar': { kind: 'type', methods: {} },
+  'python.numeric-tuple': { kind: 'type', methods: {}, iterationTypes: ['python.scalar'] },
+  'python.numbers': { kind: 'type', methods: containerMethods, iterationTypes: ['python.scalar'] },
+  colorsys: {
+    kind: 'module',
+    methods: Object.fromEntries(
+      ['rgb_to_hls', 'hls_to_rgb', 'rgb_to_hsv', 'hsv_to_rgb', 'rgb_to_yiq', 'yiq_to_rgb'].map(
+        (name) => [name, { effect: 'read', returnType: 'python.numeric-tuple' }]
+      )
+    )
+  },
+  'matplotlib.colors': {
+    kind: 'module',
+    methods: {
+      '@LinearSegmentedColormap': {
+        effect: 'read',
+        returnType: 'matplotlib.colors.LinearSegmentedColormap'
+      },
+      to_rgba: { effect: 'read', returnType: 'python.numeric-tuple' },
+      to_rgb: { effect: 'read', returnType: 'python.numeric-tuple' },
+      to_hex: { effect: 'read', returnType: 'python.string' }
+    }
+  },
+  // Static factory namespace; the resulting colormap is a separate value.
+  'matplotlib.colors.LinearSegmentedColormap': {
+    kind: 'module',
+    methods: {
+      from_list: { effect: 'read', returnType: 'matplotlib.colors.Colormap' }
+    }
+  },
+  'matplotlib.colors.Colormap': {
+    kind: 'type',
+    methods: {
+      reversed: { effect: 'read', returnType: 'matplotlib.colors.Colormap' },
+      set_bad: { effect: 'mutate' },
+      set_under: { effect: 'mutate' },
+      set_over: { effect: 'mutate' }
+    }
+  },
+  'python.scalar': {
+    kind: 'type',
+    methods: {
+      is_integer: { effect: 'read', returnType: 'python.scalar' },
+      startswith: { effect: 'read', returnType: 'python.scalar' },
+      endswith: { effect: 'read', returnType: 'python.scalar' },
+      replace: { effect: 'read', returnType: 'python.string' }
+    }
+  },
+  'xml.etree.ElementTree': {
+    kind: 'module',
+    methods: {
+      fromstring: {
+        effect: 'read',
+        returnType: 'xml.etree.ElementTree.Element',
+        callbackKeywords: ['parser'],
+        callbackPositionalKeywords: { 1: 'parser' }
+      }
+    }
+  },
+  'xml.etree.ElementTree.Element': {
+    kind: 'type',
+    unknownMethodsHaveExternalState: true,
+    iterationTypes: ['xml.etree.ElementTree.Element'],
+    methods: {
+      find: {
+        effect: 'read',
+        returnType: 'xml.etree.ElementTree.Element',
+        returnsPossibleAliasOf: 'receiver'
+      },
+      findall: {
+        effect: 'read',
+        returnType: 'python.xml-elements',
+        returnsPossibleAliasOf: 'receiver'
+      },
+      iter: {
+        effect: 'read',
+        returnType: 'python.xml-elements',
+        returnsPossibleAliasOf: 'receiver'
+      },
+      iterfind: {
+        effect: 'read',
+        returnType: 'python.xml-elements',
+        returnsPossibleAliasOf: 'receiver'
+      },
+      get: { effect: 'read', returnType: 'python.string' },
+      '@text': { effect: 'read', returnType: 'python.string' },
+      '@tag': { effect: 'read', returnType: 'python.string' },
+      '@tail': { effect: 'read', returnType: 'python.string' }
+    }
+  },
+  'python.xml-elements': {
+    kind: 'type',
+    methods: {},
+    iterationTypes: ['xml.etree.ElementTree.Element']
+  },
+  'python.string': {
+    kind: 'type',
+    methods: {
+      startswith: { effect: 'read', returnType: 'python.scalar' },
+      endswith: { effect: 'read', returnType: 'python.scalar' },
+      ...Object.fromEntries(
+        [
+          'capitalize',
+          'casefold',
+          'lower',
+          'upper',
+          'title',
+          'strip',
+          'lstrip',
+          'rstrip',
+          'replace',
+          'format'
+        ].map((name) => [name, { effect: 'read', returnType: 'python.string' }])
+      )
+    }
+  },
+  'python.strings': { kind: 'type', methods: containerMethods, iterationTypes: ['python.string'] },
+  'pandas.unique-values': {
+    kind: 'type',
+    iterationTypes: ['python.scalar'],
+    methods: {
+      tolist: { effect: 'read', returnType: 'python.container', returnsPossibleAliasOf: 'receiver' }
+    }
+  },
+  'python.calculated-sequence': { kind: 'type', methods: {} },
+  'python.container': {
+    kind: 'type',
+    methods: containerMethods,
+    iterationTypes: ['python.object']
+  },
+  'pandas.ExcelFile': {
+    kind: 'type',
+    unknownMethodsHaveExternalState: true,
+    methods: {
+      '@sheet_names': { effect: 'read', returnType: 'python.strings' },
+      parse: {
+        effect: 'mutate',
+        ...excelReadResult(0)
+      },
+      close: { effect: 'mutate' }
+    }
+  },
+  'pandas.ExcelSheets': {
+    kind: 'type',
+    methods: {
+      keys: { effect: 'read', returnType: 'python.container' },
+      values: {
+        effect: 'read',
+        returnType: 'pandas.ExcelSheets.values',
+        returnsPossibleAliasOf: 'receiver'
+      },
+      items: {
+        effect: 'read',
+        returnType: 'pandas.ExcelSheets.items',
+        returnsPossibleAliasOf: 'receiver'
+      }
+    }
+  },
+  'pandas.ExcelSheets.values': { kind: 'type', iterationTypes: ['pandas.DataFrame'], methods: {} },
+  'pandas.ExcelSheets.items': {
+    kind: 'type',
+    iterationTypes: ['python.scalar', 'pandas.DataFrame'],
+    methods: {}
+  },
+  'pandas.Index': {
+    kind: 'type',
+    iterationTypes: ['python.scalar'],
+    methods: {
+      tolist: {
+        effect: 'read',
+        returnType: 'pandas.unique-values',
+        returnsPossibleAliasOf: 'receiver'
+      },
+      to_list: {
+        effect: 'read',
+        returnType: 'pandas.unique-values',
+        returnsPossibleAliasOf: 'receiver'
+      }
+    }
+  },
   'pandas.DataFrame': {
     kind: 'type',
     methods: {
+      to_numpy: { effect: 'read', returnType: 'numpy.ndarray', returnsPossibleAliasOf: 'receiver' },
+      ...Object.fromEntries(
+        ['div', 'divide', 'truediv', 'sub', 'subtract'].map((name) => [
+          name,
+          { effect: 'read', returnType: 'pandas.DataFrame', returnsFreshValue: true }
+        ])
+      ),
+      '@column': {
+        effect: 'read',
+        returnType: 'pandas.Series',
+        returnsPossibleAliasOf: 'receiver'
+      },
+      '@columns': {
+        effect: 'read',
+        returnType: 'pandas.Index',
+        returnsPossibleAliasOf: 'receiver'
+      },
+      '@index': { effect: 'read', returnType: 'pandas.Index', returnsPossibleAliasOf: 'receiver' },
+      describe: { effect: 'read', returnType: 'pandas.DataFrame' },
+      '@values': {
+        effect: 'read',
+        returnType: 'numpy.ndarray',
+        returnsPossibleAliasOf: 'receiver'
+      },
       assign: {
         effect: 'read',
         returnType: 'pandas.DataFrame',
@@ -612,7 +997,26 @@ const PYTHON_LIBRARY_EFFECTS: PythonLibraryEffects = {
       ffill: { effect: 'read', returnType: 'pandas.DataFrame' },
       bfill: { effect: 'read', returnType: 'pandas.DataFrame' },
       groupby: { effect: 'read', returnType: 'pandas.core.groupby.DataFrameGroupBy' },
+      reindex: {
+        effect: 'read',
+        returnType: 'pandas.DataFrame',
+        returnsPossibleAliasWhenKeywordFalse: { keyword: 'copy', sources: ['receiver'] }
+      },
+      to_dict: {
+        effect: 'read',
+        callbackKeywords: ['into'],
+        callbackPositionalKeywords: { 1: 'into' }
+      },
       head: { effect: 'read', returnType: 'pandas.DataFrame' },
+      iterrows: { effect: 'read', returnType: 'pandas.DataFrame.iterrows' },
+      to_string: {
+        effect: 'read',
+        possiblyMutatesFirstArgument: true,
+        firstArgumentKeyword: 'buf',
+        callbackKeywords: ['float_format'],
+        callbackContainerKeywords: ['formatters'],
+        file: { kind: 'write', position: 0, keywords: ['buf'], pathOptional: true }
+      },
       join: { effect: 'read', returnType: 'pandas.DataFrame' },
       max: { effect: 'read', returnType: 'pandas.Series' },
       mean: { effect: 'read', returnType: 'pandas.Series' },
@@ -635,7 +1039,26 @@ const PYTHON_LIBRARY_EFFECTS: PythonLibraryEffects = {
         effect: 'read',
         returnType: 'pandas.DataFrame',
         callbackKeywords: ['aggfunc'],
-        callbackContainerKeywords: ['aggfunc']
+        callbackContainerKeywords: ['aggfunc'],
+        callbackStringValues: {
+          aggfunc: [
+            'sum',
+            'mean',
+            'min',
+            'max',
+            'count',
+            'size',
+            'std',
+            'var',
+            'median',
+            'first',
+            'last',
+            'prod',
+            'nunique',
+            'any',
+            'all'
+          ]
+        }
       },
       rename: {
         effect: 'read',
@@ -687,10 +1110,37 @@ const PYTHON_LIBRARY_EFFECTS: PythonLibraryEffects = {
       value_counts: { effect: 'read', returnType: 'pandas.Series' }
     }
   },
+  'pandas.StringMethods': {
+    kind: 'type',
+    methods: Object.fromEntries(
+      ['strip', 'lstrip', 'rstrip', 'lower', 'upper', 'capitalize', 'title', 'casefold'].map(
+        (name) => [name, { effect: 'read', returnType: 'pandas.Series' }]
+      )
+    )
+  },
+  'pandas.DataFrame.iterrows': {
+    kind: 'type',
+    iterationTypes: ['python.scalar', 'pandas.Series'],
+    methods: {}
+  },
   'pandas.core.groupby.DataFrameGroupBy': {
     kind: 'type',
     iterationTypes: ['python.scalar', 'pandas.DataFrame'],
     methods: {
+      agg: {
+        effect: 'read',
+        returnType: 'pandas.DataFrame',
+        callbackKeywords: ['func'],
+        callbackContainerKeywords: ['func'],
+        callbackPositionalKeywords: { 0: 'func' }
+      },
+      aggregate: {
+        effect: 'read',
+        returnType: 'pandas.DataFrame',
+        callbackKeywords: ['func'],
+        callbackContainerKeywords: ['func'],
+        callbackPositionalKeywords: { 0: 'func' }
+      },
       mean: { effect: 'read', returnType: 'pandas.DataFrame' },
       sum: { effect: 'read', returnType: 'pandas.DataFrame' }
     }
@@ -698,6 +1148,34 @@ const PYTHON_LIBRARY_EFFECTS: PythonLibraryEffects = {
   'pandas.Series': {
     kind: 'type',
     methods: {
+      to_numpy: { effect: 'read', returnType: 'numpy.ndarray', returnsPossibleAliasOf: 'receiver' },
+      ...Object.fromEntries(
+        ['div', 'divide', 'truediv', 'sub', 'subtract'].map((name) => [
+          name,
+          { effect: 'read', returnType: 'pandas.Series', returnsFreshValue: true }
+        ])
+      ),
+      '@str': {
+        effect: 'read',
+        returnType: 'pandas.StringMethods',
+        returnsPossibleAliasOf: 'receiver'
+      },
+      describe: { effect: 'read', returnType: 'pandas.Series' },
+      tolist: {
+        effect: 'read',
+        returnType: 'python.container',
+        returnsPossibleAliasOf: 'receiver'
+      },
+      to_list: {
+        effect: 'read',
+        returnType: 'python.container',
+        returnsPossibleAliasOf: 'receiver'
+      },
+      '@values': {
+        effect: 'read',
+        returnType: 'numpy.ndarray',
+        returnsPossibleAliasOf: 'receiver'
+      },
       astype: {
         effect: 'read',
         returnType: 'pandas.Series',
@@ -722,6 +1200,16 @@ const PYTHON_LIBRARY_EFFECTS: PythonLibraryEffects = {
       ffill: { effect: 'read', returnType: 'pandas.Series' },
       bfill: { effect: 'read', returnType: 'pandas.Series' },
       head: { effect: 'read', returnType: 'pandas.Series' },
+      reindex: {
+        effect: 'read',
+        returnType: 'pandas.Series',
+        returnsPossibleAliasWhenKeywordFalse: { keyword: 'copy', sources: ['receiver'] }
+      },
+      unique: {
+        effect: 'read',
+        returnType: 'pandas.unique-values',
+        returnsPossibleAliasOf: 'receiver'
+      },
       max: { effect: 'read' },
       mean: { effect: 'read' },
       min: { effect: 'read' },
@@ -750,7 +1238,11 @@ const PYTHON_LIBRARY_EFFECTS: PythonLibraryEffects = {
         possiblyMutatesFirstArgument: true,
         possiblyMutatesKeyword: 'path_or_buf'
       },
-      to_dict: { effect: 'read' },
+      to_dict: {
+        effect: 'read',
+        callbackKeywords: ['into'],
+        callbackPositionalKeywords: { 0: 'into' }
+      },
       to_frame: {
         effect: 'read',
         returnType: 'pandas.DataFrame',
@@ -762,8 +1254,26 @@ const PYTHON_LIBRARY_EFFECTS: PythonLibraryEffects = {
   matplotlib: {
     kind: 'module',
     methods: {
-      use: { effect: 'read' }
+      // @ entries describe property access in a receiver chain, not method invocation.
+      '@colors': { effect: 'read', returnType: 'matplotlib.colors' },
+      '@rcParams': { effect: 'read', returnType: 'matplotlib.RcParams' },
+      '@style': { effect: 'read', returnType: 'matplotlib.style' },
+      rc: { effect: 'read', plottingState: 'write' },
+      rcdefaults: { effect: 'read', plottingState: 'write' },
+      use: { effect: 'read', plottingState: 'write' }
     }
+  },
+  'matplotlib.RcParams': {
+    kind: 'type',
+    methods: {
+      update: { effect: 'read', plottingState: 'write' },
+      get: { effect: 'read', plottingState: 'read' },
+      copy: { effect: 'read', returnType: 'python.container', plottingState: 'read' }
+    }
+  },
+  'matplotlib.style': {
+    kind: 'module',
+    methods: { use: { effect: 'read', plottingState: 'style' } }
   },
   'matplotlib.image': {
     kind: 'module',
@@ -1192,6 +1702,11 @@ const PYTHON_LIBRARY_EFFECTS: PythonLibraryEffects = {
   'matplotlib.pyplot': {
     kind: 'module',
     methods: {
+      close: { effect: 'read' },
+      '@rcParams': { effect: 'read', returnType: 'matplotlib.RcParams' },
+      '@style': { effect: 'read', returnType: 'matplotlib.style' },
+      rc: { effect: 'read', plottingState: 'write' },
+      rcdefaults: { effect: 'read', plottingState: 'write' },
       figure: { effect: 'read', returnType: 'matplotlib.figure.Figure' },
       pie: {
         effect: 'read',
@@ -1216,8 +1731,15 @@ const PYTHON_LIBRARY_EFFECTS: PythonLibraryEffects = {
   'matplotlib.figure.Figure': {
     kind: 'type',
     methods: {
+      '@patch': {
+        effect: 'read',
+        returnType: 'matplotlib.patches.Patch',
+        returnsAliasOfReceiver: true
+      },
+      set_facecolor: { effect: 'mutate' },
       add_gridspec: { effect: 'mutate', returnType: 'matplotlib.gridspec.GridSpec' },
       add_subplot: { effect: 'mutate', returnType: 'matplotlib.axes.Axes' },
+      clear: { effect: 'mutate' },
       savefig: { effect: 'read' },
       suptitle: { effect: 'mutate', returnType: 'matplotlib.text.Text' },
       tight_layout: { effect: 'mutate' }
@@ -1231,7 +1753,14 @@ const PYTHON_LIBRARY_EFFECTS: PythonLibraryEffects = {
     kind: 'type',
     iterationTypes: ['matplotlib.axes.Axes'],
     methods: {
+      fill: { effect: 'mutate' },
+      set_facecolor: { effect: 'mutate' },
       axis: { effect: 'mutate' },
+      add_patch: { effect: 'mutate', possiblyMutatesFirstArgument: true },
+      fill_between: { effect: 'mutate' },
+      set_axis_off: { effect: 'mutate' },
+      set_theta_zero_location: { effect: 'mutate' },
+      set_theta_direction: { effect: 'mutate' },
       axhline: { effect: 'mutate' },
       axvline: { effect: 'mutate' },
       bar: { effect: 'mutate', returnType: 'matplotlib.container.BarContainer' },
@@ -1291,10 +1820,19 @@ const PYTHON_LIBRARY_EFFECTS: PythonLibraryEffects = {
     iterationTypes: ['matplotlib.patches.Rectangle'],
     methods: {}
   },
+  'matplotlib.path': {
+    kind: 'module',
+    methods: { Path: { effect: 'read', returnType: 'matplotlib.path.Path' } }
+  },
+  'matplotlib.path.Path': { kind: 'type', methods: {} },
   'matplotlib.patches': {
     kind: 'module',
     methods: {
-      Patch: { effect: 'read', returnType: 'matplotlib.patches.Patch' }
+      Patch: { effect: 'read', returnType: 'matplotlib.patches.Patch' },
+      PathPatch: { effect: 'read', returnType: 'matplotlib.patches.Patch' },
+      Wedge: { effect: 'read', returnType: 'matplotlib.patches.Wedge' },
+      Circle: { effect: 'read', returnType: 'matplotlib.patches.Patch' },
+      FancyBboxPatch: { effect: 'read', returnType: 'matplotlib.patches.Patch' }
     }
   },
   'matplotlib.patches.Patch': {
@@ -1369,9 +1907,60 @@ const PYTHON_LIBRARY_EFFECTS: PythonLibraryEffects = {
       set_visible: { effect: 'mutate' }
     }
   },
+  'seaborn.matrix.ClusterGrid': {
+    kind: 'type',
+    methods: {
+      ...Object.fromEntries(
+        [
+          'ax_heatmap',
+          'ax_row_dendrogram',
+          'ax_col_dendrogram',
+          'ax_row_colors',
+          'ax_col_colors',
+          'ax_cbar',
+          'cax'
+        ].map((name) => [
+          `@${name}`,
+          {
+            effect: 'read' as const,
+            returnType: 'matplotlib.axes.Axes',
+            returnsAliasOfReceiver: true
+          }
+        ])
+      ),
+      '@fig': {
+        effect: 'read',
+        returnType: 'matplotlib.figure.Figure',
+        returnsAliasOfReceiver: true
+      },
+      '@figure': {
+        effect: 'read',
+        returnType: 'matplotlib.figure.Figure',
+        returnsAliasOfReceiver: true
+      },
+      savefig: { effect: 'read', file: { kind: 'write', position: 0, keywords: ['fname'] } },
+      tight_layout: { effect: 'mutate' }
+    }
+  },
   seaborn: {
     kind: 'module',
     methods: {
+      clustermap: {
+        effect: 'read',
+        returnType: 'seaborn.matrix.ClusterGrid',
+        callbackKeywords: ['metric']
+      },
+      ...Object.fromEntries(
+        [
+          'set',
+          'set_theme',
+          'set_style',
+          'set_context',
+          'set_palette',
+          'reset_defaults',
+          'reset_orig'
+        ].map((name) => [name, { effect: 'read' as const, plottingState: 'write' as const }])
+      ),
       barplot: {
         effect: 'read',
         returnType: 'matplotlib.axes.Axes',
@@ -1674,9 +2263,31 @@ const pythonLibraryMethodEffect = (
   typeName: string,
   member: string
 ): PythonLibraryMethodEffect | undefined => {
-  const summary = PYTHON_LIBRARY_EFFECTS[typeName]
+  let resolvedType = typeName
+  if (!PYTHON_LIBRARY_EFFECTS[resolvedType]) {
+    const parts = typeName.split('.')
+    for (let index = parts.length - 1; index > 0; index--) {
+      let owner = parts.slice(0, index).join('.')
+      if (!PYTHON_LIBRARY_EFFECTS[owner]) continue
+      for (const property of parts.slice(index))
+        owner = PYTHON_LIBRARY_EFFECTS[owner]?.methods[`@${property}`]?.returnType ?? ''
+      resolvedType = owner
+      break
+    }
+  }
+  const summary = PYTHON_LIBRARY_EFFECTS[resolvedType]
+  const method = summary?.methods[member]
+  if (
+    method &&
+    !method.plottingState &&
+    !member.startsWith('@') &&
+    (resolvedType.startsWith('matplotlib.') ||
+      resolvedType === 'matplotlib' ||
+      resolvedType === 'seaborn')
+  )
+    return { ...method, plottingState: 'read' }
   return (
-    summary?.methods[member] ??
+    method ??
     (summary?.unknownMethodsHaveExternalState
       ? { effect: 'unknown', externalState: true, scopedOpaque: true }
       : undefined)
@@ -1699,3 +2310,17 @@ const pythonUnpackedReturnType = (
 }
 
 export { PYTHON_LIBRARY_EFFECTS, pythonLibraryMethodEffect, pythonUnpackedReturnType }
+
+// Unknown selectors cannot be assumed to return either a table or a collection.
+export const pythonArgumentShapeReturnType = (
+  effect: PythonLibraryMethodEffect,
+  positionalShapes: PythonArgumentShape[] | undefined,
+  keywords: Array<{ name: string; staticShape?: PythonArgumentShape }> | undefined
+): string | undefined => {
+  const rule = effect.returnTypeByArgumentShape
+  if (!rule) return effect.returnType
+  const keyword = keywords?.find((value) => value.name === rule.keyword)
+  if (keywords?.some((value) => value.name === '**')) return undefined
+  const shape = keyword ? (keyword.staticShape ?? 'unknown') : positionalShapes?.[rule.position]
+  return shape === undefined ? effect.returnType : rule.types[shape]
+}

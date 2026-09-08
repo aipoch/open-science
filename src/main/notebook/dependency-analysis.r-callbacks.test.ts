@@ -206,3 +206,53 @@ it.each([
   const script = `df <- data.frame(x=1:3); factor <- 2; ${call}`
   expect(await analyzeNotebookSourceFileAccess('r', script)).toMatchObject({ readState: 'partial' })
 })
+
+it.each([
+  [
+    'names_to=option',
+    'option <- "key"',
+    'option <- "variable"',
+    'pivot_longer(data, x:y, names_to=option)'
+  ],
+  [
+    'values_fn closure',
+    'option <- 1',
+    'option <- 2',
+    'pivot_wider(data, names_from=x, values_from=y, values_fn=function(x) sum(x) + option)'
+  ],
+  [
+    'names_repair closure',
+    'option <- "old_"',
+    'option <- "new_"',
+    'pivot_wider(data, names_from=x, values_from=y, names_repair=function(x) paste0(option,x))'
+  ]
+])('invalidates a tidyr result when its %s changes', async (_label, setup, replacement, call) => {
+  const scripts = ['data <- data.frame(x=1:2,y=3:4)', setup, `result <- tidyr::${call}`]
+  const before = await project(scripts)
+  expect(before.dependenciesByRunId?.['run-2']).toEqual(expect.arrayContaining(['run-0', 'run-1']))
+  expect(before.stalenessByRunId['run-2']).toEqual({ state: 'clear' })
+  const after = await project([...scripts, replacement])
+  expect(after.stalenessByRunId['run-2']).toMatchObject({ state: 'stale' })
+})
+
+it('retains the upstream path cell for a bounded file-reader callback', async () => {
+  const scripts = ['paths <- c("a.csv","b.csv")', 'result <- purrr::map(paths,readr::read_csv)']
+  const before = await project(scripts)
+  expect(before.dependenciesByRunId?.['run-1']).toContain('run-0')
+  expect(before.stalenessByRunId['run-1']).toEqual({ state: 'clear' })
+  const after = await project([...scripts, 'paths <- c("new.csv")'])
+  expect(after.stalenessByRunId['run-1']).toMatchObject({ state: 'stale' })
+})
+
+it('retains both data and path dependencies for piped file exports', async () => {
+  const scripts = [
+    'data <- data.frame(n=1)',
+    'paths <- c("a.csv","b.csv")',
+    'list(data) |> purrr::walk2(paths,utils::write.csv)'
+  ]
+  const before = await project(scripts)
+  expect(before.dependenciesByRunId?.['run-2']).toEqual(expect.arrayContaining(['run-0', 'run-1']))
+  expect(before.stalenessByRunId['run-2']).toEqual({ state: 'clear' })
+  const after = await project([...scripts, 'data <- data.frame(n=2)'])
+  expect(after.stalenessByRunId['run-2']).toMatchObject({ state: 'stale' })
+})

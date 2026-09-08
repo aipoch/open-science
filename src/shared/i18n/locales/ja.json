@@ -5220,7 +5220,6 @@
     "Output retention limit reached.": "出力の保存上限に達しました。",
     "Reproduced output was not retained.": "再現された出力は保存されていません。",
     "Includes the report, logs, and retained differing outputs. Source data is not included.": "レポート、ログ、保存された差異のある出力を含みます。元データは含まれません。",
-    "Reproduced outputs": "再現出力",
     "Clear reproduced outputs": "再現出力を削除",
     "Clearing…": "削除中…",
     "Output cleared": "出力は削除済みです",
@@ -5342,6 +5341,20 @@
     "Showing the first 100 changed cells. Totals include the complete comparison.": "変化したセルの先頭100件を表示しています。集計には比較全体が含まれます。",
     "These rules compare saved outputs; they do not establish scientific equivalence.": "これらのルールは保存された出力を比較するもので、科学的同等性を証明するものではありません。",
     "Difference image": "差分画像",
-    "Execution evidence is missing. Rerun the required code to create a new version.": "実行の証拠が不足しています。必要なコードを再実行して、新しいバージョンを作成してください。"
+    "Execution evidence is missing. Rerun the required code to create a new version.": "実行の証拠が不足しています。必要なコードを再実行して、新しいバージョンを作成してください。",
+    "Retained reproduced outputs": "保持された再現出力",
+    "View comparison": "比較を表示",
+    "Byte-for-byte match": "バイト単位で一致",
+    "Bytes differ": "バイト単位で相違",
+    "Not compared": "未比較",
+    "Checked at": "確認日時",
+    "Output comparison incomplete": "出力の比較が不完全です",
+    "Package setup is missing": "パッケージの読み込み手順がありません",
+    "Package loading steps were not captured for {{packageNames}}. Run the package setup cells again, then rerun this cell to capture its dependencies.": "{{packageNames}} のパッケージ読み込み手順が記録されていません。パッケージを読み込むセルを再実行してから、このセルを再実行し、依存関係を記録してください。",
+    "Plot setup is incomplete": "描画の準備が不完全です",
+    "Earlier circlize plotting parameters were not captured. Call circlize::circos.clear() before configuring and drawing the plot, then rerun the cell.": "以前の circlize 描画パラメーターが記録されていません。設定と描画の前に circlize::circos.clear() を呼び出してから、セルを再実行してください。",
+    "Analysis rules: {{revision}}": "解析ルール: {{revision}}",
+    "Analysis rules were not recorded for this version.": "このバージョンの解析ルールは記録されていません。",
+    "Recorded when this Artifact Version was created. Later analysis updates do not change this verification evidence.": "この Artifact バージョンの作成時に記録されました。その後の解析の更新によって、この検証の証拠が変更されることはありません。"
   }
 }

@@ -1,3 +1,4 @@
+import { notebookExecutionContextSchema } from '../../shared/notebook-execution-context'
 import type {
   PersistedArtifactExecutionSnapshot,
   ProvenanceNotebookOutput
@@ -11,6 +12,7 @@ import {
   notebookHelperEvidenceKey
 } from '../notebook/helper-evidence'
 import { artifactProvenanceGraphValue } from './artifact-provenance-graph'
+import { artifactAnalysisRevisionMatchesGraph } from './provenance-analysis-revision'
 import {
   artifactReproducibilityRecipeMatchesSnapshot,
   artifactReproducibilityRecipeValue
@@ -229,6 +231,8 @@ const executionRunValue = (value: unknown): boolean => {
       run.status === 'cancelled') &&
     (run.environmentName === undefined || typeof run.environmentName === 'string') &&
     (run.environmentLock === undefined || environmentLockCaptureValue(run.environmentLock)) &&
+    (run.executionContext === undefined ||
+      notebookExecutionContextSchema.safeParse(run.executionContext).success) &&
     (run.scriptTruncated === undefined || run.scriptTruncated === true) &&
     (run.executionCount === undefined ||
       (typeof run.executionCount === 'number' && Number.isFinite(run.executionCount))) &&
@@ -328,6 +332,7 @@ const executionSnapshotValue = (value: unknown): PersistedArtifactExecutionSnaps
   const truncation = recordValue(snapshot?.truncation)
   const graphUnsupported = unsupportedNestedVersion(snapshot?.provenanceGraph, 1)
   const recipeUnsupported = unsupportedNestedVersion(snapshot?.reproducibilityRecipe, 1)
+  const analysisUnsupported = unsupportedNestedVersion(snapshot?.analysisRevision, 1)
   if (
     snapshot?.schemaVersion !== 2 ||
     typeof snapshot.rootFrameId !== 'string' ||
@@ -341,6 +346,10 @@ const executionSnapshotValue = (value: unknown): PersistedArtifactExecutionSnaps
     !Array.isArray(snapshot.inputFiles) ||
     snapshot.inputFiles.some((input) => !executionInputFileValue(input)) ||
     !Array.isArray(snapshot.runs) ||
+    (snapshot.analysisRevision !== undefined &&
+      !analysisUnsupported &&
+      !graphUnsupported &&
+      !artifactAnalysisRevisionMatchesGraph(snapshot.analysisRevision, snapshot.provenanceGraph)) ||
     (snapshot.provenanceGraph !== undefined &&
       !graphUnsupported &&
       !artifactProvenanceGraphValue(snapshot.provenanceGraph)) ||
@@ -365,13 +374,19 @@ const executionSnapshotValue = (value: unknown): PersistedArtifactExecutionSnaps
   const {
     provenanceGraph: persistedGraph,
     reproducibilityRecipe: persistedRecipe,
+    analysisRevision: persistedAnalysis,
     ...executionFields
   } = persisted
   const helperEvidence = decodeSnapshotHelperEvidence(snapshot, persisted.runs)
   const normalizedSnapshot: PersistedArtifactExecutionSnapshot = {
     ...executionFields,
-    ...(!graphUnsupported && persistedGraph ? { provenanceGraph: persistedGraph } : {}),
-    ...(!graphUnsupported && !recipeUnsupported && persistedRecipe
+    ...(!graphUnsupported && !analysisUnsupported && persistedAnalysis
+      ? { analysisRevision: persistedAnalysis }
+      : {}),
+    ...(!graphUnsupported && !analysisUnsupported && persistedGraph
+      ? { provenanceGraph: persistedGraph }
+      : {}),
+    ...(!graphUnsupported && !analysisUnsupported && !recipeUnsupported && persistedRecipe
       ? { reproducibilityRecipe: persistedRecipe }
       : {}),
     ...helperEvidence,

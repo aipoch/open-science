@@ -90,6 +90,7 @@ export type NotebookSessionExecutionRequest = {
   // binds this domain epoch to the OS process owner so startup recovery never adopts a stale writer.
   kernelEpochId?: string
   code: string
+  pythonRandomState?: import('../../shared/notebook-execution-context').NotebookExecutionContext['before']['pythonRandomState']
   helperModules?: readonly NotebookHelperModuleInjection[]
   cwd: string
   notebookSessionRoot: string

@@ -1973,6 +1973,7 @@ const ArtifactProvenancePanel = ({
           <ArtifactReproducibilityPanel
             key={provenanceKey}
             projection={provenance.execution?.reproducibility}
+            analysisRevision={provenance.execution?.analysisRevision}
             environmentRuns={provenance.execution?.runs}
             executionAvailable={provenance.execution !== undefined}
             artifactName={item.name}

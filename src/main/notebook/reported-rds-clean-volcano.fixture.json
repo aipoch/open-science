@@ -1,0 +1,56 @@
+[
+  {
+    "index": 0,
+    "language": "r",
+    "status": "completed",
+    "script": "# List the input files available in the notebook working directory\nlibrary(readxl)\n# Check the differential analysis xlsx file\nxlsx_path <- \"inputs/differential-results-333333333333.xlsx\"\nsheets <- excel_sheets(xlsx_path)\ncat(\"Sheets in xlsx file:\", paste(sheets, collapse = \", \"), \"\\n\")"
+  },
+  {
+    "index": 1,
+    "language": "r",
+    "status": "completed",
+    "script": "# Read the xlsx file and preview structure\ndiff_data <- read_excel(\"inputs/differential-results-333333333333.xlsx\")\ncat(\"Dimensions:\", dim(diff_data), \"\\n\")\ncat(\"Column names:\", paste(names(diff_data), collapse = \", \"), \"\\n\")\ncat(\"\\nFirst 6 rows:\\n\")\nprint(head(diff_data, 6))\ncat(\"\\nLast 6 rows:\\n\")\nprint(tail(diff_data, 6))"
+  },
+  {
+    "index": 2,
+    "language": "r",
+    "status": "failed",
+    "script": "# Read the CSV raw data to confirm structure (use vroom for speed)\nlibrary(data.table)\nraw <- fread(\"inputs/expression-matrix-444444444444.csv\")\ncat(\"Dimensions of raw CSV:\", dim(raw), \"\\n\")\ncat(\"Column names:\", paste(names(raw), collapse = \", \"), \"\\n\")\ncat(\"\\nFirst 3 rows:\\n\")\nprint(head(raw, 3))\ncat(\"\\nGroup info from header rows:\\n\")\ncat(\"Row 1 (group labels):\\n\")\nprint(as.character(raw[1,]))\ncat(\"\\nRow 2 (sample labels):\\n\")\nprint(as.character(raw[2,]))\ncat(\"\\nNumber of unique gene ids:\", length(unique(raw$id)), \"\\n\")\ncat(\"Rows per gene (head counts):\\n\")\nprint(table(head(raw$id, 2000)))"
+  },
+  {
+    "index": 3,
+    "language": "r",
+    "status": "completed",
+    "script": "# Use base R read.csv to inspect the CSV\ncon <- file(\"inputs/expression-matrix-444444444444.csv\", \"r\")\nhdr1 <- readLines(con, n = 2, warn = FALSE)\nclose(con)\ncat(\"Header rows:\\n\")\ncat(\"Line1:\", hdr1[1], \"\\n\")\ncat(\"Line2:\", hdr1[2], \"\\n\")"
+  },
+  {
+    "index": 4,
+    "language": "r",
+    "status": "failed",
+    "script": "# Check installed packages and load data using base R\nif (!requireNamespace(\"ggplot2\", quietly = TRUE)) {\n  install.packages(\"ggplot2\", repos = \"https://cloud.r-project.org\")\n}\nif (!requireNamespace(\"ggrepel\", quietly = TRUE)) {\n  install.packages(\"ggrepel\", repos = \"https://cloud.r-project.org\")\n}\nlibrary(ggplot2)\nlibrary(ggrepel)\n# Read CSV raw data (skip the 2-line header) for reference / additional gene annotation\nraw <- read.csv(\"inputs/expression-matrix-444444444444.csv\", skip = 2, check.names = FALSE)\ncat(\"Raw data dim:\", dim(raw), \"\\n\")\ncat(\"Unique genes in raw:\", length(unique(raw$id)), \"\\n\")\n# Read the precomputed differential analysis\ndiff_df <- read_excel(\"inputs/differential-results-333333333333.xlsx\")\ncat(\"Differential analysis dim:\", dim(diff_df), \"\\n\")\ncat(\"Non-NA id entries:\", sum(!is.na(diff_df$id)), \"\\n\")\ncat(\"log2FoldChange range:\", range(diff_df$log2FoldChange, na.rm = TRUE), \"\\n\")\ncat(\"pvalue range:\", range(diff_df$pvalue, na.rm = TRUE), \"\\n\")"
+  },
+  {
+    "index": 5,
+    "language": "r",
+    "status": "completed",
+    "script": "library(ggplot2)\nlibrary(ggrepel)\nlibrary(readxl)\n# Read CSV raw data (skip the 2-line header) for reference\nraw <- read.csv(\"inputs/expression-matrix-444444444444.csv\", skip = 2, check.names = FALSE)\ncat(\"Raw data dim:\", dim(raw), \"\\n\")\ncat(\"Unique genes in raw:\", length(unique(raw$id)), \"\\n\")\n# Read the precomputed differential analysis\ndiff_df <- read_excel(\"inputs/differential-results-333333333333.xlsx\")\ncat(\"Differential analysis dim:\", dim(diff_df), \"\\n\")\ncat(\"Non-NA id entries:\", sum(!is.na(diff_df$id)), \"\\n\")\ncat(\"log2FoldChange range:\", range(diff_df$log2FoldChange, na.rm = TRUE), \"\\n\")\ncat(\"pvalue range:\", range(diff_df$pvalue, na.rm = TRUE), \"\\n\")"
+  },
+  {
+    "index": 6,
+    "language": "r",
+    "status": "completed",
+    "script": "# Check duplicates in raw CSV - first column is gene id\nraw_ids <- raw[[1]]\ncat(\"First few raw IDs:\", head(raw_ids, 10), \"\\n\")\ncat(\"Total rows:\", length(raw_ids), \"\\n\")\ncat(\"Unique IDs:\", length(unique(raw_ids)), \"\\n\")\ncat(\"Duplicated IDs (count):\", sum(duplicated(raw_ids)), \"\\n\")\n# Most-common duplicate count\ndup_counts <- table(raw_ids)\ncat(\"Max duplicates for a single gene:\", max(dup_counts), \"\\n\")\ncat(\"Distribution of duplicate counts:\\n\")\nprint(table(dup_counts))"
+  },
+  {
+    "index": 7,
+    "language": "r",
+    "status": "completed",
+    "script": "# Build a clean differential-analysis data frame\nlibrary(ggplot2)\nlibrary(ggrepel)\nlibrary(readxl)\n# Read the precomputed differential analysis\ndiff_df <- read_excel(\"inputs/differential-results-333333333333.xlsx\")\n# Drop rows missing id or with NA stats, and remove zero p-values\ndf <- as.data.frame(diff_df)\ndf <- df[!is.na(df$id) & !is.na(df$log2FoldChange) & !is.na(df$pvalue), ]\ndf <- df[df$pvalue > 0, ]\ncat(\"Clean rows:\", nrow(df), \"\\n\")\n# Compute -log10(p) and significance\ndf$neg_log10_p <- -log10(df$pvalue)\nFC_THRESH <- 1        # |log2FC| cutoff\nP_THRESH  <- 0.05     # p-value cutoff (use adjusted would be safer; sticking to file)\ndf$status <- \"NS\"\ndf$status[df$log2FoldChange >  FC_THRESH & df$pvalue < P_THRESH] <- \"Up\"\ndf$status[df$log2FoldChange < -FC_THRESH & df$pvalue < P_THRESH] <- \"Down\"\ncat(\"Status counts:\\n\")\nprint(table(df$status))\n# Top genes for labeling (top by significance in each direction)\ntop_up   <- head(df[df$status == \"Up\",   ][order(df[df$status == \"Up\",   ]$pvalue), ], 12)\ntop_down <- head(df[df$status == \"Down\", ][order(df[df$status == \"Down\", ]$pvalue), ], 12)\nlabel_ids <- unique(c(top_up$id, top_down$id))\ndf$label <- ifelse(df$id %in% label_ids, df$id, \"\")\ncat(\"Labels to draw:\", length(label_ids), \"\\n\")\n# Save for the next cell\nsaveRDS(df, \"diff_df_clean.rds\")"
+  },
+  {
+    "index": 8,
+    "language": "r",
+    "status": "completed",
+    "script": "library(ggplot2)\nlibrary(ggrepel)\ndf <- readRDS(\"diff_df_clean.rds\")\n# Reorder status for plotting\ndf$status <- factor(df$status, levels = c(\"Down\", \"NS\", \"Up\"))\n# Common volcano-plot limits\nxlim_range <- max(abs(df$log2FoldChange)) * 1.05\nylim_range <- max(df$neg_log10_p) * 1.05\n# \"Diagonal volcano plot\":\n#   - log2FC on x-axis, -log10(p) on y-axis\n#   - The two diagonal dashed lines are the joint (|log2FC|, -log10(p)) cutoffs that\n#     approximate the rectangular Up / Down selection, then fan out diagonally so the\n#     \"significance region\" looks like a V -- the hallmark of the diagonal style.\n#   - Up / Down DEGs highlighted, top genes labeled with ggrepel.\np <- ggplot(df, aes(x = log2FoldChange, y = neg_log10_p, colour = status)) +\n  geom_point(alpha = 0.65, size = 1.4) +\n  scale_colour_manual(\n    values = c(\"Down\" = \"#2E86C1\", \"NS\" = \"grey70\", \"Up\" = \"#E74C3C\"),\n    labels = c(\"Down\" = \"Down-regulated\",\n               \"NS\"   = \"Not significant\",\n               \"Up\"   = \"Up-regulated\"),\n    breaks = c(\"Down\", \"NS\", \"Up\")\n  ) +\n  # Vertical cutoffs (|log2FC| = 1)\n  geom_vline(xintercept = c(-1, 1), linetype = \"dashed\", colour = \"grey40\") +\n  # Horizontal cutoff (p = 0.05)\n  geom_hline(yintercept = -log10(0.05), linetype = \"dashed\", colour = \"grey40\") +\n  # Diagonal lines -- the defining feature of the diagonal volcano plot.\n  # They connect the four (FC=±1, p=0.05) corners to (FC=±xlim, p=top) so that\n  # the \"significant\" region is bounded by slanted lines rather than only axes.\n  geom_segment(\n    aes(x = 1,  xend =  xlim_range, y = -log10(0.05), yend = ylim_range),\n    colour = \"#E74C3C\", linetype = \"dotdash\", linewidth = 0.6, inherit.aes = FALSE\n  ) +\n  geom_segment(\n    aes(x = -1, xend = -xlim_range, y = -log10(0.05), yend = ylim_range),\n    colour = \"#2E86C1\", linetype = \"dotdash\", linewidth = 0.6, inherit.aes = FALSE\n  ) +\n  geom_text_repel(\n    data = subset(df, label != \"\"),\n    aes(label = label),\n    size = 3.2, max.overlaps = 30, box.padding = 0.3, segment.colour = \"grey50\"\n  ) +\n  scale_x_continuous(limits = c(-xlim_range, xlim_range)) +\n  scale_y_continuous(limits = c(0, ylim_range), expand = expansion(mult = c(0, 0.02))) +\n  labs(\n    title = \"Diagonal Volcano Plot — group2 vs group1\",\n    subtitle = \"CohortB / CohortA comparison (n = 6 vs 6)\",\n    x = expression(log[2] * \" fold change (group2 / group1)\"),\n    y = expression(-log[10] * \" (\" * italic(p) * \"-value)\"),\n    colour = NULL\n  ) +\n  theme_bw(base_size = 13) +\n  theme(\n    plot.title    = element_text(face = \"bold\", hjust = 0.5),\n    plot.subtitle = element_text(hjust = 0.5, colour = \"grey30\"),\n    panel.grid.minor = element_blank(),\n    legend.position  = \"top\"\n  )\n# Save as PNG\nggsave(\"diagonal_volcano.png\", plot = p, width = 9, height = 7, dpi = 200)\ncat(\"Saved diagonal_volcano.png\\n\")\nfile.info(\"diagonal_volcano.png\")"
+  }
+]

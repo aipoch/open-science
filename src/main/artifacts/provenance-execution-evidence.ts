@@ -155,6 +155,9 @@ const sanitizeRun = (
     kernelKind: run.kernelKind,
     ...(run.environment ? { environmentName: run.environment } : {}),
     ...(run.environmentLock ? { environmentLock: run.environmentLock } : {}),
+    ...(run.environmentManifest?.executionContext
+      ? { executionContext: run.environmentManifest.executionContext }
+      : {}),
     script,
     ...(script !== run.script ? { scriptTruncated: true } : {}),
     status: run.status,
