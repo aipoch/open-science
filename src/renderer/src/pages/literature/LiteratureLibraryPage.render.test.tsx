@@ -6286,7 +6286,9 @@ describe('LiteratureLibraryPage', () => {
 
     fireEvent.change(screen.getByLabelText('Import references'), { target: { files: [file] } })
     await screen.findByRole('dialog')
-    expect(screen.getByText('Only the first 1,000 references will be imported.')).not.toBeNull()
+    expect(
+      await screen.findByText('Only the first 1,000 references will be imported.')
+    ).not.toBeNull()
     fireEvent.click(screen.getByRole('button', { name: 'Import references' }))
     expect(await screen.findByText('Created')).not.toBeNull()
     expect(screen.getByText('Skipped').parentElement?.textContent).toContain('1001Skipped')
