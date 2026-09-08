@@ -304,3 +304,37 @@ it('retires a failed apply request when the user changes the selection', async (
   expect(jobs.mock.calls.filter(([request]) => request.action === 'apply')).toHaveLength(1)
   expect((screen.getByRole('checkbox') as HTMLInputElement).checked).toBe(false)
 })
+
+it('adopts another window saved deselection when this window has no pending draft', async () => {
+  job.state = 'review'
+  job.rows[0]!.status = 'ready'
+  job.rows.push({
+    id: 'second',
+    item: { ...item, id: 'second', item: { ...item.item, title: 'Second paper' } },
+    checked: true,
+    status: 'ready'
+  })
+  open(id)
+  await flush()
+  expect(
+    (screen.getByRole('checkbox', { name: 'Select reference: First paper' }) as HTMLInputElement)
+      .checked
+  ).toBe(true)
+  job.rows[0]!.checked = false
+  job.updatedAt += 1
+  fireEvent(window, new Event('literature-job-refresh'))
+  await act(async () => {})
+  expect
+    .soft(
+      (screen.getByRole('checkbox', { name: 'Select reference: First paper' }) as HTMLInputElement)
+        .checked
+    )
+    .toBe(false)
+  fireEvent.click(screen.getByRole('button', { name: /Apply metadata/ }))
+  await act(async () => {})
+  expect(jobs).toHaveBeenLastCalledWith({
+    action: 'apply',
+    jobId: id,
+    selections: [{ itemId: 'second', candidateId: undefined }]
+  })
+})

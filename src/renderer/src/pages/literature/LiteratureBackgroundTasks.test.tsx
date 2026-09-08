@@ -177,3 +177,20 @@ it('updates metadata dates with the interface language on an unchanged host', as
     })
   }
 })
+
+it('keeps unsearched references discoverable after a partial application is marked completed', async () => {
+  await show([
+    {
+      ...job,
+      state: 'completed',
+      phase: 'apply',
+      total: 2,
+      checked: 1,
+      ready: 0,
+      done: 1,
+      failed: 0,
+      completedItemIds: ['a']
+    }
+  ])
+  expect(screen.queryByRole('button', { name: 'Background tasks' })).not.toBeNull()
+})
