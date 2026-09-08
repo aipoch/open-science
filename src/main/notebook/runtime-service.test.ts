@@ -3878,15 +3878,28 @@ describe('notebook runtime service', () => {
       }
     )
 
-    it.each(['linux', 'win32'] as const)(
-      'recovers a lost background Shell receipt and idempotently cancels running work on %s',
-      async (platform) => {
+    it.each([
+      { platform: 'linux', dispatchDelayMs: 0 },
+      { platform: 'win32', dispatchDelayMs: 0 },
+      { platform: 'linux', dispatchDelayMs: 1500 }
+    ] as const)(
+      'recovers a lost background Shell receipt and idempotently cancels running work on $platform after $dispatchDelayMs ms dispatch delay',
+      async ({ platform, dispatchDelayMs }) => {
         const root = await createStorageRoot()
+        const executionStarted = createDeferred<void>()
+        const dispatchAllowed = createDeferred<void>()
+        const repository = new NotebookRunRepository(root)
+        const transitionRun = repository.transitionRun.bind(repository)
+        vi.spyOn(repository, 'transitionRun').mockImplementation(async (request) => {
+          if (dispatchDelayMs && request.run.status === 'running') await dispatchAllowed.promise
+          return transitionRun(request)
+        })
         let executions = 0
         const execute = vi.fn<NotebookShellProcess['execute']>(
           (request) =>
             new Promise((resolve) => {
               executions += 1
+              executionStarted.resolve()
               request.signal?.addEventListener(
                 'abort',
                 () =>
@@ -3904,7 +3917,7 @@ describe('notebook runtime service', () => {
           configRoot: root,
           dataRoot: root,
           projectId: 'default-project',
-          repository: new NotebookRunRepository(root),
+          repository,
           shellProcess: { execute },
           backgroundExecutionEnabled: true,
           platform
@@ -3920,10 +3933,26 @@ describe('notebook runtime service', () => {
         const first = await service.executeShellBackground(request)
         const recovered = await service.executeShellBackground(request)
 
-        expect(recovered.runId).toBe(first.runId)
-        await vi.waitFor(() => expect(executions).toBe(1))
-        await service.cancelBackgroundRun({ ...request, runId: first.runId })
-        expect(executions).toBe(1)
+        // Admission can precede dispatch by more than waitFor's one-second default.
+        const releaseDispatch = setTimeout(() => dispatchAllowed.resolve(), dispatchDelayMs)
+        try {
+          expect(recovered.runId).toBe(first.runId)
+          await executionStarted.promise
+          expect(executions).toBe(1)
+          await expect(
+            service.cancelBackgroundRun({ ...request, runId: first.runId })
+          ).resolves.toMatchObject({ run: { status: 'cancelled' } })
+          await expect(
+            service.cancelBackgroundRun({ ...request, runId: first.runId })
+          ).resolves.toMatchObject({ run: { status: 'cancelled' } })
+          expect(executions).toBe(1)
+        } finally {
+          clearTimeout(releaseDispatch)
+          dispatchAllowed.resolve()
+          await executionStarted.promise
+          await service.cancelBackgroundRun({ ...request, runId: first.runId })
+          await service.waitForBackgroundRun(first.runId)
+        }
       }
     )
 
