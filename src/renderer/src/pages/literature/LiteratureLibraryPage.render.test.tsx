@@ -557,6 +557,25 @@ describe('LiteratureLibraryPage', () => {
     }
   })
 
+  it.each(['中文', ''])(
+    'keeps selection aligned with a composition-end-only search value: %s',
+    async (final) => {
+      search.mockImplementation((request: { scope: string }) =>
+        Promise.resolve(request.scope === 'library' ? { entries: [libraryItem] } : { entries: [] })
+      )
+      render(<LiteratureLibraryPage />)
+      fireEvent.click(screen.getByRole('button', { name: 'All references' }))
+      await screen.findByText(libraryItem.item.title)
+      fireEvent.click(screen.getByRole('checkbox', { name: 'Select all references' }))
+      expect(screen.queryByText('1 selected')).not.toBeNull()
+      const input = screen.getByLabelText('Search references')
+      fireEvent.compositionStart(input)
+      fireEvent.compositionEnd(input, { data: final, target: { value: final } })
+      if (final) expect(screen.queryByText('1 selected')).toBeNull()
+      else expect(screen.queryByText('1 selected')).not.toBeNull()
+    }
+  )
+
   it('cancels a pending catalog search when composition starts before another change', async () => {
     render(<LiteratureLibraryPage />)
     fireEvent.click(screen.getByRole('button', { name: 'All references' }))

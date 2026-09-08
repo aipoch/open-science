@@ -20,6 +20,12 @@ const LiteratureSearchInput = ({
   const [isComposing, setIsComposing] = useState(false)
   const committedRef = useRef(initialValue)
 
+  const updateDraft = (value: string): void => {
+    if (value === draft) return
+    setDraft(value)
+    onDraftChange()
+  }
+
   useEffect(() => {
     if (isComposing || draft === committedRef.current) return
     const timeout = window.setTimeout(() => {
@@ -39,13 +45,10 @@ const LiteratureSearchInput = ({
         value={draft}
         onCompositionStart={() => setIsComposing(true)}
         onCompositionEnd={(event) => {
-          setDraft(event.currentTarget.value)
+          updateDraft(event.currentTarget.value)
           setIsComposing(false)
         }}
-        onChange={(event) => {
-          setDraft(event.target.value)
-          onDraftChange()
-        }}
+        onChange={(event) => updateDraft(event.target.value)}
         placeholder={t('Search references')}
         aria-label={t('Search references')}
         className="pl-9"
