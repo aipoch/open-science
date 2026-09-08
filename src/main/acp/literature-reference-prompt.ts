@@ -1,3 +1,4 @@
+import { MAX_COMPOSER_ATTACHMENTS } from '../../shared/uploads'
 import type {
   LiteratureReference,
   LiteratureScopeReference,
@@ -11,7 +12,7 @@ const referencesFromParts = (parts: readonly MessagePart[] | undefined): Literat
     if (part.type !== 'literature' || seen.has(part.itemId)) continue
     seen.add(part.itemId)
     references.push(part)
-    if (references.length === 10) break
+    if (references.length === MAX_COMPOSER_ATTACHMENTS) break
   }
   return references
 }
@@ -25,7 +26,7 @@ const scopesFromParts = (parts: readonly MessagePart[] | undefined): LiteratureS
     if (seen.has(identity)) continue
     seen.add(identity)
     scopes.push(part)
-    if (scopes.length === 5) break
+    if (scopes.length === MAX_COMPOSER_ATTACHMENTS) break
   }
   return scopes
 }

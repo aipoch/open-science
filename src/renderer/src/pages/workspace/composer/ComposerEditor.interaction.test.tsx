@@ -315,6 +315,60 @@ const flushProjectFiles = async (): Promise<void> => {
 }
 
 describe('ComposerEditor mention input safety', () => {
+  it('does not insert a prior-project reference into an identical unsaved project draft', async () => {
+    window.api.literature = {
+      ...window.api.literature,
+      search: vi.fn().mockImplementation((request) => {
+        if (request.scope === 'collections') return Promise.resolve({ entries: [] })
+        if (request.projectId === 'project-b') return new Promise(() => undefined)
+        return Promise.resolve({
+          entries: [
+            {
+              id: 'project-a-only-item',
+              metadataRevision: 7,
+              attachments: [],
+              projectIds: ['default'],
+              collectionIds: [],
+              createdAt: 1,
+              updatedAt: 1,
+              item: {
+                itemType: 'journalArticle',
+                title: 'UniquePaper',
+                abstract: '',
+                issuedText: '',
+                containerTitle: '',
+                shortTitle: '',
+                language: '',
+                rights: '',
+                url: '',
+                extra: '',
+                typeFields: {},
+                creators: [],
+                identifiers: []
+              }
+            }
+          ]
+        })
+      })
+    }
+    const doc: ComposerDoc = { nodes: [{ type: 'text', text: '@Unique' }] }
+    renderEditor({ doc })
+    await typeQuery('@Unique')
+    await vi.waitFor(() =>
+      expect(document.body.querySelector('[role="option"]')?.textContent).toContain('UniquePaper')
+    )
+    await act(async () => useNavigationStore.setState({ activeProjectId: 'project-b' }))
+    renderEditor({ doc: { nodes: [{ type: 'text', text: '@Unique' }] } })
+    act(() => document.body.querySelector<HTMLElement>('[role="option"]')?.click())
+    expect(useNavigationStore.getState().activeProjectId).toBe('project-b')
+    expect(
+      domToDoc(editor()).nodes.some(
+        (node) => node.type === 'literature' && node.itemId === 'project-a-only-item'
+      )
+    ).toBe(false)
+    expect(document.body.querySelector('[role="listbox"]')).toBeNull()
+  })
+
   const typeQuery = async (text: string): Promise<void> => {
     act(() => {
       editor().textContent = text

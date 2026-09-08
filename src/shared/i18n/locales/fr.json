@@ -1623,6 +1623,7 @@
     "Inbox": "Boîte de réception",
     "Inbox is clear": "La boîte de réception est vide",
     "Literature could not be loaded.": "Les références n’ont pas pu être chargées.",
+    "Collections could not be loaded.": "Impossible de charger les collections.",
     "This reference is no longer in your Library.": "Cette référence ne figure plus dans votre bibliothèque.",
     "Literature could not be updated.": "Les références n’ont pas pu être mises à jour.",
     "Literature library": "Bibliothèque de références",
