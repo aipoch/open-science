@@ -26,7 +26,7 @@ type Job = {
   'runs-on'?: string
   strategy?: {
     'fail-fast'?: boolean
-    matrix?: { shard?: number[] }
+    matrix?: { shard?: number[]; group?: string[] }
   }
   steps?: Step[]
   'timeout-minutes'?: number
@@ -118,7 +118,7 @@ describe('PR Gate workflow', () => {
           required: false,
           default: 'classified',
           type: 'choice',
-          options: ['classified', 'unit-coverage', 'i18n', 'windows-e2e']
+          options: ['classified', 'unit-coverage', 'i18n', 'windows-e2e', 'e2e']
         }
       }
     })
@@ -538,10 +538,10 @@ describe('PR Gate workflow', () => {
     expect(macosRuns?.filter((run) => run === 'npm run build:e2e')).toHaveLength(1)
     expect(macosRuns).toEqual(
       expect.arrayContaining([
-        'npm run test:e2e:journey -- --fail-on-flaky-tests',
-        'npm run test:e2e:workspace -- --fail-on-flaky-tests',
+        'npm run test:e2e:journey -- --fail-on-flaky-tests --global-timeout=600000',
+        'npm run test:e2e:workspace -- --fail-on-flaky-tests --global-timeout=900000',
         'npm run test:e2e:accessibility:signal',
-        'npm run test:e2e:visual -- --fail-on-flaky-tests'
+        'npm run test:e2e:visual -- --fail-on-flaky-tests --global-timeout=300000'
       ])
     )
 
@@ -549,31 +549,31 @@ describe('PR Gate workflow', () => {
     expect(windowsRuns?.filter((run) => run === 'npm run build:e2e')).toHaveLength(1)
     expect(windowsRuns).toEqual(
       expect.arrayContaining([
-        'npm run test:e2e:journey -- --workers=2 --fully-parallel --shard=${{ matrix.shard }}/2 --fail-on-flaky-tests',
-        'npm run test:e2e:workspace -- --workers=2 --fully-parallel --shard=${{ matrix.shard }}/2 --fail-on-flaky-tests',
+        'npm run test:e2e:journey -- --workers=1 --fully-parallel --shard=${{ matrix.shard }}/3 --fail-on-flaky-tests --global-timeout=600000',
+        'npm run test:e2e:workspace -- --workers=1 --fully-parallel --shard=${{ matrix.shard }}/3 --fail-on-flaky-tests --global-timeout=900000',
         'npm run test:e2e:accessibility -- --fail-on-flaky-tests'
       ])
     )
   })
 
   it('budgets the complete Windows E2E path beyond dependency and build setup', () => {
-    expect(workflow.jobs.windows_e2e['timeout-minutes']).toBe(25)
+    expect(workflow.jobs.windows_e2e['timeout-minutes']).toBe(35)
   })
 
   it('budgets the combined macOS builds and all four E2E groups', () => {
-    expect(workflow.jobs.macos_e2e['timeout-minutes']).toBe(20)
+    expect(workflow.jobs.macos_e2e['timeout-minutes']).toBe(30)
   })
 
   it('shards every selected Windows journey without cancelling siblings or colliding artifacts', () => {
     const job = workflow.jobs.windows_e2e
-    expect(job.strategy).toEqual({ 'fail-fast': false, matrix: { shard: [1, 2] } })
-    expect(job.name).toBe('Windows E2E (shard ${{ matrix.shard }}/2)')
+    expect(job.strategy).toEqual({ 'fail-fast': false, matrix: { shard: [1, 2, 3] } })
+    expect(job.name).toBe('Windows E2E (shard ${{ matrix.shard }}/3)')
     for (const lane of ['e2e_functional_windows', 'e2e_workspace_windows']) {
       const step = job.steps?.find(({ id }) => id === lane)
       expect(step?.if).toContain(
         `contains(fromJSON(needs.preflight.outputs.plan).lanes, '${lane}')`
       )
-      expect(step?.run).toContain('--workers=2 --fully-parallel --shard=${{ matrix.shard }}/2')
+      expect(step?.run).toContain('--workers=1 --fully-parallel --shard=${{ matrix.shard }}/3')
       expect(step?.run).toContain('--fail-on-flaky-tests')
     }
     const uploads = job.steps?.filter(({ name }) =>
@@ -713,7 +713,7 @@ describe('PR Gate workflow', () => {
       if: "${{ steps.e2e_accessibility_macos.outcome != 'skipped' }}",
       'continue-on-error': true,
       with: {
-        name: 'accessibility-macos-diagnostics',
+        name: 'accessibility-macos-${{ matrix.group }}-diagnostics',
         path: 'playwright-report/\ntest-results/\n'
       }
     })
@@ -739,7 +739,7 @@ describe('PR Gate workflow', () => {
 
     expect(native).toMatchObject({
       'continue-on-error': true,
-      if: "${{ fromJSON(needs.preflight.outputs.plan).mode == 'full' }}"
+      if: "${{ matrix.group == 'journeys' && fromJSON(needs.preflight.outputs.plan).mode == 'full' }}"
     })
     for (const testFile of [
       'packages/notebook-network-sandbox/src/filesystem-enforcement.integration.test.ts',
@@ -941,5 +941,68 @@ describe('PR Gate workflow', () => {
     }
     expect(manifest.laneOrder).not.toContain('unit_preload_contracts')
     expect(workflow.jobs).not.toHaveProperty('preload_contracts')
+  })
+})
+
+describe('E2E throughput contracts', () => {
+  it('dispatches the real E2E bundles with a valid focused plan', () => {
+    const classify = workflow.jobs.preflight.steps?.find(({ id }) => id === 'classify')
+    const dir = mkdtempSync(join(tmpdir(), 'e2e-plan-'))
+    try {
+      const output = join(dir, 'output')
+      const run = spawnSync('bash', ['-eu', '-c', classify!.run!], {
+        env: {
+          ...process.env,
+          EVENT_NAME: 'workflow_dispatch',
+          DRY_RUN_MODE: 'e2e',
+          GITHUB_OUTPUT: output
+        },
+        encoding: 'utf8'
+      })
+      expect(run.status, run.stderr).toBe(0)
+      const line = readFileSync(output, 'utf8')
+        .split('\n')
+        .find((line) => line.startsWith('plan='))!
+      const plan = JSON.parse(line.slice(5))
+      expect(plan.bundles).toEqual(['policy', 'macos_e2e', 'windows_e2e'])
+      expect([...new Set(plan.lanes.map((lane: string) => manifest.laneBundles[lane]))]).toEqual(
+        plan.bundles
+      )
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('retains native-platform font coverage in one Windows browser pilot', () => {
+    const job = workflow.jobs.windows_e2e
+    expect(job.steps?.find(({ id }) => id === 'renderer_layout')).toMatchObject({
+      if: '${{ matrix.shard == 1 }}',
+      run: 'npm run test:e2e:browser -- --fail-on-flaky-tests --global-timeout=180000'
+    })
+    expect(
+      job.steps?.find(({ name }) => name === 'Enforce selected Windows E2E checks')?.run
+    ).toContain('check renderer_layout "$RENDERER_LAYOUT_OUTCOME"')
+  })
+
+  it('partitions macOS groups while preserving the stable aggregate gate', () => {
+    const job = workflow.jobs.macos_e2e
+    expect(job.strategy?.matrix?.group).toEqual(['journeys', 'presentation'])
+    for (const [id, group] of [
+      ['e2e_functional_macos', 'journeys'],
+      ['e2e_workspace_macos', 'journeys'],
+      ['e2e_accessibility_macos', 'presentation'],
+      ['e2e_visual_macos', 'presentation'],
+      ['renderer_layout', 'presentation']
+    ]) {
+      expect(job.steps?.find((step) => step.id === id)?.if).toContain(`matrix.group == '${group}'`)
+    }
+    expect(workflow.jobs.gate.needs).toContain('macos_e2e')
+    const enforce = job.steps?.find(({ name }) => name === 'Enforce selected macOS checks')
+    const run = spawnSync('bash', ['-c', enforce!.run!], {
+      env: { ...process.env, RENDERER_LAYOUT_OUTCOME: 'failure' },
+      encoding: 'utf8'
+    })
+    expect(run.status).toBe(1)
+    expect(run.stderr).toContain('renderer_layout ended with failure')
   })
 })
