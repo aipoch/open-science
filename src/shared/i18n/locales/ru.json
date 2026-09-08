@@ -106,6 +106,8 @@
     "Select no more than {{limit}} references for this task.": "Выберите не более {{limit}} источников для этой задачи.",
     "This reference changed while you were editing. Your draft has been kept.": "Эта публикация изменилась во время редактирования. Ваш черновик сохранён.",
     "Discard this draft and load the latest saved metadata.": "Отбросить этот черновик и загрузить последние сохранённые метаданные.",
+    "Open retained reference": "Открыть сохранённую публикацию",
+    "Can restore: {{recoverable}}. Merged duplicates skipped: {{skipped}}.": "Можно восстановить: {{recoverable}}. Пропущено объединённых дубликатов: {{skipped}}.",
     "Identifiers (★ primary)": "Идентификаторы (★ основной)",
     "Search again to refresh this older metadata review.": "Повторите поиск, чтобы обновить эти устаревшие данные для проверки.",
     "The reference was saved, but could not be reloaded.": "Источник сохранён, но его не удалось загрузить повторно.",

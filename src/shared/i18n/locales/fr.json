@@ -105,6 +105,8 @@
     "Select no more than {{limit}} references for this task.": "Sélectionnez au maximum {{limit}} références pour cette tâche.",
     "This reference changed while you were editing. Your draft has been kept.": "Cette référence a été modifiée pendant votre saisie. Votre brouillon a été conservé.",
     "Discard this draft and load the latest saved metadata.": "Abandonner ce brouillon et charger les dernières métadonnées enregistrées.",
+    "Open retained reference": "Ouvrir la référence conservée",
+    "Can restore: {{recoverable}}. Merged duplicates skipped: {{skipped}}.": "Références pouvant être restaurées : {{recoverable}}. Doublons fusionnés ignorés : {{skipped}}.",
     "Identifiers (★ primary)": "Identifiants (★ principal)",
     "Search again to refresh this older metadata review.": "Relancez la recherche pour actualiser cette ancienne révision des métadonnées.",
     "The reference was saved, but could not be reloaded.": "La référence a été enregistrée, mais n’a pas pu être rechargée.",

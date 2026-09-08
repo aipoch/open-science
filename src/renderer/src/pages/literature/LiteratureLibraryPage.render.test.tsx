@@ -5502,6 +5502,159 @@ describe('LiteratureLibraryPage', () => {
     }
   })
 
+  it('counts only applied years after an invalid draft is dismissed', async () => {
+    render(<LiteratureLibraryPage />)
+    fireEvent.click(screen.getByRole('button', { name: 'All references' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Filters' }))
+    fireEvent.change(screen.getByLabelText('From year'), { target: { value: '2020' } })
+    await waitFor(() =>
+      expect(search).toHaveBeenCalledWith(
+        expect.objectContaining({
+          scope: 'library',
+          filter: expect.objectContaining({ yearFrom: 2020 })
+        })
+      )
+    )
+    fireEvent.change(screen.getByLabelText('To year'), { target: { value: '2010' } })
+    await waitFor(() =>
+      expect(screen.getByLabelText('To year').getAttribute('aria-invalid')).toBe('true')
+    )
+    fireEvent.keyDown(screen.getByLabelText('To year'), { key: 'Escape' })
+    expect(screen.queryByLabelText('To year')).toBeNull()
+    const requests = search.mock.calls
+      .map(([request]) => request)
+      .filter((request) => request.scope === 'library')
+    expect(requests.at(-1).filter).toMatchObject({ yearFrom: 2020 })
+    expect(requests.at(-1).filter.yearTo).toBeUndefined()
+    expect(screen.getByRole('button', { name: /^Filters/ }).textContent).toBe('Filters1')
+  })
+
+  it.each(['single', 'batch'] as const)(
+    'does not offer enabled %s restoration for merged aliases',
+    async (surface) => {
+      const alias = { ...libraryItem, mergedIntoItemId: 'survivor', deletedAt: 2 }
+      search.mockImplementation((request: { lifecycle?: string; scope: string }) =>
+        Promise.resolve(
+          request.scope === 'library' && request.lifecycle === 'deleted'
+            ? { entries: [alias], totalCount: 1 }
+            : { entries: [] }
+        )
+      )
+      render(<LiteratureLibraryPage />)
+      fireEvent.click(screen.getByRole('button', { name: 'Trash' }))
+      const row = (await screen.findByText(alias.item.title)).closest('tr')!
+      expect(within(row).getByText('Merged duplicate')).not.toBeNull()
+      if (surface === 'single') {
+        await openMenu(within(row).getByRole('button', { name: 'More actions' }))
+        expect(
+          screen.getByRole('menuitem', { name: 'Restore' }).getAttribute('aria-disabled')
+        ).toBe('true')
+      } else {
+        fireEvent.click(screen.getByLabelText('Select all references'))
+        expect(
+          (screen.getByRole('button', { name: 'Restore' }) as HTMLButtonElement).disabled
+        ).toBe(true)
+      }
+      expect(transact).not.toHaveBeenCalled()
+    }
+  )
+
+  it('keeps invalid-only year drafts visible and clearable outside the popover', async () => {
+    render(<LiteratureLibraryPage />)
+    fireEvent.click(screen.getByRole('button', { name: 'All references' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Filters' }))
+    fireEvent.change(screen.getByLabelText('From year'), { target: { value: '10000' } })
+    await waitFor(() =>
+      expect(screen.getByLabelText('From year').getAttribute('aria-invalid')).toBe('true')
+    )
+    fireEvent.keyDown(screen.getByLabelText('From year'), { key: 'Escape' })
+    expect.soft(screen.queryByText('Enter a valid year range (0–9999).')).not.toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: /^Filters/ }))
+    expect(
+      (screen.getByRole('button', { name: 'Clear filters' }) as HTMLButtonElement).disabled
+    ).toBe(false)
+    fireEvent.click(screen.getByRole('button', { name: 'Clear filters' }))
+    expect((screen.getByLabelText('From year') as HTMLInputElement).value).toBe('')
+    expect(screen.queryByText('Enter a valid year range (0–9999).')).toBeNull()
+  })
+
+  it('previews recoverable and merged counts across all matching Trash pages', async () => {
+    const entries = Array.from({ length: 26 }, (_, index) => ({
+      ...createLibraryItem(index),
+      deletedAt: 2,
+      ...(index === 25 ? {} : { mergedIntoItemId: 'survivor' })
+    }))
+    search.mockImplementation((request: LiteratureCatalogSearchRequest) => {
+      if (request.scope !== 'library' || request.lifecycle !== 'deleted')
+        return Promise.resolve({ entries: [] })
+      if (request.allItemIds)
+        return Promise.resolve({
+          entries: [],
+          itemIds: entries.map(({ id }) => id),
+          totalCount: 26
+        })
+      const offset = request.offset ?? 0,
+        limit = request.limit ?? 25
+      return Promise.resolve({
+        entries: entries.slice(offset, offset + limit),
+        totalCount: 26,
+        nextOffset: offset + limit < entries.length ? offset + limit : undefined
+      })
+    })
+    render(<LiteratureLibraryPage />)
+    fireEvent.click(screen.getByRole('button', { name: 'Trash' }))
+    await screen.findByText('Reference 0')
+    fireEvent.click(screen.getByLabelText('Select all references'))
+    fireEvent.click(screen.getByRole('button', { name: 'Select all matching references 26' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Restore' }))
+    const dialog = await screen.findByRole('alertdialog')
+    expect(
+      within(dialog).getByText('Can restore: 1. Merged duplicates skipped: 25.')
+    ).not.toBeNull()
+    expect(transact).not.toHaveBeenCalled()
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Restore' }))
+    await waitFor(() =>
+      expect(transact).toHaveBeenCalledWith({
+        kind: 'set-item-lifecycle',
+        itemIds: ['item-25'],
+        state: 'active'
+      })
+    )
+    expect(transact).toHaveBeenCalledTimes(1)
+  })
+
+  it.each([true, false])(
+    'opens a merged alias retained reference with availability %s',
+    async (available) => {
+      const alias = { ...libraryItem, mergedIntoItemId: 'survivor', deletedAt: 2 }
+      search.mockImplementation((request: LiteratureCatalogSearchRequest) =>
+        Promise.resolve(
+          request.scope === 'library' && request.lifecycle === 'deleted'
+            ? { entries: [alias], totalCount: 1 }
+            : { entries: [] }
+        )
+      )
+      get.mockResolvedValue(
+        available
+          ? {
+              ...libraryItem,
+              id: 'survivor',
+              item: { ...libraryItem.item, title: 'Retained reference' }
+            }
+          : undefined
+      )
+      render(<LiteratureLibraryPage />)
+      fireEvent.click(screen.getByRole('button', { name: 'Trash' }))
+      const row = (await screen.findByText(alias.item.title)).closest('tr')!
+      await openMenu(within(row).getByRole('button', { name: 'More actions' }))
+      fireEvent.click(screen.getByRole('menuitem', { name: 'Open retained reference' }))
+      await waitFor(() => expect(get).toHaveBeenCalledWith('survivor'))
+      if (available) await screen.findByText('Retained reference')
+      else await screen.findByText('This reference is no longer in your Library.')
+      expect(transact).not.toHaveBeenCalled()
+    }
+  )
+
   it('applies pending years after closing Filters and restores the drafts when reopened', async () => {
     render(<LiteratureLibraryPage />)
     fireEvent.click(screen.getByRole('button', { name: 'All references' }))

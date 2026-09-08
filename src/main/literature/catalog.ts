@@ -111,6 +111,56 @@ const normalizeCreatorName = (creator: LiteratureCreatorInput): string =>
     ? normalizeSpace(creator.literalName).toLowerCase()
     : normalizeSpace(`${creator.familyName} ${creator.givenName}`).toLowerCase()
 
+// Search comparison is derived at read time so existing records follow the same rules as new ones.
+const normalizeSearchText = (value: string): string => normalizeSpace(value).toLowerCase()
+// Preserve trailing combining marks when comparing lowercase expansions (for example İ).
+const literalSearchPattern = (value: string): RegExp =>
+  new RegExp(`${normalizeSearchText(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?!\\p{M})`, 'u')
+
+const searchIdentifiers = (
+  text: string
+): { scheme: LiteratureIdentifierScheme; normalizedValue: string }[] => {
+  const forms: [LiteratureIdentifierScheme, RegExp][] = [
+    ['doi', /^10\.\d{4,9}\/\S+$/u],
+    ['pmid', /^\d+$/u],
+    ['pmcid', /^PMC\d+$/u],
+    ['arxiv', /^(?:\d{4}\.\d{4,5}|[a-z-]+(?:\.[a-z-]+)?\/\d{7})$/iu],
+    ['isbn', /^(?:\d{9}[\dX]|\d{13})$/u],
+    ['issn', /^\d{7}[\dX]$/u]
+  ]
+  return forms.flatMap(([scheme, pattern]) => {
+    // ISBN/ISSN normalization strips arbitrary characters; admit only explicit numeric forms.
+    if ((scheme === 'isbn' || scheme === 'issn') && !/^[\dX\s-]+$/iu.test(text)) return []
+    const normalizedValue = normalizeIdentifier(scheme, text)
+    return pattern.test(normalizedValue) ? [{ scheme, normalizedValue }] : []
+  })
+}
+
+const searchItemSelect = {
+  id: true,
+  title: true,
+  abstract: true,
+  containerTitle: true,
+  identifiers: { select: { scheme: true, normalizedValue: true } },
+  creators: {
+    select: {
+      creator: { select: { nameMode: true, familyName: true, givenName: true, literalName: true } }
+    }
+  }
+} satisfies Prisma.LiteratureItemSelect
+
+type SearchItem = Prisma.LiteratureItemGetPayload<{ select: typeof searchItemSelect }>
+const matchesCreator = (row: SearchItem, pattern: RegExp): boolean =>
+  row.creators.some(({ creator }) =>
+    (creator.nameMode === 'organization'
+      ? [creator.literalName ?? '']
+      : [
+          `${creator.familyName ?? ''} ${creator.givenName ?? ''}`,
+          `${creator.givenName ?? ''} ${creator.familyName ?? ''}`
+        ]
+    ).some((name) => pattern.test(normalizeSearchText(name)))
+  )
+
 const canonicalJsonValue = (value: unknown): unknown => {
   if (value === null || typeof value === 'string' || typeof value === 'boolean') return value
   if (typeof value === 'number' && Number.isFinite(value)) return value
@@ -863,8 +913,16 @@ class LiteratureCatalog {
         nextOffset: rows.length > limit ? offset + limit : undefined
       }
     }
-    if (request.allItemIds) {
-      return client.$transaction((transaction) => this.searchLibrary(request, transaction))
+    if (
+      request.allItemIds ||
+      request.query?.trim() ||
+      request.filter?.query?.trim() ||
+      request.filter?.creator?.trim() ||
+      request.filter?.containerTitle?.trim()
+    ) {
+      return client.$transaction((transaction) => this.searchLibrary(request, transaction), {
+        timeout: 30_000
+      })
     }
     return this.searchLibrary(request, client)
   }
@@ -911,20 +969,6 @@ class LiteratureCatalog {
             }
           }
         : {}),
-      ...(filter?.creator
-        ? {
-            creators: {
-              some: {
-                creator: {
-                  normalizedName: { contains: normalizeSpace(filter.creator).toLowerCase() }
-                }
-              }
-            }
-          }
-        : {}),
-      ...(filter?.containerTitle
-        ? { containerTitle: { contains: normalizeSpace(filter.containerTitle) } }
-        : {}),
       ...(filter?.itemTypes?.length ? { itemType: { in: filter.itemTypes } } : {}),
       ...(filter?.yearFrom !== undefined || filter?.yearTo !== undefined
         ? {
@@ -938,23 +982,7 @@ class LiteratureCatalog {
         ? {}
         : filter.hasFullText
           ? { attachments: { some: { versions: { some: {} } } } }
-          : { attachments: { none: { versions: { some: {} } } } }),
-      ...(textQueries.length
-        ? {
-            AND: textQueries.map((text) => ({
-              OR: [
-                { title: { contains: text } },
-                { abstract: { contains: text } },
-                { containerTitle: { contains: text } },
-                {
-                  creators: {
-                    some: { creator: { normalizedName: { contains: text.toLowerCase() } } }
-                  }
-                }
-              ]
-            }))
-          }
-        : {})
+          : { attachments: { none: { versions: { some: {} } } } })
     }
     const sortDirection = request.sortDirection ?? (request.sortBy === 'title' ? 'asc' : 'desc')
     const orderBy: Prisma.LiteratureItemOrderByWithRelationInput[] =
@@ -971,6 +999,72 @@ class LiteratureCatalog {
             : request.sortBy === 'created'
               ? [{ createdAt: sortDirection }, { id: 'asc' }]
               : [{ updatedAt: sortDirection }, { id: 'asc' }]
+    if (textQueries.length || filter?.creator?.trim() || filter?.containerTitle?.trim()) {
+      const queries = textQueries.map((text) => ({
+        pattern: literalSearchPattern(text),
+        identifiers: searchIdentifiers(text)
+      }))
+      const creatorPattern = filter?.creator?.trim()
+        ? literalSearchPattern(filter.creator)
+        : undefined
+      const containerPattern = filter?.containerTitle?.trim()
+        ? literalSearchPattern(filter.containerTitle)
+        : undefined
+      const itemIds: string[] = []
+      let totalCount = 0
+      let cursor: string | undefined
+      // ponytail: linear text scan with bounded row batches; derived search columns if measured library sizes outgrow this path.
+      for (;;) {
+        const rows: SearchItem[] = await client.literatureItem.findMany({
+          where,
+          orderBy,
+          select: searchItemSelect,
+          take: 500,
+          ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {})
+        })
+        for (const row of rows) {
+          if (creatorPattern && !matchesCreator(row, creatorPattern)) continue
+          if (
+            containerPattern &&
+            !containerPattern.test(normalizeSearchText(row.containerTitle ?? ''))
+          )
+            continue
+          if (
+            !queries.every(
+              ({ pattern, identifiers }) =>
+                [row.title, row.abstract, row.containerTitle].some((value) =>
+                  pattern.test(normalizeSearchText(value ?? ''))
+                ) ||
+                matchesCreator(row, pattern) ||
+                identifiers.some((key) =>
+                  row.identifiers.some(
+                    (id) => id.scheme === key.scheme && id.normalizedValue === key.normalizedValue
+                  )
+                )
+            )
+          )
+            continue
+          if (request.allItemIds || (totalCount >= offset && itemIds.length < limit))
+            itemIds.push(row.id)
+          totalCount += 1
+        }
+        if (rows.length < 500) break
+        cursor = rows.at(-1)!.id
+      }
+      if (request.allItemIds) return { entries: [], itemIds, totalCount }
+      const rows = itemIds.length
+        ? await client.literatureItem.findMany({
+            where: { id: { in: itemIds } },
+            include: itemInclude
+          })
+        : []
+      const byId = new Map(rows.map((row) => [row.id, row]))
+      return {
+        entries: itemIds.map((id) => toItemView(byId.get(id)!)),
+        totalCount,
+        nextOffset: offset + limit < totalCount ? offset + limit : undefined
+      }
+    }
     if (request.allItemIds) {
       const rows = await client.literatureItem.findMany({ where, orderBy, select: { id: true } })
       return { entries: [], itemIds: rows.map(({ id }) => id), totalCount: rows.length }
