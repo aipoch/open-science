@@ -4420,11 +4420,9 @@
     "Year": "年份",
     "Publication": "出版物",
     "Authors": "作者",
-    "Add author": "添加作者",
     "Given name": "名",
     "Family name": "姓",
     "Organization": "机构",
-    "Remove author": "移除作者",
     "Add identifier": "添加标识符",
     "Remove identifier": "移除标识符",
     "URL": "URL",
@@ -4756,6 +4754,20 @@
     "Dismissed": "已忽略",
     "No dismissed references": "没有已忽略的文献",
     "Dismissed references can be restored here.": "可以在此恢复已忽略的文献。",
-    "Accepting will link to: {{projects}}": "接受后将关联到：{{projects}}"
+    "Accepting will link to: {{projects}}": "接受后将关联到：{{projects}}",
+    "YYYY-MM-DD": "YYYY-MM-DD",
+    "Creators": "创作者",
+    "Add creator": "添加创作者",
+    "Remove creator": "移除创作者",
+    "Creator role": "创作者角色",
+    "Name type": "姓名类型",
+    "Person": "个人",
+    "Enter a whole year from 0 to 9999, or leave it blank.": "请输入 0 到 9999 之间的整数年份，或留空。",
+    "Enter a valid publication date matching the year, or clear both fields.": "请输入与年份一致的有效出版日期，或清空这两个字段。",
+    "Use YYYY, YYYY-MM, or YYYY-MM-DD. Year and date stay in sync; clearing either clears both.": "使用 YYYY、YYYY-MM 或 YYYY-MM-DD 格式。年份与日期保持同步；清空其中一个会同时清空两者。",
+    "The saved year and publication date disagree. Editing either field will reconcile them.": "已保存的年份与出版日期不一致。编辑任一字段将使两者保持一致。",
+    "Enter a valid access date on or after 1970-01-01, or leave it blank.": "请输入不早于 1970-01-01 的有效访问日期，或留空。",
+    "The reference was created, but linking it to the destination failed. Retry to finish linking. Closing leaves it in your library without that link.": "文献已创建，但关联到目标位置失败。请重试以完成关联。关闭后，文献仍保留在文献库中，但不会建立该关联。",
+    "The reference was created, but the remaining steps failed. Retry to finish. If you close, the reference remains in your library.": "文献已创建，但后续步骤失败。请重试以完成。关闭后，文献仍保留在文献库中。"
   }
 }

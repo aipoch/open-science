@@ -1317,6 +1317,19 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
   const [isCreatingItem, setIsCreatingItem] = useState(false)
   const [isSavingNewItem, setIsSavingNewItem] = useState(false)
   const [createItemError, setCreateItemError] = useState<string>()
+  const [createdItemId, setCreatedItemId] = useState<string>()
+  const creatingItemRef = useRef(false)
+  const pendingCreationRef = useRef<{
+    id: string
+    destination?: Extract<
+      LiteratureCatalogCommand,
+      { kind: 'set-project-item' | 'set-collection-item' }
+    >
+    projectId?: string
+    collectionId?: string
+    file?: File
+    pdfItem?: LiteratureItemView
+  }>(undefined)
   const [pendingImportPdf, setPendingImportPdf] = useState<File>()
   const [pendingImportDraft, setPendingImportDraft] = useState<LiteratureItemInput>()
   const [isReadingImportMetadata, setIsReadingImportMetadata] = useState(false)
@@ -2539,80 +2552,95 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
     }
   }
 
-  const createManualItem = async (item: LiteratureItemInput): Promise<void> => {
-    if (isSavingNewItem) return
+  const createManualItem = async (item?: LiteratureItemInput): Promise<void> => {
+    if (creatingItemRef.current || (!pendingCreationRef.current && !item)) return
+    creatingItemRef.current = true
     setIsSavingNewItem(true)
     setCreateItemError(undefined)
-    const file = pendingImportPdf
     const transferId = crypto.randomUUID()
     let staged: Awaited<ReturnType<typeof stageComposerFile>> | undefined
-    let createdItemId: string | undefined
     try {
-      const receipt = await window.api.literature.transact({
-        kind: 'create-item',
-        item,
-        ...(duplicatePolicy === 'reuse' ? {} : { duplicatePolicy })
-      })
-      createdItemId = receipt.id
-      if (projectId) {
-        await window.api.literature.transact({
-          kind: 'set-project-item',
+      if (!pendingCreationRef.current) {
+        const receipt = await window.api.literature.transact({
+          kind: 'create-item',
+          item: item!,
+          ...(duplicatePolicy === 'reuse' ? {} : { duplicatePolicy })
+        })
+        // This receipt belongs to this dialog's creation intent, including its original destination.
+        pendingCreationRef.current = {
+          id: receipt.id,
           projectId,
-          itemId: receipt.id,
-          included: true,
-          source: 'library'
-        })
-      } else if (collectionId) {
-        await window.api.literature.transact({
-          kind: 'set-collection-item',
           collectionId,
-          itemId: receipt.id,
-          included: true
-        })
+          file: pendingImportPdf,
+          destination: projectId
+            ? {
+                kind: 'set-project-item',
+                projectId,
+                itemId: receipt.id,
+                included: true,
+                source: 'library'
+              }
+            : collectionId
+              ? { kind: 'set-collection-item', collectionId, itemId: receipt.id, included: true }
+              : undefined
+        }
+        setCreatedItemId(receipt.id)
       }
-      const created = file
-        ? await (async (): Promise<LiteratureItemView> => {
-            staged = await stageComposerFile(file, window.api.uploads, {
-              transferId,
-              name: file.name
-            })
-            await window.api.uploads.claimLocalFile?.({ transferId })
-            return (
-              await window.api.literature.importPdf({ itemId: receipt.id, attachment: staged })
-            ).item
-          })()
-        : await window.api.literature.get(receipt.id)
+      const pending = pendingCreationRef.current
+      if (pending.destination) {
+        await window.api.literature.transact(pending.destination)
+        pending.destination = undefined
+      }
+      if (pending.file && !pending.pdfItem) {
+        staged = await stageComposerFile(pending.file, window.api.uploads, {
+          transferId,
+          name: pending.file.name
+        })
+        await window.api.uploads.claimLocalFile?.({ transferId })
+        pending.pdfItem = (
+          await window.api.literature.importPdf({ itemId: pending.id, attachment: staged })
+        ).item
+      }
+      const created = pending.pdfItem ?? (await window.api.literature.get(pending.id))
       if (!created) throw new Error('Literature Item is unavailable after creating.')
       setItems((entries) =>
         entries.some((entry) => entry.id === created.id)
           ? entries.map((entry) => (entry.id === created.id ? created : entry))
           : [created, ...entries]
       )
-      if (collectionId) await loadCollections()
-      if (projectId) await loadProjectCounts()
-      setIsCreatingItem(false)
-      setPendingImportPdf(undefined)
-      setPendingImportDraft(undefined)
+      if (pending.collectionId) await loadCollections()
+      if (pending.projectId) await loadProjectCounts()
+      closeItemEditor()
       openSelectedItemDetail(created)
     } catch (error) {
-      if (file && createdItemId) {
-        const created = await window.api.literature.get(createdItemId).catch(() => undefined)
-        if (created) {
-          setIsCreatingItem(false)
-          setPendingImportPdf(undefined)
-          setPendingImportDraft(undefined)
-          openSelectedItemDetail(created)
-          setPdfError(pdfImportErrorMessage(error, t))
-        } else {
-          setCreateItemError(t('Literature could not be created.'))
-        }
+      const pending = pendingCreationRef.current
+      // Retain the existing PDF-error detail recovery only once destination linking has completed.
+      const created =
+        pending?.file && !pending.destination && !pending.pdfItem
+          ? await window.api.literature.get(pending.id).catch(() => undefined)
+          : undefined
+      if (created) {
+        closeItemEditor()
+        openSelectedItemDetail(created)
+        setPdfError(pdfImportErrorMessage(error, t))
       } else {
-        setCreateItemError(t('Literature could not be created.'))
+        setCreateItemError(
+          pending
+            ? pending.destination
+              ? t(
+                  'The reference was created, but linking it to the destination failed. Retry to finish linking. Closing leaves it in your library without that link.'
+                )
+              : t(
+                  'The reference was created, but the remaining steps failed. Retry to finish. If you close, the reference remains in your library.'
+                )
+            : t('Literature could not be created.')
+        )
       }
     } finally {
       if (staged)
         await window.api.uploads.deleteUpload({ path: staged.path }).catch(() => undefined)
-      if (createdItemId) void loadEntries(true)
+      void loadEntries(true)
+      creatingItemRef.current = false
       setIsSavingNewItem(false)
     }
   }
@@ -2642,6 +2670,8 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
   }
 
   const closeItemEditor = (): void => {
+    pendingCreationRef.current = undefined
+    setCreatedItemId(undefined)
     setDuplicatePolicy('reuse')
     importMetadataGenerationRef.current += 1
     setIsCreatingItem(false)
@@ -5120,7 +5150,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
                   <LiteratureDuplicatePolicyField
                     value={duplicatePolicy}
                     onChange={setDuplicatePolicy}
-                    disabled={isSavingNewItem}
+                    disabled={isSavingNewItem || Boolean(createdItemId)}
                   />
                 }
                 key={pendingImportPdf?.name ?? 'manual-reference'}
@@ -5132,6 +5162,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
                 }
                 saving={isSavingNewItem}
                 error={createItemError}
+                onRetry={createdItemId ? () => void createManualItem() : undefined}
                 onCancel={closeItemEditor}
                 onSave={(item) => void createManualItem(item)}
               />
