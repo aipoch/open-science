@@ -187,11 +187,13 @@ export const LiteratureBatchLookupDialog = ({
       const currentJob = jobRef.current
       const selections = [...pendingDrafts.current.values()]
       if (!currentJob || selections.length === 0) return
-      const result = await window.api.literature.jobs({
-        action: 'review',
-        jobId: currentJob.id,
-        selections
-      })
+      const result = await readLiteratureJobPages(
+        await window.api.literature.jobs({
+          action: 'review',
+          jobId: currentJob.id,
+          selections
+        })
+      )
       for (const selection of selections) {
         if (pendingDrafts.current.get(selection.itemId) === selection)
           pendingDrafts.current.delete(selection.itemId)
