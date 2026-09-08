@@ -4719,6 +4719,9 @@
     "Snapshot unavailable": "스냅샷 없음",
     "This older record does not verify delivered evidence or preserve every corpus snapshot.": "이 이전 기록은 반환된 근거를 검증하거나 전체 자료의 스냅샷을 보존하지 않습니다.",
     "Evidence counts describe content returned to the Agent, not completed reading. Candidates are Agent-reported and checked against retrieved records. Search counts below describe individual result pages.": "근거 수는 에이전트에 반환된 내용을 나타내며 읽기 완료를 의미하지 않습니다. 후보 수는 에이전트가 보고하며 검색 기록을 기준으로 검증됩니다. 아래 검색 수는 각 응답의 결과 페이지별 수치입니다.",
-    "Saved reference metadata. Attachments reflect the current Library entry.": "저장된 문헌 메타데이터입니다. 첨부 파일은 현재 라이브러리 항목의 파일입니다."
+    "Saved reference metadata. Attachments reflect the current Library entry.": "저장된 문헌 메타데이터입니다. 첨부 파일은 현재 라이브러리 항목의 파일입니다.",
+    "Select 2–20 references to compare.": "비교할 문헌을 2~20개 선택하세요.",
+    "Selected: {{selected}} / 20": "선택됨: {{selected}} / 20",
+    "Compare selected references": "선택한 문헌 비교"
   }
 }
