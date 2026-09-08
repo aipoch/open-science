@@ -2,7 +2,7 @@ import { transactLiterature } from './literature/transact'
 import { createSpecialistApplicationOwner } from './specialist/application-commands'
 import { basename, dirname, join } from 'node:path'
 import { randomUUID } from 'node:crypto'
-import { readFile, stat, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, stat, writeFile } from 'node:fs/promises'
 
 import {
   app,
@@ -310,6 +310,8 @@ import { SettingsService } from './settings/service'
 import { SettingsInstallCoordinator } from './settings/settings-install-coordinator'
 import { SettingsRepository } from './settings/repository'
 import { WslSetupOwner } from './wsl/wsl-setup-owner'
+import { WslSetupSessionOwner } from './wsl/wsl-setup-session-owner'
+import { openWslSetupPowerShellTerminal } from './wsl/wsl-setup-terminal'
 import { FileWslSetupOperationJournal } from './wsl/wsl-setup-operation-journal'
 import { initializeWsl2BashPreview, wsl2BashPreviewStatus } from './wsl/wsl2-preview-gate'
 import { runPackagedWsl2RestartCertification } from './wsl/wsl2-packaged-restart-certification'
@@ -575,6 +577,7 @@ const createApplicationModules = async (
     resourcesPath: process.resourcesPath
   })
   const settingsInstallCoordinator = new SettingsInstallCoordinator()
+  const wslSetupSessions = new WslSetupSessionOwner(resolveConfigRoot())
   const wslRuntimeReconciliation: { current?: (status: WslSetupStatus) => void } = {}
   const wslSetup = new WslSetupOwner({
     // Managed workspaces, handoff data, and caches live below this local NTFS mount root. The
@@ -592,6 +595,7 @@ const createApplicationModules = async (
     writeSelection: (selection) => settingsRepository.setWslSelection(selection),
     installCoordinator: settingsInstallCoordinator,
     operationJournal: new FileWslSetupOperationJournal(resolveConfigRoot()),
+    previewStatus: wsl2BashPreviewStatus,
     onStatusChanged: (status) => {
       applicationEvents.publish('settings:wsl-setup-changed', status)
       wslRuntimeReconciliation.current?.(status)
@@ -739,6 +743,11 @@ const createApplicationModules = async (
       installNotebookNetwork: () => notebookNetworkSandbox.installWindows(),
       removeNotebookNetwork: () => notebookNetworkSandbox.removeWindows(),
       wslSetup,
+      wslSetupSessions,
+      ensureDefaultWslSetupWorkspace: async () => {
+        const settings = await settingsRepository.getSettings()
+        if (!settings.dataRoot?.trim()) await mkdir(resolveDataRoot(), { recursive: true })
+      },
       resolveCodexProxyEnvironment: () =>
         Promise.resolve(networkProxyRuntime.getChildProcessProxyEnvironment())
     })
@@ -1624,6 +1633,18 @@ const createApplicationModules = async (
   })
   const loadAllSessions = (): Promise<LoadAllSessionsResult> => sessionCatalogHydration.loadAll()
   const sessionProjectionDiagnostics = new SessionProjectionDiagnostics()
+  let wslSetupSessionsReconciliation: Promise<void> | undefined
+  const reconcileWslSetupSessions = async (sessions: readonly SessionSummary[]): Promise<void> => {
+    wslSetupSessionsReconciliation ??= wslSetupSessions.reconcileBoundSessions(
+      new Set(sessions.map((session) => session.id))
+    )
+    try {
+      await wslSetupSessionsReconciliation
+    } catch (error) {
+      wslSetupSessionsReconciliation = undefined
+      throw error
+    }
+  }
   const ensureSessionProjection = async (): Promise<{
     result?: LoadAllSessionsResult
     sessions: SessionSummary[]
@@ -1640,10 +1661,9 @@ const createApplicationModules = async (
     }
     const projection = await sessionRepository.ensureSessionProjection(loadAllSessions)
     const result = projection.result
-    await sessionPersistenceCoordinator.replaceSessionMetadata(
-      projection.sessions,
-      result ? canReconcileSessionAbsences(result) : true
-    )
+    const catalogComplete = result ? canReconcileSessionAbsences(result) : true
+    await sessionPersistenceCoordinator.replaceSessionMetadata(projection.sessions, catalogComplete)
+    if (catalogComplete) await reconcileWslSetupSessions(projection.sessions)
     return { ...projection, result }
   }
   const uncoordinatedSessionPersistenceBackend: SessionPersistenceBackend = {
@@ -2929,7 +2949,11 @@ const createApplicationModules = async (
       delegatedWorkService: delegatedWork.host,
       skillsService: hostSkillsService,
       hostModel: hostModelService,
-      hostViewImage: hostViewImageService
+      hostViewImage: hostViewImageService,
+      wslSetup,
+      wslSetupSessions,
+      wslSetupPreviewAvailable: () => wsl2BashPreviewStatus().available,
+      openWslSetupPowerShellTerminal
     }),
     createNotebookLocalRpcModule
   )
@@ -3122,6 +3146,7 @@ const createApplicationModules = async (
       managedFileVersions: managedFileVersionService,
       uploadRepository,
       notebookRpcServer,
+      wslSetupSessions,
       getShellRuntimeBinding: getAvailableShellRuntimeBinding,
       peekNotebookHandoffContext: (sessionId) => notebookService.peekHandoffContext(sessionId),
       authorizeSkillImportReferencedUploads: (projectId, sessionId, paths) =>

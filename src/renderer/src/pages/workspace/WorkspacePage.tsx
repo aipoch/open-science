@@ -69,6 +69,7 @@ import { EditSessionDialog } from './EditSessionDialog'
 import { SessionNotebookDialog } from './SessionNotebookDialog'
 import { JobDetailModal } from '@/components/JobDetailModal'
 import { useProjectFormDialog } from '@/hooks/useProjectFormDialog'
+import { startWslSetupConversation } from '@/lib/wsl-support-handoff'
 import { ProjectFormDialog } from '../home/ProjectFormDialog'
 import { getVisiblePermissionRequests } from './session-permissions'
 import { WorkspaceSidebarContainer } from './WorkspaceSidebarContainer'
@@ -1454,6 +1455,9 @@ const WorkspacePage = ({
                   .cancel({ sessionId: activeSession.id, scope: 'subagents' })
                   .then(() => undefined)
               }
+            }}
+            wslSetup={{
+              start: () => startWslSetupConversation(scopedProjectId, t)
             }}
           />
         )}

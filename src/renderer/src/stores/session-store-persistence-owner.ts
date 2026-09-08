@@ -95,6 +95,9 @@ export type ChatSession = Omit<
   activePlanProjection?: ActivePlanProjection
   planHistoryProjections?: ActivePlanProjection[]
   isPending?: boolean
+  // Transient presentation hint returned from Main's durable WSL setup binding. It carries no
+  // authority and is refreshed from create/resume responses rather than persisted by renderer.
+  wslSetup?: true
   // Transient: the first send has captured Delegation, but Main has not acknowledged the new
   // Session policy yet. Binding an Agent Session does not make this policy authoritative.
   delegationPolicyAuthorityPending?: true
@@ -317,6 +320,7 @@ export const toPersistedSession = (
     activities,
     activityGroups,
     isPending,
+    wslSetup,
     delegationPolicyAuthorityPending,
     unsavedTitle,
     interrupted,
@@ -346,6 +350,7 @@ export const toPersistedSession = (
   } = session
 
   void isPending
+  void wslSetup
   void delegationPolicyAuthorityPending
   void unsavedTitle
   void interrupted
@@ -532,6 +537,7 @@ const withTransientSessionState = (
       sortIndex: sourceMessages.get(message.id)?.sortIndex
     })),
     isPending: source.isPending,
+    wslSetup: source.wslSetup,
     interrupted: source.interrupted ?? hydrated.interrupted,
     fixLoopActive: source.fixLoopActive,
     compacting: source.compacting,

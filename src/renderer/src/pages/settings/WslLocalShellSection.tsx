@@ -16,7 +16,7 @@ import { Button } from '@/components/ui/button'
 import { ErrorNotice } from '@/components/error-notice'
 import { Input } from '@/components/ui/input'
 import { resolveCustomizeProjectId } from '@/lib/last-opened-project'
-import { buildWslSupportPrefillDoc } from '@/lib/wsl-support-handoff'
+import { startWslSetupConversation } from '@/lib/wsl-support-handoff'
 import { useNavigationStore } from '@/stores/navigation-store'
 import { useProjectStore } from '@/stores/project-store'
 import { useSettingsStore } from '@/stores/settings-store'
@@ -158,6 +158,7 @@ export const WslLocalShellSection = ({
   const [actionBusy, setBusy] = useState(false)
   const [hasSnapshot, setHasSnapshot] = useState(false)
   const [copied, setCopied] = useState(false)
+  const [conversationError, setConversationError] = useState(false)
   const [shellSwitchResult, setShellSwitchResult] = useState<
     | { runtime: 'powershell'; result: SwitchToPowerShellResult }
     | { runtime: 'wsl2-bash'; result: UseWsl2BashResult }
@@ -337,14 +338,20 @@ export const WslLocalShellSection = ({
   const startSupportConversation = async (): Promise<void> => {
     if (!chatProjectId) return
     setBusy(true)
+    setConversationError(false)
     try {
-      const handoff = await window.api.settings.createWslSupportHandoff()
-      const doc = buildWslSupportPrefillDoc(handoff, t)
-      const opened = useNavigationStore.getState().startWslSupportConversation(chatProjectId, doc)
+      const opened = await startWslSetupConversation(chatProjectId, t)
       if (opened) useSettingsStore.getState().closeSettings()
+    } catch {
+      setConversationError(true)
     } finally {
       setBusy(false)
     }
+  }
+
+  const createProjectForSetup = (): void => {
+    useSettingsStore.getState().closeSettings()
+    useNavigationStore.getState().requestWslSetupProjectCreation()
   }
 
   const switchToPowerShell = async (): Promise<void> => {
@@ -817,14 +824,39 @@ export const WslLocalShellSection = ({
               variant="outline"
               onClick={() => void startSupportConversation()}
               disabled={!chatProjectId}
+              data-testid="wsl-setup-conversation"
             >
               <MessagesSquare aria-hidden="true" />
-              {t('Solve in conversation')}
+              {t('Set up in conversation')}
             </Button>
             {!chatProjectId ? (
-              <p className="text-xs text-muted-foreground">
-                {t('Create or open a project to solve this with the agent.')}
-              </p>
+              <div className="flex flex-col items-start gap-1.5">
+                <p className="text-xs text-muted-foreground">
+                  {t('A project is required for the WSL2 setup conversation.')}
+                </p>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={createProjectForSetup}
+                  data-testid="wsl-setup-create-project"
+                >
+                  {t('Create project')}
+                </Button>
+              </div>
+            ) : null}
+            {conversationError ? (
+              <ErrorNotice
+                role="alert"
+                icon={CircleX}
+                tone="red"
+                title={t('Open Science could not prepare the WSL2 setup conversation.')}
+                description={t('Check the WSL2 status again, then retry the conversation setup.')}
+                primaryButton={{
+                  label: t('Try again'),
+                  onClick: () => void startSupportConversation()
+                }}
+              />
             ) : null}
           </div>
         ) : null}

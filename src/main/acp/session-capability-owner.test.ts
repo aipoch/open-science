@@ -784,6 +784,118 @@ describe('ACP session capability owner', () => {
     })
   })
 
+  it('pins explicit and resumed WSL setup Sessions to PowerShell with setup tools only', async () => {
+    const boundSessionIds = new Set<string>()
+    const bind = vi.fn(async (_token: string, sessionId: string) => {
+      boundSessionIds.add(sessionId)
+    })
+    const setupSessions = {
+      authorizeToken: vi.fn((token: unknown) => token === 'local-setup-token'),
+      bind,
+      isBound: vi.fn(async (sessionId: string) => boundSessionIds.has(sessionId)),
+      forget: vi.fn(async (sessionId: string) => {
+        boundSessionIds.delete(sessionId)
+      })
+    }
+    const makeOwner = (): AcpSessionCapabilityOwner =>
+      createOwner({
+        artifacts: undefined,
+        skillImport: undefined,
+        wslSetupSessions: setupSessions,
+        notebook: {
+          projectId: 'project',
+          mcpEntryPath: '/app/main.js',
+          getShellRuntimeBinding: () => ({
+            kind: 'wsl2-bash',
+            profileId: 'global-profile',
+            distro: 'Ubuntu',
+            user: 'researcher'
+          }),
+          getRpcConnection: async () => ({
+            endpoint: 'http://127.0.0.1:1',
+            token: 'notebook'
+          })
+        }
+      })
+    const request = {
+      framework: opencodeFramework,
+      nativeMcpEnabled: true,
+      bridgeMcpAliasesEnabled: false,
+      policy: CURRENT_PRIMARY_SESSION_CAPABILITY_POLICY,
+      sessionCwd: '/workspace',
+      projectId: 'project'
+    }
+
+    const owner = makeOwner()
+    const ordinary = await owner.provision(request)
+    const ordinaryNotebook = ordinary.mcpServers.find(
+      (server) => server.name === 'open_science_notebook'
+    )
+    expect(
+      ordinaryNotebook && 'env' in ordinaryNotebook ? ordinaryNotebook.env : []
+    ).not.toContainEqual({ name: 'OPEN_SCIENCE_WSL_SETUP_TOOLS', value: '1' })
+    ordinary.release({ ownsStableIdentity: true })
+
+    const setup = await owner.provision({ ...request, setupSessionToken: 'local-setup-token' })
+    const setupNotebook = setup.mcpServers.find((server) => server.name === 'open_science_notebook')
+    expect(setupNotebook && 'env' in setupNotebook ? setupNotebook.env : []).toEqual(
+      expect.arrayContaining([
+        { name: 'OPEN_SCIENCE_WSL_SETUP_TOOLS', value: '1' },
+        {
+          name: 'OPEN_SCIENCE_NOTEBOOK_SHELL_RUNTIME',
+          value: '{"kind":"powershell","version":"5.1"}'
+        }
+      ])
+    )
+    await setup.prepareCommit?.('setup-session')
+    setup.commit('setup-session')
+    expect(bind).toHaveBeenCalledWith('local-setup-token', 'setup-session')
+    expect(owner.shellRuntimeBindingFor('setup-session')).toEqual({
+      kind: 'powershell',
+      version: '5.1'
+    })
+
+    const resumedOwner = makeOwner()
+    const resumed = await resumedOwner.provision({
+      ...request,
+      stableAppSessionId: 'setup-session'
+    })
+    const resumedNotebook = resumed.mcpServers.find(
+      (server) => server.name === 'open_science_notebook'
+    )
+    expect(resumedNotebook && 'env' in resumedNotebook ? resumedNotebook.env : []).toEqual(
+      expect.arrayContaining([
+        { name: 'OPEN_SCIENCE_WSL_SETUP_TOOLS', value: '1' },
+        {
+          name: 'OPEN_SCIENCE_NOTEBOOK_SHELL_RUNTIME',
+          value: '{"kind":"powershell","version":"5.1"}'
+        }
+      ])
+    )
+  })
+
+  it('rejects an invalid setup Session token before allocating capabilities', async () => {
+    const owner = createOwner({
+      wslSetupSessions: {
+        authorizeToken: () => false,
+        bind: vi.fn(),
+        isBound: vi.fn(async () => false)
+      }
+    })
+
+    await expect(
+      owner.provision({
+        framework: opencodeFramework,
+        nativeMcpEnabled: true,
+        bridgeMcpAliasesEnabled: false,
+        policy: CURRENT_PRIMARY_SESSION_CAPABILITY_POLICY,
+        sessionCwd: '/workspace',
+        projectId: 'project',
+        setupSessionToken: 'expired-token'
+      })
+    ).rejects.toThrow('WSL_SETUP_SESSION_TOKEN_INVALID')
+  })
+
   it('releases acquired local RPC leases when a later provision step fails', async () => {
     const notebookRelease = vi.fn()
     const releaseSessionCapabilities = vi.fn()

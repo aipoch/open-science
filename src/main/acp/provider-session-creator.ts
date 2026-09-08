@@ -66,6 +66,7 @@ export class AcpProviderSessionCreator {
     let capability: SessionCapabilityProvision | undefined
     let provisionalSession: ActiveSession | undefined
     let reservation: ReturnType<AcpSessionRegistry['reserve']>['reservation']
+    let wslSetup = false
     try {
       log.info('createSession: starting', this.deps.diagnosticContext())
       const cwd = resolve(request.cwd || this.deps.currentCwd() || this.deps.defaultCwd)
@@ -87,8 +88,10 @@ export class AcpProviderSessionCreator {
         sessionCwd: cwd,
         projectId,
         memoryEnabled: request.memoryEnabled,
-        literatureEnabled: request.literatureContext === true
+        literatureEnabled: request.literatureContext === true,
+        ...(request.setupSessionToken ? { setupSessionToken: request.setupSessionToken } : {})
       })
+      wslSetup = capability.wslSetup === true
       const setup = this.presentation.buildSessionSetup({
         framework: startupBackend.framework,
         tooling: {
@@ -126,6 +129,9 @@ export class AcpProviderSessionCreator {
       const identityReservation = reserved.reservation
       const provisionedCapability = capability
       reservation = identityReservation
+      // Durable setup authority must finish before publication. Configuration and the final
+      // reservation check below still run afterwards, so an invalidated startup cannot publish.
+      await provisionedCapability.prepareCommit?.(session.sessionId)
 
       log.info('createSession: configurePermissionProfile', this.deps.diagnosticContext())
       log.info('createSession: applySessionModel', this.deps.diagnosticContext())
@@ -185,7 +191,8 @@ export class AcpProviderSessionCreator {
           : {}),
         cwd,
         frameworkId: backend.framework.id,
-        ...(backend.backendId ? { backendId: backend.backendId } : {})
+        ...(backend.backendId ? { backendId: backend.backendId } : {}),
+        ...(wslSetup ? { wslSetup: true as const } : {})
       }
     } catch (caught) {
       let startupError = caught
@@ -199,7 +206,7 @@ export class AcpProviderSessionCreator {
       this.disposeProvisional(provisionalSession, 'primary startup session disposal failed')
       if (capability) {
         try {
-          capability.release({ ownsStableIdentity: true })
+          await capability.release({ ownsStableIdentity: true })
         } catch (cleanupError) {
           this.safeLogError('primary capability release failed', cleanupError, undefined, false)
         }

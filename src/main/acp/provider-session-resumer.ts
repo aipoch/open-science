@@ -61,7 +61,8 @@ type AcpProviderSessionResumerDependencies = Readonly<{
   currentBackend: () => AcpBackendGenerationView
   registry: AcpSessionRegistry
   reserveIdentity: (sessionId: string) => AcpPrimarySessionIdentityReservationResult
-  capabilities: Pick<AcpSessionCapabilityOwner, 'provision'>
+  capabilities: Pick<AcpSessionCapabilityOwner, 'provision'> &
+    Partial<Pick<AcpSessionCapabilityOwner, 'isWslSetupSession'>>
   capabilityPolicy: SessionCapabilityPolicy
   configurator: Pick<AcpSessionConfigurator, 'configure' | 'configurePermissionProfile'>
   adopter: Pick<AcpProviderSessionAdopter, 'adopt'>
@@ -231,6 +232,7 @@ export class AcpProviderSessionResumer {
         'Use Specialist switching to change the Skill scope of an attached Codex session.'
       )
     }
+    const wslSetup = (await this.deps.capabilities.isWslSetupSession?.(request.sessionId)) === true
     if (request.specialistId) entry.aggregate.setSpecialistId(request.specialistId)
     const permissionProfile = await this.deps.configurator.configurePermissionProfile({
       backend,
@@ -266,7 +268,8 @@ export class AcpProviderSessionResumer {
         : {}),
       cwd,
       frameworkId: responseBackend.framework.id,
-      ...(responseBackend.backendId ? { backendId: responseBackend.backendId } : {})
+      ...(responseBackend.backendId ? { backendId: responseBackend.backendId } : {}),
+      ...(wslSetup ? { wslSetup: true as const } : {})
     }
   }
 
@@ -434,6 +437,7 @@ export class AcpProviderSessionResumer {
         memoryEnabled: request.memoryEnabled
       })
       const capabilityDescriptor = capability.descriptor
+      const wslSetup = capability.wslSetup === true
       const shellRuntimeAgentContract = capability.shellRuntimeAgentContract
       const existingAggregate = this.deps.registry.lookup(request.sessionId)?.aggregate
       let specialistBindingRevision = existingAggregate?.specialistBindingRevision() ?? 0
@@ -600,7 +604,8 @@ export class AcpProviderSessionResumer {
             : {}),
           cwd,
           frameworkId: backend.framework.id,
-          ...(backend.backendId ? { backendId: backend.backendId } : {})
+          ...(backend.backendId ? { backendId: backend.backendId } : {}),
+          ...(wslSetup ? { wslSetup: true as const } : {})
         }
       }
     } catch (caught) {

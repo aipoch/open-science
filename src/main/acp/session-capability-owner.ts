@@ -186,6 +186,8 @@ type BuildSessionCapabilitiesRequest = {
   projectId: string
   memoryEnabled?: boolean
   literatureEnabled: boolean
+  setupSessionToken?: string
+  wslSetupEnabled: boolean
   onNotebookConnection?: (connection: NotebookRpcConnection) => void
   onSkillImportConnection?: (connection: SkillImportRpcConnection) => void
   onPlanConnection?: (connection: NotebookRpcConnection) => void
@@ -211,9 +213,11 @@ export type ProvisionSessionCapabilitiesRequest = Omit<
   | 'onSkillImportConnection'
   | 'onPlanConnection'
   | 'literatureEnabled'
+  | 'wslSetupEnabled'
 > & {
   stableAppSessionId?: string
   literatureEnabled?: boolean
+  setupSessionToken?: string
 }
 
 export type SessionCapabilityOwnershipFacts = Readonly<{
@@ -224,9 +228,11 @@ export type SessionCapabilityProvision = Readonly<{
   mcpServers: McpServer[]
   descriptor: EffectiveSessionCapabilityDescriptor
   shellRuntimeAgentContract?: ShellRuntimeAgentContract
+  wslSetup?: true
   includeFrameworkMcpServers: (servers: readonly McpServer[]) => SessionCapabilities
+  prepareCommit?: (appSessionId: string) => Promise<void>
   commit: (appSessionId: string) => void
-  release: (ownershipFacts: SessionCapabilityOwnershipFacts) => void
+  release: (ownershipFacts: SessionCapabilityOwnershipFacts) => void | Promise<void>
 }>
 
 type CommitSessionCapabilitiesRequest = {
@@ -273,6 +279,14 @@ type SessionCapabilityOwnerOptions = {
     ) => LiteratureLibraryMcpHandler
   }>
   mcpHttpHost?: AgentMcpHttpHost
+  wslSetupSessions?: Readonly<{
+    authorizeToken(token: unknown): boolean
+    bind(token: string, sessionId: string): Promise<void>
+    commitBinding?(token: string, sessionId: string): void
+    rollbackBinding?(token: string, sessionId: string): Promise<void>
+    isBound(sessionId: string): Promise<boolean>
+    forget?(sessionId: string): Promise<void>
+  }>
 }
 
 const freezeDescriptor = (
@@ -332,6 +346,18 @@ export class AcpSessionCapabilityOwner {
   async provision(
     request: ProvisionSessionCapabilitiesRequest
   ): Promise<SessionCapabilityProvision> {
+    const tokenAuthorized = request.setupSessionToken
+      ? this.options.wslSetupSessions?.authorizeToken(request.setupSessionToken) === true
+      : false
+    if (request.setupSessionToken && !tokenAuthorized) {
+      throw new Error('WSL_SETUP_SESSION_TOKEN_INVALID')
+    }
+    const wslSetupEnabled =
+      tokenAuthorized ||
+      Boolean(
+        request.stableAppSessionId &&
+        (await this.options.wslSetupSessions?.isBound(request.stableAppSessionId))
+      )
     const routingIds = this.createRoutingIds(request.stableAppSessionId)
     const routingOwner = this.trackProvisionalRoutingOwner(routingIds)
     const provisionGeneration = this.provisionalGeneration
@@ -352,6 +378,8 @@ export class AcpSessionCapabilityOwner {
         projectId: request.projectId,
         memoryEnabled: request.memoryEnabled,
         literatureEnabled: request.literatureEnabled === true,
+        setupSessionToken: request.setupSessionToken,
+        wslSetupEnabled,
         onNotebookConnection: (connection) => {
           notebookRelease = connection.release
         },
@@ -395,6 +423,8 @@ export class AcpSessionCapabilityOwner {
       throw error
     }
     let terminal = false
+    let provisionalCleanupComplete = false
+    let preparedSetupSessionId: string | undefined
 
     return Object.freeze({
       mcpServers: built.mcpServers,
@@ -402,6 +432,7 @@ export class AcpSessionCapabilityOwner {
       ...(built.shellRuntimeAgentContract
         ? { shellRuntimeAgentContract: built.shellRuntimeAgentContract }
         : {}),
+      ...(wslSetupEnabled ? { wslSetup: true as const } : {}),
       includeFrameworkMcpServers: (servers: readonly McpServer[]): SessionCapabilities => {
         if (terminal) throw new Error('ACP session capability provision is already finalized.')
         if (servers.length === 0) {
@@ -452,9 +483,28 @@ export class AcpSessionCapabilityOwner {
         })
         return Object.freeze({ mcpServers: built.mcpServers, descriptor: built.descriptor })
       },
+      prepareCommit: async (appSessionId: string): Promise<void> => {
+        if (terminal) throw new Error('ACP session capability provision is already finalized.')
+        if (!request.setupSessionToken) return
+        await this.options.wslSetupSessions?.bind(request.setupSessionToken, appSessionId)
+        if (
+          provisionGeneration !== this.provisionalGeneration ||
+          !this.ownsProvisionalRoutingIds(routingIds, routingOwner)
+        ) {
+          if (this.options.wslSetupSessions?.rollbackBinding) {
+            await this.options.wslSetupSessions.rollbackBinding(
+              request.setupSessionToken,
+              appSessionId
+            )
+          } else {
+            await this.options.wslSetupSessions?.forget?.(appSessionId)
+          }
+          throw new Error('ACP session capability provision was superseded.')
+        }
+        preparedSetupSessionId = appSessionId
+      },
       commit: (appSessionId: string): void => {
         if (terminal) return
-        terminal = true
         const ownsRoutingIds = this.ownsProvisionalRoutingIds(routingIds, routingOwner)
         if (provisionGeneration !== this.provisionalGeneration) {
           this.revokeProvisional({
@@ -487,6 +537,7 @@ export class AcpSessionCapabilityOwner {
             )
           }
           this.finishProvisionalRoutingOwner(routingIds, routingOwner)
+          provisionalCleanupComplete = true
           throw new Error('ACP session capability provision was superseded.')
         }
         if (!ownsRoutingIds) {
@@ -500,6 +551,7 @@ export class AcpSessionCapabilityOwner {
             ownsStableIdentity: false
           })
           this.finishProvisionalRoutingOwner(routingIds, routingOwner)
+          provisionalCleanupComplete = true
           throw new Error('ACP session capability provision was superseded.')
         }
         if (
@@ -526,6 +578,9 @@ export class AcpSessionCapabilityOwner {
             this.options.library.handlerFor(appSessionId, request.projectId, request.sessionCwd)
           )
         }
+        if (request.setupSessionToken && preparedSetupSessionId !== appSessionId) {
+          throw new Error('WSL setup Session capability was not prepared.')
+        }
         this.commit({
           appSessionId,
           routingIds,
@@ -536,11 +591,24 @@ export class AcpSessionCapabilityOwner {
           skillImportRelease,
           planRelease
         })
+        if (request.setupSessionToken) {
+          this.options.wslSetupSessions?.commitBinding?.(request.setupSessionToken, appSessionId)
+        }
         this.finishProvisionalRoutingOwner(routingIds, routingOwner)
+        terminal = true
       },
-      release: (ownershipFacts: SessionCapabilityOwnershipFacts): void => {
+      release: (ownershipFacts: SessionCapabilityOwnershipFacts): void | Promise<void> => {
         if (terminal) return
         terminal = true
+        const setupRollback = preparedSetupSessionId
+          ? request.setupSessionToken && this.options.wslSetupSessions?.rollbackBinding
+            ? this.options.wslSetupSessions.rollbackBinding(
+                request.setupSessionToken,
+                preparedSetupSessionId
+              )
+            : this.options.wslSetupSessions?.forget?.(preparedSetupSessionId)
+          : undefined
+        if (provisionalCleanupComplete) return setupRollback
         const ownsStableIdentity =
           ownershipFacts.ownsStableIdentity &&
           this.ownsProvisionalRoutingIds(routingIds, routingOwner)
@@ -574,6 +642,7 @@ export class AcpSessionCapabilityOwner {
           )
         }
         this.finishProvisionalRoutingOwner(routingIds, routingOwner)
+        return setupRollback
       }
     })
   }
@@ -636,9 +705,12 @@ export class AcpSessionCapabilityOwner {
     const notebookAllowed = policyAllowsSessionCapability(request.policy, 'notebook')
     const shellRuntime =
       notebookAllowed && this.options.notebook
-        ? captureShellRuntimeBinding(
-            (await this.options.notebook.getShellRuntimeBinding?.()) ?? defaultShellRuntimeBinding()
-          )
+        ? request.wslSetupEnabled
+          ? captureShellRuntimeBinding({ kind: 'powershell', version: '5.1' })
+          : captureShellRuntimeBinding(
+              (await this.options.notebook.getShellRuntimeBinding?.()) ??
+                defaultShellRuntimeBinding()
+            )
         : undefined
     const skillImportAllowed = policyAllowsSessionCapability(request.policy, 'skill-import')
     const planAllowed = policyAllowsSessionCapability(request.policy, 'plan')
@@ -982,6 +1054,14 @@ export class AcpSessionCapabilityOwner {
     this.releaseSessionCapabilities(appSessionId)
   }
 
+  forgetSetupSession(appSessionId: string): Promise<void> | undefined {
+    return this.options.wslSetupSessions?.forget?.(appSessionId)
+  }
+
+  isWslSetupSession(appSessionId: string): Promise<boolean> {
+    return this.options.wslSetupSessions?.isBound(appSessionId) ?? Promise.resolve(false)
+  }
+
   dispose(sessionIds: Iterable<string> = []): void {
     this.provisionalGeneration += 1
     const ownedSessionIds = new Set([
@@ -1138,7 +1218,8 @@ export class AcpSessionCapabilityOwner {
     projectId: string,
     memoryTools: boolean,
     shellRuntime: ShellRuntimeBinding,
-    onConnection?: (connection: NotebookRpcConnection) => void
+    onConnection?: (connection: NotebookRpcConnection) => void,
+    wslSetupEnabled = false
   ): Promise<NotebookMcpEnvironment | undefined> {
     if (!this.options.notebook || !routingId) return undefined
     if (!this.options.notebook.getRpcConnection) {
@@ -1157,7 +1238,8 @@ export class AcpSessionCapabilityOwner {
       projectId: projectId,
       sessionId: routingId,
       workspaceCwd: sessionCwd,
-      shellRuntime
+      shellRuntime,
+      wslSetupTools: wslSetupEnabled
     }
   }
 
@@ -1220,7 +1302,8 @@ export class AcpSessionCapabilityOwner {
         request.projectId,
         enabled.memoryTools,
         enabled.shellRuntime ?? defaultShellRuntimeBinding(),
-        request.onNotebookConnection
+        request.onNotebookConnection,
+        request.wslSetupEnabled
       )
       if (environment && this.options.notebook) {
         servers.push(
@@ -1308,7 +1391,8 @@ export class AcpSessionCapabilityOwner {
         request.projectId,
         enabled.memoryTools,
         enabled.shellRuntime ?? defaultShellRuntimeBinding(),
-        request.onNotebookConnection
+        request.onNotebookConnection,
+        request.wslSetupEnabled
       )
       if (environment && this.options.notebook && this.canPublishHttpRoute(request)) {
         host.registerNotebook(request.routingIds.notebook, {

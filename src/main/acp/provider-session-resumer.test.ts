@@ -195,7 +195,9 @@ const createHarness = (options: HarnessOptions = {}): ResumerHarness => {
   })
   const connection = { agent: { request, attachSession } } as unknown as ClientConnection
   const commit = vi.fn(() => order.push('capability commit'))
-  const release = vi.fn(() => order.push('capability release'))
+  const release = vi.fn(() => {
+    order.push('capability release')
+  })
   const adopt = vi.fn(
     async (
       stableAppSessionId: string,

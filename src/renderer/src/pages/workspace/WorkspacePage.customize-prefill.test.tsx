@@ -210,7 +210,12 @@ describe('WorkspacePage customize prefill', () => {
   it('prefills and consumes a normal WSL support conversation without sending it', async () => {
     const doc = { nodes: [{ type: 'text' as const, text: 'safe WSL diagnostics' }] }
     useNavigationStore.setState({
-      pendingWslSupportPrefill: { projectId: 'proj-1', doc, requestId: 1 }
+      pendingWslSupportPrefill: {
+        projectId: 'proj-1',
+        doc,
+        setupSessionToken: 'setup-session-token',
+        requestId: 1
+      }
     })
     await renderPage()
 

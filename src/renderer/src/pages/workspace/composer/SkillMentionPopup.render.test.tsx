@@ -56,6 +56,7 @@ afterEach(() => {
   container.remove()
   document.body.innerHTML = ''
   vi.restoreAllMocks()
+  delete (window as unknown as { api?: unknown }).api
 })
 
 const options = (): HTMLElement[] =>
@@ -75,6 +76,70 @@ const pressKey = (key: string, init: KeyboardEventInit = {}): KeyboardEvent => {
 }
 
 describe('SkillMentionPopup', () => {
+  it('offers the WSL setup product command even when no Skills are enabled', async () => {
+    useSettingsStore.setState({ skills: [], skillsLoaded: true })
+    const onSelectWslSetup = vi.fn()
+    ;(window as unknown as { api: unknown }).api = {
+      settings: {
+        getWsl2BashPreviewStatus: vi.fn().mockResolvedValue({
+          available: true,
+          reason: 'available'
+        })
+      }
+    }
+
+    await act(async () => {
+      root.render(
+        <SkillMentionPopup
+          query="setup-wsl"
+          onSelect={vi.fn()}
+          onSelectWslSetup={onSelectWslSetup}
+          onClose={vi.fn()}
+        />
+      )
+    })
+
+    const command = document.body.querySelector<HTMLElement>(
+      '[data-testid="product-command-setup-wsl"]'
+    )
+    expect(command?.textContent).toContain('/setup-wsl')
+    act(() => command?.click())
+    expect(onSelectWslSetup).toHaveBeenCalledOnce()
+    delete (window as unknown as { api?: unknown }).api
+  })
+
+  it('shows the platform reason and disables an unavailable WSL setup command', async () => {
+    ;(window as unknown as { api: unknown }).api = {
+      settings: {
+        getWsl2BashPreviewStatus: vi.fn().mockResolvedValue({
+          available: false,
+          reason: 'unsupported-platform'
+        })
+      }
+    }
+    const onSelectWslSetup = vi.fn()
+
+    await act(async () => {
+      root.render(
+        <SkillMentionPopup
+          query="setup"
+          onSelect={vi.fn()}
+          onSelectWslSetup={onSelectWslSetup}
+          onClose={vi.fn()}
+        />
+      )
+    })
+
+    const command = document.body.querySelector<HTMLElement>(
+      '[data-testid="product-command-setup-wsl"]'
+    )
+    expect(command?.getAttribute('aria-disabled')).toBe('true')
+    expect(command?.textContent).toContain('unsupported-platform')
+    act(() => command?.click())
+    expect(onSelectWslSetup).not.toHaveBeenCalled()
+    delete (window as unknown as { api?: unknown }).api
+  })
+
   it('shows the exact Specialist scope and only Main-enabled Skills for Main', () => {
     act(() => {
       root.render(

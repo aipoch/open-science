@@ -83,6 +83,7 @@ export class AcpProviderSessionAdopter {
     let capability: SessionCapabilityProvision | undefined
     let provisionalSession: ActiveSession | undefined
     let adoptedProviderSessionId: string | undefined
+    let wslSetup = false
     let identity = request.identity
     try {
       const startupBackend = this.deps.currentBackend()
@@ -99,6 +100,7 @@ export class AcpProviderSessionAdopter {
         projectId: request.projectId,
         memoryEnabled: request.memoryEnabled
       })
+      wslSetup = capability.wslSetup === true
       const hasAuthoritativeSpecialistBinding =
         request.specialistBindingPending === true || request.specialistId !== undefined
       const specialistBindingRevision =
@@ -231,7 +233,8 @@ export class AcpProviderSessionAdopter {
         cwd: request.cwd,
         frameworkId: backend.framework.id,
         ...(backend.backendId ? { backendId: backend.backendId } : {}),
-        contextReset: true
+        contextReset: true,
+        ...(wslSetup ? { wslSetup: true as const } : {})
       }
     } catch (caught) {
       let startupError = caught

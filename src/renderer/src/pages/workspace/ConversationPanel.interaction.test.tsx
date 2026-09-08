@@ -548,6 +548,7 @@ const createPanelDefaults = (): PanelProps => ({
       historyStatus: '',
       isHistoryBrowsing: false,
       isUploading: false,
+      isWslSetupDraft: false,
       caretRequest: undefined,
       readingContext: {
         bindings: [],
@@ -703,6 +704,9 @@ const createPanelDefaults = (): PanelProps => ({
   },
   subagents: {
     stop: vi.fn()
+  },
+  wslSetup: {
+    start: vi.fn().mockResolvedValue(true)
   }
 })
 
@@ -2609,6 +2613,67 @@ describe('ConversationPanel composer intake', () => {
 
     // A plain-text draft carries no chips, so the send handler receives an empty id list.
     expect(onSendMessage).toHaveBeenCalledWith([])
+  })
+
+  it('handles exact /setup-wsl as a product command instead of sending ordinary text', async () => {
+    const start = vi.fn().mockResolvedValue(true)
+    const submit = vi.fn()
+    window.api.settings = {
+      getWsl2BashPreviewStatus: vi.fn().mockResolvedValue({
+        available: true,
+        reason: 'available'
+      })
+    } as unknown as typeof window.api.settings
+    renderPanel({
+      composer: { view: { doc: { nodes: [{ type: 'text', text: '/setup-wsl' }] } } },
+      conversation: {
+        availability: { submit: true },
+        actions: { submit: { draft: submit } }
+      },
+      wslSetup: { start }
+    })
+
+    await act(async () => {
+      getComposerEditor().dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true })
+      )
+    })
+
+    expect(start).toHaveBeenCalledOnce()
+    expect(submit).not.toHaveBeenCalled()
+  })
+
+  it('shows the setup draft boundary and an explicit Settings activation action', () => {
+    renderPanel({
+      composer: { view: { isWslSetupDraft: true } }
+    })
+
+    expect(
+      container.querySelector('[data-testid="wsl-setup-conversation-actions"]')?.textContent
+    ).toContain('Review the diagnostics')
+    expect(container.textContent).toContain('Check and activate in Settings')
+  })
+
+  it('keeps the Settings activation action visible for a Main-confirmed setup session', () => {
+    renderPanel({
+      view: {
+        activeSession: {
+          id: 'wsl-setup-session',
+          projectId: 'project-a',
+          title: 'WSL setup',
+          cwd: '/workspace',
+          status: 'idle',
+          messages: [],
+          createdAt: 1,
+          updatedAt: 1,
+          wslSetup: true
+        }
+      },
+      composer: { view: { isWslSetupDraft: false } }
+    })
+
+    expect(container.querySelector('[data-testid="wsl-setup-conversation-actions"]')).not.toBeNull()
+    expect(container.textContent).toContain('Check and activate in Settings')
   })
 
   it('offers Plan first for a text draft in a new conversation while Branch stays disabled', () => {

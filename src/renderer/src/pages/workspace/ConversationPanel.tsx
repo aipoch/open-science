@@ -394,6 +394,10 @@ type ConversationPanelSubagents = {
   stop: () => void | Promise<void>
 }
 
+type ConversationPanelWslSetup = {
+  start: () => Promise<boolean>
+}
+
 type StopSubmissionState = Readonly<{
   pending: boolean
   error?: string
@@ -413,6 +417,7 @@ type ConversationPanelProps = {
   workflows: ConversationPanelWorkflows
   sessionTools: ConversationPanelSessionTools
   subagents: ConversationPanelSubagents
+  wslSetup: ConversationPanelWslSetup
 }
 
 // Middle chat surface owns the visible conversation and local message composer UI.
@@ -429,7 +434,8 @@ const ConversationPanel = ({
   contextWindow,
   workflows,
   sessionTools,
-  subagents
+  subagents,
+  wslSetup
 }: ConversationPanelProps): React.JSX.Element => {
   const { t } = useTranslation()
   const { activeSession, composerFocusKey, canEditDraft, actionError, sideChatDisabledReason } =
@@ -445,6 +451,7 @@ const ConversationPanel = ({
       historyStatus,
       isHistoryBrowsing,
       isUploading: isUploadingAttachments,
+      isWslSetupDraft,
       caretRequest,
       readingContext: pdfContext
     },
@@ -895,8 +902,32 @@ const ConversationPanel = ({
   })
 
   // Submits the current doc, passing the ids of any skills picked as inline chips.
+  const handleWslSetupCommand = async (): Promise<void> => {
+    if (!canEditDraft) return
+    try {
+      const status = await window.api.settings.getWsl2BashPreviewStatus()
+      if (!status.available) {
+        onSetComposerError(
+          t('WSL2 setup is unavailable on this system ({{reason}}).', {
+            reason: status.reason
+          })
+        )
+        return
+      }
+      if (!(await wslSetup.start())) {
+        onSetComposerError(t('Open Science could not open the WSL2 setup conversation.'))
+      }
+    } catch {
+      onSetComposerError(t('Open Science could not open the WSL2 setup conversation.'))
+    }
+  }
+
   const handleSubmit = (): void => {
     if (!canEditDraft || !effectiveCanSend) return
+    if (docToText(draftDoc).trim() === '/setup-wsl') {
+      void handleWslSetupCommand()
+      return
+    }
     onSendMessage(docToSkillIds(draftDoc))
   }
 
@@ -1782,6 +1813,29 @@ const ConversationPanel = ({
                         {...messageQueue}
                         expanded={messageQueueExpanded}
                       />
+                      {isWslSetupDraft || activeSession?.wslSetup === true ? (
+                        <div
+                          className="flex items-center justify-between gap-3 rounded-lg border border-status-info-accent/30 bg-status-info-surface px-3 py-2 text-xs text-status-info-foreground"
+                          data-testid="wsl-setup-conversation-actions"
+                        >
+                          <span>
+                            {t(
+                              'This draft will open a guided WSL2 setup conversation. Review the diagnostics, then send it.'
+                            )}
+                          </span>
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            className="shrink-0"
+                            onClick={() =>
+                              useSettingsStore.getState().openSettingsToPanel('runtimes')
+                            }
+                          >
+                            {t('Check and activate in Settings')}
+                          </Button>
+                        </div>
+                      ) : null}
                       {composer.view.queuedEdit ? (
                         <div className="flex items-center justify-between gap-2 text-xs text-text-300">
                           <span>
@@ -2016,6 +2070,7 @@ const ConversationPanel = ({
                             )}
                             ariaLabel={t('Ask anything')}
                             allowedSkillIds={allowedSkillIds}
+                            onSelectWslSetup={() => void handleWslSetupCommand()}
                             isHistoryBrowsing={isHistoryBrowsing}
                             historyStatus={historyStatus}
                             onNavigateHistory={onNavigateHistory}

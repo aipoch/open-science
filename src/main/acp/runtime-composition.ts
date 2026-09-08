@@ -130,6 +130,7 @@ type AcpRuntimeCompositionOptions = AcpRuntimeArtifacts & {
   mcpEntryPath: string
   uploadRepository: UploadRepository
   notebookRpcServer: NotebookLocalRpcServer
+  wslSetupSessions?: AcpRuntimeOptions['wslSetupSessions']
   getShellRuntimeBinding?: () => ShellRuntimeBinding | Promise<ShellRuntimeBinding>
   peekNotebookHandoffContext?: (sessionId: string) => NotebookHandoffContext | undefined
   authorizeSkillImportReferencedUploads: (
@@ -223,6 +224,7 @@ const createAcpRuntime = ({
   managedFileVersions,
   uploadRepository,
   notebookRpcServer,
+  wslSetupSessions,
   getShellRuntimeBinding,
   peekNotebookHandoffContext,
   authorizeSkillImportReferencedUploads,
@@ -381,6 +383,7 @@ const createAcpRuntime = ({
             : settingsService.resolveAgentBackend(await selection!, context)),
         ...(spawnAgent ? { spawnAgent } : {}),
         mcpHttpHost: new AgentMcpHttpHost(),
+        wslSetupSessions,
         ...(literatureReader && literatureAttachments && sessionPersistenceCoordinator
           ? {
               literature: {

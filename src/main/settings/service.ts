@@ -94,6 +94,7 @@ import type {
   WslPlatformInstallResult,
   WslSetupSnapshot,
   WslSetupStatus,
+  WslSetupConversationBootstrap,
   WslSupportHandoff
 } from '../../shared/wsl-setup'
 import type { Wsl2BashPreviewStatus } from '../../shared/wsl-setup'
@@ -238,6 +239,8 @@ export type SettingsServiceOptions = {
     createSupportHandoff(): Promise<WslSupportHandoff>
     requireLatestReadySelection(): Promise<WslSelection>
   }
+  wslSetupSessions?: { mintLocalToken(): string }
+  ensureDefaultWslSetupWorkspace?: () => Promise<void>
   wsl2PreviewStatus?: () => Wsl2BashPreviewStatus
   // Encrypted-token controller for claude-isolated; default-constructed against this.configRoot
   // when omitted. Storage is delegated to the host's SettingsRepository + encrypt/tryDecryptKey
@@ -270,6 +273,8 @@ class SettingsService {
   private readonly installNotebookNetworkImpl: () => Promise<{ cancelled: boolean }>
   private readonly removeNotebookNetworkImpl: () => Promise<{ cancelled: boolean }>
   private readonly wslSetup?: SettingsServiceOptions['wslSetup']
+  private readonly wslSetupSessions?: SettingsServiceOptions['wslSetupSessions']
+  private readonly ensureDefaultWslSetupWorkspace?: SettingsServiceOptions['ensureDefaultWslSetupWorkspace']
   private readonly wsl2PreviewStatus: () => Wsl2BashPreviewStatus
   private readonly userClaudeDir: string
   private readonly log: Logger
@@ -335,6 +340,8 @@ class SettingsService {
         throw new Error('Notebook network sandbox removal is unavailable.')
       })
     this.wslSetup = options.wslSetup
+    this.wslSetupSessions = options.wslSetupSessions
+    this.ensureDefaultWslSetupWorkspace = options.ensureDefaultWslSetupWorkspace
     this.wsl2PreviewStatus = options.wsl2PreviewStatus ?? wsl2BashPreviewStatus
     this.log = options.log ?? createLogger('settings')
     this.preferences = new SettingsPreferencesModule(this.repository)
@@ -563,10 +570,17 @@ class SettingsService {
     return this.wslSetup.openTerminal(request)
   }
 
-  createWslSupportHandoff(): Promise<WslSupportHandoff> {
+  async createWslSupportHandoff(): Promise<WslSetupConversationBootstrap> {
     this.requireWsl2Preview()
     if (!this.wslSetup) throw new Error('WSL setup is unavailable.')
-    return this.wslSetup.createSupportHandoff()
+    if (!this.wslSetupSessions) throw new Error('WSL setup Session capability is unavailable.')
+    await this.ensureDefaultWslSetupWorkspace?.()
+    await this.wslSetup.probe()
+    const handoff = await this.wslSetup.createSupportHandoff()
+    return Object.freeze({
+      handoff,
+      setupSessionToken: this.wslSetupSessions.mintLocalToken()
+    })
   }
 
   async switchLocalShellToPowerShell(): Promise<{

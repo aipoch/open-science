@@ -237,6 +237,11 @@ type AcpRuntimeOptions = {
     resolveRoot: (rootId: string) => Promise<Pick<GrantedLocalRoot, 'path' | 'access'> | undefined>
   }
   notebook?: AcpRuntimeNotebookOptions
+  wslSetupSessions?: Readonly<{
+    authorizeToken(token: unknown): boolean
+    bind(token: string, sessionId: string): Promise<void>
+    isBound(sessionId: string): Promise<boolean>
+  }>
   memory?: {
     isEnabled?(): Promise<boolean>
     recallForPrompt(

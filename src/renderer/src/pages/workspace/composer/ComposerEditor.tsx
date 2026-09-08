@@ -25,6 +25,7 @@ import {
   docArtifactCount,
   docSessionCount,
   domToDoc,
+  domToDocWithCaret,
   isPastedTextCaretHost,
   MAX_COMPOSER_ARTIFACT_MENTIONS,
   MAX_COMPOSER_SESSION_MENTIONS,
@@ -70,6 +71,7 @@ type ComposerEditorProps = {
   ariaLabel: string
   // Undefined shows Main-enabled Skills; an empty array intentionally hides every Skill.
   allowedSkillIds?: readonly string[]
+  onSelectWslSetup?: () => void
   isHistoryBrowsing?: boolean
   historyStatus?: string
   onNavigateHistory?: (direction: 'previous' | 'next') => boolean
@@ -415,6 +417,12 @@ const currentCaretPosition = (root: HTMLElement): ComposerCaretPosition | undefi
   if (!selection || selection.rangeCount === 0) return undefined
   const range = selection.getRangeAt(0)
   if (!root.contains(range.startContainer)) return undefined
+  const hasBrowserBlocks = Array.from(root.children).some(
+    (child) => child.tagName === 'DIV' || child.tagName === 'P' || child.tagName === 'BR'
+  )
+  if (hasBrowserBlocks) {
+    return domToDocWithCaret(root, range.startContainer, range.startOffset).caret
+  }
   if (range.startContainer === root) {
     return { nodeIndex: Math.min(range.startOffset, root.childNodes.length), offset: 0 }
   }
@@ -447,6 +455,7 @@ export const ComposerEditor = ({
   className,
   ariaLabel,
   allowedSkillIds,
+  onSelectWslSetup,
   isHistoryBrowsing = false,
   historyStatus = '',
   onNavigateHistory,
@@ -524,6 +533,14 @@ export const ComposerEditor = ({
     const root = editorRef.current
     if (root) {
       const nextDoc = domToDoc(root)
+      const hasBrowserBlocks = Array.from(root.children).some(
+        (child) => child.tagName === 'DIV' || child.tagName === 'P' || child.tagName === 'BR'
+      )
+      if (hasBrowserBlocks) {
+        const caret = currentCaretPosition(root)
+        applyDocToDom(root, nextDoc)
+        if (caret) moveCaretToPosition(root, caret)
+      }
       if (undoCaretRef.current) onDocChange(nextDoc, undoCaretRef.current)
       else onDocChange(nextDoc)
     }
@@ -875,6 +892,11 @@ export const ComposerEditor = ({
     }
   }
 
+  const handleSelectWslSetup = (): void => {
+    mention.cancel()
+    onSelectWslSetup?.()
+  }
+
   // Replace the active `@query` token with an artifact chip, then close the popup.
   const handleSelectArtifact = (ref: PickedMention): void => {
     const root = editorRef.current
@@ -976,6 +998,7 @@ export const ComposerEditor = ({
           listboxId={mentionListboxId}
           onActiveOptionIdChange={setActiveMentionOptionId}
           onSelect={handleSelectSkill}
+          onSelectWslSetup={onSelectWslSetup ? handleSelectWslSetup : undefined}
           onClose={mention.cancel}
         />
       ) : null}

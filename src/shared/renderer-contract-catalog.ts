@@ -55,7 +55,7 @@ import type {
   Wsl2BashPreviewStatus,
   WslSetupSnapshot,
   WslSetupStatus,
-  WslSupportHandoff
+  WslSetupConversationBootstrap
 } from './wsl-setup'
 import type { SourcePreviewLoadState } from './source-preview'
 import type { ArtifactLiteratureManifest } from './artifact-literature'
@@ -2105,10 +2105,10 @@ export const RENDERER_API_CONTRACT = Object.freeze({
     'settings:install-wsl-platform',
     LOCAL
   ]),
-  'settings.createWslSupportHandoff': callable<() => Promise<WslSupportHandoff>>()('settings', [
-    'settings:create-wsl-support-handoff',
-    LOCAL
-  ]),
+  'settings.createWslSupportHandoff': callable<() => Promise<WslSetupConversationBootstrap>>()(
+    'settings',
+    ['settings:create-wsl-support-handoff', LOCAL]
+  ),
   'settings.selectWslProfile': callable<
     (request: SelectWslProfileRequest) => Promise<WslSetupSnapshot>
   >()('settings', ['settings:select-wsl-profile', LOCAL]),

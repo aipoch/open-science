@@ -4,8 +4,10 @@ import { describe, expect, it, vi } from 'vitest'
 
 import { SettingsInstallCoordinator } from '../settings/settings-install-coordinator'
 import {
+  boundedWslDiagnosticText,
   RECOMMENDED_WSL_DISTRO,
   WSL_DISTRO_INSTALL_TIMEOUT_MS,
+  WSL_SETUP_DIAGNOSTICS_STALE,
   WslSetupOwner,
   createWslTerminalLauncher,
   type WslCommandRunner,
@@ -36,6 +38,14 @@ const makeOwner = (
 ): WslSetupOwner =>
   new WslSetupOwner({
     volumeProbe: async () => ({ kind: 'local-ntfs' }),
+    loadGuide: async () => ({
+      id: 'wsl2-setup',
+      version: '1',
+      status: 'available',
+      markdown: '# test guide'
+    }),
+    windowsVersion: () => ({ version: '10.0.26100', build: '26100', architecture: 'x64' }),
+    now: () => Date.UTC(2026, 8, 8),
     ...options
   })
 
@@ -58,34 +68,183 @@ describe('WslSetupOwner', () => {
     await owner.probe()
     const handoff = await owner.createSupportHandoff()
 
-    expect(handoff).toEqual({
+    expect(handoff).toMatchObject({
+      schemaVersion: 1,
+      guide: { id: 'wsl2-setup', version: '1', status: 'available' },
+      capturedAt: '2026-09-08T00:00:00.000Z',
+      revision: 1,
       errorCode: 'wsl_bwrap_missing',
       supportReference: 'a1b2c3d4',
       capabilities: { wsl2: true, home: true, bash: true, bwrap: false, python3: false },
-      versions: { wsl: '2', distribution: '2' },
+      versions: { wsl: 'unknown', distribution: '2' },
+      selectedTarget: { distro: 'Private-Lab', user: 'private-user' },
+      checks: {
+        wsl2: { state: 'pass' },
+        home: { state: 'pass' },
+        bash: { state: 'pass' },
+        bwrap: { state: 'fail' },
+        python3: { state: 'fail', path: '/usr/bin/python3' },
+        mirroredNetworking: { state: 'not-checked' },
+        namespaces: { state: 'not-checked' },
+        localWorkspace: { state: 'not-checked' }
+      },
+      failure: {
+        stage: 'dependencies',
+        code: 'wsl_bwrap_missing',
+        stderr: 'raw stderr with credential=[redacted]'
+      },
       target: 'restore-wsl2-bash'
     })
     const serialized = JSON.stringify(handoff)
-    expect(serialized).not.toContain('Private-Lab')
-    expect(serialized).not.toContain('private-user')
     expect(serialized).not.toContain('private-token')
     expect(serialized).not.toContain('C:\\science')
   })
 
   it('uses stable fallback diagnostics when no probe has completed yet', async () => {
     const owner = makeOwner({
+      runner: makeRunner(result('', 1)),
       workspacePath: 'C:\\science',
       readSelection: async () => undefined,
       writeSelection: async () => undefined,
       operationReference: () => 'deadbeef'
     })
 
-    await expect(owner.createSupportHandoff()).resolves.toEqual({
+    await expect(owner.createSupportHandoff()).resolves.toMatchObject({
+      schemaVersion: 1,
+      revision: 0,
       errorCode: 'wsl_probe_required',
       supportReference: 'deadbeef',
       capabilities: {},
       versions: { wsl: 'unknown', distribution: 'unknown' },
+      checks: { wsl2: { state: 'not-checked' } },
       target: 'restore-wsl2-bash'
+    })
+  })
+
+  it('keeps the captured revision paired with its snapshot across concurrent refresh', async () => {
+    let releaseGuide!: () => void
+    const guideGate = new Promise<void>((resolve) => {
+      releaseGuide = resolve
+    })
+    const loadGuide = vi.fn(async () => {
+      await guideGate
+      return {
+        id: 'wsl2-setup' as const,
+        version: '1' as const,
+        status: 'available' as const,
+        markdown: '# test guide'
+      }
+    })
+    const runner: WslCommandRunner = {
+      run: vi.fn(async (args: readonly string[]) => {
+        if (args[0] === '--status') return result('Default Version: 2')
+        if (args.join(' ') === '--list --quiet') return result('')
+        if (args.join(' ') === '--list --verbose') return result('')
+        if (args[0] === '--version') return result('WSL version: 2.7.13.0')
+        return result()
+      })
+    }
+    const owner = makeOwner({
+      runner,
+      loadGuide,
+      workspacePath: 'C:\\science',
+      readSelection: async () => undefined,
+      writeSelection: vi.fn()
+    })
+    await owner.probe()
+    const capturedRevision = owner.getStatus().revision
+
+    const handoffPromise = owner.createSupportHandoff()
+    await vi.waitFor(() => expect(loadGuide).toHaveBeenCalledOnce())
+    await owner.probe()
+    releaseGuide()
+    const handoff = await handoffPromise
+
+    expect(handoff.revision).toBe(capturedRevision)
+    expect(owner.getStatus().revision).toBeGreaterThan(capturedRevision)
+  })
+
+  it('reports the WSL software version separately from distro generation', async () => {
+    const runner: WslCommandRunner = {
+      run: vi.fn(async (args: readonly string[]) => {
+        if (args[0] === '--status') return result('Default Version: 2')
+        if (args.join(' ') === '--list --quiet') return result('Ubuntu')
+        if (args.join(' ') === '--list --verbose') return result('* Ubuntu Running 2')
+        if (args[0] === '--version') return result('WSL version: 2.4.13.0\nKernel version: 5.15')
+        const script = args.join(' ')
+        if (script.includes('id -un; id -u')) return result('scientist\n1000')
+        if (script.includes('id -u')) return result('1000\nscientist\nhome-ok')
+        if (script.includes('command -v bash')) {
+          return result('/usr/bin/bash\n/usr/bin/bwrap\n/usr/bin/python3\nmirrored')
+        }
+        if (script.includes('bwrap --unshare-all')) return result('ok')
+        if (script.includes('guest_path=')) return result('/mnt/c/science\nok')
+        if (script.includes('kernel=%s')) {
+          return result(
+            'kernel=5.15.167.4-microsoft-standard-WSL2\n' +
+              'distroRelease=22.04\n' +
+              'bash=GNU bash, version 5.1.16\n' +
+              'bwrap=bubblewrap 0.6.2\n' +
+              'python3=Python 3.10.12'
+          )
+        }
+        return result()
+      })
+    }
+    const owner = makeOwner({
+      runner,
+      workspacePath: 'C:\\science',
+      readSelection: async () => ({ distro: 'Ubuntu', user: 'scientist' }),
+      writeSelection: vi.fn()
+    })
+
+    await owner.probe()
+    await expect(owner.createSupportHandoff()).resolves.toMatchObject({
+      wsl: {
+        softwareVersion: '2.4.13.0',
+        linuxKernelVersion: '5.15.167.4-microsoft-standard-WSL2'
+      },
+      distros: [
+        {
+          name: 'Ubuntu',
+          version: 2,
+          release: '22.04',
+          defaultUser: 'scientist',
+          defaultUserIsRoot: false
+        }
+      ],
+      versions: { wsl: '2.4.13.0', distribution: '2' },
+      checks: {
+        bash: { state: 'pass', version: 'GNU bash, version 5.1.16' },
+        bwrap: { state: 'pass', version: 'bubblewrap 0.6.2' },
+        python3: { state: 'pass', version: 'Python 3.10.12', path: '/usr/bin/python3' },
+        mirroredNetworking: { state: 'pass' }
+      }
+    })
+  })
+
+  it('parses the localized WSL software version line without using the kernel version', async () => {
+    const runner: WslCommandRunner = {
+      run: vi.fn(async (args: readonly string[]) => {
+        if (args[0] === '--version') {
+          return result('WSL 版本: 2.7.13.0\n内核版本: 6.6.87.2\nWSLg 版本: 1.0.70')
+        }
+        if (args[0] === '--status') return result('Default Version: 2')
+        if (args.join(' ') === '--list --quiet') return result('')
+        if (args.join(' ') === '--list --verbose') return result('')
+        return result()
+      })
+    }
+    const owner = makeOwner({
+      runner,
+      workspacePath: 'C:\\science',
+      readSelection: async () => undefined,
+      writeSelection: vi.fn()
+    })
+
+    await owner.probe()
+    await expect(owner.createSupportHandoff()).resolves.toMatchObject({
+      wsl: { softwareVersion: '2.7.13.0' }
     })
   })
 
@@ -112,6 +271,57 @@ describe('WslSetupOwner', () => {
 
     installation.resolve({ kind: 'uac-cancelled' })
     await completion
+  })
+
+  it('rejects a stale profile selection inside the owner before persistence', async () => {
+    const writeSelection = vi.fn()
+    const owner = makeOwner({
+      runner: makeRunner(result('', 1, '', 'not-found')),
+      workspacePath: 'C:\\science',
+      readSelection: async () => undefined,
+      writeSelection
+    })
+    await owner.probe()
+
+    await expect(
+      owner.selectAtRevision({ distro: 'Ubuntu', user: 'scientist' }, 0)
+    ).rejects.toThrow(WSL_SETUP_DIAGNOSTICS_STALE)
+    expect(writeSelection).not.toHaveBeenCalled()
+  })
+
+  it('serializes revision-bound selections so a queued stale request cannot overwrite settings', async () => {
+    const writes: Array<{ distro: string; user: string }> = []
+    const runner: WslCommandRunner = {
+      run: vi.fn(async (args: readonly string[]) => {
+        if (args[0] === '--status') return result('Default Version: 2')
+        if (args.join(' ') === '--list --quiet') return result('Ubuntu')
+        if (args.join(' ') === '--list --verbose') return result('* Ubuntu Running 2')
+        const command = args.join(' ')
+        if (command.includes('id -u')) return result('1000\nscientist\nhome-ok')
+        if (command.includes('command -v bash')) {
+          return result('/usr/bin/bash\n/usr/bin/bwrap\n/usr/bin/python3\nmirrored')
+        }
+        if (command.includes('bwrap --unshare-all')) return result('ok')
+        if (command.includes('guest_path=')) return result('/mnt/c/science\nok')
+        return result()
+      })
+    }
+    const owner = makeOwner({
+      runner,
+      workspacePath: 'C:\\science',
+      readSelection: async () => undefined,
+      writeSelection: async (selection) => {
+        writes.push(selection)
+      }
+    })
+    const expectedRevision = owner.getStatus().revision
+
+    const first = owner.selectAtRevision({ distro: 'Ubuntu', user: 'scientist' }, expectedRevision)
+    const stale = owner.selectAtRevision({ distro: 'Ubuntu', user: 'other-user' }, expectedRevision)
+
+    await expect(first).resolves.toMatchObject({ selection: { user: 'scientist' } })
+    await expect(stale).rejects.toThrow(WSL_SETUP_DIAGNOSTICS_STALE)
+    expect(writes).toEqual([{ distro: 'Ubuntu', user: 'scientist' }])
   })
 
   it('returns the live status after startup reconciliation has already completed', async () => {
@@ -440,12 +650,22 @@ describe('WslSetupOwner', () => {
       })
       await expect(owner.createSupportHandoff()).resolves.toMatchObject({
         errorCode: code,
-        supportReference: 'install2'
+        supportReference: 'install2',
+        failure: { stage: 'installation', code }
       })
       expect(installer.install).toHaveBeenCalledOnce()
-      expect(runner.run).not.toHaveBeenCalled()
+      expect(runner.run).toHaveBeenCalledOnce()
+      expect(runner.run).toHaveBeenCalledWith(['--version'])
     }
   )
+
+  it('bounds and redacts diagnostic command output', () => {
+    const diagnostic = boundedWslDiagnosticText(`token=private-token ${'x'.repeat(800)}`)
+    expect(diagnostic).toHaveLength(512)
+    expect(diagnostic).toContain('token=[redacted]')
+    expect(diagnostic).not.toContain('private-token')
+    expect(diagnostic).toMatch(/…$/)
+  })
 
   it('hands the platform to the user and OS and only performs a fresh probe after owner restart', async () => {
     const installer: WslPlatformInstaller = {

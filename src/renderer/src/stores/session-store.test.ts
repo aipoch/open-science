@@ -139,6 +139,31 @@ describe('session store', () => {
     useSessionStore.setState(createInitialSessionState())
   })
 
+  it('retains the Main-confirmed WSL setup presentation marker across persistence echoes', () => {
+    useSessionStore.getState().appendUserMessage({
+      sessionId: 'session-1',
+      content: 'Set up WSL2',
+      projectId: 'project-1',
+      cwd: '/workspace'
+    })
+    useSessionStore.setState((state) => ({
+      sessions: state.sessions.map((session) =>
+        session.id === 'session-1' ? { ...session, wslSetup: true as const } : session
+      )
+    }))
+    const current = useSessionStore.getState().sessions[0]
+    const persisted = toPersistedSession(current)
+    expect(persisted).not.toHaveProperty('wslSetup')
+
+    useSessionStore.getState().upsertPersistedSession({
+      ...persisted,
+      revision: (persisted.revision ?? 0) + 1,
+      updatedAt: persisted.updatedAt + 1
+    })
+
+    expect(useSessionStore.getState().sessions[0].wslSetup).toBe(true)
+  })
+
   it.each([
     'runtime-context-authority',
     'permission-authority',

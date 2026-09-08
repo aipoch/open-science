@@ -97,11 +97,53 @@ beforeEach(() => {
     operationReference: 'feedface'
   })
   createSupportHandoff = vi.fn().mockResolvedValue({
-    errorCode: 'wsl_namespace_unavailable',
-    supportReference: 'a1b2c3d4',
-    capabilities: { wsl2: true, bash: true, bwrap: true, python3: false, namespaces: false },
-    versions: { wsl: '2', distribution: '2' },
-    target: 'restore-wsl2-bash'
+    setupSessionToken: 'secret-setup-token',
+    handoff: {
+      schemaVersion: 1,
+      guide: { id: 'wsl2-setup', version: '1', status: 'available' },
+      capturedAt: '2026-09-08T00:00:00.000Z',
+      revision: 7,
+      errorCode: 'wsl_namespace_unavailable',
+      supportReference: 'a1b2c3d4',
+      operationReference: 'a1b2c3d4',
+      windows: {
+        version: '11',
+        build: '26100',
+        architecture: 'x64',
+        previewAvailable: true,
+        previewReason: 'available'
+      },
+      wsl: {
+        softwareVersion: '2.5.9',
+        linuxKernelVersion: '6.6.87',
+        installState: 'dependency-required'
+      },
+      distros: [{ name: 'Private-Lab', version: 2, isDefault: true }],
+      selectedTarget: { distro: 'Private-Lab', user: 'private-user' },
+      currentBackend: 'powershell',
+      checks: {
+        wsl2: { state: 'pass' },
+        home: { state: 'pass', path: '/home/private-user' },
+        bash: { state: 'pass', path: '/bin/bash' },
+        bwrap: { state: 'pass', path: '/usr/bin/bwrap' },
+        python3: { state: 'fail' },
+        mirroredNetworking: { state: 'pass' },
+        namespaces: { state: 'fail' },
+        localWorkspace: { state: 'pass' }
+      },
+      operation: { state: 'idle' },
+      recovery: { restartRequired: false, resultUnknown: false, recheck: ['namespaces'] },
+      capabilities: {
+        wsl2: true,
+        home: true,
+        bash: true,
+        bwrap: true,
+        python3: false,
+        namespaces: false
+      },
+      versions: { wsl: '2.5.9', distribution: '2' },
+      target: 'restore-wsl2-bash'
+    }
   })
   switchToPowerShell = vi.fn().mockResolvedValue({
     runtimeBinding: { kind: 'powershell', version: '5.1' },
@@ -694,7 +736,7 @@ describe('WslLocalShellSection', () => {
     await renderAndCheck()
 
     const support = [...container.querySelectorAll('button')].find((button) =>
-      button.textContent?.includes('Solve in conversation')
+      button.textContent?.includes('Set up in conversation')
     )
     await act(async () => support?.click())
     await flush()
@@ -709,13 +751,14 @@ describe('WslLocalShellSection', () => {
         text: expect.stringContaining('wsl_namespace_unavailable')
       })
     ])
-    expect(JSON.stringify(intent)).not.toContain('Private-Lab')
-    expect(JSON.stringify(intent)).not.toContain('private-user')
-    expect(JSON.stringify(intent)).toContain('Python 3: Unavailable')
-    expect(JSON.stringify(intent)).toContain('must ask me to use an explicit action')
+    expect(JSON.stringify(intent?.doc)).toContain('Private-Lab')
+    expect(JSON.stringify(intent?.doc)).toContain('private-user')
+    expect(JSON.stringify(intent?.doc)).toContain('python3')
+    expect(JSON.stringify(intent?.doc)).not.toContain('secret-setup-token')
+    expect(intent?.setupSessionToken).toBe('secret-setup-token')
   })
 
-  it('disables conversation handoff and explains why when no project is available', async () => {
+  it('offers project creation and carries setup forward when no project is available', async () => {
     useProjectStore.setState({ ...createInitialProjectState(), projects: [], isLoaded: true })
     probe.mockResolvedValue({
       state: 'not-installed',
@@ -726,12 +769,17 @@ describe('WslLocalShellSection', () => {
     await renderAndCheck()
 
     const support = [...container.querySelectorAll('button')].find((button) =>
-      button.textContent?.includes('Solve in conversation')
+      button.textContent?.includes('Set up in conversation')
     )
     expect(support?.disabled).toBe(true)
-    expect(container.textContent).toContain(
-      'Create or open a project to solve this with the agent.'
+    const createProject = container.querySelector<HTMLButtonElement>(
+      '[data-testid="wsl-setup-create-project"]'
     )
+    expect(createProject).not.toBeNull()
+    act(() => createProject?.click())
+    expect(useSettingsStore.getState().isSettingsOpen).toBe(false)
+    expect(useNavigationStore.getState().pendingProjectCreation).toBe(true)
+    expect(useNavigationStore.getState().pendingWslSetupAfterProjectCreation).toBe(true)
   })
 
   it.each([
@@ -752,7 +800,7 @@ describe('WslLocalShellSection', () => {
 
     expect(
       [...container.querySelectorAll('button')].some((button) =>
-        button.textContent?.includes('Solve in conversation')
+        button.textContent?.includes('Set up in conversation')
       )
     ).toBe(true)
   })

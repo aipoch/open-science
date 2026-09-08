@@ -11,6 +11,9 @@ export type WslSetupState =
 export type WslDistro = Readonly<{
   name: string
   version: 1 | 2
+  release?: string
+  defaultUser?: string
+  defaultUserIsRoot?: boolean
   isDefault: boolean
 }>
 
@@ -57,6 +60,35 @@ export type WslReadiness = Readonly<{
   localWorkspace?: boolean
 }>
 
+export type WslDiagnosticCheckState = 'pass' | 'fail' | 'not-checked' | 'not-applicable'
+
+export type WslDiagnosticCheck = Readonly<{
+  state: WslDiagnosticCheckState
+  version?: string
+  path?: string
+}>
+
+export type WslSetupFailureStage =
+  | 'platform'
+  | 'distribution'
+  | 'identity'
+  | 'dependencies'
+  | 'networking'
+  | 'namespaces'
+  | 'workspace'
+  | 'installation'
+  | 'recovery'
+
+export type WslSetupFailure = Readonly<{
+  stage: WslSetupFailureStage
+  code: string
+  exitCode?: number
+  timedOut?: boolean
+  cancelled?: boolean
+  stdout?: string
+  stderr?: string
+}>
+
 export type WslSetupSnapshot = Readonly<{
   state: WslSetupState
   distros: readonly WslDistro[]
@@ -65,6 +97,7 @@ export type WslSetupSnapshot = Readonly<{
   selection?: WslSelection
   readiness?: WslReadiness
   errorCode?: string
+  failure?: WslSetupFailure
   suggestedCommand?: string
   operationReference: string
 }>
@@ -112,15 +145,72 @@ export type WslSetupStatus = Readonly<{
   operation: WslSetupOperation
 }>
 
+export const WSL_SETUP_DIAGNOSTICS_SCHEMA_VERSION = 1 as const
+export const WSL_SETUP_GUIDE_ID = 'wsl2-setup' as const
+export const WSL_SETUP_GUIDE_VERSION = '1' as const
+
+export type WslSetupGuide = Readonly<{
+  id: typeof WSL_SETUP_GUIDE_ID
+  version: typeof WSL_SETUP_GUIDE_VERSION
+  status: 'available' | 'missing' | 'version-mismatch'
+  markdown?: string
+}>
+
 export type WslSupportHandoff = Readonly<{
+  schemaVersion: typeof WSL_SETUP_DIAGNOSTICS_SCHEMA_VERSION
+  guide: WslSetupGuide
+  capturedAt: string
+  revision: number
   errorCode: string
   supportReference: string
+  operationReference: string
+  windows: Readonly<{
+    version: string
+    build: string
+    architecture: string
+    previewAvailable: boolean | 'unknown'
+    previewReason: string
+  }>
+  wsl: Readonly<{
+    softwareVersion: string
+    linuxKernelVersion: string
+    installState: WslSetupState
+  }>
+  distros: readonly WslDistro[]
+  selectedTarget?: WslSelection
+  activatedTarget?: WslSelection
+  currentBackend: LocalShellRuntimePreference | 'unknown'
+  checks: Readonly<{
+    wsl2: WslDiagnosticCheck
+    home: WslDiagnosticCheck
+    bash: WslDiagnosticCheck
+    bwrap: WslDiagnosticCheck
+    python3: WslDiagnosticCheck
+    mirroredNetworking: WslDiagnosticCheck
+    namespaces: WslDiagnosticCheck
+    localWorkspace: WslDiagnosticCheck
+  }>
+  failure?: WslSetupFailure
+  operation: WslSetupOperation
+  recovery: Readonly<{
+    lastOperation?: WslSetupOperationKind
+    restartRequired: boolean
+    resultUnknown: boolean
+    recheck: readonly string[]
+  }>
+  /** Compatibility summary for renderer versions that predate structured checks. */
   capabilities: WslReadiness
+  /** Compatibility summary. `wsl` is a software version, never the distro WSL generation. */
   versions: Readonly<{
-    wsl: '2' | 'unknown'
+    wsl: string
     distribution: '1' | '2' | 'unknown'
   }>
   target: 'restore-wsl2-bash'
+}>
+
+export type WslSetupConversationBootstrap = Readonly<{
+  handoff: WslSupportHandoff
+  setupSessionToken: string
 }>
 
 export type SelectWslProfileRequest = Readonly<{

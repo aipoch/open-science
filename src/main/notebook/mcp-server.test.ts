@@ -416,6 +416,31 @@ describe('notebook MCP server config', () => {
     )
   })
 
+  it('exposes WSL setup tools only to an explicitly scoped setup Session', () => {
+    const environment = {
+      endpoint: 'http://127.0.0.1:4567',
+      token: 'secret-token',
+      projectId: 'project-1',
+      sessionId: 'session-1',
+      workspaceCwd: '/workspace',
+      memoryTools: true
+    }
+    const names = (wslSetupTools: boolean): string[] =>
+      notebookRpcToolsForEnvironment({ ...environment, wslSetupTools }).map(({ name }) => name)
+
+    expect(names(false)).not.toEqual(expect.arrayContaining(['wsl_setup_diagnostics']))
+    expect(names(true)).toEqual(
+      expect.arrayContaining([
+        'wsl_setup_diagnostics',
+        'wsl_setup_install_platform',
+        'wsl_setup_install_recommended_distro',
+        'wsl_setup_select_profile',
+        'wsl_setup_open_terminal'
+      ])
+    )
+    expect(names(true)).not.toEqual(expect.arrayContaining(['wsl_setup_activate']))
+  })
+
   it('publishes remember_memory with a root object output schema', async () => {
     const environment = {
       endpoint: 'http://127.0.0.1:4567',

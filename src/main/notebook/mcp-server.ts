@@ -74,6 +74,7 @@ type NotebookMcpEnvironment = NotebookRpcConnection &
     workspaceCwd: string
     memoryTools?: boolean
     shellRuntime?: ShellRuntimeBinding
+    wslSetupTools?: boolean
   }
 
 type NotebookMcpServerConfigRequest = Omit<NotebookMcpEnvironment, 'memoryTools'> & {
@@ -180,6 +181,18 @@ const userChoiceQuestionSchema = z.object({
 
 const requestUserInputToolSchema = {
   questions: z.array(userChoiceQuestionSchema).min(1).max(MAX_AGENT_USER_CHOICE_QUESTIONS)
+}
+
+const wslSetupSelectProfileSchema = {
+  distro: z.string().trim().min(1).max(256),
+  user: z.string().trim().min(1).max(128),
+  expectedRevision: z.number().int().nonnegative()
+}
+
+const wslSetupOpenTerminalSchema = {
+  target: z.enum(['powershell', 'distro']),
+  distro: z.string().trim().min(1).max(256).optional(),
+  user: z.string().trim().min(1).max(128).optional()
 }
 
 // Install contract embedded as the manage_packages description so the agent always sees it (spec §8.2).
@@ -344,6 +357,7 @@ const createNotebookMcpServerConfig = (request: NotebookMcpServerConfigRequest):
             }
           ]
         : []),
+      ...(request.wslSetupTools ? [{ name: 'OPEN_SCIENCE_WSL_SETUP_TOOLS', value: '1' }] : []),
       {
         name: 'OPEN_SCIENCE_NOTEBOOK_MEMORY_TOOLS',
         value: request.memoryTools ? '1' : '0'
@@ -397,6 +411,7 @@ const createNotebookMcpEnvironmentFromProcess = (
     sessionId: requireEnvironmentVariable(env, 'OPEN_SCIENCE_NOTEBOOK_SESSION_ID'),
     workspaceCwd: requireEnvironmentVariable(env, 'OPEN_SCIENCE_NOTEBOOK_WORKSPACE_CWD'),
     memoryTools: env.OPEN_SCIENCE_NOTEBOOK_MEMORY_TOOLS === '1',
+    wslSetupTools: env.OPEN_SCIENCE_WSL_SETUP_TOOLS === '1',
     ...(shellRuntime ? { shellRuntime } : {})
   }
 }
@@ -1645,10 +1660,63 @@ const MEMORY_NOTEBOOK_RPC_METHODS = new Set([
   'memoryRemember'
 ])
 
+const WSL_SETUP_RPC_TOOLS: readonly NotebookRpcToolDefinition[] = [
+  {
+    name: 'wsl_setup_diagnostics',
+    title: 'Refresh WSL2 setup diagnostics',
+    description:
+      'Call this first in a WSL setup Session. It refreshes app-owned diagnostics and returns the bundled, version-matched setup guide markdown that governs the available setup tools.',
+    method: 'wslSetupDiagnostics',
+    inputSchema: {},
+    resultLimitChars: NOTEBOOK_MCP_CONTROL_RESULT_LIMIT
+  },
+  {
+    name: 'wsl_setup_install_platform',
+    title: 'Install the WSL platform',
+    description:
+      'Start the existing app-owned Windows WSL platform installation operation. Windows handles UAC; inspect the returned outcome and never claim success for restart-required, cancelled, failed, or unknown results.',
+    method: 'wslSetupInstallPlatform',
+    inputSchema: {},
+    resultLimitChars: NOTEBOOK_MCP_CONTROL_RESULT_LIMIT,
+    progressMessage: 'The WSL platform operation is still running.'
+  },
+  {
+    name: 'wsl_setup_install_recommended_distro',
+    title: 'Install the recommended WSL distribution',
+    description:
+      'Start the existing app-owned recommended distribution operation after diagnostics show a distribution is required. Inspect the returned snapshot and do not claim completion unless it is ready.',
+    method: 'wslSetupInstallRecommendedDistro',
+    inputSchema: {},
+    resultLimitChars: NOTEBOOK_MCP_CONTROL_RESULT_LIMIT,
+    progressMessage: 'The WSL distribution operation is still running.'
+  },
+  {
+    name: 'wsl_setup_select_profile',
+    title: 'Save a candidate WSL2 Shell profile',
+    description:
+      'Save and verify one detected WSL2 distribution and non-root Linux user. expectedRevision must match the latest app-owned diagnostics; stale writes are refused. This does not activate WSL2 Bash.',
+    method: 'wslSetupSelectProfile',
+    inputSchema: wslSetupSelectProfileSchema,
+    resultLimitChars: NOTEBOOK_MCP_CONTROL_RESULT_LIMIT
+  },
+  {
+    name: 'wsl_setup_open_terminal',
+    title: 'Open a visible WSL setup terminal',
+    description:
+      'Open a visible host Windows PowerShell terminal with target="powershell", or the exact detected WSL distribution with target="distro", distro, and optionally a verified user. Use it for guided interactive configuration, first launch, password, sudo, or dependency repair. Opening a terminal is not installation success; wait for the user and rerun diagnostics.',
+    method: 'wslSetupOpenTerminal',
+    inputSchema: wslSetupOpenTerminalSchema,
+    resultLimitChars: NOTEBOOK_MCP_CONTROL_RESULT_LIMIT
+  }
+]
+
 const notebookRpcToolsForEnvironment = (
   environment: NotebookMcpEnvironment
 ): readonly NotebookRpcToolDefinition[] => {
-  const tools = NOTEBOOK_RPC_TOOLS.map((tool) =>
+  const definitions = environment.wslSetupTools
+    ? [...NOTEBOOK_RPC_TOOLS, ...WSL_SETUP_RPC_TOOLS]
+    : NOTEBOOK_RPC_TOOLS
+  const tools = definitions.map((tool) =>
     tool.method === 'executeShell' && environment.shellRuntime
       ? {
           ...tool,

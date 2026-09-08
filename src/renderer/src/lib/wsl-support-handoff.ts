@@ -2,9 +2,7 @@ import type { TFunction } from 'i18next'
 
 import type { WslSupportHandoff } from '../../../shared/wsl-setup'
 import type { ComposerDoc } from '@/pages/workspace/composer/composer-doc'
-
-const availability = (value: boolean | undefined, t: TFunction): string =>
-  value === true ? t('Available') : value === false ? t('Unavailable') : t('Not checked')
+import { useNavigationStore } from '@/stores/navigation-store'
 
 export const buildWslSupportPrefillDoc = (
   handoff: WslSupportHandoff,
@@ -14,32 +12,65 @@ export const buildWslSupportPrefillDoc = (
     {
       type: 'text',
       text: [
-        t('Help me fix Open Science WSL2 Bash.'),
+        t('Set up or repair WSL2 Bash in Open Science.'),
         '',
-        t('Safe diagnostic context:'),
-        t('Error code: {{code}}', { code: handoff.errorCode }),
-        t('Support reference: {{reference}}', { reference: handoff.supportReference }),
-        t('WSL version: {{version}}', { version: handoff.versions.wsl }),
-        t('Distribution version: {{version}}', { version: handoff.versions.distribution }),
-        t('WSL2: {{status}}', { status: availability(handoff.capabilities.wsl2, t) }),
-        t('Linux home directory: {{status}}', {
-          status: availability(handoff.capabilities.home, t)
-        }),
-        t('Bash: {{status}}', { status: availability(handoff.capabilities.bash, t) }),
-        t('bubblewrap: {{status}}', { status: availability(handoff.capabilities.bwrap, t) }),
-        t('Python 3: {{status}}', { status: availability(handoff.capabilities.python3, t) }),
-        t('Linux namespaces: {{status}}', {
-          status: availability(handoff.capabilities.namespaces, t)
-        }),
-        t('Local Windows workspace: {{status}}', {
-          status: availability(handoff.capabilities.localWorkspace, t)
-        }),
+        t('Review this diagnostic snapshot before sending. It contains no passwords.'),
+        t('Diagnostic snapshot:'),
+        '```json',
+        JSON.stringify(
+          {
+            schemaVersion: handoff.schemaVersion,
+            guide: {
+              id: handoff.guide.id,
+              version: handoff.guide.version,
+              status: handoff.guide.status
+            },
+            capturedAt: handoff.capturedAt,
+            revision: handoff.revision,
+            supportReference: handoff.supportReference,
+            operationReference: handoff.operationReference,
+            errorCode: handoff.errorCode,
+            windows: handoff.windows,
+            wsl: handoff.wsl,
+            distros: handoff.distros,
+            selectedTarget: handoff.selectedTarget,
+            activatedTarget: handoff.activatedTarget,
+            currentBackend: handoff.currentBackend,
+            checks: handoff.checks,
+            failure: handoff.failure,
+            operation: handoff.operation,
+            recovery: handoff.recovery
+          },
+          null,
+          2
+        ),
+        '```',
         '',
-        t('Goal: Restore sandboxed WSL2 Bash, then guide me back to Settings to check again.'),
         t(
-          'Give guidance only. Do not switch the shell backend, run a privileged installer, or replay a failed command. If PowerShell diagnostics are needed, you must ask me to use an explicit action first.'
+          'Goal: Diagnose the current state, set up or repair WSL2 Bash, save the verified profile, and offer the explicit activation action.'
+        ),
+        t(
+          'Use the bundled WSL2 setup guide and only the setup tools available in this conversation. Recheck after each change. Do not enter or request passwords in chat, replay an uncertain operation, or activate WSL2 Bash without my explicit action.'
+        ),
+        t(
+          'First call {{toolName}} to read the bundled version-matched setup guide and refresh diagnostics.',
+          { toolName: 'wsl_setup_diagnostics' }
         )
       ].join('\n')
     }
   ]
 })
+
+export const startWslSetupConversation = async (
+  projectId: string,
+  t: TFunction
+): Promise<boolean> => {
+  const { handoff, setupSessionToken } = await window.api.settings.createWslSupportHandoff()
+  return useNavigationStore
+    .getState()
+    .startWslSupportConversation(
+      projectId,
+      buildWslSupportPrefillDoc(handoff, t),
+      setupSessionToken
+    )
+}

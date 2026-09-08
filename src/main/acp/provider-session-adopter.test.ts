@@ -138,7 +138,9 @@ const createHarness = (
   })
   if (reservation.collision) throw reservation.collision
   const commit = vi.fn(() => order.push('capability commit'))
-  const release = vi.fn(() => order.push('capability release'))
+  const release = vi.fn(() => {
+    order.push('capability release')
+  })
   const commitClaudeReplay = vi.fn(() => order.push('handoff commit'))
   const configure = vi.fn(
     options.configure ??

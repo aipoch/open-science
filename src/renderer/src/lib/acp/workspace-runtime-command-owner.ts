@@ -88,6 +88,7 @@ type SendWorkspaceMessageIntent = {
   memoryEnabled?: boolean
   delegationPolicy?: DelegationPolicy
   preserveSelection?: boolean
+  setupSessionToken?: string
 }
 type SendWorkspaceMessageCommand = SendWorkspaceMessageIntent & {
   agentFrameworkId?: AgentFrameworkId
@@ -550,8 +551,8 @@ const startPendingPrompt = (
         request.memoryEnabled !== false
       ] as const
       created = literatureContext
-        ? await runtime.createSession(...createSessionArgs, true)
-        : await runtime.createSession(...createSessionArgs)
+        ? await runtime.createSession(...createSessionArgs, true, request.setupSessionToken)
+        : await runtime.createSession(...createSessionArgs, undefined, request.setupSessionToken)
     } catch (error) {
       if (ownsPrompt(pending.sessionId, pending.messageId)) {
         useSessionStore.getState().failRun(pending.sessionId, createSessionFailureMessage(error))
@@ -577,7 +578,8 @@ const startPendingPrompt = (
       agentFrameworkId: created.frameworkId,
       agentBackendId: created.backendId,
       providerSessionId: created.providerSessionId,
-      providerContinuityToken: created.providerContinuityToken
+      providerContinuityToken: created.providerContinuityToken,
+      wslSetup: created.wslSetup
     })
     onSessionBound?.(pending.sessionId, created.sessionId)
     const boundMessageId = bound?.messageId

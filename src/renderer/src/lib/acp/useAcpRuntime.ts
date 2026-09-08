@@ -68,7 +68,8 @@ const useAcpRuntime = (): {
     specialistId?: string,
     agentTarget?: AcpSessionAgentTarget,
     memoryEnabled?: boolean,
-    literatureContext?: true
+    literatureContext?: true,
+    setupSessionToken?: string
   ) => Promise<AcpCreateSessionResponse>
   resumeSession: (
     sessionId: AcpResumeSessionRequest['sessionId'],
@@ -343,7 +344,8 @@ const useAcpRuntime = (): {
       specialistId?: string,
       agentTarget?: AcpSessionAgentTarget,
       memoryEnabled = true,
-      literatureContext?: true
+      literatureContext?: true,
+      setupSessionToken?: string
     ) =>
       runValueAction(setIsConnecting, () =>
         window.api.acp.createSession({
@@ -353,6 +355,7 @@ const useAcpRuntime = (): {
           memoryEnabled,
           specialistId,
           ...(literatureContext ? { literatureContext } : {}),
+          ...(setupSessionToken ? { setupSessionToken } : {}),
           ...(agentTarget ? { agentTarget } : {})
         })
       ),

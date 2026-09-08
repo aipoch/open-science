@@ -1,10 +1,18 @@
 import { useEffect, useId, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { CircleAlert, LoaderCircle, PackageOpen, RotateCw, SearchX } from 'lucide-react'
+import {
+  CircleAlert,
+  LoaderCircle,
+  PackageOpen,
+  RotateCw,
+  SearchX,
+  SquareTerminal
+} from 'lucide-react'
 
 import { Button } from '@/components/ui/button'
 
 import type { SkillSource, SkillView } from '../../../../../shared/settings'
+import type { Wsl2BashPreviewStatus } from '../../../../../shared/wsl-setup'
 import { useSettingsStore } from '@/stores/settings-store'
 
 import { fuzzyScore } from './fuzzy-match'
@@ -27,6 +35,7 @@ type SkillMentionPopupProps = {
   listboxId?: string
   onActiveOptionIdChange?: (optionId: string | undefined) => void
   onSelect: (skill: SkillView) => void
+  onSelectWslSetup?: () => void
   onClose: () => void
 }
 
@@ -45,6 +54,7 @@ export const SkillMentionPopup = ({
   listboxId,
   onActiveOptionIdChange,
   onSelect,
+  onSelectWslSetup,
   onClose
 }: SkillMentionPopupProps): React.JSX.Element | null => {
   const { t } = useTranslation()
@@ -52,6 +62,7 @@ export const SkillMentionPopup = ({
   const skillsLoaded = useSettingsStore((state) => state.skillsLoaded)
   const [loadError, setLoadError] = useState(false)
   const [retryAttempt, setRetryAttempt] = useState(0)
+  const [wslStatus, setWslStatus] = useState<Wsl2BashPreviewStatus>()
   const loadSkills = useSettingsStore((state) => state.loadSkills)
   const generatedListboxId = useId()
   const resolvedListboxId = listboxId ?? generatedListboxId
@@ -67,6 +78,22 @@ export const SkillMentionPopup = ({
       cancelled = true
     }
   }, [skillsLoaded, skills.length, loadSkills, retryAttempt])
+
+  useEffect(() => {
+    const getStatus = window.api?.settings?.getWsl2BashPreviewStatus
+    if (!getStatus) return
+    let active = true
+    void getStatus()
+      .then((status) => {
+        if (active) setWslStatus(status)
+      })
+      .catch(() => {
+        if (active) setWslStatus({ available: false, reason: 'not-initialized' })
+      })
+    return () => {
+      active = false
+    }
+  }, [])
 
   const visibleSkills = useMemo(() => {
     const allowed = allowedSkillIds ? new Set(allowedSkillIds) : undefined
@@ -108,6 +135,17 @@ export const SkillMentionPopup = ({
     )
   }, [visibleSkills, query])
 
+  const productCommandMatches = useMemo(() => {
+    const needle = query.trim().toLowerCase()
+    return (
+      onSelectWslSetup !== undefined &&
+      (needle.length === 0 ||
+        '/setup-wsl'.includes(needle) ||
+        'set up or repair wsl2 bash'.includes(needle))
+    )
+  }, [onSelectWslSetup, query])
+  const optionCount = matches.length + (productCommandMatches ? 1 : 0)
+
   const [activeIndex, setActiveIndex] = useState(0)
 
   // Reset the highlight to the top when the query changes. This is the setState-during-render pattern
@@ -119,8 +157,8 @@ export const SkillMentionPopup = ({
   }
 
   // Keep the highlight within the current match set even after filtering shrinks it.
-  const safeIndex = matches.length === 0 ? 0 : Math.min(activeIndex, matches.length - 1)
-  const activeOptionId = matches.length > 0 ? `${resolvedListboxId}-option-${safeIndex}` : undefined
+  const safeIndex = optionCount === 0 ? 0 : Math.min(activeIndex, optionCount - 1)
+  const activeOptionId = optionCount > 0 ? `${resolvedListboxId}-option-${safeIndex}` : undefined
 
   // Focus remains in the editor, so keep its active-descendant target synchronized and visible.
   useEffect(() => {
@@ -139,10 +177,10 @@ export const SkillMentionPopup = ({
       if (event.isComposing || composingRef?.current) return
       if (event.key === 'ArrowDown') {
         event.preventDefault()
-        if (matches.length > 0) setActiveIndex((safeIndex + 1) % matches.length)
+        if (optionCount > 0) setActiveIndex((safeIndex + 1) % optionCount)
       } else if (event.key === 'ArrowUp') {
         event.preventDefault()
-        if (matches.length > 0) setActiveIndex((safeIndex - 1 + matches.length) % matches.length)
+        if (optionCount > 0) setActiveIndex((safeIndex - 1 + optionCount) % optionCount)
       } else if (
         event.key === 'Enter' ||
         (event.key === 'Tab' &&
@@ -151,10 +189,15 @@ export const SkillMentionPopup = ({
           !event.ctrlKey &&
           !event.metaKey)
       ) {
-        const active = matches[safeIndex]
-        if (active) {
+        if (productCommandMatches && safeIndex === 0 && wslStatus?.available !== false) {
           event.preventDefault()
-          onSelect(active.skill)
+          onSelectWslSetup?.()
+        } else {
+          const active = matches[safeIndex - (productCommandMatches ? 1 : 0)]
+          if (active) {
+            event.preventDefault()
+            onSelect(active.skill)
+          }
         }
       } else if (event.key === 'Escape') {
         event.preventDefault()
@@ -164,7 +207,17 @@ export const SkillMentionPopup = ({
 
     document.addEventListener('keydown', onKeyDown)
     return () => document.removeEventListener('keydown', onKeyDown)
-  }, [matches, safeIndex, onSelect, onClose, composingRef])
+  }, [
+    matches,
+    optionCount,
+    productCommandMatches,
+    safeIndex,
+    onSelect,
+    onSelectWslSetup,
+    onClose,
+    composingRef,
+    wslStatus
+  ])
 
   const loading = skills.length === 0 && !skillsLoaded && !loadError
   const failed = skills.length === 0 && !skillsLoaded && loadError
@@ -184,7 +237,7 @@ export const SkillMentionPopup = ({
         aria-label={t('Skill suggestions')}
         className="min-h-0 flex-1 overflow-y-auto"
       >
-        {matches.length === 0 && (
+        {optionCount === 0 && (
           <li role="presentation" className="flex min-h-18 items-center gap-3 px-3 py-3.5">
             <span
               aria-hidden="true"
@@ -223,15 +276,48 @@ export const SkillMentionPopup = ({
             )}
           </li>
         )}
+        {productCommandMatches ? (
+          <li
+            id={`${resolvedListboxId}-option-0`}
+            role="option"
+            aria-selected={safeIndex === 0}
+            aria-disabled={wslStatus?.available === false}
+            data-testid="product-command-setup-wsl"
+            onMouseEnter={() => setActiveIndex(0)}
+            onMouseDown={(event) => event.preventDefault()}
+            onClick={() => {
+              if (wslStatus?.available !== false) onSelectWslSetup?.()
+            }}
+            className={`w-full flex items-start gap-2 rounded-lg px-2 py-1.5 text-sm text-text-100 transition-colors hover:bg-bg-200 hover:text-text-000 ${wslStatus?.available === false ? 'cursor-not-allowed opacity-70' : 'cursor-pointer'}${safeIndex === 0 ? ' bg-bg-200 !text-text-000' : ''}`}
+          >
+            <SquareTerminal className="mt-0.5 size-4 shrink-0" aria-hidden="true" />
+            <div className="min-w-0 flex-1">
+              <div className="flex items-center gap-2">
+                <span className="font-mono text-sm font-medium">/setup-wsl</span>
+                <span className="ml-auto rounded bg-accent px-1.5 py-0.5 text-[10px] text-accent-foreground">
+                  {t('Open Science')}
+                </span>
+              </div>
+              <div className="mt-0.5 text-xs text-text-300">
+                {wslStatus && !wslStatus.available
+                  ? t('WSL2 setup is unavailable on this system ({{reason}}).', {
+                      reason: wslStatus.reason
+                    })
+                  : t('Set up or repair WSL2 Bash in a guided conversation')}
+              </div>
+            </div>
+          </li>
+        ) : null}
         {matches.map(({ skill, positions }, index) => {
-          const isActive = index === safeIndex
+          const optionIndex = index + (productCommandMatches ? 1 : 0)
+          const isActive = optionIndex === safeIndex
           return (
             <li
               key={skill.id}
-              id={`${resolvedListboxId}-option-${index}`}
+              id={`${resolvedListboxId}-option-${optionIndex}`}
               role="option"
               aria-selected={isActive}
-              onMouseEnter={() => setActiveIndex(index)}
+              onMouseEnter={() => setActiveIndex(optionIndex)}
               // Keep the editor focused/caret intact so the mention stays open long enough for the click.
               onMouseDown={(event) => event.preventDefault()}
               onClick={() => onSelect(skill)}
@@ -256,7 +342,7 @@ export const SkillMentionPopup = ({
         })}
       </ul>
       <div className="mt-1 -mx-1.5 -mb-1.5 flex shrink-0 items-center justify-end gap-3 border-t border-border-200 bg-bg-200/40 px-3 py-1.5 text-[11px] text-text-100 select-none">
-        {matches.length > 0 && (
+        {optionCount > 0 && (
           <>
             <span>
               <kbd className="rounded border border-border-200 bg-bg-000 px-1 py-0.5 font-sans text-[10px] font-medium">

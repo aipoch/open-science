@@ -57,6 +57,7 @@ export type PdfReadingDocument = Readonly<{
 export type WslSupportPrefillIntent = {
   projectId: string
   doc: ComposerDoc
+  setupSessionToken: string
   requestId: number
 }
 
@@ -78,6 +79,7 @@ type NavigationStore = {
   pendingWslSupportPrefill: WslSupportPrefillIntent | undefined
   // Home consumes this one-shot intent to open its existing New Project dialog.
   pendingProjectCreation: boolean
+  pendingWslSetupAfterProjectCreation: boolean
   // A same-Project Artifact selected from global search. WorkspacePage consumes it once and appends
   // its immutable Version reference to the currently active composer draft.
   pendingArtifactMention: ProjectFileItem | undefined
@@ -137,10 +139,16 @@ type NavigationStore = {
   ) => boolean
   consumeCustomizePrefill: () => void
   consumeLiteratureReviewPrefill: () => void
-  startWslSupportConversation: (projectId: string, doc: ComposerDoc) => boolean
+  startWslSupportConversation: (
+    projectId: string,
+    doc: ComposerDoc,
+    setupSessionToken: string
+  ) => boolean
   consumeWslSupportPrefill: () => void
   requestProjectCreation: () => void
+  requestWslSetupProjectCreation: () => void
   consumeProjectCreation: () => void
+  consumeWslSetupProjectCreation: () => void
   requestArtifactMention: (file: ProjectFileItem) => void
   consumeArtifactMention: () => ProjectFileItem | undefined
   consumeLiteratureItem: (expectedItemId?: string) => string | undefined
@@ -222,6 +230,7 @@ export const useNavigationStore = create<NavigationStore>((set, get) => ({
   pendingLiteratureReviewPrefill: undefined,
   pendingWslSupportPrefill: undefined,
   pendingProjectCreation: false,
+  pendingWslSetupAfterProjectCreation: false,
   pendingArtifactMention: undefined,
   pendingLiteratureItemId: undefined,
   pendingLiteratureProjectId: undefined,
@@ -451,7 +460,7 @@ export const useNavigationStore = create<NavigationStore>((set, get) => ({
 
   consumeLiteratureReviewPrefill: () => set({ pendingLiteratureReviewPrefill: undefined }),
 
-  startWslSupportConversation: (projectId, doc) => {
+  startWslSupportConversation: (projectId, doc, setupSessionToken) => {
     if (!isActiveProject(projectId)) return false
     return requestPreviewLeaveForNavigation({ view: 'workspace', projectId }, () => {
       useSessionStore.getState().clearSelection()
@@ -468,6 +477,7 @@ export const useNavigationStore = create<NavigationStore>((set, get) => ({
           pendingWslSupportPrefill: {
             projectId,
             doc,
+            setupSessionToken,
             requestId: navigation.explicitNavigationRevision
           }
         }
@@ -487,7 +497,16 @@ export const useNavigationStore = create<NavigationStore>((set, get) => ({
     )
   },
 
+  requestWslSetupProjectCreation: () => {
+    set((state) => ({
+      ...navigationState(state, 'user', { view: 'home' }),
+      pendingProjectCreation: true,
+      pendingWslSetupAfterProjectCreation: true
+    }))
+  },
+
   consumeProjectCreation: () => set({ pendingProjectCreation: false }),
+  consumeWslSetupProjectCreation: () => set({ pendingWslSetupAfterProjectCreation: false }),
 
   // Mentions never route between Projects. Keeping this guard at the Navigation boundary prevents a
   // dialog caller from leaking an Artifact locator into whichever composer happens to mount next.
