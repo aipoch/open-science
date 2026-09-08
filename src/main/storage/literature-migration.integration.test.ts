@@ -193,7 +193,7 @@ describe('literature data relocation', () => {
       state: 'review',
       createdAt: 1,
       updatedAt: 1,
-      rows: [{ id: 'paper', status: 'ready', checked: true }]
+      rows: [{ id: 'paper', status: 'ready', checked: true, message: 'Retained review result' }]
     }
     const path = join(source, 'literature', 'batch-jobs.json')
     await put(path, JSON.stringify({ version: 1, jobs: [job] }))
@@ -203,9 +203,9 @@ describe('literature data relocation', () => {
     } finally {
       await oldJobs.close()
     }
-    expect(JSON.parse(await readFile(path, 'utf8'))).toEqual({ version: 2, jobIds: [id] })
+    expect(JSON.parse(await readFile(path, 'utf8'))).toEqual({ version: 3, jobIds: [id] })
     // A durable write can survive a crash before rename; the existing reader recovers this file.
-    const record = join(`${path}.d`, `${id}.json`)
+    const record = join(`${path}.d`, id, 'task.json')
     await rename(record, `${record}.123.tmp`)
     await copyAndCommit()
     const reopened = jobsAt(target)

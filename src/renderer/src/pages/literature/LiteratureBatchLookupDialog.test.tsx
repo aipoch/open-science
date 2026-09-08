@@ -3,7 +3,11 @@ import { act, cleanup, fireEvent, render, screen, within } from '@testing-librar
 import { StrictMode, useState } from 'react'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { literatureItemInputSchema, type LiteratureItemView } from '../../../../shared/literature'
-import type { LiteratureJob, LiteratureJobRequest } from '../../../../shared/literature-jobs'
+import type {
+  LiteratureJob,
+  LiteratureJobView,
+  LiteratureJobRequest
+} from '../../../../shared/literature-jobs'
 import { LiteratureBatchLookupDialog } from './LiteratureBatchLookupDialog'
 
 const item: LiteratureItemView = {
@@ -18,7 +22,7 @@ const item: LiteratureItemView = {
 }
 const id = '9323d39a-2ae2-49c8-8826-a589c78f1f5d'
 let job: LiteratureJob
-const jobs = vi.fn<(request: LiteratureJobRequest) => Promise<{ jobs: LiteratureJob[] }>>(
+const jobs = vi.fn<(request: LiteratureJobRequest) => Promise<{ jobs: LiteratureJobView[] }>>(
   async () => ({ jobs: [structuredClone(job)] })
 )
 const onClose = vi.fn()
@@ -516,3 +520,78 @@ it('reports failed searches instead of completion when no candidates are ready',
   )
   expect(screen.getByRole('button', { name: 'Search again' })).toBeTruthy()
 })
+
+it.each([false, true])(
+  'keeps later review rows after saving a draft with a transient continuation failure: %s',
+  async (failContinuation) => {
+    job.state = 'review'
+    job.rows[0].status = 'ready'
+    job.rows.push({
+      ...job.rows[0],
+      id: 'second',
+      item: { ...item, id: 'second', item: { ...item.item, title: 'Second paper' } }
+    })
+    let reviewed = false
+    let continuationAvailable = !failContinuation
+    jobs.mockImplementation(async (request) => {
+      if (request.action === 'review') {
+        reviewed = true
+        for (const selection of request.selections)
+          Object.assign(
+            job.rows.find((row) => row.id === selection.itemId)!,
+            selection
+          )
+        job.updatedAt++
+      }
+      if (request.action === 'get' && request.rowOffset === 1) {
+        if (!continuationAvailable) throw new Error('Continuation unavailable')
+        return {
+          jobs: [
+            {
+              ...structuredClone(job),
+              rows: [structuredClone(job.rows[1])],
+              rowOffset: 1,
+              totalRows: 2
+            }
+          ]
+        }
+      }
+      if (reviewed && request.action !== 'apply')
+        return {
+          jobs: [
+            {
+              ...structuredClone(job),
+              rows: [structuredClone(job.rows[0])],
+              rowOffset: 0,
+              nextRowOffset: 1,
+              totalRows: 2
+            }
+          ]
+        }
+      return { jobs: [structuredClone(job)] }
+    })
+    open(id)
+    await flush()
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Select reference: First paper' }))
+    await act(async () => {})
+    if (failContinuation) {
+      expect(screen.getByRole('alert')).toBeTruthy()
+      continuationAvailable = true
+      fireEvent.click(screen.getByRole('button', { name: 'Retry' }))
+      await act(async () => {})
+      expect(jobs.mock.calls.filter(([request]) => request.action === 'review')).toHaveLength(2)
+    }
+    expect(
+      (screen.getByRole('checkbox', { name: 'Select reference: Second paper' }) as HTMLInputElement)
+        .checked
+    ).toBe(true)
+    expect(screen.queryByRole('alert')).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: 'Apply selected (1)' }))
+    await act(async () => {})
+    expect(jobs).toHaveBeenCalledWith({
+      action: 'apply',
+      jobId: id,
+      selections: [{ itemId: 'second', candidateId: undefined }]
+    })
+  }
+)

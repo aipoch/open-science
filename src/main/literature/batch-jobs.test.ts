@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { mkdtemp, rm, writeFile, readFile, stat } from 'node:fs/promises'
+import { mkdtemp, rm, writeFile, readFile, stat, cp } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, expect, it, vi } from 'vitest'
@@ -83,7 +83,7 @@ async function setup(): Promise<{
 async function state(
   jobs: LiteratureBatchJobs,
   jobId: string
-): Promise<import('../../shared/literature-jobs').LiteratureJob> {
+): Promise<import('../../shared/literature-jobs').LiteratureJobView> {
   return (await jobs.run({ action: 'get', jobId })).jobs[0]!
 }
 
@@ -223,7 +223,7 @@ it('persists review choices and writes only the changed task checkpoint', async 
     await jobs.run({ action: 'create', mode: 'full-text', itemIds: ['a'], requestId: id })
     await vi.waitFor(async () => expect((await state(jobs, id)).state).toBe('review'))
   }
-  const checkpoint = join(`${path}.d`, `${first}.json`)
+  const checkpoint = join(`${path}.d`, first, 'task.json')
   const before = await stat(checkpoint)
   const indexBefore = await readFile(path, 'utf8')
   await jobs.run({
@@ -423,7 +423,7 @@ it('keeps a failed apply checkpoint in review and allows the same command to be 
   await vi.waitFor(async () => expect((await state(jobs, jobId)).state).toBe('review'))
   const directory = `${path}.d`
   const backup = `${path}.saved`
-  const checkpoint = await readFile(join(directory, `${jobId}.json`), 'utf8')
+  const checkpoint = await readFile(join(directory, jobId, 'task.json'), 'utf8')
   await rename(directory, backup)
   try {
     await writeFile(directory, 'block checkpoint directory creation')
@@ -434,7 +434,7 @@ it('keeps a failed apply checkpoint in review and allows the same command to be 
     await rm(directory, { force: true })
     await rename(backup, directory)
   }
-  expect(await readFile(join(directory, `${jobId}.json`), 'utf8')).toBe(checkpoint)
+  expect(await readFile(join(directory, jobId, 'task.json'), 'utf8')).toBe(checkpoint)
   expect(options.metadata.applyReviewed).not.toHaveBeenCalled()
   expect(await state(jobs, jobId)).toMatchObject({ state: 'review', phase: 'search' })
   await jobs.run({ action: 'apply', jobId, selections: [{ itemId: 'a' }] })
@@ -498,20 +498,19 @@ it.each(['review', 'retry', 'resume', 'remove'] as const)(
     // Finish the search checkpoint before injecting a command-only write failure.
     await jobs.close()
     if (action === 'resume') {
-      const record = JSON.parse(await readFile(join(`${path}.d`, `${jobId}.json`), 'utf8'))
+      const record = JSON.parse(await readFile(join(`${path}.d`, jobId, 'task.json'), 'utf8'))
       record.state = 'paused'
-      await writeFile(join(`${path}.d`, `${jobId}.json`), JSON.stringify(record))
+      await writeFile(join(`${path}.d`, jobId, 'task.json'), JSON.stringify(record))
     }
     jobs = new LiteratureBatchJobs(options)
     cleanup.push(() => jobs.close())
     const before = await state(jobs, jobId)
     // Block the real write destination, retaining all original files for restoration.
-    const target = action === 'remove' ? path : `${path}.d`
+    const target = action === 'remove' ? path : join(`${path}.d`, jobId, 'task.json')
     const backup = `${target}.saved`
     await rename(target, backup)
     try {
-      if (action === 'remove') await mkdir(target)
-      else await writeFile(target, 'unavailable directory')
+      await mkdir(target)
       await expect(
         jobs.run(
           action === 'review'
@@ -746,7 +745,7 @@ it('reloads repaired checkpoints on the same service without dropping any indexe
   }
   await jobs.close()
   const indexBefore = await readFile(path, 'utf8')
-  const checkpoint = join(`${path}.d`, `${first}.json`)
+  const checkpoint = join(`${path}.d`, first, 'task.json')
   await rename(checkpoint, `${checkpoint}.saved`)
   const reopened = new LiteratureBatchJobs(options)
   cleanup.push(() => reopened.close())
@@ -806,7 +805,8 @@ it('recognizes its committed metadata after replaying the pre-commit checkpoint'
   )
   const enricher = new LiteratureMetadataEnricher(catalog, fetchMetadata)
   const jobId = randomUUID()
-  const checkpoint = join(`${path}.d`, `${jobId}.json`)
+  const checkpoint = join(`${path}.d`, jobId, 'task.json')
+  const savedDirectory = `${path}.pre-commit`
   let beforeCommit = ''
   const serviceOptions = { ...options, catalog, metadata: enricher }
   const jobs = new LiteratureBatchJobs({
@@ -816,6 +816,7 @@ it('recognizes its committed metadata after replaying the pre-commit checkpoint'
       applyReviewed: async (review) => {
         // The service has durably accepted apply, but has not yet committed catalog data.
         beforeCommit = await readFile(checkpoint, 'utf8')
+        await cp(join(`${path}.d`, jobId), savedDirectory, { recursive: true })
         return enricher.applyReviewed(review)
       }
     }
@@ -825,13 +826,16 @@ it('recognizes its committed metadata after replaying the pre-commit checkpoint'
   await vi.waitFor(async () => expect((await state(jobs, jobId)).state).toBe('review'))
   await jobs.run({ action: 'apply', jobId, selections: [{ itemId: created.id }] })
   await vi.waitFor(async () => expect((await state(jobs, jobId)).state).toBe('completed'))
+  expect((await state(jobs, jobId)).rows[0].status).toBe('done')
+  expect((await state(jobs, jobId)).rows[0].message).toBeUndefined()
   await jobs.close()
   const committed = (await catalog.get(created.id))!
   expect(committed.item.containerTitle).toBe('Committed journal')
   expect(committed.metadataRevision).toBeGreaterThan(original.metadataRevision)
   expect(JSON.parse(beforeCommit)).toMatchObject({ state: 'running', phase: 'apply' })
   // Reconstruct only the crash window: catalog commit survived, task completion did not.
-  await writeFile(checkpoint, beforeCommit)
+  await rm(join(`${path}.d`, jobId), { recursive: true, force: true })
+  await cp(savedDirectory, join(`${path}.d`, jobId), { recursive: true })
   const reopened = new LiteratureBatchJobs(serviceOptions)
   cleanup.push(() => reopened.close())
   expect((await state(reopened, jobId)).state).toBe('paused')
@@ -855,13 +859,21 @@ it('restores a historically completed partial search without repeating completed
   await vi.waitFor(async () => expect((await state(jobs, jobId)).state).toBe('review'))
   await jobs.close()
   const checkpoint = join(`${path}.d`, `${jobId}.json`)
-  const stored = JSON.parse(await readFile(checkpoint, 'utf8'))
-  stored.state = 'completed'
-  stored.phase = 'apply'
-  stored.phaseItemIds = ['a']
-  stored.rows[0].status = 'done'
-  stored.rows.push({ id: 'b', status: 'pending', checked: true })
+  const stored = {
+    id: jobId,
+    mode: 'metadata',
+    state: 'completed',
+    phase: 'apply',
+    phaseItemIds: ['a'],
+    createdAt: 1,
+    updatedAt: 2,
+    rows: [
+      { id: 'a', status: 'done', checked: true, item: item('a'), metadata: preview('a') },
+      { id: 'b', status: 'pending', checked: true }
+    ]
+  }
   await writeFile(checkpoint, JSON.stringify(stored))
+  await writeFile(path, JSON.stringify({ version: 2, jobIds: [jobId] }))
   const reopened = new LiteratureBatchJobs(options)
   cleanup.push(() => reopened.close())
   expect(await state(reopened, jobId)).toMatchObject({
@@ -873,4 +885,166 @@ it('restores a historically completed partial search without repeating completed
   await reopened.run({ action: 'resume', jobId })
   await vi.waitFor(async () => expect((await state(reopened, jobId)).state).toBe('review'))
   expect(metadata).toHaveBeenCalledExactlyOnceWith({ mode: 'preview', itemId: 'b' })
+})
+
+it.each(['missing', 'corrupt'] as const)(
+  'removes a task with %s payloads without discarding other indexed tasks',
+  async (damage) => {
+    const { jobs, options, path } = await setup()
+    const removed = randomUUID()
+    const retained = randomUUID()
+    for (const jobId of [removed, retained]) {
+      await jobs.run({ action: 'create', mode: 'metadata', itemIds: ['a'], requestId: jobId })
+      await vi.waitFor(async () => expect((await state(jobs, jobId)).state).toBe('review'))
+    }
+    await jobs.close()
+    const directory = join(`${path}.d`, removed)
+    const header = JSON.parse(await readFile(join(directory, 'task.json'), 'utf8'))
+    const payload = join(directory, 'payloads', `${header.rows[0].payload}.json`)
+    if (damage === 'missing') await rm(payload)
+    else await writeFile(payload, '{invalid')
+    const reopened = new LiteratureBatchJobs(options)
+    cleanup.push(() => reopened.close())
+    expect((await reopened.run({ action: 'list' })).summaries).toHaveLength(2)
+    await expect(reopened.run({ action: 'get', jobId: removed })).rejects.toThrow()
+    await expect(reopened.run({ action: 'remove', jobId: removed })).resolves.toEqual({ jobs: [] })
+    await expect(stat(directory)).rejects.toMatchObject({ code: 'ENOENT' })
+    await reopened.close()
+    const restored = new LiteratureBatchJobs(options)
+    cleanup.push(() => restored.close())
+    expect((await restored.run({ action: 'list' })).summaries?.map(({ id }) => id)).toEqual([
+      retained
+    ])
+    expect((await state(restored, retained)).rows[0].status).toBe('ready')
+  }
+)
+
+it('reads a bounded task page without loading later payloads or retaining full row snapshots', async () => {
+  const { jobs, options, path, metadata } = await setup()
+  metadata.mockImplementation(async ({ itemId }) => ({
+    ...preview(itemId),
+    filled: [{ field: 'journal', value: 'P'.repeat(6 * 1024 * 1024) }]
+  }))
+  const jobId = randomUUID()
+  await jobs.run({ action: 'create', mode: 'metadata', itemIds: ['a', 'b', 'c'], requestId: jobId })
+  await vi.waitFor(
+    async () => expect((await jobs.run({ action: 'list' })).summaries?.[0].state).toBe('review'),
+    { timeout: 5000 }
+  )
+  await jobs.close()
+  const directory = join(`${path}.d`, jobId)
+  const header = JSON.parse(await readFile(join(directory, 'task.json'), 'utf8'))
+  await rm(join(directory, 'payloads', `${header.rows[2].payload}.json`))
+  const reopened = new LiteratureBatchJobs(options)
+  cleanup.push(() => reopened.close())
+  const result = await reopened.run({ action: 'get', jobId })
+  expect(result.jobs[0]).toMatchObject({
+    rowOffset: 0,
+    nextRowOffset: 1,
+    totalRows: 3,
+    rows: [{ id: 'a', metadata: { filled: [{ field: 'journal' }] } }]
+  })
+  expect(result.jobs[0].rows).toHaveLength(1)
+  await expect(reopened.run({ action: 'get', jobId, rowOffset: 2 })).rejects.toThrow()
+  // A read must not leave large payloads cached on the durable control rows.
+  await rm(join(directory, 'payloads', `${header.rows[0].payload}.json`))
+  await expect(reopened.run({ action: 'get', jobId })).rejects.toThrow()
+})
+
+it.each(['metadata', 'full-text'] as const)(
+  'replays an accepted %s create request with complete review rows after restart',
+  async (mode) => {
+    const { jobs, options } = await setup()
+    const request = { action: 'create' as const, mode, itemIds: ['a'], requestId: randomUUID() }
+    await jobs.run(request)
+    await vi.waitFor(async () =>
+      expect((await state(jobs, request.requestId)).state).toBe('review')
+    )
+    const before = await state(jobs, request.requestId)
+    await jobs.close()
+    const reopened = new LiteratureBatchJobs(options)
+    cleanup.push(() => reopened.close())
+    expect((await reopened.run(request)).jobs).toEqual([before])
+  }
+)
+it.each(['review', 'apply'] as const)(
+  'handles a first-page %s without reading unrelated later payloads',
+  async (action) => {
+    const { jobs, options, path, metadata } = await setup()
+    metadata.mockImplementation(async ({ itemId }) => ({
+      ...preview(itemId),
+      filled: [{ field: 'journal', value: 'P'.repeat(6 * 1024 * 1024) }]
+    }))
+    const jobId = randomUUID()
+    await jobs.run({
+      action: 'create',
+      mode: 'metadata',
+      itemIds: ['a', 'b', 'c'],
+      requestId: jobId
+    })
+    await vi.waitFor(
+      async () => expect((await jobs.run({ action: 'list' })).summaries?.[0].state).toBe('review'),
+      { timeout: 5000 }
+    )
+    await jobs.close()
+    const directory = join(`${path}.d`, jobId)
+    const header = JSON.parse(await readFile(join(directory, 'task.json'), 'utf8'))
+    await rm(join(directory, 'payloads', `${header.rows[2].payload}.json`))
+    const reopened = new LiteratureBatchJobs(options)
+    cleanup.push(() => reopened.close())
+    const result = await reopened.run(
+      action === 'review'
+        ? {
+            action,
+            jobId,
+            selections: [{ itemId: 'a', checked: false }]
+          }
+        : { action, jobId, selections: [{ itemId: 'a' }] }
+    )
+    expect(result.jobs[0]).toMatchObject({
+      rowOffset: 0,
+      nextRowOffset: 1,
+      totalRows: 3,
+      rows: [{ id: 'a', metadata: { filled: [{ field: 'journal' }] } }]
+    })
+    expect(result.jobs[0].rows).toHaveLength(1)
+    await expect(reopened.run({ action: 'get', jobId, rowOffset: 2 })).rejects.toThrow()
+    if (action === 'apply')
+      await vi.waitFor(async () =>
+        expect((await reopened.run({ action: 'list' })).summaries?.[0]).toMatchObject({
+          state: 'completed',
+          done: 1
+        })
+      )
+    // A read must not leave large payloads cached on the durable control rows.
+    const committedHeader =
+      action === 'apply'
+        ? await vi.waitFor(async () => {
+            const value = JSON.parse(await readFile(join(directory, 'task.json'), 'utf8'))
+            expect(value.state).toBe('completed')
+            return value
+          })
+        : header
+    await rm(join(directory, 'payloads', `${committedHeader.rows[0].payload}.json`))
+    await expect(reopened.run({ action: 'get', jobId })).rejects.toThrow()
+  }
+)
+
+it('releases worker payloads after their durable checkpoint', async () => {
+  const { jobs, path } = await setup()
+  const jobId = randomUUID()
+  await jobs.run({ action: 'create', mode: 'metadata', itemIds: ['a'], requestId: jobId })
+  await vi.waitFor(async () =>
+    expect((await jobs.run({ action: 'list' })).summaries?.[0].state).toBe('review')
+  )
+  const header = await vi.waitFor(async () => {
+    const value = JSON.parse(await readFile(join(`${path}.d`, jobId, 'task.json'), 'utf8'))
+    expect(value.state).toBe('review')
+    expect(value.rows[0].payload).toEqual(expect.any(String))
+    return value
+  })
+  await rm(join(`${path}.d`, jobId, 'payloads', `${header.rows[0].payload}.json`))
+  await expect(jobs.run({ action: 'get', jobId })).rejects.toThrow(
+    'checkpoint is missing or invalid'
+  )
 })

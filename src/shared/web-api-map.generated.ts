@@ -75,6 +75,7 @@ export const WEB_INVOKE_CHANNELS = {
   'lifecycle.getClientId': 'lifecycle:client-id',
   'literature.citationStyles': 'literature:citation-styles',
   'literature.completeMetadata': 'literature:complete-metadata',
+  'literature.exportRecord': 'literature:export-record',
   'literature.formatDocument': 'literature:format-document',
   'literature.formatReferences': 'literature:format-references',
   'literature.fullText': 'literature:full-text',

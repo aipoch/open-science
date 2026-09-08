@@ -1,3 +1,10 @@
+import { ApplicationCommandError } from '../../shared/application-command-contract'
+import {
+  LITERATURE_OVERSIZED_REFERENCE,
+  type LiteratureExportRecordRequest,
+  type LiteratureExportRecordResult
+} from '../../shared/literature-export'
+import { boundedLiteraturePage } from './response-page'
 import type { ContentRepository } from '../storage/content-repository'
 import { createHash, randomUUID } from 'node:crypto'
 
@@ -916,9 +923,21 @@ class LiteratureCatalog {
     })
   }
 
+  // The main-process agent adapter applies the existing MCP projection and output budget.
+  // This entry point is not exposed by the renderer/Web search command.
+  async searchForAgent(
+    request: LiteratureCatalogSearchRequest & { scope: 'library' }
+  ): Promise<LiteratureCatalogSearchPage> {
+    const client = await this.getClient()
+    return client.$transaction((transaction) => this.searchLibrary(request, transaction, false), {
+      timeout: 30_000
+    })
+  }
+
   private async searchLibrary(
     request: LiteratureCatalogSearchRequest,
-    client: Pick<LiteratureCatalogClient, 'literatureItem' | '$queryRaw'>
+    client: Pick<LiteratureCatalogClient, 'literatureItem' | '$queryRaw'>,
+    boundResponse = true
   ): Promise<LiteratureCatalogSearchPage> {
     const offset = Math.max(0, request.offset ?? 0)
     const limit = Math.min(100, Math.max(1, request.limit ?? 50))
@@ -1014,6 +1033,12 @@ class LiteratureCatalog {
         : Prisma.sql`"LiteratureItem" selected JOIN "LiteratureItem" i
           ON i.id = COALESCE(selected."mergedIntoItemId", selected.id)`
     const requestedId = request.itemIds === undefined ? Prisma.sql`i.id` : Prisma.sql`selected.id`
+    if (request.countOnly) {
+      const [count] = await client.$queryRaw<{ total: bigint }[]>(
+        Prisma.sql`SELECT COUNT(*) AS total FROM ${from} WHERE ${where}`
+      )
+      return { entries: [], totalCount: Number(count!.total) }
+    }
     const ids = await client.$queryRaw<
       { id: string; requestedId: string }[]
     >(Prisma.sql`SELECT i.id, ${requestedId} AS "requestedId" FROM ${from} WHERE ${where} ORDER BY ${orderBy}, ${requestedId} ASC
@@ -1036,13 +1061,51 @@ class LiteratureCatalog {
         })
       : []
     const byId = new Map(rows.map((row) => [row.id, row]))
+    const entries = ids.map(({ id, requestedId }) => ({
+      ...toItemView(byId.get(id)!),
+      id: requestedId
+    }))
+    const page = boundResponse
+      ? boundedLiteraturePage(
+          entries,
+          0,
+          limit,
+          (row) =>
+            new ApplicationCommandError('command-failed', LITERATURE_OVERSIZED_REFERENCE + row.id)
+        )
+      : { entries }
     return {
-      entries: ids.map(({ id, requestedId }) => ({
-        ...toItemView(byId.get(id)!),
-        id: requestedId
-      })),
+      entries: page.entries,
       totalCount,
-      nextOffset: offset + limit < totalCount ? offset + limit : undefined
+      nextOffset:
+        offset + page.entries.length < totalCount ? offset + page.entries.length : undefined
+    }
+  }
+
+  async exportRecord(
+    request: LiteratureExportRecordRequest
+  ): Promise<LiteratureExportRecordResult> {
+    const client = await this.getClient()
+    // Export the retained record itself, including Trash metadata and merge provenance.
+    // Normal get() deliberately hides deleted records and follows active aliases.
+    const row = await client.literatureItem.findUnique({
+      where: { id: request.itemId },
+      include: itemInclude
+    })
+    if (!row) throw new Error('Reference unavailable')
+    const content = JSON.stringify(toItemView(row))
+    const digest = createHash('sha256').update(content).digest('hex')
+    const offset = request.offset ?? 0
+    if ((offset > 0 && !request.digest) || (request.digest && request.digest !== digest))
+      throw new Error('Reference changed during export. Try again.')
+    if (offset >= content.length) throw new Error('Invalid reference export offset.')
+    // Offsets are UTF-16 code units. Concatenate chunks before encoding the complete JSON so
+    // supplementary Unicode characters split at a chunk boundary remain lossless.
+    const end = Math.min(content.length, offset + 262144)
+    return {
+      chunk: content.slice(offset, end),
+      digest,
+      nextOffset: end < content.length ? end : undefined
     }
   }
 

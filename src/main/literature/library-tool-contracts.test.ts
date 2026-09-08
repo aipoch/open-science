@@ -575,3 +575,33 @@ it('searches survivor metadata through selected merged aliases and preserves the
       ).items
     ).toEqual([])
   }))
+
+it('compacts an oversized catalog record before returning the agent library search result', async () =>
+  db(async (catalog) => {
+    const abstract = 'A'.repeat(11 * 1024 * 1024)
+    const receipt = await catalog.transact({
+      kind: 'create-item',
+      item: item('Oversized agent reference', { abstract })
+    })
+    const search = production('searchLibrary', catalog)
+    const api = await open({
+      searchLibrary: (request) => search({ ...request, projectId: 'project-1' })
+    })
+    try {
+      const result = await api.client.callTool({
+        name: 'search_library',
+        arguments: { scope: 'library', query: 'Oversized agent reference' }
+      })
+      expect(result.isError).not.toBe(true)
+      expect(result.structuredContent).toMatchObject({
+        totalCount: 1,
+        items: [{ id: receipt.id, abstractLength: abstract.length, abstractTruncated: true }]
+      })
+      expect(JSON.stringify(result.content).length).toBeLessThan(50000)
+      await expect(
+        catalog.search({ scope: 'library', query: 'Oversized agent reference' })
+      ).rejects.toThrow('display budget')
+    } finally {
+      await api.close()
+    }
+  }))

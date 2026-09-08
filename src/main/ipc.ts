@@ -4644,6 +4644,7 @@ const createApplicationModules = async (
           exports: { bibtex, ris }
         }
       },
+      exportRecord: (request) => literatureCatalog.exportRecord(request),
       get: (itemId) => literatureCatalog.get(itemId),
       importPdf: (request) => literaturePdfImporter.import(request),
       importRecords: async (request) => {

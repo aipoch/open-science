@@ -1,3 +1,6 @@
+import { oversizedLiteratureReference } from '../../../../shared/literature-export'
+import { LiteratureOversizedNotice } from './LiteratureOversizedNotice'
+import { readLiteratureJobPages } from './literature-read-pages'
 import { useEffect, useEffectEvent, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { LoaderCircle, X } from 'lucide-react'
@@ -30,8 +33,8 @@ import {
 type BatchLookupMode = 'metadata' | 'full-text'
 const progressClassName =
   'h-1.5 w-full overflow-hidden rounded-full [&::-webkit-progress-bar]:bg-muted [&::-webkit-progress-value]:bg-primary [&::-moz-progress-bar]:bg-primary'
-type Row = import('../../../../shared/literature-jobs').LiteratureJobRow
-type Job = import('../../../../shared/literature-jobs').LiteratureJob
+type Row = import('../../../../shared/literature-jobs').LiteratureJobRowView
+type Job = import('../../../../shared/literature-jobs').LiteratureJobView
 
 export const LiteratureBatchLookupDialog = ({
   itemIds,
@@ -61,6 +64,7 @@ export const LiteratureBatchLookupDialog = ({
       checked: true
     }))
   )
+  const [oversizedItemId, setOversizedItemId] = useState<string>()
   const [error, setError] = useState(false)
   const [sending, setSending] = useState(false)
   const jobRef = useRef<Job | undefined>(undefined)
@@ -126,10 +130,12 @@ export const LiteratureBatchLookupDialog = ({
       if (inFlight) return
       inFlight = true
       try {
-        const result = await window.api.literature.jobs(
-          id
-            ? { action: 'get', jobId: id, ifUpdatedAt: jobRef.current?.updatedAt }
-            : { action: 'create', mode, itemIds, requestId }
+        const result = await readLiteratureJobPages(
+          await window.api.literature.jobs(
+            id
+              ? { action: 'get', jobId: id, ifUpdatedAt: jobRef.current?.updatedAt }
+              : { action: 'create', mode, itemIds, requestId }
+          )
         )
         if (!active) return
         const value = result.jobs[0]
@@ -139,9 +145,13 @@ export const LiteratureBatchLookupDialog = ({
         } else if (!jobRef.current) throw new Error('Task unavailable')
         else if (result.progress || jobRef.current.progress)
           setJob((current) => (current ? { ...current, progress: result.progress } : current))
+        setOversizedItemId(undefined)
         if (pendingDrafts.current.size === 0 && !failedCommand.current) setError(false)
-      } catch {
-        if (active) setError(true)
+      } catch (error) {
+        if (active) {
+          setOversizedItemId(oversizedLiteratureReference(error))
+          setError(true)
+        }
       } finally {
         inFlight = false
         const running =
@@ -177,11 +187,13 @@ export const LiteratureBatchLookupDialog = ({
       const currentJob = jobRef.current
       const selections = [...pendingDrafts.current.values()]
       if (!currentJob || selections.length === 0) return
-      const result = await window.api.literature.jobs({
-        action: 'review',
-        jobId: currentJob.id,
-        selections
-      })
+      const result = await readLiteratureJobPages(
+        await window.api.literature.jobs({
+          action: 'review',
+          jobId: currentJob.id,
+          selections
+        })
+      )
       for (const selection of selections) {
         if (pendingDrafts.current.get(selection.itemId) === selection)
           pendingDrafts.current.delete(selection.itemId)
@@ -214,7 +226,7 @@ export const LiteratureBatchLookupDialog = ({
     try {
       failedCommand.current = request
       await saveDrafts()
-      const result = await window.api.literature.jobs(request)
+      const result = await readLiteratureJobPages(await window.api.literature.jobs(request))
       if (result.jobs[0]) receive(result.jobs[0])
       failedCommand.current = undefined
       setError(false)
@@ -370,7 +382,8 @@ export const LiteratureBatchLookupDialog = ({
                 <p>{statusHint}</p>
               </>
             ) : null}
-            {error ? (
+            {oversizedItemId ? <LiteratureOversizedNotice itemId={oversizedItemId} /> : null}
+            {error && !oversizedItemId ? (
               <LiteratureErrorNotice
                 title={t('Background task could not be updated. Try again.')}
                 primaryButton={{
