@@ -68,3 +68,40 @@ describe('Electron Playwright concurrency', () => {
     }
   )
 })
+
+it('partitions the selected Electron suites across three shards without losing or repeating tests', () => {
+  const collect = (shard?: string): string[] => {
+    const run = spawnSync(
+      process.execPath,
+      [
+        require.resolve('@playwright/test/cli'),
+        'test',
+        '--list',
+        '--reporter=json',
+        '--fully-parallel',
+        ...(shard ? [`--shard=${shard}`] : []),
+        'e2e/electron-foundation.spec.ts',
+        'e2e/settings-persistence.spec.ts',
+        'e2e/windows-window-system.spec.ts',
+        'e2e/launch-environment.spec.ts',
+        'e2e/message-tool-layout-stability.spec.ts',
+        'e2e/workspace-project-switcher.spec.ts',
+        'e2e/workspace-conversation.spec.ts',
+        'e2e/workspace-files.spec.ts'
+      ],
+      { encoding: 'utf8', timeout: 20_000 }
+    )
+    expect(run.status, run.stderr).toBe(0)
+    const report = JSON.parse(run.stdout) as JSONReport
+    const visit = (suites: JSONReport['suites']): string[] =>
+      suites.flatMap((suite) => [
+        ...suite.specs.map((spec) => spec.id),
+        ...visit(suite.suites ?? [])
+      ])
+    return visit(report.suites)
+  }
+  const expected = collect()
+  const actual = [1, 2, 3].flatMap((index) => collect(`${index}/3`))
+  expect(new Set(actual).size).toBe(actual.length)
+  expect(actual.sort()).toEqual(expected.sort())
+}, 90_000)
