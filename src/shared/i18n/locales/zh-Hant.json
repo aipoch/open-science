@@ -4721,6 +4721,10 @@
     "Snapshot unavailable": "快照無法使用",
     "This older record does not verify delivered evidence or preserve every corpus snapshot.": "此舊記錄未核實傳回的證據，也未儲存全部語料快照。",
     "Evidence counts describe content returned to the Agent, not completed reading. Candidates are Agent-reported and checked against retrieved records. Search counts below describe individual result pages.": "證據數量表示傳回給智能體的內容，不代表已完成閱讀。候選數量由智能體申報，並根據檢索記錄驗證。下方檢索數量分別對應各次傳回的結果頁。",
-    "Saved reference metadata. Attachments reflect the current Library entry.": "已儲存的文獻中繼資料。附件來自目前文獻庫項目。"
+    "Saved reference metadata. Attachments reflect the current Library entry.": "已儲存的文獻中繼資料。附件來自目前文獻庫項目。",
+    "The update could not be confirmed. Check the Inbox before trying again.": "無法確認更新結果。請檢查收件匣後再試。",
+    "Already restored: {{restored}}. Accepted or unavailable, skipped: {{skipped}}. Still dismissed: {{remaining}}.": "已還原：{{restored}}。已收錄或無法使用，已略過：{{skipped}}。仍已忽略：{{remaining}}。",
+    "The remaining references could not be checked. Recheck before undoing.": "無法核對剩餘參考文獻。請重新核對後再復原。",
+    "Project counts could not be refreshed.": "無法重新整理專案計數。"
   }
 }

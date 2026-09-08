@@ -188,6 +188,7 @@ type PendingLiteratureReading = readonly PdfReadingDocument[]
 type DismissedCandidateUndo = Readonly<{
   candidateIds: readonly string[]
   detail: string
+  needsRecheck?: boolean
 }>
 
 const OPEN_DIALOG_SELECTOR =
@@ -237,6 +238,7 @@ const LITERATURE_DEFAULT_PAGE_SIZE = 25
 const LITERATURE_PAGE_SIZES = [25, 50, 100] as const
 const LITERATURE_SIDEBAR_GROUP_LIMIT = 5
 const LITERATURE_BATCH_COMMAND_SIZE = 200
+const LITERATURE_INBOX_COMMAND_SIZE = 100
 
 type LiteratureSelectionSnapshot = Readonly<{
   selectedIds: ReadonlySet<string>
@@ -1331,6 +1333,9 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
   const [linkedItemError, setLinkedItemError] = useState<string>()
   const [pendingCandidateId, setPendingCandidateId] = useState<string>()
   const [dismissedCandidateUndo, setDismissedCandidateUndo] = useState<DismissedCandidateUndo>()
+  const [candidateUpdateUncertain, setCandidateUpdateUncertain] = useState(false)
+  const [candidateCountsFailed, setCandidateCountsFailed] = useState(false)
+  const [undoNotice, setUndoNotice] = useState<string>()
   const [collectionPendingDelete, setCollectionPendingDelete] = useState<LiteratureCollectionView>()
   const [isDeletingCollection, setIsDeletingCollection] = useState(false)
   const [collectionDeleteError, setCollectionDeleteError] = useState<string>()
@@ -1892,41 +1897,98 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
     })
   }
 
+  const dismissedUndo = (candidateIds: readonly string[]): DismissedCandidateUndo | undefined =>
+    candidateIds.length
+      ? {
+          candidateIds,
+          detail: t('{{count}} references', {
+            count: candidateIds.length,
+            defaultValue_one: '{{count}} reference'
+          })
+        }
+      : undefined
+
+  const refreshCandidateProjectCounts = async (): Promise<void> => {
+    try {
+      await loadProjectCounts()
+      setCandidateCountsFailed(false)
+    } catch {
+      setCandidateCountsFailed(true)
+    }
+  }
+
+  const retryCandidateReads = async (): Promise<void> => {
+    if (isBatching || pendingCandidateId) return
+    setIsBatching(true)
+    setCandidateUpdateUncertain(false)
+    try {
+      await Promise.all([loadEntries(true), refreshCandidateProjectCounts()])
+    } finally {
+      setIsBatching(false)
+    }
+  }
+
+  const submitCandidateChange = async (
+    candidateIds: string[],
+    state: 'accepted' | 'dismissed',
+    command: Extract<
+      LiteratureCatalogCommand,
+      { kind: 'accept-candidate' | 'dismiss-candidate' | 'settle-candidates' }
+    >
+  ): Promise<boolean> => {
+    setError(undefined)
+    setCandidateUpdateUncertain(false)
+    setUndoNotice(undefined)
+    try {
+      await window.api.literature.transact(command)
+    } catch {
+      // A rejected transport response does not prove that the transaction rolled back.
+      // Reload handles its own read errors; never put a saved candidate snapshot back here.
+      await Promise.all([loadEntries(true), refreshCandidateProjectCounts()])
+      setCandidateUpdateUncertain(true)
+      return false
+    }
+    if (state === 'dismissed') {
+      setDismissedCandidateUndo((current) => {
+        const candidateIdsToUndo = [...new Set([...(current?.candidateIds ?? []), ...candidateIds])]
+        const undo = dismissedUndo(candidateIdsToUndo)!
+        return {
+          ...undo,
+          needsRecheck: current?.needsRecheck,
+          detail:
+            candidateIdsToUndo.length === 1
+              ? (candidates.find(({ id }) => id === candidateIdsToUndo[0])?.candidate.item.title ??
+                undo.detail)
+              : undo.detail
+        }
+      })
+    }
+    const settledIds = new Set(candidateIds)
+    setCandidates((current) => current.filter(({ id }) => !settledIds.has(id)))
+    candidateIds.forEach((id) => selectionStore.remove(id))
+    setInboxPendingCount((current) =>
+      current === undefined ? current : Math.max(0, current - candidateIds.length)
+    )
+    // Committed writes stay committed even when an independent refresh fails.
+    await Promise.all([
+      loadEntries(true),
+      ...(state === 'accepted' ? [refreshCandidateProjectCounts()] : [])
+    ])
+    return true
+  }
+
   const changeCandidateState = async (
     candidateId: string,
     kind: 'accept-candidate' | 'dismiss-candidate'
   ): Promise<boolean> => {
+    if (isBatching || pendingCandidateId || entriesFailed) return false
     setPendingCandidateId(candidateId)
-    setError(undefined)
     try {
-      await window.api.literature.transact({ kind, candidateId })
-      if (kind === 'dismiss-candidate') {
-        setDismissedCandidateUndo((current) => {
-          const candidateIds = [...new Set([...(current?.candidateIds ?? []), candidateId])]
-          return {
-            candidateIds,
-            detail:
-              candidateIds.length === 1
-                ? (candidates.find(({ id }) => id === candidateId)?.candidate.item.title ?? '')
-                : t('{{count}} references', {
-                    count: candidateIds.length,
-                    defaultValue_one: '{{count}} reference'
-                  })
-          }
-        })
-      }
-      selectionStore.remove(candidateId)
-      setInboxPendingCount((current) =>
-        current === undefined ? current : Math.max(0, current - 1)
+      return await submitCandidateChange(
+        [candidateId],
+        kind === 'accept-candidate' ? 'accepted' : 'dismissed',
+        { kind, candidateId }
       )
-      await Promise.all([
-        loadEntries(true),
-        ...(kind === 'accept-candidate' ? [loadProjectCounts()] : [])
-      ])
-      return true
-    } catch {
-      setError(t('Literature could not be updated.'))
-      return false
     } finally {
       setPendingCandidateId(undefined)
     }
@@ -1934,61 +1996,92 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
 
   const settleSelectedCandidates = async (state: 'accepted' | 'dismissed'): Promise<void> => {
     const { selectedIds } = selectionStore.getSnapshot()
-    const candidateIds = candidates
-      .map(({ id }) => id)
-      .filter((candidateId) => selectedIds.has(candidateId))
-    if (candidateIds.length === 0 || isBatching) return
-    const previousCandidates = candidates
+    const candidateIds = candidates.map(({ id }) => id).filter((id) => selectedIds.has(id))
+    if (!candidateIds.length || isBatching || pendingCandidateId || entriesFailed) return
     setIsBatching(true)
-    setError(undefined)
-    setCandidates((current) => current.filter(({ id }) => !selectedIds.has(id)))
-    setInboxPendingCount((current) =>
-      current === undefined ? current : Math.max(0, current - candidateIds.length)
-    )
     clearSelection()
     try {
-      await window.api.literature.transact({
+      await submitCandidateChange(candidateIds, state, {
         kind: 'settle-candidates',
         candidateIds,
         state
       })
-      if (state === 'dismissed') {
-        setDismissedCandidateUndo((current) => {
-          const restoredIds = [...new Set([...(current?.candidateIds ?? []), ...candidateIds])]
-          return {
-            candidateIds: restoredIds,
-            detail: t('{{count}} references', {
-              count: restoredIds.length,
-              defaultValue_one: '{{count}} reference'
-            })
-          }
-        })
-      }
-      await Promise.all([loadEntries(true), ...(state === 'accepted' ? [loadProjectCounts()] : [])])
-    } catch {
-      setCandidates(previousCandidates)
-      setInboxPendingCount((current) =>
-        current === undefined ? current : current + candidateIds.length
-      )
-      setError(t('Literature could not be updated.'))
     } finally {
       setIsBatching(false)
     }
   }
 
-  const restoreDismissedCandidates = async (): Promise<void> => {
-    if (!dismissedCandidateUndo || isBatching) return
-    setIsBatching(true)
-    setError(undefined)
+  const recheckDismissedCandidates = async (candidateIds: readonly string[]): Promise<void> => {
+    setDismissedCandidateUndo((current) => current && { ...current, needsRecheck: true })
     try {
-      await window.api.literature.transact({
-        kind: 'restore-candidates',
-        candidateIds: [...dismissedCandidateUndo.candidateIds]
-      })
-      setDismissedCandidateUndo(undefined)
+      const wanted = new Set(candidateIds)
+      const readMatchingIds = async (inboxState: 'pending' | 'dismissed'): Promise<Set<string>> => {
+        const matching = new Set<string>()
+        let offset: number | undefined = 0
+        do {
+          const page = await window.api.literature.search({
+            scope: 'inbox',
+            inboxState,
+            limit: 100,
+            offset
+          })
+          for (const entry of page.entries) {
+            if (isCandidate(entry) && wanted.has(entry.id)) matching.add(entry.id)
+          }
+          offset = page.nextOffset
+        } while (offset !== undefined && matching.size < wanted.size)
+        return matching
+      }
+      const dismissed = await readMatchingIds('dismissed')
+      const pending =
+        dismissed.size === wanted.size ? new Set<string>() : await readMatchingIds('pending')
+      const remaining = candidateIds.filter((id) => dismissed.has(id))
+      const alreadyRestored = candidateIds.filter(
+        (id) => !dismissed.has(id) && pending.has(id)
+      ).length
+      setDismissedCandidateUndo(dismissedUndo(remaining))
+      setUndoNotice(
+        t(
+          'Already restored: {{restored}}. Accepted or unavailable, skipped: {{skipped}}. Still dismissed: {{remaining}}.',
+          {
+            restored: alreadyRestored,
+            skipped: candidateIds.length - remaining.length - alreadyRestored,
+            remaining: remaining.length
+          }
+        )
+      )
       await loadEntries(true)
     } catch {
-      setError(t('Literature could not be updated.'))
+      setUndoNotice(t('The remaining references could not be checked. Recheck before undoing.'))
+    }
+  }
+
+  const restoreDismissedCandidates = async (): Promise<void> => {
+    if (!dismissedCandidateUndo || isBatching || pendingCandidateId) return
+    setIsBatching(true)
+    setError(undefined)
+    setUndoNotice(undefined)
+    let remaining = [...dismissedCandidateUndo.candidateIds]
+    try {
+      if (dismissedCandidateUndo.needsRecheck) {
+        await recheckDismissedCandidates(remaining)
+        return
+      }
+      while (remaining.length) {
+        const batch = remaining.slice(0, LITERATURE_INBOX_COMMAND_SIZE)
+        try {
+          await window.api.literature.transact({ kind: 'restore-candidates', candidateIds: batch })
+        } catch {
+          await recheckDismissedCandidates(remaining)
+          return
+        }
+        remaining = remaining.slice(batch.length)
+        setDismissedCandidateUndo(dismissedUndo(remaining))
+        setInboxPendingCount((current) =>
+          current === undefined ? current : current + batch.length
+        )
+      }
+      await loadEntries(true)
     } finally {
       setIsBatching(false)
     }
@@ -3971,6 +4064,27 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
               />
             </div>
           ) : null}
+          {candidateUpdateUncertain || candidateCountsFailed ? (
+            <div className="mt-5">
+              <LiteratureErrorNotice
+                title={
+                  candidateUpdateUncertain
+                    ? t('The update could not be confirmed. Check the Inbox before trying again.')
+                    : t('Project counts could not be refreshed.')
+                }
+                secondaryButton={{
+                  label: t('Retry'),
+                  disabled: isBatching || Boolean(pendingCandidateId),
+                  onClick: () => void retryCandidateReads()
+                }}
+              />
+            </div>
+          ) : null}
+          {undoNotice ? (
+            <p role="status" className="mt-5 text-sm text-muted-foreground">
+              {undoNotice}
+            </p>
+          ) : null}
           {(linkedItemError || error) && !entriesLoading ? (
             <div className="mt-5">
               <LiteratureErrorNotice
@@ -4086,7 +4200,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
                             type="button"
                             className="absolute inset-0 cursor-pointer rounded-xl outline-none active:bg-muted/10 focus-visible:ring-3 focus-visible:ring-ring/50 disabled:cursor-not-allowed"
                             aria-label={`${t('View details')}: ${item.title}`}
-                            disabled={pending}
+                            disabled={isBatching || Boolean(pendingCandidateId)}
                             onClick={() => setSelectedCandidate(candidate)}
                           />
                           <LiteratureSelectionCheckbox
@@ -4127,7 +4241,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
                               type="button"
                               variant="outline"
                               className="w-full"
-                              disabled={pending}
+                              disabled={isBatching || Boolean(pendingCandidateId)}
                               onClick={() =>
                                 void changeCandidateState(candidate.id, 'dismiss-candidate')
                               }
@@ -4138,7 +4252,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
                             <Button
                               type="button"
                               className="w-full"
-                              disabled={pending}
+                              disabled={isBatching || Boolean(pendingCandidateId)}
                               onClick={() =>
                                 void changeCandidateState(candidate.id, 'accept-candidate')
                               }
@@ -4813,7 +4927,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
                 <Button
                   type="button"
                   variant="outline"
-                  disabled={pendingCandidateId === selectedCandidate.id}
+                  disabled={isBatching || Boolean(pendingCandidateId) || entriesFailed}
                   onClick={() => {
                     void changeCandidateState(selectedCandidate.id, 'dismiss-candidate').then(
                       (updated) => {
@@ -4827,7 +4941,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
                 </Button>
                 <Button
                   type="button"
-                  disabled={pendingCandidateId === selectedCandidate.id}
+                  disabled={isBatching || Boolean(pendingCandidateId) || entriesFailed}
                   onClick={() => {
                     void changeCandidateState(selectedCandidate.id, 'accept-candidate').then(
                       (updated) => {
@@ -5771,15 +5885,24 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
         onClose={() => setPreviewItem(undefined)}
       />
       {dismissedCandidateUndo ? (
-        <ActionToast
-          title={t('Dismissed from Inbox')}
-          detail={dismissedCandidateUndo.detail}
-          actionLabel={t('Undo')}
-          dismissLabel={t('Close')}
-          onAction={() => void restoreDismissedCandidates()}
-          onDismiss={() => setDismissedCandidateUndo(undefined)}
-          testId="literature-dismiss-undo"
-        />
+        <fieldset
+          className="contents"
+          disabled={isBatching || Boolean(pendingCandidateId)}
+          aria-busy={isBatching || Boolean(pendingCandidateId)}
+        >
+          <ActionToast
+            title={t('Dismissed from Inbox')}
+            detail={dismissedCandidateUndo.detail}
+            actionLabel={dismissedCandidateUndo.needsRecheck ? t('Recheck') : t('Undo')}
+            dismissLabel={t('Close')}
+            onAction={() => void restoreDismissedCandidates()}
+            onDismiss={() => {
+              setDismissedCandidateUndo(undefined)
+              setUndoNotice(undefined)
+            }}
+            testId="literature-dismiss-undo"
+          />
+        </fieldset>
       ) : null}
     </main>
   )

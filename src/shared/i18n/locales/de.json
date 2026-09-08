@@ -4874,6 +4874,10 @@
     "Snapshot unavailable": "Snapshot nicht verfügbar",
     "This older record does not verify delivered evidence or preserve every corpus snapshot.": "Dieser ältere Datensatz bestätigt keine bereitgestellten Belege und enthält nicht alle Korpus-Snapshots.",
     "Evidence counts describe content returned to the Agent, not completed reading. Candidates are Agent-reported and checked against retrieved records. Search counts below describe individual result pages.": "Die Belegzahlen beschreiben Inhalte, die dem Agenten bereitgestellt wurden, keine abgeschlossene Lektüre. Kandidatenzahlen werden vom Agenten angegeben und mit den Suchergebnissen abgeglichen. Die folgenden Suchzahlen gelten jeweils für einzelne Ergebnisseiten.",
-    "Saved reference metadata. Attachments reflect the current Library entry.": "Gespeicherte Referenzmetadaten. Anhänge stammen aus dem aktuellen Bibliothekseintrag."
+    "Saved reference metadata. Attachments reflect the current Library entry.": "Gespeicherte Referenzmetadaten. Anhänge stammen aus dem aktuellen Bibliothekseintrag.",
+    "The update could not be confirmed. Check the Inbox before trying again.": "Die Aktualisierung konnte nicht bestätigt werden. Prüfen Sie den Posteingang, bevor Sie es erneut versuchen.",
+    "Already restored: {{restored}}. Accepted or unavailable, skipped: {{skipped}}. Still dismissed: {{remaining}}.": "Bereits wiederhergestellt: {{restored}}. Angenommen oder nicht verfügbar, übersprungen: {{skipped}}. Weiterhin verworfen: {{remaining}}.",
+    "The remaining references could not be checked. Recheck before undoing.": "Die verbleibenden Referenzen konnten nicht geprüft werden. Prüfen Sie sie vor dem Rückgängigmachen erneut.",
+    "Project counts could not be refreshed.": "Die Projektanzahlen konnten nicht aktualisiert werden."
   }
 }
