@@ -4730,6 +4730,22 @@
     "Selected: {{selected}} / 20": "選択済み：{{selected}} / 20",
     "Compare selected references": "選択した文献を比較",
     "PDF added. Refreshing attachment details…": "PDF を追加しました。添付ファイルの詳細を更新しています…",
-    "You can close this dialog. The download continues in the background; reopen it to see progress.": "このダイアログを閉じても、ダウンロードはバックグラウンドで続行されます。進捗を確認するには、もう一度開いてください。"
+    "You can close this dialog. The download continues in the background; reopen it to see progress.": "このダイアログを閉じても、ダウンロードはバックグラウンドで続行されます。進捗を確認するには、もう一度開いてください。",
+    "Retry file verification": "ファイルを再検証",
+    "Remove attachment": "添付ファイルを削除",
+    "This PDF requires a password. Add an unlocked copy.": "この PDF にはパスワードが必要です。ロックを解除したコピーを追加してください。",
+    "This PDF is damaged or invalid. Select another file.": "この PDF は破損しているか無効です。別のファイルを選択してください。",
+    "This PDF could not be parsed. It may use unsupported features. Select another file or try again.": "この PDF を解析できませんでした。未対応の機能が使用されている可能性があります。別のファイルを選択するか、再試行してください。",
+    "Attachment actions for {{title}}": "{{title}} の添付ファイル操作",
+    "Attachment removed. Storage cleanup could not finish.": "添付ファイルを削除しました。ストレージのクリーンアップを完了できませんでした。",
+    "The attachment operation completed, but details could not be refreshed. Reopen this reference.": "添付ファイルの操作は完了しましたが、詳細を更新できませんでした。この文献を開き直してください。",
+    "The attachment operation failed. Try again.": "添付ファイルの操作に失敗しました。再試行してください。",
+    "File missing": "ファイルが見つかりません",
+    "File damaged": "ファイルが破損しています",
+    "File integrity verified": "ファイルの整合性を検証済み",
+    "File integrity not yet verified": "ファイルの整合性は未検証です",
+    "PDF not validated: exceeds the 50 MiB automatic processing limit.": "PDF は未検証です：自動処理の上限 50 MiB を超えています。",
+    "PDF structure not yet validated.": "PDF の構造は未検証です。",
+    "Attachment unavailable": "添付ファイルを利用できません"
   }
 }

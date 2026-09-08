@@ -329,6 +329,58 @@ describe('content repository', () => {
     await expect(readFile(published.path)).resolves.toEqual(bytes)
   })
 
+  it('orders a failed verification before repair across repository instances', async () => {
+    const verifier = await createRepository()
+    const sourcePath = join(storageRoot!, 'verification-repair.pdf')
+    await writeFile(sourcePath, 'original bytes')
+    const published = await verifier.publish({ sourcePath, contentType: 'application/pdf' })
+    await writeFile(published.path, 'broken')
+    const publisher = new ContentRepository({
+      storageRoot: storageRoot!,
+      getClient: async () => client!
+    })
+    let observe!: () => void
+    let release!: () => void
+    const observing = new Promise<void>((resolve) => {
+      observe = resolve
+    })
+    const gate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const update = client!.contentBlob.updateMany.bind(client!.contentBlob)
+    const spy = vi.spyOn(client!.contentBlob, 'updateMany').mockImplementation((async (
+      args: Parameters<typeof update>[0]
+    ) => {
+      if (args?.data.lastVerificationFailure === 'size-mismatch') {
+        observe()
+        await gate
+      }
+      return update(args)
+    }) as unknown as typeof update)
+    const verification = verifier.verify(published.id)
+    await observing
+    const publishing = publisher.publish({ sourcePath, contentType: 'application/pdf' })
+    try {
+      release()
+      await expect(verification).resolves.toMatchObject({
+        state: 'unavailable',
+        reason: 'size-mismatch'
+      })
+      await publishing
+      await expect(
+        client!.contentBlob.findUnique({ where: { id: published.id } })
+      ).resolves.toMatchObject({
+        state: 'available',
+        lastVerificationFailure: null,
+        lastVerificationAttemptAt: expect.any(Date)
+      })
+      await expect(verifier.verify(published.id)).resolves.toMatchObject({ state: 'available' })
+    } finally {
+      release()
+      spy.mockRestore()
+    }
+  })
+
   it('sweeps only old unreferenced blobs and leaves referenced bytes intact', async () => {
     const repository = await createRepository()
     const createdAt = new Date('2026-08-30T00:00:00.000Z')

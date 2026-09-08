@@ -2196,6 +2196,95 @@ describe('LiteratureLibraryPage', () => {
     })
   })
 
+  it('offers removal of an individual PDF while retaining the reference', async () => {
+    const entry = createLibraryItemWithPdf()
+    search.mockImplementation((request: { scope: string }) =>
+      Promise.resolve(request.scope === 'library' ? { entries: [entry] } : { entries: [] })
+    )
+    render(<LiteratureLibraryPage />)
+    fireEvent.click(screen.getByRole('button', { name: 'All references' }))
+    const detail = await openReferenceDetail(
+      await screen.findByText('Corrective Retrieval Augmented Generation')
+    )
+    expect(within(detail).getByRole('button', { name: 'Preview paper.pdf' })).not.toBeNull()
+    get.mockResolvedValue({ ...entry, attachments: [] })
+    fireEvent.click(
+      within(detail).getByRole('button', { name: 'Attachment actions for paper.pdf' })
+    )
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Remove attachment' }))
+    await waitFor(() =>
+      expect(transact).toHaveBeenCalledWith({
+        kind: 'delete-attachment',
+        itemId: entry.id,
+        attachmentId: 'attachment-1'
+      })
+    )
+    await waitFor(() =>
+      expect(within(detail).queryByRole('button', { name: 'Preview paper.pdf' })).toBeNull()
+    )
+    expect(within(detail).getByText(entry.item.title)).not.toBeNull()
+  })
+
+  it('shows a known missing file and retries verification through the attachment menu', async () => {
+    const entry = createLibraryItemWithPdf()
+    entry.attachments[0].versions[0].availability = 'unavailable'
+    entry.attachments[0].versions[0].verificationFailure = 'missing'
+    search.mockImplementation((request: { scope: string }) =>
+      Promise.resolve(request.scope === 'library' ? { entries: [entry] } : { entries: [] })
+    )
+    render(<LiteratureLibraryPage />)
+    fireEvent.click(screen.getByRole('button', { name: 'All references' }))
+    await screen.findByText('Attachment unavailable')
+    const detail = await openReferenceDetail(await screen.findByText(entry.item.title))
+    expect(within(detail).getByText('File missing')).not.toBeNull()
+    expect(
+      (within(detail).getByRole('button', { name: 'Preview paper.pdf' }) as HTMLButtonElement)
+        .disabled
+    ).toBe(true)
+    const repaired = createLibraryItemWithPdf()
+    repaired.attachments[0].versions[0].availability = 'available'
+    get.mockResolvedValue(repaired)
+    fireEvent.click(
+      within(detail).getByRole('button', { name: 'Attachment actions for paper.pdf' })
+    )
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Retry file verification' }))
+    await waitFor(() =>
+      expect(transact).toHaveBeenCalledWith({
+        kind: 'verify-attachment',
+        itemId: entry.id,
+        versionId: 'version-1'
+      })
+    )
+    await waitFor(() => expect(within(detail).queryByText('File missing')).toBeNull())
+    expect(within(detail).getByText('File integrity verified')).not.toBeNull()
+  })
+
+  it('retains attachment removal success when content cleanup is pending', async () => {
+    const entry = createLibraryItemWithPdf()
+    search.mockImplementation((request: { scope: string }) =>
+      Promise.resolve(request.scope === 'library' ? { entries: [entry] } : { entries: [] })
+    )
+    render(<LiteratureLibraryPage />)
+    fireEvent.click(screen.getByRole('button', { name: 'All references' }))
+    const detail = await openReferenceDetail(await screen.findByText(entry.item.title))
+    transact.mockResolvedValueOnce({
+      kind: 'item',
+      id: entry.id,
+      state: 'unlinked',
+      cleanupPending: true
+    })
+    get.mockResolvedValue({ ...entry, attachments: [] })
+    fireEvent.click(
+      within(detail).getByRole('button', { name: 'Attachment actions for paper.pdf' })
+    )
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Remove attachment' }))
+    expect(await within(detail).findByRole('alert')).not.toBeNull()
+    expect(
+      within(detail).getByText('Attachment removed. Storage cleanup could not finish.')
+    ).not.toBeNull()
+    expect(within(detail).queryByRole('button', { name: 'Preview paper.pdf' })).toBeNull()
+  })
+
   it('does not block PDF wheel events behind reference details and restores the detail modal on close', async () => {
     const itemWithPdf = createLibraryItemWithPdf()
     search.mockImplementation((request: { scope: string }) =>

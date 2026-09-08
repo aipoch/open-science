@@ -1,3 +1,4 @@
+import type { ContentRepository } from '../storage/content-repository'
 import { createHash, randomUUID } from 'node:crypto'
 
 import { Prisma, type PrismaClient } from '@prisma/client'
@@ -40,6 +41,7 @@ type LiteratureCatalogClient = Pick<
   | '$transaction'
   | 'contentBlob'
   | 'literatureAttachment'
+  | 'literatureAttachmentVersion'
   | 'literatureCollection'
   | 'literatureInboxCandidate'
   | 'literatureItem'
@@ -165,7 +167,16 @@ const itemInclude = {
   projects: { select: { projectId: true }, orderBy: { addedAt: 'asc' as const } },
   collections: { select: { collectionId: true }, orderBy: { addedAt: 'asc' as const } },
   attachments: {
-    include: { versions: { orderBy: { versionNumber: 'desc' as const } } },
+    include: {
+      versions: {
+        include: {
+          contentBlob: {
+            select: { state: true, lastVerificationFailure: true, lastVerificationAttemptAt: true }
+          }
+        },
+        orderBy: { versionNumber: 'desc' as const }
+      }
+    },
     orderBy: [{ sortOrder: 'asc' as const }, { createdAt: 'asc' as const }]
   }
 } satisfies Prisma.LiteratureItemInclude
@@ -226,6 +237,14 @@ const toItemView = (row: LiteratureItemRow): LiteratureItemView => ({
       sizeBytes: Number(version.sizeBytes),
       checksum: version.checksum,
       pageCount: version.pageCount ?? undefined,
+      availability:
+        version.contentBlob.state !== 'available' || version.contentBlob.lastVerificationFailure
+          ? 'unavailable'
+          : version.contentBlob.lastVerificationAttemptAt
+            ? 'available'
+            : 'unknown',
+      verificationFailure: version.contentBlob.lastVerificationFailure ?? undefined,
+      verificationAttemptAt: version.contentBlob.lastVerificationAttemptAt?.getTime(),
       createdAt: version.createdAt.getTime()
     })),
     createdAt: attachment.createdAt.getTime(),
@@ -646,7 +665,8 @@ const acceptInboxCandidate = async (
 class LiteratureCatalog {
   constructor(
     private readonly getClient: LiteratureCatalogClientProvider,
-    private readonly onTagAssignmentsChanged?: () => Promise<void>
+    private readonly onTagAssignmentsChanged?: () => Promise<void>,
+    private readonly content?: Pick<ContentRepository, 'verify' | 'sweep'>
   ) {}
 
   private async publishTagAssignmentsChanged(): Promise<void> {
@@ -1106,8 +1126,60 @@ class LiteratureCatalog {
         duplicateGroups.delete(await this.getClient())
     }
   }
+  private async deleteAttachment(
+    command: Extract<LiteratureCatalogCommand, { kind: 'delete-attachment' }>
+  ): Promise<LiteratureCatalogReceipt> {
+    if (!this.content) throw new Error('Literature content operations are unavailable.')
+    const client = await this.getClient()
+    const contentIds = await client.$transaction(async (transaction) => {
+      const attachment = await transaction.literatureAttachment.findFirst({
+        where: {
+          id: command.attachmentId,
+          itemId: command.itemId,
+          item: { deletedAt: null, mergedIntoItemId: null }
+        },
+        select: { versions: { select: { contentBlobId: true } } }
+      })
+      if (!attachment) throw new Error('Literature Attachment is unavailable.')
+      await transaction.literatureAttachment.delete({ where: { id: command.attachmentId } })
+      return attachment.versions.map(({ contentBlobId }) => contentBlobId)
+    })
+    let cleanupPending = false
+    try {
+      const sweep = await this.content.sweep({
+        contentIds,
+        createdBefore: new Date(Date.now() + 1)
+      })
+      cleanupPending = sweep.failedIds.length > 0
+    } catch {
+      cleanupPending = true
+    }
+    return { kind: 'item', id: command.itemId, state: 'unlinked', cleanupPending }
+  }
+
+  private async verifyAttachment(
+    command: Extract<LiteratureCatalogCommand, { kind: 'verify-attachment' }>
+  ): Promise<LiteratureCatalogReceipt> {
+    if (!this.content) throw new Error('Literature content operations are unavailable.')
+    const client = await this.getClient()
+    const version = await client.literatureAttachmentVersion.findFirst({
+      where: {
+        id: command.versionId,
+        attachment: { itemId: command.itemId, item: { deletedAt: null, mergedIntoItemId: null } }
+      },
+      select: { contentBlobId: true }
+    })
+    if (!version) throw new Error('Literature Attachment is unavailable.')
+    await this.content.verify(version.contentBlobId, { retry: true })
+    return { kind: 'item', id: command.itemId, state: 'present' }
+  }
+
   private execute(command: LiteratureCatalogCommand): Promise<LiteratureCatalogReceipt> {
     switch (command.kind) {
+      case 'delete-attachment':
+        return this.deleteAttachment(command)
+      case 'verify-attachment':
+        return this.verifyAttachment(command)
       case 'stage-candidate':
         return this.stageCandidate(command.candidate)
       case 'create-item':

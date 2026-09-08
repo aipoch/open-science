@@ -219,7 +219,8 @@ describe('application database (integration)', () => {
         '0032_permission_approval_summary',
         '0033_compute_job_harvest_retry',
         '0034_background_result_delivery',
-        '0035_literature_pdf_provenance'
+        '0035_literature_pdf_provenance',
+        '0036_content_verification_observation'
       ]
     })
 
@@ -1284,7 +1285,8 @@ describe('application database (integration)', () => {
         '0032_permission_approval_summary',
         '0033_compute_job_harvest_retry',
         '0034_background_result_delivery',
-        '0035_literature_pdf_provenance'
+        '0035_literature_pdf_provenance',
+        '0036_content_verification_observation'
       ]
     })
 

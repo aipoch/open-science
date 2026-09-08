@@ -4730,6 +4730,22 @@
     "Selected: {{selected}} / 20": "已選取：{{selected}} / 20",
     "Compare selected references": "比較所選文獻",
     "PDF added. Refreshing attachment details…": "PDF 已新增。正在重新整理附件詳細資訊…",
-    "You can close this dialog. The download continues in the background; reopen it to see progress.": "您可以關閉此對話框。下載將在背景繼續；重新開啟即可查看進度。"
+    "You can close this dialog. The download continues in the background; reopen it to see progress.": "您可以關閉此對話框。下載將在背景繼續；重新開啟即可查看進度。",
+    "Retry file verification": "重新驗證檔案",
+    "Remove attachment": "移除附件",
+    "This PDF requires a password. Add an unlocked copy.": "此 PDF 需要密碼。請新增已解鎖的副本。",
+    "This PDF is damaged or invalid. Select another file.": "此 PDF 已損壞或無效。請選擇其他檔案。",
+    "This PDF could not be parsed. It may use unsupported features. Select another file or try again.": "無法解析此 PDF，它可能使用了不受支援的功能。請選擇其他檔案或重試。",
+    "Attachment actions for {{title}}": "附件 {{title}} 的操作",
+    "Attachment removed. Storage cleanup could not finish.": "附件已移除，但儲存空間清理未能完成。",
+    "The attachment operation completed, but details could not be refreshed. Reopen this reference.": "附件操作已完成，但無法重新整理詳情。請重新開啟此文獻。",
+    "The attachment operation failed. Try again.": "附件操作失敗，請重試。",
+    "File missing": "檔案遺失",
+    "File damaged": "檔案損壞",
+    "File integrity verified": "檔案完整性已驗證",
+    "File integrity not yet verified": "檔案完整性尚未驗證",
+    "PDF not validated: exceeds the 50 MiB automatic processing limit.": "PDF 未驗證：超過 50 MiB 自動處理限制。",
+    "PDF structure not yet validated.": "PDF 結構尚未驗證。",
+    "Attachment unavailable": "附件無法使用"
   }
 }

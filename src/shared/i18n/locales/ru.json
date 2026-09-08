@@ -5176,6 +5176,22 @@
     "Selected: {{selected}} / 20": "Выбрано: {{selected}} / 20",
     "Compare selected references": "Сравнить выбранные источники",
     "PDF added. Refreshing attachment details…": "PDF добавлен. Обновление сведений о вложении…",
-    "You can close this dialog. The download continues in the background; reopen it to see progress.": "Можно закрыть это окно. Загрузка продолжится в фоновом режиме; откройте окно снова, чтобы увидеть ход загрузки."
+    "You can close this dialog. The download continues in the background; reopen it to see progress.": "Можно закрыть это окно. Загрузка продолжится в фоновом режиме; откройте окно снова, чтобы увидеть ход загрузки.",
+    "Retry file verification": "Повторно проверить файл",
+    "Remove attachment": "Удалить вложение",
+    "This PDF requires a password. Add an unlocked copy.": "Этот PDF защищён паролем. Добавьте разблокированную копию.",
+    "This PDF is damaged or invalid. Select another file.": "Этот PDF повреждён или недействителен. Выберите другой файл.",
+    "This PDF could not be parsed. It may use unsupported features. Select another file or try again.": "Не удалось разобрать этот PDF. Возможно, он использует неподдерживаемые функции. Выберите другой файл или повторите попытку.",
+    "Attachment actions for {{title}}": "Действия с вложением {{title}}",
+    "Attachment removed. Storage cleanup could not finish.": "Вложение удалено. Не удалось завершить очистку хранилища.",
+    "The attachment operation completed, but details could not be refreshed. Reopen this reference.": "Операция с вложением завершена, но не удалось обновить сведения. Откройте эту запись заново.",
+    "The attachment operation failed. Try again.": "Операция с вложением не удалась. Повторите попытку.",
+    "File missing": "Файл отсутствует",
+    "File damaged": "Файл повреждён",
+    "File integrity verified": "Целостность файла проверена",
+    "File integrity not yet verified": "Целостность файла ещё не проверена",
+    "PDF not validated: exceeds the 50 MiB automatic processing limit.": "PDF не проверен: превышен предел автоматической обработки в 50 MiB.",
+    "PDF structure not yet validated.": "Структура PDF ещё не проверена.",
+    "Attachment unavailable": "Вложение недоступно"
   }
 }
