@@ -6893,4 +6893,697 @@ describe('LiteratureLibraryPage', () => {
       await rm(root, { recursive: true, force: true })
     }
   }, 120000)
+  describe('detail request and snapshot consistency', () => {
+    const deferred = <T,>(): { promise: Promise<T>; resolve: (value: T) => void } => {
+      let resolve!: (value: T) => void
+      const promise = new Promise<T>((done) => {
+        resolve = done
+      })
+      return { promise, resolve }
+    }
+    const version = (revision: number, title: string): LiteratureItemView => ({
+      ...libraryItem,
+      metadataRevision: revision,
+      item: { ...libraryItem.item, title }
+    })
+    const showLibrary = async (): Promise<void> => {
+      search.mockImplementation(async (request: LiteratureCatalogSearchRequest) => ({
+        entries: request.scope === 'library' ? [libraryItem] : []
+      }))
+      render(<LiteratureLibraryPage />)
+      fireEvent.click(screen.getByRole('button', { name: 'All references' }))
+      await screen.findByText(libraryItem.item.title)
+    }
+    const editDetail = async (): Promise<void> => {
+      await openMenu(screen.getByRole('button', { name: 'More actions' }))
+      fireEvent.click(screen.getByRole('menuitem', { name: 'Edit metadata' }))
+    }
+    const closeDetail = (): void => {
+      fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Close' }))
+    }
+
+    it('keeps a reopened reference newer than an earlier save readback', async () => {
+      await showLibrary()
+      await openReferenceDetail(screen.getByText(libraryItem.item.title))
+      await editDetail()
+      const oldRead = deferred<LiteratureItemView>()
+      get.mockReturnValueOnce(oldRead.promise)
+      fireEvent.change(screen.getByLabelText('Title'), { target: { value: 'Saved version two' } })
+      fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+      await waitFor(() => expect(get).toHaveBeenCalledTimes(1))
+      closeDetail()
+      get.mockResolvedValueOnce(version(3, 'Latest version three'))
+      act(() => useNavigationStore.getState().openLiteratureItem(libraryItem.id, 'user'))
+      await screen.findByRole('heading', { name: 'Latest version three' })
+      await act(async () => oldRead.resolve(version(2, 'Saved version two')))
+      expect(
+        within(screen.getByRole('dialog')).getByRole('heading', { level: 2 }).textContent
+      ).toBe('Latest version three')
+      await editDetail()
+      get.mockResolvedValue(version(4, 'Latest version three'))
+      fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+      await waitFor(() =>
+        expect(transact).toHaveBeenLastCalledWith(
+          expect.objectContaining({
+            expectedMetadataRevision: 3
+          })
+        )
+      )
+    })
+
+    it('does not restore an old preview after reopening metadata lookup', async () => {
+      await showLibrary()
+      await openReferenceDetail(screen.getByText(libraryItem.item.title))
+      await openMenu(screen.getByRole('button', { name: 'More actions' }))
+      fireEvent.click(screen.getByRole('menuitem', { name: 'Complete metadata' }))
+      const reply = await completeMetadata.getMockImplementation()!({ mode: 'preview' })
+      const pending = deferred<typeof reply>()
+      completeMetadata.mockReturnValueOnce(pending.promise)
+      const callsBefore = completeMetadata.mock.calls.length
+      fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Search' }))
+      await waitFor(() => expect(completeMetadata).toHaveBeenCalledTimes(callsBefore + 1))
+      closeDetail()
+      await openReferenceDetail(screen.getByText(libraryItem.item.title))
+      await openMenu(screen.getByRole('button', { name: 'More actions' }))
+      fireEvent.click(screen.getByRole('menuitem', { name: 'Complete metadata' }))
+      expect(screen.queryByRole('button', { name: 'Apply metadata' })).toBeNull()
+      await act(async () => pending.resolve(reply))
+      const staleApply = screen.queryByRole('button', { name: 'Apply metadata' })
+      if (staleApply) {
+        fireEvent.click(staleApply)
+        await act(async () => {})
+      }
+      expect(completeMetadata).toHaveBeenCalledTimes(callsBefore + 1)
+      expect(screen.queryByRole('button', { name: 'Apply metadata' })).toBeNull()
+    })
+
+    it('hides a completed preview when its identifier is edited', async () => {
+      await showLibrary()
+      await openReferenceDetail(screen.getByText(libraryItem.item.title))
+      await openMenu(screen.getByRole('button', { name: 'More actions' }))
+      fireEvent.click(screen.getByRole('menuitem', { name: 'Complete metadata' }))
+      fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Search' }))
+      await screen.findByRole('button', { name: 'Apply metadata' })
+      fireEvent.change(screen.getByRole('textbox', { name: 'DOI' }), {
+        target: { value: '10.1234/new-identifier' }
+      })
+      expect(screen.queryByRole('button', { name: 'Apply metadata' })).toBeNull()
+    })
+
+    it('recovers a committed detail save by reading without a second transaction', async () => {
+      await showLibrary()
+      await openReferenceDetail(screen.getByText(libraryItem.item.title))
+      await editDetail()
+      let actualRevision = 1
+      transact.mockImplementation(async (command) => {
+        if (command.expectedMetadataRevision !== actualRevision) throw new Error('Metadata changed')
+        actualRevision += 1
+        return { kind: 'item', id: libraryItem.id, state: 'present' }
+      })
+      get.mockRejectedValueOnce(new Error('Read temporarily unavailable'))
+      fireEvent.change(screen.getByLabelText('Title'), { target: { value: 'Committed draft' } })
+      fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+      await waitFor(() => {
+        expect(actualRevision).toBe(2)
+        expect(get).toHaveBeenCalledTimes(1)
+        expect((screen.getByLabelText('Title') as HTMLInputElement).value).toBe('Committed draft')
+        expect(screen.getByRole('alert')).not.toBeNull()
+      })
+      get.mockResolvedValue(version(2, 'Committed draft'))
+      // Prefer the dedicated recovery action when present; the existing UI offers only Save.
+      fireEvent.click(
+        screen.queryByRole('button', { name: /retry|reload/i }) ??
+          screen.getByRole('button', { name: 'Save' })
+      )
+      await act(async () => {})
+      expect(transact).toHaveBeenCalledTimes(1)
+      await waitFor(() => expect(get).toHaveBeenCalledTimes(2))
+      expect(await screen.findByRole('heading', { name: 'Committed draft' })).not.toBeNull()
+    })
+
+    it('publishes background metadata completion to the open detail', async () => {
+      const summary = {
+        id: 'detail-background-job',
+        mode: 'metadata' as const,
+        phase: 'apply' as const,
+        state: 'running' as const,
+        total: 1,
+        checked: 1,
+        ready: 0,
+        done: 0,
+        failed: 0,
+        createdAt: 1,
+        updatedAt: 1,
+        completedItemIds: [] as string[]
+      }
+      vi.mocked(window.api.literature.jobs).mockResolvedValue({ jobs: [], summaries: [summary] })
+      await showLibrary()
+      await screen.findByRole('button', { name: 'Background tasks' })
+      await openReferenceDetail(screen.getByText(libraryItem.item.title))
+      get.mockResolvedValue(version(2, 'Background updated title'))
+      vi.mocked(window.api.literature.jobs).mockResolvedValue({
+        jobs: [],
+        summaries: [{ ...summary, state: 'completed', done: 1, completedItemIds: [libraryItem.id] }]
+      })
+      await act(async () => window.dispatchEvent(new Event('literature-jobs-changed')))
+      await waitFor(() =>
+        expect(
+          document.querySelector('[data-slot="literature-table-scroll"]')!.textContent
+        ).toContain('Background updated title')
+      )
+      expect(
+        within(screen.getByRole('dialog')).getByRole('heading', { level: 2 }).textContent
+      ).toBe('Background updated title')
+      await editDetail()
+      fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+      await waitFor(() =>
+        expect(transact).toHaveBeenCalledWith(
+          expect.objectContaining({
+            expectedMetadataRevision: 2
+          })
+        )
+      )
+    })
+
+    it('honors a row opened after a pending linked reference request', async () => {
+      const second = { ...version(1, 'Manually selected reference'), id: 'item-2' }
+      search.mockImplementation(async (request: LiteratureCatalogSearchRequest) => ({
+        entries: request.scope === 'library' ? [libraryItem, second] : []
+      }))
+      const pending = deferred<LiteratureItemView>()
+      get.mockReturnValueOnce(pending.promise)
+      useNavigationStore.getState().openLiteratureItem(libraryItem.id, 'user')
+      render(<LiteratureLibraryPage />)
+      await waitFor(() => expect(get).toHaveBeenCalledWith(libraryItem.id))
+      await openReferenceDetail(await screen.findByText(second.item.title))
+      expect(screen.getByRole('heading', { name: second.item.title })).not.toBeNull()
+      await act(async () => pending.resolve(libraryItem))
+      expect(
+        within(screen.getByRole('dialog')).getByRole('heading', { level: 2 }).textContent
+      ).toBe(second.item.title)
+    })
+
+    it('retains a detail save when returning to the cached library page', async () => {
+      await showLibrary()
+      await openReferenceDetail(screen.getByText(libraryItem.item.title))
+      await editDetail()
+      const updated = version(2, 'Saved cache title')
+      get.mockResolvedValue(updated)
+      fireEvent.change(screen.getByLabelText('Title'), { target: { value: updated.item.title } })
+      fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+      await screen.findByRole('heading', { name: updated.item.title })
+      closeDetail()
+      expect(screen.getByText(updated.item.title)).not.toBeNull()
+      search.mockImplementation(async (request: LiteratureCatalogSearchRequest) => ({
+        entries: request.scope === 'library' ? [updated] : []
+      }))
+      const listReads = (): number =>
+        search.mock.calls.filter(([request]) => request.scope === 'library' && request.limit !== 1)
+          .length
+      const before = listReads()
+      fireEvent.click(screen.getByRole('button', { name: 'Inbox' }))
+      await act(async () => {})
+      fireEvent.click(screen.getByRole('button', { name: 'All references' }))
+      await act(async () => {})
+      // The original bug restores a cached old title without an authoritative list read.
+      expect(
+        document.querySelector('[data-slot="literature-table-scroll"]')!.textContent,
+        `Main library requests before/after returning: ${before}/${listReads()}`
+      ).toContain(updated.item.title)
+    })
+    it('keeps a newer editor and its draft when an earlier save finishes', async () => {
+      await showLibrary()
+      await openReferenceDetail(screen.getByText(libraryItem.item.title))
+      await editDetail()
+      const pending = deferred<LiteratureItemView>()
+      get.mockReturnValueOnce(pending.promise)
+      fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+      await waitFor(() => expect(get).toHaveBeenCalledTimes(1))
+      closeDetail()
+      get.mockResolvedValueOnce(version(3, 'Newest title'))
+      act(() => useNavigationStore.getState().openLiteratureItem(libraryItem.id, 'user'))
+      await screen.findByRole('heading', { name: 'Newest title' })
+      await editDetail()
+      fireEvent.change(screen.getByLabelText('Title'), { target: { value: 'New opening draft' } })
+      await act(async () => pending.resolve(version(2, 'Old response')))
+      expect((screen.getByLabelText('Title') as HTMLInputElement).value).toBe('New opening draft')
+      expect(screen.queryByRole('alert')).toBeNull()
+    })
+
+    it('keeps retrying only the read after an acknowledged save', async () => {
+      await showLibrary()
+      await openReferenceDetail(screen.getByText(libraryItem.item.title))
+      await editDetail()
+      get.mockRejectedValue(new Error('Read unavailable'))
+      fireEvent.change(screen.getByLabelText('Title'), { target: { value: 'Acknowledged title' } })
+      fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+      await screen.findByText('The reference was saved, but could not be reloaded.')
+      expect((screen.getByRole('button', { name: 'Save' }) as HTMLButtonElement).disabled).toBe(
+        true
+      )
+      fireEvent.click(screen.getByRole('button', { name: 'Retry' }))
+      await waitFor(() => expect(get).toHaveBeenCalledTimes(2))
+      await waitFor(() =>
+        expect((screen.getByRole('button', { name: 'Retry' }) as HTMLButtonElement).disabled).toBe(
+          false
+        )
+      )
+      expect((screen.getByLabelText('Title') as HTMLInputElement).value).toBe('Acknowledged title')
+      expect(transact).toHaveBeenCalledTimes(1)
+      get.mockResolvedValue(version(2, 'Acknowledged title'))
+      fireEvent.click(screen.getByRole('button', { name: 'Retry' }))
+      await screen.findByRole('heading', { name: 'Acknowledged title' })
+      expect(transact).toHaveBeenCalledTimes(1)
+    })
+
+    it('preserves a conflicting draft until the latest version is explicitly loaded', async () => {
+      await showLibrary()
+      await openReferenceDetail(screen.getByText(libraryItem.item.title))
+      await editDetail()
+      const latest = version(2, 'Other writer title')
+      transact.mockRejectedValueOnce(
+        new Error('Literature metadata revision conflict: expected 1, actual 2')
+      )
+      get.mockResolvedValue(latest)
+      fireEvent.change(screen.getByLabelText('Title'), {
+        target: { value: 'My conflicting draft' }
+      })
+      fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+      await screen.findByText(
+        'This reference changed while you were editing. Your draft has been kept.'
+      )
+      expect((screen.getByLabelText('Title') as HTMLInputElement).value).toBe(
+        'My conflicting draft'
+      )
+      expect((screen.getByRole('button', { name: 'Save' }) as HTMLButtonElement).disabled).toBe(
+        true
+      )
+      expect(transact).toHaveBeenCalledTimes(1)
+      fireEvent.click(screen.getByRole('button', { name: 'Load latest version' }))
+      expect((screen.getByLabelText('Title') as HTMLInputElement).value).toBe(latest.item.title)
+      expect(transact).toHaveBeenCalledTimes(1)
+      get.mockResolvedValue(version(3, 'Reviewed draft'))
+      fireEvent.change(screen.getByLabelText('Title'), { target: { value: 'Reviewed draft' } })
+      fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+      await waitFor(() =>
+        expect(transact).toHaveBeenLastCalledWith(
+          expect.objectContaining({ expectedMetadataRevision: 2 })
+        )
+      )
+    })
+
+    it('keeps an editable draft when a transaction fails without committing', async () => {
+      await showLibrary()
+      await openReferenceDetail(screen.getByText(libraryItem.item.title))
+      await editDetail()
+      transact.mockRejectedValueOnce(new Error('Write unavailable'))
+      get.mockResolvedValue(libraryItem)
+      fireEvent.change(screen.getByLabelText('Title'), { target: { value: 'Unsaved draft' } })
+      fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+      await screen.findByText('Literature could not be updated.')
+      await waitFor(() =>
+        expect((screen.getByRole('button', { name: 'Save' }) as HTMLButtonElement).disabled).toBe(
+          false
+        )
+      )
+      expect((screen.getByLabelText('Title') as HTMLInputElement).value).toBe('Unsaved draft')
+      expect(screen.queryByRole('button', { name: 'Retry' })).toBeNull()
+    })
+
+    it('keeps the draft when background metadata arrives during editing', async () => {
+      const summary = {
+        id: 'edit-job',
+        mode: 'metadata' as const,
+        phase: 'apply' as const,
+        state: 'running' as const,
+        total: 1,
+        checked: 1,
+        ready: 0,
+        done: 0,
+        failed: 0,
+        createdAt: 1,
+        updatedAt: 1,
+        completedItemIds: [] as string[]
+      }
+      vi.mocked(window.api.literature.jobs).mockResolvedValue({ jobs: [], summaries: [summary] })
+      await showLibrary()
+      await screen.findByRole('button', { name: 'Background tasks' })
+      await openReferenceDetail(screen.getByText(libraryItem.item.title))
+      await editDetail()
+      const title = screen.getByLabelText('Title')
+      fireEvent.change(title, { target: { value: 'Work in progress' } })
+      get.mockResolvedValue(version(2, 'Background result'))
+      vi.mocked(window.api.literature.jobs).mockResolvedValue({
+        jobs: [],
+        summaries: [{ ...summary, state: 'completed', done: 1, completedItemIds: [libraryItem.id] }]
+      })
+      await act(async () => window.dispatchEvent(new Event('literature-jobs-changed')))
+      await screen.findByText(
+        'This reference changed while you were editing. Your draft has been kept.'
+      )
+      expect(screen.getByLabelText('Title')).toBe(title)
+      expect((title as HTMLInputElement).value).toBe('Work in progress')
+      expect((screen.getByRole('button', { name: 'Save' }) as HTMLButtonElement).disabled).toBe(
+        true
+      )
+      expect(transact).not.toHaveBeenCalled()
+    })
+
+    it('rejects a preview after leaving and reentering lookup without closing detail', async () => {
+      await showLibrary()
+      await openReferenceDetail(screen.getByText(libraryItem.item.title))
+      await openMenu(screen.getByRole('button', { name: 'More actions' }))
+      fireEvent.click(screen.getByRole('menuitem', { name: 'Complete metadata' }))
+      const reply = await completeMetadata.getMockImplementation()!({ mode: 'preview' })
+      const pending = deferred<typeof reply>()
+      completeMetadata.mockReturnValueOnce(pending.promise)
+      fireEvent.click(screen.getByRole('button', { name: 'Search' }))
+      fireEvent.click(screen.getByRole('button', { name: 'Back' }))
+      await openMenu(screen.getByRole('button', { name: 'More actions' }))
+      fireEvent.click(screen.getByRole('menuitem', { name: 'Complete metadata' }))
+      await act(async () => pending.resolve(reply))
+      expect(screen.queryByRole('button', { name: 'Apply metadata' })).toBeNull()
+    })
+    it('publishes an inline save to a detail opened during its readback', async () => {
+      await showLibrary()
+      const pending = deferred<LiteratureItemView>()
+      get.mockReturnValueOnce(pending.promise)
+      fireEvent.click(
+        screen.getByRole('combobox', { name: `Reference type: ${libraryItem.item.title}` })
+      )
+      fireEvent.click(screen.getByRole('option', { name: 'Preprint' }))
+      await waitFor(() => expect(get).toHaveBeenCalledTimes(1))
+      await openReferenceDetail(screen.getByText(libraryItem.item.title))
+      await act(async () =>
+        pending.resolve({
+          ...libraryItem,
+          metadataRevision: 2,
+          item: { ...libraryItem.item, itemType: 'preprint' }
+        })
+      )
+      expect(within(screen.getByRole('dialog')).queryAllByText('Preprint').length).toBeGreaterThan(
+        0
+      )
+      await editDetail()
+      fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+      await waitFor(() =>
+        expect(transact).toHaveBeenLastCalledWith(
+          expect.objectContaining({ expectedMetadataRevision: 2 })
+        )
+      )
+    })
+
+    it.each(['view', 'edit'] as const)(
+      'publishes a pending background read to a subsequently opened %s detail',
+      async (mode) => {
+        const summary = {
+          id: 'opening-job',
+          mode: 'metadata' as const,
+          phase: 'apply' as const,
+          state: 'running' as const,
+          total: 1,
+          checked: 1,
+          ready: 0,
+          done: 0,
+          failed: 0,
+          createdAt: 1,
+          updatedAt: 1,
+          completedItemIds: [] as string[]
+        }
+        vi.mocked(window.api.literature.jobs).mockResolvedValue({ jobs: [], summaries: [summary] })
+        await showLibrary()
+        await screen.findByRole('button', { name: 'Background tasks' })
+        const pending = deferred<LiteratureItemView>()
+        get.mockReturnValueOnce(pending.promise)
+        vi.mocked(window.api.literature.jobs).mockResolvedValue({
+          jobs: [],
+          summaries: [
+            { ...summary, state: 'completed', done: 1, completedItemIds: [libraryItem.id] }
+          ]
+        })
+        await act(async () => window.dispatchEvent(new Event('literature-jobs-changed')))
+        await waitFor(() => expect(get).toHaveBeenCalledTimes(1))
+        await openReferenceDetail(screen.getByText(libraryItem.item.title))
+        if (mode === 'edit') {
+          await editDetail()
+          fireEvent.change(screen.getByLabelText('Title'), { target: { value: 'Keep my draft' } })
+        }
+        await act(async () => pending.resolve(version(2, 'Fresh background title')))
+        expect(
+          document.querySelector('[data-slot="literature-table-scroll"]')!.textContent
+        ).toContain('Fresh background title')
+        if (mode === 'view') {
+          expect(
+            within(screen.getByRole('dialog')).getByRole('heading', { level: 2 }).textContent
+          ).toBe('Fresh background title')
+        } else {
+          expect((screen.getByLabelText('Title') as HTMLInputElement).value).toBe('Keep my draft')
+          expect(
+            within(screen.getByRole('dialog')).queryByText(
+              'This reference changed while you were editing. Your draft has been kept.'
+            )
+          ).not.toBeNull()
+          expect((screen.getByRole('button', { name: 'Save' }) as HTMLButtonElement).disabled).toBe(
+            true
+          )
+        }
+      }
+    )
+
+    it.each(['pending', 'visible'] as const)(
+      'invalidates a %s metadata preview when the background publishes a newer revision',
+      async (previewState) => {
+        const summary = {
+          id: 'preview-update-job',
+          mode: 'metadata' as const,
+          phase: 'apply' as const,
+          state: 'running' as const,
+          total: 1,
+          checked: 1,
+          ready: 0,
+          done: 0,
+          failed: 0,
+          createdAt: 1,
+          updatedAt: 1,
+          completedItemIds: [] as string[]
+        }
+        vi.mocked(window.api.literature.jobs).mockResolvedValue({ jobs: [], summaries: [summary] })
+        await showLibrary()
+        await screen.findByRole('button', { name: 'Background tasks' })
+        await openReferenceDetail(screen.getByText(libraryItem.item.title))
+        await openMenu(screen.getByRole('button', { name: 'More actions' }))
+        fireEvent.click(screen.getByRole('menuitem', { name: 'Complete metadata' }))
+        const reply = await completeMetadata.getMockImplementation()!({ mode: 'preview' })
+        const pending = deferred<typeof reply>()
+        completeMetadata.mockReturnValueOnce(pending.promise)
+        fireEvent.click(screen.getByRole('button', { name: 'Search' }))
+        await waitFor(() => expect(completeMetadata).toHaveBeenCalledTimes(1))
+        if (previewState === 'visible') {
+          await act(async () => pending.resolve(reply))
+          expect(screen.getByRole('button', { name: 'Apply metadata' })).not.toBeNull()
+        }
+        get.mockResolvedValue(version(2, 'Background revision two'))
+        vi.mocked(window.api.literature.jobs).mockResolvedValue({
+          jobs: [],
+          summaries: [
+            { ...summary, state: 'completed', done: 1, completedItemIds: [libraryItem.id] }
+          ]
+        })
+        await act(async () => window.dispatchEvent(new Event('literature-jobs-changed')))
+        await waitFor(() => expect(get).toHaveBeenCalledTimes(1))
+        if (previewState === 'pending') await act(async () => pending.resolve(reply))
+        expect(screen.queryByRole('button', { name: 'Apply metadata' })).toBeNull()
+        expect(screen.queryByText('Journal of Retrieval')).toBeNull()
+        expect(screen.getByRole('button', { name: 'Search' })).toHaveProperty('disabled', false)
+        expect(completeMetadata).toHaveBeenCalledTimes(1)
+        completeMetadata.mockResolvedValueOnce({
+          ...reply,
+          item: version(2, 'Background revision two'),
+          reviewToken: 'fresh-review'
+        })
+        fireEvent.click(screen.getByRole('button', { name: 'Search' }))
+        fireEvent.click(await screen.findByRole('button', { name: 'Apply metadata' }))
+        await waitFor(() =>
+          expect(completeMetadata).toHaveBeenLastCalledWith(
+            expect.objectContaining({
+              mode: 'commit',
+              expectedMetadataRevision: 2,
+              reviewToken: 'fresh-review'
+            })
+          )
+        )
+      }
+    )
+
+    it('keeps a metadata preview when background attachments change at the same revision', async () => {
+      const summary = {
+        id: 'attachment-preview-job',
+        mode: 'full-text' as const,
+        phase: 'apply' as const,
+        state: 'running' as const,
+        total: 1,
+        checked: 1,
+        ready: 0,
+        done: 0,
+        failed: 0,
+        createdAt: 1,
+        updatedAt: 1,
+        completedItemIds: [] as string[]
+      }
+      vi.mocked(window.api.literature.jobs).mockResolvedValue({ jobs: [], summaries: [summary] })
+      await showLibrary()
+      await screen.findByRole('button', { name: 'Background tasks' })
+      await openReferenceDetail(screen.getByText(libraryItem.item.title))
+      await openMenu(screen.getByRole('button', { name: 'More actions' }))
+      fireEvent.click(screen.getByRole('menuitem', { name: 'Complete metadata' }))
+      fireEvent.click(screen.getByRole('button', { name: 'Search' }))
+      await screen.findByRole('button', { name: 'Apply metadata' })
+      get.mockResolvedValue(createLibraryItemWithPdf())
+      vi.mocked(window.api.literature.jobs).mockResolvedValue({
+        jobs: [],
+        summaries: [{ ...summary, state: 'completed', done: 1, completedItemIds: [libraryItem.id] }]
+      })
+      await act(async () => window.dispatchEvent(new Event('literature-jobs-changed')))
+      await waitFor(() => expect(get).toHaveBeenCalledTimes(1))
+      expect(screen.getByRole('button', { name: 'Apply metadata' })).toHaveProperty(
+        'disabled',
+        false
+      )
+      expect(screen.getByText('Journal of Retrieval')).not.toBeNull()
+    })
+
+    it('publishes successful background reads when another completed item cannot be read', async () => {
+      const summary = {
+        id: 'partial-read-job',
+        mode: 'metadata' as const,
+        phase: 'apply' as const,
+        state: 'running' as const,
+        total: 2,
+        checked: 2,
+        ready: 0,
+        done: 0,
+        failed: 0,
+        createdAt: 1,
+        updatedAt: 1,
+        completedItemIds: [] as string[]
+      }
+      vi.mocked(window.api.literature.jobs).mockResolvedValue({ jobs: [], summaries: [summary] })
+      await showLibrary()
+      await screen.findByRole('button', { name: 'Background tasks' })
+      await openReferenceDetail(screen.getByText(libraryItem.item.title))
+      get.mockImplementation(async (id: string) => {
+        if (id === libraryItem.id) return version(2, 'Successful background update')
+        throw new Error('The other reference cannot be read')
+      })
+      vi.mocked(window.api.literature.jobs).mockResolvedValue({
+        jobs: [],
+        summaries: [
+          {
+            ...summary,
+            state: 'completed',
+            done: 2,
+            completedItemIds: [libraryItem.id, 'unavailable-item']
+          }
+        ]
+      })
+      await act(async () => window.dispatchEvent(new Event('literature-jobs-changed')))
+      await waitFor(() => expect(get).toHaveBeenCalledTimes(2))
+      expect(
+        within(screen.getByRole('dialog')).getByRole('heading', { level: 2 }).textContent
+      ).toBe('Successful background update')
+      expect(
+        document.querySelector('[data-slot="literature-table-scroll"]')!.textContent
+      ).toContain('Successful background update')
+      closeDetail()
+      expect(screen.queryByText('Literature could not be loaded.')).not.toBeNull()
+    })
+
+    it('reloads a completed PDF import into a reopened newer detail', async () => {
+      await showLibrary()
+      await openReferenceDetail(screen.getByText(libraryItem.item.title))
+      stageLocalFile.mockResolvedValue({
+        id: 'upload-1',
+        sessionId: '.pending',
+        name: 'paper.pdf',
+        originalName: 'paper.pdf',
+        path: '/managed/paper.pdf',
+        mimeType: 'application/pdf',
+        size: 8
+      })
+      const pending = deferred<{ item: LiteratureItemView }>()
+      importPdf.mockReturnValueOnce(pending.promise)
+      fireEvent.change(screen.getByLabelText('Add PDF'), {
+        target: { files: [new File(['%PDF-1.7'], 'paper.pdf', { type: 'application/pdf' })] }
+      })
+      await waitFor(() => expect(importPdf).toHaveBeenCalledTimes(1))
+      closeDetail()
+      const latest = version(3, 'Latest metadata before attachment')
+      get.mockResolvedValueOnce(latest)
+      act(() => useNavigationStore.getState().openLiteratureItem(libraryItem.id, 'user'))
+      await screen.findByRole('heading', { name: latest.item.title })
+      const withPdf = createLibraryItemWithPdf()
+      get.mockResolvedValue({ ...latest, attachments: withPdf.attachments })
+      await act(async () => pending.resolve({ item: withPdf }))
+      await waitFor(() =>
+        expect(
+          within(screen.getByRole('dialog')).queryByRole('button', { name: 'Preview paper.pdf' })
+        ).not.toBeNull()
+      )
+      expect(
+        within(screen.getByRole('dialog')).getByRole('heading', { level: 2 }).textContent
+      ).toBe(latest.item.title)
+      expect(importPdf).toHaveBeenCalledTimes(1)
+      expect(get).toHaveBeenCalledTimes(2)
+    })
+    it.each(['save', 'completion'] as const)(
+      'publishes an earlier %s without replacing the reopened editor draft',
+      async (operation) => {
+        await showLibrary()
+        await openReferenceDetail(screen.getByText(libraryItem.item.title))
+        const updated = version(2, 'Committed before reopening')
+        const pending = deferred<LiteratureItemView>()
+        if (operation === 'save') {
+          await editDetail()
+          get.mockReturnValueOnce(pending.promise)
+          fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+          await waitFor(() => expect(get).toHaveBeenCalledTimes(1))
+        } else {
+          await openMenu(screen.getByRole('button', { name: 'More actions' }))
+          fireEvent.click(screen.getByRole('menuitem', { name: 'Complete metadata' }))
+          fireEvent.click(screen.getByRole('button', { name: 'Search' }))
+          await screen.findByRole('button', { name: 'Apply metadata' })
+          completeMetadata.mockImplementationOnce(async () => ({
+            mode: 'commit',
+            provider: 'crossref',
+            sourceUrl: 'https://example.test',
+            item: await pending.promise,
+            filled: [],
+            conflicts: []
+          }))
+          fireEvent.click(screen.getByRole('button', { name: 'Apply metadata' }))
+          await waitFor(() =>
+            expect(completeMetadata).toHaveBeenLastCalledWith(
+              expect.objectContaining({ mode: 'commit' })
+            )
+          )
+        }
+        closeDetail()
+        await openReferenceDetail(screen.getByText(libraryItem.item.title))
+        await editDetail()
+        fireEvent.change(screen.getByLabelText('Title'), {
+          target: { value: 'Keep this newer draft' }
+        })
+        await act(async () => pending.resolve(updated))
+        expect((screen.getByLabelText('Title') as HTMLInputElement).value).toBe(
+          'Keep this newer draft'
+        )
+        expect(
+          within(screen.getByRole('dialog')).queryByText(
+            'This reference changed while you were editing. Your draft has been kept.'
+          )
+        ).not.toBeNull()
+        expect(screen.queryByRole('button', { name: 'Apply metadata' })).toBeNull()
+      }
+    )
+  })
 })

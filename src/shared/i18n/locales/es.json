@@ -103,6 +103,8 @@
   },
   "renderer": {
     "Select no more than {{limit}} references for this task.": "Seleccione como máximo {{limit}} referencias para esta tarea.",
+    "This reference changed while you were editing. Your draft has been kept.": "Esta referencia cambió mientras la editaba. Se ha conservado su borrador.",
+    "Discard this draft and load the latest saved metadata.": "Descartar este borrador y cargar los últimos metadatos guardados.",
     "Identifiers (★ primary)": "Identificadores (★ principal)",
     "Search again to refresh this older metadata review.": "Busque de nuevo para actualizar esta revisión anterior de metadatos.",
     "The reference was saved, but could not be reloaded.": "La referencia se guardó, pero no se pudo volver a cargar.",
