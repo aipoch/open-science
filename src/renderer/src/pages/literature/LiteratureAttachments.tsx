@@ -110,7 +110,15 @@ export const LiteratureAttachments = ({
   }
   return (
     <ActionMenuProvider
-      onActionError={() => setError(t('The attachment operation failed. Try again.'))}
+      onActionError={(error) =>
+        setError(
+          error instanceof Error && error.message.includes('LITERATURE_ATTACHMENT_IN_USE')
+            ? t(
+                'This PDF is linked to a chat. Remove it from the chat before removing this attachment.'
+              )
+            : t('The attachment operation failed. Try again.')
+        )
+      }
     >
       <div className="mt-2 space-y-2">
         {error ? (

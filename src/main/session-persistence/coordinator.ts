@@ -532,6 +532,30 @@ class SessionPersistenceCoordinator implements DelegatedWorkRecordCommands {
     })
   }
 
+  withUnreferencedLiteratureAttachment<Result>(
+    attachmentId: string,
+    remove: () => Promise<Result>
+  ): Promise<Result> {
+    return this.operationScheduler.runGlobal(async () => {
+      // Deletion is infrequent. Read the existing authority instead of maintaining a second
+      // persistent reference index, and hold the barrier through the Catalog transaction.
+      const scan = await this.repository.loadAllWithDiagnostics({ mode: 'read-only' })
+      if (!scan.isComplete)
+        throw new Error('Cannot remove an attachment without a complete Session catalog.')
+      if (
+        scan.result.sessions.some((session) =>
+          session.runtimeContext?.pdfContext?.bindings.some(
+            (binding) =>
+              binding.sourceKind === 'literature-attachment-version' &&
+              binding.sourceFileId === attachmentId
+          )
+        )
+      )
+        throw new Error('LITERATURE_ATTACHMENT_IN_USE')
+      return remove()
+    })
+  }
+
   readSessionRuntimeContext(projectId: string, sessionId: string): Promise<SessionRuntimeContext> {
     return this.operationScheduler.runSession(projectId, sessionId, () =>
       this.stateOwner.readRuntimeContext(projectId, sessionId)

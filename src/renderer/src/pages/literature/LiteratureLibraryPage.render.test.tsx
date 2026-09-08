@@ -2263,6 +2263,29 @@ describe('LiteratureLibraryPage', () => {
     expect(within(detail).getByText('File integrity verified')).not.toBeNull()
   })
 
+  it('explains why a session-referenced attachment cannot be removed and keeps its preview', async () => {
+    const entry = createLibraryItemWithPdf()
+    search.mockImplementation((request: { scope: string }) =>
+      Promise.resolve(request.scope === 'library' ? { entries: [entry] } : { entries: [] })
+    )
+    render(<LiteratureLibraryPage />)
+    fireEvent.click(screen.getByRole('button', { name: 'All references' }))
+    const detail = await openReferenceDetail(await screen.findByText(entry.item.title))
+    transact.mockRejectedValueOnce(
+      new Error('Error invoking remote method: LITERATURE_ATTACHMENT_IN_USE')
+    )
+    fireEvent.click(
+      within(detail).getByRole('button', { name: 'Attachment actions for paper.pdf' })
+    )
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Remove attachment' }))
+    expect(
+      await within(detail).findByText(
+        'This PDF is linked to a chat. Remove it from the chat before removing this attachment.'
+      )
+    ).not.toBeNull()
+    expect(within(detail).getByRole('button', { name: 'Preview paper.pdf' })).not.toBeNull()
+  })
+
   it('refreshes the diagnosis when attachment verification fails', async () => {
     const entry = createLibraryItemWithPdf()
     search.mockImplementation((request: { scope: string }) =>

@@ -63,7 +63,7 @@ import { computeJobRemoteCleanupMigration } from './migrations/0026-compute-job-
 import { projectSessionDefaultsMigration } from './migrations/0027-project-session-defaults'
 import { numericAndNullConstraintsMigration } from './migrations/0028-database-numeric-and-null-constraints'
 import { computeHostExecutionModeMigration } from './migrations/0029-compute-host-execution-mode'
-import { contentVerificationObservationMigration } from './migrations/0035-content-verification-observation'
+import { contentVerificationObservationMigration } from './migrations/0036-content-verification-observation'
 import { backgroundResultDeliveryMigration } from './migrations/0034-background-result-delivery'
 import {
   applySqliteMigrationOperations,
@@ -736,11 +736,11 @@ const MIGRATION_MANIFEST = [
       literaturePdfProvenanceMigration.statements,
       literaturePdfProvenanceMigration.verifiers,
       literaturePdfProvenanceMigration.operations
-      ),
-      backupOnApply: 'required',
-      backupRetention: 'retain'
-    },
-    {
+    ),
+    backupOnApply: 'required',
+    backupRetention: 'retain'
+  },
+  {
     ...contentVerificationObservationMigration,
     checksum: checksumMigrationPayload(
       contentVerificationObservationMigration.id,

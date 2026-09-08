@@ -666,7 +666,11 @@ class LiteratureCatalog {
   constructor(
     private readonly getClient: LiteratureCatalogClientProvider,
     private readonly onTagAssignmentsChanged?: () => Promise<void>,
-    private readonly content?: Pick<ContentRepository, 'verify' | 'sweep'>
+    private readonly content?: Pick<ContentRepository, 'verify' | 'sweep'>,
+    private readonly withAttachmentRemoval?: (
+      attachmentId: string,
+      remove: () => Promise<LiteratureCatalogReceipt>
+    ) => Promise<LiteratureCatalogReceipt>
   ) {}
 
   private async publishTagAssignmentsChanged(): Promise<void> {
@@ -1126,7 +1130,17 @@ class LiteratureCatalog {
         duplicateGroups.delete(await this.getClient())
     }
   }
-  private async deleteAttachment(
+  private deleteAttachment(
+    command: Extract<LiteratureCatalogCommand, { kind: 'delete-attachment' }>
+  ): Promise<LiteratureCatalogReceipt> {
+    if (!this.withAttachmentRemoval)
+      throw new Error('Literature attachment removal is unavailable.')
+    return this.withAttachmentRemoval(command.attachmentId, () =>
+      this.deleteUnreferencedAttachment(command)
+    )
+  }
+
+  private async deleteUnreferencedAttachment(
     command: Extract<LiteratureCatalogCommand, { kind: 'delete-attachment' }>
   ): Promise<LiteratureCatalogReceipt> {
     if (!this.content) throw new Error('Literature content operations are unavailable.')

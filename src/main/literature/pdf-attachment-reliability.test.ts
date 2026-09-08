@@ -18,7 +18,14 @@ import { LiteratureAttachmentAuthority } from './attachment-authority'
 import { LiteratureCatalog } from './catalog'
 import { AgentPdfAcquisition } from './agent-pdf-acquisition'
 import { LiteratureFullTextFinder } from './full-text-finder'
+import { SessionRepository } from '../session-persistence/repository'
+import {
+  SessionPersistenceCoordinator,
+  type SessionFileIndex
+} from '../session-persistence/coordinator'
 import { LiteraturePdfImporter } from './pdf-importer'
+
+vi.mock('electron', () => ({ app: { getPath: () => '/home/user', isPackaged: true } }))
 
 describe('Literature PDF attachment reliability', () => {
   let root: string
@@ -36,12 +43,22 @@ describe('Literature PDF attachment reliability', () => {
     request: LiteraturePdfImportRequest
     path: string
     authority: LiteratureAttachmentAuthority
+    sessions: SessionRepository
+    coordinator: SessionPersistenceCoordinator
   }> => {
     root = await mkdtemp(join(tmpdir(), 'literature-pdf-reliability-'))
     client = createProjectDbClient(root)
     await migrateApplicationDatabase(client)
     const content = new ContentRepository({ storageRoot: root, getClient: async () => client! })
-    const catalog = new LiteratureCatalog(async () => client!, undefined, content)
+    const sessions = new SessionRepository(join(root, 'sessions'))
+    const coordinator = new SessionPersistenceCoordinator(sessions, {} as SessionFileIndex)
+    const catalog = new LiteratureCatalog(
+      async () => client!,
+      undefined,
+      content,
+      (attachmentId, remove) =>
+        coordinator.withUnreferencedLiteratureAttachment(attachmentId, remove)
+    )
     const item = await catalog.transact({
       kind: 'create-item',
       item: literatureItemInputSchema.parse({ title: 'Paper', itemType: 'journalArticle' })
@@ -67,6 +84,8 @@ describe('Literature PDF attachment reliability', () => {
     }
     return {
       catalog,
+      sessions,
+      coordinator,
       content,
       importer,
       request,
@@ -251,18 +270,83 @@ describe('Literature PDF attachment reliability', () => {
         (error) => ({ error })
       )
       await paused
+      let sweepStarted!: () => void
+      const sweeping = new Promise<void>((resolve) => {
+        sweepStarted = resolve
+      })
+      const sweep = content.sweep.bind(content)
+      vi.spyOn(content, 'sweep').mockImplementationOnce((request) => {
+        sweepStarted()
+        return sweep(request)
+      })
+      const removal = catalog.transact({
+        kind: 'delete-attachment',
+        itemId: request.itemId,
+        attachmentId: imported.item.attachments[0].id
+      })
       try {
-        await catalog.transact({
-          kind: 'delete-attachment',
-          itemId: request.itemId,
-          attachmentId: imported.item.attachments[0].id
-        })
+        await sweeping
       } finally {
         resume()
       }
+      await removal
       expect(await outcome).toHaveProperty('value')
     }
   )
+
+  it('preserves an attachment referenced by a saved session until that context is unlinked', async () => {
+    const { importer, request, catalog, authority, sessions, coordinator } = await setup()
+    const imported = await importer.import(request)
+    const attachment = imported.item.attachments[0]
+    const version = attachment.versions[0]
+    await sessions.saveSession({
+      id: 'reading-session',
+      projectId: 'project',
+      title: 'Reading paper',
+      cwd: root,
+      status: 'idle',
+      messages: [],
+      filesRevision: 0,
+      createdAt: 1,
+      updatedAt: 1,
+      runtimeContext: {
+        version: 1,
+        revision: 0,
+        pdfContext: {
+          version: 1,
+          bindings: [
+            {
+              version: 1,
+              bindingId: 'binding',
+              sourceKind: 'literature-attachment-version',
+              sourceFileId: attachment.id,
+              sourceVersionId: version.id,
+              name: version.filename,
+              mimeType: 'application/pdf',
+              sizeBytes: version.sizeBytes,
+              checksum: version.checksum,
+              linkedAt: 1
+            }
+          ]
+        }
+      }
+    })
+    const remove = {
+      kind: 'delete-attachment' as const,
+      itemId: request.itemId,
+      attachmentId: attachment.id
+    }
+    await expect(catalog.transact(remove)).rejects.toThrow('LITERATURE_ATTACHMENT_IN_USE')
+    await expect(authority.resolveVersion(version.id)).resolves.toBeDefined()
+    await coordinator.patchSessionRuntimeContext({
+      projectId: 'project',
+      sessionId: 'reading-session',
+      expectedRevision: 0,
+      patch: { pdfContext: undefined }
+    })
+    await expect(catalog.transact(remove)).resolves.toMatchObject({ state: 'unlinked' })
+    await expect(authority.resolveVersion(version.id)).resolves.toBeUndefined()
+  })
 
   it('keeps different same-named PDFs as independent attachments without an explicit version target', async () => {
     const { importer, request, path } = await setup()

@@ -67,7 +67,7 @@ const setup = (): {
   const pageCount = vi.fn(async () => 8)
   const service = new AgentPdfAcquisition({
     catalog: { stageAcquiredPdf },
-    content: { withPublishedContent: async (request, acquire) => acquire(await publish(request)) },
+    content: { publish },
     fullText: { discover },
     download,
     pageCount

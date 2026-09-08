@@ -327,7 +327,13 @@ describe('application database migrations', () => {
     )
     await client.$executeRawUnsafe('ALTER TABLE "LiteratureInboxPdf" DROP COLUMN "provenanceJson"')
     await client.$executeRawUnsafe(
-      `DELETE FROM "_open_science_migrations" WHERE "id" = '0035_literature_pdf_provenance'`
+      'ALTER TABLE "ContentBlob" DROP COLUMN "lastVerificationFailure"'
+    )
+    await client.$executeRawUnsafe(
+      'ALTER TABLE "ContentBlob" DROP COLUMN "lastVerificationAttemptAt"'
+    )
+    await client.$executeRawUnsafe(
+      `DELETE FROM "_open_science_migrations" WHERE "id" >= '0035_literature_pdf_provenance'`
     )
     const checksum = 'a'.repeat(64)
     const oldCandidate = literatureCandidateInputSchema.parse({
@@ -586,7 +592,11 @@ describe('application database migrations', () => {
 
     await expect(migrateApplicationDatabase(client)).resolves.toEqual({
       adoptedLegacy: false,
-      applied: ['0034_background_result_delivery', '0036_content_verification_observation'],
+      applied: [
+        '0034_background_result_delivery',
+        '0035_literature_pdf_provenance',
+        '0036_content_verification_observation'
+      ],
       from: '0033_compute_job_harvest_retry',
       to: '0036_content_verification_observation'
     })
@@ -1161,6 +1171,7 @@ describe('application database migrations', () => {
       { id: '0032_permission_approval_summary' },
       { id: '0033_compute_job_harvest_retry' },
       { id: '0034_background_result_delivery' },
+      { id: '0035_literature_pdf_provenance' },
       { id: '0036_content_verification_observation' },
       { id: '9997_test_suffix' }
     ])
@@ -1342,6 +1353,7 @@ describe('application database migrations', () => {
       { id: '0032_permission_approval_summary' },
       { id: '0033_compute_job_harvest_retry' },
       { id: '0034_background_result_delivery' },
+      { id: '0035_literature_pdf_provenance' },
       { id: '0036_content_verification_observation' }
     ])
   })
@@ -2684,7 +2696,7 @@ describe('application database migrations', () => {
         entries.filter((entry) => entry.endsWith('.backup')).sort()
       )
     ).resolves.toEqual([
-      'open-science.db.before-0034_background_result_delivery.backup',
+      'open-science.db.before-0035_literature_pdf_provenance.backup',
       'open-science.db.before-0036_content_verification_observation.backup',
       unknownBackupName
     ])

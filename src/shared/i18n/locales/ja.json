@@ -4746,6 +4746,7 @@
     "File integrity not yet verified": "ファイルの整合性は未検証です",
     "PDF not validated: exceeds the 50 MiB automatic processing limit.": "PDF は未検証です：自動処理の上限 50 MiB を超えています。",
     "PDF structure not yet validated.": "PDF の構造は未検証です。",
-    "Attachment unavailable": "添付ファイルを利用できません"
+    "Attachment unavailable": "添付ファイルを利用できません",
+    "This PDF is linked to a chat. Remove it from the chat before removing this attachment.": "このPDFはチャットにリンクされています。この添付ファイルを削除する前に、チャットからPDFを削除してください。"
   }
 }

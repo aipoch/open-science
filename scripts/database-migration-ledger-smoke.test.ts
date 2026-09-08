@@ -104,7 +104,7 @@ const removeArchiveAndLiteratureSchema = async (client: PrismaClient): Promise<v
 
 describe('packaged database migration ledger smoke', () => {
   it('pins every packaged application migration identity and checksum', () => {
-    expect(MIGRATION_MANIFEST.slice(-13).map(({ id, checksum }) => ({ id, checksum }))).toEqual([
+    expect(MIGRATION_MANIFEST.slice(-14).map(({ id, checksum }) => ({ id, checksum }))).toEqual([
       {
         id: '0023_compute_job_operation',
         checksum: 'c625e336996c7dd1eba64da8ccd306104ccd68cf219e60ee2c3889749f86b079'
@@ -159,7 +159,7 @@ describe('packaged database migration ledger smoke', () => {
       },
       {
         id: '0036_content_verification_observation',
-        checksum: '3baac1c79c8e2746013986a1decbdc5eda9b320a12c8c1059c6bca9d81561ec8'
+        checksum: '79b45da6421bbbc2962de6106189c50ff19bef219a7310800a669ec1ebad64a4'
       }
     ])
     expect(() => assertApplicationMigrationLedger(MIGRATION_MANIFEST)).not.toThrow()

@@ -252,6 +252,49 @@ describe('SessionPdfContextOwner', () => {
     ).resolves.toEqual({ sources: [], pendingAttachmentIds: ['multi-page'] })
   })
 
+  it('rejects a literature source removed after inspection but before the binding is persisted', async () => {
+    const resolveVersion = vi
+      .fn()
+      .mockResolvedValueOnce({
+        sourceKind: 'literature-attachment-version',
+        sourceFileId: 'attachment',
+        sourceVersionId: 'version',
+        filename: 'paper.pdf',
+        contentType: 'application/pdf',
+        sizeBytes: 42,
+        checksum: 'a'.repeat(64),
+        path: '/managed/paper.pdf'
+      })
+      .mockResolvedValue(undefined)
+    const persist = vi.fn()
+    const owner = new SessionPdfContextOwner({
+      sources: { resolveVersion },
+      sessions: {
+        readSessionRuntimeContext: async () => ({ version: 1, revision: 0 }),
+        patchSessionRuntimeContext: async (request) => {
+          await request.beforePersist?.()
+          persist()
+          return { version: 1, revision: 1, ...request.patch }
+        }
+      }
+    })
+    await expect(
+      owner.link({
+        projectId: 'project',
+        sessionId: 'session',
+        expectedRevision: 0,
+        sources: [
+          {
+            sourceKind: 'literature-attachment-version',
+            sourceFileId: 'attachment',
+            sourceVersionId: 'version'
+          }
+        ]
+      })
+    ).rejects.toThrow('unavailable')
+    expect(persist).not.toHaveBeenCalled()
+  })
+
   it('resolves immutable bytes before installing one revision-fenced PDF binding', async () => {
     const harness = setup()
 

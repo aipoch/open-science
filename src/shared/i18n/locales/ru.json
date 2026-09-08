@@ -5192,6 +5192,7 @@
     "File integrity not yet verified": "Целостность файла ещё не проверена",
     "PDF not validated: exceeds the 50 MiB automatic processing limit.": "PDF не проверен: превышен предел автоматической обработки в 50 MiB.",
     "PDF structure not yet validated.": "Структура PDF ещё не проверена.",
-    "Attachment unavailable": "Вложение недоступно"
+    "Attachment unavailable": "Вложение недоступно",
+    "This PDF is linked to a chat. Remove it from the chat before removing this attachment.": "Этот PDF связан с чатом. Уберите его из чата, прежде чем удалять это вложение."
   }
 }

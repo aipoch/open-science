@@ -4746,6 +4746,7 @@
     "File integrity not yet verified": "檔案完整性尚未驗證",
     "PDF not validated: exceeds the 50 MiB automatic processing limit.": "PDF 未驗證：超過 50 MiB 自動處理限制。",
     "PDF structure not yet validated.": "PDF 結構尚未驗證。",
-    "Attachment unavailable": "附件無法使用"
+    "Attachment unavailable": "附件無法使用",
+    "This PDF is linked to a chat. Remove it from the chat before removing this attachment.": "此 PDF 已關聯到聊天。請先從聊天中移除它，再移除此附件。"
   }
 }

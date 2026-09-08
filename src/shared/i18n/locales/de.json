@@ -4899,6 +4899,7 @@
     "File integrity not yet verified": "Dateiintegrität noch nicht geprüft",
     "PDF not validated: exceeds the 50 MiB automatic processing limit.": "PDF nicht validiert: überschreitet die Grenze von 50 MiB für die automatische Verarbeitung.",
     "PDF structure not yet validated.": "PDF-Struktur noch nicht validiert.",
-    "Attachment unavailable": "Anhang nicht verfügbar"
+    "Attachment unavailable": "Anhang nicht verfügbar",
+    "This PDF is linked to a chat. Remove it from the chat before removing this attachment.": "Diese PDF ist mit einem Chat verknüpft. Entfernen Sie sie zuerst aus dem Chat, bevor Sie diesen Anhang entfernen."
   }
 }
