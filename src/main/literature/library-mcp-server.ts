@@ -1,3 +1,4 @@
+import { withDataRootWrite } from '../storage/migration-state'
 import { McpServer as ModelContextProtocolServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { z } from 'zod'
 
@@ -445,27 +446,28 @@ const createLiteratureLibraryMcpServer = (
         limit: z.number().int().min(1).max(LITERATURE_LIBRARY_SEARCH_DEFAULT_LIMIT).optional()
       }
     },
-    async (request) => {
-      const scope = request.scope ?? 'project'
-      const limit = request.limit ?? LITERATURE_LIBRARY_SEARCH_DEFAULT_LIMIT
-      if (scope === 'collection' && !request.collectionId) {
-        throw new Error('COLLECTION_ID_REQUIRED: Collection scope requires collectionId.')
-      }
-      if (scope !== 'collection' && request.collectionId) {
-        throw new Error('COLLECTION_SCOPE_REQUIRED: collectionId requires Collection scope.')
-      }
-      if (scope === 'items' && !request.itemIds) {
-        throw new Error('ITEM_IDS_REQUIRED: Items scope requires itemIds.')
-      }
-      if (scope !== 'items' && request.itemIds) {
-        throw new Error('ITEMS_SCOPE_REQUIRED: itemIds requires Items scope.')
-      }
-      if (request.itemIds && new Set(request.itemIds).size !== request.itemIds.length) {
-        throw new Error('DUPLICATE_ITEM_IDS: Items scope does not accept duplicate itemIds.')
-      }
-      const result = await handler.searchLibrary({ ...request, scope, limit })
-      return compactSearchResult(result, { ...request, scope, limit })
-    }
+    async (request) =>
+      withDataRootWrite(async () => {
+        const scope = request.scope ?? 'project'
+        const limit = request.limit ?? LITERATURE_LIBRARY_SEARCH_DEFAULT_LIMIT
+        if (scope === 'collection' && !request.collectionId) {
+          throw new Error('COLLECTION_ID_REQUIRED: Collection scope requires collectionId.')
+        }
+        if (scope !== 'collection' && request.collectionId) {
+          throw new Error('COLLECTION_SCOPE_REQUIRED: collectionId requires Collection scope.')
+        }
+        if (scope === 'items' && !request.itemIds) {
+          throw new Error('ITEM_IDS_REQUIRED: Items scope requires itemIds.')
+        }
+        if (scope !== 'items' && request.itemIds) {
+          throw new Error('ITEMS_SCOPE_REQUIRED: itemIds requires Items scope.')
+        }
+        if (request.itemIds && new Set(request.itemIds).size !== request.itemIds.length) {
+          throw new Error('DUPLICATE_ITEM_IDS: Items scope does not accept duplicate itemIds.')
+        }
+        const result = await handler.searchLibrary({ ...request, scope, limit })
+        return compactSearchResult(result, { ...request, scope, limit })
+      })
   )
 
   if (handler.formatReferences) {
@@ -481,19 +483,20 @@ const createLiteratureLibraryMcpServer = (
           locale: z.enum(LITERATURE_CITATION_LOCALES).default('en-US')
         }
       },
-      async (request) => {
-        const result = await handler.formatReferences!(request)
-        return {
-          structuredContent: result,
-          content: [
-            presentationContent({
-              libraryAction: 'format',
-              resultCount: result.references.length
-            }),
-            { type: 'text' as const, text: JSON.stringify(result) }
-          ]
-        }
-      }
+      async (request) =>
+        withDataRootWrite(async () => {
+          const result = await handler.formatReferences!(request)
+          return {
+            structuredContent: result,
+            content: [
+              presentationContent({
+                libraryAction: 'format',
+                resultCount: result.references.length
+              }),
+              { type: 'text' as const, text: JSON.stringify(result) }
+            ]
+          }
+        })
     )
   }
 
@@ -517,21 +520,22 @@ const createLiteratureLibraryMcpServer = (
           locale: z.enum(LITERATURE_CITATION_LOCALES).default('en-US')
         }
       },
-      async (request) => {
-        const result = await handler.formatCitationDocument!(request)
-        const output = { ...result, artifactAttached: true }
-        return {
-          structuredContent: output,
-          content: [
-            presentationContent({
-              libraryAction: 'format',
-              documentNames: [result.filename],
-              resultCount: result.referenceCount
-            }),
-            { type: 'text' as const, text: JSON.stringify(output) }
-          ]
-        }
-      }
+      async (request) =>
+        withDataRootWrite(async () => {
+          const result = await handler.formatCitationDocument!(request)
+          const output = { ...result, artifactAttached: true }
+          return {
+            structuredContent: output,
+            content: [
+              presentationContent({
+                libraryAction: 'format',
+                documentNames: [result.filename],
+                resultCount: result.referenceCount
+              }),
+              { type: 'text' as const, text: JSON.stringify(output) }
+            ]
+          }
+        })
     )
   }
 
@@ -553,21 +557,22 @@ const createLiteratureLibraryMcpServer = (
             )
         }
       },
-      async (request) => {
-        const result = await handler.prepareLatexBundle!(request)
-        const output = { ...result, artifactAttached: true }
-        return {
-          structuredContent: output,
-          content: [
-            presentationContent({
-              libraryAction: 'format',
-              documentNames: [result.filename],
-              resultCount: result.referenceCount
-            }),
-            { type: 'text' as const, text: JSON.stringify(output) }
-          ]
-        }
-      }
+      async (request) =>
+        withDataRootWrite(async () => {
+          const result = await handler.prepareLatexBundle!(request)
+          const output = { ...result, artifactAttached: true }
+          return {
+            structuredContent: output,
+            content: [
+              presentationContent({
+                libraryAction: 'format',
+                documentNames: [result.filename],
+                resultCount: result.referenceCount
+              }),
+              { type: 'text' as const, text: JSON.stringify(output) }
+            ]
+          }
+        })
     )
   }
 
@@ -588,29 +593,53 @@ const createLiteratureLibraryMcpServer = (
         collectionId: z.string().trim().min(1).max(512).optional()
       }
     },
-    async (request) => {
-      const scope = request.scope ?? 'project'
-      if ((request.itemId ? 1 : 0) + (request.itemIds ? 1 : 0) !== 1) {
-        throw new Error('ABSTRACT_INPUT_REQUIRED: Pass exactly one of itemId or itemIds.')
-      }
-      if (request.itemIds && new Set(request.itemIds).size !== request.itemIds.length) {
-        throw new Error('DUPLICATE_ITEM_IDS: Abstract reading does not accept duplicate itemIds.')
-      }
-      if (scope === 'collection' && !request.collectionId) {
-        throw new Error('COLLECTION_ID_REQUIRED: Collection scope requires collectionId.')
-      }
-      if (scope !== 'collection' && request.collectionId) {
-        throw new Error('COLLECTION_SCOPE_REQUIRED: collectionId requires Collection scope.')
-      }
-      if (request.itemIds) {
-        const resolved = await Promise.all(
-          request.itemIds.map((itemId) =>
-            handler.readAbstract({ itemId, scope, collectionId: request.collectionId })
+    async (request) =>
+      withDataRootWrite(async () => {
+        const scope = request.scope ?? 'project'
+        if ((request.itemId ? 1 : 0) + (request.itemIds ? 1 : 0) !== 1) {
+          throw new Error('ABSTRACT_INPUT_REQUIRED: Pass exactly one of itemId or itemIds.')
+        }
+        if (request.itemIds && new Set(request.itemIds).size !== request.itemIds.length) {
+          throw new Error('DUPLICATE_ITEM_IDS: Abstract reading does not accept duplicate itemIds.')
+        }
+        if (scope === 'collection' && !request.collectionId) {
+          throw new Error('COLLECTION_ID_REQUIRED: Collection scope requires collectionId.')
+        }
+        if (scope !== 'collection' && request.collectionId) {
+          throw new Error('COLLECTION_SCOPE_REQUIRED: collectionId requires Collection scope.')
+        }
+        if (request.itemIds) {
+          const resolved = await Promise.all(
+            request.itemIds.map((itemId) =>
+              handler.readAbstract({ itemId, scope, collectionId: request.collectionId })
+            )
           )
-        )
-        const result: LiteratureLibraryBatchReadAbstractResult = {
-          items: resolved.filter((item) => item !== undefined).map(compactBatchAbstract),
-          missingItemIds: request.itemIds.filter((_, index) => resolved[index] === undefined)
+          const result: LiteratureLibraryBatchReadAbstractResult = {
+            items: resolved.filter((item) => item !== undefined).map(compactBatchAbstract),
+            missingItemIds: request.itemIds.filter((_, index) => resolved[index] === undefined)
+          }
+          return {
+            structuredContent: result,
+            content: [
+              presentationContent({
+                libraryAction: 'read',
+                libraryScope: scope,
+                itemTitles: result.items.map(({ title }) => title).slice(0, 3),
+                resultCount: result.items.length
+              }),
+              { type: 'text' as const, text: JSON.stringify(result) }
+            ]
+          }
+        }
+        const result = await handler.readAbstract({
+          itemId: request.itemId!,
+          scope,
+          collectionId: request.collectionId
+        })
+        if (!result) {
+          throw new Error(
+            'LITERATURE_ITEM_NOT_FOUND: Literature Item is unavailable in this scope.'
+          )
         }
         return {
           structuredContent: result,
@@ -618,34 +647,13 @@ const createLiteratureLibraryMcpServer = (
             presentationContent({
               libraryAction: 'read',
               libraryScope: scope,
-              itemTitles: result.items.map(({ title }) => title).slice(0, 3),
-              resultCount: result.items.length
+              itemTitles: [result.title],
+              resultCount: 1
             }),
             { type: 'text' as const, text: JSON.stringify(result) }
           ]
         }
-      }
-      const result = await handler.readAbstract({
-        itemId: request.itemId!,
-        scope,
-        collectionId: request.collectionId
       })
-      if (!result) {
-        throw new Error('LITERATURE_ITEM_NOT_FOUND: Literature Item is unavailable in this scope.')
-      }
-      return {
-        structuredContent: result,
-        content: [
-          presentationContent({
-            libraryAction: 'read',
-            libraryScope: scope,
-            itemTitles: [result.title],
-            resultCount: 1
-          }),
-          { type: 'text' as const, text: JSON.stringify(result) }
-        ]
-      }
-    }
   )
 
   server.registerTool(
@@ -662,32 +670,35 @@ const createLiteratureLibraryMcpServer = (
         collectionId: z.string().trim().min(1).max(512).optional()
       }
     },
-    async (request) => {
-      const scope = request.scope ?? 'project'
-      if (scope === 'collection' && !request.collectionId) {
-        throw new Error('COLLECTION_ID_REQUIRED: Collection scope requires collectionId.')
-      }
-      if (scope !== 'collection' && request.collectionId) {
-        throw new Error('COLLECTION_SCOPE_REQUIRED: collectionId requires Collection scope.')
-      }
-      const result = await handler.readPdf({ ...request, scope })
-      if (!result) {
-        throw new Error('LITERATURE_ITEM_NOT_FOUND: Literature Item is unavailable in this scope.')
-      }
-      const evidencePresentation = literatureReadPresentation(result.evidence)
-      return {
-        structuredContent: result.evidence,
-        content: [
-          presentationContent({
-            ...(evidencePresentation ?? {}),
-            libraryAction: 'read',
-            libraryScope: scope,
-            itemTitles: [result.itemTitle]
-          }),
-          { type: 'text' as const, text: JSON.stringify(result.evidence) }
-        ]
-      }
-    }
+    async (request) =>
+      withDataRootWrite(async () => {
+        const scope = request.scope ?? 'project'
+        if (scope === 'collection' && !request.collectionId) {
+          throw new Error('COLLECTION_ID_REQUIRED: Collection scope requires collectionId.')
+        }
+        if (scope !== 'collection' && request.collectionId) {
+          throw new Error('COLLECTION_SCOPE_REQUIRED: collectionId requires Collection scope.')
+        }
+        const result = await handler.readPdf({ ...request, scope })
+        if (!result) {
+          throw new Error(
+            'LITERATURE_ITEM_NOT_FOUND: Literature Item is unavailable in this scope.'
+          )
+        }
+        const evidencePresentation = literatureReadPresentation(result.evidence)
+        return {
+          structuredContent: result.evidence,
+          content: [
+            presentationContent({
+              ...(evidencePresentation ?? {}),
+              libraryAction: 'read',
+              libraryScope: scope,
+              itemTitles: [result.itemTitle]
+            }),
+            { type: 'text' as const, text: JSON.stringify(result.evidence) }
+          ]
+        }
+      })
   )
 
   server.registerTool(
@@ -717,26 +728,27 @@ const createLiteratureLibraryMcpServer = (
           )
       }
     },
-    async (request, { signal }) => {
-      const candidates = await resolveSaveCandidates(request, handler, signal)
-      signal.throwIfAborted()
-      const result = await handler.saveToInbox({ candidates, signal })
-      const summary = summarizeLiteratureSaveReceipts(result.results)
-      const titles = candidateTitles(candidates)
-      return {
-        ...(result.failure || result.cancelled ? { isError: true } : {}),
-        structuredContent: result,
-        content: [
-          presentationContent({
-            libraryAction: 'save',
-            ...(titles.length > 0 ? { itemTitles: titles } : {}),
-            candidateCount: candidates.length,
-            savedCount: summary.pendingCount
-          }),
-          { type: 'text' as const, text: JSON.stringify(result) }
-        ]
-      }
-    }
+    async (request, { signal }) =>
+      withDataRootWrite(async () => {
+        const candidates = await resolveSaveCandidates(request, handler, signal)
+        signal.throwIfAborted()
+        const result = await handler.saveToInbox({ candidates, signal })
+        const summary = summarizeLiteratureSaveReceipts(result.results)
+        const titles = candidateTitles(candidates)
+        return {
+          ...(result.failure || result.cancelled ? { isError: true } : {}),
+          structuredContent: result,
+          content: [
+            presentationContent({
+              libraryAction: 'save',
+              ...(titles.length > 0 ? { itemTitles: titles } : {}),
+              candidateCount: candidates.length,
+              savedCount: summary.pendingCount
+            }),
+            { type: 'text' as const, text: JSON.stringify(result) }
+          ]
+        }
+      })
   )
 
   if (handler.acquirePdf)
@@ -752,29 +764,30 @@ const createLiteratureLibraryMcpServer = (
           pdfUrl: z.string().url().max(4096).optional()
         }
       },
-      async ({ ref, candidate, pdfUrl }, { signal }) => {
-        signal.throwIfAborted()
-        const candidates = await resolveSaveCandidates(
-          { refs: ref ? [ref] : undefined, candidates: candidate ? [candidate] : undefined },
-          handler,
-          signal
-        )
-        if (candidates.length !== 1) throw new Error('Exactly one reference must be resolved.')
-        signal.throwIfAborted()
-        const result = await handler.acquirePdf!({ candidate: candidates[0]!, pdfUrl, signal })
-        return {
-          structuredContent: result,
-          content: [
-            presentationContent({
-              libraryAction: 'save',
-              itemTitles: candidateTitles(candidates),
-              candidateCount: 1,
-              savedCount: result.status === 'pending-review' ? 1 : 0
-            }),
-            { type: 'text' as const, text: JSON.stringify(result) }
-          ]
-        }
-      }
+      async ({ ref, candidate, pdfUrl }, { signal }) =>
+        withDataRootWrite(async () => {
+          signal.throwIfAborted()
+          const candidates = await resolveSaveCandidates(
+            { refs: ref ? [ref] : undefined, candidates: candidate ? [candidate] : undefined },
+            handler,
+            signal
+          )
+          if (candidates.length !== 1) throw new Error('Exactly one reference must be resolved.')
+          signal.throwIfAborted()
+          const result = await handler.acquirePdf!({ candidate: candidates[0]!, pdfUrl, signal })
+          return {
+            structuredContent: result,
+            content: [
+              presentationContent({
+                libraryAction: 'save',
+                itemTitles: candidateTitles(candidates),
+                candidateCount: 1,
+                savedCount: result.status === 'pending-review' ? 1 : 0
+              }),
+              { type: 'text' as const, text: JSON.stringify(result) }
+            ]
+          }
+        })
     )
   return server
 }

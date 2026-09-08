@@ -262,6 +262,9 @@ export const LiteratureBatchLookupDialog = ({
     'Full-text search failed. Try again.': t('Full-text search failed. Try again.')
   }
 
+  const running = Boolean(job && ['queued', 'running', 'pausing'].includes(job.state))
+  const paused = job?.state === 'paused'
+  const hasCandidates = rows.some((row) => row.status === 'ready')
   const ready = rows.filter((row) => row.status === 'ready' && row.checked).length
   const checked = rows.filter((row) => !['pending', 'searching'].includes(row.status)).length
   const done = rows.filter((row) => row.status === 'done').length
@@ -269,6 +272,42 @@ export const LiteratureBatchLookupDialog = ({
   const skipped = rows.filter((row) => row.status === 'skipped').length
   const title = mode === 'metadata' ? t('Complete metadata') : t('Find full-text PDF')
   const phaseProgress = job ? literatureJobProgress(job) : { processed: 0, phaseTotal: rows.length }
+  const statusLabel = paused
+    ? t('Paused')
+    : stopping
+      ? t('Pausing after the current reference…')
+      : job?.state === 'queued'
+        ? t('Queued')
+        : running
+          ? job?.phase === 'apply'
+            ? mode === 'metadata'
+              ? t('Saving…')
+              : t('Downloading…')
+            : t('Searching…')
+          : failed > 0
+            ? t('Failed')
+            : hasCandidates
+              ? t('Awaiting review')
+              : t('Completed')
+  const statusHint = paused
+    ? t('Progress is saved. Resume to continue unfinished references.')
+    : stopping
+      ? t('Finishing the current reference before pausing.')
+      : running
+        ? t('You can close this window. Tasks continue in the background.')
+        : failed > 0
+          ? t('Some references failed. Search again to retry unfinished references.')
+          : hasCandidates
+            ? t('Review the results before applying them.')
+            : done > 0
+              ? t('Completed results are saved.')
+              : t('No results are available to apply.')
+  const resumeLabel =
+    job?.phase === 'apply'
+      ? mode === 'metadata'
+        ? t('Continue applying')
+        : t('Continue download')
+      : t('Continue search')
   const labels = {
     pending: t('Pending'),
     searching: t('Searching…'),
@@ -312,7 +351,24 @@ export const LiteratureBatchLookupDialog = ({
             role="status"
           >
             {job ? (
-              <p>{t('You can close this window. Tasks continue in the background.')}</p>
+              <>
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <span className="font-medium text-foreground">{statusLabel}</span>
+                  {!running && done < rows.length ? (
+                    <Button
+                      variant="link"
+                      size="sm"
+                      className="h-auto px-0 py-0 text-xs text-muted-foreground"
+                      disabled={sending}
+                      title={t('Search again resets unfinished results and their selections.')}
+                      onClick={() => void command('retry')}
+                    >
+                      {t('Search again')}
+                    </Button>
+                  ) : null}
+                </div>
+                <p>{statusHint}</p>
+              </>
             ) : null}
             {error ? (
               <LiteratureErrorNotice
@@ -340,16 +396,9 @@ export const LiteratureBatchLookupDialog = ({
             ) : null}
             <div className="flex flex-wrap justify-between gap-2 tabular-nums">
               <span>
-                {job?.state === 'queued'
-                  ? t('Queued')
-                  : job?.phase === 'apply'
-                    ? mode === 'full-text'
-                      ? t('Downloading…')
-                      : t('Saving…')
-                    : t('Checked {{checked}} of {{total}}', { checked, total: rows.length })}
                 {job?.phase === 'apply'
-                  ? ` ${phaseProgress.processed}/${phaseProgress.phaseTotal}`
-                  : ''}
+                  ? `${phaseProgress.processed} / ${phaseProgress.phaseTotal}`
+                  : t('Checked {{checked}} of {{total}}', { checked, total: rows.length })}
               </span>
               <span>
                 {t('Completed {{done}} · Skipped {{skipped}} · Failed {{failed}}', {
@@ -497,55 +546,53 @@ export const LiteratureBatchLookupDialog = ({
               )
             })}
           </ol>
-          <footer
-            className={`${dialogFooterClassName} flex-wrap items-center [&_button]:max-w-full [&_button]:whitespace-normal [&_button]:h-auto [&_button]:min-h-8 [&_button]:py-1`}
-          >
-            {error && !job ? (
-              <Button variant="ghost" onClick={onClose}>
-                {t('Close')}
-              </Button>
-            ) : busy ? (
-              <>
-                <Button variant="ghost" onClick={onClose}>
-                  {t('Run in background')}
-                </Button>
-                {job?.state !== 'queued' ? (
-                  <LoaderCircle
-                    className="size-4 animate-spin text-muted-foreground motion-reduce:animate-none"
-                    aria-hidden="true"
-                  />
-                ) : null}
+          {job && (running || paused || hasCandidates) ? (
+            <footer
+              className={`${dialogFooterClassName} flex-wrap items-center [&_button]:max-w-full [&_button]:whitespace-normal [&_button]:h-auto [&_button]:min-h-8 [&_button]:py-1`}
+            >
+              {running ? (
                 <Button
                   variant="outline"
-                  disabled={stopping}
-                  onClick={() => {
-                    void command('pause')
-                  }}
+                  disabled={stopping || sending}
+                  onClick={() => void command('pause')}
                 >
+                  {stopping ? (
+                    <LoaderCircle
+                      className="size-4 animate-spin motion-reduce:animate-none"
+                      aria-hidden="true"
+                    />
+                  ) : null}
                   {stopping ? t('Pausing after the current reference…') : t('Pause')}
                 </Button>
-              </>
-            ) : (
-              <>
-                {job?.state === 'paused' ? (
-                  <Button onClick={() => void command('resume')}>{t('Resume')}</Button>
-                ) : null}
-                <Button variant="ghost" onClick={onClose}>
-                  {t('Close')}
-                </Button>
-                <Button
-                  variant="outline"
-                  onClick={() => void command('retry')}
-                  disabled={done === rows.length}
-                >
-                  {checked ? t('Search again') : t('Search')}
-                </Button>
-                <Button disabled={!ready} onClick={() => void command('apply')}>
-                  {mode === 'metadata' ? t('Apply metadata') : t('Add attachment')} ({ready})
-                </Button>
-              </>
-            )}
-          </footer>
+              ) : (
+                <>
+                  {hasCandidates && !ready ? (
+                    <span className="mr-auto text-xs text-muted-foreground">
+                      {t('Select at least one result.')}
+                    </span>
+                  ) : null}
+                  {hasCandidates ? (
+                    <Button
+                      variant={paused || error ? 'outline' : 'default'}
+                      disabled={!ready || sending}
+                      onClick={() => void command('apply')}
+                    >
+                      {mode === 'metadata' ? t('Apply selected') : t('Add selected')} ({ready})
+                    </Button>
+                  ) : null}
+                  {paused ? (
+                    <Button
+                      variant={error ? 'outline' : 'default'}
+                      disabled={sending}
+                      onClick={() => void command('resume')}
+                    >
+                      {resumeLabel}
+                    </Button>
+                  ) : null}
+                </>
+              )}
+            </footer>
+          ) : null}
         </Dialog.Content>
       </Dialog.Portal>
     </Dialog.Root>

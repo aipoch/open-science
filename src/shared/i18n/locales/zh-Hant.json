@@ -100,6 +100,8 @@
     "Import Connector configuration": "匯入連接器設定"
   },
   "renderer": {
+    "Shared content": "共用內容",
+    "Literature settings and tasks": "文獻設定與任務",
     "Select no more than {{limit}} references for this task.": "此任務最多支援 {{limit}} 篇文獻，請調整選取範圍。",
     "This reference changed while you were editing. Your draft has been kept.": "您編輯期間此文獻已變更。您的草稿已保留。",
     "Discard this draft and load the latest saved metadata.": "捨棄此草稿並載入最新儲存的中繼資料。",
@@ -132,7 +134,6 @@
     "No background tasks yet.": "尚無背景工作。",
     "Remove task": "移除工作",
     "You can close this window. Tasks continue in the background.": "您可以關閉此視窗，工作會在背景繼續執行。",
-    "Run in background": "在背景執行",
     "PDFs will be attached when you accept this reference.": "接受此書目後，PDF 將作為附件加入。",
     "Merge strategy": "合併策略",
     "Keep the most complete reference": "保留資訊最完整的題錄",
@@ -4810,6 +4811,19 @@
     "The damaged file was moved aside; its references are still unknown.": "損毀的檔案已移至一旁，但其參照仍無法確定。",
     "Inspect or recover the affected conversation files. Retrying deletion alone will not repair them.": "請檢查或復原受影響的對話檔案。僅重試刪除無法修復這些檔案。",
     "Complete locations are unavailable. Check conversation storage diagnostics; deletion remains blocked.": "無法提供完整位置資訊。請檢查對話儲存診斷；刪除仍遭阻止。",
-    "Conversation folder": "對話資料夾"
+    "Conversation folder": "對話資料夾",
+    "Continue search": "繼續檢索",
+    "Continue download": "繼續下載",
+    "Continue applying": "繼續套用",
+    "Progress is saved. Resume to continue unfinished references.": "進度已儲存。恢復後將繼續處理未完成的文獻。",
+    "Finishing the current reference before pausing.": "正在完成目前文獻，隨後暫停。",
+    "Review the results before applying them.": "請先檢閱結果，再套用變更。",
+    "Completed results are saved.": "已完成的結果已儲存。",
+    "No results are available to apply.": "沒有可套用的結果。",
+    "Select at least one result.": "請至少選取一項結果。",
+    "Search again resets unfinished results and their selections.": "重新檢索會重設未完成的結果及其選取項目。",
+    "Apply selected": "套用所選",
+    "Add selected": "新增所選",
+    "Some references failed. Search again to retry unfinished references.": "部分文獻處理失敗。重新檢索可重試未完成的文獻。"
   }
 }

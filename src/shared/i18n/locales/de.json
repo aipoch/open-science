@@ -101,6 +101,8 @@
     "Could not open the update installer: {{error}}": "Das Update-Installationsprogramm konnte nicht geöffnet werden: {{error}}"
   },
   "renderer": {
+    "Shared content": "Gemeinsame Inhalte",
+    "Literature settings and tasks": "Literatureinstellungen und Aufgaben",
     "Select no more than {{limit}} references for this task.": "Wählen Sie für diese Aufgabe höchstens {{limit}} Referenzen aus.",
     "This reference changed while you were editing. Your draft has been kept.": "Diese Referenz wurde während der Bearbeitung geändert. Ihr Entwurf wurde beibehalten.",
     "Discard this draft and load the latest saved metadata.": "Diesen Entwurf verwerfen und die zuletzt gespeicherten Metadaten laden.",
@@ -133,7 +135,6 @@
     "No background tasks yet.": "Noch keine Hintergrundaufgaben.",
     "Remove task": "Aufgabe entfernen",
     "You can close this window. Tasks continue in the background.": "Sie können dieses Fenster schließen. Die Aufgaben laufen im Hintergrund weiter.",
-    "Run in background": "Im Hintergrund ausführen",
     "PDFs will be attached when you accept this reference.": "Die PDFs werden angehängt, sobald Sie diese Referenz annehmen.",
     "Merge strategy": "Zusammenführungsstrategie",
     "Keep the most complete reference": "Vollständigsten Eintrag behalten",
@@ -4963,6 +4964,19 @@
     "The damaged file was moved aside; its references are still unknown.": "Die beschädigte Datei wurde beiseitegelegt; ihre Verweise sind weiterhin unbekannt.",
     "Inspect or recover the affected conversation files. Retrying deletion alone will not repair them.": "Prüfen Sie die betroffenen Konversationsdateien oder stellen Sie sie wieder her. Ein erneuter Löschversuch allein repariert sie nicht.",
     "Complete locations are unavailable. Check conversation storage diagnostics; deletion remains blocked.": "Vollständige Ortsangaben sind nicht verfügbar. Prüfen Sie die Speicherdiagnose für Konversationen; das Löschen bleibt blockiert.",
-    "Conversation folder": "Konversationsordner"
+    "Conversation folder": "Konversationsordner",
+    "Continue search": "Suche fortsetzen",
+    "Continue download": "Download fortsetzen",
+    "Continue applying": "Anwendung fortsetzen",
+    "Progress is saved. Resume to continue unfinished references.": "Der Fortschritt wurde gespeichert. Setzen Sie die Verarbeitung der noch nicht abgeschlossenen Literaturangaben fort.",
+    "Finishing the current reference before pausing.": "Die aktuelle Literaturangabe wird vor dem Pausieren fertiggestellt.",
+    "Review the results before applying them.": "Prüfen Sie die Ergebnisse, bevor Sie sie anwenden.",
+    "Completed results are saved.": "Abgeschlossene Ergebnisse wurden gespeichert.",
+    "No results are available to apply.": "Es sind keine Ergebnisse zum Anwenden verfügbar.",
+    "Select at least one result.": "Wählen Sie mindestens ein Ergebnis aus.",
+    "Search again resets unfinished results and their selections.": "Eine erneute Suche setzt nicht abgeschlossene Ergebnisse und deren Auswahl zurück.",
+    "Apply selected": "Auswahl anwenden",
+    "Add selected": "Auswahl hinzufügen",
+    "Some references failed. Search again to retry unfinished references.": "Einige Literaturstellen sind fehlgeschlagen. Suchen Sie erneut, um nicht abgeschlossene Literaturstellen erneut zu versuchen."
   }
 }

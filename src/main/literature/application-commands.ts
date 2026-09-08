@@ -1,3 +1,4 @@
+import { withDataRootWrite } from '../storage/migration-state'
 import {
   literatureJobsContract,
   type LiteratureJobRequest,
@@ -137,18 +138,24 @@ const registerLiteratureApplicationCommands = (
   const scope = registrar.createScope()
   try {
     scope.registerGroup(literatureApplicationCommandGroup, {
-      'literature:jobs': ({ args }) => owner.jobs(args[0]),
-      'literature:full-text': ({ args }) => owner.fullText(args[0]),
-      'literature:lookup-metadata': ({ args }) => owner.lookupMetadata(args[0]),
-      'literature:complete-metadata': ({ args }) => owner.completeMetadata(args[0]),
-      'literature:citation-styles': ({ args }) => owner.citationStyles(args[0]),
-      'literature:format-references': ({ args }) => owner.formatReferences(args[0]),
-      'literature:format-document': ({ args }) => owner.formatDocument(args[0]),
-      'literature:get': ({ args }) => owner.get(args[0]),
-      'literature:import-pdf': ({ args }) => owner.importPdf(args[0]),
-      'literature:import-records': ({ args }) => owner.importRecords(args[0]),
-      'literature:search': ({ args }) => owner.search(args[0]),
-      'literature:transact': ({ args }) => owner.transact(args[0])
+      'literature:jobs': ({ args }) => withDataRootWrite(() => owner.jobs(args[0])),
+      'literature:full-text': ({ args }) => withDataRootWrite(() => owner.fullText(args[0])),
+      'literature:lookup-metadata': ({ args }) =>
+        withDataRootWrite(() => owner.lookupMetadata(args[0])),
+      'literature:complete-metadata': ({ args }) =>
+        withDataRootWrite(() => owner.completeMetadata(args[0])),
+      'literature:citation-styles': ({ args }) =>
+        withDataRootWrite(() => owner.citationStyles(args[0])),
+      'literature:format-references': ({ args }) =>
+        withDataRootWrite(() => owner.formatReferences(args[0])),
+      'literature:format-document': ({ args }) =>
+        withDataRootWrite(() => owner.formatDocument(args[0])),
+      'literature:get': ({ args }) => withDataRootWrite(() => owner.get(args[0])),
+      'literature:import-pdf': ({ args }) => withDataRootWrite(() => owner.importPdf(args[0])),
+      'literature:import-records': ({ args }) =>
+        withDataRootWrite(() => owner.importRecords(args[0])),
+      'literature:search': ({ args }) => withDataRootWrite(() => owner.search(args[0])),
+      'literature:transact': ({ args }) => withDataRootWrite(() => owner.transact(args[0]))
     })
     return scope.complete()
   } catch (error) {

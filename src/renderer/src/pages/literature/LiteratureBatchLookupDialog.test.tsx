@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react'
 import { StrictMode, useState } from 'react'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { literatureItemInputSchema, type LiteratureItemView } from '../../../../shared/literature'
@@ -79,14 +79,14 @@ it('creates only one background task in Strict Mode and allows closing while it 
   expect(
     screen.getByText('You can close this window. Tasks continue in the background.')
   ).toBeTruthy()
-  fireEvent.click(screen.getByRole('button', { name: 'Run in background' }))
+  fireEvent.click(screen.getByRole('button', { name: 'Close' }))
   expect(onClose).toHaveBeenCalledTimes(1)
   expect(jobs.mock.calls.some(([request]) => request.action === 'pause')).toBe(false)
 })
 it.each(
   (['metadata', 'full-text'] as const).flatMap((mode) =>
     (['search', 'apply'] as const).flatMap((phase) =>
-      (['Close', 'Escape', 'Run in background'] as const).map((dismiss) => ({
+      (['Close', 'Escape'] as const).map((dismiss) => ({
         mode,
         phase,
         dismiss
@@ -128,22 +128,34 @@ it.each(
     job.rows[0]!.status = phase === 'search' ? 'skipped' : 'done'
     fireEvent.click(screen.getByRole('button', { name: 'Reopen task' }))
     await flush()
-    expect(screen.getByText(phase === 'search' ? 'Skipped' : 'Completed')).toBeTruthy()
+    expect(
+      screen.getAllByText(phase === 'search' ? 'Skipped' : 'Completed').length
+    ).toBeGreaterThan(0)
     expect(
       jobs.mock.calls.every(([request]) => request.action === 'get' && request.jobId === id)
     ).toBe(true)
   }
 )
-it('reopens a persisted paused job and resumes it without creating a new one', async () => {
-  job.state = 'paused'
-  job.rows[0]!.status = 'pending'
-  open(id)
-  await flush()
-  expect(jobs.mock.calls.every(([request]) => request.action === 'get')).toBe(true)
-  fireEvent.click(screen.getByRole('button', { name: 'Resume' }))
-  await act(async () => {})
-  expect(jobs).toHaveBeenLastCalledWith({ action: 'resume', jobId: id })
-})
+it.each([
+  ['metadata', 'search', 'Continue search'],
+  ['full-text', 'search', 'Continue search'],
+  ['metadata', 'apply', 'Continue applying'],
+  ['full-text', 'apply', 'Continue download']
+] as const)(
+  'resumes a persisted %s %s task without creating a new one',
+  async (mode, phase, label) => {
+    job.mode = mode
+    job.phase = phase
+    job.state = 'paused'
+    job.rows[0]!.status = 'pending'
+    open(id, mode)
+    await flush()
+    expect(jobs.mock.calls.every(([request]) => request.action === 'get')).toBe(true)
+    fireEvent.click(screen.getByRole('button', { name: label }))
+    await act(async () => {})
+    expect(jobs).toHaveBeenLastCalledWith({ action: 'resume', jobId: id })
+  }
+)
 it('applies only reviewed selections and preserves deselection across polling', async () => {
   job.state = 'review'
   job.rows[0]!.status = 'ready'
@@ -158,10 +170,10 @@ it('applies only reviewed selections and preserves deselection across polling', 
   })
   expect((screen.getByRole('checkbox') as HTMLInputElement).checked).toBe(false)
   expect(
-    (screen.getByRole('button', { name: 'Apply metadata (0)' }) as HTMLButtonElement).disabled
+    (screen.getByRole('button', { name: 'Apply selected (0)' }) as HTMLButtonElement).disabled
   ).toBe(true)
   fireEvent.click(screen.getByRole('checkbox'))
-  fireEvent.click(screen.getByRole('button', { name: 'Apply metadata (1)' }))
+  fireEvent.click(screen.getByRole('button', { name: 'Apply selected (1)' }))
   await act(async () => {})
   expect(jobs).toHaveBeenLastCalledWith({
     action: 'apply',
@@ -248,7 +260,7 @@ it('retries failed review saves without losing the selected source or applying a
   await act(async () => {})
   expect(screen.getByRole('alert')).toBeTruthy()
   expect((screen.getByRole('checkbox') as HTMLInputElement).checked).toBe(true)
-  fireEvent.click(screen.getByRole('button', { name: 'Add attachment (1)' }))
+  fireEvent.click(screen.getByRole('button', { name: 'Add selected (1)' }))
   await act(async () => {})
   expect(jobs.mock.calls.some(([request]) => request.action === 'apply')).toBe(false)
 
@@ -278,7 +290,7 @@ it('retries the failed apply command instead of only refreshing the task', async
   })
   open(id)
   await flush()
-  fireEvent.click(screen.getByRole('button', { name: 'Apply metadata (1)' }))
+  fireEvent.click(screen.getByRole('button', { name: 'Apply selected (1)' }))
   await act(async () => {})
   const first = jobs.mock.calls.find(([request]) => request.action === 'apply')![0]
   expect(screen.getByRole('alert')).toBeTruthy()
@@ -305,7 +317,7 @@ it('retires a failed apply request when the user changes the selection', async (
   })
   open(id)
   await flush()
-  fireEvent.click(screen.getByRole('button', { name: 'Apply metadata (1)' }))
+  fireEvent.click(screen.getByRole('button', { name: 'Apply selected (1)' }))
   await act(async () => {})
   fireEvent.click(screen.getByRole('checkbox'))
   await act(async () => {})
@@ -317,6 +329,84 @@ it('retires a failed apply request when the user changes the selection', async (
   await act(async () => {})
   expect(jobs.mock.calls.filter(([request]) => request.action === 'apply')).toHaveLength(1)
   expect((screen.getByRole('checkbox') as HTMLInputElement).checked).toBe(false)
+})
+
+it('shows only the resumable action in a paused task without candidates', async () => {
+  job.state = 'paused'
+  job.rows[0]!.status = 'pending'
+  open(id, 'full-text')
+  await flush()
+  expect(screen.getByText('Paused')).toBeTruthy()
+  expect(
+    screen.queryByText('You can close this window. Tasks continue in the background.')
+  ).toBeNull()
+  expect(screen.getAllByRole('button', { name: 'Close' })).toHaveLength(1)
+  expect(screen.queryByRole('button', { name: /Add selected/ })).toBeNull()
+  const resume = screen.getByRole('button', { name: 'Continue search' })
+  expect(resume.closest('footer')?.querySelectorAll('button')).toHaveLength(1)
+  expect(screen.getByRole('button', { name: 'Search again' }).closest('footer')).toBeNull()
+})
+
+it('gives continuation priority over applying partial results in a paused task', async () => {
+  job.state = 'paused'
+  job.rows[0]!.status = 'ready'
+  open(id)
+  await flush()
+  const resume = screen.getByRole('button', { name: 'Continue search' })
+  const apply = screen.getByRole('button', { name: 'Apply selected (1)' })
+  expect(resume.getAttribute('data-variant')).toBe('default')
+  expect(apply.getAttribute('data-variant')).toBe('outline')
+  expect(resume.closest('footer')?.querySelectorAll('button')).toHaveLength(2)
+})
+
+it('explains an empty selection while retaining the review submission action', async () => {
+  job.state = 'review'
+  job.rows[0]!.status = 'ready'
+  job.rows[0]!.checked = false
+  open(id, 'full-text')
+  await flush()
+  expect(
+    (screen.getByRole('button', { name: 'Add selected (0)' }) as HTMLButtonElement).disabled
+  ).toBe(true)
+  expect(screen.getByText('Select at least one result.')).toBeTruthy()
+})
+
+it('removes irrelevant footer actions after all task results have been applied', async () => {
+  job.state = 'completed'
+  job.rows[0]!.status = 'done'
+  open(id)
+  await flush()
+  expect(screen.getAllByRole('button')).toHaveLength(1)
+  expect(screen.getByRole('button', { name: 'Close' })).toBeTruthy()
+  expect(
+    screen.queryByText('You can close this window. Tasks continue in the background.')
+  ).toBeNull()
+})
+
+it('keeps the paused actions stable and prevents duplicate requests while resuming', async () => {
+  job.state = 'paused'
+  job.rows[0]!.status = 'pending'
+  let release!: () => void
+  const waiting = new Promise<void>((resolve) => {
+    release = resolve
+  })
+  jobs.mockImplementation(async (request) => {
+    if (request.action === 'resume') await waiting
+    return { jobs: [structuredClone(job)] }
+  })
+  open(id)
+  await flush()
+  const resume = screen.getByRole('button', { name: 'Continue search' }) as HTMLButtonElement
+  fireEvent.click(resume)
+  await act(async () => {})
+  expect(resume.disabled).toBe(true)
+  expect(screen.queryByRole('button', { name: 'Pause' })).toBeNull()
+  fireEvent.click(resume)
+  expect(jobs.mock.calls.filter(([request]) => request.action === 'resume')).toHaveLength(1)
+  await act(async () => {
+    release()
+  })
+  expect(resume.disabled).toBe(false)
 })
 
 it('adopts another window saved deselection when this window has no pending draft', async () => {
@@ -344,7 +434,7 @@ it('adopts another window saved deselection when this window has no pending draf
         .checked
     )
     .toBe(false)
-  fireEvent.click(screen.getByRole('button', { name: /Apply metadata/ }))
+  fireEvent.click(screen.getByRole('button', { name: /Apply selected/ }))
   await act(async () => {})
   expect(jobs).toHaveBeenLastCalledWith({
     action: 'apply',
@@ -381,7 +471,7 @@ it('adopts another window saved candidate when there is no local draft', async (
   job.rows[0].candidateId = 'second-source'
   fireEvent(window, new Event('literature-job-refresh'))
   await act(async () => {})
-  fireEvent.click(screen.getByRole('button', { name: 'Add attachment (1)' }))
+  fireEvent.click(screen.getByRole('button', { name: 'Add selected (1)' }))
   await act(async () => {})
   expect(jobs).toHaveBeenLastCalledWith({
     action: 'apply',
@@ -399,7 +489,7 @@ it('retires failed apply selections when another window saves a different review
   })
   open(id)
   await flush()
-  fireEvent.click(screen.getByRole('button', { name: 'Apply metadata (1)' }))
+  fireEvent.click(screen.getByRole('button', { name: 'Apply selected (1)' }))
   await act(async () => {})
   expect(screen.getByRole('alert')).toBeTruthy()
   job.rows[0]!.checked = false
@@ -411,4 +501,18 @@ it('retires failed apply selections when another window saves a different review
   if (retry) fireEvent.click(retry)
   await act(async () => {})
   expect(jobs.mock.calls.filter(([request]) => request.action === 'apply')).toHaveLength(1)
+})
+
+it('reports failed searches instead of completion when no candidates are ready', async () => {
+  job.state = 'review'
+  job.rows[0]!.status = 'error'
+  open(id, 'full-text')
+  await flush()
+  const status = screen.getByRole('status')
+  expect(within(status).getByText('Failed')).toBeTruthy()
+  expect(within(status).queryByText('Completed')).toBeNull()
+  expect(status.textContent).toContain(
+    'Some references failed. Search again to retry unfinished references.'
+  )
+  expect(screen.getByRole('button', { name: 'Search again' })).toBeTruthy()
 })

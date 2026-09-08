@@ -102,6 +102,8 @@
     "Import Connector configuration": "Importar configuración del conector"
   },
   "renderer": {
+    "Shared content": "Contenido compartido",
+    "Literature settings and tasks": "Configuración y tareas bibliográficas",
     "Select no more than {{limit}} references for this task.": "Seleccione como máximo {{limit}} referencias para esta tarea.",
     "This reference changed while you were editing. Your draft has been kept.": "Esta referencia cambió mientras la editaba. Se ha conservado su borrador.",
     "Discard this draft and load the latest saved metadata.": "Descartar este borrador y cargar los últimos metadatos guardados.",
@@ -134,7 +136,6 @@
     "No background tasks yet.": "Aún no hay tareas en segundo plano.",
     "Remove task": "Eliminar tarea",
     "You can close this window. Tasks continue in the background.": "Puede cerrar esta ventana. Las tareas continúan en segundo plano.",
-    "Run in background": "Ejecutar en segundo plano",
     "PDFs will be attached when you accept this reference.": "Los PDF se adjuntarán cuando acepte esta referencia.",
     "Merge strategy": "Estrategia de fusión",
     "Keep the most complete reference": "Conservar la referencia más completa",
@@ -5124,6 +5125,19 @@
     "The damaged file was moved aside; its references are still unknown.": "El archivo dañado se apartó, pero sus referencias siguen siendo desconocidas.",
     "Inspect or recover the affected conversation files. Retrying deletion alone will not repair them.": "Inspeccione o recupere los archivos de conversación afectados. Reintentar la eliminación no los reparará.",
     "Complete locations are unavailable. Check conversation storage diagnostics; deletion remains blocked.": "No se dispone de las ubicaciones completas. Revise el diagnóstico del almacenamiento de conversaciones; la eliminación sigue bloqueada.",
-    "Conversation folder": "Carpeta de conversaciones"
+    "Conversation folder": "Carpeta de conversaciones",
+    "Continue search": "Reanudar búsqueda",
+    "Continue download": "Reanudar descarga",
+    "Continue applying": "Reanudar aplicación",
+    "Progress is saved. Resume to continue unfinished references.": "El progreso se ha guardado. Reanude para continuar con las referencias pendientes.",
+    "Finishing the current reference before pausing.": "Se completará la referencia actual antes de pausar.",
+    "Review the results before applying them.": "Revise los resultados antes de aplicarlos.",
+    "Completed results are saved.": "Los resultados completados se han guardado.",
+    "No results are available to apply.": "No hay resultados disponibles para aplicar.",
+    "Select at least one result.": "Seleccione al menos un resultado.",
+    "Search again resets unfinished results and their selections.": "Volver a buscar restablece los resultados pendientes y sus selecciones.",
+    "Apply selected": "Aplicar selección",
+    "Add selected": "Añadir selección",
+    "Some references failed. Search again to retry unfinished references.": "Algunas referencias fallaron. Repita la búsqueda para reintentar las referencias pendientes."
   }
 }

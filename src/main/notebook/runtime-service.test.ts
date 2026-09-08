@@ -2,7 +2,7 @@ import { createHash, randomUUID } from 'node:crypto'
 import { existsSync } from 'node:fs'
 import { chmod, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { dirname, join, posix, win32 } from 'node:path'
+import { delimiter, dirname, join, posix, win32 } from 'node:path'
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 import { NotebookBackgroundRunError } from '../../shared/notebook'
 
@@ -27,6 +27,7 @@ import {
   recordSpawnIntentSync
 } from './operation-journal'
 import { DefaultRuntimeProvisioner } from './provisioner'
+import * as environmentDiscovery from './environment-discovery'
 import {
   EnvironmentManifestPublicationError,
   type EnvironmentStateTracker
@@ -15318,7 +15319,7 @@ describe('v4 runtime bindings & agent tools', () => {
   })
 
   // End-to-end constructor wiring of NotebookRuntimeSettings: a Settings-added interpreter is folded
-  // into the service's REAL default discovery (NOT an injected discoverRuntimes), so it becomes
+  // into the service's default discovery (NOT an injected discoverRuntimes), so it becomes
   // discoverable, enable-able, and bindable — and survives a restart (a fresh service with the same
   // capability still resolves it active, not 'missing'). Uses a real executable interpreter so the
   // version probe + runnability classification run for real. POSIX-only:
@@ -15326,9 +15327,8 @@ describe('v4 runtime bindings & agent tools', () => {
   it.skipIf(process.platform === 'win32')(
     'discovers, binds, and (across a restart) keeps a constructor-injected manual interpreter',
     async () => {
-      // Real discovery is exercised (no injected discoverRuntimes): it enumerates PATH + conda roots and
-      // probes every real interpreter's `--version`, and it runs on each list/bind/execute/restart call —
-      // so this legitimately needs far more than the default 5s budget on a machine with many envs.
+      // Keep real probing and binding, but bound candidate enumeration to this fixture. Host PATH
+      // and conda inventory are covered in environment-discovery.test.ts, not constructor wiring.
       const root = await createStorageRoot()
 
       // A real, runnable Python shim OUTSIDE runtime/envs (so discovery classifies it 'user-own'): it
@@ -15339,6 +15339,17 @@ describe('v4 runtime bindings & agent tools', () => {
       await chmod(shim, 0o755)
       // Key everything by the canonical path — discovery's realpath-dedup makes envId the real path.
       const manualPath = await realpath(shim)
+
+      // A host interpreter must not leak into this constructor-wiring test.
+      const hostBin = join(root, 'host-bin')
+      await mkdir(hostBin)
+      const hostInterpreter = join(hostBin, 'python3')
+      await writeFile(
+        hostInterpreter,
+        '#!/bin/sh\necho probed > "$0.probed"\necho "Python 3.11.9"\n'
+      )
+      await chmod(hostInterpreter, 0o755)
+      vi.stubEnv('PATH', `${hostBin}${delimiter}${process.env.PATH ?? ''}`)
 
       let manualResolverCalls = 0
       const resolver = async (language: 'python' | 'r'): Promise<string[]> => {
@@ -15387,47 +15398,60 @@ describe('v4 runtime bindings & agent tools', () => {
         return service
       }
 
-      const service = makeService()
+      const realDiscoveryDeps = environmentDiscovery.defaultDiscoveryDeps
+      const discovery = vi
+        .spyOn(environmentDiscovery, 'defaultDiscoveryDeps')
+        .mockImplementation((runtimeRoot, manualPaths, runtimeDeps) => ({
+          ...realDiscoveryDeps(runtimeRoot, manualPaths, runtimeDeps),
+          candidatePaths: async (language) => manualPaths?.(language) ?? []
+        }))
+      try {
+        const service = makeService()
 
-      // 1) The manual interpreter surfaces through the agent-facing list (real discovery folded it in).
-      const listed = await service.listRuntimes({ sessionId: 's', workspaceCwd: root })
-      const manualListing = listed.runtimes.find((r) => r.runtimeId === manualPath)
-      expect(manualResolverCalls).toBeGreaterThan(0) // proves the resolver was consulted by discovery
-      expect(manualListing).toBeDefined()
-      expect(manualListing?.provenance).toBe('user-own')
-      expect(manualListing?.runnable).toBe(true)
-      expect(manualListing?.version).toMatch(/^3\.12\.7/)
+        // 1) The manual interpreter surfaces through the agent-facing list (real discovery folded it in).
+        const listed = await service.listRuntimes({ sessionId: 's', workspaceCwd: root })
+        expect(existsSync(`${hostInterpreter}.probed`)).toBe(false)
+        const manualListing = listed.runtimes.find((r) => r.runtimeId === manualPath)
+        expect(manualResolverCalls).toBeGreaterThan(0) // proves the resolver was consulted by discovery
+        expect(manualListing).toBeDefined()
+        expect(manualListing?.provenance).toBe('user-own')
+        expect(manualListing?.runnable).toBe(true)
+        expect(manualListing?.version).toMatch(/^3\.12\.7/)
 
-      // 2) It is bindable, and a subsequent state/execute reflects the binding + threads the interpreter.
-      const bound = await service.bindRuntime({
-        sessionId: 's',
-        workspaceCwd: root,
-        language: 'python',
-        runtimeId: manualPath
-      })
-      if (!('bound' in bound)) throw new Error(bound.error)
-      expect(bound.bound.source).toBe('external')
-      expect(bound.bound.runtimeId).toBe(manualPath)
+        // 2) It is bindable, and a subsequent state/execute reflects the binding + threads the interpreter.
+        const bound = await service.bindRuntime({
+          sessionId: 's',
+          workspaceCwd: root,
+          language: 'python',
+          runtimeId: manualPath
+        })
+        if (!('bound' in bound)) throw new Error(bound.error)
+        expect(bound.bound.source).toBe('external')
+        expect(bound.bound.runtimeId).toBe(manualPath)
 
-      const state = await service.state({ sessionId: 's', workspaceCwd: root })
-      expect(state.runtimeBindings.python?.runtimeId).toBe(manualPath)
-      expect(state.runtimeBindings.python?.status ?? 'active').toBe('active')
+        const state = await service.state({ sessionId: 's', workspaceCwd: root })
+        expect(state.runtimeBindings.python?.runtimeId).toBe(manualPath)
+        expect(state.runtimeBindings.python?.status ?? 'active').toBe('active')
 
-      await service.execute({ sessionId: 's', workspaceCwd: root, code: '1', language: 'python' })
-      expect(executions.at(-1)?.resolvedInterpreter?.command).toBe(manualPath)
+        await service.execute({ sessionId: 's', workspaceCwd: root, code: '1', language: 'python' })
+        expect(executions.at(-1)?.resolvedInterpreter?.command).toBe(manualPath)
 
-      // 3) Restart: a FRESH service instance (same manual resolver + same on-disk repository) must still
-      // discover the interpreter and rehydrate the persisted binding as ACTIVE — never 'missing'.
-      const afterRestart = makeService()
-      const restartState = await afterRestart.state({ sessionId: 's', workspaceCwd: root })
-      expect(restartState.runtimeBindings.python?.runtimeId).toBe(manualPath)
-      expect(restartState.runtimeBindings.python?.status ?? 'active').toBe('active')
-      expect(restartState.runtimeBindings.python?.reason).toBeUndefined()
+        // 3) Restart: a FRESH service instance (same manual resolver + same on-disk repository) must still
+        // discover the interpreter and rehydrate the persisted binding as ACTIVE — never 'missing'.
+        const afterRestart = makeService()
+        const restartState = await afterRestart.state({ sessionId: 's', workspaceCwd: root })
+        expect(restartState.runtimeBindings.python?.runtimeId).toBe(manualPath)
+        expect(restartState.runtimeBindings.python?.status ?? 'active').toBe('active')
+        expect(restartState.runtimeBindings.python?.reason).toBeUndefined()
 
-      const relisted = await afterRestart.listRuntimes({ sessionId: 's', workspaceCwd: root })
-      expect(relisted.runtimes.some((r) => r.runtimeId === manualPath)).toBe(true)
+        const relisted = await afterRestart.listRuntimes({ sessionId: 's', workspaceCwd: root })
+        expect(relisted.runtimes.some((r) => r.runtimeId === manualPath)).toBe(true)
 
-      await rm(manualDir, { recursive: true, force: true })
+        expect(existsSync(`${hostInterpreter}.probed`)).toBe(false)
+      } finally {
+        discovery.mockRestore()
+        await rm(manualDir, { recursive: true, force: true })
+      }
     },
     60_000
   )

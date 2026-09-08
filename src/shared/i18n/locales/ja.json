@@ -100,6 +100,8 @@
     "Import Connector configuration": "コネクタ構成のインポート"
   },
   "renderer": {
+    "Shared content": "共有コンテンツ",
+    "Literature settings and tasks": "文献の設定とタスク",
     "Select no more than {{limit}} references for this task.": "このタスクでは {{limit}} 件以下の文献を選択してください。",
     "This reference changed while you were editing. Your draft has been kept.": "編集中にこの文献が変更されました。下書きは保持されています。",
     "Discard this draft and load the latest saved metadata.": "この下書きを破棄して、最後に保存されたメタデータを読み込みます。",
@@ -132,7 +134,6 @@
     "No background tasks yet.": "バックグラウンドタスクはまだありません。",
     "Remove task": "タスクを削除",
     "You can close this window. Tasks continue in the background.": "このウィンドウを閉じても、タスクはバックグラウンドで続行されます。",
-    "Run in background": "バックグラウンドで実行",
     "PDFs will be attached when you accept this reference.": "この文献を承認すると、PDF が添付されます。",
     "Merge strategy": "統合方法",
     "Keep the most complete reference": "情報が最も充実した文献を保持",
@@ -4810,6 +4811,19 @@
     "The damaged file was moved aside; its references are still unknown.": "破損したファイルは退避されましたが、参照の有無はまだ不明です。",
     "Inspect or recover the affected conversation files. Retrying deletion alone will not repair them.": "影響を受けた会話ファイルを確認または復元してください。削除を再試行するだけでは修復されません。",
     "Complete locations are unavailable. Check conversation storage diagnostics; deletion remains blocked.": "すべての場所を表示できません。会話ストレージの診断を確認してください。削除は引き続きブロックされています。",
-    "Conversation folder": "会話フォルダー"
+    "Conversation folder": "会話フォルダー",
+    "Continue search": "検索を再開",
+    "Continue download": "ダウンロードを再開",
+    "Continue applying": "適用を再開",
+    "Progress is saved. Resume to continue unfinished references.": "進捗は保存されています。再開すると未完了の文献の処理を続行します。",
+    "Finishing the current reference before pausing.": "現在の文献の処理が完了したら一時停止します。",
+    "Review the results before applying them.": "結果を確認してから適用してください。",
+    "Completed results are saved.": "完了した結果は保存されています。",
+    "No results are available to apply.": "適用できる結果はありません。",
+    "Select at least one result.": "結果を少なくとも1つ選択してください。",
+    "Search again resets unfinished results and their selections.": "再検索すると、未完了の結果とその選択内容がリセットされます。",
+    "Apply selected": "選択項目を適用",
+    "Add selected": "選択項目を追加",
+    "Some references failed. Search again to retry unfinished references.": "一部の文献の処理に失敗しました。再検索して未完了の文献を再試行してください。"
   }
 }
