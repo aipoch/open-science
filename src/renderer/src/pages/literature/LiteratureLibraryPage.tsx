@@ -1295,6 +1295,8 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
   const clearSelection = useCallback((): void => selectionStore.clear(), [selectionStore])
   const yearFilter = useLiteratureYearFilter(clearSelection)
   const { from: filterYearFrom, to: filterYearTo } = yearFilter
+  const [filtersOpen, setFiltersOpen] = useState(false)
+  const [restorePreview, setRestorePreview] = useState<{ itemIds: string[]; skipped: number }>()
   const [isBatching, setIsBatching] = useState(false)
   const [batchLookup, setBatchLookup] = useState<{
     mode: BatchLookupMode
@@ -1335,6 +1337,19 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
   const [isCreatingItem, setIsCreatingItem] = useState(false)
   const [isSavingNewItem, setIsSavingNewItem] = useState(false)
   const [createItemError, setCreateItemError] = useState<string>()
+  const [createdItemId, setCreatedItemId] = useState<string>()
+  const creatingItemRef = useRef(false)
+  const pendingCreationRef = useRef<{
+    id: string
+    destination?: Extract<
+      LiteratureCatalogCommand,
+      { kind: 'set-project-item' | 'set-collection-item' }
+    >
+    projectId?: string
+    collectionId?: string
+    file?: File
+    pdfItem?: LiteratureItemView
+  }>(undefined)
   const [pendingImportPdf, setPendingImportPdf] = useState<File>()
   const [pendingImportDraft, setPendingImportDraft] = useState<LiteratureItemInput>()
   const [isReadingImportMetadata, setIsReadingImportMetadata] = useState(false)
@@ -1898,6 +1913,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
       setEntriesOffset(0)
       clearSelection()
       setLifecycleFailure(undefined)
+      setRestorePreview(undefined)
       setLinkFailure(undefined)
     }, 0)
     return () => window.clearTimeout(timeout)
@@ -2008,8 +2024,8 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
   const activeFilterCount =
     (tagId !== 'all' ? 1 : 0) +
     (filterItemType !== 'all' ? 1 : 0) +
-    (yearFilter.draftFrom ? 1 : 0) +
-    (yearFilter.draftTo ? 1 : 0) +
+    (yearFilter.from ? 1 : 0) +
+    (yearFilter.to ? 1 : 0) +
     (filterHasPdf !== 'all' ? 1 : 0)
 
   const clearFilters = (): void => {
@@ -2586,80 +2602,95 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
     }
   }
 
-  const createManualItem = async (item: LiteratureItemInput): Promise<void> => {
-    if (isSavingNewItem) return
+  const createManualItem = async (item?: LiteratureItemInput): Promise<void> => {
+    if (creatingItemRef.current || (!pendingCreationRef.current && !item)) return
+    creatingItemRef.current = true
     setIsSavingNewItem(true)
     setCreateItemError(undefined)
-    const file = pendingImportPdf
     const transferId = crypto.randomUUID()
     let staged: Awaited<ReturnType<typeof stageComposerFile>> | undefined
-    let createdItemId: string | undefined
     try {
-      const receipt = await window.api.literature.transact({
-        kind: 'create-item',
-        item,
-        ...(duplicatePolicy === 'reuse' ? {} : { duplicatePolicy })
-      })
-      createdItemId = receipt.id
-      if (projectId) {
-        await window.api.literature.transact({
-          kind: 'set-project-item',
+      if (!pendingCreationRef.current) {
+        const receipt = await window.api.literature.transact({
+          kind: 'create-item',
+          item: item!,
+          ...(duplicatePolicy === 'reuse' ? {} : { duplicatePolicy })
+        })
+        // This receipt belongs to this dialog's creation intent, including its original destination.
+        pendingCreationRef.current = {
+          id: receipt.id,
           projectId,
-          itemId: receipt.id,
-          included: true,
-          source: 'library'
-        })
-      } else if (collectionId) {
-        await window.api.literature.transact({
-          kind: 'set-collection-item',
           collectionId,
-          itemId: receipt.id,
-          included: true
-        })
+          file: pendingImportPdf,
+          destination: projectId
+            ? {
+                kind: 'set-project-item',
+                projectId,
+                itemId: receipt.id,
+                included: true,
+                source: 'library'
+              }
+            : collectionId
+              ? { kind: 'set-collection-item', collectionId, itemId: receipt.id, included: true }
+              : undefined
+        }
+        setCreatedItemId(receipt.id)
       }
-      const created = file
-        ? await (async (): Promise<LiteratureItemView> => {
-            staged = await stageComposerFile(file, window.api.uploads, {
-              transferId,
-              name: file.name
-            })
-            await window.api.uploads.claimLocalFile?.({ transferId })
-            return (
-              await window.api.literature.importPdf({ itemId: receipt.id, attachment: staged })
-            ).item
-          })()
-        : await window.api.literature.get(receipt.id)
+      const pending = pendingCreationRef.current
+      if (pending.destination) {
+        await window.api.literature.transact(pending.destination)
+        pending.destination = undefined
+      }
+      if (pending.file && !pending.pdfItem) {
+        staged = await stageComposerFile(pending.file, window.api.uploads, {
+          transferId,
+          name: pending.file.name
+        })
+        await window.api.uploads.claimLocalFile?.({ transferId })
+        pending.pdfItem = (
+          await window.api.literature.importPdf({ itemId: pending.id, attachment: staged })
+        ).item
+      }
+      const created = pending.pdfItem ?? (await window.api.literature.get(pending.id))
       if (!created) throw new Error('Literature Item is unavailable after creating.')
       setItems((entries) =>
         entries.some((entry) => entry.id === created.id)
           ? entries.map((entry) => (entry.id === created.id ? created : entry))
           : [created, ...entries]
       )
-      if (collectionId) await loadCollections()
-      if (projectId) await loadProjectCounts()
-      setIsCreatingItem(false)
-      setPendingImportPdf(undefined)
-      setPendingImportDraft(undefined)
+      if (pending.collectionId) await loadCollections()
+      if (pending.projectId) await loadProjectCounts()
+      closeItemEditor()
       openSelectedItemDetail(created)
     } catch (error) {
-      if (file && createdItemId) {
-        const created = await window.api.literature.get(createdItemId).catch(() => undefined)
-        if (created) {
-          setIsCreatingItem(false)
-          setPendingImportPdf(undefined)
-          setPendingImportDraft(undefined)
-          openSelectedItemDetail(created)
-          setPdfError(pdfImportErrorMessage(error, t))
-        } else {
-          setCreateItemError(t('Literature could not be created.'))
-        }
+      const pending = pendingCreationRef.current
+      // Retain the existing PDF-error detail recovery only once destination linking has completed.
+      const created =
+        pending?.file && !pending.destination && !pending.pdfItem
+          ? await window.api.literature.get(pending.id).catch(() => undefined)
+          : undefined
+      if (created) {
+        closeItemEditor()
+        openSelectedItemDetail(created)
+        setPdfError(pdfImportErrorMessage(error, t))
       } else {
-        setCreateItemError(t('Literature could not be created.'))
+        setCreateItemError(
+          pending
+            ? pending.destination
+              ? t(
+                  'The reference was created, but linking it to the destination failed. Retry to finish linking. Closing leaves it in your library without that link.'
+                )
+              : t(
+                  'The reference was created, but the remaining steps failed. Retry to finish. If you close, the reference remains in your library.'
+                )
+            : t('Literature could not be created.')
+        )
       }
     } finally {
       if (staged)
         await window.api.uploads.deleteUpload({ path: staged.path }).catch(() => undefined)
-      if (createdItemId) void loadEntries(true)
+      void loadEntries(true)
+      creatingItemRef.current = false
       setIsSavingNewItem(false)
     }
   }
@@ -2689,6 +2720,8 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
   }
 
   const closeItemEditor = (): void => {
+    pendingCreationRef.current = undefined
+    setCreatedItemId(undefined)
     setDuplicatePolicy('reuse')
     importMetadataGenerationRef.current += 1
     setIsCreatingItem(false)
@@ -2808,6 +2841,43 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
     const page = await window.api.literature.search({ ...buildEntriesRequest(0), allItemIds: true })
     if (!page.itemIds) throw new Error('Literature membership is unavailable.')
     return page.itemIds.filter((id) => !excludedMatchingIds.has(id))
+  }
+
+  const previewRestoreSelection = async (): Promise<void> => {
+    if (isBatching) return
+    const scopeKey = entriesKey
+    setIsBatching(true)
+    setError(undefined)
+    try {
+      const selectedIds = new Set(await resolveSelectedItemIds())
+      const restorable = new Set<string>()
+      const skipped = new Set<string>()
+      const seenOffsets = new Set<number>()
+      let offset = 0
+      for (;;) {
+        if (seenOffsets.has(offset)) throw new Error('Repeated Literature page.')
+        seenOffsets.add(offset)
+        const page = await window.api.literature.search({
+          ...buildEntriesRequest(offset),
+          limit: 100
+        })
+        if (linkScopeRef.current !== scopeKey) return
+        for (const entry of page.entries.filter(isItem)) {
+          if (!selectedIds.has(entry.id)) continue
+          if (entry.mergedIntoItemId) skipped.add(entry.id)
+          else restorable.add(entry.id)
+        }
+        if (page.nextOffset === undefined) break
+        offset = page.nextOffset
+      }
+      if (restorable.size + skipped.size !== selectedIds.size)
+        throw new Error('Selected Literature membership changed.')
+      setRestorePreview({ itemIds: [...restorable], skipped: skipped.size })
+    } catch {
+      if (linkScopeRef.current === scopeKey) setError(t('Selected references could not be loaded.'))
+    } finally {
+      setIsBatching(false)
+    }
   }
 
   const requestBatchLookup = async (mode: BatchLookupMode): Promise<void> => {
@@ -3966,9 +4036,18 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
                               <SelectItem value="rating">{t('Highest rated')}</SelectItem>
                             </SelectContent>
                           </Select>
-                          <Popover>
+                          <Popover open={filtersOpen} onOpenChange={setFiltersOpen}>
                             <PopoverTrigger asChild>
-                              <Button type="button" variant="outline" className="relative">
+                              <Button
+                                type="button"
+                                variant="outline"
+                                className="relative"
+                                aria-describedby={
+                                  yearFilter.invalid && !filtersOpen
+                                    ? 'literature-year-filter-error'
+                                    : undefined
+                                }
+                              >
                                 <SlidersHorizontal className="size-4" aria-hidden="true" />
                                 {t('Filters')}
                                 {activeFilterCount > 0 ? (
@@ -4050,7 +4129,11 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
                                   type="button"
                                   variant="outline"
                                   className="w-full"
-                                  disabled={activeFilterCount === 0}
+                                  disabled={
+                                    activeFilterCount === 0 &&
+                                    !yearFilter.draftFrom &&
+                                    !yearFilter.draftTo
+                                  }
                                   onClick={clearFilters}
                                 >
                                   {t('Clear filters')}
@@ -4058,6 +4141,15 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
                               </div>
                             </PopoverContent>
                           </Popover>
+                          {yearFilter.invalid && !filtersOpen ? (
+                            <p
+                              id="literature-year-filter-error"
+                              role="status"
+                              className="text-xs text-destructive"
+                            >
+                              {t('Enter a valid year range (0–9999).')}
+                            </p>
+                          ) : null}
                           <LiteratureColumnCustomizer
                             columns={tableColumnOrder}
                             labels={tableColumnLabels}
@@ -4145,8 +4237,16 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
                               type="button"
                               variant="outline"
                               size="sm"
-                              disabled={isBatching}
-                              onClick={() => void runLifecycleAction('active')}
+                              disabled={
+                                isBatching ||
+                                (!selection.allMatchingSelected &&
+                                  [...selection.selectedIds].every((id) =>
+                                    items.some(
+                                      (item) => item.id === id && Boolean(item.mergedIntoItemId)
+                                    )
+                                  ))
+                              }
+                              onClick={() => void previewRestoreSelection()}
                             >
                               <RotateCcw className="size-3.5" aria-hidden="true" />
                               {t('Restore')}
@@ -4955,7 +5055,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
                                         <>
                                           <DropdownMenuSeparator />
                                           <DropdownMenuItem
-                                            disabled={isBatching}
+                                            disabled={isBatching || Boolean(entry.mergedIntoItemId)}
                                             onSelect={() =>
                                               void setItemsLifecycle([entry.id], 'active')
                                             }
@@ -4963,6 +5063,24 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
                                             <RotateCcw className="mr-2 size-4" aria-hidden="true" />
                                             {t('Restore')}
                                           </DropdownMenuItem>
+                                          {entry.mergedIntoItemId ? (
+                                            <DropdownMenuItem
+                                              onSelect={() =>
+                                                useNavigationStore
+                                                  .getState()
+                                                  .openLiteratureItem(
+                                                    entry.mergedIntoItemId!,
+                                                    'user'
+                                                  )
+                                              }
+                                            >
+                                              <BookOpenText
+                                                className="mr-2 size-4"
+                                                aria-hidden="true"
+                                              />
+                                              {t('Open retained reference')}
+                                            </DropdownMenuItem>
+                                          ) : null}
                                         </>
                                       ) : null}
                                       {section !== 'trash' ? (
@@ -5163,7 +5281,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
                   <LiteratureDuplicatePolicyField
                     value={duplicatePolicy}
                     onChange={setDuplicatePolicy}
-                    disabled={isSavingNewItem}
+                    disabled={isSavingNewItem || Boolean(createdItemId)}
                   />
                 }
                 key={pendingImportPdf?.name ?? 'manual-reference'}
@@ -5175,6 +5293,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
                 }
                 saving={isSavingNewItem}
                 error={createItemError}
+                onRetry={createdItemId ? () => void createManualItem() : undefined}
                 onCancel={closeItemEditor}
                 onSave={(item) => void createManualItem(item)}
               />
@@ -6085,6 +6204,49 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
                   />
                 ) : null}
                 {t('Delete collection')}
+              </Button>
+            </div>
+          </AlertDialog.Content>
+        </AlertDialog.Portal>
+      </AlertDialog.Root>
+      <AlertDialog.Root
+        open={Boolean(restorePreview)}
+        onOpenChange={(open) => {
+          if (!open && !isBatching) setRestorePreview(undefined)
+        }}
+      >
+        <AlertDialog.Portal>
+          <AlertDialog.Overlay className={dialogOverlayClassName} />
+          <AlertDialog.Content
+            className={dialogPanelClassName('w-[min(440px,calc(100vw-2rem))] p-0')}
+          >
+            <div className={dialogHeaderClassName}>
+              <AlertDialog.Title className={dialogTitleClassName}>{t('Restore')}</AlertDialog.Title>
+            </div>
+            <div className={dialogBodyClassName}>
+              <AlertDialog.Description className={dialogDescriptionClassName}>
+                {t('Can restore: {{recoverable}}. Merged duplicates skipped: {{skipped}}.', {
+                  recoverable: restorePreview?.itemIds.length ?? 0,
+                  skipped: restorePreview?.skipped ?? 0
+                })}
+              </AlertDialog.Description>
+            </div>
+            <div className={dialogFooterClassName}>
+              <AlertDialog.Cancel asChild>
+                <Button type="button" variant="ghost" disabled={isBatching}>
+                  {t('Cancel')}
+                </Button>
+              </AlertDialog.Cancel>
+              <Button
+                type="button"
+                disabled={isBatching || !restorePreview?.itemIds.length}
+                onClick={() => {
+                  const ids = restorePreview?.itemIds
+                  setRestorePreview(undefined)
+                  if (ids?.length) void setItemsLifecycle(ids, 'active')
+                }}
+              >
+                {t('Restore')}
               </Button>
             </div>
           </AlertDialog.Content>

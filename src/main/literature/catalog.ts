@@ -3,6 +3,7 @@ import { createHash, randomUUID } from 'node:crypto'
 
 import { Prisma, type PrismaClient } from '@prisma/client'
 import { createLogger } from '../logger'
+import { normalizeLiteratureSearchTextV1 as normalizeSearchText } from '../../shared/literature-search-text'
 import { findLiteratureDuplicateGroups } from './duplicates'
 import { planLiteratureMerge, supplementLiteratureMetadata } from './duplicate-metadata'
 
@@ -40,6 +41,7 @@ import {
 type LiteratureCatalogClient = Pick<
   PrismaClient,
   | '$transaction'
+  | '$queryRaw'
   | 'contentBlob'
   | 'literatureAttachment'
   | 'literatureAttachmentVersion'
@@ -76,6 +78,7 @@ type AttachLiteratureContentInput = Readonly<{
 type AttachedLiteratureContent = Readonly<{ attachmentId: string; versionId: string }>
 
 type ApplyLiteratureMetadataInput = Readonly<{
+  operationId?: string
   itemId: string
   expectedMetadataRevision: number
   item: LiteratureItemInput
@@ -108,8 +111,29 @@ const normalizeIdentifier = (scheme: LiteratureIdentifierScheme, rawValue: strin
 
 const normalizeCreatorName = (creator: LiteratureCreatorInput): string =>
   creator.nameMode === 'organization'
-    ? normalizeSpace(creator.literalName).toLowerCase()
-    : normalizeSpace(`${creator.familyName} ${creator.givenName}`).toLowerCase()
+    ? normalizeSearchText(creator.literalName)
+    : normalizeSearchText(`${creator.familyName} ${creator.givenName}`)
+
+const searchIdentifiers = (
+  text: string
+): { scheme: LiteratureIdentifierScheme; normalizedValue: string }[] => {
+  const forms: [LiteratureIdentifierScheme, RegExp][] = [
+    ['doi', /^10\.\d{4,9}\/\S+$/u],
+    ['pmid', /^\d+$/u],
+    ['pmcid', /^PMC\d+$/u],
+    ['arxiv', /^(?:\d{4}\.\d{4,5}|[a-z][a-z.-]*\/\d{7})$/iu],
+    ['isbn', /^(?:\d{9}[\dX]|\d{13})$/u],
+    ['issn', /^\d{7}[\dX]$/u]
+  ]
+  return forms.flatMap(([scheme, pattern]) => {
+    // A bare number denotes a PMID, not an implicitly prefixed PMCID.
+    if (scheme === 'pmcid' && /^\d+$/u.test(text)) return []
+    // ISBN/ISSN normalization strips arbitrary characters; admit only explicit numeric forms.
+    if ((scheme === 'isbn' || scheme === 'issn') && !/^[\dX\s-]+$/iu.test(text)) return []
+    const normalizedValue = normalizeIdentifier(scheme, text)
+    return pattern.test(normalizedValue) ? [{ scheme, normalizedValue }] : []
+  })
+}
 
 const canonicalJsonValue = (value: unknown): unknown => {
   if (value === null || typeof value === 'string' || typeof value === 'boolean') return value
@@ -470,6 +494,9 @@ const createItem = async (
     data: {
       itemType: item.itemType,
       title: normalizeSpace(item.title),
+      normalizedTitle: normalizeSearchText(item.title),
+      normalizedAbstract: normalizeSearchText(item.abstract),
+      normalizedContainerTitle: normalizeSearchText(item.containerTitle),
       abstract: item.abstract,
       issuedText: item.issuedText,
       issuedYear: item.issuedYear,
@@ -499,6 +526,11 @@ const createItem = async (
     const creators = item.creators.map((creator) => ({
       id: randomUUID(),
       normalizedName: normalizeCreatorName(creator),
+      normalizedDisplayName: normalizeSearchText(
+        creator.nameMode === 'organization'
+          ? creator.literalName
+          : `${creator.givenName} ${creator.familyName}`
+      ),
       ...(creator.nameMode === 'organization'
         ? { nameMode: 'organization', literalName: creator.literalName }
         : { nameMode: 'person', givenName: creator.givenName, familyName: creator.familyName })
@@ -557,6 +589,9 @@ const replaceItemMetadata = async (
     data: {
       itemType: item.itemType,
       title: normalizeSpace(item.title),
+      normalizedTitle: normalizeSearchText(item.title),
+      normalizedAbstract: normalizeSearchText(item.abstract),
+      normalizedContainerTitle: normalizeSearchText(item.containerTitle),
       abstract: item.abstract,
       issuedText: item.issuedText,
       issuedYear: item.issuedYear ?? null,
@@ -593,12 +628,20 @@ const replaceItemMetadata = async (
     const persisted = await transaction.literatureCreator.create({
       data:
         creator.nameMode === 'organization'
-          ? { nameMode: 'organization', literalName: creator.literalName, normalizedName }
+          ? {
+              nameMode: 'organization',
+              literalName: creator.literalName,
+              normalizedName,
+              normalizedDisplayName: normalizedName
+            }
           : {
               nameMode: 'person',
               givenName: creator.givenName,
               familyName: creator.familyName,
-              normalizedName
+              normalizedName,
+              normalizedDisplayName: normalizeSearchText(
+                `${creator.givenName} ${creator.familyName}`
+              )
             },
       select: { id: true }
     })
@@ -863,134 +906,116 @@ class LiteratureCatalog {
         nextOffset: rows.length > limit ? offset + limit : undefined
       }
     }
-    if (request.allItemIds) {
-      return client.$transaction((transaction) => this.searchLibrary(request, transaction))
-    }
-    return this.searchLibrary(request, client)
+    return client.$transaction((transaction) => this.searchLibrary(request, transaction), {
+      timeout: 30_000
+    })
   }
 
   private async searchLibrary(
     request: LiteratureCatalogSearchRequest,
-    client: Pick<LiteratureCatalogClient, 'literatureItem' | 'tagAssignment'>
+    client: Pick<LiteratureCatalogClient, 'literatureItem' | '$queryRaw'>
   ): Promise<LiteratureCatalogSearchPage> {
     const offset = Math.max(0, request.offset ?? 0)
     const limit = Math.min(100, Math.max(1, request.limit ?? 50))
-    const query = normalizeSpace(request.query ?? '')
     const filter = request.filter
-    const tagIds = [
-      ...new Set([...(filter?.tagIds ?? []), ...(request.tagId ? [request.tagId] : [])])
+    const predicates: Prisma.Sql[] = [
+      request.lifecycle === 'deleted'
+        ? Prisma.sql`i."deletedAt" IS NOT NULL`
+        : Prisma.sql`i."deletedAt" IS NULL`
     ]
-    let taggedItemIds: string[] | undefined
-    if (tagIds.length > 0) {
-      const assignments = await client.tagAssignment.findMany({
-        where: { resourceType: 'literature.item', tagId: { in: tagIds } },
-        select: { resourceId: true, tagId: true }
-      })
-      const assigned = new Map<string, Set<string>>()
-      for (const assignment of assignments) {
-        const ids = assigned.get(assignment.resourceId) ?? new Set<string>()
-        ids.add(assignment.tagId)
-        assigned.set(assignment.resourceId, ids)
-      }
-      taggedItemIds = [...assigned]
-        .filter(([, ids]) => tagIds.every((tagId) => ids.has(tagId)))
-        .map(([itemId]) => itemId)
+    const contains = (column: Prisma.Sql, text: string): Prisma.Sql =>
+      Prisma.sql`instr(${column}, ${normalizeSearchText(text)}) > 0`
+    const creatorMatches = (text: string): Prisma.Sql => Prisma.sql`EXISTS (
+      SELECT 1 FROM "LiteratureItemCreator" ic JOIN "LiteratureCreator" c ON c.id = ic."creatorId"
+      WHERE ic."itemId" = i.id AND (${contains(Prisma.sql`c."normalizedName"`, text)}
+        OR ${contains(Prisma.sql`c."normalizedDisplayName"`, text)}))`
+    for (const text of [request.query, filter?.query].filter(
+      (value): value is string => !!value?.trim()
+    )) {
+      const alternatives = [
+        contains(Prisma.sql`i."normalizedTitle"`, text),
+        contains(Prisma.sql`i."normalizedAbstract"`, text),
+        contains(Prisma.sql`i."normalizedContainerTitle"`, text),
+        creatorMatches(text)
+      ]
+      const identifiers = searchIdentifiers(normalizeSpace(text))
+      if (identifiers.length)
+        alternatives.push(Prisma.sql`EXISTS (
+        SELECT 1 FROM "LiteratureIdentifier" identifier WHERE identifier."itemId" = i.id AND (
+          ${Prisma.join(
+            identifiers.map(
+              ({ scheme, normalizedValue }) =>
+                Prisma.sql`(identifier.scheme = ${scheme} AND identifier."normalizedValue" = ${normalizedValue})`
+            ),
+            ' OR '
+          )}))`)
+      predicates.push(Prisma.sql`(${Prisma.join(alternatives, ' OR ')})`)
     }
-    const lifecycle = request.lifecycle ?? 'active'
-    const textQueries = [query, normalizeSpace(filter?.query ?? '')].filter(Boolean)
-    const where: Prisma.LiteratureItemWhereInput = {
-      ...(lifecycle === 'deleted' ? { deletedAt: { not: null } } : { deletedAt: null }),
-      ...(taggedItemIds ? { id: { in: taggedItemIds } } : {}),
-      ...(request.projectId || filter?.projectId
-        ? { projects: { some: { projectId: request.projectId ?? filter?.projectId } } }
-        : {}),
-      ...(request.collectionId || filter?.collectionId
-        ? {
-            collections: {
-              some: { collectionId: request.collectionId ?? filter?.collectionId }
-            }
-          }
-        : {}),
-      ...(filter?.creator
-        ? {
-            creators: {
-              some: {
-                creator: {
-                  normalizedName: { contains: normalizeSpace(filter.creator).toLowerCase() }
-                }
-              }
-            }
-          }
-        : {}),
-      ...(filter?.containerTitle
-        ? { containerTitle: { contains: normalizeSpace(filter.containerTitle) } }
-        : {}),
-      ...(filter?.itemTypes?.length ? { itemType: { in: filter.itemTypes } } : {}),
-      ...(filter?.yearFrom !== undefined || filter?.yearTo !== undefined
-        ? {
-            issuedYear: {
-              ...(filter.yearFrom !== undefined ? { gte: filter.yearFrom } : {}),
-              ...(filter.yearTo !== undefined ? { lte: filter.yearTo } : {})
-            }
-          }
-        : {}),
-      ...(filter?.hasFullText === undefined
-        ? {}
-        : filter.hasFullText
-          ? { attachments: { some: { versions: { some: {} } } } }
-          : { attachments: { none: { versions: { some: {} } } } }),
-      ...(textQueries.length
-        ? {
-            AND: textQueries.map((text) => ({
-              OR: [
-                { title: { contains: text } },
-                { abstract: { contains: text } },
-                { containerTitle: { contains: text } },
-                {
-                  creators: {
-                    some: { creator: { normalizedName: { contains: text.toLowerCase() } } }
-                  }
-                }
-              ]
-            }))
-          }
-        : {})
-    }
-    const sortDirection = request.sortDirection ?? (request.sortBy === 'title' ? 'asc' : 'desc')
-    const orderBy: Prisma.LiteratureItemOrderByWithRelationInput[] =
+    if (filter?.creator?.trim()) predicates.push(creatorMatches(filter.creator))
+    if (filter?.containerTitle?.trim())
+      predicates.push(contains(Prisma.sql`i."normalizedContainerTitle"`, filter.containerTitle))
+    const projectId = request.projectId ?? filter?.projectId
+    if (projectId)
+      predicates.push(
+        Prisma.sql`EXISTS (SELECT 1 FROM "ProjectLiterature" p WHERE p."itemId" = i.id AND p."projectId" = ${projectId})`
+      )
+    const collectionId = request.collectionId ?? filter?.collectionId
+    if (collectionId)
+      predicates.push(
+        Prisma.sql`EXISTS (SELECT 1 FROM "LiteratureCollectionItem" c WHERE c."itemId" = i.id AND c."collectionId" = ${collectionId})`
+      )
+    for (const tagId of new Set([
+      ...(filter?.tagIds ?? []),
+      ...(request.tagId ? [request.tagId] : [])
+    ]))
+      predicates.push(
+        Prisma.sql`EXISTS (SELECT 1 FROM "TagAssignment" t WHERE t."resourceType" = 'literature.item' AND t."resourceId" = i.id AND t."tagId" = ${tagId})`
+      )
+    if (filter?.itemTypes?.length)
+      predicates.push(Prisma.sql`i."itemType" IN (${Prisma.join(filter.itemTypes)})`)
+    if (filter?.yearFrom !== undefined)
+      predicates.push(Prisma.sql`i."issuedYear" >= ${filter.yearFrom}`)
+    if (filter?.yearTo !== undefined)
+      predicates.push(Prisma.sql`i."issuedYear" <= ${filter.yearTo}`)
+    if (filter?.hasFullText !== undefined)
+      predicates.push(Prisma.sql`${filter.hasFullText ? Prisma.empty : Prisma.sql`NOT`} EXISTS (
+      SELECT 1 FROM "LiteratureAttachment" a JOIN "LiteratureAttachmentVersion" v ON v."attachmentId" = a.id WHERE a."itemId" = i.id)`)
+    const where = Prisma.join(predicates, ' AND ')
+    const direction =
+      (request.sortDirection ?? (request.sortBy === 'title' ? 'asc' : 'desc')) === 'asc'
+        ? Prisma.sql`ASC`
+        : Prisma.sql`DESC`
+    const orderBy =
       request.sortBy === 'title'
-        ? [{ title: sortDirection }, { id: 'asc' }]
+        ? Prisma.sql`i.title ${direction}, i.id ASC`
         : request.sortBy === 'year'
-          ? [
-              { issuedYear: { sort: sortDirection, nulls: 'last' } },
-              { title: 'asc' },
-              { id: 'asc' }
-            ]
+          ? Prisma.sql`i."issuedYear" IS NULL ASC, i."issuedYear" ${direction}, i.title ASC, i.id ASC`
           : request.sortBy === 'rating'
-            ? [{ rating: sortDirection }, { title: 'asc' }, { id: 'asc' }]
+            ? Prisma.sql`i.rating ${direction}, i.title ASC, i.id ASC`
             : request.sortBy === 'created'
-              ? [{ createdAt: sortDirection }, { id: 'asc' }]
-              : [{ updatedAt: sortDirection }, { id: 'asc' }]
-    if (request.allItemIds) {
-      const rows = await client.literatureItem.findMany({ where, orderBy, select: { id: true } })
-      return { entries: [], itemIds: rows.map(({ id }) => id), totalCount: rows.length }
-    }
-    const [totalCount, rows] = await Promise.all([
-      client.literatureItem.count({ where }),
-      client.literatureItem.findMany({
-        where: {
-          ...where
-        },
-        include: itemInclude,
-        orderBy,
-        skip: offset,
-        take: limit + 1
-      })
-    ])
+              ? Prisma.sql`i."createdAt" ${direction}, i.id ASC`
+              : Prisma.sql`i."updatedAt" ${direction}, i.id ASC`
+    const ids = await client.$queryRaw<
+      { id: string }[]
+    >(Prisma.sql`SELECT i.id FROM "LiteratureItem" i WHERE ${where} ORDER BY ${orderBy}
+      ${request.allItemIds ? Prisma.empty : Prisma.sql`LIMIT ${limit} OFFSET ${offset}`}`)
+    const itemIds = ids.map(({ id }) => id)
+    if (request.allItemIds) return { entries: [], itemIds, totalCount: itemIds.length }
+    const [count] = await client.$queryRaw<{ total: bigint }[]>(
+      Prisma.sql`SELECT COUNT(*) AS total FROM "LiteratureItem" i WHERE ${where}`
+    )
+    const totalCount = Number(count!.total)
+    const rows = itemIds.length
+      ? await client.literatureItem.findMany({
+          where: { id: { in: itemIds } },
+          include: itemInclude
+        })
+      : []
+    const byId = new Map(rows.map((row) => [row.id, row]))
     return {
-      entries: rows.slice(0, limit).map(toItemView),
+      entries: itemIds.map((id) => toItemView(byId.get(id)!)),
       totalCount,
-      nextOffset: rows.length > limit ? offset + limit : undefined
+      nextOffset: offset + limit < totalCount ? offset + limit : undefined
     }
   }
 
@@ -1042,6 +1067,18 @@ class LiteratureCatalog {
     })
   }
 
+  async getMetadataCommitReceipt(operationId: string): Promise<{
+    operationId: string
+    itemId: string
+    expectedMetadataRevision: number
+    committedMetadataRevision: number
+  } | null> {
+    const client = await this.getClient()
+    return client.$transaction((transaction) =>
+      transaction.literatureMetadataCommitReceipt.findUnique({ where: { operationId } })
+    )
+  }
+
   async applyMetadata(input: ApplyLiteratureMetadataInput): Promise<LiteratureItemView> {
     await this.updateItem(
       {
@@ -1050,7 +1087,8 @@ class LiteratureCatalog {
         expectedMetadataRevision: input.expectedMetadataRevision,
         item: input.item
       },
-      input.source
+      input.source,
+      input.operationId
     )
     const updated = await this.get(input.itemId)
     if (!updated) throw new Error('Literature Item is unavailable.')
@@ -1426,7 +1464,8 @@ class LiteratureCatalog {
 
   private async updateItem(
     command: Extract<LiteratureCatalogCommand, { kind: 'update-item' }>,
-    source?: LiteratureSourceInput
+    source?: LiteratureSourceInput,
+    operationId?: string
   ): Promise<LiteratureCatalogReceipt> {
     const itemId = normalizeSpace(command.itemId)
     const item = literatureItemInputSchema.parse(command.item)
@@ -1434,8 +1473,35 @@ class LiteratureCatalog {
 
     return client
       .$transaction(async (transaction): Promise<LiteratureCatalogReceipt> => {
+        if (operationId) {
+          const receipt = await transaction.literatureMetadataCommitReceipt.findUnique({
+            where: { operationId }
+          })
+          if (receipt) {
+            if (
+              receipt.itemId !== itemId ||
+              receipt.expectedMetadataRevision !== command.expectedMetadataRevision
+            )
+              throw new Error('Metadata operation identity does not match the reviewed reference.')
+            return { kind: 'item', id: itemId, state: 'present' }
+          }
+        }
         await replaceItemMetadata(transaction, itemId, command.expectedMetadataRevision, item)
         if (source) await this.attachSource(transaction, { source, itemId })
+        if (operationId) {
+          const committed = await transaction.literatureItem.findUniqueOrThrow({
+            where: { id: itemId },
+            select: { metadataRevision: true }
+          })
+          await transaction.literatureMetadataCommitReceipt.create({
+            data: {
+              operationId,
+              itemId,
+              expectedMetadataRevision: command.expectedMetadataRevision,
+              committedMetadataRevision: committed.metadataRevision
+            }
+          })
+        }
         return { kind: 'item', id: itemId, state: 'present' }
       })
       .finally(() => duplicateGroups.delete(client))
