@@ -17,6 +17,7 @@ import {
   type LiteratureRecordImportFormat
 } from '../../shared/literature'
 import { fromCslItem, toCslItem } from '../../shared/literature-csl'
+import { exportRisFields, importRisFields, normalizeBibtexEntry } from './citation-exchange'
 import {
   citationResourceDirectory,
   type LiteratureCitationStyleLibrary
@@ -319,7 +320,14 @@ class LiteratureCitationFormatter {
   ): Promise<string> {
     const engine = await this.engine()
     if (format === 'ris') {
-      return engine.exportRis(JSON.stringify(references.map(({ id, item }) => toCslItem(id, item))))
+      return references
+        .map(({ id, item }) => {
+          const csl = toCslItem(id, item)
+          return engine
+            .exportRis(JSON.stringify([csl]))
+            .replace(/^ER {2}-.*$/mu, () => `${exportRisFields(csl)}ER  - `)
+        })
+        .join('\n')
     }
     // The engine silently renames duplicate IDs in a batch. Export records independently so the
     // complete-output owner (Library export or LaTeX bundle) can reject collisions without renaming.
@@ -328,8 +336,14 @@ class LiteratureCitationFormatter {
         const fallback = /^[A-Za-z0-9][A-Za-z0-9_:.+-]{0,127}$/u.test(id)
           ? id
           : `os${createHash('sha256').update(id).digest('hex').slice(0, 12)}`
+        const csl = toCslItem(citationKey(fallback, item), item)
         return engine
-          .exportBibtex(JSON.stringify(toCslItem(citationKey(fallback, item), item)))
+          .exportBibtex(
+            JSON.stringify({
+              ...csl,
+              ...(csl.arXiv ? { custom: { eprint: { id: csl.arXiv, type: 'arxiv' } } } : {})
+            })
+          )
           .trim()
       })
       .join('\n\n')
@@ -339,16 +353,31 @@ class LiteratureCitationFormatter {
     const nbib = parseNbib(input)
     if (nbib) return nbib
     const engine = await this.engine()
-    const parsed = parseResultSchema.parse(
+    let parsed = parseResultSchema.parse(
       JSON.parse(engine.parseAuto(input, LITERATURE_RECORD_IMPORT_MAX_RECORDS)) as unknown
     )
     if (parsed.format !== 'bibtex' && parsed.format !== 'ris') {
       throw new Error('Selected file must contain BibTeX or RIS references.')
     }
+    const format = parsed.format
+    if (format === 'ris') {
+      // Parse each source record independently so rejected records cannot shift supplemental fields.
+      const records = input
+        .split(/(?=^[ \t]*TY[ \t]+-)/mu)
+        .filter((record) => /^[ \t]*TY[ \t]+-/mu.test(record))
+      const entries: Record<string, unknown>[] = []
+      const recordErrors: CitationImportError[] = []
+      for (const record of records.slice(0, LITERATURE_RECORD_IMPORT_MAX_RECORDS)) {
+        const result = parseResultSchema.parse(JSON.parse(engine.parseAuto(record, 1)))
+        recordErrors.push(...result.errors)
+        for (const entry of result.entries) entries.push(importRisFields(record, entry))
+      }
+      parsed = { ...parsed, entries, errors: recordErrors }
+    }
     const errors = [...parsed.errors]
     const items = parsed.entries.flatMap((entry) => {
       try {
-        return [fromCslItem(entry)]
+        return [fromCslItem(format === 'bibtex' ? normalizeBibtexEntry(entry) : entry)]
       } catch (error) {
         errors.push({
           preview: String(entry.title ?? entry.id ?? '').slice(0, 160),
@@ -358,7 +387,7 @@ class LiteratureCitationFormatter {
       }
     })
     return {
-      format: parsed.format,
+      format,
       items,
       errors,
       truncated: parsed.truncated,

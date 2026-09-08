@@ -776,6 +776,19 @@ class LiteratureCatalog {
         nextOffset: rows.length > limit ? offset + limit : undefined
       }
     }
+    if (request.allItemIds) {
+      return client.$transaction((transaction) => this.searchLibrary(request, transaction))
+    }
+    return this.searchLibrary(request, client)
+  }
+
+  private async searchLibrary(
+    request: LiteratureCatalogSearchRequest,
+    client: Pick<LiteratureCatalogClient, 'literatureItem' | 'tagAssignment'>
+  ): Promise<LiteratureCatalogSearchPage> {
+    const offset = Math.max(0, request.offset ?? 0)
+    const limit = Math.min(100, Math.max(1, request.limit ?? 50))
+    const query = normalizeSpace(request.query ?? '')
     const filter = request.filter
     const tagIds = [
       ...new Set([...(filter?.tagIds ?? []), ...(request.tagId ? [request.tagId] : [])])
@@ -871,6 +884,10 @@ class LiteratureCatalog {
             : request.sortBy === 'created'
               ? [{ createdAt: sortDirection }, { id: 'asc' }]
               : [{ updatedAt: sortDirection }, { id: 'asc' }]
+    if (request.allItemIds) {
+      const rows = await client.literatureItem.findMany({ where, orderBy, select: { id: true } })
+      return { entries: [], itemIds: rows.map(({ id }) => id), totalCount: rows.length }
+    }
     const [totalCount, rows] = await Promise.all([
       client.literatureItem.count({ where }),
       client.literatureItem.findMany({

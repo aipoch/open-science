@@ -359,7 +359,24 @@ describe('LiteratureLibraryPage', () => {
         literature: {
           lookupMetadata: vi.fn(async () => libraryItem.item),
           jobs: vi.fn(async () => ({ jobs: [], summaries: [] })),
-          search,
+          search: async (request: LiteratureCatalogSearchRequest) => {
+            const page = await search(request)
+            if (!request.allItemIds || page.itemIds) return page
+            // Legacy fixtures describe their in-memory member set as pages. Adapt only the
+            // fixture data; production and real-catalog cases return one ID snapshot.
+            const entries = [...page.entries]
+            let nextOffset = page.nextOffset
+            while (nextOffset !== undefined) {
+              const next = await search({ ...request, offset: nextOffset })
+              entries.push(...next.entries)
+              nextOffset = next.nextOffset
+            }
+            return {
+              entries: [],
+              itemIds: entries.map((entry) => entry.id),
+              totalCount: entries.length
+            }
+          },
           transact,
           get,
           completeMetadata,
@@ -4722,7 +4739,7 @@ describe('LiteratureLibraryPage', () => {
         scope: 'library',
         projectId: 'project-1',
         sortBy: 'title',
-        limit: 100
+        allItemIds: true
       })
     )
     expect(saveBlobFile).toHaveBeenCalledWith(
@@ -4768,7 +4785,7 @@ describe('LiteratureLibraryPage', () => {
         scope: 'library',
         collectionId: collection.id,
         sortBy: 'title',
-        limit: 100
+        allItemIds: true
       })
     )
     expect(saveBlobFile).toHaveBeenCalledWith(
@@ -5965,4 +5982,124 @@ describe('LiteratureLibraryPage', () => {
     expect((await screen.findByRole('alert')).textContent).toBe('PDF could not be added.')
     expect(transact).toHaveBeenCalledTimes(1)
   })
+  it('reports a failed membership read without saving an incomplete project export', async () => {
+    search.mockImplementation(async (request: LiteratureCatalogSearchRequest) => {
+      if (request.allItemIds) throw new Error('Membership read failed')
+      return { entries: request.scope === 'library' ? [libraryItem] : [] }
+    })
+    useNavigationStore.setState({ pendingLiteratureProjectId: 'project-1' })
+    render(<LiteratureLibraryPage />)
+    await screen.findByRole('heading', { name: 'Retrieval research' })
+    await openMenu(screen.getByTitle('More actions'))
+    fireEvent.click(screen.getByRole('menuitem', { name: 'RIS' }))
+    await screen.findByText('References could not be exported.')
+    expect(formatReferences).not.toHaveBeenCalled()
+    expect(saveBlobFile).not.toHaveBeenCalled()
+  })
+
+  it('exports every project member when a title moves during pagination', async () => {
+    const { mkdtemp, rm } = await import('node:fs/promises')
+    const { tmpdir } = await import('node:os')
+    const { join } = await import('node:path')
+    const { createProjectDbClient } = await import('../../../../main/projects/prisma-client')
+    const { migrateApplicationDatabase } =
+      await import('../../../../main/database/migration-service')
+    const { LiteratureCatalog } = await import('../../../../main/literature/catalog')
+    const { LiteratureCitationFormatter } =
+      await import('../../../../main/literature/citation-formatter')
+    const root = await mkdtemp(join(tmpdir(), 'literature-export-pagination-'))
+    const client = createProjectDbClient(root)
+    try {
+      await migrateApplicationDatabase(client)
+      await client.project.create({ data: { id: 'project-1', name: 'Retrieval research' } })
+      const catalog = new LiteratureCatalog(async () => client)
+      const formatter = new LiteratureCitationFormatter()
+      const { itemIds: ids } = await catalog.importItems(
+        Array.from({ length: 101 }, (_, index) => ({
+          ...libraryItem.item,
+          title: `Paper ${String(index + 1).padStart(3, '0')}`,
+          identifiers: []
+        }))
+      )
+      await catalog.transact({
+        kind: 'set-project-items',
+        projectId: 'project-1',
+        itemIds: ids,
+        included: true,
+        source: 'library'
+      })
+      let moveOnSecondPage = true
+      const seenPages: { offset?: number; ids: string[]; totalCount?: number }[] = []
+      search.mockImplementation(async (request: LiteratureCatalogSearchRequest) => {
+        if (request.scope !== 'library' || request.projectId !== 'project-1') return { entries: [] }
+        if (request.sortBy === 'title' && request.offset === 100 && moveOnSecondPage) {
+          moveOnSecondPage = false
+          const view = (await catalog.get(ids[100]!))!
+          await catalog.transact({
+            kind: 'update-item',
+            itemId: view.id,
+            expectedMetadataRevision: view.metadataRevision,
+            item: { ...view.item, title: 'A moved reference' }
+          })
+        }
+        const page = await catalog.search(request)
+        if (request.allItemIds && moveOnSecondPage) {
+          moveOnSecondPage = false
+          const view = (await catalog.get(ids[100]!))!
+          await catalog.transact({
+            kind: 'update-item',
+            itemId: view.id,
+            expectedMetadataRevision: view.metadataRevision,
+            item: { ...view.item, title: 'A moved reference' }
+          })
+        }
+        if (request.sortBy === 'title')
+          seenPages.push({
+            offset: request.offset,
+            ids: page.entries.map((e) => ('id' in e ? e.id : '')),
+            totalCount: page.totalCount
+          })
+        return page
+      })
+      formatReferences.mockImplementation(async ({ itemIds }: { itemIds: string[] }) => {
+        const refs = (await catalog.getMany(itemIds)).map(({ id, item }) => ({ id, item }))
+        return {
+          references: [],
+          exports: {
+            bibtex: await formatter.exportReferences(refs, 'bibtex'),
+            ris: await formatter.exportReferences(refs, 'ris')
+          }
+        }
+      })
+      useNavigationStore.setState({ pendingLiteratureProjectId: 'project-1' })
+      render(<LiteratureLibraryPage />)
+      await screen.findByRole('heading', { name: 'Retrieval research' })
+      await openMenu(screen.getByTitle('More actions'))
+      fireEvent.click(screen.getByRole('menuitem', { name: 'RIS' }))
+      await waitFor(() => expect(saveBlobFile).toHaveBeenCalledTimes(1), { timeout: 15000 })
+      const first = new TextDecoder().decode(
+        (saveBlobFile.mock.calls[0]![0] as { data: ArrayBuffer }).data
+      )
+      expect.soft(first.match(/^TY {2}-/gm)).toHaveLength(101)
+      expect.soft(first).toContain('A moved reference')
+      expect(seenPages.every((p) => p.totalCount === 101)).toBe(true)
+      expect.soft(formatReferences.mock.calls[0]![0].itemIds).toContain(ids[100])
+      expect(screen.queryByText('References could not be exported.')).toBeNull()
+      await waitFor(() =>
+        expect(screen.getByTitle('More actions').hasAttribute('disabled')).toBe(false)
+      )
+      await openMenu(screen.getByTitle('More actions'))
+      fireEvent.click(screen.getByRole('menuitem', { name: 'RIS' }))
+      await waitFor(() => expect(saveBlobFile).toHaveBeenCalledTimes(2), { timeout: 15000 })
+      const control = new TextDecoder().decode(
+        (saveBlobFile.mock.calls[1]![0] as { data: ArrayBuffer }).data
+      )
+      expect(control.match(/^TY {2}-/gm)).toHaveLength(101)
+      expect(control).toContain('A moved reference')
+    } finally {
+      cleanup()
+      await client.$disconnect()
+      await rm(root, { recursive: true, force: true })
+    }
+  }, 120000)
 })

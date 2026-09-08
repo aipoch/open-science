@@ -113,6 +113,7 @@ describe('toCslItem', () => {
       accessed: { 'date-parts': [[2026, 8, 31]] },
       'container-title': 'Research Journal',
       DOI: '10.0000/example',
+      PMID: '1234',
       volume: '12',
       issue: '3',
       page: '44–58',
@@ -158,6 +159,19 @@ describe('toCslItem', () => {
 })
 
 describe('fromCslItem', () => {
+  it.each([
+    [2024, 0],
+    [2024, 13],
+    [2024, 2, 0],
+    [2023, 2, 29],
+    [2024, 4, 31],
+    [2024, 'bad', 12]
+  ])('rejects invalid positional date parts %j', (...parts) => {
+    expect(() => fromCslItem({ title: 'Invalid date', issued: { 'date-parts': [parts] } })).toThrow(
+      'Invalid bibliographic date'
+    )
+  })
+
   it('maps imported CSL metadata into the Literature model', () => {
     expect(
       fromCslItem({
