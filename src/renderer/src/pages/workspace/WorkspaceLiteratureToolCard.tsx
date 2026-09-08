@@ -10,9 +10,11 @@ import type { LiteratureToolSummary } from './literature-tool-presentation'
 import { ExtensionPreservingFileName } from './ExtensionPreservingFileName'
 
 const WorkspaceLiteratureToolCard = ({
-  summary
+  summary,
+  isApproval = false
 }: {
   summary: LiteratureToolSummary
+  isApproval?: boolean
 }): React.JSX.Element => {
   const { t } = useTranslation()
   const isLibrary = summary.libraryScope !== undefined
@@ -103,7 +105,9 @@ const WorkspaceLiteratureToolCard = ({
             </span>
           ) : null}
           {isLibrary &&
-          (summary.action === 'format' || summary.action === 'read') &&
+          (summary.action === 'format' ||
+            summary.action === 'read' ||
+            (isApproval && summary.action === 'save')) &&
           summary.itemCount !== undefined ? (
             <span className="rounded-md bg-primary/10 px-1.5 py-0.5 text-[10px] font-medium tabular-nums text-primary">
               {t('{{count}} references', {

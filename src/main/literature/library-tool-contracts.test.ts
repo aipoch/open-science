@@ -523,3 +523,55 @@ it('reports the production candidate-file size limit as a read failure, without 
       await rm(root, { recursive: true, force: true })
     }
   }))
+
+it('searches survivor metadata through selected merged aliases and preserves their IDs', async () =>
+  db(async (catalog) => {
+    const survivor = await catalog.transact({ kind: 'create-item', item: item('Climate survivor') })
+    const alias = await catalog.transact({ kind: 'create-item', item: item('Original title') })
+    const reviewed = await catalog.getMany([survivor.id, alias.id])
+    await catalog.transact({
+      kind: 'merge-items',
+      survivorId: survivor.id,
+      duplicateIds: [alias.id],
+      expectedMetadataRevision: reviewed[0].metadataRevision,
+      expectedItems: reviewed.map(({ id, metadataRevision, updatedAt }) => ({
+        id,
+        metadataRevision,
+        updatedAt
+      })),
+      item: reviewed[0].item
+    })
+    const search = production('searchLibrary', catalog)
+    const page = await search({
+      projectId: 'project-1',
+      scope: 'items',
+      itemIds: [alias.id],
+      query: 'Climate'
+    })
+    expect(page.totalCount).toBe(1)
+    expect(page.items).toMatchObject([{ id: alias.id, item: { title: 'Climate survivor' } }])
+    const selected = {
+      projectId: 'project-1',
+      scope: 'items' as const,
+      itemIds: [alias.id, survivor.id],
+      query: 'Climate',
+      limit: 1
+    }
+    const first = await search(selected)
+    const next = await search({ ...selected, offset: first.nextOffset })
+    expect(first.totalCount).toBe(2)
+    expect(new Set([...first.items, ...next.items].map(({ id }) => id))).toEqual(
+      new Set(selected.itemIds)
+    )
+    expect(next.hasMore).toBe(false)
+    expect(
+      (
+        await search({
+          projectId: 'project-1',
+          scope: 'items',
+          itemIds: [alias.id],
+          query: 'Original'
+        })
+      ).items
+    ).toEqual([])
+  }))

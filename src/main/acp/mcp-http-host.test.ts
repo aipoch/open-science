@@ -1,5 +1,5 @@
 import { mkdtemp, rm, writeFile } from 'node:fs/promises'
-import { createServer, type Server } from 'node:http'
+import { createServer, request as httpRequest, type Server } from 'node:http'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -411,6 +411,79 @@ describe('AgentMcpHttpHost', () => {
       await client.close()
     }
     expect(saveToInbox).not.toHaveBeenCalled()
+  })
+
+  it('honors cancellation while the original Library request body is still arriving', async () => {
+    host = new AgentMcpHttpHost()
+    const { token } = await host.ensureStarted()
+    const saveToInbox = vi.fn(async () => ({ results: [] }))
+    host.registerLiteratureLibrary('slow-body', {
+      searchLibrary: vi.fn(),
+      readAbstract: vi.fn(),
+      readPdf: vi.fn(),
+      saveToInbox
+    })
+    const url = host.urlFor('library', 'slow-body')
+    const headers = {
+      authorization: `Bearer ${token}`,
+      'content-type': 'application/json',
+      accept: 'application/json, text/event-stream'
+    }
+    const body = JSON.stringify({
+      jsonrpc: '2.0',
+      id: 71,
+      method: 'tools/call',
+      params: {
+        name: 'save_to_inbox',
+        arguments: {
+          candidates: [
+            {
+              item: { itemType: 'journalArticle', title: 'Cancelled before body completion' },
+              source: { provider: 'test', rawMetadata: {} }
+            }
+          ]
+        }
+      }
+    })
+    let finish!: () => void
+    let accepted!: () => void
+    const bodyAccepted = new Promise<void>((resolve) => {
+      accepted = resolve
+    })
+    const pending = new Promise<void>((resolve, reject) => {
+      const request = httpRequest(
+        url,
+        { method: 'POST', headers: { ...headers, expect: '100-continue' } },
+        (response) => {
+          response.resume()
+          response.on('end', resolve)
+        }
+      )
+      request.on('error', reject)
+      request.on('continue', accepted)
+      request.write(body.slice(0, -1))
+      finish = () => request.end(body.slice(-1))
+    })
+    await bodyAccepted
+    // This notification can complete while the earlier POST is waiting for its final byte.
+    const cancelled = await fetch(url, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        jsonrpc: '2.0',
+        method: 'notifications/cancelled',
+        params: { requestId: 71 }
+      })
+    })
+    expect(cancelled.status).toBe(202)
+    finish()
+    await pending
+    expect(saveToInbox).not.toHaveBeenCalled()
+    // The same ID is reusable after this POST closes; cancellation must not poison a future call.
+    const repeated = await fetch(url, { method: 'POST', headers, body })
+    expect(repeated.status).toBe(200)
+    await repeated.json()
+    expect(saveToInbox).toHaveBeenCalledOnce()
   })
 
   it('isolates concurrent Library request IDs by route and releases completed or cancelled entries', async () => {

@@ -926,7 +926,7 @@ class LiteratureCatalog {
     if (request.itemIds !== undefined) {
       predicates.push(
         request.itemIds.length
-          ? Prisma.sql`i.id IN (${Prisma.join(request.itemIds)})`
+          ? Prisma.sql`selected.id IN (${Prisma.join(request.itemIds)})`
           : Prisma.sql`0 = 1`
       )
     }
@@ -1002,14 +1002,26 @@ class LiteratureCatalog {
             : request.sortBy === 'created'
               ? Prisma.sql`i."createdAt" ${direction}, i.id ASC`
               : Prisma.sql`i."updatedAt" ${direction}, i.id ASC`
+    // Selected IDs follow getMany's alias contract: filter survivor metadata, return requested IDs.
+    const from =
+      request.itemIds === undefined
+        ? Prisma.sql`"LiteratureItem" i`
+        : Prisma.sql`"LiteratureItem" selected JOIN "LiteratureItem" i
+          ON i.id = COALESCE(selected."mergedIntoItemId", selected.id)`
+    const requestedId = request.itemIds === undefined ? Prisma.sql`i.id` : Prisma.sql`selected.id`
     const ids = await client.$queryRaw<
-      { id: string }[]
-    >(Prisma.sql`SELECT i.id FROM "LiteratureItem" i WHERE ${where} ORDER BY ${orderBy}
+      { id: string; requestedId: string }[]
+    >(Prisma.sql`SELECT i.id, ${requestedId} AS "requestedId" FROM ${from} WHERE ${where} ORDER BY ${orderBy}, ${requestedId} ASC
       ${request.allItemIds ? Prisma.empty : Prisma.sql`LIMIT ${limit} OFFSET ${offset}`}`)
     const itemIds = ids.map(({ id }) => id)
-    if (request.allItemIds) return { entries: [], itemIds, totalCount: itemIds.length }
+    if (request.allItemIds)
+      return {
+        entries: [],
+        itemIds: ids.map(({ requestedId }) => requestedId),
+        totalCount: ids.length
+      }
     const [count] = await client.$queryRaw<{ total: bigint }[]>(
-      Prisma.sql`SELECT COUNT(*) AS total FROM "LiteratureItem" i WHERE ${where}`
+      Prisma.sql`SELECT COUNT(*) AS total FROM ${from} WHERE ${where}`
     )
     const totalCount = Number(count!.total)
     const rows = itemIds.length
@@ -1020,7 +1032,10 @@ class LiteratureCatalog {
       : []
     const byId = new Map(rows.map((row) => [row.id, row]))
     return {
-      entries: itemIds.map((id) => toItemView(byId.get(id)!)),
+      entries: ids.map(({ id, requestedId }) => ({
+        ...toItemView(byId.get(id)!),
+        id: requestedId
+      })),
       totalCount,
       nextOffset: offset + limit < totalCount ? offset + limit : undefined
     }

@@ -96,6 +96,16 @@ class AgentMcpHttpHost {
     }
   >()
 
+  // Keep cancellations only for POSTs already arriving; never retain unknown IDs for future calls.
+  private readonly readingLibraryRequests = new Map<
+    ServerResponse,
+    {
+      routingId: string
+      cancelledIds: Set<string>
+      cancellationBytes: number
+    }
+  >()
+
   constructor(options: { token?: string; host?: string; requestBytes?: number } = {}) {
     this.token = options.token ?? randomUUID()
     this.host = options.host ?? '127.0.0.1'
@@ -194,6 +204,11 @@ class AgentMcpHttpHost {
   // Drops a routing id's registered environments once its session is gone.
   unregister(routingId: string): void {
     this.sessions.delete(routingId)
+    for (const [response, pending] of this.readingLibraryRequests) {
+      if (pending.routingId !== routingId) continue
+      this.readingLibraryRequests.delete(response)
+      response.destroy()
+    }
     for (const [key, active] of this.libraryRequests) {
       if (active.routingId !== routingId) continue
       this.libraryRequests.delete(key)
@@ -204,6 +219,8 @@ class AgentMcpHttpHost {
   // Drops every registered environment (e.g. on runtime disconnect); the server keeps running for reuse.
   clear(): void {
     this.sessions.clear()
+    for (const response of this.readingLibraryRequests.keys()) response.destroy()
+    this.readingLibraryRequests.clear()
     for (const active of this.libraryRequests.values()) active.response.destroy()
     this.libraryRequests.clear()
   }
@@ -302,12 +319,22 @@ class AgentMcpHttpHost {
       void server.close()
     })
 
+    const reading = { routingId, cancelledIds: new Set<string>(), cancellationBytes: 0 }
+    if (kind === 'library' && request.method === 'POST') {
+      this.readingLibraryRequests.set(response, reading)
+      response.once('close', () => this.readingLibraryRequests.delete(response))
+    }
     try {
       await server.connect(transport)
       if (kind === 'library') {
         const receive = transport.onmessage!
         transport.onmessage = (message, extra) => {
+          this.readingLibraryRequests.delete(response)
           if (isJSONRPCRequest(message) && message.method === 'tools/call') {
+            if (reading.cancelledIds.has(JSON.stringify(message.id))) {
+              response.end()
+              return
+            }
             const key = JSON.stringify([routingId, message.id])
             if (this.libraryRequests.has(key)) {
               writeJson(response, 409, { error: 'Duplicate active Literature request id.' })
@@ -321,6 +348,16 @@ class AgentMcpHttpHost {
           } else {
             const cancellation = CancelledNotificationSchema.safeParse(message)
             if (cancellation.success) {
+              const id = JSON.stringify(cancellation.data.params.requestId)
+              for (const [pendingResponse, pending] of this.readingLibraryRequests) {
+                if (pending.routingId !== routingId || pending.cancelledIds.has(id)) continue
+                pending.cancellationBytes += Buffer.byteLength(id)
+                if (pending.cancellationBytes > this.requestBytes) {
+                  // Bound cancellation buffering by the same budget as the incoming body.
+                  this.readingLibraryRequests.delete(pendingResponse)
+                  pendingResponse.destroy()
+                } else pending.cancelledIds.add(id)
+              }
               const key = JSON.stringify([routingId, cancellation.data.params.requestId])
               const active = this.libraryRequests.get(key)
               if (active) {
@@ -340,8 +377,10 @@ class AgentMcpHttpHost {
               emptyValue: undefined
             })
           : undefined
+      if (response.destroyed) return
       await transport.handleRequest(request, response, body)
     } catch (error) {
+      this.readingLibraryRequests.delete(response)
       log.error('MCP host request failed', { kind, error })
 
       if (!response.headersSent) {
