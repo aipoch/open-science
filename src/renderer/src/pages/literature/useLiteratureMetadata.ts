@@ -104,10 +104,8 @@ const useLiteratureMetadata = (
       const updated = await window.api.literature.get(current.item.id)
       if (!updated) throw new Error('Literature Item is unavailable after updating.')
       onItemChange(updated)
-      if (active()) {
-        controller.replace(updated)
-        changeMode('view')
-      }
+      controller.replace(updated)
+      if (active()) changeMode('view')
     } catch {
       if (active()) setError(t('The reference was saved, but could not be reloaded.'))
     } finally {
@@ -138,10 +136,8 @@ const useLiteratureMetadata = (
       const updated = await window.api.literature.get(current.id)
       if (!updated) throw new Error('Literature Item is unavailable after updating.')
       onItemChange(updated)
-      if (active()) {
-        controller.replace(updated)
-        changeMode('view')
-      }
+      controller.replace(updated)
+      if (active()) changeMode('view')
     } catch {
       if (active()) {
         setAwaitingReload(persisted)
@@ -157,7 +153,7 @@ const useLiteratureMetadata = (
           const latest = await window.api.literature.get(current.id)
           if (latest) {
             onItemChange(latest)
-            if (active()) controller.replace(latest)
+            controller.replace(latest)
           }
         } catch {
           /* Keep the draft and original error when the follow-up read also fails. */
@@ -202,7 +198,7 @@ const useLiteratureMetadata = (
         if (result.mode === 'preview') setOverwriteFields(new Set())
       }
       if (result.mode === 'commit') {
-        if (active()) controller.replace(result.item)
+        controller.replace(result.item)
         onItemChange(result.item)
       }
     } catch {

@@ -1811,14 +1811,12 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
   const receiveBackgroundItems = useCallback(
     (itemIds: string[]): void => {
       setDuplicatesRevision((value) => value + 1)
-      const generation = detailController.getSnapshot().generation
       void Promise.all(itemIds.map((id) => window.api.literature.get(id))).then(
         (results) => {
           const updated = results.filter((item): item is LiteratureItemView => Boolean(item))
           void refreshItems(itemIds, updated)
-          if (detailController.getSnapshot().generation === generation) {
-            updated.forEach((item) => detailController.replace(item))
-          }
+          // Data publication follows item identity/revision, not the opening that started the read.
+          updated.forEach((item) => detailController.replace(item))
         },
         () => setError(t('Literature could not be loaded.'))
       )
@@ -2282,8 +2280,10 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
         itemId: current.id,
         attachment: staged
       })
-      if (detailController.getSnapshot().generation === generation)
-        detailController.replace(receipt.item)
+      // An attachment receipt may predate metadata edits in a reopened detail. Re-read rather
+      // than using metadataRevision as an attachment version or rolling metadata backwards.
+      const updated = await window.api.literature.get(current.id).catch(() => undefined)
+      detailController.replace(updated ?? receipt.item)
       await loadEntries(true)
     } catch (error) {
       if (detailController.getSnapshot().generation === generation)
@@ -2411,7 +2411,6 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
       (item.rating ?? 0) === (entry.item.rating ?? 0)
     )
       return
-    const generation = detailController.getSnapshot().generation
     let persisted = false
     try {
       await window.api.literature.transact({
@@ -2426,8 +2425,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
           const updated = await window.api.literature.get(entry.id)
           if (!updated) throw new Error('Literature Item is unavailable after updating.')
           await refreshItems([updated.id], [updated])
-          if (detailController.getSnapshot().generation === generation)
-            detailController.replace(updated)
+          detailController.replace(updated)
           setError(undefined)
           return updated
         } catch (error) {
