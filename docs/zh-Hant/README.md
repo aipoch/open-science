@@ -134,45 +134,41 @@ Notebook 執行為選用功能。所有必要的環境與智能體執行環境�
 
 ## 產品導覽
 
-Open Science 將研究整理為專案與會話，讓每項結果都能與產生它的證據保持關聯。以下章節介紹工作區、產物溯源、預覽、科學技能及資料連接器。
+### 從研究請求到可追溯結果
 
-### 從任務到可追溯產物的單一工作區
+以一項具代表性的生物資訊學任務為例：重現已發表的差異表達分析、將重新生成的結果與論文比較，並交付審閱所需的報告、表格與圖像。以下截圖來自已有記錄的 Open Science 工作流程，用於展示各個階段，並非同一次連續會話。
 
-專案會將相關會話、上傳內容、生成檔案及預覽狀態保存在一起。對話會記錄智能體回答，以及產生該回答的指令、檔案讀取、編輯、搜尋與連接器呼叫。每個生成產物都以不可變且含總和檢查碼的版本儲存。其 **Provenance** 檢視會公開 Open Science 在建立時能驗證的證據：生成程式碼與執行歷史、引用的輸入、觀測到的環境清單、產生該產物的對話分支，以及限定於該版本的審查結果。缺少的證據會明確顯示為無法使用，而不會由系統猜測。
+#### 1. 明確研究任務與證據
 
-<table>
-  <tr>
-    <td width="50%"><img src="../images/readme/project-files.jpg" alt="包含上傳內容與生成研究產物的專案檔案庫"></td>
-    <td width="50%"><img src="../images/readme/csv-preview.jpg" alt="已完成智能體會話旁的 CSV 產物預覽"></td>
-  </tr>
-  <tr>
-    <td align="center"><sub>依專案與會話整理的上傳內容及生成檔案</sub></td>
-    <td align="center"><sub>原生預覽讓資料與研究歷史並排顯示</sub></td>
-  </tr>
-</table>
+說明研究問題、來源論文與資料集、必要的方法或閾值、預期輸出及驗收標準。上傳支援檔案，或使用 `@` 引用現有專案產物，讓智能體從明確輸入開始，而不是依賴隱藏的上下文。
 
-生成的報告、圖表與表格會繼續附屬於會話，同時彙整到專案檔案庫。面板大小改變時，預覽分頁會讓作用中結果保持可見；長名稱會保留可辨識的字尾與副檔名。Open Science 可預覽常見科學資料、PDF、Office 文件（DOCX、XLSX、PPTX）、影像（支援縮放與平移）、含語法醒目提示的原始碼、分子結構與反應，以及 Notebook 歷史。預覽限制不會截斷底層檔案，智能體與外部工具仍可使用完整產物。使用 `Cmd/Ctrl+F` 搜尋工作區中的對話記錄、Notebook 輸出與轉譯頁面，或使用 `Cmd/Ctrl+K` 開啟專案層級命令面板。工作區也支援深色模式：在 **Settings → General** 切換主題，整個命令列、對話記錄及 renderer 色盤會無閃爍切換。介面也提供德文、簡體中文、繁體中文、日語、韓語、法語、俄語和西班牙語，並能在設定中於執行期間切換語言。
+<p align="center">
+  <img src="../images/readme/product-tour-task.jpg" alt="Open Science 論文重現任務，在同一工作區顯示研究結論、生成產物與來源比較" width="900">
+</p>
 
-### 建立對話分支而不失去原始內容
+#### 2. 使用可檢查的科學工具執行
 
-編輯已完成的使用者訊息，可以從該位置重新傳送修改後的提示。Open Science 會新增訊息分支，而不刪除後續輪次；修訂控制項可在原始與替代路徑之間切換。分支選擇、工具活動、附件及生成產物會跨專案切換與應用程式重新啟動保存。溯源仍與生成每個產物版本的確切分支綁定，因此探索不同假設不會模糊較早結果的記錄。
+智能體可在共享 Notebook 中組合科學技能、受權限控制的研究連接器、搜尋、檔案操作，以及 Python 或 R 程式碼。生成圖像可與研究摘要並排審閱，產物記錄則提供已擷取的生成程式碼及執行證據供檢查。
 
-### 科學技能與資料連接器
+<p align="center">
+  <img src="../images/readme/product-tour-execute.png" alt="Open Science 生物資訊學分析，並排顯示研究摘要、生成圖像與已擷取的生成程式碼" width="900">
+</p>
 
-Open Science 包含持續擴充的 **22 個精選**檔案型研究技能目錄：AlphaFold2、Boltz、Borzoi、Chai-1、Customize、DiffDock、Environment & Packages、ESM-2、ESMFold2、Evo 2、Figure Composer、Figure Style、Indication Dossier、LigandMPNN、Literature Review、OpenFold3、Paper Narrative、ProteinMPNN、scGPT、scvi-tools、SolubleMPNN，以及用於在遠端 HPC 叢集提交並收取長時間工作的 **Remote Compute (SSH)**。你可以新增個人技能、上傳 `SKILL.md`/ZIP/`.skill` 套件、選擇使用驗證從 GitHub 預覽並匯入相容技能，或匯入已安裝在全域智能體目錄中的技能。智能體也能請求從會話附件或公開 GitHub URL 匯入套件；應用程式會在寫入任何內容前提供自有的預覽與確認步驟。可以在輸入框中使用 `/` 直接選取已啟用技能。
+#### 3. 就地審閱報告、表格與圖像
 
-應用程式也包含 **24 個內建**研究連接器：Literature Graph、PubMed、bioRxiv、Genes & Ontologies、Genomes、BioMart、Variants、Human Genetics、Clinical Genomics、Structures & Interactions、Protein Annotation、Expression、Omics Archives、CellGuide、Regulation、RNA、Chemistry、ChEMBL、ZINC、Molecule Viewer、Clinical Trials、Drug Regulatory、Cancer Models 和 Research Resources。內建與自訂連接器都受權限系統保護，每個工具可設定 `Always allow`、`Ask each time` 與 `Block`。已安裝應用程式會顯示目前的技能、連接器及工具目錄。
+最終回答會概述哪些結果成功重現、哪些存在差異，以及需要注意的限制。生成的 Markdown 報告、CSV 表格、圖像與其他研究產物會繼續附屬於會話，並彙整到專案檔案庫，可在對話旁預覽，也可於後續工作中重複使用。
 
-<table>
-  <tr>
-    <td width="50%"><img src="../images/readme/skills.jpg" alt="Open Science 設定顯示精選科學技能"></td>
-    <td width="50%"><img src="../images/readme/connectors.jpg" alt="Open Science 設定顯示內建科學資料連接器"></td>
-  </tr>
-  <tr>
-    <td align="center"><sub>可讀、可重複使用的研究技能</sub></td>
-    <td align="center"><sub>以受權限控制的智能體工具提供科學資料庫</sub></td>
-  </tr>
-</table>
+<p align="center">
+  <img src="../images/readme/product-tour-output.jpg" alt="Open Science 重現結果，在智能體說明旁預覽差異表達圖像與生成檔案" width="900">
+</p>
+
+#### 4. 將每個產物追溯至證據
+
+每個生成產物都以不可變且含總和檢查碼的版本儲存。其 **Provenance** 檢視可顯示生成程式碼與執行歷史、引用的輸入、觀測到的環境清單、產生該產物的對話分支，以及限定於該版本的 Reviewer 結果。無法驗證的證據會標記為無法使用，而不會被推論補全。
+
+<p align="center">
+  <img src="../images/readme/product-tour-provenance.jpg" alt="Open Science 研究產物預覽，其中包含用於追溯生成結果的 Provenance 入口" width="900">
+</p>
 
 ## 基準測試表現
 

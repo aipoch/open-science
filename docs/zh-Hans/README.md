@@ -134,45 +134,41 @@ Notebook 执行是可选功能。所有必需的环境和智能体运行时检�
 
 ## 产品导览
 
-Open Science 将研究组织成项目和会话，使每项结果都能与产生它的证据保持关联。以下章节介绍工作区、产物来源、预览、科学技能和数据连接器。
+### 从研究请求到可追溯结果
 
-### 从任务到可追溯产物的统一工作区
+以一个具有代表性的生物信息学任务为例：复现已发表的差异表达分析，将重新生成的结果与论文比较，并交付审阅所需的报告、表格和图像。以下截图来自已记录的 Open Science 工作流，用于展示各个阶段，并非同一次连续会话。
 
-项目将相关会话、上传内容、生成文件和预览状态保存在一起。对话会记录智能体回答，以及产生该回答的命令、文件读取、编辑、搜索和连接器调用。每个生成产物都以不可变且带校验和的版本保存。其 **Provenance** 视图公开 Open Science 在创建时能够验证的证据：生成代码和执行历史、引用的输入、观测到的环境清单、生成该产物的对话分支，以及限定到该版本的审查结果。缺少的证据会明确显示为不可用，而不会被猜测补全。
+#### 1. 明确研究任务与证据
 
-<table>
-  <tr>
-    <td width="50%"><img src="../images/readme/project-files.jpg" alt="包含上传内容和生成研究产物的项目文件库"></td>
-    <td width="50%"><img src="../images/readme/csv-preview.jpg" alt="已完成智能体会话旁的 CSV 产物预览"></td>
-  </tr>
-  <tr>
-    <td align="center"><sub>按项目和会话组织的上传内容与生成文件</sub></td>
-    <td align="center"><sub>原生预览让数据和研究历史并排显示</sub></td>
-  </tr>
-</table>
+说明研究问题、来源论文与数据集、必需的方法或阈值、预期输出和验收标准。上传支持文件，或使用 `@` 引用已有项目产物，让智能体从明确的输入开始，而不是依赖隐藏上下文。
 
-生成的报告、图表和表格会继续附属于会话，同时汇集到项目文件库。面板尺寸变化时，预览标签页会保持活动结果可见；长名称会保留用于识别的后缀和扩展名。Open Science 可以预览常见科学数据、PDF、Office 文档（DOCX、XLSX、PPTX）、图像（支持缩放和平移）、带语法高亮的源代码、分子结构与反应，以及 Notebook 历史。预览限制不会截断底层文件，智能体和外部工具仍可使用完整产物。使用 `Cmd/Ctrl+F` 搜索工作区中的对话记录、Notebook 输出和渲染页面，或使用 `Cmd/Ctrl+K` 打开项目级命令面板。工作区还支持深色模式：在 **Settings → General** 中切换主题，整个命令行、对话记录和渲染器配色会无闪烁切换。界面也提供德语、简体中文、繁体中文、日语、韩语、法语、俄语和西班牙语，并可在设置中运行时切换语言。
+<p align="center">
+  <img src="../images/readme/product-tour-task.jpg" alt="Open Science 论文复现任务，在同一工作区中显示研究结论、生成产物和来源比较" width="900">
+</p>
 
-### 为对话创建分支而不丢失原始内容
+#### 2. 使用可检查的科学工具执行
 
-编辑已完成的用户消息，可从该位置重新发送修改后的提示。Open Science 会新建消息分支，而不是删除后续轮次；修订控件可在原始路径和替代路径之间切换。分支选择、工具活动、附件和生成产物会跨项目切换与应用重启保持。来源仍与生成每个产物版本的准确分支绑定，因此探索不同假设不会模糊早期结果的记录。
+智能体可以在共享 Notebook 中组合科学技能、受权限控制的研究连接器、搜索、文件操作以及 Python 或 R 代码。生成图像可与研究摘要并排审阅，产物记录则提供已捕获的生成代码和执行证据供检查。
 
-### 科学技能与数据连接器
+<p align="center">
+  <img src="../images/readme/product-tour-execute.png" alt="Open Science 生物信息学分析，并排显示研究摘要、生成图像和已捕获的生成代码" width="900">
+</p>
 
-Open Science 包含不断扩展的 **22 个精选**文件型研究技能目录：AlphaFold2、Boltz、Borzoi、Chai-1、Customize、DiffDock、Environment & Packages、ESM-2、ESMFold2、Evo 2、Figure Composer、Figure Style、Indication Dossier、LigandMPNN、Literature Review、OpenFold3、Paper Narrative、ProteinMPNN、scGPT、scvi-tools、SolubleMPNN，以及用于在远程 HPC 集群提交和收取长时间任务的 **Remote Compute (SSH)**。你可以新建个人技能，上传 `SKILL.md`/ZIP/`.skill` 软件包，以可选认证方式从 GitHub 预览并导入兼容技能，或导入已安装在全局智能体目录中的技能。智能体也可以请求从会话附件或公开 GitHub URL 导入软件包；应用会在写入任何内容前提供自有的预览和确认步骤。可以在输入框中使用 `/` 直接选择已启用的技能。
+#### 3. 就地审阅报告、表格和图像
 
-应用还包含 **24 个内置**研究连接器：Literature Graph、PubMed、bioRxiv、Genes & Ontologies、Genomes、BioMart、Variants、Human Genetics、Clinical Genomics、Structures & Interactions、Protein Annotation、Expression、Omics Archives、CellGuide、Regulation、RNA、Chemistry、ChEMBL、ZINC、Molecule Viewer、Clinical Trials、Drug Regulatory、Cancer Models 和 Research Resources。内置与自定义连接器都受权限系统控制，每个工具可设置 `Always allow`、`Ask each time` 和 `Block`。已安装应用会显示当前的技能、连接器和工具目录。
+最终回答会概述哪些结果成功复现、哪些存在差异，以及需要关注的局限。生成的 Markdown 报告、CSV 表格、图像和其他研究产物会继续附属于会话，并汇集到项目文件库，可在对话旁预览，也可用于后续工作。
 
-<table>
-  <tr>
-    <td width="50%"><img src="../images/readme/skills.jpg" alt="Open Science 设置中显示精选科学技能"></td>
-    <td width="50%"><img src="../images/readme/connectors.jpg" alt="Open Science 设置中显示内置科学数据连接器"></td>
-  </tr>
-  <tr>
-    <td align="center"><sub>可读、可复用的研究技能</sub></td>
-    <td align="center"><sub>作为受权限控制的智能体工具提供的科学数据库</sub></td>
-  </tr>
-</table>
+<p align="center">
+  <img src="../images/readme/product-tour-output.jpg" alt="Open Science 复现结果，在智能体说明旁预览差异表达图像和生成文件" width="900">
+</p>
+
+#### 4. 将每个产物追溯到证据
+
+每个生成产物都以不可变且带校验和的版本保存。其 **Provenance** 视图可显示生成代码与执行历史、引用的输入、观测到的环境清单、生成该产物的对话分支，以及限定到该版本的 Reviewer 结果。无法验证的证据会标记为不可用，而不会被推断补全。
+
+<p align="center">
+  <img src="../images/readme/product-tour-provenance.jpg" alt="Open Science 研究产物预览，其中包含用于追溯生成结果的 Provenance 入口" width="900">
+</p>
 
 ## 基准测试表现
 

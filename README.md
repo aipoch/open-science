@@ -133,45 +133,41 @@ Notebook execution is optional. Every required environment and agent-runtime che
 
 ## Product Tour
 
-Open Science organizes research into projects and sessions so that every result can stay connected to the evidence that produced it. The sections below walk through the workspace, artifact provenance, previews, scientific skills, and data connectors.
+### From a research request to a traceable result
 
-### One workspace from task to traceable artifacts
+Consider a representative bioinformatics task: reproduce a published differential-expression analysis, compare the regenerated results with the paper, and deliver the report, tables, and figures needed for review. The screenshots below are representative views from documented Open Science workflows; they illustrate each stage rather than one continuous session.
 
-Projects keep related sessions, uploads, generated files, and preview state together. The conversation records the agent's answer and the commands, file reads, edits, searches, and connector calls that produced it. Each generated artifact is stored as an immutable, checksummed version. Its **Provenance** view exposes the evidence Open Science could verify at creation time: producer code and execution history, referenced inputs, an observed environment inventory, the producing conversation branch, and any version-scoped reviewer findings. Missing evidence is shown as unavailable instead of being guessed.
+#### 1. Define the research task and evidence
 
-<table>
-  <tr>
-    <td width="50%"><img src="docs/images/readme/project-files.jpg" alt="Project file library with uploads and generated research artifacts"></td>
-    <td width="50%"><img src="docs/images/readme/csv-preview.jpg" alt="CSV artifact preview beside a completed agent session"></td>
-  </tr>
-  <tr>
-    <td align="center"><sub>Uploads and generated files organized by project and session</sub></td>
-    <td align="center"><sub>Native previews keep data and the research history side by side</sub></td>
-  </tr>
-</table>
+Describe the research question, source paper and datasets, required methods or thresholds, expected outputs, and acceptance criteria. Upload supporting files or reference an existing project artifact with `@`, so the agent starts from explicit inputs instead of hidden context.
 
-Generated reports, figures, and tables remain attached to the session and are also collected in the project file library. Preview tabs keep the active result visible as the panel changes size, and long names preserve their identifying suffix and extension. Open Science previews common scientific data, PDFs, Office documents (DOCX, XLSX, PPTX), images (with zoom and pan), source code with syntax highlighting, molecular structures and reactions, and Notebook history. Preview limits do not truncate the underlying file—the full artifact stays available to the agent and external tools. Use `Cmd/Ctrl+F` to search transcripts, Notebook output, and rendered pages across the workspace, or `Cmd/Ctrl+K` to open the project-scoped command palette. A dark mode rounds out the workspace: toggle the theme in **Settings → General** and the whole shell, transcript, and renderer palette switch without a flash. The interface is also available in German, Spanish, Chinese (Simplified and Traditional), Japanese, Korean, French, and Russian with a runtime language switcher in Settings.
+<p align="center">
+  <img src="docs/images/readme/product-tour-task.jpg" alt="Open Science paper reproduction task with the research conclusion, generated artifacts, and source comparison visible in one workspace" width="900">
+</p>
 
-### Branch a conversation without losing the original
+#### 2. Execute with inspectable scientific tools
 
-Edit a completed user message to resend a revised prompt from that point. Open Science creates a new message branch instead of deleting the turns that followed, and revision controls let you move between the original and alternative paths. Branch selection, tool activity, attachments, and generated artifacts persist across project switches and restarts. Provenance remains tied to the exact branch that produced each artifact version, so exploring a different hypothesis does not blur the record of the earlier result.
+The agent can combine scientific skills, permissioned research connectors, searches, file operations, and Python or R code in the shared Notebook. Generated figures can be reviewed beside the research summary, while the artifact record exposes captured producer code and execution evidence for inspection.
 
-### Scientific skills and data connectors
+<p align="center">
+  <img src="docs/images/readme/product-tour-execute.png" alt="Open Science bioinformatics analysis showing the research summary, generated figure, and captured producer code side by side" width="900">
+</p>
 
-Open Science includes a growing catalog of **22 featured**, file-based research skills: AlphaFold2, Boltz, Borzoi, Chai-1, Customize, DiffDock, Environment & Packages, ESM-2, ESMFold2, Evo 2, Figure Composer, Figure Style, Indication Dossier, LigandMPNN, Literature Review, OpenFold3, Paper Narrative, ProteinMPNN, scGPT, scvi-tools, SolubleMPNN, and **Remote Compute (SSH)** for submitting and harvesting long-running jobs on remote HPC clusters. You can create personal skills, upload `SKILL.md`/ZIP/`.skill` packages, preview and import compatible skills from GitHub with optional authenticated access, or import skills already installed in your global agent directories. The agent can also request a package import from a session attachment or a public GitHub URL, with an app-owned preview and confirmation step before anything is written. Enabled skills can be selected directly in the composer with `/`.
+#### 3. Review reports, tables, and figures in place
 
-It also includes **24 built-in** research connectors: Literature Graph, PubMed, bioRxiv, Genes & Ontologies, Genomes, BioMart, Variants, Human Genetics, Clinical Genomics, Structures & Interactions, Protein Annotation, Expression, Omics Archives, CellGuide, Regulation, RNA, Chemistry, ChEMBL, ZINC, Molecule Viewer, Clinical Trials, Drug Regulatory, Cancer Models, and Research Resources. Built-in and custom connectors remain behind the permission system, with per-tool `Always allow`, `Ask each time`, and `Block` controls. The installed app shows the current skill, connector, and tool catalogs.
+The final response summarizes what reproduced, what differed, and which limitations matter. Generated Markdown reports, CSV tables, images, and other research artifacts remain attached to the session and are collected in the project file library, where they can be previewed beside the conversation and reused in follow-up work.
 
-<table>
-  <tr>
-    <td width="50%"><img src="docs/images/readme/skills.jpg" alt="Open Science settings showing featured scientific skills"></td>
-    <td width="50%"><img src="docs/images/readme/connectors.jpg" alt="Open Science settings showing built-in scientific data connectors"></td>
-  </tr>
-  <tr>
-    <td align="center"><sub>Readable, reusable research skills</sub></td>
-    <td align="center"><sub>Scientific databases exposed as permissioned agent tools</sub></td>
-  </tr>
-</table>
+<p align="center">
+  <img src="docs/images/readme/product-tour-output.jpg" alt="Open Science reproduction result with differential-expression figures and generated files previewed beside the agent's explanation" width="900">
+</p>
+
+#### 4. Trace every artifact back to its evidence
+
+Each generated artifact is stored as an immutable, checksummed version. Its **Provenance** view can expose the producing code and execution history, referenced inputs, observed environment inventory, producing conversation branch, and version-scoped Reviewer findings. Evidence that could not be verified is marked unavailable rather than inferred.
+
+<p align="center">
+  <img src="docs/images/readme/product-tour-provenance.jpg" alt="Open Science research artifact preview with the Provenance entry for tracing a generated result" width="900">
+</p>
 
 ## Benchmark Performance
 

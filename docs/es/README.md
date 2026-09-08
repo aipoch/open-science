@@ -135,45 +135,41 @@ La ejecución de Notebook es opcional. Todas las comprobaciones obligatorias del
 
 ## Recorrido por el producto
 
-Open Science organiza la investigación en proyectos y sesiones para que cada resultado permanezca vinculado a la evidencia que lo produjo. Las secciones siguientes presentan el espacio de trabajo, la procedencia de los artefactos, las vistas previas, las habilidades científicas y los conectores de datos.
+### De la solicitud de investigación al resultado rastreable
 
-### Un espacio de trabajo desde la tarea hasta los artefactos rastreables
+Considere una tarea bioinformática representativa: reproducir un análisis publicado de expresión diferencial, comparar los resultados regenerados con el artículo y entregar el informe, las tablas y las figuras necesarias para la revisión. Las capturas siguientes son vistas representativas de flujos de trabajo documentados de Open Science; ilustran cada etapa, pero no pertenecen a una única sesión continua.
 
-Los proyectos mantienen juntas las sesiones relacionadas, las cargas, los archivos generados y el estado de vista previa. La conversación registra la respuesta del agente y los comandos, lecturas de archivos, ediciones, búsquedas y llamadas de conector que la produjeron. Cada artefacto generado se almacena como una versión inmutable con suma de comprobación. Su vista **Procedencia** muestra la evidencia que Open Science pudo verificar en el momento de la creación: el código que produjo el artefacto y su historial de ejecución, las entradas utilizadas, un inventario del entorno observado, la rama de conversación de origen y cualquier hallazgo del revisor asociado a esa versión. La evidencia que falta se marca como no disponible; nunca se inventa.
+#### 1. Definir la tarea de investigación y sus evidencias
 
-<table>
-<tr>
-<td width="50%"> <img src="../images/readme/project-files.jpg" alt="Biblioteca de archivos del proyecto con cargas y artefactos de investigación generados"> </td>
-<td width="50%"> <img src="../images/readme/csv-preview.jpg" alt="Vista previa de un artefacto CSV junto a una sesión completada del agente"> </td>
-</tr>
-<tr>
-<td align="center"> <sub> Cargas y archivos generados organizados por proyecto y sesión </sub> </td>
-<td align="center"> <sub> Las vistas previas nativas mantienen los datos y el historial de investigación uno al lado del otro </sub> </td>
-</tr>
-</table>
+Describa la pregunta de investigación, el artículo y los conjuntos de datos de origen, los métodos o umbrales necesarios, los resultados esperados y los criterios de aceptación. Cargue los archivos de apoyo o haga referencia a un artefacto existente del proyecto con `@`, para que el agente parta de entradas explícitas y no de un contexto oculto.
 
-Los informes, las figuras y las tablas generados permanecen vinculados a la sesión y también se recopilan en la biblioteca de archivos del proyecto. Las pestañas de vista previa mantienen visible el resultado activo cuando cambia el tamaño del panel, y los nombres largos conservan el sufijo y la extensión que permiten identificarlos. Open Science previsualiza datos científicos habituales, PDF, documentos de Office (DOCX, XLSX, PPTX), imágenes (con zoom y desplazamiento), código fuente con resaltado de sintaxis, estructuras y reacciones moleculares, y el historial de Notebook. Los límites de la vista previa no truncan el archivo subyacente: el artefacto completo permanece disponible para el agente y las herramientas externas. Utilice `Cmd/Ctrl+F` para buscar transcripciones, resultados de Notebook y páginas renderizadas en todo el espacio de trabajo, o `Cmd/Ctrl+K` para abrir la paleta de comandos del proyecto. El espacio de trabajo también ofrece un modo oscuro: cambie el tema en **Configuración → General** y la interfaz, la transcripción y la paleta del renderizador cambiarán sin parpadeos. La interfaz está disponible en español, alemán, chino (simplificado y tradicional), japonés, coreano, francés y ruso, con un selector de idioma en Configuración que se aplica al instante.
+<p align="center">
+  <img src="../images/readme/product-tour-task.jpg" alt="Tarea de reproducción de un artículo en Open Science con la conclusión, los artefactos generados y la comparación de fuentes en un mismo espacio de trabajo" width="900">
+</p>
 
-### Bifurque una conversación sin perder la original
+#### 2. Ejecutar con herramientas científicas inspeccionables
 
-Edite un mensaje de usuario completo para reenviar una versión revisada desde ese punto. Open Science crea una nueva rama de mensajes en lugar de eliminar los turnos posteriores, y los controles de revisión le permiten moverse entre las rutas original y alternativa. La selección de ramas, la actividad de las herramientas, los archivos adjuntos y los artefactos generados persisten tras los cambios y reinicios del proyecto. La procedencia permanece vinculada a la rama exacta que produjo cada versión del artefacto, por lo que explorar una hipótesis diferente no borra el registro del resultado anterior.
+El agente puede combinar en el Notebook compartido habilidades científicas, conectores de investigación sujetos a permisos, búsquedas, operaciones con archivos y código Python o R. Las figuras generadas se pueden revisar junto al resumen de la investigación, mientras que el registro del artefacto permite inspeccionar el código productor capturado y las evidencias de ejecución.
 
-### Habilidades científicas y conectores de datos
+<p align="center">
+  <img src="../images/readme/product-tour-execute.png" alt="Análisis bioinformático en Open Science que muestra juntos el resumen de la investigación, la figura generada y el código productor capturado" width="900">
+</p>
 
-Open Science incluye un catálogo creciente de **22 habilidades de investigación basadas en archivos** destacadas: AlphaFold2, Boltz, Borzoi, Chai-1, Customize, DiffDock, Environment & Packages, ESM-2, ESMFold2, Evo 2, Figure Composer, Figure Style, Indication Dossier, LigandMPNN, Literature Review, OpenFold3, Paper Narrative, ProteinMPNN, scGPT, scvi-tools, SolubleMPNN y **Computación remota (SSH)** para enviar y recopilar trabajos de larga duración en clústeres HPC remotos. Puede crear habilidades personales, cargar paquetes `SKILL.md`, `.skill` o ZIP, previsualizar e importar habilidades compatibles desde GitHub con acceso autenticado opcional, o importar habilidades ya instaladas en sus directorios globales de agentes. El agente también puede solicitar la importación de un paquete desde un archivo adjunto de sesión o una URL pública de GitHub, con una vista previa y un paso de confirmación controlados por la aplicación antes de escribir nada. Las habilidades habilitadas pueden seleccionarse directamente en el editor de mensajes con `/`.
+#### 3. Revisar informes, tablas y figuras en contexto
 
-También incluye **24 conectores de investigación integrados**: Gráfico de literatura, PubMed, bioRxiv, Genes y ontologías, Genomas, BioMart, Variantes, Genética humana, Genómica clínica, Estructuras e interacciones, Anotación de proteínas, Expresión, Archivos ómicos, CellGuide, Regulación, ARN, Química, ChEMBL, ZINC, Visor de moléculas, Ensayos clínicos, Regulación de fármacos, Modelos de cáncer y Recursos de investigación. Los conectores integrados y personalizados permanecen detrás del sistema de permisos, con los controles **Permitir siempre**, **Preguntar siempre** y **Bloquear** para cada herramienta. La aplicación instalada muestra los catálogos actuales de habilidades, conectores y herramientas.
+La respuesta final resume qué se reprodujo, qué presentó diferencias y qué limitaciones son importantes. Los informes Markdown, las tablas CSV, las imágenes y otros artefactos de investigación generados permanecen asociados a la sesión y también se reúnen en la biblioteca de archivos del proyecto, donde se pueden previsualizar junto a la conversación y reutilizar en trabajos posteriores.
 
-<table>
-<tr>
-<td width="50%"> <img src="../images/readme/skills.jpg" alt="Configuración de Open Science con habilidades científicas destacadas"> </td>
-<td width="50%"> <img src="../images/readme/connectors.jpg" alt="Configuración de Open Science con conectores de datos científicos integrados"> </td>
-</tr>
-<tr>
-<td align="center"> <sub> Habilidades de investigación legibles y reutilizables </sub> </td>
-<td align="center"> <sub> Bases de datos científicas expuestas como herramientas de agentes autorizados </sub> </td>
-</tr>
-</table>
+<p align="center">
+  <img src="../images/readme/product-tour-output.jpg" alt="Resultado de reproducción en Open Science con figuras de expresión diferencial y archivos generados junto a la explicación del agente" width="900">
+</p>
+
+#### 4. Rastrear cada artefacto hasta sus evidencias
+
+Cada artefacto generado se almacena como una versión inmutable con suma de comprobación. La vista **Provenance** puede mostrar el código productor y el historial de ejecución, las entradas referenciadas, el inventario observado del entorno, la rama de conversación productora y los hallazgos del Reviewer específicos de la versión. Las evidencias que no se pudieron verificar se marcan como no disponibles en lugar de inferirse.
+
+<p align="center">
+  <img src="../images/readme/product-tour-provenance.jpg" alt="Vista previa de un artefacto de investigación de Open Science con acceso a Provenance para rastrear un resultado generado" width="900">
+</p>
 
 ## Rendimiento en benchmarks
 
