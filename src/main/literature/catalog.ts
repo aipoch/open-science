@@ -124,7 +124,7 @@ const searchIdentifiers = (
     ['doi', /^10\.\d{4,9}\/\S+$/u],
     ['pmid', /^\d+$/u],
     ['pmcid', /^PMC\d+$/u],
-    ['arxiv', /^(?:\d{4}\.\d{4,5}|[a-z-]+(?:\.[a-z-]+)?\/\d{7})$/iu],
+    ['arxiv', /^(?:\d{4}\.\d{4,5}|[a-z][a-z.-]*\/\d{7})$/iu],
     ['isbn', /^(?:\d{9}[\dX]|\d{13})$/u],
     ['issn', /^\d{7}[\dX]$/u]
   ]

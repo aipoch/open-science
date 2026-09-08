@@ -6,6 +6,7 @@ import type { PrismaClient } from '@prisma/client'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import {
+  createLiteratureIdentifierUrl,
   literatureCatalogSearchRequestSchema,
   literatureCandidateInputSchema,
   literatureItemInputSchema,
@@ -441,6 +442,27 @@ describe('LiteratureCatalog', () => {
       )
     ).toEqual([receipts[1].id])
   })
+
+  it.each(['cond-mat.stat-mech/9901001', 'math.algebra.geometry/9901001'])(
+    'recognizes old-style arXiv forms accepted by the shared link contract: %s',
+    async (value) => {
+      expect(createLiteratureIdentifierUrl('arxiv', value)).toBeDefined()
+      const catalog = await setup()
+      const receipt = await catalog.transact({
+        kind: 'create-item',
+        item: literatureItemInputSchema.parse({
+          itemType: 'preprint',
+          title: 'Archive category control',
+          identifiers: [{ scheme: 'arxiv', value }]
+        })
+      })
+      expect(
+        (await catalog.search({ scope: 'library', query: value })).entries.flatMap((entry) =>
+          'id' in entry ? [entry.id] : []
+        )
+      ).toEqual([receipt.id])
+    }
+  )
 
   it.each(['merge', 'delete', 'batch', 'rollback', 'preview'] as const)(
     'publishes tag assignments only after committed catalog changes: %s',
