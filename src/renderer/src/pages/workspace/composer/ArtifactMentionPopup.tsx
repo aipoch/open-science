@@ -65,6 +65,13 @@ type ArtifactRow = {
   positions?: number[]
 }
 
+type LiteratureResult = {
+  projectId?: string
+  query: string
+  rows: ArtifactRow[]
+  state: 'loading' | 'loaded' | 'error'
+}
+
 // Catalog keys for the section headers, ordered as they render.
 const SECTION_UPLOADS_KEY = 'User uploads'
 const SECTION_ARTIFACTS_KEY = 'Other artifacts'
@@ -88,13 +95,21 @@ export const ArtifactMentionPopup = ({
   const [projectFiles, setProjectFiles] = useState<{
     projectId?: string
     files: ProjectFileItem[]
-    state: 'loaded' | 'error'
-  }>({ files: [], state: 'loaded' })
-  const [library, setLibrary] = useState<{
-    query: string
-    rows: ArtifactRow[]
     state: 'loading' | 'loaded' | 'error'
-  }>({ query: '', rows: [], state: 'loading' })
+  }>({ files: [], state: 'loaded' })
+  const [library, setLibrary] = useState<LiteratureResult>({
+    query: '',
+    rows: [],
+    state: 'loading'
+  })
+  const [collections, setCollections] = useState<LiteratureResult>({
+    query: '',
+    rows: [],
+    state: 'loading'
+  })
+  const [fileRetry, setFileRetry] = useState(0)
+  const [libraryRetry, setLibraryRetry] = useState(0)
+  const [collectionRetry, setCollectionRetry] = useState(0)
 
   useEffect(() => {
     let cancelled = false
@@ -111,43 +126,33 @@ export const ArtifactMentionPopup = ({
     return () => {
       cancelled = true
     }
-  }, [activeProjectId])
+  }, [activeProjectId, fileRetry])
 
   useEffect(() => {
     let cancelled = false
     const timeout = window.setTimeout(() => {
-      void Promise.all([
-        query.trim()
-          ? searchLiteratureCollectionMentionOptions(query).catch(() => [])
-          : Promise.resolve([]),
-        searchLiteratureMentionOptions(query, { projectId: activeProjectId })
-      ]).then(
-        ([collections, options]) => {
+      void searchLiteratureMentionOptions(query, { projectId: activeProjectId }).then(
+        (options) => {
           if (cancelled) return
           setLibrary({
+            projectId: activeProjectId,
             query,
             state: 'loaded',
-            rows: [
-              ...collections.map((option) => ({
-                id: option.reference.scope === 'collection' ? option.reference.collectionId : '',
-                name: option.name,
-                picked: option.reference,
-                tag: 'collection-scope' as const
-              })),
-              ...options.map((option) => ({
-                id: option.reference.itemId,
-                name: option.name,
-                picked: option.reference,
-                source: 'literature' as const,
-                tag: 'library' as const,
-                iconName: option.iconName,
-                description: option.description
-              }))
-            ]
+            rows: options.map((option) => ({
+              id: option.reference.itemId,
+              projectId: activeProjectId,
+              name: option.name,
+              picked: option.reference,
+              source: 'literature',
+              tag: 'library',
+              iconName: option.iconName,
+              description: option.description
+            }))
           })
         },
         () => {
-          if (!cancelled) setLibrary({ query, rows: [], state: 'error' })
+          if (!cancelled)
+            setLibrary({ projectId: activeProjectId, query, rows: [], state: 'error' })
         }
       )
     }, 120)
@@ -155,9 +160,47 @@ export const ArtifactMentionPopup = ({
       cancelled = true
       window.clearTimeout(timeout)
     }
-  }, [activeProjectId, query])
+  }, [activeProjectId, query, libraryRetry])
 
-  const libraryState = library.query === query ? library.state : 'loading'
+  useEffect(() => {
+    let cancelled = false
+    const timeout = window.setTimeout(() => {
+      void (
+        query.trim() ? searchLiteratureCollectionMentionOptions(query) : Promise.resolve([])
+      ).then(
+        (options) => {
+          if (cancelled) return
+          setCollections({
+            projectId: activeProjectId,
+            query,
+            state: 'loaded',
+            rows: options.map((option) => ({
+              id: option.reference.scope === 'collection' ? option.reference.collectionId : '',
+              projectId: activeProjectId,
+              name: option.name,
+              picked: option.reference,
+              tag: 'collection-scope'
+            }))
+          })
+        },
+        () => {
+          if (!cancelled)
+            setCollections({ projectId: activeProjectId, query, rows: [], state: 'error' })
+        }
+      )
+    }, 120)
+    return () => {
+      cancelled = true
+      window.clearTimeout(timeout)
+    }
+  }, [activeProjectId, query, collectionRetry])
+
+  const libraryState =
+    library.query === query && library.projectId === activeProjectId ? library.state : 'loading'
+  const collectionState =
+    collections.query === query && collections.projectId === activeProjectId
+      ? collections.state
+      : 'loading'
 
   // ManagedFile supplies a logical file identity. The consumer resolves its current DB head when the
   // turn starts; only an explicit history action may attach an immutable Version id.
@@ -180,6 +223,7 @@ export const ArtifactMentionPopup = ({
       ? [
           {
             id: 'library',
+            projectId: activeProjectId,
             name: t('Library'),
             description: t('References linked to this project.'),
             picked: { type: 'literature-scope', scope: 'project' },
@@ -187,8 +231,13 @@ export const ArtifactMentionPopup = ({
           }
         ]
       : []
-    return [...projectRows, ...libraryScopeRows, ...(library.query === query ? library.rows : [])]
-  }, [activeProjectId, library, projectFiles, query, t])
+    return [
+      ...projectRows,
+      ...libraryScopeRows,
+      ...(collectionState === 'loaded' ? collections.rows : []),
+      ...(libraryState === 'loaded' ? library.rows : [])
+    ]
+  }, [activeProjectId, library, libraryState, collections, collectionState, projectFiles, query, t])
   const loadState =
     !activeProjectId || projectFiles.projectId === activeProjectId ? projectFiles.state : 'loading'
 
@@ -246,6 +295,8 @@ export const ArtifactMentionPopup = ({
 
   const selectRow = useCallback(
     async (row: ArtifactRow): Promise<void> => {
+      if (row.projectId !== useNavigationStore.getState().activeProjectId || !matches.includes(row))
+        return
       const revision = ++selectionRevisionRef.current
       if (
         (row.tag === 'library' || row.tag === 'library-scope' || row.tag === 'collection-scope') &&
@@ -296,7 +347,7 @@ export const ArtifactMentionPopup = ({
         setSelectionError(t('Could not resolve file version.'))
       }
     },
-    [onSelect, t]
+    [matches, onSelect, t]
   )
 
   useLayoutEffect(
@@ -310,6 +361,12 @@ export const ArtifactMentionPopup = ({
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent): void => {
       if (event.isComposing || composingRef?.current) return
+      if (
+        event.target instanceof Element &&
+        event.target.closest('button') &&
+        event.key !== 'Escape'
+      )
+        return
       if (event.key === 'ArrowDown') {
         event.preventDefault()
         if (matches.length > 0) setActiveIndex((safeIndex + 1) % matches.length)
@@ -430,35 +487,77 @@ export const ArtifactMentionPopup = ({
   }
 
   return (
-    <div className="absolute bottom-full left-0 mb-1 z-50 bg-bg-000 border-0.5 border-border-200 rounded-xl shadow-[0_4px_16px_hsl(var(--always-black)/10%)] p-1.5 min-w-[320px] max-w-[440px] max-h-[min(45vh,18rem)] overflow-hidden">
+    <div className="absolute bottom-full left-0 mb-1 z-50 flex flex-col bg-bg-000 border-0.5 border-border-200 rounded-xl shadow-[0_4px_16px_hsl(var(--always-black)/10%)] p-1.5 min-w-[320px] max-w-[440px] max-h-[min(45vh,18rem)] overflow-hidden">
       {selectionError ? (
         <div role="alert" className="px-2 py-1.5 text-sm text-danger-000">
           {selectionError}
         </div>
       ) : null}
-      {matches.length === 0 ? (
+      {[
+        {
+          state: loadState,
+          label: t('Could not load project files'),
+          retry: () => {
+            setProjectFiles({ projectId: activeProjectId, files: [], state: 'loading' })
+            setFileRetry((value) => value + 1)
+          }
+        },
+        {
+          state: libraryState,
+          label: t('Literature could not be loaded.'),
+          retry: () => {
+            setLibrary({ projectId: activeProjectId, query, rows: [], state: 'loading' })
+            setLibraryRetry((value) => value + 1)
+          }
+        },
+        {
+          state: collectionState,
+          label: t('Collections could not be loaded.'),
+          retry: () => {
+            setCollections({ projectId: activeProjectId, query, rows: [], state: 'loading' })
+            setCollectionRetry((value) => value + 1)
+          }
+        }
+      ]
+        .filter(({ state }) => state === 'error')
+        .map(({ label, retry }) => (
+          <div
+            key={label}
+            role="alert"
+            aria-live="assertive"
+            aria-atomic="true"
+            className="flex shrink-0 items-center justify-between gap-3 px-2 py-1.5 text-sm text-text-300"
+          >
+            <span>{label}</span>
+            <button
+              type="button"
+              className="shrink-0 text-primary underline"
+              onMouseDown={(event) => event.preventDefault()}
+              onClick={retry}
+            >
+              {t('Retry')}
+            </button>
+          </div>
+        ))}
+      {matches.length === 0 && ![loadState, libraryState, collectionState].includes('error') ? (
         <div
-          role={loadState === 'error' || libraryState === 'error' ? 'alert' : 'status'}
-          aria-live={loadState === 'error' || libraryState === 'error' ? 'assertive' : 'polite'}
+          role="status"
+          aria-live="polite"
           aria-atomic="true"
           className="px-2 py-1.5 text-sm text-text-300"
         >
           {loadState === 'loading'
             ? t('Loading project files…')
-            : loadState === 'error'
-              ? t('Could not load project files')
-              : libraryState === 'loading'
-                ? t('Loading…')
-                : libraryState === 'error'
-                  ? t('Literature could not be loaded.')
-                  : t('No artifacts yet')}
+            : libraryState === 'loading' || collectionState === 'loading'
+              ? t('Loading…')
+              : t('No artifacts yet')}
         </div>
       ) : null}
       <ul
         id={resolvedListboxId}
         role="listbox"
         aria-label={t('Artifact suggestions')}
-        className="overflow-y-auto max-h-[min(45vh,18rem)]"
+        className="min-h-0 overflow-y-auto max-h-[min(45vh,18rem)]"
       >
         {uploadMatches.length > 0 ? (
           <>
@@ -512,7 +611,7 @@ export const ArtifactMentionPopup = ({
           </>
         ) : null}
       </ul>
-      <div className="mt-1 -mx-1.5 -mb-1.5 px-3.5 pt-1.5 pb-2 border-t border-border-300 flex items-center gap-3 text-[11px] text-text-400 select-none">
+      <div className="shrink-0 mt-1 -mx-1.5 -mb-1.5 px-3.5 pt-1.5 pb-2 border-t border-border-300 flex items-center gap-3 text-[11px] text-text-400 select-none">
         <span>
           <span className="text-text-300">↑↓</span> {t('navigate')}
         </span>

@@ -1557,6 +1557,7 @@
     "Inbox": "受信トレイ",
     "Inbox is clear": "受信トレイは空です",
     "Literature could not be loaded.": "文献を読み込めませんでした。",
+    "Collections could not be loaded.": "コレクションを読み込めませんでした。",
     "This reference is no longer in your Library.": "この文献はライブラリに存在しません。",
     "Literature could not be updated.": "文献を更新できませんでした。",
     "Literature library": "文献ライブラリ",

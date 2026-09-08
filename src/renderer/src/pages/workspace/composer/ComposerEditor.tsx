@@ -493,6 +493,7 @@ export const ComposerEditor = ({
     trigger: '#',
     disabled: disabled || docSessionCount(doc) >= MAX_COMPOSER_SESSION_MENTIONS
   })
+  const activeProjectId = useNavigationStore((state) => state.activeProjectId)
   const mentionPopupOpen = mention.active || artifactMention.active || sessionMention.active
   const undoCaretRef = useRef<ComposerCaretPosition | undefined>(undefined)
 
@@ -507,6 +508,8 @@ export const ComposerEditor = ({
     cancelSessionMention()
   }, [
     mentionPreviewContext?.sessionId,
+    mentionPreviewContext?.projectId,
+    activeProjectId,
     cancelSkillMention,
     cancelArtifactMention,
     cancelSessionMention

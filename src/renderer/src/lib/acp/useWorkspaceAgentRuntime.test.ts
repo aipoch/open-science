@@ -8381,6 +8381,131 @@ describe('resuming an interrupted session on demand', () => {
     ).toHaveLength(2)
   })
 
+  it.each(['claude-code', 'opencode', 'codex-response', 'codex-bridge'] as const)(
+    'sends frozen historical Literature identities during %s application replay',
+    async (target) => {
+      useSessionStore.getState().appendUserMessage({
+        sessionId: 'session-1',
+        content: 'Compare @Study set with @Repeated title',
+        cwd: '/workspace/project',
+        projectId: 'default-project',
+        parts: [
+          {
+            type: 'literature-scope',
+            scope: 'collection',
+            collectionId: 'frozen-collection',
+            name: 'Study set'
+          },
+          {
+            type: 'literature',
+            itemId: 'frozen-item',
+            metadataRevision: 7,
+            item: {
+              itemType: 'journalArticle',
+              title: 'Repeated title',
+              abstract: 'Frozen evidence abstract',
+              issuedText: '2025',
+              containerTitle: '',
+              shortTitle: '',
+              language: '',
+              rights: '',
+              url: '',
+              extra: '',
+              typeFields: {},
+              creators: [],
+              identifiers: [{ scheme: 'doi', value: '10.1234/history', isPrimary: true }]
+            }
+          }
+        ]
+      })
+      useSessionStore.getState().finishRun('session-1')
+      const runtime = {
+        state: createSnapshot([]),
+        createSession: vi.fn(),
+        resumeSession: vi.fn().mockResolvedValue({
+          sessionId: 'session-1',
+          cwd: '/workspace/project',
+          contextReset: true
+        }),
+        resetSessionContext: vi.fn(),
+        sendPrompt: vi.fn().mockResolvedValue(createSnapshot(['session-1']))
+      }
+      await sendWorkspaceMessage(runtime, {
+        sessionId: 'session-1',
+        text: 'Continue using these references',
+        cwd: '/workspace/project',
+        projectId: 'default-project',
+        historyReplayDescriptor: { target }
+      })
+      await flushRuntimeTasks()
+      const preamble = runtime.sendPrompt.mock.calls[0]?.[5]
+      for (const value of [
+        'frozen-collection',
+        'frozen-item',
+        '10.1234/history',
+        'Frozen evidence abstract'
+      ])
+        expect(preamble).toContain(value)
+      expect(preamble).toMatch(/metadataRevision[^0-9]*7/)
+      expect(preamble).not.toContain('Continue using these references')
+    }
+  )
+
+  it('replays Literature scopes from the active Branch without leaking the replaced Branch', async () => {
+    for (const id of ['shared-scope', 'replaced-scope']) {
+      useSessionStore.getState().appendUserMessage({
+        sessionId: 'session-1',
+        content: `Use @${id}`,
+        cwd: '/workspace/project',
+        projectId: 'default-project',
+        parts: [{ type: 'literature-scope', scope: 'collection', collectionId: id, name: id }]
+      })
+      useSessionStore.getState().finishRun('session-1')
+    }
+    const second = useSessionStore.getState().sessions[0].messages.at(-1)!
+    const runtime = {
+      state: createSnapshot(['session-1']),
+      createSession: vi.fn(),
+      resumeSession: vi.fn(),
+      resetSessionContext: vi.fn().mockResolvedValue({ contextReset: true }),
+      sendPrompt: vi.fn().mockResolvedValue(createSnapshot(['session-1']))
+    }
+    await resendEditedWorkspaceMessage(runtime, {
+      sessionId: 'session-1',
+      messageId: second.id,
+      text: 'Use @active-scope',
+      parts: [
+        {
+          type: 'literature-scope',
+          scope: 'collection',
+          collectionId: 'active-scope',
+          name: 'active-scope'
+        }
+      ]
+    })
+    await flushRuntimeTasks()
+    useSessionStore.getState().finishRun('session-1')
+    runtime.state = createSnapshot([])
+    runtime.resumeSession.mockResolvedValue({
+      sessionId: 'session-1',
+      cwd: '/workspace/project',
+      contextReset: true
+    })
+    runtime.sendPrompt.mockClear()
+    await sendWorkspaceMessage(runtime, {
+      sessionId: 'session-1',
+      text: 'Continue',
+      cwd: '/workspace/project',
+      projectId: 'default-project'
+    })
+    await flushRuntimeTasks()
+    const preamble = runtime.sendPrompt.mock.calls[0]?.[5]
+    expect(preamble).toContain('"collectionId":"shared-scope"')
+    expect(preamble).toContain('"collectionId":"active-scope"')
+    expect(preamble).not.toContain('replaced-scope')
+    expect(useSessionStore.getState().sessions[0].conversationGraph?.branches.length).toBe(2)
+  })
+
   it('replays a history preamble when a resume resets agent context', async () => {
     // A completed prior turn that should be replayed to the freshly-adopted agent.
     useSessionStore.getState().appendUserMessage({

@@ -1626,6 +1626,7 @@
     "Inbox": "Bandeja de entrada",
     "Inbox is clear": "La bandeja de entrada está vacía",
     "Literature could not be loaded.": "No se pudieron cargar las referencias.",
+    "Collections could not be loaded.": "No se pudieron cargar las colecciones.",
     "This reference is no longer in your Library.": "Esta referencia ya no está en su Biblioteca.",
     "Literature could not be updated.": "No se pudieron actualizar las referencias.",
     "Literature library": "Biblioteca de referencias",
