@@ -41,6 +41,10 @@ const LiteratureBatchDestinationMenus = ({
   const { t } = useTranslation()
   const [collectionCreateMode, setCollectionCreateMode] = useState(false)
   const [collectionName, setCollectionName] = useState('')
+  const [collectionQuery, setCollectionQuery] = useState('')
+  const visibleCollections = collections.filter((collection) =>
+    collection.name.toLocaleLowerCase().includes(collectionQuery.trim().toLocaleLowerCase())
+  )
   const [projectQuery, setProjectQuery] = useState('')
   const normalizedProjectQuery =
     projects.length > SEARCH_THRESHOLD ? projectQuery.trim().toLocaleLowerCase() : ''
@@ -57,6 +61,7 @@ const LiteratureBatchDestinationMenus = ({
           if (!open) {
             setCollectionCreateMode(false)
             setCollectionName('')
+            setCollectionQuery('')
           }
         }}
       >
@@ -83,9 +88,24 @@ const LiteratureBatchDestinationMenus = ({
           <div className="px-2 pb-1 pt-0.5 text-xs font-medium text-muted-foreground">
             {t('Collections')}
           </div>
+          {collections.length > SEARCH_THRESHOLD ? (
+            <Input
+              type="search"
+              aria-label={t('Search collections')}
+              placeholder={t('Search collections…')}
+              value={collectionQuery}
+              onChange={(event) => setCollectionQuery(event.target.value)}
+              className="mb-1 h-8 text-xs"
+            />
+          ) : null}
           {collections.length > 0 ? (
             <div className="max-h-56 overflow-y-auto">
-              {collections.map((collection) => (
+              {visibleCollections.length === 0 ? (
+                <p className="px-2 py-3 text-sm text-muted-foreground">
+                  {t('No matching collections')}
+                </p>
+              ) : null}
+              {visibleCollections.map((collection) => (
                 <PopoverClose key={collection.id} asChild>
                   <button
                     type="button"
@@ -133,6 +153,7 @@ const LiteratureBatchDestinationMenus = ({
               >
                 <Input
                   autoFocus
+                  disabled={disabled}
                   value={collectionName}
                   onChange={(event) => setCollectionName(event.target.value)}
                   placeholder={t('New collection')}
