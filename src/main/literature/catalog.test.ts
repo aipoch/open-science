@@ -415,6 +415,33 @@ describe('LiteratureCatalog', () => {
     }
   })
 
+  it('does not reinterpret a bare PMID as a different PMCID identity', async () => {
+    const catalog = await setup()
+    const receipts = []
+    for (const scheme of ['pmid', 'pmcid'] as const) {
+      receipts.push(
+        await catalog.transact({
+          kind: 'create-item',
+          item: literatureItemInputSchema.parse({
+            itemType: 'journalArticle',
+            title: `${scheme} control`,
+            identifiers: [{ scheme, value: scheme === 'pmid' ? '39876543' : 'PMC39876543' }]
+          })
+        })
+      )
+    }
+    expect(
+      (await catalog.search({ scope: 'library', query: '39876543' })).entries.flatMap((entry) =>
+        'id' in entry ? [entry.id] : []
+      )
+    ).toEqual([receipts[0].id])
+    expect(
+      (await catalog.search({ scope: 'library', query: 'PMCID: 39876543' })).entries.flatMap(
+        (entry) => ('id' in entry ? [entry.id] : [])
+      )
+    ).toEqual([receipts[1].id])
+  })
+
   it.each(['merge', 'delete', 'batch', 'rollback', 'preview'] as const)(
     'publishes tag assignments only after committed catalog changes: %s',
     async (operation) => {

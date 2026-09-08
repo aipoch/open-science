@@ -129,6 +129,8 @@ const searchIdentifiers = (
     ['issn', /^\d{7}[\dX]$/u]
   ]
   return forms.flatMap(([scheme, pattern]) => {
+    // A bare number denotes a PMID, not an implicitly prefixed PMCID.
+    if (scheme === 'pmcid' && /^\d+$/u.test(text)) return []
     // ISBN/ISSN normalization strips arbitrary characters; admit only explicit numeric forms.
     if ((scheme === 'isbn' || scheme === 'issn') && !/^[\dX\s-]+$/iu.test(text)) return []
     const normalizedValue = normalizeIdentifier(scheme, text)
