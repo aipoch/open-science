@@ -4690,6 +4690,7 @@
     "{{count}} tasks_other": "작업 {{count}}개",
     "{{count}} background tasks_other": "백그라운드 작업 {{count}}개",
     "{{count}} running background tasks_other": "실행 중인 백그라운드 작업 {{count}}개",
+    "Updated: {{completed}}. Not updated: {{remaining}}. Unavailable: {{skipped}}.": "업데이트됨: {{completed}}. 업데이트되지 않음: {{remaining}}. 사용할 수 없음: {{skipped}}.",
     "Updated: {{completed}}. Not updated: {{remaining}}.": "업데이트됨: {{completed}}. 업데이트되지 않음: {{remaining}}.",
     "Conflicting identifiers": "식별자 충돌",
     "Some identifiers disagree or match different references. Correct the source file or keep separate copies of every reference in this import.": "일부 식별자가 서로 모순되거나 서로 다른 문헌과 일치합니다. 원본 파일을 수정하거나 이번에 가져오는 모든 문헌을 별도의 사본으로 유지하세요.",

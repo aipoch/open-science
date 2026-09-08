@@ -5138,6 +5138,7 @@
     "{{count}} running background tasks_few": "{{count}} фоновые задачи выполняются",
     "{{count}} running background tasks_many": "{{count}} фоновых задач выполняется",
     "{{count}} running background tasks_other": "{{count}} фоновые задачи выполняются",
+    "Updated: {{completed}}. Not updated: {{remaining}}. Unavailable: {{skipped}}.": "Обновлено: {{completed}}. Не обновлено: {{remaining}}. Недоступно: {{skipped}}.",
     "Updated: {{completed}}. Not updated: {{remaining}}.": "Обновлено: {{completed}}. Не обновлено: {{remaining}}.",
     "Conflicting identifiers": "Конфликтующие идентификаторы",
     "Some identifiers disagree or match different references. Correct the source file or keep separate copies of every reference in this import.": "Некоторые идентификаторы противоречат друг другу или соответствуют разным источникам. Исправьте исходный файл или сохраните отдельную копию каждого импортируемого источника.",

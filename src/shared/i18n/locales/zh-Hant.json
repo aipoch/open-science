@@ -4692,6 +4692,7 @@
     "{{count}} tasks_other": "{{count}} 個任務",
     "{{count}} background tasks_other": "{{count}} 個背景工作",
     "{{count}} running background tasks_other": "{{count}} 個背景工作正在執行",
+    "Updated: {{completed}}. Not updated: {{remaining}}. Unavailable: {{skipped}}.": "已更新：{{completed}}。未更新：{{remaining}}。無法使用：{{skipped}}。",
     "Updated: {{completed}}. Not updated: {{remaining}}.": "已更新：{{completed}}。未更新：{{remaining}}。",
     "Conflicting identifiers": "識別碼衝突",
     "Some identifiers disagree or match different references. Correct the source file or keep separate copies of every reference in this import.": "部分識別碼互相矛盾或符合不同文獻。請修正來源檔案，或將本次匯入的每篇文獻保留為獨立副本。",

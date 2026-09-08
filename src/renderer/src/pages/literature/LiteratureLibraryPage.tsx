@@ -1264,6 +1264,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
     itemIds: readonly string[]
     completed: number
     scopeKey: string
+    skipped: number
   }>()
   const [linkedItemError, setLinkedItemError] = useState<string>()
   const [pendingCandidateId, setPendingCandidateId] = useState<string>()
@@ -2653,7 +2654,9 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
   const runLinkBatch = async (
     command: NonNullable<typeof linkFailure>['command'],
     itemIds?: readonly string[],
-    previousCompleted = 0
+    previousCompleted = 0,
+    previousSkipped = 0,
+    reconcile = false
   ): Promise<void> => {
     const scopeKey = entriesKey
     setIsBatching(true)
@@ -2661,15 +2664,43 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
     setLinkFailure(undefined)
     let resolvedIds: readonly string[] = itemIds ?? []
     let completed = 0
+    let skipped = previousSkipped
     try {
       resolvedIds = itemIds ?? (await resolveSelectedItemIds())
+      if (reconcile) {
+        const activeIds: string[] = []
+        for (let offset = 0; offset < resolvedIds.length; offset += LITERATURE_BATCH_COMMAND_SIZE) {
+          const batch = resolvedIds.slice(offset, offset + LITERATURE_BATCH_COMMAND_SIZE)
+          const entries = await Promise.all(batch.map((id) => window.api.literature.get(id)))
+          entries.forEach((entry, index) => {
+            // get resolves merged aliases; never redirect the original association intent.
+            if (
+              entry?.id === batch[index] &&
+              entry.deletedAt === undefined &&
+              entry.mergedIntoItemId === undefined
+            )
+              activeIds.push(batch[index])
+          })
+        }
+        skipped += resolvedIds.length - activeIds.length
+        resolvedIds = activeIds
+      }
       for (let offset = 0; offset < resolvedIds.length; offset += LITERATURE_BATCH_COMMAND_SIZE) {
-        if (linkScopeRef.current !== scopeKey) return
         const batch = resolvedIds.slice(offset, offset + LITERATURE_BATCH_COMMAND_SIZE)
         await window.api.literature.transact({ ...command, itemIds: [...batch] })
         completed += batch.length
       }
-      if (linkScopeRef.current === scopeKey) clearSelection()
+      if (linkScopeRef.current === scopeKey) {
+        clearSelection()
+        if (skipped)
+          setLinkFailure({
+            command,
+            itemIds: [],
+            completed: previousCompleted + completed,
+            scopeKey,
+            skipped
+          })
+      }
     } catch {
       if (linkScopeRef.current === scopeKey) {
         if (resolvedIds.length) {
@@ -2679,6 +2710,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
             command,
             itemIds: remaining,
             completed: previousCompleted + completed,
+            skipped,
             scopeKey
           })
         } else {
@@ -2723,16 +2755,14 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
       if (linkScopeRef.current !== scopeKey) return false
       const receipt = await window.api.literature.transact({ kind: 'create-collection', name })
       void loadCollections().catch(() => undefined)
-      if (linkScopeRef.current === scopeKey) {
-        await runLinkBatch(
-          {
-            kind: 'move-collection-items',
-            targetCollectionId: receipt.id,
-            ...(collectionId ? { sourceCollectionId: collectionId } : {})
-          },
-          itemIds
-        )
-      }
+      await runLinkBatch(
+        {
+          kind: 'move-collection-items',
+          targetCollectionId: receipt.id,
+          ...(collectionId ? { sourceCollectionId: collectionId } : {})
+        },
+        itemIds
+      )
       // Creation succeeded even if association needs Retry; retire the creation form.
       return true
     } catch (error) {
@@ -3814,20 +3844,37 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
             <div className="mt-2">
               <LiteratureErrorNotice
                 className="w-fit max-w-full rounded-md px-3 py-1.5 [&>div]:items-center"
-                description={t('Updated: {{completed}}. Not updated: {{remaining}}.', {
-                  completed: linkFailure.completed,
-                  remaining: linkFailure.itemIds.length
-                })}
-                primaryButton={{
-                  label: t('Retry'),
-                  disabled: isBatching,
-                  onClick: () =>
-                    void runLinkBatch(
-                      linkFailure.command,
-                      linkFailure.itemIds,
-                      linkFailure.completed
-                    )
-                }}
+                description={
+                  linkFailure.skipped
+                    ? t(
+                        'Updated: {{completed}}. Not updated: {{remaining}}. Unavailable: {{skipped}}.',
+                        {
+                          completed: linkFailure.completed,
+                          remaining: linkFailure.itemIds.length,
+                          skipped: linkFailure.skipped
+                        }
+                      )
+                    : t('Updated: {{completed}}. Not updated: {{remaining}}.', {
+                        completed: linkFailure.completed,
+                        remaining: linkFailure.itemIds.length
+                      })
+                }
+                primaryButton={
+                  linkFailure.itemIds.length
+                    ? {
+                        label: t('Retry'),
+                        disabled: isBatching,
+                        onClick: () =>
+                          void runLinkBatch(
+                            linkFailure.command,
+                            linkFailure.itemIds,
+                            linkFailure.completed,
+                            linkFailure.skipped,
+                            true
+                          )
+                      }
+                    : undefined
+                }
               />
             </div>
           ) : null}

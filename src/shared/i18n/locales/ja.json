@@ -4692,6 +4692,7 @@
     "{{count}} tasks_other": "{{count}} 件のタスク",
     "{{count}} background tasks_other": "{{count}} 件のバックグラウンドタスク",
     "{{count}} running background tasks_other": "実行中のバックグラウンドタスク {{count}} 件",
+    "Updated: {{completed}}. Not updated: {{remaining}}. Unavailable: {{skipped}}.": "更新済み：{{completed}}。未更新：{{remaining}}。利用不可：{{skipped}}。",
     "Updated: {{completed}}. Not updated: {{remaining}}.": "更新済み：{{completed}}。未更新：{{remaining}}。",
     "Conflicting identifiers": "識別子の競合",
     "Some identifiers disagree or match different references. Correct the source file or keep separate copies of every reference in this import.": "一部の識別子が矛盾しているか、異なる文献に一致しています。元のファイルを修正するか、今回インポートするすべての文献を個別のコピーとして保持してください。",

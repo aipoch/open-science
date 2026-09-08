@@ -4815,6 +4815,7 @@ describe('LiteratureLibraryPage', () => {
           createdAt: 1,
           updatedAt: 1
         })
+      get.mockImplementation(async (id: string) => createLibraryItem(Number(id.slice(5))))
       let linked = 0
       search.mockImplementation((request: LiteratureCatalogSearchRequest) => {
         if (request.scope === 'collections')
@@ -4921,6 +4922,93 @@ describe('LiteratureLibraryPage', () => {
         destination === 'new collection' ? 1 : 0
       )
       expect(linked).toBe(201)
+      transact.mockReset().mockResolvedValue({ kind: 'item', id: 'item-1', state: 'present' })
+    }
+  )
+
+  it.each(['navigation', 'deleted', 'merged'] as const)(
+    'finishes valid batch references after %s changes',
+    async (change) => {
+      const entries = Array.from({ length: 202 }, (_, index) => createLibraryItem(index))
+      let invalid = false
+      const linked: string[] = []
+      search.mockImplementation(async (request: LiteratureCatalogSearchRequest) => {
+        if (request.scope === 'collections')
+          return {
+            entries: [
+              {
+                id: 'source',
+                name: 'Source',
+                description: '',
+                itemCount: 202,
+                createdAt: 1,
+                updatedAt: 1
+              },
+              {
+                id: 'target',
+                name: 'Target',
+                description: '',
+                itemCount: linked.length,
+                createdAt: 1,
+                updatedAt: 1
+              }
+            ]
+          }
+        if (request.scope !== 'library') return { entries: [] }
+        const active = entries.filter(
+          (e) => !(invalid && e.id === 'item-200') && !linked.includes(e.id)
+        )
+        const offset = request.offset ?? 0
+        const limit = request.limit ?? 100
+        return {
+          entries: active.slice(offset, offset + limit),
+          totalCount: active.length,
+          nextOffset: offset + limit < active.length ? offset + limit : undefined
+        }
+      })
+      get.mockImplementation(async (id: string) => {
+        if (invalid && id === 'item-200') return change === 'merged' ? entries[0] : undefined
+        return entries.find((e) => e.id === id)
+      })
+      let release!: () => void
+      transact.mockImplementation(async (command) => {
+        if (!linked.length && change === 'navigation')
+          await new Promise<void>((resolve) => {
+            release = resolve
+          })
+        if (command.itemIds.includes('item-200') && change !== 'navigation') {
+          invalid = true
+          throw new Error('One or more Literature Items are unavailable.')
+        }
+        linked.push(...command.itemIds)
+        return { kind: 'item', id: command.itemIds[0], state: 'linked' }
+      })
+      useNavigationStore.setState({ pendingLiteratureCollectionId: 'source' })
+      render(<LiteratureLibraryPage />)
+      await screen.findByText('Reference 0')
+      fireEvent.click(screen.getByLabelText('Select all references'))
+      fireEvent.click(screen.getByRole('button', { name: 'Select all matching references 202' }))
+      fireEvent.click(screen.getByRole('button', { name: 'Move to collection' }))
+      fireEvent.click(
+        within(
+          document.querySelector<HTMLElement>('[data-slot="literature-batch-collection-popover"]')!
+        ).getByRole('button', { name: 'Target' })
+      )
+      if (change === 'navigation') {
+        await waitFor(() => expect(release).toBeDefined())
+        fireEvent.click(screen.getByRole('button', { name: 'All references' }))
+        await act(async () => {})
+        await act(async () => release())
+        expect(linked).toHaveLength(202)
+      } else {
+        await screen.findByText('Updated: 200. Not updated: 2.')
+        fireEvent.click(screen.getByRole('button', { name: 'Retry' }))
+        await act(async () => {})
+        expect(linked).toHaveLength(201)
+        expect(transact.mock.calls.at(-1)?.[0].itemIds).toEqual(['item-201'])
+        expect(screen.getByText('Updated: 201. Not updated: 0. Unavailable: 1.')).not.toBeNull()
+        expect(screen.queryByRole('button', { name: 'Retry' })).toBeNull()
+      }
       transact.mockReset().mockResolvedValue({ kind: 'item', id: 'item-1', state: 'present' })
     }
   )
