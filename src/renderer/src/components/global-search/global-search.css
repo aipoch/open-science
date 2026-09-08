@@ -372,24 +372,27 @@
 .search-recent-limit {
   margin-top: 10px;
   text-align: center;
-  color: var(--muted-foreground);
-  font-size: 9px;
-  line-height: 13.5px;
+  color: var(--text-300);
+  font-size: 10px;
+  line-height: 15px;
 }
 .search-recent-session {
   display: flex;
   align-items: center;
   gap: 10px;
   width: 100%;
-  padding: 7px 0;
+  padding: 6px 8px;
+  border-radius: 6px;
+  color: var(--text-000);
   text-align: left;
+  transition: background-color 150ms ease;
 }
 .search-recent-session > svg,
 .search-recent-literature > svg {
   width: 15px;
   height: 15px;
   flex-shrink: 0;
-  color: var(--muted-foreground);
+  color: var(--text-300);
 }
 .search-recent-session-text {
   min-width: 0;
@@ -400,16 +403,16 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 500;
-  line-height: 16.5px;
+  line-height: 18px;
 }
 .search-recent-session-text small {
   display: block;
   margin-top: 2px;
-  font-size: 9px;
-  line-height: 13.5px;
-  color: var(--muted-foreground);
+  font-size: 10px;
+  line-height: 15px;
+  color: var(--text-300);
 }
 .search-recent-arrow {
   margin-left: auto;
@@ -418,58 +421,109 @@
 .search-recent-literature {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
   width: 100%;
-  padding: 7px 0;
+  min-height: 36px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  color: var(--text-000);
   text-align: left;
-  font-size: 11px;
+  font-size: 12px;
+  transition: background-color 150ms ease;
 }
 .search-recent-session:hover,
 .search-recent-literature:hover {
-  color: var(--primary);
+  background: var(--bg-200);
 }
 .search-recent-file-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 11px 10px;
+  gap: 8px;
 }
 .search-recent-file {
   display: block;
   min-width: 0;
+  overflow: hidden;
+  border: 1px solid color-mix(in oklab, var(--color-border-300) 50%, transparent);
+  border-radius: 8px;
+  background: var(--bg-000);
+  box-shadow: var(--shadow-sm);
+  transition:
+    background-color 150ms ease,
+    border-color 150ms ease;
   text-align: left;
+}
+.search-recent-file:hover {
+  border-color: var(--color-border-200);
+  background: var(--bg-100);
+}
+.search-recent-file:has(:focus-visible) {
+  outline: 2px solid color-mix(in oklab, var(--ring) 50%, transparent);
+  outline-offset: -2px;
+}
+.search-recent-file-open {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  min-width: 0;
+  height: 128px;
+  cursor: pointer;
+  text-align: left;
+}
+.search-recent-file-open:focus-visible {
+  outline: none;
 }
 .search-recent-file-thumb {
   display: flex;
   align-items: center;
   justify-content: center;
-  height: 84px;
+  width: 100%;
+  height: 82px;
+  flex-shrink: 0;
   overflow: hidden;
-  border-radius: 5px;
-  background: var(--bg-300);
+  background: var(--bg-200);
 }
 .search-recent-file-thumb > div {
   background: transparent;
 }
+.search-recent-file-info {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  justify-content: center;
+  gap: 2px;
+  width: 100%;
+  min-width: 0;
+  padding: 6px 8px;
+}
 .search-recent-file-name {
-  padding-right: 26px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  margin-top: 5px;
-  font-size: 10px;
-  line-height: 15px;
+  font-size: 11px;
+  line-height: 18px;
+  color: var(--text-000);
 }
 .search-recent-file-meta {
-  padding-right: 26px;
-  margin-top: 2px;
-  font-size: 9px;
-  line-height: 13.5px;
-  color: var(--muted-foreground);
+  font-size: 10px;
+  line-height: 12px;
+  color: var(--text-300);
 }
 .search-recent-file > .search-file-locate {
   position: absolute;
-  right: 0;
-  bottom: 2px;
+  top: 6px;
+  right: 6px;
+  opacity: 0;
+  border: 1px solid var(--border);
+  background: color-mix(in oklab, var(--bg-000) 95%, transparent);
+  box-shadow: var(--shadow-sm);
+  transition: opacity 150ms ease;
+}
+.search-recent-file:hover > .search-file-locate,
+.search-recent-file:focus-within > .search-file-locate {
+  opacity: 1;
+}
+@media (hover: none) {
+  .search-recent-file > .search-file-locate {
+    opacity: 1;
+  }
 }
 .search-detail-actions > .search-file-locate {
   margin-right: 8px;
@@ -624,9 +678,6 @@
   }
 }
 @media (max-width: 740px) {
-  .search-recent-file-thumb {
-    height: 96px;
-  }
   .search-detail-actions {
     padding: 13px 18px;
   }
@@ -711,7 +762,11 @@
 }
 @media (prefers-reduced-motion: reduce) {
   .global-search-body,
-  .global-search-detail {
+  .global-search-detail,
+  .search-recent-session,
+  .search-recent-literature,
+  .search-recent-file,
+  .search-recent-file > .search-file-locate {
     transition: none;
   }
 }

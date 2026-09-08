@@ -9,6 +9,7 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/comp
 import { SearchFilePreview } from './SearchFilePreview'
 import { SearchDetailHeader } from './SearchDetailHeader'
 import { ArtifactPreview } from '@/pages/workspace/artifact-preview'
+import { ExtensionPreservingFileName } from '@/pages/workspace/ExtensionPreservingFileName'
 import {
   createProjectFilePreviewArtifact,
   useProjectFilePreviewReader,
@@ -267,13 +268,15 @@ export const SearchDetails = ({
               ? t('Open collection')
               : t('Open literature')
             : t('Open full screen preview')
+  // Match artifact tiles while keeping preview and source navigation owned by the search panel.
   const renderFiles = (): React.JSX.Element => (
     <div className="search-recent-file-grid">
       {files.map((file) => (
         <div key={file.id} className="search-recent-file relative">
           <button
             type="button"
-            className="search-recent-file-open block w-full text-left focus-visible:ring-2 focus-visible:ring-ring"
+            className="search-recent-file-open"
+            title={file.name}
             onClick={() => setPreviewDialog(filePreviewItem(file))}
           >
             <div className="search-recent-file-thumb">
@@ -287,13 +290,13 @@ export const SearchDetails = ({
                 preview={filePreviews.get(file.id)}
               />
             </div>
-            <div className="search-recent-file-name" title={file.name}>
-              {file.name}
-            </div>
-            <div className="search-recent-file-meta">
-              {fileFormatLabel(file)}
-              {' · '}
-              {formatBytes(file.size)}
+            <div className="search-recent-file-info">
+              <ExtensionPreservingFileName name={file.name} className="search-recent-file-name" />
+              <div className="search-recent-file-meta">
+                {fileFormatLabel(file)}
+                {' · '}
+                {formatBytes(file.size)}
+              </div>
             </div>
           </button>
           {renderLocateFile(file)}
