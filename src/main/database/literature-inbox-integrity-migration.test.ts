@@ -59,14 +59,18 @@ describe('Literature inbox integrity migration', () => {
       } else {
         await client.literatureCandidateDiscovery.deleteMany()
       }
+      await client.$executeRawUnsafe('DROP TABLE "LiteratureMetadataCommitReceipt"')
       await client.$executeRawUnsafe(
         schema === 'pre-ledger released'
           ? 'DELETE FROM "_open_science_migrations"'
-          : 'DELETE FROM "_open_science_migrations" WHERE id = \'0037_literature_inbox_integrity\''
+          : 'DELETE FROM "_open_science_migrations" WHERE id >= \'0037_literature_inbox_integrity\''
       )
 
       expect(await migrateApplicationDatabase(client)).toMatchObject({
-        applied: expect.arrayContaining(['0037_literature_inbox_integrity'])
+        applied: expect.arrayContaining([
+          '0037_literature_inbox_integrity',
+          '0039_literature_metadata_commit_receipt'
+        ])
       })
       expect(await client.literatureSourceRecord.findMany()).toEqual(sources)
       expect(

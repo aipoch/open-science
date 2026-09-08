@@ -21,7 +21,14 @@ it('refreshes the library when a background job completes after its dialog close
   request.mockResolvedValue({
     jobs: [],
     summaries: [
-      { ...job, state: 'completed', done: 3, ready: 0, completedItemIds: ['a', 'b', 'c'] }
+      {
+        ...job,
+        state: 'completed',
+        checked: 3,
+        done: 3,
+        ready: 0,
+        completedItemIds: ['a', 'b', 'c']
+      }
     ]
   })
   await act(async () => {
@@ -249,4 +256,21 @@ it('keeps progress polls quiet and announces important transitions after the ind
   } finally {
     observer.disconnect()
   }
+})
+
+it('keeps unsearched references discoverable after a partial application is marked completed', async () => {
+  await show([
+    {
+      ...job,
+      state: 'completed',
+      phase: 'apply',
+      total: 2,
+      checked: 1,
+      ready: 0,
+      done: 1,
+      failed: 0,
+      completedItemIds: ['a']
+    }
+  ])
+  expect(screen.queryByRole('button', { name: 'Background tasks' })).not.toBeNull()
 })

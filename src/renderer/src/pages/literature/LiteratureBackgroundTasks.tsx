@@ -102,7 +102,9 @@ export function LiteratureBackgroundTasks({
     review: t('Awaiting review'),
     completed: t('Completed')
   }
-  const pending = jobs.filter((job) => job.state !== 'completed' || job.failed > 0 || job.ready > 0)
+  const pending = jobs.filter(
+    (job) => job.state !== 'completed' || job.failed > 0 || job.ready > 0 || job.checked < job.total
+  )
   const running = pending.filter((job) => job.state === 'running' || job.state === 'pausing')
   const allPaused = pending.every((job) => job.state === 'paused')
   const checked = running.reduce(
@@ -225,6 +227,9 @@ export function LiteratureBackgroundTasks({
                             : job.mode === 'metadata'
                               ? t('Metadata updated: {{done}}', { done: job.done })
                               : t('PDFs added: {{done}}', { done: job.done })}
+                          {job.total > job.checked
+                            ? ` · ${t('Pending')}: ${job.total - job.checked}`
+                            : null}
                           {job.failed > 0 ? ` · ${t('Failed')}: ${job.failed}` : null}
                         </p>
                         <p className="text-xs text-muted-foreground">
