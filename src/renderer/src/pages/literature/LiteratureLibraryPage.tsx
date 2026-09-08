@@ -1810,6 +1810,35 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
     })
   }, [changeDetailMode, detailController])
 
+  useEffect(() => {
+    let request = 0
+    const refreshOpenDetail = (): void => {
+      const snapshot = detailController.getSnapshot()
+      if (!snapshot.open || !snapshot.item) return
+      const currentRequest = ++request
+      void window.api.literature.get(snapshot.item.id).then(
+        (item) => {
+          if (
+            currentRequest !== request ||
+            detailController.getSnapshot().generation !== snapshot.generation
+          )
+            return
+          if (!item || item.deletedAt !== undefined) {
+            setPreviewItem(undefined)
+            closeSelectedItemDetail()
+            void reloadEntries(true, true)
+          }
+        },
+        () => undefined
+      )
+    }
+    window.addEventListener('focus', refreshOpenDetail)
+    return () => {
+      request += 1
+      window.removeEventListener('focus', refreshOpenDetail)
+    }
+  }, [closeSelectedItemDetail, detailController, reloadEntries])
+
   const appliedTagRevision = useRef(tagRevision)
   useEffect(() => {
     if (appliedTagRevision.current === tagRevision) return

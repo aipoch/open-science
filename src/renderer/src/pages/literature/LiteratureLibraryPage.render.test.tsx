@@ -2570,6 +2570,46 @@ describe('LiteratureLibraryPage', () => {
     })
   })
 
+  it('closes an open reference and its preview when returning after deletion in another window', async () => {
+    const entry = createLibraryItemWithPdf()
+    search.mockImplementation((request: { scope: string }) =>
+      Promise.resolve(request.scope === 'library' ? { entries: [entry] } : { entries: [] })
+    )
+    render(<LiteratureLibraryPage />)
+    fireEvent.click(screen.getByRole('button', { name: 'All references' }))
+    await openReferenceDetail(await screen.findByText(entry.item.title))
+    fireEvent.click(screen.getByRole('button', { name: 'Preview paper.pdf' }))
+    expect(screen.getByTestId('literature-pdf-preview')).not.toBeNull()
+    // The active-only public read no longer returns an item after another window trashes it.
+    search.mockResolvedValue({ entries: [] })
+    get.mockResolvedValue(undefined)
+    fireEvent.focus(window)
+    await waitFor(() => expect(screen.queryByTestId('literature-pdf-preview')).toBeNull())
+    expect(screen.queryByRole('dialog')).toBeNull()
+    await waitFor(() => expect(screen.queryByText(entry.item.title)).toBeNull())
+    expect(transact).not.toHaveBeenCalled()
+  })
+
+  it.each(['active', 'read failure'] as const)(
+    'keeps the open reference on focus after an %s result',
+    async (result) => {
+      const entry = createLibraryItemWithPdf()
+      search.mockImplementation((request: { scope: string }) =>
+        Promise.resolve(request.scope === 'library' ? { entries: [entry] } : { entries: [] })
+      )
+      render(<LiteratureLibraryPage />)
+      fireEvent.click(screen.getByRole('button', { name: 'All references' }))
+      const detail = await openReferenceDetail(await screen.findByText(entry.item.title))
+      get.mockClear()
+      if (result === 'active') get.mockResolvedValue(entry)
+      else get.mockRejectedValue(new Error('Controlled lifecycle read failure'))
+      await act(async () => fireEvent.focus(window))
+      expect(get).toHaveBeenCalledWith(entry.id)
+      expect(screen.getByRole('dialog')).toBe(detail)
+      expect(within(detail).getByRole('button', { name: 'Preview paper.pdf' })).not.toBeNull()
+    }
+  )
+
   it('offers removal of an individual PDF while retaining the reference', async () => {
     const entry = createLibraryItemWithPdf()
     search.mockImplementation((request: { scope: string }) =>
