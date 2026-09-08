@@ -347,6 +347,7 @@ const literatureCatalogSearchRequestSchema = z
   .object({
     scope: z.enum(['library', 'inbox', 'collections', 'project-counts', 'duplicates']),
     refreshDuplicates: z.boolean().optional(),
+    allItemIds: z.boolean().optional(),
     query: optionalTextSchema,
     projectId: optionalTextSchema,
     collectionId: optionalTextSchema,
@@ -361,6 +362,9 @@ const literatureCatalogSearchRequestSchema = z
     limit: z.number().int().positive().max(100).optional()
   })
   .strict()
+  .refine((request) => !request.allItemIds || request.scope === 'library', {
+    message: 'Complete item membership is only available for the library.'
+  })
 
 const literatureCatalogSearchPageSchema = z
   .object({
@@ -373,6 +377,7 @@ const literatureCatalogSearchPageSchema = z
         literatureDuplicateGroupSchema
       ])
     ),
+    itemIds: z.array(nonEmptyTextSchema).optional(),
     totalCount: z.number().int().nonnegative().optional(),
     nextOffset: z.number().int().nonnegative().optional()
   })

@@ -179,6 +179,52 @@ describe('LiteratureCatalog', () => {
     }
   )
 
+  it('reads all matching member IDs independently of page limits and later title changes', async () => {
+    const catalog = await setup()
+    const { itemIds } = await catalog.importItems(
+      Array.from({ length: 101 }, (_, index) =>
+        literatureItemInputSchema.parse({
+          itemType: 'book',
+          title: `Paper ${String(index).padStart(3, '0')}`
+        })
+      )
+    )
+    await catalog.transact({
+      kind: 'set-project-items',
+      projectId: 'project-1',
+      itemIds,
+      included: true,
+      source: 'library'
+    })
+    const page = await catalog.search({
+      scope: 'library',
+      projectId: 'project-1',
+      sortBy: 'title',
+      allItemIds: true,
+      limit: 1,
+      offset: 100
+    })
+    expect(page).toEqual({ entries: [], itemIds, totalCount: 101 })
+    const view = (await catalog.get(itemIds[100]!))!
+    await catalog.transact({
+      kind: 'update-item',
+      itemId: view.id,
+      expectedMetadataRevision: view.metadataRevision,
+      item: { ...view.item, title: 'A moved reference' }
+    })
+    expect(page.itemIds).toEqual(itemIds)
+    const filtered = await catalog.search({
+      scope: 'library',
+      projectId: 'project-1',
+      filter: { query: 'A moved' },
+      allItemIds: true
+    })
+    expect(filtered.itemIds).toEqual([view.id])
+    expect(
+      (await catalog.search({ scope: 'library', projectId: 'missing', allItemIds: true })).itemIds
+    ).toEqual([])
+  })
+
   it.each([
     ['deleted', 'missing'],
     ['active', 'missing'],

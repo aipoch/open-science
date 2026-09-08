@@ -2520,22 +2520,9 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
   const resolveSelectedItemIds = async (): Promise<string[]> => {
     const { allMatchingSelected, excludedMatchingIds, selectedIds } = selectionStore.getSnapshot()
     if (!allMatchingSelected) return [...selectedIds]
-    const itemIds: string[] = []
-    const seenOffsets = new Set<number>()
-    let offset = 0
-    while (!seenOffsets.has(offset)) {
-      seenOffsets.add(offset)
-      const page = await window.api.literature.search(buildEntriesRequest(offset))
-      itemIds.push(
-        ...page.entries
-          .filter(isItem)
-          .map(({ id }) => id)
-          .filter((id) => !excludedMatchingIds.has(id))
-      )
-      if (page.nextOffset === undefined) break
-      offset = page.nextOffset
-    }
-    return [...new Set(itemIds)]
+    const page = await window.api.literature.search({ ...buildEntriesRequest(0), allItemIds: true })
+    if (!page.itemIds) throw new Error('Literature membership is unavailable.')
+    return page.itemIds.filter((id) => !excludedMatchingIds.has(id))
   }
 
   const requestBatchLookup = async (mode: BatchLookupMode): Promise<void> => {
@@ -2941,11 +2928,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
 
   const exportCurrentScope = async (format: 'bibtex' | 'ris'): Promise<boolean> => {
     if (!selectedProject && !selectedCollection) return false
-    const itemIds: string[] = []
-    let offset = 0
-    const seenOffsets = new Set<number>()
-    while (!seenOffsets.has(offset)) {
-      seenOffsets.add(offset)
+    try {
       const page = await window.api.literature.search({
         scope: 'library',
         ...(selectedProject ? { projectId: selectedProject.id } : {}),
@@ -2953,18 +2936,18 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
         lifecycle: 'active',
         sortBy: 'title',
         sortDirection: 'asc',
-        offset,
-        limit: 100
+        allItemIds: true
       })
-      itemIds.push(...page.entries.filter(isItem).map(({ id }) => id))
-      if (page.nextOffset === undefined) break
-      offset = page.nextOffset
+      if (!page.itemIds) throw new Error('Literature membership is unavailable.')
+      return await exportReferenceIds(
+        page.itemIds,
+        format,
+        `${selectedProject?.name ?? selectedCollection?.name ?? 'references'}-references`
+      )
+    } catch (error) {
+      setError(t('References could not be exported.'))
+      throw error
     }
-    return exportReferenceIds(
-      [...new Set(itemIds)],
-      format,
-      `${selectedProject?.name ?? selectedCollection?.name ?? 'references'}-references`
-    )
   }
 
   const mergeSelectedItems = async (): Promise<void> => {
