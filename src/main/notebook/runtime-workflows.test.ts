@@ -12,7 +12,8 @@ const discoveryState = vi.hoisted(() => ({
   calls: [] as NotebookLanguage[]
 }))
 
-vi.mock('./environment-discovery', () => ({
+vi.mock('./environment-discovery', async (importOriginal) => ({
+  rscriptFor: (await importOriginal<typeof import('./environment-discovery')>()).rscriptFor,
   defaultDiscoveryDeps: (
     runtimeRoot: string,
     getManualInterpreters: (language: NotebookLanguage) => string[]
@@ -97,6 +98,94 @@ beforeEach(() => {
 })
 
 describe('runtime workflows', () => {
+  it('rejects authorization for non-runnable R while allowing its access to be removed', async () => {
+    discoveryState.r = [
+      {
+        language: 'r',
+        provenance: 'user-own',
+        envId: 'needs-jsonlite',
+        interpreterPath: 'D:\\R\\bin\\R.exe',
+        label: 'External R',
+        runnable: false
+      }
+    ]
+    const setWindowsRuntimeAccess = vi.fn(async () => ({ cancelled: false }))
+    const workflows = createRuntimeWorkflows({
+      settingsService: fakeSettingsService(),
+      runtimeRoot: () => '/runtime',
+      setWindowsRuntimeAccess
+    })
+    await expect(
+      workflows.setSandboxAccess({
+        language: 'r',
+        envId: 'needs-jsonlite',
+        authorized: true
+      })
+    ).rejects.toThrow('jsonlite')
+    expect(setWindowsRuntimeAccess).not.toHaveBeenCalled()
+    await workflows.setSandboxAccess({ language: 'r', envId: 'needs-jsonlite', authorized: false })
+    expect(setWindowsRuntimeAccess).toHaveBeenCalledWith('D:\\R\\bin\\Rscript.exe', false)
+  })
+
+  it('authorizes only the selected discovered R and drains it before removing access', async () => {
+    const env: DiscoveredInterpreter = {
+      language: 'r',
+      provenance: 'user-own',
+      envId: 'selected-r',
+      interpreterPath: 'D:\\RStudio\\R-4.6.0\\bin\\x64\\R.exe',
+      label: 'External R',
+      version: '4.6.0',
+      runnable: true
+    }
+    discoveryState.r = [env]
+    const settingsService = fakeSettingsService()
+    const events: string[] = []
+    const setWindowsRuntimeAccess = vi.fn(async (_path: string, authorized: boolean) => {
+      events.push(authorized ? 'grant' : 'remove')
+      return { cancelled: false }
+    })
+    const workflows = createRuntimeWorkflows({
+      settingsService,
+      runtimeRoot: () => '/runtime',
+      setWindowsRuntimeAccess,
+      onRuntimeDisabled: async () => {
+        expect((await settingsService.getRuntimeEnablement('r')).enabled[env.envId]).toBe(false)
+        await expect(
+          workflows.setEnvironmentEnabled({
+            language: 'r',
+            envId: env.envId,
+            enabled: true
+          })
+        ).rejects.toThrow('already in progress')
+        events.push('drain')
+      }
+    })
+    await expect(
+      workflows.setSandboxAccess({ language: 'r', envId: 'unknown', authorized: true })
+    ).rejects.toThrow('Select a discovered external R')
+    expect(setWindowsRuntimeAccess).not.toHaveBeenCalled()
+    await workflows.setSandboxAccess({ language: 'r', envId: env.envId, authorized: true })
+    expect(setWindowsRuntimeAccess).toHaveBeenLastCalledWith(
+      'D:\\RStudio\\R-4.6.0\\bin\\x64\\Rscript.exe',
+      true
+    )
+    await workflows.setSandboxAccess({ language: 'r', envId: env.envId, authorized: false })
+    expect(events).toEqual(['grant', 'drain', 'remove'])
+  })
+
+  it('preserves interpreter registration when removal authorization is cancelled', async () => {
+    const settingsService = fakeSettingsService()
+    settingsService.manual.set('r', ['D:\\R\\bin\\R.exe'])
+    const workflows = createRuntimeWorkflows({
+      settingsService,
+      runtimeRoot: () => '/runtime',
+      setWindowsRuntimeAccess: async () => ({ cancelled: true })
+    })
+    await expect(
+      workflows.unregister({ language: 'r', path: 'D:\\R\\bin\\R.exe' })
+    ).rejects.toThrow('remains registered')
+    expect(settingsService.manual.get('r')).toEqual(['D:\\R\\bin\\R.exe'])
+  })
   it('returns the persisted runtime enablement unchanged', async () => {
     const settingsService = fakeSettingsService()
     const persisted: RuntimeEnablement = {

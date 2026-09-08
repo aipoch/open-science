@@ -200,6 +200,7 @@ const REMOTE_LOCAL_ONLY_CHANNELS: GroupedInventory = {
     'set-agent-environment-creation-enabled',
     'set-environment-enabled',
     'set-install-authorized',
+    'set-sandbox-access',
     'unregister-interpreter'
   ],
   settings: [

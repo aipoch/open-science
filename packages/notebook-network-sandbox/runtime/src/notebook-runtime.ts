@@ -15,6 +15,7 @@ import { macosLaunch } from './platform/macos-isolation.js'
 import {
   checkWindowsAppContainer,
   installWindowsAppContainer,
+  setWindowsRuntimeAccess as setWindowsRuntimeAccessImpl,
   readAppContainerStatus,
   removeWindowsAppContainer,
   windowsLaunch,
@@ -331,6 +332,19 @@ const removeWindows = (config: NetworkRuntimeConfig): Promise<{ cancelled: boole
     config.windowsOwnershipRoot
   )
 
+const setWindowsRuntimeAccess = (
+  config: NetworkRuntimeConfig,
+  executable: string,
+  authorized: boolean
+): Promise<{ cancelled: boolean }> =>
+  setWindowsRuntimeAccessImpl(
+    config.windowsHostPath,
+    config.installationId,
+    config.windowsOwnershipRoot,
+    executable,
+    authorized
+  )
+
 const NotebookNetworkRuntime = {
   initialize,
   wrap,
@@ -346,7 +360,13 @@ const NotebookNetworkRuntime = {
   reset
 } as const
 
-export { NotebookNetworkRuntime, installWindows, removeWindows, statusForPlatform }
+export {
+  NotebookNetworkRuntime,
+  installWindows,
+  removeWindows,
+  setWindowsRuntimeAccess,
+  statusForPlatform
+}
 export type {
   NetworkAskCallback,
   NetworkRuntimeConfig,

@@ -4852,6 +4852,13 @@
     "File reference {{number}}: {{title}}": "Referenz {{number}} in der Datei: {{title}}",
     "Check author names. Original text is kept in Extra.": "Prüfen Sie die Autorennamen. Der Originaltext bleibt unter Zusatzinformationen erhalten.",
     "Preferred for {{scheme}}": "Bevorzugt für {{scheme}}",
-    "All identifiers are kept. Preferred values come from the kept reference when available.": "Alle Kennungen bleiben erhalten. Bevorzugte Werte stammen, sofern vorhanden, aus der beibehaltenen Referenz."
+    "All identifiers are kept. Preferred values come from the kept reference when available.": "Alle Kennungen bleiben erhalten. Bevorzugte Werte stammen, sofern vorhanden, aus der beibehaltenen Referenz.",
+    "R access was not verified. Permission may already be granted. Use Remove R access to revoke it.": "Der R-Zugriff wurde nicht überprüft. Die Berechtigung wurde möglicherweise bereits erteilt. Verwenden Sie „R-Zugriff entfernen“, um sie zu widerrufen.",
+    "R access verified": "R-Zugriff überprüft",
+    "R access removed": "R-Zugriff entfernt",
+    "Could not update R access.": "Der R-Zugriff konnte nicht aktualisiert werden.",
+    "Allow the sandbox to list names in this R installation's parent folders. Other file contents remain protected. Administrator approval may be required.": "Der Sandbox erlauben, Namen in den übergeordneten Ordnern dieser R-Installation aufzulisten. Andere Dateiinhalte bleiben geschützt. Möglicherweise ist eine Freigabe durch einen Administrator erforderlich.",
+    "Authorize and verify": "Genehmigen und überprüfen",
+    "Remove R access": "R-Zugriff entfernen"
   }
 }
