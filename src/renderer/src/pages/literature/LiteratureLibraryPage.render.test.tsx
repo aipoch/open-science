@@ -7350,6 +7350,108 @@ describe('LiteratureLibraryPage', () => {
       }
     )
 
+    it.each(['pending', 'visible'] as const)(
+      'invalidates a %s metadata preview when the background publishes a newer revision',
+      async (previewState) => {
+        const summary = {
+          id: 'preview-update-job',
+          mode: 'metadata' as const,
+          phase: 'apply' as const,
+          state: 'running' as const,
+          total: 1,
+          checked: 1,
+          ready: 0,
+          done: 0,
+          failed: 0,
+          createdAt: 1,
+          updatedAt: 1,
+          completedItemIds: [] as string[]
+        }
+        vi.mocked(window.api.literature.jobs).mockResolvedValue({ jobs: [], summaries: [summary] })
+        await showLibrary()
+        await screen.findByRole('button', { name: 'Background tasks' })
+        await openReferenceDetail(screen.getByText(libraryItem.item.title))
+        await openMenu(screen.getByRole('button', { name: 'More actions' }))
+        fireEvent.click(screen.getByRole('menuitem', { name: 'Complete metadata' }))
+        const reply = await completeMetadata.getMockImplementation()!({ mode: 'preview' })
+        const pending = deferred<typeof reply>()
+        completeMetadata.mockReturnValueOnce(pending.promise)
+        fireEvent.click(screen.getByRole('button', { name: 'Search' }))
+        await waitFor(() => expect(completeMetadata).toHaveBeenCalledTimes(1))
+        if (previewState === 'visible') {
+          await act(async () => pending.resolve(reply))
+          expect(screen.getByRole('button', { name: 'Apply metadata' })).not.toBeNull()
+        }
+        get.mockResolvedValue(version(2, 'Background revision two'))
+        vi.mocked(window.api.literature.jobs).mockResolvedValue({
+          jobs: [],
+          summaries: [
+            { ...summary, state: 'completed', done: 1, completedItemIds: [libraryItem.id] }
+          ]
+        })
+        await act(async () => window.dispatchEvent(new Event('literature-jobs-changed')))
+        await waitFor(() => expect(get).toHaveBeenCalledTimes(1))
+        if (previewState === 'pending') await act(async () => pending.resolve(reply))
+        expect(screen.queryByRole('button', { name: 'Apply metadata' })).toBeNull()
+        expect(screen.queryByText('Journal of Retrieval')).toBeNull()
+        expect(screen.getByRole('button', { name: 'Search' })).toHaveProperty('disabled', false)
+        expect(completeMetadata).toHaveBeenCalledTimes(1)
+        completeMetadata.mockResolvedValueOnce({
+          ...reply,
+          item: version(2, 'Background revision two'),
+          reviewToken: 'fresh-review'
+        })
+        fireEvent.click(screen.getByRole('button', { name: 'Search' }))
+        fireEvent.click(await screen.findByRole('button', { name: 'Apply metadata' }))
+        await waitFor(() =>
+          expect(completeMetadata).toHaveBeenLastCalledWith(
+            expect.objectContaining({
+              mode: 'commit',
+              expectedMetadataRevision: 2,
+              reviewToken: 'fresh-review'
+            })
+          )
+        )
+      }
+    )
+
+    it('keeps a metadata preview when background attachments change at the same revision', async () => {
+      const summary = {
+        id: 'attachment-preview-job',
+        mode: 'full-text' as const,
+        phase: 'apply' as const,
+        state: 'running' as const,
+        total: 1,
+        checked: 1,
+        ready: 0,
+        done: 0,
+        failed: 0,
+        createdAt: 1,
+        updatedAt: 1,
+        completedItemIds: [] as string[]
+      }
+      vi.mocked(window.api.literature.jobs).mockResolvedValue({ jobs: [], summaries: [summary] })
+      await showLibrary()
+      await screen.findByRole('button', { name: 'Background tasks' })
+      await openReferenceDetail(screen.getByText(libraryItem.item.title))
+      await openMenu(screen.getByRole('button', { name: 'More actions' }))
+      fireEvent.click(screen.getByRole('menuitem', { name: 'Complete metadata' }))
+      fireEvent.click(screen.getByRole('button', { name: 'Search' }))
+      await screen.findByRole('button', { name: 'Apply metadata' })
+      get.mockResolvedValue(createLibraryItemWithPdf())
+      vi.mocked(window.api.literature.jobs).mockResolvedValue({
+        jobs: [],
+        summaries: [{ ...summary, state: 'completed', done: 1, completedItemIds: [libraryItem.id] }]
+      })
+      await act(async () => window.dispatchEvent(new Event('literature-jobs-changed')))
+      await waitFor(() => expect(get).toHaveBeenCalledTimes(1))
+      expect(screen.getByRole('button', { name: 'Apply metadata' })).toHaveProperty(
+        'disabled',
+        false
+      )
+      expect(screen.getByText('Journal of Retrieval')).not.toBeNull()
+    })
+
     it('publishes successful background reads when another completed item cannot be read', async () => {
       const summary = {
         id: 'partial-read-job',

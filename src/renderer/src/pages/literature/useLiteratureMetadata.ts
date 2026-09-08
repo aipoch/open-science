@@ -73,19 +73,21 @@ const useLiteratureMetadata = (
   )
 
   useLayoutEffect(() => {
-    let generation = controller.getSnapshot().generation
+    let previous = controller.getSnapshot()
     const unsubscribe = controller.subscribe(() => {
-      const next = controller.getSnapshot().generation
-      if (next === generation) return
-      generation = next
-      changeMode('view')
+      const next = controller.getSnapshot()
+      const openingChanged = next.generation !== previous.generation
+      const revisionChanged = next.item?.metadataRevision !== previous.item?.metadataRevision
+      previous = next
+      if (openingChanged) changeMode('view')
+      else if (revisionChanged) resetCompletion()
     })
     return () => {
       unsubscribe()
       requestRef.current += 1
       completionRequestRef.current += 1
     }
-  }, [controller, changeMode])
+  }, [controller, changeMode, resetCompletion])
 
   const externallyUpdated = (): boolean =>
     Boolean(
@@ -176,6 +178,7 @@ const useLiteratureMetadata = (
     const active = (): boolean =>
       controller.getSnapshot().generation === generation &&
       controller.getSnapshot().item?.id === current.id &&
+      controller.getSnapshot().item?.metadataRevision === current.metadataRevision &&
       completionRequestRef.current === request
     identifierRef.current = identifier
     setCompleting(true)
@@ -193,13 +196,22 @@ const useLiteratureMetadata = (
               overwriteFields: [...overwriteFields]
             }
       )
-      if (active()) {
-        setCompletion(result)
-        if (result.mode === 'preview') setOverwriteFields(new Set())
-      }
       if (result.mode === 'commit') {
+        const showResult = active()
+        // Publishing the saved revision invalidates its preview; retain the successful receipt.
         controller.replace(result.item)
         onItemChange(result.item)
+        const published = controller.getSnapshot()
+        if (
+          showResult &&
+          published.generation === generation &&
+          published.item?.id === current.id &&
+          published.item.metadataRevision === result.item.metadataRevision
+        )
+          setCompletion(result)
+      } else if (active()) {
+        setCompletion(result)
+        setOverwriteFields(new Set())
       }
     } catch {
       if (active())
