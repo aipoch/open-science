@@ -1,3 +1,4 @@
+import { transactLiterature } from './literature/transact'
 import { createSpecialistApplicationOwner } from './specialist/application-commands'
 import { basename, dirname, join } from 'node:path'
 import { randomUUID } from 'node:crypto'
@@ -4668,31 +4669,7 @@ const createApplicationModules = async (
         }
       },
       search: (request) => literatureCatalog.search(request),
-      transact: async (command) => {
-        if (command.kind !== 'delete-items-permanently') {
-          return literatureCatalog.transact(command)
-        }
-        const contentBlobIds = await literatureCatalog.contentBlobIdsForItems(command.itemIds)
-        const receipt = await literatureCatalog.transact(command)
-        try {
-          const sweep = await contentRepository.sweep({
-            createdBefore: new Date(Date.now() + 1),
-            contentIds: contentBlobIds
-          })
-          if (sweep.failedIds.length > 0) {
-            literatureContextLog.warn(
-              'Permanent Literature deletion left content for later cleanup',
-              { failedContentCount: sweep.failedIds.length }
-            )
-          }
-        } catch (error) {
-          literatureContextLog.warn(
-            'Permanent Literature deletion could not start content cleanup',
-            errorLogFields(error)
-          )
-        }
-        return receipt
-      }
+      transact: (command) => transactLiterature(literatureCatalog, contentRepository, command)
     },
     memory: {
       snapshot: () => memoryService.snapshot(),
