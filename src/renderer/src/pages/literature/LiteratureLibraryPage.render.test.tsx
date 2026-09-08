@@ -402,7 +402,7 @@ describe('LiteratureLibraryPage', () => {
           appendTransfer: vi.fn(),
           getTransferStatus: vi.fn(),
           finishTransfer: vi.fn(),
-          abortTransfer: vi.fn()
+          abortTransfer: vi.fn().mockResolvedValue(undefined)
         } as unknown as Window['api']['uploads'],
         sessions: {
           filterPdfContextCandidates
@@ -2493,8 +2493,13 @@ describe('LiteratureLibraryPage', () => {
         request.scope === 'library' ? { entries: [libraryItem] } : { entries: [] }
       )
       stageLocalFile.mockResolvedValue({
-        id: 'upload-1', sessionId: '.pending', name: 'first.pdf', originalName: 'first.pdf',
-        path: '/managed/first.pdf', mimeType: 'application/pdf', size: 8
+        id: 'upload-1',
+        sessionId: '.pending',
+        name: 'first.pdf',
+        originalName: 'first.pdf',
+        path: '/managed/first.pdf',
+        mimeType: 'application/pdf',
+        size: 8
       })
       importPdf.mockResolvedValue({ item: libraryItem })
       render(<LiteratureLibraryPage />)
@@ -2504,13 +2509,22 @@ describe('LiteratureLibraryPage', () => {
       )
       await act(async () => {
         fireEvent.drop(detail.querySelector('[data-slot="literature-pdf-drop-zone"]')!, {
-          dataTransfer: { types: ['Files'], files: [
-            new File(['%PDF-1.7'], 'first.pdf', { type: 'application/pdf' }),
-            new File(['second'], secondName)
-          ] }
+          dataTransfer: {
+            types: ['Files'],
+            files: [
+              new File(['%PDF-1.7'], 'first.pdf', { type: 'application/pdf' }),
+              new File(['second'], secondName)
+            ]
+          }
         })
       })
-      expect.soft(within(detail).queryByRole('alert')).not.toBeNull()
+      expect(within(detail).getByRole('alert').textContent).toContain(
+        'Choose one PDF at a time. No files were added.'
+      )
+      if (secondName === 'notes.txt')
+        expect(within(detail).getByRole('alert').textContent).toContain(
+          'Unsupported files: notes.txt'
+        )
       expect(stageLocalFile).not.toHaveBeenCalled()
       expect(importPdf).not.toHaveBeenCalled()
     }
@@ -2520,7 +2534,10 @@ describe('LiteratureLibraryPage', () => {
     let finishRead!: (content: string) => void
     const file = new File(['references'], 'slow.bib')
     Object.defineProperty(file, 'text', {
-      value: () => new Promise<string>((resolve) => { finishRead = resolve })
+      value: () =>
+        new Promise<string>((resolve) => {
+          finishRead = resolve
+        })
     })
     render(<LiteratureLibraryPage />)
     fireEvent.click(screen.getByRole('button', { name: 'All references' }))
@@ -2533,54 +2550,165 @@ describe('LiteratureLibraryPage', () => {
       expect(within(dialog!).getByText('slow.bib')).not.toBeNull()
       fireEvent.click(within(dialog!).getByRole('button', { name: 'Cancel' }))
     } finally {
-      await act(async () => { finishRead('@article{x,title={Example}}') })
+      await act(async () => {
+        finishRead('@article{x,title={Example}}')
+      })
     }
     expect(screen.queryByRole('dialog')).toBeNull()
     expect(importRecords).not.toHaveBeenCalled()
   })
 
-  it('shows byte progress and cancellation while a Web PDF chunk is pending', async () => {
+  it('keeps the selection-time reference destination through delayed reading and submission', async () => {
+    let finishRead!: (content: string) => void
+    const file = new File(['references'], 'slow.bib')
+    Object.defineProperty(file, 'text', {
+      value: () =>
+        new Promise<string>((resolve) => {
+          finishRead = resolve
+        })
+    })
+    render(<LiteratureLibraryPage />)
+    fireEvent.click(screen.getByRole('button', { name: 'Retrieval research' }))
+    const allReferences = screen.getByRole('button', { name: 'All references' })
+    fireEvent.change(screen.getByLabelText('Import references'), { target: { files: [file] } })
+    // External navigation can still update page state behind a modal.
+    fireEvent.click(allReferences)
+    await act(async () => {
+      finishRead('@article{x,title={Example}}')
+    })
+    expect(within(screen.getByRole('dialog')).getByText('Retrieval research')).not.toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: 'Import references' }))
+    await waitFor(() =>
+      expect(transact).toHaveBeenCalledWith(
+        expect.objectContaining({
+          kind: 'set-project-items',
+          projectId: 'project-1',
+          itemIds: [libraryItem.id]
+        })
+      )
+    )
+  })
+
+  it('cleans up a cancelled desktop stage that returns a managed file late', async () => {
     search.mockImplementation(async (request: { scope: string }) =>
       request.scope === 'library' ? { entries: [libraryItem] } : { entries: [] }
     )
-    const uploads = window.api.uploads
-    delete uploads.stageLocalFile
-    const size = 8 * 1024 * 1024 + 1
-    const status = { transferId: 'upload-web', name: 'large.pdf', receivedBytes: 0, totalBytes: size }
-    vi.mocked(uploads.beginTransfer).mockResolvedValue(status)
-    let finishChunk!: () => void
-    vi.mocked(uploads.appendTransfer).mockImplementation(async (request) => {
-      if (request.offset > 0) await new Promise<void>((resolve) => { finishChunk = resolve })
-      return { ...status, receivedBytes: request.offset + request.chunk.byteLength }
-    })
-    vi.mocked(uploads.finishTransfer).mockResolvedValue({
-      id: 'upload-web', sessionId: '.pending', name: 'large.pdf', originalName: 'large.pdf',
-      path: '/managed/large.pdf', mimeType: 'application/pdf', size
-    })
-    importPdf.mockResolvedValue({ item: libraryItem })
-    const file = new File([new Uint8Array(size)], 'large.pdf', { type: 'application/pdf' })
-    // jsdom Blob lacks arrayBuffer; keep the real staging algorithm and its 8 MiB boundary.
-    Object.defineProperty(file, 'slice', { value: (start: number, end: number) => ({
-      arrayBuffer: async () => new ArrayBuffer(end - start)
-    }) })
+    let finishStage!: (value: unknown) => void
+    stageLocalFile.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finishStage = resolve
+        })
+    )
     render(<LiteratureLibraryPage />)
     fireEvent.click(screen.getByRole('button', { name: 'All references' }))
-    const detail = await openReferenceDetail(
-      await screen.findByText('Corrective Retrieval Augmented Generation')
-    )
-    fireEvent.change(screen.getByLabelText('Add PDF'), { target: { files: [file] } })
-    await waitFor(() => expect(uploads.appendTransfer).toHaveBeenCalledTimes(2))
-    try {
-      expect.soft(within(detail).queryByRole('progressbar')).not.toBeNull()
-      const cancel = within(detail).queryByRole('button', { name: /cancel/i })
-      expect(cancel).not.toBeNull()
-      fireEvent.click(cancel!)
-    } finally {
-      await act(async () => { finishChunk() })
-    }
-    expect(uploads.abortTransfer).toHaveBeenCalled()
+    await openReferenceDetail(await screen.findByText(libraryItem.item.title))
+    fireEvent.change(screen.getByLabelText('Add PDF'), {
+      target: { files: [new File(['pdf'], 'paper.pdf')] }
+    })
+    fireEvent.click(await screen.findByRole('button', { name: 'Cancel upload' }))
+    await act(async () => {
+      finishStage({
+        id: 'upload-late',
+        sessionId: '.pending',
+        name: 'paper.pdf',
+        originalName: 'paper.pdf',
+        path: '/managed/late.pdf',
+        mimeType: 'application/pdf',
+        size: 3
+      })
+    })
+    expect(deleteUpload).toHaveBeenCalledWith({ path: '/managed/late.pdf' })
     expect(importPdf).not.toHaveBeenCalled()
+    expect(claimLocalFile).not.toHaveBeenCalled()
   })
+
+  it.each(['existing', 'new'])(
+    'shows byte progress and cancellation for a %s reference while a Web PDF chunk is pending',
+    async (owner) => {
+      search.mockImplementation(async (request: { scope: string }) =>
+        request.scope === 'library' ? { entries: [libraryItem] } : { entries: [] }
+      )
+      get.mockResolvedValue(libraryItem)
+      const uploads = window.api.uploads
+      delete uploads.stageLocalFile
+      const size = 8 * 1024 * 1024 + 1
+      const status = {
+        transferId: 'upload-web',
+        name: 'large.pdf',
+        receivedBytes: 0,
+        totalBytes: size
+      }
+      vi.mocked(uploads.beginTransfer).mockResolvedValue(status)
+      let finishChunk!: () => void
+      vi.mocked(uploads.appendTransfer).mockImplementation(async (request) => {
+        if (request.offset > 0)
+          await new Promise<void>((resolve) => {
+            finishChunk = resolve
+          })
+        return { ...status, receivedBytes: request.offset + request.chunk.byteLength }
+      })
+      vi.mocked(uploads.finishTransfer).mockResolvedValue({
+        id: 'upload-web',
+        sessionId: '.pending',
+        name: 'large.pdf',
+        originalName: 'large.pdf',
+        path: '/managed/large.pdf',
+        mimeType: 'application/pdf',
+        size
+      })
+      importPdf.mockResolvedValue({ item: libraryItem })
+      const file = new File([new Uint8Array(size)], 'large.pdf', { type: 'application/pdf' })
+      // jsdom Blob lacks arrayBuffer; keep the real staging algorithm and its 8 MiB boundary.
+      Object.defineProperty(file, 'slice', {
+        value: (start: number, end: number) => ({
+          arrayBuffer: async () => new ArrayBuffer(end - start)
+        })
+      })
+      render(<LiteratureLibraryPage />)
+      fireEvent.click(screen.getByRole('button', { name: 'All references' }))
+      if (owner === 'existing') {
+        await openReferenceDetail(
+          await screen.findByText('Corrective Retrieval Augmented Generation')
+        )
+        fireEvent.change(screen.getByLabelText('Add PDF'), { target: { files: [file] } })
+      } else {
+        fireEvent.change(screen.getByLabelText('Import PDF'), { target: { files: [file] } })
+        await screen.findByLabelText('Title')
+        fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+      }
+      const detail = screen.getByRole('dialog')
+      await waitFor(() => expect(uploads.appendTransfer).toHaveBeenCalledTimes(2))
+      try {
+        expect(within(detail).getByRole('progressbar').getAttribute('value')).toBe(String(size - 1))
+        expect(within(detail).getByRole('progressbar').getAttribute('max')).toBe(String(size))
+        expect(
+          within(detail)
+            .getAllByRole('button', { name: 'Close' })
+            .every((button) => (button as HTMLButtonElement).disabled)
+        ).toBe(true)
+        fireEvent.keyDown(detail, { key: 'Escape' })
+        expect(screen.getByRole('dialog')).toBe(detail)
+        const cancel = within(detail).queryByRole('button', { name: /cancel/i })
+        expect(cancel).not.toBeNull()
+        fireEvent.click(cancel!)
+        expect(within(detail).getByText('Cancelling…')).not.toBeNull()
+        expect(uploads.abortTransfer).toHaveBeenCalled()
+        expect(importPdf).not.toHaveBeenCalled()
+      } finally {
+        await act(async () => {
+          finishChunk()
+        })
+      }
+      expect(uploads.abortTransfer).toHaveBeenCalled()
+      expect(importPdf).not.toHaveBeenCalled()
+      expect(uploads.finishTransfer).not.toHaveBeenCalled()
+      expect((await screen.findByRole('alert')).textContent).toContain(
+        'PDF upload cancelled. The reference was kept.'
+      )
+      if (owner === 'new') expect(transact).toHaveBeenCalledTimes(1)
+    }
+  )
 
   it('adds a selected PDF to an existing Literature Item through managed staging', async () => {
     search.mockImplementation((request: { scope: string }) =>
