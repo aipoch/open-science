@@ -47,6 +47,11 @@ for (const localized of localizedSettingsCases) {
       page
     }) => {
       await page.goto('/')
+      await expect(page.locator('.github-star-cta').first()).toHaveAttribute(
+        'data-state',
+        'success'
+      )
+      await expect(page.locator('.github-star-cta').first()).not.toContainText('NaN')
       await page.setViewportSize({ width: viewportWidth, height: 800 })
 
       await selectLanguage(page, localized.pickerLabel)

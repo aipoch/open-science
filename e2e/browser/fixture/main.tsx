@@ -14,17 +14,26 @@ import { TooltipProvider } from '@/components/ui/tooltip'
 // Native boundaries only. Components, navigation, i18n, CSS and browser geometry are production code.
 // Missing APIs fail normally: do not use a catch-all proxy that could hide accidental dependencies.
 const unsubscribe = (): (() => void) => () => undefined
-window.api = {
+const nativeApi = {
   platform: 'darwin',
   settings: {},
-  notifications: { getDesktopAvailability: async () => 'available' },
+  notifications: { getDesktopAvailability: async () => 'supported' },
   cli: {
     getStatus: async () => ({ installed: false, target: '/test/open-science', onPath: true })
   },
-  logs: { getStatus: async () => ({ path: null, existing: false }) },
+  logs: {
+    getStatus: async () => ({
+      configured: false,
+      path: null,
+      existing: false,
+      lastWriteSucceeded: null,
+      lastFailureCategory: null
+    })
+  },
   projectFiles: { onChanged: unsubscribe },
-  github: { getStars: async () => ({ stars: 1000 }) }
-} as unknown as typeof window.api
+  github: { getStars: async () => 1000 }
+} satisfies { [Key in keyof typeof window.api]?: Partial<(typeof window.api)[Key]> }
+window.api = nativeApi as unknown as typeof window.api
 initI18n('en')
 useSettingsStore.setState({
   isLoaded: true,
