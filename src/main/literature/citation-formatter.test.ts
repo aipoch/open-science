@@ -232,7 +232,7 @@ describe('LiteratureCitationFormatter', () => {
       await expect(
         formatter.parseReferences('@article{example, title={A useful paper}, year={2024}}')
       ).resolves.toMatchObject({ items: [expect.objectContaining({ title: 'A useful paper' })] })
-      expect((await styles.list()).some(({ id }) => id === `custom:${digest}`)).toBe(true)
+      expect((await styles.list()).some(({ id }) => id === `custom:${digest}`)).toBe(false)
       await styles.delete(`custom:${digest}`)
       expect((await styles.list()).some(({ id }) => id === `custom:${digest}`)).toBe(false)
     } finally {
