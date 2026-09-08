@@ -101,6 +101,8 @@
     "Could not open the update installer: {{error}}": "Das Update-Installationsprogramm konnte nicht geöffnet werden: {{error}}"
   },
   "renderer": {
+    "Shared content": "Gemeinsame Inhalte",
+    "Literature settings and tasks": "Literatureinstellungen und Aufgaben",
     "Select no more than {{limit}} references for this task.": "Wählen Sie für diese Aufgabe höchstens {{limit}} Referenzen aus.",
     "This reference changed while you were editing. Your draft has been kept.": "Diese Referenz wurde während der Bearbeitung geändert. Ihr Entwurf wurde beibehalten.",
     "Discard this draft and load the latest saved metadata.": "Diesen Entwurf verwerfen und die zuletzt gespeicherten Metadaten laden.",

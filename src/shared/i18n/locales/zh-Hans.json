@@ -100,6 +100,8 @@
     "Import Connector configuration": "导入连接器配置"
   },
   "renderer": {
+    "Shared content": "共享内容",
+    "Literature settings and tasks": "文献配置与任务",
     "Select no more than {{limit}} references for this task.": "此任务最多支持 {{limit}} 篇文献，请调整选择。",
     "This reference changed while you were editing. Your draft has been kept.": "您编辑期间此文献已更改。您的草稿已保留。",
     "Discard this draft and load the latest saved metadata.": "放弃此草稿并加载最新保存的元数据。",

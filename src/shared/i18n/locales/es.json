@@ -102,6 +102,8 @@
     "Import Connector configuration": "Importar configuración del conector"
   },
   "renderer": {
+    "Shared content": "Contenido compartido",
+    "Literature settings and tasks": "Configuración y tareas bibliográficas",
     "Select no more than {{limit}} references for this task.": "Seleccione como máximo {{limit}} referencias para esta tarea.",
     "This reference changed while you were editing. Your draft has been kept.": "Esta referencia cambió mientras la editaba. Se ha conservado su borrador.",
     "Discard this draft and load the latest saved metadata.": "Descartar este borrador y cargar los últimos metadatos guardados.",

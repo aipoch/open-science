@@ -46,6 +46,14 @@ const writeSized = async (path: string, bytes: number): Promise<void> => {
 }
 
 describe('computeStorageUsage', () => {
+  it('includes shared PDF bytes and literature checkpoints in the total', async () => {
+    await writeSized(join(dataRoot, 'content', 'blobs', 'paper'), 125)
+    await writeSized(join(dataRoot, 'literature', 'citation-styles', 'custom.csl'), 20)
+    await writeSized(join(dataRoot, 'literature', 'batch-jobs.json'), 10)
+    await writeSized(join(dataRoot, 'literature', 'batch-jobs.json.d', 'job.json.123.tmp'), 30)
+    expect((await computeStorageUsage(dataRoot)).totalBytes).toBe(185)
+  })
+
   it('counts Session cache downloads in the compute category and total', async () => {
     await writeSized(join(dataRoot, 'compute', 'session-cache', 'result.bin'), 125)
 
@@ -88,7 +96,9 @@ describe('computeStorageUsage', () => {
     expect(usage.categories).toEqual([
       { key: 'artifacts', bytes: 100 },
       { key: 'compute', bytes: 0 },
+      { key: 'content', bytes: 0 },
       { key: 'delegation', bytes: 75 },
+      { key: 'literature', bytes: 0 },
       { key: 'uploads', bytes: 50 },
       {
         key: 'runtime',
@@ -240,7 +250,9 @@ describe('computeStorageUsage', () => {
     expect(usage.categories).toEqual([
       { key: 'artifacts', bytes: 0 },
       { key: 'compute', bytes: 0 },
+      { key: 'content', bytes: 0 },
       { key: 'delegation', bytes: 0 },
+      { key: 'literature', bytes: 0 },
       { key: 'uploads', bytes: 0 },
       { key: 'runtime', bytes: 0, children: [] },
       { key: 'notebooks', bytes: 0 },

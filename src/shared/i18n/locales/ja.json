@@ -100,6 +100,8 @@
     "Import Connector configuration": "コネクタ構成のインポート"
   },
   "renderer": {
+    "Shared content": "共有コンテンツ",
+    "Literature settings and tasks": "文献の設定とタスク",
     "Select no more than {{limit}} references for this task.": "このタスクでは {{limit}} 件以下の文献を選択してください。",
     "This reference changed while you were editing. Your draft has been kept.": "編集中にこの文献が変更されました。下書きは保持されています。",
     "Discard this draft and load the latest saved metadata.": "この下書きを破棄して、最後に保存されたメタデータを読み込みます。",

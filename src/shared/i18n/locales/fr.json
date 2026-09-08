@@ -102,6 +102,8 @@
     "Import Connector configuration": "Importer la configuration du connecteur"
   },
   "renderer": {
+    "Shared content": "Contenu partagé",
+    "Literature settings and tasks": "Paramètres et tâches bibliographiques",
     "Select no more than {{limit}} references for this task.": "Sélectionnez au maximum {{limit}} références pour cette tâche.",
     "This reference changed while you were editing. Your draft has been kept.": "Cette référence a été modifiée pendant votre saisie. Votre brouillon a été conservé.",
     "Discard this draft and load the latest saved metadata.": "Abandonner ce brouillon et charger les dernières métadonnées enregistrées.",

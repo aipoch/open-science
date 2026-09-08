@@ -103,6 +103,8 @@
     "Import Connector configuration": "Импорт конфигурации коннектора"
   },
   "renderer": {
+    "Shared content": "Общее содержимое",
+    "Literature settings and tasks": "Настройки и задачи литературы",
     "Select no more than {{limit}} references for this task.": "Выберите не более {{limit}} источников для этой задачи.",
     "This reference changed while you were editing. Your draft has been kept.": "Эта публикация изменилась во время редактирования. Ваш черновик сохранён.",
     "Discard this draft and load the latest saved metadata.": "Отбросить этот черновик и загрузить последние сохранённые метаданные.",

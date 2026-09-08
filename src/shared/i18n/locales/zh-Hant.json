@@ -100,6 +100,8 @@
     "Import Connector configuration": "匯入連接器設定"
   },
   "renderer": {
+    "Shared content": "共用內容",
+    "Literature settings and tasks": "文獻設定與任務",
     "Select no more than {{limit}} references for this task.": "此任務最多支援 {{limit}} 篇文獻，請調整選取範圍。",
     "This reference changed while you were editing. Your draft has been kept.": "您編輯期間此文獻已變更。您的草稿已保留。",
     "Discard this draft and load the latest saved metadata.": "捨棄此草稿並載入最新儲存的中繼資料。",
