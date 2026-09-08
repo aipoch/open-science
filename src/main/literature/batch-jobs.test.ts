@@ -506,12 +506,11 @@ it.each(['review', 'retry', 'resume', 'remove'] as const)(
     cleanup.push(() => jobs.close())
     const before = await state(jobs, jobId)
     // Block the real write destination, retaining all original files for restoration.
-    const target = action === 'remove' ? path : `${path}.d`
+    const target = action === 'remove' ? path : join(`${path}.d`, jobId, 'task.json')
     const backup = `${target}.saved`
     await rename(target, backup)
     try {
-      if (action === 'remove') await mkdir(target)
-      else await writeFile(target, 'unavailable directory')
+      await mkdir(target)
       await expect(
         jobs.run(
           action === 'review'
@@ -918,3 +917,35 @@ it.each(['missing', 'corrupt'] as const)(
     expect((await state(restored, retained)).rows[0].status).toBe('ready')
   }
 )
+
+it('reads a bounded task page without loading later payloads or retaining full row snapshots', async () => {
+  const { jobs, options, path, metadata } = await setup()
+  metadata.mockImplementation(async ({ itemId }) => ({
+    ...preview(itemId),
+    filled: [{ field: 'journal', value: 'P'.repeat(6 * 1024 * 1024) }]
+  }))
+  const jobId = randomUUID()
+  await jobs.run({ action: 'create', mode: 'metadata', itemIds: ['a', 'b', 'c'], requestId: jobId })
+  await vi.waitFor(
+    async () => expect((await jobs.run({ action: 'list' })).summaries?.[0].state).toBe('review'),
+    { timeout: 5000 }
+  )
+  await jobs.close()
+  const directory = join(`${path}.d`, jobId)
+  const header = JSON.parse(await readFile(join(directory, 'task.json'), 'utf8'))
+  await rm(join(directory, 'payloads', `${header.rows[2].payload}.json`))
+  const reopened = new LiteratureBatchJobs(options)
+  cleanup.push(() => reopened.close())
+  const result = await reopened.run({ action: 'get', jobId })
+  expect(result.jobs[0]).toMatchObject({
+    rowOffset: 0,
+    nextRowOffset: 1,
+    totalRows: 3,
+    rows: [{ id: 'a', metadata: { filled: [{ field: 'journal' }] } }]
+  })
+  expect(result.jobs[0].rows).toHaveLength(1)
+  await expect(reopened.run({ action: 'get', jobId, rowOffset: 2 })).rejects.toThrow()
+  // A read must not leave large payloads cached on the durable control rows.
+  await rm(join(directory, 'payloads', `${header.rows[0].payload}.json`))
+  await expect(reopened.run({ action: 'get', jobId })).rejects.toThrow()
+})

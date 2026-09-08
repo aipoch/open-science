@@ -5,13 +5,14 @@ import {
 } from '../storage/migration-state'
 import { ApplicationCommandError } from '../../shared/application-command-contract'
 import { LITERATURE_OVERSIZED_REFERENCE } from '../../shared/literature-export'
-import { boundedLiteraturePage } from './response-page'
+import { boundedLiteraturePage, LITERATURE_PAGE_BYTES } from './response-page'
 import { LiteratureBatchJobJournal } from './batch-job-journal'
 import {
   literatureJobRequestSchema,
   literatureJobProgress,
   type LiteratureJob,
   type LiteratureJobView,
+  type LiteratureJobRowView,
   type LiteratureJobRequest,
   type LiteratureJobRow,
   type LiteratureJobsResult
@@ -78,10 +79,8 @@ export class LiteratureBatchJobs {
     this.writes = this.writes.then(write, write)
     return this.writes
   }
-  private snapshot(job: LiteratureJob, rowOffset = 0): LiteratureJobView {
-    const { rows, ...fields } = job
-    if (rowOffset >= rows.length) throw new Error('Invalid Literature task row offset.')
-    const view = rows.map(({ item, metadata, ...row }) => ({
+  private rowView({ item, metadata, ...row }: LiteratureJobRow): LiteratureJobRowView {
+    return {
       ...row,
       item: item
         ? { id: item.id, metadataRevision: item.metadataRevision, item: { title: item.item.title } }
@@ -92,19 +91,47 @@ export class LiteratureBatchJobs {
             return preview
           })(metadata)
         : undefined
-    }))
+    }
+  }
+  private async readSnapshot(job: LiteratureJob, rowOffset = 0): Promise<LiteratureJobView> {
+    const updatedAt = job.updatedAt
+    const view: LiteratureJobRowView[] = []
+    let bytes = 2
+    for (let index = rowOffset; index < job.rows.length; index++) {
+      // Read one full payload at a time and retain only its display projection. Never cache
+      // payloads on the durable control rows just because a client requested a page.
+      const row = this.rowView(await this.journal.readRow(job, job.rows[index]))
+      const size = Buffer.byteLength(JSON.stringify(row)) + 1
+      if (bytes + size > LITERATURE_PAGE_BYTES && view.length) break
+      view.push(row)
+      bytes += size
+      if (bytes > LITERATURE_PAGE_BYTES) break // snapshot reports a single oversized record.
+    }
+    if (job.updatedAt !== updatedAt)
+      throw new Error('Literature task changed while reading its results. Try again.')
+    return this.snapshot(job, rowOffset, view)
+  }
+  private snapshot(
+    job: LiteratureJob,
+    rowOffset = 0,
+    view = job.rows.slice(rowOffset).map((row) => this.rowView(row))
+  ): LiteratureJobView {
+    const { rows, ...fields } = job
+    if (rowOffset >= rows.length) throw new Error('Invalid Literature task row offset.')
     const page = boundedLiteraturePage(
       view,
-      rowOffset,
+      0,
       view.length,
       (row) =>
         new ApplicationCommandError('command-failed', LITERATURE_OVERSIZED_REFERENCE + row.id)
     )
+    const next = rowOffset + page.entries.length
+    const nextRowOffset = next < rows.length ? next : undefined
     const snapshot: LiteratureJobView = structuredClone({
       ...fields,
       rows: page.entries,
-      ...(rowOffset || page.nextOffset !== undefined
-        ? { rowOffset, nextRowOffset: page.nextOffset, totalRows: rows.length }
+      ...(rowOffset || nextRowOffset !== undefined
+        ? { rowOffset, nextRowOffset, totalRows: rows.length }
         : {})
     })
     if (snapshot.state === 'running' && !this.activeJob(job)) snapshot.state = 'queued'
@@ -184,16 +211,22 @@ export class LiteratureBatchJobs {
     if (request.action === 'get') {
       // Serialize only checkpoint reads with mutations. Download-progress providers may wait
       // for the worker and must never hold the command queue while doing so.
-      const hydrated = this.commands.then(() => this.journal.hydrate(publishedJob))
-      this.commands = hydrated.catch(() => undefined)
-      await hydrated
-    } else if (request.action !== 'remove') await this.journal.hydrate(publishedJob)
-    const job = request.action === 'get' ? publishedJob : structuredClone(publishedJob)
-    if (request.action === 'get') {
-      if (request.expectedUpdatedAt !== undefined && request.expectedUpdatedAt !== job.updatedAt)
-        throw new Error('Literature task changed while reading its results. Try again.')
-      const snapshot =
-        request.ifUpdatedAt === job.updatedAt ? undefined : this.snapshot(job, request.rowOffset)
+      const read = this.commands.then(async () => {
+        if (
+          request.expectedUpdatedAt !== undefined &&
+          request.expectedUpdatedAt !== publishedJob.updatedAt
+        )
+          throw new Error('Literature task changed while reading its results. Try again.')
+        return request.ifUpdatedAt === publishedJob.updatedAt
+          ? undefined
+          : this.readSnapshot(publishedJob, request.rowOffset)
+      })
+      this.commands = read.then(
+        () => undefined,
+        () => undefined
+      )
+      const snapshot = await read
+      const job = publishedJob
       let download: LiteratureJob['progress']
       const active = this.active
       if (active?.jobId === job.id) {
@@ -208,6 +241,8 @@ export class LiteratureBatchJobs {
       if (snapshot && download) snapshot.progress = download
       return { jobs: snapshot ? [snapshot] : [], progress: download }
     }
+    if (request.action !== 'remove') await this.journal.hydrate(publishedJob)
+    const job = structuredClone(publishedJob)
     if (request.action === 'review') {
       for (const selection of request.selections) {
         const row = job.rows.find((row) => row.id === selection.itemId)

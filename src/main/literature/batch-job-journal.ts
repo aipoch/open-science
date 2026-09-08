@@ -161,6 +161,11 @@ export class LiteratureBatchJobJournal {
       this.hydrated.add(row)
     }
   }
+  async readRow(job: LiteratureJob, row: LiteratureJobRow): Promise<LiteratureJobRow> {
+    const copy = { ...row }
+    if (!this.hydrated.has(row)) await this.hydrate(job, [copy])
+    return copy
+  }
   private async control(
     jobId: string,
     row: LiteratureJobRow,
