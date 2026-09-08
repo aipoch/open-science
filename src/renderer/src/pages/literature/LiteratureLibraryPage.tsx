@@ -1419,6 +1419,9 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
   const detailTagMenuOpenRef = useRef(false)
   const detailSelectOpenRef = useRef(false)
   const childLayerDismissGuardUntilRef = useRef(0)
+  const detailInitiatorRef = useRef<HTMLElement | null>(null)
+  const libraryEntryRef = useRef<HTMLButtonElement>(null)
+  const accessibilityId = useId()
   const selectedItemDialogRef = useRef<HTMLDivElement>(null)
   const collectionEditorRef = useRef<CollectionEditorDialogHandle>(null)
   const importMetadataGenerationRef = useRef(0)
@@ -1438,8 +1441,13 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
 
   const detailInteractionRef = useRef(0)
   const openSelectedItemDetail = useCallback(
-    (item: LiteratureItemView): void => {
+    (item: LiteratureItemView, initiator?: HTMLElement): void => {
       if (item.deletedAt !== undefined) return
+      if (!detailController.getSnapshot().open) {
+        detailInitiatorRef.current =
+          initiator ??
+          (document.activeElement instanceof HTMLElement ? document.activeElement : null)
+      }
       detailInteractionRef.current += 1
       detailController.open(item)
     },
@@ -3572,6 +3580,11 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
                     navButtonClassName,
                     !duplicatesOpen && section === 'inbox' && 'bg-bg-300 font-medium'
                   )}
+                  aria-current={
+                    !citationStylesOpen && !duplicatesOpen && section === 'inbox'
+                      ? 'page'
+                      : undefined
+                  }
                   aria-label={t('Inbox')}
                   title={sidebarCollapsed ? t('Inbox') : undefined}
                   onClick={() => selectSection('inbox')}
@@ -3600,6 +3613,16 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
                       !projectId &&
                       'bg-bg-300 font-medium'
                   )}
+                  ref={libraryEntryRef}
+                  aria-current={
+                    !citationStylesOpen &&
+                    !duplicatesOpen &&
+                    section === 'library' &&
+                    !collectionId &&
+                    !projectId
+                      ? 'page'
+                      : undefined
+                  }
                   aria-label={t('All references')}
                   title={sidebarCollapsed ? t('All references') : undefined}
                   onClick={() => selectLibrary()}
@@ -3614,6 +3637,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
                 <button
                   type="button"
                   className={cn(navButtonClassName, duplicatesOpen && 'bg-bg-300 font-medium')}
+                  aria-current={!citationStylesOpen && duplicatesOpen ? 'page' : undefined}
                   aria-label={t('Duplicates')}
                   title={sidebarCollapsed ? t('Duplicates') : undefined}
                   onClick={() => {
@@ -3632,6 +3656,11 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
                     navButtonClassName,
                     !duplicatesOpen && section === 'trash' && 'bg-bg-300 font-medium'
                   )}
+                  aria-current={
+                    !citationStylesOpen && !duplicatesOpen && section === 'trash'
+                      ? 'page'
+                      : undefined
+                  }
                   aria-label={t('Trash')}
                   title={sidebarCollapsed ? t('Trash') : undefined}
                   onClick={() => selectSection('trash')}
@@ -3672,6 +3701,14 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
                         navButtonClassName,
                         !duplicatesOpen && projectId === project.id && 'bg-bg-300 font-medium'
                       )}
+                      aria-current={
+                        !citationStylesOpen &&
+                        !duplicatesOpen &&
+                        section === 'library' &&
+                        projectId === project.id
+                          ? 'page'
+                          : undefined
+                      }
                       aria-label={project.name}
                       title={sidebarCollapsed ? project.name : undefined}
                       onClick={() => selectProject(project.id)}
@@ -3733,6 +3770,14 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
                         navButtonClassName,
                         !duplicatesOpen && collectionId === collection.id && 'bg-bg-300 font-medium'
                       )}
+                      aria-current={
+                        !citationStylesOpen &&
+                        !duplicatesOpen &&
+                        section === 'library' &&
+                        collectionId === collection.id
+                          ? 'page'
+                          : undefined
+                      }
                       aria-label={collection.name}
                       title={sidebarCollapsed ? collection.name : undefined}
                       onClick={() => selectLibrary(collection.id)}
@@ -4059,9 +4104,12 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
                             </PopoverTrigger>
                             <PopoverContent
                               align="end"
+                              aria-labelledby={`${accessibilityId}-filters`}
                               className="w-72 space-y-4 rounded-xl border border-border bg-popover p-4 text-popover-foreground shadow-menu"
                             >
-                              <p className="text-sm font-medium">{t('Filters')}</p>
+                              <p id={`${accessibilityId}-filters`} className="text-sm font-medium">
+                                {t('Filters')}
+                              </p>
                               <div className="space-y-1.5">
                                 <span className="text-xs font-medium text-muted-foreground">
                                   {t('Tags')}
@@ -4827,7 +4875,9 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
                                     type="button"
                                     className="flex h-full min-h-16 w-full min-w-0 items-center gap-2 px-2 py-2 text-left outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
                                     disabled={section === 'trash'}
-                                    onClick={() => openSelectedItemDetail(entry)}
+                                    onClick={(event) =>
+                                      openSelectedItemDetail(entry, event.currentTarget)
+                                    }
                                   >
                                     <span className="min-w-0 line-clamp-2 break-words font-medium text-foreground">
                                       {entry.item.title}
@@ -5023,7 +5073,9 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
                                     type="button"
                                     className="block w-full text-xs text-danger-000"
                                     disabled={section === 'trash'}
-                                    onClick={() => openSelectedItemDetail(entry)}
+                                    onClick={(event) =>
+                                      openSelectedItemDetail(entry, event.currentTarget)
+                                    }
                                   >
                                     {t('Attachment unavailable')}
                                   </button>
@@ -5526,6 +5578,18 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
                 />
                 <Dialog.Content
                   ref={selectedItemDialogRef}
+                  onCloseAutoFocus={(event) => {
+                    event.preventDefault()
+                    // Switching modal mode for a child preview must not restore list focus.
+                    if (detailController.getSnapshot().open || previewItem) return
+                    const initiator = detailInitiatorRef.current
+                    if (initiator?.isConnected && !initiator.closest('[inert], [hidden]')) {
+                      initiator.focus()
+                      if (document.activeElement === initiator && initiator !== document.body)
+                        return
+                    }
+                    libraryEntryRef.current?.focus()
+                  }}
                   className={dialogPanelClassName(
                     cn(
                       'flex w-[min(760px,calc(100vw-2rem))] flex-col p-0',
@@ -5805,7 +5869,12 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
                                           key={field}
                                           className="rounded-lg border border-border-300/70 bg-bg-000 px-3 py-2 text-xs"
                                         >
-                                          <p className="font-medium">{metadataFieldLabel(field)}</p>
+                                          <p
+                                            id={`${accessibilityId}-${field}-label`}
+                                            className="font-medium"
+                                          >
+                                            {metadataFieldLabel(field)}
+                                          </p>
                                           <div className="mt-2 grid grid-cols-[4.5rem_minmax(0,1fr)_auto] items-start gap-x-3 gap-y-2">
                                             <span className="py-1 text-muted-foreground">
                                               {t('Kept')}
@@ -5817,7 +5886,10 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
                                             <span className="py-1 text-muted-foreground">
                                               {providerLabel}
                                             </span>
-                                            <p className="min-w-0 break-words py-1 leading-5 text-foreground">
+                                            <p
+                                              id={`${accessibilityId}-${field}-candidate`}
+                                              className="min-w-0 break-words py-1 leading-5 text-foreground"
+                                            >
                                               {value}
                                             </p>
                                             {valuesMatch ? (
@@ -5830,6 +5902,8 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
                                                 variant="outline"
                                                 size="sm"
                                                 className="h-8 self-start px-3 text-xs"
+                                                aria-pressed={metadata.overwriteFields.has(field)}
+                                                aria-describedby={`${accessibilityId}-${field}-label ${accessibilityId}-${field}-candidate`}
                                                 onClick={() => metadata.toggleOverwrite(field)}
                                               >
                                                 {metadata.overwriteFields.has(field) ? (

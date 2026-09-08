@@ -4464,7 +4464,7 @@
     "{{count}} of {{limit}} categories used_other": "{{count}} de {{limit}} categorías utilizadas",
     "Add a note…": "Añadir una nota…",
     "Customize columns": "Personalizar columnas",
-    "Drag to reorder. Select columns to show.": "Arrastre para reordenar. Seleccione las columnas que desea mostrar.",
+    "Drag or use the up and down arrow keys to reorder. Select columns to show.": "Arrastrar o usar las flechas arriba y abajo para reordenar. Seleccionar las columnas que se mostrarán.",
     "Move {{column}}": "Mover {{column}}",
     "Note for {{title}}": "Nota para {{title}}",
     "Copy note": "Copiar nota",

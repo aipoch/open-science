@@ -4590,7 +4590,7 @@
     "{{count}} of {{limit}} categories used_other": "Использовано {{count}} категории из {{limit}}",
     "Add a note…": "Добавить заметку…",
     "Customize columns": "Настроить столбцы",
-    "Drag to reorder. Select columns to show.": "Перетащите, чтобы изменить порядок. Выберите отображаемые столбцы.",
+    "Drag or use the up and down arrow keys to reorder. Select columns to show.": "Перетаскивайте или используйте клавиши со стрелками вверх и вниз для изменения порядка. Выберите столбцы для отображения.",
     "Move {{column}}": "Переместить {{column}}",
     "Note for {{title}}": "Заметка для {{title}}",
     "Copy note": "Копировать заметку",

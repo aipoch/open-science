@@ -4163,7 +4163,7 @@
     "{{count}} of {{limit}} categories used_other": "已使用 {{count}} / {{limit}} 個分類",
     "Add a note…": "新增筆記…",
     "Customize columns": "自訂欄",
-    "Drag to reorder. Select columns to show.": "拖曳以重新排序。選取要顯示的欄。",
+    "Drag or use the up and down arrow keys to reorder. Select columns to show.": "拖曳或使用上下方向鍵調整順序。選取要顯示的欄。",
     "Move {{column}}": "移動{{column}}",
     "Note for {{title}}": "為「{{title}}」新增筆記",
     "Copy note": "複製筆記",

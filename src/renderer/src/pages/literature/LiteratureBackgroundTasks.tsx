@@ -1,4 +1,4 @@
-import { useEffect, useEffectEvent, useRef, useState } from 'react'
+import { useEffect, useEffectEvent, useId, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useDateTimeFormat } from '@/hooks/useDateTimeFormat'
 import { AlertCircle, ListTodo, LoaderCircle, X } from 'lucide-react'
@@ -24,10 +24,12 @@ export function LiteratureBackgroundTasks({
   hidden?: boolean
 }): React.JSX.Element {
   const { t } = useTranslation()
+  const statusId = useId()
   const formatDate = useDateTimeFormat()
   const [open, setOpen] = useState(false)
   const [jobs, setJobs] = useState<LiteratureJobSummary[]>([])
   const [error, setError] = useState(false)
+  const [announceCompletion, setAnnounceCompletion] = useState(false)
   const previous = useRef<LiteratureJobSummary[]>([])
   const initialized = useRef(false)
   const receive = useEffectEvent((summaries: LiteratureJobSummary[]) => {
@@ -39,6 +41,24 @@ export function LiteratureBackgroundTasks({
       return (job.completedItemIds ?? []).filter((id) => !known.has(id))
     })
     if (changed.length) onChanged?.([...new Set(changed)])
+    if (JSON.stringify(previous.current) !== JSON.stringify(summaries)) {
+      setAnnounceCompletion(
+        summaries.some((job) => {
+          const prior = previous.current.find(({ id }) => id === job.id)
+          return Boolean(
+            prior &&
+            (prior.state !== 'completed' ||
+              prior.failed > 0 ||
+              prior.ready > 0 ||
+              prior.checked < prior.total) &&
+            job.state === 'completed' &&
+            job.failed === 0 &&
+            job.ready === 0 &&
+            job.checked >= job.total
+          )
+        })
+      )
+    }
     previous.current = summaries
     initialized.current = true
     setJobs((current) =>
@@ -63,7 +83,10 @@ export function LiteratureBackgroundTasks({
           setError(false)
         }
       } catch {
-        if (active) setError(true)
+        if (active) {
+          setError(true)
+          setAnnounceCompletion(false)
+        }
       } finally {
         inFlight = false
         const running = previous.current.some((job) =>
@@ -111,144 +134,170 @@ export function LiteratureBackgroundTasks({
     0
   )
   const total = running.reduce((sum, job) => sum + (job.phaseTotal ?? job.total), 0)
-  if (hidden || (!pending.length && !open && !error)) return <></>
+  const statusLabel = error
+    ? t('Task list unavailable')
+    : running.some((job) => job.state === 'pausing')
+      ? t('Pausing…')
+      : running.length
+        ? running[0].phase === 'search'
+          ? t('Searching…')
+          : running[0].mode === 'full-text'
+            ? t('Downloading…')
+            : t('Saving…')
+        : pending.some((job) => job.state === 'queued')
+          ? t('Queued')
+          : pending.some((job) => job.failed > 0)
+            ? t('Failed')
+            : allPaused
+              ? t('Paused')
+              : t('Awaiting review')
+  const announcement =
+    error || pending.length ? statusLabel : announceCompletion ? t('Completed') : ''
+  const showEntry = !hidden && (pending.length > 0 || open || error)
   return (
-    <Dialog.Root open={open} onOpenChange={setOpen}>
-      <Dialog.Trigger asChild>
-        <Button
-          variant="ghost"
-          className="text-muted-foreground"
-          aria-label={t('Background tasks')}
-        >
-          {error || (!running.length && pending.some((job) => job.failed > 0)) ? (
-            <AlertCircle className="size-4 text-status-warning-foreground" aria-hidden="true" />
-          ) : running.length ? (
-            <LoaderCircle
-              className="size-4 animate-spin motion-reduce:animate-none text-primary"
-              aria-hidden="true"
-            />
-          ) : (
-            <ListTodo className="size-4" aria-hidden="true" />
-          )}
-          {error
-            ? t('Task list unavailable')
-            : running.some((job) => job.state === 'pausing')
-              ? t('Pausing…')
-              : running.length
-                ? running[0].phase === 'search'
-                  ? t('Searching…')
-                  : running[0].mode === 'full-text'
-                    ? t('Downloading…')
-                    : t('Saving…')
-                : pending.some((job) => job.state === 'queued')
-                  ? t('Queued')
-                  : pending.some((job) => job.failed > 0)
-                    ? t('Failed')
-                    : allPaused
-                      ? t('Paused')
-                      : t('Awaiting review')}
-          {!error ? (
-            <span className="tabular-nums">
-              {running.length ? `${checked}/${total}` : pending.length}
-            </span>
-          ) : null}
-        </Button>
-      </Dialog.Trigger>
-      <Dialog.Portal>
-        <Dialog.Overlay className={dialogOverlayClassName} />
-        <Dialog.Content
-          className={dialogPanelClassName(
-            'flex max-h-[80vh] w-[min(40rem,calc(100vw-2rem))] flex-col p-0'
-          )}
-        >
-          <header className={dialogHeaderClassName}>
-            <div>
-              <Dialog.Title className={dialogTitleClassName}>{t('Background tasks')}</Dialog.Title>
-              <Dialog.Description className={dialogDescriptionClassName}>
-                {t(
-                  'Completed results are saved. Resume unfinished references after restarting the app.'
-                )}
-              </Dialog.Description>
-            </div>
+    <>
+      <span aria-live="polite" aria-atomic="true" className="sr-only">
+        {announcement}
+      </span>
+      {showEntry ? (
+        <Dialog.Root open={open} onOpenChange={setOpen}>
+          <Dialog.Trigger asChild>
             <Button
               variant="ghost"
-              size="icon-sm"
-              aria-label={t('Close')}
-              onClick={() => setOpen(false)}
+              className="text-muted-foreground"
+              aria-label={t('Background tasks')}
+              aria-describedby={error ? statusId : `${statusId} ${statusId}-progress`}
             >
-              <X aria-hidden="true" />
+              {error || (!running.length && pending.some((job) => job.failed > 0)) ? (
+                <AlertCircle className="size-4 text-status-warning-foreground" aria-hidden="true" />
+              ) : running.length ? (
+                <LoaderCircle
+                  className="size-4 animate-spin motion-reduce:animate-none text-primary"
+                  aria-hidden="true"
+                />
+              ) : (
+                <ListTodo className="size-4" aria-hidden="true" />
+              )}
+              <span id={statusId}>{statusLabel}</span>
+              {!error ? (
+                <span id={`${statusId}-progress`} className="tabular-nums">
+                  {running.length ? `${checked}/${total}` : pending.length}
+                </span>
+              ) : null}
             </Button>
-          </header>
-          <div className="min-h-0 overflow-y-auto px-5 py-3">
-            {error ? (
-              <LiteratureErrorNotice
-                title={t('Background task could not be updated. Try again.')}
-                primaryButton={{
-                  label: t('Retry'),
-                  onClick: () => window.dispatchEvent(new Event('literature-jobs-changed'))
-                }}
-              />
-            ) : null}
-            {!jobs.length && !error ? (
-              <p className="py-5 text-sm text-muted-foreground">{t('No background tasks yet.')}</p>
-            ) : null}
-            <ul className="divide-y divide-border-300/60">
-              {jobs.map((job) => (
-                <li key={job.id} className="flex flex-wrap items-center justify-between gap-3 py-3">
-                  <div className="min-w-0 text-sm">
-                    <p className="font-medium">
-                      {job.mode === 'metadata' ? t('Complete metadata') : t('Find full-text PDF')}
-                    </p>
-                    <p className="text-xs text-muted-foreground">
-                      {labels[job.state]} ·{' '}
-                      {job.phase === 'search'
-                        ? t('Checked {{checked}} of {{total}}', {
-                            checked: job.checked,
-                            total: job.total
-                          })
-                        : job.mode === 'metadata'
-                          ? t('Metadata updated: {{done}}', { done: job.done })
-                          : t('PDFs added: {{done}}', { done: job.done })}
-                      {job.total > job.checked
-                        ? ` · ${t('Pending')}: ${job.total - job.checked}`
-                        : null}
-                      {job.failed > 0 ? ` · ${t('Failed')}: ${job.failed}` : null}
-                    </p>
-                    <p className="text-xs text-muted-foreground">
-                      {formatDate(job.createdAt, 'dateTime')}
-                    </p>
-                  </div>
-                  <div className="flex gap-2">
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      onClick={() => {
-                        setOpen(false)
-                        onOpen(job)
-                      }}
+          </Dialog.Trigger>
+          <Dialog.Portal>
+            <Dialog.Overlay className={dialogOverlayClassName} />
+            <Dialog.Content
+              className={dialogPanelClassName(
+                'flex max-h-[80vh] w-[min(40rem,calc(100vw-2rem))] flex-col p-0'
+              )}
+            >
+              <header className={dialogHeaderClassName}>
+                <div>
+                  <Dialog.Title className={dialogTitleClassName}>
+                    {t('Background tasks')}
+                  </Dialog.Title>
+                  <Dialog.Description className={dialogDescriptionClassName}>
+                    {t(
+                      'Completed results are saved. Resume unfinished references after restarting the app.'
+                    )}
+                  </Dialog.Description>
+                </div>
+                <Button
+                  variant="ghost"
+                  size="icon-sm"
+                  aria-label={t('Close')}
+                  onClick={() => setOpen(false)}
+                >
+                  <X aria-hidden="true" />
+                </Button>
+              </header>
+              <div className="min-h-0 overflow-y-auto px-5 py-3">
+                {error ? (
+                  <LiteratureErrorNotice
+                    title={t('Background task could not be updated. Try again.')}
+                    primaryButton={{
+                      label: t('Retry'),
+                      onClick: () => window.dispatchEvent(new Event('literature-jobs-changed'))
+                    }}
+                  />
+                ) : null}
+                {!jobs.length && !error ? (
+                  <p className="py-5 text-sm text-muted-foreground">
+                    {t('No background tasks yet.')}
+                  </p>
+                ) : null}
+                <ul className="divide-y divide-border-300/60">
+                  {jobs.map((job) => (
+                    <li
+                      key={job.id}
+                      className="flex flex-wrap items-center justify-between gap-3 py-3"
                     >
-                      {t('Open')}
-                    </Button>
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      disabled={['queued', 'running', 'pausing'].includes(job.state)}
-                      onClick={() => {
-                        void window.api.literature.jobs({ action: 'remove', jobId: job.id }).then(
-                          () => setJobs((current) => current.filter(({ id }) => id !== job.id)),
-                          () => setError(true)
-                        )
-                      }}
-                    >
-                      {t('Remove task')}
-                    </Button>
-                  </div>
-                </li>
-              ))}
-            </ul>
-          </div>
-        </Dialog.Content>
-      </Dialog.Portal>
-    </Dialog.Root>
+                      <div className="min-w-0 text-sm">
+                        <p className="font-medium">
+                          {job.mode === 'metadata'
+                            ? t('Complete metadata')
+                            : t('Find full-text PDF')}
+                        </p>
+                        <p className="text-xs text-muted-foreground">
+                          {labels[job.state]} ·{' '}
+                          {job.phase === 'search'
+                            ? t('Checked {{checked}} of {{total}}', {
+                                checked: job.checked,
+                                total: job.total
+                              })
+                            : job.mode === 'metadata'
+                              ? t('Metadata updated: {{done}}', { done: job.done })
+                              : t('PDFs added: {{done}}', { done: job.done })}
+                          {job.total > job.checked
+                            ? ` · ${t('Pending')}: ${job.total - job.checked}`
+                            : null}
+                          {job.failed > 0 ? ` · ${t('Failed')}: ${job.failed}` : null}
+                        </p>
+                        <p className="text-xs text-muted-foreground">
+                          {formatDate(job.createdAt, 'dateTime')}
+                        </p>
+                      </div>
+                      <div className="flex gap-2">
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => {
+                            setOpen(false)
+                            onOpen(job)
+                          }}
+                        >
+                          {t('Open')}
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          disabled={['queued', 'running', 'pausing'].includes(job.state)}
+                          onClick={() => {
+                            void window.api.literature
+                              .jobs({ action: 'remove', jobId: job.id })
+                              .then(
+                                () =>
+                                  setJobs((current) => current.filter(({ id }) => id !== job.id)),
+                                () => {
+                                  setError(true)
+                                  setAnnounceCompletion(false)
+                                }
+                              )
+                          }}
+                        >
+                          {t('Remove task')}
+                        </Button>
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            </Dialog.Content>
+          </Dialog.Portal>
+        </Dialog.Root>
+      ) : null}
+    </>
   )
 }
