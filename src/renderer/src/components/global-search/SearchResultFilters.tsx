@@ -16,9 +16,6 @@ export const SearchResultFilters = ({
   sort,
   days,
   subtype,
-  total,
-  shown,
-  loading,
   onScope,
   onSort,
   onDays,
@@ -30,9 +27,6 @@ export const SearchResultFilters = ({
   sort: SearchSort
   days: number
   subtype: string
-  total: number
-  shown: number
-  loading: boolean
   onScope: (value: string) => void
   onSort: (value: SearchSort) => void
   onDays: (value: number) => void
@@ -63,62 +57,52 @@ export const SearchResultFilters = ({
             ]
           : []
   return (
-    <>
-      <div className="search-list-toolbar">
-        <span aria-live="polite">
-          {loading ? t('Loading…') : t('{{total}} results · {{shown}} shown', { total, shown })}
-        </span>
-      </div>
-      <div className="search-subfilters">
-        <Select value={scope} onValueChange={onScope}>
-          <SelectTrigger
-            aria-label={t('Search scope')}
-            className="search-scope-select w-auto min-w-0 text-xs"
-          >
+    <div className="search-subfilters">
+      <Select value={scope} onValueChange={onScope}>
+        <SelectTrigger
+          aria-label={t('Search scope')}
+          className="search-scope-select w-auto min-w-0 text-xs"
+        >
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent>
+          <SelectItem value="all">{t('All projects and Library')}</SelectItem>
+          {canScopeToProject && <SelectItem value="current">{t('Current project')}</SelectItem>}
+        </SelectContent>
+      </Select>
+      <Select value={sort} onValueChange={(value) => onSort(value as SearchSort)}>
+        <SelectTrigger aria-label={t('Result order')} className="w-auto min-w-0 max-w-full text-xs">
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent>
+          <SelectItem value="relevance">{t('Relevance within categories')}</SelectItem>
+          <SelectItem value="recent">{t('Recently updated')}</SelectItem>
+        </SelectContent>
+      </Select>
+      <Select value={String(days)} onValueChange={(value) => onDays(Number(value))}>
+        <SelectTrigger aria-label={t('Time range')} className="w-auto max-w-full text-xs">
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent>
+          <SelectItem value="0">{t('Any time')}</SelectItem>
+          <SelectItem value="7">{t('Last 7 days')}</SelectItem>
+          <SelectItem value="30">{t('Last 30 days')}</SelectItem>
+        </SelectContent>
+      </Select>
+      {options.length > 0 && (
+        <Select value={subtype} onValueChange={onSubtype}>
+          <SelectTrigger aria-label={t('Refine category')} className="w-auto max-w-full text-xs">
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
-            <SelectItem value="all">{t('All projects and Library')}</SelectItem>
-            {canScopeToProject && <SelectItem value="current">{t('Current project')}</SelectItem>}
+            {options.map(([value, label]) => (
+              <SelectItem key={value} value={value}>
+                {label}
+              </SelectItem>
+            ))}
           </SelectContent>
         </Select>
-        <Select value={sort} onValueChange={(value) => onSort(value as SearchSort)}>
-          <SelectTrigger
-            aria-label={t('Result order')}
-            className="w-auto min-w-0 max-w-full text-xs"
-          >
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="relevance">{t('Relevance within categories')}</SelectItem>
-            <SelectItem value="recent">{t('Recently updated')}</SelectItem>
-          </SelectContent>
-        </Select>
-        <Select value={String(days)} onValueChange={(value) => onDays(Number(value))}>
-          <SelectTrigger aria-label={t('Time range')} className="w-auto max-w-full text-xs">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="0">{t('Any time')}</SelectItem>
-            <SelectItem value="7">{t('Last 7 days')}</SelectItem>
-            <SelectItem value="30">{t('Last 30 days')}</SelectItem>
-          </SelectContent>
-        </Select>
-        {options.length > 0 && (
-          <Select value={subtype} onValueChange={onSubtype}>
-            <SelectTrigger aria-label={t('Refine category')} className="w-auto max-w-full text-xs">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              {options.map(([value, label]) => (
-                <SelectItem key={value} value={value}>
-                  {label}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        )}
-      </div>
-    </>
+      )}
+    </div>
   )
 }

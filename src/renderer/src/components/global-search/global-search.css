@@ -23,7 +23,7 @@
 .global-search-chips {
   display: flex;
   gap: 6px;
-  padding: 0 20px 12px;
+  padding: 0 20px 6px;
   overflow-x: auto;
   scrollbar-width: none;
 }
@@ -57,22 +57,12 @@
   background: var(--primary);
   border-color: var(--primary);
 }
-.search-list-toolbar {
-  min-height: 34px;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  padding: 11px 18px 5px;
-  font-size: 10px;
-  color: var(--muted-foreground);
-}
 .search-subfilters {
   min-height: 28px;
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
-  padding: 0 18px 9px;
+  padding: 0 20px 6px;
 }
 .global-search-list {
   padding-bottom: 7px;
@@ -88,6 +78,9 @@
   font-weight: 500;
   color: var(--muted-foreground);
   background: var(--card);
+}
+.search-group-heading[data-stuck='true'] {
+  box-shadow: 0 4px 6px -4px color-mix(in oklab, var(--foreground) 25%, transparent);
 }
 .search-result-row {
   position: relative;
@@ -679,7 +672,10 @@
     font-size: 18px;
   }
   .global-search-chips {
-    padding: 0 13px 10px;
+    padding: 0 13px 6px;
+  }
+  .search-subfilters {
+    padding-inline: 13px;
   }
   .search-category-chip {
     padding: 4px 9px;

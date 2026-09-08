@@ -151,18 +151,26 @@ test('searches projects, sessions, message bodies and Library with paged disclos
   await search.fill('Search')
   const sessions = dialog.locator('[data-search-group="sessions"]')
   await expect(sessions.getByRole('option')).toHaveCount(10)
-  await sessions.getByRole('button', { name: 'Show more 10/23' }).click()
+  const sessionHeading = sessions.locator('.search-group-heading')
+  await expect(sessionHeading).toHaveCSS('box-shadow', 'none')
+  await sessions.getByRole('button', { name: 'Load more 10/23' }).click()
   await expect(sessions.getByRole('option')).toHaveCount(20)
   const resultsViewport = dialog.locator('.global-search-list')
   await resultsViewport.evaluate((el) => {
     el.scrollTop = 180
   })
+  await expect(sessionHeading).not.toHaveCSS('box-shadow', 'none')
   expect(
     Math.abs(
       (await sessions.locator('.search-group-heading').boundingBox())!.y -
         (await resultsViewport.boundingBox())!.y
     )
   ).toBeLessThanOrEqual(1)
+  await dialog.screenshot({ path: testInfo.outputPath('global-search-sticky-heading.png') })
+  await resultsViewport.evaluate((el) => {
+    el.scrollTop = 0
+  })
+  await expect(sessionHeading).toHaveCSS('box-shadow', 'none')
   await sessions.getByRole('option').first().click()
   await dialog.locator('.global-search-body').evaluate(async (el) => {
     await Promise.all(el.getAnimations().map((animation) => animation.finished))

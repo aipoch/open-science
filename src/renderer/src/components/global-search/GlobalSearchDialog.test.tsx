@@ -426,19 +426,54 @@ describe('GlobalSearchDialog', () => {
     expect(rows('messages')).toHaveLength(1)
     expect(document.body.textContent).toContain('Some results are unavailable.')
   })
+  it.each(['all', 'messages'])(
+    'waits until the final available page before showing incomplete results in %s',
+    async (category) => {
+      const messages = Array.from({ length: 23 }, (_, index) => ({
+        ...message,
+        messageId: `paged-message-${index}`
+      }))
+      vi.mocked(window.api.sessions.searchMessages).mockImplementation(async (request) => {
+        const offset = request.offset ?? 0
+        return {
+          items: messages.slice(offset, offset + 10),
+          totalCount: 24,
+          nextOffset: offset + 10 < messages.length ? offset + 10 : undefined,
+          isComplete: false
+        }
+      })
+      await renderSearch()
+      if (category === 'messages') {
+        act(() => document.querySelector<HTMLButtonElement>('[data-category="messages"]')!.click())
+        await waitFor(() => expect(rows('messages')).toHaveLength(10))
+      }
+      const group = (): Element => document.querySelector('[data-search-group="messages"]')!
+      expect(group().textContent).not.toContain('Some results are unavailable.')
+      for (const count of [20, 23]) {
+        await act(async () => {
+          if (category === 'all')
+            group().querySelector<HTMLButtonElement>('.search-show-more')!.click()
+          else fireEvent.scroll(document.querySelector('.global-search-list')!)
+        })
+        expect(rows('messages')).toHaveLength(count)
+        if (count === 20) expect(group().textContent).not.toContain('Some results are unavailable.')
+      }
+      expect(group().textContent).toContain('Some results are unavailable.')
+    }
+  )
   it('appends ten results inside one group and preserves its selected detail', async () => {
     useSessionStore.setState({ sessions: Array.from({ length: 23 }, (_, i) => makeSession(i)) })
     await renderSearch()
     expect(rows('sessions')).toHaveLength(10)
     clickRow('sessions')
     const panel = detail()
-    const more = button('Show more10/23')
+    const more = button('Load more10/23')
     expect(more.classList.contains('mx-auto')).toBe(true)
     act(() => more.click())
     expect(rows('sessions')).toHaveLength(20)
     expect(detail()).toBe(panel)
     expect(panel.dataset.open).toBe('true')
-    act(() => button('Show more20/23').click())
+    act(() => button('Load more20/23').click())
     expect(rows('sessions')).toHaveLength(23)
   })
   it('loads filtered categories on scroll in batches of ten without duplicating requests', async () => {
@@ -491,9 +526,9 @@ describe('GlobalSearchDialog', () => {
       isIndexComplete: true
     }))
     await renderSearch()
-    await act(async () => button('Show more10/20').click())
+    await act(async () => button('Load more10/20').click())
     expect(rows('generated')).toHaveLength(20)
-    expect(document.body.textContent).not.toContain('Show more20/21')
+    expect(document.body.textContent).not.toContain('Load more20/21')
     act(() => document.querySelector<HTMLButtonElement>('[data-category="generated"]')!.click())
     await waitFor(() => expect(rows('generated')).toHaveLength(10))
     await act(async () => fireEvent.scroll(document.querySelector('.global-search-list')!))

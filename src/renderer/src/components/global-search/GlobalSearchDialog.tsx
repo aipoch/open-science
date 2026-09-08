@@ -75,6 +75,21 @@ const initialCounts = (): Record<'projects' | 'sessions', number> => ({
   sessions: 10
 })
 
+const updateStickyHeadings = (viewport: HTMLDivElement | null): void => {
+  if (!viewport) return
+  const top = viewport.getBoundingClientRect().top
+  // Compare the group's natural position so a header at rest at the top has no shadow.
+  const headings = [...viewport.querySelectorAll<HTMLElement>('.search-group-heading')].map(
+    (heading) => ({
+      heading,
+      stuck:
+        heading.parentElement!.getBoundingClientRect().top < top &&
+        heading.getBoundingClientRect().bottom > top
+    })
+  )
+  for (const { heading, stuck } of headings) heading.dataset.stuck = String(stuck)
+}
+
 export const GlobalSearchDialog = ({
   open,
   onOpenChange,
@@ -86,6 +101,9 @@ export const GlobalSearchDialog = ({
   const inputRef = useRef<HTMLInputElement>(null)
   const listRef = useRef<HTMLDivElement>(null)
   const loadMoreRef = useRef<HTMLDivElement>(null)
+  useLayoutEffect(() => {
+    updateStickyHeadings(listRef.current)
+  })
   const [query, setQuery] = useState('')
   const { recentSearches, rememberSearch } = useRecentSearches()
   const [category, setCategory] = useState<SearchCategory | 'all'>('all')
@@ -454,6 +472,7 @@ export const GlobalSearchDialog = ({
   }, [category, filteredPage, loadMore])
   const scrollMore = (): void => {
     const viewport = listRef.current
+    updateStickyHeadings(viewport)
     if (
       category !== 'all' &&
       viewport &&
@@ -689,9 +708,6 @@ export const GlobalSearchDialog = ({
                 sort={sort}
                 days={days}
                 subtype={subtype}
-                total={total}
-                shown={rows.length}
-                loading={anyLoading}
                 onScope={(value) => {
                   setCurrentProjectOnly(value === 'current')
                   resetSelection()
@@ -879,11 +895,13 @@ export const GlobalSearchDialog = ({
                             />
                           </div>
                         )}
-                        {group.incomplete && (
-                          <p className="px-2 py-1 text-xs text-muted-foreground">
-                            {t('Some results are unavailable.')}
-                          </p>
-                        )}
+                        {group.incomplete &&
+                          !group.loading &&
+                          !hasMoreSearchResults(key, group) && (
+                            <p className="px-2 py-1 text-xs text-muted-foreground">
+                              {t('Some results are unavailable.')}
+                            </p>
+                          )}
                         {!group.loading &&
                           !group.error &&
                           hasMoreSearchResults(key, group) &&
@@ -893,7 +911,7 @@ export const GlobalSearchDialog = ({
                               type="button"
                               onClick={() => loadMore(key)}
                             >
-                              <span>{t('Show more')}</span>
+                              <span>{t('Load more')}</span>
                               <span className="tabular-nums">
                                 {group.items.length}/{group.totalCount}
                               </span>
