@@ -7350,6 +7350,52 @@ describe('LiteratureLibraryPage', () => {
       }
     )
 
+    it('publishes successful background reads when another completed item cannot be read', async () => {
+      const summary = {
+        id: 'partial-read-job',
+        mode: 'metadata' as const,
+        phase: 'apply' as const,
+        state: 'running' as const,
+        total: 2,
+        checked: 2,
+        ready: 0,
+        done: 0,
+        failed: 0,
+        createdAt: 1,
+        updatedAt: 1,
+        completedItemIds: [] as string[]
+      }
+      vi.mocked(window.api.literature.jobs).mockResolvedValue({ jobs: [], summaries: [summary] })
+      await showLibrary()
+      await screen.findByRole('button', { name: 'Background tasks' })
+      await openReferenceDetail(screen.getByText(libraryItem.item.title))
+      get.mockImplementation(async (id: string) => {
+        if (id === libraryItem.id) return version(2, 'Successful background update')
+        throw new Error('The other reference cannot be read')
+      })
+      vi.mocked(window.api.literature.jobs).mockResolvedValue({
+        jobs: [],
+        summaries: [
+          {
+            ...summary,
+            state: 'completed',
+            done: 2,
+            completedItemIds: [libraryItem.id, 'unavailable-item']
+          }
+        ]
+      })
+      await act(async () => window.dispatchEvent(new Event('literature-jobs-changed')))
+      await waitFor(() => expect(get).toHaveBeenCalledTimes(2))
+      expect(
+        within(screen.getByRole('dialog')).getByRole('heading', { level: 2 }).textContent
+      ).toBe('Successful background update')
+      expect(
+        document.querySelector('[data-slot="literature-table-scroll"]')!.textContent
+      ).toContain('Successful background update')
+      closeDetail()
+      expect(screen.queryByText('Literature could not be loaded.')).not.toBeNull()
+    })
+
     it('reloads a completed PDF import into a reopened newer detail', async () => {
       await showLibrary()
       await openReferenceDetail(screen.getByText(libraryItem.item.title))

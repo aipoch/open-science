@@ -1811,14 +1811,17 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
   const receiveBackgroundItems = useCallback(
     (itemIds: string[]): void => {
       setDuplicatesRevision((value) => value + 1)
-      void Promise.all(itemIds.map((id) => window.api.literature.get(id))).then(
+      void Promise.allSettled(itemIds.map((id) => window.api.literature.get(id))).then(
         (results) => {
-          const updated = results.filter((item): item is LiteratureItemView => Boolean(item))
+          const updated = results.flatMap((result) =>
+            result.status === 'fulfilled' && result.value ? [result.value] : []
+          )
           void refreshItems(itemIds, updated)
           // Data publication follows item identity/revision, not the opening that started the read.
           updated.forEach((item) => detailController.replace(item))
-        },
-        () => setError(t('Literature could not be loaded.'))
+          if (results.some((result) => result.status === 'rejected'))
+            setError(t('Literature could not be loaded.'))
+        }
       )
     },
     [detailController, refreshItems, t]
