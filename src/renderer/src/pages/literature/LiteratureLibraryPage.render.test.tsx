@@ -2,6 +2,7 @@
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { literatureJobRequestSchema } from '../../../../shared/literature-jobs'
 import {
   LITERATURE_IMPORT_IDENTITY_CONFLICT,
   literatureCatalogCommandSchema
@@ -445,6 +446,198 @@ describe('LiteratureLibraryPage', () => {
     transact.mockReset().mockResolvedValue({ kind: 'item', id: 'item-1', state: 'present' })
     vi.unstubAllGlobals()
   })
+
+  it('TB-E1 trashes all 26 members despite an update between target reads', async () => {
+    const { mkdtemp, rm } = await import('node:fs/promises')
+    const { tmpdir } = await import('node:os')
+    const { join } = await import('node:path')
+    const { createProjectDbClient } = await import('../../../../main/projects/prisma-client')
+    const { migrateApplicationDatabase } =
+      await import('../../../../main/database/migration-service')
+    const { LiteratureCatalog } = await import('../../../../main/literature/catalog')
+    const root = await mkdtemp(join(tmpdir(), 'literature-batch-membership-'))
+    const client = createProjectDbClient(root)
+    try {
+      await migrateApplicationDatabase(client)
+      const catalog = new LiteratureCatalog(async () => client)
+      const { itemIds } = await catalog.importItems(
+        Array.from({ length: 26 }, (_, index) => ({
+          ...libraryItem.item,
+          title: `Member ${index}`,
+          identifiers: []
+        }))
+      )
+      const initial = await catalog.search({ scope: 'library', sortBy: 'updated', limit: 100 })
+      const lastId = (initial.entries[25] as LiteratureItemView).id
+      let resolving = false
+      let edited = false
+      const edit = async (): Promise<void> => {
+        edited = true
+        const view = (await catalog.get(lastId))!
+        await catalog.transact({
+          kind: 'update-item',
+          itemId: lastId,
+          expectedMetadataRevision: view.metadataRevision,
+          item: { ...view.item, abstract: 'Concurrent metadata edit' }
+        })
+      }
+      // Use the actual catalog API, bypassing the legacy fixture pagination adapter.
+      window.api.literature.search = async (request) => {
+        if (resolving && !edited && request.scope === 'library' && request.offset === 25)
+          await edit()
+        const page = await catalog.search(request)
+        if (resolving && !edited && request.allItemIds) await edit()
+        return page
+      }
+      transact.mockImplementation((command) => catalog.transact(command))
+      render(<LiteratureLibraryPage />)
+      fireEvent.click(screen.getByRole('button', { name: 'All references' }))
+      fireEvent.click(await screen.findByLabelText('Select all references'))
+      fireEvent.click(screen.getByRole('button', { name: 'Select all matching references 26' }))
+      resolving = true
+      const toolbar = document.querySelector<HTMLElement>(
+        '[data-slot="literature-selection-toolbar"]'
+      )!
+      await openMenu(within(toolbar).getByRole('button', { name: 'More actions' }))
+      fireEvent.click(screen.getByRole('menuitem', { name: 'Move to Trash' }))
+      await waitFor(() => expect(screen.queryByText('26 selected')).toBeNull())
+      expect(edited).toBe(true)
+      const deleted = await client.literatureItem.findMany({ where: { deletedAt: { not: null } } })
+      expect(deleted.map(({ id }) => id).sort()).toEqual([...itemIds].sort())
+      expect(await client.literatureItem.count({ where: { deletedAt: null } })).toBe(0)
+    } finally {
+      cleanup()
+      await client.$disconnect()
+      await rm(root, { recursive: true, force: true })
+    }
+  }, 120000)
+
+  it('TB-01 keeps the real page usable when preference writes fail', async () => {
+    search.mockImplementation(async ({ scope }) =>
+      scope === 'library' ? { entries: [libraryItem], totalCount: 1 } : { entries: [] }
+    )
+    const original = window.localStorage.setItem.bind(window.localStorage)
+    const write = vi
+      .spyOn(window.localStorage, 'setItem')
+      .mockImplementation(function (key, value) {
+        if (key === 'open-science:literature-table-preferences')
+          throw new DOMException('Injected preference quota', 'QuotaExceededError')
+        original(key, value)
+      })
+    try {
+      render(<LiteratureLibraryPage />)
+      fireEvent.click(screen.getByRole('button', { name: 'All references' }))
+      await screen.findByText(libraryItem.item.title)
+      fireEvent.click(screen.getByRole('button', { name: 'Customize' }))
+      fireEvent.click(await screen.findByRole('checkbox', { name: 'Notes' }))
+      expect(screen.getByRole('columnheader', { name: 'Notes' })).not.toBeNull()
+      const attempts = write.mock.calls.length
+      await act(async () => {})
+      expect(write.mock.calls.length).toBe(attempts)
+    } finally {
+      write.mockRestore()
+    }
+  })
+
+  it.each([true, false])(
+    'TB-03 preserves external columns when storage event delivered: %s',
+    async (deliverEvent) => {
+      localStorage.setItem(
+        'open-science:literature-table-preferences',
+        JSON.stringify({ order: [], visible: ['year'] })
+      )
+      search.mockImplementation(async ({ scope }) =>
+        scope === 'library' ? { entries: [libraryItem], totalCount: 1 } : { entries: [] }
+      )
+      render(<LiteratureLibraryPage />)
+      fireEvent.click(screen.getByRole('button', { name: 'All references' }))
+      await screen.findByText(libraryItem.item.title)
+      const key = 'open-science:literature-table-preferences'
+      const stored = JSON.parse(localStorage.getItem(key)!)
+      const value = JSON.stringify({ ...stored, visible: [...stored.visible, 'abstract'] })
+      act(() => {
+        localStorage.setItem(key, value)
+        const event = new StorageEvent('storage', { key, newValue: value })
+        Object.defineProperty(event, 'storageArea', { value: window.localStorage })
+        if (deliverEvent) window.dispatchEvent(event)
+      })
+      if (deliverEvent)
+        expect.soft(screen.queryByRole('columnheader', { name: 'Abstract' })).not.toBeNull()
+      fireEvent.click(screen.getByRole('button', { name: 'Customize' }))
+      fireEvent.click(await screen.findByRole('checkbox', { name: 'Notes' }))
+      expect(JSON.parse(localStorage.getItem(key)!).visible).toEqual(
+        expect.arrayContaining(['abstract', 'notes'])
+      )
+    }
+  )
+
+  it('TB-04 exposes mixed selection for the visible page', async () => {
+    search.mockImplementation(async ({ scope }) =>
+      scope === 'library'
+        ? { entries: [createLibraryItem(1), createLibraryItem(2)], totalCount: 2 }
+        : { entries: [] }
+    )
+    render(<LiteratureLibraryPage />)
+    fireEvent.click(screen.getByRole('button', { name: 'All references' }))
+    const all = (await screen.findByLabelText('Select all references')) as HTMLInputElement
+    const rows = screen.getAllByRole('checkbox').filter((input) => input !== all)
+    fireEvent.click(rows[0]!)
+    expect(screen.getByText('1 selected')).not.toBeNull()
+    expect(all.checked).toBe(false)
+    expect(all.indeterminate).toBe(true)
+    fireEvent.click(all)
+    expect(all.checked).toBe(true)
+    expect(all.indeterminate).toBe(false)
+    fireEvent.click(all)
+    expect(all.checked).toBe(false)
+    expect(all.indeterminate).toBe(false)
+  })
+
+  it.each(
+    ['Complete metadata', 'Find full-text PDF'].flatMap((action) =>
+      [1000, 1001].map((count) => ({ action, count }))
+    )
+  )(
+    'TB-02 $action validates $count matching references before creating a job',
+    async ({ action, count }) => {
+      const items = Array.from({ length: count }, (_, index) => createLibraryItem(index))
+      search.mockImplementation(async (request) => {
+        if (request.scope !== 'library') return { entries: [] }
+        if (request.allItemIds)
+          return { entries: [], itemIds: items.map(({ id }) => id), totalCount: count }
+        return { entries: items.slice(0, 25), totalCount: count, nextOffset: 25 }
+      })
+      const jobs = vi.mocked(window.api.literature.jobs)
+      jobs.mockImplementation(async (request) => {
+        literatureJobRequestSchema.parse(request)
+        return { jobs: [], summaries: [] }
+      })
+      render(<LiteratureLibraryPage />)
+      fireEvent.click(screen.getByRole('button', { name: 'All references' }))
+      fireEvent.click(await screen.findByLabelText('Select all references'))
+      fireEvent.click(
+        screen.getByRole('button', { name: new RegExp('^Select all matching references') })
+      )
+      const toolbar = document.querySelector<HTMLElement>(
+        '[data-slot="literature-selection-toolbar"]'
+      )!
+      await openMenu(within(toolbar).getByRole('button', { name: 'More actions' }))
+      fireEvent.click(screen.getByRole('menuitem', { name: action }))
+      await act(async () => {})
+      if (count > 1000) {
+        expect(
+          screen.queryByText('Select no more than 1000 references for this task.')
+        ).not.toBeNull()
+        expect(jobs.mock.calls.filter(([r]) => r.action === 'create')).toHaveLength(0)
+        expect(screen.queryByRole('dialog')).toBeNull()
+      } else {
+        expect(jobs.mock.calls.filter(([r]) => r.action === 'create')).toHaveLength(1)
+        const request = jobs.mock.calls.find(([r]) => r.action === 'create')![0]
+        expect(literatureJobRequestSchema.safeParse(request).success).toBe(true)
+        expect(request.action === 'create' && request.itemIds.length).toBe(1000)
+      }
+    }
+  )
 
   it('shows the load error after the initial Inbox request settles', async () => {
     search.mockImplementation((request: LiteratureCatalogSearchRequest) =>

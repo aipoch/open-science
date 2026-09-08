@@ -7,6 +7,8 @@ import {
 } from './literature'
 import { defineApplicationCommandContract, validationCodec } from './application-command-contract'
 
+export const LITERATURE_JOB_MAX_ITEMS = 1000
+
 const id = z.string().trim().min(1).max(512)
 export const literatureJobRowSchema = z
   .object({
@@ -26,9 +28,9 @@ export const literatureJobSchema = z
     id,
     mode: z.enum(['metadata', 'full-text']),
     phase: z.enum(['search', 'apply']),
-    phaseItemIds: z.array(id).max(1000).optional(),
+    phaseItemIds: z.array(id).max(LITERATURE_JOB_MAX_ITEMS).optional(),
     state: z.enum(['queued', 'running', 'pausing', 'paused', 'review', 'completed']),
-    rows: z.array(literatureJobRowSchema).min(1).max(1000),
+    rows: z.array(literatureJobRowSchema).min(1).max(LITERATURE_JOB_MAX_ITEMS),
     createdAt: z.number().finite(),
     updatedAt: z.number().finite(),
     progress: z.object({ itemId: id, value: literatureFullTextProgressSchema }).optional()
@@ -40,7 +42,7 @@ export const literatureJobRequestSchema = z.discriminatedUnion('action', [
     .object({
       action: z.literal('create'),
       mode: z.enum(['metadata', 'full-text']),
-      itemIds: z.array(id).min(1).max(1000),
+      itemIds: z.array(id).min(1).max(LITERATURE_JOB_MAX_ITEMS),
       requestId: z.string().uuid()
     })
     .strict(),
@@ -58,7 +60,7 @@ export const literatureJobRequestSchema = z.discriminatedUnion('action', [
       selections: z
         .array(z.object({ itemId: id, checked: z.boolean(), candidateId: id.optional() }).strict())
         .min(1)
-        .max(1000)
+        .max(LITERATURE_JOB_MAX_ITEMS)
     })
     .strict(),
   z
@@ -68,7 +70,7 @@ export const literatureJobRequestSchema = z.discriminatedUnion('action', [
       selections: z
         .array(z.object({ itemId: id, candidateId: id.optional() }).strict())
         .min(1)
-        .max(1000)
+        .max(LITERATURE_JOB_MAX_ITEMS)
     })
     .strict()
 ])

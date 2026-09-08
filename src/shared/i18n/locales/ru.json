@@ -103,6 +103,7 @@
     "Import Connector configuration": "Импорт конфигурации коннектора"
   },
   "renderer": {
+    "Select no more than {{limit}} references for this task.": "Выберите не более {{limit}} источников для этой задачи.",
     "Identifiers (★ primary)": "Идентификаторы (★ основной)",
     "Search again to refresh this older metadata review.": "Повторите поиск, чтобы обновить эти устаревшие данные для проверки.",
     "The reference was saved, but could not be reloaded.": "Источник сохранён, но его не удалось загрузить повторно.",
