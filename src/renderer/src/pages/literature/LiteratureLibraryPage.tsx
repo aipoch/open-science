@@ -1917,12 +1917,22 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
     }
   }
 
+  const refreshCandidateInboxCount = async (): Promise<void> => {
+    try {
+      await loadInboxPendingCount()
+    } catch {
+      setInboxPendingCount(undefined)
+      setError(t('Literature could not be loaded.'))
+    }
+  }
+
   const retryCandidateReads = async (): Promise<void> => {
     if (isBatching || pendingCandidateId) return
     setIsBatching(true)
     setCandidateUpdateUncertain(false)
     try {
       await Promise.all([loadEntries(true), refreshCandidateProjectCounts()])
+      await refreshCandidateInboxCount()
     } finally {
       setIsBatching(false)
     }
@@ -1953,6 +1963,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
         await Promise.all([recheckDismissedCandidates(undoIds), refreshCandidateProjectCounts()])
       } else {
         await Promise.all([loadEntries(true), refreshCandidateProjectCounts()])
+        await refreshCandidateInboxCount()
       }
       setCandidateUpdateUncertain(true)
       return false
@@ -2063,6 +2074,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
       setUndoNotice(t('The remaining references could not be checked. Recheck before undoing.'))
     }
     await loadEntries(true)
+    await refreshCandidateInboxCount()
   }
 
   const restoreDismissedCandidates = async (): Promise<void> => {
@@ -4121,6 +4133,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
                           void Promise.all([
                             loadEntries(true, true),
                             loadCollections(),
+                            loadInboxPendingCount(),
                             loadProjectCounts()
                           ]).catch(() => setError(t('Literature could not be loaded.')))
                         }
