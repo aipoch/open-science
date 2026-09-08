@@ -4161,6 +4161,97 @@ describe('notebook runtime service', () => {
       expect(diagnosticText).not.toContain('researcher')
     })
 
+    it('rejects an idempotent Shell retry that changes its captured runtime', async () => {
+      const root = await createStorageRoot()
+      const execute = vi
+        .fn<NotebookShellProcess['execute']>()
+        .mockResolvedValue({ stdout: '', stderr: '', exitCode: 0 })
+      const service = new NotebookRuntimeService({
+        configRoot: root,
+        dataRoot: root,
+        projectId: 'default-project',
+        repository: new NotebookRunRepository(root),
+        shellProcess: { execute }
+      })
+      const request = {
+        sessionId: 'runtime-retry',
+        workspaceCwd: root,
+        command: 'echo hello',
+        executionInvocationId: 'same-invocation'
+      }
+      await service.executeShell({
+        ...request,
+        shellRuntime: { kind: 'powershell', version: '5.1' }
+      })
+      await expect(
+        service.executeShell({
+          ...request,
+          shellRuntime: {
+            kind: 'wsl2-bash',
+            profileId: 'profile-1',
+            distro: 'Ubuntu',
+            user: 'researcher'
+          }
+        })
+      ).rejects.toThrow()
+      expect(execute).toHaveBeenCalledOnce()
+    })
+
+    it('preserves unavailable Shell results on durable retries', async () => {
+      const root = await createStorageRoot()
+      const unavailable = {
+        stdout: '',
+        stderr: 'unavailable',
+        exitCode: null,
+        runtimeStatus: 'unavailable' as const,
+        errorCode: 'shell-runtime-unavailable' as const
+      }
+      const execute = vi.fn<NotebookShellProcess['execute']>().mockResolvedValue(unavailable)
+      const service = new NotebookRuntimeService({
+        configRoot: root,
+        dataRoot: root,
+        projectId: 'default-project',
+        repository: new NotebookRunRepository(root),
+        shellProcess: { execute }
+      })
+      const request = {
+        sessionId: 'unavailable-retry',
+        workspaceCwd: root,
+        command: 'echo hello',
+        executionInvocationId: 'same-invocation'
+      }
+      expect(await service.executeShell(request)).toEqual(unavailable)
+      expect(await service.executeShell(request)).toEqual(unavailable)
+      expect(execute).toHaveBeenCalledOnce()
+    })
+
+    it('blocks unmanaged WSL Bash detachment on a Windows host', async () => {
+      const root = await createStorageRoot()
+      const execute = vi.fn<NotebookShellProcess['execute']>()
+      const service = new NotebookRuntimeService({
+        configRoot: root,
+        dataRoot: root,
+        projectId: 'default-project',
+        repository: new NotebookRunRepository(root),
+        shellProcess: { execute },
+        platform: 'win32',
+        shellRuntimeBinding: {
+          kind: 'wsl2-bash',
+          profileId: 'profile-1',
+          distro: 'Ubuntu',
+          user: 'researcher'
+        }
+      })
+      await expect(
+        service.executeShell({
+          sessionId: 'wsl-detached',
+          workspaceCwd: root,
+          command: 'sleep 30 &'
+        })
+      ).rejects.toMatchObject({ detail: { code: 'UNMANAGED_SHELL_BACKGROUND_BLOCKED' } })
+      expect(execute).not.toHaveBeenCalled()
+    })
+
     it('records a selected but unavailable WSL runtime as failed without falling back', async () => {
       const root = await createStorageRoot()
       const service = new NotebookRuntimeService({

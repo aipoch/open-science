@@ -62,6 +62,7 @@ import type { NotebookKernelExecutorOptions } from './kernel-executor'
 import { saveIpynbAll } from './save-ipynb-all'
 import { englishNativeTranslator, type NativeTranslator } from '../locale/main-process-messages'
 import type { ProbeDeps } from './mirror-probe'
+import { defaultShellRuntimeBinding, shellRuntimePlatform } from './shell-runtime'
 import { detachedShellMechanism } from './shell-detachment-policy.windows-posix'
 import {
   installPackages as installPackagesDefault,
@@ -1678,7 +1679,12 @@ class NotebookRuntimeService {
   private assertManagedShellCommand(request: ExecuteShellRequest): void {
     const mechanism = detachedShellMechanism(
       request.command,
-      this.options.platform ?? process.platform
+      shellRuntimePlatform(
+        request.shellRuntime ??
+          this.options.shellRuntimeBinding ??
+          defaultShellRuntimeBinding(this.options.platform),
+        this.options.platform
+      )
     )
     if (!mechanism) return
     throw new NotebookBackgroundRunError(

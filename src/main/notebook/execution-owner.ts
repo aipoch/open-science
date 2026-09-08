@@ -250,7 +250,8 @@ const controlRunFingerprint = (
 const shellRunFingerprint = (
   session: NotebookSessionAggregate,
   request: ExecuteShellRequest,
-  frozenShellContext: NonNullable<NotebookRunRecord['frozenShellContext']>
+  frozenShellContext: NonNullable<NotebookRunRecord['frozenShellContext']>,
+  runtimeBinding: ShellRuntimeBinding
 ): string =>
   createHash('sha256')
     .update(
@@ -261,7 +262,8 @@ const shellRunFingerprint = (
         ...(request.background ? { executionMode: 'background' } : {}),
         provenanceContext: request.provenanceContext ?? null,
         inputFiles: immutableInputIdentities(request.registeredInputFiles),
-        frozenShellContext
+        frozenShellContext,
+        runtimeBinding
       })
     )
     .digest('hex')
@@ -283,11 +285,16 @@ const controlResultFromRun = (run: NotebookRunRecord): NotebookControlResult => 
 }
 
 const publicShellResult = (
-  run: Pick<NotebookRunRecord, 'text' | 'exitCode' | 'truncated'>
+  run: Pick<
+    NotebookRunRecord,
+    'text' | 'exitCode' | 'truncated' | 'shellRuntimeStatus' | 'shellErrorCode'
+  >
 ): NotebookShellResult => ({
   stdout: run.text.stdout,
   stderr: run.text.stderr,
   exitCode: run.exitCode ?? null,
+  ...(run.shellRuntimeStatus ? { runtimeStatus: run.shellRuntimeStatus } : {}),
+  ...(run.shellErrorCode ? { errorCode: run.shellErrorCode } : {}),
   ...(run.truncated ? { truncated: true } : {})
 })
 
@@ -1333,7 +1340,7 @@ class NotebookExecutionOwner {
     const protectedDirs = [getAppClaudeConfigDir(this.options.configRoot)]
     const environment = buildShellEnv(
       handoffDir,
-      platform,
+      shellRuntimePlatform(runtimeBinding, platform),
       process.env,
       runtimeRoot,
       prepareNotebookWorkloadCache(runtimeRoot)
@@ -1353,7 +1360,12 @@ class NotebookExecutionOwner {
       timeoutMs: request.timeoutMs ?? 120_000,
       platform
     }
-    const submissionFingerprint = shellRunFingerprint(session, request, frozenShellContext)
+    const submissionFingerprint = shellRunFingerprint(
+      session,
+      request,
+      frozenShellContext,
+      runtimeBinding
+    )
     let runId: string | undefined
     const submissionIdentity =
       request.executionInvocationId ??

@@ -408,7 +408,7 @@ const prepareShellLaunchOptions = async (
 
 const disposePreparedShellLaunch = (prepared: PreparedShellLaunch): void => {
   prepared.endSandboxExecution?.()
-  prepared.sandboxed?.cleanup()
+  void prepared.sandboxed?.cleanup('cancel', { processesTerminated: true }).catch(() => undefined)
 }
 
 const runShellCommand = (
@@ -567,9 +567,15 @@ const runShellCommand = (
           .catch(() => {
             // Retain the ownership receipt when cleanup cannot prove that the child tree is gone.
           })
-          .finally(() => {
+          .finally(async () => {
             endSandboxExecution?.()
-            if (reaped) sandboxed?.cleanup()
+            try {
+              reaped = cleanupCompleted(
+                await cleanupSandboxWithRetry('spawn-failed', { processesTerminated: reaped })
+              )
+            } catch {
+              reaped = false
+            }
             const result: NotebookShellResult = {
               stdout: '',
               stderr: error instanceof Error ? error.message : String(error),
@@ -603,7 +609,6 @@ const runShellCommand = (
         options.signal?.removeEventListener('abort', abort)
         // A receipt is removal authority and recovery evidence. Keep it whenever full-tree teardown
         // cannot be proved so startup recovery can retry and new work remains fenced fail-closed.
-        if (processOutcome.processesTerminated) releaseProcessOwnership?.()
         endSandboxExecution?.()
         const normalized =
           runtimeBinding.kind === 'powershell'
@@ -616,6 +621,7 @@ const runShellCommand = (
         } catch {
           complete = false
         }
+        if (complete) releaseProcessOwnership?.()
         const normalizedResult = { ...result, stderr }
         const completed = complete ? normalizedResult : withIncompleteCleanup(normalizedResult)
         if (!processOutcome.processesTerminated || !complete)

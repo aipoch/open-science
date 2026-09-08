@@ -1078,7 +1078,7 @@ class NotebookKernelExecutor implements NotebookExecutor {
       })
     } catch (error) {
       if (ownershipIntent) this.processLifecycle?.abandonSpawn(ownershipIntent)
-      await cleanupSandbox('spawn-failed', { processesTerminated: true })
+      await cleanupSandbox('spawn-failed', { processesTerminated: false })
       throw error
     }
     if (this.platform !== 'win32' && this.canTrackPosixProcesses)

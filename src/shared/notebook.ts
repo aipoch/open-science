@@ -605,6 +605,9 @@ export type NotebookRunRecord = {
   truncated?: boolean
   // Exact stateless-shell outcome. Optional keeps non-shell and historical records compatible.
   exitCode?: number | null
+  shellRuntimeStatus?: 'unavailable'
+  shellErrorCode?:
+    'shell-runtime-unavailable' | 'shell-cleanup-incomplete' | 'shell-network-transport-unsupported'
   // Named env that produced this run (python/r only; omitted for repl/bash).
   environment?: string
   // Immutable completed-run environment evidence. The cache that helped build it is never referenced.
