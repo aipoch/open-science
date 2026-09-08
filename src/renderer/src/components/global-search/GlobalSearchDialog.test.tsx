@@ -74,6 +74,86 @@ const selectFilter = async (name: string, option: string): Promise<void> => {
 }
 
 describe('GlobalSearchDialog', () => {
+  it('loads complete long messages from the real search excerpt', async () => {
+    const content =
+      '## Opening heading\n\n' + 'Context sentence.\n\n'.repeat(500) + '**sin** final paragraph.'
+    const transcript = {
+      ...makeSession(0),
+      messages: [{ ...message, id: 'long-message', role: 'user' as const, content }]
+    }
+    vi.mocked(window.api.sessions.searchMessages).mockImplementation(
+      createMessageSearch({
+        list: async () => ({
+          sessions: [
+            {
+              ...transcript,
+              number: 1,
+              revision: 1,
+              pinned: false,
+              artifactCount: 0,
+              filesRevision: 0,
+              activeMessageCount: 1,
+              presentedStatus: 'idle' as const,
+              needsStartupRecovery: false
+            }
+          ]
+        }),
+        loadOne: async () => transcript as unknown as PersistedChatSession
+      })
+    )
+    window.api.sessions.loadOne = vi.fn().mockResolvedValue(transcript)
+    await renderSearch()
+    clickRow('messages')
+    await waitFor(() => expect(detail().querySelector('h2')?.textContent).toBe('Opening heading'))
+    expect(detail().querySelector('.search-message-content')?.textContent).toContain(
+      'sin final paragraph.'
+    )
+  })
+
+  it('ignores a delayed complete-message read after another result is selected', async () => {
+    let resolve!: (value: PersistedChatSession) => void
+    vi.mocked(window.api.sessions.searchMessages).mockResolvedValue({
+      items: [{ ...message, contentTruncated: true }],
+      totalCount: 1,
+      isComplete: true
+    })
+    window.api.sessions.loadOne = vi.fn(
+      () =>
+        new Promise<PersistedChatSession>((done) => {
+          resolve = done
+        })
+    )
+    await renderSearch()
+    clickRow('messages')
+    await waitFor(() => expect(window.api.sessions.loadOne).toHaveBeenCalledOnce())
+    clickRow('projects')
+    await act(async () =>
+      resolve({
+        ...makeSession(0),
+        messages: [
+          { ...message, id: message.messageId, role: 'user', content: 'Late full message' }
+        ]
+      } as unknown as PersistedChatSession)
+    )
+    expect(detail().textContent).not.toContain('Late full message')
+    expect(screen.getByRole('tab', { name: 'Recent sessions' })).toBeTruthy()
+  })
+
+  it('reports a removed message instead of presenting its excerpt as complete', async () => {
+    vi.mocked(window.api.sessions.searchMessages).mockResolvedValue({
+      items: [{ ...message, contentTruncated: true }],
+      totalCount: 1,
+      isComplete: true
+    })
+    window.api.sessions.loadOne = vi.fn().mockResolvedValue(undefined)
+    await renderSearch()
+    clickRow('messages')
+    await waitFor(() =>
+      expect(detail().textContent).toContain('The source message is no longer available.')
+    )
+    expect(detail().querySelector('.search-message-content')).toBeNull()
+  })
+
   it.each([
     ['sin', 'answer'],
     ['Checking', 'progress']
@@ -315,15 +395,18 @@ describe('GlobalSearchDialog', () => {
     expect(useSearchMessageFocusStore.getState().pending).toBeUndefined()
   })
   it('restarts remote category paging when switching between All and a category', async () => {
-    vi.mocked(window.api.sessions.searchMessages).mockImplementation(async ({ offset = 0 }) => ({
-      items: Array.from({ length: Math.min(10, 23 - offset) }, (_, index) => ({
-        ...message,
-        messageId: `page-message-${offset + index}`
-      })),
-      totalCount: 23,
-      isComplete: true,
-      nextOffset: offset < 20 ? offset + 10 : undefined
-    }))
+    vi.mocked(window.api.sessions.searchMessages).mockImplementation(async ({ cursor }) => {
+      const offset = Number(cursor ?? 0)
+      return {
+        items: Array.from({ length: Math.min(10, 23 - offset) }, (_, index) => ({
+          ...message,
+          messageId: `page-message-${offset + index}`
+        })),
+        totalCount: 23,
+        isComplete: true,
+        nextCursor: offset < 20 ? String(offset + 10) : undefined
+      }
+    })
     await renderSearch()
     await waitFor(() => expect(rows('messages')).toHaveLength(10))
     act(() =>
@@ -387,7 +470,7 @@ describe('GlobalSearchDialog', () => {
           sort: 'recent',
           updatedAfter: expect.any(Number),
           limit: 10,
-          offset: undefined
+          cursor: undefined
         })
       )
     )
@@ -596,11 +679,11 @@ describe('GlobalSearchDialog', () => {
         messageId: `paged-message-${index}`
       }))
       vi.mocked(window.api.sessions.searchMessages).mockImplementation(async (request) => {
-        const offset = request.offset ?? 0
+        const offset = Number(request.cursor ?? 0)
         return {
           items: messages.slice(offset, offset + 10),
           totalCount: 24,
-          nextOffset: offset + 10 < messages.length ? offset + 10 : undefined,
+          nextCursor: offset + 10 < messages.length ? String(offset + 10) : undefined,
           isComplete: false
         }
       })

@@ -69,6 +69,26 @@ const setup = (
 }
 
 describe('global file content search', () => {
+  it('reuses content locations beyond 256 files while rechecking catalog membership', async () => {
+    const items = Array.from({ length: 300 }, (_, index) => file(index))
+    const { handlers, open } = setup(items, () => 'needle')
+    const first = await handlers.searchArtifacts(request)
+    expect(first.primary.totalCount).toBe(300)
+    expect(open).toHaveBeenCalledTimes(300)
+    items.splice(0, 1)
+    const second = await handlers.searchArtifacts({
+      ...request,
+      primaryCursor: first.primary.nextCursor
+    })
+    expect(second.primary.totalCount).toBe(299)
+    expect(second.primary.items).toHaveLength(10)
+    expect(open).toHaveBeenCalledTimes(300)
+    const changed = { ...items[0]!, sourceVersionId: 'new-version' }
+    items[0] = changed
+    await handlers.searchArtifacts(request)
+    expect(open).toHaveBeenCalledTimes(301)
+  })
+
   it('finds text-only matches and returns a location for the preview', async () => {
     const { handlers, close } = setup([file(1)], () => '# Heading\nA needle in the body.')
     const result = await handlers.searchArtifacts(request)

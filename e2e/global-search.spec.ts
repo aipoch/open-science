@@ -133,7 +133,10 @@ test('searches projects, sessions, message bodies and Library with paged disclos
                   index === 8
                     ? [
                         'First context line',
-                        ...Array.from({ length: 70 }, (_, line) => `Background paragraph ${line}.`),
+                        ...Array.from(
+                          { length: 400 },
+                          (_, line) => `Background paragraph ${line}.`
+                        ),
                         '**Historical needle** in the message body',
                         'Final context paragraph.'
                       ].join('\n\n')
@@ -149,6 +152,27 @@ test('searches projects, sessions, message bodies and Library with paged disclos
     return project.id
   })
   page = await app.restart()
+  const concurrentSearchCounts = await page.evaluate(async (projectId) => {
+    const pages = await Promise.all([
+      window.api.sessions.searchMessages({
+        clientId: 'surface-a',
+        projectIds: [projectId],
+        query: 'Transcript entry',
+        limit: 10
+      }),
+      window.api.sessions.searchMessages({
+        clientId: 'surface-b',
+        projectIds: [projectId],
+        query: 'Historical needle',
+        limit: 10
+      })
+    ])
+    return pages.map(({ totalCount, isComplete }) => ({ totalCount, isComplete }))
+  }, projectId)
+  expect(concurrentSearchCounts).toEqual([
+    { totalCount: 119, isComplete: true },
+    { totalCount: 1, isComplete: true }
+  ])
   await page.getByRole('button', { name: 'Search', exact: true }).click()
   const dialog = page.getByRole('dialog', { name: 'Global search' })
   const search = dialog.getByRole('combobox', { name: 'Global search' })
@@ -259,6 +283,7 @@ test('searches projects, sessions, message bodies and Library with paged disclos
   await expect(details.locator('.search-detail-context')).toContainText('Search session 00')
   await expect(details.locator('.search-detail-context time')).toBeVisible()
   const message = details.locator('.search-message-content')
+  await expect(message).toContainText('First context line')
   await expect(message).toContainText('Final context paragraph.')
   await expect(message).toHaveAttribute('data-search-match-count', '1')
   await expect

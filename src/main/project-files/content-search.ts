@@ -93,7 +93,8 @@ const findContentMatch = async (
 // Metadata membership is re-read for every search; only immutable Version match locations are
 // cached, so archived/deleted files cannot survive through a cached result page.
 export const createFileContentSearch = (repository: SearchRepository, open: SearchFileOpener) => {
-  const cache = new Map<string, Match | undefined>()
+  let cachedQuery = ''
+  let cache = new Map<string, Match | undefined>()
   return async (request: SearchArtifactsRequest): Promise<SearchArtifactsResult> => {
     const limit = normalizeLimit(request.primaryLimit)
     if (
@@ -125,6 +126,14 @@ export const createFileContentSearch = (repository: SearchRepository, open: Sear
       format: request.format,
       updatedAfter: request.updatedAfter
     })
+    // Keep locations for the complete current query, rather than evicting the front of each scan.
+    // Each request captures its own map so an older query cannot populate its successor's cache.
+    if (cachedQuery !== key) {
+      cachedQuery = key
+      cache = new Map()
+    }
+    const locations = cache
+    const currentVersions = new Set<string>()
     let cursor: { key: string; rank: number; sortAtMs: number; id: string } | undefined
     if (request.primaryCursor) {
       try {
@@ -172,14 +181,13 @@ export const createFileContentSearch = (repository: SearchRepository, open: Sear
                   file.projectId,
                   file.source,
                   file.sourceFileId,
-                  file.sourceVersionId,
-                  normalizeSearchText(query)
+                  file.sourceVersionId
                 ])
-                const match = cache.has(cacheKey)
-                  ? cache.get(cacheKey)
+                currentVersions.add(cacheKey)
+                const match = locations.has(cacheKey)
+                  ? locations.get(cacheKey)
                   : await findContentMatch(file, query, open)
-                cache.set(cacheKey, match)
-                if (cache.size > 256) cache.delete(cache.keys().next().value!)
+                locations.set(cacheKey, match)
                 return match ? { ...file, contentMatch: match } : undefined
               } catch {
                 complete = false
@@ -199,6 +207,9 @@ export const createFileContentSearch = (repository: SearchRepository, open: Sear
         ? request.otherProjectIds.filter((id) => !request.primaryProjectIds.includes(id))
         : []
     )
+    // Removed files and superseded Versions leave no retained locations after a catalog scan.
+    for (const version of locations.keys())
+      if (!currentVersions.has(version)) locations.delete(version)
     const rank = (file: ProjectFileItem): number =>
       request.sort === 'recent' ? 0 : searchTitleRank(file.name, query)
     const compare = (a: { rank: number; sortAtMs: number; id: string }, b: typeof a): number =>

@@ -216,32 +216,12 @@ export const GlobalSearchDialog = ({
     sessions: scopedSessions.filter(
       (item) => updatedAfter === undefined || item.updatedAt >= updatedAfter
     ),
-    projectNames,
-    primaryProjectId: undefined,
     query,
-    visiblePrimaryCount: scopedSessions.length
+    sort
   })
-  const sessionItems = sessionMatches.primary
-    .map((item) => ({
-      kind: 'sessions' as const,
-      item: scopedSessions.find((session) => session.id === item.id)!
-    }))
-    .sort(
-      (a, b) =>
-        (sort === 'relevance'
-          ? Math.max(
-              searchTitleRank(b.item.title, query),
-              searchTitleRank(String(b.item.number), query)
-            ) -
-            Math.max(
-              searchTitleRank(a.item.title, query),
-              searchTitleRank(String(a.item.number), query)
-            )
-          : 0) ||
-        b.item.updatedAt - a.item.updatedAt ||
-        a.item.id.localeCompare(b.item.id)
-    )
+  const sessionItems = sessionMatches
     .slice(0, counts.sessions)
+    .map((item) => ({ kind: 'sessions' as const, item }))
   const groups: Record<SearchCategory, SearchPage> = {
     ...pages,
     projects: {
@@ -251,7 +231,7 @@ export const GlobalSearchDialog = ({
     },
     sessions: {
       ...emptySearchPage(),
-      totalCount: sessionMatches.primaryTotalCount,
+      totalCount: sessionMatches.length,
       items: sessionItems
     }
   }

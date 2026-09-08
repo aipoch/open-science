@@ -45,6 +45,7 @@ export const useSearchResults = (
   load: (category: RemoteCategory, append?: boolean) => Promise<void>
 } => {
   const identity = JSON.stringify([open, ready, query, scopeKey])
+  const [clientId] = useState(() => crypto.randomUUID())
   const [activeIdentity, setActiveIdentity] = useState(identity)
   const [pages, setPages] = useState(() => emptyPages(open && ready))
   if (identity !== activeIdentity) {
@@ -114,6 +115,7 @@ export const useSearchResults = (
           }
         } else if (projectIds.length > 0 && category === 'messages') {
           const result = await window.api.sessions.searchMessages({
+            clientId,
             projectIds,
             excludedSessionIds,
             updatedAfter,
@@ -121,13 +123,13 @@ export const useSearchResults = (
             role,
             query,
             limit: 10,
-            offset: append ? previous.offset : undefined
+            cursor: append ? previous.cursor : undefined
           })
           page = {
             ...page,
             items: result.items.map((item) => ({ kind: 'messages', item })),
             totalCount: result.totalCount,
-            offset: result.nextOffset,
+            cursor: result.nextCursor,
             incomplete: !result.isComplete
           }
         } else if (projectIds.length > 0 && (category === 'uploads' || category === 'generated')) {
@@ -177,7 +179,7 @@ export const useSearchResults = (
         if (generation.current === version) pending.current.delete(category)
       }
     },
-    [open, ready, query, scopeKey]
+    [open, ready, query, scopeKey, clientId]
   )
 
   useEffect(() => {

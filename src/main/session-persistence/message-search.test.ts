@@ -35,6 +35,98 @@ const session = (id: string, overrides = {}): PersistedChatSession =>
   }) as PersistedChatSession
 
 describe('message body search', () => {
+  it.each([false, true])(
+    'does not cancel independent callers (explicit identities: %s)',
+    async (identified) => {
+      let release!: () => void
+      const loadOne = vi.fn(async () => {
+        await new Promise<void>((resolve) => {
+          release = resolve
+        })
+        return session('s')
+      })
+      const search = createMessageSearch({
+        list: async () => ({ sessions: [summary('s')] }),
+        loadOne
+      })
+      const first = search({
+        projectIds: ['p'],
+        query: 'before',
+        limit: 10,
+        ...(identified ? { clientId: 'window-a' } : {})
+      })
+      await vi.waitFor(() => expect(loadOne).toHaveBeenCalledOnce())
+      loadOne.mockImplementation(async () => session('s'))
+      const second = search({
+        projectIds: ['p'],
+        query: 'after',
+        limit: 10,
+        ...(identified ? { clientId: 'window-b' } : {})
+      })
+      release()
+      for (const page of await Promise.all([first, second]))
+        expect(page).toMatchObject({ totalCount: 12, isComplete: true })
+    }
+  )
+
+  it('continues after a deleted page anchor without skipping remaining messages', async () => {
+    let revision = 1
+    const transcript = session('s')
+    const search = createMessageSearch({
+      list: async () => ({ sessions: [summary('s', { revision })] }),
+      loadOne: async () => transcript
+    })
+    const request = { projectIds: ['p'], query: 'query', limit: 10 }
+    const first = await search(request)
+    expect(first.items.map((item) => item.messageId)).toEqual([
+      's-11',
+      's-10',
+      's-9',
+      's-8',
+      's-7',
+      's-6',
+      's-5',
+      's-4',
+      's-3',
+      's-2'
+    ])
+    transcript.messages = transcript.messages.filter((message) => message.id !== 's-2')
+    revision++
+    const second = await search({ ...request, cursor: first.nextCursor })
+    expect(second.items.map((item) => item.messageId)).toEqual(['s-1', 's-0'])
+    expect(second.nextCursor).toBeUndefined()
+  })
+
+  it('marks bounded search excerpts that need a complete detail read', async () => {
+    const content = 'Heading\n' + 'Context\n'.repeat(1200) + 'needle\nFinal paragraph.'
+    const search = createMessageSearch({
+      list: async () => ({ sessions: [summary('s')] }),
+      loadOne: async () => session('s', { messages: [{ id: 'long', role: 'user', content }] })
+    })
+    const page = await search({ projectIds: ['p'], query: 'needle', limit: 10 })
+    expect(page.items[0]).toMatchObject({ messageId: 'long', contentTruncated: true })
+    expect(page.items[0]!.content).toContain('needle')
+    expect(page.items[0]!.content.length).toBeLessThan(content.length)
+  })
+
+  it('rejects a cursor reused with another query, sort or project scope', async () => {
+    const search = createMessageSearch({
+      list: async () => ({ sessions: [summary('s')] }),
+      loadOne: async () => session('s')
+    })
+    const request = { projectIds: ['p'], query: 'query', limit: 10 }
+    const first = await search(request)
+    for (const changed of [
+      { query: 'before' },
+      { sort: 'recent' as const },
+      { projectIds: ['other'] }
+    ]) {
+      await expect(search({ ...request, ...changed, cursor: first.nextCursor })).rejects.toThrow(
+        /cursor/i
+      )
+    }
+  })
+
   it('groups matching agent fragments by turn before counting and paging, retaining the best hit target', async () => {
     const search = createMessageSearch({
       list: async () => ({ sessions: [summary('s')] }),
@@ -67,9 +159,10 @@ describe('message body search', () => {
         })
     })
     const request = { projectIds: ['p'], query: 'needle', sort: 'relevance' as const, limit: 2 }
-    expect(await search(request)).toMatchObject({
+    const first = await search(request)
+    expect(first).toMatchObject({
       totalCount: 3,
-      nextOffset: 2,
+      nextCursor: expect.any(String),
       items: [
         {
           messageId: 'answer',
@@ -79,9 +172,9 @@ describe('message body search', () => {
         { messageId: 'follow-up' }
       ]
     })
-    expect(await search({ ...request, offset: 2 })).toMatchObject({
+    expect(await search({ ...request, cursor: first.nextCursor })).toMatchObject({
       totalCount: 3,
-      nextOffset: undefined,
+      nextCursor: undefined,
       items: [{ messageId: 'prompt', role: 'user' }]
     })
     expect(await search({ ...request, sort: 'recent' })).toMatchObject({
@@ -193,14 +286,15 @@ describe('message body search', () => {
       role: 'user' as const,
       sort: 'relevance' as const
     }
-    expect(await search(request)).toMatchObject({
+    const first = await search(request)
+    expect(first).toMatchObject({
       totalCount: 2,
-      nextOffset: 1,
+      nextCursor: expect.any(String),
       items: [{ messageId: 'relevant', title: 'Actual heading' }]
     })
-    expect(await search({ ...request, offset: 1 })).toMatchObject({
+    expect(await search({ ...request, cursor: first.nextCursor })).toMatchObject({
       items: [{ messageId: 'recent' }],
-      nextOffset: undefined
+      nextCursor: undefined
     })
     expect(await search({ ...request, sort: 'recent' })).toMatchObject({
       items: [{ messageId: 'recent' }]
@@ -223,7 +317,7 @@ describe('message body search', () => {
     })
     const list = vi.fn(async () => catalog)
     const search = createMessageSearch({ list, loadOne })
-    const request = { projectIds: ['p'], query: 'query', limit: 10 }
+    const request = { clientId: 'same-window', projectIds: ['p'], query: 'query', limit: 10 }
     const first = search(request)
     await vi.waitFor(() => expect(loadOne).toHaveBeenCalledTimes(1))
     list.mockImplementationOnce(
@@ -266,9 +360,9 @@ describe('message body search', () => {
       list: async () => ({ sessions: Array.from({ length: 12 }, (_, i) => summary(String(i))) }),
       loadOne
     })
-    const first = search({ projectIds: ['p'], query: 'old', limit: 10 })
+    const first = search({ clientId: 'same-window', projectIds: ['p'], query: 'old', limit: 10 })
     await new Promise((resolve) => setTimeout(resolve, 1))
-    const second = search({ projectIds: ['p'], query: 'query', limit: 10 })
+    const second = search({ clientId: 'same-window', projectIds: ['p'], query: 'query', limit: 10 })
     await Promise.all([first, second])
     expect(maximum).toBeLessThanOrEqual(4)
     expect(loadOne.mock.calls.length).toBeLessThan(24)
@@ -290,9 +384,9 @@ describe('message body search', () => {
     expect(first.totalCount).toBe(12)
     expect(first.items).toHaveLength(10)
     expect(first.items[0]).toMatchObject({ messageId: 's-11', sessionId: 's', projectId: 'p' })
-    const second = await search({ ...request, offset: first.nextOffset })
+    const second = await search({ ...request, cursor: first.nextCursor })
     expect(second.items.map((item) => item.messageId)).toEqual(['s-1', 's-0'])
-    expect(second.nextOffset).toBeUndefined()
+    expect(second.nextCursor).toBeUndefined()
     expect(loadOne).toHaveBeenCalledTimes(1)
   })
   it('invalidates revision caches and reports partial failures without losing healthy results', async () => {

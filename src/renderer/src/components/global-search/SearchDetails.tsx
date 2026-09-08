@@ -22,6 +22,7 @@ import type { ProjectFileItem } from '../../../../shared/project-files'
 import type { LiteratureItemView } from '../../../../shared/literature'
 import type { Project } from '../../../../shared/projects'
 import { STANDALONE_UPLOAD_SESSION_ID } from '../../../../shared/uploads'
+import { isHiddenControlMessage } from '../../../../shared/session-persistence'
 import { AgentMarkdown } from '@/components/streamdown/AgentMarkdown'
 import {
   filePreviewItem,
@@ -72,8 +73,11 @@ export const SearchDetails = ({
   const [papers, setPapers] = useState<LiteratureItemView[]>([])
   const [hasMoreRecentItems, setHasMoreRecentItems] = useState(false)
   const [collectionNames, setCollectionNames] = useState<string>()
+  const [completeMessage, setCompleteMessage] = useState<string>()
   const initialStatus =
-    result.kind === 'sessions' || (result.kind === 'library' && !('item' in result.item))
+    result.kind === 'sessions' ||
+    (result.kind === 'messages' && result.item.contentTruncated) ||
+    (result.kind === 'library' && !('item' in result.item))
       ? 'loading'
       : 'idle'
   const [status, setStatus] = useState<'idle' | 'loading' | 'error'>(initialStatus)
@@ -86,6 +90,7 @@ export const SearchDetails = ({
     setPapers([])
     setHasMoreRecentItems(false)
     setCollectionNames(undefined)
+    setCompleteMessage(undefined)
     setFileCount(undefined)
     setFileCountUnavailable(false)
     setStatus(initialStatus)
@@ -118,7 +123,31 @@ export const SearchDetails = ({
 
   useEffect(() => {
     let active = true
-    if (result.kind === 'projects') {
+    if (result.kind === 'messages' && result.item.contentTruncated) {
+      // Search pages carry bounded excerpts. Hydrate only the selected Message, and discard a
+      // delayed read when the selection changes so it cannot replace another result's preview.
+      void window.api.sessions
+        .loadOne({ projectId: result.item.projectId, sessionId: result.item.sessionId })
+        .then((transcript) => {
+          if (!active) return
+          const message =
+            transcript?.archivedAt === undefined
+              ? transcript?.messages.find(
+                  (message) =>
+                    message.id === result.item.messageId && !isHiddenControlMessage(message)
+                )
+              : undefined
+          if (!message) {
+            setStatus('error')
+            return
+          }
+          setCompleteMessage(message.content)
+          setStatus('idle')
+        })
+        .catch(() => {
+          if (active) setStatus('error')
+        })
+    } else if (result.kind === 'projects') {
       void window.api.projectFiles
         .getOverview({ projectId: result.item.id })
         .then((overview) => {
@@ -495,9 +524,13 @@ export const SearchDetails = ({
         aria-labelledby={tabs.length ? `search-detail-tab-${tab}` : undefined}
       >
         {result.kind === 'messages' ? (
-          <SearchContentHighlight query={query} className="search-message-content">
-            <AgentMarkdown content={result.item.content} />
-          </SearchContentHighlight>
+          (!result.item.contentTruncated || completeMessage !== undefined) && (
+            <SearchContentHighlight query={query} className="search-message-content">
+              <AgentMarkdown
+                content={result.item.contentTruncated ? completeMessage! : result.item.content}
+              />
+            </SearchContentHighlight>
+          )
         ) : tab === 'details' ? (
           details()
         ) : tab === 'preview' ||
@@ -580,7 +613,13 @@ export const SearchDetails = ({
           </div>
         )}
         {tab === 'content' && status === 'error' && (
-          <ErrorNotice title={t('Could not load recent content.')} />
+          <ErrorNotice
+            title={
+              result.kind === 'messages'
+                ? t('The source message is no longer available.')
+                : t('Could not load recent content.')
+            }
+          />
         )}
         {tab === 'content' &&
           status === 'idle' &&

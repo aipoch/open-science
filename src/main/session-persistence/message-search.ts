@@ -11,6 +11,7 @@ import {
   type SessionSummary
 } from '../../shared/session-persistence'
 import { findSearchMatches } from '../../shared/search-text'
+import { z } from 'zod'
 
 type SearchBackend = {
   list: () => Promise<{
@@ -20,14 +21,38 @@ type SearchBackend = {
   loadOne: (request: LoadSessionRequest) => Promise<PersistedChatSession | undefined>
 }
 
+const cursorSchema = z
+  .object({
+    queryKey: z.string(),
+    rank: z.number().int().min(0).max(3),
+    createdAt: z.number(),
+    projectId: z.string(),
+    sessionId: z.string(),
+    messageId: z.string()
+  })
+  .strict()
+type MessagePosition = Omit<z.infer<typeof cursorSchema>, 'queryKey'>
+const comparePositions = (a: MessagePosition, b: MessagePosition): number =>
+  b.rank - a.rank ||
+  b.createdAt - a.createdAt ||
+  a.projectId.localeCompare(b.projectId) ||
+  a.sessionId.localeCompare(b.sessionId) ||
+  a.messageId.localeCompare(b.messageId)
+type SearchSnapshot = {
+  items: MessageSearchItem[]
+  ranks: Map<MessageSearchItem, number>
+  isComplete: boolean
+}
+type ClientSearch = {
+  query: string
+  generation: number
+  cache?: { key: string; generation: number; page: Promise<SearchSnapshot> }
+}
+
 export const createMessageSearch = (backend: SearchBackend) => {
-  // Only retain the latest query. Summary revisions invalidate pages without hydrating transcripts
-  // into the renderer; failed reads are retried instead of caching an incomplete snapshot.
-  let cache:
-    | { key: string; generation: number; page: Promise<Omit<MessageSearchPage, 'nextOffset'>> }
-    | undefined
-  let generation = 0
-  let latestQuery = ''
+  // Cancellation belongs to a search surface, not the shared main-process service. Callers without
+  // a client identity have independent queries; bounded retention also releases closed windows.
+  const clients = new Map<string, ClientSearch>()
   let scanning: Promise<unknown> = Promise.resolve()
   return async (input: MessageSearchRequest): Promise<MessageSearchPage> => {
     const request = messageSearchRequestSchema.parse(input)
@@ -39,15 +64,26 @@ export const createMessageSearch = (backend: SearchBackend) => {
       request.role,
       request.sort
     ])
-    if (queryKey !== latestQuery) {
-      latestQuery = queryKey
-      generation++
+    const clientKey = request.clientId ? `client:${request.clientId}` : `query:${queryKey}`
+    const client = clients.get(clientKey) ?? { query: '', generation: 0 }
+    clients.delete(clientKey)
+    clients.set(clientKey, client)
+    if (clients.size > 32) clients.delete(clients.keys().next().value!)
+    if (queryKey !== client.query) {
+      client.query = queryKey
+      client.generation++
     }
-    const requestGeneration = generation
+    const requestGeneration = client.generation
+    const cursor = request.cursor
+      ? cursorSchema.parse(JSON.parse(Buffer.from(request.cursor, 'base64url').toString()))
+      : undefined
+    if (cursor && cursor.queryKey !== queryKey)
+      throw new Error('Message cursor does not match the requested search.')
     const projects = new Set(request.projectIds)
     const excluded = new Set(request.excludedSessionIds)
     const { sessions: all, diagnostics } = await backend.list()
-    if (requestGeneration !== generation) return { items: [], totalCount: 0, isComplete: false }
+    if (requestGeneration !== client.generation)
+      return { items: [], totalCount: 0, isComplete: false }
     const catalogComplete =
       diagnostics?.isComplete !== false && diagnostics?.isProjectDeletionRecoveryComplete !== false
     const sessions = all
@@ -58,7 +94,7 @@ export const createMessageSearch = (backend: SearchBackend) => {
       catalogComplete,
       sessions.map((s) => [s.projectId, s.id, s.revision, s.updatedAt])
     ])
-    if (cache?.key !== key || cache.generation !== requestGeneration) {
+    if (client.cache?.key !== key || client.cache.generation !== requestGeneration) {
       const page = scanning
         .catch(() => undefined)
         .then(async () => {
@@ -68,7 +104,7 @@ export const createMessageSearch = (backend: SearchBackend) => {
           let next = 0
           await Promise.all(
             Array.from({ length: Math.min(4, sessions.length) }, async () => {
-              while (next < sessions.length && requestGeneration === generation) {
+              while (next < sessions.length && requestGeneration === client.generation) {
                 const summary = sessions[next++]!
                 try {
                   const session = await backend.loadOne({
@@ -105,6 +141,10 @@ export const createMessageSearch = (backend: SearchBackend) => {
                     )
                       continue
                     const start = Math.max(0, (hit?.start ?? 0) - 4000)
+                    const content = message.content.slice(
+                      start,
+                      Math.max(hit?.end ?? 0, start) + 4000
+                    )
                     const item: MessageSearchItem = {
                       projectId: summary.projectId,
                       sessionId: summary.id,
@@ -113,7 +153,10 @@ export const createMessageSearch = (backend: SearchBackend) => {
                       messageId: message.id,
                       role: message.role,
                       title: message.content.trim().slice(0, 240).split(/\r?\n/, 1)[0],
-                      content: message.content.slice(start, Math.max(hit?.end ?? 0, start) + 4000),
+                      content,
+                      ...(content.length < message.content.length
+                        ? { contentTruncated: true }
+                        : {}),
                       createdAt
                     }
                     turnHits.set(turnKey, { item, rank })
@@ -128,31 +171,42 @@ export const createMessageSearch = (backend: SearchBackend) => {
               }
             })
           )
-          items.sort(
-            (a, b) =>
-              (ranks.get(b) ?? 0) - (ranks.get(a) ?? 0) ||
-              b.createdAt - a.createdAt ||
-              a.projectId.localeCompare(b.projectId) ||
-              a.sessionId.localeCompare(b.sessionId) ||
-              a.messageId.localeCompare(b.messageId)
+          items.sort((a, b) =>
+            comparePositions({ ...a, rank: ranks.get(a) ?? 0 }, { ...b, rank: ranks.get(b) ?? 0 })
           )
           return {
             items,
-            totalCount: items.length,
-            isComplete: isComplete && requestGeneration === generation
+            ranks,
+            isComplete: isComplete && requestGeneration === client.generation
           }
         })
       scanning = page
-      cache = { key, generation: requestGeneration, page }
+      client.cache = { key, generation: requestGeneration, page }
     }
-    const pending = cache
+    const pending = client.cache
     const result = await pending.page
-    if (!result.isComplete && cache === pending) cache = undefined
-    const offset = request.offset ?? 0
+    if (!result.isComplete && client.cache === pending) client.cache = undefined
+    // A deleted/reordered earlier hit must not shift the next page's starting position.
+    const position = (item: MessageSearchItem): MessagePosition => ({
+      rank: result.ranks.get(item) ?? 0,
+      createdAt: item.createdAt,
+      projectId: item.projectId,
+      sessionId: item.sessionId,
+      messageId: item.messageId
+    })
+    const remaining = cursor
+      ? result.items.filter((item) => comparePositions(position(item), cursor) > 0)
+      : result.items
+    const items = remaining.slice(0, request.limit)
+    const last = items.at(-1)
     return {
-      ...result,
-      items: result.items.slice(offset, offset + request.limit),
-      nextOffset: offset + request.limit < result.totalCount ? offset + request.limit : undefined
+      items,
+      totalCount: result.items.length,
+      isComplete: result.isComplete,
+      nextCursor:
+        remaining.length > request.limit && last
+          ? Buffer.from(JSON.stringify({ queryKey, ...position(last) })).toString('base64url')
+          : undefined
     }
   }
 }
