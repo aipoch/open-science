@@ -314,6 +314,223 @@ const flushProjectFiles = async (): Promise<void> => {
   })
 }
 
+describe('ComposerEditor mention input safety', () => {
+  it('does not insert a prior-project reference into an identical unsaved project draft', async () => {
+    window.api.literature = {
+      ...window.api.literature,
+      search: vi.fn().mockImplementation((request) => {
+        if (request.scope === 'collections') return Promise.resolve({ entries: [] })
+        if (request.projectId === 'project-b') return new Promise(() => undefined)
+        return Promise.resolve({
+          entries: [
+            {
+              id: 'project-a-only-item',
+              metadataRevision: 7,
+              attachments: [],
+              projectIds: ['default'],
+              collectionIds: [],
+              createdAt: 1,
+              updatedAt: 1,
+              item: {
+                itemType: 'journalArticle',
+                title: 'UniquePaper',
+                abstract: '',
+                issuedText: '',
+                containerTitle: '',
+                shortTitle: '',
+                language: '',
+                rights: '',
+                url: '',
+                extra: '',
+                typeFields: {},
+                creators: [],
+                identifiers: []
+              }
+            }
+          ]
+        })
+      })
+    }
+    const doc: ComposerDoc = { nodes: [{ type: 'text', text: '@Unique' }] }
+    renderEditor({ doc })
+    await typeQuery('@Unique')
+    await vi.waitFor(() =>
+      expect(document.body.querySelector('[role="option"]')?.textContent).toContain('UniquePaper')
+    )
+    await act(async () => useNavigationStore.setState({ activeProjectId: 'project-b' }))
+    renderEditor({ doc: { nodes: [{ type: 'text', text: '@Unique' }] } })
+    act(() => document.body.querySelector<HTMLElement>('[role="option"]')?.click())
+    expect(useNavigationStore.getState().activeProjectId).toBe('project-b')
+    expect(
+      domToDoc(editor()).nodes.some(
+        (node) => node.type === 'literature' && node.itemId === 'project-a-only-item'
+      )
+    ).toBe(false)
+    expect(document.body.querySelector('[role="listbox"]')).toBeNull()
+  })
+
+  const typeQuery = async (text: string): Promise<void> => {
+    act(() => {
+      editor().textContent = text
+      setCaret(editor().firstChild!, text.length)
+      editor().dispatchEvent(new Event('input', { bubbles: true }))
+    })
+    await flushProjectFiles()
+  }
+
+  it.each([
+    { key: 'Enter', query: '@', outputFirst: true },
+    { key: 'Tab', query: '@', outputFirst: true },
+    { key: 'Enter', query: '@seq', outputFirst: true },
+    { key: 'Enter', query: '@', outputFirst: false }
+  ])(
+    'inserts the hovered upload with $key for $query (output first: $outputFirst)',
+    async ({ key, query, outputFirst }) => {
+      window.api.projectFiles.listFiles = vi.fn().mockResolvedValue({
+        items: outputFirst ? [pickerProjectFiles[1], pickerProjectFiles[0]] : pickerProjectFiles,
+        totalCount: 2
+      })
+      renderEditor()
+      await typeQuery(query)
+      const upload = Array.from(
+        document.body.querySelectorAll<HTMLElement>('[role="option"]')
+      ).find((option) => option.textContent?.includes('sequence.csv'))!
+      act(() => upload.dispatchEvent(new MouseEvent('mouseover', { bubbles: true })))
+      expect(upload.getAttribute('aria-selected')).toBe('true')
+      dispatchKey(editor(), key)
+      await flushProjectFiles()
+      expect(editor().querySelector('[data-mention-type]')?.textContent).toBe('@sequence.csv')
+    }
+  )
+
+  it.each(['/lit', '@seq', '#'])(
+    'preserves %s while Enter confirms IME composition',
+    async (query) => {
+      renderEditor()
+      await typeQuery(query)
+      expect(document.body.querySelector('[role="option"]')).not.toBeNull()
+      act(() => {
+        editor().dispatchEvent(new CompositionEvent('compositionstart', { bubbles: true }))
+      })
+      dispatchKey(editor(), 'Enter', { isComposing: true })
+      await flushProjectFiles()
+      expect(editor().querySelector('[data-mention-type]')).toBeNull()
+      expect(editor().textContent).toBe(query)
+      expect(document.body.querySelector('[role="listbox"]')).not.toBeNull()
+    }
+  )
+
+  it.each(
+    ['/lit', '@seq', '#'].flatMap((query) =>
+      ['Enter', 'ArrowDown', 'ArrowUp', 'Escape', 'Tab'].map((key) => ({ query, key }))
+    )
+  )('leaves $key to composition for $query without a native flag', async ({ query, key }) => {
+    renderEditor()
+    await typeQuery(query)
+    const active = editor().getAttribute('aria-activedescendant')
+    act(() => editor().dispatchEvent(new CompositionEvent('compositionstart', { bubbles: true })))
+    const event = new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true })
+    act(() => editor().dispatchEvent(event))
+    await flushProjectFiles()
+    expect(event.defaultPrevented).toBe(false)
+    expect(editor().textContent).toBe(query)
+    expect(editor().getAttribute('aria-activedescendant')).toBe(active)
+    expect(document.body.querySelector('[role="listbox"]')).not.toBeNull()
+    act(() => editor().dispatchEvent(new CompositionEvent('compositionend', { bubbles: true })))
+    dispatchKey(editor(), 'Enter')
+    await flushProjectFiles()
+    expect(editor().querySelector('[data-mention-type]')).not.toBeNull()
+  })
+
+  it.each(['another token', 'cancel', 'replace draft', 'switch session', 'new selection'])(
+    'ignores an earlier file lookup after %s',
+    async (change) => {
+      const inspect = vi.mocked(window.api.managedFileVersions.inspect)
+      const result = await inspect({ source: 'upload', projectId: 'default', fileId: 'up-1' })
+      let resolve!: (value: typeof result) => void
+      inspect.mockImplementationOnce(
+        () =>
+          new Promise((done) => {
+            resolve = done
+          })
+      )
+      renderEditor({ mentionPreviewContext: { sessionId: 'session-1', projectId: 'default' } })
+      await typeQuery(change === 'another token' ? '@seq @seq' : '@seq')
+      dispatchKey(editor(), 'Enter')
+      let expected = '@seq'
+      if (change === 'another token') {
+        act(() => {
+          setCaret(editor().firstChild!, 4)
+          document.dispatchEvent(new Event('selectionchange'))
+        })
+        expected = '@seq @seq'
+      } else if (change === 'cancel') {
+        dispatchKey(editor(), 'Escape')
+      } else if (change === 'switch session') {
+        renderEditor({
+          doc: { nodes: [{ type: 'text', text: '@seq' }] },
+          mentionPreviewContext: { sessionId: 'session-2', projectId: 'default' }
+        })
+      } else if (change === 'replace draft') {
+        renderEditor({
+          doc: { nodes: [{ type: 'text', text: '@seq new draft' }] },
+          mentionPreviewContext: { sessionId: 'session-1', projectId: 'default' }
+        })
+        // Preserve the query while replacing the controlled draft through public props.
+        act(() => {
+          setCaret(editor().firstChild!, 4)
+          document.dispatchEvent(new Event('selectionchange'))
+        })
+        expected = '@seq new draft'
+      } else {
+        await typeQuery('@report')
+        dispatchKey(editor(), 'Enter')
+        await flushProjectFiles()
+        expected = '@report.pdf'
+      }
+      await act(async () => resolve(result))
+      expect(editor().textContent).toBe(expected)
+      expect(editor().querySelectorAll('[data-mention-type]')).toHaveLength(
+        change === 'new selection' ? 1 : 0
+      )
+    }
+  )
+
+  it('preserves a newer file query when an earlier version lookup finishes', async () => {
+    const inspect = vi.mocked(window.api.managedFileVersions.inspect)
+    const result = await inspect({ source: 'upload', projectId: 'default', fileId: 'up-1' })
+    let resolve!: (value: typeof result) => void
+    inspect.mockClear()
+    inspect.mockImplementationOnce(
+      () =>
+        new Promise((done) => {
+          resolve = done
+        })
+    )
+    renderEditor()
+    await typeQuery('@seq')
+    expect(document.body.querySelector('[role="option"]')?.textContent).toContain('sequence.csv')
+    dispatchKey(editor(), 'Enter')
+    expect(inspect).toHaveBeenCalledOnce()
+    await typeQuery('@report')
+    expect(document.body.querySelector('[role="option"]')?.textContent).toContain('report.pdf')
+    await act(async () => resolve(result))
+    expect(editor().textContent).toBe('@report')
+    expect(editor().querySelector('[data-mention-type]')).toBeNull()
+  })
+
+  it.each([
+    ['/does-not-exist', 'No matching skills'],
+    ['#999999999', 'No matching sessions']
+  ])('explains empty suggestions for %s', async (query, message) => {
+    renderEditor()
+    await typeQuery(query)
+    expect(document.body.querySelector('[role="listbox"]')).not.toBeNull()
+    expect(document.body.querySelectorAll('[role="option"]')).toHaveLength(0)
+    expect(document.body.textContent).toContain(message)
+  })
+})
+
 describe('ComposerEditor', () => {
   it('shows the placeholder when the doc is empty and hides it once there is content', () => {
     renderEditor({ doc: emptyDoc })

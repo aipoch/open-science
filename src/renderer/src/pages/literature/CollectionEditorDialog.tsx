@@ -163,6 +163,7 @@ export const CollectionEditorDialog = forwardRef<
                 </label>
                 <Input
                   id="collection-form-name"
+                  disabled={saving}
                   aria-required={true}
                   value={name}
                   onChange={(event) => setName(event.target.value)}
@@ -203,6 +204,7 @@ export const CollectionEditorDialog = forwardRef<
                 </div>
                 <Textarea
                   id="collection-form-description"
+                  disabled={saving}
                   value={description}
                   onChange={(event) => setDescription(event.target.value)}
                   placeholder={t('Describe what this collection is for…')}

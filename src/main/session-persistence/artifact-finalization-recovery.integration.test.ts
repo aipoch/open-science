@@ -12,12 +12,15 @@ vi.mock('electron', () => ({
   shell: { openPath: vi.fn() }
 }))
 
-import { createLinearConversationGraph } from '../../shared/conversation-graph'
+import {
+  createLinearConversationGraph,
+  rebindConversationGraphSessionId
+} from '../../shared/conversation-graph'
 import {
   ARTIFACT_FINALIZATION_INVALID_PROOF,
   type ReconcilePendingArtifactsRequest
 } from '../../shared/artifacts'
-import type { PersistedChatSession } from '../../shared/session-persistence'
+import type { PersistedChatMessage, PersistedChatSession } from '../../shared/session-persistence'
 import { createPngBytes, createPngInlineSource } from '../artifacts/artifact-test-fixtures'
 import { ProvenanceMessageSnapshotRepository } from '../artifacts/provenance-message-snapshot'
 import { ArtifactProvenanceRepository } from '../artifacts/provenance-repository'
@@ -297,14 +300,15 @@ describe('artifact finalization startup recovery', () => {
     }
   )
 
-  it.each([
-    'missing-metadata',
-    'partial-run',
-    'competing-owner',
-    'missing-projection',
-    'later-turn'
-  ] as const)('keeps ambiguous recovery unpublished with %s', async (scenario) => {
-    const { session, versions, provenance, compatibility } = await prepareAttachedRecovery(2)
+  it.each(
+    (['missing-metadata', 'partial-run', 'competing-owner', 'missing-projection'] as const).flatMap(
+      (scenario) => [false, true].map((earlierMessage) => ({ scenario, earlierMessage }))
+    )
+  )('keeps ambiguous recovery unpublished with %j', async ({ scenario, earlierMessage }) => {
+    const { session, versions, provenance, compatibility } = await prepareAttachedRecovery(
+      2,
+      earlierMessage
+    )
     const graph = session.conversationGraph!
     const owner = graph.messages.find((message) => message.id === 'message-1')!
     if (scenario === 'missing-metadata') session.artifacts = []
@@ -312,30 +316,8 @@ describe('artifact finalization startup recovery', () => {
       owner.artifactIds = [versions[0].versionId]
       session.messages.at(-1)!.artifactIds = owner.artifactIds
     }
-    if (scenario === 'competing-owner') graph.messages[1].artifactIds = [versions[0].versionId]
+    if (scenario === 'competing-owner') graph.messages[0].artifactIds = [versions[0].versionId]
     if (scenario === 'missing-projection') session.messages.at(-1)!.artifactIds = []
-    if (scenario === 'later-turn') {
-      graph.messages.push(
-        {
-          ...owner,
-          id: 'next-prompt',
-          role: 'user',
-          status: 'complete',
-          artifactIds: undefined,
-          revisionRootMessageId: 'next-prompt',
-          parentMessageId: owner.id
-        },
-        {
-          ...owner,
-          id: 'later-owner',
-          revisionRootMessageId: 'later-owner',
-          parentMessageId: 'next-prompt'
-        }
-      )
-      graph.branches[0].headMessageId = 'later-owner'
-      owner.artifactIds = []
-      session.messages.at(-1)!.artifactIds = []
-    }
     const result = await provenance.reconcileSession(PROJECT_ID, SESSION_ID, session)
     expect(result.unresolvedNativeFinalizationRunIds).toContain(RUN_ID)
     for (const version of versions) {
@@ -356,6 +338,46 @@ describe('artifact finalization startup recovery', () => {
     expect(pending).toHaveLength(2)
     for (const file of pending)
       expect(await readFile(file.path)).toEqual(createPngBytes('recovered bytes'))
+  })
+
+  it('prefers a complete durable claim after a later prompt over the turn window', async () => {
+    const { session, versions, coordinator, request } = await prepareAttachedRecovery()
+    const owner = session.messages.at(-1)!
+    // A complete durable claim is authoritative even when an ordinary user prompt intervenes.
+    // An unclaimed later Message must never be inferred from its position alone.
+    session.messages.push(
+      {
+        ...owner,
+        id: 'next-prompt',
+        role: 'user',
+        content: 'another task',
+        status: 'complete',
+        artifactIds: undefined
+      },
+      { ...owner, id: 'later-owner' }
+    )
+    owner.artifactIds = undefined
+    session.conversationGraph = createLinearConversationGraph({
+      sessionId: SESSION_ID,
+      messages: session.messages,
+      frameworkId: 'codex',
+      createdAt: 1,
+      updatedAt: 3
+    })
+    await sessions.saveSession(session)
+    const retry = { ...request, messageId: 'later-owner' }
+    const recovered = await coordinator.retryArtifactFinalization(retry)
+    expect(recovered).toMatchObject({
+      artifacts: [expect.objectContaining({ versionId: versions[0].versionId })]
+    })
+    await expect(
+      client.artifactVersion.findUniqueOrThrow({ where: { id: versions[0].versionId } })
+    ).resolves.toMatchObject({
+      state: 'finalized',
+      messageId: 'later-owner',
+      managedVisibleAt: expect.any(Date)
+    })
+    await expect(coordinator.retryArtifactFinalization(retry)).resolves.toEqual(recovered)
   })
 
   it('uses the attached owner even when another assistant message follows it', async () => {
@@ -461,6 +483,160 @@ describe('artifact finalization startup recovery', () => {
       artifacts: [expect.objectContaining({ versionId: versions[0].versionId })]
     })
   })
+
+  it.each([0, 1, 2])(
+    'recovers the run after Plan review feedback interleaves a user Message after %i commentary messages',
+    async (commentaryCount) => {
+      const { session, versions, coordinator, request, handlers } = await prepareAttachedRecovery()
+      const feedback: PersistedChatMessage = {
+        id: 'plan-feedback-1',
+        role: 'user',
+        content: 'tighten step 2',
+        status: 'complete',
+        eventIds: [],
+        createdAt: 2,
+        updatedAt: 2
+      }
+      const commentary = Array.from({ length: commentaryCount }, (_, index) => ({
+        ...session.messages[1],
+        id: `before-feedback-${index}`
+      }))
+      const messages = [session.messages[0], ...commentary, feedback, ...session.messages.slice(1)]
+      session.messages = messages
+      session.conversationGraph = createLinearConversationGraph({
+        sessionId: SESSION_ID,
+        messages: messages.map(
+          ({ id, role, content, status, eventIds, createdAt, updatedAt, artifactIds }) => ({
+            id,
+            role,
+            content,
+            status,
+            eventIds,
+            createdAt,
+            updatedAt,
+            artifactIds
+          })
+        ),
+        frameworkId: 'codex',
+        createdAt: 1,
+        updatedAt: 3
+      })
+      await sessions.saveSession(session)
+      const identity = {
+        projectId: PROJECT_ID,
+        fileId: versions[0].artifactId,
+        path: versions[0].path
+      }
+      await expect(handlers.readPreview(identity)).rejects.toMatchObject({
+        code: 'VERSION_NOT_FOUND',
+        message: 'Managed file has no published version.'
+      })
+
+      await expect.soft(coordinator.retryArtifactFinalization(request)).resolves.toMatchObject({
+        artifacts: [expect.objectContaining({ versionId: versions[0].versionId })]
+      })
+      await expect(
+        client.artifactVersion.findUniqueOrThrow({ where: { id: versions[0].versionId } })
+      ).resolves.toMatchObject({
+        state: 'finalized',
+        messageId: 'message-1',
+        managedVisibleAt: expect.any(Date)
+      })
+      await expect(
+        client.artifactLineage.findUniqueOrThrow({ where: { id: versions[0].artifactId } })
+      ).resolves.toMatchObject({ currentVersionId: versions[0].versionId })
+      await expect(
+        handlers.readPreview({ ...identity, encoding: 'base64' })
+      ).resolves.toMatchObject({
+        content: createPngBytes('recovered bytes').toString('base64')
+      })
+    }
+  )
+
+  it('leaves an unclaimed run unresolved when a user Message interleaves the turn', async () => {
+    const { session, coordinator, request } = await prepareAttachedRecovery()
+    const feedback: PersistedChatMessage = {
+      id: 'plan-feedback-1',
+      role: 'user',
+      content: 'tighten step 2',
+      status: 'complete',
+      eventIds: [],
+      createdAt: 2,
+      updatedAt: 2
+    }
+    const messages = [session.messages[0], feedback, ...session.messages.slice(1)]
+    session.artifacts = []
+    for (const message of messages) message.artifactIds = undefined
+    session.messages = messages
+    session.conversationGraph = createLinearConversationGraph({
+      sessionId: SESSION_ID,
+      messages: messages.map(({ id, role, content, status, eventIds, createdAt, updatedAt }) => ({
+        id,
+        role,
+        content,
+        status,
+        eventIds,
+        createdAt,
+        updatedAt
+      })),
+      frameworkId: 'codex',
+      createdAt: 1,
+      updatedAt: 3
+    })
+    await sessions.saveSession(session)
+
+    await expect(coordinator.retryArtifactFinalization(request)).rejects.toThrow(
+      'Native Artifact finalization remains unresolved.'
+    )
+  })
+
+  it.each([false, true])(
+    'preserves a historical root during recovery with conflicting Artifact scope: %s',
+    async (conflicting) => {
+      const historicalSessionId = 'pending-session-123-1'
+      const compatibility = new ArtifactRepository(storageRoot)
+      const { provenance, version } = await prepareRecovery(
+        compatibility,
+        1,
+        conflicting ? SESSION_ID : historicalSessionId
+      )
+      const persisted = await sessions.loadSession(PROJECT_ID, SESSION_ID)
+      if (!persisted?.conversationGraph)
+        throw new Error('Recovery fixture Session graph is missing.')
+      await sessions.saveSession({
+        ...persisted,
+        conversationGraph: rebindConversationGraphSessionId(
+          persisted.conversationGraph,
+          SESSION_ID,
+          historicalSessionId
+        )
+      })
+      const coordinator = new SessionPersistenceCoordinator(
+        sessions,
+        files,
+        undefined,
+        undefined,
+        undefined,
+        provenance
+      )
+
+      const loaded = await coordinator.loadAll()
+
+      expect(loaded.sessions[0].conversationGraph?.rootFrameId).toBe(
+        `root-frame-${historicalSessionId}`
+      )
+      expect(loaded.sessions[0].messages[1].artifactIds).toEqual(
+        conflicting ? undefined : [version.versionId]
+      )
+      await expect(
+        client.artifactVersion.findUniqueOrThrow({ where: { id: version.versionId } })
+      ).resolves.toMatchObject(
+        conflicting
+          ? { state: 'pending', messageId: null }
+          : { state: 'finalized', messageId: 'message-1' }
+      )
+    }
+  )
 
   it('replays an explicitly requested finalized Version that is already linked', async () => {
     const compatibility = new ArtifactRepository(storageRoot)
@@ -1375,7 +1551,8 @@ describe('artifact finalization startup recovery', () => {
 
   const prepareRecovery = async (
     compatibility: ArtifactRepository,
-    outputCount = 1
+    outputCount = 1,
+    graphSessionId = SESSION_ID
   ): Promise<{
     versions: Awaited<ReturnType<ArtifactProvenanceRepository['createVersion']>>[]
     provenance: ArtifactProvenanceRepository
@@ -1413,7 +1590,7 @@ describe('artifact finalization startup recovery', () => {
       updatedAt: 2
     }
     const conversationGraph = createLinearConversationGraph({
-      sessionId: SESSION_ID,
+      sessionId: graphSessionId,
       messages: [prompt, message],
       frameworkId: 'codex',
       createdAt: 1,

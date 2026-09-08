@@ -37,8 +37,19 @@ describe('Web RPC contract', () => {
     const invokePaths = Object.keys(WEB_INVOKE_CHANNELS)
     const eventPaths = Object.keys(WEB_EVENT_CHANNELS)
 
-    expect(invokePaths.filter((path) => path.startsWith('specialist.'))).toEqual([])
-    expect(eventPaths.filter((path) => path.startsWith('specialist.'))).toEqual([])
+    expect(invokePaths.filter((path) => path.startsWith('specialist.'))).toEqual([
+      'specialist.abortPackageUpload',
+      'specialist.beginPackageUpload',
+      'specialist.cancelPackage',
+      'specialist.installPackage',
+      'specialist.list',
+      'specialist.previewPackageUpload',
+      'specialist.setEnabled',
+      'specialist.update'
+    ])
+    expect(eventPaths.filter((path) => path.startsWith('specialist.'))).toEqual([
+      'specialist.onCatalogChanged'
+    ])
 
     expect(invokePaths.filter((path) => path.startsWith('permissions.'))).toEqual([
       'permissions.extendUndo',
@@ -118,10 +129,13 @@ describe('Web RPC contract', () => {
       'notebook.abortCodeCell',
       'notebook.appendCodeCell',
       'notebook.beginCodeCell',
+      'notebook.cancelBackgroundRun',
       'notebook.execute',
       'notebook.exportIpynb',
       'notebook.exportIpynbAll',
       'notebook.finishCodeCell',
+      'notebook.getBackgroundRun',
+      'notebook.getProjectActivity',
       'notebook.getReference',
       'notebook.inspectNamespace',
       'notebook.readInputPreview',
@@ -148,6 +162,7 @@ describe('Web RPC contract', () => {
       'runtime.setAgentEnvironmentCreationEnabled',
       'runtime.setEnvironmentEnabled',
       'runtime.setInstallAuthorized',
+      'runtime.setSandboxAccess',
       'runtime.unregisterInterpreter'
     ])
     expect(eventPaths.filter((path) => path.startsWith('notebook.'))).toEqual([

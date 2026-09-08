@@ -8,7 +8,8 @@ import {
   type NotebookRuntimeBindings,
   type NotebookRuntimeListing,
   type RuntimeBindingUnavailableReason,
-  type RuntimeTargetReceipt
+  type RuntimeTargetReceipt,
+  type RuntimeEnablement
 } from '../../shared/notebook-runtime'
 import type { NotebookRuntimeSettings } from '../settings/capabilities'
 import { createLogger, diagnosticErrorFields } from '../logger'
@@ -569,7 +570,8 @@ export class NotebookRuntimeBindingOwner {
 
   private async discover(
     language: NotebookLanguage,
-    manualInterpreters: string[]
+    manualInterpreters: string[],
+    enablement?: RuntimeEnablement
   ): Promise<DiscoveredInterpreter[]> {
     try {
       const injected = this.options.discoverRuntimes
@@ -579,7 +581,8 @@ export class NotebookRuntimeBindingOwner {
             language,
             defaultDiscoveryDeps(getRuntimeRoot(this.options.dataRoot), () => manualInterpreters, {
               platform: this.options.platform
-            })
+            }),
+            enablement
           )
     } catch {
       return []
@@ -590,7 +593,11 @@ export class NotebookRuntimeBindingOwner {
     language: NotebookLanguage
   ): Promise<DiscoveredInterpreter[]> {
     const settings = await this.runtimeSettingsSnapshot(language)
-    const discovered = await this.discover(language, settings?.manualInterpreters ?? [])
+    const discovered = await this.discover(
+      language,
+      settings?.manualInterpreters ?? [],
+      settings?.runtimeEnablement
+    )
     return discovered.filter((env) => isEnvEnabled(env, settings?.runtimeEnablement))
   }
 

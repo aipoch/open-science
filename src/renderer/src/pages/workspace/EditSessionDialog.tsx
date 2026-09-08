@@ -52,14 +52,32 @@ const EditSessionDialog = ({
   const retainedTitleDraft = useRetainedDialogValue(session ? titleDraft : undefined) ?? titleDraft
   const retainedDescriptionDraft =
     useRetainedDialogValue(session ? descriptionDraft : undefined) ?? descriptionDraft
-  const titleIsValid = retainedTitleDraft.trim().length > 0
+  const titleTooLong = retainedTitleDraft.trim().length > SESSION_DETAILS_TITLE_MAX_LENGTH
+  const descriptionTooLong =
+    retainedDescriptionDraft.trim().length > SESSION_DETAILS_DESCRIPTION_MAX_LENGTH
+  const detailsAreValid =
+    retainedTitleDraft.trim().length > 0 && !titleTooLong && !descriptionTooLong
+  const validationError = titleTooLong
+    ? t('Shorten the title to 80 characters or fewer before saving.')
+    : descriptionTooLong
+      ? t('Shorten the description to 1000 characters or fewer before saving.')
+      : undefined
+  const displayError = validationError ?? error
 
   return (
     <Dialog.Root open={Boolean(session)} onOpenChange={(open) => !open && onCancel()}>
       <Dialog.Portal>
         <Dialog.Overlay className={dialogOverlayClassName} />
         <Dialog.Content className={dialogPanelClassName('w-[min(480px,calc(100vw-2rem))] p-0')}>
-          <form onSubmit={onConfirmEdit}>
+          <form
+            onSubmit={(event) => {
+              if (!detailsAreValid || isSaving) {
+                event.preventDefault()
+                return
+              }
+              onConfirmEdit(event)
+            }}
+          >
             <div className={dialogHeaderClassName}>
               <Dialog.Title className={dialogTitleClassName}>{t('Edit session')}</Dialog.Title>
               <TooltipProvider delayDuration={200}>
@@ -99,6 +117,8 @@ const EditSessionDialog = ({
                 <Input
                   id="edit-session-title"
                   value={retainedTitleDraft}
+                  aria-invalid={titleTooLong || undefined}
+                  aria-describedby={titleTooLong ? 'edit-session-error' : undefined}
                   maxLength={SESSION_DETAILS_TITLE_MAX_LENGTH}
                   onChange={(event) => onTitleDraftChange(event.target.value)}
                   autoFocus
@@ -118,6 +138,8 @@ const EditSessionDialog = ({
                 <Textarea
                   id="edit-session-description"
                   value={retainedDescriptionDraft}
+                  aria-invalid={descriptionTooLong || undefined}
+                  aria-describedby={descriptionTooLong ? 'edit-session-error' : undefined}
                   maxLength={SESSION_DETAILS_DESCRIPTION_MAX_LENGTH}
                   onChange={(event) => onDescriptionDraftChange(event.target.value)}
                   disabled={isSaving}
@@ -125,12 +147,13 @@ const EditSessionDialog = ({
                   className={`${dialogFormInputClassName} min-h-28 resize-y px-3 py-2 text-sm`}
                 />
               </div>
-              {error ? (
+              {displayError ? (
                 <p
+                  id="edit-session-error"
                   role="alert"
                   className="rounded-lg border border-danger-000/30 bg-danger-000/10 px-3 py-2 text-xs text-danger-000"
                 >
-                  {error}
+                  {displayError}
                 </p>
               ) : null}
             </div>
@@ -144,7 +167,7 @@ const EditSessionDialog = ({
               >
                 {t('Cancel')}
               </Button>
-              <Button type="submit" disabled={!titleIsValid || isSaving}>
+              <Button type="submit" disabled={!detailsAreValid || isSaving}>
                 {t('Save')}
               </Button>
             </div>

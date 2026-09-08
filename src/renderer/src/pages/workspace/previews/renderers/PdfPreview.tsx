@@ -41,6 +41,11 @@ import { createManagedPdfLoadingTask } from '../managed-pdf-document'
 import { pdfjsLib } from '../pdfjs'
 import { isUnavailableFileError } from '../preview-errors'
 import { createPreviewResourceKey } from '../preview-resource-key'
+import { usePreviewResourceGeneration } from '../usePreviewResourceGeneration'
+import {
+  WEB_EVENT_CONNECTION_STATE_EVENT,
+  type WebEventConnectionState
+} from '../../../../../../shared/web-event-connection'
 import { createManagedPreviewRequest } from '../preview-file-reader'
 import type { PreviewFileRendererProps } from '../preview-types'
 import { PreviewTextAnnotationSurface } from '../PreviewTextAnnotationSurface'
@@ -152,18 +157,34 @@ const textRangesForQuery = (root: HTMLElement, query: string): Range[] => {
   const normalizedText = text.toLocaleLowerCase()
   const normalizedQuery = query.toLocaleLowerCase()
   if (!normalizedQuery) return []
+  // Keep whole-string casing (for example, Greek final sigma). Length-changing lowercase
+  // mappings need a base character and its combining marks together (Turkish/Lithuanian I).
+  // Unicode mark runs suffice here; full grapheme segmentation would require Intl.Segmenter
+  // in older Web browsers without improving these UTF-16 mappings.
+  const originalStarts: number[] = []
+  const originalEnds: number[] = []
+  for (const { 0: segment, index } of text.matchAll(/\P{M}\p{M}*|\p{M}+/gu)) {
+    const length = segment.toLocaleLowerCase().length
+    for (let offset = 0; offset < length; offset += 1) {
+      originalStarts.push(index + (length === segment.length ? offset : 0))
+      originalEnds.push(index + (length === segment.length ? offset + 1 : segment.length))
+    }
+  }
   const ranges: Range[] = []
   let index = 0
   while ((index = normalizedText.indexOf(normalizedQuery, index)) >= 0) {
     const end = index + normalizedQuery.length
-    const startNodeIndex = starts.findLastIndex((start) => start <= index)
-    const endNodeIndex = starts.findLastIndex((start) => start < end)
+    const originalStart = originalStarts[index]
+    const originalEnd = originalEnds[end - 1]
+    // Inserted word/line gaps have no DOM node: anchor their endpoints to adjacent text.
+    const startNodeIndex = starts.findIndex((start, i) => start + nodes[i].length > originalStart)
+    const endNodeIndex = starts.findLastIndex((start) => start < originalEnd)
     const startNode = nodes[startNodeIndex]
     const endNode = nodes[endNodeIndex]
     if (startNode && endNode) {
       const range = new Range()
-      range.setStart(startNode, index - starts[startNodeIndex])
-      range.setEnd(endNode, end - starts[endNodeIndex])
+      range.setStart(startNode, Math.max(0, originalStart - starts[startNodeIndex]))
+      range.setEnd(endNode, Math.min(endNode.length, originalEnd - starts[endNodeIndex]))
       ranges.push(range)
     }
     index = Math.max(end, index + 1)
@@ -175,13 +196,13 @@ const updatePdfSearchHighlights = (
   scroll: HTMLElement | null,
   query: string,
   selected?: PdfSearchMatch
-): void => {
+): Range | undefined => {
   const registry = (globalThis as unknown as { CSS?: { highlights?: HighlightRegistry } }).CSS
     ?.highlights
   const HighlightClass = (globalThis as unknown as { Highlight?: HighlightConstructor }).Highlight
   registry?.delete('pdf-search-results')
   registry?.delete('pdf-search-current')
-  if (!registry || !HighlightClass || !scroll || !query) return
+  if (!scroll || !query) return
   const allRanges: Range[] = []
   let selectedRange: Range | undefined
   for (const page of scroll.querySelectorAll<HTMLElement>('[data-page-number]')) {
@@ -193,8 +214,33 @@ const updatePdfSearchHighlights = (
       selectedRange = pageRanges[selected.occurrence]
     }
   }
-  if (allRanges.length > 0) registry.set('pdf-search-results', new HighlightClass(...allRanges))
-  if (selectedRange) registry.set('pdf-search-current', new HighlightClass(selectedRange))
+  if (registry && HighlightClass) {
+    if (allRanges.length > 0) registry.set('pdf-search-results', new HighlightClass(...allRanges))
+    if (selectedRange) registry.set('pdf-search-current', new HighlightClass(selectedRange))
+  }
+  return selectedRange
+}
+
+const revealPdfSearchRange = (scroll: HTMLElement, range: Range | undefined): boolean => {
+  const bounds = range?.getBoundingClientRect()
+  if (!bounds || bounds.width <= 0 || bounds.height <= 0) return false
+  const viewport = scroll.getBoundingClientRect()
+  const left = viewport.left + scroll.clientLeft
+  const top = viewport.top + scroll.clientTop
+  const right = left + scroll.clientWidth
+  const bottom = top + scroll.clientHeight
+  // Center offscreen matches away from the floating controls; leave visible matches still.
+  // An oversized match reveals its beginning.
+  if (bounds.top < top || bounds.bottom > bottom) {
+    scroll.scrollTop += bounds.top - top - Math.max(0, (scroll.clientHeight - bounds.height) / 2)
+  }
+  if (bounds.left < left || bounds.right > right) {
+    scroll.scrollLeft +=
+      bounds.left < left || bounds.width > scroll.clientWidth
+        ? bounds.left - left
+        : bounds.right - right
+  }
+  return true
 }
 
 const isPdfPageRef = (value: unknown): value is { num: number; gen: number } =>
@@ -1132,6 +1178,8 @@ export const PdfPreviewContent = ({
     size,
     mtimeMs
   })
+  const generation = usePreviewResourceGeneration()
+  const resourceRequestKey = `${requestKey}:${generation}`
   const scrollRef = useRef<HTMLDivElement | null>(null)
   const panGestureRef = useRef<PdfPanGesture | undefined>(undefined)
   const viewportAnchorRef = useRef<PdfViewportAnchor | undefined>(undefined)
@@ -1154,6 +1202,15 @@ export const PdfPreviewContent = ({
   const [selectedSearchIndex, setSelectedSearchIndex] = useState(0)
   const [textLayerEpoch, setTextLayerEpoch] = useState(0)
   const searchTextCacheRef = useRef(new Map<number, Promise<string>>())
+  const pendingSearchRevealRef = useRef<
+    | {
+        document: PdfDocument
+        requestKey: string
+        query: string
+        match: PdfSearchMatch
+      }
+    | undefined
+  >(undefined)
   const [outlineState, setOutlineState] = useState<
     Readonly<{ requestKey: string; items: readonly PdfOutlineItem[] }> | undefined
   >()
@@ -1215,6 +1272,19 @@ export const PdfPreviewContent = ({
       viewportY: anchorTop - viewport.top
     }
   }, [])
+
+  useEffect(() => {
+    const onConnectionState = (event: Event): void => {
+      if ((event as CustomEvent<WebEventConnectionState>).detail.phase === 'reconnecting') {
+        captureViewportAnchor()
+      }
+    }
+    window.addEventListener(WEB_EVENT_CONNECTION_STATE_EVENT, onConnectionState)
+    return () => window.removeEventListener(WEB_EVENT_CONNECTION_STATE_EVENT, onConnectionState)
+  }, [captureViewportAnchor])
+  useLayoutEffect(() => {
+    searchTextCacheRef.current.clear()
+  }, [generation])
 
   const updateZoom = useCallback(
     (resolve: (current: number) => number): void => {
@@ -1345,10 +1415,10 @@ export const PdfPreviewContent = ({
           return
         }
 
-        setDocumentState({ requestKey, status: 'ready', document })
+        setDocumentState({ requestKey: resourceRequestKey, status: 'ready', document })
       } catch (error: unknown) {
         if (!isUnavailableFileError(error)) console.error('Failed to load PDF preview', error)
-        if (!canceled) setDocumentState({ requestKey, status: 'error', error })
+        if (!canceled) setDocumentState({ requestKey: resourceRequestKey, status: 'error', error })
         await dispose()
       }
     })()
@@ -1357,9 +1427,19 @@ export const PdfPreviewContent = ({
       canceled = true
       if (resourceId) void dispose()
     }
-  }, [managedFileId, mimeType, path, projectId, requestKey, selectedVersionId, sessionId, source])
+  }, [
+    managedFileId,
+    mimeType,
+    path,
+    projectId,
+    resourceRequestKey,
+    selectedVersionId,
+    sessionId,
+    source
+  ])
 
-  const currentDocumentState = documentState?.requestKey === requestKey ? documentState : null
+  const currentDocumentState =
+    documentState?.requestKey === resourceRequestKey ? documentState : null
   const hasError = currentDocumentState?.status === 'error'
   const document = currentDocumentState?.status === 'ready' ? currentDocumentState.document : null
   const pageCount = document?.numPages ?? 0
@@ -1373,6 +1453,23 @@ export const PdfPreviewContent = ({
     currentPageRef.current = pageNumber
     setCurrentPage(pageNumber)
   }, [])
+  const revealSearchMatch = useCallback(
+    (match: PdfSearchMatch): void => {
+      const scroll = scrollRef.current
+      if (!scroll || !document) return
+      const range = updatePdfSearchHighlights(scroll, searchQuery, match)
+      pendingSearchRevealRef.current = undefined
+      if (revealPdfSearchRange(scroll, range)) return
+      pendingSearchRevealRef.current = {
+        document,
+        requestKey: resourceRequestKey,
+        query: searchQuery,
+        match
+      }
+      scrollToPage(match.pageNumber)
+    },
+    [document, resourceRequestKey, searchQuery, scrollToPage]
+  )
   const navigateToPage = scrollToPage
   useEffect(
     () =>
@@ -1438,7 +1535,7 @@ export const PdfPreviewContent = ({
             if (!revealedFirstMatch && matches[0]) {
               revealedFirstMatch = true
               setSelectedSearchIndex(0)
-              scrollToPage(matches[0].pageNumber)
+              revealSearchMatch({ pageNumber: matches[0].pageNumber, occurrence: 0 })
             }
           }
         }
@@ -1447,28 +1544,47 @@ export const PdfPreviewContent = ({
         setSearchResultCount(matchCount)
         if (!revealedFirstMatch && matches[0]) {
           setSelectedSearchIndex(0)
-          scrollToPage(matches[0].pageNumber)
+          revealSearchMatch({ pageNumber: matches[0].pageNumber, occurrence: 0 })
         }
       })()
     }, 180)
     return () => {
       canceled = true
       clearTimeout(timer)
+      pendingSearchRevealRef.current = undefined
     }
-  }, [document, searchQuery, scrollToPage])
+  }, [document, searchQuery, revealSearchMatch])
 
   useEffect(() => {
-    updatePdfSearchHighlights(
-      scrollRef.current,
-      searchQuery,
-      resolvePdfSearchMatch(searchResults, selectedSearchIndex)
-    )
-  }, [searchQuery, searchResults, selectedSearchIndex, textLayerEpoch])
+    const scroll = scrollRef.current
+    const selected = resolvePdfSearchMatch(searchResults, selectedSearchIndex)
+    const range = updatePdfSearchHighlights(scroll, searchQuery, selected)
+    const pending = pendingSearchRevealRef.current
+    if (!pending) return
+    if (
+      pending.document !== document ||
+      pending.requestKey !== resourceRequestKey ||
+      pending.query !== searchQuery ||
+      pending.match.pageNumber !== selected?.pageNumber ||
+      pending.match.occurrence !== selected.occurrence
+    ) {
+      pendingSearchRevealRef.current = undefined
+      return
+    }
+    if (scroll && revealPdfSearchRange(scroll, range)) pendingSearchRevealRef.current = undefined
+  }, [
+    document,
+    resourceRequestKey,
+    searchQuery,
+    searchResults,
+    selectedSearchIndex,
+    textLayerEpoch
+  ])
 
   useLayoutEffect(() => {
     const anchor = viewportAnchorRef.current
     const scroll = scrollRef.current
-    if (!anchor || !scroll) return
+    if (!anchor || !scroll || !document) return
     viewportAnchorRef.current = undefined
     const page = scroll.querySelector<HTMLElement>(`[data-page-number="${anchor.pageNumber}"]`)
     if (!page) return
@@ -1476,7 +1592,7 @@ export const PdfPreviewContent = ({
     const bounds = page.getBoundingClientRect()
     scroll.scrollLeft += bounds.left + anchor.x * bounds.width - viewport.left - anchor.viewportX
     scroll.scrollTop += bounds.top + anchor.y * bounds.height - viewport.top - anchor.viewportY
-  }, [fitWidth, zoom])
+  }, [document, fitWidth, zoom])
 
   useEffect(() => {
     if (!document) return
@@ -1595,7 +1711,7 @@ export const PdfPreviewContent = ({
     const nextMatch = resolvePdfSearchMatch(searchResults, nextIndex)
     if (!nextMatch) return
     setSelectedSearchIndex(nextIndex)
-    scrollToPage(nextMatch.pageNumber)
+    revealSearchMatch(nextMatch)
   }
   const closeSearch = (): void => {
     setSearchOpen(false)

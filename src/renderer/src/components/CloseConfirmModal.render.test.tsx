@@ -1,4 +1,12 @@
 // @vitest-environment jsdom
+import { EventEmitter } from 'node:events'
+import type { BrowserWindow } from 'electron'
+import { createElectronCloseConfirm } from '../../../main/window-close-confirm'
+import {
+  WINDOW_CLOSE_CONFIRM_DISMISS_CHANNEL,
+  WINDOW_CLOSE_CONFIRM_REQUEST_CHANNEL,
+  WINDOW_CLOSE_CONFIRM_RESPONSE_CHANNEL
+} from '../../../shared/window-controls'
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -7,11 +15,27 @@ import { CloseConfirmModal } from './CloseConfirmModal'
 import { useNavigationStore } from '@/stores/navigation-store'
 import { useProjectStore } from '@/stores/project-store'
 import { useSessionStore } from '@/stores/session-store'
-import type { CloseConfirmRequest } from '../../../shared/window-controls'
+import type { CloseConfirmDismissal, CloseConfirmRequest } from '../../../shared/window-controls'
 
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
+const electronBoundary = vi.hoisted(() => ({
+  ipc: undefined as EventEmitter | undefined,
+  showMessageBox: vi.fn()
+}))
+vi.mock('electron', () => ({
+  BrowserWindow: class {},
+  dialog: { showMessageBox: electronBoundary.showMessageBox },
+  ipcMain: {
+    on: (channel: string, listener: (...args: unknown[]) => void) =>
+      electronBoundary.ipc!.on(channel, listener),
+    removeListener: (channel: string, listener: (...args: unknown[]) => void) =>
+      electronBoundary.ipc!.removeListener(channel, listener)
+  }
+}))
+
 let requestListener: ((payload: CloseConfirmRequest) => void) | undefined
+let dismissListener: ((payload: CloseConfirmDismissal) => void) | undefined
 const sendResponse = vi.fn()
 
 let container: HTMLDivElement
@@ -20,12 +44,17 @@ let root: Root
 beforeEach(() => {
   sendResponse.mockClear()
   requestListener = undefined
+  dismissListener = undefined
   // Test double: only window.api.window is exercised by this component.
   window.api = {
     window: {
       onCloseConfirmRequest: (cb: (payload: CloseConfirmRequest) => void) => {
         requestListener = cb
         return () => (requestListener = undefined)
+      },
+      onCloseConfirmDismiss: (cb: (payload: CloseConfirmDismissal) => void) => {
+        dismissListener = cb
+        return () => (dismissListener = undefined)
       },
       sendCloseConfirmResponse: sendResponse
     }
@@ -76,6 +105,108 @@ const findButtonByName = async (pattern: RegExp): Promise<HTMLButtonElement> => 
 }
 
 describe('CloseConfirmModal', () => {
+  it('removes the web confirmation when the native fallback cancels quit', async () => {
+    vi.useFakeTimers()
+    const ipc = new EventEmitter()
+    electronBoundary.ipc = ipc
+    electronBoundary.showMessageBox.mockResolvedValue({ response: 0, checkboxChecked: false })
+    const contents = Object.assign(new EventEmitter(), {
+      isDestroyed: () => false,
+      send: (channel: string, payload: CloseConfirmRequest): void => {
+        if (channel === WINDOW_CLOSE_CONFIRM_REQUEST_CHANNEL) emit(payload)
+        if (channel === WINDOW_CLOSE_CONFIRM_DISMISS_CHANNEL) dismissListener?.(payload)
+      }
+    })
+    const ownerWindow = {
+      isDestroyed: () => false,
+      isMinimized: () => false,
+      isVisible: () => true,
+      focus: vi.fn(),
+      webContents: contents
+    } as unknown as BrowserWindow
+    sendResponse.mockImplementation((payload) =>
+      ipc.emit(WINDOW_CLOSE_CONFIRM_RESPONSE_CHANNEL, { sender: contents }, payload)
+    )
+    const confirm = createElectronCloseConfirm(() => ownerWindow, {
+      get: async () => undefined,
+      set: async () => undefined
+    })
+    let pending: ReturnType<typeof confirm> | undefined
+    try {
+      render()
+      act(() => {
+        pending = confirm('quit', [], true)
+      })
+      expect(sendResponse).toHaveBeenCalledWith(expect.objectContaining({ ack: true }))
+      expect(document.querySelector('[role="alertdialog"]')).not.toBeNull()
+      await act(async () => {
+        contents.emit('unresponsive')
+        await vi.advanceTimersByTimeAsync(10_001)
+        await pending
+      })
+      await expect(pending).resolves.toBe('cancel')
+      expect(electronBoundary.showMessageBox).toHaveBeenCalledTimes(1)
+      expect(ipc.listenerCount(WINDOW_CLOSE_CONFIRM_RESPONSE_CHANNEL)).toBe(0)
+      expect
+        .soft(
+          document.querySelector('[role="alertdialog"]'),
+          'native cancel must not leave actionable stale web controls'
+        )
+        .toBeNull()
+      const staleQuit = Array.from(document.querySelectorAll('button')).find(
+        (button) => button.textContent === 'Quit'
+      )
+      if (staleQuit) {
+        act(() => staleQuit.click())
+        expect(sendResponse).toHaveBeenLastCalledWith(expect.objectContaining({ choice: 'quit' }))
+        await expect(pending).resolves.toBe('cancel')
+      }
+    } finally {
+      sendResponse.mockReset()
+      vi.useRealTimers()
+    }
+  })
+
+  it('withdraws only the matching request and reports visibility without replying', () => {
+    const onOpenChange = vi.fn()
+    act(() => root.render(<CloseConfirmModal onOpenChange={onOpenChange} />))
+    act(() => emit({ requestId: 'old', variant: 'quit', sessions: [] }))
+    act(() => emit({ requestId: 'new', variant: 'quit', sessions: [] }))
+    act(() => dismissListener?.({ requestId: 'old' }))
+    expect(document.querySelector('[role="alertdialog"]')).not.toBeNull()
+    expect(onOpenChange).toHaveBeenLastCalledWith(true)
+    act(() => dismissListener?.({ requestId: 'new' }))
+    expect(document.querySelector('[role="alertdialog"]')).toBeNull()
+    expect(onOpenChange).toHaveBeenLastCalledWith(false)
+    expect(sendResponse.mock.calls.every(([response]) => response.ack === true)).toBe(true)
+    act(() => root.render(<></>))
+    expect(requestListener).toBeUndefined()
+    expect(dismissListener).toBeUndefined()
+  })
+
+  it('keeps a long running-task list separate from the close actions', async () => {
+    render()
+    act(() =>
+      emit({
+        requestId: 'many-tasks',
+        variant: 'quit',
+        sessions: Array.from({ length: 35 }, (_, index) => ({
+          sessionId: `scroll-session-${index}`,
+          projectId: `scroll-project-${index}`,
+          kind: 'agent'
+        }))
+      })
+    )
+    const dialog = document.querySelector('[role="alertdialog"]')!
+    const viewport = dialog.querySelector('[data-slot="scroll-area-viewport"]')!
+    expect(viewport.querySelectorAll('li')).toHaveLength(35)
+    expect(viewport.textContent).toContain('scroll-session-34')
+    const cancel = await findButtonByName(/^Cancel$/)
+    expect(viewport.contains(cancel)).toBe(false)
+    act(() => cancel.click())
+    expect(sendResponse).toHaveBeenCalledWith({ requestId: 'many-tasks', choice: 'cancel' })
+  })
+
   it('retains a covered close request until its presentation becomes active', async () => {
     act(() => root.render(<CloseConfirmModal active={false} />))
     act(() => {

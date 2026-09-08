@@ -198,6 +198,124 @@ const renderPopup = async ({
 }
 
 describe('ArtifactMentionPopup', () => {
+  it.each(['click', 'Enter'])(
+    'rejects prior-project Literature suggestions via %s while the next search is pending',
+    async (selection) => {
+      const onSelect = vi.fn()
+      window.api.literature.search = vi.fn().mockImplementation((request) => {
+        if (request.scope === 'collections') return Promise.resolve({ entries: [] })
+        if (request.projectId === 'project-b') return new Promise(() => undefined)
+        return Promise.resolve({ entries: [libraryPdf] })
+      })
+      await renderPopup({ query: 'Corrective', onSelect })
+      await vi.waitFor(() =>
+        expect(options().some((row) => row.textContent?.includes('Corrective'))).toBe(true)
+      )
+      await act(async () => useNavigationStore.setState({ activeProjectId: 'project-b' }))
+      if (selection === 'click')
+        act(() =>
+          options()
+            .find((row) => row.textContent?.includes('Corrective'))
+            ?.click()
+        )
+      else pressKey('Enter')
+      expect(onSelect).not.toHaveBeenCalled()
+      expect(options().some((row) => row.textContent?.includes('Corrective'))).toBe(false)
+    }
+  )
+
+  it('reports failed Collection suggestions instead of an empty result', async () => {
+    window.api.projectFiles.listFiles = vi.fn().mockResolvedValue({ items: [], totalCount: 0 })
+    window.api.literature.search = vi.fn().mockImplementation(async (request) => {
+      if (request.scope === 'collections') throw new Error('Collection search unavailable')
+      return { entries: [] }
+    })
+    await renderPopup({ query: 'Unique' })
+    await vi.waitFor(() => expect(window.api.literature.search).toHaveBeenCalled())
+    await flushSelection()
+    expect(document.body.querySelector('[role="alert"]')).not.toBeNull()
+    expect(document.body.textContent).not.toContain('No artifacts yet')
+  })
+
+  it('reports failed Literature suggestions alongside healthy project files', async () => {
+    window.api.literature.search = vi.fn().mockImplementation(async (request) => {
+      if (request.scope === 'collections') return { entries: [] }
+      throw new Error('Literature search unavailable')
+    })
+    await renderPopup({ query: 'seq' })
+    await vi.waitFor(() => expect(window.api.literature.search).toHaveBeenCalled())
+    await flushSelection()
+    expect(options().some((row) => row.textContent?.includes('sequence.csv'))).toBe(true)
+    expect(document.body.querySelector('[role="alert"]')?.textContent ?? '').toContain(
+      'Literature could not be loaded.'
+    )
+  })
+
+  it('retries only the failed source while keeping healthy options available', async () => {
+    let fail = true
+    window.api.literature.search = vi.fn().mockImplementation(async (request) => {
+      if (request.scope === 'collections') {
+        if (fail) throw new Error('Collection search unavailable')
+        return {
+          entries: [
+            {
+              id: 'collection-retry',
+              name: 'Corrective collection',
+              description: '',
+              itemCount: 1,
+              createdAt: 1,
+              updatedAt: 1
+            }
+          ]
+        }
+      }
+      return { entries: [libraryPdf] }
+    })
+    await renderPopup({ query: 'Corrective' })
+    await vi.waitFor(() =>
+      expect(document.body.querySelector('[role="alert"]')?.textContent).toContain(
+        'Collections could not be loaded.'
+      )
+    )
+    expect(options().some((row) => row.textContent?.includes('Corrective Retrieval'))).toBe(true)
+    const count = vi
+      .mocked(window.api.literature.search)
+      .mock.calls.filter(([request]) => request.scope !== 'collections').length
+    fail = false
+    act(() => document.body.querySelector<HTMLButtonElement>('[role="alert"] button')?.click())
+    expect(document.body.querySelector('[role="alert"]')).toBeNull()
+    expect(options().some((row) => row.textContent?.includes('Corrective Retrieval'))).toBe(true)
+    await vi.waitFor(() =>
+      expect(options().some((row) => row.textContent?.includes('Corrective collection'))).toBe(true)
+    )
+    expect(
+      vi
+        .mocked(window.api.literature.search)
+        .mock.calls.filter(([request]) => request.scope !== 'collections')
+    ).toHaveLength(count)
+  })
+
+  it('accepts fresh next-project results after rejecting the previous project', async () => {
+    const onSelect = vi.fn()
+    window.api.literature.search = vi.fn().mockImplementation(async (request) => ({
+      entries:
+        request.scope === 'collections'
+          ? []
+          : [{ ...libraryPdf, id: request.projectId === 'project-b' ? 'item-b' : 'item-a' }]
+    }))
+    await renderPopup({ query: 'Corrective', onSelect })
+    await vi.waitFor(() =>
+      expect(options().some((row) => row.textContent?.includes('Corrective'))).toBe(true)
+    )
+    await act(async () => useNavigationStore.setState({ activeProjectId: 'project-b' }))
+    expect(options().some((row) => row.textContent?.includes('Corrective'))).toBe(false)
+    await vi.waitFor(() =>
+      expect(options().some((row) => row.textContent?.includes('Corrective'))).toBe(true)
+    )
+    pressKey('Enter')
+    expect(onSelect).toHaveBeenCalledWith(expect.objectContaining({ itemId: 'item-b' }))
+  })
+
   it('owns Enter while project files are still loading', () => {
     window.api.projectFiles.listFiles = vi.fn(
       () => new Promise(() => undefined)

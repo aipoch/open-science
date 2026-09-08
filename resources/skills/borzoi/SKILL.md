@@ -72,17 +72,11 @@ job = c.submitJob(
 print(job.job_id)   # cell ends here — kernel never blocks on compute
 ```
 
-Then call the `wait_for_notification` brain-tool. When the
-`compute_done` notification arrives, act on its payload:
-
-```python
-save_artifacts(payload["featured_files"])   # paths under hpc/<job_id>/
-```
-
-For the full result dict (`output_files`, `remote_workdir`, …), re-enter the
-kernel: `c.attachJob(job_id).result()` then `c.close()`. See the
-`remote-compute-ssh` / `remote-compute-modal` skill for the orchestration
-details.
+Retain the exact returned `job_id`. Query that saved ID with the non-blocking
+`c.attachJob(job_id).status()` or `.result()` when its state or result is relevant; do not scan Job
+history. A final `.result()` read reports whether its follow-up was `suppressed` or had already been
+`committed`; otherwise the app starts the later analysis turn for an unread final result. See the
+`remote-compute-ssh` skill for details.
 
 If the provider exposes a weight-cache mount, point `HF_HOME` at it inside
 `borzoi_run.py` (path is in `compute_details`).

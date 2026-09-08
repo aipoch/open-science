@@ -14,6 +14,7 @@ import {
   type AccessibilityUiFinding
 } from './accessibility-reporter'
 import { test } from './fixtures/electron-app'
+import { setTheme } from './fixtures/settings-preferences'
 
 const AXE_PATH = resolve(process.cwd(), 'node_modules/axe-core/axe.min.js')
 const WCAG_TAGS = ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa']
@@ -97,31 +98,6 @@ const waitForFiniteAnimations = async (page: Page): Promise<void> => {
 const setViewport = async (page: Page, width: number, height = 800): Promise<void> => {
   await page.setViewportSize({ width, height })
   await expect.poll(() => page.evaluate(() => window.innerWidth)).toBe(width)
-}
-
-const setTheme = async (page: Page, theme: 'Dark' | 'Light'): Promise<void> => {
-  const homeThemeMenu = page.getByRole('button', { name: /^Theme:/ })
-  const workspaceNavigation = page.getByRole('complementary', { name: 'Workspace navigation' })
-  await expect(homeThemeMenu.or(workspaceNavigation)).toBeVisible()
-  if (await homeThemeMenu.isVisible()) {
-    await homeThemeMenu.click()
-    await page.getByRole('menuitem', { name: new RegExp(`^${theme}`) }).click()
-  } else {
-    await page.getByRole('button', { name: 'Settings', exact: true }).click()
-    const settings = page.getByRole('dialog', { name: 'Settings' })
-    await settings
-      .getByRole('navigation', { name: 'Settings' })
-      .getByRole('button', { name: 'General', exact: true })
-      .click()
-    await settings
-      .getByRole('radiogroup', { name: 'Theme' })
-      .getByRole('radio', { name: theme })
-      .click()
-    await page.keyboard.press('Escape')
-    await expect(settings).toBeHidden()
-  }
-  if (theme === 'Dark') await expect(page.locator('html')).toHaveClass(/dark/)
-  else await expect(page.locator('html')).not.toHaveClass(/dark/)
 }
 
 const focusWithTab = async (page: Page, target: Locator, maxTabs = 80): Promise<boolean> => {

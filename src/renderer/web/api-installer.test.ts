@@ -198,13 +198,13 @@ describe('installWebRendererContracts', () => {
       nativeAdapters: {}
     })
 
-    // specialist.* is ELECTRON / ELECTRON_EVENT — the namespace must not exist on web.
-    expect(api.specialist).toBeUndefined()
+    // Native selection remains unavailable even when the Web catalog is installed.
+    expect(methodAt(api, 'specialist.selectPackage')).toBeUndefined()
     // handoff.list is ELECTRON — namespace must not exist on web.
     expect(api.handoff).toBeUndefined()
     // officePreview.onState is ELECTRON_EVENT — namespace must not exist on web.
     expect(api.officePreview).toBeUndefined()
-    expect(methodAt(api, 'specialist.list')).toBeUndefined()
+    expect(methodAt(api, 'specialist.list')).toBeTypeOf('function')
   })
 
   it('accepts one test-local neutral descriptor in both renderer adapters', async () => {

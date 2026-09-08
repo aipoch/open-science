@@ -1,3 +1,4 @@
+import { WorkspaceComposerDraftsProvider } from './pages/workspace/workspace-composer-drafts'
 import { memo, useCallback, useRef } from 'react'
 import { useTranslation } from 'react-i18next'
 
@@ -9,6 +10,7 @@ import { ErrorNotice } from '@/components/error-notice'
 import { GlobalSearchDialog } from '@/components/global-search/GlobalSearchDialog'
 import { LegacyDataMoveDialog } from '@/components/LegacyDataMoveDialog'
 import { LifecycleToast } from '@/components/LifecycleToast'
+import { LanguageSaveToast } from '@/components/LanguageControls'
 import { NotificationLiveToast } from '@/components/NotificationLiveToast'
 import { OpenScienceLogoLoader } from '@/components/OpenScienceLogoLoader'
 import { PermissionUndoSnackbar } from '@/components/PermissionUndoSnackbar'
@@ -156,6 +158,7 @@ const ApplicationPresentationHost = (): React.JSX.Element => {
           : t('Conversation storage limit reached')
       }
       message={sessions.writeError}
+      onDismiss={sessions.writeErrorRetryable ? sessions.dismissWriteWarning : undefined}
       onRetry={sessions.writeErrorRetryable ? sessions.retryWrites : undefined}
       onAction={
         sessions.writeErrorRetryable
@@ -224,31 +227,33 @@ const ApplicationPresentationHost = (): React.JSX.Element => {
           ? writeErrorAlert
           : null}
         <WorkspaceAgentRuntimeProvider onSessionSizeLimit={sessions.reportSessionSizeLimit}>
-          <WorkspaceMessageQueueProvider>
-            <WorkspaceComputeRecoveryBridge enabled={sessions.isReady} />
-            <WorkspaceMessageQueueRuntimeBridge
-              persistenceBlockedSessionIds={sessions.persistenceBlockedSessionIds}
-            />
-            {events.navigation.view === 'home' ? (
-              <HomePage
-                canDeleteProjects={sessions.canDeleteSessionsAndProjects}
-                hasCompleteSessionCatalog={sessions.hasCompleteSessionCatalog}
-                catalogRecovery={sessions.catalogRecovery}
-                onOpenGlobalSearch={events.globalSearch.open}
-              />
-            ) : events.navigation.view === 'library' ? (
-              <StableLiteratureLibraryPage />
-            ) : (
-              <WorkspacePage
-                isSessionPersistenceHydrated={sessions.isHydrated}
-                isSessionPersistenceReady={sessions.isReady}
+          <WorkspaceComposerDraftsProvider>
+            <WorkspaceMessageQueueProvider>
+              <WorkspaceComputeRecoveryBridge enabled={sessions.isReady} />
+              <WorkspaceMessageQueueRuntimeBridge
                 persistenceBlockedSessionIds={sessions.persistenceBlockedSessionIds}
-                onSessionSizeLimit={sessions.reportSessionSizeLimit}
-                canDeleteConversations={sessions.canDeleteSessionsAndProjects}
-                isPreviewPresentationActive={isBasePresentationActive}
               />
-            )}
-          </WorkspaceMessageQueueProvider>
+              {events.navigation.view === 'home' ? (
+                <HomePage
+                  canDeleteProjects={sessions.canDeleteSessionsAndProjects}
+                  hasCompleteSessionCatalog={sessions.hasCompleteSessionCatalog}
+                  catalogRecovery={sessions.catalogRecovery}
+                  onOpenGlobalSearch={events.globalSearch.open}
+                />
+              ) : events.navigation.view === 'library' ? (
+                <StableLiteratureLibraryPage />
+              ) : (
+                <WorkspacePage
+                  isSessionPersistenceHydrated={sessions.isHydrated}
+                  isSessionPersistenceReady={sessions.isReady}
+                  persistenceBlockedSessionIds={sessions.persistenceBlockedSessionIds}
+                  onSessionSizeLimit={sessions.reportSessionSizeLimit}
+                  canDeleteConversations={sessions.canDeleteSessionsAndProjects}
+                  isPreviewPresentationActive={isBasePresentationActive}
+                />
+              )}
+            </WorkspaceMessageQueueProvider>
+          </WorkspaceComposerDraftsProvider>
         </WorkspaceAgentRuntimeProvider>
         <LifecycleToast
           notice={events.lifecycle.notice}
@@ -256,6 +261,7 @@ const ApplicationPresentationHost = (): React.JSX.Element => {
           onView={events.lifecycle.viewNotice}
         />
         <ConnectorAuthToast />
+        {isBasePresentationActive ? <LanguageSaveToast /> : null}
         <StorageCleanupToast />
         <NotificationLiveToast />
         <PermissionUndoSnackbar allowsArchiveShortcut={events.allowsArchiveUndoShortcut} />

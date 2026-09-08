@@ -51,11 +51,21 @@ afterEach(async () => {
 })
 
 describe('OpenScienceClient', () => {
-  it('pins the SDK method inventory without exposing management capabilities', () => {
+  it('pins the SDK method inventory including Connector management', () => {
     expect(Object.getOwnPropertyNames(OpenScienceClient.prototype).sort()).toEqual(
       [
         'constructor',
         'health',
+        'listConnectors',
+        'getConnector',
+        'setConnectorEnabled',
+        'addConnector',
+        'updateConnector',
+        'removeConnector',
+        'testConnector',
+        'listCredentials',
+        'createCredential',
+        'updateCredential',
         'listProjects',
         'createProject',
         'updateProject',

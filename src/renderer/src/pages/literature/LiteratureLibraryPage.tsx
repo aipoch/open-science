@@ -1,4 +1,7 @@
-import { LITERATURE_COLLECTION_NAME_CONFLICT } from '../../../../shared/literature'
+import {
+  LITERATURE_COLLECTION_NAME_CONFLICT,
+  LITERATURE_IMPORT_IDENTITY_CONFLICT
+} from '../../../../shared/literature'
 /* Hallmark · pre-emit critique: P5 H5 E5 S5 R5 V4 */
 import { AlertDialog } from 'radix-ui'
 import * as Dialog from '@/components/ui/dialog'
@@ -56,6 +59,7 @@ import { ExternalTextLink } from '@/components/ExternalTextLink'
 import { ActionToast } from '@/components/ActionToast'
 import { LiteratureErrorNotice } from './LiteratureErrorNotice'
 import { Button } from '@/components/ui/button'
+import { ScrollArea } from '@/components/ui/scroll-area'
 import {
   dialogBodyClassName,
   dialogCancelButtonClassName,
@@ -98,6 +102,7 @@ import { LiteratureBackgroundTasks } from './LiteratureBackgroundTasks'
 import { LiteratureTable, LiteratureTextTooltip } from './LiteratureTable'
 import { buildLiteratureMergeItem, mergeScalarFields } from './literature-merge'
 import type {
+  LiteratureCatalogCommand,
   LiteratureCatalogSearchRequest,
   LiteratureCatalogSearchPage,
   LiteratureCollectionView,
@@ -147,6 +152,7 @@ import { LiteratureDetailLinkList } from './LiteratureDetailLinkList'
 import { LiteratureMetadataLookup } from './LiteratureMetadataLookup'
 import { useLiteratureEntries } from './useLiteratureEntries'
 import { useLiteratureMetadata } from './useLiteratureMetadata'
+import { LiteratureLibraryCount } from './LiteratureLibraryCount'
 import { LiteratureMetadataEditor } from './LiteratureMetadataEditor'
 import { LiteratureDuplicatePolicyField } from './LiteratureDuplicatePolicyField'
 import { LiteratureSearchInput } from './LiteratureSearchInput'
@@ -182,6 +188,7 @@ type PendingLiteratureReading = readonly PdfReadingDocument[]
 type DismissedCandidateUndo = Readonly<{
   candidateIds: readonly string[]
   detail: string
+  needsRecheck?: boolean
 }>
 
 const OPEN_DIALOG_SELECTOR =
@@ -231,6 +238,7 @@ const LITERATURE_DEFAULT_PAGE_SIZE = 25
 const LITERATURE_PAGE_SIZES = [25, 50, 100] as const
 const LITERATURE_SIDEBAR_GROUP_LIMIT = 5
 const LITERATURE_BATCH_COMMAND_SIZE = 200
+const LITERATURE_INBOX_COMMAND_SIZE = 100
 
 type LiteratureSelectionSnapshot = Readonly<{
   selectedIds: ReadonlySet<string>
@@ -910,56 +918,117 @@ function LiteratureTypeControl({
 }
 
 function LiteratureNoteControl({
-  value,
-  title,
+  entry,
   onCommit
 }: Readonly<{
-  value: string
-  title: string
-  onCommit: (note: string) => Promise<void>
+  entry: LiteratureItemView
+  onCommit: (
+    base: LiteratureItemView,
+    note: string,
+    onPersisted: (reload: () => Promise<LiteratureItemView>) => void
+  ) => Promise<void>
 }>): React.JSX.Element {
   const { t } = useTranslation()
-  const [draft, setDraft] = useState(value)
+  const [edit, setEdit] = useState<{ base: LiteratureItemView; draft: string }>()
   const [isSaving, setIsSaving] = useState(false)
+  const [failed, setFailed] = useState(false)
+  const savingRef = useRef(false)
+  const recoveryRef = useRef<
+    { note: string; reload: () => Promise<LiteratureItemView> } | undefined
+  >(undefined)
   const cancelNextBlurRef = useRef(false)
+  const dirty = edit !== undefined && edit.draft !== (edit.base.item.personalNote ?? '')
+  // A dirty draft keeps its original full item and revision, including across rating refreshes.
+  const base = dirty ? edit.base : entry
+  const draft = dirty ? edit.draft : (entry.item.personalNote ?? '')
 
   const commitNote = async (): Promise<void> => {
     if (cancelNextBlurRef.current) {
       cancelNextBlurRef.current = false
       return
     }
+    if (savingRef.current) return
     const note = draft.trim()
-    setDraft(note)
-    if (isSaving || note === value) return
+    if (!recoveryRef.current && note === (base.item.personalNote ?? '')) {
+      setEdit(undefined)
+      setFailed(false)
+      return
+    }
+    savingRef.current = true
     setIsSaving(true)
     try {
-      await onCommit(note)
+      const recovery = recoveryRef.current
+      if (recovery) {
+        const updated = await recovery.reload()
+        // New typing during recovery remains a draft. Only rebase it when the saved note
+        // still matches our acknowledged write; otherwise retain conflict protection.
+        setEdit(
+          note === recovery.note
+            ? undefined
+            : {
+                base: (updated.item.personalNote ?? '') === recovery.note ? updated : base,
+                draft
+              }
+        )
+      } else {
+        await onCommit(base, note, (reload) => {
+          recoveryRef.current = { note, reload }
+        })
+        setEdit(undefined)
+      }
+      recoveryRef.current = undefined
+      setFailed(false)
     } catch {
-      setDraft(value)
+      setFailed(true)
     } finally {
+      savingRef.current = false
       setIsSaving(false)
     }
   }
 
   return (
-    <Input
-      value={draft}
-      readOnly={isSaving}
-      aria-label={t('Note for {{title}}', { title })}
-      aria-busy={isSaving}
-      placeholder={t('Add a note…')}
-      className="h-8 border-transparent bg-transparent px-2 text-xs placeholder:text-muted-foreground/70 hover:border-border hover:bg-bg-100 focus-visible:border-border focus-visible:bg-bg-000"
-      onChange={(event) => setDraft(event.currentTarget.value)}
-      onKeyDown={(event) => {
-        if (event.key === 'Enter') event.currentTarget.blur()
-        if (event.key === 'Escape') {
-          cancelNextBlurRef.current = true
-          setDraft(value)
-          event.currentTarget.blur()
-        }
-      }}
-      onBlur={() => void commitNote()}
-    />
+    <div>
+      <Input
+        value={draft}
+        readOnly={isSaving}
+        aria-label={t('Note for {{title}}', { title: entry.item.title })}
+        aria-busy={isSaving}
+        aria-invalid={failed || undefined}
+        placeholder={t('Add a note…')}
+        className="h-8 border-transparent bg-transparent px-2 text-xs placeholder:text-muted-foreground/70 hover:border-border hover:bg-bg-100 focus-visible:border-border focus-visible:bg-bg-000"
+        onFocus={() => {
+          if (!dirty) setEdit({ base: entry, draft: entry.item.personalNote ?? '' })
+        }}
+        onChange={(event) => setEdit({ base, draft: event.currentTarget.value })}
+        onKeyDown={(event) => {
+          if (isSaving || event.nativeEvent.isComposing) return
+          if (event.key === 'Enter') event.currentTarget.blur()
+          if (event.key === 'Escape') {
+            cancelNextBlurRef.current = true
+            setEdit(undefined)
+            setFailed(false)
+            event.currentTarget.blur()
+          }
+        }}
+        onBlur={() => void commitNote()}
+      />
+      {failed ? (
+        <div className="flex items-center gap-2 px-2 text-xs text-status-warning-foreground">
+          <p role="alert" className="truncate" title={t('Draft preserved. Escape to discard.')}>
+            {t('Draft preserved. Escape to discard.')}
+          </p>
+          <button
+            type="button"
+            className="shrink-0 underline"
+            disabled={isSaving}
+            onMouseDown={(event) => event.preventDefault()}
+            onClick={() => void commitNote()}
+          >
+            {t('Retry')}
+          </button>
+        </div>
+      ) : null}
+    </div>
   )
 }
 
@@ -1172,6 +1241,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
   const loadProjects = useProjectStore((state) => state.loadProjects)
   const loadTags = useTagStore((state) => state.load)
   const listenTags = useTagStore((state) => state.listen)
+  const tagRevision = useTagStore((state) => state.revision)
   const [section, setSection] = useState<LibrarySection>('inbox')
   const [duplicatesOpen, setDuplicatesOpen] = useState(false)
   const [shouldCueLiteratureReview, setShouldCueLiteratureReview] = useState(
@@ -1210,6 +1280,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
     duplicateCountRef.current?.setCount(count)
   }, [])
   const [duplicatesRevision, setDuplicatesRevision] = useState(0)
+  const [libraryCountRevision, setLibraryCountRevision] = useState(0)
   const [mergeSurvivorId, setMergeSurvivorId] = useState('')
   const [mergeFieldSources, setMergeFieldSources] = useState<Record<string, string>>({})
   const [items, setItems] = useState<LiteratureItemView[]>([])
@@ -1245,9 +1316,26 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
   const [entriesTotalCount, setEntriesTotalCount] = useState(0)
   const [nextEntriesOffset, setNextEntriesOffset] = useState<number>()
   const [error, setError] = useState<string>()
+  const [lifecycleFailure, setLifecycleFailure] = useState<{
+    itemIds: string[]
+    state: 'active' | 'deleted'
+    completed: number
+  }>()
+  const [linkFailure, setLinkFailure] = useState<{
+    command:
+      | Omit<Extract<LiteratureCatalogCommand, { kind: 'move-collection-items' }>, 'itemIds'>
+      | Omit<Extract<LiteratureCatalogCommand, { kind: 'set-project-items' }>, 'itemIds'>
+    itemIds: readonly string[]
+    completed: number
+    scopeKey: string
+    skipped: number
+  }>()
   const [linkedItemError, setLinkedItemError] = useState<string>()
   const [pendingCandidateId, setPendingCandidateId] = useState<string>()
   const [dismissedCandidateUndo, setDismissedCandidateUndo] = useState<DismissedCandidateUndo>()
+  const [candidateUpdateUncertain, setCandidateUpdateUncertain] = useState(false)
+  const [candidateCountsFailed, setCandidateCountsFailed] = useState(false)
+  const [undoNotice, setUndoNotice] = useState<string>()
   const [collectionPendingDelete, setCollectionPendingDelete] = useState<LiteratureCollectionView>()
   const [isDeletingCollection, setIsDeletingCollection] = useState(false)
   const [collectionDeleteError, setCollectionDeleteError] = useState<string>()
@@ -1408,9 +1496,18 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
     })
   }, [clearSelection, consumeLiteratureCollection, pendingLiteratureCollectionId])
 
+  const collectionsGenerationRef = useRef(0)
   const loadCollections = useCallback(async (): Promise<void> => {
-    const page = await window.api.literature.search({ scope: 'collections', limit: 100 })
-    setCollections(page.entries.filter(isCollection))
+    const generation = ++collectionsGenerationRef.current
+    const collections: LiteratureCollectionView[] = []
+    let offset: number | undefined = 0
+    do {
+      const page = await window.api.literature.search({ scope: 'collections', limit: 100, offset })
+      if (generation !== collectionsGenerationRef.current) return
+      collections.push(...page.entries.filter(isCollection))
+      offset = page.nextOffset
+    } while (offset !== undefined)
+    setCollections(collections)
   }, [])
 
   const loadInboxPendingCount = useCallback(async (): Promise<void> => {
@@ -1422,16 +1519,18 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
     setInboxPendingCount(page.totalCount ?? page.entries.length)
   }, [])
 
+  const projectCountsGenerationRef = useRef(0)
   const loadProjectCounts = useCallback(async (): Promise<void> => {
+    const generation = ++projectCountsGenerationRef.current
     const page = await window.api.literature.search({ scope: 'project-counts' })
-    setProjectItemCounts((current) => ({
-      ...current,
-      ...Object.fromEntries(
+    if (generation !== projectCountsGenerationRef.current) return
+    setProjectItemCounts(
+      Object.fromEntries(
         page.entries
           .filter(isProjectCount)
           .map(({ projectId, itemCount }) => [projectId, itemCount])
       )
-    }))
+    )
   }, [])
 
   const selectedCollection = useMemo(
@@ -1467,6 +1566,13 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
       tagId
     ]
   )
+  const linkScopeRef = useRef(entriesKey)
+  useLayoutEffect(() => {
+    linkScopeRef.current = entriesKey
+    return () => {
+      linkScopeRef.current = ''
+    }
+  }, [entriesKey])
   const entriesPage = Math.floor(entriesOffset / entriesPageSize) + 1
   const entriesPageCount = Math.max(1, Math.ceil(entriesTotalCount / entriesPageSize))
   const displayedEntryCount = section === 'inbox' ? candidates.length : items.length
@@ -1582,6 +1688,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
   const entriesRequest = useMemo(() => buildEntriesRequest(), [buildEntriesRequest])
   const {
     loading: entriesLoading,
+    failed: entriesFailed,
     pageTransitionLoading: entriesPageTransitionLoading,
     reload: reloadEntries,
     refreshItems
@@ -1593,10 +1700,27 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
     onEmptyPage: setEntriesOffset,
     onError: receiveEntriesError
   })
+  const appliedTagRevision = useRef(tagRevision)
+  useEffect(() => {
+    if (appliedTagRevision.current === tagRevision) return
+    appliedTagRevision.current = tagRevision
+    if (tagId !== 'all') {
+      clearSelection()
+      // Keep surviving keyed editors mounted during an authoritative background refresh.
+      void reloadEntries(true, true)
+    } else {
+      // Previously visited filtered scopes must not resurrect old assignment membership.
+      void refreshItems([])
+    }
+  }, [clearSelection, refreshItems, reloadEntries, tagId, tagRevision])
+
   const loadEntries = useCallback(
-    (force = false): Promise<void> => {
-      if (force) setDuplicatesRevision((value) => value + 1)
-      return reloadEntries(force)
+    (force = false, preservePage = false): Promise<void> => {
+      if (force) {
+        setDuplicatesRevision((value) => value + 1)
+        setLibraryCountRevision((value) => value + 1)
+      }
+      return reloadEntries(force, preservePage)
     },
     [reloadEntries]
   )
@@ -1623,6 +1747,8 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
     const timeout = window.setTimeout(() => {
       setEntriesOffset(0)
       clearSelection()
+      setLifecycleFailure(undefined)
+      setLinkFailure(undefined)
     }, 0)
     return () => window.clearTimeout(timeout)
   }, [clearSelection, entriesKey])
@@ -1674,9 +1800,25 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
     window.sessionStorage.setItem(LITERATURE_REVIEW_CTA_ATTENTION_KEY, 'true')
   }, [shouldCueLiteratureReview, showLiteratureReviewAction])
 
+  const displayCollections = useMemo(() => {
+    const byId = new Map(collections.map((collection) => [collection.id, collection]))
+    return collections.map((collection) => {
+      const names = [collection.name]
+      const seen = new Set([collection.id])
+      let parentId = collection.parentId
+      while (parentId && !seen.has(parentId)) {
+        seen.add(parentId)
+        const parent = byId.get(parentId)
+        if (!parent) break
+        names.unshift(parent.name)
+        parentId = parent.parentId
+      }
+      return { ...collection, name: names.join(' / ') }
+    })
+  }, [collections])
   const batchCollections = useMemo(
-    () => collections.filter((collection) => collection.id !== collectionId),
-    [collectionId, collections]
+    () => displayCollections.filter((collection) => collection.id !== collectionId),
+    [collectionId, displayCollections]
   )
   const itemTypeLabels = useMemo<Record<LiteratureItemType, string>>(
     () => ({
@@ -1755,41 +1897,118 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
     })
   }
 
+  const dismissedUndo = (candidateIds: readonly string[]): DismissedCandidateUndo | undefined =>
+    candidateIds.length
+      ? {
+          candidateIds,
+          detail: t('{{count}} references', {
+            count: candidateIds.length,
+            defaultValue_one: '{{count}} reference'
+          })
+        }
+      : undefined
+
+  const refreshCandidateProjectCounts = async (): Promise<void> => {
+    try {
+      await loadProjectCounts()
+      setCandidateCountsFailed(false)
+    } catch {
+      setCandidateCountsFailed(true)
+    }
+  }
+
+  const refreshCandidateInboxCount = async (): Promise<void> => {
+    try {
+      await loadInboxPendingCount()
+    } catch {
+      setInboxPendingCount(undefined)
+      setError(t('Literature could not be loaded.'))
+    }
+  }
+
+  const retryCandidateReads = async (): Promise<void> => {
+    if (isBatching || pendingCandidateId) return
+    setIsBatching(true)
+    setCandidateUpdateUncertain(false)
+    try {
+      await Promise.all([loadEntries(true), refreshCandidateProjectCounts()])
+      await refreshCandidateInboxCount()
+    } finally {
+      setIsBatching(false)
+    }
+  }
+
+  const submitCandidateChange = async (
+    candidateIds: string[],
+    state: 'accepted' | 'dismissed',
+    command: Extract<
+      LiteratureCatalogCommand,
+      { kind: 'accept-candidate' | 'dismiss-candidate' | 'settle-candidates' }
+    >
+  ): Promise<boolean> => {
+    setError(undefined)
+    setCandidateUpdateUncertain(false)
+    setUndoNotice(undefined)
+    try {
+      await window.api.literature.transact(command)
+    } catch {
+      // A rejected transport response does not prove that the transaction rolled back.
+      // Reload handles its own read errors; never put a saved candidate snapshot back here.
+      if (state === 'dismissed') {
+        const undoIds = [
+          ...new Set([...(dismissedCandidateUndo?.candidateIds ?? []), ...candidateIds])
+        ]
+        // Keep recovery reachable even if the following reads are also unavailable.
+        setDismissedCandidateUndo({ ...dismissedUndo(undoIds)!, needsRecheck: true })
+        await Promise.all([recheckDismissedCandidates(undoIds), refreshCandidateProjectCounts()])
+      } else {
+        await Promise.all([loadEntries(true), refreshCandidateProjectCounts()])
+        await refreshCandidateInboxCount()
+      }
+      setCandidateUpdateUncertain(true)
+      return false
+    }
+    if (state === 'dismissed') {
+      setDismissedCandidateUndo((current) => {
+        const candidateIdsToUndo = [...new Set([...(current?.candidateIds ?? []), ...candidateIds])]
+        const undo = dismissedUndo(candidateIdsToUndo)!
+        return {
+          ...undo,
+          needsRecheck: current?.needsRecheck,
+          detail:
+            candidateIdsToUndo.length === 1
+              ? (candidates.find(({ id }) => id === candidateIdsToUndo[0])?.candidate.item.title ??
+                undo.detail)
+              : undo.detail
+        }
+      })
+    }
+    const settledIds = new Set(candidateIds)
+    setCandidates((current) => current.filter(({ id }) => !settledIds.has(id)))
+    candidateIds.forEach((id) => selectionStore.remove(id))
+    setInboxPendingCount((current) =>
+      current === undefined ? current : Math.max(0, current - candidateIds.length)
+    )
+    // Committed writes stay committed even when an independent refresh fails.
+    await Promise.all([
+      loadEntries(true),
+      ...(state === 'accepted' ? [refreshCandidateProjectCounts()] : [])
+    ])
+    return true
+  }
+
   const changeCandidateState = async (
     candidateId: string,
     kind: 'accept-candidate' | 'dismiss-candidate'
   ): Promise<boolean> => {
+    if (isBatching || pendingCandidateId || entriesFailed) return false
     setPendingCandidateId(candidateId)
-    setError(undefined)
     try {
-      await window.api.literature.transact({ kind, candidateId })
-      if (kind === 'dismiss-candidate') {
-        setDismissedCandidateUndo((current) => {
-          const candidateIds = [...new Set([...(current?.candidateIds ?? []), candidateId])]
-          return {
-            candidateIds,
-            detail:
-              candidateIds.length === 1
-                ? (candidates.find(({ id }) => id === candidateId)?.candidate.item.title ?? '')
-                : t('{{count}} references', {
-                    count: candidateIds.length,
-                    defaultValue_one: '{{count}} reference'
-                  })
-          }
-        })
-      }
-      selectionStore.remove(candidateId)
-      setInboxPendingCount((current) =>
-        current === undefined ? current : Math.max(0, current - 1)
+      return await submitCandidateChange(
+        [candidateId],
+        kind === 'accept-candidate' ? 'accepted' : 'dismissed',
+        { kind, candidateId }
       )
-      await Promise.all([
-        loadEntries(true),
-        ...(kind === 'accept-candidate' ? [loadProjectCounts()] : [])
-      ])
-      return true
-    } catch {
-      setError(t('Literature could not be updated.'))
-      return false
     } finally {
       setPendingCandidateId(undefined)
     }
@@ -1797,61 +2016,93 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
 
   const settleSelectedCandidates = async (state: 'accepted' | 'dismissed'): Promise<void> => {
     const { selectedIds } = selectionStore.getSnapshot()
-    const candidateIds = candidates
-      .map(({ id }) => id)
-      .filter((candidateId) => selectedIds.has(candidateId))
-    if (candidateIds.length === 0 || isBatching) return
-    const previousCandidates = candidates
+    const candidateIds = candidates.map(({ id }) => id).filter((id) => selectedIds.has(id))
+    if (!candidateIds.length || isBatching || pendingCandidateId || entriesFailed) return
     setIsBatching(true)
-    setError(undefined)
-    setCandidates((current) => current.filter(({ id }) => !selectedIds.has(id)))
-    setInboxPendingCount((current) =>
-      current === undefined ? current : Math.max(0, current - candidateIds.length)
-    )
     clearSelection()
     try {
-      await window.api.literature.transact({
+      await submitCandidateChange(candidateIds, state, {
         kind: 'settle-candidates',
         candidateIds,
         state
       })
-      if (state === 'dismissed') {
-        setDismissedCandidateUndo((current) => {
-          const restoredIds = [...new Set([...(current?.candidateIds ?? []), ...candidateIds])]
-          return {
-            candidateIds: restoredIds,
-            detail: t('{{count}} references', {
-              count: restoredIds.length,
-              defaultValue_one: '{{count}} reference'
-            })
-          }
-        })
-      }
-      await Promise.all([loadEntries(true), ...(state === 'accepted' ? [loadProjectCounts()] : [])])
-    } catch {
-      setCandidates(previousCandidates)
-      setInboxPendingCount((current) =>
-        current === undefined ? current : current + candidateIds.length
-      )
-      setError(t('Literature could not be updated.'))
     } finally {
       setIsBatching(false)
     }
   }
 
+  const recheckDismissedCandidates = async (candidateIds: readonly string[]): Promise<void> => {
+    setDismissedCandidateUndo((current) => current && { ...current, needsRecheck: true })
+    try {
+      const wanted = new Set(candidateIds)
+      const readMatchingIds = async (inboxState: 'pending' | 'dismissed'): Promise<Set<string>> => {
+        const matching = new Set<string>()
+        let offset: number | undefined = 0
+        do {
+          const page = await window.api.literature.search({
+            scope: 'inbox',
+            inboxState,
+            limit: 100,
+            offset
+          })
+          for (const entry of page.entries) {
+            if (isCandidate(entry) && wanted.has(entry.id)) matching.add(entry.id)
+          }
+          offset = page.nextOffset
+        } while (offset !== undefined && matching.size < wanted.size)
+        return matching
+      }
+      const dismissed = await readMatchingIds('dismissed')
+      const pending =
+        dismissed.size === wanted.size ? new Set<string>() : await readMatchingIds('pending')
+      const remaining = candidateIds.filter((id) => dismissed.has(id))
+      const alreadyRestored = candidateIds.filter(
+        (id) => !dismissed.has(id) && pending.has(id)
+      ).length
+      setDismissedCandidateUndo(dismissedUndo(remaining))
+      setUndoNotice(
+        t(
+          'Already restored: {{restored}}. Accepted or unavailable, skipped: {{skipped}}. Still dismissed: {{remaining}}.',
+          {
+            restored: alreadyRestored,
+            skipped: candidateIds.length - remaining.length - alreadyRestored,
+            remaining: remaining.length
+          }
+        )
+      )
+    } catch {
+      setUndoNotice(t('The remaining references could not be checked. Recheck before undoing.'))
+    }
+    await loadEntries(true)
+    await refreshCandidateInboxCount()
+  }
+
   const restoreDismissedCandidates = async (): Promise<void> => {
-    if (!dismissedCandidateUndo || isBatching) return
+    if (!dismissedCandidateUndo || isBatching || pendingCandidateId) return
     setIsBatching(true)
     setError(undefined)
+    setUndoNotice(undefined)
+    let remaining = [...dismissedCandidateUndo.candidateIds]
     try {
-      await window.api.literature.transact({
-        kind: 'restore-candidates',
-        candidateIds: [...dismissedCandidateUndo.candidateIds]
-      })
-      setDismissedCandidateUndo(undefined)
+      if (dismissedCandidateUndo.needsRecheck) {
+        await recheckDismissedCandidates(remaining)
+        return
+      }
+      while (remaining.length) {
+        const batch = remaining.slice(0, LITERATURE_INBOX_COMMAND_SIZE)
+        try {
+          await window.api.literature.transact({ kind: 'restore-candidates', candidateIds: batch })
+        } catch {
+          await recheckDismissedCandidates(remaining)
+          return
+        }
+        remaining = remaining.slice(batch.length)
+        setDismissedCandidateUndo(dismissedUndo(remaining))
+        setInboxPendingCount((current) =>
+          current === undefined ? current : current + batch.length
+        )
+      }
       await loadEntries(true)
-    } catch {
-      setError(t('Literature could not be updated.'))
     } finally {
       setIsBatching(false)
     }
@@ -2039,6 +2290,12 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
         included
       })
       updateCollectionLinkState(included)
+      if (!included && targetCollectionId === collectionId) {
+        selectionStore.remove(itemId)
+        setItems((current) => current.filter((item) => item.id !== itemId))
+        setEntriesTotalCount((current) => Math.max(0, current - 1))
+        await loadEntries(true)
+      }
       return true
     } catch {
       setCollectionLinkError(t('Collection link could not be updated.'))
@@ -2048,7 +2305,8 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
 
   const persistInlineItem = async (
     entry: LiteratureItemView,
-    patch: Partial<Pick<LiteratureItemInput, 'itemType' | 'personalNote' | 'rating'>>
+    patch: Partial<Pick<LiteratureItemInput, 'itemType' | 'personalNote' | 'rating'>>,
+    onPersisted?: (reload: () => Promise<LiteratureItemView>) => void
   ): Promise<void> => {
     const item = { ...entry.item, ...patch }
     if (
@@ -2057,6 +2315,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
       (item.rating ?? 0) === (entry.item.rating ?? 0)
     )
       return
+    let persisted = false
     try {
       await window.api.literature.transact({
         kind: 'update-item',
@@ -2064,13 +2323,28 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
         expectedMetadataRevision: entry.metadataRevision,
         item
       })
-      const updated = await window.api.literature.get(entry.id)
-      if (!updated) throw new Error('Literature Item is unavailable after updating.')
-      setItems((current) => current.map((item) => (item.id === updated.id ? updated : item)))
-      detailController.replace(updated)
-      setError(undefined)
+      persisted = true
+      const reload = async (): Promise<LiteratureItemView> => {
+        try {
+          const updated = await window.api.literature.get(entry.id)
+          if (!updated) throw new Error('Literature Item is unavailable after updating.')
+          await refreshItems([updated.id], [updated])
+          detailController.replace(updated)
+          setError(undefined)
+          return updated
+        } catch (error) {
+          setError(t('The reference was saved, but could not be reloaded.'))
+          throw error
+        }
+      }
+      onPersisted?.(reload)
+      await reload()
     } catch (error) {
-      setError(t('Literature could not be updated.'))
+      setError(
+        persisted
+          ? t('The reference was saved, but could not be reloaded.')
+          : t('Literature could not be updated.')
+      )
       throw error
     }
   }
@@ -2081,6 +2355,8 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
         return t('Title')
       case 'authors':
         return t('Authors')
+      case 'identifiers':
+        return t('Identifiers (★ primary)')
       case 'publicationDate':
         return t('Publication date')
       case 'year':
@@ -2227,7 +2503,11 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
     setIsReadingImportMetadata(true)
     setIsCreatingItem(true)
     void import('./literature-pdf-metadata')
-      .then(({ extractLiteraturePdfDraft }) => extractLiteraturePdfDraft(file, fallback))
+      .then(async ({ extractLiteraturePdfDraft, completeLiteraturePdfDraft }) => {
+        const local = await extractLiteraturePdfDraft(file, fallback)
+        if (importMetadataGenerationRef.current !== generation) return local
+        return completeLiteraturePdfDraft(local)
+      })
       .then((draft) => {
         if (importMetadataGenerationRef.current === generation) setPendingImportDraft(draft)
       })
@@ -2315,7 +2595,24 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
         loadCollections(),
         ...(projectId ? [loadProjectCounts()] : [])
       ])
-    } catch {
+    } catch (error) {
+      if (error instanceof Error && error.message.includes(LITERATURE_IMPORT_IDENTITY_CONFLICT)) {
+        const preview = await window.api.literature
+          .importRecords({ mode: 'preview', content: recordImport.content })
+          .catch(() => undefined)
+        setRecordImport((current) =>
+          current
+            ? {
+                ...current,
+                ...(preview ? { preview } : {}),
+                error: t(
+                  'Some identifiers disagree or match different references. Correct the source file or keep separate copies of every reference in this import.'
+                )
+              }
+            : current
+        )
+        return
+      }
       setRecordImport((current) =>
         current
           ? {
@@ -2337,22 +2634,9 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
   const resolveSelectedItemIds = async (): Promise<string[]> => {
     const { allMatchingSelected, excludedMatchingIds, selectedIds } = selectionStore.getSnapshot()
     if (!allMatchingSelected) return [...selectedIds]
-    const itemIds: string[] = []
-    const seenOffsets = new Set<number>()
-    let offset = 0
-    while (!seenOffsets.has(offset)) {
-      seenOffsets.add(offset)
-      const page = await window.api.literature.search(buildEntriesRequest(offset))
-      itemIds.push(
-        ...page.entries
-          .filter(isItem)
-          .map(({ id }) => id)
-          .filter((id) => !excludedMatchingIds.has(id))
-      )
-      if (page.nextOffset === undefined) break
-      offset = page.nextOffset
-    }
-    return [...new Set(itemIds)]
+    const page = await window.api.literature.search({ ...buildEntriesRequest(0), allItemIds: true })
+    if (!page.itemIds) throw new Error('Literature membership is unavailable.')
+    return page.itemIds.filter((id) => !excludedMatchingIds.has(id))
   }
 
   const requestBatchLookup = async (mode: BatchLookupMode): Promise<void> => {
@@ -2377,20 +2661,37 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
     if ((!allMatchingSelected && (itemIds?.length ?? 0) === 0) || isBatching) return
     setIsBatching(true)
     setError(undefined)
+    setLifecycleFailure(undefined)
+    let resolvedIds: readonly string[] = []
+    let completed = 0
     try {
-      const resolvedIds = itemIds ?? (await resolveSelectedItemIds())
+      resolvedIds = itemIds ?? (await resolveSelectedItemIds())
       for (let offset = 0; offset < resolvedIds.length; offset += LITERATURE_BATCH_COMMAND_SIZE) {
-        await window.api.literature.transact({
-          kind: 'set-item-lifecycle',
-          itemIds: resolvedIds.slice(offset, offset + LITERATURE_BATCH_COMMAND_SIZE),
-          state
-        })
+        const batch = resolvedIds.slice(offset, offset + LITERATURE_BATCH_COMMAND_SIZE)
+        await window.api.literature.transact({ kind: 'set-item-lifecycle', itemIds: batch, state })
+        completed += batch.length
       }
       clearSelection()
-      await loadEntries(true)
     } catch {
-      setError(t('Literature could not be updated.'))
+      if (resolvedIds.length) {
+        const remaining = resolvedIds.slice(completed)
+        selectionStore.replace(remaining)
+        setLifecycleFailure({ itemIds: remaining, state, completed })
+      } else {
+        setError(t('Literature could not be updated.'))
+      }
     } finally {
+      if (resolvedIds.length) {
+        // Refresh even after a failed command: earlier batches may already be committed.
+        const refreshed = await Promise.allSettled([
+          loadEntries(true),
+          loadCollections(),
+          loadProjectCounts()
+        ])
+        if (refreshed.some((result) => result.status === 'rejected')) {
+          setError(t('Literature could not be loaded.'))
+        }
+      }
       setIsBatching(false)
     }
   }
@@ -2544,37 +2845,95 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
     }
   }
 
-  const linkSelectedItemsToCollection = async (targetCollectionId: string): Promise<void> => {
-    const resolvedIds = await resolveSelectedItemIds()
-    for (let offset = 0; offset < resolvedIds.length; offset += LITERATURE_BATCH_COMMAND_SIZE) {
-      await window.api.literature.transact({
-        kind: 'move-collection-items',
-        itemIds: resolvedIds.slice(offset, offset + LITERATURE_BATCH_COMMAND_SIZE),
-        targetCollectionId,
-        ...(collectionId ? { sourceCollectionId: collectionId } : {})
-      })
+  const runLinkBatch = async (
+    command: NonNullable<typeof linkFailure>['command'],
+    itemIds?: readonly string[],
+    previousCompleted = 0,
+    previousSkipped = 0,
+    reconcile = false
+  ): Promise<void> => {
+    const scopeKey = entriesKey
+    setIsBatching(true)
+    setError(undefined)
+    setLinkFailure(undefined)
+    let resolvedIds: readonly string[] = itemIds ?? []
+    let completed = 0
+    let skipped = previousSkipped
+    try {
+      resolvedIds = itemIds ?? (await resolveSelectedItemIds())
+      if (reconcile) {
+        const activeIds: string[] = []
+        for (let offset = 0; offset < resolvedIds.length; offset += LITERATURE_BATCH_COMMAND_SIZE) {
+          const batch = resolvedIds.slice(offset, offset + LITERATURE_BATCH_COMMAND_SIZE)
+          const entries = await Promise.all(batch.map((id) => window.api.literature.get(id)))
+          entries.forEach((entry, index) => {
+            // get resolves merged aliases; never redirect the original association intent.
+            if (
+              entry?.id === batch[index] &&
+              entry.deletedAt === undefined &&
+              entry.mergedIntoItemId === undefined
+            )
+              activeIds.push(batch[index])
+          })
+        }
+        skipped += resolvedIds.length - activeIds.length
+        resolvedIds = activeIds
+      }
+      for (let offset = 0; offset < resolvedIds.length; offset += LITERATURE_BATCH_COMMAND_SIZE) {
+        const batch = resolvedIds.slice(offset, offset + LITERATURE_BATCH_COMMAND_SIZE)
+        await window.api.literature.transact({ ...command, itemIds: [...batch] })
+        completed += batch.length
+      }
+      if (linkScopeRef.current === scopeKey) {
+        clearSelection()
+        if (skipped)
+          setLinkFailure({
+            command,
+            itemIds: [],
+            completed: previousCompleted + completed,
+            scopeKey,
+            skipped
+          })
+      }
+    } catch {
+      if (linkScopeRef.current === scopeKey) {
+        if (resolvedIds.length) {
+          const remaining = resolvedIds.slice(completed)
+          selectionStore.replace(remaining)
+          setLinkFailure({
+            command,
+            itemIds: remaining,
+            completed: previousCompleted + completed,
+            skipped,
+            scopeKey
+          })
+        } else {
+          setError(t('Selected references could not be loaded.'))
+        }
+      }
+    } finally {
+      const refreshed = await Promise.allSettled([
+        ...(linkScopeRef.current === scopeKey ? [loadEntries(true)] : []),
+        loadCollections(),
+        loadProjectCounts()
+      ])
+      if (
+        linkScopeRef.current === scopeKey &&
+        refreshed.some((result) => result.status === 'rejected')
+      ) {
+        setError(t('Literature could not be loaded.'))
+      }
+      setIsBatching(false)
     }
   }
 
   const moveSelectedItems = async (targetCollectionId: string): Promise<void> => {
-    const selection = selectionStore.getSnapshot()
-    if (
-      !targetCollectionId ||
-      (!selection.allMatchingSelected && selection.selectedIds.size === 0) ||
-      isBatching
-    )
-      return
-    setIsBatching(true)
-    setError(undefined)
-    try {
-      await linkSelectedItemsToCollection(targetCollectionId)
-      clearSelection()
-      await Promise.all([loadEntries(true), loadCollections()])
-    } catch {
-      setError(t('Collection link could not be updated.'))
-    } finally {
-      setIsBatching(false)
-    }
+    if (!targetCollectionId || isBatching) return
+    await runLinkBatch({
+      kind: 'move-collection-items',
+      targetCollectionId,
+      ...(collectionId ? { sourceCollectionId: collectionId } : {})
+    })
   }
 
   const createCollectionForSelection = async (name: string): Promise<boolean> => {
@@ -2583,22 +2942,30 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
       return false
     setIsBatching(true)
     setError(undefined)
-    let collectionCreated = false
+    const scopeKey = entriesKey
     try {
+      // Resolve before creating so every continuation has a fixed reference set.
+      const itemIds = await resolveSelectedItemIds()
+      if (linkScopeRef.current !== scopeKey) return false
       const receipt = await window.api.literature.transact({ kind: 'create-collection', name })
-      collectionCreated = true
-      await linkSelectedItemsToCollection(receipt.id)
-      clearSelection()
-      await Promise.all([loadEntries(true), loadCollections()])
+      void loadCollections().catch(() => undefined)
+      await runLinkBatch(
+        {
+          kind: 'move-collection-items',
+          targetCollectionId: receipt.id,
+          ...(collectionId ? { sourceCollectionId: collectionId } : {})
+        },
+        itemIds
+      )
+      // Creation succeeded even if association needs Retry; retire the creation form.
       return true
     } catch (error) {
-      setError(
-        collectionCreated
-          ? t('Collection link could not be updated.')
-          : error instanceof Error && error.message.includes(LITERATURE_COLLECTION_NAME_CONFLICT)
+      if (linkScopeRef.current === scopeKey)
+        setError(
+          error instanceof Error && error.message.includes(LITERATURE_COLLECTION_NAME_CONFLICT)
             ? t('A collection with this name already exists at this level. Choose another name.')
             : t('Collection could not be created.')
-      )
+        )
       return false
     } finally {
       setIsBatching(false)
@@ -2606,33 +2973,8 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
   }
 
   const addSelectedItemsToProject = async (projectId: string): Promise<void> => {
-    const selection = selectionStore.getSnapshot()
-    if (
-      !projectId ||
-      (!selection.allMatchingSelected && selection.selectedIds.size === 0) ||
-      isBatching
-    )
-      return
-    setIsBatching(true)
-    setError(undefined)
-    try {
-      const resolvedIds = await resolveSelectedItemIds()
-      for (let offset = 0; offset < resolvedIds.length; offset += LITERATURE_BATCH_COMMAND_SIZE) {
-        await window.api.literature.transact({
-          kind: 'set-project-items',
-          projectId,
-          itemIds: resolvedIds.slice(offset, offset + LITERATURE_BATCH_COMMAND_SIZE),
-          included: true,
-          source: 'library'
-        })
-      }
-      clearSelection()
-      await Promise.all([loadEntries(true), loadProjectCounts()])
-    } catch {
-      setError(t('Project link could not be updated.'))
-    } finally {
-      setIsBatching(false)
-    }
+    if (!projectId || isBatching) return
+    await runLinkBatch({ kind: 'set-project-items', projectId, included: true, source: 'library' })
   }
 
   const batchProjectFormDialog = useProjectFormDialog({
@@ -2651,12 +2993,22 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
     setError(undefined)
     try {
       const chunks: string[] = []
+      const citationKeys = new Set<string>()
       for (let offset = 0; offset < itemIds.length; offset += LITERATURE_BATCH_COMMAND_SIZE) {
         const result = await window.api.literature.formatReferences({
           itemIds: itemIds.slice(offset, offset + LITERATURE_BATCH_COMMAND_SIZE),
           styleId: citationStyleRef.current,
           locale: citationLocale
         })
+        if (format === 'bibtex') {
+          // These headers come from our BibTeX exporter, whose keys are validated before emission.
+          for (const match of result.exports.bibtex.matchAll(/^@[a-z]+\{([^,\r\n]+),/gimu)) {
+            const key = match[1]!
+            if (citationKeys.has(key))
+              throw new Error('Selected Literature Items have duplicate citation keys.')
+            citationKeys.add(key)
+          }
+        }
         chunks.push(result.exports[format].trim())
       }
       const content = `${chunks.filter(Boolean).join('\n\n')}\n`
@@ -2690,11 +3042,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
 
   const exportCurrentScope = async (format: 'bibtex' | 'ris'): Promise<boolean> => {
     if (!selectedProject && !selectedCollection) return false
-    const itemIds: string[] = []
-    let offset = 0
-    const seenOffsets = new Set<number>()
-    while (!seenOffsets.has(offset)) {
-      seenOffsets.add(offset)
+    try {
       const page = await window.api.literature.search({
         scope: 'library',
         ...(selectedProject ? { projectId: selectedProject.id } : {}),
@@ -2702,18 +3050,18 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
         lifecycle: 'active',
         sortBy: 'title',
         sortDirection: 'asc',
-        offset,
-        limit: 100
+        allItemIds: true
       })
-      itemIds.push(...page.entries.filter(isItem).map(({ id }) => id))
-      if (page.nextOffset === undefined) break
-      offset = page.nextOffset
+      if (!page.itemIds) throw new Error('Literature membership is unavailable.')
+      return await exportReferenceIds(
+        page.itemIds,
+        format,
+        `${selectedProject?.name ?? selectedCollection?.name ?? 'references'}-references`
+      )
+    } catch (error) {
+      setError(t('References could not be exported.'))
+      throw error
     }
-    return exportReferenceIds(
-      [...new Set(itemIds)],
-      format,
-      `${selectedProject?.name ?? selectedCollection?.name ?? 'references'}-references`
-    )
   }
 
   const mergeSelectedItems = async (): Promise<void> => {
@@ -2969,6 +3317,10 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
                 >
                   <BookOpenText className="size-4" aria-hidden="true" />
                   {!sidebarCollapsed ? <span>{t('All references')}</span> : null}
+                  <LiteratureLibraryCount
+                    revision={libraryCountRevision}
+                    hidden={sidebarCollapsed}
+                  />
                 </button>
                 <button
                   type="button"
@@ -3057,7 +3409,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
                 />
                 <LiteratureSidebarGroup
                   collapsed={sidebarCollapsed}
-                  entries={collections}
+                  entries={displayCollections}
                   groupId="literature-sidebar-collections"
                   label={t('Collections')}
                   action={
@@ -3678,14 +4030,122 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
               onChanged={receiveBackgroundItems}
             />
           ) : null}
-          {(linkedItemError || error) && !entriesLoading ? (
+          {linkFailure && linkFailure.scopeKey === entriesKey ? (
+            <div className="mt-2">
+              <LiteratureErrorNotice
+                className="w-fit max-w-full rounded-md px-3 py-1.5 [&>div]:items-center"
+                description={
+                  linkFailure.skipped
+                    ? t(
+                        'Updated: {{completed}}. Not updated: {{remaining}}. Unavailable: {{skipped}}.',
+                        {
+                          completed: linkFailure.completed,
+                          remaining: linkFailure.itemIds.length,
+                          skipped: linkFailure.skipped
+                        }
+                      )
+                    : t('Updated: {{completed}}. Not updated: {{remaining}}.', {
+                        completed: linkFailure.completed,
+                        remaining: linkFailure.itemIds.length
+                      })
+                }
+                primaryButton={
+                  linkFailure.itemIds.length
+                    ? {
+                        label: t('Retry'),
+                        disabled: isBatching,
+                        onClick: () =>
+                          void runLinkBatch(
+                            linkFailure.command,
+                            linkFailure.itemIds,
+                            linkFailure.completed,
+                            linkFailure.skipped,
+                            true
+                          )
+                      }
+                    : undefined
+                }
+              />
+            </div>
+          ) : null}
+          {lifecycleFailure ? (
             <div className="mt-5">
-              <LiteratureErrorNotice title={linkedItemError || error || undefined} />
+              <LiteratureErrorNotice
+                title={t('Literature could not be updated.')}
+                description={t('Updated: {{completed}}. Not updated: {{remaining}}.', {
+                  completed: lifecycleFailure.completed,
+                  remaining: lifecycleFailure.itemIds.length
+                })}
+                secondaryButton={{
+                  label: t('Retry'),
+                  disabled: isBatching,
+                  onClick: () =>
+                    void setItemsLifecycle(lifecycleFailure.itemIds, lifecycleFailure.state)
+                }}
+              />
+            </div>
+          ) : null}
+          {candidateUpdateUncertain || candidateCountsFailed ? (
+            <div className="mt-2">
+              <LiteratureErrorNotice
+                className="w-fit max-w-full rounded-md px-3 py-1.5 [&>div]:items-center"
+                description={
+                  candidateUpdateUncertain
+                    ? t('The update could not be confirmed. Check the Inbox before trying again.')
+                    : [
+                        t('Project counts could not be refreshed.'),
+                        error === t('Literature could not be loaded.') ? error : undefined
+                      ]
+                        .filter(Boolean)
+                        .join(' ')
+                }
+                primaryButton={{
+                  label: t('Retry'),
+                  disabled: isBatching || Boolean(pendingCandidateId),
+                  onClick: () => void retryCandidateReads()
+                }}
+              />
+            </div>
+          ) : null}
+          {undoNotice ? (
+            <p role="status" className="mt-2 text-xs leading-5 text-muted-foreground">
+              {undoNotice}
+            </p>
+          ) : null}
+          {(linkedItemError || error) &&
+          !entriesLoading &&
+          // A failed Inbox read is already covered by the recovery notice and its Retry.
+          !(
+            !linkedItemError &&
+            (candidateUpdateUncertain || candidateCountsFailed) &&
+            error === t('Literature could not be loaded.')
+          ) ? (
+            <div className="mt-2">
+              <LiteratureErrorNotice
+                className="w-fit max-w-full rounded-md px-3 py-1.5 [&>div]:items-center"
+                description={linkedItemError || error || undefined}
+                primaryButton={
+                  !linkedItemError && error === t('Literature could not be loaded.')
+                    ? {
+                        label: t('Retry'),
+                        disabled: isBatching,
+                        onClick: () => {
+                          void Promise.all([
+                            loadEntries(true, true),
+                            loadCollections(),
+                            loadInboxPendingCount(),
+                            loadProjectCounts()
+                          ]).catch(() => setError(t('Literature could not be loaded.')))
+                        }
+                      }
+                    : undefined
+                }
+              />
             </div>
           ) : null}
 
           <div className="mt-6 flex min-h-0 flex-1 flex-col gap-2">
-            {entriesLoading && !entriesPageTransitionLoading ? (
+            {entriesFailed ? null : entriesLoading && !entriesPageTransitionLoading ? (
               <div
                 role="status"
                 className="flex min-h-0 flex-1 justify-center py-20 text-muted-foreground"
@@ -3709,7 +4169,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
                               itemIds={candidates.map(({ id }) => id)}
                               label={t('Select all references')}
                               store={selectionStore}
-                              disabled={isBatching}
+                              disabled={isBatching || Boolean(pendingCandidateId)}
                               className="size-4"
                             />
                             {t('Select all')}
@@ -3723,7 +4183,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
                                 type="button"
                                 variant="ghost"
                                 size="sm"
-                                disabled={isBatching}
+                                disabled={isBatching || Boolean(pendingCandidateId)}
                                 onClick={clearSelection}
                               >
                                 {t('Clear selection')}
@@ -3733,7 +4193,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
                                   type="button"
                                   variant="outline"
                                   size="sm"
-                                  disabled={isBatching}
+                                  disabled={isBatching || Boolean(pendingCandidateId)}
                                   onClick={() => void settleSelectedCandidates('dismissed')}
                                 >
                                   <X className="size-3.5" aria-hidden="true" />
@@ -3742,7 +4202,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
                                 <Button
                                   type="button"
                                   size="sm"
-                                  disabled={isBatching}
+                                  disabled={isBatching || Boolean(pendingCandidateId)}
                                   onClick={() => void settleSelectedCandidates('accepted')}
                                 >
                                   <Check className="size-3.5" aria-hidden="true" />
@@ -3776,14 +4236,14 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
                             type="button"
                             className="absolute inset-0 cursor-pointer rounded-xl outline-none active:bg-muted/10 focus-visible:ring-3 focus-visible:ring-ring/50 disabled:cursor-not-allowed"
                             aria-label={`${t('View details')}: ${item.title}`}
-                            disabled={pending}
+                            disabled={isBatching || Boolean(pendingCandidateId)}
                             onClick={() => setSelectedCandidate(candidate)}
                           />
                           <LiteratureSelectionCheckbox
                             itemId={candidate.id}
                             label={t('Select {{title}}', { title: item.title })}
                             store={selectionStore}
-                            disabled={pending || isBatching}
+                            disabled={isBatching || Boolean(pendingCandidateId)}
                             className="relative z-10 mt-1 size-4"
                           />
                           <div className="pointer-events-none relative min-w-0">
@@ -3817,7 +4277,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
                               type="button"
                               variant="outline"
                               className="w-full"
-                              disabled={pending}
+                              disabled={isBatching || Boolean(pendingCandidateId)}
                               onClick={() =>
                                 void changeCandidateState(candidate.id, 'dismiss-candidate')
                               }
@@ -3828,7 +4288,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
                             <Button
                               type="button"
                               className="w-full"
-                              disabled={pending}
+                              disabled={isBatching || Boolean(pendingCandidateId)}
                               onClick={() =>
                                 void changeCandidateState(candidate.id, 'accept-candidate')
                               }
@@ -4078,11 +4538,10 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
                                     return (
                                       <td key={column} className="px-2 py-2 align-middle">
                                         <LiteratureNoteControl
-                                          key={`${entry.id}:${entry.metadataRevision}:note`}
-                                          value={entry.item.personalNote ?? ''}
-                                          title={entry.item.title}
-                                          onCommit={(personalNote) =>
-                                            persistInlineItem(entry, { personalNote })
+                                          key={entry.id}
+                                          entry={entry}
+                                          onCommit={(base, personalNote, onPersisted) =>
+                                            persistInlineItem(base, { personalNote }, onPersisted)
                                           }
                                         />
                                       </td>
@@ -4504,7 +4963,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
                 <Button
                   type="button"
                   variant="outline"
-                  disabled={pendingCandidateId === selectedCandidate.id}
+                  disabled={isBatching || Boolean(pendingCandidateId) || entriesFailed}
                   onClick={() => {
                     void changeCandidateState(selectedCandidate.id, 'dismiss-candidate').then(
                       (updated) => {
@@ -4518,7 +4977,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
                 </Button>
                 <Button
                   type="button"
-                  disabled={pendingCandidateId === selectedCandidate.id}
+                  disabled={isBatching || Boolean(pendingCandidateId) || entriesFailed}
                   onClick={() => {
                     void changeCandidateState(selectedCandidate.id, 'accept-candidate').then(
                       (updated) => {
@@ -5027,7 +5486,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
                           <LiteratureDetailLinkList
                             key={`${selectedItem.id}:collections`}
                             checkedIds={selectedItem.collectionIds}
-                            entries={collections}
+                            entries={displayCollections}
                             error={collectionLinkError}
                             kind="collections"
                             onCheckedChange={setCollectionLink}
@@ -5316,8 +5775,12 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
       >
         <Dialog.Portal>
           <Dialog.Overlay className={dialogOverlayClassName} />
-          <Dialog.Content className={dialogPanelClassName('w-[min(440px,calc(100vw-2rem))] p-0')}>
-            <div className={dialogHeaderClassName}>
+          <Dialog.Content
+            className={dialogPanelClassName(
+              'flex max-h-[calc(100svh-2rem)] w-[min(440px,calc(100vw-2rem))] flex-col p-0'
+            )}
+          >
+            <div className={cn(dialogHeaderClassName, 'shrink-0')}>
               <div>
                 <Dialog.Title className={dialogTitleClassName}>{t('Read with agent')}</Dialog.Title>
                 <Dialog.Description className={dialogDescriptionClassName}>
@@ -5336,87 +5799,89 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
                 </Button>
               </Dialog.Close>
             </div>
-            <div className={dialogBodyClassName}>
-              {readingProjectError ? (
-                <div className="mb-3">
-                  <p role="alert" className="text-sm text-danger-000">
-                    {readingProjectError}
-                  </p>
-                  {readingSelectionEntries ? (
-                    <Button
-                      className="mt-2"
-                      variant="outline"
-                      size="sm"
-                      disabled={Boolean(startingReadingProjectId)}
-                      onClick={() => {
-                        setPendingLiteratureReading(undefined)
-                        setReadingProjectError(undefined)
-                        setBatchReading({ entries: readingSelectionEntries })
-                      }}
-                    >
-                      {t('Back')}
-                    </Button>
-                  ) : null}
-                </div>
-              ) : null}
-              {projectsLoaded ? (
-                activeProjects.length > 0 ? (
-                  <div className="grid gap-2">
-                    {activeProjects.map((project) => (
+            <ScrollArea className="grid min-h-0 flex-1 [&>[data-slot=scroll-area-viewport]]:h-auto [&>[data-slot=scroll-area-viewport]]:min-h-0">
+              <div className={dialogBodyClassName}>
+                {readingProjectError ? (
+                  <div className="mb-3">
+                    <p role="alert" className="text-sm text-danger-000">
+                      {readingProjectError}
+                    </p>
+                    {readingSelectionEntries ? (
                       <Button
-                        key={project.id}
-                        type="button"
+                        className="mt-2"
                         variant="outline"
-                        className="justify-start"
+                        size="sm"
                         disabled={Boolean(startingReadingProjectId)}
-                        onClick={() => void startReadingInProject(project.id)}
+                        onClick={() => {
+                          setPendingLiteratureReading(undefined)
+                          setReadingProjectError(undefined)
+                          setBatchReading({ entries: readingSelectionEntries })
+                        }}
                       >
-                        {startingReadingProjectId === project.id ? (
-                          <LoaderCircle
-                            className="size-4 animate-spin motion-reduce:animate-none"
-                            aria-hidden="true"
-                          />
-                        ) : (
-                          <FolderOpen className="size-4" aria-hidden="true" />
-                        )}
-                        <span className="truncate">{project.name}</span>
+                        {t('Back')}
                       </Button>
-                    ))}
+                    ) : null}
                   </div>
-                ) : (
-                  <div className="flex flex-col items-start gap-3 rounded-lg border border-dashed border-border-300/80 bg-bg-100 p-4">
-                    <FolderPlus className="size-5 text-muted-foreground" aria-hidden="true" />
-                    <div>
-                      <h3 className="text-sm font-medium">{t('No projects yet')}</h3>
-                      <p className="mt-1 text-sm leading-relaxed text-muted-foreground">
-                        {pendingLiteratureReading && pendingLiteratureReading.length > 1
-                          ? t(
-                              'Create a project to keep these papers and their Reading session together.'
-                            )
-                          : t(
-                              'Create a project to keep this paper and its Reading session together.'
-                            )}
-                      </p>
+                ) : null}
+                {projectsLoaded ? (
+                  activeProjects.length > 0 ? (
+                    <div className="grid gap-2">
+                      {activeProjects.map((project) => (
+                        <Button
+                          key={project.id}
+                          type="button"
+                          variant="outline"
+                          className="min-w-0 justify-start"
+                          disabled={Boolean(startingReadingProjectId)}
+                          onClick={() => void startReadingInProject(project.id)}
+                        >
+                          {startingReadingProjectId === project.id ? (
+                            <LoaderCircle
+                              className="size-4 animate-spin motion-reduce:animate-none"
+                              aria-hidden="true"
+                            />
+                          ) : (
+                            <FolderOpen className="size-4" aria-hidden="true" />
+                          )}
+                          <span className="truncate">{project.name}</span>
+                        </Button>
+                      ))}
                     </div>
-                    <Button
-                      type="button"
-                      disabled={Boolean(startingReadingProjectId)}
-                      onClick={readingProjectFormDialog.openCreateDialog}
-                    >
-                      <FolderPlus className="size-4" aria-hidden="true" />
-                      {t('Create project')}
-                    </Button>
-                  </div>
-                )
-              ) : (
-                <p role="status" className="text-sm text-muted-foreground">
-                  {t('Loading…')}
-                </p>
-              )}
-            </div>
+                  ) : (
+                    <div className="flex flex-col items-start gap-3 rounded-lg border border-dashed border-border-300/80 bg-bg-100 p-4">
+                      <FolderPlus className="size-5 text-muted-foreground" aria-hidden="true" />
+                      <div>
+                        <h3 className="text-sm font-medium">{t('No projects yet')}</h3>
+                        <p className="mt-1 text-sm leading-relaxed text-muted-foreground">
+                          {pendingLiteratureReading && pendingLiteratureReading.length > 1
+                            ? t(
+                                'Create a project to keep these papers and their Reading session together.'
+                              )
+                            : t(
+                                'Create a project to keep this paper and its Reading session together.'
+                              )}
+                        </p>
+                      </div>
+                      <Button
+                        type="button"
+                        disabled={Boolean(startingReadingProjectId)}
+                        onClick={readingProjectFormDialog.openCreateDialog}
+                      >
+                        <FolderPlus className="size-4" aria-hidden="true" />
+                        {t('Create project')}
+                      </Button>
+                    </div>
+                  )
+                ) : (
+                  <p role="status" className="text-sm text-muted-foreground">
+                    {t('Loading…')}
+                  </p>
+                )}
+              </div>
+            </ScrollArea>
             {projectsLoaded && activeProjects.length > 0 ? (
               <div
-                className={`${dialogFooterClassName} flex-wrap items-center [&_button]:max-w-full [&_button]:whitespace-normal [&_button]:h-auto [&_button]:min-h-8 [&_button]:py-1`}
+                className={`${dialogFooterClassName} shrink-0 flex-wrap items-center [&_button]:max-w-full [&_button]:whitespace-normal [&_button]:h-auto [&_button]:min-h-8 [&_button]:py-1`}
               >
                 <Button
                   type="button"
@@ -5456,15 +5921,24 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
         onClose={() => setPreviewItem(undefined)}
       />
       {dismissedCandidateUndo ? (
-        <ActionToast
-          title={t('Dismissed from Inbox')}
-          detail={dismissedCandidateUndo.detail}
-          actionLabel={t('Undo')}
-          dismissLabel={t('Close')}
-          onAction={() => void restoreDismissedCandidates()}
-          onDismiss={() => setDismissedCandidateUndo(undefined)}
-          testId="literature-dismiss-undo"
-        />
+        <fieldset
+          className="contents"
+          disabled={isBatching || Boolean(pendingCandidateId)}
+          aria-busy={isBatching || Boolean(pendingCandidateId)}
+        >
+          <ActionToast
+            title={t('Dismissed from Inbox')}
+            detail={dismissedCandidateUndo.detail}
+            actionLabel={dismissedCandidateUndo.needsRecheck ? t('Recheck') : t('Undo')}
+            dismissLabel={t('Close')}
+            onAction={() => void restoreDismissedCandidates()}
+            onDismiss={() => {
+              setDismissedCandidateUndo(undefined)
+              setUndoNotice(undefined)
+            }}
+            testId="literature-dismiss-undo"
+          />
+        </fieldset>
       ) : null}
     </main>
   )

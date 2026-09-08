@@ -273,6 +273,7 @@ const useApplicationEventBindings = ({
       if (
         event.defaultPrevented ||
         event.isComposing ||
+        event.repeat ||
         event.key.toLowerCase() !== 'k' ||
         !(event.metaKey || event.ctrlKey) ||
         !presentation.allowsShortcut('globalSearch')

@@ -2,6 +2,8 @@
 // chips, and artifact chips. These functions are DOM-free except domToDoc/applyDocToDom, which
 // bridge the model to the contenteditable editor.
 
+import { MAX_COMPOSER_ATTACHMENTS } from '../../../../../shared/uploads'
+
 import { getExtensionPreservingFileNameParts } from '../extension-preserving-file-name'
 
 import type { FileReference } from '../../../../../shared/artifacts'
@@ -47,7 +49,7 @@ export type ComposerNode =
 export type ComposerDoc = { nodes: ComposerNode[] }
 
 // Max artifact `@` mentions per message, mirroring the composer upload attachment cap.
-export const MAX_COMPOSER_ARTIFACT_MENTIONS = 10
+export const MAX_COMPOSER_ARTIFACT_MENTIONS = MAX_COMPOSER_ATTACHMENTS
 export const MAX_COMPOSER_SESSION_MENTIONS = MAX_SESSION_REFERENCES_PER_MESSAGE
 
 export const LONG_PASTE_CHARACTER_THRESHOLD = 10_000

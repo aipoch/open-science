@@ -1,5 +1,6 @@
 import { useEffect, useId, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+import { SearchX } from 'lucide-react'
 
 import type { SessionReference } from '../../../../../shared/session-persistence'
 import { useDateTimeFormat } from '@/hooks/useDateTimeFormat'
@@ -14,6 +15,7 @@ export type PickedSession = SessionReference
 
 type SessionMentionPopupProps = {
   query: string
+  composingRef?: React.RefObject<boolean>
   listboxId?: string
   onActiveOptionIdChange?: (optionId: string | undefined) => void
   onSelect: (session: PickedSession) => void
@@ -34,6 +36,7 @@ type SessionRow = PickedSession & {
 // rows sort first; picking a row snapshots only global Session identity plus its current title.
 export const SessionMentionPopup = ({
   query,
+  composingRef,
   listboxId,
   onActiveOptionIdChange,
   onSelect,
@@ -136,6 +139,7 @@ export const SessionMentionPopup = ({
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent): void => {
+      if (event.isComposing || composingRef?.current) return
       if (event.key === 'ArrowDown') {
         event.preventDefault()
         if (matches.length > 0) setActiveIndex((safeIndex + 1) % matches.length)
@@ -161,17 +165,35 @@ export const SessionMentionPopup = ({
 
     document.addEventListener('keydown', onKeyDown)
     return () => document.removeEventListener('keydown', onKeyDown)
-  }, [matches, onClose, onSelect, safeIndex])
+  }, [matches, onClose, onSelect, safeIndex, composingRef])
 
   return (
-    <div className="absolute bottom-full left-0 z-50 mb-1 flex max-h-[min(55vh,24rem)] min-w-[320px] max-w-[440px] flex-col overflow-hidden rounded-xl border-0.5 border-border-200 bg-bg-000 p-1.5 shadow-[0_4px_16px_hsl(var(--always-black)/10%)]">
-      <div className="shrink-0 px-2 py-1 text-xs font-medium text-text-300">{t('Sessions')}</div>
+    <div className="absolute bottom-full left-0 z-50 mb-1 flex max-h-[min(55vh,24rem)] w-max min-w-[min(320px,100%)] max-w-[min(440px,100%)] flex-col overflow-hidden rounded-xl border-0.5 border-border-200 bg-bg-000 p-1.5 shadow-[0_4px_16px_hsl(var(--always-black)/10%)]">
+      {matches.length > 0 && (
+        <div className="shrink-0 px-2 py-1 text-xs font-medium text-text-300">{t('Sessions')}</div>
+      )}
       <ul
         id={resolvedListboxId}
         role="listbox"
         aria-label={t('Sessions')}
         className="min-h-0 flex-1 overflow-y-auto"
       >
+        {matches.length === 0 && (
+          <li role="presentation" className="flex min-h-18 items-center gap-3 px-3 py-3.5">
+            <span
+              aria-hidden="true"
+              className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-bg-200 text-text-100"
+            >
+              <SearchX className="size-4" />
+            </span>
+            <div
+              role="status"
+              className="min-w-0 flex-1 text-sm font-medium leading-5 text-text-000"
+            >
+              {t('No matching sessions')}
+            </div>
+          </li>
+        )}
         {matches.map((session, index) => {
           const isActive = index === safeIndex
           return (
@@ -215,15 +237,28 @@ export const SessionMentionPopup = ({
           )
         })}
       </ul>
-      <div className="mt-1 -mx-1.5 -mb-1.5 flex shrink-0 items-center gap-3 border-t border-border-300 px-3.5 pt-1.5 pb-2 text-[11px] text-text-400 select-none">
+      <div className="mt-1 -mx-1.5 -mb-1.5 flex shrink-0 items-center justify-end gap-3 border-t border-border-200 bg-bg-200/40 px-3 py-1.5 text-[11px] text-text-100 select-none">
+        {matches.length > 0 && (
+          <>
+            <span>
+              <kbd className="rounded border border-border-200 bg-bg-000 px-1 py-0.5 font-sans text-[10px] font-medium">
+                ↑↓
+              </kbd>{' '}
+              {t('navigate')}
+            </span>
+            <span>
+              <kbd className="rounded border border-border-200 bg-bg-000 px-1 py-0.5 font-sans text-[10px] font-medium">
+                Enter / Tab
+              </kbd>{' '}
+              {t('select')}
+            </span>
+          </>
+        )}
         <span>
-          <span className="text-text-300">↑↓</span> {t('navigate')}
-        </span>
-        <span>
-          <span className="text-text-300">Enter / Tab</span> {t('select')}
-        </span>
-        <span>
-          <span className="text-text-300">Esc</span> {t('close')}
+          <kbd className="rounded border border-border-200 bg-bg-000 px-1 py-0.5 font-sans text-[10px] font-medium">
+            Esc
+          </kbd>{' '}
+          {t('close')}
         </span>
       </div>
     </div>

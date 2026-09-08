@@ -1073,7 +1073,7 @@ describe('usePreviewPersistence per-project save/restore', () => {
     })
   })
 
-  it('restores the authoritative snapshot and advances after a save conflict', async () => {
+  it('rebases the rejected local change and advances after a save conflict', async () => {
     await act(async () => {
       root.render(<PersistenceHarness projectId="project-a" />)
       await flushPreviewPersistence()
@@ -1108,17 +1108,20 @@ describe('usePreviewPersistence per-project save/restore', () => {
     })
     await flushPreviewPersistence()
 
-    expect(save).toHaveBeenCalledTimes(1)
+    expect(save).toHaveBeenCalledTimes(2)
     expect(usePreviewWorkbenchStore.getState()).toMatchObject({
-      activeItemId: serverItem.id,
-      items: [expect.objectContaining({ id: serverItem.id })]
+      activeItemId: createStoredFileItem().id,
+      items: [
+        expect.objectContaining({ id: serverItem.id }),
+        expect.objectContaining({ id: createStoredFileItem().id })
+      ]
     })
 
     save.mockResolvedValueOnce({ status: 'saved', revision: 11 })
     act(() => usePreviewWorkbenchStore.getState().collapsePanel())
     await flushPreviewPersistence()
 
-    expect(save).toHaveBeenLastCalledWith(expect.objectContaining({ expectedRevision: 10 }))
+    expect(save).toHaveBeenLastCalledWith(expect.objectContaining({ expectedRevision: 11 }))
   })
 
   it('rebases a user change queued after the conflicting snapshot', async () => {
@@ -1183,6 +1186,7 @@ describe('usePreviewPersistence per-project save/restore', () => {
         activeItemId: queuedItem.id,
         items: [
           expect.objectContaining({ id: serverItem.id }),
+          expect.objectContaining({ id: submittedItem.id }),
           expect.objectContaining({ id: queuedItem.id })
         ]
       })

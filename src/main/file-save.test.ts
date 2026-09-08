@@ -2179,6 +2179,57 @@ describe('file save IPC handlers', () => {
     }
   )
 
+  it('suffixes canonically equivalent ZIP names from different sessions', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'open-science-save-project-case-'))
+    const upperPath = join(root, 'managed-upper.csv')
+    const lowerPath = join(root, 'managed-lower.csv')
+    await writeFile(upperPath, 'upper bytes')
+    await writeFile(lowerPath, 'lower bytes')
+    const destinationPath = join(root, 'Research-artifacts.zip')
+    const resolveSessionArtifactFilePath = vi
+      .fn()
+      .mockResolvedValueOnce(upperPath)
+      .mockResolvedValueOnce(lowerPath)
+    showSaveDialog.mockResolvedValue({ canceled: false, filePath: destinationPath })
+    registerProjectFileSaveHandlers({ resolveSessionArtifactFilePath } as never)
+
+    try {
+      const result = await handlers.get('file:save-project-artifacts')!(
+        { sender: {} },
+        {
+          projectId: 'project-1',
+          suggestedArchiveName: 'Research',
+          files: [
+            {
+              source: 'artifact',
+              sessionId: 'session-1',
+              fileId: 'test-file-id',
+              versionId: 'test-file-id-version',
+              suggestedName: 'é.csv'
+            },
+            {
+              source: 'artifact',
+              sessionId: 'session-2',
+              fileId: 'second-file',
+              versionId: 'second-version',
+              suggestedName: 'e\u0301.csv'
+            }
+          ]
+        }
+      )
+
+      expect(result).toEqual({ saved: true, filePath: destinationPath })
+      const entries = unzipSync(new Uint8Array(await readFile(destinationPath)))
+      expect(Object.keys(entries)).toEqual(['generated/é.csv', 'generated/e\u0301 (2).csv'])
+      expect(Buffer.from(entries['generated/é.csv']!).toString('utf8')).toBe('upper bytes')
+      expect(Buffer.from(entries['generated/e\u0301 (2).csv']!).toString('utf8')).toBe(
+        'lower bytes'
+      )
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
   it('claims zip entry names case-insensitively so case-only twins cannot overlap on disk', async () => {
     const root = await mkdtemp(join(tmpdir(), 'open-science-save-project-case-'))
     const upperPath = join(root, 'managed-upper.csv')

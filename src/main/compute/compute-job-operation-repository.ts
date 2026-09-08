@@ -250,7 +250,11 @@ class ComputeJobOperationRepository {
     })
   }
 
-  async fulfill(claim: ClaimedComputeJobOperation, now: Date): Promise<boolean> {
+  async fulfill(
+    claim: ClaimedComputeJobOperation,
+    now: Date,
+    remoteWorkdirAbsent = false
+  ): Promise<boolean> {
     const client = await this.getClient()
     return client.$transaction(async (transaction) => {
       switch (claim.operation.kind) {
@@ -268,7 +272,15 @@ class ComputeJobOperationRepository {
                 }
               }
             },
-            data: { status: 'failed', finishedAt: now }
+            data: {
+              status: 'failed',
+              finishedAt: now,
+              // Persist the definitive no-launch result with cancellation settlement so a restart
+              // cannot retry harvesting a directory that was never created.
+              ...(remoteWorkdirAbsent
+                ? { harvestedAt: now, harvestError: null, remoteCleanupDisposition: 'cleaned' }
+                : {})
+            }
           })
           if (terminalized.count === 0) return false
           break

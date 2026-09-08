@@ -10,6 +10,56 @@ const MAX_LOCAL_PDF_METADATA_BYTES = 50 * 1024 * 1024
 const DOI_PATTERN = /\b10\.\d{4,9}\/[-._;()/:A-Z0-9]+/giu
 const PMID_PATTERN = /\b(?:PMID|PubMed\s+ID)\s*:?\s*(\d{6,9})\b/iu
 
+const DOI_CACHE_SIZE = 32
+const DOI_CACHE_MS = 5 * 60_000
+const doiCaches = new WeakMap<
+  typeof window.api.literature.lookupMetadata,
+  Map<string, { expires: number; result: Promise<LiteratureItemInput> }>
+>()
+
+const lookupPdfDoi = (doi: string): Promise<LiteratureItemInput> => {
+  const lookup = window.api.literature.lookupMetadata
+  let cache = doiCaches.get(lookup)
+  if (!cache) {
+    cache = new Map()
+    doiCaches.set(lookup, cache)
+  }
+  const cached = cache.get(doi)
+  if (cached && cached.expires > Date.now()) return cached.result
+  const result = lookup(doi)
+  const entry = { expires: Date.now() + DOI_CACHE_MS, result }
+  cache.delete(doi)
+  cache.set(doi, entry)
+  while (cache.size > DOI_CACHE_SIZE) cache.delete(cache.keys().next().value!)
+  const entries = cache
+  void result.catch(() => {
+    if (entries.get(doi) === entry) entries.delete(doi)
+  })
+  return result
+}
+
+const completeLiteraturePdfDraft = async (
+  draft: LiteratureItemInput
+): Promise<LiteratureItemInput> => {
+  const doi = draft.identifiers?.find(({ scheme }) => scheme === 'doi')?.value
+  if (!doi) return draft
+  try {
+    const resolved = await lookupPdfDoi(doi)
+    // Remote defaults must not erase fields present only in the PDF metadata.
+    const populated = Object.fromEntries(
+      Object.entries(resolved).filter(([, value]) =>
+        typeof value === 'string'
+          ? value.trim().length > 0
+          : value !== undefined &&
+            (typeof value !== 'object' || (value !== null && Object.keys(value).length > 0))
+      )
+    )
+    return { ...draft, ...populated, identifiers: draft.identifiers }
+  } catch {
+    return draft
+  }
+}
+
 const textValue = (value: unknown): string => (typeof value === 'string' ? value.trim() : '')
 
 const pdfInfoValue = (info: Record<string, unknown>, key: string): string => {
@@ -97,4 +147,4 @@ const extractLiteraturePdfDraft = async (
   }
 }
 
-export { extractLiteraturePdfDraft, parseLiteraturePdfMetadata }
+export { completeLiteraturePdfDraft, extractLiteraturePdfDraft, parseLiteraturePdfMetadata }

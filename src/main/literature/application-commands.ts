@@ -17,6 +17,7 @@ import {
   type LiteratureFormatReferencesResult,
   type LiteratureFormatDocumentRequest,
   type LiteratureFormatDocumentResult,
+  type LiteratureItemInput,
   type LiteratureItemView,
   type LiteratureMetadataCompletionRequest,
   type LiteratureMetadataCompletionResult,
@@ -35,6 +36,7 @@ import {
 type LiteratureCommandOwner = Readonly<{
   jobs(request: LiteratureJobRequest): Promise<LiteratureJobsResult>
   fullText(request: LiteratureFullTextRequest): Promise<LiteratureFullTextResult>
+  lookupMetadata(doi: string): Promise<LiteratureItemInput>
   completeMetadata(
     request: LiteratureMetadataCompletionRequest
   ): Promise<LiteratureMetadataCompletionResult>
@@ -61,6 +63,11 @@ const literatureApplicationCommands = Object.freeze({
     readonly [LiteratureFullTextRequest],
     LiteratureFullTextResult
   >('literature:full-text', literatureApplicationCommandContracts.fullText),
+  lookupMetadata: defineApplicationCommand<
+    'literature:lookup-metadata',
+    readonly [string],
+    LiteratureItemInput
+  >('literature:lookup-metadata', literatureApplicationCommandContracts.lookupMetadata),
   completeMetadata: defineApplicationCommand<
     'literature:complete-metadata',
     readonly [LiteratureMetadataCompletionRequest],
@@ -111,6 +118,7 @@ const literatureApplicationCommands = Object.freeze({
 const literatureApplicationCommandGroup = defineApplicationCommandGroup('literature', [
   literatureApplicationCommands.jobs,
   literatureApplicationCommands.fullText,
+  literatureApplicationCommands.lookupMetadata,
   literatureApplicationCommands.completeMetadata,
   literatureApplicationCommands.citationStyles,
   literatureApplicationCommands.formatReferences,
@@ -131,6 +139,7 @@ const registerLiteratureApplicationCommands = (
     scope.registerGroup(literatureApplicationCommandGroup, {
       'literature:jobs': ({ args }) => owner.jobs(args[0]),
       'literature:full-text': ({ args }) => owner.fullText(args[0]),
+      'literature:lookup-metadata': ({ args }) => owner.lookupMetadata(args[0]),
       'literature:complete-metadata': ({ args }) => owner.completeMetadata(args[0]),
       'literature:citation-styles': ({ args }) => owner.citationStyles(args[0]),
       'literature:format-references': ({ args }) => owner.formatReferences(args[0]),

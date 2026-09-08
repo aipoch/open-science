@@ -317,6 +317,18 @@ describe('LocalFsService granted roots', () => {
     await rm(outside, { recursive: true, force: true })
   })
 
+  it('regression: rejects a regular file before stopping notebooks or persisting a grant', async () => {
+    const file = join(outside, 'audit.txt')
+    await writeFile(file, 'AUDIT OUTSIDE ROOT')
+    const outcome = await grantService.grantRoot({ path: file, access: 'ro' }).then(
+      () => 'accepted',
+      () => 'rejected'
+    )
+    expect.soft(outcome).toBe('rejected')
+    expect.soft(beforeGrantedRootsChange).not.toHaveBeenCalled()
+    expect(store).toEqual([])
+  })
+
   it('grants a folder inside home, canonicalized via realpath', async () => {
     const updated = await grantService.grantRoot({ path: join(home, 'Documents'), access: 'ro' })
 

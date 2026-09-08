@@ -4,7 +4,7 @@ import { useTranslation } from 'react-i18next'
 
 import { cn } from '@/lib/utils'
 
-import { getFileExtension } from '../../preview-support'
+import { getFileExtension, getMoleculeFormat } from '../../preview-support'
 import { PreviewErrorCard, PreviewLoadingContent } from '../PreviewFallback'
 import type { PreviewFileRendererProps } from '../preview-types'
 import { usePreviewFileContent } from '../usePreviewFileContent'
@@ -13,19 +13,14 @@ import { buildReactionMarkup } from './reaction-markup'
 
 type OclModule = typeof import('openchemlib')
 
-// SMILES sources parse via fromSmiles; molfile/SDF via fromMolfile (which reads the first record).
-const SMILES_EXTENSIONS = new Set(['smi', 'smiles'])
-// MDL reaction files render as a laid-out row of component depictions instead of one molecule.
-const REACTION_EXTENSIONS = new Set(['rxn'])
-
 const MoleculePreviewCanvas = ({
   content,
-  extension,
+  format,
   name,
   presentation
 }: {
   content: string
-  extension: string
+  format: ReturnType<typeof getMoleculeFormat>
   name: string
   presentation?: PreviewFileRendererProps['presentation']
 }): React.JSX.Element => {
@@ -45,7 +40,7 @@ const MoleculePreviewCanvas = ({
     if (container.clientWidth <= 0 || container.clientHeight <= 0) return
 
     try {
-      if (REACTION_EXTENSIONS.has(extension)) {
+      if (format === 'rxn') {
         // Each reaction component is bounded by the tile height so the row fits and scrolls if wide.
         const componentHeight = Math.max(80, Math.min(container.clientHeight - 24, 260))
         container.innerHTML = buildReactionMarkup(ocl, content, svgId, {
@@ -53,9 +48,16 @@ const MoleculePreviewCanvas = ({
           height: componentHeight
         })
       } else {
-        const molecule = SMILES_EXTENSIONS.has(extension)
-          ? ocl.Molecule.fromSmiles(content)
-          : ocl.Molecule.fromMolfile(content)
+        const molecule =
+          format === 'smiles'
+            ? ocl.Molecule.fromSmiles(
+                content
+                  .split(/\r?\n/)
+                  .find((line) => line.trim())
+                  ?.trim() ?? ''
+              )
+            : ocl.Molecule.fromMolfile(content)
+        if (molecule.getAllAtoms() === 0) throw new Error(t('No atoms found'))
         container.innerHTML = molecule.toSVG(container.clientWidth, container.clientHeight, svgId, {
           autoCrop: true,
           autoCropMargin: 16
@@ -67,7 +69,7 @@ const MoleculePreviewCanvas = ({
       container.replaceChildren()
       setError(renderError instanceof Error ? renderError.message : t('Could not render structure'))
     }
-  }, [content, extension, svgId, t])
+  }, [content, format, svgId, t])
 
   useEffect(() => {
     let canceled = false
@@ -136,6 +138,7 @@ export const MoleculePreviewRenderer = ({
 }: PreviewFileRendererProps): React.JSX.Element => {
   const { t } = useTranslation()
   const state = usePreviewFileContent(item)
+  const [showSource, setShowSource] = useState(false)
 
   if (state.status === 'loading') return <PreviewLoadingContent />
 
@@ -154,12 +157,36 @@ export const MoleculePreviewRenderer = ({
     return <SourcePreviewContent content={state.preview.content} pagination={state.pagination} />
   }
 
+  const format = getMoleculeFormat(getFileExtension(item.name), item.mimeType)
   return (
-    <MoleculePreviewCanvas
-      content={state.preview.content}
-      extension={getFileExtension(item.name)}
-      name={item.name}
-      presentation={presentation}
-    />
+    <div className="flex size-full flex-col overflow-hidden">
+      {presentation !== 'search' && (
+        <div className="flex shrink-0 items-center justify-between gap-2 border-b border-border-300 px-3 py-2 text-[12px] text-text-300">
+          <span>
+            {!showSource && format !== 'rxn' ? t('Only the first record is previewed.') : null}
+          </span>
+          <button
+            type="button"
+            className="rounded px-2 py-1 hover:bg-bg-200"
+            aria-pressed={showSource}
+            onClick={() => setShowSource(!showSource)}
+          >
+            {showSource ? t('Preview') : t('Source')}
+          </button>
+        </div>
+      )}
+      <div className="min-h-0 flex-1">
+        {showSource ? (
+          <SourcePreviewContent content={state.preview.content} pagination={state.pagination} />
+        ) : (
+          <MoleculePreviewCanvas
+            content={state.preview.content}
+            format={format}
+            name={item.name}
+            presentation={presentation}
+          />
+        )}
+      </div>
+    </div>
   )
 }

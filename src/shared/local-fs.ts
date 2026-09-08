@@ -184,19 +184,6 @@ export const resolveLocalPath = (cwd: string, input: string, platform: string): 
   return `${base}${separator}${input}`
 }
 
-// Normalizes separators for scope comparisons: both POSIX and Windows separators count as
-// separators (the app ships on mac/win), and trailing separators are dropped so a root recorded
-// as "/data/" still matches "/data/x". Case is left alone — comparison is exact on purpose.
-const normalizePathForScope = (path: string): string => path.replace(/\\/g, '/').replace(/\/+$/, '')
-
-// True when `path` is `root` itself or lives inside it. The separator boundary in the startsWith
-// check matters: "/data2/x" must NOT count as within "/data".
-export const isPathWithin = (path: string, root: string): boolean => {
-  const candidate = normalizePathForScope(path)
-  const base = normalizePathForScope(root)
-  return candidate === base || candidate.startsWith(`${base}/`)
-}
-
 // Validates a folder the user wants to grant. Any valid absolute path qualifies — granting is no
 // longer confined to home or already-granted roots (existence is guaranteed by the realpath in
 // grantRoot). Home itself is rejected because it is the implicit root and granting it would be a
@@ -207,8 +194,7 @@ export const validateGrantCandidate = (
   platform: string
 ): { ok: true } | { ok: false; reason: 'not-absolute' | 'is-home' } => {
   if (validateLocalPath(path, platform) !== undefined) return { ok: false, reason: 'not-absolute' }
-  if (normalizePathForScope(path) === normalizePathForScope(home))
-    return { ok: false, reason: 'is-home' }
+  if (sameLocalDirectory(path, home, platform)) return { ok: false, reason: 'is-home' }
   return { ok: true }
 }
 

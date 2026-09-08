@@ -92,6 +92,11 @@ const isProcessGroupAlive = (groupId: number): boolean => {
   }
 }
 
+// Durable kernel recovery addresses a previously-owned detached group by its persisted group id,
+// without a live ChildProcess handle from the crashed application instance.
+export const isOwnedPosixProcessGroupAlive = (groupId: number): boolean =>
+  Number.isSafeInteger(groupId) && groupId > 0 && isProcessGroupAlive(groupId)
+
 const signalProcessGroup = (groupId: number, signal: NodeJS.Signals): void => {
   try {
     process.kill(-groupId, signal)
@@ -316,7 +321,6 @@ const terminatePosixTree = async (
 
   if (exited && survivors.length === 0) return { reaped: snapshot.complete }
 
-  let childExited = exited
   if (survivors.length > 0) {
     log?.error(
       `process tree left ${survivors.length} descendant(s) alive after ${gracefulSignal}; escalating to SIGKILL`
@@ -328,12 +332,17 @@ const terminatePosixTree = async (
       `process ${child.pid ?? '(no pid)'} did not exit after ${gracefulSignal}; escalating to SIGKILL`
     )
     forceKillChild(child)
-    childExited = await waitForExit(child, SIGKILL_GRACE_MS)
   }
 
-  // Re-check after SIGKILL: reaped only if the direct child exited and no descendant is still alive.
+  // SIGKILL delivery is asynchronous. Give descendants the same bounded exit grace even when the
+  // direct child exited first; an immediate probe can otherwise report a successfully stopped tree
+  // as unconfirmed. Wait concurrently so the whole forced pass still has one grace period.
+  const [childExited, descendantsExited] = await Promise.all([
+    exited ? true : waitForExit(child, SIGKILL_GRACE_MS),
+    waitForPidsExit(descendants, SIGKILL_GRACE_MS)
+  ])
   return {
-    reaped: snapshot.complete && childExited && descendants.filter(isProcessAlive).length === 0
+    reaped: snapshot.complete && childExited && descendantsExited
   }
 }
 
@@ -377,6 +386,19 @@ const terminateOwnedPosixProcessGroup = async (
   ])
   return { reaped: snapshot.complete && forcedExit.every(Boolean) }
 }
+
+export const terminateOwnedPosixProcessGroupById = (
+  groupId: number,
+  signal?: NodeJS.Signals,
+  log?: ProcessTreeLogger
+): Promise<ProcessTreeKillResult> =>
+  Number.isSafeInteger(groupId) && groupId > 0
+    ? terminateOwnedPosixProcessGroup(
+        { kind: 'owned-posix-process-group', id: groupId },
+        signal,
+        log
+      )
+    : Promise.resolve({ reaped: false })
 
 // Terminates a child process and every descendant it spawned, then waits for the direct child to actually
 // exit — escalating to SIGKILL anything still alive. On Windows the tree is reaped with taskkill /T /F

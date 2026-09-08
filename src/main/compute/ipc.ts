@@ -148,7 +148,8 @@ export const toJobSummary = async (
     featured_file_count: featuredFiles.length,
     left_on_remote_count: leftOnRemote.length,
     left_on_remote: leftOnRemote,
-    harvest_error: job.harvest_error ?? undefined
+    harvest_error: job.harvest_error ?? undefined,
+    harvested_at: job.harvested_at
   }
 }
 
@@ -229,6 +230,11 @@ type ComputeHandlers = {
   jobsTransitionAnalysis: (request: ComputeJobAnalysisTransition) => Promise<JobSummary[]>
 }
 
+type ComputeResultDeliveryProjection = Readonly<{
+  observeJob(job: JobSummary): Promise<void>
+  hasDeliveryPath(jobId: string): Promise<boolean>
+}>
+
 const createComputeHandlers = (
   repository: ComputeHostRepository,
   listSshAliases: () => Promise<string[]> = readSshConfigHostAliases,
@@ -248,7 +254,8 @@ const createComputeHandlers = (
   authenticationDependencies?: ComputeAuthenticationDependencies,
   sessionCacheOwner?: SessionCacheOwner,
   operationRepository?: ComputeJobOperationRepository,
-  sessionLimitPersistence?: SessionConcurrencyLimitPersistence
+  sessionLimitPersistence?: SessionConcurrencyLimitPersistence,
+  resultDelivery?: Pick<ComputeResultDeliveryProjection, 'hasDeliveryPath'>
 ): ComputeHandlers => {
   const permissionGrants = permissionGrantRegistry
     ? createComputePermissionGrantAdapter(permissionGrantRegistry, legacyComputeGrants)
@@ -414,6 +421,16 @@ const createComputeHandlers = (
       return new Map()
     }
   }
+  const projectDeliveryPath = async (summary: JobSummary): Promise<JobSummary> => {
+    try {
+      return resultDelivery && (await resultDelivery.hasDeliveryPath(summary.job_id))
+        ? { ...summary, result_delivery_path: 'agent-result-delivery' }
+        : summary
+    } catch (error) {
+      log.warn('agent result delivery projection failed', errorLogFields(error))
+      return summary
+    }
+  }
 
   const createHostWithLifecycle = <Request extends { sshAlias: string }>(
     request: Request,
@@ -543,13 +560,26 @@ const createComputeHandlers = (
     jobsList: async (filter) => {
       if (!jobRepository || !storageRoot) return []
       const hostNameMap = await listHostNames()
+      if ('projectId' in filter) {
+        const jobs = await jobRepository.findProjectOverview(
+          filter.projectId,
+          new Date(filter.since)
+        )
+        return Promise.all(
+          jobs.map((job) =>
+            toJobSummary(job, hostNameMap.get(job.provider_id) ?? job.provider_id, storageRoot)
+          )
+        )
+      }
       const jobs =
         'nonTerminal' in filter
           ? await jobRepository.findNonTerminal()
           : await jobRepository.findBySession(filter.sessionId, filter.status)
       return Promise.all(
-        jobs.map((j) =>
-          toJobSummary(j, hostNameMap.get(j.provider_id) ?? j.provider_id, storageRoot)
+        jobs.map(async (j) =>
+          projectDeliveryPath(
+            await toJobSummary(j, hostNameMap.get(j.provider_id) ?? j.provider_id, storageRoot)
+          )
         )
       )
     },
@@ -575,8 +605,10 @@ const createComputeHandlers = (
           ? await jobRepository.findPendingNotifications(filter)
           : await jobRepository.findPendingNotifications()
       return Promise.all(
-        jobs.map((j) =>
-          toJobSummary(j, hostNameMap.get(j.provider_id) ?? j.provider_id, storageRoot)
+        jobs.map(async (j) =>
+          projectDeliveryPath(
+            await toJobSummary(j, hostNameMap.get(j.provider_id) ?? j.provider_id, storageRoot)
+          )
         )
       )
     },
@@ -599,8 +631,14 @@ const createComputeHandlers = (
       }
       const hostNameMap = await listHostNames()
       return Promise.all(
-        jobs.map((job) =>
-          toJobSummary(job, hostNameMap.get(job.provider_id) ?? job.provider_id, storageRoot)
+        jobs.map(async (job) =>
+          projectDeliveryPath(
+            await toJobSummary(
+              job,
+              hostNameMap.get(job.provider_id) ?? job.provider_id,
+              storageRoot
+            )
+          )
         )
       )
     },
@@ -629,9 +667,43 @@ export const createJobUpdatedBroadcaster =
   (
     hostRepository: ComputeHostRepository,
     storageRoot: string,
-    jobRepository: Pick<ComputeJobRepository, 'get'>
+    jobRepository: Pick<ComputeJobRepository, 'get'>,
+    resultDelivery?: ComputeResultDeliveryProjection
   ): ((job: ComputeJob) => void) =>
   (job) => {
+    // Register the canonical nonterminal observation before any filesystem/Host lookup yields.
+    // A dispatch can fail and notify very quickly; entering the adapter's per-Job chain here makes
+    // waiting-result registration happen before that terminal notification is processed.
+    if (
+      resultDelivery &&
+      (job.status === 'queued' || job.status === 'submitted' || job.status === 'running')
+    ) {
+      void resultDelivery
+        .observeJob({
+          job_id: job.job_id,
+          provider_id: job.provider_id,
+          display_name: job.provider_id,
+          shape: job.shape,
+          session_id: job.session_id,
+          project_id: job.project_id,
+          status: job.status,
+          cancellation_status: job.cancellation_status,
+          intent: job.intent,
+          created_at: job.created_at,
+          started_at: job.started_at,
+          finished_at: job.finished_at,
+          exit_code: job.exit_code,
+          error_code: job.error_code,
+          remote_workdir: job.remote_workdir,
+          stdout_tail: job.stdout_tail,
+          stderr_tail: job.stderr_tail,
+          notified_at: job.notified_at,
+          notification_consumed_at: job.notification_consumed_at
+        })
+        .catch((error) =>
+          log.warn('agent result delivery observation failed', errorLogFields(error))
+        )
+    }
     void (async () => {
       let displayName = job.provider_id
       try {
@@ -657,6 +729,14 @@ export const createJobUpdatedBroadcaster =
         verified.harvest_error !== current.harvest_error
       ) {
         summary = await toJobSummary(verified, displayName, storageRoot)
+      }
+      try {
+        await resultDelivery?.observeJob(summary)
+        if (resultDelivery && (await resultDelivery.hasDeliveryPath(summary.job_id))) {
+          summary = { ...summary, result_delivery_path: 'agent-result-delivery' }
+        }
+      } catch (error) {
+        log.warn('agent result delivery projection failed', errorLogFields(error))
       }
       broadcastJobUpdated(summary)
     })().catch(() => undefined)
@@ -693,7 +773,8 @@ const createComputeIpcModule = (
   permissionGrantRegistry?: PermissionGrantRegistry,
   legacyComputeGrants?: LegacyComputeGrantPort,
   hostLifecycle?: ComputeHostLifecycle,
-  sessionLimitPersistence?: SessionConcurrencyLimitPersistence
+  sessionLimitPersistence?: SessionConcurrencyLimitPersistence,
+  resultDelivery?: ComputeResultDeliveryProjection
 ): ComputeIpcModule => {
   const operationRepository = createDefaultComputeJobOperationRepository()
   const configRoot = resolveConfigRoot()
@@ -706,7 +787,12 @@ const createComputeIpcModule = (
     legacyComputeGrants ?? createSettingsComputeGrantPort(configRoot)
 
   // Broadcast dispatcher status transitions to the renderer, same hook shape as the JobPoller uses.
-  const onJobUpdated = createJobUpdatedBroadcaster(repository, dataRoot, jobRepository)
+  const onJobUpdated = createJobUpdatedBroadcaster(
+    repository,
+    dataRoot,
+    jobRepository,
+    resultDelivery
+  )
   const handlers = createComputeHandlers(
     repository,
     undefined,
@@ -723,7 +809,8 @@ const createComputeIpcModule = (
     undefined,
     sessionCacheOwner,
     operationRepository,
-    sessionLimitPersistence
+    sessionLimitPersistence,
+    resultDelivery
   )
   const jobDeletionOwner = handlers.jobDeletionOwner
   if (!jobDeletionOwner) throw new Error('Compute Job deletion owner is unavailable.')
@@ -751,4 +838,9 @@ export {
 }
 export { COMPUTE_JOBS_LIST_CHANNEL, installComputeIpcHandlers } from './electron-ipc-adapter'
 export type { ComputeIpcAdapter } from './electron-ipc-adapter'
-export type { ComputeHandlers, ComputeHostLifecycle, ComputeIpcModule }
+export type {
+  ComputeHandlers,
+  ComputeHostLifecycle,
+  ComputeIpcModule,
+  ComputeResultDeliveryProjection
+}

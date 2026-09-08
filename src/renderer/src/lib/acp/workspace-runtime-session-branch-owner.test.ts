@@ -76,6 +76,82 @@ describe('branchWorkspaceSessionFromMessage', () => {
     )
   })
 
+  it.each(['stay', 'switch', 'delete-source', 'archive-source'])(
+    'restores only an available source without overriding user navigation: %s',
+    async (selectionAction) => {
+      useSessionStore.getState().appendUserMessage({
+        sessionId: 'source-session',
+        content: 'question',
+        cwd: '/workspace/project',
+        projectId: 'project-1'
+      })
+      const answer = useSessionStore.getState().appendAgentMessageChunk({
+        sessionId: 'source-session',
+        streamId: 'answer',
+        eventId: 'answer',
+        content: 'answer'
+      })!
+      useSessionStore.getState().finishRun('source-session')
+      useSessionStore.getState().appendUserMessage({
+        sessionId: 'other-session',
+        content: 'other question',
+        cwd: '/workspace/project',
+        projectId: 'project-1'
+      })
+      useSessionStore.getState().finishRun('other-session')
+      useSessionStore.setState((state) => ({
+        sessions: state.sessions.map((session) => ({
+          ...session,
+          updatedAt: session.id === 'source-session' ? 1 : 2
+        }))
+      }))
+      useSessionStore.getState().selectSession('source-session')
+      let rejectCreation!: (error: Error) => void
+      const failure = new Error('backend offline')
+      const createSession = vi.fn(
+        () =>
+          new Promise<never>((_, reject) => {
+            rejectCreation = reject
+          })
+      )
+      const pending = branchWorkspaceSessionFromMessage(
+        { createSession },
+        {
+          sourceSessionId: 'source-session',
+          sourceMessageId: answer.messageId
+        }
+      )
+      const rejection = expect(pending).rejects.toBe(failure)
+      await vi.waitFor(() => expect(createSession).toHaveBeenCalledOnce())
+      expect(useSessionStore.getState().selectedSessionId).not.toBe('source-session')
+      if (selectionAction === 'switch') useSessionStore.getState().selectSession('other-session')
+      if (selectionAction === 'delete-source')
+        useSessionStore.getState().deleteSession('source-session')
+      if (selectionAction === 'archive-source')
+        useSessionStore.setState((state) => ({
+          sessions: state.sessions.map((session) =>
+            session.id === 'source-session' ? { ...session, archivedAt: 3 } : session
+          )
+        }))
+      rejectCreation(failure)
+      await rejection
+
+      expect(
+        useSessionStore
+          .getState()
+          .sessions.map((session) => session.id)
+          .sort()
+      ).toEqual(
+        selectionAction === 'delete-source'
+          ? ['other-session']
+          : ['other-session', 'source-session']
+      )
+      expect(useSessionStore.getState().selectedSessionId).toBe(
+        selectionAction === 'stay' ? 'source-session' : 'other-session'
+      )
+    }
+  )
+
   it('reports branch size failures against the durable source Session', async () => {
     useSessionStore.getState().appendUserMessage({
       sessionId: 'source-session',

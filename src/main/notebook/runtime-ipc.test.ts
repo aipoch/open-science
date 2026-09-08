@@ -115,6 +115,7 @@ describe('runtime IPC adapter', () => {
 
     expect([...handlers.keys()]).toEqual([
       'runtime:list-environments',
+      'runtime:set-sandbox-access',
       'runtime:list-packages',
       'runtime:list-package-counts',
       'runtime:get-enablement',

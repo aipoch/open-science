@@ -8,7 +8,16 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { ChatMessage } from '@/stores/session-store'
 
-import { WorkspaceMessageItem } from './WorkspaceMessageItem'
+import { TooltipProvider } from '@/components/ui/tooltip'
+import { WorkspaceMessageItem as MessageItem } from './WorkspaceMessageItem'
+
+const WorkspaceMessageItem = (
+  props: React.ComponentProps<typeof MessageItem>
+): React.JSX.Element => (
+  <TooltipProvider delayDuration={200}>
+    <MessageItem {...props} />
+  </TooltipProvider>
+)
 
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 

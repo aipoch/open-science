@@ -212,6 +212,18 @@ export const branchWorkspaceSessionFromMessage = async (
     } else if (createdSessionId && runtime.deleteSession) {
       await runtime.deleteSession(createdSessionId).catch(() => undefined)
     }
+    const store = useSessionStore.getState()
+    const source = store.sessions.find((session) => session.id === input.sourceSessionId)
+    if (
+      (store.selectedSessionId === failedSessionId ||
+        store.selectedSessionId === pending.sessionId) &&
+      source &&
+      source.projectId === pendingSession.projectId &&
+      !source.isPending &&
+      source.archivedAt === undefined
+    ) {
+      store.selectSession(source.id)
+    }
     useSessionStore.getState().deleteSession(failedSessionId)
     if (failedSessionId !== pending.sessionId)
       useSessionStore.getState().deleteSession(pending.sessionId)

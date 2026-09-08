@@ -115,6 +115,18 @@ const PERMISSION_PROFILES: ReadonlyArray<{
 const permissionProfileLabel = (profile: PermissionProfileId): string =>
   PERMISSION_PROFILES.find((candidate) => candidate.id === profile)?.label ?? 'Ask for approval'
 
+const permissionScopeLabel = (
+  grant: PermissionGrantView,
+  t: ReturnType<typeof useTranslation>['t']
+): string => {
+  if (grant.scopeKind === 'global') return t('Global')
+  // Source compatibility for an older host. Current projections always supply scopeName.
+  if (grant.scopeName === undefined) return grant.scopeLabel
+  return grant.scopeKind === 'project'
+    ? t('Project: {{name}}', { name: grant.scopeName ?? t('Unknown project') })
+    : t('Session: {{name}}', { name: grant.scopeName ?? t('Unknown session') })
+}
+
 const PermissionRow = ({
   grant,
   onRevoke,
@@ -126,7 +138,40 @@ const PermissionRow = ({
   onOpenConnector?: (serverId: string) => void
   onOpenSession?: (sessionId: string) => void
 }): React.JSX.Element => {
-  const { t } = useTranslation()
+  const { t, i18n } = useTranslation()
+  const scopeLabel = permissionScopeLabel(grant, t)
+  const connectorName =
+    grant.connectorDisplayName && grant.connectorDisplayName !== grant.connectorServerId
+      ? `${grant.connectorDisplayName} (${grant.connectorServerId})`
+      : grant.connectorServerId
+  const title = connectorName
+    ? `${connectorName} · ${grant.connectorToolName ?? grant.capabilityLabel}`
+    : t(grant.capabilityLabel)
+  const qualifierLabel =
+    grant.qualifierKind === 'any'
+      ? t('Any call')
+      : grant.qualifierKind === 'exact'
+        ? t('Specific input')
+        : grant.qualifierKind === 'command_group'
+          ? t('Command group')
+          : grant.qualifierLabel
+  const summary = grant.approvalSummary ? t(grant.approvalSummary) : undefined
+  const createdLabel =
+    grant.qualifierKind === 'command_group' && grant.createdAt !== undefined
+      ? t('Approved {{date}}', {
+          date: new Intl.DateTimeFormat(i18n.language, {
+            dateStyle: 'medium',
+            timeStyle: 'medium'
+          }).format(grant.createdAt)
+        })
+      : undefined
+  const revokeName = [title, summary, scopeLabel, createdLabel].filter(Boolean).join(' · ')
+  const policyHint =
+    grant.effectiveState === 'blocked_by_policy'
+      ? t('Blocked in Connectors; this permission is currently inactive')
+      : grant.effectiveState === 'covered_by_policy'
+        ? t('Allowed by Connector policy even without this permission')
+        : undefined
   const sessionId = grant.scopeKind === 'session' ? grant.sessionId : undefined
   const scopeClassName =
     'col-start-1 row-start-2 max-w-full justify-self-start truncate rounded-md bg-muted px-2 py-1 text-sm text-muted-foreground sm:col-start-2 sm:row-start-1 sm:max-w-80'
@@ -138,11 +183,28 @@ const PermissionRow = ({
     >
       <div className="min-w-0">
         <div>
-          <span className="text-sm text-foreground">{t(grant.capabilityLabel)}</span>
-          {grant.qualifierLabel ? (
-            <span className="ml-2 text-sm text-muted-foreground">{grant.qualifierLabel}</span>
+          {grant.connectorServerId && grant.effectiveState && onOpenConnector ? (
+            <button
+              type="button"
+              className="rounded-sm text-left text-sm text-foreground underline-offset-2 hover:underline focus-visible:ring-3 focus-visible:ring-ring/50"
+              aria-label={t('Open {{name}}', { name: title })}
+              onClick={() => onOpenConnector(grant.connectorServerId!)}
+            >
+              {title}
+            </button>
+          ) : (
+            <span className="text-sm text-foreground">{title}</span>
+          )}
+          {qualifierLabel ? (
+            <span className="ml-2 text-sm text-muted-foreground">{qualifierLabel}</span>
           ) : null}
         </div>
+        {grant.qualifierKind === 'command_group' ? (
+          <p className="mt-0.5 text-xs text-muted-foreground">
+            {summary ?? t('Command details unavailable for this permission')}
+            {createdLabel ? <span className="ml-2">{createdLabel}</span> : null}
+          </p>
+        ) : null}
         {grant.coveredBy ? (
           <p className="mt-0.5 text-xs text-muted-foreground">
             {t('Also allowed {{scope}}', {
@@ -150,7 +212,7 @@ const PermissionRow = ({
             })}
           </p>
         ) : null}
-        {grant.policyHint ? (
+        {policyHint ? (
           <button
             type="button"
             className="mt-0.5 block rounded-sm text-left text-xs text-muted-foreground underline-offset-2 outline-none transition-colors duration-150 motion-reduce:transition-none hover:underline focus-visible:ring-3 focus-visible:ring-ring/50"
@@ -158,27 +220,27 @@ const PermissionRow = ({
               grant.connectorServerId ? onOpenConnector?.(grant.connectorServerId) : undefined
             }
           >
-            {grant.policyHint}
+            {policyHint}
           </button>
         ) : null}
       </div>
       {sessionId && onOpenSession ? (
         <button
           type="button"
-          title={grant.scopeLabel}
-          aria-label={t('Open {{scope}}', { scope: grant.scopeLabel })}
+          title={scopeLabel}
+          aria-label={t('Open {{scope}}', { scope: scopeLabel })}
           className={`${scopeClassName} cursor-pointer transition-colors duration-150 motion-reduce:transition-none outline-none hover:bg-accent hover:text-accent-foreground focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50`}
           onClick={() => onOpenSession(sessionId)}
         >
-          {grant.scopeLabel}
+          {scopeLabel}
         </button>
       ) : (
-        <span title={grant.scopeLabel} className={scopeClassName}>
-          {grant.scopeLabel}
+        <span title={scopeLabel} className={scopeClassName}>
+          {scopeLabel}
         </span>
       )}
       <SettingsIconAction
-        label={t('Revoke {{name}}', { name: t(grant.capabilityLabel) })}
+        label={t('Revoke {{name}}', { name: revokeName })}
         icon={X}
         danger
         className="relative col-start-2 row-span-2 row-start-1 size-8 shrink-0 opacity-100 transition-opacity duration-150 motion-reduce:transition-none before:absolute before:-inset-1.5 before:content-[''] sm:col-start-3 sm:row-span-1 [@media(hover:hover)]:opacity-0 [@media(hover:hover)]:group-hover:opacity-100 [@media(hover:hover)]:focus-visible:opacity-100"
@@ -329,7 +391,13 @@ const PermissionsPanel = ({
               </p>
             </div>
             <RestoreDefaultPermissionsButton
-              state={defaultsComplete ? 'success' : restoreDefaultsState}
+              state={
+                defaultsComplete
+                  ? 'success'
+                  : restoreDefaultsState === 'success'
+                    ? 'idle'
+                    : restoreDefaultsState
+              }
               disabled={defaultsComplete || status === 'loading'}
               onRestore={() => void restoreDefaults()}
             />

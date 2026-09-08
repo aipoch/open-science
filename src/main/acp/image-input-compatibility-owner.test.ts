@@ -2,6 +2,8 @@ import type { ContentBlock } from '@agentclientprotocol/sdk'
 import { describe, expect, it, vi } from 'vitest'
 
 import type { ExplicitAgentBackendTarget } from '../settings/backend-resolver'
+import { AcpSessionInteractionOwner } from './session-interaction-owner'
+import type { RestrictedInferenceResult } from './restricted-inference-runner'
 import { ImageInputCompatibilityOwner } from './image-input-compatibility-owner'
 
 const target: ExplicitAgentBackendTarget = {
@@ -393,7 +395,7 @@ describe('ImageInputCompatibilityOwner', () => {
     expect(prepared[1]).toEqual(
       expect.objectContaining({
         type: 'text',
-        text: expect.stringContaining('<attached-image-evidence schema-version="2"')
+        text: expect.stringContaining('<attached-image-evidence schema-version="3"')
       })
     )
   })
@@ -630,5 +632,156 @@ describe('ImageInputCompatibilityOwner', () => {
         })
       ])
     )
+  })
+})
+
+describe('image evidence integrity', () => {
+  const evidence = {
+    summary: 'Complete evidence',
+    findings: [],
+    transcription: '',
+    regions: [],
+    entities: [],
+    relations: [],
+    uncertainty: []
+  }
+  const result = (text = JSON.stringify(evidence)): RestrictedInferenceResult => ({
+    text,
+    frameworkId: 'opencode',
+    model: 'vision-model',
+    stopReason: 'end_turn',
+    usage: { inputTokens: 8, cacheTokens: 0, outputTokens: 2, turnCount: 1 }
+  })
+  const input = {
+    content: [image],
+    supportsImageInput: false,
+    projectId: 'project-1',
+    sessionId: 'session-1',
+    imageSources: [{ kind: 'upload-version' as const, uploadVersionId: 'version-1' }]
+  }
+
+  it.each(['max_tokens', 'cancelled', 'refusal'] as const)(
+    'rejects %s evidence without caching it and retains usage',
+    async (stopReason) => {
+      const rows = new Map<string, string>()
+      const evidenceRepository = {
+        find: vi.fn(async ({ identityKey }: { identityKey: string }) => rows.get(identityKey)),
+        save: vi.fn(
+          async ({ identityKey, evidenceJson }: { identityKey: string; evidenceJson: string }) => {
+            rows.set(identityKey, evidenceJson)
+          }
+        )
+      }
+      const run = vi.fn(async () => ({ ...result(), stopReason }))
+      const recordUsage = vi.fn(async () => undefined)
+      const createOwner = (): ImageInputCompatibilityOwner =>
+        new ImageInputCompatibilityOwner({
+          captureTarget: async () => target,
+          runner: { run },
+          evidenceRepository,
+          recordUsage
+        })
+      const owner = createOwner()
+      for (const candidate of [owner, owner, createOwner()]) {
+        const outcome = await candidate.prepare(input).then(
+          () => 'accepted',
+          () => 'rejected'
+        )
+        expect.soft(outcome).toBe('rejected')
+      }
+      expect.soft(evidenceRepository.save).not.toHaveBeenCalled()
+      expect.soft(run).toHaveBeenCalledTimes(3)
+      expect(recordUsage).toHaveBeenCalledTimes(3)
+    }
+  )
+
+  it.each(['findings', 'regions', 'entities', 'relations', 'uncertainty'] as const)(
+    'rejects oversized %s instead of silently persisting truncated evidence',
+    async (field) => {
+      const entries = {
+        findings: 'observation',
+        uncertainty: 'qualification',
+        regions: { kind: 'chart' },
+        entities: { name: 'entity' },
+        relations: { source: 'entity', relation: 'near', target: 'entity-64' }
+      }
+      const text = JSON.stringify({
+        ...evidence,
+        relations: [{ source: 'entity', relation: 'near', target: 'entity-64' }],
+        [field]: Array.from({ length: 65 }, (_, index) =>
+          field === 'entities' ? { name: `entity-${index}` } : entries[field]
+        )
+      })
+      expect(Buffer.byteLength(text)).toBeLessThan(64 * 1024)
+      const save = vi.fn(async () => undefined)
+      const owner = new ImageInputCompatibilityOwner({
+        captureTarget: async () => target,
+        runner: { run: vi.fn(async () => result(text)) },
+        evidenceRepository: { find: vi.fn(async () => undefined), save }
+      })
+      const outcome = await owner.prepare(input).then(
+        () => 'accepted',
+        () => 'rejected'
+      )
+      expect.soft(outcome).toBe('rejected')
+      expect(save).not.toHaveBeenCalled()
+    }
+  )
+
+  it('preserves all evidence at the array limit', async () => {
+    const text = JSON.stringify({
+      ...evidence,
+      findings: Array.from({ length: 64 }, (_, index) => `finding-${index}`),
+      regions: Array.from({ length: 64 }, (_, index) => ({ kind: `region-${index}` })),
+      entities: Array.from({ length: 64 }, (_, index) => ({ name: `entity-${index}` })),
+      relations: Array.from({ length: 64 }, () => ({
+        source: 'entity-0',
+        relation: 'near',
+        target: 'entity-63'
+      })),
+      uncertainty: Array.from({ length: 64 }, (_, index) => `uncertainty-${index}`)
+    })
+    const save = vi.fn(async () => undefined)
+    const owner = new ImageInputCompatibilityOwner({
+      captureTarget: async () => target,
+      runner: { run: vi.fn(async () => result(text)) },
+      evidenceRepository: { find: vi.fn(async () => undefined), save }
+    })
+    const prepared = await owner.prepare(input)
+    expect(JSON.stringify(prepared)).toContain('uncertainty-63')
+    expect(save).toHaveBeenCalledWith(
+      expect.objectContaining({ evidenceJson: text, evidenceSchemaVersion: 3 })
+    )
+  })
+
+  it('stops taking queued images after a fatal extraction error and interaction release', async () => {
+    let release!: (value: RestrictedInferenceResult) => void
+    const pending = new Promise<RestrictedInferenceResult>((resolve) => {
+      release = resolve
+    })
+    const run = vi
+      .fn(async () => result())
+      .mockRejectedValueOnce(new Error('current extraction failed'))
+      .mockImplementationOnce(() => pending)
+    const owner = new ImageInputCompatibilityOwner({
+      captureTarget: async () => target,
+      runner: { run }
+    })
+    const interactions = new AcpSessionInteractionOwner()
+    const scope = interactions.claim({ sessionId: 'session-1', kind: 'prompt' })
+    const content = Array.from({ length: 5 }, (_, index): ContentBlock => ({
+      ...image,
+      data: Buffer.from(`queued-${index}`).toString('base64')
+    }))
+    await expect(
+      owner.prepare({ content, supportsImageInput: false, signal: scope.signal })
+    ).rejects.toThrow('current extraction failed')
+    expect(run).toHaveBeenCalledTimes(2)
+    interactions.release(scope)
+    expect(scope.signal.aborted).toBe(false)
+    release(result())
+    // Drain the worker's promise chain without timing or network dependencies.
+    await new Promise<void>((resolve) => setImmediate(resolve))
+    expect(run).toHaveBeenCalledTimes(2)
   })
 })

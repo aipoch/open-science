@@ -19,7 +19,7 @@ import {
 } from '../notebook/working-file-observer'
 import type { ComputeApprovalBroker } from './compute-approval-broker'
 import type { ComputeConnectionBrokerAcquirer } from './connection-broker'
-import { projectJobStatus } from './compute-job-status'
+import { isComputeJobResultFinal, projectJobStatus } from './compute-job-status'
 import type { ConcurrencyManager, SessionStatus } from './concurrency-manager'
 import { validateComputeEnvironmentName } from './compute-environment'
 import { parseSlurmSchedulerJobId } from './remote-job-handle'
@@ -30,7 +30,7 @@ import {
   type ComputeJobRepository,
   UnencryptedComputeJobPersistenceApprovalRequiredError
 } from './job-repository'
-import { validateHarvestConfig } from './harvest-classifier'
+import { assertSafeInputDestination, validateHarvestConfig } from './harvest-classifier'
 import { hasLeadingSlurmDirective, SlurmDriverError, validateSlurmCommand } from './slurm-driver'
 import type { ComputeHostRepository } from './repository'
 import { GLOB_CHARS, SHELL_UNSAFE_CHARS } from './remote-path-security'
@@ -106,6 +106,7 @@ export const resolveInputs = async (
   const destinations = new Set<string>()
 
   const reserveDestination = (dstFilename: string): void => {
+    assertSafeInputDestination(dstFilename)
     if (destinations.has(dstFilename)) {
       throw new Error(`dst_filename must be unique within a Compute Job (got "${dstFilename}")`)
     }
@@ -643,6 +644,7 @@ const jobResultWithFiles = (
   status: job.status,
   ...(job.error_code ? { error_code: job.error_code } : {}),
   ...(job.last_poll_error ? { last_poll_error: job.last_poll_error } : {}),
+  result_final: isComputeJobResultFinal(job),
   cancellation_status: job.cancellation_status,
   exit_code: job.exit_code,
   ...(localOutputRoot ? { local_output_root: localOutputRoot } : {}),

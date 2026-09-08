@@ -380,6 +380,22 @@ describe('createFindOverlay', () => {
     expect(ctx.api.findInPage).not.toHaveBeenCalled()
   })
 
+  it.each(['Enter', 'Escape'])('leaves composing %s to the input method', (key) => {
+    const overlay = createFindOverlay(ctx.deps)
+    ctx.input.value = 'pin'
+    const event = new KeyboardEvent('keydown', {
+      key,
+      isComposing: true,
+      bubbles: true,
+      cancelable: true
+    })
+    ctx.input.dispatchEvent(event)
+    expect.soft(event.defaultPrevented).toBe(false)
+    expect.soft(ctx.api.findInPage).not.toHaveBeenCalled()
+    expect.soft(ctx.api.closeFind).not.toHaveBeenCalled()
+    overlay.destroy()
+  })
+
   it('next/prev do nothing when the query is empty', () => {
     createFindOverlay(ctx.deps)
     ctx.next.dispatchEvent(new Event('click', { bubbles: true }))

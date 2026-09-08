@@ -7,7 +7,11 @@ import { delimiter, join, posix, win32 } from 'node:path'
 import { createInterface, type Interface } from 'node:readline'
 import { Transform, type TransformCallback } from 'node:stream'
 
-import { terminateProcessTree, type ProcessTreeKillResult } from '../process-tree'
+import {
+  registerOwnedPosixProcessGroup,
+  terminateProcessTree,
+  type ProcessTreeKillResult
+} from '../process-tree'
 import {
   KERNEL_FIGURES_DIR_ENV,
   frameRNamespaceRequest,
@@ -74,6 +78,12 @@ import {
   type NotebookHelperModuleInjection
 } from './helper-module-host'
 import { notebookInterpreterIdentity } from './session-aggregate'
+import type {
+  KernelProcessLifecycleOwner,
+  KernelProcessReceipt,
+  KernelProcessSpawnIntent
+} from './kernel-process-lifecycle.windows-posix'
+import { readProcessStartToken } from './operation-recovery'
 
 // Driver-internal process kind. 'python'/'r' are the data kernels selected by the agent-facing
 // NotebookLanguage; 'repl' is the control-plane Node kernel reached only via the control path. The
@@ -115,6 +125,19 @@ const kernelExecutableReadRoot = (
   const platformPath = platform === 'win32' ? win32 : posix
   if (kind === 'repl' && platform === 'darwin' && executable.includes('/Contents/MacOS/')) {
     return platformPath.resolve(platformPath.dirname(executable), '../..')
+  }
+  if (kind === 'r' && platform === 'win32' && /^Rscript\.exe$/i.test(win32.basename(executable))) {
+    const directory = win32.dirname(executable)
+    const bin =
+      win32.basename(directory).toLowerCase() === 'x64' ? win32.dirname(directory) : directory
+    const home = win32.dirname(bin)
+    if (
+      win32.basename(bin).toLowerCase() === 'bin' &&
+      existsSync(win32.join(home, 'etc')) &&
+      existsSync(win32.join(home, 'library'))
+    ) {
+      return home
+    }
   }
   return platformPath.dirname(executable)
 }
@@ -185,6 +208,8 @@ export type NotebookKernelExecutorOptions = {
   // Path to resources/notebook/repl_loop.js (env override OPEN_SCIENCE_REPL_LOOP). Spawned under
   // process.execPath with ELECTRON_RUN_AS_NODE=1.
   replLoopPath?: string
+  // Crash-safe host that publishes the OS process receipt before starting the real loop.
+  processHostPath?: string
   // Idle window before a proc with no pending request is dropped so the next execute() lazily
   // respawns a fresh one (namespace cleared). Defaults to OPEN_SCIENCE_KERNEL_IDLE_MS if that is a
   // positive ms value, else DEFAULT_IDLE_MS (0 = disabled). A non-positive value keeps kernels alive.
@@ -212,6 +237,10 @@ export type NotebookKernelExecutorOptions = {
   platform?: NodeJS.Platform
   // Shared application-owned network sandbox. Omitted only by isolated executor tests.
   processSandbox?: NotebookProcessSandbox
+  // Application-owned durable process ledger. Production supplies one owner plus this executor's
+  // immutable lane key; isolated executor tests may omit both.
+  processLifecycle?: KernelProcessLifecycleOwner
+  laneKey?: string
 }
 
 // One in-flight request awaiting a matching loop response line.
@@ -261,6 +290,7 @@ type ProcState = {
   // Canonical host descriptors already installed into the Python loop's immutable audit hooks.
   // New roots cross the protocol once; Python never exposes a mutable policy collection or updater.
   protectedDirs: Set<string>
+  ownershipReceipt?: KernelProcessReceipt
 }
 
 // Marks timeouts distinctly so persisted run status can reflect timeout instead of failure.
@@ -298,6 +328,12 @@ const defaultReplLoopPath = (): string => {
   if (process.env.OPEN_SCIENCE_REPL_LOOP) return process.env.OPEN_SCIENCE_REPL_LOOP
   if (process.resourcesPath) return join(process.resourcesPath, 'notebook', 'repl_loop.js')
   return join(__dirname, '../../../resources/notebook/repl_loop.js')
+}
+
+const defaultProcessHostPath = (): string => {
+  if (process.resourcesPath)
+    return join(process.resourcesPath, 'notebook', 'kernel_process_host.js')
+  return join(__dirname, '../../../resources/notebook/kernel_process_host.js')
 }
 
 // Resolves the process kind a request targets: the control path sets kind 'repl'; data cells leave it
@@ -417,6 +453,7 @@ class NotebookKernelExecutor implements NotebookExecutor {
   private readonly pythonLoopPath: string
   private readonly rLoopPath: string
   private readonly replLoopPath: string
+  private readonly processHostPath: string
   private readonly idleTimeoutMs: number
   private readonly scheduleIdleTimer: ScheduleIdleTimer
   private readonly cancelIdleTimer: CancelIdleTimer
@@ -426,11 +463,14 @@ class NotebookKernelExecutor implements NotebookExecutor {
   private readonly namespaceInspectionTimeoutMs: number
   private readonly platform: NodeJS.Platform
   private readonly processSandbox?: NotebookProcessSandbox
+  private readonly processLifecycle?: KernelProcessLifecycleOwner
+  private readonly laneKey?: string
 
   constructor(options: NotebookKernelExecutorOptions = {}) {
     this.pythonLoopPath = options.pythonLoopPath ?? defaultPythonLoopPath()
     this.rLoopPath = options.rLoopPath ?? defaultRLoopPath()
     this.replLoopPath = options.replLoopPath ?? defaultReplLoopPath()
+    this.processHostPath = options.processHostPath ?? defaultProcessHostPath()
     this.idleTimeoutMs = resolveIdleTimeoutMs(options.idleTimeoutMs)
     this.scheduleIdleTimer = options.scheduleIdleTimer ?? defaultScheduleIdleTimer
     this.cancelIdleTimer = options.cancelIdleTimer ?? defaultCancelIdleTimer
@@ -441,6 +481,8 @@ class NotebookKernelExecutor implements NotebookExecutor {
       options.namespaceInspectionTimeoutMs ?? DEFAULT_NAMESPACE_INSPECTION_TIMEOUT_MS
     this.platform = options.platform ?? process.platform
     this.processSandbox = options.processSandbox
+    this.processLifecycle = options.processLifecycle
+    this.laneKey = options.laneKey
   }
 
   // Sends one cell to the kind's loop and resolves with the mapped execution result.
@@ -607,7 +649,7 @@ class NotebookKernelExecutor implements NotebookExecutor {
     // update-install uninstall while it still holds an interpreter file handle.
     const pending = Array.from(this.pendingTeardowns.values())
     const [results, pendingResults] = await Promise.all([
-      Promise.all(procs.map((proc) => this.killChild(proc.child))),
+      Promise.all(procs.map((proc) => this.killChild(proc.child, proc.ownershipReceipt))),
       Promise.all(pending)
     ])
 
@@ -624,7 +666,12 @@ class NotebookKernelExecutor implements NotebookExecutor {
 
   // Tears down all loops so the next execute() lazily respawns a clean process per language.
   async restart(): Promise<void> {
-    await this.shutdown()
+    const result = await this.shutdown()
+    if (!result.reaped) {
+      throw new Error(
+        'Notebook kernel restart refused because a persistent process tree was not reaped.'
+      )
+    }
   }
 
   // Physically tears down ONE (kind, env) kernel: drop it from the routing map FIRST (so its exit
@@ -638,7 +685,12 @@ class NotebookKernelExecutor implements NotebookExecutor {
     this.disarmIdleTimer(proc)
     this.rejectPending(proc, new Error('Notebook kernel was torn down for a runtime switch.'))
     proc.readline.close()
-    await this.killChild(proc.child)
+    const result = await this.killChild(proc.child, proc.ownershipReceipt)
+    if (!result.reaped) {
+      throw new Error(
+        `Notebook kernel runtime switch refused because the ${key} persistent process tree was not reaped.`
+      )
+    }
   }
 
   // Checked before ever spawning a loop for a (kind, env), so a not-yet-provisioned environment fails
@@ -733,7 +785,8 @@ class NotebookKernelExecutor implements NotebookExecutor {
       annotateStderr: spawned.annotateStderr,
       alive: true,
       interpreterIdentity: identity,
-      protectedDirs: new Set(request.protectedDirs ?? [])
+      protectedDirs: new Set(request.protectedDirs ?? []),
+      ownershipReceipt: spawned.ownershipReceipt
     }
 
     readline.on('line', (line) => this.handleLine(proc, line))
@@ -759,6 +812,9 @@ class NotebookKernelExecutor implements NotebookExecutor {
         this.disarmIdleTimer(proc)
         this.procs.delete(key)
         proc.readline.close()
+        // The durable process-group receipt remains addressable after reparenting, so reap the
+        // complete tree before this lane can spawn a replacement.
+        this.killChildTracked(proc)
         const pending = proc.pending
         const terminationError =
           pending?.timeout?.timedOut && pending.timeoutMs !== undefined
@@ -809,6 +865,7 @@ class NotebookKernelExecutor implements NotebookExecutor {
     beginSandboxExecution: () => () => void
     annotateStderr: (stderr: string) => string
     cleanupSandbox: () => void
+    ownershipReceipt?: KernelProcessReceipt
   }> {
     const figuresDir = this.ensureFiguresDir()
     // Control-plane REPL may omit a runtime root; package cache belongs to a managed runtime directory.
@@ -818,7 +875,14 @@ class NotebookKernelExecutor implements NotebookExecutor {
     // A missing session dir would surface as an opaque ENOENT; fall back to the OS default cwd so
     // spawn fails only for a genuinely missing interpreter.
     const spawnCwd = existsSync(request.cwd) ? request.cwd : undefined
-    const spawnEnv = this.buildEnv(kind, request, figuresDir, workloadCacheEnv)
+    const ownerToken = this.processLifecycle?.createOwnerToken()
+    const spawnEnv = this.buildEnv(
+      kind,
+      request,
+      figuresDir,
+      workloadCacheEnv,
+      ownerToken ? this.processLifecycle?.environment(ownerToken) : undefined
+    )
     const prefix = envPrefix(request.runtimeRoot, env, this.platform)
 
     let command: string
@@ -898,24 +962,81 @@ class NotebookKernelExecutor implements NotebookExecutor {
       : undefined
     const rpcTokenFileDescriptor =
       kind === 'repl' && this.platform === 'linux' && request.mcpRpcToken ? 3 : undefined
-    const child = spawn(
-      sandboxed?.executable ?? invocation.executable,
-      sandboxed?.args ?? invocation.args,
-      {
+    let ownershipIntent: KernelProcessSpawnIntent | undefined
+    if (this.processLifecycle && this.laneKey && ownerToken) {
+      ownershipIntent = this.processLifecycle.beginSpawn(
+        {
+          laneKey: this.laneKey,
+          processKey: kind === 'repl' ? 'repl' : `${kind}:${env}`,
+          kernelEpochId: request.kernelEpochId ?? randomUUID()
+        },
+        ownerToken
+      )
+    }
+    const kernelExecutable = sandboxed?.executable ?? invocation.executable
+    const kernelArgs = sandboxed?.args ?? invocation.args
+    const spawnExecutable = ownershipIntent ? process.execPath : kernelExecutable
+    const spawnArgs = ownershipIntent
+      ? [
+          this.processHostPath,
+          ownershipIntent.path,
+          ownershipIntent.record.receiptId,
+          kernelExecutable,
+          ...kernelArgs
+        ]
+      : kernelArgs
+    const effectiveSpawnEnv = {
+      ...(sandboxed?.env ?? spawnEnv),
+      ...(ownershipIntent
+        ? {
+            ELECTRON_RUN_AS_NODE: '1',
+            OPEN_SCIENCE_KERNEL_INHERITED_FDS: rpcTokenFileDescriptor ? '1' : '0'
+          }
+        : {})
+    }
+    let child: ChildProcessWithoutNullStreams
+    try {
+      child = spawn(spawnExecutable, spawnArgs, {
         cwd: spawnCwd,
-        env: sandboxed?.env ?? spawnEnv,
+        env: effectiveSpawnEnv,
+        // Persistent kernels own a private POSIX process group. This gives teardown a stable OS-level
+        // container that remains addressable even when the loop leader exits before its descendants.
+        // Windows descendants are contained by the sandbox host's kill-on-close Job Object and the
+        // taskkill /T fallback used by terminateProcessTree.
+        detached: this.platform !== 'win32',
         ...(rpcTokenFileDescriptor ? { stdio: ['pipe', 'pipe', 'pipe', 'pipe'] } : {})
+      })
+    } catch (error) {
+      if (ownershipIntent) this.processLifecycle?.abandonSpawn(ownershipIntent)
+      sandboxed?.cleanup()
+      throw error
+    }
+    if (this.platform !== 'win32') registerOwnedPosixProcessGroup(child)
+    let ownershipReceipt: KernelProcessReceipt | undefined
+    const cleanupFailedSpawn = async (): Promise<void> => {
+      const result = await terminateProcessTree(child)
+      if (ownershipReceipt) this.processLifecycle?.complete(ownershipReceipt, result.reaped)
+      else if (ownershipIntent && result.reaped) {
+        this.processLifecycle?.abandonSpawn(ownershipIntent)
       }
-    )
-    if (rpcTokenFileDescriptor) {
-      const tokenPipe = child.stdio[rpcTokenFileDescriptor]
-      if (!tokenPipe || !('end' in tokenPipe)) {
-        child.kill()
-        sandboxed?.cleanup()
-        throw new Error('Notebook RPC credential pipe was not created.')
-      }
-      tokenPipe.on('error', () => undefined)
-      tokenPipe.end(request.mcpRpcToken)
+      sandboxed?.cleanup()
+    }
+    const recordOwnership = (): void => {
+      if (!ownershipIntent || child.pid === undefined || ownershipReceipt) return
+      ownershipReceipt = this.processLifecycle?.recordSpawned(ownershipIntent, {
+        pid: child.pid,
+        processStartToken: readProcessStartToken(child.pid),
+        commandIdentityMarker: ownershipIntent.record.receiptId
+      })
+    }
+    try {
+      // ChildProcess.pid is populated synchronously for a successful spawn. The parent commits it
+      // before yielding; if main dies first, kernel_process_host atomically activates the same receipt
+      // before it starts the actual loop.
+      recordOwnership()
+    } catch (error) {
+      await cleanupFailedSpawn()
+      throw error
     }
     try {
       await new Promise<void>((resolve, reject) => {
@@ -923,14 +1044,33 @@ class NotebookKernelExecutor implements NotebookExecutor {
         child.once('error', reject)
       })
     } catch (error) {
-      sandboxed?.cleanup()
+      await cleanupFailedSpawn()
       throw error
+    }
+    try {
+      recordOwnership()
+      if (ownershipIntent && !ownershipReceipt) {
+        throw new Error('Kernel process did not expose a valid pid.')
+      }
+    } catch (error) {
+      await cleanupFailedSpawn()
+      throw error
+    }
+    if (rpcTokenFileDescriptor) {
+      const tokenPipe = child.stdio[rpcTokenFileDescriptor]
+      if (!tokenPipe || !('end' in tokenPipe)) {
+        await cleanupFailedSpawn()
+        throw new Error('Notebook RPC credential pipe was not created.')
+      }
+      tokenPipe.on('error', () => undefined)
+      tokenPipe.end(request.mcpRpcToken)
     }
     return {
       child,
       beginSandboxExecution: sandboxed?.beginExecution ?? (() => () => undefined),
       annotateStderr: sandboxed?.annotateStderr ?? ((stderr) => stderr),
-      cleanupSandbox: sandboxed?.cleanup ?? (() => undefined)
+      cleanupSandbox: sandboxed?.cleanup ?? (() => undefined),
+      ...(ownershipReceipt ? { ownershipReceipt } : {})
     }
   }
 
@@ -941,7 +1081,8 @@ class NotebookKernelExecutor implements NotebookExecutor {
     kind: KernelProcessKind,
     request: NotebookExecutionRequest,
     figuresDir: string,
-    workloadCacheEnv: NodeJS.ProcessEnv = notebookWorkloadCacheEnv(request.runtimeRoot)
+    workloadCacheEnv: NodeJS.ProcessEnv = notebookWorkloadCacheEnv(request.runtimeRoot),
+    processOwnershipEnv?: NodeJS.ProcessEnv
   ): NodeJS.ProcessEnv {
     // A resolved interpreter is user-owned (BYO/overlay). Never put app-managed conda DLLs ahead of
     // it: on Windows that can load an incompatible BLAS/compiler runtime into the external R process.
@@ -957,6 +1098,7 @@ class NotebookKernelExecutor implements NotebookExecutor {
     const env: NodeJS.ProcessEnv = {
       ...buildNotebookKernelEnvironment(this.platform),
       ...workloadCacheEnv,
+      ...processOwnershipEnv,
       // Force a non-interactive backend. Inheriting MPLBACKEND can load an arbitrary module from the
       // host environment and would bypass the environment-isolation policy below.
       MPLBACKEND: 'Agg',
@@ -1337,7 +1479,7 @@ class NotebookKernelExecutor implements NotebookExecutor {
   // Fire-and-forget tree teardown for a DROPPED proc, tracked by its key so ensureProc can await it
   // before respawning a replacement for the same (kind, env). Self-clears once the teardown settles.
   private killChildTracked(proc: ProcState): void {
-    const done = this.killChild(proc.child).finally(() => {
+    const done = this.killChild(proc.child, proc.ownershipReceipt).finally(() => {
       if (this.pendingTeardowns.get(proc.key) === done) this.pendingTeardowns.delete(proc.key)
     })
     this.pendingTeardowns.set(proc.key, done)
@@ -1348,8 +1490,12 @@ class NotebookKernelExecutor implements NotebookExecutor {
   // Returns { reaped } so shutdown()/shutdownAll() can tell a clean teardown (all trees gone, file
   // handles released) from a degraded one — the update-install gate refuses the NSIS uninstall unless
   // every kernel tree was cleanly reaped. terminateProcessTree never rejects.
-  private async killChild(child: ChildProcessWithoutNullStreams): Promise<ProcessTreeKillResult> {
+  private async killChild(
+    child: ChildProcessWithoutNullStreams,
+    ownershipReceipt?: KernelProcessReceipt
+  ): Promise<ProcessTreeKillResult> {
     const result = await terminateProcessTree(child)
+    if (ownershipReceipt) this.processLifecycle?.complete(ownershipReceipt, result.reaped)
     child.removeAllListeners('exit')
     child.removeAllListeners('close')
     return result

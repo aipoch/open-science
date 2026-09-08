@@ -186,15 +186,24 @@ describe('renderer surface compatibility matrix', () => {
     expect([...REMOTE_LOCAL_ONLY_RPC_CHANNELS].sort()).toEqual(expected)
   })
 
-  it('keeps Specialist management and pending-switch delivery Electron-only', () => {
+  it('exposes the Specialist ZIP setup journey while keeping session switches Electron-only', () => {
     const invokePaths = Object.keys(WEB_INVOKE_CHANNELS)
     const eventPaths = Object.keys(WEB_EVENT_CHANNELS)
-    const specialistChannels = Object.values(SPECIALIST_IPC)
-
-    expect(pathsWithPrefix(invokePaths, 'specialist.')).toEqual([])
-    expect(pathsWithPrefix(eventPaths, 'specialist.')).toEqual([])
-    expect(specialistChannels.every((channel) => !isWebRpcChannel(channel))).toBe(true)
-    expect(specialistChannels.every((channel) => !isWebRpcEventChannel(channel))).toBe(true)
+    expect(pathsWithPrefix(invokePaths, 'specialist.')).toEqual([
+      'specialist.abortPackageUpload',
+      'specialist.beginPackageUpload',
+      'specialist.cancelPackage',
+      'specialist.installPackage',
+      'specialist.list',
+      'specialist.previewPackageUpload',
+      'specialist.setEnabled',
+      'specialist.update'
+    ])
+    expect(pathsWithPrefix(eventPaths, 'specialist.')).toEqual(['specialist.onCatalogChanged'])
+    expect(isWebRpcChannel(SPECIALIST_IPC.SELECT_PACKAGE)).toBe(false)
+    expect(isWebRpcChannel(SPECIALIST_IPC.SET_SESSION_SPECIALIST)).toBe(false)
+    expect(isWebRpcEventChannel(SPECIALIST_IPC.CATALOG_CHANGED)).toBe(true)
+    expect(isWebRpcEventChannel(SPECIALIST_IPC.PENDING_SWITCH)).toBe(false)
 
     const hub = new ApplicationEventHub()
     const installedEvents: ApplicationEvent[] = []
@@ -210,7 +219,9 @@ describe('renderer surface compatibility matrix', () => {
       'specialist:pending-switch'
     ])
     for (const event of installedEvents) {
-      expect(projectWebRendererEvent(event)).toBeUndefined()
+      if (event.channel === 'specialist:catalog-changed')
+        expect(projectWebRendererEvent(event)).toMatchObject({ channel: event.channel })
+      else expect(projectWebRendererEvent(event)).toBeUndefined()
       expect(projectPublicTaskEvent(event)).toBeUndefined()
       expect(projectTaskRuntimeEvent(event)).toBeUndefined()
     }

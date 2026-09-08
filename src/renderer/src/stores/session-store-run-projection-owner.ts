@@ -1,6 +1,11 @@
 import type { StoreApi } from 'zustand'
 
 import type { ActivePlanProjection } from '../../../shared/session-plan/contract'
+import {
+  MAX_ELICITATION_MESSAGE_CHARS,
+  MAX_ELICITATION_MULTI_SELECT_VALUES,
+  resolveAgentUserChoiceQuestions
+} from '../../../shared/elicitation'
 import type { AcpModelCallUsage, AcpTurnTokenUsage, ElicitationAnswer } from '../../../shared/acp'
 import type {
   PersistedChatSession,
@@ -49,7 +54,11 @@ import {
   projectPermissionPending,
   type RunTerminalContextWindowSample
 } from './session-store-run-terminal-helpers'
-import type { ChatSession, SessionStoreData } from './session-store-persistence-owner'
+import type {
+  ChatSession,
+  ElicitationEditDraft,
+  SessionStoreData
+} from './session-store-persistence-owner'
 import {
   materializeStreamingMessageContent,
   removeStreamingMessageContentForSession
@@ -134,6 +143,12 @@ export type SessionRunProjectionActions = {
   finishCompaction: (sessionId: string) => void
   failCompaction: (sessionId: string, error: string) => void
   upsertToolActivity: (input: UpsertToolActivityInput) => void
+  setElicitationEditDraft: (
+    sessionId: string,
+    activityId: string,
+    requestId: string,
+    draft: ElicitationEditDraft | undefined
+  ) => void
   setElicitationDraftAnswers: (
     sessionId: string,
     activityId: string,
@@ -377,6 +392,52 @@ export const createSessionRunProjectionOwner = <
         sessions: projectSession(state.sessions, input.sessionId, (session) =>
           projectToolActivity(session, input)
         )
+      }))
+    },
+
+    setElicitationEditDraft: (sessionId, activityId, requestId, draft) => {
+      const session = get().sessions.find((item) => item.id === sessionId)
+      const activity = session?.activities?.find((item) => item.id === activityId)
+      if (
+        !session ||
+        activity?.elicitation?.state !== 'pending' ||
+        (activity.elicitation.durable && activity.elicitation.durable.requestId !== requestId) ||
+        (draft && draft.requestId !== requestId)
+      )
+        return
+      if (!draft && session.elicitationEditDrafts?.[activityId]?.requestId !== requestId) return
+      const drafts = { ...session.elicitationEditDrafts }
+      if (draft) {
+        const questions = resolveAgentUserChoiceQuestions(activity.elicitation.fields)
+        if (
+          !questions ||
+          !Number.isInteger(draft.activeQuestionIndex) ||
+          draft.activeQuestionIndex < 0 ||
+          draft.activeQuestionIndex >= questions.length
+        )
+          return
+        drafts[activityId] = {
+          ...draft,
+          values: Object.fromEntries(
+            activity.elicitation.fields.map((field) => {
+              const value = draft.values[field.id]
+              return [
+                field.id,
+                typeof value === 'string'
+                  ? value.slice(0, MAX_ELICITATION_MESSAGE_CHARS)
+                  : Array.isArray(value)
+                    ? value.slice(0, MAX_ELICITATION_MULTI_SELECT_VALUES)
+                    : undefined
+              ]
+            })
+          )
+        }
+      } else delete drafts[activityId]
+      setSessionState((state) => ({
+        sessions: projectSession(state.sessions, sessionId, (current) => ({
+          ...current,
+          elicitationEditDrafts: drafts
+        }))
       }))
     },
 

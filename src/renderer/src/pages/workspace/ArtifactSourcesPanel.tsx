@@ -2,6 +2,7 @@
 import { Check, Eye, LoaderCircle, SlidersHorizontal } from 'lucide-react'
 import { useEffect, useState, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
+import { useDateTimeFormat } from '@/hooks/useDateTimeFormat'
 
 import type {
   ArtifactLiteratureManifest,
@@ -50,9 +51,22 @@ const ArtifactSourcesPanel = ({
   }
 }): React.JSX.Element => {
   const { t } = useTranslation()
+  const formatDate = useDateTimeFormat()
   const [selectedReference, setSelectedReference] = useState<
     ArtifactLiteratureReference | undefined
   >()
+  const [showCorpus, setShowCorpus] = useState(false)
+  const corpus = literature.corpus
+  const observedEvidence = corpus?.coverage.metadataOnlyCount !== undefined
+  const displayedReferences =
+    showCorpus && corpus
+      ? corpus.items.map((entry) => ({
+          ...entry,
+          item:
+            entry.item ??
+            literature.references.find((reference) => reference.itemId === entry.itemId)?.item
+        }))
+      : literature.references
   const [formatOpen, setFormatOpen] = useState(false)
   const [styleId, setStyleId] = useState(literature.styleId)
   const [styles, setStyles] = useState<LiteratureCitationStyleView[]>()
@@ -281,12 +295,18 @@ const ArtifactSourcesPanel = ({
                 defaultValue_one: '{{count}} reference'
               })}
               {' · '}
-              {new Intl.DateTimeFormat(undefined, {
-                dateStyle: 'medium',
-                timeStyle: 'short'
-              }).format(new Date(literature.corpus.capturedAt))}
+              {formatDate(literature.corpus.capturedAt, 'dateTime')}
             </span>
           </div>
+          <p className="mt-2 text-xs text-text-300">
+            {observedEvidence
+              ? t(
+                  'Evidence counts describe content returned to the Agent, not completed reading. Candidates are Agent-reported and checked against retrieved records. Search counts below describe individual result pages.'
+                )
+              : t(
+                  'This older record does not verify delivered evidence or preserve every corpus snapshot.'
+                )}
+          </p>
           <ul className="mt-2 space-y-1 text-xs text-text-300">
             {literature.corpus.retrievals.map((retrieval, index) => (
               <li key={`${retrieval.scope}:${retrieval.collectionId ?? ''}:${index}`}>
@@ -298,25 +318,51 @@ const ArtifactSourcesPanel = ({
               </li>
             ))}
           </ul>
-          <dl className="mt-3 grid grid-cols-3 gap-px overflow-hidden rounded-md border border-border-300/60 bg-border-300/60 @min-[32rem]/sources:grid-cols-6">
+          <dl className="mt-3 grid grid-cols-3 gap-px overflow-hidden rounded-md border border-border-300/60 bg-border-300/60 @min-[32rem]/sources:grid-cols-7">
             {[
               [t('Searched'), literature.corpus.coverage.searchedCount],
               [t('Candidates'), literature.corpus.coverage.candidateCount],
               [t('Included'), literature.corpus.items.length],
-              [t('Full text'), literature.corpus.coverage.fullTextCount],
+              [
+                observedEvidence ? t('PDF passages') : t('Full text'),
+                literature.corpus.coverage.fullTextCount
+              ],
               [t('Abstract only'), literature.corpus.coverage.abstractOnlyCount],
-              [t('Unprocessed'), literature.corpus.coverage.unprocessedCount]
+              [
+                observedEvidence ? t('Not screened') : t('Unprocessed'),
+                literature.corpus.coverage.unprocessedCount
+              ],
+              ...(observedEvidence
+                ? [[t('Metadata only'), literature.corpus.coverage.metadataOnlyCount]]
+                : [])
             ].map(([label, count]) => (
               <div key={label} className="min-w-0 bg-bg-000 px-2 py-2 text-center">
-                <dt className="truncate text-[10px] text-text-300">{label}</dt>
+                <dt className="text-[10px] text-text-300">{label}</dt>
                 <dd className="mt-0.5 text-sm font-medium tabular-nums text-text-000">{count}</dd>
               </div>
             ))}
           </dl>
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            className="mt-2"
+            aria-pressed={showCorpus}
+            onClick={() => setShowCorpus(!showCorpus)}
+          >
+            {showCorpus ? t('View cited references') : t('View full corpus')}
+          </Button>
         </div>
       ) : null}
       <ol className="mt-3 divide-y divide-border-300/60 border-y border-border-300/60">
-        {literature.references.map((reference, index) => {
+        {displayedReferences.map((entry, index) => {
+          if (!entry.item)
+            return (
+              <li key={entry.itemId} className="py-3 text-sm text-text-300">
+                {t('Snapshot unavailable')}
+              </li>
+            )
+          const reference: ArtifactLiteratureReference = { ...entry, item: entry.item }
           const authors = referenceAuthors(reference)
           const publication = referencePublication(reference)
 

@@ -2046,7 +2046,7 @@ describe('JobPoller — harvest wiring', () => {
     await Promise.resolve()
     await Promise.resolve()
 
-    expect(started.length).toBe(3)
+    await vi.waitFor(() => expect(started.length).toBe(3))
   })
 
   it('does not affect poller tick when a harvest fails (error isolation)', async () => {

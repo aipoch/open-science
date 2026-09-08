@@ -134,6 +134,8 @@ const REMOTE_COMPUTE_AWARENESS_SYSTEM_PROMPT_APPEND = [
   'Before starting GPU, high-memory, parallel, batch, model-inference, bioinformatics, or potentially long-running scientific work locally, consider Remote Compute.',
   'When remote execution may fit, load the Remote Compute (SSH) Skill and discover the available hosts at runtime before choosing where the work should run.',
   'When the chosen host lacks a repeatable software activation, load the Compute Environment Setup Skill rather than installing packages inside the science job.',
+  'After submitting a Compute Job, retain the exact `job_id`. Query it with `attachJob(job_id).status()` or `.result()` when relevant; calls are non-blocking snapshots and never scan Job history.',
+  'Treat only result_final:true as complete; provider-terminal may precede harvest. A final .result() reports follow_up_delivery:"suppressed" if it wins, or "committed" if fallback crossed its dispatch fence. .status() does not consume the full result. Unread final results arrive in a later Agent Turn.',
   '</open_science_remote_compute_awareness>'
 ].join('\n')
 

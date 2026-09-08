@@ -9,6 +9,7 @@ import { Textarea } from '@/components/ui/textarea'
 import { cn } from '@/lib/utils'
 import {
   LITERATURE_IDENTIFIER_SCHEMES,
+  normalizeLiteratureIdentifierPreferences,
   LITERATURE_ITEM_TYPES,
   type LiteratureCreatorInput,
   type LiteratureIdentifierInput,
@@ -76,7 +77,7 @@ const LiteratureMetadataEditor = ({
   const [draft, setDraft] = useState<LiteratureItemInput>(() => ({
     ...item,
     creators: item.creators.map((creator) => ({ ...creator })),
-    identifiers: item.identifiers.map((identifier) => ({ ...identifier })),
+    identifiers: normalizeLiteratureIdentifierPreferences(item.identifiers),
     typeFields: { ...item.typeFields }
   }))
   const [advancedOpen, setAdvancedOpen] = useState(() =>
@@ -103,7 +104,7 @@ const LiteratureMetadataEditor = ({
           ? identifier.isPrimary
             ? { ...identifier, isPrimary: true }
             : identifier
-          : identifier.isPrimary
+          : identifier.isPrimary && entry.scheme === identifier.scheme
             ? { ...entry, isPrimary: false }
             : entry
       )
@@ -123,6 +124,7 @@ const LiteratureMetadataEditor = ({
   }
 
   const submit = (): void => {
+    if (saving) return
     const creators = draft.creators.filter((creator) =>
       creator.nameMode === 'organization'
         ? creator.literalName.trim()
@@ -133,13 +135,17 @@ const LiteratureMetadataEditor = ({
   }
 
   return (
-    <div className={cn('max-h-[70vh] space-y-5 overflow-y-auto p-5 text-sm', className)}>
+    <fieldset
+      disabled={saving}
+      className={cn('min-w-0 max-h-[70vh] space-y-5 overflow-y-auto p-5 text-sm', className)}
+    >
       {beforeFields}
       <div className="block space-y-1.5">
         <label htmlFor="literature-reference-type" className="font-medium">
           {t('Reference type')}
         </label>
         <Select
+          disabled={saving}
           value={draft.itemType}
           onValueChange={(value) =>
             setDraft((current) => ({
@@ -325,6 +331,7 @@ const LiteratureMetadataEditor = ({
           {draft.identifiers.map((identifier, index) => (
             <div key={index} className="flex items-center gap-2">
               <Select
+                disabled={saving}
                 value={identifier.scheme}
                 onValueChange={(value) =>
                   updateIdentifier(index, {
@@ -355,11 +362,11 @@ const LiteratureMetadataEditor = ({
               <label className="flex shrink-0 items-center gap-1 text-xs text-muted-foreground">
                 <input
                   type="radio"
-                  name="primary-literature-identifier"
+                  name={`primary-literature-identifier-${identifier.scheme}`}
                   checked={identifier.isPrimary}
                   onChange={() => updateIdentifier(index, { ...identifier, isPrimary: true })}
                 />
-                {t('Primary')}
+                {t('Preferred for {{scheme}}', { scheme: identifier.scheme.toUpperCase() })}
               </label>
               <Button
                 type="button"
@@ -413,7 +420,7 @@ const LiteratureMetadataEditor = ({
           {t('Save')}
         </Button>
       </div>
-    </div>
+    </fieldset>
   )
 }
 

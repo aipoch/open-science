@@ -1,3 +1,4 @@
+import type { PromptResponse } from '@agentclientprotocol/sdk'
 import { Buffer } from 'node:buffer'
 
 import type { AcpTurnTokenUsage } from '../../shared/acp'
@@ -19,6 +20,7 @@ import type { AgentFrameworkId, ReasoningEffort } from '../../shared/settings'
 
 export const SESSION_DETAILS_TITLE_LIMIT = SESSION_DETAILS_TITLE_MAX_LENGTH
 export const SESSION_DETAILS_DESCRIPTION_LIMIT = SESSION_DETAILS_DESCRIPTION_MAX_LENGTH
+const MAX_CONCURRENT_INFERENCES = 2
 const MAX_INFERENCE_OUTPUT_BYTES = 8_192
 const DEFAULT_SHUTDOWN_CLEANUP_MS = 500
 const DEFAULT_INFERENCE_TIMEOUT_MS = 30_000
@@ -57,6 +59,7 @@ export interface SessionDetailsTargetResolver {
 
 export type SessionDetailsInferenceResult = Readonly<{
   output: string
+  stopReason: PromptResponse['stopReason']
   usage?: AcpTurnTokenUsage
   attemptedTool?: boolean
 }>
@@ -252,6 +255,8 @@ export const createSessionDetailsOwner = (
 ): SessionDetailsOwner => {
   const now = dependencies.now ?? Date.now
   const active = new Map<string, ActiveAttempt>()
+  const admissionQueue = new Map<string, { projectId: string; sessionId: string }>()
+  const admitting = new Set<string>()
   const pendingSaves: SessionDetailsSession[] = []
   let started = false
   let stopping = false
@@ -461,6 +466,8 @@ export const createSessionDetailsOwner = (
         })
         const result = await Promise.race([inference, timedOut])
         usage = result.usage
+        if (result.stopReason !== 'end_turn')
+          throw new Error('Session details inference did not finish normally.')
         if (result.attemptedTool) throw new Error('Tool use is forbidden for Session details.')
         await completeSuccess(attempt, parseGeneratedDetails(result.output), usage)
       } catch (error) {
@@ -481,6 +488,7 @@ export const createSessionDetailsOwner = (
         if (timeout) clearTimeout(timeout)
         attempt.timeout = undefined
         active.delete(keyOf(attempt.projectId, attempt.sessionId))
+        void drainAdmissions()
       }
     })()
     attempt.task = task
@@ -594,6 +602,38 @@ export const createSessionDetailsOwner = (
     runInference(attempt, running, target)
   }
 
+  const drainAdmissions = async (): Promise<void> => {
+    const admissions: Promise<void>[] = []
+    while (
+      !stopping &&
+      admissionQueue.size > 0 &&
+      active.size + admitting.size < MAX_CONCURRENT_INFERENCES
+    ) {
+      const [key, session] = admissionQueue.entries().next().value!
+      admissionQueue.delete(key)
+      // Reserve capacity before target resolution or persistence yields to another save callback.
+      admitting.add(key)
+      admissions.push(
+        admit(session.projectId, session.sessionId)
+          .catch(() => {
+            // A deleted or unreadable Session cannot be admitted. Leave durable queued work for restart.
+          })
+          .finally(() => {
+            admitting.delete(key)
+            void drainAdmissions()
+          })
+      )
+    }
+    await Promise.all(admissions)
+  }
+
+  const enqueueAdmission = (projectId: string, sessionId: string): Promise<void> => {
+    const key = keyOf(projectId, sessionId)
+    if (stopping || active.has(key) || admitting.has(key)) return Promise.resolve()
+    admissionQueue.set(key, { projectId, sessionId })
+    return drainAdmissions()
+  }
+
   const claimEligible = async (projectId: string, sessionId: string): Promise<boolean> => {
     const claimed = await dependencies.sessions.mutateSession(projectId, sessionId, (session) => {
       if (!acceptCompletions || stopping) return { kind: 'unchanged' }
@@ -642,14 +682,14 @@ export const createSessionDetailsOwner = (
       return
     }
     if (session.sessionDetailsGeneration?.status === 'queued') {
-      await admit(session.projectId, session.id)
+      await enqueueAdmission(session.projectId, session.id)
       return
     }
     if (
       session.sessionDetailsGenerationEligible === true &&
       (await claimEligible(session.projectId, session.id))
     ) {
-      await admit(session.projectId, session.id)
+      await enqueueAdmission(session.projectId, session.id)
     }
   }
 
@@ -793,6 +833,7 @@ export const createSessionDetailsOwner = (
       if (stopping) return
       stopping = true
       pendingSaves.length = 0
+      admissionQueue.clear()
       const attempts = [...active.values()]
       for (const attempt of attempts) {
         attempt.controller.abort('Application shutdown.')

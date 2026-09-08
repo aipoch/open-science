@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest'
 import {
   ensureConversationRuntimeSegment,
   resolveMessageBranchPath,
+  synchronizeActiveConversationActivities,
   synchronizeActiveConversationMessages
 } from '../../shared/conversation-graph'
 import {
@@ -11,6 +12,7 @@ import {
   normalizeSessionFile,
   type PersistedChatSession
 } from '../../shared/session-persistence'
+import { estimateHistoryTokens, resolveHistoryReplayBudget } from '../../shared/history-preamble'
 import type { AgentFrameworkId } from '../../shared/settings'
 import type { AgentModelRoute } from '../agent-framework'
 import { createAcpHandlerWorkflows } from './handler-workflows'
@@ -280,6 +282,176 @@ describe('ACP send prompt workflow', () => {
 })
 
 describe('ACP Save as skill workflow', () => {
+  it.each(['before admission', 'while admission waits'] as const)(
+    'rejects the original cancelled control %s and allows explicit continuation',
+    async (phase) => {
+      let release!: () => void
+      const waiting = new Promise<void>((resolve) => {
+        release = resolve
+      })
+      const admission = vi.fn(async () => {
+        await waiting
+      })
+      const harness = createHarness(undefined, undefined, undefined, admission)
+      const cancel = (): void => {
+        harness.session.status = 'error'
+        harness.session.activeRun = undefined
+        harness.session.resumeRecovery = {
+          kind: 'resume-required',
+          cause: 'cancelled',
+          promptMessageId: harness.request.promptMessageId
+        }
+      }
+      if (phase === 'before admission') cancel()
+      const result = harness.workflows.saveAsSkill(harness.request).catch((error: unknown) => error)
+      if (phase === 'while admission waits') {
+        await vi.waitFor(() => expect(admission).toHaveBeenCalledOnce())
+        cancel()
+      }
+      release()
+      await result
+      expect(harness.startContinuation).not.toHaveBeenCalled()
+      await harness.workflows.continueInterruptedTurn({
+        projectId: harness.request.projectId,
+        sessionId: harness.request.sessionId,
+        promptMessageId: harness.request.promptMessageId
+      })
+      expect(harness.startContinuation).toHaveBeenCalledOnce()
+      expect(harness.startContinuation).toHaveBeenCalledWith(
+        expect.objectContaining({
+          provenanceContext: expect.objectContaining({
+            promptMessageId: harness.request.promptMessageId
+          })
+        })
+      )
+    }
+  )
+
+  it.each(['claude-code', 'opencode', 'codebuddy', 'codex-response', 'codex-bridge'] as const)(
+    'replays the completed tool method within the %s budget',
+    async (target) => {
+      const harness = createHarness((session) => {
+        session.conversationGraph = synchronizeActiveConversationActivities(
+          session.conversationGraph!,
+          [
+            {
+              id: 'notebook-method',
+              kind: 'tool',
+              title: 'Run analysis',
+              providerToolName: 'mcp__notebook__execute',
+              promptMessageId: 'prompt-1',
+              status: 'completed',
+              sortIndex: 1,
+              eventIds: [],
+              rawInput: { code: 'normalize_counts(method="median_ratio")' },
+              rawOutput: { validation: 'replicate_correlation=0.98; controls_passed=true' },
+              createdAt: 1,
+              updatedAt: 2
+            }
+          ],
+          []
+        )
+        session.pendingHistoryReplay = { kind: 'all' }
+        session.conversationGraph = ensureConversationRuntimeSegment(session.conversationGraph, {
+          id: 'runtime-after-reset',
+          frameworkId: 'claude-code',
+          startedAt: 3,
+          forceNew: true
+        })
+      })
+      harness.session.agentFrameworkId = target.startsWith('codex-')
+        ? 'codex'
+        : (target as AgentFrameworkId)
+      harness.session.conversationGraph!.runtimeSegments.at(-1)!.frameworkId =
+        harness.session.agentFrameworkId
+      harness.captureSessionBackend.mockReturnValue({
+        framework: { id: harness.session.agentFrameworkId },
+        modelRoute: target === 'codex-bridge' ? 'codex-bridge' : 'codex-responses',
+        context: { window: 100_000, supportsImageInput: true }
+      } as never)
+      expect(harness.session.conversationGraph!.activities[0]).toMatchObject({
+        providerToolName: 'mcp__notebook__execute',
+        status: 'completed',
+        rawInput: { code: 'normalize_counts(method="median_ratio")' }
+      })
+      await harness.workflows.saveAsSkill(harness.request)
+      expect(harness.startContinuation).toHaveBeenCalledOnce()
+      expect(harness.startContinuation.mock.calls[0][0]).toMatchObject({ contextReset: true })
+      const request = JSON.stringify(harness.startContinuation.mock.calls[0][0])
+      expect(request).toContain('mcp__notebook__execute')
+      expect(request).toContain('median_ratio')
+      expect(request).toContain('replicate_correlation=0.98')
+      const continuation = harness.startContinuation.mock.calls[0][0] as { historyPreamble: string }
+      expect(estimateHistoryTokens(continuation.historyPreamble)).toBeLessThanOrEqual(
+        resolveHistoryReplayBudget({ target, contextWindow: 100_000 })
+      )
+    }
+  )
+
+  it.each(['chronological', 'reversed'] as const)(
+    'bounds execution records stored in %s order and excludes other branches',
+    async (order) => {
+      const harness = createHarness((session) => {
+        session.conversationGraph = synchronizeActiveConversationActivities(
+          session.conversationGraph!,
+          Array.from({ length: 20 }, (_, index) => ({
+            id: `tool-${index}`,
+            kind: 'tool' as const,
+            title: 'Notebook validation',
+            providerToolName: 'mcp__notebook__execute',
+            promptMessageId: 'prompt-1',
+            status: 'completed' as const,
+            sortIndex: index,
+            eventIds: [],
+            rawInput: { code: '验证🧬'.repeat(2_000) },
+            rawOutput: { result: `validated-${index}` },
+            createdAt: 1,
+            updatedAt: 2
+          })),
+          []
+        )
+        const graph = session.conversationGraph
+        if (order === 'reversed') graph.activities.reverse()
+        const frame = graph.frames.find(({ id }) => id === graph.activeFrameId)!
+        graph.messages.push({
+          ...graph.messages[0],
+          id: 'off-branch-prompt',
+          content: 'Unrelated request',
+          introducedOnBranchId: 'off-branch',
+          revisionRootMessageId: 'off-branch-prompt',
+          parentMessageId: 'answer-1'
+        })
+        graph.branches.push({
+          id: 'off-branch',
+          agentFrameId: frame.id,
+          parentBranchId: frame.activeBranchId,
+          forkMessageId: 'answer-1',
+          headMessageId: 'off-branch-prompt',
+          createdAt: 2,
+          updatedAt: 2
+        })
+        graph.activities.push({
+          ...graph.activities[0],
+          id: 'off-branch-tool',
+          messageBranchId: 'off-branch',
+          promptMessageId: 'off-branch-prompt',
+          rawInput: { code: 'unrelated_branch_method' }
+        })
+      })
+      const before = structuredClone(harness.session.conversationGraph)
+      await harness.workflows.saveAsSkill(harness.request)
+      const continuation = harness.startContinuation.mock.calls[0][0] as {
+        resumeFallback: { historyPreamble: string }
+      }
+      const history = continuation.resumeFallback.historyPreamble
+      expect(history).toContain('validated-19')
+      expect(history).toContain('omitted for replay budget')
+      expect(history).not.toContain('unrelated_branch_method')
+      expect(estimateHistoryTokens(history)).toBeLessThanOrEqual(10_000)
+      expect(harness.session.conversationGraph).toEqual(before)
+    }
+  )
+
   it('dispatches through the Session admission already held by the workflow', async () => {
     const harness = createHarness()
 
@@ -455,6 +627,7 @@ describe('ACP Save as skill workflow', () => {
   it.each<readonly [string, AgentFrameworkId, AgentModelRoute]>([
     ['Claude Code', 'claude-code', 'claude-anthropic'],
     ['OpenCode', 'opencode', 'opencode-openai'],
+    ['CodeBuddy', 'codebuddy', 'codebuddy-openai'],
     ['Codex Responses', 'codex', 'codex-responses'],
     ['Codex Bridge', 'codex', 'codex-bridge']
   ])('accepts pending context-reset replay on %s', async (_name, frameworkId, modelRoute) => {
@@ -489,6 +662,7 @@ describe('ACP Save as skill workflow', () => {
   it.each<readonly [string, AgentFrameworkId, AgentModelRoute]>([
     ['Claude Code', 'claude-code', 'claude-anthropic'],
     ['OpenCode', 'opencode', 'opencode-openai'],
+    ['CodeBuddy', 'codebuddy', 'codebuddy-openai'],
     ['Codex Responses', 'codex', 'codex-responses'],
     ['Codex Bridge', 'codex', 'codex-bridge']
   ])(
@@ -657,6 +831,7 @@ describe('ACP Save as skill workflow', () => {
   it.each<readonly [string, AgentFrameworkId, AgentModelRoute]>([
     ['Claude Code', 'claude-code', 'claude-anthropic'],
     ['OpenCode', 'opencode', 'opencode-openai'],
+    ['CodeBuddy', 'codebuddy', 'codebuddy-openai'],
     ['Codex Responses', 'codex', 'codex-responses'],
     ['Codex Bridge', 'codex', 'codex-bridge']
   ])('keeps shared hidden-turn semantics on %s', async (_name, frameworkId, modelRoute) => {

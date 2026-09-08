@@ -235,6 +235,7 @@ const isNonActionableCodexDiagnostic = (text: string): boolean => {
 }
 
 type WorkspaceRuntimeEventDependencies = {
+  agentPromptInFlight?: boolean
   finalizeRunArtifacts?: (request: FinalizeRunArtifactsRequest) => Promise<ArtifactFile[]>
   reconcilePendingArtifacts?: (
     request: ReconcilePendingArtifactsRequest
@@ -883,6 +884,15 @@ const applyWorkspaceRuntimeEvent = async (
       deferredArtifactEventsBySession.delete(event.sessionId)
       pendingArtifactTurnUsageBySession.delete(event.sessionId)
       return true
+    }
+
+    // Main can own a continuation beyond this provider stop. Keep its liveness projection before
+    // Artifact finalization yields, without restarting a waiting edge already cleared by output.
+    if (dependencies.agentPromptInFlight) {
+      store.setAgentPromptInFlight(event.sessionId, true)
+      if (activeSession?.awaitingFirstAgentOutput) {
+        store.setAwaitingFirstAgentOutput(event.sessionId, true)
+      }
     }
 
     if (deferredAttachmentFailed) {

@@ -22775,7 +22775,8 @@ describe('ACP runtime session management', () => {
     const session = await runtime.createSession({ cwd: '/workspace' })
     const promptPromise = runtime.sendPrompt({
       sessionId: session.sessionId,
-      text: 'first prompt'
+      text: 'first prompt',
+      provenanceContext: { promptMessageId: 'cancelled-task-prompt' }
     })
 
     await promptStarted.promise
@@ -22787,11 +22788,14 @@ describe('ACP runtime session management', () => {
       runtime.sendPrompt({ sessionId: session.sessionId, text: 'second prompt' })
     ).rejects.toThrow(/already running/)
 
-    await promptPromise
+    await expect(promptPromise).resolves.toMatchObject({ stopReason: 'cancelled' })
 
     expect(runtime.getSnapshot().promptInFlightSessionIds).toEqual([])
     expect(prompts).toEqual(['first prompt'])
     expect(runtime.getSnapshot().events.find((event) => event.kind === 'stop')).toMatchObject({
+      text: 'cancelled',
+      sessionId: session.sessionId,
+      promptMessageId: 'cancelled-task-prompt',
       turnUsage: { inputTokens: 19, cacheTokens: 5, outputTokens: 3 }
     })
   })

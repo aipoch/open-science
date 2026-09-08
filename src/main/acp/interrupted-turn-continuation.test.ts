@@ -1,6 +1,9 @@
 import { describe, expect, it, vi } from 'vitest'
 
-import { createLinearConversationGraph } from '../../shared/conversation-graph'
+import {
+  createLinearConversationGraph,
+  synchronizeActiveConversationActivities
+} from '../../shared/conversation-graph'
 import type { AcpPromptRequest, AcpStateSnapshot } from '../../shared/acp'
 import type { PersistedChatMessage, PersistedChatSession } from '../../shared/session-persistence'
 import { continueInterruptedTurn } from './interrupted-turn-continuation'
@@ -108,53 +111,61 @@ describe('continueInterruptedTurn', () => {
     ])
   })
 
-  it('rebuilds current PDF region Evidence from the interrupted user turn', async () => {
-    const durable = session([
-      message('prompt-1', 'user', 'Explain this figure', {
-        annotations: [
-          {
-            id: 'pdf-region-1',
-            kind: 'pdf',
-            target: 'agent',
-            source: {
-              kind: 'upload-version',
-              projectId: 'project-1',
-              sessionId: 'session-1',
-              versionId: 'version-1',
-              name: 'paper.pdf',
-              path: 'upload-version:project-1/session-1/version-1',
-              checksum: 'a'.repeat(64)
-            },
-            selector: {
-              kind: 'region',
-              pageNumber: 2,
-              rect: { x: 0.1, y: 0.2, width: 0.4, height: 0.3 },
-              pageRotation: 0,
-              image: { mimeType: 'image/png', data: 'AQID', byteLength: 3 }
+  it.each([true, false])(
+    'rebuilds PDF region evidence after interruption with bitmap retained=%s',
+    async (withBitmap) => {
+      const durable = session([
+        message('prompt-1', 'user', 'Explain this figure', {
+          annotations: [
+            {
+              id: 'pdf-region-1',
+              kind: 'pdf',
+              target: 'agent',
+              source: {
+                kind: 'upload-version',
+                projectId: 'project-1',
+                sessionId: 'session-1',
+                versionId: 'version-1',
+                name: 'paper.pdf',
+                path: 'upload-version:project-1/session-1/version-1',
+                checksum: 'a'.repeat(64)
+              },
+              selector: {
+                kind: 'region',
+                pageNumber: 2,
+                rect: { x: 0.1, y: 0.2, width: 0.4, height: 0.3 },
+                pageRotation: 0,
+                ...(withBitmap
+                  ? { image: { mimeType: 'image/png' as const, data: 'AQID', byteLength: 3 } }
+                  : { imageOmissionReason: 'session-budget' as const })
+              }
             }
-          }
-        ]
-      })
-    ])
-    const startContinuation = vi.fn<(request: AcpPromptRequest) => Promise<void>>(async () => {})
+          ]
+        })
+      ])
+      const startContinuation = vi.fn<(request: AcpPromptRequest) => Promise<void>>(async () => {})
 
-    await continueInterruptedTurn(
-      {
-        runtime: {
-          getState: vi.fn(() => snapshot()),
-          getLatestUserPrompt: vi.fn(() => undefined),
-          startContinuation
+      await continueInterruptedTurn(
+        {
+          runtime: {
+            getState: vi.fn(() => snapshot()),
+            getLatestUserPrompt: vi.fn(() => undefined),
+            startContinuation
+          },
+          loadSession: vi.fn(async () => durable)
         },
-        loadSession: vi.fn(async () => durable)
-      },
-      { sessionId: 'session-1', projectId: 'project-1', promptMessageId: 'prompt-1' }
-    )
+        { sessionId: 'session-1', projectId: 'project-1', promptMessageId: 'prompt-1' }
+      )
 
-    const request = startContinuation.mock.calls[0][0]
-    expect(request.text).toContain('"type":"pdf-region"')
-    expect(request.currentImages).toEqual([{ mimeType: 'image/png', data: 'AQID', byteLength: 3 }])
-    expect(request.historyImages).toBeUndefined()
-  })
+      const request = startContinuation.mock.calls[0][0]
+      expect(request.text).toContain('"type":"pdf-region"')
+      expect(request.currentImages).toEqual(
+        withBitmap ? [{ mimeType: 'image/png', data: 'AQID', byteLength: 3 }] : undefined
+      )
+      if (!withBitmap) expect(request.text).toContain('"imageOmissionReason":"session-budget"')
+      expect(request.historyImages).toBeUndefined()
+    }
+  )
 
   it('reconstructs the hidden Save as skill turn after restart', async () => {
     const durable = session([
@@ -327,6 +338,7 @@ describe('continueInterruptedTurn', () => {
   it.each([
     ['Claude Code', 'claude-code', 'claude-code'],
     ['OpenCode', 'opencode', 'opencode'],
+    ['CodeBuddy', 'codebuddy', 'codebuddy'],
     ['Codex Responses', 'codex', 'codex-response'],
     ['Codex Bridge', 'codex', 'codex-bridge']
   ] as const)(
@@ -387,70 +399,103 @@ describe('continueInterruptedTurn', () => {
     }
   )
 
-  it('replays only the durable active branch when a hidden turn recovers after context reset', async () => {
-    const durable = session([
-      message('prompt-0', 'user', 'Build the active workflow'),
-      message('answer-0', 'agent', 'The active workflow is ready', {
-        responseToMessageId: 'prompt-0'
-      }),
-      message('prompt-1', 'user', 'Save as skill', { turnIntent: 'save-as-skill' })
-    ])
-    const graph = durable.conversationGraph!
-    const frame = graph.frames.find(({ id }) => id === graph.activeFrameId)!
-    const inactiveMessage = message('inactive-prompt', 'user', 'Use unrelated branch rules')
-    durable.messages.push(inactiveMessage)
-    graph.messages.push({
-      ...inactiveMessage,
-      agentFrameId: frame.id,
-      introducedOnBranchId: 'inactive-branch',
-      parentMessageId: 'answer-0',
-      revisionRootMessageId: inactiveMessage.id,
-      runtimeSegmentId: graph.runtimeSegments[0].id
-    })
-    graph.branches.push({
-      id: 'inactive-branch',
-      agentFrameId: frame.id,
-      parentBranchId: frame.activeBranchId,
-      forkMessageId: 'answer-0',
-      headMessageId: inactiveMessage.id,
-      createdAt: 2,
-      updatedAt: 2
-    })
-    graph.runtimeSegments.push({
-      id: 'runtime-resumed',
-      agentFrameId: frame.id,
-      frameworkId: 'claude-code',
-      startedAt: 2
-    })
-    const startContinuation = vi.fn<(request: AcpPromptRequest) => Promise<void>>(async () => {})
+  it.each([
+    ['Claude Code', 'claude-code', 'claude-code'],
+    ['OpenCode', 'opencode', 'opencode'],
+    ['CodeBuddy', 'codebuddy', 'codebuddy'],
+    ['Codex Responses', 'codex', 'codex-response'],
+    ['Codex Bridge', 'codex', 'codex-bridge']
+  ] as const)(
+    'replays only the durable active branch when a hidden turn recovers on %s',
+    async (_name, frameworkId, historyReplayTarget) => {
+      const durable = session([
+        message('prompt-0', 'user', 'Build the active workflow'),
+        message('answer-0', 'agent', 'The active workflow is ready', {
+          responseToMessageId: 'prompt-0'
+        }),
+        message('prompt-1', 'user', 'Save as skill', { turnIntent: 'save-as-skill' })
+      ])
+      durable.agentFrameworkId = frameworkId
+      durable.conversationGraph = synchronizeActiveConversationActivities(
+        durable.conversationGraph!,
+        [
+          {
+            id: 'validated-method',
+            kind: 'tool',
+            title: 'Execute Notebook method',
+            providerToolName: 'mcp__notebook__execute',
+            promptMessageId: 'prompt-0',
+            status: 'completed',
+            sortIndex: 1,
+            eventIds: [],
+            rawInput: { code: 'normalize_counts(method="median_ratio")' },
+            rawOutput: { validation: 'controls_passed=true' },
+            createdAt: 1,
+            updatedAt: 1
+          }
+        ],
+        []
+      )
+      const graph = durable.conversationGraph!
+      const frame = graph.frames.find(({ id }) => id === graph.activeFrameId)!
+      const inactiveMessage = message('inactive-prompt', 'user', 'Use unrelated branch rules')
+      durable.messages.push(inactiveMessage)
+      graph.messages.push({
+        ...inactiveMessage,
+        agentFrameId: frame.id,
+        introducedOnBranchId: 'inactive-branch',
+        parentMessageId: 'answer-0',
+        revisionRootMessageId: inactiveMessage.id,
+        runtimeSegmentId: graph.runtimeSegments[0].id
+      })
+      graph.branches.push({
+        id: 'inactive-branch',
+        agentFrameId: frame.id,
+        parentBranchId: frame.activeBranchId,
+        forkMessageId: 'answer-0',
+        headMessageId: inactiveMessage.id,
+        createdAt: 2,
+        updatedAt: 2
+      })
+      graph.runtimeSegments.push({
+        id: 'runtime-resumed',
+        agentFrameId: frame.id,
+        frameworkId,
+        startedAt: 2
+      })
+      const startContinuation = vi.fn<(request: AcpPromptRequest) => Promise<void>>(async () => {})
 
-    await continueInterruptedTurn(
-      {
-        runtime: {
-          getState: () => snapshot(),
-          getLatestUserPrompt: () => undefined,
-          startContinuation
+      await continueInterruptedTurn(
+        {
+          runtime: {
+            getState: () => snapshot(),
+            getLatestUserPrompt: () => undefined,
+            startContinuation
+          },
+          loadSession: vi.fn(async () => durable)
         },
-        loadSession: vi.fn(async () => durable)
-      },
-      {
-        sessionId: 'session-1',
-        projectId: 'project-1',
-        promptMessageId: 'prompt-1',
-        contextReset: {
-          runtimeSegmentId: 'runtime-resumed',
-          historyReplayTarget: 'claude-code',
-          contextWindow: 100_000,
-          supportsImageInput: false
+        {
+          sessionId: 'session-1',
+          projectId: 'project-1',
+          promptMessageId: 'prompt-1',
+          contextReset: {
+            runtimeSegmentId: 'runtime-resumed',
+            historyReplayTarget,
+            contextWindow: 100_000,
+            supportsImageInput: false
+          }
         }
-      }
-    )
+      )
 
-    const request = startContinuation.mock.calls[0][0]
-    expect(request.historyPreamble).toContain('Build the active workflow')
-    expect(request.historyPreamble).not.toContain('Use unrelated branch rules')
-    expect(request.historyPreamble).not.toContain('Save as skill')
-  })
+      const request = startContinuation.mock.calls[0][0]
+      expect(request.historyPreamble).toContain('Build the active workflow')
+      expect(request.historyPreamble).not.toContain('Use unrelated branch rules')
+      expect(request.historyPreamble).not.toContain('Save as skill')
+      expect(request.historyPreamble).toContain('mcp__notebook__execute')
+      expect(request.historyPreamble).toContain('median_ratio')
+      expect(request.historyPreamble).toContain('controls_passed=true')
+    }
+  )
 
   it('fails closed after context reset when only hidden controls remain for replay', async () => {
     const durable = session([

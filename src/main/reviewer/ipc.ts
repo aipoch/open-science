@@ -270,7 +270,9 @@ const createReviewerCommandOwner = (options: ReviewerIpcOptions): ReviewerComman
     try {
       session = await sessionRepository.loadSession(request.projectId, request.appSessionId)
     } catch {
-      return reviews
+      return reviews.map((review) =>
+        review.lifecycle === 'complete' ? { ...review, verificationUnavailable: true } : review
+      )
     }
     return flagStaleReviews(reviews, session, dataRoot, resolveArtifactVersion)
   }
@@ -309,6 +311,7 @@ const createReviewerCommandOwner = (options: ReviewerIpcOptions): ReviewerComman
       sessionId,
       turnMessageId,
       scopeTurnMessageId,
+      scopeMessageBranchId,
       evidenceScope,
       projectId,
       mainSessionId,
@@ -484,6 +487,7 @@ const createReviewerCommandOwner = (options: ReviewerIpcOptions): ReviewerComman
         sessionId,
         turnMessageId,
         scopeTurnMessageId,
+        scopeMessageBranchId,
         evidenceScope,
         projectId,
         mainSessionId,

@@ -2,9 +2,14 @@ import { diffArrays } from 'diff'
 import { marked } from 'marked'
 import { html, parseFragment, type DefaultTreeAdapterTypes } from 'parse5'
 
-import type { ManagedFileVersionDiffResult } from '../../../../shared/managed-file-versions'
+import type {
+  ManagedFileVersionDiffResult,
+  ManagedFileVersionDiffLine,
+  ManagedFileVersionDiffOmission
+} from '../../../../shared/managed-file-versions'
 
-type DiffLine = ManagedFileVersionDiffResult['lines'][number]
+type DiffLine = ManagedFileVersionDiffLine
+type TextDiffResult = { lines: DiffLine[] }
 type DiffSegment = DiffLine['segments'][number]
 type DiffPresentationKind = 'markdown' | 'prose' | 'structured'
 type MarkdownChangeTags = { added: string; removed: string }
@@ -63,6 +68,7 @@ type MarkdownRenderBlockBase = {
 }
 
 type DiffRenderBlock =
+  | (ManagedFileVersionDiffOmission & { startIndex: number })
   | {
       kind: 'text'
       changeKind: 'context' | 'mixed' | 'added' | 'removed'
@@ -419,7 +425,7 @@ const conservativeMarkdownContainerRanges = (entries: IndexedDiffLine[]): DiffRa
 const markdownContainerRanges = (
   before: IndexedDiffLine[],
   after: IndexedDiffLine[],
-  lines: ManagedFileVersionDiffResult['lines'],
+  lines: DiffLine[],
   useStructureSkeleton: boolean
 ): DiffRange[] | undefined => {
   if (![...before, ...after].some(({ line }) => MARKDOWN_FENCE_MARKER.test(diffLineText(line)))) {
@@ -1428,11 +1434,7 @@ const isRenderableStandaloneTableRow = (line: DiffLine): boolean => {
 const indentationWidth = (indentation: string): number =>
   Array.from(indentation).reduce((width, character) => width + (character === '\t' ? 4 : 1), 0)
 
-const hasListAncestor = (
-  lines: ManagedFileVersionDiffResult['lines'],
-  index: number,
-  indentation: string
-): boolean => {
+const hasListAncestor = (lines: DiffLine[], index: number, indentation: string): boolean => {
   const currentIndentation = indentationWidth(indentation)
   if (currentIndentation < 4) return true
   for (let previousIndex = index - 1; previousIndex >= 0; previousIndex -= 1) {
@@ -1458,10 +1460,7 @@ const mergeOverlappingDiffRanges = (ranges: DiffRange[]): DiffRange[] => {
   return merged
 }
 
-const mergeMarkdownRanges = (
-  ranges: DiffRange[],
-  lines: ManagedFileVersionDiffResult['lines']
-): DiffRange[] => {
+const mergeMarkdownRanges = (ranges: DiffRange[], lines: DiffLine[]): DiffRange[] => {
   const merged: DiffRange[] = []
   for (const range of mergeOverlappingDiffRanges(ranges)) {
     const previous = merged.at(-1)
@@ -1685,7 +1684,7 @@ const toStandaloneMarkdownChange = (
 }
 
 const inlineMarkdownPairs = (
-  lines: ManagedFileVersionDiffResult['lines'],
+  lines: DiffLine[],
   tags: MarkdownChangeTags
 ): {
   pairs: Map<number, InlineMarkdownChange>
@@ -1742,10 +1741,9 @@ const inlineMarkdownPairs = (
   return { pairs, indexes, stableHtmlIndexes, stableMarkdownIndexes, forcedRawRanges }
 }
 
-const markdownSourceContent = (lines: ManagedFileVersionDiffResult['lines']): string =>
-  markdownSource(lines).content
+const markdownSourceContent = (lines: DiffLine[]): string => markdownSource(lines).content
 
-const markdownContent = (lines: ManagedFileVersionDiffResult['lines']): string =>
+const markdownContent = (lines: DiffLine[]): string =>
   markdownSourceContent(lines).replace(/(?:\r\n|\n)$/u, '')
 
 const isMarkdownParagraphLine = (line: DiffLine): boolean => {
@@ -1763,7 +1761,7 @@ const isMarkdownParagraphLine = (line: DiffLine): boolean => {
 }
 
 const nonInlineParagraphRanges = (
-  lines: ManagedFileVersionDiffResult['lines'],
+  lines: DiffLine[],
   inlinePairs: ReadonlyMap<number, InlineMarkdownChange>
 ): DiffRange[] => {
   const ranges: DiffRange[] = []
@@ -1793,7 +1791,7 @@ const nonInlineParagraphRanges = (
 }
 
 const toTextRenderBlocks = (
-  result: ManagedFileVersionDiffResult,
+  result: TextDiffResult,
   presentationKind: Exclude<DiffPresentationKind, 'markdown'>,
   mergeStructuredReplacements = false
 ): DiffRenderBlock[] => {
@@ -1848,7 +1846,7 @@ const toTextRenderBlocks = (
 }
 
 const toRawMarkdownRenderBlocks = (
-  result: ManagedFileVersionDiffResult,
+  result: TextDiffResult,
   markdownRanges: DiffRange[] = []
 ): DiffRenderBlock[] => {
   const blocks: DiffRenderBlock[] = []
@@ -1959,7 +1957,7 @@ const toRawMarkdownRenderBlocks = (
   return blocks
 }
 
-const requiresRawMarkdownDiff = (result: ManagedFileVersionDiffResult): boolean => {
+const requiresRawMarkdownDiff = (result: TextDiffResult): boolean => {
   const before = markdownSourceContent(result.lines.filter((line) => line.kind !== 'added'))
   const after = markdownSourceContent(result.lines.filter((line) => line.kind !== 'removed'))
   return [before, after].some(
@@ -1970,7 +1968,7 @@ const requiresRawMarkdownDiff = (result: ManagedFileVersionDiffResult): boolean 
 }
 
 const isInlineSemanticRange = (
-  lines: ManagedFileVersionDiffResult['lines'],
+  lines: DiffLine[],
   range: DiffRange,
   inlineChangeIndexes: ReadonlySet<number>,
   stableHtmlIndexes: ReadonlySet<number>,
@@ -2013,7 +2011,7 @@ const isInlineSemanticRange = (
 }
 
 const toMarkdownRenderBlocks = (
-  result: ManagedFileVersionDiffResult,
+  result: TextDiffResult,
   tags: MarkdownChangeTags
 ): DiffRenderBlock[] => {
   const before = result.lines
@@ -2224,8 +2222,30 @@ const toDiffPresentationBlocks = (
   presentationKind: DiffPresentationKind,
   markdownChangeTags: MarkdownChangeTags = DEFAULT_MARKDOWN_CHANGE_TAGS
 ): DiffRenderBlock[] => {
-  if (presentationKind === 'markdown') return toMarkdownRenderBlocks(result, markdownChangeTags)
-  return toTextRenderBlocks(result, presentationKind, presentationKind === 'structured')
+  const hasOmissions = result.lines.some((line) => line.kind === 'omitted')
+  const blocks: DiffRenderBlock[] = []
+  let pending: DiffLine[] = []
+  let start = 0
+  const flush = (): void => {
+    const chunk = { lines: pending }
+    // Omitted Markdown may start inside a fence/table or omit reference definitions.
+    // Keep these disjoint excerpts as source, and preserve invisible changed characters.
+    const rendered =
+      presentationKind === 'markdown' && !hasOmissions
+        ? toMarkdownRenderBlocks(chunk, markdownChangeTags)
+        : toTextRenderBlocks(chunk, presentationKind === 'prose' ? 'prose' : 'structured', true)
+    blocks.push(...rendered.map((block) => ({ ...block, startIndex: block.startIndex + start })))
+    pending = []
+  }
+  result.lines.forEach((line, index) => {
+    if (line.kind === 'omitted') {
+      flush()
+      blocks.push({ ...line, startIndex: index })
+      start = index + 1
+    } else pending.push(line)
+  })
+  flush()
+  return blocks
 }
 
 export { toDiffPresentationBlocks }

@@ -1,7 +1,7 @@
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 // Item-path encode/decode falls back to resolveDataRoot(), which reads electron's app.getPath.
 vi.mock('electron', () => ({
@@ -9,6 +9,7 @@ vi.mock('electron', () => ({
 }))
 
 import type { PersistedPreviewState } from '../../shared/preview-state'
+import { initDataRoot } from '../storage-root'
 import { PreviewStateRepository, type PreviewStateClient } from './preview-repository'
 import { createProjectDbClient, migrateApplicationDatabase } from './prisma-client'
 
@@ -40,7 +41,13 @@ const createState = (overrides: Partial<PersistedPreviewState> = {}): PersistedP
   ...overrides
 })
 
+beforeEach(() => {
+  // Match application startup: path encoding must not probe legacy home directories for every tab.
+  initDataRoot(DATA_ROOT)
+})
+
 afterEach(async () => {
+  initDataRoot(undefined)
   await disconnect?.()
   disconnect = undefined
 
@@ -51,6 +58,43 @@ afterEach(async () => {
 })
 
 describe('preview state repository (integration)', () => {
+  it.each([false, true])(
+    'round-trips 100 files and the active first file (Subagents: %s)',
+    async (withSubagents) => {
+      storageRoot = await mkdtemp(join(tmpdir(), 'open-science-preview-limit-'))
+      const client = createProjectDbClient(storageRoot)
+      disconnect = () => client.$disconnect()
+      await migrateApplicationDatabase(client)
+      await client.project.create({ data: { id: 'project-a', name: 'Project A' } })
+      const repository = new PreviewStateRepository(() => Promise.resolve(client))
+      const items = Array.from({ length: 100 }, (_, index) => ({
+        ...createState().items[0]!,
+        id: `file-${index}`
+      }))
+      const subagents = withSubagents
+        ? {
+            id: 'tool:session-1:subagents',
+            sessionId: 'session-1',
+            title: 'Subagents',
+            type: 'tool' as const,
+            toolKind: 'subagents' as const,
+            selectedAgentFrameId: 'child-1'
+          }
+        : undefined
+      await expect(
+        repository.save('project-a', createState({ items, activeItemId: 'file-0', subagents }), 0)
+      ).resolves.toMatchObject({ status: 'saved' })
+      const row = await client.projectPreviewState.findUniqueOrThrow({
+        where: { projectId: 'project-a' }
+      })
+      expect(JSON.parse(row.items)).toHaveLength(withSubagents ? 101 : 100)
+      const loaded = await repository.get('project-a')
+      expect.soft(loaded?.state.items).toHaveLength(100)
+      expect.soft(loaded?.state.activeItemId).toBe('file-0')
+      expect(loaded?.state.subagents).toEqual(subagents)
+    }
+  )
+
   it('treats a late save after Project deletion as a no-op without touching another Project', async () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open-science-preview-'))
 

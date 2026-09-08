@@ -249,7 +249,12 @@ describe('workspace conversation controller', () => {
       version: 1,
       doc: { nodes: [] },
       annotations: [annotation],
-      attachments: []
+      attachments: [],
+      pdfReadingPosition: { pageNumber: 2, pageCount: 14 },
+      pdfReadingPositionSource: {
+        sourceKind: 'artifact-version' as const,
+        sourceVersionId: 'version-1'
+      }
     }))
     const hook = renderController(input)
     mounted.push(hook)
@@ -259,7 +264,12 @@ describe('workspace conversation controller', () => {
     await vi.waitFor(() => expect(input.runtime.sendMessage).toHaveBeenCalledOnce())
 
     expect(input.runtime.sendMessage).toHaveBeenCalledWith(
-      expect.objectContaining({ text: '', annotations: [annotation] })
+      expect.objectContaining({
+        text: '',
+        annotations: [annotation],
+        pdfReadingPosition: { pageNumber: 2, pageCount: 14 },
+        pdfReadingPositionSource: { sourceKind: 'artifact-version', sourceVersionId: 'version-1' }
+      })
     )
     expect(hook.result.current.optimisticMessage).toMatchObject({
       content: '',
@@ -971,7 +981,7 @@ describe('workspace conversation controller', () => {
     await vi.waitFor(() =>
       expect(input.sideChat?.start).toHaveBeenCalledWith(
         'Compare these observations.\n\n[Annotations]\n' +
-          '{"items":[{"type":"quote","content":"The confidence intervals overlap.","instruction":"Explain this caveat."}]}'
+          '{"items":[{"type":"quote","content":"The confidence intervals overlap.","source":{"kind":"agent-message","sessionId":"session-a","messageId":"agent-message-a"},"instruction":"Explain this caveat."}]}'
       )
     )
 
@@ -998,7 +1008,7 @@ describe('workspace conversation controller', () => {
     await vi.waitFor(() =>
       expect(input.sideChat?.start).toHaveBeenCalledWith(
         '[Annotations]\n' +
-          '{"items":[{"type":"quote","content":"The confidence intervals overlap.","instruction":"Explain this caveat."}]}'
+          '{"items":[{"type":"quote","content":"The confidence intervals overlap.","source":{"kind":"agent-message","sessionId":"session-a","messageId":"agent-message-a"},"instruction":"Explain this caveat."}]}'
       )
     )
     expect(input.composer.lifecycle.clearDraft).toHaveBeenCalledWith('session-a', 3)

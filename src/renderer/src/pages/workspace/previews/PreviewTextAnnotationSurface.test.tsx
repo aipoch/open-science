@@ -12,7 +12,10 @@ import type {
 import { createArtifactVersionLocator } from '../../../../../shared/artifact-provenance'
 import type { PreviewFileItem } from '@/stores/preview-workbench-store'
 
-import { requestAnnotationReveal } from '../annotations/annotation-reveal'
+import {
+  requestAnnotationReveal,
+  subscribeAnnotationReveal
+} from '../annotations/annotation-reveal'
 import { HighlightedCodeLines } from '../HighlightedCodeLines'
 import { PreviewTextAnnotationSurface } from './PreviewTextAnnotationSurface'
 
@@ -109,6 +112,7 @@ describe('PreviewTextAnnotationSurface', () => {
 
   afterEach(async () => {
     await act(async () => root.unmount())
+    subscribeAnnotationReveal(() => true)()
     container.remove()
     window.getSelection()?.removeAllRanges()
     Reflect.deleteProperty(navigator, 'clipboard')
@@ -207,6 +211,43 @@ describe('PreviewTextAnnotationSurface', () => {
     )
     await act(async () => actions.at(-1)?.click())
   }
+
+  it('restores the selected second occurrence after creation and a serialized remount', async () => {
+    const onAddAnnotation = vi.fn<(annotation: Annotation) => undefined>(() => undefined)
+    await renderSurface({ onAddAnnotation, content: 'repeat then repeat' })
+    await selectRange(12, 18)
+    await confirmAnnotation()
+    expect(onAddAnnotation).toHaveBeenCalledTimes(1)
+    const saved: Annotation = JSON.parse(JSON.stringify(onAddAnnotation.mock.calls[0][0]))
+    expect(saved.kind === 'text' && saved.quote).toBe('repeat')
+    expect(Array.from(registeredRanges).map((range) => range.startOffset)).toContain(12)
+    await act(async () => root.unmount())
+    expect(registeredRanges.size).toBe(0)
+    root = createRoot(container)
+    await renderSurface({ activeAnnotations: [saved], content: 'repeat then repeat' })
+    expect(Array.from(registeredRanges).map((range) => range.startOffset)).toEqual([12])
+  })
+
+  it('reveals a sent file quote after the requested preview mounts', async () => {
+    const saved = annotation()
+    await act(async () => requestAnnotationReveal(saved))
+    Element.prototype.scrollIntoView = vi.fn()
+    await renderSurface()
+    expect(Array.from(registeredRanges).map((range) => range.toString())).toContain(saved.quote)
+    expect(container.querySelector('[data-text-annotation-edit]')).toBeNull()
+  })
+
+  it.each([true, false])('reveals a file quote with draft present=%s', async (inDraft) => {
+    const saved = annotation()
+    await renderSurface({ activeAnnotations: inDraft ? [saved] : [] })
+    const scroll = vi.fn()
+    container.querySelector('p')!.scrollIntoView = scroll
+    await act(async () => requestAnnotationReveal(saved))
+    expect(scroll).toHaveBeenCalled()
+    expect(Array.from(registeredRanges).some((range) => range.toString() === saved.quote)).toBe(
+      true
+    )
+  })
 
   it('creates a versioned project-file annotation only after confirmation', async () => {
     const onAddAnnotation = vi.fn<(annotation: Annotation) => undefined>(() => undefined)
@@ -711,7 +752,7 @@ describe('PreviewTextAnnotationSurface', () => {
     Reflect.deleteProperty(Range.prototype, 'getClientRects')
   })
 
-  it('preserves exact duplicate ranges until deletion and falls back only after reopening', async () => {
+  it('preserves exact duplicate ranges after deletion and reopening', async () => {
     const onAddAnnotation = vi.fn<(annotation: Annotation) => undefined>(() => undefined)
     const content = 'repeat then repeat'
     await renderSurface({ onAddAnnotation, content })
@@ -733,11 +774,17 @@ describe('PreviewTextAnnotationSurface', () => {
 
     await act(async () => root.render(<div>Preview closed</div>))
     await renderSurface({ activeAnnotations: [second], onAddAnnotation, content })
-    expect(Array.from(registeredRanges).map((range) => range.startOffset)).toEqual([0])
+    expect(Array.from(registeredRanges).map((range) => range.startOffset)).toEqual([12])
   })
 
   it('reprojects a Preview quote after content mutation and removes stale color when it disappears', async () => {
-    const active = [annotation({ id: 'content-update', quote: 'repeat' })]
+    const active = [
+      annotation({
+        id: 'content-update',
+        quote: 'repeat',
+        anchor: { position: { start: 0, end: 6 }, suffix: ' then repeat' }
+      })
+    ]
     await renderSurface({ activeAnnotations: active, content: 'repeat then repeat' })
     expect(Array.from(registeredRanges)[0]?.startOffset).toBe(0)
 

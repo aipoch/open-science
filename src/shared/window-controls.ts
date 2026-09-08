@@ -5,6 +5,7 @@
 // column) is open it closes that panel instead of the window. The main process intercepts the chord
 // and forwards it to the renderer, which decides whether to collapse the panel or close the window.
 
+import { isLocale, type Locale } from './locale'
 import type { ActiveSessionInfo } from './storage'
 
 // Renderer -> main: close the focused window (the fallback when no pane is open).
@@ -67,17 +68,36 @@ export type WindowFindResult = {
   finalUpdate: boolean
 }
 
+export type WindowFindLocalization = {
+  lang: Locale
+  placeholder: string
+  findText: string
+  findInWindow: string
+  previous: string
+  next: string
+  close: string
+}
+
 export type WindowFindAppearance = {
   theme: 'light' | 'dark'
   followsSystem: boolean
+  localization?: WindowFindLocalization
 }
 
 export const isWindowFindAppearance = (value: unknown): value is WindowFindAppearance => {
   if (!value || typeof value !== 'object') return false
   const appearance = value as Partial<WindowFindAppearance>
+  const localization = appearance.localization
   return (
     (appearance.theme === 'light' || appearance.theme === 'dark') &&
-    typeof appearance.followsSystem === 'boolean'
+    typeof appearance.followsSystem === 'boolean' &&
+    (localization === undefined ||
+      (localization !== null &&
+        typeof localization === 'object' &&
+        isLocale(localization.lang) &&
+        (['placeholder', 'findText', 'findInWindow', 'previous', 'next', 'close'] as const).every(
+          (key) => typeof localization[key] === 'string'
+        )))
   )
 }
 
@@ -157,6 +177,10 @@ export const isFindInPageChord = (input: KeyChordInput, platform: string): boole
 
 // Main -> renderer: show the close/quit confirmation modal for `variant`, listing `sessions`.
 export const WINDOW_CLOSE_CONFIRM_REQUEST_CHANNEL = 'window:close-confirm-request'
+
+// Main -> renderer: withdraw this request after settlement or transfer to native UI.
+export const WINDOW_CLOSE_CONFIRM_DISMISS_CHANNEL = 'window:close-confirm-dismiss'
+export type CloseConfirmDismissal = { requestId: string }
 
 // Renderer -> main: modal mounted (ack) or the user chose an action (choice), keyed by requestId.
 export const WINDOW_CLOSE_CONFIRM_RESPONSE_CHANNEL = 'window:close-confirm-response'

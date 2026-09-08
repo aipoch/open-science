@@ -12,7 +12,16 @@ import type { ChatMessage } from '@/stores/session-store'
 import type { SendEditedMessage } from './workspace-edited-message'
 import type { EditAnnotationTarget } from './WorkspaceMessageItem'
 import type { Annotation, TextAnnotation } from '../../../../shared/annotations'
-import { WorkspaceMessageItem } from './WorkspaceMessageItem'
+import { TooltipProvider } from '@/components/ui/tooltip'
+import { WorkspaceMessageItem as MessageItem } from './WorkspaceMessageItem'
+
+const WorkspaceMessageItem = (
+  props: React.ComponentProps<typeof MessageItem>
+): React.JSX.Element => (
+  <TooltipProvider delayDuration={200}>
+    <MessageItem {...props} />
+  </TooltipProvider>
+)
 
 const { requestPdfReadingReveal } = vi.hoisted(() => ({ requestPdfReadingReveal: vi.fn() }))
 vi.mock('./pdf-reading-reveal', () => ({ requestPdfReadingReveal }))
@@ -630,6 +639,27 @@ describe('WorkspaceMessageItem user message actions', () => {
     )
 
     expectComputeCompletionEvent()
+  })
+
+  it('presents durable background result context without exposing its control payload', async () => {
+    await renderItem(
+      createMessage({
+        content: 'Background execution outcomes are now available.\n\n{"runId":"run-1"}',
+        attribution: {
+          kind: 'application',
+          feature: 'background-results',
+          purpose: 'agent-result-delivery',
+          deliveryKey: 'agent-result-delivery:continuation-1',
+          deliveryIds: ['local-run:run-1']
+        }
+      })
+    )
+
+    expect(container.querySelector('[data-testid="agent-result-delivery-event"]')).not.toBeNull()
+    expect(container.textContent).toContain('Background activity')
+    expect(container.textContent).toContain('New task results are available')
+    expect(container.textContent).not.toContain('Pending delivery')
+    expect(container.textContent).not.toContain('run-1')
   })
 
   it('keeps a reloaded Compute completion presentation out of the user bubble', async () => {

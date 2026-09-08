@@ -49,7 +49,8 @@ describe('useWindowFindAppearanceSync', () => {
     await render()
     expect(announceWindowFindAppearance).toHaveBeenLastCalledWith({
       theme: 'light',
-      followsSystem: false
+      followsSystem: false,
+      localization: expect.any(Object)
     })
 
     theme.preference = 'dark'
@@ -57,7 +58,8 @@ describe('useWindowFindAppearanceSync', () => {
     await render()
     expect(announceWindowFindAppearance).toHaveBeenLastCalledWith({
       theme: 'dark',
-      followsSystem: false
+      followsSystem: false,
+      localization: expect.any(Object)
     })
 
     theme.preference = 'system'
@@ -65,14 +67,16 @@ describe('useWindowFindAppearanceSync', () => {
     await render()
     expect(announceWindowFindAppearance).toHaveBeenLastCalledWith({
       theme: 'light',
-      followsSystem: true
+      followsSystem: true,
+      localization: expect.any(Object)
     })
 
     theme.resolvedTheme = 'dark'
     await render()
     expect(announceWindowFindAppearance).toHaveBeenLastCalledWith({
       theme: 'dark',
-      followsSystem: true
+      followsSystem: true,
+      localization: expect.any(Object)
     })
   })
 })

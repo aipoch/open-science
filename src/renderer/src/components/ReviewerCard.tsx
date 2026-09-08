@@ -11,7 +11,14 @@
 // warn/fail expansions show a self-correct footer note; pass-only expansions do not.
 
 import { useState } from 'react'
-import { ChevronDown, ChevronRight, ShieldCheck, AlertTriangle, Loader } from 'lucide-react'
+import {
+  ChevronDown,
+  ChevronRight,
+  ShieldCheck,
+  AlertTriangle,
+  Loader,
+  CircleMinus
+} from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { cn } from '@/lib/utils'
 import { OpenScienceThinkingIndicator } from '@/components/OpenScienceThinkingIndicator'
@@ -20,7 +27,11 @@ import {
   type PresentedReviewCheck
 } from '@/lib/reviewer-submission-presentation'
 
-import type { ReviewWithChecks, GoToTranscriptIntent } from '../../../shared/reviewer'
+import {
+  REVIEW_CORRECTION_CONTEXT_CHANGED,
+  type ReviewWithChecks,
+  type GoToTranscriptIntent
+} from '../../../shared/reviewer'
 
 type ReviewerCardProps = {
   review: ReviewWithChecks
@@ -33,6 +44,7 @@ type ReviewerCardProps = {
   // Resolves to whether a review actually started; a false result (e.g. session load failed) releases
   // the button latch so the turn stays retriable.
   onRerun?: (review: ReviewWithChecks) => Promise<boolean>
+  onRetryVerification?: () => Promise<void>
 }
 
 // Status badge styles (pass/warn/fail).
@@ -211,7 +223,8 @@ export const ReviewerCard = ({
   className,
   defaultExpanded = false,
   onGoToTranscript,
-  onRerun
+  onRerun,
+  onRetryVerification
 }: ReviewerCardProps): React.JSX.Element => {
   const { t } = useTranslation()
   const [expanded, setExpanded] = useState(defaultExpanded)
@@ -220,11 +233,14 @@ export const ReviewerCard = ({
   // Reset if this row itself changes so a later re-stale Review can be re-run again.
   const [rerunRequested, setRerunRequested] = useState(false)
   const [rerunStarted, setRerunStarted] = useState(false)
+  const [rerunFailed, setRerunFailed] = useState(false)
+  const [verifying, setVerifying] = useState(false)
   const [lastReviewStamp, setLastReviewStamp] = useState(review.updatedAt)
   if (lastReviewStamp !== review.updatedAt) {
     setLastReviewStamp(review.updatedAt)
     setRerunRequested(false)
     setRerunStarted(false)
+    setRerunFailed(false)
   }
 
   const hasPersistedFlaggedChecks = review.checks.some(
@@ -291,6 +307,17 @@ export const ReviewerCard = ({
   // describe the current turn. Computed at load time (see flagStaleReviews); only meaningful for a
   // completed review, since running/error reviews have no verdict to go stale.
   const isStale = isTerminal && review.stale === true
+  const isUnverified = review.verificationUnavailable === true
+  const isEmptyAssessment =
+    isTerminal && review.outcome === 'pass' && review.submittedChecks?.length === 0
+  const contextChanged =
+    isInterrupted &&
+    [
+      ...review.checks,
+      ...(review.submittedChecks ?? []).map((item) =>
+        item.kind === 'new' ? item.check : item.sourceCheck
+      )
+    ].some((check) => check.unaddressedNote === REVIEW_CORRECTION_CONTEXT_CHANGED)
   const hasUnresolvedFindings =
     review.submittedChecks === undefined
       ? review.checks.some(
@@ -312,11 +339,13 @@ export const ReviewerCard = ({
           )
         })
   const canRerunUnresolved = isTerminal && hasUnresolvedFindings
-  const showRerunNotice = (isStale || canRerunUnresolved) && !rerunStarted
+  const showRerunNotice = (isError || isStale || canRerunUnresolved) && !rerunStarted
 
   // Compact summary line.
   const summaryText = (): string => {
     if (isError) return t('Review error')
+    if (isUnverified) return t('Current evidence could not be verified')
+    if (isEmptyAssessment) return t('No checkable claims')
     if (isFlagged) {
       if (!hasWarnOrFail) {
         return isStale ? t('Issues found (outdated)') : t('Issues found')
@@ -336,6 +365,8 @@ export const ReviewerCard = ({
   // the point is "this verdict may not reflect the turn anymore", not the original outcome.
   const statusIcon = ((): React.JSX.Element => {
     if (isError) return <AlertTriangle className="h-3 w-3 text-yellow-500" />
+    if (isUnverified) return <AlertTriangle className="h-3 w-3 text-amber-500" />
+    if (isEmptyAssessment) return <CircleMinus className="h-3 w-3 text-text-400" />
     if (isStale) return <AlertTriangle className="h-3 w-3 text-amber-500" />
     if (isFlagged) return <AlertTriangle className="h-3 w-3 text-red-500" />
     if (isComplete) return <ShieldCheck className="h-3 w-3 text-green-600 dark:text-green-400" />
@@ -407,6 +438,44 @@ export const ReviewerCard = ({
         )}
       </button>
 
+      {isUnverified && (
+        <div
+          className="mt-2 flex items-center justify-between gap-2 rounded-md bg-bg-300 px-2 py-1"
+          data-testid="reviewer-verification-notice"
+        >
+          <span>{t('Historical results are retained. Retry to verify the current evidence.')}</span>
+          {onRetryVerification && (
+            <button
+              type="button"
+              disabled={verifying}
+              className="shrink-0 rounded bg-bg-000 px-2 py-0.5 disabled:opacity-50"
+              onClick={() => {
+                setVerifying(true)
+                void onRetryVerification()
+                  .catch(() => undefined)
+                  .finally(() => setVerifying(false))
+              }}
+            >
+              {verifying ? t('Verifying…') : t('Retry')}
+            </button>
+          )}
+        </div>
+      )}
+      {contextChanged && (
+        <div className="mt-2" data-testid="reviewer-context-notice">
+          <p>{t('Automatic correction stopped because the active conversation changed.')}</p>
+          {onGoToTranscript && (
+            <button
+              type="button"
+              className="mt-1 underline"
+              onClick={() => onGoToTranscript({ reviewId: review.id })}
+            >
+              {t('Go to transcript')}
+            </button>
+          )}
+        </div>
+      )}
+
       {/* Stale notice + explicit re-run: the verdict above may no longer describe the turn (an artifact
           was edited after the review ran). This is the actionable refresh path for THIS review's turn —
           including earlier turns that the composer's "Request review" (last-turn only) cannot reach. */}
@@ -416,7 +485,13 @@ export const ReviewerCard = ({
           data-testid={isStale ? 'reviewer-stale-notice' : 'reviewer-unresolved-notice'}
         >
           <span className="text-[11px] text-amber-800 dark:text-amber-300">
-            {isStale ? t('Turn changed after this review ran.') : t('Issues found')}
+            {rerunFailed
+              ? t('Review did not start. Please try again.')
+              : isError
+                ? t('Review failed. You can try again.')
+                : isStale
+                  ? t('Turn changed after this review ran.')
+                  : t('Issues found')}
           </span>
           {onRerun && (
             <button
@@ -427,13 +502,20 @@ export const ReviewerCard = ({
               className="shrink-0 rounded bg-bg-000 px-2 py-0.5 text-[11px] text-amber-800 transition-colors hover:bg-bg-300 disabled:cursor-default disabled:opacity-50 dark:text-amber-300"
               onClick={() => {
                 setRerunRequested(true)
+                setRerunFailed(false)
                 // Release the latch if no review actually started (e.g. the session couldn't load).
                 // A true result is emitted only after the replacement running Review row was pushed,
                 // so its new card can take over while this superseded notice disappears.
-                void onRerun(review).then((started) => {
-                  setRerunRequested(false)
-                  if (started) setRerunStarted(true)
-                })
+                void onRerun(review)
+                  .then((started) => {
+                    setRerunRequested(false)
+                    if (started) setRerunStarted(true)
+                    else setRerunFailed(true)
+                  })
+                  .catch(() => {
+                    setRerunRequested(false)
+                    setRerunFailed(true)
+                  })
               }}
             >
               {rerunRequested ? t('Re-running…') : t('Re-run review')}

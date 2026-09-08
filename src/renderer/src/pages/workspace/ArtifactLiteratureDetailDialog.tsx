@@ -97,7 +97,7 @@ const ArtifactLiteratureDetailDialog = ({
   const resolvedReference =
     reference && liveReference.itemId === reference.itemId ? liveReference : undefined
   const loadStatus = resolvedReference?.status ?? (reference ? 'loading' : 'idle')
-  const item = resolvedReference?.item?.item ?? reference?.item
+  const item = reference?.item
   const attachments = resolvedReference?.item?.attachments ?? []
   const itemTypeLabels: Record<LiteratureItemType, string> = {
     journalArticle: t('Journal article'),
@@ -119,10 +119,11 @@ const ArtifactLiteratureDetailDialog = ({
     <Dialog.Root open={Boolean(reference)} onOpenChange={onOpenChange}>
       {item ? (
         <Dialog.Portal>
-          <Dialog.Overlay className={dialogOverlayClassName} />
+          {/* Artifact preview panels occupy layers 60/61; keep both child surfaces above them. */}
+          <Dialog.Overlay className={cn(dialogOverlayClassName, 'z-[65]')} />
           <Dialog.Content
             className={dialogPanelClassName(
-              'flex max-h-[85svh] w-[min(680px,calc(100vw-2rem))] flex-col p-0'
+              'z-[65] flex max-h-[85svh] w-[min(680px,calc(100vw-2rem))] flex-col p-0'
             )}
           >
             <div className={cn(dialogHeaderClassName, 'shrink-0 items-start')}>
@@ -165,6 +166,9 @@ const ArtifactLiteratureDetailDialog = ({
             </div>
 
             <div className="min-h-0 flex-1 divide-y divide-border-300/80 overflow-y-auto px-5 text-sm">
+              <p className="py-3 text-xs text-muted-foreground">
+                {t('Saved reference metadata. Attachments reflect the current Library entry.')}
+              </p>
               {loadStatus === 'missing' || loadStatus === 'error' ? (
                 <p
                   role="alert"

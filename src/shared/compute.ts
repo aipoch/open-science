@@ -233,9 +233,9 @@ export type ChangeComputeHostAuthenticationRequest = Readonly<{
   expectedRevision: number
   operationId: string
   authenticationMode: ComputeAuthenticationMode
-  // Absent in ssh_config mode: the User (and port fallback) then come from ~/.ssh/config.
+  // Absent overrides in ssh_config mode inherit User and Port from ~/.ssh/config.
   username?: string
-  port: number
+  port?: number
   identityFile?: string
   password?: string
 }>
@@ -464,12 +464,18 @@ export type JobStatusResult = {
   error_code?: string
   last_poll_error?: string
   status: ComputeJobStatus
+  // True only when this exact DB snapshot includes the final locally-harvested result. Provider
+  // terminality can precede harvest, so callers must not infer finality from status alone.
+  result_final: boolean
   cancellation_status?: ComputeJobCancellationStatus
   exit_code: number | undefined
   stdout_tail: string | undefined
   stderr_tail: string | undefined
   remote_workdir: string | undefined
   harvest_error: string | undefined
+  // Agent-facing status reads remain pending because this projection omits harvested file lists.
+  // Internal and renderer callers omit the marker.
+  follow_up_delivery?: 'pending'
 }
 
 // Full job result shape returned by attach_job().result() (spec §11.4, design §9).
@@ -484,6 +490,9 @@ export type JobResult = {
   error_code?: string
   last_poll_error?: string
   status: ComputeJobStatus
+  // Mirrors the exact snapshot returned by this read; avoids a second-read TOCTOU when deciding
+  // whether an Agent has observed the durable final result.
+  result_final: boolean
   cancellation_status?: ComputeJobCancellationStatus
   exit_code: number | undefined
   // Absolute canonical Notebook Session root. Join workspace-relative output paths to this root
@@ -502,6 +511,9 @@ export type JobResult = {
   stdout_tail: string | undefined
   stderr_tail: string | undefined
   harvest_error: string | undefined
+  // See JobStatusResult.follow_up_delivery. `suppressed` means this read won; `committed` means
+  // automatic delivery had already crossed its dispatch fence.
+  follow_up_delivery?: 'pending' | 'suppressed' | 'committed'
 }
 
 // Result returned by submit_job (immediate, before dispatch completes). remote_workdir is
@@ -572,11 +584,19 @@ export type JobSummary = {
   left_on_remote_count?: number
   left_on_remote?: Array<{ uri: string; size_mb: number; reason: string }>
   harvest_error?: string
+  // A terminal provider status can precede local harvest. Direct Agent reads may only acknowledge
+  // delivery after this marker is present, when the returned file/result projection is final.
+  harvested_at?: number
+  // Read-side marker derived from the durable Agent Result Delivery ledger. When present, the
+  // renderer must not start the legacy completion-analysis path for this Job.
+  result_delivery_path?: 'agent-result-delivery'
 }
 
 // The existing per-Session feed supports workspace history. The non-terminal variant is a bounded
 // cross-Session query used to hydrate renderer-lifetime activity after startup or recovery.
 export type ComputeJobsListFilter =
-  Readonly<{ sessionId: string; status?: string[] }> | Readonly<{ nonTerminal: true }>
+  | Readonly<{ sessionId: string; status?: string[] }>
+  | Readonly<{ nonTerminal: true }>
+  | Readonly<{ projectId: string; since: number }>
 
 export type ComputeJobsPendingNotificationFilter = string | Readonly<{ allSessions: true }>

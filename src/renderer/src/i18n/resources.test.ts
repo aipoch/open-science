@@ -809,11 +809,11 @@ describe('dynamic counted lookup translations', () => {
       '5 шагов',
       '1.5 шага'
     ])
-    expect([1, 2, 5, 1.5].map((count) => instance.t('{{count}} jobs', { count }))).toEqual([
-      '1 задание',
-      '2 задания',
-      '5 заданий',
-      '1.5 задания'
+    expect([1, 2, 5, 1.5].map((count) => instance.t('{{count}} tasks', { count }))).toEqual([
+      '1 задача',
+      '2 задачи',
+      '5 задач',
+      '1.5 задачи'
     ])
     expect([1, 2, 5, 1.5].map((count) => instance.t('{{count}} subagents', { count }))).toEqual([
       '1 субагент',
@@ -1475,8 +1475,6 @@ describe('mandatory product glossary', () => {
       runningSubagents: de.renderer['{{count}} subagents, {{running}} running_other'],
       allowedThisSessionOne: de.renderer['{{count}} allowed this session_one'],
       allowedThisSessionOther: de.renderer['{{count}} allowed this session_other'],
-      remoteOne: de.renderer['REMOTE · {{count}}_one'],
-      remoteOther: de.renderer['REMOTE · {{count}}_other'],
       revokedConflicts:
         de.renderer[
           'Revoked {{count}} permissions; {{conflictCount}} changed before it could be revoked_other'
@@ -1487,8 +1485,6 @@ describe('mandatory product glossary', () => {
       runningSubagents: '{{count}} Unteragenten, davon {{running}} aktiv',
       allowedThisSessionOne: 'In dieser Sitzung zugelassen: {{count}}',
       allowedThisSessionOther: 'In dieser Sitzung zugelassen: {{count}}',
-      remoteOne: 'REMOTE · {{count}}',
-      remoteOther: 'REMOTE · {{count}}',
       revokedConflicts:
         '{{count}} Berechtigungen widerrufen · Vor dem Widerruf anderweitig geändert: {{conflictCount}}'
     })
@@ -1587,7 +1583,6 @@ describe('mandatory product glossary', () => {
   it('keeps high-risk German storage, exit, credential, and theme actions unambiguous', () => {
     expect({
       about: de.renderer.About,
-      alwaysLight: de.renderer['Always light'],
       credential: de.renderer.Credential,
       custom: de.renderer.Custom,
       duplicate: de.renderer.Duplicate,
@@ -1615,7 +1610,6 @@ describe('mandatory product glossary', () => {
       volumes: de.renderer.Volumes
     }).toEqual({
       about: 'Über',
-      alwaysLight: 'Immer hell',
       credential: 'Anmeldeinformation',
       custom: 'Benutzerdefiniert',
       duplicate: 'Duplizieren',
@@ -1734,31 +1728,26 @@ describe('mandatory product glossary', () => {
     expect(readme).toContain(
       'Nach Abschluss eines Jobs startet die App automatisch eine Analyseinteraktion; eine eigene Polling-Schleife ist nicht erforderlich.'
     )
-    expect(readme).toContain('Schätzungen pro Kategorie')
-    expect(readme).toContain('projektbezogene Frame-Lesezugriffe')
-    expect(readme).toContain('verfeinerte Zeilen in der Sitzungssidebar')
-    expect(readme).toContain('interaktionsbezogenem Lesezugriff')
-    expect(readme).toContain('Sitzungsnummern in der globalen Suche')
-    expect(readme).toContain('Tastaturkürzel für eine neue Konversation')
-    expect(readme).toContain('Schlüssel- oder Passwortauthentifizierung')
     const rootPackage = JSON.parse(
       readFileSync(join(__dirname, '..', '..', '..', '..', 'package.json'), 'utf8')
     ) as { version: string }
     // The banner assertion tracks the repo version instead of a hardcoded bump target.
     expect(readme).toContain(`Open Science v${rootPackage.version} veröffentlicht`)
+    expect(readme).toContain('30-Tage-Aktivitäts-Heatmap')
+    expect(readme).toContain('10 GB')
+    expect(readme).toContain('22 hervorgehobenen')
+    expect(readme).toContain('24 integrierten')
+    expect(readme).toContain('64 integrierte Fähigkeitssymbole')
+    expect(readme).toContain('GPT-6 Astra')
+    expect(readme).toContain('Claude Fable 5.1')
+    expect(readme).toContain('SSH')
+    expect(readme).toContain('Slurm')
+    expect(readme).toContain('Konfigurationsimport/-export')
+    expect(readme).toContain('bearbeitbaren Sitzungsdetails')
+    expect(readme).toContain('Quellenvorschau')
     expect(readme).toContain('CodeBuddy')
     expect(readme).toContain('Text-, Bild- und PDF-Anmerkungen')
-    expect(readme).toContain('persistente Agentenerinnerungen')
-    expect(readme).toContain('Vorschlägen für Variablennamen des laufenden Kernels')
-    expect(readme).toContain('provenienzbewusste Workflows für Abbildungen')
-    expect(readme).toContain('abgeschirmte Quellenvorschauen')
-    expect(readme).toContain('Live-Variablenansicht')
-    expect(readme).toContain('Schließen anderer Tabs')
     expect(readme).toContain('OpenCode Go und OpenCode Zen')
-    expect(readme).toContain('automatisch erzeugte und bearbeitbare Sitzungsdetails')
-    expect(readme).toContain('Rückgängigmachen und Wiederholen von Entwurfsänderungen')
-    expect(readme).toContain('Nutzungsdetails pro Modellaufruf')
-    expect(readme).toContain('Import und Export standardmäßiger MCP-Client-Konfigurationen')
   })
 
   const chosenGenericTerms = {
@@ -2815,8 +2804,8 @@ describe('Russian catalog quality', () => {
       'Сохраняет файл как артефакт этого диалога.'
     ],
     [
-      'Remote access is off on the home computer. Re-enable a remote access mode in Open Science, then try again.',
-      'Удалённый доступ отключён на домашнем компьютере. Снова включите режим удалённого доступа в Open Science и повторите попытку.'
+      'Access authorization has expired. Reopen the Web link from Open Science on the host computer, or return to the remote access entry page to pair again.',
+      'Срок действия разрешения на доступ истёк. Снова откройте веб-ссылку из Open Science на главном компьютере или вернитесь на страницу удалённого доступа для повторного сопряжения.'
     ],
     [
       'That folder already contains Open Science data. Pick an empty folder, or use the default location.',
@@ -3719,7 +3708,7 @@ describe('Korean binding terminology', () => {
       '2단계 인증은 6자리 코드를 사용합니다. 코드가 여기에 표시된 요청과 일치할 때만 새 원격 세션을 승인하세요.'
     ],
     ['Library', '라이브러리'],
-    ['{{count}} jobs_other', '작업 {{count}}개'],
+    ['{{count}} tasks_other', '작업 {{count}}개'],
     ['{{count}} repl_other', 'REPL {{count}}개'],
     ['{{count}} steps_other', '{{count}}단계'],
     ['{{count}} calls_other', '호출 {{count}}회'],

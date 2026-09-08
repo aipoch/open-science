@@ -177,6 +177,8 @@ export function ComputeHostDetail({
   const [detailsDoc, setDetailsDoc] = useState<string>('')
   const [originalDoc, setOriginalDoc] = useState<string>('')
   const [isEditingDetails, setIsEditingDetails] = useState(false)
+  const [detailsConflict, setDetailsConflict] = useState(false)
+  const [mergeBase, setMergeBase] = useState<string | undefined>()
   const [detailsSaving, setDetailsSaving] = useState(false)
   const [detailsError, setDetailsError] = useState<DetailError | undefined>(undefined)
   const [isSkeleton, setIsSkeleton] = useState(false)
@@ -219,7 +221,7 @@ export function ComputeHostDetail({
 
   // Load the details doc (with skeleton synthesis) when the host is first available.
   useEffect(() => {
-    if (!host || detailsLoadedRef.current) return
+    if (!host || detailsLoadedRef.current || isEditingDetails) return
     detailsLoadedRef.current = true
 
     window.api.compute
@@ -234,7 +236,7 @@ export function ComputeHostDetail({
         setDetailsDoc(host.detailsDoc ?? '')
         setOriginalDoc(host.detailsDoc ?? '')
       })
-  }, [host, providerId])
+  }, [host, providerId, isEditingDetails])
 
   useEffect(() => {
     if (host?.authentication?.mode !== 'password') return
@@ -302,9 +304,30 @@ export function ComputeHostDetail({
     setDetailsError(undefined)
     try {
       await saveDetails(providerId, detailsDoc, originalDoc)
+      setDetailsConflict(false)
+      setMergeBase(undefined)
       setOriginalDoc(detailsDoc)
       setIsSkeleton(false)
       setIsEditingDetails(false)
+    } catch (err) {
+      setDetailsConflict(
+        /details_conflict|old_text/.test(err instanceof Error ? err.message : String(err))
+      )
+      setDetailsError(failure(err, 'Failed to save details.'))
+    } finally {
+      setDetailsSaving(false)
+    }
+  }
+
+  const reloadDetailsForMerge = async (): Promise<void> => {
+    setDetailsSaving(true)
+    try {
+      const { doc, isSkeleton: skeleton } = await window.api.compute.detailsGet(providerId)
+      setOriginalDoc(skeleton ? '' : doc)
+      setIsSkeleton(skeleton)
+      setMergeBase(doc)
+      setDetailsConflict(false)
+      setDetailsError(undefined)
     } catch (err) {
       setDetailsError(failure(err, 'Failed to save details.'))
     } finally {
@@ -313,6 +336,8 @@ export function ComputeHostDetail({
   }
 
   const handleDetailsCancel = (): void => {
+    setDetailsConflict(false)
+    setMergeBase(undefined)
     setDetailsDoc(originalDoc)
     setDetailsError(undefined)
     setIsEditingDetails(false)
@@ -810,6 +835,26 @@ export function ComputeHostDetail({
       >
         {isEditingDetails ? (
           <div className="flex flex-col gap-2">
+            {detailsConflict ? (
+              <Button
+                type="button"
+                variant="outline"
+                disabled={detailsSaving}
+                onClick={() => void reloadDetailsForMerge()}
+              >
+                {t('Reload')}
+              </Button>
+            ) : null}
+            {detailsConflict || mergeBase !== undefined ? (
+              <p className="text-xs text-muted-foreground">
+                {t(
+                  'Your draft is preserved. Reload the current details, then merge them into your draft before saving.'
+                )}
+              </p>
+            ) : null}
+            {mergeBase !== undefined ? (
+              <pre className="whitespace-pre-wrap rounded border p-3 text-xs">{mergeBase}</pre>
+            ) : null}
             <textarea
               className="min-h-[160px] w-full resize-y rounded-md border border-input bg-background px-3 py-2 font-mono text-xs focus:outline-none focus:ring-2 focus:ring-ring"
               value={detailsDoc}
@@ -848,7 +893,9 @@ export function ComputeHostDetail({
                   type="button"
                   size="sm"
                   onClick={() => void handleDetailsSave()}
-                  disabled={detailsSaving || detailsDoc.length > DETAILS_DOC_MAX_LENGTH}
+                  disabled={
+                    detailsSaving || detailsConflict || detailsDoc.length > DETAILS_DOC_MAX_LENGTH
+                  }
                   aria-busy={detailsSaving}
                 >
                   {detailsSaving ? t('Saving…') : t('Save')}

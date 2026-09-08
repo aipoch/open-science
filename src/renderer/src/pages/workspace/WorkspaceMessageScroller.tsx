@@ -1,3 +1,4 @@
+import { flushSync } from 'react-dom'
 /* Hallmark · pre-emit critique: P5 H5 E5 S5 R5 V4 */
 import {
   MessageScroller,
@@ -59,6 +60,7 @@ import { JobDetailModal } from '@/components/JobDetailModal'
 import { extractJobIdFromActivity } from '@/components/job-binding-utils'
 import { MessageScrollerItem } from '@/components/ui/message-scroller'
 import { Button } from '@/components/ui/button'
+import { TooltipProvider } from '@/components/ui/tooltip'
 import { ReviewerCard } from '@/components/ReviewerCard'
 import { WorkspaceActivityGroup } from './WorkspaceActivityGroup'
 import { WorkspaceContextCompactionActivityRow } from './WorkspaceContextCompactionActivityRow'
@@ -105,6 +107,48 @@ import { setWorkspacePresentationRevealing } from './workspace-presentation-reve
 import { useTranscriptWindow } from './use-transcript-window'
 import { subscribeAnnotationRevealPreparation } from './annotations/annotation-reveal'
 import type { AnnotationPort } from './annotations/annotation-port'
+
+// Replacing a bounded tail can keep the same row count. Tell the existing scroller to follow
+// after that replacement commits; its normal resize/streaming behavior remains authoritative.
+const TranscriptEndSync = ({
+  scopeId,
+  itemCount,
+  mountedItemCount,
+  following
+}: {
+  scopeId: string | undefined
+  itemCount: number
+  mountedItemCount: number
+  following: boolean
+}): null => {
+  const { scrollToEnd } = useMessageScroller()
+  const previousRef = useRef<
+    { scopeId: string | undefined; itemCount: number; mountedItemCount: number } | undefined
+  >(undefined)
+  useLayoutEffect(() => {
+    const previous = previousRef.current
+    previousRef.current = { scopeId, itemCount, mountedItemCount }
+    if (
+      following &&
+      previous &&
+      previous.scopeId === scopeId &&
+      itemCount > previous.itemCount &&
+      mountedItemCount === previous.mountedItemCount
+    ) {
+      // Content processes the replaced rows in a MutationObserver, which can select a new
+      // prompt anchor. Restore follow intent after that observer, before the next paint.
+      let cancelled = false
+      queueMicrotask(() => {
+        if (!cancelled) scrollToEnd({ behavior: 'auto' })
+      })
+      return () => {
+        cancelled = true
+      }
+    }
+    return undefined
+  }, [following, itemCount, mountedItemCount, scopeId, scrollToEnd])
+  return null
+}
 
 type WorkspaceMessageScrollerProps = {
   activeSession: ChatSession | undefined
@@ -404,7 +448,16 @@ const WorkspaceReviewCard = ({
     )
   )
   if (!review) return null
-  return <ReviewerCard review={review} onGoToTranscript={onGoToTranscript} onRerun={onRerun} />
+  return (
+    <ReviewerCard
+      review={review}
+      onGoToTranscript={onGoToTranscript}
+      onRerun={onRerun}
+      onRetryVerification={() =>
+        useReviewStore.getState().loadReviewsForSession(sessionId, projectId)
+      }
+    />
+  )
 }
 
 type EditableWorkspaceMessageItemProps = Omit<
@@ -472,6 +525,19 @@ const WorkspaceMessageScrollerImpl = ({
           onUpdateNote: onUpdateAnnotationNote,
           onError: onAnnotationError
         }
+      : undefined
+  const revisionNavigationDisabledReason =
+    activeSession &&
+    (activeSession.activeRun ||
+      activeSession.status === 'running' ||
+      activeSession.status === 'waiting-for-user' ||
+      activeSession.status === 'waiting-permission' ||
+      activeSession.status === 'waiting-plan-approval' ||
+      activeSession.fixLoopActive ||
+      activeSession.compacting ||
+      activeSession.branchSwitchBlocked ||
+      activeSession.conversationGraphSyncBlocked)
+      ? t('Message revisions are unavailable while this session is busy or blocked.')
       : undefined
   const currentProjectId = activeSession?.projectId
   const statusAllowsScrollToFirstMessage = Boolean(
@@ -790,10 +856,26 @@ const WorkspaceMessageScrollerImpl = ({
     undefined
   )
   const showWindowFind = useCallback((): void => {
+    const acknowledgedScope = windowFindAcknowledgedScopeRef.current
+    if (
+      acknowledgedScope &&
+      acknowledgedScope.scopeId === currentPresentationScopeId &&
+      presentationBarrierIndex < 0 &&
+      transcriptWindow.entries.length === conversationItems.length
+    ) {
+      window.api?.window?.announceWindowFindContentReady?.()
+      return
+    }
     windowFindAcknowledgedScopeRef.current = undefined
     setWindowFindOpen(true)
     revealFullTranscript()
-  }, [revealFullTranscript])
+  }, [
+    conversationItems.length,
+    currentPresentationScopeId,
+    presentationBarrierIndex,
+    revealFullTranscript,
+    transcriptWindow.entries.length
+  ])
   useEffect(() => {
     return window.api?.window?.onShowWindowFind?.(showWindowFind)
   }, [showWindowFind])
@@ -1312,6 +1394,7 @@ const WorkspaceMessageScrollerImpl = ({
         sessionId: review.sessionId,
         turnMessageId: review.turnMessageId,
         scopeTurnMessageId: review.scope.turnMessageId,
+        scopeMessageBranchId: review.scope.messageBranchId,
         projectId: review.projectId,
         mainSessionId: review.sessionId,
         // Explicit user Re-run: bypass main's auto-only per-turn idempotency so the stale/error review
@@ -1325,7 +1408,11 @@ const WorkspaceMessageScrollerImpl = ({
   }
 
   return (
-    <>
+    <TooltipProvider
+      key={activeSession?.id ?? 'empty-conversation'}
+      delayDuration={200}
+      skipDelayDuration={300}
+    >
       <MessageScrollerProvider
         key={activeSession?.id ?? 'empty-conversation'}
         autoScroll
@@ -1362,6 +1449,20 @@ const WorkspaceMessageScrollerImpl = ({
             ref={handleMessageScrollerViewportRef}
             aria-label={t('Conversation')}
             onScroll={handleMessageScrollerScroll}
+            onWheel={transcriptWindow.recordUserScroll}
+            onTouchMove={transcriptWindow.recordUserScroll}
+            onPointerDown={(event) => {
+              if (event.target === event.currentTarget) transcriptWindow.recordUserScroll()
+            }}
+            onKeyDown={(event) => {
+              if (
+                ['ArrowUp', 'ArrowDown', 'PageUp', 'PageDown', 'Home', 'End', ' '].includes(
+                  event.key
+                )
+              ) {
+                transcriptWindow.recordUserScroll()
+              }
+            }}
           >
             {/* No wrapper div: message-scroller only measures/anchors Content's direct children. */}
             <MessageScrollerContent
@@ -1495,6 +1596,7 @@ const WorkspaceMessageScrollerImpl = ({
                         ? {
                             index: revisionIndex,
                             total: revisions.length,
+                            disabledReason: revisionNavigationDisabledReason,
                             onPrevious: activateRevision(revisionIndex - 1),
                             onNext: activateRevision(revisionIndex + 1)
                           }
@@ -1841,6 +1943,12 @@ const WorkspaceMessageScrollerImpl = ({
               ) : null}
             </MessageScrollerContent>
           </MessageScrollerViewport>
+          <TranscriptEndSync
+            scopeId={currentPresentationScopeId}
+            itemCount={conversationItems.length}
+            mountedItemCount={transcriptWindow.entries.length}
+            following={transcriptWindow.isFollowingEnd}
+          />
 
           {showScrollToFirstMessage ? (
             <MessageScrollerButton
@@ -1865,6 +1973,10 @@ const WorkspaceMessageScrollerImpl = ({
           ) : null}
 
           <MessageScrollerButton
+            onClick={() => {
+              // The primitive's click handler measures the end immediately after this callback.
+              flushSync(transcriptWindow.followEnd)
+            }}
             size="icon-lg"
             className="z-10 rounded-full border-transparent bg-bg-000 shadow-card hover:bg-bg-200 data-[direction=end]:bottom-3"
           />
@@ -1916,7 +2028,7 @@ const WorkspaceMessageScrollerImpl = ({
           onClose={handleCloseModal}
         />
       )}
-    </>
+    </TooltipProvider>
   )
 }
 
@@ -1929,14 +2041,9 @@ const areSessionsEqualForTranscript = (
   if (Object.is(previous, next)) return true
   if (!previous || !next) return false
 
-  // WorkspacePage mirrors reviewer activity into this transient operation gate. It changes the
-  // ChatSession object identity but is not rendered by the transcript, so compare every other field.
-  const previousKeys = Object.keys(previous).filter(
-    (key) => key !== 'branchSwitchBlocked'
-  ) as Array<keyof ChatSession>
-  const nextKeys = Object.keys(next).filter((key) => key !== 'branchSwitchBlocked') as Array<
-    keyof ChatSession
-  >
+  // Branch-switch blocking is visible in revision controls even when the transcript is unchanged.
+  const previousKeys = Object.keys(previous) as Array<keyof ChatSession>
+  const nextKeys = Object.keys(next) as Array<keyof ChatSession>
 
   return (
     previousKeys.length === nextKeys.length &&

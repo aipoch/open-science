@@ -123,7 +123,11 @@ describe('database startup logging', () => {
               '0028_database_numeric_and_null_constraints',
               '0029_compute_host_execution_mode',
               '0030_literature_foundation',
-              '0031_project_archive_revision'
+              '0031_project_archive_revision',
+              '0032_permission_approval_summary',
+              '0033_compute_job_harvest_retry',
+              '0034_background_result_delivery',
+              '0035_literature_pdf_provenance'
             ],
             adoptedLegacy: true
           })

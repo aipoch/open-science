@@ -258,6 +258,9 @@ gate('repl kernel host.compute', () => {
 
     expect(result.status).toBe('completed')
     expect(result.stdout).toContain('"job_id":"job-1"')
+    expect(result.stdout).toMatch(
+      /"nextAction":"Save the exact job_id\..*attachJob\(job_id\)\.result\(\) once for a non-blocking peek\..*Only result_final:true is final; otherwise continue other work without polling or scanning history\..*later Turn\."/
+    )
     expect(stub.received().map((request) => request.params)).toEqual([
       { op: 'list_compute', session_id: 'session-7' },
       {
@@ -328,6 +331,7 @@ gate('repl kernel host.compute', () => {
 
     expect(result.status).toBe('completed')
     expect(result.stdout).toContain('"job_id":"job-1"')
+    expect(result.stdout).toContain('"nextAction":"Save the exact job_id.')
     const submissions = stub
       .received()
       .map((request) => request.params)
@@ -356,6 +360,7 @@ gate('repl kernel host.compute', () => {
 
     expect(result.status).toBe('completed')
     expect(result.stdout).toContain('"job_id":"job-1"')
+    expect(result.stdout).toContain('"nextAction":"Save the exact job_id.')
     const submissions = stub
       .received()
       .map((request) => request.params)

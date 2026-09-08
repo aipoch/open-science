@@ -516,6 +516,7 @@ const useWorkspaceConversationController = (
             parts: docToMessageParts(snapshot.doc),
             pdfContext: snapshot.pdfContext,
             pdfReadingPosition: snapshot.pdfReadingPosition,
+            pdfReadingPositionSource: snapshot.pdfReadingPositionSource,
             pendingPdfContextAttachmentIds: snapshot.pendingPdfContextAttachmentIds,
             pendingPdfContextVersions: snapshot.pendingPdfContextVersions,
             cwd: activeSession?.cwd,

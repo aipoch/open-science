@@ -147,6 +147,7 @@ const RUNTIME_SCHEMA_TABLE_DDLS = [
     "scopeKind" TEXT NOT NULL,
     "projectId" TEXT,
     "sessionId" TEXT,
+    "approvalSummary" TEXT,
     "fingerprint" TEXT NOT NULL,
     "revision" INTEGER NOT NULL DEFAULT 1,
     "createdAt" DATETIME,
@@ -379,6 +380,7 @@ const RUNTIME_SCHEMA_TABLE_DDLS = [
     "filename" TEXT NOT NULL,
     "contentType" TEXT NOT NULL,
     "sizeBytes" BIGINT NOT NULL,
+    "provenanceJson" TEXT,
     "checksum" TEXT NOT NULL,
     "pageCount" INTEGER,
     "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -446,6 +448,7 @@ const RUNTIME_SCHEMA_TABLE_DDLS = [
     "contentBlobId" TEXT NOT NULL,
     "filename" TEXT NOT NULL,
     "sizeBytes" BIGINT NOT NULL,
+    "provenanceJson" TEXT,
     "checksum" TEXT NOT NULL,
     "pageCount" INTEGER NOT NULL,
     "sourceUrl" TEXT NOT NULL,
@@ -768,7 +771,7 @@ const RUNTIME_SCHEMA_TABLE_DDLS = [
     CONSTRAINT "ComputeJob_analysisState_check" CHECK ("analysisState" IS NULL OR "analysisState" IN ('dispatched', 'succeeded', 'failed', 'cancelled')),
     CONSTRAINT "ComputeJob_analysisBundle_check" CHECK ((("analysisState" IS NULL AND "analysisMessageId" IS NULL AND "analysisUpdatedAt" IS NULL) OR ("analysisState" IS NOT NULL AND "analysisMessageId" IS NOT NULL AND length(trim("analysisMessageId")) > 0 AND "analysisUpdatedAt" IS NOT NULL))),
     CONSTRAINT "ComputeJob_analysisConsumption_check" CHECK ("analysisState" IS NULL OR "analysisState" <> 'succeeded' OR "notificationConsumedAt" IS NOT NULL),
-    CONSTRAINT "ComputeJob_harvestPayload_check" CHECK (("harvestError" IS NULL AND "leftOnRemote" IS NULL) OR "harvestedAt" IS NOT NULL),
+    CONSTRAINT "ComputeJob_harvestPayload_check" CHECK ("leftOnRemote" IS NULL OR "harvestedAt" IS NOT NULL),
     CONSTRAINT "ComputeJob_harvestState_check" CHECK ("harvestedAt" IS NULL OR "status" IN ('success', 'failed', 'timeout')),
     CONSTRAINT "ComputeJob_errorState_check" CHECK ((("errorCode" IS NULL OR "status" IN ('failed', 'timeout', 'error')) AND ("status" <> 'error' OR "errorCode" IS NOT NULL))),
     CONSTRAINT "ComputeJob_resourceRequestJson_check" CHECK ("resourceRequest" IS NULL OR (json_valid("resourceRequest") AND json_type("resourceRequest") = 'object')),
@@ -932,6 +935,27 @@ const RUNTIME_SCHEMA_TABLE_DDLS = [
     CONSTRAINT "MemoryEntry_scope_check" CHECK ("categoryId" IS NOT NULL OR "projectId" IS NOT NULL),
     CONSTRAINT "MemoryEntry_source_check" CHECK (("origin" = 'user' AND "sourceSessionId" IS NULL AND "sourceAgentId" IS NULL) OR ("origin" = 'agent' AND "sourceSessionId" IS NOT NULL AND "projectId" IS NOT NULL)),
     CONSTRAINT "MemoryEntry_revision_check" CHECK ("revision" >= 1)
+);`,
+  `CREATE TABLE IF NOT EXISTS "BackgroundResultDelivery" (
+    "id" TEXT NOT NULL PRIMARY KEY,
+    "sourceKind" TEXT NOT NULL,
+    "sourceId" TEXT NOT NULL,
+    "projectId" TEXT NOT NULL,
+    "sessionId" TEXT NOT NULL,
+    "agentFrameId" TEXT,
+    "state" TEXT NOT NULL,
+    "attemptCount" INTEGER NOT NULL DEFAULT 0,
+    "claimToken" TEXT,
+    "claimExpiresAt" DATETIME,
+    "continuationMessageId" TEXT,
+    "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updatedAt" DATETIME NOT NULL,
+    CONSTRAINT "BackgroundResultDelivery_sourceKind_check" CHECK ("sourceKind" IN ('local-run', 'compute-job')),
+    CONSTRAINT "BackgroundResultDelivery_state_check" CHECK ("state" IN ('waiting-result', 'pending', 'claimed', 'dispatching', 'consumed', 'needs-attention')),
+    CONSTRAINT "BackgroundResultDelivery_identity_check" CHECK (length(trim("id")) > 0 AND length(trim("sourceId")) > 0 AND length(trim("projectId")) > 0 AND length(trim("sessionId")) > 0),
+    CONSTRAINT "BackgroundResultDelivery_attemptCount_check" CHECK ("attemptCount" >= 0),
+    CONSTRAINT "BackgroundResultDelivery_claimLifecycle_check" CHECK ((("state" IN ('claimed', 'dispatching') AND "claimToken" IS NOT NULL AND length(trim("claimToken")) > 0 AND "claimExpiresAt" IS NOT NULL) OR ("state" NOT IN ('claimed', 'dispatching') AND "claimToken" IS NULL AND "claimExpiresAt" IS NULL))),
+    CONSTRAINT "BackgroundResultDelivery_continuation_check" CHECK (("continuationMessageId" IS NULL OR length(trim("continuationMessageId")) > 0) AND ("state" <> 'dispatching' OR "continuationMessageId" IS NOT NULL) AND ("state" <> 'waiting-result' OR "continuationMessageId" IS NULL))
 );`
 ] as const
 
@@ -1060,8 +1084,13 @@ const RUNTIME_SCHEMA_INDEX_DDLS = [
   `CREATE INDEX IF NOT EXISTS "MemoryEntry_categoryId_updatedAt_idx" ON "MemoryEntry"("categoryId", "updatedAt");`,
   `CREATE INDEX IF NOT EXISTS "MemoryEntry_projectId_updatedAt_idx" ON "MemoryEntry"("projectId", "updatedAt");`,
   `CREATE UNIQUE INDEX IF NOT EXISTS "MemoryEntry_projectId_contentKey_key" ON "MemoryEntry"("projectId", "contentKey");`,
+  `CREATE INDEX IF NOT EXISTS "BackgroundResultDelivery_sessionId_state_createdAt_id_idx" ON "BackgroundResultDelivery"("sessionId", "state", "createdAt", "id");`,
+  `CREATE INDEX IF NOT EXISTS "BackgroundResultDelivery_sourceKind_state_createdAt_id_idx" ON "BackgroundResultDelivery"("sourceKind", "state", "createdAt", "id");`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS "BackgroundResultDelivery_sourceKind_sourceId_key" ON "BackgroundResultDelivery"("sourceKind", "sourceId");`,
   `CREATE UNIQUE INDEX IF NOT EXISTS "MemoryEntry_global_contentKey_key" ON "MemoryEntry"("contentKey") WHERE "projectId" IS NULL`,
-  `CREATE UNIQUE INDEX IF NOT EXISTS "LiteratureCollection_root_nameKey_key" ON "LiteratureCollection"("nameKey") WHERE "parentId" IS NULL`
+  `CREATE UNIQUE INDEX IF NOT EXISTS "LiteratureCollection_root_nameKey_key" ON "LiteratureCollection"("nameKey") WHERE "parentId" IS NULL`,
+  `CREATE INDEX IF NOT EXISTS "BackgroundResultDelivery_project_visible_idx" ON "BackgroundResultDelivery"("projectId", "updatedAt" DESC, "id") WHERE "state" IN ('waiting-result', 'pending', 'claimed', 'dispatching', 'needs-attention')`,
+  `CREATE INDEX IF NOT EXISTS "BackgroundResultDelivery_recoverable_claim_idx" ON "BackgroundResultDelivery"("claimExpiresAt", "id") WHERE "state" IN ('claimed', 'dispatching')`
 ] as const
 
 const RUNTIME_SCHEMA_TARGET_SQL = [
@@ -1125,7 +1154,8 @@ const RUNTIME_SCHEMA_TABLES = [
   'TagAssignment',
   'MemorySettings',
   'MemoryCategory',
-  'MemoryEntry'
+  'MemoryEntry',
+  'BackgroundResultDelivery'
 ] as const
 
 export {

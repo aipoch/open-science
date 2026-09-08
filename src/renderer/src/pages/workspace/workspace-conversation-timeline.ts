@@ -97,9 +97,11 @@ const createWorkspaceConversationTimeline = (
   const terminalMessageIds = resolveTurnTerminalAgentMessageIds(session.messages)
   const activePromptMessageId = openPromptMessageId(session)
   const resolveActivityPrompt = createActivityPromptResolver(session)
-  const promptByItemIndex = groupedItems.map((item) =>
-    resolveTimelineItemPrompt(item, resolveActivityPrompt)
-  )
+  const lastItemIndexByPromptId = new Map<string, number>()
+  groupedItems.forEach((item, index) => {
+    const promptId = resolveTimelineItemPrompt(item, resolveActivityPrompt)
+    if (promptId) lastItemIndexByPromptId.set(promptId, index)
+  })
   const itemIndexById = new Map(groupedItems.map((item, index) => [item.id, index]))
   const completionsByItemIndex = new Map<number, ConversationTurnCompletionItem[]>()
 
@@ -114,10 +116,10 @@ const createWorkspaceConversationTimeline = (
     if (messageIndex === undefined) continue
     let completionIndex = messageIndex
     if (promptMessageId) {
-      promptByItemIndex.forEach((candidatePromptMessageId, index) => {
-        if (candidatePromptMessageId === promptMessageId)
-          completionIndex = Math.max(completionIndex, index)
-      })
+      completionIndex = Math.max(
+        completionIndex,
+        lastItemIndexByPromptId.get(promptMessageId) ?? messageIndex
+      )
     }
 
     const completion: ConversationTurnCompletionItem = {

@@ -75,7 +75,7 @@ const DownloadSessionArtifactsDialog = ({
 
     void listAllSessionArtifacts({
       getOverview: window.api.projectFiles.getOverview,
-      listFiles: window.api.projectFiles.listFiles,
+      readExportFiles: window.api.projectFiles.readExportFiles,
       repairIndex: window.api.projectFiles.repairIndex,
       projectId,
       sessionId
@@ -105,6 +105,18 @@ const DownloadSessionArtifactsDialog = ({
       isCurrent = false
     }
   }, [projectId, requestKey, sessionId])
+
+  // Keep the retained title for the closing animation, but invalidate the previous selection.
+  const [wasOpen, setWasOpen] = useState(Boolean(session))
+  const isOpen = Boolean(session)
+  if (isOpen !== wasOpen) {
+    setWasOpen(isOpen)
+    if (!isOpen) {
+      setSettledArtifactList(undefined)
+      setSelectedIds(new Set())
+      setDownloadError(undefined)
+    }
+  }
 
   const selectedArtifacts = useMemo(
     () => artifacts.filter((artifact) => selectedIds.has(artifact.id)),

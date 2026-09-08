@@ -129,6 +129,7 @@ const createDependencies = () => {
   const projectFiles = {
     getOverview: vi.fn(),
     listArtifactGroups: vi.fn(),
+    readExportFiles: vi.fn(),
     listFiles: vi.fn(),
     repairIndex: vi.fn(),
     resolveFile: vi.fn(),
@@ -322,6 +323,7 @@ describe('Data and content application commands', () => {
         'project-files:get-overview',
         'project-files:list-artifact-groups',
         'project-files:list-files',
+        'project-files:read-export-files',
         'project-files:repair-index',
         'project-files:resolve-file',
         'project-files:search-artifacts',
@@ -484,6 +486,11 @@ describe('Data and content application commands', () => {
         key: 'projectFilesListFiles',
         args: [request('project-files-list')],
         owner: deps.projectFiles.listFiles
+      },
+      {
+        key: 'projectFilesReadExportFiles',
+        args: [request('project-files-export')],
+        owner: deps.projectFiles.readExportFiles
       },
       {
         key: 'projectFilesRepairIndex',

@@ -104,6 +104,7 @@ describe('compute handlers', () => {
     const cancelJob = vi.fn(async () => ({
       job_id: 'job-1',
       status: 'running' as const,
+      result_final: false,
       cancellation_status: 'cancelling' as const,
       exit_code: undefined,
       stdout_tail: undefined,
@@ -862,6 +863,66 @@ describe('compute handlers — jobsList', () => {
     expect(findBySession).toHaveBeenCalledWith('sess-1', undefined)
   })
 
+  it('projects the durable Agent Result Delivery path without changing Compute Job truth', async () => {
+    const job = makeJob({ session_id: 'sess-1' })
+    const hasDeliveryPath = vi.fn().mockResolvedValue(true)
+    const handlers = createComputeHandlers(
+      mockRepository({ list: vi.fn().mockResolvedValue([]) }),
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      mockJobRepository({ findBySession: vi.fn().mockResolvedValue([job]) }),
+      undefined,
+      undefined,
+      '/tmp/test-storage',
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      { hasDeliveryPath }
+    )
+
+    const result = await handlers.jobsList({ sessionId: 'sess-1' })
+
+    expect(result[0]).toMatchObject({
+      job_id: 'job-1',
+      status: 'running',
+      result_delivery_path: 'agent-result-delivery'
+    })
+    expect(hasDeliveryPath).toHaveBeenCalledWith('job-1')
+  })
+
+  it('keeps the Compute Job feed available when Agent Result Delivery ownership cannot be determined', async () => {
+    const handlers = createComputeHandlers(
+      mockRepository({ list: vi.fn().mockResolvedValue([]) }),
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      mockJobRepository({ findBySession: vi.fn().mockResolvedValue([makeJob()]) }),
+      undefined,
+      undefined,
+      '/tmp/test-storage',
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      { hasDeliveryPath: vi.fn().mockRejectedValue(new Error('delivery database unavailable')) }
+    )
+
+    const result = await handlers.jobsList({ sessionId: 'sess-1' })
+
+    expect(result).toEqual([expect.objectContaining({ job_id: 'job-1', status: 'running' })])
+    expect(result[0]).not.toHaveProperty('result_delivery_path')
+  })
+
   it('retains a safe needs-attention projection in the renderer jobs list', async () => {
     const findBySession = vi.fn().mockResolvedValue([
       makeJob({
@@ -939,6 +1000,38 @@ describe('compute handlers — jobsList', () => {
       ['job-2', 'sess-2']
     ])
     expect(findNonTerminal).toHaveBeenCalledOnce()
+  })
+
+  it('returns the project overview without consulting Agent Result Delivery state', async () => {
+    const job = makeJob({ project_id: 'proj-1', status: 'success', finished_at: 2000 })
+    const findProjectOverview = vi.fn().mockResolvedValue([job])
+    const hasDeliveryPath = vi.fn().mockResolvedValue(true)
+    const handlers = createComputeHandlers(
+      mockRepository({ list: vi.fn().mockResolvedValue([]) }),
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      mockJobRepository({ findProjectOverview }),
+      undefined,
+      undefined,
+      '/tmp/test-storage',
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      { hasDeliveryPath }
+    )
+
+    const result = await handlers.jobsList({ projectId: 'proj-1', since: 1725541200000 })
+
+    expect(findProjectOverview).toHaveBeenCalledWith('proj-1', new Date('2024-09-05T13:00:00.000Z'))
+    expect(hasDeliveryPath).not.toHaveBeenCalled()
+    expect(result).toEqual([expect.objectContaining({ job_id: 'job-1', project_id: 'proj-1' })])
+    expect(result[0]).not.toHaveProperty('result_delivery_path')
   })
 
   it('returns empty array when no jobRepository is injected', async () => {
@@ -1920,6 +2013,34 @@ describe('createJobUpdatedBroadcaster', () => {
     })
   })
 
+  it('broadcasts the canonical Compute Job update when Agent Result Delivery observation fails', async () => {
+    const current = sampleJob({ status: 'success', finished_at: 2, exit_code: 0 })
+    const resultDelivery = {
+      observeJob: vi.fn(async () => {
+        throw new Error('delivery database unavailable')
+      }),
+      hasDeliveryPath: vi.fn(async () => true)
+    }
+    const broadcaster = createJobUpdatedBroadcaster(
+      mockRepository({ get: vi.fn(async () => sampleHost()) }),
+      storageRoot,
+      { get: vi.fn(async () => current) },
+      resultDelivery
+    )
+
+    const captured = captureNextBroadcast()
+    broadcaster(current)
+
+    const result = await captured
+
+    expect(result).toMatchObject({
+      channel: COMPUTE_JOB_UPDATED_CHANNEL,
+      payload: expect.objectContaining({ job_id: 'job-bcast', status: 'success' })
+    })
+    expect(result.payload).not.toHaveProperty('result_delivery_path')
+    expect(resultDelivery.observeJob).toHaveBeenCalledOnce()
+  })
+
   it('does not broadcast an unverified snapshot when the current-row lookup fails', async () => {
     const sink = vi.fn()
     const remove = addRendererBroadcastSink(sink)
@@ -2420,6 +2541,49 @@ describe('installComputeIpcHandlers', () => {
     await rm(storageRoot, { recursive: true, force: true })
   })
 
+  it.each([{}, { port: undefined }])(
+    'forwards an inherited SSH port through Electron IPC: %j',
+    async (port) => {
+      const module = createComputeIpcModule(mockRepository({}), mockJobRepo({}))
+      const changeAuthentication = vi
+        .spyOn(module.handlers, 'changeAuthentication')
+        .mockResolvedValue({ ok: true, host: sampleHost() })
+      installComputeModule(module)
+      const request = {
+        providerId: 'ssh:biowulf',
+        expectedRevision: 1,
+        operationId: 'inherit-port',
+        authenticationMode: 'ssh_config',
+        username: 'researcher',
+        ...port
+      }
+
+      await expect(invokeHandler('compute:change-authentication', request)).resolves.toMatchObject({
+        ok: true
+      })
+      expect(changeAuthentication).toHaveBeenCalledWith(request)
+      expect(changeAuthentication.mock.calls[0][0].port).toBeUndefined()
+    }
+  )
+
+  it('rejects an omitted password-authentication port before invoking the owner', async () => {
+    const module = createComputeIpcModule(mockRepository({}), mockJobRepo({}))
+    const changeAuthentication = vi.spyOn(module.handlers, 'changeAuthentication')
+    installComputeModule(module)
+
+    await expect(
+      invokeHandler('compute:change-authentication', {
+        providerId: 'ssh:biowulf',
+        expectedRevision: 1,
+        operationId: 'password-port',
+        authenticationMode: 'password',
+        username: 'researcher',
+        password: 'secret'
+      })
+    ).rejects.toThrow(/invalid.*compute:change-authentication/i)
+    expect(changeAuthentication).not.toHaveBeenCalled()
+  })
+
   it('registers every compute:* channel that the renderer can invoke', () => {
     const module = createComputeIpcModule(mockRepository({}), mockJobRepo({}))
     installComputeModule(module)
@@ -2534,6 +2698,26 @@ describe('installComputeIpcHandlers', () => {
 
     expect(handlers.has('compute:list')).toBe(true)
     expect(module.computeService).toBeDefined()
+  })
+
+  it('accepts a project overview jobs list request at the Electron boundary', async () => {
+    const findProjectOverview = vi.fn().mockResolvedValue([])
+    const module = createComputeIpcModule(
+      mockRepository({ list: vi.fn().mockResolvedValue([]) }),
+      mockJobRepo({ findProjectOverview })
+    )
+    installComputeModule(module)
+
+    await expect(
+      invokeHandler(COMPUTE_JOBS_LIST_CHANNEL, {
+        projectId: 'project-1',
+        since: 1725541200000
+      })
+    ).resolves.toEqual([])
+    expect(findProjectOverview).toHaveBeenCalledWith(
+      'project-1',
+      new Date('2024-09-05T13:00:00.000Z')
+    )
   })
 
   it('rejects an invalid approval decision without settling the pending operation', async () => {

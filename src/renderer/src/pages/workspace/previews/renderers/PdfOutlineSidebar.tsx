@@ -270,24 +270,34 @@ const PdfOutlineTree = ({
   const { t } = useTranslation()
   const parents = useMemo(() => collectParents(items), [items])
   const activeId = useMemo(() => activeOutlineId(items, currentPage), [currentPage, items])
-  const [expanded, setExpanded] = useState<ReadonlySet<string>>(
-    () => new Set(items.filter((item) => item.children.length > 0).map((item) => item.id))
-  )
-  const [focusedId, setFocusedId] = useState<string | undefined>(activeId ?? items[0]?.id)
-  const itemRefs = useRef(new Map<string, HTMLButtonElement>())
-  const visibleExpanded = useMemo(() => {
-    const next = new Set(expanded)
+  const expandActiveParents = (current: ReadonlySet<string>): ReadonlySet<string> => {
+    const next = new Set(current)
     let parentId = activeId ? parents.get(activeId) : undefined
     while (parentId) {
       next.add(parentId)
       parentId = parents.get(parentId)
     }
     return next
-  }, [activeId, expanded, parents])
-  const visible = useMemo(() => flattenVisible(items, visibleExpanded), [items, visibleExpanded])
-  const effectiveFocusedId = visible.some(({ item }) => item.id === focusedId)
-    ? focusedId
-    : (activeId ?? visible[0]?.item.id)
+  }
+  const [expanded, setExpanded] = useState<ReadonlySet<string>>(() =>
+    expandActiveParents(
+      new Set(items.filter((item) => item.children.length > 0).map((item) => item.id))
+    )
+  )
+  const [expandedActiveId, setExpandedActiveId] = useState(activeId)
+  // Expand once per active section, then respect the user's collapse until it changes.
+  if (expandedActiveId !== activeId) {
+    setExpandedActiveId(activeId)
+    setExpanded(expandActiveParents(expanded))
+  }
+  const [focusedId, setFocusedId] = useState<string | undefined>(activeId ?? items[0]?.id)
+  const itemRefs = useRef(new Map<string, HTMLButtonElement>())
+  const visible = useMemo(() => flattenVisible(items, expanded), [items, expanded])
+  let effectiveFocusedId = focusedId
+  while (effectiveFocusedId && !visible.some(({ item }) => item.id === effectiveFocusedId)) {
+    effectiveFocusedId = parents.get(effectiveFocusedId)
+  }
+  effectiveFocusedId ??= visible[0]?.item.id
   const toggle = (id: string, force?: boolean): void => {
     setExpanded((current) => {
       const next = new Set(current)
@@ -311,7 +321,7 @@ const PdfOutlineTree = ({
     <ul role="tree" aria-label={t('Outline')} className="space-y-0.5">
       {visible.map(({ item, level, parentId }, index) => {
         const hasChildren = item.children.length > 0
-        const isExpanded = hasChildren && visibleExpanded.has(item.id)
+        const isExpanded = hasChildren && expanded.has(item.id)
         const isActive = item.id === activeId
         return (
           <li key={item.id} role="none">

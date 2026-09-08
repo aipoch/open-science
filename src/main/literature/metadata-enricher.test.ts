@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest'
+import { describe, expect, it, vi, type Mock } from 'vitest'
 
 import type { LiteratureItemInput, LiteratureItemView } from '../../shared/literature'
 import { LiteratureMetadataEnricher } from './metadata-enricher'
@@ -106,7 +106,7 @@ describe('LiteratureMetadataEnricher', () => {
         'pages',
         'publisher',
         'volume',
-        'year'
+        'publicationDate'
       ])
     )
     expect(applyMetadata).not.toHaveBeenCalled()
@@ -263,3 +263,300 @@ describe('LiteratureMetadataEnricher', () => {
     expect(applyMetadata).toHaveBeenCalledTimes(1)
   })
 })
+
+// Exercise the public review/commit boundary; the receiver observes the actual catalog payload.
+const regressionEnricher = (
+  current: LiteratureItemInput,
+  response: Response
+): {
+  enricher: LiteratureMetadataEnricher
+  applyMetadata: Mock<(input: { item: LiteratureItemInput }) => Promise<LiteratureItemView>>
+} => {
+  const applyMetadata = vi.fn(async (input: { item: LiteratureItemInput }) => ({
+    ...view,
+    item: input.item
+  }))
+  const enricher = new LiteratureMetadataEnricher(
+    { get: vi.fn().mockResolvedValue({ ...view, item: current }), applyMetadata },
+    vi.fn().mockResolvedValue(response)
+  )
+  return { enricher, applyMetadata }
+}
+const crossref = (message: Record<string, unknown>): Response =>
+  new Response(JSON.stringify({ message }))
+
+it('retains editors and translators in the author-only commit payload and citation', async () => {
+  const { toCslItem } = await import('../../shared/literature-csl')
+  const creators = ['editor', 'author', 'translator', 'editor'].map((creatorType, index) => ({
+    creatorType,
+    nameMode: 'person' as const,
+    familyName: `Person${index}`,
+    givenName: ''
+  }))
+  const { enricher, applyMetadata } = regressionEnricher(
+    { ...item, creators },
+    crossref({ author: [{ family: 'Online' }] })
+  )
+  const review = await enricher.complete({ mode: 'preview', itemId: view.id })
+  await enricher.complete({
+    mode: 'commit',
+    itemId: view.id,
+    reviewToken: review.reviewToken,
+    expectedMetadataRevision: 2,
+    overwriteFields: ['authors']
+  })
+  const saved = applyMetadata.mock.calls[0]![0].item
+  expect(saved.creators.filter((creator) => creator.creatorType !== 'author')).toEqual(
+    creators.filter((creator) => creator.creatorType !== 'author')
+  )
+  expect(toCslItem(view.id, saved)).toMatchObject({
+    author: [{ family: 'Online' }],
+    editor: [{ family: 'Person0' }, { family: 'Person3' }],
+    translator: [{ family: 'Person2' }]
+  })
+})
+
+it('fills missing authors when the reference contains only an editor', async () => {
+  const editor = {
+    creatorType: 'editor',
+    nameMode: 'person' as const,
+    familyName: 'Editor',
+    givenName: ''
+  }
+  const { enricher } = regressionEnricher(
+    { ...item, creators: [editor] },
+    crossref({ author: [{ family: 'Online' }] })
+  )
+  const review = await enricher.complete({ mode: 'preview', itemId: view.id })
+  expect(review.conflicts.filter(({ field }) => field === 'authors')).toEqual([])
+  expect(review.filled).toContainEqual({ field: 'authors', value: 'Online' })
+  expect(review.item.item.creators).toContainEqual(editor)
+})
+
+it('reports identifier-only additions as reviewable changes', async () => {
+  const { enricher } = regressionEnricher(
+    {
+      ...item,
+      url: 'https://pubmed.ncbi.nlm.nih.gov/12345678/',
+      identifiers: [{ scheme: 'pmid', value: '12345678', isPrimary: true }]
+    },
+    new Response(
+      JSON.stringify({
+        result: {
+          '12345678': {
+            uid: '12345678',
+            articleids: [
+              { idtype: 'doi', value: '10.2000/example' },
+              { idtype: 'pmc', value: 'PMC1234567' }
+            ]
+          }
+        }
+      })
+    )
+  )
+  const review = await enricher.complete({ mode: 'preview', itemId: view.id })
+  expect(review.item.item.identifiers).toHaveLength(3)
+  expect(review.filled.length).toBeGreaterThan(0)
+})
+
+it('exposes entered identifier replacements and primary changes for review', async () => {
+  const { enricher } = regressionEnricher(item, crossref({ DOI: '10.2000/replacement' }))
+  const review = await enricher.complete({
+    mode: 'preview',
+    itemId: view.id,
+    identifier: { scheme: 'doi', value: '10.2000/replacement' }
+  })
+  expect(review.filled.length + review.conflicts.length).toBeGreaterThan(0)
+})
+
+it.each([{ issuedYear: 2020, issuedText: '' }, { issuedText: '2020-04-05' }])(
+  'keeps the existing publication year coherent in preview and commit: %j',
+  async (date) => {
+    const { enricher, applyMetadata } = regressionEnricher(
+      { ...item, ...date },
+      crossref({ issued: { 'date-parts': [[2021, 2, 3]] } })
+    )
+    const review = await enricher.complete({ mode: 'preview', itemId: view.id })
+    await enricher.complete({
+      mode: 'commit',
+      itemId: view.id,
+      reviewToken: review.reviewToken,
+      expectedMetadataRevision: 2,
+      overwriteFields: []
+    })
+    for (const candidate of [review.item.item, applyMetadata.mock.calls[0]![0].item]) {
+      expect(candidate.issuedYear).toBe(2020)
+      expect(candidate.issuedText === '' || candidate.issuedText.startsWith('2020')).toBe(true)
+    }
+  }
+)
+
+it('cancels an oversized response before consuming the full stream', async () => {
+  let consumed = 0
+  const cancel = vi.fn()
+  const body = new ReadableStream<Uint8Array>(
+    {
+      pull(controller) {
+        if (consumed === 4 * 1024 * 1024) return controller.close()
+        consumed += 64 * 1024
+        controller.enqueue(new Uint8Array(64 * 1024).fill(32))
+      },
+      cancel
+    },
+    { highWaterMark: 0 }
+  )
+  const { enricher } = regressionEnricher(item, new Response(body))
+  await expect(enricher.complete({ mode: 'preview', itemId: view.id })).rejects.toThrow(
+    'Metadata response is too large'
+  )
+  expect(consumed).toBeLessThan(4 * 1024 * 1024)
+  expect(cancel).toHaveBeenCalledOnce()
+})
+
+it('enforces the response limit in UTF-8 bytes before retaining raw metadata', async () => {
+  const { enricher } = regressionEnricher(item, crossref({ extra: '汉'.repeat(800_000) }))
+  await expect(enricher.complete({ mode: 'preview', itemId: view.id })).rejects.toThrow(
+    'Metadata response is too large'
+  )
+})
+
+it.each([false, true])(
+  'applies an entered identifier replacement only when selected: %s',
+  async (selected) => {
+    const original = {
+      ...item,
+      identifiers: [
+        { scheme: 'doi' as const, value: '10.1000/example', isPrimary: true },
+        { scheme: 'pmid' as const, value: '12345678', isPrimary: false }
+      ]
+    }
+    const { enricher, applyMetadata } = regressionEnricher(
+      original,
+      crossref({ DOI: '10.2000/new', publisher: 'Press' })
+    )
+    const review = await enricher.complete({
+      mode: 'preview',
+      itemId: view.id,
+      identifier: { scheme: 'doi', value: '10.2000/new' }
+    })
+    expect(review.conflicts).toContainEqual({
+      field: 'identifiers',
+      currentValue: 'DOI: 10.1000/example ★; PMID: 12345678',
+      value: 'PMID: 12345678; DOI: 10.2000/new ★'
+    })
+    await enricher.complete({
+      mode: 'commit',
+      itemId: view.id,
+      reviewToken: review.reviewToken,
+      expectedMetadataRevision: 2,
+      overwriteFields: selected ? ['identifiers'] : []
+    })
+    expect(applyMetadata.mock.calls[0]![0].item.identifiers).toEqual(
+      selected ? review.item.item.identifiers : original.identifiers
+    )
+  }
+)
+
+it('shows changes to primary flags even when identifier values are unchanged', async () => {
+  const original = {
+    ...item,
+    identifiers: [
+      { scheme: 'doi' as const, value: '10.1000/example', isPrimary: false },
+      { scheme: 'pmid' as const, value: '12345678', isPrimary: true }
+    ]
+  }
+  const { enricher } = regressionEnricher(original, crossref({}))
+  const review = await enricher.complete({
+    mode: 'preview',
+    itemId: view.id,
+    identifier: { scheme: 'doi', value: '10.1000/example' }
+  })
+  expect(review.conflicts).toContainEqual({
+    field: 'identifiers',
+    currentValue: 'DOI: 10.1000/example; PMID: 12345678 ★',
+    value: 'PMID: 12345678; DOI: 10.1000/example ★'
+  })
+})
+
+it('uses one publication-date choice to replace both date and year', async () => {
+  const { enricher, applyMetadata } = regressionEnricher(
+    { ...item, issuedYear: 2020 },
+    crossref({ issued: { 'date-parts': [[2021, 2, 3]] } })
+  )
+  const review = await enricher.complete({ mode: 'preview', itemId: view.id })
+  expect(review.conflicts).toEqual([
+    { field: 'publicationDate', currentValue: '2020', value: '2021-02-03' }
+  ])
+  await enricher.complete({
+    mode: 'commit',
+    itemId: view.id,
+    reviewToken: review.reviewToken,
+    expectedMetadataRevision: 2,
+    overwriteFields: ['publicationDate']
+  })
+  expect(applyMetadata.mock.calls[0]![0].item).toMatchObject({
+    issuedYear: 2021,
+    issuedText: '2021-02-03'
+  })
+})
+
+it.each(['forthcoming', 'Spring 2020', '2020-02-30'])(
+  'preserves ambiguous or invalid publication text without inventing a year: %s',
+  async (issuedText) => {
+    const { enricher, applyMetadata } = regressionEnricher(
+      { ...item, issuedText },
+      crossref({ issued: { 'date-parts': [[2021]] } })
+    )
+    const review = await enricher.complete({ mode: 'preview', itemId: view.id })
+    await enricher.complete({
+      mode: 'commit',
+      itemId: view.id,
+      reviewToken: review.reviewToken,
+      expectedMetadataRevision: 2,
+      overwriteFields: []
+    })
+    expect(applyMetadata.mock.calls[0]![0].item.issuedText).toBe(issuedText)
+    expect(applyMetadata.mock.calls[0]![0].item.issuedYear).toBeUndefined()
+  }
+)
+
+it('requires a fresh search before applying a persisted legacy review', async () => {
+  const { enricher, applyMetadata } = regressionEnricher(item, crossref({ publisher: 'Press' }))
+  const review = await enricher.complete({ mode: 'preview', itemId: view.id })
+  delete review.reviewVersion
+  await expect(enricher.applyReviewed(review)).rejects.toThrow(
+    'Search again to refresh this older metadata review'
+  )
+  expect(applyMetadata).not.toHaveBeenCalled()
+})
+
+it('accepts a valid JSON response exactly at the byte limit', async () => {
+  const empty = JSON.stringify({ message: { extra: '' } })
+  const { enricher } = regressionEnricher(
+    item,
+    crossref({ extra: 'a'.repeat(2 * 1024 * 1024 - Buffer.byteLength(empty)) })
+  )
+  expect((await enricher.complete({ mode: 'preview', itemId: view.id })).source).toBeDefined()
+})
+
+it.each(['10.1000/example', 'https://doi.org/10.1000/EXAMPLE'])(
+  'preserves unchanged identifier values and order after an explicit lookup: %s',
+  async (doi) => {
+    const original = {
+      ...item,
+      identifiers: [
+        { scheme: 'doi' as const, value: doi, isPrimary: true },
+        { scheme: 'pmid' as const, value: '12345678', isPrimary: false }
+      ]
+    }
+    const { enricher } = regressionEnricher(original, crossref({ DOI: '10.1000/example' }))
+    const review = await enricher.complete({
+      mode: 'preview',
+      itemId: view.id,
+      identifier: { scheme: 'doi', value: '10.1000/example' }
+    })
+    expect(review.filled).toEqual([])
+    expect(review.conflicts).toEqual([])
+    expect(review.item.item.identifiers).toEqual(original.identifiers)
+  }
+)

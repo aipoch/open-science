@@ -16,6 +16,7 @@ import { useSessionStore } from '@/stores/session-store'
 import type { PreviewFileItem } from '@/stores/preview-workbench-store'
 import type {
   ManagedFileIdentity,
+  ManagedFileVersionErrorCode,
   ManagedFileVersionDiffResult,
   ManagedFileVersionInspectResult
 } from '../../../../shared/managed-file-versions'
@@ -30,7 +31,7 @@ type ManagedVersionWorkflow = {
   navigationInspect: ManagedFileVersionInspectResult | undefined
   controlsInspect: ManagedFileVersionInspectResult | undefined
   diffResult: ManagedFileVersionDiffResult | undefined
-  diffError: string | undefined
+  diffError: { code?: ManagedFileVersionErrorCode } | undefined
   showTextTools: boolean
   isSelectedSourceText: boolean
   downloadVersionContext: PreviewDownloadVersionContext | undefined
@@ -80,13 +81,13 @@ const useManagedVersionWorkflow = ({
   const [diff, setDiff] = useState<{
     key?: string
     result?: ManagedFileVersionDiffResult
-    error?: string
+    error?: { code?: ManagedFileVersionErrorCode }
   }>({})
   const activeDiffRequestId = useRef<string | undefined>(undefined)
-  const source: 'upload' | 'artifact' = item.source === 'upload' ? 'upload' : 'artifact'
+  const source = item.source ?? 'artifact'
   const identity = useMemo(
     () =>
-      projectId && item.managedFileId
+      (source === 'artifact' || source === 'upload') && projectId && item.managedFileId
         ? { source, projectId, fileId: item.managedFileId }
         : undefined,
     [item.managedFileId, projectId, source]
@@ -275,11 +276,11 @@ const useManagedVersionWorkflow = ({
         activeDiffRequestId.current = undefined
         if (result.ok) setDiff({ key: requestKey, result: result.value })
         else if (result.error.code !== 'DIFF_CANCELLED')
-          setDiff({ key: requestKey, error: t('Diff could not be loaded.') })
+          setDiff({ key: requestKey, error: { code: result.error.code } })
       })
       .catch(() => {
         if (activeDiffRequestId.current === requestId && refresh === refreshGeneration.current)
-          setDiff({ key: requestKey, error: t('Diff could not be loaded.') })
+          setDiff({ key: requestKey, error: {} })
       })
     return () => {
       if (activeDiffRequestId.current !== requestId) return

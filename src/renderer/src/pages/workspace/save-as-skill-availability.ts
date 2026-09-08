@@ -62,7 +62,6 @@ export const resolveSaveAsSkillAvailability = ({
               : session.interrupted ||
                   session.resumeRecovery ||
                   session.pendingHistoryReplay ||
-                  session.branchContextResetRequired ||
                   session.specialistSwitchResetRequired ||
                   session.fixLoopActive ||
                   session.compacting

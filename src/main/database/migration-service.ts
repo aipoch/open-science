@@ -1,3 +1,6 @@
+import { literaturePdfProvenanceMigration } from './migrations/0035-literature-pdf-provenance'
+import { permissionApprovalSummaryMigration } from './migrations/0032-permission-approval-summary'
+import { computeJobHarvestRetryMigration } from './migrations/0033-compute-job-harvest-retry'
 import { projectArchiveRevisionMigration } from './migrations/0031-project-archive-revision'
 import { createHash } from 'node:crypto'
 import { access, rename, rm } from 'node:fs/promises'
@@ -60,6 +63,7 @@ import { computeJobRemoteCleanupMigration } from './migrations/0026-compute-job-
 import { projectSessionDefaultsMigration } from './migrations/0027-project-session-defaults'
 import { numericAndNullConstraintsMigration } from './migrations/0028-database-numeric-and-null-constraints'
 import { computeHostExecutionModeMigration } from './migrations/0029-compute-host-execution-mode'
+import { backgroundResultDeliveryMigration } from './migrations/0034-background-result-delivery'
 import {
   applySqliteMigrationOperations,
   type SqliteMigrationOperation
@@ -268,6 +272,12 @@ const MANAGED_FILE_VERSION_FOUNDATION_CHECKSUM = checksumMigrationPayload(
   managedFileVersionFoundationMigration.id,
   managedFileVersionFoundationMigration.statements,
   managedFileVersionFoundationMigration.verifiers
+)
+const BACKGROUND_RESULT_DELIVERY_CHECKSUM = checksumMigrationPayload(
+  backgroundResultDeliveryMigration.id,
+  backgroundResultDeliveryMigration.statements,
+  backgroundResultDeliveryMigration.verifiers,
+  backgroundResultDeliveryMigration.operations
 )
 const VISION_EVIDENCE_CHECKSUM = checksumMigrationPayload(
   visionEvidenceMigration.id,
@@ -688,6 +698,46 @@ const MIGRATION_MANIFEST = [
     ),
     backupOnApply: 'required',
     backupRetention: 'retain'
+  },
+  {
+    ...permissionApprovalSummaryMigration,
+    checksum: checksumMigrationPayload(
+      permissionApprovalSummaryMigration.id,
+      permissionApprovalSummaryMigration.statements,
+      permissionApprovalSummaryMigration.verifiers,
+      permissionApprovalSummaryMigration.operations
+    ),
+    backupOnApply: 'required',
+    backupRetention: 'retain'
+  },
+  {
+    ...computeJobHarvestRetryMigration,
+    checksum: checksumMigrationPayload(
+      computeJobHarvestRetryMigration.id,
+      computeJobHarvestRetryMigration.statements,
+      computeJobHarvestRetryMigration.verifiers,
+      computeJobHarvestRetryMigration.operations
+    ),
+    backupOnApply: 'required',
+    backupRetention: 'retain',
+    foreignKeysDuringApply: 'disabled'
+  },
+  {
+    ...backgroundResultDeliveryMigration,
+    checksum: BACKGROUND_RESULT_DELIVERY_CHECKSUM,
+    backupOnApply: 'required',
+    backupRetention: 'retain'
+  },
+  {
+    ...literaturePdfProvenanceMigration,
+    checksum: checksumMigrationPayload(
+      literaturePdfProvenanceMigration.id,
+      literaturePdfProvenanceMigration.statements,
+      literaturePdfProvenanceMigration.verifiers,
+      literaturePdfProvenanceMigration.operations
+    ),
+    backupOnApply: 'required',
+    backupRetention: 'retain'
   }
 ] as const satisfies readonly MigrationManifestEntry[]
 // schema-locality: begin frozen-0001-repairs
@@ -1097,6 +1147,9 @@ const verifyCurrentApplicationSchema = async (client: PrismaClient): Promise<voi
   )
   await runMigrationVerifiers(client, computeJobFileEvidenceMigration.verifiers)
   await runMigrationVerifiers(client, literatureFoundationMigration.verifiers)
+  await runMigrationVerifiers(client, computeJobRemoteCleanupMigration.verifiers)
+  await runMigrationVerifiers(client, backgroundResultDeliveryMigration.verifiers)
+  await runMigrationVerifiers(client, literaturePdfProvenanceMigration.verifiers)
 }
 
 const readLedger = async (client: PrismaClient): Promise<LedgerRow[]> => {
@@ -1934,6 +1987,16 @@ const migrateApplicationDatabaseWithManifest = async (
       candidate.id === literatureFoundationMigration.id &&
       candidate.checksum === LITERATURE_FOUNDATION_CHECKSUM
   )
+  const adoptsComputeJobRemoteCleanup = manifest.some(
+    (candidate) =>
+      candidate.id === computeJobRemoteCleanupMigration.id &&
+      candidate.checksum === COMPUTE_JOB_REMOTE_CLEANUP_CHECKSUM
+  )
+  const adoptsBackgroundResultDelivery = manifest.some(
+    (candidate) =>
+      candidate.id === backgroundResultDeliveryMigration.id &&
+      candidate.checksum === BACKGROUND_RESULT_DELIVERY_CHECKSUM
+  )
   const adoptedLegacy = appliedCount === 0 && hasExistingApplicationTables
   const allowedSuffixChecks = mergeAllowedSuffixChecks(
     adoptsDatabaseDomainConstraints ? DATABASE_DOMAIN_ALLOWED_SUFFIX_CHECKS : {},
@@ -1959,16 +2022,26 @@ const migrateApplicationDatabaseWithManifest = async (
       allowedSuffixChecks,
       adoptsManagedFileVersionFoundation,
       {
-        ...(adoptsAgentMemoryProjectScope
+        ...(adoptsAgentMemoryProjectScope || adoptsBackgroundResultDelivery
           ? {
-              tableNames: MEMORY_AUXILIARY_TABLE_NAMES,
+              tableNames: [
+                ...(adoptsAgentMemoryProjectScope ? MEMORY_AUXILIARY_TABLE_NAMES : []),
+                ...(adoptsBackgroundResultDelivery ? ['BackgroundResultDelivery'] : [])
+              ],
               schemaObjects: MEMORY_AUXILIARY_SCHEMA_OBJECTS.flatMap(({ type, name }) =>
-                type === 'trigger' ? [{ type, name }] : []
+                adoptsAgentMemoryProjectScope && type === 'trigger' ? [{ type, name }] : []
               )
             }
           : {}),
-        ...(adoptsComputeJobFileEvidence
-          ? { columns: { ComputeJob: ['producerRunId', 'fileEvidence'] } }
+        ...(adoptsComputeJobFileEvidence || adoptsComputeJobRemoteCleanup
+          ? {
+              columns: {
+                ComputeJob: [
+                  ...(adoptsComputeJobFileEvidence ? ['producerRunId', 'fileEvidence'] : []),
+                  ...(adoptsComputeJobRemoteCleanup ? ['remoteCleanupDisposition'] : [])
+                ]
+              }
+            }
           : {})
       }
     )
@@ -2015,6 +2088,7 @@ export {
   AGENT_MEMORY_PROJECT_SCOPE_CHECKSUM,
   COMPUTE_JOB_ANALYSIS_CONSTRAINTS_CHECKSUM,
   MEMORY_GLOBAL_CONTENT_UNIQUE_CHECKSUM,
+  BACKGROUND_RESULT_DELIVERY_CHECKSUM,
   DatabaseMigrationError,
   checksumMigrationPayload,
   classifyDatabaseFailure,

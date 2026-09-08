@@ -1,3 +1,6 @@
+import type { SpecialistApplicationOwner } from './application-commands'
+import { callerContextForEvent } from '../caller-context'
+import { callerLeaseForEvent } from '../caller-lifecycle'
 import { ipcMainHandle } from '../ipc-handler-registry'
 
 import type {
@@ -253,10 +256,26 @@ export const registerSpecialistIpcHandlers = (
   onProfilesChanged?: () => void,
   exportContributionTemplate?: () => Promise<ContributionTemplateExportResult>,
   packageImport?: PackageImportIpc,
-  marketplace?: MarketplaceIpc
+  marketplace?: MarketplaceIpc,
+  applicationOwner?: SpecialistApplicationOwner
 ): void => {
+  if (applicationOwner) {
+    for (const [channel, method] of [
+      ['specialist:package-upload-begin', 'beginUpload'],
+      ['specialist:package-upload-preview', 'previewUpload'],
+      ['specialist:package-upload-abort', 'abortUpload']
+    ] as const) {
+      ipcMainHandle(channel, (event, request) =>
+        applicationOwner[method]({
+          callerContext: callerContextForEvent(event),
+          callerLease: callerLeaseForEvent(event),
+          args: [request]
+        })
+      )
+    }
+  }
   // Subscribe once so every mutation (create, setEnabled) triggers a broadcast.
-  service.subscribe(broadcastCatalogChanged)
+  if (!applicationOwner) service.subscribe(broadcastCatalogChanged)
 
   ipcMainHandle(SPECIALIST_IPC.LIST, async (): Promise<SpecialistCatalogSnapshot> => {
     try {

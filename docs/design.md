@@ -696,6 +696,11 @@ colors communicate a successful or failed probe/migration result.
 - Ask-User elicitation uses the same content-bounded bottom resize behavior. Key the resize shell to
   the elicitation request so a new question starts at its natural height instead of inheriting the
   previous question's manual height.
+- Optional boolean fields distinguish an unanswered value from explicit Yes/No beside the switch,
+  with Clear selection returning to unanswered. Empty optional text and multi-select values are
+  omitted consistently by validation and submission. Choice-question input and the current step
+  survive Session navigation in renderer memory; they remain separate from confirmed steps and
+  are cleared when the request settles. Unsubmitted edits are not persisted across app restarts.
 - Plan approval uses the same content-bounded bottom panel shell and single-border embedded surface.
   Its compact summary normally has no hidden overflow, so the top resize handle cannot stretch it
   into empty space. The card shows the Plan lifecycle, task summary, confidence, and inline revision
@@ -733,6 +738,8 @@ colors communicate a successful or failed probe/migration result.
 - Root: `min-h-svh bg-background text-foreground`.
 - Container: `mx-auto max-w-[1080px] px-8 py-7 pb-16`.
 - Header: `flex items-center justify-between`.
+- Language and theme preferences live in Settings > General > Appearance; omit their shortcuts
+  from the Home header. The Settings gear opens Settings directly.
 - Brand title: display `Open Science`, `text-[26px] leading-none font-medium`.
 - Global search: expose a `Search` ghost icon action in the header; it opens the same shared dialog as
   `Cmd/Ctrl+K` and does not maintain a second search state.
@@ -975,6 +982,20 @@ colors communicate a successful or failed probe/migration result.
 
 #### Connectors panel
 
+- Remembered permission rows identify Connector tools by the current Connector display name,
+  public server ID, and exact tool name. The name opens the existing Connector Settings route in
+  active, policy-covered, and blocked states. Revoke accessible names also include the scope.
+- Command-group grants may retain a reviewed `approvalSummary` for an exact known prefix. It is
+  display metadata and never participates in authorization. Raw commands, paths, arguments, and
+  qualifier digests remain outside the permission-list IPC projection. Historical and unsupported
+  groups explicitly show that command details are unavailable, with creation time when present;
+  they are not silently backfilled, revoked, or reapproved.
+- Permission scope prefixes, qualifier categories, policy explanations, tooltips, and accessible
+  names are localized in the renderer; Connector/tool identities and user-authored names remain
+  literal. The Restore defaults button derives its completed appearance from the latest missing
+  count. Permission revoke resolves slow metadata before committing so response construction does
+  not spend the Registry-owned Undo window; an unavailable Undo reports that no restore occurred.
+
 - Local MCP arguments use one multiline text field. Editing replaces the argument list with one element per line, preserving spaces and blank lines; an empty field clears the list. Until the field is edited, preserve the original array, including empty values and embedded line breaks. Explain the replacement semantics when saved arguments contain embedded line breaks. Omitted arguments retain the stored array while the transport stays on stdio, including redacted historical values; credential availability restrictions remain in force. Template import/export preserves literal arrays, and the command preview quotes each element to show its boundary.
 - Tool permission controls in a bundled Connector detail remain disabled until the current tool permission save settles. Failed saves restore interactivity and retain the existing inline error feedback.
 - Credentials distinguish a pending list read, a failed read, an empty result and a deleted entry. Failed reads retain saved rows and use the shared ErrorNotice with Retry. All credential reads, mutation snapshots and compensating refreshes use one renderer coordinator; overlapping mutations finish with a fresh authoritative list.
@@ -1089,3 +1110,19 @@ alert region excludes the diagnostic payload so opening it does not announce the
 - CSL examples use a focusable preview button and a non-modal Popover: hover/focus discovers, click/tap pins, Escape/outside interaction dismisses, and internal scrolling preserves the panel. Show the complete style title, lazy-load and deduplicate per style, retain cached examples, and offer Retry after failure. The formatter's plain-text contract and content-addressed style identities stay unchanged.
 - Root canvas, body, and application root share the current theme background so exposed scrolling regions remain continuous; document canvases retain their own surface.
 - Use tabular digits for comparable numeric columns and changing counts/durations. Right-align numeric columns and reserve a minimum duration width where appropriate; retain existing formats and units.
+
+## File version comparisons
+
+Version comparisons retain the first and last three lines of each unchanged run and show explicit
+omitted line ranges. Omitted rows contain range metadata, never synthetic source text. All changed
+lines remain subject to the existing Worker time, memory, concurrency and output limits; exceeding
+the output budget is an explicit failure, never a successful truncated result. Markdown with omitted
+sections is shown as source excerpts because the missing text may contain fences or reference definitions.
+Complete files remain available through version previews and per-version downloads; this surface does
+not expand omitted ranges in place.
+
+Comparison failures use compact `ErrorNotice` with controlled translated explanations. Concurrency,
+timeout and temporarily unavailable storage offer a direct manual retry through fresh inspection;
+capacity failures explain the limit and return to version preview. Raw internal errors are not displayed.
+Visible CR/LF/CRLF labels and trailing-newline/BOM summaries clarify format changes without changing raw
+segments. BOM flags and omitted ranges are transient comparison metadata, not persisted version fields.

@@ -27,6 +27,7 @@ const item = (id: string): LiteratureItemView => ({
 })
 const preview = (id: string): LiteratureMetadataCompletionResult => ({
   mode: 'preview',
+  reviewVersion: 1,
   provider: 'crossref',
   sourceUrl: 'https://crossref.org',
   item: item(id),
@@ -408,3 +409,282 @@ it.each(['pmc', 'arxiv'] as const)(
     expect((await state(reopened, jobId)).rows[0].status).toBe('done')
   }
 )
+
+it('keeps a failed apply checkpoint in review and allows the same command to be retried', async () => {
+  const { rename } = await import('node:fs/promises')
+  const { jobs, path, options } = await setup()
+  const jobId = randomUUID()
+  await jobs.run({ action: 'create', mode: 'metadata', itemIds: ['a'], requestId: jobId })
+  await vi.waitFor(async () => expect((await state(jobs, jobId)).state).toBe('review'))
+  const directory = `${path}.d`
+  const backup = `${path}.saved`
+  const checkpoint = await readFile(join(directory, `${jobId}.json`), 'utf8')
+  await rename(directory, backup)
+  try {
+    await writeFile(directory, 'block checkpoint directory creation')
+    await expect(
+      jobs.run({ action: 'apply', jobId, selections: [{ itemId: 'a' }] })
+    ).rejects.toThrow()
+  } finally {
+    await rm(directory, { force: true })
+    await rename(backup, directory)
+  }
+  expect(await readFile(join(directory, `${jobId}.json`), 'utf8')).toBe(checkpoint)
+  expect(options.metadata.applyReviewed).not.toHaveBeenCalled()
+  expect(await state(jobs, jobId)).toMatchObject({ state: 'review', phase: 'search' })
+  await jobs.run({ action: 'apply', jobId, selections: [{ itemId: 'a' }] })
+  await vi.waitFor(() => expect(options.metadata.applyReviewed).toHaveBeenCalledOnce())
+})
+
+it('offers identifier-only metadata additions as a ready batch row', async () => {
+  const { LiteratureMetadataEnricher } = await import('./metadata-enricher')
+  const { jobs: initial, options } = await setup()
+  await initial.close()
+  const current = item('a')
+  current.item.url = 'https://pubmed.ncbi.nlm.nih.gov/12345678/'
+  current.item.identifiers = [{ scheme: 'pmid', value: '12345678', isPrimary: true }]
+  const applyMetadata = vi.fn(async (input) => ({ ...current, item: input.item }))
+  const enricher = new LiteratureMetadataEnricher(
+    { get: async () => current, applyMetadata },
+    vi.fn(
+      async () =>
+        new Response(
+          JSON.stringify({
+            result: {
+              '12345678': {
+                uid: '12345678',
+                articleids: [
+                  { idtype: 'doi', value: '10.2000/example' },
+                  { idtype: 'pmc', value: 'PMC1234567' }
+                ]
+              }
+            }
+          })
+        )
+    )
+  )
+  const jobs = new LiteratureBatchJobs({
+    ...options,
+    catalog: { get: async () => current },
+    metadata: enricher
+  })
+  cleanup.push(() => jobs.close())
+  const jobId = randomUUID()
+  await jobs.run({ action: 'create', mode: 'metadata', itemIds: ['a'], requestId: jobId })
+  await vi.waitFor(async () =>
+    expect(['review', 'completed']).toContain((await state(jobs, jobId)).state)
+  )
+  expect((await state(jobs, jobId)).rows[0]!.status).toBe('ready')
+  await jobs.run({ action: 'apply', jobId, selections: [{ itemId: 'a' }] })
+  await vi.waitFor(() => expect(applyMetadata).toHaveBeenCalledOnce())
+  expect(applyMetadata.mock.calls[0]![0].item.identifiers).toHaveLength(3)
+})
+
+it.each(['review', 'retry', 'resume', 'remove'] as const)(
+  'preserves accepted task state when %s cannot be persisted',
+  async (action) => {
+    const { rename, mkdir } = await import('node:fs/promises')
+    const setupResult = await setup()
+    const { path, options } = setupResult
+    let jobs = setupResult.jobs
+    const jobId = randomUUID()
+    await jobs.run({ action: 'create', mode: 'metadata', itemIds: ['a'], requestId: jobId })
+    await vi.waitFor(async () => expect((await state(jobs, jobId)).state).toBe('review'))
+    // Finish the search checkpoint before injecting a command-only write failure.
+    await jobs.close()
+    if (action === 'resume') {
+      const record = JSON.parse(await readFile(join(`${path}.d`, `${jobId}.json`), 'utf8'))
+      record.state = 'paused'
+      await writeFile(join(`${path}.d`, `${jobId}.json`), JSON.stringify(record))
+    }
+    jobs = new LiteratureBatchJobs(options)
+    cleanup.push(() => jobs.close())
+    const before = await state(jobs, jobId)
+    // Block the real write destination, retaining all original files for restoration.
+    const target = action === 'remove' ? path : `${path}.d`
+    const backup = `${target}.saved`
+    await rename(target, backup)
+    try {
+      if (action === 'remove') await mkdir(target)
+      else await writeFile(target, 'unavailable directory')
+      await expect(
+        jobs.run(
+          action === 'review'
+            ? { action, jobId, selections: [{ itemId: 'a', checked: false }] }
+            : { action, jobId }
+        )
+      ).rejects.toThrow()
+      expect(await state(jobs, jobId)).toEqual(before)
+    } finally {
+      await rm(target, { force: true, recursive: true })
+      await rename(backup, target)
+    }
+    await jobs.run(
+      action === 'review'
+        ? { action, jobId, selections: [{ itemId: 'a', checked: false }] }
+        : { action, jobId }
+    )
+    if (action === 'remove') expect((await jobs.run({ action: 'list' })).summaries).toEqual([])
+    else if (action === 'review') expect((await state(jobs, jobId)).rows[0]!.checked).toBe(false)
+    else await vi.waitFor(async () => expect((await state(jobs, jobId)).state).toBe('review'))
+  }
+)
+
+it('does not pause an active worker when the pause checkpoint fails', async () => {
+  const { rename } = await import('node:fs/promises')
+  const { jobs, path, metadata } = await setup()
+  let release!: () => void
+  metadata.mockImplementationOnce(async () => {
+    await new Promise<void>((resolve) => {
+      release = resolve
+    })
+    return preview('a')
+  })
+  const jobId = randomUUID()
+  await jobs.run({ action: 'create', mode: 'metadata', itemIds: ['a', 'b'], requestId: jobId })
+  await vi.waitFor(() => expect(release).toBeTypeOf('function'))
+  const target = `${path}.d`
+  await rename(target, `${target}.saved`)
+  try {
+    await writeFile(target, 'unavailable directory')
+    await expect(jobs.run({ action: 'pause', jobId })).rejects.toThrow()
+    expect((await state(jobs, jobId)).state).toBe('running')
+  } finally {
+    await rm(target, { force: true })
+    await rename(`${target}.saved`, target)
+    release()
+  }
+  await vi.waitFor(async () => expect((await state(jobs, jobId)).state).toBe('review'))
+  expect(metadata).toHaveBeenCalledTimes(2)
+})
+
+it('marks a persisted legacy review for a fresh search without applying it', async () => {
+  const { jobs, metadata, options } = await setup()
+  metadata.mockImplementation(async ({ itemId }) => {
+    const old = preview(itemId)
+    delete old.reviewVersion
+    return old
+  })
+  const jobId = randomUUID()
+  await jobs.run({ action: 'create', mode: 'metadata', itemIds: ['a'], requestId: jobId })
+  await vi.waitFor(async () => expect((await state(jobs, jobId)).state).toBe('review'))
+  await jobs.close()
+  const reopened = new LiteratureBatchJobs(options)
+  cleanup.push(() => reopened.close())
+  await reopened.run({ action: 'apply', jobId, selections: [{ itemId: 'a' }] })
+  await vi.waitFor(async () => expect((await state(reopened, jobId)).state).toBe('completed'))
+  expect(options.metadata.applyReviewed).not.toHaveBeenCalled()
+  expect((await state(reopened, jobId)).rows[0]).toMatchObject({
+    status: 'error',
+    message: 'Search again to refresh this older metadata review.'
+  })
+})
+
+it.each(['supplement', 'fullText'] as const)(
+  'uses the attachment role when searching for full text beside a %s PDF',
+  async (kind) => {
+    const { jobs, options, fullText } = await setup()
+    options.catalog.get = async (id) => ({
+      ...item(id),
+      attachments: [
+        {
+          id: 'attachment',
+          kind,
+          title: 'Supporting methods',
+          sortOrder: 0,
+          createdAt: 1,
+          updatedAt: 1,
+          versions: [
+            {
+              id: 'version',
+              versionNumber: 1,
+              filename: 'supporting-methods.pdf',
+              contentType: 'application/pdf',
+              sizeBytes: 10,
+              checksum: 'a'.repeat(64),
+              pageCount: 2,
+              createdAt: 1
+            }
+          ]
+        }
+      ]
+    })
+    const jobId = randomUUID()
+    await jobs.run({ action: 'create', mode: 'full-text', itemIds: ['a'], requestId: jobId })
+    await vi.waitFor(async () =>
+      expect(['review', 'completed']).toContain((await state(jobs, jobId)).state)
+    )
+    expect(fullText).toHaveBeenCalledTimes(kind === 'fullText' ? 0 : 1)
+    expect((await state(jobs, jobId)).rows[0].status).toBe(
+      kind === 'fullText' ? 'skipped' : 'ready'
+    )
+  }
+)
+
+it('still applies the selected full text when a supplement PDF appears after search', async () => {
+  const { jobs, options, fullText } = await setup()
+  const jobId = randomUUID()
+  await jobs.run({ action: 'create', mode: 'full-text', itemIds: ['a'], requestId: jobId })
+  await vi.waitFor(async () => expect((await state(jobs, jobId)).state).toBe('review'))
+  const current = {
+    ...item('a'),
+    attachments: [
+      {
+        id: 'supplement',
+        kind: 'supplement',
+        title: 'Supporting methods',
+        sortOrder: 0,
+        createdAt: 1,
+        updatedAt: 1,
+        versions: [
+          {
+            id: 'version',
+            versionNumber: 1,
+            filename: 'supporting-methods.pdf',
+            contentType: 'application/pdf',
+            sizeBytes: 10,
+            checksum: 'a'.repeat(64),
+            pageCount: 2,
+            createdAt: 1
+          }
+        ]
+      }
+    ]
+  }
+  options.catalog.get = async () => current
+  fullText.mockImplementation(async (request) =>
+    request.mode === 'attach'
+      ? { mode: 'attach', item: current }
+      : { mode: 'search', candidates: [source], notices: [] }
+  )
+  await jobs.run({ action: 'apply', jobId, selections: [{ itemId: 'a', candidateId: source.id }] })
+  await vi.waitFor(async () => expect((await state(jobs, jobId)).state).toBe('completed'))
+  expect(fullText).toHaveBeenCalledWith({ mode: 'attach', itemId: 'a', candidateId: source.id })
+  expect((await state(jobs, jobId)).rows[0].status).toBe('done')
+})
+
+it('finishes an attachment from its committed receipt while item refresh is unavailable', async () => {
+  const { jobs, fullText } = await setup()
+  fullText.mockResolvedValue({ mode: 'search', candidates: [source], notices: [] })
+  const jobId = randomUUID()
+  await jobs.run({ action: 'create', mode: 'full-text', itemIds: ['a'], requestId: jobId })
+  await vi.waitFor(async () => expect((await state(jobs, jobId)).state).toBe('review'))
+  fullText.mockImplementation(async (request) =>
+    request.mode === 'search'
+      ? { mode: 'search', candidates: [source], notices: [] }
+      : {
+          mode: 'transfer',
+          transfer: {
+            id: 'task',
+            itemId: 'a',
+            candidate: source,
+            status: 'succeeded',
+            attachmentId: 'attachment',
+            versionId: 'version'
+          }
+        }
+  )
+  await jobs.run({ action: 'apply', jobId, selections: [{ itemId: 'a', candidateId: source.id }] })
+  await vi.waitFor(async () => expect((await state(jobs, jobId)).state).toBe('completed'))
+  expect((await state(jobs, jobId)).rows[0].status).toBe('done')
+})

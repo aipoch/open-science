@@ -21,7 +21,7 @@ describe('createComputeJobRuntime', () => {
     const jobDeletionOwner = { bindRuntime: vi.fn(() => unbind) }
     const connectionBroker = {} as ComputeConnectionBroker
     const hostRepository = {} as ComputeHostRepository
-    const jobRepository = {} as ComputeJobRepository
+    const jobRepository = { get: vi.fn(async () => job) } as unknown as ComputeJobRepository
     const broadcast = vi.fn()
     const harvest = vi.fn(async () => undefined)
     let wiredPollerDeps: JobPollerDeps | undefined
@@ -65,7 +65,8 @@ describe('createComputeJobRuntime', () => {
       jobRepository,
       storageRoot: '/data',
       broadcast,
-      publishJobUpdated: handleJobUpdated
+      publishJobUpdated: handleJobUpdated,
+      signal: expect.any(AbortSignal)
     })
     expect(start).toHaveBeenCalledTimes(1)
     expect(startQueueReconciliation).toHaveBeenCalledTimes(1)
@@ -299,6 +300,7 @@ describe('createComputeJobRuntime', () => {
         })
     )
     const jobRepository = {
+      get: vi.fn(async () => terminalJob),
       findTerminalUnharvested: vi.fn(async () => [terminalJob]),
       findNotificationReadyUnnotified: vi.fn(async () => []),
       findNonTerminal: vi.fn(async () => [runningJob])

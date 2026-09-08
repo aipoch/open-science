@@ -224,3 +224,92 @@ describe('createAgentMarkdownNormalizer', () => {
     expect(incremental(grown)).toBe(normalizeAgentMarkdown(grown))
   })
 })
+
+describe('fenced alert source fidelity', () => {
+  it.each(['```', '````', '~~~', '~~~~'])(
+    'preserves literal alerts in %s fences throughout streaming',
+    (fence) => {
+      const source = `${fence}markdown\n> [!NOTE]\n> This is literal example source.\n\n> [!TIP]\n> Still literal.\n${fence}\n`
+      const normalize = createAgentMarkdownNormalizer()
+      for (let end = 1; end <= source.length; end += 1) {
+        expect(normalize(source.slice(0, end))).toBe(source.slice(0, end))
+      }
+      const outside = '> [!NOTE]\n> Actual alert.'
+      expect(normalize(source + '\n' + outside)).toBe(source + '\n' + normalizeGfmAlerts(outside))
+    }
+  )
+})
+
+it.each(['```', '````', '~~~', '~~~~'])(
+  'preserves fenced alerts during full normalization with %s',
+  (fence) => {
+    const source = `${fence}markdown\n> [!NOTE]\n> This is literal example source.\n${fence}\n`
+    expect(normalizeAgentMarkdown(source)).toBe(source)
+  }
+)
+
+it.each([
+  ['````', '```', '`````'],
+  ['~~~~', '~~~', '~~~~~'],
+  ['```', '~~~', '```']
+])('keeps alerts literal past a non-closing %s fence marker', (opener, inner, closer) => {
+  const code = `${opener}markdown\n${inner}\n> [!NOTE]\n> Literal.\n${closer}\n`
+  const input = '> [!TIP]\n> Before.\n\n' + code + '\n> [!NOTE]\n> After.'
+  const expected =
+    normalizeGfmAlerts('> [!TIP]\n> Before.\n\n') +
+    code +
+    '\n' +
+    normalizeGfmAlerts('> [!NOTE]\n> After.')
+  expect(normalizeAgentMarkdown(input)).toBe(expected)
+  const incremental = createAgentMarkdownNormalizer()
+  for (let end = 1; end <= input.length; end += 1) {
+    expect(incremental(input.slice(0, end))).toBe(normalizeAgentMarkdown(input.slice(0, end)))
+  }
+})
+
+it('preserves CRLF source inside an unclosed Python fence', () => {
+  const input = '```python\r\nexample = """\r\n> [!NOTE]\r\n> Literal.\r\n"""'
+  expect(normalizeAgentMarkdown(input)).toBe(input)
+})
+
+it('leaves ambiguous axis quoting unchanged', () => {
+  for (const labels of ['"Control, untreated, Treatment', 'Control"untreated, Treatment']) {
+    const input = `xychart-beta\n x-axis [${labels}]`
+    expect(normalizeMermaidChart(input)).toBe(input)
+  }
+})
+
+it('keeps a fence info string inside an open code block literal', () => {
+  const code = '```markdown\n```js\n> [!NOTE]\n> Literal.\n\n> [!TIP]\n> Also literal.\n```\n'
+  expect(normalizeAgentMarkdown(code)).toBe(code)
+  const incremental = createAgentMarkdownNormalizer()
+  for (let end = 1; end <= code.length; end += 1) {
+    expect(incremental(code.slice(0, end))).toBe(code.slice(0, end))
+  }
+})
+
+it.each([
+  '> ```markdown\n> [!NOTE]\n> Literal.\n> ```\n',
+  '> - ```markdown\n>   > [!NOTE]\n>   > Literal.\n>   ```\n'
+])('preserves alert source in a container fence: %s', (code) => {
+  expect(normalizeAgentMarkdown(code)).toBe(code)
+  const incremental = createAgentMarkdownNormalizer()
+  for (let end = 1; end <= code.length; end += 1) {
+    expect(incremental(code.slice(0, end))).toBe(code.slice(0, end))
+  }
+  const alert = '\n> [!TIP]\n> Outside.'
+  expect(incremental(code + alert)).toBe(code + normalizeGfmAlerts(alert))
+})
+
+it.each(['> ```md\n> Literal.\n\n', '- ```md\n  Literal.\n\n'])(
+  'converts alerts after an unclosed fence leaves its container: %s',
+  (code) => {
+    const alert = '> [!NOTE]\n> Outside.'
+    const input = code + alert
+    expect(normalizeAgentMarkdown(input)).toBe(code + normalizeGfmAlerts(alert))
+    const incremental = createAgentMarkdownNormalizer()
+    for (let end = 1; end <= input.length; end += 1) {
+      expect(incremental(input.slice(0, end))).toBe(normalizeAgentMarkdown(input.slice(0, end)))
+    }
+  }
+)

@@ -4,6 +4,7 @@ import {
   ChevronLeft,
   Download,
   Files,
+  Cpu,
   MoreVertical,
   PanelLeft,
   Plus,
@@ -74,6 +75,8 @@ type WorkspaceSidebarProps = {
   isFilesOpen: boolean
   onOpenFiles: () => void
   onOpenLiterature?: () => void
+  isComputeOpen?: boolean
+  onOpenCompute?: () => void
   onOpenSession: (sessionId: string) => void
   onPreviewSession?: SessionPreviewRequest
   onRenameSession: (session: ChatSession) => void
@@ -380,6 +383,8 @@ const WorkspaceSidebarView = ({
   isFilesOpen,
   onOpenFiles,
   onOpenLiterature,
+  isComputeOpen = false,
+  onOpenCompute,
   onOpenSession,
   onPreviewSession,
   onRenameSession,
@@ -823,6 +828,28 @@ const WorkspaceSidebarView = ({
                 <Files className="size-3.5" strokeWidth={2} />
               </span>
               <span>{t('Files')}</span>
+            </button>
+          </div>
+          <div className="flex h-9 items-center gap-1 px-2">
+            <button
+              type="button"
+              className={cn(
+                'flex min-w-0 flex-1 cursor-pointer items-center gap-1.5 rounded-md px-2 py-1 text-left text-sm text-text-000 hover:bg-bg-300 disabled:cursor-not-allowed disabled:opacity-50',
+                isComputeOpen && 'bg-bg-300',
+                sidebarInteractiveTransitionClassName
+              )}
+              disabled={!canCreateConversation || !onOpenCompute}
+              aria-controls="right-panel"
+              aria-pressed={isComputeOpen}
+              onClick={onOpenCompute}
+            >
+              <span
+                className="flex size-3.5 shrink-0 items-center justify-center"
+                aria-hidden="true"
+              >
+                <Cpu className="size-3.5" strokeWidth={2} />
+              </span>
+              <span>{t('Compute')}</span>
             </button>
           </div>
           <div className="flex h-9 items-center gap-1 px-2">

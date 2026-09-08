@@ -101,7 +101,8 @@ describe('LiteratureCitationDocument', () => {
     expect(formatReferences).toHaveBeenCalledWith(
       [{ id: 'item-1', item: reference.item }],
       'vancouver',
-      'en-US'
+      'en-US',
+      'html'
     )
   })
 

@@ -146,7 +146,23 @@ describe('NotebookEnvironmentOperations', () => {
     })
     const { owner } = await createOwner(() => registry.values(), writes)
 
-    await owner.revokeRuntime('python', '/env/python', { force })
+    let releaseDrain!: () => void
+    const pendingDrain = new Promise<void>((resolve) => {
+      releaseDrain = resolve
+    })
+    vi.mocked(current[0].drainExecution).mockImplementation(() => pendingDrain)
+    let revoked = false
+    const revocation = owner
+      .revokeRuntime('python', '/env/python', { force, waitForDrain: true })
+      .then(() => {
+        revoked = true
+      })
+    if (!force) {
+      await vi.waitFor(() => expect(current[0].drainExecution).toHaveBeenCalled())
+      expect(revoked).toBe(false)
+    }
+    releaseDrain()
+    await revocation
     await owner.waitForRevocationDrains()
 
     for (const candidate of current) {

@@ -28,6 +28,7 @@ type ErrorNoticeButton = {
 }
 
 type ErrorNoticeProps = {
+  className?: string
   fullPage?: boolean
   // Announce the summary without reading technical diagnostics or recovery controls.
   role?: 'alert' | 'status'
@@ -102,6 +103,7 @@ const NoticeButton = ({
 }
 
 const ErrorNotice = ({
+  className,
   fullPage = false,
   role,
   children,
@@ -136,7 +138,8 @@ const ErrorNotice = ({
     <section
       className={cn(
         'flex w-full min-w-0 flex-col text-left',
-        compact ? 'gap-3 rounded-lg border border-border bg-card p-4' : 'max-w-md gap-4'
+        compact ? 'gap-3 rounded-lg border border-border bg-card p-4' : 'max-w-md gap-4',
+        className
       )}
     >
       {fullPage ? <FlaskLogo className="mb-4 size-18 self-center text-text-300" /> : null}

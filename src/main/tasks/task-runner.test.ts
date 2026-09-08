@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, sep } from 'node:path'
 import { queryObjects } from 'node:v8'
@@ -8,6 +8,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { AcpRuntimeEvent } from '../../shared/acp'
 import { ComputeHostPreferenceValidationError } from '../../shared/compute'
 import type { Project } from '../../shared/projects'
+import { resolveProviderEffectiveModel } from '../../shared/provider-reasoning-effort'
 import type { SettingsSnapshot } from '../../shared/settings'
 import {
   materializeSessionConversationGraph,
@@ -19,7 +20,7 @@ import {
 import type { TaskRun } from '../../shared/task-api'
 import { EnabledComputeHostsRegistry } from '../compute/enabled-hosts-registry'
 import { SessionEnabledComputeHostsOwner } from '../compute/session-enabled-hosts-owner'
-import type { TaskRunJournalEntry } from './task-run-journal'
+import { FileTaskRunJournal, type TaskRunJournalEntry } from './task-run-journal'
 import {
   TASK_RUN_DISPOSAL_BUDGET_MS,
   TaskRunner,
@@ -224,6 +225,69 @@ const createRunner = (overrides: TaskRunnerOverrides = {}): TaskRunner => {
   })
 }
 describe('TaskRunner', () => {
+  it.each([
+    ['claude-sonnet-4-6', 'claude-opus-4-6'],
+    ['claude-opus-4-6', 'claude-sonnet-4-6']
+  ])('keeps provider-default intent independent of catalog order %j', async (...models) => {
+    const providerSettings: SettingsSnapshot = {
+      ...configuredSettings,
+      activeModel: 'claude-opus-4-6',
+      providers: [
+        {
+          ...configuredSettings.providers[0],
+          type: 'official',
+          vendorId: 'anthropic',
+          model: 'claude-opus-4-6',
+          models
+        }
+      ]
+    }
+    expect(resolveProviderEffectiveModel(providerSettings.providers[0], undefined)).toBe(
+      'claude-opus-4-6'
+    )
+    let current: PersistedChatSession = {
+      ...session,
+      agentConfiguration: {
+        providerId: 'provider-1',
+        model: 'claude-sonnet-4-6',
+        reasoningEffort: 'high' as const
+      }
+    }
+    const updateConfiguration = vi.fn(async (value: PersistedChatSession) => {
+      current = value
+      return value
+    })
+    const update = vi.fn(
+      async (request: Parameters<NonNullable<TaskProjectPort['update']>>[0]) => ({
+        ...project,
+        sessionDefaults: request.sessionDefaults
+      })
+    )
+    const runner = createRunner({
+      settings: { get: async () => providerSettings },
+      sessions: { list: async () => [current], updateConfiguration },
+      projects: { list: async () => [project], create: async () => project, update }
+    })
+    const result = await runner.updateSessionConfiguration(session.id, {
+      expectedRevision: 0,
+      agentConfiguration: { model: null }
+    })
+    expect.soft(result.persisted.agentConfiguration).toEqual({
+      providerId: 'provider-1',
+      reasoningEffort: 'high'
+    })
+    const defaults = await runner.updateProjectSessionDefaults(project.id, {
+      expectedUpdatedAt: 1,
+      patch: {
+        agentConfiguration: { providerId: 'provider-1', model: null, reasoningEffort: 'high' }
+      }
+    })
+    expect(defaults.configured.agentConfiguration).toEqual({
+      providerId: 'provider-1',
+      reasoningEffort: 'high'
+    })
+  })
+
   it('updates an idle Session configuration atomically with revision and availability checks', async () => {
     let current: PersistedChatSession = {
       ...session,
@@ -5150,5 +5214,421 @@ describe('TaskRunner', () => {
 
     finishPrompt?.()
     await runner.waitForRun(accepted.id)
+  })
+})
+
+describe('runtime terminal outcomes and recovery retention', () => {
+  it.each(['cancelled', 'end_turn'] as const)(
+    'honors a prompt-scoped %s stop when the prompt resolves normally',
+    async (stopReason) => {
+      let emit: ((event: AcpRuntimeEvent) => void) | undefined
+      const review = vi.fn(async () => ({ started: true }))
+      const root = await mkdtemp(join(tmpdir(), 'task-outcome-'))
+      temporaryRoots.push(root)
+      const runJournal = new FileTaskRunJournal(root)
+      const runner = createRunner({
+        runJournal,
+        reviewer: { review },
+        runtimeEvents: {
+          subscribe: (listener) => {
+            emit = listener
+            return () => undefined
+          }
+        },
+        agent: {
+          prompt: async (request) => {
+            const scope = { sessionId: request.sessionId, promptMessageId: request.promptMessageId }
+            emit?.({
+              id: 'partial',
+              timestamp: 2,
+              kind: 'message',
+              level: 'info',
+              role: 'assistant',
+              text: 'Partial output.',
+              ...scope
+            })
+            emit?.({
+              id: 'terminal',
+              timestamp: 3,
+              kind: 'stop',
+              level: 'info',
+              text: stopReason,
+              ...scope
+            })
+          }
+        }
+      })
+      try {
+        const started = await runner.startRun({
+          project: project.id,
+          prompt: 'Write a report.',
+          autoReviewEnabled: true
+        })
+        const result = await runner.waitForRun(started.id)
+        expect.soft(result.status).toBe(stopReason === 'cancelled' ? 'cancelled' : 'completed')
+        expect.soft(result.output).toBe('Partial output.')
+        expect
+          .soft(result.cancelledAt)
+          .toEqual(stopReason === 'cancelled' ? expect.any(Number) : undefined)
+        expect(result.cancelRequestedAt).toBeUndefined()
+        expect(await runJournal.load()).toContainEqual(
+          expect.objectContaining({
+            id: result.id,
+            status: result.status,
+            output: 'Partial output.'
+          })
+        )
+        expect((await runJournal.load()).find((run) => run.id === result.id)?.cancelledAt).toBe(
+          result.cancelledAt
+        )
+        expect.soft(review).toHaveBeenCalledTimes(stopReason === 'cancelled' ? 0 : 1)
+      } finally {
+        await runner.dispose()
+      }
+    }
+  )
+
+  it.each(['another-session', 'another-prompt', 'unscoped'] as const)(
+    'ignores cancellation from %s',
+    async (source) => {
+      let emit: ((event: AcpRuntimeEvent) => void) | undefined
+      const runner = createRunner({
+        runtimeEvents: {
+          subscribe: (listener) => {
+            emit = listener
+            return () => undefined
+          }
+        },
+        agent: {
+          prompt: async (request) => {
+            emit?.({
+              id: 'unrelated-stop',
+              kind: 'stop',
+              level: 'info',
+              timestamp: 2,
+              text: 'cancelled',
+              sessionId: source === 'another-session' ? 'other-session' : request.sessionId,
+              promptMessageId:
+                source === 'unscoped'
+                  ? undefined
+                  : source === 'another-prompt'
+                    ? 'other-prompt'
+                    : request.promptMessageId
+            })
+          }
+        }
+      })
+      try {
+        const started = await runner.startRun({ project: project.id, prompt: 'Complete normally.' })
+        expect(await runner.waitForRun(started.id)).toMatchObject({
+          status: 'completed',
+          cancelledAt: undefined
+        })
+      } finally {
+        await runner.dispose()
+      }
+    }
+  )
+
+  it.each(['prompt', 'artifact', 'session', 'journal'] as const)(
+    'preserves a real %s failure after a runtime cancellation',
+    async (owner) => {
+      let emit: ((event: AcpRuntimeEvent) => void) | undefined
+      const review = vi.fn(async () => ({ started: true }))
+      const failure = new Error(`${owner} failed`)
+      const runner = createRunner({
+        reviewer: { review },
+        runtimeEvents: {
+          subscribe: (listener) => {
+            emit = listener
+            return () => undefined
+          }
+        },
+        agent: {
+          prompt: async (request) => {
+            const scope = { sessionId: request.sessionId, promptMessageId: request.promptMessageId }
+            emit?.({
+              id: 'partial',
+              kind: 'message',
+              role: 'assistant',
+              level: 'info',
+              timestamp: 2,
+              text: 'Partial output.',
+              ...scope
+            })
+            emit?.({
+              id: 'claim',
+              kind: 'artifact',
+              artifactClaimId: 'claim-1',
+              runId: 'artifact-run',
+              artifacts: [],
+              level: 'info',
+              timestamp: 2,
+              ...scope
+            })
+            emit?.({
+              id: 'stop',
+              kind: 'stop',
+              level: 'info',
+              timestamp: 3,
+              text: 'cancelled',
+              ...scope
+            })
+            if (owner === 'prompt') throw failure
+          }
+        },
+        ...(owner === 'artifact'
+          ? {
+              artifacts: {
+                finalizeRun: async () => {
+                  throw failure
+                }
+              }
+            }
+          : {}),
+        ...(owner === 'session'
+          ? {
+              sessions: {
+                settleCompletion: async () => {
+                  throw failure
+                }
+              }
+            }
+          : {}),
+        ...(owner === 'journal'
+          ? {
+              runJournal: {
+                load: async () => [],
+                replace: async (runs: readonly TaskRunJournalEntry[]) => {
+                  if (runs.some((run) => run.sessionCommitStatus === 'cancelled')) throw failure
+                }
+              }
+            }
+          : {})
+      })
+      try {
+        const started = await runner.startRun({
+          project: project.id,
+          prompt: 'Write output.',
+          autoReviewEnabled: true
+        })
+        expect(await runner.waitForRun(started.id)).toMatchObject({
+          status: 'failed',
+          cancelledAt: undefined,
+          error:
+            owner === 'journal'
+              ? 'Task Run terminal state could not be persisted.'
+              : failure.message
+        })
+        expect(review).not.toHaveBeenCalled()
+      } finally {
+        await runner.dispose()
+      }
+    }
+  )
+
+  it('retains interrupted runs, committed witnesses and pending repairs ahead of completed history', async () => {
+    const base: TaskRunJournalEntry = {
+      id: 'active',
+      sessionId: 'active-session',
+      projectId: project.id,
+      cwd: session.cwd,
+      status: 'running',
+      startedAt: 1,
+      artifacts: [],
+      preferredComputeHostIds: [],
+      promptMessageId: 'prompt'
+    }
+    const pendingRepair = {
+      ...base,
+      id: 'repair',
+      sessionId: 'repair-session',
+      status: 'failed' as const,
+      error: 'original failure'
+    }
+    const witness = {
+      ...base,
+      id: 'witness',
+      sessionId: 'witness-session',
+      sessionCommitStatus: 'completed' as const,
+      completedAt: 2
+    }
+    let persisted: TaskRunJournalEntry[] = []
+    const save = vi.fn(async (value: PersistedChatSession) => value)
+    const runner = createRunner({
+      sessions: {
+        list: async () => [
+          { ...session, id: 'witness-session', taskRunCommitId: 'witness' },
+          {
+            ...session,
+            id: 'repair-session',
+            status: 'running',
+            activeRun: { promptMessageId: 'prompt', startedAt: 1 }
+          }
+        ],
+        save
+      },
+      runJournal: {
+        load: async () => [
+          base,
+          pendingRepair,
+          witness,
+          ...Array.from({ length: 210 }, (_, index) => ({
+            ...base,
+            id: `history-${index}`,
+            status: 'completed' as const,
+            completedAt: 2
+          }))
+        ],
+        replace: async (runs) => {
+          persisted = structuredClone([...runs])
+        }
+      }
+    })
+    try {
+      await runner.initialize()
+      expect(runner.getRun('active')).toMatchObject({
+        status: 'failed',
+        failureCode: 'process_restarted'
+      })
+      expect(runner.getRun('witness')).toMatchObject({ status: 'completed' })
+      expect(runner.getRun('repair')).toMatchObject({ status: 'failed', error: 'original failure' })
+      expect(save).toHaveBeenCalledWith(
+        expect.objectContaining({
+          id: 'repair-session',
+          status: 'error',
+          taskRunCommitId: 'repair'
+        })
+      )
+      expect(persisted).toHaveLength(200)
+      expect(() => runner.getRun('history-0')).toThrow('Run not found')
+      expect(runner.getRun('history-209').status).toBe('completed')
+    } finally {
+      await runner.dispose()
+    }
+  })
+
+  it('preserves legacy entries without prompt identities when recovery rewrites the journal', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'task-legacy-journal-'))
+    temporaryRoots.push(root)
+    const journal = new FileTaskRunJournal(root)
+    const base: TaskRunJournalEntry = {
+      id: 'legacy',
+      sessionId: session.id,
+      projectId: project.id,
+      cwd: session.cwd,
+      status: 'completed',
+      startedAt: 1,
+      artifacts: [],
+      preferredComputeHostIds: []
+    }
+    await journal.replace([base, { ...base, id: 'interrupted', status: 'running' }])
+    const runner = createRunner({ runJournal: journal })
+    try {
+      await runner.initialize()
+      const runs = await journal.load()
+      expect(runs.find((run) => run.id === 'legacy')?.promptMessageId).toBeUndefined()
+      expect(runs.find((run) => run.id === 'interrupted')).toMatchObject({
+        status: 'failed',
+        failureCode: 'process_restarted'
+      })
+    } finally {
+      await runner.dispose()
+    }
+  })
+
+  it('rejects corrupt journal initialization before rewriting any bytes', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'task-corrupt-journal-'))
+    temporaryRoots.push(root)
+    const journal = new FileTaskRunJournal(root)
+    const bytes = JSON.stringify({
+      version: 1,
+      runs: [
+        {
+          id: 'corrupt',
+          sessionId: session.id,
+          projectId: project.id,
+          cwd: session.cwd,
+          status: 'running',
+          startedAt: 1,
+          artifacts: [null],
+          preferredComputeHostIds: []
+        }
+      ]
+    })
+    const path = join(root, 'task-runs.json')
+    await writeFile(path, bytes)
+    const runner = createRunner({ runJournal: journal })
+    try {
+      await expect(runner.initialize()).rejects.toThrow(/journal/i)
+      expect(await readFile(path, 'utf8')).toBe(bytes)
+    } finally {
+      await runner.dispose()
+    }
+  })
+
+  it('recovers every accepted identity when active runs exceed the history retention target', async () => {
+    let durableRuns: TaskRunJournalEntry[] = []
+    const durableSessions = new Map<string, PersistedChatSession>()
+    let nextId = 0
+    let nextSession = 0
+    let release: (() => void) | undefined
+    const pending = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const runner = createRunner({
+      createId: () => `identity-${++nextId}`,
+      sessions: {
+        list: async () => structuredClone([...durableSessions.values()]),
+        save: async (value) => {
+          durableSessions.set(value.id, structuredClone(value))
+        }
+      },
+      runJournal: {
+        load: async () => [],
+        replace: async (runs) => {
+          durableRuns = structuredClone([...runs])
+        }
+      },
+      agent: {
+        createSession: async () => ({ sessionId: `active-session-${++nextSession}` }),
+        prompt: async () => pending
+      }
+    })
+    let recovered: TaskRunner | undefined
+    const accepted: TaskRun[] = []
+    try {
+      for (let index = 0; index < 201; index++) {
+        accepted.push(await runner.startRun({ project: project.id, prompt: 'Remain active.' }))
+      }
+      expect(runner.getRun(accepted[0].id).status).toBe('running')
+      expect(durableRuns).toHaveLength(201)
+      const frozenRuns = structuredClone(durableRuns)
+      const frozenSessions = structuredClone([...durableSessions.values()])
+      let recoveredJournal: TaskRunJournalEntry[] = []
+      recovered = createRunner({
+        sessions: { list: async () => structuredClone(frozenSessions) },
+        runJournal: {
+          load: async () => structuredClone(frozenRuns),
+          replace: async (runs) => {
+            recoveredJournal = structuredClone([...runs])
+          }
+        }
+      })
+      await recovered.initialize()
+      expect.soft(recoveredJournal).toHaveLength(201)
+      for (const run of accepted) {
+        expect.soft(() => recovered!.getRun(run.id)).not.toThrow()
+        const restored = recoveredJournal.find((entry) => entry.id === run.id)
+        expect
+          .soft(restored)
+          .toMatchObject({ id: run.id, status: 'failed', failureCode: 'process_restarted' })
+      }
+    } finally {
+      release?.()
+      await Promise.all(accepted.map((run) => runner.waitForRun(run.id)))
+      await runner.dispose()
+      await recovered?.dispose()
+    }
   })
 })

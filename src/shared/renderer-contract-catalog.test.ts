@@ -207,6 +207,7 @@ describe('renderer contract catalog', () => {
       'runtime.registerInterpreter',
       'runtime.setEnvironmentEnabled',
       'runtime.setInstallAuthorized',
+      'runtime.setSandboxAccess',
       'runtime.unregisterInterpreter',
       'storage.commitAndRelaunch',
       'storage.discardMigratedCopy',
@@ -222,14 +223,22 @@ describe('renderer contract catalog', () => {
     const specialist = RENDERER_CONTRACT_CATALOG.filter(({ publicPath }) =>
       publicPath.startsWith('specialist.')
     )
-    expect(specialist).toHaveLength(31)
+    expect(specialist).toHaveLength(34)
     expect(
-      specialist.every(
-        ({ surfaceInstallation }) =>
-          surfaceInstallation.localWeb === 'unavailable' &&
-          surfaceInstallation.remoteWeb === 'unavailable'
-      )
-    ).toBe(true)
+      specialist
+        .filter(({ surfaceInstallation }) => surfaceInstallation.remoteWeb !== 'unavailable')
+        .map(({ publicPath }) => publicPath)
+    ).toEqual([
+      'specialist.abortPackageUpload',
+      'specialist.beginPackageUpload',
+      'specialist.cancelPackage',
+      'specialist.installPackage',
+      'specialist.list',
+      'specialist.onCatalogChanged',
+      'specialist.previewPackageUpload',
+      'specialist.setEnabled',
+      'specialist.update'
+    ])
 
     const permissionPaths = [
       'acp.respondToPermission',
@@ -434,6 +443,7 @@ describe('renderer contract catalog', () => {
       'literature.importPdf',
       'literature.importRecords',
       'literature.jobs',
+      'literature.lookupMetadata',
       'literature.search',
       'literature.transact',
       'memory.clearAll',
@@ -482,6 +492,7 @@ describe('renderer contract catalog', () => {
       'literature:import-pdf',
       'literature:import-records',
       'literature:jobs',
+      'literature:lookup-metadata',
       'literature:search',
       'literature:transact',
       'memory:clear-all',

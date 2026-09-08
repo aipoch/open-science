@@ -30,6 +30,23 @@ export function createFindOverlay(deps) {
   systemTheme?.addEventListener('change', onSystemThemeChange)
 
   const handleAppearance = (appearance) => {
+    const copy = appearance?.localization
+    if (copy) {
+      ownerDocument.documentElement.lang = copy.lang
+      ownerDocument.title = copy.findInWindow
+      input.placeholder = copy.placeholder
+      input.setAttribute('aria-label', copy.findText)
+      ownerDocument.querySelector('[role="search"]')?.setAttribute('aria-label', copy.findInWindow)
+      for (const [button, label, shortcut] of [
+        [prev, copy.previous, 'Shift+Enter'],
+        [next, copy.next, 'Enter'],
+        [close, copy.close, 'Esc']
+      ]) {
+        button.setAttribute('aria-label', label)
+        const tooltip = ownerDocument.getElementById(button.getAttribute('aria-describedby'))
+        if (tooltip) tooltip.textContent = `${label} (${shortcut})`
+      }
+    }
     followsSystem = appearance?.followsSystem === true
     const theme =
       followsSystem && systemTheme
@@ -94,6 +111,7 @@ export function createFindOverlay(deps) {
   }
 
   const onKeydown = (event) => {
+    if (event.isComposing) return
     if (event.key === 'Enter' && event.target === input) {
       event.preventDefault()
       if (event.shiftKey) {

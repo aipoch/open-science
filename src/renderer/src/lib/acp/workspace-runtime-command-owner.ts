@@ -1,7 +1,11 @@
+import { i18next } from '../../i18n'
 import type { AcpMessageImage, AcpRuntimeEvent } from '../../../../shared/acp'
 import type { FileReference } from '../../../../shared/artifacts'
 import * as annotationProtocol from '../../../../shared/annotations'
-import { withPdfContext as withPdf } from '../../../../shared/session-pdf-context'
+import {
+  type PdfReadingPositionSource,
+  withPdfContext as withPdf
+} from '../../../../shared/session-pdf-context'
 import {
   collectSessionReferences,
   isSessionSizeLimitError,
@@ -73,6 +77,7 @@ type SendWorkspaceMessageIntent = {
   referencedArtifacts?: FileReference[]
   pdfContext?: MessagePdfContextSnapshot
   pdfReadingPosition?: PdfReadingPosition
+  pdfReadingPositionSource?: PdfReadingPositionSource
   pendingPdfContextAttachmentIds?: string[]
   pendingPdfContextVersions?: SessionPdfContextSource[]
   parts?: MessagePart[]
@@ -309,12 +314,32 @@ type PendingPromptRequest = SendWorkspaceMessageCommand & {
   contextReset?: boolean
 }
 
+const readingSourceForSend = (
+  request: Pick<SendWorkspaceMessageIntent, 'pdfReadingPositionSource' | 'pdfContext'>,
+  attachments: UploadedAttachment[]
+): SessionPdfContextSource | undefined => {
+  const identity = request.pdfReadingPositionSource
+  if (!identity) {
+    return request.pdfContext?.bindings.find(
+      (binding) =>
+        binding.bindingId ===
+        (request.pdfContext?.activeBindingId ?? request.pdfContext?.bindings[0]?.bindingId)
+    )
+  }
+  if (!('attachmentId' in identity)) return identity
+  const attachment = attachments.find(({ id }) => id === identity.attachmentId)
+  return attachment?.versionId
+    ? { sourceKind: 'upload-version', sourceVersionId: attachment.versionId }
+    : undefined
+}
+
 const linkPdfContextForSend = async ({
   sessionId,
   messageId,
   projectId,
   sources,
   pdfReadingPosition,
+  readingSource,
   excludeSinglePage = false,
   persistSessionBeforeLink = false,
   materializedRuntimeRevision
@@ -324,6 +349,7 @@ const linkPdfContextForSend = async ({
   projectId: string | undefined
   sources: SessionPdfContextSource[]
   pdfReadingPosition?: PdfReadingPosition
+  readingSource?: SessionPdfContextSource
   excludeSinglePage?: boolean
   persistSessionBeforeLink?: boolean
   materializedRuntimeRevision?: number
@@ -331,7 +357,6 @@ const linkPdfContextForSend = async ({
   if (!projectId) throw new Error('The PDF Project is unavailable for Session context.')
   let source = useSessionStore.getState().sessions.find((candidate) => candidate.id === sessionId)
   if (!source) throw new Error(`Session not found: ${sessionId}`)
-  const previousBindings = source.runtimeContext?.pdfContext?.bindings ?? []
   let expectedRevision = materializedRuntimeRevision ?? source.runtimeContext?.revision ?? 0
 
   // A new Agent Session is bound in memory before its first durable save. Materialize that Session
@@ -349,21 +374,24 @@ const linkPdfContextForSend = async ({
     ...(excludeSinglePage ? { excludeSinglePage: true } : {})
   })
   const pdfContext = runtimeContext.pdfContext
-  const activeBinding = sources
-    .map(({ sourceKind, sourceVersionId }) =>
-      pdfContext?.bindings.find(
+  const readingBinding = readingSource
+    ? pdfContext?.bindings.find(
         (binding) =>
-          binding.sourceKind === sourceKind && binding.sourceVersionId === sourceVersionId
+          binding.sourceKind === readingSource.sourceKind &&
+          binding.sourceVersionId === readingSource.sourceVersionId
       )
-    )
-    .find((binding) => binding !== undefined)
-  const activeBindingWasAlreadyLinked = activeBinding
-    ? previousBindings.some(({ bindingId }) => bindingId === activeBinding.bindingId)
-    : false
-  const canApplyReadingPosition =
-    activeBinding !== undefined &&
-    pdfReadingPosition !== undefined &&
-    (previousBindings.length === 0 || activeBindingWasAlreadyLinked)
+    : undefined
+  const activeBinding =
+    readingBinding ??
+    sources
+      .map(({ sourceKind, sourceVersionId }) =>
+        pdfContext?.bindings.find(
+          (binding) =>
+            binding.sourceKind === sourceKind && binding.sourceVersionId === sourceVersionId
+        )
+      )
+      .find((binding) => binding !== undefined)
+  const canApplyReadingPosition = readingBinding !== undefined && pdfReadingPosition !== undefined
   const messagePdfContext: MessagePdfContextSnapshot | undefined = pdfContext
     ? {
         ...pdfContext,
@@ -468,6 +496,23 @@ const filterPendingPdfContext = async (
     sources: uniqueVersions,
     ...(pendingAttachments.length > 0 ? { pendingAttachments } : {})
   })
+  const missingLiterature = (request.pendingPdfContextVersions ?? []).filter(
+    (source) =>
+      source.sourceKind === 'literature-attachment-version' &&
+      !eligible.sources.some(
+        (available) =>
+          available.sourceKind === source.sourceKind &&
+          available.sourceVersionId === source.sourceVersionId
+      )
+  )
+  if (missingLiterature.length) {
+    throw new Error(
+      i18next.t(
+        'Selected literature versions are unavailable: {{versions}}. Remove or reselect them before sending.',
+        { versions: missingLiterature.map(({ sourceVersionId }) => sourceVersionId).join(', ') }
+      )
+    )
+  }
   return {
     attachmentIds: [...eligible.pendingAttachmentIds],
     versions: [...eligible.sources]
@@ -606,6 +651,7 @@ const startPendingPrompt = (
           projectId: request.projectId,
           sources: pdfContextSources,
           pdfReadingPosition: request.pdfReadingPosition,
+          readingSource: readingSourceForSend(request, attachments),
           excludeSinglePage: true,
           persistSessionBeforeLink: !sessionMaterialized,
           materializedRuntimeRevision
@@ -673,13 +719,18 @@ const sendWorkspaceMessage = async (
   const replayPrompt = replaySession?.pendingContextReplayMessageId
     ? replaySession.messages.find((item) => item.id === replaySession.pendingContextReplayMessageId)
     : undefined
+  const initialReadingSource = readingSourceForSend(input, [])
+  const initialReadingBinding = input.pdfContext?.bindings.find(
+    (binding) =>
+      binding.sourceKind === initialReadingSource?.sourceKind &&
+      binding.sourceVersionId === initialReadingSource.sourceVersionId
+  )
   let pdfContext = replayPrompt
     ? replayPrompt.pdfContext
-    : input.pdfContext && input.pdfReadingPosition
+    : input.pdfContext && input.pdfReadingPosition && initialReadingBinding
       ? {
           ...input.pdfContext,
-          activeBindingId:
-            input.pdfContext.activeBindingId ?? input.pdfContext.bindings[0]?.bindingId,
+          activeBindingId: initialReadingBinding.bindingId,
           readingPosition: input.pdfReadingPosition
         }
       : input.pdfContext
@@ -690,7 +741,10 @@ const sendWorkspaceMessage = async (
     input.supportsImageInput !== true &&
     input.supportsImageRelay !== true &&
     annotations.some(
-      (annotation) => annotation.kind === 'pdf' && annotation.selector.kind === 'region'
+      (annotation) =>
+        annotation.kind === 'pdf' &&
+        annotation.selector.kind === 'region' &&
+        !!annotation.selector.image
     )
   ) {
     throw new Error(VISION_MODEL_NOT_CONFIGURED_MESSAGE)
@@ -704,6 +758,20 @@ const sendWorkspaceMessage = async (
           toRuntimeUploadedAttachment(upload, replaySession?.projectId)
         )
   if (!content && effectiveAttachments.length === 0 && annotations.length === 0) return undefined
+
+  // Validate explicit library choices before adding a message or creating a pending Session,
+  // so the composer's existing rejection path preserves the draft and selection.
+  const selectedLiterature = input.pendingPdfContextVersions?.filter(
+    ({ sourceKind }) => sourceKind === 'literature-attachment-version'
+  )
+  if (selectedLiterature?.length) {
+    await filterPendingPdfContext({
+      projectId: input.projectId ?? replaySession?.projectId,
+      attachments: [],
+      pendingPdfContextVersions: selectedLiterature
+    })
+    if (lifecycle.isCurrent?.() === false) return undefined
+  }
 
   if (input.branchSourceSessionId) {
     const pending = useSessionStore.getState().branchInNewSession({
@@ -767,7 +835,8 @@ const sendWorkspaceMessage = async (
                   sourceVersionId
                 })
               ),
-              pdfReadingPosition: pdfContext.readingPosition
+              pdfReadingPosition: pdfContext.readingPosition,
+              pdfReadingPositionSource: readingSourceForSend({ pdfContext }, [])
             }
           : {}),
         pending: pendingPrompt,
@@ -959,6 +1028,7 @@ const sendWorkspaceMessage = async (
           projectId,
           sources: pdfContextSources,
           pdfReadingPosition: input.pdfReadingPosition,
+          readingSource: readingSourceForSend(input, promptAttachments),
           excludeSinglePage: true
         })
       }
@@ -1159,6 +1229,8 @@ const resendEditedWorkspaceMessage = async (
         forcedSkillIds: input.forcedSkillIds,
         referencedArtifacts: input.referencedArtifacts,
         pdfContext: sourceMessage.pdfContext,
+        turnIntent:
+          sourceMessage.turnIntent === 'plan-first' ? sourceMessage.turnIntent : undefined,
         agentFrameworkId: options.agentFrameworkId,
         agentBackendId: options.agentBackendId,
         agentModel: options.agentModel,

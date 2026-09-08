@@ -53,6 +53,7 @@ type ConnectorIntegrationWorkflows = Pick<
   | 'disconnectCustomServer'
   | 'retryConnectorProjection'
   | 'retryCustomServer'
+  | 'testCustomServer'
 >
 
 type OwnerArgs<Owner, Method extends keyof Owner> = Owner[Method] extends (
@@ -74,6 +75,11 @@ const requireLocalCaller = (context: CallerContext, channel: string): void => {
 }
 
 const settingsIntegrationApplicationCommands = Object.freeze({
+  testCustomServer: defineApplicationCommand<
+    'settings:test-custom-server',
+    OwnerArgs<ConnectorIntegrationWorkflows, 'testCustomServer'>,
+    OwnerResult<ConnectorIntegrationWorkflows, 'testCustomServer'>
+  >('settings:test-custom-server'),
   listDeviceCredentials: defineApplicationCommand<
     'settings:list-device-credentials',
     OwnerArgs<ConnectorIntegrationWorkflows, 'listDeviceCredentials'>,
@@ -271,6 +277,7 @@ const settingsSkillApplicationCommandGroup = defineApplicationCommandGroup('sett
 const settingsConnectorApplicationCommandGroup = defineApplicationCommandGroup(
   'settings-connectors',
   [
+    settingsIntegrationApplicationCommands.testCustomServer,
     settingsIntegrationApplicationCommands.listDeviceCredentials,
     settingsIntegrationApplicationCommands.createDeviceCredential,
     settingsIntegrationApplicationCommands.updateDeviceCredential,
@@ -340,6 +347,10 @@ const registerIntegrationSettingsApplicationCommands = (
         dependencies.skills.importSkillZipBatch(args[0])
     })
     scope.registerGroup(settingsConnectorApplicationCommandGroup, {
+      'settings:test-custom-server': ({ args, callerContext, callerLease }) => {
+        requireLocalCaller(callerContext, 'settings:test-custom-server')
+        return dependencies.connectors.testCustomServer(args[0], callerLease.signal)
+      },
       'settings:list-device-credentials': ({ callerContext }) => {
         requireLocalCaller(callerContext, 'settings:list-device-credentials')
         return dependencies.connectors.listDeviceCredentials()

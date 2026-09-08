@@ -69,6 +69,7 @@ const snapshot = (overrides: Partial<SettingsSnapshot> = {}): SettingsSnapshot =
 const fakeStore = () => {
   const store = {
     getSettingsView: vi.fn().mockResolvedValue(snapshot()),
+    refreshProviderModels: vi.fn().mockResolvedValue({ ok: true, models: [] }),
     getConnectors: vi.fn().mockResolvedValue(undefined),
     uninstallClaude: vi.fn(),
     uninstallOpencode: vi.fn(),

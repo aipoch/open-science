@@ -1,5 +1,7 @@
+// @ts-expect-error The published ESM entry uses a sibling index.d.ts.
+import { OpenScienceClient } from '../../../packages/open-science/index.mjs'
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
-import { request as httpRequest, type IncomingMessage, ServerResponse } from 'node:http'
+import { request as httpRequest, IncomingMessage, ServerResponse } from 'node:http'
 import { connect } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -10,6 +12,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 
 vi.mock('electron', () => ({
   BrowserWindow: { getAllWindows: () => [] },
+  ipcMain: { handle: vi.fn() },
+  protocol: { handle: vi.fn(), unhandle: vi.fn() },
   net: { fetch: vi.fn() }
 }))
 
@@ -33,7 +37,14 @@ import {
   type ExternalWebAccessAuthorization,
   type RunningWebServer
 } from './http-server'
-import { TaskApiError } from './task-api'
+import { HeadlessTaskApi, TaskApiError } from './task-api'
+import { ManagedPreviewResources } from '../managed-preview-resources'
+import { createManagedPreviewOwnerRegistry } from '../managed-preview-ipc'
+import type { ApplicationCommandByNameDispatcher } from '../application-command-composition'
+import type {
+  AcquireManagedPreviewRequest,
+  ReadManagedPreviewRangeRequest
+} from '../../shared/preview-resources'
 
 const roots: string[] = []
 const servers: RunningWebServer[] = []
@@ -131,6 +142,39 @@ const startBudgetTestServer = async (
   servers.push(server)
   return server
 }
+it('does not expose unexpected RPC body stream errors', async () => {
+  const original = IncomingMessage.prototype[Symbol.asyncIterator]
+  const iterator = vi
+    .spyOn(IncomingMessage.prototype, Symbol.asyncIterator)
+    .mockImplementation(function (this: IncomingMessage) {
+      if (this.url?.startsWith('/rpc/')) {
+        return (async function* () {
+          yield Buffer.from('{')
+          throw new Error('private-stream-path/secret')
+        })()
+      }
+      return original.call(this)
+    })
+  try {
+    const server = await startBudgetTestServer({
+      perRequestBytes: 1024,
+      perClientInFlightBytes: 2048,
+      serverInFlightBytes: 4096
+    })
+    const response = await fetch(`http://127.0.0.1:${server.port}/rpc/projects%3Alist`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: '{}'
+    })
+    expect(response.status).toBe(400)
+    expect(await response.json()).toMatchObject({
+      error: { code: 'invalid_request', message: 'Failed to read request body.' }
+    })
+  } finally {
+    iterator.mockRestore()
+  }
+})
+
 const runWithCallerContext = <Result>(_context: CallerContext, operation: () => Result): Result =>
   operation()
 
@@ -2417,60 +2461,84 @@ describe('startWebHttpServer', () => {
     ).toHaveLength(1)
   })
 
-  it('releases an HTTP-only caller when its connection closes during command execution', async () => {
-    let markInvocationStarted: (() => void) | undefined
-    const invocationStarted = new Promise<void>((resolve) => {
-      markInvocationStarted = resolve
-    })
-    let finishInvocation: (() => void) | undefined
-    const invocationGate = new Promise<void>((resolve) => {
-      finishInvocation = resolve
-    })
-    let callerSignal: AbortSignal | undefined
-    const directInvoke = vi.fn(async (_channel, invocation) => {
-      callerSignal = invocation.callerLease.signal
-      markInvocationStarted?.()
-      await invocationGate
-      return []
-    })
-    const server = await startTestWebHttpServer({
-      host: '127.0.0.1',
-      port: 0,
-      token: 'test-token',
-      staticRoot: '/unused',
-      rpc: { channels: () => ['projects:list'], invoke: vi.fn() },
-      applicationCommands: {
-        localWeb: { commandNames: () => ['projects:list'], invoke: directInvoke },
-        remoteWeb: { commandNames: () => [], rejectedCommandNames: () => [], invoke: vi.fn() }
-      },
-      bootstrap: {
-        appName: 'Open Science',
-        appVersion: '0.0.0',
-        configRoot: '/fake/root',
-        platform: 'test',
-        versions: { electron: '1', chrome: '1', node: '1' }
+  it.each([false, true])(
+    'releases a caller when its pending HTTP request closes (event socket: %s)',
+    async (withEventSocket) => {
+      let markInvocationStarted: (() => void) | undefined
+      const invocationStarted = new Promise<void>((resolve) => {
+        markInvocationStarted = resolve
+      })
+      let finishInvocation: (() => void) | undefined
+      const invocationGate = new Promise<void>((resolve) => {
+        finishInvocation = resolve
+      })
+      let callerSignal: AbortSignal | undefined
+      const directInvoke = vi.fn(async (_channel, invocation) => {
+        callerSignal = invocation.callerLease.signal
+        markInvocationStarted?.()
+        await invocationGate
+        return []
+      })
+      const server = await startTestWebHttpServer({
+        host: '127.0.0.1',
+        port: 0,
+        token: 'test-token',
+        staticRoot: '/unused',
+        rpc: { channels: () => ['projects:list'], invoke: vi.fn() },
+        applicationCommands: {
+          localWeb: { commandNames: () => ['projects:list'], invoke: directInvoke },
+          remoteWeb: { commandNames: () => [], rejectedCommandNames: () => [], invoke: vi.fn() }
+        },
+        bootstrap: {
+          appName: 'Open Science',
+          appVersion: '0.0.0',
+          configRoot: '/fake/root',
+          platform: 'test',
+          versions: { electron: '1', chrome: '1', node: '1' }
+        }
+      })
+      servers.push(server)
+      let socket: WebSocket | undefined
+      if (withEventSocket) {
+        socket = new WebSocket(`ws://127.0.0.1:${server.port}/events?client=http-only-client`, {
+          headers: { authorization: 'Bearer test-token' }
+        })
+        await new Promise<void>((resolve, reject) => {
+          socket!.once('open', () => resolve())
+          socket!.once('error', reject)
+        })
       }
-    })
-    servers.push(server)
-    const request = httpRequest({
-      host: '127.0.0.1',
-      port: server.port,
-      path: '/rpc/projects%3Alist',
-      method: 'POST',
-      headers: {
-        authorization: 'Bearer test-token',
-        'content-type': 'application/json',
-        'x-open-science-client': 'http-only-client'
-      }
-    })
-    request.once('error', () => undefined)
-    request.end(JSON.stringify({ protocolVersion: WEB_RPC_PROTOCOL_VERSION, args: [] }))
-    await invocationStarted
+      const request = httpRequest({
+        host: '127.0.0.1',
+        port: server.port,
+        path: '/rpc/projects%3Alist',
+        method: 'POST',
+        headers: {
+          authorization: 'Bearer test-token',
+          'content-type': 'application/json',
+          'x-open-science-client': 'http-only-client'
+        }
+      })
+      request.once('error', () => undefined)
+      request.end(JSON.stringify({ protocolVersion: WEB_RPC_PROTOCOL_VERSION, args: [] }))
+      await invocationStarted
 
-    request.destroy()
-    await vi.waitFor(() => expect(callerSignal?.aborted).toBe(true))
-    finishInvocation?.()
-  })
+      try {
+        if (socket) {
+          const closed = new Promise<void>((resolve) => socket!.once('close', () => resolve()))
+          socket.close()
+          await closed
+          expect(callerSignal?.aborted).toBe(false)
+        }
+        request.destroy()
+        await vi.waitFor(() => expect(callerSignal?.aborted).toBe(true))
+      } finally {
+        socket?.close()
+        request.destroy()
+        finishInvocation?.()
+      }
+    }
+  )
 
   it('releases an HTTP-only caller after its idle retention window', async () => {
     let callerSignal: AbortSignal | undefined
@@ -3009,8 +3077,11 @@ describe('startWebHttpServer', () => {
       'notebook:abort-code-cell',
       'notebook:append-code-cell',
       'notebook:begin-code-cell',
+      'notebook:cancel-background-run',
       'notebook:execute',
       'notebook:finish-code-cell',
+      'notebook:background-run',
+      'notebook:project-activity',
       'notebook:reference',
       'notebook:inspect-namespace',
       'notebook:read-input-preview',
@@ -3033,6 +3104,7 @@ describe('startWebHttpServer', () => {
       'runtime:set-agent-environment-creation-enabled',
       'runtime:set-environment-enabled',
       'runtime:set-install-authorized',
+      'runtime:set-sandbox-access',
       'runtime:unregister-interpreter'
     ])
     expect(
@@ -3088,14 +3160,26 @@ describe('startWebHttpServer', () => {
       'compute:scratch:set',
       'compute:ssh-config-aliases'
     ]
+    const specialistChannels = [
+      'specialist:list',
+      'specialist:update',
+      'specialist:set-enabled',
+      'specialist:package-upload-begin',
+      'specialist:package-upload-preview',
+      'specialist:package-upload-abort',
+      'specialist:package-install',
+      'specialist:package-cancel'
+    ]
     const remoteDeniedComputeChannels = ['compute:download', 'compute:reveal-in-folder']
     const remoteAllowedChannels = [
+      ...specialistChannels,
       ...acpChannels,
       ...permissionChannels,
       ...computeChannels.filter((channel) => !remoteDeniedComputeChannels.includes(channel))
     ]
     const rpcChannels = [
-      'specialist:list',
+      'specialist:package-select',
+      ...specialistChannels,
       ...acpChannels,
       ...permissionChannels,
       ...computeChannels
@@ -3171,14 +3255,15 @@ describe('startWebHttpServer', () => {
     }
     expect(localBootstrapBody.webCallerLocation).toBe('local')
     expect(localBootstrapBody.rpcChannels).toEqual([
+      ...specialistChannels,
       ...acpChannels,
       ...permissionChannels,
       ...computeChannels
     ])
     expect(localBootstrapBody.restrictedRpcChannels).toEqual([])
 
-    expect((await invoke('specialist:list')).status).toBe(404)
-    expect((await invoke('specialist:list', true)).status).toBe(404)
+    expect((await invoke('specialist:package-select')).status).toBe(404)
+    expect((await invoke('specialist:package-select', true)).status).toBe(404)
     expect(rpc.invoke.mock.calls.map(([channel]) => channel)).toEqual([
       ...remoteAllowedChannels,
       ...remoteDeniedComputeChannels
@@ -4387,5 +4472,155 @@ describe('startWebHttpServer', () => {
       expect(cancelStream).toHaveBeenCalledOnce()
       expect(tasks.releaseArtifact).toHaveBeenCalledWith('resource-disconnect')
     })
+  })
+})
+
+describe('Web preview reconnect owner contract', () => {
+  it('W01 replays a valid cursor after revoking the disconnected caller capabilities', async () => {
+    const staticRoot = await mkdtemp(join(tmpdir(), 'web-preview-reconnect-'))
+    roots.push(staticRoot)
+    const path = join(staticRoot, 'report.pdf')
+    await writeFile(path, new Uint8Array([1, 2, 3]))
+    const resources = new ManagedPreviewResources({ resolvePath: async () => path })
+    const released = vi.spyOn(resources, 'releaseOwner')
+    const owners = createManagedPreviewOwnerRegistry(resources)
+    const dispatcher: ApplicationCommandByNameDispatcher = {
+      commandNames: () => ['preview-resources:acquire', 'preview-resources:read-range'],
+      invoke: async (channel, { callerLease, args }) => {
+        if (!callerLease) throw new Error('Missing caller lease')
+        if (channel === 'preview-resources:acquire') {
+          return owners.acquire(callerLease, args[0] as AcquireManagedPreviewRequest)
+        }
+        return owners.readRange(callerLease, args[0] as ReadManagedPreviewRangeRequest)
+      }
+    }
+    const server = await startTestWebHttpServer({
+      host: '127.0.0.1',
+      port: 0,
+      token: 'test-token',
+      staticRoot,
+      rpc: { channels: () => [], invoke: vi.fn() },
+      applicationCommands: {
+        localWeb: dispatcher,
+        remoteWeb: { ...dispatcher, rejectedCommandNames: () => [] }
+      },
+      bootstrap: {
+        appName: 'Open Science',
+        appVersion: '0.0.0',
+        configRoot: staticRoot,
+        platform: 'test',
+        versions: { electron: '1', chrome: '1', node: '1' }
+      }
+    })
+    servers.push(server)
+    const base = `http://127.0.0.1:${server.port}`
+    const headers = {
+      authorization: 'Bearer test-token',
+      'x-open-science-client': 'preview-client'
+    }
+    const bootstrap = await (await fetch(`${base}/api/bootstrap`, { headers })).json()
+    const url = new URL(`${base.replace('http:', 'ws:')}/events`)
+    url.searchParams.set('client', 'preview-client')
+    url.searchParams.set('eventProtocol', String(WEB_EVENT_STREAM_PROTOCOL_VERSION))
+    url.searchParams.set('stream', bootstrap.eventStream.streamId)
+    url.searchParams.set('after', String(bootstrap.eventStream.latestSequence))
+    const sockets: WebSocket[] = []
+    const open = async (): Promise<WebSocket> => {
+      const socket = new WebSocket(url, { headers })
+      sockets.push(socket)
+      const frame = await new Promise((resolve, reject) => {
+        socket.once('message', (data) => resolve(JSON.parse(data.toString())))
+        socket.once('error', reject)
+      })
+      expect(frame).toMatchObject({
+        kind: 'ready',
+        latestSequence: bootstrap.eventStream.latestSequence
+      })
+      return socket
+    }
+    const rpc = (channel: string, request: unknown): Promise<Response> =>
+      fetch(`${base}/rpc/${encodeURIComponent(channel)}`, {
+        method: 'POST',
+        headers: { ...headers, 'content-type': 'application/json' },
+        body: JSON.stringify({ protocolVersion: WEB_RPC_PROTOCOL_VERSION, args: [request] })
+      })
+    try {
+      const socket = await open()
+      const acquired = await (
+        await rpc('preview-resources:acquire', { source: 'local', path })
+      ).json()
+      const range = { resourceId: acquired.result.id, begin: 0, end: 3 }
+      expect((await rpc('preview-resources:read-range', range)).status).toBe(200)
+      socket.close()
+      await vi.waitFor(() => expect(released).toHaveBeenCalledOnce())
+      await open()
+      expect((await rpc('preview-resources:read-range', range)).status).toBe(500)
+      const fresh = await (await rpc('preview-resources:acquire', { source: 'local', path })).json()
+      expect(fresh.result.id).not.toBe(range.resourceId)
+      expect(
+        (await rpc('preview-resources:read-range', { ...range, resourceId: fresh.result.id }))
+          .status
+      ).toBe(200)
+    } finally {
+      for (const socket of sockets) socket.close()
+    }
+  })
+})
+
+describe('Connector Task HTTP routes', () => {
+  it('routes authenticated SDK reads and writes to the same Settings snapshot', async () => {
+    const snapshot = {
+      connectors: [],
+      customServers: [
+        {
+          id: 'sample',
+          name: 'sample',
+          displayName: 'Sample',
+          transport: 'stdio',
+          command: 'node',
+          enabled: false
+        }
+      ],
+      ncbi: { hasApiKey: false }
+    }
+    const invoke = vi.fn(async (channel: string, invocation: { args: readonly unknown[] }) => {
+      if (channel === 'settings:set-custom-server-enabled')
+        snapshot.customServers[0].enabled = (invocation.args[0] as { enabled: boolean }).enabled
+      return snapshot
+    })
+    const tasks = new HeadlessTaskApi({
+      commands: { commandNames: () => [], invoke },
+      agent: {} as never
+    })
+    const server = await startTestWebHttpServer({
+      host: '127.0.0.1',
+      port: 0,
+      token: 'test-token',
+      staticRoot: '/unused',
+      tasks,
+      rpc: { channels: () => [], invoke: vi.fn() },
+      bootstrap: {
+        appName: 'Open Science',
+        appVersion: 'test',
+        configRoot: '/fake/root',
+        platform: 'test',
+        versions: { electron: '1', chrome: '1', node: '1' }
+      }
+    })
+    servers.push(server)
+    const baseUrl = `http://127.0.0.1:${server.port}`
+    expect((await fetch(`${baseUrl}/api/v1/connectors`)).status).toBe(401)
+    const client = new OpenScienceClient({ baseUrl, token: 'test-token' })
+    expect((await client.listConnectors()).customServers[0].enabled).toBe(false)
+    await client.setConnectorEnabled('sample', true)
+    expect((await client.getConnector('sample')).enabled).toBe(true)
+    expect(invoke).toHaveBeenCalledWith(
+      'settings:set-custom-server-enabled',
+      expect.objectContaining({
+        args: [{ id: 'sample', enabled: true }],
+        callerContext: expect.objectContaining({ surface: 'task', location: 'local' })
+      })
+    )
+    await tasks.dispose()
   })
 })

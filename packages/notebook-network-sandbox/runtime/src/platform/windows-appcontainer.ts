@@ -347,6 +347,50 @@ const removeWindowsAppContainer = async (
   return elevated
 }
 
+const setWindowsRuntimeAccess = async (
+  hostPath: string,
+  installationId: string,
+  ownershipRoot: string,
+  executable: string,
+  authorized: boolean
+): Promise<{ cancelled: boolean }> => {
+  const status = await runCapture(hostPath, [
+    'runtime-access-status',
+    installationId,
+    ownershipRoot,
+    executable
+  ])
+  if (status.code !== 0)
+    throw new Error(status.stderr.trim() || 'Could not inspect R runtime access.')
+  const current: unknown = JSON.parse(status.stdout)
+  if (
+    !current ||
+    typeof current !== 'object' ||
+    typeof (current as { authorized?: unknown }).authorized !== 'boolean' ||
+    typeof (current as { registered?: unknown }).registered !== 'boolean'
+  ) {
+    throw new Error('AppContainer host returned invalid runtime access status.')
+  }
+  const access = current as { authorized: boolean; registered: boolean }
+  if ((authorized && access.authorized) || (!authorized && !access.registered))
+    return { cancelled: false }
+  const prepared = await runCapture(hostPath, [
+    authorized ? 'prepare-runtime-access' : 'prepare-remove-runtime-access',
+    installationId,
+    ownershipRoot,
+    executable
+  ])
+  if (prepared.code !== 0)
+    throw new Error(prepared.stderr.trim() || 'Could not prepare R runtime access.')
+  const result = await runElevatedHostCommand(hostPath, installationId, ownershipRoot, 'setup')
+  if (result.cancelled) {
+    await runHostCommand(hostPath, installationId, ownershipRoot, 'cancel-setup')
+  } else {
+    await runHostCommand(hostPath, installationId, ownershipRoot, 'finish-setup')
+  }
+  return result
+}
+
 const windowsLaunch = (
   request: WindowsLaunchRequest
 ): { argv: string[]; env: NodeJS.ProcessEnv } => {
@@ -440,6 +484,7 @@ export {
   checkWindowsAppContainer,
   connectionProbeSpecification,
   installWindowsAppContainer,
+  setWindowsRuntimeAccess,
   removeWindowsAppContainer,
   readAppContainerStatus,
   loopbackPortAvailable,

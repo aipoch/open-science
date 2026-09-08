@@ -517,6 +517,7 @@ const sendIntentKeys = [
   'referencedArtifacts',
   'pdfContext',
   'pdfReadingPosition',
+  'pdfReadingPositionSource',
   'pendingPdfContextAttachmentIds',
   'pendingPdfContextVersions',
   'parts',

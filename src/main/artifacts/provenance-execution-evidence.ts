@@ -147,6 +147,9 @@ const sanitizeRun = (
     runtimeSegmentId: run.runtimeSegmentId ?? '',
     promptMessageId: run.promptMessageId ?? '',
     ...(run.kernelEpochId ? { kernelEpochId: run.kernelEpochId } : {}),
+    ...(typeof run.kernelDispatched === 'boolean'
+      ? { kernelDispatched: run.kernelDispatched }
+      : {}),
     kernelKind: run.kernelKind,
     ...(run.environment ? { environmentName: run.environment } : {}),
     script,

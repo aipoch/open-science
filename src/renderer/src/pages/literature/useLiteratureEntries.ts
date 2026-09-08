@@ -2,7 +2,8 @@ import { useCallback, useLayoutEffect, useRef, useState } from 'react'
 
 import type {
   LiteratureCatalogSearchPage,
-  LiteratureCatalogSearchRequest
+  LiteratureCatalogSearchRequest,
+  LiteratureItemView
 } from '../../../../shared/literature'
 
 const PAGE_CACHE_SIZE = 12
@@ -31,13 +32,16 @@ const useLiteratureEntries = ({
   onError
 }: LiteratureEntriesOptions): {
   loading: boolean
+  failed: boolean
   pageTransitionLoading: boolean
-  reload: (force?: boolean) => Promise<void>
-  refreshItems: (itemIds: string[]) => Promise<void>
+  reload: (force?: boolean, preservePage?: boolean) => Promise<void>
+  refreshItems: (itemIds: string[], updatedItems?: LiteratureItemView[]) => Promise<void>
 } => {
   const [loading, setLoading] = useState(true)
   const [loadedKey, setLoadedKey] = useState<string>()
+  const [failedKey, setFailedKey] = useState<string>()
   const generationRef = useRef(0)
+  const dataRevisionRef = useRef(0)
   const cacheRef = useRef(new Map<string, LiteratureCatalogSearchPage>())
   const dirtyKeys = useRef(new Set<string>())
   const [cachedKeys, setCachedKeys] = useState<ReadonlySet<string>>(() => new Set())
@@ -49,18 +53,29 @@ const useLiteratureEntries = ({
   const pageKey = `${scopeKey}:${request.offset ?? 0}`
 
   const reload = useCallback(
-    async (force = false): Promise<void> => {
+    async (force = false, preservePage = false): Promise<void> => {
+      const retained =
+        preservePage && appliedPageRef.current?.key === pageKey ? appliedPageRef.current : undefined
       if (force) {
         cacheRef.current.clear()
         dirtyKeys.current.clear()
-        setCachedKeys(new Set())
-        appliedPageRef.current = undefined
-        setLoadedKey(undefined)
+        if (retained) {
+          cacheRef.current.set(pageKey, retained.page)
+          dirtyKeys.current.add(pageKey)
+        }
+        setCachedKeys(new Set(cacheRef.current.keys()))
+        if (!retained) {
+          appliedPageRef.current = undefined
+          setLoadedKey(undefined)
+        }
+        setFailedKey(undefined)
       }
       if (!enabled) return
       const generation = ++generationRef.current
+      let dataRevision = dataRevisionRef.current
       const cached =
         force || dirtyKeys.current.has(pageKey) ? undefined : cacheRef.current.get(pageKey)
+      setFailedKey(undefined)
       onError(false)
       if (
         cached &&
@@ -72,7 +87,11 @@ const useLiteratureEntries = ({
       }
       if (!cached) setLoading(true)
       try {
-        const page = cached ?? (await window.api.literature.search(request))
+        let page = cached ?? (await window.api.literature.search(request))
+        while (generation === generationRef.current && dataRevision !== dataRevisionRef.current) {
+          dataRevision = dataRevisionRef.current
+          page = await window.api.literature.search(request)
+        }
         if (generation !== generationRef.current) return
         if (page.entries.length === 0 && (request.offset ?? 0) > 0) {
           onEmptyPage(Math.max(0, (request.offset ?? 0) - (request.limit ?? 50)))
@@ -91,7 +110,10 @@ const useLiteratureEntries = ({
         appliedPageRef.current = { key: pageKey, page }
         setLoadedKey(pageKey)
       } catch {
-        if (generation === generationRef.current) onError(true)
+        if (generation === generationRef.current) {
+          if (!retained) setFailedKey(pageKey)
+          onError(true)
+        }
       } finally {
         if (generation === generationRef.current) setLoading(false)
       }
@@ -100,7 +122,8 @@ const useLiteratureEntries = ({
   )
 
   const refreshItems = useCallback(
-    async (itemIds: string[]): Promise<void> => {
+    async (itemIds: string[], updatedItems?: LiteratureItemView[]): Promise<void> => {
+      dataRevisionRef.current += 1
       const displayed = appliedPageRef.current
       const ids = new Set(itemIds)
       // Invalidate other scopes, but keep the current page and its order while it is being read.
@@ -115,7 +138,8 @@ const useLiteratureEntries = ({
         'metadataRevision' in entry && ids.has(entry.id) ? [entry.id] : []
       )
       try {
-        const updated = await Promise.all(visible.map((id) => window.api.literature.get(id)))
+        const updated =
+          updatedItems ?? (await Promise.all(visible.map((id) => window.api.literature.get(id))))
         if (generation !== generationRef.current || appliedPageRef.current?.key !== pageKey) return
         const replacements = new Map(
           updated.flatMap((entry) => (entry ? [[entry.id, entry] as const] : []))
@@ -124,7 +148,10 @@ const useLiteratureEntries = ({
         const page = {
           ...current,
           entries: current.entries.map((entry) =>
-            'metadataRevision' in entry ? (replacements.get(entry.id) ?? entry) : entry
+            'metadataRevision' in entry &&
+            (replacements.get(entry.id)?.metadataRevision ?? -1) >= entry.metadataRevision
+              ? replacements.get(entry.id)!
+              : entry
           )
         }
         cacheRef.current.set(pageKey, page)
@@ -155,9 +182,11 @@ const useLiteratureEntries = ({
     }
   }, [pageKey, reload, request.offset, request.query, scopeKey])
 
-  const pending = !cachedKeys.has(pageKey) && (loading || loadedKey !== pageKey)
+  const pending =
+    failedKey !== pageKey && !cachedKeys.has(pageKey) && (loading || loadedKey !== pageKey)
   return {
     loading: pending,
+    failed: failedKey === pageKey,
     pageTransitionLoading: pending && loadedKey?.startsWith(`${scopeKey}:`) === true,
     reload,
     refreshItems

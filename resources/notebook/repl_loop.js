@@ -2783,6 +2783,9 @@ const hostSessions = Object.freeze({ list: hostSessionsList, inspect: hostSessio
 // the trusted control plane — the python/r data kernels have no host.compute, so SSH/approval always
 // happens outside the sandbox workspace. Uses the captured RPC endpoint/token + client for the same
 // token-isolation reasons documented on host.mcp above.
+const COMPUTE_JOB_SUBMISSION_RECEIPT_GUIDANCE =
+  'Save the exact job_id. Query that saved id with attachJob(job_id).status() or .result() when its state or result is relevant. Each call is a non-blocking snapshot and never scans Job history. Only result_final:true is final; a final .result() read reports follow_up_delivery:"suppressed" when it prevents the fallback, or "committed" when that fallback already crossed its dispatch fence. A .status() snapshot does not consume the full result. An unread final result is delivered in a later Turn.'
+
 async function computeRpc(params) {
   if (!RPC_ENDPOINT) throw new Error('host.compute is unavailable: connector RPC endpoint not set')
   const isRetryableSubmit = params?.op === 'submit_job' && typeof params.invocation_id === 'string'
@@ -2840,7 +2843,19 @@ async function agentsRpc(op, params = {}, sessionId = COMPUTE_SESSION_ID) {
     // Server-side method errors are already `host.agents.<method>: <message>`. Boundary failures
     // (auth, unknown method) are not method-scoped, so prefix them with the op the caller invoked so
     // the agent always sees a host.agents.* namespaced, secret-free message.
-    const serverMessage = body.error || 'host.agents HTTP ' + res.status
+    const structuredError = body.error
+    const serverMessage =
+      structuredError &&
+      typeof structuredError === 'object' &&
+      typeof structuredError.code === 'string'
+        ? [
+            structuredError.code,
+            typeof structuredError.method === 'string' ? structuredError.method : null,
+            typeof structuredError.hint === 'string' ? structuredError.hint : null
+          ]
+            .filter(Boolean)
+            .join(': ')
+        : body.error || 'host.agents HTTP ' + res.status
     const publicMethod =
       {
         list_skills: 'listSkills',
@@ -3407,9 +3422,12 @@ const hostCompute = {
           assertHarvestLimit('maxFileMb', harvest.max_file_mb, 100)
           assertHarvestLimit('maxTotalMb', harvest.max_total_mb, 500)
         }
-        return computeRpc({
+        // Generate the idempotency key once at the adapter boundary. computeRpc may replay this
+        // exact request after a lost successful response, but must never mint a second invocation.
+        const invocationId = randomUUID()
+        const receipt = await computeRpc({
           op: 'submit_job',
-          invocation_id: randomUUID(),
+          invocation_id: invocationId,
           provider_id: providerId,
           intent,
           command,
@@ -3423,6 +3441,9 @@ const hostCompute = {
           project_id: COMPUTE_PROJECT_ID,
           workspace_cwd: COMPUTE_WORKSPACE_CWD
         })
+        // Keep the main-process wire receipt unchanged; this field exists only in the Agent-facing
+        // host SDK projection so the durable job id remains available at its later dependency point.
+        return { ...receipt, nextAction: COMPUTE_JOB_SUBMISSION_RECEIPT_GUIDANCE }
       },
 
       // Attaches this provider handle to an existing job by job_id. Server-side reads verify that

@@ -579,6 +579,73 @@ describe('session persistence IPC handlers', () => {
     expect(restored.messages[0]?.attribution).toEqual(correctionAttribution)
   })
 
+  it('accepts Agent result delivery attribution only from main-owned runtime evidence', async () => {
+    const deliveryAttribution = {
+      kind: 'application' as const,
+      feature: 'background-results' as const,
+      purpose: 'agent-result-delivery' as const,
+      deliveryKey: 'agent-result-delivery:continuation-1',
+      deliveryIds: ['delivery-1']
+    }
+    const attributedMessage = {
+      id: 'continuation-1',
+      role: 'user' as const,
+      content: 'A background task has finished. Continue from its result.',
+      status: 'complete' as const,
+      eventIds: [],
+      attribution: deliveryAttribution,
+      createdAt: 2,
+      updatedAt: 2
+    }
+    const submittedSession = materializeSessionConversationGraph({
+      ...createSession(),
+      messages: [attributedMessage]
+    })
+    let durable: PersistedChatSession | undefined
+    const repository: SessionPersistenceBackend = {
+      loadAll: vi.fn(),
+      loadOne: vi.fn(async () => durable),
+      saveSession: vi.fn(async (session) => {
+        durable = session
+        return { created: false, session }
+      }),
+      deleteSession: vi.fn(),
+      saveManifest: vi.fn()
+    }
+    const authority = new MainMessageAttributionAuthority()
+    const handlers = createSessionPersistenceHandlersWithAttributionAuthority(
+      repository,
+      createMockReviewRepository(),
+      authority
+    )
+
+    const rejected = (await handlers.saveSession(submittedSession)).session
+    expect(rejected.messages[0]).not.toHaveProperty('attribution')
+    expect(rejected.conversationGraph?.messages[0]).not.toHaveProperty('attribution')
+
+    durable = undefined
+    authority.recordRuntimeEvent('project-a', {
+      id: 'event-continuation-1',
+      timestamp: 2,
+      kind: 'message',
+      level: 'info',
+      sessionId: submittedSession.id,
+      messageId: attributedMessage.id,
+      role: 'user',
+      text: attributedMessage.content,
+      attribution: deliveryAttribution
+    })
+    const accepted = (await handlers.saveSession(submittedSession)).session
+    expect(accepted.messages[0]?.attribution).toEqual(deliveryAttribution)
+    expect(accepted.conversationGraph?.messages[0]?.attribution).toEqual(deliveryAttribution)
+
+    durable = accepted
+    authority.clear()
+    const reloaded = (await handlers.saveSession(accepted)).session
+    expect(reloaded.messages[0]?.attribution).toEqual(deliveryAttribution)
+    expect(reloaded.conversationGraph?.messages[0]?.attribution).toEqual(deliveryAttribution)
+  })
+
   it('keeps Compute completion presentation across history without trusting renderer attribution', async () => {
     const computeAttribution = {
       kind: 'application' as const,

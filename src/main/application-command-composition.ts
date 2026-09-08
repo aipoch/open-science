@@ -1,3 +1,8 @@
+import {
+  specialistApplicationCommandGroup,
+  registerSpecialistApplicationCommands,
+  type SpecialistApplicationOwner
+} from './specialist/application-commands'
 import { ApplicationCommandError } from '../shared/application-command-contract'
 import {
   ELECTRON_APPLICATION_COMMAND_CHANNELS,
@@ -119,6 +124,7 @@ type ApplicationCommandCompositionDependencies = Readonly<{
   permissionGrants: PermissionGrantDependencies
   tags: TagCommandOwner
   memory: MemoryCommandOwner
+  specialist: SpecialistApplicationOwner
   literature: LiteratureCommandOwner
   dataContent: DataContentApplicationCommandDependencies
   host: Omit<HostApplicationCommandDependencies, 'remoteAccess'>
@@ -142,6 +148,7 @@ const ELECTRON_NATIVE_COMMAND_NAMES = Object.freeze([
 ])
 
 const TASK_NATIVE_COMMAND_NAMES = Object.freeze([
+  'settings:test-custom-server',
   'projects:update-session-defaults',
   'reviewer:abort',
   'settings:set-agent-routing',
@@ -152,6 +159,18 @@ const TASK_NATIVE_COMMAND_NAMES = Object.freeze([
 ])
 
 const TASK_COMMAND_NAMES = Object.freeze([
+  'settings:list-connectors',
+  'settings:get-connector-detail',
+  'settings:set-connector-enabled',
+  'settings:set-custom-server-enabled',
+  'settings:add-custom-server',
+  'settings:update-custom-server',
+  'settings:remove-custom-server',
+  'settings:test-custom-server',
+  'settings:list-device-credentials',
+  'settings:create-device-credential',
+  'settings:update-device-credential',
+
   'projects:list',
   'projects:create',
   'projects:update',
@@ -239,6 +258,9 @@ const createApplicationCommandModules = (
     ),
     defineApplicationCommandModule([memoryApplicationCommandGroup], (registrar) =>
       registerMemoryApplicationCommands(registrar, dependencies.memory)
+    ),
+    defineApplicationCommandModule([specialistApplicationCommandGroup], (registrar) =>
+      registerSpecialistApplicationCommands(registrar, dependencies.specialist)
     ),
     defineApplicationCommandModule([literatureApplicationCommandGroup], (registrar) =>
       registerLiteratureApplicationCommands(registrar, dependencies.literature)

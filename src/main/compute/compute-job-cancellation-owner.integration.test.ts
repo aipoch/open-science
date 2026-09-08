@@ -8,6 +8,7 @@ import {
   ComputeJobCancellationOwner,
   ComputeJobCancellationReaper
 } from './compute-job-cancellation-owner'
+import { ComputeJobLifecycle } from './compute-job-lifecycle'
 import { ComputeJobOperationRepository } from './compute-job-operation-repository'
 import { OptionalSecureStorageStringProtection, type SecureStorageCipher } from './credential-vault'
 import { ComputeJobRepository } from './job-repository'
@@ -378,6 +379,37 @@ describe('Compute Job cancellation owner (SQLite + fake SSH)', () => {
     await expect(owner.status('job-1', scope)).resolves.toMatchObject({
       cancellation_status: 'cancelled'
     })
+  })
+
+  it('preserves an encrypted launch handle during cancellation without reviving execution', async () => {
+    const { client, jobs, operations, createJob } = await setup(true)
+    await createJob('submitted')
+    const owner = new ComputeJobCancellationOwner(operations, jobs)
+    await owner.request('job-1', scope)
+    const lifecycle = new ComputeJobLifecycle(jobs)
+    await expect(lifecycle.dispatchRunning('job-1', remoteHandle)).resolves.toEqual({
+      kind: 'ignored'
+    })
+    await expect(jobs.get('job-1')).resolves.toMatchObject({
+      status: 'submitted',
+      remote_handle: remoteHandle
+    })
+    const [stored] = await client.$queryRaw<
+      Array<{ remoteHandle: string }>
+    >`SELECT "remoteHandle" FROM "ComputeJob" WHERE "id" = 'job-1'`
+    expect(stored.remoteHandle).toContain('open-science:protected')
+    expect(stored.remoteHandle).not.toContain('4321')
+    await lifecycle.dispatchRunning('job-1', remoteHandle.replace('4321', '5678'))
+    expect((await jobs.get('job-1'))?.remote_handle).toBe(remoteHandle)
+    await expect(
+      lifecycle.finishPolled('job-1', {
+        status: 'success',
+        errorCode: null,
+        stdoutTail: null,
+        stderrTail: null
+      })
+    ).resolves.toEqual({ kind: 'ignored' })
+    expect((await owner.status('job-1', scope)).cancellation_status).toBe('cancelling')
   })
 
   it('linearizes request against a terminal poll CAS', async () => {

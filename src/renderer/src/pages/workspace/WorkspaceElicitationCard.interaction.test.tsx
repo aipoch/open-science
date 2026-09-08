@@ -3,9 +3,16 @@ import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { validateElicitationAnswers } from '../../../../main/acp/elicitation-owner'
+import type { ElicitationField, PendingElicitationRequest } from '../../../../shared/elicitation'
+
 import { WorkspaceElicitationCard } from './WorkspaceElicitationCard'
 
-import type { ToolActivity } from '@/stores/session-store'
+import {
+  useSessionStore,
+  createInitialSessionState,
+  type ToolActivity
+} from '@/stores/session-store'
 
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
@@ -1274,4 +1281,266 @@ describe('WorkspaceElicitationCard generic ACP form', () => {
       answers: [{ fieldId: 'rationale', value: 'The checks passed' }]
     })
   })
+})
+
+describe('elicitation reported input regressions', () => {
+  const button = (label: string): HTMLButtonElement => {
+    const result = Array.from(container.querySelectorAll('button')).find(
+      (item) => item.textContent?.trim() === label
+    )
+    expect(result).toBeDefined()
+    return result!
+  }
+  const mountForm = async (
+    formFields: ElicitationField[]
+  ): Promise<{ onRespond: ReturnType<typeof vi.fn>; formRequest: PendingElicitationRequest }> => {
+    const onRespond = vi.fn().mockResolvedValue(undefined)
+    const formRequest = { ...request, fields: formFields }
+    await act(async () =>
+      root.render(
+        <WorkspaceElicitationCard
+          elicitation={{ message: request.message, fields: formFields, state: 'pending' }}
+          request={formRequest}
+          onRespond={onRespond}
+        />
+      )
+    )
+    return { onRespond, formRequest }
+  }
+
+  it.each<ElicitationField>([
+    { id: 'optional', label: 'Email', kind: 'text', format: 'email' },
+    { id: 'optional', label: 'Text', kind: 'text', minLength: 2 },
+    {
+      id: 'optional',
+      label: 'Choices',
+      kind: 'multi-select',
+      minItems: 1,
+      options: [{ value: 'one', label: 'One' }]
+    }
+  ])('EL-01 permits omission after clearing $label', async (field) => {
+    const other: ElicitationField = {
+      id: 'other',
+      label: 'Other answer',
+      kind: 'text',
+      required: true,
+      defaultValue: 'Keep me'
+    }
+    const { onRespond, formRequest } = await mountForm([field, other])
+    const answers = [{ fieldId: 'other', value: 'Keep me' }]
+    expect(validateElicitationAnswers(formRequest, answers)).toEqual(answers)
+    expect(button('Continue').disabled).toBe(false)
+    const control = container.querySelector<HTMLInputElement | HTMLTextAreaElement>(
+      'input, textarea'
+    )!
+    if (field.kind === 'multi-select') {
+      await act(async () => control.click())
+    } else {
+      await act(async () => setTextControlValue(control, field.format ? 'a@example.com' : 'valid'))
+    }
+    expect(button('Continue').disabled).toBe(false)
+    await act(async () => {
+      if (field.kind === 'multi-select') control.click()
+      else setTextControlValue(control, '')
+    })
+    expect(button('Continue').disabled, 'cleared optional field must be omittable').toBe(false)
+    await act(async () => button('Continue').click())
+    expect(onRespond).toHaveBeenCalledWith({
+      requestId: request.requestId,
+      action: 'accept',
+      answers
+    })
+  })
+
+  it.each([20, undefined])('EL-02 edits a date-time with maxLength %s', async (maxLength) => {
+    const field: ElicitationField = {
+      id: 'time',
+      label: 'Time',
+      kind: 'text',
+      required: true,
+      format: 'date-time',
+      maxLength,
+      defaultValue: '2026-09-07T12:00:00Z'
+    }
+    const { onRespond, formRequest } = await mountForm([field])
+    expect(button('Continue').disabled).toBe(false)
+    const local = '2026-09-07T12:01:00'
+    const expected = new Date(local).toISOString().replace('.000Z', 'Z')
+    expect(validateElicitationAnswers(formRequest, [{ fieldId: 'time', value: expected }])).toEqual(
+      [{ fieldId: 'time', value: expected }]
+    )
+    await act(async () => setTextControlValue(container.querySelector('input')!, local))
+    expect(button('Continue').disabled, 'editing must not add unnecessary length').toBe(false)
+    await act(async () => button('Continue').click())
+    const sent = onRespond.mock.calls[0][0].answers[0].value
+    expect(new Date(sent).getTime()).toBe(new Date(local).getTime())
+    if (maxLength) expect(sent).toHaveLength(maxLength)
+  })
+
+  it.each([
+    { local: '2026-09-07T12:01:00.123', minLength: undefined, suffix: '.123Z' },
+    { local: '2026-09-07T12:01:00', minLength: 24, suffix: '.000Z' }
+  ])(
+    'EL-02 preserves precision and minimum length: $suffix',
+    async ({ local, minLength, suffix }) => {
+      const { onRespond } = await mountForm([
+        { id: 'time', label: 'Time', kind: 'text', format: 'date-time', minLength }
+      ])
+      await act(async () => setTextControlValue(container.querySelector('input')!, local))
+      expect(button('Continue').disabled).toBe(false)
+      await act(async () => button('Continue').click())
+      const sent = onRespond.mock.calls[0][0].answers[0].value
+      expect(sent.endsWith(suffix)).toBe(true)
+      expect(new Date(sent).getTime()).toBe(new Date(local).getTime())
+    }
+  )
+
+  it.each<ElicitationField>([
+    { id: 'value', label: 'Required', kind: 'text', required: true, minLength: 2 },
+    { id: 'value', label: 'Email', kind: 'text', format: 'email' },
+    { id: 'value', label: 'Minimum length', kind: 'text', minLength: 2 }
+  ])('EL-01 still rejects invalid nonempty $label', async (field) => {
+    const { onRespond } = await mountForm([field])
+    await act(async () => setTextControlValue(container.querySelector('input, textarea')!, 'x'))
+    expect(button('Continue').disabled).toBe(true)
+    await act(async () => setTextControlValue(container.querySelector('input, textarea')!, ''))
+    expect(button('Continue').disabled).toBe(Boolean(field.required))
+    if (field.required) {
+      await act(async () => button('Continue').click())
+      expect(onRespond).not.toHaveBeenCalled()
+    }
+  })
+
+  it('EL-03 distinguishes an omitted boolean from explicit false on screen', async () => {
+    const { onRespond } = await mountForm([{ id: 'enabled', label: 'Enabled', kind: 'boolean' }])
+    const initialView = container.textContent
+    const toggle = container.querySelector<HTMLButtonElement>('[role="switch"]')!
+    expect(toggle.getAttribute('aria-checked')).toBe('false')
+    await act(async () => button('Continue').click())
+    expect(onRespond.mock.calls[0][0].answers).toEqual([])
+    await act(async () => toggle.click())
+    await act(async () => toggle.click())
+    expect(toggle.getAttribute('aria-checked')).toBe('false')
+    await act(async () => button('Continue').click())
+    expect(onRespond.mock.calls[1][0].answers).toEqual([{ fieldId: 'enabled', value: false }])
+    expect(
+      container.textContent,
+      'different submission meanings need a visible distinction'
+    ).not.toBe(initialView)
+    await act(async () => button('Clear selection').click())
+    expect(container.textContent).toContain('Not answered')
+    await act(async () => button('Continue').click())
+    expect(onRespond.mock.calls.at(-1)?.[0].answers).toEqual([])
+  })
+
+  it('EL-04 keeps edits after a failed response and clears only after acceptance', async () => {
+    const onRespond = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('Try again'))
+      .mockResolvedValue(undefined)
+    const onEditDraftChange = vi.fn()
+    await act(async () =>
+      root.render(
+        <WorkspaceElicitationCard
+          elicitation={activity.elicitation!}
+          request={request}
+          onRespond={onRespond}
+          onEditDraftChange={onEditDraftChange}
+        />
+      )
+    )
+    await act(async () =>
+      setTextControlValue(container.querySelector('textarea')!, 'Keep this draft')
+    )
+    expect(onEditDraftChange).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        values: expect.objectContaining({ question_0_custom: 'Keep this draft' })
+      })
+    )
+    await act(async () => button('Finish').click())
+    expect(container.querySelector('[role="alert"]')?.textContent).toBe('Try again')
+    expect(onEditDraftChange).not.toHaveBeenCalledWith(undefined)
+    await act(async () => button('Finish').click())
+    expect(onEditDraftChange).toHaveBeenLastCalledWith(undefined)
+  })
+
+  it.each(['single', 'last', 'back'] as const)(
+    'EL-04 restores unsubmitted custom text: %s',
+    async (scenario) => {
+      const choiceRequest = scenario === 'single' ? request : multiQuestionRequest
+      useSessionStore.setState({
+        ...createInitialSessionState(),
+        sessions: [
+          {
+            id: request.sessionId,
+            projectId: 'project',
+            title: 'Test',
+            cwd: '/workspace',
+            status: 'waiting-for-user',
+            messages: [],
+            createdAt: 1,
+            updatedAt: 1,
+            activities: [
+              {
+                ...activity,
+                elicitation: {
+                  message: choiceRequest.message,
+                  fields: choiceRequest.fields,
+                  state: 'pending'
+                }
+              }
+            ]
+          }
+        ]
+      })
+      const onRespond = vi.fn().mockResolvedValue(undefined)
+      const DraftCard = (): React.JSX.Element => {
+        const session = useSessionStore((state) => state.sessions[0])
+        const owner = useSessionStore.getState()
+        return (
+          <WorkspaceElicitationCard
+            elicitation={session.activities![0].elicitation!}
+            request={choiceRequest}
+            onRespond={onRespond}
+            editDraft={session.elicitationEditDrafts?.[activity.id]}
+            onEditDraftChange={(draft) =>
+              owner.setElicitationEditDraft(session.id, activity.id, request.requestId, draft)
+            }
+            onDraftChange={(answers) =>
+              owner.setElicitationDraftAnswers(session.id, activity.id, answers)
+            }
+          />
+        )
+      }
+      const render = async (): Promise<void> => act(async () => root.render(<DraftCard />))
+      await render()
+      if (scenario !== 'single') {
+        await act(async () =>
+          container
+            .querySelector<HTMLButtonElement>('[data-testid="elicitation-option-clinical"]')!
+            .click()
+        )
+        await act(async () => button('Next').click())
+        if (scenario === 'back') {
+          await act(async () =>
+            container.querySelector<HTMLButtonElement>('[aria-label="Previous question"]')!.click()
+          )
+        }
+      }
+      await act(async () =>
+        setTextControlValue(container.querySelector('textarea')!, 'Unsaved custom answer')
+      )
+      const prompt = container.querySelector('h3')?.textContent
+      expect(onRespond).not.toHaveBeenCalled()
+      await act(async () => root.unmount())
+      root = createRoot(container)
+      await render()
+      expect(
+        container.querySelector('textarea')?.value,
+        'remount must restore the current input'
+      ).toBe('Unsaved custom answer')
+      expect(container.querySelector('h3')?.textContent).toBe(prompt)
+      expect(onRespond).not.toHaveBeenCalled()
+    }
+  )
 })

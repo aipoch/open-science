@@ -131,10 +131,21 @@ type ManagedFileVersionDiffLine = {
   segments: ManagedFileVersionDiffSegment[]
 }
 
+type ManagedFileVersionDiffOmission = {
+  kind: 'omitted'
+  oldLineNumber: number
+  newLineNumber: number
+  count: number
+}
+
+type ManagedFileVersionDiffRow = ManagedFileVersionDiffLine | ManagedFileVersionDiffOmission
+
 type ManagedFileVersionDiffResult = {
   baseVersionId: string
   selectedVersionId: string
-  lines: ManagedFileVersionDiffLine[]
+  lines: ManagedFileVersionDiffRow[]
+  baseFormat?: Pick<ManagedTextFormat, 'hasUtf8Bom'>
+  selectedFormat?: Pick<ManagedTextFormat, 'hasUtf8Bom'>
 }
 
 type ManagedFileVersionSaveTextEditRequest = ManagedFileIdentity & {
@@ -271,6 +282,8 @@ export {
   type ManagedFileVersionDiffRequest,
   type ManagedFileVersionCancelDiffRequest,
   type ManagedFileVersionDiffLine,
+  type ManagedFileVersionDiffRow,
+  type ManagedFileVersionDiffOmission,
   type ManagedFileVersionDiffResult,
   type ManagedFileVersionDiffSegment,
   type ManagedFileVersionInspectRequest,

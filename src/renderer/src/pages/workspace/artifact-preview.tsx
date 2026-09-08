@@ -15,7 +15,7 @@ import {
 } from './artifact-preview-utils'
 import { PdfThumbnail } from './previews/renderers/PdfThumbnail'
 import { TiffThumbnail } from './previews/renderers/TiffThumbnail'
-import { createPreviewResourceKey } from './previews/preview-resource-key'
+import { usePreviewResourceKey } from './previews/usePreviewResourceGeneration'
 import { useCachedPreviewImage } from './previews/useCachedPreviewImage'
 
 type MessageArtifact = NonNullable<ChatSession['artifacts']>[number]
@@ -179,7 +179,7 @@ const getFastaRows = (content: string): string[] => {
 
   if (currentSequence) rows.push(currentSequence)
 
-  if (rows.length > 1) return rows.slice(0, 6)
+  if (rows.length > 1) return rows.slice(0, 6).map((row) => row.slice(0, 8))
 
   return rows[0]?.match(/.{1,8}/g)?.slice(0, 6) ?? []
 }
@@ -287,7 +287,7 @@ const ManagedImageThumbnail = ({
   selectedVersionId?: string
   enabled: boolean
 }): React.JSX.Element => {
-  const requestKey = createPreviewResourceKey({
+  const requestKey = usePreviewResourceKey({
     projectId,
     sessionId,
     source,

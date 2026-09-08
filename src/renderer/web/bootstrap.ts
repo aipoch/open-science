@@ -1,3 +1,4 @@
+import { flushSync } from 'react-dom'
 import {
   ApplicationCommandError,
   isApplicationCommandErrorCode
@@ -42,11 +43,11 @@ const t = i18next.t.bind(i18next)
 applyHtmlLang(initialLocale)
 document.documentElement.setAttribute(WEB_EVENT_SURFACE_ATTRIBUTE, 'true')
 
-const REMOTE_ACCESS_OFF_MESSAGE = t(
-  'Remote access is off on the home computer. Re-enable a remote access mode in Open Science, then try again.'
+const AUTHORIZATION_EXPIRED_MESSAGE = t(
+  'Access authorization has expired. Reopen the Web link from Open Science on the host computer, or return to the remote access entry page to pair again.'
 )
 
-class RemoteAccessOffError extends Error {}
+class AuthorizationExpiredError extends Error {}
 
 type Listener = (payload: unknown) => void
 
@@ -57,7 +58,19 @@ const WEB_DOWNLOAD_TIMEOUT_MS = 5 * 60_000
 const WEB_BLOB_DOWNLOAD_MAX_BYTES = 512 * 1024 * 1024
 const EVENT_CONNECTION_ATTEMPTS = 8
 const EVENT_CONNECTION_IDLE_TIMEOUT_MS = 30_000
-const MODEL_OWNED_WEB_RPC_CHANNELS = new Set(['notebook:execute', 'notebook:run-cell'])
+const DOMAIN_OWNED_WEB_RPC_CHANNELS = new Set([
+  'notebook:execute',
+  'notebook:run-cell',
+  'specialist:package-upload-begin',
+  'specialist:package-upload-preview',
+  'specialist:package-upload-abort',
+  'specialist:package-install',
+  'specialist:package-cancel',
+  'settings:install-claude',
+  'settings:install-codebuddy',
+  'settings:install-codex',
+  'settings:install-opencode'
+])
 
 const clientId = sessionStorage.getItem('open-science-web-client') ?? crypto.randomUUID()
 sessionStorage.setItem('open-science-web-client', clientId)
@@ -109,7 +122,7 @@ const withRequestTimeout = async <T>(
 }
 
 const responseError = (response: Response, body: string, fallback: string): Error => {
-  if (response.status === 401) return new RemoteAccessOffError(REMOTE_ACCESS_OFF_MESSAGE)
+  if (response.status === 401) return new AuthorizationExpiredError(AUTHORIZATION_EXPIRED_MESSAGE)
   try {
     const payload = JSON.parse(body) as {
       error?: string | { message?: string }
@@ -154,7 +167,7 @@ const fetchBootstrap = async (): Promise<unknown> => {
         return await response.json()
       })
     } catch (error) {
-      if (error instanceof RemoteAccessOffError) throw error
+      if (error instanceof AuthorizationExpiredError) throw error
       lastError = error
     }
   }
@@ -172,7 +185,7 @@ const showConnectionFailure = (error: unknown): void => {
   const message = connectionMessage()
   if (message) {
     message.textContent =
-      error instanceof RemoteAccessOffError
+      error instanceof AuthorizationExpiredError
         ? detail
         : t('This computer did not finish responding. {{detail}}', { detail })
   }
@@ -224,12 +237,28 @@ const invoke = async (channel: string, args: unknown[]): Promise<unknown> => {
     })
     return { response, body: await response.text() }
   }
-  // Notebook execution has its own optional domain deadline. A transport wall clock must not report
-  // failure while the kernel is still legitimately running; connection liveness owns disconnects.
+  // These operations own their completion/cancellation. Connection liveness, not a generic
+  // wall clock, bounds their transport while the business owner is legitimately working.
   const connectionSignal = eventConnectionController.signal
-  const { response, body } = MODEL_OWNED_WEB_RPC_CHANNELS.has(channel)
-    ? await request(connectionSignal)
-    : await withRequestTimeout(WEB_RPC_TIMEOUT_MS, request)
+  const { response, body } = await (
+    DOMAIN_OWNED_WEB_RPC_CHANNELS.has(channel)
+      ? request(connectionSignal)
+      : withRequestTimeout(
+          WEB_RPC_TIMEOUT_MS,
+          request,
+          channel === 'uploads:append-transfer' || channel === 'uploads:transfer-status'
+            ? connectionSignal
+            : undefined
+        )
+  ).catch((error: unknown) => {
+    // Aborting fetch does not confirm that the business operation was canceled or failed.
+    throw new DOMException(
+      t(
+        'The operation result could not be confirmed. It may still be running. Reconnect and check its status before trying again.'
+      ),
+      error instanceof Error || error instanceof DOMException ? error.name : 'NetworkError'
+    )
+  })
   let payload
   try {
     payload = webRpcResponseSchema.parse(JSON.parse(body, reviveBinary))
@@ -364,7 +393,8 @@ const connectEvents = (): void => {
       return
     }
     eventReconnectAttempt = 0
-    publishEventConnectionPhase('live')
+    // Commit resource invalidation/loading states before the recovery gate enables interaction.
+    flushSync(() => publishEventConnectionPhase('live'))
     window.dispatchEvent(new Event(WEB_EVENTS_OPEN_EVENT))
   })
   socket.addEventListener('close', () => {
@@ -504,7 +534,11 @@ const installWebApi = async (): Promise<EventCursor> => {
           throw error
         } finally {
           if (resource) {
-            await invoke('preview-resources:release', [{ resourceId: resource.id }])
+            await invoke('preview-resources:release', [{ resourceId: resource.id }]).catch(
+              (error: unknown) => {
+                console.error('Failed to release downloaded preview resource', error)
+              }
+            )
           }
         }
       },

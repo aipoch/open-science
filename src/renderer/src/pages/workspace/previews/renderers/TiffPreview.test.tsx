@@ -1,9 +1,16 @@
 // @vitest-environment jsdom
+import { TiffPageDecodeError } from '../tiff-preview-types'
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { decodeTiffFixture, LZW_MULTIPAGE_TIFF, LZW_RGB_TIFF } from '../tiff-test-fixtures'
+import {
+  createUnsupportedFirstPageTiff,
+  createSampleTiff,
+  decodeTiffFixture,
+  LZW_MULTIPAGE_TIFF,
+  LZW_RGB_TIFF
+} from '../tiff-test-fixtures'
 import { decodeTiffPage } from '../tiff-preview'
 import type {
   TiffDecodeWorkerRequest,
@@ -48,6 +55,7 @@ class TestTiffWorker {
         response = {
           type: 'error',
           requestId: request.requestId,
+          ...(error instanceof TiffPageDecodeError ? { pageCount: error.pageCount } : {}),
           message: error instanceof Error ? error.message : String(error)
         }
       }
@@ -255,6 +263,67 @@ describe('TiffPreviewContent', () => {
     expect(Array.from(secondPage.data)).toEqual([0, 0, 255, 255])
   })
 
+  it.each([
+    { samples: [10, 20], label: 'Automatic contrast: 10 – 20' },
+    { samples: [0, 1], label: 'Display range: 0 – 1' }
+  ])('discloses floating intensity mapping: $label', async ({ samples, label }) => {
+    const bytes = createSampleTiff({ samples, components: 1, floating: true })
+    vi.mocked(fetch).mockResolvedValue(new Response(bytes, { status: 200 }))
+    vi.mocked(window.api.previewResources.acquire).mockResolvedValue({
+      id: 'float',
+      url: 'open-science-preview://float/image.tiff',
+      size: bytes.byteLength,
+      mimeType: 'image/tiff',
+      version: 1
+    })
+    root = createRoot(container)
+    await act(async () =>
+      root.render(
+        <TiffPreviewContent
+          {...managedArtifactIdentity}
+          path="/workspace/float.tiff"
+          name="float.tiff"
+        />
+      )
+    )
+    expect(container.textContent).toContain(label)
+    expect(container.querySelector('canvas')).not.toBeNull()
+  })
+
+  it('keeps later pages reachable when the first page uses unsupported compression', async () => {
+    const bytes = createUnsupportedFirstPageTiff()
+    expect(() => decodeTiffPage(bytes, 0)).toThrow('Unsupported TIFF compression: 32773')
+    expect(Array.from(decodeTiffPage(bytes, 1).rgba)).toEqual([0, 0, 255, 255])
+    vi.mocked(fetch).mockImplementation(async () => new Response(bytes.slice(0), { status: 200 }))
+    vi.mocked(window.api.previewResources.acquire).mockResolvedValue({
+      id: 'resource-first-page-error',
+      url: 'open-science-preview://resource-first-page-error/stack.tiff',
+      size: bytes.byteLength,
+      mimeType: 'image/tiff',
+      version: 1
+    })
+    root = createRoot(container)
+    await act(async () => {
+      root.render(
+        <TiffPreviewContent
+          {...managedArtifactIdentity}
+          path="/workspace/stack.tiff"
+          name="stack.tiff"
+        />
+      )
+    })
+    await vi.waitFor(() =>
+      expect(container.textContent).toContain("This TIFF encoding isn't supported for preview")
+    )
+    expect.soft(container.textContent).toContain('Page 1 of 2')
+    expect.soft(window.api.previewResources.release).not.toHaveBeenCalled()
+    const next = container.querySelector<HTMLButtonElement>('[aria-label="Next page"]')
+    expect(next).not.toBeNull()
+    await act(async () => next?.click())
+    await vi.waitFor(() => expect(container.textContent).toContain('Page 2 of 2'))
+    expect(Array.from((putImageData.mock.calls[0][0] as ImageData).data)).toEqual([0, 0, 255, 255])
+  })
+
   it('keeps page controls available after one page fails and returns to a valid page', async () => {
     const bytes = decodeTiffFixture(LZW_MULTIPAGE_TIFF)
     vi.mocked(fetch).mockImplementation(
@@ -273,7 +342,12 @@ describe('TiffPreviewContent', () => {
     })
     workerResponseOverride = (request) =>
       request.pageIndex === 1
-        ? { type: 'error', requestId: request.requestId, message: 'Unsupported TIFF test page' }
+        ? {
+            type: 'error',
+            requestId: request.requestId,
+            message: 'Unsupported TIFF test page',
+            pageCount: 2
+          }
         : undefined
 
     root = createRoot(container)

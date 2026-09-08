@@ -405,6 +405,22 @@ describe('reviewer IPC handlers', () => {
     expect(passed.scopeTurnMessageId).toBe('correction')
   })
 
+  it('preserves the historical scope branch when starting a manual rerun', async () => {
+    const owner = createReviewerCommandOwner({ acpRuntime })
+    const request = {
+      ...createRequest(),
+      scopeTurnMessageId: 'historical-answer',
+      scopeMessageBranchId: 'original-branch'
+    }
+    await expect(owner.run(request)).resolves.toEqual({ started: true })
+    expect(runReview).toHaveBeenCalledWith(
+      expect.objectContaining({
+        scopeTurnMessageId: 'historical-answer',
+        scopeMessageBranchId: 'original-branch'
+      })
+    )
+  })
+
   it('passes a live session loader to the orchestrator instead of a review-start snapshot', async () => {
     sessionLoadOne
       .mockResolvedValueOnce({ id: 'session-1', messages: [{ id: 'original-turn' }] })
@@ -696,8 +712,38 @@ describe('reviewer IPC handlers', () => {
       expect(result).toBe(reviews)
     })
 
-    it('returns reviews unflagged when the session load throws', async () => {
-      const reviews = [{ id: 'review-1', turnMessageId: 'message-1' }]
+    it('distinguishes unreadable current evidence from an ordinary historical pass', async () => {
+      const reviews = [
+        {
+          id: 'review-1',
+          projectId: 'project-1',
+          sessionId: 'session-1',
+          turnMessageId: 'message-1',
+          lifecycle: 'complete',
+          outcome: 'pass',
+          checks: [],
+          submittedChecks: []
+        }
+      ]
+      getReviewsForSession.mockResolvedValue(reviews)
+      sessionLoadOne.mockRejectedValueOnce(
+        Object.assign(new Error('Temporary session read failure'), { code: 'EIO' })
+      )
+      const owner = createReviewerCommandOwner({ acpRuntime })
+
+      const result = await owner.getForSession({
+        projectId: 'project-1',
+        appSessionId: 'session-1'
+      })
+
+      expect(result).toEqual(expect.arrayContaining([expect.objectContaining(reviews[0])]))
+      expect(flagStaleReviews).not.toHaveBeenCalled()
+      expect(result[0].stale).not.toBe(true)
+      expect(result[0].verificationUnavailable).toBe(true)
+    })
+
+    it('retains history with an unavailable verification marker when the session load throws', async () => {
+      const reviews = [{ id: 'review-1', turnMessageId: 'message-1', lifecycle: 'complete' }]
       getReviewsForSession.mockResolvedValue(reviews)
       sessionLoadOne.mockRejectedValueOnce(new Error('session store unavailable'))
       registerReviewerIpcHandlers({ acpRuntime })
@@ -711,10 +757,33 @@ describe('reviewer IPC handlers', () => {
         }
       )
 
-      expect(result).toBe(reviews)
-      // Fail-open: a load failure must not hide stale findings by leaving the detector un-runnable.
+      expect(result).toEqual(
+        reviews.map((review) => ({ ...review, verificationUnavailable: true }))
+      )
+      // A read error is distinct from a missing Session and from a confirmed scope change.
       expect(flagStaleReviews).not.toHaveBeenCalled()
     })
+
+    it.each(['running', 'error'])(
+      'does not attach a historical verification marker to a %s review on a session read error',
+      async (lifecycle) => {
+        const review = { id: 'review-1', turnMessageId: 'message-1', lifecycle }
+        getReviewsForSession.mockResolvedValue([review])
+        sessionLoadOne.mockRejectedValueOnce(
+          Object.assign(new Error('Temporary session read failure'), { code: 'EIO' })
+        )
+        const owner = createReviewerCommandOwner({ acpRuntime })
+
+        const result = await owner.getForSession({
+          projectId: 'project-1',
+          appSessionId: 'session-1'
+        })
+
+        expect(result[0]).toEqual(review)
+        expect(result[0].verificationUnavailable).toBeUndefined()
+        expect(flagStaleReviews).not.toHaveBeenCalled()
+      }
+    )
   })
 
   describe('reviewer:abort-fix-loop handler', () => {

@@ -214,12 +214,17 @@ const composeAcpRuntimeBaseOwners = (options: AcpRuntimeOptions) => {
       ? {
           handlerFor: (appSessionId, projectId, workspaceCwd) => ({
             searchLibrary: async (request) => {
+              const interaction = sessionInteractions.current(appSessionId)
               const result = await options.literatureLibrary!.searchLibrary({
                 ...request,
                 projectId
               })
-              const interaction = sessionInteractions.current(appSessionId)
-              if (interaction?.kind === 'prompt' && interaction.promptMessageId) {
+              if (
+                interaction?.kind === 'prompt' &&
+                interaction.promptMessageId &&
+                !interaction.signal.aborted &&
+                sessionInteractions.current(appSessionId) === interaction
+              ) {
                 options.artifacts?.provenance?.recordLiteratureSearch?.({
                   projectId,
                   appSessionId,
@@ -235,18 +240,48 @@ const composeAcpRuntimeBaseOwners = (options: AcpRuntimeOptions) => {
               }
               return result
             },
-            readAbstract: (request) =>
-              options.literatureLibrary!.readAbstract({
+            readAbstract: async (request) => {
+              const interaction = sessionInteractions.current(appSessionId)
+              const result = await options.literatureLibrary!.readAbstract({
                 ...request,
                 projectId
-              }),
+              })
+              if (
+                result?.abstract.trim() &&
+                interaction?.kind === 'prompt' &&
+                interaction.promptMessageId &&
+                !interaction.signal.aborted &&
+                sessionInteractions.current(appSessionId) === interaction
+              ) {
+                options.artifacts?.provenance?.recordLiteratureAbstractRead?.({
+                  projectId,
+                  appSessionId,
+                  promptMessageId: interaction.promptMessageId,
+                  itemId: result.itemId
+                })
+              }
+              return result
+            },
             readPdf: async (request) => {
+              const interaction = sessionInteractions.current(appSessionId)
               const result = await options.literatureLibrary!.readPdf({
                 ...request,
                 projectId
               })
-              const interaction = sessionInteractions.current(appSessionId)
-              if (result && interaction?.kind === 'prompt' && interaction.promptMessageId) {
+              const passages = result?.evidence.passages
+              const hasContent =
+                Array.isArray(passages) &&
+                passages.some(
+                  (passage) =>
+                    passage && typeof passage.content === 'string' && passage.content.trim()
+                )
+              if (
+                hasContent &&
+                interaction?.kind === 'prompt' &&
+                interaction.promptMessageId &&
+                !interaction.signal.aborted &&
+                sessionInteractions.current(appSessionId) === interaction
+              ) {
                 options.artifacts?.provenance?.recordLiteraturePdfRead?.({
                   projectId,
                   appSessionId,

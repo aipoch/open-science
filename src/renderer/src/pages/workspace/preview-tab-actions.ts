@@ -32,8 +32,10 @@ export const PREVIEW_TAB_ACTION_CATALOG: Record<PreviewTabActionCommand, ActionM
 
 export type PreviewTabActionContext = {
   tabCount: number
+  retryPendingKeys?: ReadonlySet<string>
   // Set by the host (which owns the stores) for linkable PDF file tabs; drives the leading
   // Read-with-agent command's label.
+  pdfContextPending?: boolean
   pdfContext?: PdfContextLinkState
 }
 
@@ -98,6 +100,61 @@ export const getPreviewTabActionRecipe = (
     ])
 }
 
+// Carries the original operation across tab switches or removal without changing the shared menu.
+export class PreviewTabActionError extends Error {
+  constructor(
+    readonly command: PreviewTabActionCommand,
+    readonly fileName: string,
+    readonly retry: () => Promise<void>,
+    cause: unknown,
+    readonly projectId: string | undefined,
+    readonly itemId: string,
+    readonly retryKey: string
+  ) {
+    super('Preview tab action failed', { cause })
+  }
+}
+
+export const getPreviewTabActionRetryKey = (
+  command: PreviewTabActionCommand,
+  item: PreviewItem,
+  projectId: string | undefined
+): string =>
+  JSON.stringify([
+    projectId ?? null,
+    item.id,
+    command,
+    item.type === 'file' ? item.path : null,
+    item.type === 'file' ? (item.selectedVersionId ?? null) : null
+  ])
+
+const retryableFileBinding = (
+  command: PreviewTabActionCommand,
+  deps: PreviewTabActionDeps,
+  pendingKeys?: ReadonlySet<string>
+): ActionMenuBinding<PreviewItem> => ({
+  disabled: (item) =>
+    pendingKeys?.has(getPreviewTabActionRetryKey(command, item, deps.activeProjectId)) ?? false,
+  execute: async (item) => {
+    const retry = async (): Promise<void> => {
+      await runPreviewTabAction(command, item, deps)
+    }
+    try {
+      await retry()
+    } catch (error) {
+      throw new PreviewTabActionError(
+        command,
+        item.title,
+        retry,
+        error,
+        deps.activeProjectId,
+        item.id,
+        getPreviewTabActionRetryKey(command, item, deps.activeProjectId)
+      )
+    }
+  }
+})
+
 export const createPreviewTabActionBindings = (
   context: PreviewTabActionContext,
   deps: PreviewTabActionDeps
@@ -107,15 +164,14 @@ export const createPreviewTabActionBindings = (
     execute: (item) => runPreviewTabAction('close-others', item, deps),
     disabled: context.tabCount <= 1
   },
-  download: { execute: (item) => runPreviewTabAction('download', item, deps) },
-  'copy-path': { execute: (item) => runPreviewTabAction('copy-path', item, deps) },
-  'save-as-artifact': {
-    execute: (item) => runPreviewTabAction('save-as-artifact', item, deps)
-  },
+  download: retryableFileBinding('download', deps, context.retryPendingKeys),
+  'copy-path': retryableFileBinding('copy-path', deps, context.retryPendingKeys),
+  'save-as-artifact': retryableFileBinding('save-as-artifact', deps, context.retryPendingKeys),
   ...(context.pdfContext && deps.togglePdfContext
     ? {
         'toggle-pdf-context': {
           execute: (item: PreviewItem) => runPreviewTabAction('toggle-pdf-context', item, deps),
+          disabled: context.pdfContextPending,
           labelKey: context.pdfContext === 'remove' ? 'Remove PDF from context' : 'Read with agent',
           icon: context.pdfContext === 'remove' ? Link2Off : BookOpen
         }
@@ -168,15 +224,11 @@ export const runPreviewTabAction = (
   }
 
   if (command === 'download') {
-    return downloadManagedFile(item, deps).catch((error: unknown) => {
-      console.error(`Failed to download ${item.name} from the tab menu`, error)
-    })
+    return downloadManagedFile(item, deps)
   }
 
   if (command === 'copy-path') {
-    return deps
-      .copyText(item.path)
-      .catch((error: unknown) => console.error(`Failed to copy the path of ${item.name}`, error))
+    return deps.copyText(item.path)
   }
 
   if (command === 'save-as-artifact') {
@@ -192,8 +244,5 @@ export const runPreviewTabAction = (
         ...(deps.activeProjectId ? { projectId: deps.activeProjectId } : {})
       })
       .then(() => undefined)
-      .catch((error: unknown) => {
-        console.error(`Failed to save ${item.name} as an artifact from the tab menu`, error)
-      })
   }
 }

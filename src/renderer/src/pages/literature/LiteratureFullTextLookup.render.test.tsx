@@ -1,11 +1,17 @@
 // @vitest-environment jsdom
-import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { literatureItemInputSchema, type LiteratureItemView } from '../../../../shared/literature'
+import {
+  literatureItemInputSchema,
+  type LiteratureFullTextRequest,
+  type LiteratureItemView
+} from '../../../../shared/literature'
+import { LiteratureFullTextFinder } from '../../../../main/literature/full-text-finder'
 import { LiteratureFullTextLookup } from './LiteratureFullTextLookup'
 import { useSettingsStore } from '@/stores/settings-store'
 
 const fullText = vi.fn()
+const transfer = vi.fn()
 const item: LiteratureItemView = {
   id: 'reference-1',
   metadataRevision: 1,
@@ -30,6 +36,7 @@ describe('LiteratureFullTextLookup', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     fullText.mockReset()
+    transfer.mockReset().mockResolvedValue({ mode: 'transfer' })
     validate.mockResolvedValue({ valid: true })
     save.mockImplementation(async () =>
       useSettingsStore.setState({ openAlex: { hasApiKey: true } })
@@ -47,10 +54,170 @@ describe('LiteratureFullTextLookup', () => {
     })
     Object.defineProperty(window, 'api', {
       configurable: true,
-      value: { literature: { fullText } }
+      value: {
+        literature: {
+          fullText: (request: LiteratureFullTextRequest) =>
+            request.mode === 'transfer' ? transfer(request) : fullText(request)
+        }
+      }
     })
   })
   afterEach(cleanup)
+  it.each(['attached', 'reopened'])(
+    'retries item refresh after a successful %s transfer without reporting download failure',
+    async (entry) => {
+      const candidate = {
+        id: 'candidate',
+        provider: 'pmc',
+        source: 'PubMed Central',
+        url: 'https://pmc.ncbi.nlm.nih.gov/paper.pdf'
+      }
+      const receipt = {
+        mode: 'transfer',
+        transfer: {
+          id: 'task',
+          itemId: item.id,
+          status: 'succeeded',
+          candidate,
+          attachmentId: 'attachment',
+          versionId: 'version',
+          progress: { phase: 'saving', receivedBytes: 100, totalBytes: 100, bytesPerSecond: 0 }
+        }
+      }
+      fullText.mockResolvedValue({ mode: 'search', candidates: [candidate], notices: [] })
+      if (entry === 'reopened') transfer.mockResolvedValue(receipt)
+      render(<LiteratureFullTextLookup {...props} />)
+      if (entry === 'attached') {
+        const add = await screen.findByRole('button', { name: 'Add attachment' })
+        fullText.mockResolvedValue(receipt)
+        transfer.mockResolvedValue(receipt)
+        fireEvent.click(add)
+      }
+      await waitFor(() =>
+        expect(
+          (screen.getByRole('button', { name: 'Adding PDF…' }) as HTMLButtonElement).disabled
+        ).toBe(true)
+      )
+      const polls = transfer.mock.calls.length
+      await waitFor(() => expect(transfer.mock.calls.length).toBeGreaterThan(polls))
+      expect(screen.queryByText('PDF could not be added')).toBeNull()
+      expect(props.onAdded).not.toHaveBeenCalled()
+      transfer.mockResolvedValue({ ...receipt, item })
+      await waitFor(() => expect(props.onAdded).toHaveBeenCalledOnce())
+      expect(transfer).toHaveBeenCalledWith({
+        mode: 'transfer',
+        itemId: item.id,
+        acknowledgeId: 'task'
+      })
+    }
+  )
+  it('reconnects to the running PDF transfer after the lookup is unmounted and reopened', async () => {
+    let release!: (bytes: Buffer) => void
+    const attachContent = vi.fn(async () => ({ attachmentId: 'attachment', versionId: 'version' }))
+    const finder = new LiteratureFullTextFinder({
+      catalog: { get: async () => item, attachContent },
+      content: {
+        publish: async () => ({
+          id: 'blob',
+          path: 'unused',
+          storageKey: 'blob',
+          sizeBytes: 10n,
+          checksum: 'a'.repeat(64),
+          contentType: 'application/pdf'
+        })
+      },
+      openAlexKey: async () => undefined,
+      fetch: async (input) =>
+        new URL(String(input)).hostname === 'pmc.ncbi.nlm.nih.gov'
+          ? Response.json({ records: [] })
+          : Response.json({
+              resultList: {
+                result: [
+                  {
+                    doi: '10.1234/example',
+                    fullTextUrlList: {
+                      fullTextUrl: [
+                        {
+                          availabilityCode: 'OA',
+                          documentStyle: 'pdf',
+                          site: 'Europe PMC',
+                          url: 'https://europepmc.org/paper.pdf'
+                        }
+                      ]
+                    }
+                  }
+                ]
+              }
+            }),
+      download: async (_url, _limit, report) => {
+        report?.({
+          receivedBytes: 512,
+          totalBytes: 1024,
+          bytesPerSecond: 256,
+          phase: 'downloading'
+        })
+        return new Promise<Buffer>((resolve) => {
+          release = resolve
+        })
+      },
+      pageCount: async () => 2
+    })
+    const attached: Promise<unknown>[] = []
+    const candidateIds: string[] = []
+    fullText.mockImplementation((request) => {
+      const result = finder.run(request)
+      if (request.mode === 'attach') attached.push(result.catch(() => undefined))
+      if (request.mode === 'search')
+        void result.then((response) => {
+          if (response.mode === 'search') candidateIds.push(response.candidates[0].id)
+        })
+      return result
+    })
+    window.api.literature.fullText = fullText
+    const first = render(<LiteratureFullTextLookup {...props} />)
+    fireEvent.click(await screen.findByRole('button', { name: 'Add attachment' }))
+    await screen.findByText('512 B of 1.0 KB · 256 B/s')
+    first.unmount()
+    const reopened = render(<LiteratureFullTextLookup {...props} />)
+    try {
+      // Re-search must not disconnect the UI from the original download owner.
+      await expect
+        .soft(
+          waitFor(() => {
+            expect(screen.queryByRole('progressbar')).not.toBeNull()
+          })
+        )
+        .resolves.toBeUndefined()
+      const add = screen.queryByRole('button', { name: 'Add attachment' })
+      if (add && !(add as HTMLButtonElement).disabled) {
+        fireEvent.click(add)
+        await waitFor(() => expect(attached).toHaveLength(2))
+        await act(async () => {
+          await attached[1]
+        })
+      }
+      expect
+        .soft(
+          screen.queryByText(
+            'PDF could not be added. The link may have expired, require sign-in, or exceed 50 MB. Search again or upload a PDF.'
+          )
+        )
+        .toBeNull()
+      // These observations establish that the old transfer still exists and no duplicate commits.
+      await expect(
+        finder.run({ mode: 'progress', itemId: item.id, candidateId: candidateIds[0] })
+      ).resolves.toMatchObject({ progress: { receivedBytes: 512 } })
+    } finally {
+      await act(async () => {
+        release(Buffer.from('%PDF-1.7\n'))
+        await Promise.all(attached)
+      })
+      await waitFor(() => expect(props.onAdded).toHaveBeenCalledTimes(1))
+      reopened.unmount()
+    }
+    expect(attachContent).toHaveBeenCalledTimes(1)
+  })
+
   it('uses a single error surface when full-text search fails', async () => {
     fullText.mockRejectedValue(new Error('offline'))
     render(<LiteratureFullTextLookup {...props} />)
@@ -77,12 +244,13 @@ describe('LiteratureFullTextLookup', () => {
     expect(await screen.findByText('Configured')).not.toBeNull()
     expect(saveEmail).toHaveBeenCalledWith({ contactEmail: 'research@lab.org' })
     expect(screen.queryByLabelText('Contact email')).toBeNull()
-    expect(fullText).toHaveBeenCalledTimes(2)
+    // Credential UI can update before the lookup effect starts the new search.
+    await waitFor(() => expect(fullText).toHaveBeenCalledTimes(2))
     fireEvent.click(screen.getByRole('button', { name: 'Edit' }))
     fireEvent.click(screen.getByRole('button', { name: 'Remove email' }))
     await screen.findByRole('button', { name: 'Configure Unpaywall' })
     expect(saveEmail).toHaveBeenLastCalledWith({ contactEmail: '' })
-    expect(fullText).toHaveBeenCalledTimes(3)
+    await waitFor(() => expect(fullText).toHaveBeenCalledTimes(3))
   })
 
   it.each(['pmc-unavailable', 'unpaywall-unavailable'])(
@@ -109,10 +277,31 @@ describe('LiteratureFullTextLookup', () => {
               phase: 'downloading'
             }
           }
-        if (request.mode === 'attach')
+        if (request.mode === 'attach') {
+          transfer.mockResolvedValue({
+            mode: 'transfer',
+            transfer: {
+              id: 'task',
+              itemId: item.id,
+              candidate: {
+                id: 'pdf-1',
+                provider: 'europe-pmc',
+                source: 'Europe PMC',
+                url: 'https://europepmc.org/paper.pdf'
+              },
+              status: 'running',
+              progress: {
+                receivedBytes: 512,
+                totalBytes: known ? 1024 : undefined,
+                bytesPerSecond: 256,
+                phase: 'downloading'
+              }
+            }
+          })
           return new Promise((resolve) => {
             finish = resolve
           })
+        }
         return {
           mode: 'search',
           notices: [],
@@ -184,7 +373,7 @@ describe('LiteratureFullTextLookup', () => {
     expect(validate).toHaveBeenCalledWith({ apiKey: 'test-key' })
     expect(save).toHaveBeenCalledWith({ apiKey: 'test-key' })
     expect(screen.queryByLabelText('OpenAlex API key')).toBeNull()
-    expect(fullText).toHaveBeenCalledTimes(2)
+    await waitFor(() => expect(fullText).toHaveBeenCalledTimes(2))
   })
 
   it('keeps a rejected key editable and does not save or restart the search', async () => {

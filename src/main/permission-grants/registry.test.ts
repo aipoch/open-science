@@ -7,6 +7,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { createProjectDbClient, migrateApplicationDatabase } from '../projects/prisma-client'
 import { createPermissionGrantRegistry, PermissionGrantTargetUnavailableError } from './registry'
+import { createPermissionGrantProjectionController } from './projection-controller'
+import { capabilityFromLegacyCategory, commandPrefixPermissionCategory } from './capability'
 
 let storageRoot: string | undefined
 let clients: PrismaClient[] = []
@@ -31,6 +33,83 @@ const openClient = async (): Promise<PrismaClient> => {
 }
 
 describe('PermissionGrantRegistry', () => {
+  it('persists only reviewed command-group summaries across reopen and Undo', async () => {
+    const client = await openClient()
+    let registry = await createPermissionGrantRegistry({ getClient: async () => client })
+    const capability = capabilityFromLegacyCategory(
+      commandPrefixPermissionCategory(['git', 'status'])!
+    )!
+    const grant = await registry.remember({ capability, scope: { kind: 'global' } })
+    expect(grant).toMatchObject({ approvalSummary: 'Git: working tree status' })
+    registry = await createPermissionGrantRegistry({ getClient: async () => client })
+    expect(await registry.list()).toMatchObject([{ approvalSummary: 'Git: working tree status' }])
+    const revoked = await registry.revoke({ grants: [grant] })
+    expect(
+      (await registry.restore({ undoToken: revoked.receipt!.undoToken })).grants
+    ).toMatchObject([{ approvalSummary: 'Git: working tree status' }])
+    for (const prefix of [
+      ['git', 'status', '/private/research'],
+      ['custom-cli', 'private-value']
+    ]) {
+      const unknown = await registry.remember({
+        capability: capabilityFromLegacyCategory(commandPrefixPermissionCategory(prefix)!)!,
+        scope: { kind: 'global' }
+      })
+      expect(unknown).not.toHaveProperty('approvalSummary')
+    }
+    const persisted = await client.$queryRawUnsafe(
+      'SELECT "approvalSummary" FROM "PermissionGrant"'
+    )
+    expect(JSON.stringify(persisted)).not.toMatch(/private|custom-cli/)
+  })
+
+  it('PG02 provides a usable Undo window after slow revoke-response metadata reads', async () => {
+    const client = await openClient()
+    let now = Date.parse('2026-09-07T00:00:00Z')
+    const registry = await createPermissionGrantRegistry({
+      getClient: async () => client,
+      now: () => new Date(now)
+    })
+    const grant = await registry.remember({
+      capability: { kind: 'file_operation', key: 'file:read' },
+      scope: { kind: 'global' }
+    })
+    let delayed = false
+    const controller = createPermissionGrantProjectionController({
+      registry,
+      projects: {
+        list: async () => {
+          if (!delayed) {
+            now += 9000
+            delayed = true
+          }
+          return []
+        }
+      },
+      sessions: { metadataSnapshot: async () => ({ sessions: [], isComplete: true }) },
+      publishChanged: vi.fn()
+    })
+    try {
+      const result = await controller.revoke({
+        grants: [{ id: grant.id, revision: grant.revision }]
+      })
+      expect(delayed).toBe(true)
+      expect(result.receipt).toBeDefined()
+      expect(result.grants).toEqual([])
+      expect(await client.$queryRawUnsafe('SELECT "id" FROM "PermissionGrant"')).toEqual([])
+      expect.soft(result.receipt!.expiresAt - now).toBeGreaterThanOrEqual(8000)
+      const request = { undoToken: result.receipt!.undoToken }
+      expect.soft(await controller.extendUndo(request)).toBeDefined()
+      const restored = await controller.restore(request)
+      expect.soft(restored.grants.map((row) => row.id)).toContain(grant.id)
+      expect(await client.$queryRawUnsafe('SELECT "id" FROM "PermissionGrant"')).toEqual([
+        { id: grant.id }
+      ])
+    } finally {
+      controller.dispose()
+    }
+  })
+
   it('reacquires the shared client after an exclusive database disconnect', async () => {
     const firstClient = await openClient()
     let retired = false

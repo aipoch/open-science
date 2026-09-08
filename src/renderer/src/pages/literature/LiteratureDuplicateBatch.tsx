@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { LoaderCircle } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { Button } from '@/components/ui/button'
@@ -19,18 +19,32 @@ import type {
 export function LiteratureDuplicateBatch({
   groups,
   onBusy,
-  onMerged
+  onMerged,
+  onRefresh = onMerged,
+  onCompleted,
+  result
 }: {
   groups: LiteratureDuplicateGroup[]
   onBusy: (busy: boolean) => void
   onMerged: () => void
+  onRefresh?: () => void
+  onCompleted?: (batch: NonNullable<LiteratureCatalogReceipt['batch']>) => void
+  result?: LiteratureCatalogReceipt['batch']
 }): React.JSX.Element {
   const { t } = useTranslation()
-  const [batch, setBatch] = useState<LiteratureCatalogReceipt['batch']>()
-  const [done, setDone] = useState(false)
+  const [batch, setBatch] = useState<LiteratureCatalogReceipt['batch']>(result)
+  const [done, setDone] = useState(Boolean(result))
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState(false)
   const [strategy, setStrategy] = useState<LiteratureMergeStrategy>('conflict-free')
+  const mounted = useRef(true)
+  useEffect(() => {
+    mounted.current = true
+    return () => {
+      mounted.current = false
+      onBusy(false)
+    }
+  }, [onBusy])
   const previewGroups = useRef<string[][]>([])
   const run = async (mode: 'preview' | 'commit'): Promise<void> => {
     setBusy(true)
@@ -49,14 +63,18 @@ export function LiteratureDuplicateBatch({
           : {}),
         groups: previewGroups.current
       })
+      if (mode === 'commit' && receipt.batch) onCompleted?.(receipt.batch)
+      if (!mounted.current) return
       if (!receipt.batch) throw new Error('Missing duplicate batch result')
       setBatch(receipt.batch)
       setDone(mode === 'commit')
     } catch {
-      setError(true)
+      if (mounted.current) setError(true)
     } finally {
-      setBusy(false)
-      onBusy(false)
+      if (mounted.current) {
+        setBusy(false)
+        onBusy(false)
+      }
       // A lost response can follow committed groups; always invalidate the library after a commit.
       if (mode === 'commit') onMerged()
     }
@@ -78,39 +96,45 @@ export function LiteratureDuplicateBatch({
   }
   return (
     <div className="space-y-3 rounded-lg border border-border-300/80 bg-bg-100 p-4">
-      <Select
-        value={strategy}
-        disabled={busy || done}
-        onValueChange={(value) => {
-          setStrategy(value as LiteratureMergeStrategy)
-          setBatch(undefined)
-          setError(false)
-        }}
-      >
-        <SelectTrigger aria-label={t('Merge strategy')}>
-          <SelectValue />
-        </SelectTrigger>
-        <SelectContent>
-          <SelectItem value="conflict-free">{t('Merge conflict-free groups')}</SelectItem>
-          <SelectItem value="most-complete">{t('Keep the most complete reference')}</SelectItem>
-          <SelectItem value="oldest">{t('Keep the earliest added reference')}</SelectItem>
-          <SelectItem value="newest">{t('Keep the most recently updated reference')}</SelectItem>
-        </SelectContent>
-      </Select>
-      <p className="text-sm text-muted-foreground">
-        {strategy === 'conflict-free'
-          ? t(
-              'Only groups with matching identifiers and no conflicting fields are merged. The oldest reference is kept; attachments, tags and destinations are preserved. Groups with more than 20 references need individual review.'
-            )
-          : t(
-              'Keep the chosen reference’s values when fields conflict and fill its empty fields. Attachments, tags and links are preserved. Ambiguous identifiers and groups over 20 references require individual review.'
-            )}
-      </p>
+      {!done ? (
+        <>
+          <Select
+            value={strategy}
+            disabled={busy || done}
+            onValueChange={(value) => {
+              setStrategy(value as LiteratureMergeStrategy)
+              setBatch(undefined)
+              setError(false)
+            }}
+          >
+            <SelectTrigger aria-label={t('Merge strategy')}>
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="conflict-free">{t('Merge conflict-free groups')}</SelectItem>
+              <SelectItem value="most-complete">{t('Keep the most complete reference')}</SelectItem>
+              <SelectItem value="oldest">{t('Keep the earliest added reference')}</SelectItem>
+              <SelectItem value="newest">
+                {t('Keep the most recently updated reference')}
+              </SelectItem>
+            </SelectContent>
+          </Select>
+          <p className="text-sm text-muted-foreground">
+            {strategy === 'conflict-free'
+              ? t(
+                  'Only groups with matching identifiers and no conflicting fields are merged. The oldest reference is kept; attachments, tags and destinations are preserved. Groups with more than 20 references need individual review.'
+                )
+              : t(
+                  'Keep the chosen reference’s values when fields conflict and fill its empty fields. Attachments, tags and links are preserved. Ambiguous identifiers and groups over 20 references require individual review.'
+                )}
+          </p>
+        </>
+      ) : null}
       {error ? (
         <LiteratureErrorNotice
           tone="amber"
           title={t('Duplicate processing failed. Refresh the list before trying again.')}
-          primaryButton={{ label: t('Refresh'), onClick: onMerged }}
+          primaryButton={{ label: t('Refresh'), onClick: onRefresh }}
         />
       ) : null}
       {batch?.groups && !done ? (

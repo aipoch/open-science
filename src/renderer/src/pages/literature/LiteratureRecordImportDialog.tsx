@@ -67,6 +67,9 @@ export const LiteratureRecordImportDialog = ({
   const skippedImportCount = invalidImportCount + truncatedImportCount
   const existingCount =
     recordImport.preview?.entries.filter((entry) => entry.status === 'existing').length ?? 0
+  const conflictCount =
+    recordImport.preview?.entries.filter((entry) => entry.status === 'conflict').length ?? 0
+  const blockedByConflict = conflictCount > 0 && duplicatePolicy !== 'separate'
   return (
     <Dialog.Root
       open
@@ -137,11 +140,16 @@ export const LiteratureRecordImportDialog = ({
                   </span>
                 </div>
                 {!recordImport.preview.imported && recordImport.failedCount === undefined ? (
-                  <div className="grid grid-cols-3 divide-x divide-border-300/80 border-y border-border-300/80 py-3 text-center">
+                  <div
+                    className={cn(
+                      'grid divide-x divide-border-300/80 border-y border-border-300/80 py-3 text-center',
+                      conflictCount > 0 ? 'grid-cols-4' : 'grid-cols-3'
+                    )}
+                  >
                     <div>
                       <strong className="block text-xl tabular-nums">
                         {recordImport.preview.items.length -
-                          (duplicatePolicy === 'separate' ? 0 : existingCount)}
+                          (duplicatePolicy === 'separate' ? 0 : existingCount + conflictCount)}
                       </strong>
                       <span className="text-xs text-muted-foreground">{t('New references')}</span>
                     </div>
@@ -153,6 +161,14 @@ export const LiteratureRecordImportDialog = ({
                       <strong className="block text-xl tabular-nums">{skippedImportCount}</strong>
                       <span className="text-xs text-muted-foreground">{t('Skipped')}</span>
                     </div>
+                    {conflictCount > 0 ? (
+                      <div>
+                        <strong className="block text-xl tabular-nums">{conflictCount}</strong>
+                        <span className="text-xs text-muted-foreground">
+                          {t('Conflicting identifiers')}
+                        </span>
+                      </div>
+                    ) : null}
                   </div>
                 ) : null}
                 {!recordImport.preview.imported ? (
@@ -160,6 +176,14 @@ export const LiteratureRecordImportDialog = ({
                     value={duplicatePolicy}
                     onChange={onDuplicatePolicyChange}
                     disabled={isImportingRecords}
+                  />
+                ) : null}
+                {conflictCount > 0 && !recordImport.preview.imported ? (
+                  <LiteratureErrorNotice
+                    title={t('Conflicting identifiers')}
+                    description={t(
+                      'Some identifiers disagree or match different references. Correct the source file or keep separate copies of every reference in this import.'
+                    )}
                   />
                 ) : null}
                 {recordImport.preview.truncated && !recordImport.preview.imported ? (
@@ -186,7 +210,7 @@ export const LiteratureRecordImportDialog = ({
                   </p>
                 ) : (
                   <p className="text-xs leading-relaxed text-muted-foreground">
-                    {duplicatePolicy === 'reuse'
+                    {duplicatePolicy === 'reuse' && conflictCount === 0
                       ? t(
                           'Matching DOI, PMID or PMCID references will be reused. PDFs are not downloaded.'
                         )
@@ -285,11 +309,13 @@ export const LiteratureRecordImportDialog = ({
                               </p>
                               {entry.status !== 'ready' ? (
                                 <span className="shrink-0 rounded bg-bg-200 px-2 py-0.5 text-[11px] text-muted-foreground">
-                                  {entry.status === 'existing'
-                                    ? t('Existing')
-                                    : entry.status === 'warning'
-                                      ? t('Warning')
-                                      : t('Invalid')}
+                                  {entry.status === 'conflict'
+                                    ? t('Conflicting identifiers')
+                                    : entry.status === 'existing'
+                                      ? t('Existing')
+                                      : entry.status === 'warning'
+                                        ? t('Warning')
+                                        : t('Invalid')}
                                 </span>
                               ) : null}
                             </div>
@@ -298,15 +324,36 @@ export const LiteratureRecordImportDialog = ({
                                 {itemDescription(entry.item) || itemTypeLabels[entry.item.itemType]}
                               </p>
                             ) : null}
+                            {entry.conflict ? (
+                              <div className="mt-1 space-y-1 text-xs [overflow-wrap:anywhere]">
+                                <p>
+                                  {entry.conflict.identifiers
+                                    .map(({ scheme, value }) => `${scheme.toUpperCase()}: ${value}`)
+                                    .join(' · ')}
+                                </p>
+                                {entry.conflict.matches.map((match) => (
+                                  <p key={match.itemId ?? match.inputIndex}>
+                                    {match.inputIndex === undefined
+                                      ? t('Library reference: {{title}}', { title: match.title })
+                                      : t('File reference {{number}}: {{title}}', {
+                                          number: match.inputIndex + 1,
+                                          title: match.title
+                                        })}
+                                  </p>
+                                ))}
+                              </div>
+                            ) : null}
                             {entry.warnings.length > 0 ? (
                               <p className="mt-1 text-xs text-status-warning-foreground dark:text-status-warning-dark-foreground">
                                 {entry.warnings
                                   .map((warning) =>
-                                    warning === 'missing-authors'
-                                      ? t('Missing authors')
-                                      : warning === 'missing-year'
-                                        ? t('Missing year')
-                                        : t('Missing journal or venue')
+                                    warning === 'uncertain-author-name'
+                                      ? t('Check author names. Original text is kept in Extra.')
+                                      : warning === 'missing-authors'
+                                        ? t('Missing authors')
+                                        : warning === 'missing-year'
+                                          ? t('Missing year')
+                                          : t('Missing journal or venue')
                                   )
                                   .join(' · ')}
                               </p>
@@ -361,6 +408,7 @@ export const LiteratureRecordImportDialog = ({
                   type="button"
                   disabled={
                     isImportingRecords ||
+                    blockedByConflict ||
                     !recordImport.preview ||
                     recordImport.preview.items.length === 0
                   }

@@ -27,6 +27,11 @@ const registerRuntimeIpcHandlers = (
   options: RuntimeIpcOptions = {}
 ): void => {
   ipcMainHandle('runtime:list-environments', () => workflows.listEnvironments())
+  ipcMainHandle(
+    'runtime:set-sandbox-access',
+    (_event, request: { language: NotebookLanguage; envId: string; authorized: boolean }) =>
+      workflows.setSandboxAccess(request)
+  )
 
   ipcMainHandle(
     'runtime:list-packages',

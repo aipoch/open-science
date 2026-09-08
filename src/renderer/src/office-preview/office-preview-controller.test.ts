@@ -50,6 +50,38 @@ describe('connectOfficePreviewRuntime', () => {
     expect(disposeRender).toHaveBeenCalledOnce()
   })
 
+  it('hides failed runtime content and ignores reports from a disconnected session', async () => {
+    let startListener: ((start: never) => void) | undefined
+    let emit: RunOfficePreviewOptions['reportState'] | undefined
+    const reportState = vi.fn()
+    const container = document.createElement('div')
+    const disconnect = connectOfficePreviewRuntime({
+      container,
+      bridge: {
+        onStart: (listener) => {
+          startListener = listener
+          return vi.fn<() => void>()
+        },
+        reportState
+      },
+      runPreview: async (options) => {
+        emit = options.reportState
+        return vi.fn<() => void>()
+      }
+    })
+    startListener?.({ sessionId: 'session-1' } as never)
+    await vi.waitFor(() => expect(emit).toBeTypeOf('function'))
+    emit?.({ sessionId: 'session-1', phase: 'ready' })
+    expect(container.dataset.officePreviewReady).toBe('true')
+    emit?.({ sessionId: 'session-1', phase: 'error', error: 'RENDER_FAILED' })
+    expect(container.dataset.officePreviewReady).toBe('false')
+    await disconnect()
+    const count = reportState.mock.calls.length
+    emit?.({ sessionId: 'session-1', phase: 'ready' })
+    expect(reportState).toHaveBeenCalledTimes(count)
+    expect(container.dataset.officePreviewReady).toBe('false')
+  })
+
   it('reports the stable error code returned by the isolated runtime', async () => {
     vi.spyOn(console, 'error').mockImplementation(() => undefined)
     let startListener: ((start: never) => void) | undefined
@@ -57,7 +89,7 @@ describe('connectOfficePreviewRuntime', () => {
     const bridge = {
       onStart: vi.fn((listener) => {
         startListener = listener
-        return vi.fn()
+        return vi.fn<() => void>()
       }),
       reportState
     }
@@ -104,7 +136,7 @@ describe('connectOfficePreviewRuntime', () => {
     const bridge = {
       onStart: vi.fn((listener) => {
         startListener = listener
-        return vi.fn()
+        return vi.fn<() => void>()
       }),
       reportState
     }
@@ -129,7 +161,7 @@ describe('connectOfficePreviewRuntime', () => {
       })
       expect(container.dataset.officePreviewReady).toBe('false')
       options.reportState({ sessionId: start.sessionId, phase: 'ready' })
-      return vi.fn()
+      return vi.fn<() => void>()
     })
 
     connectOfficePreviewRuntime({ bridge, container, runPreview })

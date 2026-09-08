@@ -588,32 +588,42 @@ describe('AcpRuntimeCoordinator', () => {
     }
   )
 
-  it('reconnects only targeted runtimes using the edited provider', async () => {
-    const created: ReturnType<typeof createFakeRuntime>[] = []
-    const coordinator = new AcpRuntimeCoordinator((callbacks) => {
-      const fake = createFakeRuntime({
-        frameworkId: 'claude-code',
-        sessionIds: [`session-${created.length}`],
-        callbacks
+  it.each([
+    ['claude-code', 'model'],
+    ['claude-code', undefined],
+    ['opencode', 'model'],
+    ['opencode', undefined],
+    ['codex', 'model'],
+    ['codex', undefined]
+  ] as const)(
+    'reconnects only targeted runtimes using the changed provider for %s with model %s',
+    async (frameworkId, model) => {
+      const created: ReturnType<typeof createFakeRuntime>[] = []
+      const coordinator = new AcpRuntimeCoordinator((callbacks) => {
+        const fake = createFakeRuntime({
+          frameworkId,
+          sessionIds: [`session-${created.length}`],
+          callbacks
+        })
+        created.push(fake)
+        return fake.runtime
       })
-      created.push(fake)
-      return fake.runtime
-    })
-    const target = (providerId: string): AcpSessionAgentTarget => ({
-      frameworkId: 'claude-code',
-      providerId,
-      model: 'model',
-      reasoningEffort: 'high'
-    })
+      const target = (providerId: string): AcpSessionAgentTarget => ({
+        frameworkId,
+        providerId,
+        ...(model ? { model } : {}),
+        reasoningEffort: 'high'
+      })
 
-    await coordinator.createSession({ agentTarget: target('provider-a') })
-    await coordinator.createSession({ agentTarget: target('provider-b') })
-    await coordinator.requestProviderReconnect(['provider-a'], false)
+      await coordinator.createSession({ agentTarget: target('provider-a') })
+      await coordinator.createSession({ agentTarget: target('provider-b') })
+      await coordinator.requestProviderReconnect(['provider-a'], false)
 
-    expect(created[0].requestProviderReconnect).not.toHaveBeenCalled()
-    expect(created[1].requestProviderReconnect).toHaveBeenCalledOnce()
-    expect(created[2].requestProviderReconnect).not.toHaveBeenCalled()
-  })
+      expect(created[0].requestProviderReconnect).not.toHaveBeenCalled()
+      expect(created[1].requestProviderReconnect).toHaveBeenCalledOnce()
+      expect(created[2].requestProviderReconnect).not.toHaveBeenCalled()
+    }
+  )
 
   it('retires an unused targeted runtime after Session creation fails', async () => {
     const created: ReturnType<typeof createFakeRuntime>[] = []
@@ -3189,78 +3199,203 @@ describe('AcpRuntimeCoordinator', () => {
     await reloadRequest
   })
 
-  it('uses a fresh runtime generation on the next prompt after Project Agent Context changes', async () => {
-    let storedAgentContext = 'Always cite DOIs.'
-    const promptContexts: string[] = []
-    const created: ReturnType<typeof createFakeRuntime>[] = []
-    const coordinator = new AcpRuntimeCoordinator((callbacks) => {
-      const generationAgentContext = storedAgentContext
-      const fake = createFakeRuntime({
-        frameworkId: 'claude-code',
-        sessionIds: created.length === 0 ? ['agent-session'] : ['fresh-session'],
-        callbacks,
-        prompt: async () => {
-          promptContexts.push(generationAgentContext)
-          return { stopReason: 'end_turn' }
+  it.each(['Prefer Python.', ''])(
+    'reloads only the affected project runtime when context becomes %j',
+    async (nextContext) => {
+      let storedAgentContext = 'Always cite DOIs.'
+      const promptContexts: string[] = []
+      const created: ReturnType<typeof createFakeRuntime>[] = []
+      const coordinator = new AcpRuntimeCoordinator((callbacks) => {
+        const generationAgentContext = storedAgentContext
+        const fake = createFakeRuntime({
+          frameworkId: 'claude-code',
+          sessionIds: created.length === 0 ? ['agent-session'] : ['fresh-session'],
+          callbacks,
+          prompt: async () => {
+            promptContexts.push(generationAgentContext)
+            return { stopReason: 'end_turn' }
+          }
+        })
+        created.push(fake)
+        return fake.runtime
+      })
+      const project = {
+        id: 'project-1',
+        name: 'Research',
+        description: '',
+        agentContext: storedAgentContext,
+        isExample: false,
+        createdAt: 1,
+        updatedAt: 2
+      }
+      const repository = {
+        list: vi.fn(),
+        get: vi.fn(async () => ({ ...project, agentContext: storedAgentContext })),
+        create: vi.fn(),
+        update: vi.fn(async (request) => {
+          storedAgentContext = request.agentContext ?? storedAgentContext
+          return { ...project, agentContext: storedAgentContext, updatedAt: 3 }
+        })
+      }
+      const handlers = createProjectHandlers(
+        repository,
+        {
+          deleteProject: vi.fn(),
+          listDeletionCleanup: vi.fn().mockResolvedValue([]),
+          retryDeletionCleanup: vi.fn(),
+          waitForProjectOperations: vi.fn().mockResolvedValue(undefined)
+        },
+        {
+          updateArchive: vi.fn(),
+          onAgentContextChanged: (projectId) => {
+            void coordinator.requestProjectAgentContextReload(projectId)
+          }
+        }
+      )
+      const session = await coordinator.createSession({ projectId: project.id })
+
+      const other = await coordinator.createSession({
+        projectId: 'project-b',
+        agentTarget: {
+          frameworkId: 'claude-code',
+          providerId: 'provider-b',
+          model: 'model',
+          reasoningEffort: 'high'
         }
       })
+      const otherRuntime = created.find((fake) =>
+        fake.createSession.mock.calls.some(([request]) => request?.projectId === 'project-b')
+      )!
+      const affectedRuntime = created[0]
+
+      await handlers.update({
+        id: project.id,
+        agentContext: nextContext,
+        expectedUpdatedAt: project.updatedAt
+      })
+
+      expect.soft(otherRuntime.requestRetirement).not.toHaveBeenCalled()
+      expect.soft(coordinator.getSnapshot().sessionIds).toContain(other.sessionId)
+      expect(affectedRuntime.requestRetirement).toHaveBeenCalledOnce()
+      expect(coordinator.getSnapshot().sessionIds).not.toContain(session.sessionId)
+      await coordinator.resumeSession({
+        sessionId: session.sessionId,
+        cwd: '/workspace',
+        projectId: project.id,
+        previousFrameworkId: 'claude-code'
+      })
+      await coordinator.sendPrompt({ sessionId: session.sessionId, text: 'Use the current policy' })
+
+      expect(promptContexts).toEqual([nextContext])
+      expect(created[0].sendPrompt).not.toHaveBeenCalled()
+      expect(created.at(-1)!.resumeSession).toHaveBeenCalledOnce()
+      expect(created.at(-1)!.sendPrompt).toHaveBeenCalledOnce()
+      await coordinator.sendPrompt({ sessionId: other.sessionId, text: 'Continue without resume' })
+      expect(otherRuntime.sendPrompt).toHaveBeenCalledOnce()
+    }
+  )
+
+  it.each([
+    { hasPriorOwner: true, changedProjectId: 'project-a' },
+    { hasPriorOwner: false, changedProjectId: 'project-a' },
+    { hasPriorOwner: false, changedProjectId: 'project-b' }
+  ])(
+    'scopes pending adoption retirement to $changedProjectId (prior owner: $hasPriorOwner)',
+    async ({ hasPriorOwner, changedProjectId }) => {
+      const adoption = createDeferred<void>()
+      const created: ReturnType<typeof createFakeRuntime>[] = []
+      const coordinator = new AcpRuntimeCoordinator((callbacks) => {
+        const fake = createFakeRuntime({
+          frameworkId: 'claude-code',
+          sessionIds: [`session-${created.length}`],
+          callbacks,
+          ...(created.length === 0 ? {} : { beforeResume: () => adoption.promise })
+        })
+        created.push(fake)
+        return fake.runtime
+      })
+      const sessionId = hasPriorOwner
+        ? (await coordinator.createSession({ projectId: 'project-a' })).sessionId
+        : 'restored-session'
+      const resume = coordinator.resumeSession({
+        sessionId,
+        projectId: 'project-a',
+        cwd: '/workspace',
+        previousFrameworkId: 'claude-code',
+        agentTarget: {
+          frameworkId: 'claude-code',
+          providerId: 'incoming-provider',
+          model: 'model',
+          reasoningEffort: 'high'
+        }
+      })
+      await vi.waitFor(() => expect(created[1]?.resumeSession).toHaveBeenCalledOnce())
+      await coordinator.requestProjectAgentContextReload(changedProjectId)
+      adoption.resolve()
+      if (changedProjectId === 'project-a') {
+        expect.soft(created[1].requestRetirement).toHaveBeenCalledOnce()
+        await expect(resume).rejects.toThrow('adoption was superseded')
+      } else {
+        expect(created[1].requestRetirement).not.toHaveBeenCalled()
+        await expect(resume).resolves.toMatchObject({ sessionId })
+        await coordinator.sendPrompt({ sessionId, text: 'Continue without another resume' })
+        expect(created[1].sendPrompt).toHaveBeenCalledOnce()
+      }
+    }
+  )
+
+  it.each(['project-a', 'project-b'])(
+    'scopes unpublished session creation retirement to %s',
+    async (changedProjectId) => {
+      const creation = createDeferred<void>()
+      const created: ReturnType<typeof createFakeRuntime>[] = []
+      const coordinator = new AcpRuntimeCoordinator((callbacks) => {
+        const fake = createFakeRuntime({
+          frameworkId: 'claude-code',
+          sessionIds: [`session-${created.length}`],
+          callbacks
+        })
+        const createSession =
+          fake.createSession.getMockImplementation() as AcpRuntime['createSession']
+        fake.createSession.mockImplementation(async (request) => {
+          await creation.promise
+          return createSession(request)
+        })
+        created.push(fake)
+        return fake.runtime
+      })
+      const pending = coordinator.createSession({ projectId: 'project-a' })
+      await vi.waitFor(() => expect(created[0].createSession).toHaveBeenCalledOnce())
+      await coordinator.requestProjectAgentContextReload(changedProjectId)
+      creation.resolve()
+      const session = await pending
+      const prompt = coordinator.sendPrompt({
+        sessionId: session.sessionId,
+        text: 'Use current project context'
+      })
+      if (changedProjectId === 'project-a') {
+        expect.soft(created[0].requestRetirement).toHaveBeenCalledOnce()
+        await expect(prompt).rejects.toThrow('resume')
+      } else {
+        expect(created[0].requestRetirement).not.toHaveBeenCalled()
+        await expect(prompt).resolves.toMatchObject({ stopReason: 'end_turn' })
+      }
+    }
+  )
+
+  it('removes failed session creations from project-context retirement', async () => {
+    const created: ReturnType<typeof createFakeRuntime>[] = []
+    const coordinator = new AcpRuntimeCoordinator((callbacks) => {
+      const fake = createFakeRuntime({ frameworkId: 'claude-code', sessionIds: [], callbacks })
+      fake.createSession.mockRejectedValue(new Error('creation failed'))
       created.push(fake)
       return fake.runtime
     })
-    const project = {
-      id: 'project-1',
-      name: 'Research',
-      description: '',
-      agentContext: storedAgentContext,
-      isExample: false,
-      createdAt: 1,
-      updatedAt: 2
-    }
-    const repository = {
-      list: vi.fn(),
-      get: vi.fn(async () => ({ ...project, agentContext: storedAgentContext })),
-      create: vi.fn(),
-      update: vi.fn(async (request) => {
-        storedAgentContext = request.agentContext ?? storedAgentContext
-        return { ...project, agentContext: storedAgentContext, updatedAt: 3 }
-      })
-    }
-    const handlers = createProjectHandlers(
-      repository,
-      {
-        deleteProject: vi.fn(),
-        listDeletionCleanup: vi.fn().mockResolvedValue([]),
-        retryDeletionCleanup: vi.fn(),
-        waitForProjectOperations: vi.fn().mockResolvedValue(undefined)
-      },
-      {
-        updateArchive: vi.fn(),
-        onAgentContextChanged: () => {
-          void coordinator.requestProjectAgentContextReload()
-        }
-      }
+    await expect(coordinator.createSession({ projectId: 'project-a' })).rejects.toThrow(
+      'creation failed'
     )
-    const session = await coordinator.createSession({ projectId: project.id })
-
-    await handlers.update({
-      id: project.id,
-      agentContext: 'Prefer Python.',
-      expectedUpdatedAt: project.updatedAt
-    })
-
-    expect(coordinator.getSnapshot().sessionIds).not.toContain(session.sessionId)
-    await coordinator.resumeSession({
-      sessionId: session.sessionId,
-      cwd: '/workspace',
-      projectId: project.id,
-      previousFrameworkId: 'claude-code'
-    })
-    await coordinator.sendPrompt({ sessionId: session.sessionId, text: 'Use the current policy' })
-
-    expect(promptContexts).toEqual(['Prefer Python.'])
-    expect(created[0].sendPrompt).not.toHaveBeenCalled()
-    expect(created[1].resumeSession).toHaveBeenCalledOnce()
-    expect(created[1].sendPrompt).toHaveBeenCalledOnce()
+    await coordinator.requestProjectAgentContextReload('project-a')
+    expect(created[0].requestRetirement).not.toHaveBeenCalled()
   })
 
   it('publishes prompt ownership only from the runtime that currently owns the session', async () => {

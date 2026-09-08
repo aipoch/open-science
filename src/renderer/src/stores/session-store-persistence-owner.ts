@@ -6,7 +6,7 @@ import type {
 } from '@agentclientprotocol/sdk'
 import type { StoreApi } from 'zustand'
 
-import type { ElicitationProjection } from '../../../shared/acp'
+import type { ElicitationProjection, ElicitationValue } from '../../../shared/acp'
 import type { ActivePlanProjection } from '../../../shared/session-plan/contract'
 import { DEFAULT_PERMISSION_PROFILE } from '../../../shared/permission-profiles'
 import type { PermissionProfileId } from '../../../shared/permission-profiles'
@@ -76,6 +76,13 @@ export type ToolActivity = {
 }
 export type ChatArtifact = PersistedArtifact & { isPublished?: boolean }
 
+// Renderer memory only: edits are separate from confirmed, durable draftAnswers.
+export type ElicitationEditDraft = {
+  requestId: string
+  values: Record<string, ElicitationValue | undefined>
+  activeQuestionIndex: number
+}
+
 export type ChatSession = Omit<
   PersistedChatSession,
   'messages' | 'activities' | 'permissionProfile' | 'artifacts'
@@ -84,6 +91,7 @@ export type ChatSession = Omit<
   permissionProfile?: PermissionProfileId
   messages: ChatMessage[]
   activities?: ToolActivity[]
+  elicitationEditDrafts?: Record<string, ElicitationEditDraft>
   activePlanProjection?: ActivePlanProjection
   planHistoryProjections?: ActivePlanProjection[]
   isPending?: boolean
@@ -305,6 +313,7 @@ export const toPersistedSession = (
     activeRunRuntimeSegmentId,
     specialistSwitchResetRequired,
     elicitationHistoryReplayRequestId,
+    elicitationEditDrafts,
     branchSwitchBlocked,
     conversationGraphSyncBlocked,
     pendingContextReplayMessageId,
@@ -332,6 +341,7 @@ export const toPersistedSession = (
   void agentPromptInFlight
   void activeRunRuntimeSegmentId
   void specialistSwitchResetRequired
+  void elicitationEditDrafts
   void elicitationHistoryReplayRequestId
   void branchSwitchBlocked
   void conversationGraphSyncBlocked
@@ -518,6 +528,18 @@ const withTransientSessionState = (
       source.branchContextResetRequired || hydrated.branchContextResetRequired,
     specialistSwitchResetRequired: source.specialistSwitchResetRequired,
     elicitationHistoryReplayRequestId: source.elicitationHistoryReplayRequestId,
+    elicitationEditDrafts: Object.fromEntries(
+      Object.entries(source.elicitationEditDrafts ?? {}).filter(([id, draft]) => {
+        const activity =
+          hydrated.activities?.find((item) => item.id === id) ??
+          hydrated.conversationGraph?.activities.find((item) => item.id === id)
+        return (
+          activity?.elicitation?.state === 'pending' &&
+          (!activity.elicitation.durable ||
+            activity.elicitation.durable.requestId === draft.requestId)
+        )
+      })
+    ),
     branchSwitchBlocked: source.branchSwitchBlocked,
     conversationGraphSyncBlocked: source.conversationGraphSyncBlocked,
     pendingContextReplayMessageId: source.pendingContextReplayMessageId,
@@ -612,7 +634,11 @@ export const createSessionPersistenceOwner = <State extends SessionStoreData>(
   hydrateSessions: (sessions, manifest, selection) => {
     const hydrated = [...sessions]
       .sort((left, right) => right.updatedAt - left.updatedAt)
-      .map(hydrateSession)
+      .map((session) => {
+        const hydrated = hydrateSession(session)
+        markExternallyHydratedSession(hydrated, session)
+        return hydrated
+      })
     const hasExplicitSelection = selection !== undefined
     const requestedSelection = hasExplicitSelection ? selection.sessionId : manifest?.lastSessionId
     const selectedSessionId = hydrated.some((session) => session.id === requestedSelection)
@@ -630,7 +656,10 @@ export const createSessionPersistenceOwner = <State extends SessionStoreData>(
       .sort((left, right) => right.updatedAt - left.updatedAt)
       .map((summary) => {
         const authority = selectedById.get(summary.id)
-        return authority ? hydrateSession(authority) : hydrateSessionSummary(summary)
+        if (!authority) return hydrateSessionSummary(summary)
+        const hydrated = hydrateSession(authority)
+        markExternallyHydratedSession(hydrated, authority)
+        return hydrated
       })
     const hasExplicitSelection = selection !== undefined
     const requestedSelection = hasExplicitSelection ? selection.sessionId : manifest?.lastSessionId
@@ -825,6 +854,17 @@ export const createSessionPersistenceOwner = <State extends SessionStoreData>(
       if (mode === 'archive-authority') {
         const projected = archive
         if (projected === current) return state
+        const previousAuthority = externallyHydratedSessionAuthorities.get(current)
+        if (previousAuthority) {
+          // Refreshing archive metadata is not a local edit. Preserve dirty sessions as dirty,
+          // and do not let a delayed receipt replace a newer persistence acknowledgement.
+          markExternallyHydratedSession(
+            projected,
+            sessionRevision(previousAuthority) > sessionRevision(session)
+              ? previousAuthority
+              : session
+          )
+        }
         return {
           sessions: state.sessions.map((candidate) =>
             candidate === current ? projected : candidate

@@ -108,6 +108,7 @@ export type JobPollerDeps = {
   // Injectable harvest function (design §3). When omitted, harvest is disabled (no-op).
   // In production, wire this to harvestJob from harvest-engine.ts.
   harvestFn?: HarvestFn
+  harvestScheduler?: JobHarvestScheduler
   /**
    * Broadcast hook for compute_done notification (issue 06).
    * Used when emitting the notification for execution-error jobs (dispatch_failed).
@@ -161,9 +162,9 @@ export class JobPoller {
     this.clearIntervalFn = deps.clearInterval ?? ((h) => clearInterval(h))
     this.makeNonceFn = deps.makeNonce ?? (() => randomBytes(12).toString('hex') + '_')
     this.dispatchTracker = deps.dispatchTracker ?? sharedDispatchTracker
-    this.harvestScheduler = deps.harvestFn
-      ? new JobHarvestScheduler(deps.harvestFn, deps.now)
-      : undefined
+    this.harvestScheduler =
+      deps.harvestScheduler ??
+      (deps.harvestFn ? new JobHarvestScheduler(deps.harvestFn, deps.now) : undefined)
     this.lifecycle = new ComputeJobLifecycle(deps.jobRepository, deps.onJobUpdated)
     this.submittedJobRecovery = new SubmittedJobRecovery(this.lifecycle)
   }

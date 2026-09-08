@@ -1,6 +1,7 @@
 use std::ffi::c_void;
+use std::ptr::NonNull;
 
-use anyhow::{Result, bail};
+use anyhow::{Context, Result, bail};
 use windows::Win32::Foundation::HANDLE;
 use windows::Win32::NetworkManagement::WindowsFilteringPlatform::{
     FWP_ACTION_BLOCK, FWP_ACTION_PERMIT, FWP_BYTE_BLOB, FWP_CONDITION_VALUE0,
@@ -64,17 +65,25 @@ impl Drop for AbortTransaction {
     }
 }
 
-struct WfpMemory<T>(*mut T);
+struct WfpMemory<T>(NonNull<T>);
 
 impl<T> WfpMemory<T> {
+    // Call only for successful WFP allocations; Drop retains the API's ownership contract.
+    fn from_raw(pointer: *mut T) -> Result<Self> {
+        Ok(Self(
+            NonNull::new(pointer).context("Windows Filtering Platform returned no object")?,
+        ))
+    }
+
     fn get(&self) -> &T {
-        unsafe { &*self.0 }
+        // The allocation is non-null and remains owned by self for the returned borrow.
+        unsafe { self.0.as_ref() }
     }
 }
 
 impl<T> Drop for WfpMemory<T> {
     fn drop(&mut self) {
-        let mut pointer = self.0.cast::<c_void>();
+        let mut pointer = self.0.as_ptr().cast::<c_void>();
         unsafe { FwpmFreeMemory0(&mut pointer) };
     }
 }
@@ -163,7 +172,7 @@ fn get_filter(engine: HANDLE, key: &GUID) -> Result<Option<WfpMemory<FWPM_FILTER
         return Ok(None);
     }
     check(code, "read Windows Filtering Platform filter")?;
-    Ok(Some(WfpMemory(pointer)))
+    Ok(Some(WfpMemory::from_raw(pointer)?))
 }
 
 fn get_sublayer(engine: HANDLE, key: &GUID) -> Result<Option<WfpMemory<FWPM_SUBLAYER0>>> {
@@ -173,7 +182,7 @@ fn get_sublayer(engine: HANDLE, key: &GUID) -> Result<Option<WfpMemory<FWPM_SUBL
         return Ok(None);
     }
     check(code, "read Windows Filtering Platform sublayer")?;
-    Ok(Some(WfpMemory(pointer)))
+    Ok(Some(WfpMemory::from_raw(pointer)?))
 }
 
 fn remove_owned_filter(
@@ -393,4 +402,25 @@ pub fn remove(descriptor: &FenceDescriptor<'_>) -> Result<()> {
         }
         Ok(())
     })
+}
+
+#[cfg(test)]
+mod memory_tests {
+    use super::*;
+    use std::mem::ManuallyDrop;
+
+    #[test]
+    fn rejects_null_wfp_outputs() {
+        assert!(WfpMemory::<FWPM_FILTER0>::from_raw(std::ptr::null_mut()).is_err());
+        assert!(WfpMemory::<FWPM_SUBLAYER0>::from_raw(std::ptr::null_mut()).is_err());
+    }
+
+    #[test]
+    fn borrows_a_non_null_object_without_transferring_ownership() {
+        let mut value = 42_u32;
+        // Stack storage is not a WFP allocation, so never run the WFP deallocator on it.
+        let memory = ManuallyDrop::new(WfpMemory::from_raw(&mut value).unwrap());
+        assert_eq!(*memory.get(), 42);
+        assert_eq!(*memory.get(), 42);
+    }
 }

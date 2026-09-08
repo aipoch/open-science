@@ -18,6 +18,7 @@ import base64
 import json
 import os
 import signal
+import subprocess
 import sys
 import time
 
@@ -130,6 +131,20 @@ def main():
             signal.signal(signal.SIGINT, signal.SIG_IGN)
             time.sleep(30)
             continue
+        if code.startswith("__SPAWN_DESCENDANT_AND_CRASH__:"):
+            pid_path = code.split(":", 1)[1]
+            descendant = subprocess.Popen(
+                [
+                    sys.executable,
+                    "-c",
+                    "import signal,time; signal.signal(signal.SIGTERM, signal.SIG_IGN); time.sleep(30)",
+                ]
+            )
+            with open(pid_path, "w", encoding="utf-8") as handle:
+                handle.write(str(descendant.pid))
+                handle.flush()
+                os.fsync(handle.fileno())
+            os._exit(23)
         if code.startswith("__OVERSIZED_LINE__:"):
             remaining = int(code.split(":", 1)[1])
             chunk = "x" * (64 * 1024)

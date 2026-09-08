@@ -230,7 +230,7 @@ const SourceWebPreviewContent = ({
                 className="text-text-100 hover:text-text-000"
                 data-source-preview-header-external=""
                 aria-label={t('Open source in browser')}
-                onClick={() => window.open(sourceUrl.href, '_blank', 'noreferrer')}
+                onClick={() => window.open(displayedUrl, '_blank', 'noreferrer')}
               >
                 <ExternalLink data-source-preview-header-external-icon="" aria-hidden="true" />
               </Button>
@@ -310,7 +310,7 @@ const SourceWebPreviewContent = ({
                 errorCode={getFailureCode(loadState)}
                 secondaryButton={{
                   label: t('Open source in browser'),
-                  onClick: () => window.open(sourceUrl.href, '_blank', 'noreferrer')
+                  onClick: () => window.open(displayedUrl, '_blank', 'noreferrer')
                 }}
                 primaryButton={{ label: t('Try again'), onClick: retry }}
               />

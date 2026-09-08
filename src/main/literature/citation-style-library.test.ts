@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm } from 'node:fs/promises'
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -8,6 +8,8 @@ vi.mock('node:fs/promises', async (importOriginal) => {
   const actual = await importOriginal<typeof import('node:fs/promises')>()
   return { ...actual, readFile: vi.fn(actual.readFile) }
 })
+
+import { LiteratureCitationFormatter } from './citation-formatter'
 
 import { LiteratureCitationStyleLibrary } from './citation-style-library'
 
@@ -114,4 +116,102 @@ describe('LiteratureCitationStyleLibrary', () => {
 
     expect((await library.list()).filter(({ source }) => source === 'custom')).toEqual([])
   })
+})
+
+const macroStyle = (): string =>
+  independentStyle()
+    .replace(
+      '</info>',
+      '</info><macro name="journal-format"><text value="REQUIRED JOURNAL FORMAT"/></macro>'
+    )
+    .replaceAll('<text variable="title"/>', '<text macro="journal-format"/>')
+
+it('CS-01 rejects undefined macro references instead of accepting generic fallback output', async () => {
+  const { library } = await createLibrary()
+  const valid = macroStyle()
+  const styleId = await library.import(valid)
+  expect(await new LiteratureCitationFormatter(library).formatStyleExample(styleId)).toEqual({
+    inText: 'REQUIRED JOURNAL FORMAT',
+    reference: 'REQUIRED JOURNAL FORMAT'
+  })
+  await expect(
+    library.import(valid.replace('name="journal-format"', 'name="renamed-format"'))
+  ).rejects.toThrow(/undefined macro/i)
+  expect((await library.list()).filter(({ source }) => source === 'custom')).toHaveLength(1)
+})
+
+it('CS-01 rejects a citation-only style with an application-support explanation', async () => {
+  const { library } = await createLibrary()
+  const content = independentStyle().replace(/<bibliography>.*?<\/bibliography>/u, '')
+  await expect(library.import(content)).rejects.toThrow(/bibliography/i)
+  expect((await library.list()).filter(({ source }) => source === 'custom')).toEqual([])
+})
+
+it.each([
+  ['truncated XML', '<style>truncated'],
+  [
+    'valid replacement',
+    independentStyle('Changed style').replaceAll(
+      '<text variable="title"/>',
+      '<text value="CHANGED OUTPUT"/>'
+    )
+  ]
+])('CS-02 restores the original bytes by reimporting over %s', async (_kind, damaged) => {
+  const { library, stylesDirectory } = await createLibrary()
+  const original = macroStyle()
+  const styleId = await library.import(original)
+  const path = join(stylesDirectory, `${styleId.slice(7)}.csl`)
+  await writeFile(path, damaged)
+  expect(await library.import(original)).toBe(styleId)
+  expect(await readFile(path, 'utf8')).toBe(original)
+  expect((await library.list()).find(({ id }) => id === styleId)?.title).toBe(
+    'A compact journal style'
+  )
+  expect(await new LiteratureCitationFormatter(library).formatStyleExample(styleId)).toEqual({
+    inText: 'REQUIRED JOURNAL FORMAT',
+    reference: 'REQUIRED JOURNAL FORMAT'
+  })
+})
+
+it('CS-02 excludes valid replacement content under the original digest from listing and formatting', async () => {
+  const { library, stylesDirectory } = await createLibrary()
+  const styleId = await library.import(macroStyle())
+  await writeFile(
+    join(stylesDirectory, `${styleId.slice(7)}.csl`),
+    independentStyle('Changed style')
+  )
+  expect((await library.list()).some(({ id }) => id === styleId)).toBe(false)
+  await expect(
+    new LiteratureCitationFormatter(library).formatStyleExample(styleId)
+  ).rejects.toThrow()
+})
+
+it('CS-05 imports CDATA metadata just like ordinary XML text', async () => {
+  const { library } = await createLibrary()
+  const styleId = await library.import(independentStyle('<![CDATA[A compact journal style]]>'))
+  expect((await library.list()).find(({ id }) => id === styleId)?.title).toBe(
+    'A compact journal style'
+  )
+  expect(await new LiteratureCitationFormatter(library).formatStyleExample(styleId)).toMatchObject({
+    reference: 'Genome Editing in Human Cells'
+  })
+})
+
+it('CS-02 checks and restores stored bytes even when UTF-8 decoding masks corruption', async () => {
+  const { library, stylesDirectory } = await createLibrary()
+  const content = independentStyle('A \uFFFD journal style')
+  const styleId = await library.import(content)
+  const path = join(stylesDirectory, `${styleId.slice(7)}.csl`)
+  const original = Buffer.from(content, 'utf8')
+  const offset = original.indexOf(Buffer.from('\uFFFD'))
+  const damaged = Buffer.concat([
+    original.subarray(0, offset),
+    Buffer.from([0xff]),
+    original.subarray(offset + 3)
+  ])
+  expect(damaged.toString('utf8')).toBe(content)
+  await writeFile(path, damaged)
+  expect.soft((await library.list()).some(({ id }) => id === styleId)).toBe(false)
+  expect(await library.import(content)).toBe(styleId)
+  expect(await readFile(path)).toEqual(original)
 })

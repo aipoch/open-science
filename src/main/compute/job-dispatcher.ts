@@ -1,3 +1,4 @@
+import { assertSafeInputDestination } from './harvest-classifier'
 import { createHash } from 'node:crypto'
 
 import type { ComputeJob } from '../../shared/compute'
@@ -110,6 +111,8 @@ export const stageInputs = async (
   workdir: string,
   connection: ComputeConnectionLease
 ): Promise<void> => {
+  // Validate the complete persisted manifest before the first upload or symlink.
+  for (const entry of entries) assertSafeInputDestination(entry.dstFilename)
   for (const entry of entries) {
     if (entry.kind === 'upload') {
       const remoteDest = `${workdir}/${entry.dstFilename}`

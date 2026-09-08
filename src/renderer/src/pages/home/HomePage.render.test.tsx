@@ -812,6 +812,27 @@ describe('HomePage activity overview', () => {
     expect(onOpenGlobalSearch).toHaveBeenCalledOnce()
   })
 
+  it('keeps preferences in Settings and opens Settings directly from the gear', async () => {
+    await act(async () =>
+      root.render(
+        <HomePage canDeleteProjects hasCompleteSessionCatalog onOpenGlobalSearch={vi.fn()} />
+      )
+    )
+
+    const header = container.querySelector('header')
+    expect(header).not.toBeNull()
+    expect(header?.querySelector('[aria-label^="Language:"]')).toBeNull()
+    expect(header?.querySelector('[aria-label^="Theme:"]')).toBeNull()
+    const settings = header?.querySelector<HTMLButtonElement>('[aria-label="Model settings"]')
+    expect(settings).not.toBeNull()
+    expect(useSettingsStore.getState().isSettingsOpen).toBe(false)
+
+    await act(async () => settings?.click())
+
+    expect(useSettingsStore.getState().isSettingsOpen).toBe(true)
+    expect(document.querySelector('[role="menu"]')).toBeNull()
+  })
+
   it('places the update action beside Settings and before New project', async () => {
     await act(async () =>
       root.render(
@@ -1713,6 +1734,33 @@ describe('HomePage activity overview', () => {
     const recentRow = container.querySelector<HTMLElement>('[aria-label="Recent sessions"] button')
     expect(recentRow?.textContent).toContain(project.name)
     expect(recentRow?.textContent?.match(/Live analysis/g)).toHaveLength(1)
+  })
+
+  it('shows loading until the first project list resolves, then shows the empty state', async () => {
+    let resolve!: (projects: Project[]) => void
+    window.api.projects = {
+      list: vi.fn(
+        () =>
+          new Promise<Project[]>((done) => {
+            resolve = done
+          })
+      )
+    } as never
+    const load = useProjectStore.getState().loadProjects()
+    await act(async () =>
+      root.render(
+        <HomePage canDeleteProjects hasCompleteSessionCatalog onOpenGlobalSearch={vi.fn()} />
+      )
+    )
+    const section = container.querySelector('[aria-label="Projects"]')!
+    expect.soft(section.textContent).not.toContain('No projects yet.')
+    expect.soft(section.querySelector('[role="status"]')?.textContent).toBe('Loading…')
+    await act(async () => {
+      resolve([])
+      await load
+    })
+    expect(section.textContent).toContain('No projects yet. Create one to get started.')
+    expect(section.querySelector('[role="status"]')).toBeNull()
   })
 
   it('offers a Retry action when loading Projects fails', async () => {

@@ -41,6 +41,7 @@ export type ReviewerCorrectionRequest = Readonly<{
   causeReviewId: string
   checks: readonly ReviewCheck[]
   provenanceContext: AgentTurnProvenanceContext
+  abortSignal?: AbortSignal
 }>
 
 export type ReviewerCorrectionResult =
@@ -82,6 +83,7 @@ export class ReviewerCorrectionOwner {
     })
 
     try {
+      input.abortSignal?.throwIfAborted()
       await this.options.acpRuntime.sendApplicationPrompt(
         { sessionId: input.sessionId, text, provenanceContext },
         {

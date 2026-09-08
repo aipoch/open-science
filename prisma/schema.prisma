@@ -200,6 +200,7 @@ model PermissionGrant {
   scopeKind      String
   projectId      String?
   sessionId      String?
+  approvalSummary String?
   fingerprint    String    @unique
   revision       Int       @default(1)
   createdAt      DateTime?
@@ -496,6 +497,7 @@ model LiteratureAttachmentVersion {
   filename      String
   contentType   String
   sizeBytes     BigInt
+  provenanceJson String?
   checksum      String
   pageCount     Int?
   createdAt     DateTime             @default(now())
@@ -582,6 +584,7 @@ model LiteratureInboxPdf {
   contentBlobId String
   filename      String
   sizeBytes     BigInt
+  provenanceJson String?
   checksum      String
   pageCount     Int
   sourceUrl     String
@@ -1123,4 +1126,26 @@ model MemoryEntry {
   @@unique([projectId, contentKey])
   @@index([categoryId, updatedAt])
   @@index([projectId, updatedAt])
+}
+
+// Main-owned delivery facts for terminal background outcomes. This table records only delivery
+// workflow state; Notebook Run and Compute Job records remain the execution authorities.
+model BackgroundResultDelivery {
+  id                    String   @id
+  sourceKind            String
+  sourceId              String
+  projectId             String
+  sessionId             String
+  agentFrameId          String?
+  state                 String
+  attemptCount          Int      @default(0)
+  claimToken            String?
+  claimExpiresAt        DateTime?
+  continuationMessageId String?
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+
+  @@unique([sourceKind, sourceId])
+  @@index([sessionId, state, createdAt, id])
+  @@index([sourceKind, state, createdAt, id])
 }

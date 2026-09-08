@@ -204,7 +204,8 @@ describe('session job store — applyUpdate', () => {
         job_id: 'j',
         status: 'success',
         notified_at: 200,
-        notification_consumed_at: 300
+        notification_consumed_at: 300,
+        result_delivery_path: 'agent-result-delivery'
       })
     )
     useSessionJobStore
@@ -214,7 +215,8 @@ describe('session job store — applyUpdate', () => {
     expect(useSessionJobStore.getState().jobsById.get('j')).toMatchObject({
       status: 'success',
       notified_at: 200,
-      notification_consumed_at: 300
+      notification_consumed_at: 300,
+      result_delivery_path: 'agent-result-delivery'
     })
   })
 

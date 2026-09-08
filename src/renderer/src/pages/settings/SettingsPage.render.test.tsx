@@ -4052,6 +4052,28 @@ describe('SettingsPage layout', () => {
     )
   })
 
+  it('labels the Specialist ZIP import breadcrumb with the active workflow', async () => {
+    window.api.specialist.selectPackage = vi.fn().mockResolvedValue({ cancelled: true })
+    useSettingsStore.getState().openSettingsToPanel('specialists')
+    await act(async () => {
+      root.render(<SettingsPage open onClose={vi.fn()} />)
+    })
+    openRadixMenu(
+      Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).find((button) =>
+        button.textContent?.includes('Add specialist')
+      )
+    )
+    await act(async () => {
+      clickRadixMenuItem(
+        Array.from(document.body.querySelectorAll<HTMLElement>('[role="menuitem"]')).find((item) =>
+          item.textContent?.includes('Import ZIP')
+        )
+      )
+    })
+    expect(document.body.textContent).toContain('Select a Specialist ZIP')
+    expect(document.body.textContent).not.toContain('Edit specialist')
+  })
+
   it('opens the specialist creation form from Write from scratch', async () => {
     useSettingsStore.getState().openSettingsToPanel('specialists')
 

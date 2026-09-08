@@ -276,6 +276,7 @@ type AcpRuntimeOptions = {
     acquirePdf?: (request: {
       candidate: LiteratureLibraryDiscovery
       pdfUrl?: string
+      signal?: AbortSignal
       projectId: string
       sessionId: string
     }) => Promise<import('../literature/agent-pdf-acquisition').AgentPdfAcquisitionResult>
@@ -422,7 +423,7 @@ type AcpRuntimeArtifactOptions = {
     Partial<
       Pick<
         import('../artifacts/provenance-repository').ArtifactProvenanceRepository,
-        'recordLiteraturePdfRead' | 'recordLiteratureSearch'
+        'recordLiteraturePdfRead' | 'recordLiteratureAbstractRead' | 'recordLiteratureSearch'
       >
     >
   managedFileVersions?: Pick<

@@ -3,12 +3,13 @@ import { describe, expect, it } from 'vitest'
 import type { ConfiguredModelCatalogEntry } from '../../../../shared/configured-model-catalog'
 import {
   CODEX_ISOLATED_PROVIDER_ID,
-  CODEX_SUBSCRIPTION_PROVIDER_ID
+  CODEX_SUBSCRIPTION_PROVIDER_ID,
+  type ProviderView
 } from '../../../../shared/settings'
 import {
   isConfigurationSelectable,
   resolveSelectableConfiguration,
-  resolveSessionAgentConfiguration
+  resolveSessionAgentConfiguration as resolveConfiguration
 } from './session-agent-configuration'
 
 const option = (
@@ -26,6 +27,21 @@ const option = (
   selectable,
   supportsImageInput: false
 })
+
+const providersFromCatalog = (catalog: readonly ConfiguredModelCatalogEntry[]): ProviderView[] =>
+  [...new Set(catalog.map((entry) => entry.providerId))].map((id) => ({
+    id,
+    name: id,
+    type: catalog.find((entry) => entry.providerId === id)!.providerType,
+    models: catalog.filter((entry) => entry.providerId === id).map((entry) => entry.model),
+    supportsImageInput: false,
+    hasKey: true,
+    needsKey: false
+  }))
+const resolveSessionAgentConfiguration = (
+  input: Omit<Parameters<typeof resolveConfiguration>[0], 'providers'>
+): ReturnType<typeof resolveConfiguration> =>
+  resolveConfiguration({ ...input, providers: providersFromCatalog(input.catalog) })
 
 describe('Session agent configuration', () => {
   it('keeps a selectable Session configuration', () => {
@@ -45,7 +61,9 @@ describe('Session agent configuration', () => {
     const configuration = { providerId: 'session', reasoningEffort: 'high' as const }
     const catalog = [option('session', 'provider-default'), option('active', 'new')]
 
-    expect(isConfigurationSelectable(configuration, catalog)).toBe(true)
+    expect(isConfigurationSelectable(configuration, catalog, providersFromCatalog(catalog))).toBe(
+      true
+    )
     expect(
       resolveSessionAgentConfiguration({
         session: { agentConfiguration: configuration },
@@ -58,7 +76,6 @@ describe('Session agent configuration', () => {
       status: 'ready',
       configuration: {
         providerId: 'session',
-        model: 'provider-default',
         reasoningEffort: 'high'
       },
       changed: false
@@ -73,8 +90,18 @@ describe('Session agent configuration', () => {
       option('active', 'new')
     ]
 
-    expect(isConfigurationSelectable(configuration, catalog)).toBe(true)
-    expect(resolveSelectableConfiguration(catalog, 'codex', undefined, 'default')).toEqual({
+    expect(isConfigurationSelectable(configuration, catalog, providersFromCatalog(catalog))).toBe(
+      true
+    )
+    expect(
+      resolveSelectableConfiguration(
+        catalog,
+        'codex',
+        undefined,
+        'default',
+        providersFromCatalog(catalog)
+      )
+    ).toEqual({
       providerId: 'codex',
       reasoningEffort: 'default'
     })
@@ -151,7 +178,7 @@ describe('Session agent configuration', () => {
     })
   })
 
-  it('lazily replaces an unavailable Session model with a valid active default', () => {
+  it('preserves an unavailable Session model despite a valid active default', () => {
     expect(
       resolveSessionAgentConfiguration({
         session: {
@@ -167,9 +194,8 @@ describe('Session agent configuration', () => {
         activeReasoningEffort: 'medium'
       })
     ).toEqual({
-      status: 'ready',
-      configuration: { providerId: 'active', model: 'new', reasoningEffort: 'medium' },
-      changed: true
+      status: 'unavailable',
+      configuration: { providerId: 'deleted', model: 'gone', reasoningEffort: 'high' }
     })
   })
 
@@ -185,7 +211,6 @@ describe('Session agent configuration', () => {
       status: 'ready',
       configuration: {
         providerId: 'custom',
-        model: 'custom-model',
         reasoningEffort: 'default'
       },
       changed: true

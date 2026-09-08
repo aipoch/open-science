@@ -320,20 +320,30 @@ describe('electron renderer contract adapter', () => {
     })
   })
 
-  it('strips Electron events and removes the exact wrapped listener on unsubscribe', () => {
+  it.each([
+    {
+      publicPath: 'specialist.onPendingSwitch',
+      channel: 'specialist:pending-switch',
+      payload: { specialistId: 'specialist-1' }
+    },
+    {
+      publicPath: 'window.onCloseConfirmDismiss',
+      channel: 'window:close-confirm-dismiss',
+      payload: { requestId: 'close-1' }
+    }
+  ])('strips Electron events and unsubscribes $publicPath', ({ publicPath, channel, payload }) => {
     const port = createPort()
     const adapter = createElectronRendererContractAdapter(port)
     const listener = vi.fn()
 
-    const unsubscribe = adapter.subscribe('specialist.onPendingSwitch', listener)
+    const unsubscribe = adapter.subscribe(publicPath, listener)
     const wrappedListener = port.on.mock.calls[0]?.[1]
-    const payload = { specialistId: 'specialist-1' }
 
     wrappedListener?.({ sender: 'electron' }, payload)
     unsubscribe()
 
-    expect(port.on).toHaveBeenCalledWith('specialist:pending-switch', wrappedListener)
+    expect(port.on).toHaveBeenCalledWith(channel, wrappedListener)
     expect(listener).toHaveBeenCalledWith(payload)
-    expect(port.removeListener).toHaveBeenCalledWith('specialist:pending-switch', wrappedListener)
+    expect(port.removeListener).toHaveBeenCalledWith(channel, wrappedListener)
   })
 })

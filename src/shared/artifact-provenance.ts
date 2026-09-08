@@ -466,6 +466,8 @@ export type ProvenanceNotebookRun = {
   runtimeSegmentId: string
   promptMessageId: string
   kernelEpochId?: string
+  // Missing in older snapshots; only explicit false proves the script never reached the kernel.
+  kernelDispatched?: boolean
   kernelKind: NotebookKernelKind
   environmentName?: string
   script: string

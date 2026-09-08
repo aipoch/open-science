@@ -248,6 +248,7 @@ type TaskRunEventAccumulator = {
   assistantEventIds: string[]
   images: PersistedMessageImage[]
   imageBytes: number
+  runtimeCancelled?: boolean
   terminalStop?: Pick<AcpRuntimeEvent, 'turnUsage' | 'modelCallUsage'>
   runtimeError?: Pick<AcpRuntimeEvent, 'text' | 'providerError'>
   activities: Map<string, PendingTaskRunActivity>
@@ -424,7 +425,7 @@ const cloneRunForJournal = (run: MutableTaskRun): TaskRunJournalEntry => {
   return {
     ...cloneRun(run),
     status: run.terminalStatus ?? run.status,
-    promptMessageId: run.promptMessageId,
+    ...(run.promptMessageId ? { promptMessageId: run.promptMessageId } : {}),
     ...(sessionCommit
       ? {
           sessionCommitStatus: sessionCommit.status,
@@ -638,7 +639,8 @@ const validateTaskAgentConfiguration = (
     taskModelCatalog(settings),
     configuration.providerId,
     configuration.model,
-    configuration.reasoningEffort
+    configuration.reasoningEffort,
+    settings.providers
   )
   if (!resolved) {
     throw new TaskRunnerError(
@@ -654,6 +656,7 @@ const effectiveTaskAgentConfiguration = (
   settings: SettingsSnapshot
 ): SessionAgentConfiguration | undefined => {
   const resolution = resolveSessionAgentConfiguration({
+    providers: settings.providers,
     session,
     catalog: taskModelCatalog(settings),
     activeProviderId: settings.activeProviderId,
@@ -2084,6 +2087,7 @@ class TaskRunner {
     promptError: unknown,
     cancellationAtPromptFailure: MutableTaskRun['cancellation']
   ): Promise<void> {
+    const runtimeCancelled = run.eventAccumulator?.runtimeCancelled === true
     const acceptedSession =
       promptError === undefined ? consumePendingHistoryReplay(admittedSession) : admittedSession
 
@@ -2119,7 +2123,7 @@ class TaskRunner {
       await sessionCommitCancellation.dispatch.catch(() => undefined)
     }
     const sessionCommitStatus =
-      sessionCommitCancellation?.accepted === true ? 'cancelled' : 'completed'
+      runtimeCancelled || sessionCommitCancellation?.accepted === true ? 'cancelled' : 'completed'
     completed!.session = { ...completed!.session, taskRunCommitId: run.id }
     const sessionCommitAt = this.dependencies.now()
     const sessionCommit: NonNullable<MutableTaskRun['sessionCommit']> = {
@@ -2166,7 +2170,12 @@ class TaskRunner {
       return
     }
     run.eventAccumulator = undefined
-    if (!this.disposed && !run.cancellation && completed!.session.autoReviewEnabled === true) {
+    if (
+      !this.disposed &&
+      !runtimeCancelled &&
+      !run.cancellation &&
+      completed!.session.autoReviewEnabled === true
+    ) {
       const reviewedMessage = [...completed!.session.messages]
         .reverse()
         .find(
@@ -2199,7 +2208,7 @@ class TaskRunner {
     }
     const terminalCancellation = run.cancellation
     if (terminalCancellation) await terminalCancellation.dispatch.catch(() => undefined)
-    const terminalCancellationAccepted = terminalCancellation?.accepted === true
+    const terminalCancellationAccepted = runtimeCancelled || terminalCancellation?.accepted === true
     if (terminalCancellationAccepted) run.attention = undefined
     const terminalStatus = terminalCancellationAccepted ? 'cancelled' : 'completed'
     run.output = completed!.output
@@ -2376,7 +2385,18 @@ class TaskRunner {
       if (event.promptMessageId !== undefined && event.promptMessageId !== run.promptMessageId) {
         continue
       }
-      if (run.eventAccumulator) accumulateTaskRunEvent(run.eventAccumulator, event)
+      if (run.eventAccumulator) {
+        // Only the current prompt's terminal fact can cancel this Run. Unscoped compatibility
+        // events may still contribute output/usage, but cannot decide its terminal status.
+        if (
+          event.kind === 'stop' &&
+          event.text === 'cancelled' &&
+          event.promptMessageId === run.promptMessageId
+        ) {
+          run.eventAccumulator.runtimeCancelled = true
+        }
+        accumulateTaskRunEvent(run.eventAccumulator, event)
+      }
       if (event.kind === 'plan' && event.planProjection) {
         run.attention =
           event.planProjection.lifecycle === 'awaiting_approval'
@@ -2459,12 +2479,30 @@ class TaskRunner {
     this.runs.clear()
     this.activeRunBySession.clear()
     const loadedRuns = await journal.load()
-    const storedRuns = loadedRuns.slice(-MAX_RETAINED_RUNS)
-    const sessions = storedRuns.some(
+    const sessions = loadedRuns.some(
       (run) => (run.status === 'running' || run.status === 'failed') && run.promptMessageId
     )
       ? await this.dependencies.sessions.list()
       : []
+    // Retention is a history target, not an admission limit. Reconcile every unsettled identity
+    // and keep its result queryable this startup, even when recovery alone exceeds the target.
+    const needsRecovery = new Set(
+      loadedRuns.filter(
+        (run) =>
+          run.status === 'running' ||
+          (run.status === 'failed' &&
+            sessions.some(
+              (session) =>
+                session.taskRunCommitId !== run.id && sessionOwnsTaskRunPrompt(session, run)
+            ))
+      )
+    )
+    const historyBudget = Math.max(0, MAX_RETAINED_RUNS - needsRecovery.size)
+    const history = loadedRuns.filter((run) => !needsRecovery.has(run))
+    const retainedHistory = new Set(historyBudget > 0 ? history.slice(-historyBudget) : [])
+    const storedRuns = loadedRuns.filter(
+      (run) => needsRecovery.has(run) || retainedHistory.has(run)
+    )
     const interrupted: MutableTaskRun[] = []
     const terminalSessionRepairs: MutableTaskRun[] = []
     let normalized = false

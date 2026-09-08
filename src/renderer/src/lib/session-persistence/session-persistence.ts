@@ -1216,6 +1216,7 @@ type SessionPersistenceState = {
   writeErrorRetryable: boolean
   persistenceBlockedSessionIds: readonly string[]
   reportSessionSizeLimit: (sessionId: string) => void
+  dismissWriteWarning: () => void
   dismissLoadWarning: () => void
   startNewConversationAfterSizeLimit: () => void
   retryLoad: () => void
@@ -1554,6 +1555,7 @@ const createStoreSaver = (
           isForced ||
           streamingDirtySessionIds.has(session.id)) &&
         (isForced ||
+          streamingDirtySessionIds.has(session.id) ||
           !isExternallyHydratedSession(session) ||
           hasUnsavedLocalTitle ||
           hasUnsavedContextReset) &&
@@ -1788,6 +1790,8 @@ const useSessionPersistence = (): SessionPersistenceState => {
     },
     [presentOutstandingWriteFailures]
   )
+  // Dismiss only the presentation; failed targets still block flush and remain retryable.
+  const dismissWriteWarning = useCallback(() => setWriteError(undefined), [])
   const dismissLoadWarning = useCallback(() => setLoadWarning(undefined), [])
   const startNewConversationAfterSizeLimit = useCallback(() => {
     for (const target of sizeLimitTargets.current) {
@@ -2119,6 +2123,7 @@ const useSessionPersistence = (): SessionPersistenceState => {
     persistenceBlockedSessionIds,
     reportSessionSizeLimit,
     dismissLoadWarning,
+    dismissWriteWarning,
     startNewConversationAfterSizeLimit,
     retryLoad,
     retryWrites

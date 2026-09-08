@@ -53,6 +53,12 @@ export type ListProjectFilesRequest = {
   limit: number
 }
 
+// One consistent selection for an export. Omit sessionId to include all Project sources.
+export type ReadProjectExportFilesRequest = {
+  projectId: string
+  sessionId?: string
+}
+
 export type ProjectFilesPage = {
   items: ProjectFileItem[]
   nextCursor?: string
