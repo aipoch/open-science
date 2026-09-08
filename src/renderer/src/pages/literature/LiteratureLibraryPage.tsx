@@ -1944,7 +1944,16 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
     } catch {
       // A rejected transport response does not prove that the transaction rolled back.
       // Reload handles its own read errors; never put a saved candidate snapshot back here.
-      await Promise.all([loadEntries(true), refreshCandidateProjectCounts()])
+      if (state === 'dismissed') {
+        const undoIds = [
+          ...new Set([...(dismissedCandidateUndo?.candidateIds ?? []), ...candidateIds])
+        ]
+        // Keep recovery reachable even if the following reads are also unavailable.
+        setDismissedCandidateUndo({ ...dismissedUndo(undoIds)!, needsRecheck: true })
+        await Promise.all([recheckDismissedCandidates(undoIds), refreshCandidateProjectCounts()])
+      } else {
+        await Promise.all([loadEntries(true), refreshCandidateProjectCounts()])
+      }
       setCandidateUpdateUncertain(true)
       return false
     }
@@ -2050,10 +2059,10 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
           }
         )
       )
-      await loadEntries(true)
     } catch {
       setUndoNotice(t('The remaining references could not be checked. Recheck before undoing.'))
     }
+    await loadEntries(true)
   }
 
   const restoreDismissedCandidates = async (): Promise<void> => {
@@ -4133,7 +4142,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
                               itemIds={candidates.map(({ id }) => id)}
                               label={t('Select all references')}
                               store={selectionStore}
-                              disabled={isBatching}
+                              disabled={isBatching || Boolean(pendingCandidateId)}
                               className="size-4"
                             />
                             {t('Select all')}
@@ -4147,7 +4156,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
                                 type="button"
                                 variant="ghost"
                                 size="sm"
-                                disabled={isBatching}
+                                disabled={isBatching || Boolean(pendingCandidateId)}
                                 onClick={clearSelection}
                               >
                                 {t('Clear selection')}
@@ -4157,7 +4166,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
                                   type="button"
                                   variant="outline"
                                   size="sm"
-                                  disabled={isBatching}
+                                  disabled={isBatching || Boolean(pendingCandidateId)}
                                   onClick={() => void settleSelectedCandidates('dismissed')}
                                 >
                                   <X className="size-3.5" aria-hidden="true" />
@@ -4166,7 +4175,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
                                 <Button
                                   type="button"
                                   size="sm"
-                                  disabled={isBatching}
+                                  disabled={isBatching || Boolean(pendingCandidateId)}
                                   onClick={() => void settleSelectedCandidates('accepted')}
                                 >
                                   <Check className="size-3.5" aria-hidden="true" />
@@ -4207,7 +4216,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
                             itemId={candidate.id}
                             label={t('Select {{title}}', { title: item.title })}
                             store={selectionStore}
-                            disabled={pending || isBatching}
+                            disabled={isBatching || Boolean(pendingCandidateId)}
                             className="relative z-10 mt-1 size-4"
                           />
                           <div className="pointer-events-none relative min-w-0">

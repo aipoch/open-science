@@ -1138,6 +1138,74 @@ describe('LiteratureLibraryPage', () => {
       expect(screen.queryByTestId('literature-dismiss-undo')).toBeNull()
     })
 
+    it.each([
+      ['single', false],
+      ['batch', false],
+      ['single', true],
+      ['batch', true]
+    ] as const)(
+      'preserves Undo after a lost %s dismissal response (offline recheck: %s)',
+      async (mode, offline) => {
+        const rows = mockInbox(2)
+        render(<LiteratureLibraryPage />)
+        await screen.findByText('Discovery 1')
+        const originalTransact = transact.getMockImplementation()!
+        const originalSearch = search.getMockImplementation()!
+        transact.mockImplementationOnce(async (command) => {
+          await originalTransact(command)
+          if (offline) search.mockRejectedValue(new Error('Offline'))
+          throw new Error('Response lost after commit')
+        })
+        if (mode === 'batch') await settlePage('Dismiss')
+        else
+          await act(async () =>
+            fireEvent.click(screen.getAllByRole('button', { name: 'Dismiss' })[0]!)
+          )
+        expect(rows[0]!.state).toBe('dismissed')
+        if (offline) {
+          expect(screen.queryByText('Discovery 1')).toBeNull()
+          search.mockImplementation(originalSearch)
+          const writes = transact.mock.calls.length
+          await act(async () =>
+            fireEvent.click(await screen.findByRole('button', { name: 'Recheck' }))
+          )
+          expect(transact).toHaveBeenCalledTimes(writes)
+        }
+        await act(async () => fireEvent.click(await screen.findByRole('button', { name: 'Undo' })))
+        expect(rows.every(({ state }) => state === 'pending')).toBe(true)
+      }
+    )
+
+    it('disables Inbox selection and batch controls during a single candidate update', async () => {
+      mockInbox(2)
+      render(<LiteratureLibraryPage />)
+      fireEvent.click(await screen.findByRole('checkbox', { name: 'Select all references' }))
+      let finish: () => void = () => {
+        throw new Error('Dismiss did not start')
+      }
+      transact.mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            finish = () => resolve({ kind: 'candidate', id: 'candidate-1', state: 'dismissed' })
+          })
+      )
+      fireEvent.click(
+        within(screen.getAllByRole('article')[0]!).getByRole('button', { name: 'Dismiss' })
+      )
+      try {
+        expect(
+          screen.getAllByRole('checkbox').every((control) => control.matches(':disabled'))
+        ).toBe(true)
+        for (const name of ['Accept', 'Dismiss', 'Clear selection']) {
+          expect(
+            screen.getAllByRole('button', { name }).every((control) => control.matches(':disabled'))
+          ).toBe(true)
+        }
+      } finally {
+        await act(async () => finish())
+      }
+    })
+
     it('recovers the remaining dismissed candidate after another window restores one', async () => {
       const rows = mockInbox(2)
       render(<LiteratureLibraryPage />)
