@@ -129,7 +129,8 @@ describe('database startup logging', () => {
               '0034_background_result_delivery',
               '0035_literature_pdf_provenance',
               '0036_content_verification_observation',
-              '0037_literature_inbox_integrity'
+              '0037_literature_inbox_integrity',
+              '0038_literature_search_text'
             ],
             adoptedLegacy: true
           })

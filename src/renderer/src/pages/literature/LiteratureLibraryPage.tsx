@@ -1285,6 +1285,8 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
   const clearSelection = useCallback((): void => selectionStore.clear(), [selectionStore])
   const yearFilter = useLiteratureYearFilter(clearSelection)
   const { from: filterYearFrom, to: filterYearTo } = yearFilter
+  const [filtersOpen, setFiltersOpen] = useState(false)
+  const [restorePreview, setRestorePreview] = useState<{ itemIds: string[]; skipped: number }>()
   const [isBatching, setIsBatching] = useState(false)
   const [batchLookup, setBatchLookup] = useState<{
     mode: BatchLookupMode
@@ -1848,6 +1850,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
       setEntriesOffset(0)
       clearSelection()
       setLifecycleFailure(undefined)
+      setRestorePreview(undefined)
       setLinkFailure(undefined)
     }, 0)
     return () => window.clearTimeout(timeout)
@@ -1958,8 +1961,8 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
   const activeFilterCount =
     (tagId !== 'all' ? 1 : 0) +
     (filterItemType !== 'all' ? 1 : 0) +
-    (yearFilter.draftFrom ? 1 : 0) +
-    (yearFilter.draftTo ? 1 : 0) +
+    (yearFilter.from ? 1 : 0) +
+    (yearFilter.to ? 1 : 0) +
     (filterHasPdf !== 'all' ? 1 : 0)
 
   const clearFilters = (): void => {
@@ -2758,6 +2761,43 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
     const page = await window.api.literature.search({ ...buildEntriesRequest(0), allItemIds: true })
     if (!page.itemIds) throw new Error('Literature membership is unavailable.')
     return page.itemIds.filter((id) => !excludedMatchingIds.has(id))
+  }
+
+  const previewRestoreSelection = async (): Promise<void> => {
+    if (isBatching) return
+    const scopeKey = entriesKey
+    setIsBatching(true)
+    setError(undefined)
+    try {
+      const selectedIds = new Set(await resolveSelectedItemIds())
+      const restorable = new Set<string>()
+      const skipped = new Set<string>()
+      const seenOffsets = new Set<number>()
+      let offset = 0
+      for (;;) {
+        if (seenOffsets.has(offset)) throw new Error('Repeated Literature page.')
+        seenOffsets.add(offset)
+        const page = await window.api.literature.search({
+          ...buildEntriesRequest(offset),
+          limit: 100
+        })
+        if (linkScopeRef.current !== scopeKey) return
+        for (const entry of page.entries.filter(isItem)) {
+          if (!selectedIds.has(entry.id)) continue
+          if (entry.mergedIntoItemId) skipped.add(entry.id)
+          else restorable.add(entry.id)
+        }
+        if (page.nextOffset === undefined) break
+        offset = page.nextOffset
+      }
+      if (restorable.size + skipped.size !== selectedIds.size)
+        throw new Error('Selected Literature membership changed.')
+      setRestorePreview({ itemIds: [...restorable], skipped: skipped.size })
+    } catch {
+      if (linkScopeRef.current === scopeKey) setError(t('Selected references could not be loaded.'))
+    } finally {
+      setIsBatching(false)
+    }
   }
 
   const requestBatchLookup = async (mode: BatchLookupMode): Promise<void> => {
@@ -3874,9 +3914,18 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
                               <SelectItem value="rating">{t('Highest rated')}</SelectItem>
                             </SelectContent>
                           </Select>
-                          <Popover>
+                          <Popover open={filtersOpen} onOpenChange={setFiltersOpen}>
                             <PopoverTrigger asChild>
-                              <Button type="button" variant="outline" className="relative">
+                              <Button
+                                type="button"
+                                variant="outline"
+                                className="relative"
+                                aria-describedby={
+                                  yearFilter.invalid && !filtersOpen
+                                    ? 'literature-year-filter-error'
+                                    : undefined
+                                }
+                              >
                                 <SlidersHorizontal className="size-4" aria-hidden="true" />
                                 {t('Filters')}
                                 {activeFilterCount > 0 ? (
@@ -3958,7 +4007,11 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
                                   type="button"
                                   variant="outline"
                                   className="w-full"
-                                  disabled={activeFilterCount === 0}
+                                  disabled={
+                                    activeFilterCount === 0 &&
+                                    !yearFilter.draftFrom &&
+                                    !yearFilter.draftTo
+                                  }
                                   onClick={clearFilters}
                                 >
                                   {t('Clear filters')}
@@ -3966,6 +4019,15 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
                               </div>
                             </PopoverContent>
                           </Popover>
+                          {yearFilter.invalid && !filtersOpen ? (
+                            <p
+                              id="literature-year-filter-error"
+                              role="status"
+                              className="text-xs text-destructive"
+                            >
+                              {t('Enter a valid year range (0–9999).')}
+                            </p>
+                          ) : null}
                           <LiteratureColumnCustomizer
                             columns={tableColumnOrder}
                             labels={tableColumnLabels}
@@ -4053,8 +4115,16 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
                               type="button"
                               variant="outline"
                               size="sm"
-                              disabled={isBatching}
-                              onClick={() => void runLifecycleAction('active')}
+                              disabled={
+                                isBatching ||
+                                (!selection.allMatchingSelected &&
+                                  [...selection.selectedIds].every((id) =>
+                                    items.some(
+                                      (item) => item.id === id && Boolean(item.mergedIntoItemId)
+                                    )
+                                  ))
+                              }
+                              onClick={() => void previewRestoreSelection()}
                             >
                               <RotateCcw className="size-3.5" aria-hidden="true" />
                               {t('Restore')}
@@ -4824,7 +4894,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
                                         <>
                                           <DropdownMenuSeparator />
                                           <DropdownMenuItem
-                                            disabled={isBatching}
+                                            disabled={isBatching || Boolean(entry.mergedIntoItemId)}
                                             onSelect={() =>
                                               void setItemsLifecycle([entry.id], 'active')
                                             }
@@ -4832,6 +4902,24 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
                                             <RotateCcw className="mr-2 size-4" aria-hidden="true" />
                                             {t('Restore')}
                                           </DropdownMenuItem>
+                                          {entry.mergedIntoItemId ? (
+                                            <DropdownMenuItem
+                                              onSelect={() =>
+                                                useNavigationStore
+                                                  .getState()
+                                                  .openLiteratureItem(
+                                                    entry.mergedIntoItemId!,
+                                                    'user'
+                                                  )
+                                              }
+                                            >
+                                              <BookOpenText
+                                                className="mr-2 size-4"
+                                                aria-hidden="true"
+                                              />
+                                              {t('Open retained reference')}
+                                            </DropdownMenuItem>
+                                          ) : null}
                                         </>
                                       ) : null}
                                       {section !== 'trash' ? (
@@ -5954,6 +6042,49 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
                   />
                 ) : null}
                 {t('Delete collection')}
+              </Button>
+            </div>
+          </AlertDialog.Content>
+        </AlertDialog.Portal>
+      </AlertDialog.Root>
+      <AlertDialog.Root
+        open={Boolean(restorePreview)}
+        onOpenChange={(open) => {
+          if (!open && !isBatching) setRestorePreview(undefined)
+        }}
+      >
+        <AlertDialog.Portal>
+          <AlertDialog.Overlay className={dialogOverlayClassName} />
+          <AlertDialog.Content
+            className={dialogPanelClassName('w-[min(440px,calc(100vw-2rem))] p-0')}
+          >
+            <div className={dialogHeaderClassName}>
+              <AlertDialog.Title className={dialogTitleClassName}>{t('Restore')}</AlertDialog.Title>
+            </div>
+            <div className={dialogBodyClassName}>
+              <AlertDialog.Description className={dialogDescriptionClassName}>
+                {t('Can restore: {{recoverable}}. Merged duplicates skipped: {{skipped}}.', {
+                  recoverable: restorePreview?.itemIds.length ?? 0,
+                  skipped: restorePreview?.skipped ?? 0
+                })}
+              </AlertDialog.Description>
+            </div>
+            <div className={dialogFooterClassName}>
+              <AlertDialog.Cancel asChild>
+                <Button type="button" variant="ghost" disabled={isBatching}>
+                  {t('Cancel')}
+                </Button>
+              </AlertDialog.Cancel>
+              <Button
+                type="button"
+                disabled={isBatching || !restorePreview?.itemIds.length}
+                onClick={() => {
+                  const ids = restorePreview?.itemIds
+                  setRestorePreview(undefined)
+                  if (ids?.length) void setItemsLifecycle(ids, 'active')
+                }}
+              >
+                {t('Restore')}
               </Button>
             </div>
           </AlertDialog.Content>

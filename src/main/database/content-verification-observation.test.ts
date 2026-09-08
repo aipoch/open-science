@@ -28,7 +28,11 @@ it('adds unknown verification observations without changing historical content o
     'a'.repeat(64)
   )
   await expect(migrateApplicationDatabase(client)).resolves.toMatchObject({
-    applied: ['0036_content_verification_observation', '0037_literature_inbox_integrity']
+    applied: [
+      '0036_content_verification_observation',
+      '0037_literature_inbox_integrity',
+      '0038_literature_search_text'
+    ]
   })
   expect(await client.contentBlob.findUnique({ where: { id: 'old' } })).toMatchObject({
     state: 'available',

@@ -103,6 +103,8 @@
     "Select no more than {{limit}} references for this task.": "此任务最多支持 {{limit}} 篇文献，请调整选择。",
     "This reference changed while you were editing. Your draft has been kept.": "您编辑期间此文献已更改。您的草稿已保留。",
     "Discard this draft and load the latest saved metadata.": "放弃此草稿并加载最新保存的元数据。",
+    "Open retained reference": "打开保留的文献",
+    "Can restore: {{recoverable}}. Merged duplicates skipped: {{skipped}}.": "可恢复：{{recoverable}}。跳过的已合并重复文献：{{skipped}}。",
     "Identifiers (★ primary)": "标识符（★ 主标识）",
     "Search again to refresh this older metadata review.": "请重新搜索以更新这份旧的元数据审阅结果。",
     "The reference was saved, but could not be reloaded.": "文献已保存，但无法重新加载。",

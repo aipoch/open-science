@@ -376,9 +376,10 @@ describe('D02/D04 persisted database boundaries', () => {
           '0034_background_result_delivery',
           '0035_literature_pdf_provenance',
           '0036_content_verification_observation',
-          '0037_literature_inbox_integrity'
+          '0037_literature_inbox_integrity',
+          '0038_literature_search_text'
         ],
-        to: '0037_literature_inbox_integrity'
+        to: '0038_literature_search_text'
       })
       // Literature adds contentBlobId to version rows while preserving their original fields.
       expect(await Promise.all(tables.map(readRows))).toMatchObject(before)

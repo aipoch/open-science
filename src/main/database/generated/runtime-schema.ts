@@ -336,6 +336,9 @@ const RUNTIME_SCHEMA_TABLE_DDLS = [
     CONSTRAINT "ContentBlob_sizeBytes_check" CHECK ("sizeBytes" >= 0)
 );`,
   `CREATE TABLE IF NOT EXISTS "LiteratureItem" (
+    "normalizedTitle" TEXT NOT NULL DEFAULT '',
+    "normalizedAbstract" TEXT NOT NULL DEFAULT '',
+    "normalizedContainerTitle" TEXT NOT NULL DEFAULT '',
     "id" TEXT NOT NULL PRIMARY KEY,
     "itemType" TEXT NOT NULL,
     "title" TEXT NOT NULL,
@@ -391,6 +394,7 @@ const RUNTIME_SCHEMA_TABLE_DDLS = [
     CONSTRAINT "LiteratureAttachmentVersion_shape_check" CHECK ("versionNumber" >= 1 AND length(trim("filename")) > 0 AND length(trim("contentType")) > 0 AND "sizeBytes" >= 0 AND length("checksum") = 64 AND "checksum" NOT GLOB '*[^0-9a-f]*' AND ("pageCount" IS NULL OR "pageCount" >= 1))
 );`,
   `CREATE TABLE IF NOT EXISTS "LiteratureCreator" (
+    "normalizedDisplayName" TEXT NOT NULL DEFAULT '',
     "id" TEXT NOT NULL PRIMARY KEY,
     "nameMode" TEXT NOT NULL,
     "givenName" TEXT NOT NULL DEFAULT '',

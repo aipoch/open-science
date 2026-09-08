@@ -62,7 +62,7 @@ describe('Literature inbox integrity migration', () => {
       await client.$executeRawUnsafe(
         schema === 'pre-ledger released'
           ? 'DELETE FROM "_open_science_migrations"'
-          : 'DELETE FROM "_open_science_migrations" WHERE id = \'0037_literature_inbox_integrity\''
+          : 'DELETE FROM "_open_science_migrations" WHERE id >= \'0037_literature_inbox_integrity\''
       )
 
       expect(await migrateApplicationDatabase(client)).toMatchObject({
