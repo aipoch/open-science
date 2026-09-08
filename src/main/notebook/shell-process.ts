@@ -570,9 +570,10 @@ const runShellCommand = (
           .finally(async () => {
             endSandboxExecution?.()
             try {
-              reaped = cleanupCompleted(
-                await cleanupSandboxWithRetry('spawn-failed', { processesTerminated: reaped })
-              )
+              if (reaped)
+                reaped = cleanupCompleted(
+                  await cleanupSandboxWithRetry('spawn-failed', { processesTerminated: reaped })
+                )
             } catch {
               reaped = false
             }

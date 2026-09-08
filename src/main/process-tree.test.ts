@@ -14,8 +14,12 @@ vi.mock('node:child_process', () => ({ spawn: spawnMock }))
 vi.mock('node:fs', () => ({ readFileSync: readFileSyncMock }))
 vi.mock('node:fs/promises', () => ({ readFile: readFileMock, readdir: readdirMock }))
 
-const { registerOwnedPosixProcessGroup, trackOwnedPosixProcessTree, terminateProcessTree } =
-  await import('./process-tree')
+const {
+  createPosixProcessTreeOwnership,
+  registerOwnedPosixProcessGroup,
+  trackOwnedPosixProcessTree,
+  terminateProcessTree
+} = await import('./process-tree')
 
 // Minimal ChildProcess stand-in: an EventEmitter (so waitForExit's once('exit') resolves) exposing the
 // pid/kill/killed/exitCode surface the code under test touches. kill() flips killed like Node does.
@@ -194,6 +198,67 @@ describe('terminateProcessTree (win32)', () => {
 })
 
 describe('terminateProcessTree (posix)', () => {
+  it.each(['linux', 'darwin'] as const)(
+    'preserves inherited environment when marking %s process ownership',
+    (platform) => {
+      const ownership = createPosixProcessTreeOwnership(undefined, platform)
+      expect(ownership.token).toEqual(expect.any(String))
+      expect(ownership.env).toMatchObject(process.env)
+      expect(ownership.env?.OPEN_SCIENCE_PROCESS_TREE_ID).toBe(ownership.token)
+      expect(createPosixProcessTreeOwnership(undefined, platform).token).not.toBe(ownership.token)
+    }
+  )
+
+  it.each([false, true])(
+    'checks inherited ownership against Linux PID reuse: %s',
+    async (reused) => {
+      setPlatform('linux')
+      const marker = 'command-ownership'
+      const child = new FakeChild(1000)
+      let releaseFirstSample: ((entries: string[]) => void) | undefined
+      readdirMock
+        .mockImplementationOnce(
+          () =>
+            new Promise<string[]>((resolve) => {
+              releaseFirstSample = resolve
+            })
+        )
+        .mockResolvedValue(['2000', '3000'])
+      readFileMock.mockImplementation(async (path: string) =>
+        path.includes('/2000/')
+          ? linuxStat(2000, 1, 2000, 2000, 200)
+          : linuxStat(3000, 1, 3000, 3000, 300)
+      )
+      readFileSyncMock.mockImplementation((path: string) => {
+        if (path === '/proc/1000/stat') return linuxStat(1000, process.pid, 1000, 1000, 100)
+        if (path === '/proc/2000/environ')
+          return Buffer.from('OTHER=x\0OPEN_SCIENCE_PROCESS_TREE_ID=' + marker + '\0')
+        if (path === '/proc/2000/stat') return linuxStat(2000, 1, 2000, 2000, reused ? 201 : 200)
+        return Buffer.from('OPEN_SCIENCE_PROCESS_TREE_ID=unrelated\0')
+      })
+      let helperAlive = true
+      const kill = vi.spyOn(process, 'kill').mockImplementation((_pid, signal) => {
+        if (signal === 0 && !helperAlive) throw esrch()
+        if (signal === 'SIGTERM') helperAlive = false
+        return true
+      })
+      try {
+        trackOwnedPosixProcessTree(child as never, marker)
+        child.exitCode = 0
+        releaseFirstSample?.(['2000', '3000'])
+        await expect(terminateProcessTree(child as never)).resolves.toEqual({ reaped: true })
+        if (reused) expect(kill).not.toHaveBeenCalled()
+        else expect(kill).toHaveBeenCalledWith(2000, 'SIGTERM')
+        expect(kill).not.toHaveBeenCalledWith(3000, expect.anything())
+        expect(kill).not.toHaveBeenCalledWith(-3000, expect.anything())
+      } finally {
+        readFileSyncMock.mockReset()
+        readFileMock.mockReset()
+        readdirMock.mockReset()
+      }
+    }
+  )
+
   it('pins the spawned Linux leader before a delayed first table sample observes its exit', async () => {
     setPlatform('linux')
     let releaseFirstSample: ((entries: string[]) => void) | undefined

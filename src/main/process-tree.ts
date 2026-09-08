@@ -57,9 +57,9 @@ export const createPosixProcessTreeOwnership = (
   env: NodeJS.ProcessEnv | undefined,
   platform: NodeJS.Platform = process.platform
 ): PosixProcessTreeOwnership => {
-  if (platform !== 'darwin') return { env, token: undefined }
+  if (platform !== 'darwin' && platform !== 'linux') return { env, token: undefined }
   const token = randomUUID()
-  return { env: { ...env, [PROCESS_TREE_OWNERSHIP_ENV]: token }, token }
+  return { env: { ...(env ?? process.env), [PROCESS_TREE_OWNERSHIP_ENV]: token }, token }
 }
 
 // A detached POSIX child is the leader of a private process group whose stable id is its spawn pid.
@@ -526,6 +526,28 @@ const captureTrackedDescendants = (
     for (const child of childrenByParentBirth.get(birthToken) ?? []) {
       tracker.identities.set(child.pid, child)
       if (child.birthToken) birthStack.push(child.birthToken)
+    }
+  }
+  if (process.platform === 'linux' && tracker.ownershipToken) {
+    // A child can create a new session and lose its parent before the first sample. Its inherited
+    // command marker survives that transition. Validate the kernel birth identity again after
+    // reading environ so PID reuse cannot transfer ownership to a replacement process.
+    const expectedEntry = Buffer.from(
+      PROCESS_TREE_OWNERSHIP_ENV + '=' + tracker.ownershipToken + '\0'
+    )
+    for (const candidate of table.processes.values()) {
+      if (tracker.identities.has(candidate.pid)) continue
+      try {
+        const environment = readFileSync('/proc/' + candidate.pid + '/environ')
+        const offset = environment.indexOf(expectedEntry)
+        if (offset < 0 || (offset > 0 && environment[offset - 1] !== 0)) continue
+        const current = parseLinuxProcStat(readFileSync('/proc/' + candidate.pid + '/stat', 'utf8'))
+        if (samePosixIdentity(candidate, current)) tracker.identities.set(candidate.pid, candidate)
+      } catch (error) {
+        const code = (error as NodeJS.ErrnoException).code
+        // Other users' environments are inaccessible; no ownership is inferred from their PIDs.
+        if (!['ENOENT', 'ESRCH', 'EACCES', 'EPERM'].includes(code ?? '')) tracker.complete = false
+      }
     }
   }
   if (process.platform === 'darwin' && tracker.ownershipToken) {
