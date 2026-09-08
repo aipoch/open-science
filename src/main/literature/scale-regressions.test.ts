@@ -280,3 +280,88 @@ it.each([400, 1000])(
   },
   60_000
 )
+
+it('keeps a valid oversized reference available to workspace mentions', async () => {
+  const { searchLiteratureMentionOptions } =
+    await import('../../renderer/src/pages/workspace/literature-pdf-options')
+  const client = createProjectDbClient(await directory())
+  cleanup.push(() => client.$disconnect())
+  await migrateApplicationDatabase(client)
+  const catalog = new LiteratureCatalog(async () => client)
+  const created = await catalog.transact({
+    kind: 'create-item',
+    item: literatureItemInputSchema.parse({
+      itemType: 'journalArticle',
+      title: 'Oversized mention reference',
+      abstract: 'A'.repeat(10 * 1024 * 1024 + 1)
+    })
+  })
+  vi.stubGlobal('window', {
+    api: {
+      literature: {
+        exportRecord: (request: Parameters<LiteratureCatalog['exportRecord']>[0]) =>
+          catalog.exportRecord(request),
+        search: (request: Parameters<LiteratureCatalog['search']>[0]) => catalog.search(request)
+      }
+    }
+  })
+  try {
+    const options = await searchLiteratureMentionOptions('Oversized mention reference')
+    expect(options.map((option) => option.reference.itemId)).toEqual([created.id])
+    expect(options[0].reference.item.abstract).toBe('A'.repeat(10 * 1024 * 1024 + 1))
+  } finally {
+    vi.unstubAllGlobals()
+  }
+})
+
+it('counts matching oversized records without loading their metadata', async () => {
+  const client = createProjectDbClient(await directory())
+  cleanup.push(() => client.$disconnect())
+  await migrateApplicationDatabase(client)
+  const catalog = new LiteratureCatalog(async () => client)
+  await catalog.transact({
+    kind: 'create-item',
+    item: literatureItemInputSchema.parse({
+      itemType: 'journalArticle',
+      title: 'Oversized count reference',
+      abstract: 'A'.repeat(10 * 1024 * 1024 + 1)
+    })
+  })
+  expect(
+    await catalog.search({ scope: 'library', query: 'Oversized count reference', countOnly: true })
+  ).toEqual({ entries: [], totalCount: 1 })
+})
+
+it('downloads complete metadata for an oversized reference retained in Trash', async () => {
+  const client = createProjectDbClient(await directory())
+  cleanup.push(() => client.$disconnect())
+  await migrateApplicationDatabase(client)
+  const catalog = new LiteratureCatalog(async () => client)
+  const abstract = 'A'.repeat(10 * 1024 * 1024 + 1)
+  const created = await catalog.transact({
+    kind: 'create-item',
+    item: literatureItemInputSchema.parse({
+      itemType: 'journalArticle',
+      title: 'Retained reference',
+      abstract
+    })
+  })
+  await catalog.transact({ kind: 'set-item-lifecycle', itemIds: [created.id], state: 'deleted' })
+  await expect(catalog.search({ scope: 'library', lifecycle: 'deleted' })).rejects.toThrow(
+    'display budget'
+  )
+  const chunks: string[] = []
+  let offset = 0
+  let digest: string | undefined
+  for (;;) {
+    const page = await catalog.exportRecord({ itemId: created.id, offset, digest })
+    chunks.push(page.chunk)
+    digest = page.digest
+    if (page.nextOffset === undefined) break
+    offset = page.nextOffset
+  }
+  const record = JSON.parse(chunks.join(''))
+  expect(record.item.abstract).toBe(abstract)
+  expect(record.deletedAt).toEqual(expect.any(Number))
+  expect(await catalog.get(created.id)).toBeUndefined()
+})

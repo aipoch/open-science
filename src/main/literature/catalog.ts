@@ -1061,9 +1061,15 @@ class LiteratureCatalog {
   async exportRecord(
     request: LiteratureExportRecordRequest
   ): Promise<LiteratureExportRecordResult> {
-    const item = await this.get(request.itemId)
-    if (!item) throw new Error('Reference unavailable')
-    const content = JSON.stringify(item)
+    const client = await this.getClient()
+    // Export the retained record itself, including Trash metadata and merge provenance.
+    // Normal get() deliberately hides deleted records and follows active aliases.
+    const row = await client.literatureItem.findUnique({
+      where: { id: request.itemId },
+      include: itemInclude
+    })
+    if (!row) throw new Error('Reference unavailable')
+    const content = JSON.stringify(toItemView(row))
     const digest = createHash('sha256').update(content).digest('hex')
     const offset = request.offset ?? 0
     if ((offset > 0 && !request.digest) || (request.digest && request.digest !== digest))

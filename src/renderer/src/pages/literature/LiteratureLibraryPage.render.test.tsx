@@ -5653,9 +5653,7 @@ describe('LiteratureLibraryPage', () => {
       if (!filtered) {
         expect(screen.getByText(libraryItem.item.title)).not.toBeNull()
         expect(
-          search.mock.calls.filter(
-            ([request]) => request.scope === 'library' && request.limit !== 1
-          )
+          search.mock.calls.filter(([request]) => request.scope === 'library' && !request.countOnly)
         ).toHaveLength(previousQueries)
         return
       }
