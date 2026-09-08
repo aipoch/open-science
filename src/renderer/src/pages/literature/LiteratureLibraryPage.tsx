@@ -1693,12 +1693,12 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
   }, [clearSelection, refreshItems, reloadEntries, tagId, tagRevision])
 
   const loadEntries = useCallback(
-    (force = false): Promise<void> => {
+    (force = false, preservePage = false): Promise<void> => {
       if (force) {
         setDuplicatesRevision((value) => value + 1)
         setLibraryCountRevision((value) => value + 1)
       }
-      return reloadEntries(force)
+      return reloadEntries(force, preservePage)
     },
     [reloadEntries]
   )
@@ -3880,7 +3880,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
                         disabled: isBatching,
                         onClick: () => {
                           void Promise.all([
-                            loadEntries(true),
+                            loadEntries(true, true),
                             loadCollections(),
                             loadProjectCounts()
                           ]).catch(() => setError(t('Literature could not be loaded.')))

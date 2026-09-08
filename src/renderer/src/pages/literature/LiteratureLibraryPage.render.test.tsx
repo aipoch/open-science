@@ -3556,12 +3556,13 @@ describe('LiteratureLibraryPage', () => {
   })
 
   it.each([
-    { filtered: true, remains: false },
-    { filtered: false, remains: true },
-    { filtered: true, remains: true }
+    { filtered: true, remains: false, retry: false },
+    { filtered: false, remains: true, retry: false },
+    { filtered: true, remains: true, retry: false },
+    { filtered: true, remains: true, retry: true }
   ])(
-    'refreshes a Favorites result after a tag event with filtered=$filtered and remains=$remains',
-    async ({ filtered, remains }) => {
+    'refreshes a Favorites result after a tag event with filtered=$filtered, remains=$remains and retry=$retry',
+    async ({ filtered, remains, retry }) => {
       window.localStorage.setItem(
         'open-science:literature-table-preferences',
         JSON.stringify({ visible: ['notes'] })
@@ -3572,12 +3573,17 @@ describe('LiteratureLibraryPage', () => {
         return () => undefined
       })
       let assigned = true
-      search.mockImplementation((request: LiteratureCatalogSearchRequest) =>
-        Promise.resolve({
+      let failRefresh = false
+      search.mockImplementation((request: LiteratureCatalogSearchRequest) => {
+        if (request.scope === 'library' && request.tagId && failRefresh) {
+          failRefresh = false
+          return Promise.reject(new Error('Tag-filter refresh unavailable'))
+        }
+        return Promise.resolve({
           entries: request.scope === 'library' && (!request.tagId || assigned) ? [libraryItem] : [],
           totalCount: request.scope === 'library' && (!request.tagId || assigned) ? 1 : 0
         })
-      )
+      })
       render(<LiteratureLibraryPage />)
       fireEvent.click(screen.getByRole('button', { name: 'All references' }))
       await screen.findByText(libraryItem.item.title)
@@ -3599,6 +3605,7 @@ describe('LiteratureLibraryPage', () => {
       }) as HTMLInputElement
       fireEvent.change(input, { target: { value: 'Draft during tag refresh' } })
       assigned = remains
+      failRefresh = retry
       vi.mocked(window.api.tags.snapshot).mockResolvedValue({
         revision: 2,
         tags: useTagStore.getState().tags,
@@ -3608,6 +3615,16 @@ describe('LiteratureLibraryPage', () => {
         emitChanged({ revision: 2 })
       })
       await waitFor(() => expect(useTagStore.getState().revision).toBe(2))
+      if (retry) {
+        await screen.findByText('Literature could not be loaded.')
+        fireEvent.click(screen.getByRole('button', { name: 'Retry' }))
+        expect(screen.getByRole('textbox', { name: `Note for ${libraryItem.item.title}` })).toBe(
+          input
+        )
+        await waitFor(() =>
+          expect(screen.queryByText('Literature could not be loaded.')).toBeNull()
+        )
+      }
       if (remains) {
         expect(screen.getByRole('textbox', { name: `Note for ${libraryItem.item.title}` })).toBe(
           input
