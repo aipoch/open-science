@@ -104,6 +104,8 @@
   "renderer": {
     "Identifiers (★ primary)": "Identifiants (★ principal)",
     "Search again to refresh this older metadata review.": "Relancez la recherche pour actualiser cette ancienne révision des métadonnées.",
+    "The reference was saved, but could not be reloaded.": "La référence a été enregistrée, mais n’a pas pu être rechargée.",
+    "Draft preserved. Escape to discard.": "Brouillon conservé. Échap pour abandonner.",
     "Not answered": "Sans réponse",
     "Automatic contrast": "Contraste automatique",
     "Display range": "Plage d’affichage",

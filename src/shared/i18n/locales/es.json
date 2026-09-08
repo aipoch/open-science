@@ -104,6 +104,8 @@
   "renderer": {
     "Identifiers (★ primary)": "Identificadores (★ principal)",
     "Search again to refresh this older metadata review.": "Busque de nuevo para actualizar esta revisión anterior de metadatos.",
+    "The reference was saved, but could not be reloaded.": "La referencia se guardó, pero no se pudo volver a cargar.",
+    "Draft preserved. Escape to discard.": "Borrador conservado. Escape para descartar.",
     "Not answered": "Sin responder",
     "Automatic contrast": "Contraste automático",
     "Display range": "Rango de visualización",
