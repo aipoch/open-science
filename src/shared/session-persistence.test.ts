@@ -315,7 +315,7 @@ const createHistoricalPlan = (): ActivePlanProjection => ({
 })
 
 describe('conversation graph materialization diagnostics', () => {
-  it('repairs a bound Session persisted with its provisional conversation root', () => {
+  it('preserves durable graph identities even when they retain a provisional prefix', () => {
     const pendingSessionId = 'pending-session-123-1'
     const messages: PersistedChatMessage[] = [
       {
@@ -328,41 +328,49 @@ describe('conversation graph materialization diagnostics', () => {
         updatedAt: 1
       }
     ]
+    const graph = createLinearConversationGraph({
+      sessionId: pendingSessionId,
+      messages,
+      createdAt: 1,
+      updatedAt: 1
+    })
+    graph.frames.push({
+      id: 'child-frame',
+      parentFrameId: graph.rootFrameId,
+      originMessageId: 'message-1',
+      originBindingState: 'validated',
+      kind: 'delegate',
+      status: 'completed',
+      activeBranchId: 'child-branch',
+      createdAt: 2,
+      completedAt: 3
+    })
+    graph.branches.push(
+      {
+        id: 'inactive-branch',
+        agentFrameId: graph.rootFrameId,
+        parentBranchId: graph.branches[0].id,
+        forkMessageId: 'message-1',
+        headMessageId: 'message-1',
+        createdAt: 2,
+        updatedAt: 2
+      },
+      { id: 'child-branch', agentFrameId: 'child-frame', createdAt: 2, updatedAt: 3 }
+    )
     const restored = normalizeSessionFile({
       ...createSessionWithActivity(undefined),
       id: 'runtime-session-1',
       messages,
-      conversationGraph: createLinearConversationGraph({
-        sessionId: pendingSessionId,
-        messages,
-        createdAt: 1,
-        updatedAt: 1
-      })
+      conversationGraph: graph
     })
+    expect(restored?.conversationGraph?.frames).toEqual(graph.frames)
+    expect(restored?.conversationGraph?.branches).toEqual(graph.branches)
+    expect(restored?.conversationGraph?.runtimeSegments).toEqual(graph.runtimeSegments)
 
     expect(restored?.conversationGraph).toMatchObject({
-      rootFrameId: 'root-frame-runtime-session-1',
-      activeFrameId: 'root-frame-runtime-session-1',
-      frames: [
-        {
-          id: 'root-frame-runtime-session-1',
-          activeBranchId: 'message-branch-runtime-session-1'
-        }
-      ],
-      branches: [
-        {
-          id: 'message-branch-runtime-session-1',
-          agentFrameId: 'root-frame-runtime-session-1'
-        }
-      ],
-      messages: [
-        {
-          id: 'message-1',
-          agentFrameId: 'root-frame-runtime-session-1',
-          introducedOnBranchId: 'message-branch-runtime-session-1',
-          runtimeSegmentId: 'runtime-segment-runtime-session-1'
-        }
-      ]
+      rootFrameId: graph.rootFrameId,
+      activeFrameId: graph.activeFrameId,
+      messages: graph.messages
     })
   })
 

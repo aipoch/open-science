@@ -590,36 +590,53 @@ describe('artifact finalization startup recovery', () => {
     )
   })
 
-  it('repairs a provisional root before recovering its pending Version', async () => {
-    const compatibility = new ArtifactRepository(storageRoot)
-    const { provenance, version } = await prepareRecovery(compatibility)
-    const persisted = await sessions.loadSession(PROJECT_ID, SESSION_ID)
-    if (!persisted?.conversationGraph) throw new Error('Recovery fixture Session graph is missing.')
-    await sessions.saveSession({
-      ...persisted,
-      conversationGraph: rebindConversationGraphSessionId(
-        persisted.conversationGraph,
-        SESSION_ID,
-        'pending-session-123-1'
+  it.each([false, true])(
+    'preserves a historical root during recovery with conflicting Artifact scope: %s',
+    async (conflicting) => {
+      const historicalSessionId = 'pending-session-123-1'
+      const compatibility = new ArtifactRepository(storageRoot)
+      const { provenance, version } = await prepareRecovery(
+        compatibility,
+        1,
+        conflicting ? SESSION_ID : historicalSessionId
       )
-    })
-    const coordinator = new SessionPersistenceCoordinator(
-      sessions,
-      files,
-      undefined,
-      undefined,
-      undefined,
-      provenance
-    )
+      const persisted = await sessions.loadSession(PROJECT_ID, SESSION_ID)
+      if (!persisted?.conversationGraph)
+        throw new Error('Recovery fixture Session graph is missing.')
+      await sessions.saveSession({
+        ...persisted,
+        conversationGraph: rebindConversationGraphSessionId(
+          persisted.conversationGraph,
+          SESSION_ID,
+          historicalSessionId
+        )
+      })
+      const coordinator = new SessionPersistenceCoordinator(
+        sessions,
+        files,
+        undefined,
+        undefined,
+        undefined,
+        provenance
+      )
 
-    const loaded = await coordinator.loadAll()
+      const loaded = await coordinator.loadAll()
 
-    expect(loaded.sessions[0].conversationGraph?.rootFrameId).toBe(`root-frame-${SESSION_ID}`)
-    expect(loaded.sessions[0].messages[1].artifactIds).toEqual([version.versionId])
-    await expect(
-      client.artifactVersion.findUniqueOrThrow({ where: { id: version.versionId } })
-    ).resolves.toMatchObject({ state: 'finalized', messageId: 'message-1' })
-  })
+      expect(loaded.sessions[0].conversationGraph?.rootFrameId).toBe(
+        `root-frame-${historicalSessionId}`
+      )
+      expect(loaded.sessions[0].messages[1].artifactIds).toEqual(
+        conflicting ? undefined : [version.versionId]
+      )
+      await expect(
+        client.artifactVersion.findUniqueOrThrow({ where: { id: version.versionId } })
+      ).resolves.toMatchObject(
+        conflicting
+          ? { state: 'pending', messageId: null }
+          : { state: 'finalized', messageId: 'message-1' }
+      )
+    }
+  )
 
   it('replays an explicitly requested finalized Version that is already linked', async () => {
     const compatibility = new ArtifactRepository(storageRoot)
@@ -1534,7 +1551,8 @@ describe('artifact finalization startup recovery', () => {
 
   const prepareRecovery = async (
     compatibility: ArtifactRepository,
-    outputCount = 1
+    outputCount = 1,
+    graphSessionId = SESSION_ID
   ): Promise<{
     versions: Awaited<ReturnType<ArtifactProvenanceRepository['createVersion']>>[]
     provenance: ArtifactProvenanceRepository
@@ -1572,7 +1590,7 @@ describe('artifact finalization startup recovery', () => {
       updatedAt: 2
     }
     const conversationGraph = createLinearConversationGraph({
-      sessionId: SESSION_ID,
+      sessionId: graphSessionId,
       messages: [prompt, message],
       frameworkId: 'codex',
       createdAt: 1,
