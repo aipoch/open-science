@@ -291,7 +291,7 @@ describe('MessageScrollerItem', () => {
     await act(async () => viewport?.dispatchEvent(new Event('scroll', { bubbles: true })))
     expect(button?.dataset.active).toBe('false')
 
-    // A sub-pixel move away from the bottom is still detected at threshold 0 (#2007).
+    // A sub-pixel move beyond the 0.5px edge threshold is still detected (#2007, #2145).
     if (viewport) viewport.scrollTop = 99.4
     await act(async () => viewport?.dispatchEvent(new Event('scroll', { bubbles: true })))
     expect(button?.dataset.active).toBe('true')
