@@ -104,6 +104,8 @@
     "Search again to refresh this older metadata review.": "다시 검색하여 이전 메타데이터 검토 내용을 새로 고치세요.",
     "The reference was saved, but could not be reloaded.": "참고 문헌은 저장되었지만 다시 불러오지 못했습니다.",
     "Draft preserved. Escape to discard.": "초안이 보존되었습니다. Escape로 취소.",
+    "Some PDFs are unavailable. Available PDFs are listed below.": "일부 PDF를 사용할 수 없습니다. 사용 가능한 PDF가 아래에 표시됩니다.",
+    "Selected literature versions are unavailable: {{versions}}. Remove or reselect them before sending.": "선택한 문헌 버전을 사용할 수 없습니다: {{versions}}. 제거하거나 다시 선택한 후 전송하세요.",
     "Not answered": "미응답",
     "Automatic contrast": "자동 대비",
     "Display range": "표시 범위",

@@ -106,6 +106,8 @@
     "Search again to refresh this older metadata review.": "Relancez la recherche pour actualiser cette ancienne révision des métadonnées.",
     "The reference was saved, but could not be reloaded.": "La référence a été enregistrée, mais n’a pas pu être rechargée.",
     "Draft preserved. Escape to discard.": "Brouillon conservé. Échap pour abandonner.",
+    "Some PDFs are unavailable. Available PDFs are listed below.": "Certains PDF sont indisponibles. Les PDF disponibles sont affichés ci-dessous.",
+    "Selected literature versions are unavailable: {{versions}}. Remove or reselect them before sending.": "Les versions des références sélectionnées sont indisponibles : {{versions}}. Retirez-les ou sélectionnez-les à nouveau avant l’envoi.",
     "Not answered": "Sans réponse",
     "Automatic contrast": "Contraste automatique",
     "Display range": "Plage d’affichage",

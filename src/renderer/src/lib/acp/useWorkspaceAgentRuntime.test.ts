@@ -3658,6 +3658,78 @@ describe('workspace agent message sending', () => {
     ).toBe(false)
   })
 
+  it.each(['new', 'existing', 'new-partial', 'existing-partial'] as const)(
+    'LR-05 blocks an unavailable selected literature version (%s)',
+    async (kind) => {
+      if (kind.startsWith('existing')) {
+        useSessionStore.getState().appendUserMessage({
+          sessionId: 'transport-session-1',
+          content: 'Existing prompt',
+          cwd: '/workspace/project',
+          projectId: 'project-1'
+        })
+        useSessionStore.getState().finishRun('transport-session-1')
+      }
+      const linkPdfContext = vi.fn()
+      vi.stubGlobal('window', {
+        api: {
+          sessions: {
+            filterPdfContextCandidates: vi.fn().mockResolvedValue({
+              sources: kind.endsWith('partial')
+                ? [
+                    {
+                      sourceKind: 'literature-attachment-version',
+                      sourceVersionId: 'healthy-version'
+                    }
+                  ]
+                : [],
+              pendingAttachmentIds: []
+            }),
+            linkPdfContext,
+            saveSession: vi.fn(async (session: PersistedChatSession) => session)
+          }
+        }
+      })
+      const runtime = {
+        state: createSnapshot(kind.startsWith('existing') ? ['transport-session-1'] : []),
+        createSession: vi
+          .fn()
+          .mockResolvedValue({ sessionId: 'transport-session-1', cwd: '/workspace/project' }),
+        resumeSession: vi.fn(),
+        resetSessionContext: vi.fn(),
+        sendPrompt: vi.fn().mockResolvedValue(createSnapshot(['transport-session-1']))
+      }
+      const before = useSessionStore.getState().sessions
+      const result = await sendWorkspaceMessage(
+        runtime,
+        {
+          ...(kind.startsWith('existing') ? { sessionId: 'transport-session-1' } : {}),
+          text: 'Read the selected paper',
+          cwd: '/workspace/project',
+          projectId: 'project-1',
+          pendingPdfContextVersions: [
+            { sourceKind: 'literature-attachment-version', sourceVersionId: 'deleted-version' },
+            ...(kind.endsWith('partial')
+              ? [
+                  {
+                    sourceKind: 'literature-attachment-version' as const,
+                    sourceVersionId: 'healthy-version'
+                  }
+                ]
+              : [])
+          ]
+        },
+        { awaitPendingPreparation: true }
+      ).catch((error) => error)
+      expect(runtime.sendPrompt).not.toHaveBeenCalled()
+      expect(linkPdfContext).not.toHaveBeenCalled()
+      expect(runtime.createSession).not.toHaveBeenCalled()
+      expect(result).toBeInstanceOf(Error)
+      expect(result.message).toContain('deleted-version')
+      expect(useSessionStore.getState().sessions).toEqual(before)
+    }
+  )
+
   it('keeps an ineligible follow-up PDF as an ordinary attachment', async () => {
     useSessionStore.getState().appendUserMessage({
       sessionId: 'transport-session-1',

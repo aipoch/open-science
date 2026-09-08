@@ -104,6 +104,8 @@
     "Search again to refresh this older metadata review.": "請重新搜尋以更新這份舊的中繼資料審閱結果。",
     "The reference was saved, but could not be reloaded.": "文獻已儲存，但無法重新載入。",
     "Draft preserved. Escape to discard.": "草稿已保留，按 Escape 捨棄。",
+    "Some PDFs are unavailable. Available PDFs are listed below.": "部分 PDF 無法使用。下方列出了可用的 PDF。",
+    "Selected literature versions are unavailable: {{versions}}. Remove or reselect them before sending.": "所選文獻版本無法使用：{{versions}}。請移除或重新選擇後再傳送。",
     "Not answered": "未填寫",
     "Automatic contrast": "自動對比度",
     "Display range": "顯示範圍",

@@ -107,6 +107,8 @@
     "Search again to refresh this older metadata review.": "Повторите поиск, чтобы обновить эти устаревшие данные для проверки.",
     "The reference was saved, but could not be reloaded.": "Источник сохранён, но его не удалось загрузить повторно.",
     "Draft preserved. Escape to discard.": "Черновик сохранён. Escape — отменить.",
+    "Some PDFs are unavailable. Available PDFs are listed below.": "Некоторые PDF недоступны. Доступные PDF перечислены ниже.",
+    "Selected literature versions are unavailable: {{versions}}. Remove or reselect them before sending.": "Выбранные версии литературы недоступны: {{versions}}. Удалите их или выберите заново перед отправкой.",
     "Not answered": "Нет ответа",
     "Automatic contrast": "Автоматическая контрастность",
     "Display range": "Диапазон отображения",

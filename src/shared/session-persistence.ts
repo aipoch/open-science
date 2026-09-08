@@ -196,6 +196,7 @@ export type FilterSessionPdfContextCandidatesRequest = Readonly<{
 export type FilterSessionPdfContextCandidatesResult = Readonly<{
   sources: readonly SessionPdfContextSource[]
   pendingAttachmentIds: readonly string[]
+  unavailableSources?: readonly SessionPdfContextSource[]
 }>
 
 export type LinkSessionPdfContextRequest = Readonly<{
@@ -4896,7 +4897,8 @@ export const filterSessionPdfContextCandidatesRequestSchema = z
 export const filterSessionPdfContextCandidatesResultSchema = z
   .object({
     sources: z.array(sessionPdfContextSourceSchema).max(100),
-    pendingAttachmentIds: z.array(z.string().min(1)).max(3)
+    pendingAttachmentIds: z.array(z.string().min(1)).max(3),
+    unavailableSources: z.array(sessionPdfContextSourceSchema).max(100).optional()
   })
   .strict()
 
