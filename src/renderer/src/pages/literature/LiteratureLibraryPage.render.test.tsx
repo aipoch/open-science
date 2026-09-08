@@ -4003,6 +4003,156 @@ describe('LiteratureLibraryPage', () => {
     ).toHaveLength(2)
   })
 
+  it.each([
+    ['readback', 'reuse'],
+    ['project link', 'reuse'],
+    ['collection link', 'reuse'],
+    ['readback', 'separate']
+  ] as const)(
+    'resumes acknowledged manual creation after failed %s with %s policy',
+    async (boundary, policy) => {
+      const { mkdtemp, rm } = await import('node:fs/promises')
+      const { tmpdir } = await import('node:os')
+      const { join } = await import('node:path')
+      const { createProjectDbClient } = await import('../../../../main/projects/prisma-client')
+      const { migrateApplicationDatabase } =
+        await import('../../../../main/database/migration-service')
+      const { LiteratureCatalog } = await import('../../../../main/literature/catalog')
+      const root = await mkdtemp(join(tmpdir(), 'literature-manual-retry-'))
+      const client = createProjectDbClient(root)
+      try {
+        await migrateApplicationDatabase(client)
+        await client.project.create({ data: { id: 'project-1', name: 'Retrieval research' } })
+        const catalog = new LiteratureCatalog(async () => client)
+        const collection = await catalog.transact({
+          kind: 'create-collection',
+          name: 'Manual destination'
+        })
+        window.api.literature.search = (request) => catalog.search(request)
+        let fail = true
+        let committedId: string | undefined
+        transact.mockImplementation(async (command) => {
+          if (
+            fail &&
+            ((boundary === 'project link' && command.kind === 'set-project-item') ||
+              (boundary === 'collection link' && command.kind === 'set-collection-item'))
+          ) {
+            fail = false
+            throw new Error('Temporary destination failure')
+          }
+          const receipt = await catalog.transact(command)
+          if (command.kind === 'create-item') committedId ??= receipt.id
+          return receipt
+        })
+        get.mockImplementation(async (id: string) => {
+          if (fail && boundary === 'readback' && committedId) {
+            fail = false
+            throw new Error('Temporary read failure')
+          }
+          return catalog.get(id)
+        })
+        if (boundary === 'project link')
+          useNavigationStore.setState({ pendingLiteratureProjectId: 'project-1' })
+        render(<LiteratureLibraryPage />)
+        if (boundary === 'project link')
+          await screen.findByRole('heading', { name: 'Retrieval research' })
+        else if (boundary === 'collection link')
+          fireEvent.click(await screen.findByRole('button', { name: 'Manual destination' }))
+        else fireEvent.click(screen.getByRole('button', { name: 'All references' }))
+        await openMenu(screen.getByRole('button', { name: 'Add' }))
+        fireEvent.click(screen.getByRole('menuitem', { name: 'Add reference' }))
+        if (policy === 'separate') {
+          await openMenu(screen.getByRole('combobox', { name: 'When identifiers match' }))
+          fireEvent.click(screen.getByRole('option', { name: 'Keep as separate reference' }))
+        }
+        fireEvent.change(screen.getByLabelText('Title'), {
+          target: { value: 'No identifier manual reference' }
+        })
+        fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+        await within(screen.getByRole('dialog')).findByRole('alert')
+        expect(await client.literatureItem.count()).toBe(1)
+        expect((await catalog.get(committedId!))?.item.identifiers).toEqual([])
+        const dialog = screen.getByRole('dialog')
+        fireEvent.click(
+          within(dialog).queryByRole('button', { name: /retry/i }) ??
+            within(dialog).getByRole('button', { name: 'Save' })
+        )
+        await screen.findByRole('heading', { name: 'No identifier manual reference' })
+        expect
+          .soft(await client.literatureItem.findMany({ select: { id: true, title: true } }))
+          .toEqual([{ id: committedId, title: 'No identifier manual reference' }])
+        expect
+          .soft(transact.mock.calls.filter(([command]) => command.kind === 'create-item'))
+          .toHaveLength(1)
+        const saved = (await catalog.get(committedId!))!
+        if (boundary === 'project link') expect(saved.projectIds).toEqual(['project-1'])
+        if (boundary === 'collection link') expect(saved.collectionIds).toEqual([collection.id])
+      } finally {
+        cleanup()
+        await client.$disconnect()
+        await rm(root, { recursive: true, force: true })
+      }
+    }
+  )
+
+  it('locks acknowledged metadata and retries only readback after a successful project link', async () => {
+    useNavigationStore.setState({ pendingLiteratureProjectId: 'project-1' })
+    get
+      .mockRejectedValueOnce(new Error('Read unavailable'))
+      .mockRejectedValueOnce(new Error('Still unavailable'))
+      .mockResolvedValue({
+        ...libraryItem,
+        projectIds: ['project-1'],
+        item: { ...libraryItem.item, title: 'Saved metadata' }
+      })
+    render(<LiteratureLibraryPage />)
+    await screen.findByRole('heading', { name: 'Retrieval research' })
+    await openMenu(screen.getByRole('button', { name: 'Add' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Add reference' }))
+    fireEvent.change(screen.getByLabelText('Title'), { target: { value: 'Saved metadata' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+    await screen.findByRole('alert')
+    expect(screen.getByLabelText('Title').matches(':disabled')).toBe(true)
+    expect(screen.getByRole('alert').textContent).toMatch(/created.*retry/i)
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }))
+    await waitFor(() => expect(get).toHaveBeenCalledTimes(2))
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: 'Retry' }).matches(':disabled')).toBe(false)
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }))
+    await screen.findByRole('heading', { name: 'Saved metadata' })
+    expect(transact.mock.calls.map(([command]) => command.kind)).toEqual([
+      'create-item',
+      'set-project-item'
+    ])
+  })
+
+  it('permits a fresh creation intent after closing an acknowledged recovery', async () => {
+    get
+      .mockRejectedValueOnce(new Error('Read unavailable'))
+      .mockResolvedValue({ ...libraryItem, item: { ...libraryItem.item, title: 'Second intent' } })
+    render(<LiteratureLibraryPage />)
+    fireEvent.click(screen.getByRole('button', { name: 'All references' }))
+    await openMenu(screen.getByRole('button', { name: 'Add' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Add reference' }))
+    fireEvent.change(screen.getByLabelText('Title'), { target: { value: 'First intent' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+    await screen.findByRole('alert')
+    expect(screen.getByRole('alert').textContent).toMatch(/remains.*library/i)
+    fireEvent.click(screen.getAllByRole('button', { name: 'Close' })[0])
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+    await openMenu(screen.getByRole('button', { name: 'Add' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Add reference' }))
+    fireEvent.change(screen.getByLabelText('Title'), { target: { value: 'Second intent' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+    await screen.findByRole('heading', { name: 'Second intent' })
+    expect(
+      transact.mock.calls
+        .filter(([command]) => command.kind === 'create-item')
+        .map(([command]) => command.item.title)
+    ).toEqual(['First intent', 'Second intent'])
+  })
+
   it('links a manually created reference to the current Project', async () => {
     const createdItem: LiteratureItemView = {
       ...libraryItem,
