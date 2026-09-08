@@ -841,34 +841,11 @@
     }
   }
 
-  /* Mermaid source view (view toggle): mirrors the code-block body, but scrolls vertically too
-     since a long fence replaces the diagram in place. */
-  [data-mermaid-source-view] {
-    @apply mt-0 max-h-[480px] w-full max-w-full min-w-0 overflow-auto overscroll-contain;
-    scrollbar-width: thin;
-    scrollbar-color: var(--color-sd-scrollbar-thumb) var(--color-sd-scrollbar-track);
-
-    &::-webkit-scrollbar {
-      @apply h-2.5 w-2.5;
-    }
-
-    &::-webkit-scrollbar-track {
-      @apply rounded-full bg-sd-scrollbar-track;
-    }
-
-    &::-webkit-scrollbar-thumb {
-      @apply rounded-full bg-sd-scrollbar-thumb;
-    }
-
-    & pre {
-      @apply m-0 min-w-full w-max max-w-none bg-transparent p-2.5 font-mono text-sm text-sd-ink;
-      white-space: pre !important;
-      tab-size: 2;
-    }
-
-    & code {
-      @apply block min-w-full;
-    }
+  /* Mermaid source view (view toggle): the container carries data-streamdown="code-block-body",
+     so it inherits the code-block body rules above; the only extra is tinting the mermaid body
+     with the code-block surface token while the source replaces the diagram. */
+  [data-streamdown='mermaid-block'] > div:last-child:has(> [data-mermaid-source-view]) {
+    @apply bg-sd-code-bg!;
   }
 
   :is(pre, .katex-display) {

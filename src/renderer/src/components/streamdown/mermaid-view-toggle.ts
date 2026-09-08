@@ -1,6 +1,6 @@
 import { i18next } from '@/i18n'
 
-import { highlightMermaidSource } from './mermaid-source-highlight'
+import { highlightMermaidSource, LINE_CLASS } from './mermaid-source-highlight'
 import { getMermaidSource, MERMAID_RENDER_ID_ATTRIBUTE } from './mermaid-source-registry'
 
 const AGENT_MARKDOWN_ROOT_SELECTOR = '.agent-markdown-root'
@@ -15,10 +15,9 @@ const SOURCE_VIEW_ATTRIBUTE = 'data-mermaid-source-view'
 const BUTTON_CLASS =
   'cursor-pointer p-1 text-muted-foreground transition-all hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50'
 
-const CODE_ICON =
-  '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 6L2 12l6 6M16 6l6 6-6 6"/></svg>'
-const DIAGRAM_ICON =
-  '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><path d="m19 9-5 5-4-4-3 3"/></svg>'
+// Bidirectional arrows: the button switches between the rendered diagram and its source.
+const TOGGLE_ICON =
+  '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3 4 7l4 4"/><path d="M4 7h16"/><path d="m16 21 4-4-4-4"/><path d="M20 17H4"/></svg>'
 
 const sourceByContainer = new WeakMap<HTMLElement, string>()
 
@@ -44,7 +43,7 @@ const syncButton = (button: HTMLButtonElement, block: HTMLElement): void => {
   if (button.dataset.toggleState === stateKey) return
   button.dataset.toggleState = stateKey
 
-  button.innerHTML = showingSource ? DIAGRAM_ICON : CODE_ICON
+  button.innerHTML = TOGGLE_ICON
   const label = i18next.t(showingSource ? 'View diagram' : 'View source')
   button.title = label
   button.setAttribute('aria-label', label)
@@ -52,17 +51,32 @@ const syncButton = (button: HTMLButtonElement, block: HTMLElement): void => {
   button.disabled = disabled
 }
 
-// Renders the fence source like a fenced code block (see the [data-mermaid-source-view] rules in
-// agent-markdown.css): plain text immediately, upgraded to Shiki tokens when the shared
-// highlighter chunk resolves. Stale deliveries (toggled back, re-rendered chart) are dropped.
+// Renders the fence source exactly like a line-numbered fenced code block: the container takes
+// the code-block-body data attribute so the shared stylesheet applies, each line is a gutter
+// span, and the pre picks up the Shiki background once highlighting resolves. Plain text shows
+// first and is upgraded to token markup; stale deliveries (toggled back, re-rendered chart)
+// are dropped.
 const setSourceViewContent = (container: HTMLElement, source: string): void => {
   sourceByContainer.set(container, source)
+  const pre = container.querySelector('pre')
   const code = container.querySelector('code')
-  if (!code) return
-  code.textContent = source
-  highlightMermaidSource(source, (html) => {
+  if (!pre || !code) return
+
+  pre.style.removeProperty('--sdm-bg')
+  pre.style.removeProperty('--sdm-fg')
+  code.replaceChildren(
+    ...source.split('\n').map((line) => {
+      const lineSpan = document.createElement('span')
+      lineSpan.className = LINE_CLASS
+      lineSpan.textContent = line
+      return lineSpan
+    })
+  )
+  highlightMermaidSource(source, (highlight) => {
     if (!container.isConnected || sourceByContainer.get(container) !== source) return
-    code.innerHTML = html
+    code.innerHTML = highlight.html
+    if (highlight.bg) pre.style.setProperty('--sdm-bg', highlight.bg)
+    if (highlight.fg) pre.style.setProperty('--sdm-fg', highlight.fg)
   })
 }
 
@@ -74,8 +88,13 @@ const showSource = (block: HTMLElement): void => {
 
   const container = document.createElement('div')
   container.setAttribute(SOURCE_VIEW_ATTRIBUTE, '')
+  container.dataset.streamdown = 'code-block-body'
+  container.dataset.language = 'mermaid'
   const pre = document.createElement('pre')
-  pre.appendChild(document.createElement('code'))
+  pre.className = 'bg-[var(--sdm-bg,inherit)] dark:bg-[var(--shiki-dark-bg,var(--sdm-bg,inherit))]'
+  const code = document.createElement('code')
+  code.className = '[counter-increment:line_0] [counter-reset:line]'
+  pre.appendChild(code)
   container.appendChild(pre)
   for (const child of body.children) {
     if (child instanceof HTMLElement) child.style.display = 'none'

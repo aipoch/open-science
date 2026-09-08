@@ -3,9 +3,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { initI18n, i18next } from '@/i18n'
 
-vi.mock('./mermaid-source-highlight', () => ({
-  highlightMermaidSource: vi.fn()
-}))
+vi.mock('./mermaid-source-highlight', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./mermaid-source-highlight')>()
+  return { ...actual, highlightMermaidSource: vi.fn() }
+})
 
 import { highlightMermaidSource } from './mermaid-source-highlight'
 import { rememberMermaidSource } from './mermaid-source-registry'
@@ -118,12 +119,15 @@ describe('installMermaidViewToggle', () => {
     await flushMutations()
 
     mockHighlight.mockImplementation((source, apply) => {
-      apply(`<span style="color:#0550ae">${source}</span>`)
+      apply({ html: `<span class="line">${source}</span>`, bg: '#ffffff', fg: '#1f2328' })
     })
     findToggle(actions)?.click()
 
     const code = body.querySelector('[data-mermaid-source-view] code')
-    expect(code?.innerHTML).toBe('<span style="color:#0550ae">graph TD; A--&gt;B</span>')
+    const pre = body.querySelector<HTMLElement>('[data-mermaid-source-view] pre')
+    expect(code?.innerHTML).toBe('<span class="line">graph TD; A--&gt;B</span>')
+    expect(pre?.style.getPropertyValue('--sdm-bg')).toBe('#ffffff')
+    expect(pre?.style.getPropertyValue('--sdm-fg')).toBe('#1f2328')
     expect(mockHighlight).toHaveBeenCalledWith(SOURCE, expect.any(Function))
   })
 
@@ -132,7 +136,7 @@ describe('installMermaidViewToggle', () => {
     const { actions, body } = createMermaidBlock('r-3c')
     await flushMutations()
 
-    let deliver: ((html: string) => void) | undefined
+    let deliver: ((highlight: { html: string }) => void) | undefined
     mockHighlight.mockImplementation((_source, apply) => {
       deliver = apply
     })
@@ -142,10 +146,29 @@ describe('installMermaidViewToggle', () => {
     expect(container).not.toBeNull()
 
     toggle?.click()
-    deliver?.('<span style="color:#0550ae">stale</span>')
+    deliver?.({ html: '<span class="line">stale</span>' })
 
     expect(container?.querySelector('code')?.textContent).toBe(SOURCE)
     expect(container?.isConnected).toBe(false)
+  })
+
+  it('renders the source with the code-block gutter and one line span per line', async () => {
+    rememberMermaidSource('r-3d', 'graph TD\n  A-->B')
+    const { actions, body } = createMermaidBlock('r-3d')
+    await flushMutations()
+    findToggle(actions)?.click()
+
+    const container = body.querySelector('[data-mermaid-source-view]')
+    expect(container?.getAttribute('data-streamdown')).toBe('code-block-body')
+    expect(container?.getAttribute('data-language')).toBe('mermaid')
+
+    const code = container?.querySelector('code')
+    expect(code?.className).toContain('[counter-reset:line]')
+    const lines = code?.querySelectorAll(':scope > span') ?? []
+    expect(lines).toHaveLength(2)
+    expect(lines[0]?.className).toContain('counter(line)')
+    expect(lines[0]?.textContent).toBe('graph TD')
+    expect(lines[1]?.textContent).toBe('  A-->B')
   })
 
   it('refreshes a visible source view when the diagram re-renders', async () => {

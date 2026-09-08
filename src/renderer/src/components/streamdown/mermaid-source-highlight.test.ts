@@ -16,7 +16,7 @@ vi.mock('./code-highlighter-runtime', () => ({
 
 import type { HighlightResult } from '@streamdown/code'
 
-import { highlightMermaidSource, tokensToHtml } from './mermaid-source-highlight'
+import { highlightMermaidSource, LINE_CLASS, tokensToHtml } from './mermaid-source-highlight'
 
 const tokensResult = (content: string): HighlightResult => ({
   tokens: [[{ content, color: '#0550ae', fontStyle: 0, offset: 0 }]],
@@ -24,20 +24,30 @@ const tokensResult = (content: string): HighlightResult => ({
   bg: '#ffffff'
 })
 
+const lineSpan = (inner: string): string => `<span class="${LINE_CLASS}">${inner}</span>`
+const tokenSpan = (content: string, color?: string): string =>
+  `<span class="text-[var(--sdm-c,inherit)] dark:text-[var(--shiki-dark,var(--sdm-c,inherit))]"${
+    color ? ` style="--sdm-c:${color}"` : ''
+  }>${content}</span>`
+
 beforeEach(() => {
   highlight.mockReset()
   supportsLanguage.mockReset().mockReturnValue(true)
 })
 
 describe('highlightMermaidSource', () => {
-  it('delivers token html for supported mermaid source', async () => {
+  it('delivers line-numbered token html for supported mermaid source', async () => {
     highlight.mockReturnValue(tokensResult('graph'))
     const apply = vi.fn()
 
     highlightMermaidSource('graph TD; highlight-sync', apply)
     await vi.waitFor(() => expect(apply).toHaveBeenCalled())
 
-    expect(apply).toHaveBeenCalledWith('<span style="color:#0550ae">graph</span>')
+    expect(apply).toHaveBeenCalledWith({
+      html: lineSpan(tokenSpan('graph', '#0550ae')),
+      bg: '#ffffff',
+      fg: '#1f2328'
+    })
     expect(highlight).toHaveBeenCalledWith(
       expect.objectContaining({ code: 'graph TD; highlight-sync', language: 'mermaid' }),
       expect.any(Function)
@@ -52,7 +62,9 @@ describe('highlightMermaidSource', () => {
     const apply = vi.fn()
 
     highlightMermaidSource('graph TD; highlight-async', apply)
-    await vi.waitFor(() => expect(apply).toHaveBeenCalledWith(expect.stringContaining('async')))
+    await vi.waitFor(() =>
+      expect(apply).toHaveBeenCalledWith(expect.objectContaining({ bg: '#ffffff' }))
+    )
   })
 
   it('serves repeat requests from the cache without re-highlighting', async () => {
@@ -64,7 +76,11 @@ describe('highlightMermaidSource', () => {
     await vi.waitFor(() => expect(first).toHaveBeenCalled())
     highlightMermaidSource('graph TD; highlight-cache', second)
 
-    expect(second).toHaveBeenCalledWith('<span style="color:#0550ae">cached</span>')
+    expect(second).toHaveBeenCalledWith({
+      html: lineSpan(tokenSpan('cached', '#0550ae')),
+      bg: '#ffffff',
+      fg: '#1f2328'
+    })
     expect(highlight).toHaveBeenCalledTimes(1)
   })
 
@@ -88,32 +104,31 @@ describe('tokensToHtml', () => {
       fg: '#1f2328',
       bg: '#ffffff'
     })
-    expect(html).toBe('<span>A--&gt;"&lt;b&gt;" &amp; &lt;C&gt;</span>')
+    expect(html).toBe(lineSpan(tokenSpan('A--&gt;"&lt;b&gt;" &amp; &lt;C&gt;')))
   })
 
-  it('emits italic and bold styles from the font style bitmask', () => {
+  it('colors tokens through --sdm-c and ignores fontStyle, like streamdown', () => {
     const html = tokensToHtml({
       tokens: [
         [
           { content: 'kw', color: '#cf222e', fontStyle: 1, offset: 0 },
-          { content: 'name', color: '#953800', fontStyle: 2, offset: 2 }
+          { content: 'name', fontStyle: 2, offset: 2 }
         ]
       ],
       fg: '#1f2328',
       bg: '#ffffff'
     })
-    expect(html).toBe(
-      '<span style="color:#cf222e;font-style:italic">kw</span>' +
-        '<span style="color:#953800;font-weight:600">name</span>'
-    )
+    expect(html).toBe(lineSpan(tokenSpan('kw', '#cf222e') + tokenSpan('name')))
+    expect(html).not.toContain('italic')
   })
 
-  it('joins lines with newlines', () => {
+  it('wraps each source line in a gutter line span', () => {
     const html = tokensToHtml({
       tokens: [[{ content: 'one', offset: 0 }], [{ content: 'two', offset: 4 }]],
       fg: '#1f2328',
       bg: '#ffffff'
     })
-    expect(html).toBe('<span>one</span>\n<span>two</span>')
+    expect(html).toBe(lineSpan(tokenSpan('one')) + lineSpan(tokenSpan('two')))
+    expect(html).toContain('counter(line)')
   })
 })
