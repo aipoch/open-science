@@ -369,11 +369,9 @@
   font-size: 12px;
   line-height: 1.95;
 }
-.search-recent-caption {
-  display: flex;
-  justify-content: space-between;
-  gap: 8px;
-  margin: 1px 0 4px;
+.search-recent-limit {
+  margin-top: 10px;
+  text-align: center;
   color: var(--muted-foreground);
   font-size: 9px;
   line-height: 13.5px;

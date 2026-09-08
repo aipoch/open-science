@@ -4624,7 +4624,7 @@
     "Try another keyword or broaden the search scope.": "別のキーワードを試すか、検索範囲を広げてください。",
     "PDF available": "PDF 保存済み",
     "No PDF": "PDF なし",
-    "Top {{total}}": "上位 {{total}} 件",
+    "Only the 10 most recent items are shown": "最新の10件のみ表示しています",
     "All senders": "すべての送信者",
     "Sent by me": "自分が送信",
     "Sent by agents": "エージェントが送信",

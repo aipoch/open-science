@@ -4624,7 +4624,7 @@
     "Try another keyword or broaden the search scope.": "可以换个关键词，或扩大搜索范围。",
     "PDF available": "已保存 PDF",
     "No PDF": "暂无 PDF",
-    "Top {{total}}": "前 {{total}} 条",
+    "Only the 10 most recent items are shown": "仅显示最近前 10 条",
     "All senders": "全部发送者",
     "Sent by me": "我发送的",
     "Sent by agents": "智能体发送的",

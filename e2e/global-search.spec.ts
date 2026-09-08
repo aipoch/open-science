@@ -227,8 +227,14 @@ test('searches projects, sessions, message bodies and Library with paged disclos
   await expect(details.locator('.search-detail-context')).toContainText('23 sessions')
   await expect(details.locator('.search-detail-context')).toContainText('0 files')
   await expect(details.getByRole('tabpanel').getByRole('button')).toHaveCount(10)
+  await expect(details.getByRole('tabpanel')).toContainText(
+    'Only the 10 most recent items are shown'
+  )
   await details.getByRole('tab', { name: 'Recent files' }).click()
-  await expect(details.getByRole('tabpanel')).toContainText('Recent files')
+  await expect(details.getByRole('tabpanel')).not.toContainText('Recent files')
+  await expect(details.getByRole('tabpanel')).not.toContainText(
+    'Only the 10 most recent items are shown'
+  )
   await details.getByRole('tab', { name: 'Details', exact: true }).click()
   await expect(details.getByRole('tabpanel')).toContainText('Search fixture project')
   await expect(details.getByRole('tabpanel')).toContainText('Cite primary sources in every answer.')

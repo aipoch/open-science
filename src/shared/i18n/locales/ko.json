@@ -4622,7 +4622,7 @@
     "Try another keyword or broaden the search scope.": "다른 검색어를 사용하거나 검색 범위를 넓히세요.",
     "PDF available": "PDF 저장됨",
     "No PDF": "PDF 없음",
-    "Top {{total}}": "상위 {{total}}개",
+    "Only the 10 most recent items are shown": "최근 항목 10개만 표시됩니다",
     "All senders": "모든 발신자",
     "Sent by me": "내가 보낸 메시지",
     "Sent by agents": "에이전트가 보낸 메시지",

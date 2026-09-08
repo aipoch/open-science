@@ -69,6 +69,7 @@ export const SearchDetails = ({
   const [fileCount, setFileCount] = useState<number>()
   const [fileCountUnavailable, setFileCountUnavailable] = useState(false)
   const [papers, setPapers] = useState<LiteratureItemView[]>([])
+  const [hasMoreRecentItems, setHasMoreRecentItems] = useState(false)
   const [collectionNames, setCollectionNames] = useState<string>()
   const initialStatus =
     result.kind === 'sessions' || (result.kind === 'library' && !('item' in result.item))
@@ -82,6 +83,7 @@ export const SearchDetails = ({
     setTab('content')
     setFiles([])
     setPapers([])
+    setHasMoreRecentItems(false)
     setCollectionNames(undefined)
     setFileCount(undefined)
     setFileCountUnavailable(false)
@@ -108,7 +110,6 @@ export const SearchDetails = ({
       ? sessions
           .filter((item) => item.projectId === result.item.id)
           .sort((a, b) => b.updatedAt - a.updatedAt)
-          .slice(0, 10)
       : []
   useLayoutEffect(() => {
     if (contentRef.current && result.kind !== 'messages') contentRef.current.scrollTop = 0
@@ -138,7 +139,10 @@ export const SearchDetails = ({
           otherLimit: 0
         })
         .then((page) => {
-          if (active) setFiles(page.primary.items)
+          if (active) {
+            setFiles(page.primary.items)
+            setHasMoreRecentItems(page.primary.totalCount > 10)
+          }
         })
         .catch(() => {
           if (active) setFiles([])
@@ -156,6 +160,7 @@ export const SearchDetails = ({
         .then((page) => {
           if (active) {
             setFiles(page.primary.items)
+            setHasMoreRecentItems(page.primary.totalCount > 10)
             setFileCount(page.primary.totalCount)
             setFileCountUnavailable(!page.isIndexComplete)
             setStatus('idle')
@@ -202,6 +207,7 @@ export const SearchDetails = ({
         .then((page) => {
           if (active) {
             setPapers(page.entries.filter((item): item is LiteratureItemView => 'item' in item))
+            setHasMoreRecentItems(page.nextOffset !== undefined || (page.totalCount ?? 0) > 10)
             setStatus('idle')
           }
         })
@@ -508,11 +514,7 @@ export const SearchDetails = ({
           )
         ) : result.kind === 'projects' && tab === 'content' ? (
           <div>
-            <div className="search-recent-caption">
-              <span>{t('Recent sessions')}</span>
-              <span>{t('Top {{total}}', { total: recentSessions.length })}</span>
-            </div>
-            {recentSessions.map((item) => (
+            {recentSessions.slice(0, 10).map((item) => (
               <button
                 key={item.id}
                 className="search-recent-session focus-visible:ring-2 focus-visible:ring-ring"
@@ -533,14 +535,16 @@ export const SearchDetails = ({
             {recentSessions.length === 0 && (
               <p className="search-recent-empty">{t('No recent content')}</p>
             )}
+            {recentSessions.length > 10 && (
+              <p className="search-recent-limit">{t('Only the 10 most recent items are shown')}</p>
+            )}
           </div>
         ) : result.kind === 'sessions' || (result.kind === 'projects' && tab === 'files') ? (
           <>
-            <div className="search-recent-caption">
-              <span>{t('Recent files')}</span>
-              <span>{t('Top {{total}}', { total: files.length })}</span>
-            </div>
             {renderFiles()}
+            {hasMoreRecentItems && (
+              <p className="search-recent-limit">{t('Only the 10 most recent items are shown')}</p>
+            )}
           </>
         ) : result.kind === 'library' && 'item' in result.item ? (
           <p className="search-detail-abstract">
@@ -551,10 +555,6 @@ export const SearchDetails = ({
           </p>
         ) : (
           <div>
-            <div className="search-recent-caption">
-              <span>{t('Recent literature')}</span>
-              <span>{t('Top {{total}}', { total: papers.length })}</span>
-            </div>
             {papers.map((item) => (
               <button
                 key={item.id}
@@ -566,6 +566,9 @@ export const SearchDetails = ({
                 <ArrowUpRight aria-hidden="true" className="search-recent-arrow" />
               </button>
             ))}
+            {hasMoreRecentItems && (
+              <p className="search-recent-limit">{t('Only the 10 most recent items are shown')}</p>
+            )}
           </div>
         )}
         {tab === 'content' && status === 'loading' && (
