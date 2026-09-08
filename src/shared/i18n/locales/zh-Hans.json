@@ -4694,6 +4694,7 @@
     "{{count}} tasks_other": "{{count}} 个任务",
     "{{count}} background tasks_other": "{{count}} 个后台任务",
     "{{count}} running background tasks_other": "{{count}} 个后台任务正在运行",
+    "Updated: {{completed}}. Not updated: {{remaining}}. Unavailable: {{skipped}}.": "已更新：{{completed}}。未更新：{{remaining}}。不可用：{{skipped}}。",
     "Updated: {{completed}}. Not updated: {{remaining}}.": "已更新：{{completed}}。未更新：{{remaining}}。",
     "Conflicting identifiers": "标识符冲突",
     "Some identifiers disagree or match different references. Correct the source file or keep separate copies of every reference in this import.": "部分标识符存在矛盾或匹配不同文献。请修正源文件，或将本次导入的每篇文献保留为独立副本。",

@@ -5008,6 +5008,7 @@
     "{{count}} running background tasks_one": "{{count}} tâche en arrière-plan en cours",
     "{{count}} running background tasks_many": "{{count}} tâches en arrière-plan en cours",
     "{{count}} running background tasks_other": "{{count}} tâches en arrière-plan en cours",
+    "Updated: {{completed}}. Not updated: {{remaining}}. Unavailable: {{skipped}}.": "Mis à jour : {{completed}}. Non mis à jour : {{remaining}}. Indisponibles : {{skipped}}.",
     "Updated: {{completed}}. Not updated: {{remaining}}.": "Références mises à jour : {{completed}}. Non mises à jour : {{remaining}}.",
     "Conflicting identifiers": "Identifiants contradictoires",
     "Some identifiers disagree or match different references. Correct the source file or keep separate copies of every reference in this import.": "Certains identifiants se contredisent ou correspondent à des références différentes. Corrigez le fichier source ou conservez une copie distincte de chaque référence de cet import.",

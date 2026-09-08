@@ -1601,6 +1601,142 @@ describe('LiteratureCatalog', () => {
     })
   })
 
+  it.each(['collection', 'project', 'project batch'] as const)(
+    'rejects stale merged identities when linking a single reference to a %s',
+    async (destination) => {
+      const catalog = await setup()
+      const survivor = await catalog.transact({ kind: 'create-item', item: candidate().item })
+      const alias = await catalog.transact({
+        kind: 'create-item',
+        item: candidate({ doi: '10.1234/alias', title: 'Alias' }).item
+      })
+      const reviewed = (await Promise.all([catalog.get(survivor.id), catalog.get(alias.id)])).map(
+        (view) => view!
+      )
+      await catalog.transact({
+        kind: 'merge-items',
+        survivorId: survivor.id,
+        duplicateIds: [alias.id],
+        expectedMetadataRevision: reviewed[0].metadataRevision,
+        expectedItems: reviewed.map(({ id, metadataRevision, updatedAt }) => ({
+          id,
+          metadataRevision,
+          updatedAt
+        })),
+        item: reviewed[0].item
+      })
+      const collection = await catalog.transact({ kind: 'create-collection', name: 'Target' })
+      await expect(catalog.get(alias.id)).resolves.toMatchObject({ id: survivor.id })
+      await expect(
+        catalog.transact(
+          destination === 'collection'
+            ? {
+                kind: 'set-collection-item',
+                collectionId: collection.id,
+                itemId: alias.id,
+                included: true
+              }
+            : destination === 'project batch'
+              ? {
+                  kind: 'set-project-items',
+                  projectId: 'project-1',
+                  itemIds: [alias.id],
+                  included: true,
+                  source: 'library'
+                }
+              : {
+                  kind: 'set-project-item',
+                  projectId: 'project-1',
+                  itemId: alias.id,
+                  included: true,
+                  source: 'library'
+                }
+        )
+      ).rejects.toThrow(/unavailable/i)
+      expect(await client!.literatureCollectionItem.count({ where: { itemId: alias.id } })).toBe(0)
+      expect(await client!.projectLiterature.count({ where: { itemId: alias.id } })).toBe(0)
+    }
+  )
+
+  it.each(['collection', 'project', 'project batch'] as const)(
+    'rejects deleted identities when linking a single reference to a %s',
+    async (destination) => {
+      const catalog = await setup()
+      const item = await catalog.transact({ kind: 'create-item', item: candidate().item })
+      const collection = await catalog.transact({ kind: 'create-collection', name: 'Target' })
+      await catalog.transact({ kind: 'set-item-lifecycle', itemIds: [item.id], state: 'deleted' })
+      await expect(
+        catalog.transact(
+          destination === 'collection'
+            ? {
+                kind: 'set-collection-item',
+                collectionId: collection.id,
+                itemId: item.id,
+                included: true
+              }
+            : destination === 'project batch'
+              ? {
+                  kind: 'set-project-items',
+                  projectId: 'project-1',
+                  itemIds: [item.id],
+                  included: true,
+                  source: 'library'
+                }
+              : {
+                  kind: 'set-project-item',
+                  projectId: 'project-1',
+                  itemId: item.id,
+                  included: true,
+                  source: 'library'
+                }
+        )
+      ).rejects.toThrow(/unavailable/i)
+      expect(await client!.literatureCollectionItem.count({ where: { itemId: item.id } })).toBe(0)
+      expect(await client!.projectLiterature.count({ where: { itemId: item.id } })).toBe(0)
+    }
+  )
+
+  it('preserves an earlier committed collection batch when a later command rejects', async () => {
+    const catalog = await setup()
+    const source = await catalog.transact({ kind: 'create-collection', name: 'Source' })
+    const target = await catalog.transact({ kind: 'create-collection', name: 'Target' })
+    const ids: string[] = []
+    for (let index = 0; index < 201; index++) {
+      const item = await catalog.transact({
+        kind: 'create-item',
+        item: candidate({ doi: `10.1234/batch-${index}`, title: `Reference ${index}` }).item
+      })
+      ids.push(item.id)
+      await catalog.transact({
+        kind: 'set-collection-item',
+        collectionId: source.id,
+        itemId: item.id,
+        included: true
+      })
+    }
+    await catalog.transact({
+      kind: 'move-collection-items',
+      sourceCollectionId: source.id,
+      targetCollectionId: target.id,
+      itemIds: ids.slice(0, 200)
+    })
+    await catalog.transact({ kind: 'set-item-lifecycle', itemIds: [ids[200]], state: 'deleted' })
+    await expect(
+      catalog.transact({
+        kind: 'move-collection-items',
+        sourceCollectionId: source.id,
+        targetCollectionId: target.id,
+        itemIds: [ids[200]]
+      })
+    ).rejects.toThrow(/unavailable/i)
+    await expect(
+      catalog.search({ scope: 'library', collectionId: target.id })
+    ).resolves.toMatchObject({ totalCount: 200 })
+    expect(
+      await client!.literatureCollectionItem.count({ where: { collectionId: source.id } })
+    ).toBe(1)
+  })
+
   it('moves Items between Collections', async () => {
     const catalog = await setup()
     const first = await catalog.transact({ kind: 'create-item', item: candidate().item })

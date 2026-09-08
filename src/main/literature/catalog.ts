@@ -1508,6 +1508,10 @@ class LiteratureCatalog {
       return { kind: 'item', id: command.itemId, state: 'unlinked' }
     }
     await client.$transaction(async (transaction) => {
+      const available = await transaction.literatureItem.count({
+        where: { id: command.itemId, deletedAt: null, mergedIntoItemId: null }
+      })
+      if (!available) throw new Error('One or more Literature Items are unavailable.')
       const last = await transaction.literatureCollectionItem.findFirst({
         where: { collectionId: command.collectionId },
         orderBy: { sortOrder: 'desc' },
@@ -1531,25 +1535,11 @@ class LiteratureCatalog {
   private async setProjectItem(
     command: Extract<LiteratureCatalogCommand, { kind: 'set-project-item' }>
   ): Promise<LiteratureCatalogReceipt> {
-    const client = await this.getClient()
-    if (!command.included) {
-      await client.$transaction((transaction) =>
-        transaction.projectLiterature.deleteMany({
-          where: { projectId: command.projectId, itemId: command.itemId }
-        })
-      )
-      return { kind: 'item', id: command.itemId, state: 'unlinked' }
-    }
-    const source = normalizeSpace(command.source)
-    if (!source) throw new Error('Project Literature source is required.')
-    await client.$transaction((transaction) =>
-      transaction.projectLiterature.upsert({
-        where: { projectId_itemId: { projectId: command.projectId, itemId: command.itemId } },
-        create: { projectId: command.projectId, itemId: command.itemId, source },
-        update: { source }
-      })
-    )
-    return { kind: 'item', id: command.itemId, state: 'linked' }
+    return this.setProjectItems({
+      ...command,
+      kind: 'set-project-items',
+      itemIds: [command.itemId]
+    })
   }
 
   private async setProjectItems(
@@ -1567,8 +1557,13 @@ class LiteratureCatalog {
     }
     const source = normalizeSpace(command.source)
     if (!source) throw new Error('Project Literature source is required.')
-    await client.$transaction((transaction) =>
-      Promise.all(
+    await client.$transaction(async (transaction) => {
+      const available = await transaction.literatureItem.count({
+        where: { id: { in: itemIds }, deletedAt: null, mergedIntoItemId: null }
+      })
+      if (available !== itemIds.length)
+        throw new Error('One or more Literature Items are unavailable.')
+      await Promise.all(
         itemIds.map((itemId) =>
           transaction.projectLiterature.upsert({
             where: { projectId_itemId: { projectId: command.projectId, itemId } },
@@ -1577,7 +1572,7 @@ class LiteratureCatalog {
           })
         )
       )
-    )
+    })
     return { kind: 'item', id: itemIds[0]!, state: 'linked' }
   }
 

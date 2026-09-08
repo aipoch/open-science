@@ -102,6 +102,7 @@ import { LiteratureBackgroundTasks } from './LiteratureBackgroundTasks'
 import { LiteratureTable, LiteratureTextTooltip } from './LiteratureTable'
 import { buildLiteratureMergeItem, mergeScalarFields } from './literature-merge'
 import type {
+  LiteratureCatalogCommand,
   LiteratureCatalogSearchRequest,
   LiteratureCatalogSearchPage,
   LiteratureCollectionView,
@@ -1318,6 +1319,15 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
     state: 'active' | 'deleted'
     completed: number
   }>()
+  const [linkFailure, setLinkFailure] = useState<{
+    command:
+      | Omit<Extract<LiteratureCatalogCommand, { kind: 'move-collection-items' }>, 'itemIds'>
+      | Omit<Extract<LiteratureCatalogCommand, { kind: 'set-project-items' }>, 'itemIds'>
+    itemIds: readonly string[]
+    completed: number
+    scopeKey: string
+    skipped: number
+  }>()
   const [linkedItemError, setLinkedItemError] = useState<string>()
   const [pendingCandidateId, setPendingCandidateId] = useState<string>()
   const [dismissedCandidateUndo, setDismissedCandidateUndo] = useState<DismissedCandidateUndo>()
@@ -1551,6 +1561,13 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
       tagId
     ]
   )
+  const linkScopeRef = useRef(entriesKey)
+  useLayoutEffect(() => {
+    linkScopeRef.current = entriesKey
+    return () => {
+      linkScopeRef.current = ''
+    }
+  }, [entriesKey])
   const entriesPage = Math.floor(entriesOffset / entriesPageSize) + 1
   const entriesPageCount = Math.max(1, Math.ceil(entriesTotalCount / entriesPageSize))
   const displayedEntryCount = section === 'inbox' ? candidates.length : items.length
@@ -1726,6 +1743,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
       setEntriesOffset(0)
       clearSelection()
       setLifecycleFailure(undefined)
+      setLinkFailure(undefined)
     }, 0)
     return () => window.clearTimeout(timeout)
   }, [clearSelection, entriesKey])
@@ -1777,9 +1795,25 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
     window.sessionStorage.setItem(LITERATURE_REVIEW_CTA_ATTENTION_KEY, 'true')
   }, [shouldCueLiteratureReview, showLiteratureReviewAction])
 
+  const displayCollections = useMemo(() => {
+    const byId = new Map(collections.map((collection) => [collection.id, collection]))
+    return collections.map((collection) => {
+      const names = [collection.name]
+      const seen = new Set([collection.id])
+      let parentId = collection.parentId
+      while (parentId && !seen.has(parentId)) {
+        seen.add(parentId)
+        const parent = byId.get(parentId)
+        if (!parent) break
+        names.unshift(parent.name)
+        parentId = parent.parentId
+      }
+      return { ...collection, name: names.join(' / ') }
+    })
+  }, [collections])
   const batchCollections = useMemo(
-    () => collections.filter((collection) => collection.id !== collectionId),
-    [collectionId, collections]
+    () => displayCollections.filter((collection) => collection.id !== collectionId),
+    [collectionId, displayCollections]
   )
   const itemTypeLabels = useMemo<Record<LiteratureItemType, string>>(
     () => ({
@@ -2142,6 +2176,12 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
         included
       })
       updateCollectionLinkState(included)
+      if (!included && targetCollectionId === collectionId) {
+        selectionStore.remove(itemId)
+        setItems((current) => current.filter((item) => item.id !== itemId))
+        setEntriesTotalCount((current) => Math.max(0, current - 1))
+        await loadEntries(true)
+      }
       return true
     } catch {
       setCollectionLinkError(t('Collection link could not be updated.'))
@@ -2704,37 +2744,95 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
     }
   }
 
-  const linkSelectedItemsToCollection = async (targetCollectionId: string): Promise<void> => {
-    const resolvedIds = await resolveSelectedItemIds()
-    for (let offset = 0; offset < resolvedIds.length; offset += LITERATURE_BATCH_COMMAND_SIZE) {
-      await window.api.literature.transact({
-        kind: 'move-collection-items',
-        itemIds: resolvedIds.slice(offset, offset + LITERATURE_BATCH_COMMAND_SIZE),
-        targetCollectionId,
-        ...(collectionId ? { sourceCollectionId: collectionId } : {})
-      })
+  const runLinkBatch = async (
+    command: NonNullable<typeof linkFailure>['command'],
+    itemIds?: readonly string[],
+    previousCompleted = 0,
+    previousSkipped = 0,
+    reconcile = false
+  ): Promise<void> => {
+    const scopeKey = entriesKey
+    setIsBatching(true)
+    setError(undefined)
+    setLinkFailure(undefined)
+    let resolvedIds: readonly string[] = itemIds ?? []
+    let completed = 0
+    let skipped = previousSkipped
+    try {
+      resolvedIds = itemIds ?? (await resolveSelectedItemIds())
+      if (reconcile) {
+        const activeIds: string[] = []
+        for (let offset = 0; offset < resolvedIds.length; offset += LITERATURE_BATCH_COMMAND_SIZE) {
+          const batch = resolvedIds.slice(offset, offset + LITERATURE_BATCH_COMMAND_SIZE)
+          const entries = await Promise.all(batch.map((id) => window.api.literature.get(id)))
+          entries.forEach((entry, index) => {
+            // get resolves merged aliases; never redirect the original association intent.
+            if (
+              entry?.id === batch[index] &&
+              entry.deletedAt === undefined &&
+              entry.mergedIntoItemId === undefined
+            )
+              activeIds.push(batch[index])
+          })
+        }
+        skipped += resolvedIds.length - activeIds.length
+        resolvedIds = activeIds
+      }
+      for (let offset = 0; offset < resolvedIds.length; offset += LITERATURE_BATCH_COMMAND_SIZE) {
+        const batch = resolvedIds.slice(offset, offset + LITERATURE_BATCH_COMMAND_SIZE)
+        await window.api.literature.transact({ ...command, itemIds: [...batch] })
+        completed += batch.length
+      }
+      if (linkScopeRef.current === scopeKey) {
+        clearSelection()
+        if (skipped)
+          setLinkFailure({
+            command,
+            itemIds: [],
+            completed: previousCompleted + completed,
+            scopeKey,
+            skipped
+          })
+      }
+    } catch {
+      if (linkScopeRef.current === scopeKey) {
+        if (resolvedIds.length) {
+          const remaining = resolvedIds.slice(completed)
+          selectionStore.replace(remaining)
+          setLinkFailure({
+            command,
+            itemIds: remaining,
+            completed: previousCompleted + completed,
+            skipped,
+            scopeKey
+          })
+        } else {
+          setError(t('Selected references could not be loaded.'))
+        }
+      }
+    } finally {
+      const refreshed = await Promise.allSettled([
+        ...(linkScopeRef.current === scopeKey ? [loadEntries(true)] : []),
+        loadCollections(),
+        loadProjectCounts()
+      ])
+      if (
+        linkScopeRef.current === scopeKey &&
+        refreshed.some((result) => result.status === 'rejected')
+      ) {
+        setError(t('Literature could not be loaded.'))
+      }
+      setIsBatching(false)
     }
   }
 
   const moveSelectedItems = async (targetCollectionId: string): Promise<void> => {
-    const selection = selectionStore.getSnapshot()
-    if (
-      !targetCollectionId ||
-      (!selection.allMatchingSelected && selection.selectedIds.size === 0) ||
-      isBatching
-    )
-      return
-    setIsBatching(true)
-    setError(undefined)
-    try {
-      await linkSelectedItemsToCollection(targetCollectionId)
-      clearSelection()
-      await Promise.all([loadEntries(true), loadCollections()])
-    } catch {
-      setError(t('Collection link could not be updated.'))
-    } finally {
-      setIsBatching(false)
-    }
+    if (!targetCollectionId || isBatching) return
+    await runLinkBatch({
+      kind: 'move-collection-items',
+      targetCollectionId,
+      ...(collectionId ? { sourceCollectionId: collectionId } : {})
+    })
   }
 
   const createCollectionForSelection = async (name: string): Promise<boolean> => {
@@ -2743,22 +2841,30 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
       return false
     setIsBatching(true)
     setError(undefined)
-    let collectionCreated = false
+    const scopeKey = entriesKey
     try {
+      // Resolve before creating so every continuation has a fixed reference set.
+      const itemIds = await resolveSelectedItemIds()
+      if (linkScopeRef.current !== scopeKey) return false
       const receipt = await window.api.literature.transact({ kind: 'create-collection', name })
-      collectionCreated = true
-      await linkSelectedItemsToCollection(receipt.id)
-      clearSelection()
-      await Promise.all([loadEntries(true), loadCollections()])
+      void loadCollections().catch(() => undefined)
+      await runLinkBatch(
+        {
+          kind: 'move-collection-items',
+          targetCollectionId: receipt.id,
+          ...(collectionId ? { sourceCollectionId: collectionId } : {})
+        },
+        itemIds
+      )
+      // Creation succeeded even if association needs Retry; retire the creation form.
       return true
     } catch (error) {
-      setError(
-        collectionCreated
-          ? t('Collection link could not be updated.')
-          : error instanceof Error && error.message.includes(LITERATURE_COLLECTION_NAME_CONFLICT)
+      if (linkScopeRef.current === scopeKey)
+        setError(
+          error instanceof Error && error.message.includes(LITERATURE_COLLECTION_NAME_CONFLICT)
             ? t('A collection with this name already exists at this level. Choose another name.')
             : t('Collection could not be created.')
-      )
+        )
       return false
     } finally {
       setIsBatching(false)
@@ -2766,33 +2872,8 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
   }
 
   const addSelectedItemsToProject = async (projectId: string): Promise<void> => {
-    const selection = selectionStore.getSnapshot()
-    if (
-      !projectId ||
-      (!selection.allMatchingSelected && selection.selectedIds.size === 0) ||
-      isBatching
-    )
-      return
-    setIsBatching(true)
-    setError(undefined)
-    try {
-      const resolvedIds = await resolveSelectedItemIds()
-      for (let offset = 0; offset < resolvedIds.length; offset += LITERATURE_BATCH_COMMAND_SIZE) {
-        await window.api.literature.transact({
-          kind: 'set-project-items',
-          projectId,
-          itemIds: resolvedIds.slice(offset, offset + LITERATURE_BATCH_COMMAND_SIZE),
-          included: true,
-          source: 'library'
-        })
-      }
-      clearSelection()
-      await Promise.all([loadEntries(true), loadProjectCounts()])
-    } catch {
-      setError(t('Project link could not be updated.'))
-    } finally {
-      setIsBatching(false)
-    }
+    if (!projectId || isBatching) return
+    await runLinkBatch({ kind: 'set-project-items', projectId, included: true, source: 'library' })
   }
 
   const batchProjectFormDialog = useProjectFormDialog({
@@ -3231,7 +3312,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
                 />
                 <LiteratureSidebarGroup
                   collapsed={sidebarCollapsed}
-                  entries={collections}
+                  entries={displayCollections}
                   groupId="literature-sidebar-collections"
                   label={t('Collections')}
                   action={
@@ -3851,6 +3932,44 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
               onClose={() => setBatchLookup(undefined)}
               onChanged={receiveBackgroundItems}
             />
+          ) : null}
+          {linkFailure && linkFailure.scopeKey === entriesKey ? (
+            <div className="mt-2">
+              <LiteratureErrorNotice
+                className="w-fit max-w-full rounded-md px-3 py-1.5 [&>div]:items-center"
+                description={
+                  linkFailure.skipped
+                    ? t(
+                        'Updated: {{completed}}. Not updated: {{remaining}}. Unavailable: {{skipped}}.',
+                        {
+                          completed: linkFailure.completed,
+                          remaining: linkFailure.itemIds.length,
+                          skipped: linkFailure.skipped
+                        }
+                      )
+                    : t('Updated: {{completed}}. Not updated: {{remaining}}.', {
+                        completed: linkFailure.completed,
+                        remaining: linkFailure.itemIds.length
+                      })
+                }
+                primaryButton={
+                  linkFailure.itemIds.length
+                    ? {
+                        label: t('Retry'),
+                        disabled: isBatching,
+                        onClick: () =>
+                          void runLinkBatch(
+                            linkFailure.command,
+                            linkFailure.itemIds,
+                            linkFailure.completed,
+                            linkFailure.skipped,
+                            true
+                          )
+                      }
+                    : undefined
+                }
+              />
+            </div>
           ) : null}
           {lifecycleFailure ? (
             <div className="mt-5">
@@ -5234,7 +5353,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
                           <LiteratureDetailLinkList
                             key={`${selectedItem.id}:collections`}
                             checkedIds={selectedItem.collectionIds}
-                            entries={collections}
+                            entries={displayCollections}
                             error={collectionLinkError}
                             kind="collections"
                             onCheckedChange={setCollectionLink}

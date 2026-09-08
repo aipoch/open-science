@@ -4847,6 +4847,7 @@
     "{{count}} background tasks_other": "{{count}} Hintergrundaufgaben",
     "{{count}} running background tasks_one": "{{count}} laufende Hintergrundaufgabe",
     "{{count}} running background tasks_other": "{{count}} laufende Hintergrundaufgaben",
+    "Updated: {{completed}}. Not updated: {{remaining}}. Unavailable: {{skipped}}.": "Aktualisiert: {{completed}}. Nicht aktualisiert: {{remaining}}. Nicht verfügbar: {{skipped}}.",
     "Updated: {{completed}}. Not updated: {{remaining}}.": "Aktualisiert: {{completed}}. Nicht aktualisiert: {{remaining}}.",
     "Conflicting identifiers": "Widersprüchliche Kennungen",
     "Some identifiers disagree or match different references. Correct the source file or keep separate copies of every reference in this import.": "Einige Kennungen widersprechen sich oder passen zu verschiedenen Referenzen. Korrigieren Sie die Quelldatei oder behalten Sie jede Referenz dieses Imports als separate Kopie.",
