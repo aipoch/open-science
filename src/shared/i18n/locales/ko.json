@@ -151,7 +151,6 @@
     "The selected source changed. Search again and review the results.": "선택한 출처가 변경되었습니다. 다시 검색하고 결과를 검토하세요.",
     "{{count}} missing fields_other": "누락된 필드 {{count}}개",
     "After merging": "병합 후",
-    "All identifiers are kept.": "모든 식별자가 유지됩니다.",
     "Compare references": "문헌 비교",
     "Date accessed": "접근 날짜",
     "Date added": "추가 날짜",
@@ -4410,7 +4409,6 @@
     "Organization": "기관",
     "Remove author": "저자 제거",
     "Add identifier": "식별자 추가",
-    "Primary": "기본",
     "Remove identifier": "식별자 제거",
     "URL": "URL",
     "Add reference": "문헌 추가",
@@ -4692,6 +4690,13 @@
     "{{count}} tasks_other": "작업 {{count}}개",
     "{{count}} background tasks_other": "백그라운드 작업 {{count}}개",
     "{{count}} running background tasks_other": "실행 중인 백그라운드 작업 {{count}}개",
-    "Updated: {{completed}}. Not updated: {{remaining}}.": "업데이트됨: {{completed}}. 업데이트되지 않음: {{remaining}}."
+    "Updated: {{completed}}. Not updated: {{remaining}}.": "업데이트됨: {{completed}}. 업데이트되지 않음: {{remaining}}.",
+    "Conflicting identifiers": "식별자 충돌",
+    "Some identifiers disagree or match different references. Correct the source file or keep separate copies of every reference in this import.": "일부 식별자가 서로 모순되거나 서로 다른 문헌과 일치합니다. 원본 파일을 수정하거나 이번에 가져오는 모든 문헌을 별도의 사본으로 유지하세요.",
+    "Library reference: {{title}}": "라이브러리 문헌: {{title}}",
+    "File reference {{number}}: {{title}}": "파일의 문헌 {{number}}: {{title}}",
+    "Check author names. Original text is kept in Extra.": "저자 이름을 확인하세요. 원문은 추가 정보에 보존됩니다.",
+    "Preferred for {{scheme}}": "{{scheme}}의 기본값",
+    "All identifiers are kept. Preferred values come from the kept reference when available.": "모든 식별자가 유지됩니다. 유지할 문헌에 기본값이 있으면 해당 값을 사용합니다."
   }
 }

@@ -42,17 +42,20 @@ const LITERATURE_CSL_MAX_BYTES = 1024 * 1024
 const LITERATURE_RECORD_IMPORT_FORMATS = ['bibtex', 'ris', 'nbib'] as const
 const LITERATURE_RECORD_IMPORT_MAX_BYTES = 32 * 1024 * 1024
 const LITERATURE_RECORD_IMPORT_MAX_RECORDS = 1_000
+export const LITERATURE_IMPORT_IDENTITY_CONFLICT =
+  'Import contains conflicting identifiers. Keep separate copies or correct the source file.'
 const LITERATURE_COLLECTION_NAME_CONFLICT = 'literature_collection_name_conflict'
 const LITERATURE_COLLECTION_NAME_MAX_LENGTH = 200
 const LITERATURE_COLLECTION_DESCRIPTION_MAX_LENGTH = 1_000
 const LITERATURE_LIFECYCLE_STATES = ['active', 'deleted'] as const
 const LITERATURE_SORT_FIELDS = ['updated', 'created', 'title', 'year', 'rating'] as const
 const LITERATURE_SORT_DIRECTIONS = ['asc', 'desc'] as const
-const LITERATURE_IMPORT_STATUSES = ['ready', 'existing', 'warning', 'invalid'] as const
+const LITERATURE_IMPORT_STATUSES = ['ready', 'warning', 'existing', 'conflict', 'invalid'] as const
 const LITERATURE_IMPORT_WARNINGS = [
   'missing-authors',
   'missing-year',
-  'missing-container-title'
+  'missing-container-title',
+  'uncertain-author-name'
 ] as const
 const LITERATURE_METADATA_FIELDS = [
   'title',
@@ -726,6 +729,21 @@ const literatureRecordImportEntrySchema = z
     warnings: z.array(z.enum(LITERATURE_IMPORT_WARNINGS)),
     item: literatureItemInputSchema.optional(),
     existingItemId: nonEmptyTextSchema.optional(),
+    conflict: z
+      .object({
+        identifiers: z.array(literatureIdentifierInputSchema),
+        matches: z.array(
+          z
+            .object({
+              itemId: nonEmptyTextSchema.optional(),
+              inputIndex: z.number().int().nonnegative().optional(),
+              title: z.string()
+            })
+            .strict()
+        )
+      })
+      .strict()
+      .optional(),
     error: nonEmptyTextSchema.optional()
   })
   .strict()
@@ -936,6 +954,39 @@ type LiteratureIdentityScheme = (typeof LITERATURE_IDENTITY_SCHEMES)[number]
 type LiteratureInboxState = (typeof LITERATURE_INBOX_STATES)[number]
 type LiteratureCreatorInput = z.infer<typeof literatureCreatorInputSchema>
 type LiteratureIdentifierInput = z.infer<typeof literatureIdentifierInputSchema>
+// A preferred identifier is scoped to its scheme. Legacy ties use normalized value order.
+export function preferredLiteratureIdentifier(
+  identifiers: readonly LiteratureIdentifierInput[],
+  scheme: LiteratureIdentifierScheme
+): LiteratureIdentifierInput | undefined {
+  return identifiers
+    .filter((identifier) => identifier.scheme === scheme)
+    .sort((a, b) => {
+      const priority = Number(b.isPrimary) - Number(a.isPrimary)
+      const left = normalizeLiteratureIdentifierValue(scheme, a.value).toLowerCase()
+      const right = normalizeLiteratureIdentifierValue(scheme, b.value).toLowerCase()
+      return (
+        priority ||
+        (left < right ? -1 : left > right ? 1 : a.value < b.value ? -1 : a.value > b.value ? 1 : 0)
+      )
+    })[0]
+}
+
+export function normalizeLiteratureIdentifierPreferences<T extends LiteratureIdentifierInput>(
+  identifiers: readonly T[]
+): T[] {
+  const preferred = new Map(
+    [...new Set(identifiers.map(({ scheme }) => scheme))].map((scheme) => [
+      scheme,
+      preferredLiteratureIdentifier(identifiers, scheme)
+    ])
+  )
+  return identifiers.map((identifier) => ({
+    ...identifier,
+    isPrimary: identifier.isPrimary && preferred.get(identifier.scheme) === identifier
+  }))
+}
+
 type LiteratureItemInput = z.infer<typeof literatureItemInputSchema>
 type LiteratureSourceInput = z.infer<typeof literatureSourceInputSchema>
 type LiteratureCandidateOrigin = z.infer<typeof literatureCandidateOriginSchema>

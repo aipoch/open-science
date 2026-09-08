@@ -151,7 +151,6 @@
     "The selected source changed. Search again and review the results.": "所選來源已變更，請重新搜尋並檢閱結果。",
     "{{count}} missing fields_other": "{{count}} 個待補欄位",
     "After merging": "合併後",
-    "All identifiers are kept.": "保留所有識別碼。",
     "Compare references": "比較題錄",
     "Date accessed": "存取時間",
     "Date added": "新增時間",
@@ -4413,7 +4412,6 @@
     "Organization": "機構",
     "Remove author": "移除作者",
     "Add identifier": "新增識別碼",
-    "Primary": "主要",
     "Remove identifier": "移除識別碼",
     "URL": "URL",
     "Add reference": "新增題錄",
@@ -4694,6 +4692,13 @@
     "{{count}} tasks_other": "{{count}} 個任務",
     "{{count}} background tasks_other": "{{count}} 個背景工作",
     "{{count}} running background tasks_other": "{{count}} 個背景工作正在執行",
-    "Updated: {{completed}}. Not updated: {{remaining}}.": "已更新：{{completed}}。未更新：{{remaining}}。"
+    "Updated: {{completed}}. Not updated: {{remaining}}.": "已更新：{{completed}}。未更新：{{remaining}}。",
+    "Conflicting identifiers": "識別碼衝突",
+    "Some identifiers disagree or match different references. Correct the source file or keep separate copies of every reference in this import.": "部分識別碼互相矛盾或符合不同文獻。請修正來源檔案，或將本次匯入的每篇文獻保留為獨立副本。",
+    "Library reference: {{title}}": "文獻庫中的文獻：{{title}}",
+    "File reference {{number}}: {{title}}": "檔案中的第 {{number}} 篇文獻：{{title}}",
+    "Check author names. Original text is kept in Extra.": "請核對作者姓名。原文已保留於額外資訊中。",
+    "Preferred for {{scheme}}": "{{scheme}} 首選值",
+    "All identifiers are kept. Preferred values come from the kept reference when available.": "所有識別碼都會保留。如有可用值，將優先採用保留文獻中的首選值。"
   }
 }

@@ -151,7 +151,6 @@
     "The selected source changed. Search again and review the results.": "所选来源已变化，请重新搜索并审阅结果。",
     "{{count}} missing fields_other": "{{count}} 个待补字段",
     "After merging": "合并后",
-    "All identifiers are kept.": "保留所有标识符。",
     "Compare references": "比较题录",
     "Date accessed": "访问时间",
     "Date added": "添加时间",
@@ -4413,7 +4412,6 @@
     "Organization": "机构",
     "Remove author": "移除作者",
     "Add identifier": "添加标识符",
-    "Primary": "主要",
     "Remove identifier": "移除标识符",
     "URL": "URL",
     "Add reference": "添加题录",
@@ -4694,6 +4692,13 @@
     "{{count}} tasks_other": "{{count}} 个任务",
     "{{count}} background tasks_other": "{{count}} 个后台任务",
     "{{count}} running background tasks_other": "{{count}} 个后台任务正在运行",
-    "Updated: {{completed}}. Not updated: {{remaining}}.": "已更新：{{completed}}。未更新：{{remaining}}。"
+    "Updated: {{completed}}. Not updated: {{remaining}}.": "已更新：{{completed}}。未更新：{{remaining}}。",
+    "Conflicting identifiers": "标识符冲突",
+    "Some identifiers disagree or match different references. Correct the source file or keep separate copies of every reference in this import.": "部分标识符存在矛盾或匹配不同文献。请修正源文件，或将本次导入的每篇文献保留为独立副本。",
+    "Library reference: {{title}}": "文献库中的文献：{{title}}",
+    "File reference {{number}}: {{title}}": "文件中的第 {{number}} 篇文献：{{title}}",
+    "Check author names. Original text is kept in Extra.": "请核对作者姓名。原文已保留在附加信息中。",
+    "Preferred for {{scheme}}": "{{scheme}} 首选值",
+    "All identifiers are kept. Preferred values come from the kept reference when available.": "所有标识符均会保留。如有可用值，将优先采用保留文献中的首选值。"
   }
 }

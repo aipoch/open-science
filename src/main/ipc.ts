@@ -4620,8 +4620,14 @@ const createApplicationModules = async (
       get: (itemId) => literatureCatalog.get(itemId),
       importPdf: (request) => literaturePdfImporter.import(request),
       importRecords: async (request) => {
-        const parsed = await literatureCitationFormatter.parseReferences(request.content)
-        const entries = await literatureCatalog.inspectImportItems(parsed.items, parsed.errors)
+        const { warnings, ...parsed } = await literatureCitationFormatter.parseReferences(
+          request.content
+        )
+        const entries = await literatureCatalog.inspectImportItems(
+          parsed.items,
+          parsed.errors,
+          warnings
+        )
         if (request.mode === 'preview') return { ...parsed, entries }
         if (parsed.items.length === 0) throw new Error('No valid references were found.')
         return {

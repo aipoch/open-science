@@ -31,6 +31,76 @@ const reference: LiteratureItemInput = {
 }
 
 describe('LiteratureCitationFormatter', () => {
+  it.each([
+    [
+      'CN  - Research Consortium',
+      [{ nameMode: 'organization', literalName: 'Research Consortium', creatorType: 'author' }]
+    ],
+    [
+      'AU  - Smith JA',
+      [{ nameMode: 'person', familyName: 'Smith', givenName: 'J. A.', creatorType: 'author' }]
+    ],
+    [
+      'FAU - Smith, Jane Ann\nAU  - Smith JA\nCN  - Research Consortium\nFAU - Jones, Mary\nAU  - Jones M',
+      [
+        { nameMode: 'person', familyName: 'Smith', givenName: 'Jane Ann', creatorType: 'author' },
+        { nameMode: 'organization', literalName: 'Research Consortium', creatorType: 'author' },
+        { nameMode: 'person', familyName: 'Jones', givenName: 'Mary', creatorType: 'author' }
+      ]
+    ]
+  ])('preserves NBIB author semantics and sequence for %s', async (authors, expected) => {
+    const result = await new LiteratureCitationFormatter().parseReferences(
+      `PMID- 12345\nTI  - Group authored paper\nDP  - 2024\n${authors}\n`
+    )
+    expect(result.errors).toEqual([])
+    expect(result.items[0].creators).toEqual(expected)
+  })
+
+  it('preserves uncertain personal names and warns without dropping the record', async () => {
+    const parsed = await new LiteratureCitationFormatter().parseReferences(
+      'PMID- 12345\nTI  - Paper\nFAU - Unsplit Name\n'
+    )
+    expect(parsed.errors).toEqual([])
+    expect(parsed.warnings).toEqual([['uncertain-author-name']])
+    expect(parsed.items[0]).toMatchObject({
+      creators: [{ nameMode: 'person', familyName: 'Unsplit Name', givenName: '' }],
+      extra: 'FAU - Unsplit Name'
+    })
+  })
+
+  it('does not drop unmatched abbreviated authors or collapse repeated people', async () => {
+    const parsed = await new LiteratureCitationFormatter().parseReferences(
+      'PMID- 12345\nTI  - Paper\nAU  - Smith JA\nFAU - Jones, Mary\nAU  - Jones M\nFAU - Jones, Mary\nAU  - Jones M\n'
+    )
+    expect(parsed.items[0].creators).toEqual([
+      { nameMode: 'person', familyName: 'Smith', givenName: 'J. A.', creatorType: 'author' },
+      { nameMode: 'person', familyName: 'Jones', givenName: 'Mary', creatorType: 'author' },
+      { nameMode: 'person', familyName: 'Jones', givenName: 'Mary', creatorType: 'author' }
+    ])
+  })
+
+  it('keeps adjacent people with the same surname and different initials distinct', async () => {
+    const parsed = await new LiteratureCitationFormatter().parseReferences(
+      'PMID- 12345\nTI  - Paper\nAU  - Smith JA\nFAU - Smith, Mary\nAU  - Smith M\n'
+    )
+    expect(parsed.items[0].creators).toHaveLength(2)
+    expect(parsed.items[0].creators[0]).toMatchObject({ familyName: 'Smith', givenName: 'J. A.' })
+    expect(parsed.items[0].creators[1]).toMatchObject({ familyName: 'Smith', givenName: 'Mary' })
+  })
+
+  it('preserves all abbreviated personal initials in formatted citations', async () => {
+    const formatter = new LiteratureCitationFormatter()
+    const parsed = await formatter.parseReferences(
+      'PMID- 12345\nTI  - Older personal author paper\nDP  - 1998\nAU  - Smith JA\n'
+    )
+    const [formatted] = await formatter.formatReferences(
+      [{ id: 'paper', item: parsed.items[0] }],
+      'vancouver',
+      'en-US'
+    )
+    expect(formatted.reference).toContain('Smith JA')
+  })
+
   it('formats every pinned built-in style without network access', async () => {
     const formatter = new LiteratureCitationFormatter()
 
@@ -222,7 +292,7 @@ TI  - A useful PubMed paper
 AB  - The first line of the abstract.
       The second line continues it.
 FAU - Smith, Jane A
-FAU - Research Consortium
+CN  - Research Consortium
 JT  - Journal of Useful Results
 TA  - J Useful Results
 VI  - 12

@@ -6,10 +6,12 @@ import { planLiteratureMerge, supplementLiteratureMetadata } from './duplicate-m
 
 import {
   LITERATURE_IDENTITY_SCHEMES,
+  LITERATURE_IMPORT_IDENTITY_CONFLICT,
   LITERATURE_COLLECTION_NAME_CONFLICT,
   literatureCandidateInputSchema,
   literatureItemInputSchema,
   normalizeLiteratureIdentifierValue,
+  normalizeLiteratureIdentifierPreferences,
   type LiteratureCatalogCommand,
   type LiteratureDuplicatePolicy,
   type LiteratureCollectionView,
@@ -122,15 +124,15 @@ const sha256 = (value: string): string => createHash('sha256').update(value).dig
 const normalizedIdentifiers = (
   identifiers: readonly LiteratureIdentifierInput[]
 ): Array<LiteratureIdentifierInput & { normalizedValue: string }> => {
-  const seen = new Set<string>()
-  return identifiers.flatMap((identifier) => {
+  const unique = new Map<string, LiteratureIdentifierInput & { normalizedValue: string }>()
+  for (const identifier of identifiers) {
     const normalizedValue = normalizeIdentifier(identifier.scheme, identifier.value)
     if (!normalizedValue) throw new Error(`Literature ${identifier.scheme} identifier is empty.`)
     const key = `${identifier.scheme}:${normalizedValue}`
-    if (seen.has(key)) return []
-    seen.add(key)
-    return [{ ...identifier, normalizedValue }]
-  })
+    if (!unique.has(key) || identifier.isPrimary)
+      unique.set(key, { ...identifier, normalizedValue })
+  }
+  return normalizeLiteratureIdentifierPreferences([...unique.values()])
 }
 
 const candidateDedupeKey = (candidate: LiteratureCandidateInput): string => {
@@ -294,43 +296,127 @@ const restoreExistingItem = (
 
 const identityKey = (scheme: string, value: string): string => `${scheme}:${value}`
 
-// Inspect identifiers in bounded queries instead of opening one request per reference.
+type ImportIdentityIndex = {
+  byIdentifier: Map<string, Set<string | number>>
+  records: Map<string | number, Pick<LiteratureItemInput, 'title' | 'identifiers'>>
+}
+
+const rememberImportIdentity = (
+  index: ImportIdentityIndex,
+  target: string | number,
+  item: Pick<LiteratureItemInput, 'title' | 'identifiers'>
+): void => {
+  index.records.set(target, item)
+  for (const { scheme, normalizedValue } of normalizedIdentifiers(item.identifiers)) {
+    if (!identitySchemes.has(scheme)) continue
+    const key = identityKey(scheme, normalizedValue)
+    const targets = index.byIdentifier.get(key) ?? new Set<string | number>()
+    targets.add(target)
+    index.byIdentifier.set(key, targets)
+  }
+}
+
+// Include all owners, including Trash and explicitly independent duplicates.
 const importIdentityMap = async (
   transaction: Prisma.TransactionClient,
   items: readonly LiteratureItemInput[]
-): Promise<Map<string, string>> => {
+): Promise<ImportIdentityIndex> => {
   const identifiers = items.flatMap((item) =>
     normalizedIdentifiers(item.identifiers).filter(({ scheme }) => identitySchemes.has(scheme))
   )
-  const result = new Map<string, string>()
+  const result: ImportIdentityIndex = { byIdentifier: new Map(), records: new Map() }
   for (let offset = 0; offset < identifiers.length; offset += 200) {
-    const matches = await transaction.literatureIdentifier.findMany({
+    const matches = await transaction.literatureItem.findMany({
       where: {
-        item: { mergedIntoItemId: null },
-        OR: identifiers.slice(offset, offset + 200).map(({ scheme, normalizedValue }) => ({
-          scheme,
-          normalizedValue
-        }))
+        mergedIntoItemId: null,
+        identifiers: {
+          some: {
+            OR: identifiers
+              .slice(offset, offset + 200)
+              .map(({ scheme, normalizedValue }) => ({ scheme, normalizedValue }))
+          }
+        }
       },
-      select: { scheme: true, normalizedValue: true, itemId: true },
-      orderBy: [{ item: { deletedAt: 'asc' } }, { item: { createdAt: 'asc' } }, { itemId: 'asc' }]
+      select: { id: true, title: true, identifiers: true }
     })
     for (const match of matches) {
-      const key = identityKey(match.scheme, match.normalizedValue)
-      if (!result.has(key)) result.set(key, match.itemId)
+      rememberImportIdentity(result, match.id, {
+        title: match.title,
+        identifiers: match.identifiers.map((identifier) => ({
+          scheme: identifier.scheme as LiteratureIdentifierScheme,
+          value: identifier.rawValue,
+          isPrimary: identifier.isPrimary
+        }))
+      })
     }
   }
   return result
 }
 
 const importIdentity = (
-  identities: ReadonlyMap<string, string>,
+  index: ImportIdentityIndex,
   item: LiteratureItemInput
-): string | undefined =>
-  normalizedIdentifiers(item.identifiers)
-    .filter(({ scheme }) => identitySchemes.has(scheme))
-    .map(({ scheme, normalizedValue }) => identities.get(identityKey(scheme, normalizedValue)))
-    .find((id) => id !== undefined)
+): { target?: string | number; conflict?: LiteratureRecordImportEntry['conflict'] } => {
+  const identifiers = normalizedIdentifiers(item.identifiers).filter(({ scheme }) =>
+    identitySchemes.has(scheme)
+  )
+  const targets = [
+    ...new Set(
+      identifiers.flatMap(({ scheme, normalizedValue }) => [
+        ...(index.byIdentifier.get(identityKey(scheme, normalizedValue)) ?? [])
+      ])
+    )
+  ]
+  const contradictory = identifiers.some((identifier) =>
+    identifiers.some(
+      (other) =>
+        other.scheme === identifier.scheme && other.normalizedValue !== identifier.normalizedValue
+    )
+  )
+  const target = targets[0]
+  const existing =
+    target === undefined ? [] : normalizedIdentifiers(index.records.get(target)!.identifiers)
+  const disagrees = identifiers.some((identifier) => {
+    const sameScheme = existing.filter(({ scheme }) => scheme === identifier.scheme)
+    return (
+      sameScheme.length > 0 &&
+      !sameScheme.some(({ normalizedValue }) => normalizedValue === identifier.normalizedValue)
+    )
+  })
+  if (targets.length > 1 || contradictory || disagrees)
+    return {
+      conflict: {
+        identifiers: identifiers.map(({ scheme, value, isPrimary }) => ({
+          scheme,
+          value,
+          isPrimary
+        })),
+        matches: targets.map((target) => ({
+          ...(typeof target === 'string' ? { itemId: target } : { inputIndex: target }),
+          title: index.records.get(target)!.title
+        }))
+      }
+    }
+  return { target }
+}
+
+// Plan the entire batch before any write. Virtual targets retain input indexes,
+// so bridges between earlier rows are checked identically in preview and commit.
+const resolveImportItems = (
+  identities: ImportIdentityIndex,
+  items: readonly LiteratureItemInput[]
+): ReturnType<typeof importIdentity>[] =>
+  items.map((item, inputIndex) => {
+    const resolution = importIdentity(identities, item)
+    if (resolution.conflict) return resolution
+    const target = resolution.target ?? inputIndex
+    const previous = identities.records.get(target)
+    rememberImportIdentity(identities, target, {
+      title: previous?.title ?? item.title,
+      identifiers: [...(previous?.identifiers ?? []), ...item.identifiers]
+    })
+    return resolution
+  })
 
 const createItem = async (
   transaction: Prisma.TransactionClient,
@@ -1044,35 +1130,33 @@ class LiteratureCatalog {
           }
 
           const identities = await importIdentityMap(transaction, items)
+          const resolutions =
+            duplicatePolicy === 'separate' ? [] : resolveImportItems(identities, items)
+          if (resolutions.some(({ conflict }) => conflict))
+            throw new Error(LITERATURE_IMPORT_IDENTITY_CONFLICT)
+          const importedTargets = new Map<number, string>()
           const itemIds: string[] = []
           let createdCount = 0
           let reusedCount = 0
-          for (const item of items) {
-            const identifiers = normalizedIdentifiers(item.identifiers)
+          for (const [inputIndex, item] of items.entries()) {
+            const target = resolutions[inputIndex]?.target
             const existingId =
-              duplicatePolicy === 'separate' ? undefined : importIdentity(identities, item)
+              typeof target === 'string'
+                ? target
+                : target === undefined
+                  ? undefined
+                  : importedTargets.get(target)
             const itemId = existingId ?? (await createItem(transaction, item))
             if (existingId) {
               await restoreExistingItem(transaction, existingId)
               if (duplicatePolicy === 'fill-missing') {
-                const filled = await supplementExistingItem(transaction, existingId, item)
-                for (const { scheme, normalizedValue } of normalizedIdentifiers(
-                  filled.identifiers
-                )) {
-                  const key = identityKey(scheme, normalizedValue)
-                  if (identitySchemes.has(scheme) && !identities.has(key))
-                    identities.set(key, existingId)
-                }
+                await supplementExistingItem(transaction, existingId, item)
               }
               reusedCount += 1
             } else {
               createdCount += 1
-              for (const { scheme, normalizedValue } of identifiers) {
-                if (identitySchemes.has(scheme)) {
-                  identities.set(identityKey(scheme, normalizedValue), itemId)
-                }
-              }
             }
+            importedTargets.set(inputIndex, itemId)
             if (!itemIds.includes(itemId)) itemIds.push(itemId)
             if (collectionId) {
               await transaction.literatureCollectionItem.upsert({
@@ -1094,25 +1178,20 @@ class LiteratureCatalog {
 
   async inspectImportItems(
     inputs: readonly LiteratureItemInput[],
-    errors: readonly LiteratureRecordImportError[]
+    errors: readonly LiteratureRecordImportError[],
+    parserWarnings: readonly LiteratureRecordImportEntry['warnings'][] = []
   ): Promise<LiteratureRecordImportEntry[]> {
     const items = inputs.map((item) => literatureItemInputSchema.parse(item))
     const client = await this.getClient()
     const entries: LiteratureRecordImportEntry[] = []
     await client.$transaction(async (transaction) => {
       const identities = await importIdentityMap(transaction, items)
+      const resolutions = resolveImportItems(identities, items)
       for (const [index, item] of items.entries()) {
-        const match = importIdentity(identities, item)
-        const existingItemId = match || undefined
-        if (match === undefined) {
-          for (const { scheme, normalizedValue } of normalizedIdentifiers(item.identifiers)) {
-            if (identitySchemes.has(scheme)) {
-              // An empty ID marks an earlier reference in this file, not a persisted Item.
-              identities.set(identityKey(scheme, normalizedValue), '')
-            }
-          }
-        }
+        const { target, conflict } = resolutions[index]!
+        const existingItemId = !conflict && typeof target === 'string' ? target : undefined
         const warnings: LiteratureRecordImportEntry['warnings'] = [
+          ...(parserWarnings[index] ?? []),
           ...(item.creators.length === 0 ? (['missing-authors'] as const) : []),
           ...(item.issuedYear === undefined && !item.issuedText ? (['missing-year'] as const) : []),
           ...(!item.containerTitle &&
@@ -1123,7 +1202,14 @@ class LiteratureCatalog {
         entries.push({
           index,
           title: item.title,
-          status: match !== undefined ? 'existing' : warnings.length > 0 ? 'warning' : 'ready',
+          status: conflict
+            ? 'conflict'
+            : target !== undefined
+              ? 'existing'
+              : warnings.length > 0
+                ? 'warning'
+                : 'ready',
+          ...(conflict ? { conflict } : {}),
           warnings,
           item,
           ...(existingItemId ? { existingItemId } : {})

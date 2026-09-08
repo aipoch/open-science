@@ -1,4 +1,7 @@
-import { LITERATURE_COLLECTION_NAME_CONFLICT } from '../../../../shared/literature'
+import {
+  LITERATURE_COLLECTION_NAME_CONFLICT,
+  LITERATURE_IMPORT_IDENTITY_CONFLICT
+} from '../../../../shared/literature'
 /* Hallmark · pre-emit critique: P5 H5 E5 S5 R5 V4 */
 import { AlertDialog } from 'radix-ui'
 import * as Dialog from '@/components/ui/dialog'
@@ -2345,7 +2348,24 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
         loadCollections(),
         ...(projectId ? [loadProjectCounts()] : [])
       ])
-    } catch {
+    } catch (error) {
+      if (error instanceof Error && error.message.includes(LITERATURE_IMPORT_IDENTITY_CONFLICT)) {
+        const preview = await window.api.literature
+          .importRecords({ mode: 'preview', content: recordImport.content })
+          .catch(() => undefined)
+        setRecordImport((current) =>
+          current
+            ? {
+                ...current,
+                ...(preview ? { preview } : {}),
+                error: t(
+                  'Some identifiers disagree or match different references. Correct the source file or keep separate copies of every reference in this import.'
+                )
+              }
+            : current
+        )
+        return
+      }
       setRecordImport((current) =>
         current
           ? {

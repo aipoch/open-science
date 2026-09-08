@@ -13,6 +13,7 @@ import {
   type LiteratureCitationLocale,
   type LiteratureCitationStyle,
   type LiteratureItemInput,
+  type LiteratureRecordImportEntry,
   type LiteratureRecordImportFormat
 } from '../../shared/literature'
 import { fromCslItem, toCslItem } from '../../shared/literature-csl'
@@ -38,11 +39,12 @@ type ParsedCitationRecords = Readonly<{
   format: LiteratureRecordImportFormat
   items: LiteratureItemInput[]
   errors: CitationImportError[]
+  warnings?: LiteratureRecordImportEntry['warnings'][]
   truncated: boolean
   scannedEntries: number
 }>
 
-type NbibRecord = Map<string, string[]>
+type NbibRecord = Array<{ field: string; value: string }>
 
 const citationStyleExample: LiteratureItemInput = {
   itemType: 'journalArticle',
@@ -64,7 +66,8 @@ const citationStyleExample: LiteratureItemInput = {
   identifiers: []
 }
 
-const nbibValues = (record: NbibRecord, field: string): string[] => record.get(field) ?? []
+const nbibValues = (record: NbibRecord, field: string): string[] =>
+  record.filter((entry) => entry.field === field).map(({ value }) => value)
 const nbibText = (record: NbibRecord, field: string): string =>
   nbibValues(record, field).join(' ').replace(/\s+/gu, ' ').trim()
 
@@ -72,43 +75,83 @@ const parseNbibRecords = (input: string): NbibRecord[] | undefined => {
   if (!/^PMID\s*-\s*\S+/mu.test(input)) return undefined
   const records: NbibRecord[] = []
   let record: NbibRecord | undefined
-  let lastField: string | undefined
   for (const line of input.replaceAll('\r\n', '\n').split('\n')) {
     const field = /^([A-Z0-9]{2,4})\s*-\s*(.*)$/u.exec(line)
     if (field) {
       const [, name, value] = field
-      if (name === 'PMID' && record?.size) {
+      if (name === 'PMID' && record?.length) {
         records.push(record)
-        record = new Map()
+        record = []
       }
-      record ??= new Map()
-      const values = record.get(name!) ?? []
-      values.push(value!.trim())
-      record.set(name!, values)
-      lastField = name
+      record ??= []
+      record.push({ field: name!, value: value!.trim() })
       continue
     }
     const continuation = /^\s{2,}(\S.*)$/u.exec(line)
-    if (!continuation || !record || !lastField) continue
-    const values = record.get(lastField)
-    if (!values?.length) continue
-    values[values.length - 1] = `${values.at(-1)} ${continuation[1]}`.trim()
+    const previous = record?.at(-1)
+    if (continuation && previous) previous.value = `${previous.value} ${continuation[1]}`.trim()
   }
-  if (record?.size) records.push(record)
+  if (record?.length) records.push(record)
   return records
 }
 
-const nbibCreator = (name: string): LiteratureItemInput['creators'][number] => {
-  const comma = name.indexOf(',')
-  if (comma < 0) {
-    return { nameMode: 'organization', literalName: name.trim(), creatorType: 'author' }
+const nbibCreators = (
+  record: NbibRecord
+): {
+  creators: LiteratureItemInput['creators']
+  uncertain: string[]
+} => {
+  const authors = record.filter(({ field }) => ['FAU', 'AU', 'CN'].includes(field))
+  const creators: LiteratureItemInput['creators'] = []
+  const uncertain: string[] = []
+  for (let index = 0; index < authors.length; index += 1) {
+    let { field, value } = authors[index]!
+    if (field === 'CN') {
+      creators.push({ nameMode: 'organization', literalName: value, creatorType: 'author' })
+      continue
+    }
+    // MEDLINE emits FAU followed by AU for the same person. Pair locally, never
+    // deduplicate all names: two different authors can have identical initials.
+    const next = authors[index + 1]
+    const full = field === 'FAU' ? value : next?.field === 'FAU' ? next.value : undefined
+    const short = field === 'AU' ? value : next?.field === 'AU' ? next.value : undefined
+    const family = full?.split(',')[0]?.trim()
+    const abbreviatedFamily = short
+      ? /^(.*?)\s+[A-Z]+(?:\s+(?:Jr|Sr|II|III|IV))?$/u.exec(short)?.[1]
+      : undefined
+    const fullInitials = full
+      ?.split(',')[1]
+      ?.trim()
+      .replace(/\s+(?:Jr|Sr|II|III|IV)$/u, '')
+      .match(/\p{L}+/gu)
+      ?.map((part) => part[0].toUpperCase())
+      .join('')
+    const shortInitials = short
+      ? /\s+([A-Z]+)(?:\s+(?:Jr|Sr|II|III|IV))?$/u.exec(short)?.[1]
+      : undefined
+    if (
+      next &&
+      full?.includes(',') &&
+      family === abbreviatedFamily &&
+      fullInitials === shortInitials
+    ) {
+      if (field === 'AU') ({ field, value } = next)
+      index += 1
+    }
+    const comma = value.indexOf(',')
+    const abbreviated =
+      field === 'AU' ? /^(.*?)\s+([A-Z]+(?:\s+(?:Jr|Sr|II|III|IV))?)$/u.exec(value) : null
+    const familyName = comma >= 0 ? value.slice(0, comma).trim() : (abbreviated?.[1] ?? value)
+    const givenName =
+      comma >= 0
+        ? value.slice(comma + 1).trim()
+        : (abbreviated?.[2]?.replace(/^[A-Z]+/u, (initials) =>
+            [...initials].map((initial) => `${initial}.`).join(' ')
+          ) ?? '')
+    if (comma < 0 && !abbreviated) uncertain.push(`${field} - ${value}`)
+    creators.push({ nameMode: 'person', familyName, givenName, creatorType: 'author' })
   }
-  return {
-    nameMode: 'person',
-    familyName: name.slice(0, comma).trim(),
-    givenName: name.slice(comma + 1).trim(),
-    creatorType: 'author'
-  }
+  return { creators, uncertain }
 }
 
 const parseNbib = (input: string): ParsedCitationRecords | undefined => {
@@ -117,6 +160,7 @@ const parseNbib = (input: string): ParsedCitationRecords | undefined => {
   const limited = records.slice(0, LITERATURE_RECORD_IMPORT_MAX_RECORDS)
   const items: LiteratureItemInput[] = []
   const errors: CitationImportError[] = []
+  const warnings: LiteratureRecordImportEntry['warnings'][] = []
   for (const record of limited) {
     const title = nbibText(record, 'TI')
     const pmid = nbibText(record, 'PMID')
@@ -139,6 +183,8 @@ const parseNbib = (input: string): ParsedCitationRecords | undefined => {
       ...(pmcid ? [{ scheme: 'pmcid' as const, value: pmcid, isPrimary: false }] : []),
       ...(issn ? [{ scheme: 'issn' as const, value: issn, isPrimary: false }] : [])
     ]
+    const authors = nbibCreators(record)
+    warnings.push(authors.uncertain.length ? ['uncertain-author-name'] : [])
     items.push({
       itemType: publicationTypes.includes('review') ? 'review' : 'journalArticle',
       title,
@@ -150,21 +196,19 @@ const parseNbib = (input: string): ParsedCitationRecords | undefined => {
       language: nbibText(record, 'LA'),
       rights: '',
       url: pmid ? `https://pubmed.ncbi.nlm.nih.gov/${encodeURIComponent(pmid)}/` : '',
-      extra: '',
+      extra: authors.uncertain.join('\n'),
       typeFields: {
         ...(nbibText(record, 'VI') ? { volume: nbibText(record, 'VI') } : {}),
         ...(nbibText(record, 'IP') ? { issue: nbibText(record, 'IP') } : {}),
         ...(nbibText(record, 'PG') ? { pages: nbibText(record, 'PG') } : {})
       },
-      creators: (nbibValues(record, 'FAU').length
-        ? nbibValues(record, 'FAU')
-        : nbibValues(record, 'AU')
-      ).map(nbibCreator),
+      creators: authors.creators,
       identifiers
     })
   }
   return {
     format: 'nbib',
+    warnings,
     items,
     errors,
     truncated: records.length > limited.length,

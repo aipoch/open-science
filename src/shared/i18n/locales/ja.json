@@ -151,7 +151,6 @@
     "The selected source changed. Search again and review the results.": "選択したソースが変更されました。再検索して結果を確認してください。",
     "{{count}} missing fields_other": "未入力の項目 {{count}} 件",
     "After merging": "統合後",
-    "All identifiers are kept.": "すべての識別子を保持します。",
     "Compare references": "文献を比較",
     "Date accessed": "アクセス日時",
     "Date added": "追加日時",
@@ -4412,7 +4411,6 @@
     "Organization": "組織",
     "Remove author": "著者を削除",
     "Add identifier": "識別子を追加",
-    "Primary": "主要",
     "Remove identifier": "識別子を削除",
     "URL": "URL",
     "Add reference": "文献を追加",
@@ -4694,6 +4692,13 @@
     "{{count}} tasks_other": "{{count}} 件のタスク",
     "{{count}} background tasks_other": "{{count}} 件のバックグラウンドタスク",
     "{{count}} running background tasks_other": "実行中のバックグラウンドタスク {{count}} 件",
-    "Updated: {{completed}}. Not updated: {{remaining}}.": "更新済み：{{completed}}。未更新：{{remaining}}。"
+    "Updated: {{completed}}. Not updated: {{remaining}}.": "更新済み：{{completed}}。未更新：{{remaining}}。",
+    "Conflicting identifiers": "識別子の競合",
+    "Some identifiers disagree or match different references. Correct the source file or keep separate copies of every reference in this import.": "一部の識別子が矛盾しているか、異なる文献に一致しています。元のファイルを修正するか、今回インポートするすべての文献を個別のコピーとして保持してください。",
+    "Library reference: {{title}}": "ライブラリの文献：{{title}}",
+    "File reference {{number}}: {{title}}": "ファイル内の文献 {{number}}：{{title}}",
+    "Check author names. Original text is kept in Extra.": "著者名を確認してください。元のテキストは追加情報に保持されています。",
+    "Preferred for {{scheme}}": "{{scheme}} の優先値",
+    "All identifiers are kept. Preferred values come from the kept reference when available.": "すべての識別子が保持されます。保持する文献に優先値があれば、その値を使用します。"
   }
 }

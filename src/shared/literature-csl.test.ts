@@ -41,6 +41,20 @@ describe('toCslItem', () => {
     }
   )
 
+  it.each([false, true])(
+    'selects a deterministic legacy DOI with primary flags=%s',
+    (isPrimary) => {
+      const identifiers: LiteratureItemInput['identifiers'] = [
+        { scheme: 'doi', value: '10.1234/z', isPrimary },
+        { scheme: 'doi', value: '10.1234/a', isPrimary }
+      ]
+      expect(toCslItem('legacy', item({ identifiers })).DOI).toBe('10.1234/a')
+      expect(toCslItem('legacy', item({ identifiers: [...identifiers].reverse() })).DOI).toBe(
+        '10.1234/a'
+      )
+    }
+  )
+
   it('normalizes identifiers before projecting citation metadata', () => {
     expect(
       toCslItem(
