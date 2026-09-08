@@ -56,7 +56,7 @@ const statusCopy = (snapshot: WslSetupSnapshot, t: (key: string) => string): str
     case 'ready':
       return t('This profile is ready for sandboxed WSL2 Bash.')
     case 'failed':
-      return t('This profile is not ready. Use the code below to identify the next action.')
+      return t('This WSL2 profile needs attention.')
   }
 }
 
@@ -81,6 +81,14 @@ const recoveryCopy = (
       )
     case 'wsl_terminal_open_failed':
       return t('The distribution terminal could not be opened. Check again, then retry.')
+    case 'wsl_bwrap_missing':
+      return t(
+        'Install bubblewrap in the distribution terminal. Open Science will not run sudo or a package manager.'
+      )
+    case 'wsl_python3_missing':
+      return t(
+        'Install Python 3 in the distribution terminal. Open Science will not run sudo or a package manager.'
+      )
     case 'wsl_install_interrupted':
       return t(
         'The previous installation was interrupted or could not be confirmed. Complete WSL setup in Windows, then check again.'
@@ -98,7 +106,7 @@ const recoveryCopy = (
     case 'wsl_workspace_volume_unavailable':
       return t('Move the Open Science data folder to a local NTFS drive, then check again.')
     default:
-      return undefined
+      return t('Check again, or solve this setup issue in a conversation.')
   }
 }
 
@@ -148,6 +156,7 @@ export const WslLocalShellSection = ({
   const [distro, setDistro] = useState('')
   const [user, setUser] = useState('')
   const [actionBusy, setBusy] = useState(false)
+  const [hasSnapshot, setHasSnapshot] = useState(false)
   const [copied, setCopied] = useState(false)
   const [shellSwitchResult, setShellSwitchResult] = useState<
     | { runtime: 'powershell'; result: SwitchToPowerShellResult }
@@ -175,6 +184,7 @@ export const WslLocalShellSection = ({
   ]
 
   const apply = useCallback((next: WslSetupSnapshot): void => {
+    setHasSnapshot(true)
     setSnapshot(next)
     setDistro(next.selection?.distro ?? next.distros.find((item) => item.version === 2)?.name ?? '')
     setUser(next.selection?.user ?? '')
@@ -215,6 +225,7 @@ export const WslLocalShellSection = ({
       const firstStatus = !statusHydrated.current
       statusHydrated.current = true
       if (setupStatus.snapshot) {
+        setHasSnapshot(true)
         setSnapshot(setupStatus.snapshot)
         if (firstStatus) {
           setDistro(
@@ -224,14 +235,12 @@ export const WslLocalShellSection = ({
           )
           setUser(setupStatus.snapshot.selection?.user ?? '')
         }
-      } else if (firstStatus && setupStatus.operation.state === 'idle') {
-        void probe(() => active)
       }
     })
     return () => {
       active = false
     }
-  }, [previewAvailable, probe, setupStatus])
+  }, [previewAvailable, setupStatus])
 
   const saveAndCheck = async (): Promise<void> => {
     setBusy(true)
@@ -422,12 +431,17 @@ export const WslLocalShellSection = ({
     )
   }
 
-  const supportAvailable = !busy && snapshot.state !== 'checking' && snapshot.state !== 'ready'
+  const awaitingManualCheck =
+    !busy && setupStatus !== undefined && !hasSnapshot && snapshot.state === 'checking'
+  const supportAvailable =
+    !awaitingManualCheck && !busy && snapshot.state !== 'checking' && snapshot.state !== 'ready'
   const isErrorSurface =
-    !busy &&
-    (installFailure !== undefined ||
-      snapshot.state === 'not-installed' ||
-      snapshot.state === 'failed')
+    awaitingManualCheck ||
+    (!busy &&
+      (installFailure !== undefined ||
+        snapshot.state === 'not-installed' ||
+        snapshot.state === 'failed' ||
+        snapshot.errorCode !== undefined))
   const candidateIsActive =
     snapshot.activeRuntime === 'wsl2-bash' &&
     snapshot.selection !== undefined &&
@@ -460,7 +474,7 @@ export const WslLocalShellSection = ({
           disabled={busy}
         >
           <RefreshCw className={busy ? 'animate-spin' : ''} aria-hidden="true" />
-          {t('Check again')}
+          {hasSnapshot ? t('Check again') : t('Check now')}
         </Button>
       }
     >
@@ -468,7 +482,19 @@ export const WslLocalShellSection = ({
         className={isErrorSurface ? '' : 'rounded-lg border border-border bg-card p-4'}
         data-testid="wsl-local-shell"
       >
-        {installFailure && !busy ? (
+        {awaitingManualCheck ? (
+          <div className="flex justify-center">
+            <ErrorNotice
+              role="status"
+              icon={RefreshCw}
+              tone="teal"
+              title={t('WSL2 status has not been checked yet.')}
+              description={t(
+                'Run a check when you want to refresh the available distributions and setup status.'
+              )}
+            />
+          </div>
+        ) : installFailure && !busy ? (
           <div className="flex justify-center">
             <ErrorNotice
               role="alert"
@@ -532,6 +558,18 @@ export const WslLocalShellSection = ({
               }
               diagnosticsLabel={t('Diagnostics')}
               primaryButton={{ label: t('Check again'), onClick: () => void probe() }}
+            />
+          </div>
+        ) : snapshot.errorCode && !busy ? (
+          <div className="flex justify-center">
+            <ErrorNotice
+              role="alert"
+              icon={CircleX}
+              tone={errorTone(snapshot.errorCode)}
+              title={statusCopy(snapshot, t)}
+              description={recoveryCopy(snapshot.errorCode, t)}
+              errorCode={`${snapshot.errorCode} · ${snapshot.operationReference}`}
+              diagnosticsLabel={t('Diagnostics')}
             />
           </div>
         ) : (
@@ -606,22 +644,19 @@ export const WslLocalShellSection = ({
         {!busy &&
         (snapshot.errorCode === 'wsl_bwrap_missing' ||
           snapshot.errorCode === 'wsl_python3_missing') ? (
-          <div className="mt-4 rounded-md border border-border bg-muted/30 p-3">
-            <p className="text-sm">
-              {snapshot.errorCode === 'wsl_bwrap_missing'
-                ? t(
-                    'Install bubblewrap in the distribution terminal. Open Science will not run sudo or a package manager.'
-                  )
-                : t(
-                    'Install Python 3 in the distribution terminal. Open Science will not run sudo or a package manager.'
-                  )}
-            </p>
+          <div className="mt-4 overflow-hidden rounded-lg border border-border bg-card shadow-sm">
             {snapshot.suggestedCommand ? (
               <>
-                <code className="mt-2 block overflow-x-auto rounded bg-background p-2 text-xs">
-                  {snapshot.suggestedCommand}
-                </code>
-                <div className="mt-3 flex flex-wrap gap-2">
+                <div className="flex items-center gap-2 border-b border-border bg-muted/40 px-3 py-2.5">
+                  <SquareTerminal className="size-4 text-muted-foreground" aria-hidden="true" />
+                  <p className="text-sm font-medium text-foreground">
+                    {t('Run this command in the distribution terminal')}
+                  </p>
+                </div>
+                <pre className="overflow-x-auto whitespace-pre-wrap break-all bg-background px-3 py-3 font-mono text-xs leading-5 text-foreground">
+                  <code>{snapshot.suggestedCommand}</code>
+                </pre>
+                <div className="flex flex-wrap gap-2 border-t border-border bg-muted/20 px-3 py-3">
                   <Button
                     type="button"
                     variant="outline"
@@ -699,13 +734,10 @@ export const WslLocalShellSection = ({
           </ul>
         ) : null}
 
-        {!busy && snapshot.state !== 'failed' && snapshot.errorCode ? (
-          <p className="mt-4 font-mono text-xs text-muted-foreground">
-            {snapshot.errorCode} · {snapshot.operationReference}
-          </p>
-        ) : null}
-
-        {!busy && snapshot.state !== 'ready' && shellSwitchResult?.runtime !== 'powershell' ? (
+        {!awaitingManualCheck &&
+        !busy &&
+        snapshot.state !== 'ready' &&
+        shellSwitchResult?.runtime !== 'powershell' ? (
           <div className="mt-4 flex flex-col items-start gap-2">
             <p className="text-xs text-muted-foreground">
               {t(

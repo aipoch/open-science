@@ -36,6 +36,18 @@ const flush = async (): Promise<void> => {
   await act(async () => {})
 }
 
+const renderAndCheck = async (): Promise<void> => {
+  await act(async () => root.render(<WslLocalShellSection />))
+  await flush()
+  expect(probe).not.toHaveBeenCalled()
+  const check = [...container.querySelectorAll('button')].find((button) =>
+    button.textContent?.includes('Check now')
+  )
+  expect(check).toBeDefined()
+  await act(async () => check?.click())
+  await flush()
+}
+
 beforeEach(() => {
   container = document.createElement('div')
   document.body.appendChild(container)
@@ -145,6 +157,15 @@ describe('WslLocalShellSection', () => {
     expect(container.textContent).toContain('Local Shell · WSL2 Bash Development Preview')
   })
 
+  it('waits for the user to refresh WSL2 status', async () => {
+    await act(async () => root.render(<WslLocalShellSection />))
+    await flush()
+
+    expect(probe).not.toHaveBeenCalled()
+    expect(container.textContent).toContain('WSL2 status has not been checked yet')
+    expect(container.textContent).toContain('Check now')
+  })
+
   it('offers only explicit PowerShell recovery when Preview admission is unavailable', async () => {
     await act(async () => root.render(<WslLocalShellSection previewAvailable={false} />))
     await flush()
@@ -192,8 +213,7 @@ describe('WslLocalShellSection', () => {
       errorCode: 'wsl_namespace_unavailable',
       operationReference: 'a1b2c3d4'
     })
-    await act(async () => root.render(<WslLocalShellSection />))
-    await flush()
+    await renderAndCheck()
 
     expect(switchToPowerShell).not.toHaveBeenCalled()
     const button = [...container.querySelectorAll('button')].find((candidate) =>
@@ -225,8 +245,7 @@ describe('WslLocalShellSection', () => {
       },
       operationReference: 'ready001'
     })
-    await act(async () => root.render(<WslLocalShellSection />))
-    await flush()
+    await renderAndCheck()
 
     expect(useWsl2Bash).not.toHaveBeenCalled()
     expect(container.textContent).toContain('This ready profile is only a candidate')
@@ -266,8 +285,7 @@ describe('WslLocalShellSection', () => {
       selection: { distro: 'Ubuntu-22.04', user: 'candidate' },
       operationReference: 'ready-b'
     })
-    await act(async () => root.render(<WslLocalShellSection />))
-    await flush()
+    await renderAndCheck()
 
     const useButton = [...container.querySelectorAll('button')].find((candidate) =>
       candidate.textContent?.includes('Use WSL2 Bash')
@@ -315,8 +333,7 @@ describe('WslLocalShellSection', () => {
       operationReference: 'active01'
     })
 
-    await act(async () => root.render(<WslLocalShellSection />))
-    await flush()
+    await renderAndCheck()
 
     expect(container.textContent).toContain('This ready profile is active')
     expect(container.textContent).not.toContain('Use WSL2 Bash')
@@ -342,8 +359,7 @@ describe('WslLocalShellSection', () => {
       operationReference: 'failed01'
     })
     switchToPowerShell.mockRejectedValueOnce(new Error('disk full'))
-    await act(async () => root.render(<WslLocalShellSection />))
-    await flush()
+    await renderAndCheck()
 
     const button = [...container.querySelectorAll('button')].find((candidate) =>
       candidate.textContent?.includes('Switch to PowerShell')
@@ -365,8 +381,7 @@ describe('WslLocalShellSection', () => {
       errorCode: 'wsl_not_installed',
       operationReference: 'deadbeef'
     })
-    await act(async () => root.render(<WslLocalShellSection />))
-    await flush()
+    await renderAndCheck()
 
     expect(install).not.toHaveBeenCalled()
     const installButton = [...container.querySelectorAll('button')].find((button) =>
@@ -407,8 +422,7 @@ describe('WslLocalShellSection', () => {
       return () => undefined
     })
 
-    await act(async () => root.render(<WslLocalShellSection />))
-    await flush()
+    await renderAndCheck()
     const installButton = [...container.querySelectorAll('button')].find((button) =>
       button.textContent?.includes('Install WSL2')
     )
@@ -451,8 +465,7 @@ describe('WslLocalShellSection', () => {
   })
 
   it('selects an existing WSL2 distro and exact user, then shows every readiness result', async () => {
-    await act(async () => root.render(<WslLocalShellSection />))
-    await flush()
+    await renderAndCheck()
 
     const trigger = container.querySelector('[data-slot="select-trigger"]')
     expect(trigger?.className).toContain('h-8')
@@ -486,8 +499,7 @@ describe('WslLocalShellSection', () => {
       readiness: { wsl2: true, localWorkspace: false },
       operationReference: 'a1b2c3d4'
     })
-    await act(async () => root.render(<WslLocalShellSection />))
-    await flush()
+    await renderAndCheck()
 
     expect(container.textContent).toContain('wsl_workspace_not_ntfs · a1b2c3d4')
     expect(container.textContent).toContain(
@@ -508,8 +520,7 @@ describe('WslLocalShellSection', () => {
       errorCode,
       operationReference: 'a1b2c3d4'
     })
-    await act(async () => root.render(<WslLocalShellSection />))
-    await flush()
+    await renderAndCheck()
 
     const notice = container.querySelector('[role="alert"]')
     expect(notice?.parentElement?.querySelector(`.text-status-${tone}-foreground`)).not.toBeNull()
@@ -524,8 +535,7 @@ describe('WslLocalShellSection', () => {
       errorCode: 'wsl_namespace_unavailable',
       operationReference: 'a1b2c3d4'
     })
-    await act(async () => root.render(<WslLocalShellSection />))
-    await flush()
+    await renderAndCheck()
 
     const readiness = container.querySelector('[aria-label="Readiness checks"]')
     expect(readiness?.querySelector('svg.text-status-success-foreground')).not.toBeNull()
@@ -543,8 +553,7 @@ describe('WslLocalShellSection', () => {
       errorCode: 'wsl_distro_missing',
       operationReference: 'deadbeef'
     })
-    await act(async () => root.render(<WslLocalShellSection />))
-    await flush()
+    await renderAndCheck()
 
     const install = [...container.querySelectorAll('button')].find((button) =>
       button.textContent?.includes('Install Ubuntu-22.04')
@@ -571,8 +580,7 @@ describe('WslLocalShellSection', () => {
       errorCode: 'wsl_first_launch_required',
       operationReference: 'decafbad'
     })
-    await act(async () => root.render(<WslLocalShellSection />))
-    await flush()
+    await renderAndCheck()
 
     const launch = [...container.querySelectorAll('button')].find((button) =>
       button.textContent?.includes('Open distribution terminal')
@@ -594,8 +602,7 @@ describe('WslLocalShellSection', () => {
       errorCode: 'wsl_first_launch_required',
       operationReference: 'decafbad'
     })
-    await act(async () => root.render(<WslLocalShellSection />))
-    await flush()
+    await renderAndCheck()
 
     const launch = [...container.querySelectorAll('button')].find((button) =>
       button.textContent?.includes('Open distribution terminal')
@@ -611,8 +618,7 @@ describe('WslLocalShellSection', () => {
       distros: [{ name: 'Debian', version: 2, isDefault: true }],
       operationReference: 'decafbad'
     })
-    await act(async () => root.render(<WslLocalShellSection />))
-    await flush()
+    await renderAndCheck()
 
     expect(container.textContent).not.toContain('Open distribution terminal')
     expect(openTerminal).not.toHaveBeenCalled()
@@ -633,10 +639,13 @@ describe('WslLocalShellSection', () => {
       suggestedCommand: 'sudo apt-get update && sudo apt-get install bubblewrap',
       operationReference: 'decafbad'
     })
-    await act(async () => root.render(<WslLocalShellSection />))
-    await flush()
+    await renderAndCheck()
 
     expect(container.textContent).toContain('Open Science will not run sudo or a package manager')
+    expect(container.textContent).toContain('Run this command in the distribution terminal')
+    expect(container.querySelector('pre code')?.textContent).toBe(
+      'sudo apt-get update && sudo apt-get install bubblewrap'
+    )
     expect(container.textContent).toContain(
       'sudo apt-get update && sudo apt-get install bubblewrap'
     )
@@ -664,8 +673,7 @@ describe('WslLocalShellSection', () => {
       suggestedCommand: 'sudo apt-get update && sudo apt-get install python3',
       operationReference: 'decafbad'
     })
-    await act(async () => root.render(<WslLocalShellSection />))
-    await flush()
+    await renderAndCheck()
 
     expect(container.textContent).toContain('Python 3')
     expect(container.textContent).toContain(
@@ -683,8 +691,7 @@ describe('WslLocalShellSection', () => {
       errorCode: 'wsl_namespace_unavailable',
       operationReference: 'a1b2c3d4'
     })
-    await act(async () => root.render(<WslLocalShellSection />))
-    await flush()
+    await renderAndCheck()
 
     const support = [...container.querySelectorAll('button')].find((button) =>
       button.textContent?.includes('Solve in conversation')
@@ -716,8 +723,7 @@ describe('WslLocalShellSection', () => {
       errorCode: 'wsl_not_installed',
       operationReference: 'a1b2c3d4'
     })
-    await act(async () => root.render(<WslLocalShellSection />))
-    await flush()
+    await renderAndCheck()
 
     const support = [...container.querySelectorAll('button')].find((button) =>
       button.textContent?.includes('Solve in conversation')
@@ -742,8 +748,7 @@ describe('WslLocalShellSection', () => {
       errorCode: 'wsl_probe_failed',
       operationReference: 'a1b2c3d4'
     })
-    await act(async () => root.render(<WslLocalShellSection />))
-    await flush()
+    await renderAndCheck()
 
     expect(
       [...container.querySelectorAll('button')].some((button) =>
