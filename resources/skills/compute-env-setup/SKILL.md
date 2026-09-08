@@ -153,8 +153,8 @@ await new Promise((resolve) => setTimeout(resolve, 2000))
 return compute.attachJob(job.job_id).result()
 ```
 
-The immediate result read is a single non-blocking failure check. End the cell afterward; Open
-Science polls and harvests the job in the background and starts the analysis turn when it finishes.
+The immediate result read is a single non-blocking failure check. End the cell afterward;
+Open-Science polls and harvests the job in the background and starts the analysis turn when it finishes.
 Do not poll.
 
 When validation fails, diagnose the layer identified by the error: environment definition,

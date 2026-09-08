@@ -133,7 +133,7 @@ export const findPmcPdfs = async (
       ids: identifier,
       idtype: identifiers.doi ? 'doi' : 'pmid',
       format: 'json',
-      tool: 'open-science'
+      tool: 'Open-Science'
     }).toString()
     const raw = await readFullTextProvider(url.href, fetcher)
     if (raw === undefined) return { candidates: [], noRecord: true }

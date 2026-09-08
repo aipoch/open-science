@@ -123,7 +123,7 @@ class LiteratureReferenceResolver {
       id: pmids.join(','),
       rettype: 'medline',
       retmode: 'text',
-      tool: 'open-science'
+      tool: 'Open-Science'
     })
     const response = await this.fetchFn(`${PUBMED_BASE}?${params.toString()}`, {
       headers: {

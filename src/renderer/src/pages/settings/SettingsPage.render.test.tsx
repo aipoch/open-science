@@ -4109,7 +4109,7 @@ describe('SettingsPage layout', () => {
           {
             id: 'official',
             kind: 'official',
-            name: 'OpenScience Marketplace',
+            name: 'Open-Science Marketplace',
             repositoryUrl: 'https://github.com/aipoch/marketplace',
             ref: 'published',
             trust: 'official',
@@ -4121,7 +4121,7 @@ describe('SettingsPage layout', () => {
         specialists: [
           {
             sourceId: 'official',
-            sourceName: 'OpenScience Marketplace',
+            sourceName: 'Open-Science Marketplace',
             sourceTrust: 'official',
             id: 'example-specialist',
             displayName: 'Example Specialist',

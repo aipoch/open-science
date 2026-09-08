@@ -93,8 +93,8 @@ there is intentionally no historical Job scan for rediscovering it. Status and r
 only that saved ID and return non-blocking local snapshots.
 
 For a local input, `src` is relative to the Agent Session workspace—the same workspace used by file
-writing tools. Write a script or small generated input there, then pass its relative path. Open
-Science snapshots accepted inputs before approval and dispatch. Do not pass arbitrary absolute local
+writing tools. Write a script or small generated input there, then pass its relative path.
+Open-Science snapshots accepted inputs before approval and dispatch. Do not pass arbitrary absolute local
 paths or copy files into app-managed `notebooks/...` directories. An absolute `src` is valid only
 when it is the exact path returned by `host.artifactPath(versionId)` or an exact registered Session
 input path already supplied in the Notebook context.

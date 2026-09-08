@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 
 import { createLogoParticles, resolveLogoFrame } from './open-science-logo-motion'
 
-describe('OpenScience logo motion', () => {
+describe('Open-Science logo motion', () => {
   it('moves through gather, hold, release, and field phases in one loop', () => {
     expect(resolveLogoFrame(0, 4800, false).mode).toBe('gather')
     expect(resolveLogoFrame(2016, 4800, false)).toEqual({ mode: 'hold', progress: 1 })
