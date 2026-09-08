@@ -3,6 +3,7 @@ import {
   type LiteratureDeletionDiagnostic
 } from '../../../../shared/literature-deletion'
 import { LiteratureDeletionNotice } from './LiteratureDeletionNotice'
+import { LiteratureOversizedNotice } from './LiteratureOversizedNotice'
 import type { TFunction } from 'i18next'
 import { LiteratureAttachments } from './LiteratureAttachments'
 import { LITERATURE_JOB_MAX_ITEMS } from '../../../../shared/literature-jobs'
@@ -1893,6 +1894,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
   )
   const entriesRequest = useMemo(() => buildEntriesRequest(), [buildEntriesRequest])
   const {
+    oversizedItemId,
     loading: entriesLoading,
     failed: entriesFailed,
     pageTransitionLoading: entriesPageTransitionLoading,
@@ -4640,7 +4642,9 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
               />
             </div>
           ) : null}
-          {(linkedItemError || error) &&
+          {oversizedItemId ? <LiteratureOversizedNotice itemId={oversizedItemId} /> : null}
+          {!oversizedItemId &&
+          (linkedItemError || error) &&
           !(
             permanentDeleteResult &&
             !linkedItemError &&

@@ -5287,6 +5287,7 @@
     "All {{count}} versions will be deleted._one": "Будет удалена {{count}} версия.",
     "All {{count}} versions will be deleted._few": "Будут удалены все {{count}} версии.",
     "All {{count}} versions will be deleted._many": "Будут удалены все {{count}} версий.",
-    "All {{count}} versions will be deleted._other": "Будут удалены все {{count}} версии."
+    "All {{count}} versions will be deleted._other": "Будут удалены все {{count}} версии.",
+    "This reference is too large to display. Download the complete record as JSON.": "Эта запись слишком велика для отображения. Скачайте полную запись в формате JSON."
   }
 }

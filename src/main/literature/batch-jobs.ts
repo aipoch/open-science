@@ -3,31 +3,23 @@ import {
   isMigrationPending,
   withDataRootWrite
 } from '../storage/migration-state'
-import { z } from 'zod'
-import { join } from 'node:path'
-import { mkdir, rm } from 'node:fs/promises'
+import { ApplicationCommandError } from '../../shared/application-command-contract'
+import { LITERATURE_OVERSIZED_REFERENCE } from '../../shared/literature-export'
+import { boundedLiteraturePage } from './response-page'
+import { LiteratureBatchJobJournal } from './batch-job-journal'
 import {
-  literatureJobSchema,
   literatureJobRequestSchema,
   literatureJobProgress,
   type LiteratureJob,
+  type LiteratureJobView,
   type LiteratureJobRequest,
   type LiteratureJobRow,
   type LiteratureJobsResult
 } from '../../shared/literature-jobs'
-import {
-  readDurableJsonFile,
-  writeDurableJsonFile,
-  DurableJsonRecoveryBarrierError
-} from '../storage/durable-json-file'
 import type { LiteratureCatalog } from './catalog'
 import type { LiteratureFullTextFinder } from './full-text-finder'
 import type { LiteratureMetadataEnricher } from './metadata-enricher'
 
-const journal = z.discriminatedUnion('version', [
-  z.object({ version: z.literal(1), jobs: z.array(literatureJobSchema).max(50) }).strict(),
-  z.object({ version: z.literal(2), jobIds: z.array(z.string().uuid()).max(50) }).strict()
-])
 type Options = {
   path: string
   catalog: Pick<LiteratureCatalog, 'get'>
@@ -48,45 +40,14 @@ export class LiteratureBatchJobs {
   private commands = Promise.resolve()
   private active?: { jobId: string; itemId: string; candidateId: string }
   private readonly cooldowns = new Map<string, number>()
-  constructor(private readonly options: Options) {}
+  private readonly journal: LiteratureBatchJobJournal
+  constructor(private readonly options: Options) {
+    this.journal = new LiteratureBatchJobJournal(options.path)
+  }
 
   private load(): Promise<void> {
     return (this.loaded ??= (async () => {
-      const stored = await readDurableJsonFile(
-        this.options.path,
-        (text) => {
-          const value: unknown = JSON.parse(text)
-          if (
-            typeof value === 'object' &&
-            value &&
-            'version' in value &&
-            value.version !== 1 &&
-            value.version !== 2
-          )
-            throw new DurableJsonRecoveryBarrierError('Unsupported Literature job journal version.')
-          return journal.parse(value)
-        },
-        {},
-        { maxBytes: 128 * 1024 * 1024 }
-      )
-      if (stored.status === 'found' && stored.value.version === 2) {
-        this.jobs = await Promise.all(
-          stored.value.jobIds.map(async (id) => {
-            const record = await readDurableJsonFile(
-              this.jobPath(id),
-              (text) => literatureJobSchema.parse(JSON.parse(text)),
-              {},
-              { maxBytes: 128 * 1024 * 1024 }
-            )
-            if (record.status !== 'found' || record.value.id !== id)
-              throw new DurableJsonRecoveryBarrierError(
-                'Literature task checkpoint is missing or invalid.'
-              )
-            return record.value
-          })
-        )
-      } else
-        this.jobs = stored.status === 'found' && stored.value.version === 1 ? stored.value.jobs : []
+      this.jobs = await this.journal.load()
       for (const job of this.jobs) {
         if (['queued', 'running', 'pausing'].includes(job.state)) job.state = 'paused'
         for (const row of job.rows) {
@@ -100,36 +61,52 @@ export class LiteratureBatchJobs {
           job.updatedAt = Math.max(Date.now(), job.updatedAt + 1)
         }
       }
-      if (stored.status === 'found' && stored.value.version === 1) {
-        for (const job of this.jobs) await this.save(job)
-        await this.saveIndex()
-      }
     })().catch((error: unknown) => {
       this.loaded = undefined
       throw error
     }))
   }
 
-  private jobPath(id: string): string {
-    return join(`${this.options.path}.d`, `${z.string().uuid().parse(id)}.json`)
-  }
-  private save(job: LiteratureJob): Promise<void> {
-    const contents = JSON.stringify(job)
-    const write = async (): Promise<void> => {
-      await mkdir(`${this.options.path}.d`, { recursive: true })
-      await writeDurableJsonFile(this.jobPath(job.id), contents)
-    }
+  private save(job: LiteratureJob, payloadChanged = true): Promise<void> {
+    const snapshot = structuredClone(job)
+    const write = (): Promise<void> => this.journal.save(snapshot, payloadChanged)
     this.writes = this.writes.then(write, write)
     return this.writes
   }
   private saveIndex(jobs = this.jobs): Promise<void> {
-    const contents = JSON.stringify({ version: 2, jobIds: jobs.map((job) => job.id) })
-    const write = (): Promise<void> => writeDurableJsonFile(this.options.path, contents)
+    const write = (): Promise<void> => this.journal.saveIndex(jobs)
     this.writes = this.writes.then(write, write)
     return this.writes
   }
-  private snapshot(job: LiteratureJob): LiteratureJob {
-    const snapshot = structuredClone(job)
+  private snapshot(job: LiteratureJob, rowOffset = 0): LiteratureJobView {
+    const { rows, ...fields } = job
+    if (rowOffset >= rows.length) throw new Error('Invalid Literature task row offset.')
+    const view = rows.map(({ item, metadata, ...row }) => ({
+      ...row,
+      item: item
+        ? { id: item.id, metadataRevision: item.metadataRevision, item: { title: item.item.title } }
+        : undefined,
+      metadata: metadata
+        ? (({ item, ...preview }) => {
+            void item
+            return preview
+          })(metadata)
+        : undefined
+    }))
+    const page = boundedLiteraturePage(
+      view,
+      rowOffset,
+      view.length,
+      (row) =>
+        new ApplicationCommandError('command-failed', LITERATURE_OVERSIZED_REFERENCE + row.id)
+    )
+    const snapshot: LiteratureJobView = structuredClone({
+      ...fields,
+      rows: page.entries,
+      ...(rowOffset || page.nextOffset !== undefined
+        ? { rowOffset, nextRowOffset: page.nextOffset, totalRows: rows.length }
+        : {})
+    })
     if (snapshot.state === 'running' && !this.activeJob(job)) snapshot.state = 'queued'
     return snapshot
   }
@@ -198,15 +175,25 @@ export class LiteratureBatchJobs {
       await this.save(job)
       await this.saveIndex(nextJobs)
       this.jobs = nextJobs
-      if (prunedId) await rm(this.jobPath(prunedId), { force: true }).catch(this.options.onError)
+      if (prunedId) await this.journal.remove(prunedId).catch(this.options.onError)
       await this.kick()
       return { jobs: [this.snapshot(job)] }
     }
     const publishedJob = this.jobs.find(({ id }) => id === request.jobId)
     if (!publishedJob) throw new Error('Literature task not found.')
+    if (request.action === 'get') {
+      // Serialize only checkpoint reads with mutations. Download-progress providers may wait
+      // for the worker and must never hold the command queue while doing so.
+      const hydrated = this.commands.then(() => this.journal.hydrate(publishedJob))
+      this.commands = hydrated.catch(() => undefined)
+      await hydrated
+    } else await this.journal.hydrate(publishedJob)
     const job = request.action === 'get' ? publishedJob : structuredClone(publishedJob)
     if (request.action === 'get') {
-      const snapshot = request.ifUpdatedAt === job.updatedAt ? undefined : this.snapshot(job)
+      if (request.expectedUpdatedAt !== undefined && request.expectedUpdatedAt !== job.updatedAt)
+        throw new Error('Literature task changed while reading its results. Try again.')
+      const snapshot =
+        request.ifUpdatedAt === job.updatedAt ? undefined : this.snapshot(job, request.rowOffset)
       let download: LiteratureJob['progress']
       const active = this.active
       if (active?.jobId === job.id) {
@@ -300,9 +287,9 @@ export class LiteratureBatchJobs {
       const nextJobs = this.jobs.filter(({ id }) => id !== job.id)
       await this.saveIndex(nextJobs)
       this.jobs = nextJobs
-      await rm(this.jobPath(job.id), { force: true }).catch(this.options.onError)
+      await this.journal.remove(job.id).catch(this.options.onError)
     } else {
-      await this.save(job)
+      await this.save(job, request.action === 'retry')
       // Active provider calls retain these objects. Publish only command-owned fields so a
       // completed row is not replaced by the earlier draft while its checkpoint is waiting.
       if (request.action === 'pause') publishedJob.state = job.state
@@ -365,6 +352,7 @@ export class LiteratureBatchJobs {
       if (this.closed) break
       const job = [...this.jobs].reverse().find(({ state }) => state === 'running')
       if (!job) break
+      await this.journal.hydrate(job)
       this.currentJobId = job.id
       job.updatedAt = Math.max(Date.now(), job.updatedAt + 1)
       for (const row of job.rows) {
@@ -394,7 +382,9 @@ export class LiteratureBatchJobs {
         }
         await this.commands
         job.updatedAt = Math.max(Date.now(), job.updatedAt + 1)
-        await this.save(job)
+        const write = (): Promise<void> => this.journal.saveRow(job, row)
+        this.writes = this.writes.then(write, write)
+        await this.writes
         if (job.state === 'running' && !this.closed && !isMigrationPending())
           await new Promise((resolve) => setTimeout(resolve, this.options.spacingMs ?? 350))
       }
@@ -414,7 +404,7 @@ export class LiteratureBatchJobs {
       }
       job.updatedAt = Math.max(Date.now(), job.updatedAt + 1)
       this.currentJobId = undefined
-      await this.save(job)
+      await this.save(job, false)
     }
   }
 

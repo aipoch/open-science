@@ -4992,6 +4992,7 @@
     "Previewing an older version does not change the latest version.": "Die Vorschau einer älteren Version ändert die neueste Version nicht.",
     "Version {{number}}": "Version {{number}}",
     "All {{count}} versions will be deleted._one": "Die einzige Version ({{count}}) wird gelöscht.",
-    "All {{count}} versions will be deleted._other": "Alle {{count}} Versionen werden gelöscht."
+    "All {{count}} versions will be deleted._other": "Alle {{count}} Versionen werden gelöscht.",
+    "This reference is too large to display. Download the complete record as JSON.": "Diese Referenz ist zu groß zur Anzeige. Laden Sie den vollständigen Datensatz als JSON herunter."
   }
 }

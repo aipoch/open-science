@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { mkdtemp, rm, writeFile, readFile, stat } from 'node:fs/promises'
+import { mkdtemp, rm, writeFile, readFile, stat, cp } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, expect, it, vi } from 'vitest'
@@ -83,7 +83,7 @@ async function setup(): Promise<{
 async function state(
   jobs: LiteratureBatchJobs,
   jobId: string
-): Promise<import('../../shared/literature-jobs').LiteratureJob> {
+): Promise<import('../../shared/literature-jobs').LiteratureJobView> {
   return (await jobs.run({ action: 'get', jobId })).jobs[0]!
 }
 
@@ -223,7 +223,7 @@ it('persists review choices and writes only the changed task checkpoint', async 
     await jobs.run({ action: 'create', mode: 'full-text', itemIds: ['a'], requestId: id })
     await vi.waitFor(async () => expect((await state(jobs, id)).state).toBe('review'))
   }
-  const checkpoint = join(`${path}.d`, `${first}.json`)
+  const checkpoint = join(`${path}.d`, first, 'task.json')
   const before = await stat(checkpoint)
   const indexBefore = await readFile(path, 'utf8')
   await jobs.run({
@@ -423,7 +423,7 @@ it('keeps a failed apply checkpoint in review and allows the same command to be 
   await vi.waitFor(async () => expect((await state(jobs, jobId)).state).toBe('review'))
   const directory = `${path}.d`
   const backup = `${path}.saved`
-  const checkpoint = await readFile(join(directory, `${jobId}.json`), 'utf8')
+  const checkpoint = await readFile(join(directory, jobId, 'task.json'), 'utf8')
   await rename(directory, backup)
   try {
     await writeFile(directory, 'block checkpoint directory creation')
@@ -434,7 +434,7 @@ it('keeps a failed apply checkpoint in review and allows the same command to be 
     await rm(directory, { force: true })
     await rename(backup, directory)
   }
-  expect(await readFile(join(directory, `${jobId}.json`), 'utf8')).toBe(checkpoint)
+  expect(await readFile(join(directory, jobId, 'task.json'), 'utf8')).toBe(checkpoint)
   expect(options.metadata.applyReviewed).not.toHaveBeenCalled()
   expect(await state(jobs, jobId)).toMatchObject({ state: 'review', phase: 'search' })
   await jobs.run({ action: 'apply', jobId, selections: [{ itemId: 'a' }] })
@@ -498,9 +498,9 @@ it.each(['review', 'retry', 'resume', 'remove'] as const)(
     // Finish the search checkpoint before injecting a command-only write failure.
     await jobs.close()
     if (action === 'resume') {
-      const record = JSON.parse(await readFile(join(`${path}.d`, `${jobId}.json`), 'utf8'))
+      const record = JSON.parse(await readFile(join(`${path}.d`, jobId, 'task.json'), 'utf8'))
       record.state = 'paused'
-      await writeFile(join(`${path}.d`, `${jobId}.json`), JSON.stringify(record))
+      await writeFile(join(`${path}.d`, jobId, 'task.json'), JSON.stringify(record))
     }
     jobs = new LiteratureBatchJobs(options)
     cleanup.push(() => jobs.close())
@@ -746,7 +746,7 @@ it('reloads repaired checkpoints on the same service without dropping any indexe
   }
   await jobs.close()
   const indexBefore = await readFile(path, 'utf8')
-  const checkpoint = join(`${path}.d`, `${first}.json`)
+  const checkpoint = join(`${path}.d`, first, 'task.json')
   await rename(checkpoint, `${checkpoint}.saved`)
   const reopened = new LiteratureBatchJobs(options)
   cleanup.push(() => reopened.close())
@@ -806,7 +806,8 @@ it('recognizes its committed metadata after replaying the pre-commit checkpoint'
   )
   const enricher = new LiteratureMetadataEnricher(catalog, fetchMetadata)
   const jobId = randomUUID()
-  const checkpoint = join(`${path}.d`, `${jobId}.json`)
+  const checkpoint = join(`${path}.d`, jobId, 'task.json')
+  const savedDirectory = `${path}.pre-commit`
   let beforeCommit = ''
   const serviceOptions = { ...options, catalog, metadata: enricher }
   const jobs = new LiteratureBatchJobs({
@@ -816,6 +817,7 @@ it('recognizes its committed metadata after replaying the pre-commit checkpoint'
       applyReviewed: async (review) => {
         // The service has durably accepted apply, but has not yet committed catalog data.
         beforeCommit = await readFile(checkpoint, 'utf8')
+        await cp(join(`${path}.d`, jobId), savedDirectory, { recursive: true })
         return enricher.applyReviewed(review)
       }
     }
@@ -825,13 +827,15 @@ it('recognizes its committed metadata after replaying the pre-commit checkpoint'
   await vi.waitFor(async () => expect((await state(jobs, jobId)).state).toBe('review'))
   await jobs.run({ action: 'apply', jobId, selections: [{ itemId: created.id }] })
   await vi.waitFor(async () => expect((await state(jobs, jobId)).state).toBe('completed'))
+  expect((await state(jobs, jobId)).rows[0]).toMatchObject({ status: 'done', message: undefined })
   await jobs.close()
   const committed = (await catalog.get(created.id))!
   expect(committed.item.containerTitle).toBe('Committed journal')
   expect(committed.metadataRevision).toBeGreaterThan(original.metadataRevision)
   expect(JSON.parse(beforeCommit)).toMatchObject({ state: 'running', phase: 'apply' })
   // Reconstruct only the crash window: catalog commit survived, task completion did not.
-  await writeFile(checkpoint, beforeCommit)
+  await rm(join(`${path}.d`, jobId), { recursive: true, force: true })
+  await cp(savedDirectory, join(`${path}.d`, jobId), { recursive: true })
   const reopened = new LiteratureBatchJobs(serviceOptions)
   cleanup.push(() => reopened.close())
   expect((await state(reopened, jobId)).state).toBe('paused')
@@ -855,13 +859,21 @@ it('restores a historically completed partial search without repeating completed
   await vi.waitFor(async () => expect((await state(jobs, jobId)).state).toBe('review'))
   await jobs.close()
   const checkpoint = join(`${path}.d`, `${jobId}.json`)
-  const stored = JSON.parse(await readFile(checkpoint, 'utf8'))
-  stored.state = 'completed'
-  stored.phase = 'apply'
-  stored.phaseItemIds = ['a']
-  stored.rows[0].status = 'done'
-  stored.rows.push({ id: 'b', status: 'pending', checked: true })
+  const stored = {
+    id: jobId,
+    mode: 'metadata',
+    state: 'completed',
+    phase: 'apply',
+    phaseItemIds: ['a'],
+    createdAt: 1,
+    updatedAt: 2,
+    rows: [
+      { id: 'a', status: 'done', checked: true, item: item('a'), metadata: preview('a') },
+      { id: 'b', status: 'pending', checked: true }
+    ]
+  }
   await writeFile(checkpoint, JSON.stringify(stored))
+  await writeFile(path, JSON.stringify({ version: 2, jobIds: [jobId] }))
   const reopened = new LiteratureBatchJobs(options)
   cleanup.push(() => reopened.close())
   expect(await state(reopened, jobId)).toMatchObject({

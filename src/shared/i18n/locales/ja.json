@@ -4838,6 +4838,7 @@
     "Files saved by the application will be deleted when no other references use them. This cannot be undone and does not move the attachment to Trash. Original files imported from your computer are not deleted.": "他の参照で使用されていない場合、アプリに保存されたファイルは削除されます。この操作は取り消せず、添付ファイルはゴミ箱に移動されません。コンピューターからインポートした元のファイルは削除されません。",
     "Previewing an older version does not change the latest version.": "古いバージョンをプレビューしても、最新バージョンは変わりません。",
     "Version {{number}}": "バージョン {{number}}",
-    "All {{count}} versions will be deleted._other": "すべての {{count}} バージョンが削除されます。"
+    "All {{count}} versions will be deleted._other": "すべての {{count}} バージョンが削除されます。",
+    "This reference is too large to display. Download the complete record as JSON.": "この文献は大きすぎるため表示できません。完全なレコードを JSON としてダウンロードしてください。"
   }
 }

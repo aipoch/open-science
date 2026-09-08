@@ -1,3 +1,10 @@
+import { ApplicationCommandError } from '../../shared/application-command-contract'
+import {
+  LITERATURE_OVERSIZED_REFERENCE,
+  type LiteratureExportRecordRequest,
+  type LiteratureExportRecordResult
+} from '../../shared/literature-export'
+import { boundedLiteraturePage } from './response-page'
 import type { ContentRepository } from '../storage/content-repository'
 import { createHash, randomUUID } from 'node:crypto'
 
@@ -1036,13 +1043,39 @@ class LiteratureCatalog {
         })
       : []
     const byId = new Map(rows.map((row) => [row.id, row]))
+    const page = boundedLiteraturePage(
+      ids.map(({ id, requestedId }) => ({ ...toItemView(byId.get(id)!), id: requestedId })),
+      0,
+      limit,
+      (row) =>
+        new ApplicationCommandError('command-failed', LITERATURE_OVERSIZED_REFERENCE + row.id)
+    )
     return {
-      entries: ids.map(({ id, requestedId }) => ({
-        ...toItemView(byId.get(id)!),
-        id: requestedId
-      })),
+      entries: page.entries,
       totalCount,
-      nextOffset: offset + limit < totalCount ? offset + limit : undefined
+      nextOffset:
+        offset + page.entries.length < totalCount ? offset + page.entries.length : undefined
+    }
+  }
+
+  async exportRecord(
+    request: LiteratureExportRecordRequest
+  ): Promise<LiteratureExportRecordResult> {
+    const item = await this.get(request.itemId)
+    if (!item) throw new Error('Reference unavailable')
+    const content = JSON.stringify(item)
+    const digest = createHash('sha256').update(content).digest('hex')
+    const offset = request.offset ?? 0
+    if ((offset > 0 && !request.digest) || (request.digest && request.digest !== digest))
+      throw new Error('Reference changed during export. Try again.')
+    if (offset >= content.length) throw new Error('Invalid reference export offset.')
+    // Offsets are UTF-16 code units. Concatenate chunks before encoding the complete JSON so
+    // supplementary Unicode characters split at a chunk boundary remain lossless.
+    const end = Math.min(content.length, offset + 262144)
+    return {
+      chunk: content.slice(offset, end),
+      digest,
+      nextOffset: end < content.length ? end : undefined
     }
   }
 

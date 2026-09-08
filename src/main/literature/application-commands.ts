@@ -1,5 +1,10 @@
 import { withDataRootWrite } from '../storage/migration-state'
 import {
+  literatureExportRecordContract,
+  type LiteratureExportRecordRequest,
+  type LiteratureExportRecordResult
+} from '../../shared/literature-export'
+import {
   literatureJobsContract,
   type LiteratureJobRequest,
   type LiteratureJobsResult
@@ -35,6 +40,7 @@ import {
 } from '../application-command-router'
 
 type LiteratureCommandOwner = Readonly<{
+  exportRecord(request: LiteratureExportRecordRequest): Promise<LiteratureExportRecordResult>
   jobs(request: LiteratureJobRequest): Promise<LiteratureJobsResult>
   fullText(request: LiteratureFullTextRequest): Promise<LiteratureFullTextResult>
   lookupMetadata(doi: string): Promise<LiteratureItemInput>
@@ -54,6 +60,11 @@ type LiteratureCommandOwner = Readonly<{
 }>
 
 const literatureApplicationCommands = Object.freeze({
+  exportRecord: defineApplicationCommand<
+    'literature:export-record',
+    readonly [LiteratureExportRecordRequest],
+    LiteratureExportRecordResult
+  >('literature:export-record', literatureExportRecordContract),
   jobs: defineApplicationCommand<
     'literature:jobs',
     readonly [LiteratureJobRequest],
@@ -117,6 +128,7 @@ const literatureApplicationCommands = Object.freeze({
 })
 
 const literatureApplicationCommandGroup = defineApplicationCommandGroup('literature', [
+  literatureApplicationCommands.exportRecord,
   literatureApplicationCommands.jobs,
   literatureApplicationCommands.fullText,
   literatureApplicationCommands.lookupMetadata,
@@ -138,6 +150,7 @@ const registerLiteratureApplicationCommands = (
   const scope = registrar.createScope()
   try {
     scope.registerGroup(literatureApplicationCommandGroup, {
+      'literature:export-record': ({ args }) => withDataRootWrite(() => owner.exportRecord(args[0])),
       'literature:jobs': ({ args }) => withDataRootWrite(() => owner.jobs(args[0])),
       'literature:full-text': ({ args }) => withDataRootWrite(() => owner.fullText(args[0])),
       'literature:lookup-metadata': ({ args }) =>

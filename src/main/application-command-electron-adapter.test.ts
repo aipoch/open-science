@@ -25,6 +25,7 @@ const validatedChannels = [
   'acp:respond-plan',
   'literature:citation-styles',
   'literature:complete-metadata',
+  'literature:export-record',
   'literature:format-document',
   'literature:format-references',
   'literature:full-text',

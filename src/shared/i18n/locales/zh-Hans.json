@@ -4838,6 +4838,7 @@
     "Files saved by the application will be deleted when no other references use them. This cannot be undone and does not move the attachment to Trash. Original files imported from your computer are not deleted.": "没有其他引用使用这些文件时，应用保存的文件将被删除。此操作无法撤销，附件不会移至回收站。从您的计算机导入的原始文件不会被删除。",
     "Previewing an older version does not change the latest version.": "预览旧版本不会改变最新版本。",
     "Version {{number}}": "版本 {{number}}",
-    "All {{count}} versions will be deleted._other": "全部 {{count}} 个版本都将被删除。"
+    "All {{count}} versions will be deleted._other": "全部 {{count}} 个版本都将被删除。",
+    "This reference is too large to display. Download the complete record as JSON.": "此文献过大，无法显示。请下载 JSON 格式的完整记录。"
   }
 }

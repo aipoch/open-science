@@ -4836,6 +4836,7 @@
     "Files saved by the application will be deleted when no other references use them. This cannot be undone and does not move the attachment to Trash. Original files imported from your computer are not deleted.": "다른 참조에서 사용하지 않는 경우 앱에 저장된 파일이 삭제됩니다. 이 작업은 실행 취소할 수 없으며 첨부 파일은 휴지통으로 이동하지 않습니다. 컴퓨터에서 가져온 원본 파일은 삭제되지 않습니다.",
     "Previewing an older version does not change the latest version.": "이전 버전을 미리 보아도 최신 버전은 변경되지 않습니다.",
     "Version {{number}}": "버전 {{number}}",
-    "All {{count}} versions will be deleted._other": "모든 {{count}}개 버전이 삭제됩니다."
+    "All {{count}} versions will be deleted._other": "모든 {{count}}개 버전이 삭제됩니다.",
+    "This reference is too large to display. Download the complete record as JSON.": "이 문헌은 너무 커서 표시할 수 없습니다. 전체 레코드를 JSON으로 다운로드하세요."
   }
 }

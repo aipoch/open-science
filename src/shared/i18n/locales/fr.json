@@ -5154,6 +5154,7 @@
     "Version {{number}}": "Version {{number}}",
     "All {{count}} versions will be deleted._one": "L’unique version ({{count}}) sera supprimée.",
     "All {{count}} versions will be deleted._many": "Les {{count}} versions seront toutes supprimées.",
-    "All {{count}} versions will be deleted._other": "Les {{count}} versions seront toutes supprimées."
+    "All {{count}} versions will be deleted._other": "Les {{count}} versions seront toutes supprimées.",
+    "This reference is too large to display. Download the complete record as JSON.": "Cette référence est trop volumineuse pour être affichée. Téléchargez la notice complète au format JSON."
   }
 }
