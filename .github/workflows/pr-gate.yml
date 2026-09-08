@@ -906,6 +906,7 @@ jobs:
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: e2e-reports-macos-${{ matrix.group }}
+          overwrite: true
           path: |
             blob-report/
             test-results/
@@ -1042,6 +1043,7 @@ jobs:
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: e2e-reports-windows-${{ matrix.shard }}
+          overwrite: true
           path: |
             blob-report/
             test-results/
@@ -1098,6 +1100,7 @@ jobs:
         if: ${{ always() }}
         with:
           name: e2e-combined-report
+          overwrite: true
           path: |
             playwright-report/
             test-results/e2e-timing.md
