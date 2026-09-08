@@ -4074,14 +4074,20 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
             </div>
           ) : null}
           {candidateUpdateUncertain || candidateCountsFailed ? (
-            <div className="mt-5">
+            <div className="mt-2">
               <LiteratureErrorNotice
-                title={
+                className="w-fit max-w-full rounded-md px-3 py-1.5 [&>div]:items-center"
+                description={
                   candidateUpdateUncertain
                     ? t('The update could not be confirmed. Check the Inbox before trying again.')
-                    : t('Project counts could not be refreshed.')
+                    : [
+                        t('Project counts could not be refreshed.'),
+                        error === t('Literature could not be loaded.') ? error : undefined
+                      ]
+                        .filter(Boolean)
+                        .join(' ')
                 }
-                secondaryButton={{
+                primaryButton={{
                   label: t('Retry'),
                   disabled: isBatching || Boolean(pendingCandidateId),
                   onClick: () => void retryCandidateReads()
@@ -4090,15 +4096,23 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
             </div>
           ) : null}
           {undoNotice ? (
-            <p role="status" className="mt-5 text-sm text-muted-foreground">
+            <p role="status" className="mt-2 text-xs leading-5 text-muted-foreground">
               {undoNotice}
             </p>
           ) : null}
-          {(linkedItemError || error) && !entriesLoading ? (
-            <div className="mt-5">
+          {(linkedItemError || error) &&
+          !entriesLoading &&
+          // A failed Inbox read is already covered by the recovery notice and its Retry.
+          !(
+            !linkedItemError &&
+            (candidateUpdateUncertain || candidateCountsFailed) &&
+            error === t('Literature could not be loaded.')
+          ) ? (
+            <div className="mt-2">
               <LiteratureErrorNotice
-                title={linkedItemError || error || undefined}
-                secondaryButton={
+                className="w-fit max-w-full rounded-md px-3 py-1.5 [&>div]:items-center"
+                description={linkedItemError || error || undefined}
+                primaryButton={
                   !linkedItemError && error === t('Literature could not be loaded.')
                     ? {
                         label: t('Retry'),

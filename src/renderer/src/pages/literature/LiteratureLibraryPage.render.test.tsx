@@ -1082,6 +1082,8 @@ describe('LiteratureLibraryPage', () => {
       expect(rows.every(({ state }) => state === 'accepted')).toBe(true)
       expect(screen.queryByText('Discovery 1')).toBeNull()
       expect(screen.queryByText('Inbox is clear')).toBeNull()
+      expect(screen.getAllByRole('alert')).toHaveLength(1)
+      expect(screen.getAllByRole('button', { name: 'Retry' })).toHaveLength(1)
       search.mockImplementation(originalSearch)
       const warning = screen
         .getByText('The update could not be confirmed. Check the Inbox before trying again.')
