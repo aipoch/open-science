@@ -2883,6 +2883,34 @@ describe('LiteratureLibraryPage', () => {
     expect(within(detail).getByRole('button', { name: 'Preview paper.pdf' })).not.toBeNull()
   })
 
+  it.each([
+    ['chat reference', 'LITERATURE_ATTACHMENT_IN_USE'],
+    [
+      'unreadable session catalog',
+      'Cannot remove an attachment without a complete Session catalog.'
+    ]
+  ])('offers actionable details when removal is blocked by %s', async (_reason, message) => {
+    const entry = createLibraryItemWithPdf()
+    search.mockImplementation((request: { scope: string }) =>
+      Promise.resolve(request.scope === 'library' ? { entries: [entry] } : { entries: [] })
+    )
+    render(<LiteratureLibraryPage />)
+    fireEvent.click(screen.getByRole('button', { name: 'All references' }))
+    const detail = await openReferenceDetail(await screen.findByText(entry.item.title))
+    transact.mockRejectedValueOnce(new Error(message))
+    fireEvent.click(
+      within(detail).getByRole('button', { name: 'Attachment actions for paper.pdf' })
+    )
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Remove attachment' }))
+    const alert = await within(detail).findByRole('alert')
+    expect(within(detail).getByRole('button', { name: 'Preview paper.pdf' })).not.toBeNull()
+    expect.soft(alert.textContent).not.toBe('The attachment operation failed. Try again.')
+    // A user must be able to inspect the blocking reference or recovery diagnosis.
+    expect(
+      [...within(alert).queryAllByRole('button'), ...within(alert).queryAllByRole('link')].length
+    ).toBeGreaterThan(0)
+  })
+
   it('refreshes the diagnosis when attachment verification fails', async () => {
     const entry = createLibraryItemWithPdf()
     search.mockImplementation((request: { scope: string }) =>
