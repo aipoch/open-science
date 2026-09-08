@@ -1,3 +1,8 @@
+import {
+  acquireDataRootWriter,
+  isMigrationPending,
+  withDataRootWrite
+} from '../storage/migration-state'
 import { z } from 'zod'
 import { join } from 'node:path'
 import { mkdir, rm } from 'node:fs/promises'
@@ -194,7 +199,7 @@ export class LiteratureBatchJobs {
       await this.saveIndex(nextJobs)
       this.jobs = nextJobs
       if (prunedId) await rm(this.jobPath(prunedId), { force: true }).catch(this.options.onError)
-      this.kick()
+      await this.kick()
       return { jobs: [this.snapshot(job)] }
     }
     const publishedJob = this.jobs.find(({ id }) => id === request.jobId)
@@ -310,7 +315,7 @@ export class LiteratureBatchJobs {
       } else Object.assign(publishedJob, job)
       publishedJob.updatedAt = Math.max(publishedJob.updatedAt, job.updatedAt)
     }
-    this.kick()
+    await this.kick()
     return { jobs: request.action === 'remove' ? [] : [this.snapshot(publishedJob)] }
   }
 
@@ -318,9 +323,21 @@ export class LiteratureBatchJobs {
   private activeJob(job: LiteratureJob): boolean {
     return this.currentJobId === job.id
   }
-  private kick(): void {
+  private async kick(): Promise<void> {
     if (this.worker || this.closed) return
-    this.worker = this.drain()
+    // An admitted create/resume command may finish saving after migration closes admission.
+    if (isMigrationPending()) {
+      for (const job of this.jobs) {
+        if (job.state !== 'running') continue
+        job.state = 'paused'
+        job.updatedAt = Math.max(Date.now(), job.updatedAt + 1)
+        await this.save(job)
+      }
+      return
+    }
+    // A detached worker inherits the command's async context, but outlives its lease.
+    const release = acquireDataRootWriter()
+    this.worker = withDataRootWrite(() => this.drain())
       .catch((error: unknown) => {
         for (const job of this.jobs)
           if (job.state === 'running' || job.state === 'pausing') {
@@ -336,7 +353,9 @@ export class LiteratureBatchJobs {
       })
       .finally(() => {
         this.worker = undefined
-        if (this.jobs.some(({ state }) => state === 'running')) this.kick()
+        release()
+        if (!isMigrationPending() && this.jobs.some(({ state }) => state === 'running'))
+          void this.kick().catch(this.options.onError)
       })
   }
 
@@ -350,7 +369,7 @@ export class LiteratureBatchJobs {
       job.updatedAt = Math.max(Date.now(), job.updatedAt + 1)
       for (const row of job.rows) {
         await this.commands
-        if (this.closed || job.state !== 'running') break
+        if (this.closed || isMigrationPending() || job.state !== 'running') break
         if (
           job.phase === 'search' ? row.status !== 'pending' : row.status !== 'ready' || !row.checked
         )
@@ -376,12 +395,12 @@ export class LiteratureBatchJobs {
         await this.commands
         job.updatedAt = Math.max(Date.now(), job.updatedAt + 1)
         await this.save(job)
-        if (job.state === 'running' && !this.closed)
+        if (job.state === 'running' && !this.closed && !isMigrationPending())
           await new Promise((resolve) => setTimeout(resolve, this.options.spacingMs ?? 350))
       }
       await this.commands
       job.state =
-        this.closed || job.state !== 'running'
+        this.closed || isMigrationPending() || job.state !== 'running'
           ? 'paused'
           : job.phase === 'search' &&
               job.rows.some(({ status }) => status === 'ready' || status === 'error')
