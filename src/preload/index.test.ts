@@ -350,6 +350,7 @@ describe('preload bridge — public surface inventory', () => {
       'lifecycle.getClientId',
       'literature.citationStyles',
       'literature.completeMetadata',
+      'literature.exportRecord',
       'literature.formatDocument',
       'literature.formatReferences',
       'literature.fullText',
