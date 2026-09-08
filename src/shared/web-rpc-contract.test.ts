@@ -162,6 +162,7 @@ describe('Web RPC contract', () => {
       'runtime.setAgentEnvironmentCreationEnabled',
       'runtime.setEnvironmentEnabled',
       'runtime.setInstallAuthorized',
+      'runtime.setSandboxAccess',
       'runtime.unregisterInterpreter'
     ])
     expect(eventPaths.filter((path) => path.startsWith('notebook.'))).toEqual([

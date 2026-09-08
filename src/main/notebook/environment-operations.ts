@@ -243,25 +243,31 @@ export class NotebookEnvironmentOperations {
   async revokeRuntime(
     language: NotebookLanguage,
     runtimeId: string,
-    options: { force?: boolean } = {}
+    options: { force?: boolean; waitForDrain?: boolean } = {}
   ): Promise<void> {
     // A pending selection can enter or leave this runtime. Match after the lane's earlier binding
     // writes settle, rather than omitting a not-yet-published selection from revocation.
     const targetSessions = Array.from(this.options.sessions())
+    const drains: Promise<void>[] = []
     await this.options.bindings.runWrites(
       targetSessions.map((session) => notebookLaneKey(session.lane)),
       async () => {
         for (const session of targetSessions) {
           if (!Array.from(this.options.sessions()).includes(session)) continue
-          const revocation = await this.options.bindings.revoke(
-            session,
-            language,
-            runtimeId,
-            () => {
-              const environment = runEnvironment(session, language)
-              return { environment, processKey: processKey(language, environment) }
-            }
-          )
+          let revocation = await this.options.bindings.revoke(session, language, runtimeId, () => {
+            const environment = runEnvironment(session, language)
+            return { environment, processKey: processKey(language, environment) }
+          })
+          // An unavailable binding prevents new work, but does not prove its old kernel exited.
+          // Permission removal must retry teardown after an earlier drain/termination failure.
+          if (
+            !revocation &&
+            options.waitForDrain &&
+            session.runtimeBinding(language)?.runtimeId === runtimeId
+          ) {
+            const environment = runEnvironment(session, language)
+            revocation = { environment, processKey: processKey(language, environment) }
+          }
           if (!revocation) continue
 
           const { environment, processKey: revokedProcessKey } = revocation
@@ -289,13 +295,19 @@ export class NotebookEnvironmentOperations {
                 ...errorLogFields(error),
                 environment
               })
+              if (options.waitForDrain) throw error
             }
           })
           this.revocationDrains.add(drain)
-          void drain.finally(() => this.revocationDrains.delete(drain))
+          drains.push(drain)
+          void drain.then(
+            () => this.revocationDrains.delete(drain),
+            () => this.revocationDrains.delete(drain)
+          )
         }
       }
     )
+    if (options.waitForDrain) await Promise.all(drains)
   }
 
   waitForRevocationDrains(): Promise<void> {

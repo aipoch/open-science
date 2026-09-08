@@ -819,7 +819,7 @@ describe('installAppLifecycle', () => {
     expect(windows[0].focused).toBe(true)
   })
 
-  it.each(['send-failed', 'timeout'] as const)(
+  it.each(['send-failed', 'timeout', 'renderer-failed'] as const)(
     'aborts ordinary quit and asks for consent when the renderer persistence preflight returns %s',
     async (outcome) => {
       const flushSessionPersistence = vi.fn(async () => outcome)
@@ -859,30 +859,34 @@ describe('installAppLifecycle', () => {
     expect(app.exit).not.toHaveBeenCalled()
   })
 
-  it('uses the current degraded shutdown only after the user explicitly chooses force quit', async () => {
-    const flushSessionPersistence = vi.fn(async () => 'timeout' as const)
-    const confirmClose = vi.fn(async () => 'force-quit' as never)
-    const { app, closeOpts, quit, prepareForQuit, abortQuitPreparation, shutdownBackends } = setup({
-      flushSessionPersistence,
-      confirmClose
-    })
-    closeOpts[0].requestQuit()
+  it.each(['timeout', 'renderer-failed'] as const)(
+    'uses degraded shutdown for %s only after explicit force quit',
+    async (outcome) => {
+      const flushSessionPersistence = vi.fn(async () => outcome)
+      const confirmClose = vi.fn(async () => 'force-quit' as never)
+      const { app, closeOpts, quit, prepareForQuit, abortQuitPreparation, shutdownBackends } =
+        setup({
+          flushSessionPersistence,
+          confirmClose
+        })
+      closeOpts[0].requestQuit()
 
-    app.emit('before-quit')
-    await flush()
+      app.emit('before-quit')
+      await flush()
 
-    expect(quit).toHaveBeenCalledTimes(2)
-    expect(app.exit).not.toHaveBeenCalled()
+      expect(quit).toHaveBeenCalledTimes(2)
+      expect(app.exit).not.toHaveBeenCalled()
 
-    app.emit('before-quit')
-    await flush()
+      app.emit('before-quit')
+      await flush()
 
-    expect(flushSessionPersistence).toHaveBeenCalledTimes(3)
-    expect(prepareForQuit).toHaveBeenCalledOnce()
-    expect(abortQuitPreparation).toHaveBeenCalledOnce()
-    expect(shutdownBackends).toHaveBeenCalledOnce()
-    expect(app.exit).toHaveBeenCalledWith(0)
-  })
+      expect(flushSessionPersistence).toHaveBeenCalledTimes(3)
+      expect(prepareForQuit).toHaveBeenCalledOnce()
+      expect(abortQuitPreparation).toHaveBeenCalledOnce()
+      expect(shutdownBackends).toHaveBeenCalledOnce()
+      expect(app.exit).toHaveBeenCalledWith(0)
+    }
+  )
 
   it('requires persistence consent again after delegated work interrupts a force-quit attempt', async () => {
     let active: ActiveSessionInfo[] = []
@@ -976,7 +980,7 @@ describe('installAppLifecycle', () => {
     expect(windows[0].focused).toBe(true)
   })
 
-  it.each(['send-failed', 'timeout'] as const)(
+  it.each(['send-failed', 'timeout', 'renderer-failed'] as const)(
     'aborts ordinary quit and asks for consent when the terminal renderer flush returns %s',
     async (outcome) => {
       const flushSessionPersistence = vi

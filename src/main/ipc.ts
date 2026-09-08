@@ -3946,11 +3946,20 @@ const createApplicationModules = async (
   // (getRuntimeRoot(<dataRoot>)); read lazily so a data-root switch is reflected without re-register.
   const runtimeWorkflows = createRuntimeWorkflows({
     settingsService,
+    ...(notebookNetworkSandbox.supportsWindowsRuntimeAccess
+      ? {
+          setWindowsRuntimeAccess: (executable: string, authorized: boolean) =>
+            notebookNetworkSandbox.setWindowsRuntimeAccess(executable, authorized)
+        }
+      : {}),
     runtimeRoot: () => getRuntimeRoot(resolveDataRoot()),
     micromambaRunner,
     // WS10: revoke a disabled runtime from any live session bound to it (mark binding unavailable).
     onRuntimeDisabled: (language, envId, force) =>
-      notebookService.revokeRuntime(language, envId, { force }),
+      notebookService.revokeRuntime(language, envId, {
+        force,
+        waitForDrain: notebookNetworkSandbox.supportsWindowsRuntimeAccess && language === 'r'
+      }),
     // WS11: live-session usage of a runtime, for the disable-impact warning.
     describeRuntimeUsage: (language, envId) => notebookService.describeRuntimeUsage(language, envId)
   })

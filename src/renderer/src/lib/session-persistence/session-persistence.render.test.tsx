@@ -114,6 +114,13 @@ describe('session persistence startup', () => {
         <button type="button" data-testid="retry-load" onClick={persistence.retryLoad}>
           Retry load
         </button>
+        <button
+          type="button"
+          data-testid="dismiss-write-warning"
+          onClick={persistence.dismissWriteWarning}
+        >
+          Dismiss write warning
+        </button>
         <button type="button" data-testid="retry-writes" onClick={persistence.retryWrites}>
           Retry writes
         </button>
@@ -327,6 +334,14 @@ describe('session persistence startup', () => {
     await expect(flushSessionPersistence()).rejects.toThrow('could not write')
 
     await act(async () => {
+      container.querySelector<HTMLButtonElement>('[data-testid="dismiss-write-warning"]')?.click()
+    })
+    expect(container.querySelector('[data-testid="write-error"]')?.textContent).toBe(
+      'changes saved'
+    )
+    await expect(flushSessionPersistence()).rejects.toThrow('could not write')
+
+    await act(async () => {
       useSessionStore.getState().appendUserMessage({
         sessionId: 'session-1',
         content: 'Latest version',
@@ -334,6 +349,13 @@ describe('session persistence startup', () => {
       })
       await Promise.resolve()
     })
+
+    await act(async () => {
+      await expect(flushSessionPersistence()).rejects.toThrow('could not write')
+    })
+    expect(container.querySelector('[data-testid="write-error"]')?.textContent).toContain(
+      'Open Science could not save'
+    )
 
     writesFail = false
     await act(async () =>

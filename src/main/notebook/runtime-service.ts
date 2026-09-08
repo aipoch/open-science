@@ -895,7 +895,7 @@ class NotebookRuntimeService {
   async revokeRuntime(
     language: NotebookLanguage,
     runtimeId: string,
-    options: { force?: boolean } = {}
+    options: { force?: boolean; waitForDrain?: boolean } = {}
   ): Promise<void> {
     await this.environmentOperations.revokeRuntime(language, runtimeId, options)
   }
