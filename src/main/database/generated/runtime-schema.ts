@@ -972,6 +972,13 @@ const RUNTIME_SCHEMA_TABLE_DDLS = [
     CONSTRAINT "BackgroundResultDelivery_attemptCount_check" CHECK ("attemptCount" >= 0),
     CONSTRAINT "BackgroundResultDelivery_claimLifecycle_check" CHECK ((("state" IN ('claimed', 'dispatching') AND "claimToken" IS NOT NULL AND length(trim("claimToken")) > 0 AND "claimExpiresAt" IS NOT NULL) OR ("state" NOT IN ('claimed', 'dispatching') AND "claimToken" IS NULL AND "claimExpiresAt" IS NULL))),
     CONSTRAINT "BackgroundResultDelivery_continuation_check" CHECK (("continuationMessageId" IS NULL OR length(trim("continuationMessageId")) > 0) AND ("state" <> 'dispatching' OR "continuationMessageId" IS NOT NULL) AND ("state" <> 'waiting-result' OR "continuationMessageId" IS NULL))
+);`,
+  `CREATE TABLE IF NOT EXISTS "LiteratureMetadataCommitReceipt" (
+    "operationId" TEXT NOT NULL PRIMARY KEY,
+    "itemId" TEXT NOT NULL,
+    "expectedMetadataRevision" INTEGER NOT NULL,
+    "committedMetadataRevision" INTEGER NOT NULL,
+    CONSTRAINT "LiteratureMetadataCommitReceipt_itemId_fkey" FOREIGN KEY ("itemId") REFERENCES "LiteratureItem" ("id") ON DELETE CASCADE ON UPDATE CASCADE
 );`
 ] as const
 
@@ -1106,6 +1113,7 @@ const RUNTIME_SCHEMA_INDEX_DDLS = [
   `CREATE INDEX IF NOT EXISTS "BackgroundResultDelivery_sessionId_state_createdAt_id_idx" ON "BackgroundResultDelivery"("sessionId", "state", "createdAt", "id");`,
   `CREATE INDEX IF NOT EXISTS "BackgroundResultDelivery_sourceKind_state_createdAt_id_idx" ON "BackgroundResultDelivery"("sourceKind", "state", "createdAt", "id");`,
   `CREATE UNIQUE INDEX IF NOT EXISTS "BackgroundResultDelivery_sourceKind_sourceId_key" ON "BackgroundResultDelivery"("sourceKind", "sourceId");`,
+  `CREATE INDEX IF NOT EXISTS "LiteratureMetadataCommitReceipt_itemId_idx" ON "LiteratureMetadataCommitReceipt"("itemId");`,
   `CREATE UNIQUE INDEX IF NOT EXISTS "MemoryEntry_global_contentKey_key" ON "MemoryEntry"("contentKey") WHERE "projectId" IS NULL`,
   `CREATE UNIQUE INDEX IF NOT EXISTS "LiteratureCollection_root_nameKey_key" ON "LiteratureCollection"("nameKey") WHERE "parentId" IS NULL`,
   `CREATE INDEX IF NOT EXISTS "BackgroundResultDelivery_project_visible_idx" ON "BackgroundResultDelivery"("projectId", "updatedAt" DESC, "id") WHERE "state" IN ('waiting-result', 'pending', 'claimed', 'dispatching', 'needs-attention')`,
@@ -1175,7 +1183,8 @@ const RUNTIME_SCHEMA_TABLES = [
   'MemorySettings',
   'MemoryCategory',
   'MemoryEntry',
-  'BackgroundResultDelivery'
+  'BackgroundResultDelivery',
+  'LiteratureMetadataCommitReceipt'
 ] as const
 
 export {

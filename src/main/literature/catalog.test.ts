@@ -2807,4 +2807,115 @@ describe('LiteratureCatalog', () => {
       client!.literatureItem.count({ where: { id: { in: items.map(({ id }) => id) } } })
     ).resolves.toBe(0)
   })
+
+  it('retains metadata commit proof across edits and soft deletion, and removes it with the reference', async () => {
+    const catalog = await setup()
+    const created = await catalog.transact({ kind: 'create-item', item: candidate().item })
+    const before = (await catalog.get(created.id))!
+    const input = {
+      operationId: 'review-operation',
+      itemId: before.id,
+      expectedMetadataRevision: before.metadataRevision,
+      item: { ...before.item, containerTitle: 'Committed journal' },
+      source: candidate().source
+    }
+    const committed = await catalog.applyMetadata(input)
+    expect(await catalog.getMetadataCommitReceipt(input.operationId)).toEqual({
+      operationId: input.operationId,
+      itemId: before.id,
+      expectedMetadataRevision: before.metadataRevision,
+      committedMetadataRevision: committed.metadataRevision
+    })
+    await catalog.transact({
+      kind: 'update-item',
+      itemId: before.id,
+      expectedMetadataRevision: committed.metadataRevision,
+      item: { ...committed.item, title: 'Later edit' }
+    })
+    const later = (await catalog.get(before.id))!
+    expect(await catalog.applyMetadata(input)).toEqual(later)
+    await expect(
+      catalog.applyMetadata({ ...input, operationId: 'different-operation' })
+    ).rejects.toThrow('revision conflict')
+    expect(await catalog.getMetadataCommitReceipt('different-operation')).toBeNull()
+    await catalog.transact({ kind: 'set-item-lifecycle', itemIds: [before.id], state: 'deleted' })
+    expect(await catalog.getMetadataCommitReceipt(input.operationId)).not.toBeNull()
+    await catalog.transact({ kind: 'delete-items-permanently', itemIds: [before.id] })
+    expect(await catalog.getMetadataCommitReceipt(input.operationId)).toBeNull()
+  })
+
+  it('rolls back metadata when its commit receipt cannot be written', async () => {
+    const catalog = await setup()
+    const created = await catalog.transact({ kind: 'create-item', item: candidate().item })
+    const before = (await catalog.get(created.id))!
+    const failing = client!.$extends({
+      query: {
+        literatureMetadataCommitReceipt: {
+          async create() {
+            throw new Error('Receipt storage unavailable')
+          }
+        }
+      }
+    })
+    const failingCatalog = new LiteratureCatalog(async () => failing as unknown as PrismaClient)
+    await expect(
+      failingCatalog.applyMetadata({
+        operationId: 'interrupted',
+        itemId: before.id,
+        expectedMetadataRevision: before.metadataRevision,
+        item: { ...before.item, containerTitle: 'Must roll back' },
+        source: candidate().source
+      })
+    ).rejects.toThrow('Receipt storage unavailable')
+    expect(await catalog.get(before.id)).toEqual(before)
+    expect(await catalog.getMetadataCommitReceipt('interrupted')).toBeNull()
+    expect(await client!.literatureSourceRecord.count()).toBe(0)
+  })
+
+  it('keeps commit receipts bound to their original reference when references merge', async () => {
+    const catalog = await setup()
+    const first = await catalog.transact({ kind: 'create-item', item: candidate().item })
+    const second = await catalog.transact({
+      kind: 'create-item',
+      item: candidate({ doi: '10.1234/other' }).item
+    })
+    const before = (await catalog.get(first.id))!
+    await catalog.applyMetadata({
+      operationId: 'original-reference-operation',
+      itemId: first.id,
+      expectedMetadataRevision: before.metadataRevision,
+      item: before.item,
+      source: candidate().source
+    })
+    const originalReceipt = await catalog.getMetadataCommitReceipt('original-reference-operation')
+    const reviewed = (await Promise.all([catalog.get(first.id), catalog.get(second.id)])).map(
+      (item) => item!
+    )
+    await catalog.transact({
+      kind: 'merge-items',
+      survivorId: second.id,
+      duplicateIds: [first.id],
+      item: reviewed[1].item,
+      expectedMetadataRevision: reviewed[1].metadataRevision,
+      expectedItems: reviewed.map(({ id, metadataRevision, updatedAt }) => ({
+        id,
+        metadataRevision,
+        updatedAt
+      }))
+    })
+    expect(await catalog.getMetadataCommitReceipt('original-reference-operation')).toEqual(
+      originalReceipt
+    )
+    const survivor = (await catalog.get(second.id))!
+    await expect(
+      catalog.applyMetadata({
+        operationId: 'original-reference-operation',
+        itemId: second.id,
+        expectedMetadataRevision: survivor.metadataRevision,
+        item: survivor.item,
+        source: candidate().source
+      })
+    ).rejects.toThrow('operation identity')
+    expect(await catalog.get(second.id)).toEqual(survivor)
+  })
 })

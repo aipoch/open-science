@@ -470,6 +470,7 @@ model LiteratureItem {
   projects                 ProjectLiterature[]
   attachments              LiteratureAttachment[]
   acceptedInboxCandidates  LiteratureInboxCandidate[] @relation("AcceptedLiteratureItem")
+  metadataCommitReceipts LiteratureMetadataCommitReceipt[]
 
   @@index([deletedAt, updatedAt])
   @@index([mergedIntoItemId])
@@ -1171,4 +1172,16 @@ model BackgroundResultDelivery {
   @@unique([sourceKind, sourceId])
   @@index([sessionId, state, createdAt, id])
   @@index([sourceKind, state, createdAt, id])
+}
+
+// Immutable proof of a metadata application. Retain while the reference exists, including soft
+// deletion/merge; removing a JSON task must not invalidate checkpoints that can still replay.
+model LiteratureMetadataCommitReceipt {
+  operationId                String         @id
+  itemId                     String
+  expectedMetadataRevision   Int
+  committedMetadataRevision  Int
+  item                       LiteratureItem @relation(fields: [itemId], references: [id], onDelete: Cascade)
+
+  @@index([itemId])
 }

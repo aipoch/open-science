@@ -31,7 +31,17 @@ const flush = async (): Promise<void> => {
 beforeEach(() => {
   vi.useFakeTimers()
   vi.clearAllMocks()
-  jobs.mockImplementation(async () => ({ jobs: [structuredClone(job)] }))
+  jobs.mockImplementation(async (request) => {
+    if (request.action === 'review') {
+      for (const selection of request.selections)
+        Object.assign(
+          job.rows.find(({ id }) => id === selection.itemId)!,
+          selection
+        )
+      job.updatedAt += 1
+    }
+    return { jobs: [structuredClone(job)] }
+  })
   job = {
     id,
     mode: 'metadata',
@@ -287,6 +297,10 @@ it('retires a failed apply request when the user changes the selection', async (
   job.rows[0]!.status = 'ready'
   jobs.mockImplementation(async (request) => {
     if (request.action === 'apply') throw new Error('checkpoint unavailable')
+    if (request.action === 'review') {
+      Object.assign(job.rows[0]!, request.selections[0])
+      job.updatedAt += 1
+    }
     return { jobs: [structuredClone(job)] }
   })
   open(id)
@@ -303,4 +317,98 @@ it('retires a failed apply request when the user changes the selection', async (
   await act(async () => {})
   expect(jobs.mock.calls.filter(([request]) => request.action === 'apply')).toHaveLength(1)
   expect((screen.getByRole('checkbox') as HTMLInputElement).checked).toBe(false)
+})
+
+it('adopts another window saved deselection when this window has no pending draft', async () => {
+  job.state = 'review'
+  job.rows[0]!.status = 'ready'
+  job.rows.push({
+    id: 'second',
+    item: { ...item, id: 'second', item: { ...item.item, title: 'Second paper' } },
+    checked: true,
+    status: 'ready'
+  })
+  open(id)
+  await flush()
+  expect(
+    (screen.getByRole('checkbox', { name: 'Select reference: First paper' }) as HTMLInputElement)
+      .checked
+  ).toBe(true)
+  job.rows[0]!.checked = false
+  job.updatedAt += 1
+  fireEvent(window, new Event('literature-job-refresh'))
+  await act(async () => {})
+  expect
+    .soft(
+      (screen.getByRole('checkbox', { name: 'Select reference: First paper' }) as HTMLInputElement)
+        .checked
+    )
+    .toBe(false)
+  fireEvent.click(screen.getByRole('button', { name: /Apply metadata/ }))
+  await act(async () => {})
+  expect(jobs).toHaveBeenLastCalledWith({
+    action: 'apply',
+    jobId: id,
+    selections: [{ itemId: 'second', candidateId: undefined }]
+  })
+})
+
+it('adopts another window saved candidate when there is no local draft', async () => {
+  job.state = 'review'
+  job.mode = 'full-text'
+  job.rows[0] = {
+    ...job.rows[0]!,
+    status: 'ready',
+    candidateId: 'first-source',
+    candidates: [
+      {
+        id: 'first-source',
+        provider: 'pmc',
+        source: 'PMC',
+        url: 'https://first.example/paper.pdf'
+      },
+      {
+        id: 'second-source',
+        provider: 'pmc',
+        source: 'PMC',
+        url: 'https://second.example/paper.pdf'
+      }
+    ]
+  }
+  open(id, 'full-text')
+  await flush()
+  job.updatedAt += 1
+  job.rows[0].candidateId = 'second-source'
+  fireEvent(window, new Event('literature-job-refresh'))
+  await act(async () => {})
+  fireEvent.click(screen.getByRole('button', { name: 'Add attachment (1)' }))
+  await act(async () => {})
+  expect(jobs).toHaveBeenLastCalledWith({
+    action: 'apply',
+    jobId: id,
+    selections: [{ itemId: item.id, candidateId: 'second-source' }]
+  })
+})
+
+it('retires failed apply selections when another window saves a different review', async () => {
+  job.state = 'review'
+  job.rows[0]!.status = 'ready'
+  jobs.mockImplementation(async (request) => {
+    if (request.action === 'apply') throw new Error('checkpoint unavailable')
+    return { jobs: [structuredClone(job)] }
+  })
+  open(id)
+  await flush()
+  fireEvent.click(screen.getByRole('button', { name: 'Apply metadata (1)' }))
+  await act(async () => {})
+  expect(screen.getByRole('alert')).toBeTruthy()
+  job.rows[0]!.checked = false
+  job.updatedAt += 1
+  fireEvent(window, new Event('literature-job-refresh'))
+  await act(async () => {})
+  expect((screen.getByRole('checkbox') as HTMLInputElement).checked).toBe(false)
+  const retry = screen.queryByRole('button', { name: 'Retry' })
+  if (retry) fireEvent.click(retry)
+  await act(async () => {})
+  expect(jobs.mock.calls.filter(([request]) => request.action === 'apply')).toHaveLength(1)
 })

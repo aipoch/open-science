@@ -78,6 +78,7 @@ type AttachLiteratureContentInput = Readonly<{
 type AttachedLiteratureContent = Readonly<{ attachmentId: string; versionId: string }>
 
 type ApplyLiteratureMetadataInput = Readonly<{
+  operationId?: string
   itemId: string
   expectedMetadataRevision: number
   item: LiteratureItemInput
@@ -1066,6 +1067,18 @@ class LiteratureCatalog {
     })
   }
 
+  async getMetadataCommitReceipt(operationId: string): Promise<{
+    operationId: string
+    itemId: string
+    expectedMetadataRevision: number
+    committedMetadataRevision: number
+  } | null> {
+    const client = await this.getClient()
+    return client.$transaction((transaction) =>
+      transaction.literatureMetadataCommitReceipt.findUnique({ where: { operationId } })
+    )
+  }
+
   async applyMetadata(input: ApplyLiteratureMetadataInput): Promise<LiteratureItemView> {
     await this.updateItem(
       {
@@ -1074,7 +1087,8 @@ class LiteratureCatalog {
         expectedMetadataRevision: input.expectedMetadataRevision,
         item: input.item
       },
-      input.source
+      input.source,
+      input.operationId
     )
     const updated = await this.get(input.itemId)
     if (!updated) throw new Error('Literature Item is unavailable.')
@@ -1450,7 +1464,8 @@ class LiteratureCatalog {
 
   private async updateItem(
     command: Extract<LiteratureCatalogCommand, { kind: 'update-item' }>,
-    source?: LiteratureSourceInput
+    source?: LiteratureSourceInput,
+    operationId?: string
   ): Promise<LiteratureCatalogReceipt> {
     const itemId = normalizeSpace(command.itemId)
     const item = literatureItemInputSchema.parse(command.item)
@@ -1458,8 +1473,35 @@ class LiteratureCatalog {
 
     return client
       .$transaction(async (transaction): Promise<LiteratureCatalogReceipt> => {
+        if (operationId) {
+          const receipt = await transaction.literatureMetadataCommitReceipt.findUnique({
+            where: { operationId }
+          })
+          if (receipt) {
+            if (
+              receipt.itemId !== itemId ||
+              receipt.expectedMetadataRevision !== command.expectedMetadataRevision
+            )
+              throw new Error('Metadata operation identity does not match the reviewed reference.')
+            return { kind: 'item', id: itemId, state: 'present' }
+          }
+        }
         await replaceItemMetadata(transaction, itemId, command.expectedMetadataRevision, item)
         if (source) await this.attachSource(transaction, { source, itemId })
+        if (operationId) {
+          const committed = await transaction.literatureItem.findUniqueOrThrow({
+            where: { id: itemId },
+            select: { metadataRevision: true }
+          })
+          await transaction.literatureMetadataCommitReceipt.create({
+            data: {
+              operationId,
+              itemId,
+              expectedMetadataRevision: command.expectedMetadataRevision,
+              committedMetadataRevision: committed.metadataRevision
+            }
+          })
+        }
         return { kind: 'item', id: itemId, state: 'present' }
       })
       .finally(() => duplicateGroups.delete(client))

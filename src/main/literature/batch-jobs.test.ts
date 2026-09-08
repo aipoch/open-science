@@ -65,7 +65,12 @@ async function setup(): Promise<{
     catalog: { get: async (id: string) => item(id) },
     metadata: {
       complete: metadata,
-      applyReviewed: vi.fn(async (review: LiteratureMetadataCompletionResult) => review)
+      applyReviewed: vi.fn(async (review: LiteratureMetadataCompletionResult) => {
+        const current = await options.catalog.get(review.item.id)
+        if (current.metadataRevision !== review.item.metadataRevision)
+          throw new Error('Reference changed')
+        return review
+      })
     },
     fullText: { run: fullText },
     onError: vi.fn(),
@@ -445,7 +450,7 @@ it('offers identifier-only metadata additions as a ready batch row', async () =>
   current.item.identifiers = [{ scheme: 'pmid', value: '12345678', isPrimary: true }]
   const applyMetadata = vi.fn(async (input) => ({ ...current, item: input.item }))
   const enricher = new LiteratureMetadataEnricher(
-    { get: async () => current, applyMetadata },
+    { getMetadataCommitReceipt: async () => null, get: async () => current, applyMetadata },
     vi.fn(
       async () =>
         new Response(
@@ -687,4 +692,185 @@ it('finishes an attachment from its committed receipt while item refresh is unav
   await jobs.run({ action: 'apply', jobId, selections: [{ itemId: 'a', candidateId: source.id }] })
   await vi.waitFor(async () => expect((await state(jobs, jobId)).state).toBe('completed'))
   expect((await state(jobs, jobId)).rows[0].status).toBe('done')
+})
+
+it('keeps unsearched references resumable after applying a paused partial search', async () => {
+  const { jobs, metadata, options } = await setup()
+  let release!: () => void
+  metadata.mockImplementationOnce(async () => {
+    await new Promise<void>((resolve) => {
+      release = resolve
+    })
+    return preview('a')
+  })
+  const jobId = randomUUID()
+  await jobs.run({ action: 'create', mode: 'metadata', itemIds: ['a', 'b'], requestId: jobId })
+  await vi.waitFor(() => expect(release).toBeTypeOf('function'))
+  try {
+    await jobs.run({ action: 'pause', jobId })
+  } finally {
+    release()
+  }
+  await vi.waitFor(async () => expect((await state(jobs, jobId)).state).toBe('paused'))
+  expect((await state(jobs, jobId)).rows.map(({ status }) => status)).toEqual(['ready', 'pending'])
+  await jobs.run({ action: 'apply', jobId, selections: [{ itemId: 'a' }] })
+  await vi.waitFor(async () => {
+    expect(['paused', 'completed']).toContain((await state(jobs, jobId)).state)
+  })
+  expect(options.metadata.applyReviewed).toHaveBeenCalledOnce()
+  expect((await state(jobs, jobId)).rows.map(({ status }) => status)).toEqual(['done', 'pending'])
+  expect((await jobs.run({ action: 'list' })).summaries?.[0]).toMatchObject({
+    total: 2,
+    checked: 1,
+    done: 1,
+    ready: 0,
+    failed: 0
+  })
+  expect(await state(jobs, jobId)).toMatchObject({ state: 'paused', phase: 'search' })
+  expect((await state(jobs, jobId)).rows[1].checked).toBe(true)
+  await jobs.run({ action: 'resume', jobId })
+  await vi.waitFor(async () => expect((await state(jobs, jobId)).state).toBe('review'))
+  expect(metadata).toHaveBeenCalledTimes(2)
+  expect(metadata).toHaveBeenLastCalledWith({ mode: 'preview', itemId: 'b' })
+  expect((await state(jobs, jobId)).rows.map(({ status }) => status)).toEqual(['done', 'ready'])
+})
+
+it('reloads repaired checkpoints on the same service without dropping any indexed task', async () => {
+  const { rename } = await import('node:fs/promises')
+  const { jobs, options, path } = await setup()
+  const first = randomUUID(),
+    second = randomUUID()
+  for (const jobId of [first, second]) {
+    await jobs.run({ action: 'create', mode: 'metadata', itemIds: ['a'], requestId: jobId })
+    await vi.waitFor(async () => expect((await state(jobs, jobId)).state).toBe('review'))
+  }
+  await jobs.close()
+  const indexBefore = await readFile(path, 'utf8')
+  const checkpoint = join(`${path}.d`, `${first}.json`)
+  await rename(checkpoint, `${checkpoint}.saved`)
+  const reopened = new LiteratureBatchJobs(options)
+  cleanup.push(() => reopened.close())
+  try {
+    const blocked = await Promise.allSettled([
+      reopened.run({ action: 'list' }),
+      reopened.run({ action: 'get', jobId: second }),
+      reopened.run({ action: 'remove', jobId: second })
+    ])
+    expect(blocked.map((result) => result.status)).toEqual(['rejected', 'rejected', 'rejected'])
+    for (const result of blocked)
+      if (result.status === 'rejected') expect(result.reason.message).toContain('checkpoint')
+    expect(await readFile(path, 'utf8')).toBe(indexBefore)
+  } finally {
+    await rename(`${checkpoint}.saved`, checkpoint)
+  }
+  // Control: the original bytes are healthy and load in another instance.
+  const fresh = new LiteratureBatchJobs(options)
+  expect((await fresh.run({ action: 'list' })).summaries?.map(({ id }) => id)).toEqual([
+    second,
+    first
+  ])
+  await fresh.close()
+  await expect(reopened.run({ action: 'list' })).resolves.toMatchObject({
+    summaries: [{ id: second }, { id: first }]
+  })
+  expect((await state(reopened, second)).state).toBe('review')
+  await reopened.run({ action: 'remove', jobId: second })
+  expect((await reopened.run({ action: 'list' })).summaries?.map(({ id }) => id)).toEqual([first])
+})
+
+it('recognizes its committed metadata after replaying the pre-commit checkpoint', async () => {
+  const { LiteratureCatalog } = await import('./catalog')
+  const { LiteratureMetadataEnricher } = await import('./metadata-enricher')
+  const { createProjectDbClient } = await import('../projects/prisma-client')
+  const { migrateApplicationDatabase } = await import('../database/migration-service')
+  const { jobs: initial, options, path } = await setup()
+  await initial.close()
+  const root = await mkdtemp(join(tmpdir(), 'literature-task-commit-'))
+  cleanup.push(() => rm(root, { recursive: true, force: true }))
+  const client = createProjectDbClient(root)
+  cleanup.push(() => client.$disconnect())
+  await migrateApplicationDatabase(client)
+  const catalog = new LiteratureCatalog(async () => client)
+  const created = await catalog.transact({ kind: 'create-item', item: item('a').item })
+  const original = (await catalog.get(created.id))!
+  const fetchMetadata = vi.fn(
+    async () =>
+      new Response(
+        JSON.stringify({
+          message: {
+            DOI: '10.1234/example',
+            'container-title': ['Committed journal']
+          }
+        })
+      )
+  )
+  const enricher = new LiteratureMetadataEnricher(catalog, fetchMetadata)
+  const jobId = randomUUID()
+  const checkpoint = join(`${path}.d`, `${jobId}.json`)
+  let beforeCommit = ''
+  const serviceOptions = { ...options, catalog, metadata: enricher }
+  const jobs = new LiteratureBatchJobs({
+    ...serviceOptions,
+    metadata: {
+      complete: (request) => enricher.complete(request),
+      applyReviewed: async (review) => {
+        // The service has durably accepted apply, but has not yet committed catalog data.
+        beforeCommit = await readFile(checkpoint, 'utf8')
+        return enricher.applyReviewed(review)
+      }
+    }
+  })
+  cleanup.push(() => jobs.close())
+  await jobs.run({ action: 'create', mode: 'metadata', itemIds: [created.id], requestId: jobId })
+  await vi.waitFor(async () => expect((await state(jobs, jobId)).state).toBe('review'))
+  await jobs.run({ action: 'apply', jobId, selections: [{ itemId: created.id }] })
+  await vi.waitFor(async () => expect((await state(jobs, jobId)).state).toBe('completed'))
+  await jobs.close()
+  const committed = (await catalog.get(created.id))!
+  expect(committed.item.containerTitle).toBe('Committed journal')
+  expect(committed.metadataRevision).toBeGreaterThan(original.metadataRevision)
+  expect(JSON.parse(beforeCommit)).toMatchObject({ state: 'running', phase: 'apply' })
+  // Reconstruct only the crash window: catalog commit survived, task completion did not.
+  await writeFile(checkpoint, beforeCommit)
+  const reopened = new LiteratureBatchJobs(serviceOptions)
+  cleanup.push(() => reopened.close())
+  expect((await state(reopened, jobId)).state).toBe('paused')
+  await reopened.run({ action: 'resume', jobId })
+  await vi.waitFor(async () => expect((await state(reopened, jobId)).state).toBe('completed'))
+  expect((await catalog.get(created.id))!.metadataRevision).toBe(committed.metadataRevision)
+  expect((await catalog.get(created.id))!.item.containerTitle).toBe('Committed journal')
+  expect.soft((await state(reopened, jobId)).rows[0]).toMatchObject({ status: 'done' })
+  expect.soft((await reopened.run({ action: 'list' })).summaries?.[0]).toMatchObject({
+    done: 1,
+    failed: 0,
+    completedItemIds: [created.id]
+  })
+  expect(fetchMetadata).toHaveBeenCalledOnce()
+})
+
+it('restores a historically completed partial search without repeating completed metadata', async () => {
+  const { jobs, options, path, metadata } = await setup()
+  const jobId = randomUUID()
+  await jobs.run({ action: 'create', mode: 'metadata', itemIds: ['a'], requestId: jobId })
+  await vi.waitFor(async () => expect((await state(jobs, jobId)).state).toBe('review'))
+  await jobs.close()
+  const checkpoint = join(`${path}.d`, `${jobId}.json`)
+  const stored = JSON.parse(await readFile(checkpoint, 'utf8'))
+  stored.state = 'completed'
+  stored.phase = 'apply'
+  stored.phaseItemIds = ['a']
+  stored.rows[0].status = 'done'
+  stored.rows.push({ id: 'b', status: 'pending', checked: true })
+  await writeFile(checkpoint, JSON.stringify(stored))
+  const reopened = new LiteratureBatchJobs(options)
+  cleanup.push(() => reopened.close())
+  expect(await state(reopened, jobId)).toMatchObject({
+    state: 'paused',
+    phase: 'search',
+    phaseItemIds: undefined
+  })
+  metadata.mockClear()
+  await reopened.run({ action: 'resume', jobId })
+  await vi.waitFor(async () => expect((await state(reopened, jobId)).state).toBe('review'))
+  expect(metadata).toHaveBeenCalledExactlyOnceWith({ mode: 'preview', itemId: 'b' })
 })
