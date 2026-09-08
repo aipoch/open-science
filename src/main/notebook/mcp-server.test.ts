@@ -128,7 +128,7 @@ const callRememberMemoryThroughMcp = async (
 describe('notebook MCP server config', () => {
   it('builds an ACP stdio MCP server config scoped to the notebook runtime RPC endpoint', () => {
     const config = createNotebookMcpServerConfig({
-      command: '/Applications/Open Science.app/Contents/MacOS/Open Science',
+      command: '/Applications/Open-Science.app/Contents/MacOS/Open-Science',
       entryPath: '/app/out/main/index.js',
       endpoint: 'http://127.0.0.1:4567',
       token: 'secret-token',
@@ -140,7 +140,7 @@ describe('notebook MCP server config', () => {
 
     expect(config).toEqual({
       name: 'open-science-notebook',
-      command: '/Applications/Open Science.app/Contents/MacOS/Open Science',
+      command: '/Applications/Open-Science.app/Contents/MacOS/Open-Science',
       args: ['/app/out/main/index.js', '--open-science-notebook-mcp'],
       env: [
         { name: 'ELECTRON_RUN_AS_NODE', value: '1' },
@@ -178,7 +178,7 @@ describe('notebook MCP server config', () => {
 
   it('passes the Windows named-pipe path to the notebook MCP process', () => {
     const config = createNotebookMcpServerConfig({
-      command: 'C:\\Open Science.exe',
+      command: 'C:\\Open-Science.exe',
       entryPath: 'C:\\app\\main.js',
       endpoint: 'http://localhost',
       socketPath: '\\\\.\\pipe\\open-science-notebook',

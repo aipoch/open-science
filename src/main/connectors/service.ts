@@ -189,7 +189,7 @@ const connectorGateGuidance: Readonly<Record<string, string>> = {
   connector_unauthenticated:
     'Connector authentication is required. Do not retry until the user signs in from Settings > Connectors, then retry the same call.',
   connector_runtime_unavailable:
-    'The Connector runtime is unavailable. Wait briefly and retry the same call once. If it fails again, ask the user to restart Open Science before retrying.',
+    'The Connector runtime is unavailable. Wait briefly and retry the same call once. If it fails again, ask the user to restart Open-Science before retrying.',
   connector_configuration_changed:
     'The Connector configuration changed before the external tool was called. Retry the exact same call once.',
   credential_unavailable:

@@ -35,7 +35,7 @@ vi.mock('electron', () => ({
 }))
 vi.mock('@/lib/theme', () => themeMocks)
 vi.mock('../src/main', () => ({}))
-vi.mock('../../main/remote-access/openscience-logo.svg?raw', () => ({
+vi.mock('../../main/remote-access/open-science-logo.svg?raw', () => ({
   default: '<svg viewBox="0 0 1 1"></svg>'
 }))
 

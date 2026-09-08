@@ -68,7 +68,7 @@ describe('remote access IPC authorization', () => {
     expect(isDesktopCaller(context)).toBe(false)
     expect(canManagePairing(context)).toBe(false)
     expect(() => requireDesktopCaller(context)).toThrow(
-      'must be approved from the Open Science desktop app'
+      'must be approved from the Open-Science desktop app'
     )
     expect(() => requirePairingManager(context)).toThrow('approved browser')
   })

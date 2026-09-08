@@ -307,7 +307,7 @@ describe('claudeCodeFramework', () => {
     })
   })
 
-  it('renders Open Science MCP tool references as Claude callable names', () => {
+  it('renders Open-Science MCP tool references as Claude callable names', () => {
     const setup = claudeCodeFramework.buildSessionSetup({
       systemPromptAppends: [
         NOTEBOOK_SYSTEM_PROMPT_APPEND,

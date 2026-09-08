@@ -107,7 +107,7 @@ describe('Remote Compute Skill document', () => {
     expect(doc).toContain('configured for Slurm')
     expect(doc).toContain('user-managed durable resources')
     expect(doc).toContain('must not execute commands that create, replace, or remove')
-    expect(doc).toContain('do not submit that installation through Open Science')
+    expect(doc).toContain('do not submit that installation through Open-Science')
     expect(doc).not.toContain('Stage that file as a normal job input')
     expect(doc).toMatch(/matching idempotent\s+removal command/)
     expect(doc).toContain(

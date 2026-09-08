@@ -1,4 +1,4 @@
-/* Hallmark · component: GitHub Star CTA · genre: modern-minimal · theme: existing Open Science
+/* Hallmark · component: GitHub Star CTA · genre: modern-minimal · theme: existing Open-Science
  * states: default · hover · focus · active · disabled · loading · error · success
  * contrast: pass (40–41)
  */

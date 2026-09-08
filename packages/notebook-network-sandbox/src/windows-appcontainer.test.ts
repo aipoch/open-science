@@ -31,14 +31,14 @@ describe('Windows AppContainer network fence probe', () => {
 describe('Windows AppContainer elevation', () => {
   it('recognizes a wrapped Windows UAC cancellation without matching localized text', () => {
     const script = windowsElevationScript(
-      "C:\\Program Files\\Open Science\\host's.exe",
+      "C:\\Program Files\\Open-Science\\host's.exe",
       '0123456789abcdef01234567',
       'C:\\Users\\Researcher\\AppData\\Local\\sandbox',
       'setup'
     )
 
     expect(script).toContain('} catch { exit 1223 }')
-    expect(script).toContain("'C:\\Program Files\\Open Science\\host''s.exe'")
+    expect(script).toContain("'C:\\Program Files\\Open-Science\\host''s.exe'")
   })
 })
 
@@ -46,9 +46,9 @@ describe('Windows AppContainer launch', () => {
   it('launches a structured standard-mode executable directly to preserve persistent stdio', () => {
     const request = {
       command:
-        "& 'D:\\Open Science\\open-science.exe' 'D:\\Open Science\\resources\\notebook\\repl_loop.js'",
-      executable: 'D:\\Open Science\\open-science.exe',
-      args: ['D:\\Open Science\\resources\\notebook\\repl_loop.js'],
+        "& 'D:\\Open-Science\\open-science.exe' 'D:\\Open-Science\\resources\\notebook\\repl_loop.js'",
+      executable: 'D:\\Open-Science\\open-science.exe',
+      args: ['D:\\Open-Science\\resources\\notebook\\repl_loop.js'],
       gatewayPort: 49700,
       gatewayCredentials: { username: 'command', password: 'secret' },
       env: { ELECTRON_RUN_AS_NODE: '1' }

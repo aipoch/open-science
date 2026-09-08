@@ -1,5 +1,5 @@
 /* Hallmark · pre-emit critique: P5 H5 E4 S5 R5 V4
- * component: command palette · genre: modern-minimal · theme: Open Science tokens
+ * component: command palette · genre: modern-minimal · theme: Open-Science tokens
  * structural fingerprint: fixed header / single scroll plane / fixed shortcut footer
  * states: default · hover · focus · active · disabled · loading · error · success
  * contrast: inherited from the app's verified semantic tokens · slop: pass

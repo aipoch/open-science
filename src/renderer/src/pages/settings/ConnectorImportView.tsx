@@ -108,7 +108,7 @@ export function ConnectorImportView({
           </h2>
           <p className="mt-0.5 text-[13px] leading-5 text-muted-foreground">
             {t(
-              'Import an Open Science Connector or MCP client configuration. You will review one server and enter any required credentials before it is added.'
+              'Import an Open-Science Connector or MCP client configuration. You will review one server and enter any required credentials before it is added.'
             )}
           </p>
         </div>

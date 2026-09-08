@@ -201,7 +201,7 @@ export function ComputePanel({ onNavigate }: ComputePanelProps): React.JSX.Eleme
           <p className="py-6 text-center text-sm text-muted-foreground">{t('Loading hosts…')}</p>
         ) : hosts.length === 0 ? (
           <p className="py-8 text-center text-sm text-muted-foreground">
-            {t('No SSH hosts yet. Add one to let Open Science run compute on your servers.')}
+            {t('No SSH hosts yet. Add one to let Open-Science run compute on your servers.')}
           </p>
         ) : (
           hosts.map((host) => (

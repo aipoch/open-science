@@ -246,7 +246,7 @@ def panel_crops(fig, dpi=None, pad_px=6, bbox_inches=None, pad_inches=None):
     dpi = float(dpi)
     if bbox_inches is None:
         bbox_inches = mpl.rcParams.get("savefig.bbox")
-    # The Open Science notebook captures and closes pyplot figures after every
+    # The Open-Science notebook captures and closes pyplot figures after every
     # cell. Matplotlib 3.11 decouples a closed Figure from its backend by
     # replacing FigureCanvasAgg with FigureCanvasBase, while the persistent
     # notebook namespace can still retain the Figure itself. Reattach the

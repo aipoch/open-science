@@ -35,7 +35,7 @@ const runCommand: CommandRunner = async (command, args) => {
 
 const classifyProcessName = (value: string): ProcessKind => {
   const name = value.replaceAll('\\', '/').split('/').at(-1)?.trim().toLowerCase() ?? ''
-  if (/^(?:open science(?: \(dev\))?|electron)(?: helper.*)?(?:\.exe)?$/u.test(name)) {
+  if (/^(?:open[ -]science(?: \(dev\))?|electron)(?: helper.*)?(?:\.exe)?$/u.test(name)) {
     return 'electron'
   }
   if (/(?:^|[-_.])(claude|codex|opencode)(?:$|[-_.])/u.test(name)) return 'agent'

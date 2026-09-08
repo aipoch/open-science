@@ -12,7 +12,7 @@
     nsExec::ExecToLog '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$INSTDIR\resources\windows-notebook-sandbox-uninstall.ps1" -SandboxRoot "$INSTDIR\resources\notebook-network-sandbox\windows"'
     Pop $0
     StrCmp $0 "0" notebookSandboxCleanupComplete
-    MessageBox MB_OK|MB_ICONSTOP "Open Science could not safely remove its owned Notebook isolation resources. The uninstall was stopped so the cleanup can be retried."
+    MessageBox MB_OK|MB_ICONSTOP "Open-Science could not safely remove its owned Notebook isolation resources. The uninstall was stopped so the cleanup can be retried."
     Abort
     notebookSandboxCleanupComplete:
   ${endif}
@@ -62,14 +62,14 @@ FunctionEnd
     GetFullPathName $R2 "${DIR}\.."
     ${if} ${Errors}
       DetailPrint `Could not safely preserve "${DIR}\OpenScience"; its parent path could not be resolved.`
-      MessageBox MB_OK|MB_ICONSTOP "Open Science could not safely protect its data folder before updating.$\r$\nThe existing data was left untouched."
+      MessageBox MB_OK|MB_ICONSTOP "Open-Science could not safely protect its data folder before updating.$\r$\nThe existing data was left untouched."
       StrCpy $dataProtectionFailed "1"
     ${else}
       StrCpy ${BACKUP} "$R2\.open-science-update-data-${SLOT}"
       ${if} ${FileExists} "${DIR}\OpenScience\*.*"
         ${if} ${FileExists} "${BACKUP}\*.*"
           DetailPrint `Could not safely preserve "${DIR}\OpenScience" because the backup path already exists: ${BACKUP}`
-          MessageBox MB_OK|MB_ICONSTOP "Open Science found both the current data folder and an earlier update backup.$\r$\nNo data was changed. Please inspect:$\r$\n${BACKUP}"
+          MessageBox MB_OK|MB_ICONSTOP "Open-Science found both the current data folder and an earlier update backup.$\r$\nNo data was changed. Please inspect:$\r$\n${BACKUP}"
           StrCpy ${BACKUP} ""
           StrCpy $dataProtectionFailed "1"
         ${else}
@@ -77,7 +77,7 @@ FunctionEnd
           Rename "${DIR}\OpenScience" "${BACKUP}"
           ${if} ${Errors}
             DetailPrint `Could not safely preserve "${DIR}\OpenScience"; leaving the existing installation untouched.`
-            MessageBox MB_OK|MB_ICONSTOP "Open Science could not safely protect its data folder before updating.$\r$\nThe existing data was left untouched."
+            MessageBox MB_OK|MB_ICONSTOP "Open-Science could not safely protect its data folder before updating.$\r$\nThe existing data was left untouched."
             StrCpy ${BACKUP} ""
             StrCpy $dataProtectionFailed "1"
           ${else}
@@ -101,7 +101,7 @@ FunctionEnd
     ${if} ${FileExists} "${BACKUP}\*.*"
       ${if} ${FileExists} "${DIR}\OpenScience\*.*"
         DetailPrint `The preserved data remains at: ${BACKUP}`
-        MessageBox MB_OK|MB_ICONSTOP "Open Science could not restore its data folder because the destination already exists.$\r$\nThe preserved data remains at:$\r$\n${BACKUP}"
+        MessageBox MB_OK|MB_ICONSTOP "Open-Science could not restore its data folder because the destination already exists.$\r$\nThe preserved data remains at:$\r$\n${BACKUP}"
         StrCpy $dataRestoreFailed "1"
       ${else}
         CreateDirectory "${DIR}"
@@ -109,7 +109,7 @@ FunctionEnd
         Rename "${BACKUP}" "${DIR}\OpenScience"
         ${if} ${Errors}
           DetailPrint `The preserved data remains at: ${BACKUP}`
-          MessageBox MB_OK|MB_ICONSTOP "Open Science could not restore its data folder after updating.$\r$\nThe preserved data remains at:$\r$\n${BACKUP}"
+          MessageBox MB_OK|MB_ICONSTOP "Open-Science could not restore its data folder after updating.$\r$\nThe preserved data remains at:$\r$\n${BACKUP}"
           StrCpy $dataRestoreFailed "1"
         ${else}
           DetailPrint `Restored the data folder to: ${DIR}\OpenScience`
@@ -412,7 +412,7 @@ FunctionEnd
         # Do not overwrite either copy if the old process recreated data before it was killed;
         # retain that additional directory at its unique sibling path for manual reconciliation.
         DetailPrint `Additional data created during the update remains at: $R7`
-        MessageBox MB_OK|MB_ICONEXCLAMATION "Open Science found additional data created while closing the previous version.$\r$\nYour original data will be restored; the additional data remains at:$\r$\n$R7"
+        MessageBox MB_OK|MB_ICONEXCLAMATION "Open-Science found additional data created while closing the previous version.$\r$\nYour original data will be restored; the additional data remains at:$\r$\n$R7"
       ${else}
         # No registered backup exists (recovery can also be used independently). The retry may
         # have removed ${DIR}; recreate only the parent and put the retry-local data back before
@@ -422,7 +422,7 @@ FunctionEnd
         Rename "$R7" "${DIR}\OpenScience"
         ${if} ${Errors}
           DetailPrint `The preserved data remains at: $R7`
-          MessageBox MB_OK|MB_ICONSTOP "Open Science could not restore its data folder after updating.$\r$\nYour data remains at:$\r$\n$R7"
+          MessageBox MB_OK|MB_ICONSTOP "Open-Science could not restore its data folder after updating.$\r$\nYour data remains at:$\r$\n$R7"
           !insertmacro restoreAllNestedDataRoots
           SetErrorLevel 2
           Quit

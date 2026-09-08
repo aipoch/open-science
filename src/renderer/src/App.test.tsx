@@ -1486,14 +1486,14 @@ describe('App startup routing', () => {
   it('warns that in-memory conversation changes are not durable and retries them', async () => {
     mocks.settings.isLoaded = true
     mocks.sessionPersistence.writeError =
-      'Open Science could not save the latest conversation changes. Retry before closing the app.'
+      'Open-Science could not save the latest conversation changes. Retry before closing the app.'
 
     await render()
 
     const alert = container.querySelector('[data-testid="session-persistence-alert"]')
     expect(alert?.textContent).toContain('Conversation storage needs attention')
     expect(alert?.textContent).toContain(
-      'Open Science could not save the latest conversation changes. Retry before closing the app.'
+      'Open-Science could not save the latest conversation changes. Retry before closing the app.'
     )
     expect(alert?.textContent).not.toContain('could not confirm')
     expect(alert?.querySelector('[data-testid="session-persistence-dismiss"]')).not.toBeNull()
@@ -1554,7 +1554,7 @@ describe('App startup routing', () => {
     mocks.sessionPersistence.hasCompleteSessionCatalog = false
     mocks.sessionPersistence.catalogRecovery = { kind: 'repairable', reason: 'session-scan' }
     mocks.sessionPersistence.writeError =
-      'Open Science could not save the latest conversation changes. Retry before closing the app.'
+      'Open-Science could not save the latest conversation changes. Retry before closing the app.'
 
     await render()
 

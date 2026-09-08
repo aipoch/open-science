@@ -127,7 +127,7 @@ const requestPackagedAppShutdown = async (endpoint, auth, fetchImpl = fetchWithT
 
 const parsePackagedAppEndpoint = (output) => {
   const match = output.match(
-    /Open Science Web:\s+(http:\/\/127\.0\.0\.1:\d+\/(?:\?token=[A-Za-z0-9_-]+)?)/
+    /Open[ -]Science Web:\s+(http:\/\/127\.0\.0\.1:\d+\/(?:\?token=[A-Za-z0-9_-]+)?)/
   )
   if (!match) return undefined
 
@@ -145,7 +145,7 @@ const readPackagedAppConfigRoot = async (
   { auth, legacyConfigRoots = [], readToken = readFile } = {}
 ) => {
   if (
-    bootstrap.appName !== 'Open Science' ||
+    !['Open-Science', 'Open Science'].includes(bootstrap.appName) ||
     bootstrap.appVersion !== expectedVersion ||
     bootstrap.platform !== 'win32'
   ) {
@@ -887,7 +887,7 @@ const assertDatabaseDowngradeBlocked = ({ becameHealthy, output }) => {
   if (becameHealthy) {
     throw new Error(`Ledger-aware downgrade unexpectedly became healthy.\n${output}`)
   }
-  if (!/database_newer_than_app|newer version of Open Science/i.test(output)) {
+  if (!/database_newer_than_app|newer version of Open[ -]Science/i.test(output)) {
     throw new Error(
       `Ledger-aware downgrade did not report the expected compatibility error.\n${output}`
     )

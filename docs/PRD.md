@@ -1,12 +1,12 @@
-# Open Science — Product Requirements Document
+# Open-Science — Product Requirements Document
 
 > Status: living document, tracks the shipped product plus near-term scope. For the long-range vision and phase-by-phase delivery plan, see [`ROADMAP.md`](../ROADMAP.md). For the visual/interaction spec, see [`design.md`](../design.md).
 
 ## 1. Summary
 
-**Open Science is an open-source, model-agnostic AI workbench for scientific discovery.** It runs as a self-hosted desktop application that pairs a planning-and-execution agent with a persistent, managed compute runtime and durable project/session storage — so a researcher can hand off a real data-analysis or literature task to an agent and get back not just an answer, but the code, execution record, and artifacts that produced it.
+**Open-Science is an open-source, model-agnostic AI workbench for scientific discovery.** It runs as a self-hosted desktop application that pairs a planning-and-execution agent with a persistent, managed compute runtime and durable project/session storage — so a researcher can hand off a real data-analysis or literature task to an agent and get back not just an answer, but the code, execution record, and artifacts that produced it.
 
-The project exists because the clearest current articulation of this product category is closed-source and single-vendor: gated by billing region, subscription tier, and one company's model and infrastructure choices. Open Science is an independent, from-scratch implementation of the same category of tool — not a proxy, wrapper, or jailbreak of any existing closed product — built so labs can choose compatible models and infrastructure on their own terms.
+The project exists because the clearest current articulation of this product category is closed-source and single-vendor: gated by billing region, subscription tier, and one company's model and infrastructure choices. Open-Science is an independent, from-scratch implementation of the same category of tool — not a proxy, wrapper, or jailbreak of any existing closed product — built so labs can choose compatible models and infrastructure on their own terms.
 
 ## 2. Problem Statement
 
@@ -32,7 +32,7 @@ This shows up as four structural pains:
 - **Not a real-time multi-user collaborative editor.** Team workflows happen through export/share/import, not simultaneous co-editing of one session.
 - **Not a replacement for domain-expert judgment.** Statistical validity, batch-effect analysis, and data-leakage risk remain calls the researcher makes; the system reduces the cost of _executing_ and _recording_ work, not the cost of _judging_ it.
 - **Not modeling research semantics.** The system's structured objects are computations and artifacts, not first-class "hypothesis / experiment / conclusion" entities.
-- **Not a proxy, reskin, or unofficial client of any closed-source product.** Open Science shares no code with any single vendor's client software.
+- **Not a proxy, reskin, or unofficial client of any closed-source product.** Open-Science shares no code with any single vendor's client software.
 
 ## 5. Target Users
 
@@ -63,7 +63,7 @@ These are the constraints the project treats as non-negotiable as it grows (see 
 
 ## 8. Current Architecture (What Is Actually Implemented)
 
-Open Science today is an Electron + React + TypeScript desktop application built around four cooperating layers:
+Open-Science today is an Electron + React + TypeScript desktop application built around four cooperating layers:
 
 | Layer                      | Responsibility                                                            | Current implementation                                                                                                                                                                                                                          |
 | -------------------------- | ------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -105,7 +105,7 @@ are still revoked by `releaseSessionCapabilities`, independently of the retained
 
 ### Durable external component ownership
 
-A durable external component is a resource created by Open Science that survives its creating
+A durable external component is a resource created by Open-Science that survives its creating
 process outside app-managed storage or in a third-party control plane. Examples include launch
 agents, system services, scheduled tasks, command launchers, shared caches, and provider-managed
 service records. A child process that is stopped with its owning runtime is not durable, but its

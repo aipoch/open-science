@@ -1,7 +1,7 @@
 /* eslint-disable @typescript-eslint/no-require-imports, @typescript-eslint/explicit-function-return-type */
 
 // predev hook (macOS only): rename the dev Electron.app bundle so `npm run dev` shows
-// "Open Science (DEV)" in the dock and menu bar. `app.setName()` changes app.name and the per-app
+// "Open-Science (DEV)" in the dock and menu bar. `app.setName()` changes app.name and the per-app
 // paths but NOT the macOS dock tooltip in development — that comes from the running bundle's
 // Info.plist (which ships as "Electron"). Patching CFBundleName/CFBundleDisplayName fixes it.
 //
@@ -22,7 +22,7 @@ const plistPath = path.join(appPath, 'Contents', 'Info.plist')
 
 if (!fs.existsSync(plistPath)) process.exit(0)
 
-const DEV_NAME = 'Open Science (DEV)'
+const DEV_NAME = 'Open-Science (DEV)'
 const PLIST_BUDDY = '/usr/libexec/PlistBuddy'
 
 const readKey = (key) => {

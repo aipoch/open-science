@@ -14,7 +14,7 @@ type EmittedPermissionRequest = Parameters<ConstructorParameters<typeof AcpPermi
 const getSessionOptionId = (request: EmittedPermissionRequest): string => {
   const optionId = request.options.find((option) => option.scope === 'session')?.optionId
 
-  if (!optionId) throw new Error('Expected an Open Science session option')
+  if (!optionId) throw new Error('Expected an Open-Science session option')
   return optionId
 }
 
@@ -1041,7 +1041,7 @@ describe('ACP permission broker', () => {
     })
   })
 
-  it('projects Codex commands to Open Science once and session scopes', async () => {
+  it('projects Codex commands to Open-Science once and session scopes', async () => {
     const emitted: EmittedPermissionRequest[] = []
     const broker = new AcpPermissionBroker((request) => emitted.push(request))
     const context = {

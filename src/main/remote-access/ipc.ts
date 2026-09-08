@@ -7,7 +7,7 @@ const isDesktopCaller = (context: CallerContext): boolean => context.surface ===
 
 const requireDesktopCaller = (context: CallerContext): void => {
   if (!isDesktopCaller(context)) {
-    throw new Error('This action must be approved from the Open Science desktop app.')
+    throw new Error('This action must be approved from the Open-Science desktop app.')
   }
 }
 
@@ -20,7 +20,7 @@ const canManagePairing = (context: CallerContext): boolean =>
 const requirePairingManager = (context: CallerContext): void => {
   if (!canManagePairing(context)) {
     throw new Error(
-      'Pairing can only be managed from the Open Science desktop app or an approved browser.'
+      'Pairing can only be managed from the Open-Science desktop app or an approved browser.'
     )
   }
 }

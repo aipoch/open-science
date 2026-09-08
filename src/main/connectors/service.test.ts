@@ -2489,7 +2489,7 @@ describe('ConnectorService specialist capability gate', () => {
       'connector call rejected: specialist_unavailable. The current Specialist is unavailable. Do not retry from this Specialist. Ask the user to switch to Main Agent or an available Specialist, then retry the same call.'
     )
     await expect(svc.call('custom-server', 'lookup', {}, internal)).rejects.toThrow(
-      'connector call rejected: connector_runtime_unavailable. The Connector runtime is unavailable. Wait briefly and retry the same call once. If it fails again, ask the user to restart Open Science before retrying.'
+      'connector call rejected: connector_runtime_unavailable. The Connector runtime is unavailable. Wait briefly and retry the same call once. If it fails again, ask the user to restart Open-Science before retrying.'
     )
   })
 })

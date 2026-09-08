@@ -233,7 +233,7 @@ describe('native task notification diagnostics', () => {
 
     expect(notifications.size).toBe(1)
     expect(translate).toHaveBeenCalledWith('Test notification')
-    expect(translate).toHaveBeenCalledWith('System notifications from Open Science are working.')
+    expect(translate).toHaveBeenCalledWith('System notifications from Open-Science are working.')
     Array.from(notifications)[0]?.fire('show')
 
     await expect(result).resolves.toBe('shown')

@@ -694,7 +694,7 @@ describe('MarketplaceService', () => {
     await repository.recordInstallation({
       sourceId: 'official',
       specialistId: 'installed-specialist',
-      publisher: 'Open Science',
+      publisher: 'Open-Science',
       version: '1.0.0',
       releasePath: 'releases/installed-specialist/1.0.0.json',
       releaseDigest: 'a'.repeat(64),
@@ -708,7 +708,7 @@ describe('MarketplaceService', () => {
     await repository.recordInstallation({
       sourceId: 'official',
       specialistId: 'edited-specialist',
-      publisher: 'Open Science',
+      publisher: 'Open-Science',
       version: '1.0.0',
       releasePath: 'releases/edited-specialist/1.0.0.json',
       releaseDigest: 'e'.repeat(64),

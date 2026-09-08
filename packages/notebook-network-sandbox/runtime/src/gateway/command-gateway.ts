@@ -428,7 +428,7 @@ const rejectSocket = (socket: Socket, message: string): void => {
 
 const rejectAuthentication = (response: ServerResponse): void => {
   response.writeHead(407, {
-    'proxy-authenticate': 'Basic realm="Open Science Notebook"',
+    'proxy-authenticate': 'Basic realm="Open-Science Notebook"',
     connection: 'close'
   })
   response.end('Proxy authentication required.')
@@ -436,7 +436,7 @@ const rejectAuthentication = (response: ServerResponse): void => {
 
 const rejectSocketAuthentication = (socket: Socket): void => {
   socket.end(
-    'HTTP/1.1 407 Proxy Authentication Required\r\nProxy-Authenticate: Basic realm="Open Science Notebook"\r\nConnection: close\r\nContent-Length: 30\r\n\r\nProxy authentication required.'
+    'HTTP/1.1 407 Proxy Authentication Required\r\nProxy-Authenticate: Basic realm="Open-Science Notebook"\r\nConnection: close\r\nContent-Length: 30\r\n\r\nProxy authentication required.'
   )
 }
 

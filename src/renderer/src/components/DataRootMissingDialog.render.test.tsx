@@ -106,7 +106,7 @@ describe('DataRootMissingDialog', () => {
     expect(buttons).toHaveLength(1)
     expect(buttons[0]?.textContent).toContain('Reconnect & retry')
     expect(document.body.textContent).toContain(
-      'To choose another location or continue with an empty folder, use Open Science on the home computer.'
+      'To choose another location or continue with an empty folder, use Open-Science on the home computer.'
     )
     expect(document.body.textContent).not.toContain('Choose another location')
     expect(document.body.textContent).not.toContain('Continue with an empty folder')

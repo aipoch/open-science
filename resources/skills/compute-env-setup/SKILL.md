@@ -1,20 +1,20 @@
 ---
 name: compute-env-setup
-description: Prepare reproducible setup instructions and validate a user-managed named software environment on an Open Science SSH Compute Host, including direct SSH and Slurm hosts. Use when a remote job needs packages, modules, cache variables, or a repeatable activation that the host does not already provide.
+description: Prepare reproducible setup instructions and validate a user-managed named software environment on an Open-Science SSH Compute Host, including direct SSH and Slurm hosts. Use when a remote job needs packages, modules, cache variables, or a repeatable activation that the host does not already provide.
 license: Apache-2.0
 ---
 
 # Compute environment setup
 
 Prepare one reproducible environment definition and instructions for one small user-managed host
-activation file. Open Science resolves `submitJob(..., { environment: '<name>' })` by sourcing
+activation file. Open-Science resolves `submitJob(..., { environment: '<name>' })` by sourcing
 `~/.openscience/environments/<name>.sh` before the workload. The file contains activation only; it
 does not install packages when a job starts.
 
 The environment, package caches, images, and activation file are user-managed durable resources,
-not Open Science-owned components. This Skill may inspect them and prepare exact setup/removal
+not Open-Science-owned components. This Skill may inspect them and prepare exact setup/removal
 commands, but must not execute commands that create, replace, or remove those resources. The user
-or host administrator runs those commands outside Open Science and owns their lifecycle. Do not
+or host administrator runs those commands outside Open-Science and owns their lifecycle. Do not
 interpret the `~/.openscience` path as app ownership.
 
 Use `host.compute` only in `repl_execute` JavaScript. Python and R data kernels do not expose it.
@@ -44,7 +44,7 @@ not install locally as a substitute for a requested remote environment.
 Keep the reproducible source in the user's project: an `environment.yml`, requirements or lock
 file, container definition, or a short setup script appropriate to the stack. When installation
 must run on a compute node, include exact user- or administrator-run staging and scheduler commands
-in the plan; do not submit that installation through Open Science. Do not store project package
+in the plan; do not submit that installation through Open-Science. Do not store project package
 lists or secrets in the host knowledge document.
 
 Use a logical name containing 1–64 letters, numbers, periods, underscores, or hyphens, starting with
@@ -92,7 +92,7 @@ module family, or permission to choose among materially different package stacks
 Produce a bounded, copyable installation plan for the user or host administrator. When the host is
 configured for Slurm, explain whether the plan must be run in an interactive allocation or submitted
 with provider-approved `#SBATCH` directives. Do not run the bootstrap through `callCommand` or
-`submitJob`: package installation, image pulls, caches, and activation files outlive the Open Science
+`submitJob`: package installation, image pulls, caches, and activation files outlive the Open-Science
 process and have no application-owned receipt or uninstall lifecycle.
 
 Name every path the plan will create, its expected storage/network impact, and a matching idempotent
@@ -112,7 +112,7 @@ export OMP_NUM_THREADS="${SLURM_CPUS_PER_TASK:-1}"
 ```
 
 Guard every required setup command with `|| return $?` so a missing module, activation failure, or
-invalid export stops before the workload. Open Science also treats any non-zero result from sourcing
+invalid export stops before the workload. Open-Science also treats any non-zero result from sourcing
 the activation file as a job failure. Do not append repeatedly or put activation in `.bashrc`; the
 named file makes job behavior deterministic without changing the user's interactive shell.
 

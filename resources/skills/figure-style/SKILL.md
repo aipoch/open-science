@@ -11,7 +11,7 @@ skill does not impose a visual house style — frame, font, and palette are
 parameters. Before plotting, follow the Notebook call below and invoke
 `apply_figure_style()`._
 
-## Open Science Notebook call
+## Open-Science Notebook call
 
 Every `notebook_execute` request whose `code` uses a function named in this skill
 includes this skill ID:

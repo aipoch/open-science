@@ -1,4 +1,4 @@
-/* Hallmark · component: named credential editor · genre: modern-minimal · theme: Open Science
+/* Hallmark · component: named credential editor · genre: modern-minimal · theme: Open-Science
  * states: default · hover · focus · active · disabled · loading · error · success
  * contrast: project semantic tokens
  */

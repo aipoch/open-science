@@ -98,7 +98,7 @@ const detectCodex = async (
       ? ['codex-acp.cmd', 'codex-acp.exe', 'codex-acp.bat', 'codex-acp']
       : ['codex-acp']
   const discoveredCandidates = dirs.flatMap((dir) => names.map((name) => p.join(dir, name)))
-  // Open Science supplies managedAdapterPath in production. Once present, that path is the only
+  // Open-Science supplies managedAdapterPath in production. Once present, that path is the only
   // adapter eligible to run; PATH/npm adapters are discovery noise and must never bypass the pinned
   // app extension layer. The generic scan remains available to the standalone detector tests and
   // diagnostics that do not declare an app-owned adapter.

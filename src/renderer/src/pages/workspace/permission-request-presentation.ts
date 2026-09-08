@@ -349,6 +349,8 @@ const humanizeMcpName = (name: string | undefined): string | undefined => {
         .filter(Boolean)
         .map((word) => `${word.charAt(0).toUpperCase()}${word.slice(1)}`)
         .join(' ')
+        // Keep the product token intact when a raw MCP identifier becomes display copy.
+        .replace(/^Open Science(?= |$)/u, 'Open-Science')
     )
     .filter(Boolean)
 

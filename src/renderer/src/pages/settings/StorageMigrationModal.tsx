@@ -393,7 +393,7 @@ const StorageMigrationModal = ({
                 role="alert"
                 className="mt-3 rounded-lg border border-destructive/40 bg-destructive/5 px-3 py-2 text-xs text-destructive"
               >
-                {t("Don't quit Open Science or turn off your computer until this finishes.")}
+                {t("Don't quit Open-Science or turn off your computer until this finishes.")}
               </p>
               <div className="mt-4 flex justify-end">
                 <Button
@@ -423,7 +423,7 @@ const StorageMigrationModal = ({
                   </Dialog.Title>
                   <Dialog.Description className="mt-1 text-xs leading-relaxed text-muted-foreground">
                     {t(
-                      "Open Science couldn't remove the unused copy. Normal work has resumed. You can delete the copy later."
+                      "Open-Science couldn't remove the unused copy. Normal work has resumed. You can delete the copy later."
                     )}
                   </Dialog.Description>
                 </div>
@@ -451,7 +451,7 @@ const StorageMigrationModal = ({
                   </Dialog.Title>
                   <Dialog.Description className="mt-1 text-xs leading-relaxed text-muted-foreground">
                     {t(
-                      'Open Science exited before this copy finished. Your current data is untouched. Discard the incomplete copy to use this location again.'
+                      'Open-Science exited before this copy finished. Your current data is untouched. Discard the incomplete copy to use this location again.'
                     )}
                   </Dialog.Description>
                 </div>
@@ -584,7 +584,7 @@ const StorageMigrationModal = ({
                   {isSwitchover ? (
                     <p className="mt-2 text-xs leading-relaxed text-muted-foreground">
                       {t(
-                        'Open Science is still using the original location. Close this dialog and try moving your data again.'
+                        'Open-Science is still using the original location. Close this dialog and try moving your data again.'
                       )}
                     </p>
                   ) : null}

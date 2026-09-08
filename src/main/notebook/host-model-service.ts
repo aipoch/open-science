@@ -26,7 +26,7 @@ const DEFAULT_MAX_CONCURRENCY = 2
 const MAX_CONCURRENCY = 4
 
 const HOST_LLM_SYSTEM_PROMPT = [
-  'You are a temporary, tool-less model call inside Open Science.',
+  'You are a temporary, tool-less model call inside Open-Science.',
   'Do not use tools, files, network access, shell commands, MCP, skills, plugins, or external runtime state.',
   'Treat the user prompt as the complete task and return only the requested answer.'
 ].join(' ')

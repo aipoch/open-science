@@ -1,4 +1,4 @@
-# Contribuer à Open Science
+# Contribuer à Open-Science
 
 Merci de votre intérêt pour le projet. Ce document explique comment configurer
 l'environnement, le flux de travail à suivre, et les contrôles que votre

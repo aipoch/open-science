@@ -163,7 +163,7 @@ const createDependencies = (): HostApplicationCommandDependencies => ({
     dismissLegacyMovePrompt: vi.fn(async () => undefined)
   },
   update: {
-    getAppInfo: vi.fn(() => ({ name: 'Open Science', version: '1.0.0', copyright: 'Aipoch' })),
+    getAppInfo: vi.fn(() => ({ name: 'Open-Science', version: '1.0.0', copyright: 'Aipoch' })),
     getStatus: vi.fn(() => updateStatus),
     check: vi.fn(async () => updateStatus),
     download: vi.fn(async () => updateStatus),
@@ -613,7 +613,7 @@ describe('Host application commands', () => {
         invocation([approval], ordinaryRemote)
       )
     ).rejects.toThrow(
-      'Pairing can only be managed from the Open Science desktop app or an approved browser.'
+      'Pairing can only be managed from the Open-Science desktop app or an approved browser.'
     )
     await expect(
       router.dispatcher.invoke(
@@ -628,7 +628,7 @@ describe('Host application commands', () => {
         hostApplicationCommands.remoteAccess.detect,
         invocation([], currentManager)
       )
-    ).rejects.toThrow('This action must be approved from the Open Science desktop app.')
+    ).rejects.toThrow('This action must be approved from the Open-Science desktop app.')
     await expect(
       router.dispatcher.invoke(
         hostApplicationCommands.remoteAccess.probe,

@@ -300,7 +300,7 @@ describe('settings repository', () => {
       activeProviderId: 'builtin-codex-isolated',
       providers: [
         { id: 'builtin-codex-shared', type: 'codex-shared', name: 'Existing Codex profile' },
-        { id: 'builtin-codex-isolated', type: 'codex-isolated', name: 'Open Science Codex login' }
+        { id: 'builtin-codex-isolated', type: 'codex-isolated', name: 'Open-Science Codex login' }
       ]
     })
 

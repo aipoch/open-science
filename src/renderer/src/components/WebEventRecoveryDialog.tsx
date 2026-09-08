@@ -28,18 +28,18 @@ const WebEventRecoveryDialog = ({
   const reloadAvailable = phase === 'reconnecting' || reloadRequired
   const title =
     phase === 'connecting'
-      ? t('Connecting to Open Science')
+      ? t('Connecting to Open-Science')
       : phase === 'reconnecting'
-        ? t('Reconnecting to Open Science')
+        ? t('Reconnecting to Open-Science')
         : phase === 'replaying'
           ? t('Restoring missed updates')
           : t('Reload required')
   const description = reloadRequired
     ? t(
-        'Open Science could not restore a complete, current view. Reload this page to reconnect safely.'
+        'Open-Science could not restore a complete, current view. Reload this page to reconnect safely.'
       )
     : t(
-        'Controls are paused while Open Science restores updates that may have arrived during the interruption.'
+        'Controls are paused while Open-Science restores updates that may have arrived during the interruption.'
       )
 
   return (

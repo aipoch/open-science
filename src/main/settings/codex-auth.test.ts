@@ -491,7 +491,7 @@ describe('importCodexAuthentication', () => {
       expect(restoredConfigToml).toContain('base_url = "http://127.0.0.1:9999/v1"')
       expect(restoredConfigToml).toContain('[model_providers.app-default-route]')
       expect(restoredConfigToml).toContain('[mcp_servers.app]')
-      expect(restoredConfigToml).not.toContain('Open Science:')
+      expect(restoredConfigToml).not.toContain('Open-Science:')
     } finally {
       await rm(root, { recursive: true, force: true })
     }

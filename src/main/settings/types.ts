@@ -94,7 +94,7 @@ export type StoredProvider = {
   // "unverified" warning survives a restart.
   lastValidationFailure?: ProviderValidationFailure
   // claude-shared credentials live in the user's global profile and cannot be removed safely by the
-  // app. This timestamp records an app-local disconnect so Open Science stops using that profile
+  // app. This timestamp records an app-local disconnect so Open-Science stops using that profile
   // until the user explicitly signs in again.
   disconnectedAt?: number
 }

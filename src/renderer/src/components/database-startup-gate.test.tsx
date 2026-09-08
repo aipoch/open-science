@@ -58,15 +58,15 @@ describe('DatabaseStartupGate', () => {
     const updatingLabel = screen.getByText('Updating database…')
     expect(updatingLabel.tagName).toBe('SPAN')
     expect(updatingLabel.className).toBe(checkingLabel.className)
-    expect(screen.getByText('Keep Open Science open while this finishes.')).toBeTruthy()
+    expect(screen.getByText('Keep Open-Science open while this finishes.')).toBeTruthy()
     expect(screen.getByTestId('open-science-logo-loader')).toBe(startupLoader)
 
     act(() => publish({ phase: 'starting' }))
 
-    const startingLabel = screen.getByText('Starting Open Science…')
+    const startingLabel = screen.getByText('Starting Open-Science…')
     expect(startingLabel.tagName).toBe('SPAN')
     expect(startingLabel.className).toBe(checkingLabel.className)
-    expect(screen.getByText('Keep Open Science open while this finishes.')).toBeTruthy()
+    expect(screen.getByText('Keep Open-Science open while this finishes.')).toBeTruthy()
     expect(screen.queryByText('Checking database…')).toBeNull()
     expect(screen.getByTestId('open-science-logo-loader')).toBe(startupLoader)
   })
@@ -86,13 +86,13 @@ describe('DatabaseStartupGate', () => {
         phase: 'blocked',
         error: {
           code: 'database_newer_than_app',
-          message: 'This database was updated by a newer version of Open Science.',
+          message: 'This database was updated by a newer version of Open-Science.',
           migrationId: '0002_future_schema',
           retryable: false
         }
       })
     )
-    expect(screen.getByText("Open Science couldn't start")).toBeTruthy()
+    expect(screen.getByText("Open-Science couldn't start")).toBeTruthy()
     expect(screen.getByText(/database_newer_than_app/)).toBeTruthy()
     expect(screen.queryByRole('button', { name: 'Retry' })).toBeNull()
 
@@ -123,9 +123,9 @@ describe('DatabaseStartupGate', () => {
     )
 
     await waitFor(() => {
-      expect(screen.getByText("Open Science couldn't start")).toBeTruthy()
+      expect(screen.getByText("Open-Science couldn't start")).toBeTruthy()
     })
-    expect(screen.getByText('Open Science could not finish checking its database.')).toBeTruthy()
+    expect(screen.getByText('Open-Science could not finish checking its database.')).toBeTruthy()
     expect(screen.getByText(/database_startup_unavailable/)).toBeTruthy()
     expect(screen.getByRole('button', { name: 'Retry' })).toBeTruthy()
     expect(screen.getByRole('button', { name: 'Quit' })).toBeTruthy()
@@ -152,7 +152,7 @@ describe('DatabaseStartupGate', () => {
     })
 
     expect(screen.getByText('Business application')).toBeTruthy()
-    expect(screen.queryByText("Open Science couldn't start")).toBeNull()
+    expect(screen.queryByText("Open-Science couldn't start")).toBeNull()
   })
 
   it('restores retry after a retry IPC rejection', async () => {
@@ -170,7 +170,7 @@ describe('DatabaseStartupGate', () => {
         phase: 'blocked',
         error: {
           code: 'database_open_failed',
-          message: 'Open Science could not open its database.',
+          message: 'Open-Science could not open its database.',
           retryable: true
         }
       })
@@ -178,8 +178,8 @@ describe('DatabaseStartupGate', () => {
 
     await act(async () => screen.getByRole('button', { name: 'Retry' }).click())
 
-    expect(screen.getByText("Open Science couldn't start")).toBeTruthy()
-    expect(screen.getByText('Open Science could not finish checking its database.')).toBeTruthy()
+    expect(screen.getByText("Open-Science couldn't start")).toBeTruthy()
+    expect(screen.getByText('Open-Science could not finish checking its database.')).toBeTruthy()
     expect(screen.getByText(/database_startup_unavailable/)).toBeTruthy()
     expect(screen.getByRole('button', { name: 'Retry' })).toBeTruthy()
     expect(screen.queryByText('Checking database…')).toBeNull()
@@ -205,7 +205,7 @@ describe('DatabaseStartupGate', () => {
     })
 
     expect(screen.getByText('Business application')).toBeTruthy()
-    expect(screen.queryByText("Open Science couldn't start")).toBeNull()
+    expect(screen.queryByText("Open-Science couldn't start")).toBeNull()
     expect(getState).toHaveBeenCalledOnce()
   })
 
@@ -219,14 +219,14 @@ describe('DatabaseStartupGate', () => {
     )
 
     await waitFor(() => {
-      expect(screen.getByText('Open Science could not finish checking its database.')).toBeTruthy()
+      expect(screen.getByText('Open-Science could not finish checking its database.')).toBeTruthy()
     })
 
     await act(async () => {
       await i18next.changeLanguage('zh-Hans')
     })
 
-    expect(screen.getByText('Open Science 无法完成数据库检查。')).toBeTruthy()
+    expect(screen.getByText('Open-Science 无法完成数据库检查。')).toBeTruthy()
     expect(screen.getByRole('button', { name: '重试' })).toBeTruthy()
     expect(screen.queryByText('Business application')).toBeNull()
   })
@@ -243,7 +243,7 @@ describe('DatabaseStartupGate', () => {
         phase: 'blocked',
         error: {
           code: 'database_open_failed',
-          message: 'Open Science could not open its database.',
+          message: 'Open-Science could not open its database.',
           retryable: true
         }
       })
@@ -265,7 +265,7 @@ describe('DatabaseStartupGate', () => {
         phase: 'blocked',
         error: {
           code: 'database_newer_than_app',
-          message: 'The database was updated by a newer version of Open Science.',
+          message: 'The database was updated by a newer version of Open-Science.',
           migrationId: '0009_vision_evidence',
           retryable: false,
           diagnostics: 'App version: 0.9.2 (darwin-arm64)\n\nError: boom'
@@ -324,7 +324,7 @@ describe('DatabaseStartupGate', () => {
         phase: 'blocked',
         error: {
           code: 'database_open_failed',
-          message: 'Open Science could not open its database.',
+          message: 'Open-Science could not open its database.',
           retryable: true
         }
       })
@@ -332,7 +332,7 @@ describe('DatabaseStartupGate', () => {
     expect(screen.getByRole('button', { name: 'Retry' })).toBeTruthy()
     expect(
       screen.getByText(
-        'Quit other copies of Open Science, check free disk space and folder permissions, then retry.'
+        'Quit other copies of Open-Science, check free disk space and folder permissions, then retry.'
       )
     ).toBeTruthy()
     expect(screen.queryByText(/Part of the stored data doesn't match/)).toBeNull()

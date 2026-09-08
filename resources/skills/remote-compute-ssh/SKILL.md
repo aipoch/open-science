@@ -77,7 +77,7 @@ await host.compute.details('ssh:<alias>', {
 })
 ```
 
-With `loginShell: true`, the remote Bash login profiles run first and then Open Science attempts to
+With `loginShell: true`, the remote Bash login profiles run first and then Open-Science attempts to
 source `~/.bashrc` when it is readable. A `.bashrc` can deliberately return early for non-interactive
 shells, so variables declared after such a guard are not available. A missing `.bashrc` is a no-op.
 Set `loginShell: false` to run the command without either initialization step. Initialization failures
@@ -166,7 +166,7 @@ delivery already won the race and remains authoritative. `.status()` never consu
 
 The Compute Host's configured execution mode selects how every job is launched. `direct_ssh` runs
 the command as a detached process on the SSH target. `slurm` submits it with `sbatch`; put the
-cluster's required `#SBATCH` directives at the top of `command`. Open Science owns submission,
+cluster's required `#SBATCH` directives at the top of `command`. Open-Science owns submission,
 scheduler-status polling, cancellation, and harvest. Do not call `sbatch`, `squeue`, or `scancel`
 around `submitJob` yourself.
 
@@ -176,11 +176,11 @@ rejects the script, report the returned error and
 the concrete next step (for example, add an account or partition directive). Do not silently rerun
 the workload directly on a login node.
 
-Open Science accepts ordinary single-job directives such as partition, account, CPUs, memory, and
+Open-Science accepts ordinary single-job directives such as partition, account, CPUs, memory, and
 GPUs. Set `timeoutSeconds` for the workload runtime. You may set the scheduler allocation limit with
-one `#SBATCH --time=value` directive; when it is absent, Open Science derives a default allocation
-limit from `timeoutSeconds`. Open Science owns the job name, working directory, stdout, and stderr
-directives. Avoid job arrays because one Open Science job tracks one scheduler job and one output
+one `#SBATCH --time=value` directive; when it is absent, Open-Science derives a default allocation
+limit from `timeoutSeconds`. Open-Science owns the job name, working directory, stdout, and stderr
+directives. Avoid job arrays because one Open-Science job tracks one scheduler job and one output
 harvest. Submit independent work as separate jobs and use the Session concurrency limit when needed.
 
 For Slurm, request resources with one `#SBATCH --option=value` directive per line (or a value-free
@@ -192,18 +192,18 @@ The non-blocking job `status()` and `result()` snapshots include `scheduler_job_
 `error_code` on failure, and `last_poll_error` when observation or submission recovery needs
 attention. A pending reason or delayed accounting row does not mean the workload failed. If a
 submission is unconfirmed, use the reported job identity and provider diagnostics before deciding
-whether to submit again; Open Science does not automatically submit a duplicate.
+whether to submit again; Open-Science does not automatically submit a duplicate.
 
 ### Environment activation
 
-The optional `environment` value is a logical name, not a shell command. Open Science sources
+The optional `environment` value is a logical name, not a shell command. Open-Science sources
 `~/.openscience/environments/<name>.sh` before the workload for direct and Slurm jobs. Names are
 1–64 letters, numbers, periods, underscores, or hyphens and must start with a letter or number.
 The file and every software/cache path it references must be visible on the execution node.
 
 If a submission reports that this activation file is missing, load the Compute Environment Setup
 Skill to prepare exact setup, repair, and removal instructions for the user or host administrator
-to run outside Open Science. Validate the user-managed activation after they apply the plan, then
+to run outside Open-Science. Validate the user-managed activation after they apply the plan, then
 retry. Do not guess a conda name, add an inline install to the science job, or hide activation in
 `.bashrc`. Omit `environment` when the command deliberately uses the host's default environment.
 

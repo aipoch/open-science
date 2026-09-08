@@ -902,7 +902,7 @@ describe('Data and content application commands', () => {
       for (const operation of operations) {
         await expect(
           dispatchCommand(router, operation.command, operation.args).result
-        ).rejects.toThrow('Open Science is moving your data.')
+        ).rejects.toThrow('Open-Science is moving your data.')
       }
     } finally {
       clearMigrationPending()

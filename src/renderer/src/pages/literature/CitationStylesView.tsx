@@ -1,5 +1,5 @@
 /* Hallmark · pre-emit critique: P5 H5 E5 S5 R5 V5 */
-/* Hallmark · component: citation style manager · genre: modern-minimal · theme: existing Open Science tokens · enrichment: none */
+/* Hallmark · component: citation style manager · genre: modern-minimal · theme: existing Open-Science tokens · enrichment: none */
 import { ArrowLeft, BookOpenText, FileText, LoaderCircle, Trash2, Upload } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -278,7 +278,7 @@ const CitationStylesView = ({
                 <p className="truncate text-sm font-medium">{style.title}</p>
                 <p className="mt-0.5 truncate text-xs text-muted-foreground">
                   {style.source === 'built-in'
-                    ? t('Included with Open Science')
+                    ? t('Included with Open-Science')
                     : t('Imported CSL')}
                   {style.rights ? ` · ${style.rights}` : ''}
                 </p>

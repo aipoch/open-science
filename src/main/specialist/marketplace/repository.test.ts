@@ -96,7 +96,7 @@ describe('MarketplaceRepository', () => {
     const installation = {
       sourceId: 'official',
       specialistId: 'managed-specialist',
-      publisher: 'Open Science',
+      publisher: 'Open-Science',
       version: '1.0.0',
       releasePath: 'releases/managed-specialist/1.0.0.json',
       releaseDigest: 'a'.repeat(64),

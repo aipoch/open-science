@@ -165,9 +165,9 @@ describe('SessionCatalogRecoveryAlert', () => {
       )
     )
 
-    expect(container.textContent).toContain('Open Science update required')
+    expect(container.textContent).toContain('Open-Science update required')
     expect(container.textContent).toContain(
-      'A saved conversation requires a newer version of Open Science'
+      'A saved conversation requires a newer version of Open-Science'
     )
     expect(container.textContent).toContain('files stay unchanged')
     expect(container.querySelector('[data-testid="session-persistence-retry"]')).toBeNull()

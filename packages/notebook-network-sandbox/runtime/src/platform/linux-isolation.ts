@@ -38,7 +38,7 @@ const checkLinuxTools = (): DependencyCheck => {
   const errors: string[] = []
   if (!findExecutable('bwrap')) {
     errors.push(
-      'Notebook isolation requires bubblewrap (bwrap). Install the bubblewrap package with your Linux distribution package manager, then restart Open Science.'
+      'Notebook isolation requires bubblewrap (bwrap). Install the bubblewrap package with your Linux distribution package manager, then restart Open-Science.'
     )
   }
   return { warnings: [], errors }

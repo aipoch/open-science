@@ -447,7 +447,7 @@ export class RemoteSessionPairingManager {
     const authorizationGeneration = this.options.authorizationGeneration?.() ?? 0
     const needsOrigin = request.method !== 'GET' && request.method !== 'HEAD'
     // Provider hosts identify an expected route but are forgeable by local callers. Only the
-    // unguessable Open Science session checked below authenticates external workspace access.
+    // unguessable Open-Science session checked below authenticates external workspace access.
     if (!this.isExpectedRemoteRequest(request, needsOrigin)) return 'denied'
     const sessionAccess = await this.getSessionAccess(request)
     if (

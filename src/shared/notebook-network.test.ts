@@ -41,7 +41,7 @@ describe('disabled automatic domain access', () => {
 })
 
 describe('notebook network policy', () => {
-  it('enables every Open Science domain group by default', () => {
+  it('enables every Open-Science domain group by default', () => {
     const policy = buildNotebookNetworkPolicy(DEFAULT_NOTEBOOK_NETWORK_SETTINGS)
 
     expect(policy.allowedDomains).toContain('pypi.org')

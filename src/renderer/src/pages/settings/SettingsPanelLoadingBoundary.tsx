@@ -54,7 +54,7 @@ const SettingsPanelLoadingBoundary = ({
           <div>
             <p className="font-medium text-foreground">{t("Settings panel couldn't be loaded.")}</p>
             <p className="mt-1 text-xs">
-              {t('Reload Open Science to try loading this panel again.')}
+              {t('Reload Open-Science to try loading this panel again.')}
             </p>
           </div>
           <div className="flex gap-2">

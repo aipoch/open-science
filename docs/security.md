@@ -1,13 +1,13 @@
-# Open Science security model
+# Open-Science security model
 
-Open Science is a local-first desktop application for AI-assisted research. Its security
+Open-Science is a local-first desktop application for AI-assisted research. Its security
 model combines application controls with the operating system, selected service
 providers, and the user's approval decisions. This document describes those boundaries;
 the [security policy](../SECURITY.md) explains how to report a suspected vulnerability.
 
 ## Agent actions and permissions
 
-Agent-driven side effects route through Open Science's permission system. Grants can be
+Agent-driven side effects route through Open-Science's permission system. Grants can be
 scoped to a session, project, or global setting, while safe defaults reduce prompts for
 low-risk operations. Full access is an explicit choice that suppresses additional
 approval prompts.
@@ -55,7 +55,7 @@ sessions.
 
 Model requests, Web search, Connector calls, OAuth flows, and remote jobs can send the
 content needed for the request to the selected third party. The permission system
-controls whether Open Science initiates a call; the receiving service's terms and data
+controls whether Open-Science initiates a call; the receiving service's terms and data
 practices govern how it processes that content.
 
 Treat project content, model output, downloaded files, Skills, Specialist packages,
@@ -63,7 +63,7 @@ custom Connectors, MCP servers, and remote compute hosts as untrusted until revi
 
 ## Local data and credentials
 
-Open Science keeps configuration and research data in local storage by default:
+Open-Science keeps configuration and research data in local storage by default:
 
 - `~/.open-science` contains settings, the application database, session state,
   permissions, provider profiles, and Skills; and
@@ -79,7 +79,7 @@ Project, session, Notebook, artifact, and log content remain user-readable local
 and rely on operating-system account isolation and filesystem protection. Use full-disk
 encryption when the device or research data requires protection at rest.
 
-Open Science's credential stores protect API keys, Connector secrets and OAuth state,
+Open-Science's credential stores protect API keys, Connector secrets and OAuth state,
 GitHub tokens, and compute passwords with Electron `safeStorage`, backed by the operating
 system's secure storage. Those stores reject new secret writes when a secure backend is
 unavailable, including Linux's unprotected `basic_text` backend. The renderer receives
@@ -89,7 +89,7 @@ Codex subscription authentication uses an app-owned `codex-subscription/auth.jso
 under the configuration root and relies on operating-system account and filesystem
 protection. Shared Claude mode uses the default `~/.claude` profile. Isolated Claude mode
 stores its OAuth token as a `safeStorage`-encrypted provider key and uses an app-owned
-`CLAUDE_CONFIG_DIR` under the Open Science configuration root, separate from `~/.claude`.
+`CLAUDE_CONFIG_DIR` under the Open-Science configuration root, separate from `~/.claude`.
 
 ## Diagnostics
 

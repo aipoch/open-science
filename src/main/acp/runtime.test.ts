@@ -10599,7 +10599,7 @@ describe('ACP runtime session management', () => {
         },
         sessionOptions: {
           [OPEN_SCIENCE_SKILL_RUNTIME_SESSION_OPTION]: {
-            command: '/Applications/Open Science.app/Contents/MacOS/Open Science',
+            command: '/Applications/Open-Science.app/Contents/MacOS/Open-Science',
             entryPath: '/app/out/main/index.js',
             root: runtimeRoot
           }
@@ -10608,7 +10608,7 @@ describe('ACP runtime session management', () => {
       notebook: {
         projectId: 'project-1',
         mcpEntryPath: '/app/out/main/index.js',
-        mcpCommand: '/Applications/Open Science.app/Contents/MacOS/Open Science',
+        mcpCommand: '/Applications/Open-Science.app/Contents/MacOS/Open-Science',
         getRpcConnection
       },
       skills: {
@@ -10640,7 +10640,7 @@ describe('ACP runtime session management', () => {
       'open-science-notebook'
     ])
     expect(selectSkills).toHaveBeenCalledOnce()
-    expect(fakeAgent.prompts[0].text).toContain('already loaded by Open Science')
+    expect(fakeAgent.prompts[0].text).toContain('already loaded by Open-Science')
     expect(fakeAgent.prompts[0].text).toContain('PUBMED_RUNTIME_ROUTE_SENTINEL')
     expect(fakeAgent.prompts[0].text).not.toContain(
       'Before any Notebook or Connector call, call `mcp__skills__load_skill`'
@@ -12430,7 +12430,7 @@ describe('ACP runtime session management', () => {
           const sessionOptionId = request.options.find(
             (option) => option.scope === 'session'
           )?.optionId
-          if (!sessionOptionId) throw new Error('Missing Open Science session permission option')
+          if (!sessionOptionId) throw new Error('Missing Open-Science session permission option')
           runtime.respondToPermission({
             requestId: request.requestId,
             optionId: sessionOptionId
@@ -12709,7 +12709,7 @@ describe('ACP runtime session management', () => {
             (option) => option.scope === 'session'
           )?.optionId
           if (!sessionOptionId) {
-            throw new Error('Expected Open Science to provide a conversation permission option')
+            throw new Error('Expected Open-Science to provide a conversation permission option')
           }
           runtime.respondToPermission({
             requestId: request.requestId,
@@ -13666,7 +13666,7 @@ describe('ACP runtime session management', () => {
           const sessionOptionId = request.options.find(
             (option) => option.scope === 'session'
           )?.optionId
-          if (!sessionOptionId) throw new Error('Missing Open Science conversation option')
+          if (!sessionOptionId) throw new Error('Missing Open-Science conversation option')
           runtime.respondToPermission({ requestId: request.requestId, optionId: sessionOptionId })
         }
       }
@@ -19422,7 +19422,7 @@ describe('ACP runtime session management', () => {
         ),
         { numTurns: 2, origin: 'human' },
         // Unknown future origins remain eligible so a newly introduced user-driven lane does not
-        // silently under-report model turns until Open Science knows its name.
+        // silently under-report model turns until Open-Science knows its name.
         { numTurns: 3, origin: 'future-user-lane' }
       ],
       onPrompt: () => ({
@@ -19564,7 +19564,7 @@ describe('ACP runtime session management', () => {
       onPrompt: () => ({
         stopReason: 'end_turn',
         // A Responses bridge still returns standard ACP usage even when its adapter does not publish
-        // Open Science's private whole-turn metadata. The footer must not become entirely unavailable.
+        // Open-Science's private whole-turn metadata. The footer must not become entirely unavailable.
         usage: {
           totalTokens: 27,
           inputTokens: 19,
@@ -20848,7 +20848,7 @@ describe('ACP runtime session management', () => {
         dataRoot: '/Users/example/.open-science',
         projectId: 'default-project',
         mcpEntryPath: '/app/out/main/index.js',
-        mcpCommand: '/Applications/Open Science.app/Contents/MacOS/Open Science'
+        mcpCommand: '/Applications/Open-Science.app/Contents/MacOS/Open-Science'
       }
     })
 
@@ -20862,7 +20862,7 @@ describe('ACP runtime session management', () => {
     expect(fakeAgent.newSessions[0].mcpServers).toHaveLength(1)
     expect(fakeAgent.newSessions[0].mcpServers[0]).toMatchObject({
       name: 'open-science-artifacts',
-      command: '/Applications/Open Science.app/Contents/MacOS/Open Science',
+      command: '/Applications/Open-Science.app/Contents/MacOS/Open-Science',
       args: ['/app/out/main/index.js', '--open-science-artifact-mcp']
     })
     expect(
@@ -20967,7 +20967,7 @@ describe('ACP runtime session management', () => {
       notebook: {
         projectId: 'default-project',
         mcpEntryPath: '/app/out/main/index.js',
-        mcpCommand: '/Applications/Open Science.app/Contents/MacOS/Open Science',
+        mcpCommand: '/Applications/Open-Science.app/Contents/MacOS/Open-Science',
         getRpcConnection,
         registerSessionAlias: (aliasSessionId, sessionId) => {
           aliases.push({ aliasSessionId, sessionId })
@@ -20985,7 +20985,7 @@ describe('ACP runtime session management', () => {
     expect(fakeAgent.newSessions[0].mcpServers).toHaveLength(1)
     expect(fakeAgent.newSessions[0].mcpServers[0]).toMatchObject({
       name: 'open-science-notebook',
-      command: '/Applications/Open Science.app/Contents/MacOS/Open Science',
+      command: '/Applications/Open-Science.app/Contents/MacOS/Open-Science',
       args: ['/app/out/main/index.js', '--open-science-notebook-mcp']
     })
     expect(
@@ -21054,7 +21054,7 @@ describe('ACP runtime session management', () => {
       spawnAgent: () => asAgentProcess(process),
       skillImport: {
         mcpEntryPath: '/app/out/main/index.js',
-        mcpCommand: '/Applications/Open Science.app/Contents/MacOS/Open Science',
+        mcpCommand: '/Applications/Open-Science.app/Contents/MacOS/Open-Science',
         getRpcConnection,
         registerSessionAlias: (aliasSessionId, sessionId) => {
           aliases.push({ aliasSessionId, sessionId })
@@ -21067,7 +21067,7 @@ describe('ACP runtime session management', () => {
     expect(fakeAgent.newSessions[0].mcpServers).toHaveLength(1)
     expect(fakeAgent.newSessions[0].mcpServers[0]).toMatchObject({
       name: 'open-science-skills',
-      command: '/Applications/Open Science.app/Contents/MacOS/Open Science',
+      command: '/Applications/Open-Science.app/Contents/MacOS/Open-Science',
       args: ['/app/out/main/index.js', '--open-science-skill-import-mcp']
     })
     const aliasSessionId = getEnvValue(
@@ -21174,7 +21174,7 @@ describe('ACP runtime session management', () => {
         dataRoot: '/Users/example/.open-science',
         projectId: 'default-project',
         mcpEntryPath: '/app/out/main/index.js',
-        mcpCommand: '/Applications/Open Science.app/Contents/MacOS/Open Science'
+        mcpCommand: '/Applications/Open-Science.app/Contents/MacOS/Open-Science'
       }
     })
 
@@ -21275,7 +21275,7 @@ describe('ACP runtime session management', () => {
     expect(fakeAgent.newSessions[0]._meta).toMatchObject({
       systemPrompt: {
         append: expect.stringContaining(
-          'If an Open Science app-owned Connector result includes an `artifact_id`, do not call `mcp__open-science-artifacts__write_artifact_file` again for that file.'
+          'If an Open-Science app-owned Connector result includes an `artifact_id`, do not call `mcp__open-science-artifacts__write_artifact_file` again for that file.'
         )
       }
     })

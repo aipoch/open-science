@@ -246,7 +246,7 @@ describe('JobDetailModal — detail view', () => {
 
     expect(container.textContent).toContain('Unable to load remote jobs.')
     expect(container.textContent).toContain(
-      'Harvest pending. Open Science will retry automatically.'
+      'Harvest pending. Open-Science will retry automatically.'
     )
     const retry = Array.from(container.querySelectorAll('button')).find(
       (button) => button.textContent === 'Retry'

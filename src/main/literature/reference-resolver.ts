@@ -123,12 +123,12 @@ class LiteratureReferenceResolver {
       id: pmids.join(','),
       rettype: 'medline',
       retmode: 'text',
-      tool: 'OpenScience'
+      tool: 'open-science'
     })
     const response = await this.fetchFn(`${PUBMED_BASE}?${params.toString()}`, {
       headers: {
         Accept: 'text/plain',
-        'User-Agent': 'OpenScience/1.0 (+https://github.com/aipoch/open-science)'
+        'User-Agent': 'Open-Science/1.0 (+https://github.com/aipoch/open-science)'
       },
       signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS)
     })
@@ -158,7 +158,7 @@ class LiteratureReferenceResolver {
     const response = await this.fetchFn(sourceUrl, {
       headers: {
         Accept: 'application/json',
-        'User-Agent': 'OpenScience/1.0 (+https://github.com/aipoch/open-science)'
+        'User-Agent': 'Open-Science/1.0 (+https://github.com/aipoch/open-science)'
       },
       signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS)
     })

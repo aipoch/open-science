@@ -250,7 +250,7 @@ describe('home dialogs shared chrome', () => {
     expect(deleteButton?.props.className).toContain('bg-danger-000')
     expect(elements.some((element) => element.type === AlertDialog.Action)).toBe(false)
     expect(text).toContain(
-      'Generated artifacts and uploaded files stored by Open Science will also be deleted.'
+      'Generated artifacts and uploaded files stored by Open-Science will also be deleted.'
     )
     expect(text).toContain('Deleting this project will stop its running tasks and notebooks.')
     expect(text).toContain("Files in the project's working folder are not deleted.")

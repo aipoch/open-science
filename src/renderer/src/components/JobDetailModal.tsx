@@ -348,7 +348,7 @@ function JobDetailView({ job, onBack, onOpenFileBrowser }: JobDetailViewProps): 
             tone="amber"
             title={
               latestJob.harvest_error.startsWith('harvest pending:')
-                ? t('Harvest pending. Open Science will retry automatically.')
+                ? t('Harvest pending. Open-Science will retry automatically.')
                 : t('Harvest failed. Remote files were left untouched.')
             }
             primaryButton={{

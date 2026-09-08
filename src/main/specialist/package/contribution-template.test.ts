@@ -128,7 +128,7 @@ describe('contribution template ZIP', () => {
     const repositoryRoot = join(import.meta.dirname, '..', '..', '..', '..')
     const developmentPath = resolveContributionTemplateReadmePath(repositoryRoot)
     const packagedPath = resolveContributionTemplateReadmePath(
-      '/Applications/Open Science.app/Contents/Resources/app.asar'
+      '/Applications/Open-Science.app/Contents/Resources/app.asar'
     )
 
     await expect(readFile(developmentPath, 'utf8')).resolves.toContain('50 MB')

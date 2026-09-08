@@ -7,6 +7,7 @@ import { basename, join, posix } from 'node:path'
 import type { CliLauncherStatus } from '../../shared/cli'
 import { defaultFileDurability } from '../storage/file-durability'
 
+// Ownership markers are versioned on-disk contracts; retain their pre-rename spelling.
 const MANAGED_LAUNCHER_HEADER_V1 =
   'Open Science command-line launcher. Managed by the app. Format version: 1.'
 const LEGACY_POSIX_HEADER =
@@ -96,7 +97,7 @@ const posixShim = (env: CliLauncherEnv): string => {
       '# Edits are overwritten on reinstall. Mounts the AppImage for this CLI process.',
       `app_image=${quote(env.appImagePath!)}`,
       'mount_output=$(mktemp "${TMPDIR:-/tmp}/open-science-cli.XXXXXX") || {',
-      "  echo 'Open Science could not create a temporary file for the AppImage mount.' >&2",
+      "  echo 'Open-Science could not create a temporary file for the AppImage mount.' >&2",
       '  exit 1',
       '}',
       'mount_pid=',
@@ -118,7 +119,7 @@ const posixShim = (env: CliLauncherEnv): string => {
       '    wait "$mount_pid"',
       '    mount_status=$?',
       '    if [ "$mount_status" -eq 0 ]; then mount_status=1; fi',
-      "    echo 'Open Science AppImage exited before reporting its mount point.' >&2",
+      "    echo 'Open-Science AppImage exited before reporting its mount point.' >&2",
       '    exit "$mount_status"',
       '  fi',
       '  sleep 0.05',
@@ -127,7 +128,7 @@ const posixShim = (env: CliLauncherEnv): string => {
       `app_exec="$mount_dir"/${quote(executable)}`,
       `cli_entry="$mount_dir"/${quote(cliEntry)}`,
       'if [ ! -x "$app_exec" ] || [ ! -f "$cli_entry" ]; then',
-      "  echo 'Open Science AppImage is missing its executable or CLI entry.' >&2",
+      "  echo 'Open-Science AppImage is missing its executable or CLI entry.' >&2",
       '  exit 1',
       'fi',
       'OPEN_SCIENCE_APP_PATH="$app_image" ELECTRON_RUN_AS_NODE=1 \\',
@@ -259,7 +260,7 @@ export const buildWindowsPathCommand = (binDir: string): { command: string; args
     '}',
     'function Read-PathJournal($path) {',
     '  try { $journal = [IO.File]::ReadAllText($path) | ConvertFrom-Json }',
-    "  catch { throw 'The PATH ownership journal is not managed by Open Science.' }",
+    "  catch { throw 'The PATH ownership journal is not managed by Open-Science.' }",
     '  $beforeIsValid = $null -eq $journal.beforePath -or $journal.beforePath -is [string]',
     "  $expectedAfter = (@(Get-PathParts $journal.beforePath) + $binDir) -join ';'",
     '  if ($journal.version -ne 1 -or $journal.owner -cne $receiptOwner -or',
@@ -267,7 +268,7 @@ export const buildWindowsPathCommand = (binDir: string): { command: string; args
     '      -not $beforeIsValid -or (Get-MatchCount $journal.beforePath) -ne 0 -or',
     '      $journal.afterPath -isnot [string] -or',
     '      $journal.afterPath -cne $expectedAfter) {',
-    "    throw 'The PATH ownership journal is not managed by Open Science.'",
+    "    throw 'The PATH ownership journal is not managed by Open-Science.'",
     '  }',
     '  return $journal',
     '}',
@@ -342,7 +343,7 @@ const buildWindowsPathRemovalCommand = (
     `$receiptOwner = ${powershellLiteral(WINDOWS_PATH_RECEIPT_OWNER)}`,
     `$state = ${powershellLiteral(state)}`,
     'try { $journal = [IO.File]::ReadAllText($journalPath) | ConvertFrom-Json }',
-    "catch { throw 'The PATH ownership journal is not managed by Open Science.' }",
+    "catch { throw 'The PATH ownership journal is not managed by Open-Science.' }",
     '  $beforeIsValid = $null -eq $journal.beforePath -or $journal.beforePath -is [string]',
     "$beforeParts = @($journal.beforePath -split ';' | Where-Object { $_ -ne '' })",
     "$normalizedBinDir = $binDir.TrimEnd([char[]]'\\/')",
@@ -355,7 +356,7 @@ const buildWindowsPathRemovalCommand = (
     '    -not $beforeIsValid -or $beforeMatchCount -ne 0 -or',
     '    $journal.afterPath -isnot [string] -or',
     '    $journal.afterPath -cne $expectedAfter) {',
-    "  throw 'The PATH ownership journal is not managed by Open Science.'",
+    "  throw 'The PATH ownership journal is not managed by Open-Science.'",
     '}',
     '$beforePath = $journal.beforePath',
     '$afterPath = $journal.afterPath',
@@ -383,7 +384,7 @@ class UnmanagedCliLauncherError extends Error {}
 
 const refuseUnmanagedCliLauncher = (target: string): never => {
   throw new UnmanagedCliLauncherError(
-    `Refusing to modify ${target} because it is not managed by Open Science. ` +
+    `Refusing to modify ${target} because it is not managed by Open-Science. ` +
       'Move or rename the existing file, then try again.'
   )
 }

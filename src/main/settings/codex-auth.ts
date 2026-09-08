@@ -272,6 +272,7 @@ export const projectSafeCodexProviderRoute = (configToml: string): string | unde
   return route ? serializeLegacyCodexProviderRoute(route) : undefined
 }
 
+// These delimiters identify persisted config blocks from existing installations.
 const IMPORTED_ROUTE_SELECTION_BEGIN = '# Open Science: begin imported Codex route selection'
 const IMPORTED_ROUTE_SELECTION_END = '# Open Science: end imported Codex route selection'
 const IMPORTED_ROUTE_PROVIDER_BEGIN = '# Open Science: begin imported Codex provider'
@@ -693,7 +694,7 @@ const writeCodexAuthenticationSnapshot = async (
 
 // Provider setup imports an existing login plus the safe, non-secret subset of its active provider
 // route. Global model defaults, MCP servers, Skills, sessions, memories, hooks, and tokens embedded in
-// provider config remain outside Open Science.
+// provider config remain outside Open-Science.
 export const importCodexAuthentication = async (
   sourceHome: string,
   destinationHome: string

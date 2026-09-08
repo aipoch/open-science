@@ -420,7 +420,7 @@ const ProviderStep = ({
           {t('Connect a model')}
         </h2>
         <CardDescription className="text-xs leading-5">
-          {t('Choose the provider Open Science should use for new research sessions.')}
+          {t('Choose the provider Open-Science should use for new research sessions.')}
         </CardDescription>
       </CardHeader>
       <Separator className="bg-border-200" />

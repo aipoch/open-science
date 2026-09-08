@@ -62,7 +62,7 @@ export const resolveNotebookTrustBundle = async (
       (certificate) => !fingerprints.has(new X509Certificate(certificate).fingerprint256)
     )
   ) {
-    throw new Error('The CA bundle omits public roots required by Open Science.')
+    throw new Error('The CA bundle omits public roots required by Open-Science.')
   }
 
   return {

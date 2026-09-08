@@ -419,7 +419,7 @@ class SettingsService {
   }
 
   // Sets one env's high-risk package-install authorization (keyed by envId) for a language, returning
-  // the refreshed enablement. This is the separate opt-in that lets Open Science write packages into an
+  // the refreshed enablement. This is the separate opt-in that lets Open-Science write packages into an
   // external env; it does not affect whether the env is enabled for execution.
   async setInstallAuthorized(
     language: NotebookLanguage,
@@ -932,7 +932,7 @@ class SettingsService {
   }
 
   // Re-runs the complete host inspection on every app launch, for the SELECTED framework's runtime, so
-  // a runtime installed outside Open Science between launches is picked up and onboarding can be
+  // a runtime installed outside Open-Science between launches is picked up and onboarding can be
   // completed with Claude or OpenCode alone.
   async checkEnvironment(): Promise<EnvironmentCheckResult> {
     return this.runtimeManager.checkEnvironment()

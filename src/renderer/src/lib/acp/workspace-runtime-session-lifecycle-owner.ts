@@ -436,7 +436,7 @@ const recoverContextOverflowWorkspaceSession = async (
         projectId: session.projectId,
         permissionProfile: session.permissionProfile ?? DEFAULT_PERMISSION_PROFILE,
         // Native compaction retained its own framework-authored summary. Only a replacement session needs
-        // OpenScience to replay the prior transcript into its first prompt.
+        // Open-Science to replay the prior transcript into its first prompt.
         forceHistoryReplay: !nativeCompacted,
         allowCompactionRecovery: true,
         supportsImageInput,

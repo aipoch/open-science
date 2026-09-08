@@ -26,7 +26,7 @@ describe('WebEventRecoveryDialog', () => {
     })
 
     const dialog = document.body.querySelector<HTMLElement>('[role="alertdialog"]')
-    expect(dialog?.textContent).toContain('Reconnecting to Open Science')
+    expect(dialog?.textContent).toContain('Reconnecting to Open-Science')
     expect(
       Array.from(dialog?.querySelectorAll('button') ?? []).some(
         (button) => button.textContent === 'Reload'

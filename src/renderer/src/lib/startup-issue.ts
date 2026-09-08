@@ -34,7 +34,7 @@ const buildStartupIssueBody = (
   const sections = [
     `## What happened\n\n${error.message}`,
     `## Environment\n\n| | |\n| --- | --- |\n${environmentRows.map(([key, value]) => `| ${key} | ${value} |`).join('\n')}`,
-    '## Steps to reproduce\n\n1. Launch Open Science\n2. The startup screen reports the error above'
+    '## Steps to reproduce\n\n1. Launch Open-Science\n2. The startup screen reports the error above'
   ]
   if (diagnostics) {
     sections.push(

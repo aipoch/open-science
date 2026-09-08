@@ -471,7 +471,7 @@ export function DeviceCredentialEditor({
                         </div>
                         <span className={helperClassName}>
                           {t(
-                            'Register this callback URI with your OAuth provider. Open Science adds an available port at runtime.'
+                            'Register this callback URI with your OAuth provider. Open-Science adds an available port at runtime.'
                           )}
                         </span>
                         {!customRedirectUriOpen ? (

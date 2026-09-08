@@ -81,7 +81,7 @@ const COMPUTE_AUTHENTICATION_PRESENTATIONS = {
   },
   host_key_unknown: {
     runtime: runtime(
-      (t) => t('Verify this Host key in a terminal before connecting from Open Science.'),
+      (t) => t('Verify this Host key in a terminal before connecting from Open-Science.'),
       (t) => t('Review Host settings')
     ),
     create: {

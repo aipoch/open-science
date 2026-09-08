@@ -126,10 +126,10 @@ describe('builtin Specialist resource paths', () => {
   it('rewrites packaged app.asar paths and leaves development paths unchanged', () => {
     expect(
       toUnpackedSpecialistResourcePath(
-        '/Applications/Open Science.app/Contents/Resources/app.asar/resources/specialists'
+        '/Applications/Open-Science.app/Contents/Resources/app.asar/resources/specialists'
       )
     ).toBe(
-      '/Applications/Open Science.app/Contents/Resources/app.asar.unpacked/resources/specialists'
+      '/Applications/Open-Science.app/Contents/Resources/app.asar.unpacked/resources/specialists'
     )
     expect(toUnpackedSpecialistResourcePath('/repo/resources/specialists')).toBe(
       '/repo/resources/specialists'

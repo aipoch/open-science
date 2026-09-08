@@ -1313,9 +1313,9 @@ const observePersistencePhase = <Result>(
 }
 
 const SAFE_SESSION_LOAD_ERROR =
-  'Open Science could not read saved conversation data. Retry to continue.'
+  'Open-Science could not read saved conversation data. Retry to continue.'
 const SAFE_SESSION_WRITE_ERROR =
-  'Open Science could not save the latest conversation changes. Retry before closing the app.'
+  'Open-Science could not save the latest conversation changes. Retry before closing the app.'
 const SESSION_REVISION_CONFLICT_WRITE_ERROR =
   'This conversation changed in another window. Your local changes were not saved. Retry to reload the latest version before closing the app.'
 const SESSION_SIZE_LIMIT_WRITE_ERROR =

@@ -44,9 +44,9 @@ describe('SkillRegistry', () => {
   it('resolves packaged Skill resources outside app.asar without consulting the cwd', () => {
     expect(
       toUnpackedAsarPath(
-        '/Applications/Open Science.app/Contents/Resources/app.asar/resources/skills'
+        '/Applications/Open-Science.app/Contents/Resources/app.asar/resources/skills'
       )
-    ).toBe('/Applications/Open Science.app/Contents/Resources/app.asar.unpacked/resources/skills')
+    ).toBe('/Applications/Open-Science.app/Contents/Resources/app.asar.unpacked/resources/skills')
     expect(toUnpackedAsarPath('/workspace/resources/skills')).toBe('/workspace/resources/skills')
   })
 

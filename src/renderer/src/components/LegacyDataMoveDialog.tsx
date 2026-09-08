@@ -116,7 +116,7 @@ const LegacyDataMoveDialog = ({
     setOperationError(
       defaultInspection.kind === 'adopt'
         ? t(
-            'That folder already contains Open Science data. Pick an empty folder, or use the default location.'
+            'That folder already contains Open-Science data. Pick an empty folder, or use the default location.'
           )
         : (defaultInspection.error ?? t('That folder can’t be used. Pick another one.'))
     )
@@ -143,7 +143,7 @@ const LegacyDataMoveDialog = ({
       setOperationError(
         inspection.kind === 'adopt'
           ? t(
-              'That folder already contains Open Science data. Pick an empty folder, or use the default location.'
+              'That folder already contains Open-Science data. Pick an empty folder, or use the default location.'
             )
           : (inspection.error ?? t('That folder can’t be used. Pick another one.'))
       )

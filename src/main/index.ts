@@ -1,5 +1,5 @@
 import { createRequire } from 'node:module'
-import { isAbsolute } from 'node:path'
+import { isAbsolute, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 // Only lightweight, Electron-free bootstrap modules are imported statically here. The MCP server
@@ -27,7 +27,7 @@ import {
   registerRendererDiagnosticsIpc
 } from './renderer-diagnostics'
 
-const APP_NAME = 'Open Science'
+const APP_NAME = 'Open-Science'
 const APP_USER_MODEL_ID = 'com.aipoch.open-science'
 const shouldRunArtifactMcpServer = process.argv.includes(ARTIFACT_MCP_SERVER_ARG)
 const shouldRunNotebookMcpServer = process.argv.includes(NOTEBOOK_MCP_SERVER_ARG)
@@ -119,6 +119,13 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
   // Establish identity and single-writer ownership before opening main.log. A secondary launch must
   // never rotate or append to the primary process's file sink. These two modules are lightweight; all
   // backend imports remain behind the lock.
+  // Keep Chromium state and installed CLI launchers in the pre-rename profile directory.
+  if (!app.commandLine.hasSwitch('user-data-dir')) {
+    app.setPath(
+      'userData',
+      join(app.getPath('appData'), app.isPackaged ? 'Open Science' : 'Open Science (DEV)')
+    )
+  }
   app.setName(app.isPackaged ? APP_NAME : `${APP_NAME} (DEV)`)
   // Unpackaged isolate: a second electron-vite from a worktree would otherwise lose the
   // macOS bundle-id lock and attach to an already-running main `npm run dev`.

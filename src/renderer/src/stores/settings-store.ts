@@ -337,7 +337,7 @@ export const selectProviderModelOptions = (
 }
 
 let settingsLoadPromise: Promise<boolean> | undefined
-const SAFE_SETTINGS_LOAD_ERROR = 'Open Science could not load settings. Retry to continue.'
+const SAFE_SETTINGS_LOAD_ERROR = 'Open-Science could not load settings. Retry to continue.'
 
 // Keep raw IPC diagnostics in the developer channel while renderer state remains path-safe.
 const reportSettingsLoadError = (error: unknown): void => {

@@ -147,7 +147,7 @@ const ClaudeIsolatedSignInModalBody = ({
         <div className={dialogBodyClassName}>
           <AlertDialog.Description className={dialogDescriptionClassName}>
             <Trans
-              i18nKey="Use a long-lived OAuth token from <code>claude setup-token</code>. The token is encrypted in Open Science app storage and never read from or written to <code>~/.claude</code>. See <docsLink>Anthropic's setup-token guide</docsLink> for the full flow."
+              i18nKey="Use a long-lived OAuth token from <code>claude setup-token</code>. The token is encrypted in Open-Science app storage and never read from or written to <code>~/.claude</code>. See <docsLink>Anthropic's setup-token guide</docsLink> for the full flow."
               components={{
                 code: <code className="font-mono" />,
                 docsLink: (

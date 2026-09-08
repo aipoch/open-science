@@ -293,7 +293,7 @@ describe('classifyDataRoot', () => {
       expect(result).toEqual({
         kind: 'invalid',
         error:
-          'Network folders are not supported as the Open Science data location on Windows. Choose a folder on a local drive.'
+          'Network folders are not supported as the Open-Science data location on Windows. Choose a folder on a local drive.'
       })
     } finally {
       Object.defineProperty(process, 'platform', { value: original, configurable: true })
@@ -335,7 +335,7 @@ describe('classifyDataRoot', () => {
       expect(result).toEqual({
         kind: 'invalid',
         error:
-          'Network folders are not supported as the Open Science data location on Windows. Choose a folder on a local drive.'
+          'Network folders are not supported as the Open-Science data location on Windows. Choose a folder on a local drive.'
       })
       expect(inspectPath).toHaveBeenNthCalledWith(1, emptyParent)
       expect(inspectPath).toHaveBeenNthCalledWith(2, target)
@@ -652,7 +652,7 @@ describe('validateNewDataRoot', () => {
 
     expect(result).toEqual({
       ok: false,
-      error: 'The selected folder already contains Open Science data. Pick an empty folder.'
+      error: 'The selected folder already contains Open-Science data. Pick an empty folder.'
     })
   })
 })
@@ -806,7 +806,7 @@ describe('runDataRootMigration (copy phase)', () => {
     expect(result).toEqual({
       ok: false,
       error:
-        'The new data location contains a Notebook cache that Open Science cannot safely replace. Choose another location or remove that cache first.'
+        'The new data location contains a Notebook cache that Open-Science cannot safely replace. Choose another location or remove that cache first.'
     })
     expect(deps.cleanupRuntimeCache).toHaveBeenCalledWith(join(target, 'runtime'))
     expect(copyAndVerify).not.toHaveBeenCalled()
@@ -1208,7 +1208,7 @@ describe('runDataRootMigration (copy phase)', () => {
     expect(result).toEqual({
       ok: false,
       error:
-        'The new data location contains runtime data that Open Science cannot safely replace. Choose another location or remove that data first.'
+        'The new data location contains runtime data that Open-Science cannot safely replace. Choose another location or remove that data first.'
     })
     expect(copyAndVerify).not.toHaveBeenCalled()
     expect(deps.runtime.disconnect).not.toHaveBeenCalled()

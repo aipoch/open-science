@@ -507,8 +507,8 @@ export type AppIconVariantInfo = {
 
 // The ordered icon variants shown in Settings. The default (light) leads.
 export const APP_ICON_VARIANT_INFOS: readonly AppIconVariantInfo[] = [
-  { id: 'light', label: 'Light', description: 'The light Open Science logo.' },
-  { id: 'dark', label: 'Dark', description: 'The dark Open Science logo.' }
+  { id: 'light', label: 'Light', description: 'The light Open-Science logo.' },
+  { id: 'dark', label: 'Dark', description: 'The dark Open-Science logo.' }
 ]
 
 // Renderer-facing descriptor for one selectable agent framework (built from the main registry).

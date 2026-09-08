@@ -1,5 +1,5 @@
 appId: com.aipoch.open-science
-productName: Open Science
+productName: Open-Science
 copyright: Copyright © 2026 AIPOCH
 directories:
   buildResources: build
@@ -130,8 +130,8 @@ mac:
   minimumSystemVersion: '12.0.0'
   entitlementsInherit: build/entitlements.mac.plist
   extendInfo:
-    CFBundleName: Open Science
-    CFBundleDisplayName: Open Science
+    CFBundleName: Open-Science
+    CFBundleDisplayName: Open-Science
     NSCameraUsageDescription: Application requests access to the device's camera.
     NSMicrophoneUsageDescription: Application requests access to the device's microphone.
     NSDocumentsFolderUsageDescription: Application requests access to the user's Documents folder.

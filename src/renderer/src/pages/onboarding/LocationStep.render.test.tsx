@@ -108,7 +108,7 @@ describe('LocationStep', () => {
   it('shows the warning callout', async () => {
     await renderStep()
 
-    expect(container.textContent).toContain('Open Science manages this folder')
+    expect(container.textContent).toContain('Open-Science manages this folder')
     expect(container.textContent).toContain(
       "Don't move, rename, or delete files inside it — doing so can break your projects and history."
     )
@@ -124,7 +124,7 @@ describe('LocationStep', () => {
 
     expect(window.api.storage.inspectDataRoot).toHaveBeenCalledWith('/mnt/data')
     expect(container.textContent).toContain('/mnt/data/OpenScience')
-    expect(container.textContent).toContain('Open Science will restart to set this up')
+    expect(container.textContent).toContain('Open-Science will restart to set this up')
   })
 
   it('Browse with an adopt path shows the used-as-is note', async () => {
@@ -136,7 +136,7 @@ describe('LocationStep', () => {
     await clickButton(/browse/i)
 
     expect(container.textContent).toContain('/mnt/existing/OpenScience')
-    expect(container.textContent).toContain('already contains Open Science data')
+    expect(container.textContent).toContain('already contains Open-Science data')
     expect(container.textContent).toContain('used as-is')
   })
 

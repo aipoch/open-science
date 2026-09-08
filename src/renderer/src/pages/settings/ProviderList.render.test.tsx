@@ -305,7 +305,7 @@ describe('ProviderList', () => {
       })
     ])
 
-    expect(container.textContent).toContain('Authentication imported into Open Science')
+    expect(container.textContent).toContain('Authentication imported into Open-Science')
     expect(buttonByLabel('Check Codex login')).toBeDefined()
     expect(buttonByLabel('Edit')).toBeDefined()
     expect(buttonByLabel('Delete')).toBeDefined()
@@ -326,7 +326,7 @@ describe('ProviderList', () => {
     })
     renderList([imported], undefined, undefined, { onReimport })
 
-    expect(container.textContent).toContain('Authentication imported into Open Science')
+    expect(container.textContent).toContain('Authentication imported into Open-Science')
     expect(buttonByLabel('Check Codex login')).toBeDefined()
     act(() => buttonByLabel('Re-import Codex login')?.click())
     expect(onReimport).toHaveBeenCalledWith(imported)
@@ -350,7 +350,7 @@ describe('ProviderList', () => {
       provider({
         id: 'builtin-codex-isolated',
         type: 'codex-isolated',
-        name: 'Open Science Codex login'
+        name: 'Open-Science Codex login'
       })
     ])
 
@@ -365,7 +365,7 @@ describe('ProviderList', () => {
     const isolated = provider({
       id: 'builtin-codex-isolated',
       type: 'codex-isolated',
-      name: 'Open Science Codex login',
+      name: 'Open-Science Codex login',
       models: [],
       model: undefined,
       maskedKey: undefined,
@@ -475,7 +475,7 @@ describe('ProviderList', () => {
 
     // Signed in (verified): sign-in actions go away, app-local disconnect is offered.
     renderList([{ ...shared, lastValidatedAt: 1 }], undefined, undefined, { onLogoutSharedClaude })
-    act(() => buttonByLabel('Disconnect from Open Science')?.click())
+    act(() => buttonByLabel('Disconnect from Open-Science')?.click())
     expect(onLogoutSharedClaude).toHaveBeenCalledOnce()
     expect(buttonByLabel('Sign in with browser')).toBeUndefined()
   })

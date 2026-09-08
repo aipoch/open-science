@@ -320,7 +320,7 @@ describe('Windows installer smoke plan', () => {
   })
 
   it('authenticates token-free readiness through state while accepting legacy token output', async () => {
-    const output = 'Open Science Web: http://127.0.0.1:52378/'
+    const output = 'Open-Science Web: http://127.0.0.1:52378/'
     expect(parsePackagedAppEndpoint(output)).toEqual({
       endpoint: 'http://127.0.0.1:52378'
     })
@@ -381,7 +381,7 @@ Open Science Web: http://127.0.0.1:52378/?token=iUFHGSACwBz2k1kSJfPixHbclDywVg0C
     await expect(
       readPackagedAppConfigRoot(
         {
-          appName: 'Open Science',
+          appName: 'Open-Science',
           appVersion: '0.8.0',
           configRoot,
           platform: 'win32'
@@ -391,7 +391,7 @@ Open Science Web: http://127.0.0.1:52378/?token=iUFHGSACwBz2k1kSJfPixHbclDywVg0C
     ).resolves.toBe(configRoot)
     await expect(
       readPackagedAppConfigRoot(
-        { appName: 'Open Science', appVersion: '0.8.0', platform: 'win32' },
+        { appName: 'Open-Science', appVersion: '0.8.0', platform: 'win32' },
         '0.8.0'
       )
     ).rejects.toThrow(/config root/)

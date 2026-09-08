@@ -63,7 +63,7 @@ const EnvironmentStep = ({
           </Button>
         </CardAction>
         <CardDescription className="text-xs leading-5">
-          {t('Open Science confirms its core requirements before your first research session.')}
+          {t('Open-Science confirms its core requirements before your first research session.')}
         </CardDescription>
       </CardHeader>
       <Separator className="bg-border-200" />

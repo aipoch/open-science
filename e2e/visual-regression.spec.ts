@@ -6,6 +6,14 @@ import { test } from './fixtures/electron-app'
 import { setTheme } from './fixtures/settings-preferences'
 
 const prepareVisualPage = async (page: Page): Promise<void> => {
+  // Visual baselines use English even when the host's system language differs.
+  await page.evaluate(async () => {
+    const bridge = globalThis as unknown as {
+      api: { locale: { setPreference: (request: { preference: 'en' }) => Promise<unknown> } }
+    }
+    await bridge.api.locale.setPreference({ preference: 'en' })
+  })
+  await expect(page.locator('html')).toHaveAttribute('lang', 'en')
   await page.emulateMedia({ reducedMotion: 'reduce' })
   await page.addStyleTag({
     content:
@@ -223,7 +231,7 @@ test('keeps core desktop surfaces visually stable', async ({ app }) => {
 
 test('keeps home actions and content inside compact viewports', async ({ app }) => {
   const page = await app.completeOnboarding()
-  await page.emulateMedia({ reducedMotion: 'reduce' })
+  await prepareVisualPage(page)
   await seedHomeActivitySessions(page, await app.createTestDirectory('mobile-activity-project'))
 
   for (const width of [320, 375, 390, 414, 768]) {

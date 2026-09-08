@@ -1,6 +1,6 @@
 /* Hallmark · pre-emit critique: P5 H5 E5 S5 R5 V4 */
 /* Hallmark · component: Notebook network protection banner · genre: modern-minimal
- * theme: existing Open Science Settings tokens
+ * theme: existing Open-Science Settings tokens
  * states: default · hover · focus · active · disabled · loading · error · success
  * contrast: semantic status tokens · responsive: 320 / 375 / 414 / 768
  */

@@ -26,7 +26,7 @@ describe('Linux package smoke', () => {
   })
 
   it('authenticates the token-free readiness endpoint through the service state contract', async () => {
-    const output = 'Open Science Web: http://127.0.0.1:44001/'
+    const output = 'Open-Science Web: http://127.0.0.1:44001/'
     expect(parsePackagedAppEndpoint(output)).toEqual({ endpoint: 'http://127.0.0.1:44001' })
     await expect(
       authenticatePackagedAppEndpoint(output, ['/config'], {

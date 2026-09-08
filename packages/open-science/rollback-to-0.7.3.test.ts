@@ -731,7 +731,7 @@ describe('rollback-to-0.7.3', () => {
     await expect(stat(markerPath)).resolves.toBeDefined()
   })
 
-  it('rechecks that Open Science is closed immediately before cutover', async () => {
+  it('rechecks that Open-Science is closed immediately before cutover', async () => {
     const root = await temporaryRoot()
     const configRoot = join(root, '.open-science')
     const dataRoot = join(root, 'OpenScience')
@@ -754,7 +754,7 @@ describe('rollback-to-0.7.3', () => {
           )
         }
       })
-    ).rejects.toThrow('Open Science is still running')
+    ).rejects.toThrow('Open-Science is still running')
 
     await expect(stat(configRoot)).resolves.toBeDefined()
     await expect(stat(rollbackDataRoot)).rejects.toMatchObject({ code: 'ENOENT' })
@@ -803,14 +803,14 @@ describe('rollback-to-0.7.3', () => {
 
     await expect(
       runRollbackToV073({ configRoot, output: rollbackDataRoot, confirm: true })
-    ).rejects.toThrow('Open Science is still running')
+    ).rejects.toThrow('Open-Science is still running')
 
     await expect(stat(configRoot)).resolves.toBeDefined()
     await expect(stat(stagingConfigRoot)).resolves.toBeDefined()
     await expect(stat(preservedConfigRoot)).rejects.toMatchObject({ code: 'ENOENT' })
   })
 
-  it('does not resume an interrupted cutover while Open Science is running', async () => {
+  it('does not resume an interrupted cutover while Open-Science is running', async () => {
     const root = await temporaryRoot()
     const configRoot = join(root, '.open-science')
     const rollbackDataRoot = join(root, 'OpenScience-Rollback-0.7.3')
@@ -834,7 +834,7 @@ describe('rollback-to-0.7.3', () => {
 
     await expect(
       runRollbackToV073({ configRoot, output: rollbackDataRoot, confirm: true })
-    ).rejects.toThrow('Open Science is still running')
+    ).rejects.toThrow('Open-Science is still running')
 
     await expect(stat(configRoot)).resolves.toBeDefined()
     await expect(stat(stagingConfigRoot)).resolves.toBeDefined()

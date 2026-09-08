@@ -579,7 +579,7 @@ describe('packaged database migration ledger smoke', () => {
     try {
       expect(
         parsePackagedSqliteVersion(
-          '[main] database runtime verified: sqlite_version=3.46.0\nOpen Science Web: ready'
+          '[main] database runtime verified: sqlite_version=3.46.0\nOpen-Science Web: ready'
         )
       ).toBe('3.46.0')
 

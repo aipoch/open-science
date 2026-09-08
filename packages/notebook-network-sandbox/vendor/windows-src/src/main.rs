@@ -1029,7 +1029,7 @@ mod windows_host {
         let sid = profile_sid(&record.profile_name)?;
         if !profile_exists(sid.0)? {
             let name = wide(&record.profile_name);
-            let display = wide("Open Science Notebook");
+            let display = wide("Open-Science Notebook");
             let description = wide("Local Notebook process isolation profile");
             let created = unsafe {
                 CreateAppContainerProfile(

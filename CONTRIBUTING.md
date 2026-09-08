@@ -1,4 +1,10 @@
-# Contributing to Open Science
+# Contributing to Open-Science
+
+Use **Open-Science** for the product display name and **open-science** for slugs and
+command names. Keep existing API identifiers, environment variables, data paths, and
+versioned ownership or file-format markers compatible with earlier releases. Names
+of third-party projects and externally issued certificate subjects retain their
+original spelling.
 
 Thanks for your interest in contributing! This document explains how to set up
 the project, the workflow we follow, and the checks your change must pass before

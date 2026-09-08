@@ -11,7 +11,7 @@ const CLAUDE_SKILL_RUNTIME_SEGMENTS = ['runtime-support', 'agent-skills', 'claud
 const PROJECTION_FORMAT_VERSION = 'v1'
 const LEGACY_MANAGED_SKILL_PREFIX = 'os-'
 
-// Open Science is a single-instance desktop application. On the first provision for one storage
+// Open-Science is a single-instance desktop application. On the first provision for one storage
 // root, revisions inherited from a previous process can therefore be removed safely. The resolved
 // promise remains registered for this process so later provisions retain every revision that an
 // active session in this process may still have mounted. This is deliberately not a multi-process

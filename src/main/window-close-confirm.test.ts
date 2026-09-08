@@ -678,7 +678,7 @@ describe('createElectronCloseConfirm — nativeFallback', () => {
     expect(options.buttons).toEqual(['Cancel', 'Quit'])
     expect(options.defaultId).toBe(0)
     expect(options.cancelId).toBe(0)
-    expect(options.message).toBe('Quit Open Science?')
+    expect(options.message).toBe('Quit Open-Science?')
   })
 
   it('translates a Cancel click in the quit fallback to choice=cancel', async () => {

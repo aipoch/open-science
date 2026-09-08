@@ -52,7 +52,7 @@ const findAppBundle = async (directory) => {
 
 const parsePackagedAppEndpoint = (output) => {
   const match = output.match(
-    /Open Science Web:\s+(http:\/\/127\.0\.0\.1:\d+\/(?:\?token=[A-Za-z0-9_-]+)?)/
+    /Open-Science Web:\s+(http:\/\/127\.0\.0\.1:\d+\/(?:\?token=[A-Za-z0-9_-]+)?)/
   )
   if (!match) return undefined
   const url = new URL(match[1])
@@ -97,7 +97,7 @@ const runProcess = (executable, args, options = {}) =>
 const assertPackagedResources = async (appBundle) => {
   const resources = join(appBundle, 'Contents', 'Resources')
   const paths = [
-    join(appBundle, 'Contents', 'MacOS', 'Open Science'),
+    join(appBundle, 'Contents', 'MacOS', 'Open-Science'),
     join(resources, 'app.asar'),
     join(resources, 'micromamba'),
     // electron-builder compiles build/icon.icon into the adaptive catalog and also emits an ICNS
@@ -156,7 +156,7 @@ const launchAndProbe = async ({ executable, expectedVersion, env, userDataRoot }
     if (!response.ok) throw new Error(`Packaged macOS bootstrap returned HTTP ${response.status}.`)
     const bootstrap = await response.json()
     if (
-      bootstrap.appName !== 'Open Science' ||
+      bootstrap.appName !== 'Open-Science' ||
       bootstrap.appVersion !== expectedVersion ||
       bootstrap.platform !== 'darwin'
     ) {

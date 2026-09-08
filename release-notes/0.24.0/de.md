@@ -1,7 +1,7 @@
 ## ✨ Highlights
 
 - **In Sekunden zwischen Projekten wechseln.** Das Projektmenü des Arbeitsbereichs listet jetzt Ihre anderen aktiven Projekte mit Titel- und Beschreibungsvorschau auf, sodass Sie das Projekt wechseln können, ohne die aktuelle Sitzung zu verlassen. (#1957)
-- **Notebook-Code bleibt innerhalb Ihrer Netzwerkgrenzen.** Notebook- und Compute-Laufzeiten erreichen nur die Standardziele von Open Science und die von Ihnen freigegebenen Domains; versucht Code ein neues Ziel, geben Sie es direkt im Gespräch frei oder lehnen es ab. Unter Windows greift der Schutz, sobald die einmalige Admin-Einrichtung der Sandbox abgeschlossen ist. (#1911)
+- **Notebook-Code bleibt innerhalb Ihrer Netzwerkgrenzen.** Notebook- und Compute-Laufzeiten erreichen nur die Standardziele von Open-Science und die von Ihnen freigegebenen Domains; versucht Code ein neues Ziel, geben Sie es direkt im Gespräch frei oder lehnen es ab. Unter Windows greift der Schutz, sobald die einmalige Admin-Einrichtung der Sandbox abgeschlossen ist. (#1911)
 - **Anmeldeinformationen einmal eingeben, überall wiederverwenden.** API-Schlüssel, Zugriffstoken und OAuth-Anmeldungen lassen sich geräteweit speichern und an die Umgebungsvariablen, Header oder Anmeldungen eines beliebigen benutzerdefinierten Konnektors binden. (#1948, #1963)
 - **Eine deutsche Benutzeroberfläche.** Deutsch gesellt sich zu Spanisch, Französisch, Chinesisch (vereinfacht und traditionell), Japanisch, Koreanisch und Russisch – mit README-Übersetzungen im gleichen Umfang. (#1761)
 
