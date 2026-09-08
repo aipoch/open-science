@@ -103,6 +103,8 @@
   "renderer": {
     "Identifiers (★ primary)": "Identifikatoren (★ primär)",
     "Search again to refresh this older metadata review.": "Suchen Sie erneut, um diese ältere Metadatenprüfung zu aktualisieren.",
+    "The reference was saved, but could not be reloaded.": "Die Referenz wurde gespeichert, konnte aber nicht neu geladen werden.",
+    "Your note draft is preserved. Retry saving or press Escape to discard.": "Ihr Notizentwurf bleibt erhalten. Speichern Sie erneut oder drücken Sie Escape, um ihn zu verwerfen.",
     "Not answered": "Nicht beantwortet",
     "Automatic contrast": "Automatischer Kontrast",
     "Display range": "Anzeigebereich",

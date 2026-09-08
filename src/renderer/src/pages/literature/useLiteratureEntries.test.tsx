@@ -259,4 +259,105 @@ describe('useLiteratureEntries', () => {
       true
     )
   })
+  it('requeries a page whose in-flight search predates an inline update', async () => {
+    const item: LiteratureItemView = {
+      id: 'a',
+      item: literatureItemInputSchema.parse({ itemType: 'journalArticle', title: 'Saved' }),
+      attachments: [],
+      collectionIds: [],
+      projectIds: [],
+      metadataRevision: 2,
+      createdAt: 1,
+      updatedAt: 2
+    }
+    let finish!: (page: LiteratureCatalogSearchPage) => void
+    search
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            finish = resolve
+          })
+      )
+      .mockResolvedValueOnce({ entries: [item], totalCount: 1 })
+    const { result, onPage } = setup()
+    await act(() => result.current.refreshItems([item.id], [item]))
+    await act(async () => {
+      finish({ entries: [{ ...item, metadataRevision: 1 }], totalCount: 1 })
+    })
+    expect(search).toHaveBeenCalledTimes(2)
+    expect(onPage).toHaveBeenCalledTimes(1)
+    expect(onPage.mock.calls[0][0].entries[0].metadataRevision).toBe(2)
+  })
+
+  it('keeps a newer inline revision when an older background read completes', async () => {
+    const original: LiteratureItemView = {
+      id: 'a',
+      item: literatureItemInputSchema.parse({ itemType: 'journalArticle', title: 'Saved' }),
+      attachments: [],
+      collectionIds: [],
+      projectIds: [],
+      metadataRevision: 1,
+      createdAt: 1,
+      updatedAt: 1
+    }
+    search.mockResolvedValue({ entries: [original], totalCount: 1 })
+    let finish!: (item: LiteratureItemView) => void
+    window.api.literature.get = vi.fn(
+      () =>
+        new Promise<LiteratureItemView>((resolve) => {
+          finish = resolve
+        })
+    )
+    const { result, onPage } = setup()
+    await act(async () => {})
+    let pending!: Promise<void>
+    act(() => {
+      pending = result.current.refreshItems(['a'])
+    })
+    await act(() => result.current.refreshItems(['a'], [{ ...original, metadataRevision: 3 }]))
+    await act(async () => {
+      finish({ ...original, metadataRevision: 2 })
+      await pending
+    })
+    expect(onPage.mock.lastCall?.[0].entries[0].metadataRevision).toBe(3)
+  })
+  it('retains the displayed page during a failed background refresh and retries its dirty cache', async () => {
+    const item: LiteratureItemView = {
+      id: 'a',
+      item: literatureItemInputSchema.parse({ itemType: 'journalArticle', title: 'Saved' }),
+      attachments: [],
+      collectionIds: [],
+      projectIds: [],
+      metadataRevision: 1,
+      createdAt: 1,
+      updatedAt: 1
+    }
+    search.mockResolvedValue({ entries: [item], totalCount: 1 })
+    const { result, onPage, onError, rerender } = setup()
+    await act(async () => {})
+    let reject!: (error: Error) => void
+    search.mockImplementationOnce(
+      () =>
+        new Promise((_, fail) => {
+          reject = fail
+        })
+    )
+    let pending!: Promise<void>
+    act(() => {
+      pending = result.current.reload(true, true)
+    })
+    expect(result.current.loading).toBe(false)
+    await act(async () => {
+      reject(new Error('offline'))
+      await pending
+    })
+    expect(result.current.failed).toBe(false)
+    expect(onError).toHaveBeenLastCalledWith(true)
+    expect(onPage).toHaveBeenCalledTimes(1)
+    rerender({ enabled: true, scopeKey: 'other', request: { ...request, query: 'other' } })
+    await act(async () => {})
+    rerender({ enabled: true, scopeKey: 'library', request })
+    await act(async () => {})
+    expect(search).toHaveBeenCalledTimes(4)
+  })
 })

@@ -915,56 +915,92 @@ function LiteratureTypeControl({
 }
 
 function LiteratureNoteControl({
-  value,
-  title,
+  entry,
   onCommit
 }: Readonly<{
-  value: string
-  title: string
-  onCommit: (note: string) => Promise<void>
+  entry: LiteratureItemView
+  onCommit: (base: LiteratureItemView, note: string) => Promise<void>
 }>): React.JSX.Element {
   const { t } = useTranslation()
-  const [draft, setDraft] = useState(value)
+  const [edit, setEdit] = useState<{ base: LiteratureItemView; draft: string }>()
   const [isSaving, setIsSaving] = useState(false)
+  const [failed, setFailed] = useState(false)
+  const savingRef = useRef(false)
   const cancelNextBlurRef = useRef(false)
+  const dirty = edit !== undefined && edit.draft !== (edit.base.item.personalNote ?? '')
+  // A dirty draft keeps its original full item and revision, including across rating refreshes.
+  const base = dirty ? edit.base : entry
+  const draft = dirty ? edit.draft : (entry.item.personalNote ?? '')
 
   const commitNote = async (): Promise<void> => {
     if (cancelNextBlurRef.current) {
       cancelNextBlurRef.current = false
       return
     }
+    if (savingRef.current) return
     const note = draft.trim()
-    setDraft(note)
-    if (isSaving || note === value) return
+    if (note === (base.item.personalNote ?? '')) {
+      setEdit(undefined)
+      setFailed(false)
+      return
+    }
+    savingRef.current = true
     setIsSaving(true)
     try {
-      await onCommit(note)
+      await onCommit(base, note)
+      setEdit(undefined)
+      setFailed(false)
     } catch {
-      setDraft(value)
+      setFailed(true)
     } finally {
+      savingRef.current = false
       setIsSaving(false)
     }
   }
 
   return (
-    <Input
-      value={draft}
-      readOnly={isSaving}
-      aria-label={t('Note for {{title}}', { title })}
-      aria-busy={isSaving}
-      placeholder={t('Add a note…')}
-      className="h-8 border-transparent bg-transparent px-2 text-xs placeholder:text-muted-foreground/70 hover:border-border hover:bg-bg-100 focus-visible:border-border focus-visible:bg-bg-000"
-      onChange={(event) => setDraft(event.currentTarget.value)}
-      onKeyDown={(event) => {
-        if (event.key === 'Enter') event.currentTarget.blur()
-        if (event.key === 'Escape') {
-          cancelNextBlurRef.current = true
-          setDraft(value)
-          event.currentTarget.blur()
-        }
-      }}
-      onBlur={() => void commitNote()}
-    />
+    <div>
+      <Input
+        value={draft}
+        readOnly={isSaving}
+        aria-label={t('Note for {{title}}', { title: entry.item.title })}
+        aria-busy={isSaving}
+        aria-invalid={failed || undefined}
+        placeholder={t('Add a note…')}
+        className="h-8 border-transparent bg-transparent px-2 text-xs placeholder:text-muted-foreground/70 hover:border-border hover:bg-bg-100 focus-visible:border-border focus-visible:bg-bg-000"
+        onFocus={() => {
+          if (!dirty) setEdit({ base: entry, draft: entry.item.personalNote ?? '' })
+        }}
+        onChange={(event) => setEdit({ base, draft: event.currentTarget.value })}
+        onKeyDown={(event) => {
+          if (isSaving || event.nativeEvent.isComposing) return
+          if (event.key === 'Enter') event.currentTarget.blur()
+          if (event.key === 'Escape') {
+            cancelNextBlurRef.current = true
+            setEdit(undefined)
+            setFailed(false)
+            event.currentTarget.blur()
+          }
+        }}
+        onBlur={() => void commitNote()}
+      />
+      {failed ? (
+        <div className="px-2 text-xs text-status-warning-foreground">
+          <p role="alert">
+            {t('Your note draft is preserved. Retry saving or press Escape to discard.')}
+          </p>
+          <button
+            type="button"
+            className="underline"
+            disabled={isSaving}
+            onMouseDown={(event) => event.preventDefault()}
+            onClick={() => void commitNote()}
+          >
+            {t('Retry')}
+          </button>
+        </div>
+      ) : null}
+    </div>
   )
 }
 
@@ -1177,6 +1213,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
   const loadProjects = useProjectStore((state) => state.loadProjects)
   const loadTags = useTagStore((state) => state.load)
   const listenTags = useTagStore((state) => state.listen)
+  const tagRevision = useTagStore((state) => state.revision)
   const [section, setSection] = useState<LibrarySection>('inbox')
   const [duplicatesOpen, setDuplicatesOpen] = useState(false)
   const [shouldCueLiteratureReview, setShouldCueLiteratureReview] = useState(
@@ -1616,6 +1653,20 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
     onEmptyPage: setEntriesOffset,
     onError: receiveEntriesError
   })
+  const appliedTagRevision = useRef(tagRevision)
+  useEffect(() => {
+    if (appliedTagRevision.current === tagRevision) return
+    appliedTagRevision.current = tagRevision
+    if (tagId !== 'all') {
+      clearSelection()
+      // Keep surviving keyed editors mounted during an authoritative background refresh.
+      void reloadEntries(true, true)
+    } else {
+      // Previously visited filtered scopes must not resurrect old assignment membership.
+      void refreshItems([])
+    }
+  }, [clearSelection, refreshItems, reloadEntries, tagId, tagRevision])
+
   const loadEntries = useCallback(
     (force = false): Promise<void> => {
       if (force) {
@@ -2084,6 +2135,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
       (item.rating ?? 0) === (entry.item.rating ?? 0)
     )
       return
+    let persisted = false
     try {
       await window.api.literature.transact({
         kind: 'update-item',
@@ -2091,13 +2143,18 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
         expectedMetadataRevision: entry.metadataRevision,
         item
       })
+      persisted = true
       const updated = await window.api.literature.get(entry.id)
       if (!updated) throw new Error('Literature Item is unavailable after updating.')
-      setItems((current) => current.map((item) => (item.id === updated.id ? updated : item)))
+      await refreshItems([updated.id], [updated])
       detailController.replace(updated)
       setError(undefined)
     } catch (error) {
-      setError(t('Literature could not be updated.'))
+      setError(
+        persisted
+          ? t('The reference was saved, but could not be reloaded.')
+          : t('Literature could not be updated.')
+      )
       throw error
     }
   }
@@ -4193,11 +4250,10 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
                                     return (
                                       <td key={column} className="px-2 py-2 align-middle">
                                         <LiteratureNoteControl
-                                          key={`${entry.id}:${entry.metadataRevision}:note`}
-                                          value={entry.item.personalNote ?? ''}
-                                          title={entry.item.title}
-                                          onCommit={(personalNote) =>
-                                            persistInlineItem(entry, { personalNote })
+                                          key={entry.id}
+                                          entry={entry}
+                                          onCommit={(base, personalNote) =>
+                                            persistInlineItem(base, { personalNote })
                                           }
                                         />
                                       </td>

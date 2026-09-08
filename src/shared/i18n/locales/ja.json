@@ -102,6 +102,8 @@
   "renderer": {
     "Identifiers (★ primary)": "識別子（★ 主要）",
     "Search again to refresh this older metadata review.": "再検索して、この古いメタデータの確認内容を更新してください。",
+    "The reference was saved, but could not be reloaded.": "文献は保存されましたが、再読み込みできませんでした。",
+    "Your note draft is preserved. Retry saving or press Escape to discard.": "メモの下書きは保持されています。保存を再試行するか、Escape キーで破棄してください。",
     "Not answered": "未回答",
     "Automatic contrast": "自動コントラスト",
     "Display range": "表示範囲",

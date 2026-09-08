@@ -199,6 +199,10 @@ describe('LiteratureLibraryPage', () => {
   const saveBlobFile = vi.fn()
 
   beforeEach(() => {
+    // Failed assertions must not leak unused one-shot IPC replies into another scenario.
+    search.mockReset()
+    get.mockReset()
+    transact.mockReset().mockResolvedValue({ kind: 'item', id: 'item-1', state: 'present' })
     window.localStorage.clear()
     window.sessionStorage.clear()
     useNavigationStore.setState({
@@ -3307,6 +3311,297 @@ describe('LiteratureLibraryPage', () => {
     expect(screen.queryByLabelText('Title')).toBeNull()
     expect(screen.getByRole('heading', { name: 'Collections' })).not.toBeNull()
   })
+
+  it('retains an unsaved note after persistence rejects so it can be retried', async () => {
+    window.localStorage.setItem(
+      'open-science:literature-table-preferences',
+      JSON.stringify({ visible: ['rating', 'notes'] })
+    )
+    const saved = { ...libraryItem, item: { ...libraryItem.item, personalNote: 'Old saved note' } }
+    search.mockImplementation((request: LiteratureCatalogSearchRequest) =>
+      Promise.resolve({ entries: request.scope === 'library' ? [saved] : [] })
+    )
+    transact.mockRejectedValueOnce(new Error('persistence unavailable'))
+    render(<LiteratureLibraryPage />)
+    fireEvent.click(screen.getByRole('button', { name: 'All references' }))
+    const input = await screen.findByRole('textbox', { name: `Note for ${saved.item.title}` })
+    fireEvent.focus(input)
+    fireEvent.change(input, { target: { value: 'Important new unsaved analysis' } })
+    fireEvent.blur(input)
+    await screen.findByText('Literature could not be updated.')
+    expect(transact).toHaveBeenCalledWith(
+      expect.objectContaining({
+        expectedMetadataRevision: 1,
+        item: expect.objectContaining({ personalNote: 'Important new unsaved analysis' })
+      })
+    )
+    expect(
+      (screen.getByRole('textbox', { name: `Note for ${saved.item.title}` }) as HTMLInputElement)
+        .value
+    ).toBe('Important new unsaved analysis')
+  })
+
+  it('distinguishes a committed note from a failed readback and retains its text', async () => {
+    window.localStorage.setItem(
+      'open-science:literature-table-preferences',
+      JSON.stringify({ visible: ['notes'] })
+    )
+    search.mockImplementation((request: LiteratureCatalogSearchRequest) =>
+      Promise.resolve({ entries: request.scope === 'library' ? [libraryItem] : [] })
+    )
+    get.mockRejectedValueOnce(new Error('read unavailable'))
+    render(<LiteratureLibraryPage />)
+    fireEvent.click(screen.getByRole('button', { name: 'All references' }))
+    const input = (await screen.findByRole('textbox', {
+      name: `Note for ${libraryItem.item.title}`
+    })) as HTMLInputElement
+    fireEvent.change(input, { target: { value: 'Committed analysis' } })
+    fireEvent.blur(input)
+    await screen.findByText('The reference was saved, but could not be reloaded.')
+    expect(input.value).toBe('Committed analysis')
+    expect(transact).toHaveBeenCalledTimes(1)
+  })
+
+  it('retries a failed note without losing text and adopts the next clean snapshot', async () => {
+    window.localStorage.setItem(
+      'open-science:literature-table-preferences',
+      JSON.stringify({ visible: ['rating', 'notes'] })
+    )
+    search.mockImplementation((request: LiteratureCatalogSearchRequest) =>
+      Promise.resolve({ entries: request.scope === 'library' ? [libraryItem] : [] })
+    )
+    transact.mockRejectedValueOnce(new Error('offline'))
+    get
+      .mockResolvedValueOnce({
+        ...libraryItem,
+        metadataRevision: 2,
+        item: { ...libraryItem.item, personalNote: 'Retry this draft' }
+      })
+      .mockResolvedValueOnce({
+        ...libraryItem,
+        metadataRevision: 3,
+        item: { ...libraryItem.item, personalNote: 'New saved note', rating: 4 }
+      })
+    render(<LiteratureLibraryPage />)
+    fireEvent.click(screen.getByRole('button', { name: 'All references' }))
+    const input = (await screen.findByRole('textbox', {
+      name: `Note for ${libraryItem.item.title}`
+    })) as HTMLInputElement
+    fireEvent.change(input, { target: { value: 'Retry this draft' } })
+    fireEvent.blur(input)
+    await screen.findByText(
+      'Your note draft is preserved. Retry saving or press Escape to discard.'
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }))
+    await waitFor(() => expect(get).toHaveBeenCalledTimes(1))
+    await waitFor(() =>
+      expect(
+        screen.queryByText('Your note draft is preserved. Retry saving or press Escape to discard.')
+      ).toBeNull()
+    )
+    expect(input.value).toBe('Retry this draft')
+    expect(transact.mock.calls[1][0]).toEqual(transact.mock.calls[0][0])
+    fireEvent.click(screen.getByRole('button', { name: 'Set rating to 4' }))
+    await waitFor(() => expect(input.value).toBe('New saved note'))
+  })
+
+  it('preserves a note being edited when a pending rating save completes', async () => {
+    window.localStorage.setItem(
+      'open-science:literature-table-preferences',
+      JSON.stringify({ visible: ['rating', 'notes'] })
+    )
+    search.mockImplementation((request: LiteratureCatalogSearchRequest) =>
+      Promise.resolve({ entries: request.scope === 'library' ? [libraryItem] : [] })
+    )
+    let finish!: () => void
+    transact.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finish = () => resolve({ kind: 'item', id: libraryItem.id })
+        })
+    )
+    get.mockResolvedValue({
+      ...libraryItem,
+      metadataRevision: 2,
+      item: { ...libraryItem.item, rating: 4 }
+    })
+    render(<LiteratureLibraryPage />)
+    fireEvent.click(screen.getByRole('button', { name: 'All references' }))
+    const input = await screen.findByRole('textbox', { name: `Note for ${libraryItem.item.title}` })
+    fireEvent.click(screen.getByRole('button', { name: 'Set rating to 4' }))
+    fireEvent.focus(input)
+    fireEvent.change(input, { target: { value: 'Draft typed while rating saves' } })
+    await act(async () => {
+      finish()
+    })
+    expect(get).toHaveBeenCalledWith(libraryItem.id)
+    expect(transact).toHaveBeenCalledTimes(1)
+    const current = screen.getByRole('textbox', { name: `Note for ${libraryItem.item.title}` })
+    expect((current as HTMLInputElement).value).toBe('Draft typed while rating saves')
+    expect(current).toBe(input)
+    transact.mockRejectedValueOnce(new Error('Literature Item changed.'))
+    fireEvent.blur(current)
+    await screen.findByText('Literature could not be updated.')
+    expect(transact).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        expectedMetadataRevision: 1,
+        item: expect.objectContaining({ personalNote: 'Draft typed while rating saves' })
+      })
+    )
+    expect((current as HTMLInputElement).value).toBe('Draft typed while rating saves')
+    act(() => current.focus())
+    fireEvent.keyDown(current, { key: 'Escape' })
+    expect((current as HTMLInputElement).value).toBe('')
+    expect(transact).toHaveBeenCalledTimes(2)
+  })
+
+  it('keeps a saved rating and queries its new order when returning to a cached sort', async () => {
+    const first = {
+      ...createLibraryItem(1),
+      item: { ...libraryItem.item, title: 'First ranked', rating: 4 }
+    }
+    let second = {
+      ...createLibraryItem(2),
+      item: { ...libraryItem.item, title: 'Second ranked', rating: 1 }
+    }
+    search.mockImplementation((request: LiteratureCatalogSearchRequest) =>
+      Promise.resolve({
+        entries:
+          request.scope === 'library'
+            ? request.sortBy === 'rating' && second.item.rating === 5
+              ? [second, first]
+              : [first, second]
+            : [],
+        totalCount: request.scope === 'library' ? 2 : 0
+      })
+    )
+    transact.mockImplementationOnce(async () => {
+      second = {
+        ...second,
+        metadataRevision: second.metadataRevision + 1,
+        item: { ...second.item, rating: 5 }
+      }
+      return { kind: 'item', id: second.id }
+    })
+    get.mockImplementation(async (id: string) => (id === second.id ? second : first))
+    render(<LiteratureLibraryPage />)
+    fireEvent.click(screen.getByRole('button', { name: 'All references' }))
+    await screen.findByText('Second ranked')
+    fireEvent.click(screen.getByLabelText('Sort references'))
+    fireEvent.click(screen.getByRole('option', { name: 'Highest rated' }))
+    await waitFor(() =>
+      expect(search).toHaveBeenCalledWith(
+        expect.objectContaining({ scope: 'library', sortBy: 'rating' })
+      )
+    )
+    fireEvent.click(
+      within(screen.getByText('Second ranked').closest('tr')!).getByRole('button', {
+        name: 'Set rating to 5'
+      })
+    )
+    await waitFor(() => expect(get).toHaveBeenCalledWith(second.id))
+    await act(async () => {
+      await Promise.resolve()
+    })
+    expect(
+      within(screen.getByText('Second ranked').closest('tr')!)
+        .getByRole('button', { name: 'Set rating to 5' })
+        .querySelector('svg')
+        ?.getAttribute('class')
+    ).toContain('fill-amber-400')
+    fireEvent.click(screen.getByLabelText('Sort references'))
+    fireEvent.click(screen.getByRole('option', { name: 'Recently updated' }))
+    await screen.findByText('Second ranked')
+    fireEvent.click(screen.getByLabelText('Sort references'))
+    fireEvent.click(screen.getByRole('option', { name: 'Highest rated' }))
+    await screen.findByText('Second ranked')
+    expect(
+      within(screen.getByText('Second ranked').closest('tr')!)
+        .getByRole('button', { name: 'Set rating to 5' })
+        .querySelector('svg')
+        ?.getAttribute('class')
+    ).toContain('fill-amber-400')
+    expect(
+      screen.getAllByRole('row').filter((row) => row.textContent?.includes('ranked'))[0].textContent
+    ).toContain('Second ranked')
+  })
+
+  it.each([
+    { filtered: true, remains: false },
+    { filtered: false, remains: true },
+    { filtered: true, remains: true }
+  ])(
+    'refreshes a Favorites result after a tag event with filtered=$filtered and remains=$remains',
+    async ({ filtered, remains }) => {
+      window.localStorage.setItem(
+        'open-science:literature-table-preferences',
+        JSON.stringify({ visible: ['notes'] })
+      )
+      let emitChanged!: (event: { revision: number }) => void
+      vi.mocked(window.api.tags.onChanged).mockImplementation((listener) => {
+        emitChanged = listener
+        return () => undefined
+      })
+      let assigned = true
+      search.mockImplementation((request: LiteratureCatalogSearchRequest) =>
+        Promise.resolve({
+          entries: request.scope === 'library' && (!request.tagId || assigned) ? [libraryItem] : [],
+          totalCount: request.scope === 'library' && (!request.tagId || assigned) ? 1 : 0
+        })
+      )
+      render(<LiteratureLibraryPage />)
+      fireEvent.click(screen.getByRole('button', { name: 'All references' }))
+      await screen.findByText(libraryItem.item.title)
+      if (filtered) {
+        fireEvent.click(screen.getByRole('button', { name: 'Filters' }))
+        fireEvent.click(screen.getByLabelText('Filter by Tag'))
+        fireEvent.click(screen.getByRole('option', { name: 'Favorites' }))
+        await waitFor(() =>
+          expect(search).toHaveBeenCalledWith(
+            expect.objectContaining({ scope: 'library', tagId: 'tag-favorite' })
+          )
+        )
+      }
+      const previousQueries = search.mock.calls.filter(
+        ([request]) => request.scope === 'library' && request.limit !== 1
+      ).length
+      const input = screen.getByRole('textbox', {
+        name: `Note for ${libraryItem.item.title}`
+      }) as HTMLInputElement
+      fireEvent.change(input, { target: { value: 'Draft during tag refresh' } })
+      assigned = remains
+      vi.mocked(window.api.tags.snapshot).mockResolvedValue({
+        revision: 2,
+        tags: useTagStore.getState().tags,
+        assignments: remains ? useTagStore.getState().assignments : []
+      })
+      await act(async () => {
+        emitChanged({ revision: 2 })
+      })
+      await waitFor(() => expect(useTagStore.getState().revision).toBe(2))
+      if (remains) {
+        expect(screen.getByRole('textbox', { name: `Note for ${libraryItem.item.title}` })).toBe(
+          input
+        )
+        expect(input.value).toBe('Draft during tag refresh')
+      }
+      if (!filtered) {
+        expect(screen.getByText(libraryItem.item.title)).not.toBeNull()
+        expect(
+          search.mock.calls.filter(
+            ([request]) => request.scope === 'library' && request.limit !== 1
+          )
+        ).toHaveLength(previousQueries)
+        return
+      }
+      if (!remains)
+        await waitFor(() => expect(screen.queryByText(libraryItem.item.title)).toBeNull())
+      expect(
+        search.mock.calls.filter(([request]) => request.scope === 'library' && request.limit !== 1)
+          .length
+      ).toBeGreaterThan(previousQueries)
+    }
+  )
 
   it('edits rating and notes directly in optional table columns', async () => {
     window.localStorage.setItem(

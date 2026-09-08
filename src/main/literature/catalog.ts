@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto'
 
 import { Prisma, type PrismaClient } from '@prisma/client'
+import { createLogger } from '../logger'
 import { findLiteratureDuplicateGroups } from './duplicates'
 import { planLiteratureMerge, supplementLiteratureMetadata } from './duplicate-metadata'
 
@@ -43,6 +44,8 @@ type LiteratureCatalogClient = Pick<
   | 'projectLiterature'
   | 'tagAssignment'
 >
+
+const log = createLogger('literature-catalog')
 
 type LiteratureCatalogClientProvider = () => Promise<LiteratureCatalogClient>
 const duplicateGroups = new WeakMap<
@@ -634,7 +637,19 @@ const acceptInboxCandidate = async (
 }
 
 class LiteratureCatalog {
-  constructor(private readonly getClient: LiteratureCatalogClientProvider) {}
+  constructor(
+    private readonly getClient: LiteratureCatalogClientProvider,
+    private readonly onTagAssignmentsChanged?: () => Promise<void>
+  ) {}
+
+  private async publishTagAssignmentsChanged(): Promise<void> {
+    try {
+      await this.onTagAssignmentsChanged?.()
+    } catch (error) {
+      // Delivery cannot roll back an already committed catalog transaction.
+      log.warn('Could not publish committed tag assignment changes', { error })
+    }
+  }
 
   async search(request: LiteratureCatalogSearchRequest): Promise<LiteratureCatalogSearchPage> {
     const client = await this.getClient()
@@ -1610,7 +1625,8 @@ class LiteratureCatalog {
   ): Promise<LiteratureCatalogReceipt> {
     const itemIds = [...new Set(command.itemIds)]
     const client = await this.getClient()
-    return client.$transaction(async (transaction) => {
+    let tagsChanged = false
+    const receipt = await client.$transaction<LiteratureCatalogReceipt>(async (transaction) => {
       const requestedItems = await transaction.literatureItem.findMany({
         where: { id: { in: itemIds } },
         select: { id: true, deletedAt: true }
@@ -1635,9 +1651,10 @@ class LiteratureCatalog {
       await transaction.literatureInboxCandidate.deleteMany({
         where: { acceptedItemId: { in: deletionIds } }
       })
-      await transaction.tagAssignment.deleteMany({
+      const removedTags = await transaction.tagAssignment.deleteMany({
         where: { resourceType: 'literature.item', resourceId: { in: deletionIds } }
       })
+      tagsChanged = removedTags.count > 0
       await transaction.literatureItem.updateMany({
         where: { id: { in: deletionIds } },
         data: { mergedIntoItemId: null }
@@ -1652,6 +1669,8 @@ class LiteratureCatalog {
       }
       return { kind: 'item', id: itemIds[0]!, state: 'deleted-permanently' }
     })
+    if (tagsChanged) await this.publishTagAssignmentsChanged()
+    return receipt
   }
 
   private async moveCollectionItems(
@@ -1697,7 +1716,11 @@ class LiteratureCatalog {
     command: Extract<LiteratureCatalogCommand, { kind: 'merge-items' }>
   ): Promise<LiteratureCatalogReceipt> {
     const client = await this.getClient()
-    return client.$transaction((transaction) => this.mergeItemsInTransaction(transaction, command))
+    const result = await client.$transaction((transaction) =>
+      this.mergeItemsInTransaction(transaction, command)
+    )
+    if (result.tagsChanged) await this.publishTagAssignmentsChanged()
+    return result.receipt
   }
 
   private async mergeDuplicates(
@@ -1730,6 +1753,7 @@ class LiteratureCatalog {
       }
       ids.forEach((id) => seen.add(id))
       try {
+        let tagsChanged = false
         const merged = await client.$transaction(async (transaction) => {
           const rows = await transaction.literatureItem.findMany({
             where: { id: { in: ids }, deletedAt: null, mergedIntoItemId: null },
@@ -1772,7 +1796,7 @@ class LiteratureCatalog {
             updatedAt
           }))
           if (command.mode === 'commit') {
-            await this.mergeItemsInTransaction(transaction, {
+            const result = await this.mergeItemsInTransaction(transaction, {
               kind: 'merge-items',
               survivorId: plan.survivor.id,
               duplicateIds: rows.filter((row) => row.id !== plan.survivor.id).map((row) => row.id),
@@ -1780,6 +1804,7 @@ class LiteratureCatalog {
               expectedItems: items,
               item: plan.item
             })
+            tagsChanged = result.tagsChanged
           }
           return {
             survivorId: plan.survivor.id,
@@ -1790,6 +1815,7 @@ class LiteratureCatalog {
         })
         if (merged) {
           // Publish the result only after the transaction commits successfully.
+          if (tagsChanged) await this.publishTagAssignmentsChanged()
           batch.groups!.push(merged)
           detail.status = command.mode === 'commit' ? 'merged' : 'ready'
           batch.eligible += 1
@@ -1811,7 +1837,7 @@ class LiteratureCatalog {
   private async mergeItemsInTransaction(
     transaction: Prisma.TransactionClient,
     command: Extract<LiteratureCatalogCommand, { kind: 'merge-items' }>
-  ): Promise<LiteratureCatalogReceipt> {
+  ): Promise<{ receipt: LiteratureCatalogReceipt; tagsChanged: boolean }> {
     const duplicateIds = [...new Set(command.duplicateIds)].filter(
       (itemId) => itemId !== command.survivorId
     )
@@ -1940,7 +1966,10 @@ class LiteratureCatalog {
       },
       data: { deletedAt: new Date(), mergedIntoItemId: command.survivorId }
     })
-    return { kind: 'item', id: command.survivorId, state: 'merged' }
+    return {
+      receipt: { kind: 'item', id: command.survivorId, state: 'merged' },
+      tagsChanged: assignments.length > 0
+    }
   }
 
   private async attachSource(

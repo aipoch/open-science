@@ -17,6 +17,9 @@ import { migrateApplicationDatabase } from '../database/migration-service'
 import { createProjectDbClient } from '../projects/prisma-client'
 import { LiteratureCatalog, normalizeIdentifier } from './catalog'
 import { LiteratureCitationFormatter } from './citation-formatter'
+import { TagRepository } from '../tags/repository'
+import { TagResourceCatalog } from '../tags/resource-catalog'
+import { TagService } from '../tags/service'
 
 describe('Literature identifier normalization', () => {
   it('removes text joined to the end of a DOI before provider lookup', () => {
@@ -80,6 +83,101 @@ describe('LiteratureCatalog', () => {
     await client.project.create({ data: { id: 'project-1', name: 'Research' } })
     return new LiteratureCatalog(async () => client!)
   }
+
+  it.each(['merge', 'delete', 'batch', 'rollback', 'preview'] as const)(
+    'publishes tag assignments only after committed catalog changes: %s',
+    async (operation) => {
+      await setup()
+      const catalog = new LiteratureCatalog(
+        async () => client!,
+        () => tags.notifyAssignmentsChanged()
+      )
+      const survivor = await catalog.transact({ kind: 'create-item', item: candidate().item })
+      const duplicate = await catalog.transact({
+        kind: 'create-item',
+        item: candidate().item,
+        duplicatePolicy: 'separate'
+      })
+      const publish = vi.fn()
+      const tags = new TagService(
+        new TagRepository(async () => client!),
+        new TagResourceCatalog({
+          listSkills: async () => [],
+          listConnectors: async () => ({ connectors: [], customServers: [] }),
+          listSpecialists: async () => [],
+          listLiteratureItems: async () => client!.literatureItem.findMany({ select: { id: true } })
+        }),
+        { publish }
+      )
+      await tags.snapshot()
+      const before = await tags.setAssignment({
+        tagId: 'tag-favorite',
+        resourceType: 'literature.item',
+        resourceId: duplicate.id,
+        assigned: true
+      })
+      publish.mockClear()
+      const reviewed = (
+        await Promise.all([catalog.get(survivor.id), catalog.get(duplicate.id)])
+      ).map((item) => item!)
+      if (operation === 'delete') {
+        await catalog.transact({
+          kind: 'set-item-lifecycle',
+          itemIds: [duplicate.id],
+          state: 'deleted'
+        })
+        await catalog.transact({ kind: 'delete-items-permanently', itemIds: [duplicate.id] })
+      } else if (operation === 'batch' || operation === 'preview') {
+        await catalog.transact({
+          kind: 'merge-duplicates',
+          mode: operation === 'preview' ? 'preview' : 'commit',
+          groups: [
+            [survivor.id, duplicate.id],
+            ['missing-a', 'missing-b']
+          ],
+          strategy: 'oldest',
+          expectedItems: reviewed.map(({ id, metadataRevision, updatedAt }) => ({
+            id,
+            metadataRevision,
+            updatedAt
+          }))
+        })
+      } else {
+        const merging = catalog.transact({
+          kind: 'merge-items',
+          survivorId: survivor.id,
+          duplicateIds: [duplicate.id],
+          expectedMetadataRevision: operation === 'rollback' ? 999 : reviewed[0].metadataRevision,
+          expectedItems: reviewed.map(({ id, metadataRevision, updatedAt }) => ({
+            id,
+            metadataRevision,
+            updatedAt
+          })),
+          item: reviewed[0].item
+        })
+        if (operation === 'rollback') await expect(merging).rejects.toThrow()
+        else await merging
+      }
+      const assignments = await client!.tagAssignment.findMany({
+        where: { resourceType: 'literature.item' }
+      })
+      const expectedIds =
+        operation === 'delete'
+          ? []
+          : [operation === 'rollback' || operation === 'preview' ? duplicate.id : survivor.id]
+      expect(assignments.map(({ resourceId }) => resourceId)).toEqual(expectedIds)
+      const after = await tags.snapshot()
+      expect(after.assignments.map(({ resourceId }) => resourceId)).toEqual(expectedIds)
+      if (operation === 'rollback' || operation === 'preview') {
+        expect(after.revision).toBe(before.revision)
+        expect(publish).not.toHaveBeenCalled()
+        return
+      }
+      expect.soft(after.revision).toBe(before.revision + 1)
+      expect.soft(publish).toHaveBeenCalledTimes(1)
+      expect.soft(publish).toHaveBeenCalledWith('tags:changed', { revision: after.revision })
+    }
+  )
 
   it.each([
     ['deleted', 'missing'],

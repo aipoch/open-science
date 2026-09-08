@@ -102,6 +102,8 @@
   "renderer": {
     "Identifiers (★ primary)": "标识符（★ 主标识）",
     "Search again to refresh this older metadata review.": "请重新搜索以更新这份旧的元数据审阅结果。",
+    "The reference was saved, but could not be reloaded.": "文献已保存，但无法重新加载。",
+    "Your note draft is preserved. Retry saving or press Escape to discard.": "笔记草稿已保留。请重试保存，或按 Escape 放弃修改。",
     "Not answered": "未填写",
     "Automatic contrast": "自动对比度",
     "Display range": "显示范围",

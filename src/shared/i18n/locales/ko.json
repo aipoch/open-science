@@ -102,6 +102,8 @@
   "renderer": {
     "Identifiers (★ primary)": "식별자(★ 기본)",
     "Search again to refresh this older metadata review.": "다시 검색하여 이전 메타데이터 검토 내용을 새로 고치세요.",
+    "The reference was saved, but could not be reloaded.": "참고 문헌은 저장되었지만 다시 불러오지 못했습니다.",
+    "Your note draft is preserved. Retry saving or press Escape to discard.": "메모 초안이 보존되었습니다. 저장을 다시 시도하거나 Escape 키를 눌러 취소하세요.",
     "Not answered": "미응답",
     "Automatic contrast": "자동 대비",
     "Display range": "표시 범위",

@@ -102,6 +102,8 @@
   "renderer": {
     "Identifiers (★ primary)": "識別碼（★ 主要識別碼）",
     "Search again to refresh this older metadata review.": "請重新搜尋以更新這份舊的中繼資料審閱結果。",
+    "The reference was saved, but could not be reloaded.": "文獻已儲存，但無法重新載入。",
+    "Your note draft is preserved. Retry saving or press Escape to discard.": "筆記草稿已保留。請重試儲存，或按 Escape 放棄修改。",
     "Not answered": "未填寫",
     "Automatic contrast": "自動對比度",
     "Display range": "顯示範圍",

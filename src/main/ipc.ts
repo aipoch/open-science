@@ -1771,7 +1771,10 @@ const createApplicationModules = async (
     new MemoryRepository(() => getProjectDbClient(configRoot)),
     applicationEvents
   )
-  const literatureCatalog = new LiteratureCatalog(() => getProjectDbClient(configRoot))
+  const literatureCatalog = new LiteratureCatalog(
+    () => getProjectDbClient(configRoot),
+    () => tagService.notifyAssignmentsChanged()
+  )
   const literatureCitationStyles = new LiteratureCitationStyleLibrary(
     join(resolveDataRoot(), 'literature', 'citation-styles')
   )
