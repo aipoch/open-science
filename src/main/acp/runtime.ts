@@ -276,6 +276,7 @@ type AcpRuntimeOptions = {
     acquirePdf?: (request: {
       candidate: LiteratureLibraryDiscovery
       pdfUrl?: string
+      signal?: AbortSignal
       projectId: string
       sessionId: string
     }) => Promise<import('../literature/agent-pdf-acquisition').AgentPdfAcquisitionResult>

@@ -1647,6 +1647,10 @@
     "Collections could not be loaded.": "无法加载集合。",
     "This reference is no longer in your Library.": "这篇文献已不在您的文献库中。",
     "Literature could not be updated.": "无法更新文献。",
+    "Project counts could not be refreshed.": "无法刷新项目计数。",
+    "The remaining references could not be checked. Recheck before undoing.": "无法核对剩余参考文献。请重新核对后再撤销。",
+    "Already restored: {{restored}}. Accepted or unavailable, skipped: {{skipped}}. Still dismissed: {{remaining}}.": "已恢复：{{restored}}。已收录或不可用，已跳过：{{skipped}}。仍已忽略：{{remaining}}。",
+    "The update could not be confirmed. Check the Inbox before trying again.": "无法确认更新结果。请检查收件箱后再试。",
     "Literature library": "文献库",
     "New Agent discoveries will appear here for review.": "智能体新发现的文献会出现在此处供你审核。",
     "New collection": "新建合集",
@@ -4725,9 +4729,7 @@
     "Select 2–20 references to compare.": "选择 2–20 篇文献进行比较。",
     "Selected: {{selected}} / 20": "已选择：{{selected}} / 20",
     "Compare selected references": "比较所选文献",
-    "The update could not be confirmed. Check the Inbox before trying again.": "无法确认更新结果。请检查收件箱后再试。",
-    "Already restored: {{restored}}. Accepted or unavailable, skipped: {{skipped}}. Still dismissed: {{remaining}}.": "已恢复：{{restored}}。已收录或不可用，已跳过：{{skipped}}。仍已忽略：{{remaining}}。",
-    "The remaining references could not be checked. Recheck before undoing.": "无法核对剩余参考文献。请重新核对后再撤销。",
-    "Project counts could not be refreshed.": "无法刷新项目计数。"
+    "PDF added. Refreshing attachment details…": "PDF 已添加。正在刷新附件详情…",
+    "You can close this dialog. The download continues in the background; reopen it to see progress.": "您可以关闭此对话框。下载将在后台继续；重新打开即可查看进度。"
   }
 }

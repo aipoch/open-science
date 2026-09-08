@@ -1042,7 +1042,15 @@ describe('LiteratureCatalog', () => {
       contentType: 'application/pdf',
       filename: 'paper.pdf',
       pageCount: 8,
-      sourceUrl: 'https://pmc.ncbi.nlm.nih.gov/articles/PMC1/'
+      sourceUrl: 'https://pmc.ncbi.nlm.nih.gov/articles/PMC1/',
+      provenance: {
+        provider: 'pmc',
+        source: 'PMC',
+        sourceUrl: 'https://pmc.ncbi.nlm.nih.gov/articles/PMC1/',
+        acquiredAt: 123,
+        version: 'accepted' as const,
+        license: 'cc-by'
+      }
     }
     const staged = await catalog.stageAcquiredPdf(candidate(), pdf)
     expect(staged).toMatchObject({ kind: 'candidate', state: 'pending' })
@@ -1051,13 +1059,50 @@ describe('LiteratureCatalog', () => {
     expect((await catalog.search({ scope: 'inbox' })).entries[0]).toMatchObject({
       pdfs: [{ filename: 'paper.pdf', pageCount: 8 }]
     })
+    expect(
+      JSON.parse((await client!.literatureInboxPdf.findFirstOrThrow()).provenanceJson!)
+    ).toEqual(pdf.provenance)
     const accepted = await catalog.transact({ kind: 'accept-candidate', candidateId: staged.id })
     expect(accepted.id).toBe(existing.id)
+    expect((await catalog.get(existing.id))!.attachments[0].versions[0].provenance).toEqual(
+      pdf.provenance
+    )
     expect((await catalog.get(existing.id))!.attachments).toHaveLength(1)
     expect((await catalog.get(existing.id))!.projectIds).toEqual(['project-1'])
     expect(await client!.literatureInboxPdf.count()).toBe(0)
     await catalog.transact({ kind: 'accept-candidate', candidateId: staged.id })
     expect((await catalog.get(existing.id))!.attachments).toHaveLength(1)
+  })
+
+  it('rejects a cancelled acquisition while waiting for the database client before any Inbox write', async () => {
+    await setup()
+    let release!: () => void
+    const waiting = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const catalog = new LiteratureCatalog(async () => {
+      await waiting
+      return client!
+    })
+    const controller = new AbortController()
+    const pending = catalog.stageAcquiredPdf(
+      candidate(),
+      {
+        contentBlobId: 'unused',
+        checksum: 'c'.repeat(64),
+        sizeBytes: 128,
+        contentType: 'application/pdf',
+        filename: 'paper.pdf',
+        pageCount: 8,
+        sourceUrl: 'https://example.test/paper'
+      },
+      controller.signal
+    )
+    controller.abort(new Error('cancelled before transaction'))
+    release()
+    await expect(pending).rejects.toThrow('cancelled before transaction')
+    expect(await client!.literatureInboxCandidate.count()).toBe(0)
+    expect(await client!.literatureInboxPdf.count()).toBe(0)
   })
 
   it('rolls back Inbox metadata if its acquired PDF cannot be retained', async () => {

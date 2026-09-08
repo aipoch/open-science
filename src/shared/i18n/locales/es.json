@@ -1629,6 +1629,10 @@
     "Collections could not be loaded.": "No se pudieron cargar las colecciones.",
     "This reference is no longer in your Library.": "Esta referencia ya no está en su Biblioteca.",
     "Literature could not be updated.": "No se pudieron actualizar las referencias.",
+    "Project counts could not be refreshed.": "No se pudieron actualizar los recuentos de los proyectos.",
+    "The remaining references could not be checked. Recheck before undoing.": "No se pudieron comprobar las referencias restantes. Vuelva a comprobarlas antes de deshacer.",
+    "Already restored: {{restored}}. Accepted or unavailable, skipped: {{skipped}}. Still dismissed: {{remaining}}.": "Ya restauradas: {{restored}}. Aceptadas o no disponibles, omitidas: {{skipped}}. Aún descartadas: {{remaining}}.",
+    "The update could not be confirmed. Check the Inbox before trying again.": "No se pudo confirmar la actualización. Revise la bandeja de entrada antes de volver a intentarlo.",
     "Literature library": "Biblioteca de referencias",
     "New Agent discoveries will appear here for review.": "Las nuevas referencias encontradas por Agentes aparecerán aquí para su revisión.",
     "New collection": "Nueva colección",
@@ -5039,9 +5043,7 @@
     "Select 2–20 references to compare.": "Seleccione entre 2 y 20 referencias para comparar.",
     "Selected: {{selected}} / 20": "Seleccionadas: {{selected}} / 20",
     "Compare selected references": "Comparar referencias seleccionadas",
-    "The update could not be confirmed. Check the Inbox before trying again.": "No se pudo confirmar la actualización. Revise la bandeja de entrada antes de volver a intentarlo.",
-    "Already restored: {{restored}}. Accepted or unavailable, skipped: {{skipped}}. Still dismissed: {{remaining}}.": "Ya restauradas: {{restored}}. Aceptadas o no disponibles, omitidas: {{skipped}}. Aún descartadas: {{remaining}}.",
-    "The remaining references could not be checked. Recheck before undoing.": "No se pudieron comprobar las referencias restantes. Vuelva a comprobarlas antes de deshacer.",
-    "Project counts could not be refreshed.": "No se pudieron actualizar los recuentos de los proyectos."
+    "PDF added. Refreshing attachment details…": "PDF añadido. Actualizando los detalles del archivo adjunto…",
+    "You can close this dialog. The download continues in the background; reopen it to see progress.": "Puede cerrar este diálogo. La descarga continúa en segundo plano; vuelva a abrirlo para ver el progreso."
   }
 }

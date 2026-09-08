@@ -1627,6 +1627,10 @@
     "Collections could not be loaded.": "Не удалось загрузить коллекции.",
     "This reference is no longer in your Library.": "Этой ссылки больше нет в вашей библиотеке.",
     "Literature could not be updated.": "Не удалось обновить источники.",
+    "Project counts could not be refreshed.": "Не удалось обновить счётчики проектов.",
+    "The remaining references could not be checked. Recheck before undoing.": "Не удалось проверить оставшиеся ссылки. Проверьте их ещё раз перед отменой.",
+    "Already restored: {{restored}}. Accepted or unavailable, skipped: {{skipped}}. Still dismissed: {{remaining}}.": "Уже восстановлено: {{restored}}. Принято или недоступно, пропущено: {{skipped}}. Всё ещё отклонено: {{remaining}}.",
+    "The update could not be confirmed. Check the Inbox before trying again.": "Не удалось подтвердить обновление. Проверьте входящие перед повторной попыткой.",
     "Literature library": "Библиотека источников",
     "New Agent discoveries will appear here for review.": "Новые источники, найденные Агентами, появятся здесь для проверки.",
     "New collection": "Новая коллекция",
@@ -5171,9 +5175,7 @@
     "Select 2–20 references to compare.": "Выберите от 2 до 20 источников для сравнения.",
     "Selected: {{selected}} / 20": "Выбрано: {{selected}} / 20",
     "Compare selected references": "Сравнить выбранные источники",
-    "The update could not be confirmed. Check the Inbox before trying again.": "Не удалось подтвердить обновление. Проверьте входящие перед повторной попыткой.",
-    "Already restored: {{restored}}. Accepted or unavailable, skipped: {{skipped}}. Still dismissed: {{remaining}}.": "Уже восстановлено: {{restored}}. Принято или недоступно, пропущено: {{skipped}}. Всё ещё отклонено: {{remaining}}.",
-    "The remaining references could not be checked. Recheck before undoing.": "Не удалось проверить оставшиеся ссылки. Проверьте их ещё раз перед отменой.",
-    "Project counts could not be refreshed.": "Не удалось обновить счётчики проектов."
+    "PDF added. Refreshing attachment details…": "PDF добавлен. Обновление сведений о вложении…",
+    "You can close this dialog. The download continues in the background; reopen it to see progress.": "Можно закрыть это окно. Загрузка продолжится в фоновом режиме; откройте окно снова, чтобы увидеть ход загрузки."
   }
 }

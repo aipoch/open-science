@@ -10,6 +10,8 @@ import {
   LITERATURE_IMPORT_IDENTITY_CONFLICT,
   LITERATURE_COLLECTION_NAME_CONFLICT,
   literatureCandidateInputSchema,
+  literaturePdfProvenanceSchema,
+  type LiteraturePdfProvenance,
   literatureItemInputSchema,
   normalizeLiteratureIdentifierValue,
   normalizeLiteratureIdentifierPreferences,
@@ -56,6 +58,7 @@ const duplicateGroups = new WeakMap<
 type AttachLiteratureContentInput = Readonly<{
   itemId: string
   expectedMetadataRevision?: number
+  provenance?: LiteraturePdfProvenance
   attachmentId?: string
   kind?: string
   title?: string
@@ -215,6 +218,9 @@ const toItemView = (row: LiteratureItemRow): LiteratureItemView => ({
     versions: attachment.versions.map((version) => ({
       id: version.id,
       versionNumber: version.versionNumber,
+      provenance: version.provenanceJson
+        ? literaturePdfProvenanceSchema.parse(JSON.parse(version.provenanceJson))
+        : undefined,
       filename: version.filename,
       contentType: version.contentType,
       sizeBytes: Number(version.sizeBytes),
@@ -626,6 +632,7 @@ const acceptInboxCandidate = async (
               checksum: pdf.checksum,
               pageCount: pdf.pageCount,
               contentType: 'application/pdf',
+              provenanceJson: pdf.provenanceJson,
               versionNumber: 1
             }
           }
@@ -971,6 +978,9 @@ class LiteratureCatalog {
   }
 
   async attachContent(input: AttachLiteratureContentInput): Promise<AttachedLiteratureContent> {
+    const provenanceJson = input.provenance
+      ? canonicalJson(literaturePdfProvenanceSchema.parse(input.provenance))
+      : null
     const itemId = normalizeSpace(input.itemId)
     const kind = normalizeSpace(input.kind ?? 'fullText')
     const filename = normalizeSpace(input.filename)
@@ -1067,7 +1077,8 @@ class LiteratureCatalog {
           contentType,
           sizeBytes: BigInt(input.sizeBytes),
           checksum: input.checksum,
-          pageCount: input.pageCount
+          pageCount: input.pageCount,
+          provenanceJson
         },
         select: { id: true }
       })
@@ -1287,13 +1298,20 @@ class LiteratureCatalog {
 
   private async stageCandidate(
     input: LiteratureCandidateInput,
-    pdf?: Omit<AttachLiteratureContentInput, 'itemId'> & { pageCount: number; sourceUrl: string }
+    pdf?: Omit<AttachLiteratureContentInput, 'itemId'> & { pageCount: number; sourceUrl: string },
+    signal?: AbortSignal
   ): Promise<LiteratureCatalogReceipt> {
     const candidate = literatureCandidateInputSchema.parse(input)
+    const provenanceJson = pdf?.provenance
+      ? canonicalJson(literaturePdfProvenanceSchema.parse(pdf.provenance))
+      : null
     const identifiers = normalizedIdentifiers(candidate.item.identifiers)
     const client = await this.getClient()
     return client.$transaction(async (transaction) => {
+      signal?.throwIfAborted()
       const existingItemId = await findIdentityItem(transaction, identifiers)
+      signal?.throwIfAborted()
+      // From the first write onward this transaction settles atomically, even if cancelled.
       if (existingItemId && !pdf) {
         await restoreExistingItem(transaction, existingItemId)
         await attachProjectIfPresent(
@@ -1349,7 +1367,8 @@ class LiteratureCatalog {
               sizeBytes: blob.sizeBytes,
               checksum: blob.checksum,
               pageCount: pdf.pageCount,
-              sourceUrl: pdf.sourceUrl
+              sourceUrl: pdf.sourceUrl,
+              provenanceJson
             },
             update: {}
           })
@@ -1374,9 +1393,10 @@ class LiteratureCatalog {
 
   async stageAcquiredPdf(
     candidate: LiteratureCandidateInput,
-    pdf: Omit<AttachLiteratureContentInput, 'itemId'> & { pageCount: number; sourceUrl: string }
+    pdf: Omit<AttachLiteratureContentInput, 'itemId'> & { pageCount: number; sourceUrl: string },
+    signal?: AbortSignal
   ): Promise<LiteratureCatalogReceipt> {
-    return this.stageCandidate(candidate, pdf)
+    return this.stageCandidate(candidate, pdf, signal)
   }
 
   private async dismissCandidate(candidateId: string): Promise<LiteratureCatalogReceipt> {

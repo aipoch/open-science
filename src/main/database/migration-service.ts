@@ -1,3 +1,4 @@
+import { literaturePdfProvenanceMigration } from './migrations/0035-literature-pdf-provenance'
 import { permissionApprovalSummaryMigration } from './migrations/0032-permission-approval-summary'
 import { computeJobHarvestRetryMigration } from './migrations/0033-compute-job-harvest-retry'
 import { projectArchiveRevisionMigration } from './migrations/0031-project-archive-revision'
@@ -726,6 +727,17 @@ const MIGRATION_MANIFEST = [
     checksum: BACKGROUND_RESULT_DELIVERY_CHECKSUM,
     backupOnApply: 'required',
     backupRetention: 'retain'
+  },
+  {
+    ...literaturePdfProvenanceMigration,
+    checksum: checksumMigrationPayload(
+      literaturePdfProvenanceMigration.id,
+      literaturePdfProvenanceMigration.statements,
+      literaturePdfProvenanceMigration.verifiers,
+      literaturePdfProvenanceMigration.operations
+    ),
+    backupOnApply: 'required',
+    backupRetention: 'retain'
   }
 ] as const satisfies readonly MigrationManifestEntry[]
 // schema-locality: begin frozen-0001-repairs
@@ -1137,6 +1149,7 @@ const verifyCurrentApplicationSchema = async (client: PrismaClient): Promise<voi
   await runMigrationVerifiers(client, literatureFoundationMigration.verifiers)
   await runMigrationVerifiers(client, computeJobRemoteCleanupMigration.verifiers)
   await runMigrationVerifiers(client, backgroundResultDeliveryMigration.verifiers)
+  await runMigrationVerifiers(client, literaturePdfProvenanceMigration.verifiers)
 }
 
 const readLedger = async (client: PrismaClient): Promise<LedgerRow[]> => {

@@ -1628,6 +1628,10 @@
     "Collections could not be loaded.": "Impossible de charger les collections.",
     "This reference is no longer in your Library.": "Cette référence ne figure plus dans votre bibliothèque.",
     "Literature could not be updated.": "Les références n’ont pas pu être mises à jour.",
+    "Project counts could not be refreshed.": "Les compteurs des projets n’ont pas pu être actualisés.",
+    "The remaining references could not be checked. Recheck before undoing.": "Les références restantes n’ont pas pu être vérifiées. Vérifiez à nouveau avant d’annuler.",
+    "Already restored: {{restored}}. Accepted or unavailable, skipped: {{skipped}}. Still dismissed: {{remaining}}.": "Déjà restaurées : {{restored}}. Acceptées ou indisponibles, ignorées : {{skipped}}. Toujours écartées : {{remaining}}.",
+    "The update could not be confirmed. Check the Inbox before trying again.": "La mise à jour n’a pas pu être confirmée. Vérifiez la boîte de réception avant de réessayer.",
     "Literature library": "Bibliothèque de références",
     "New Agent discoveries will appear here for review.": "Les nouvelles références trouvées par les Agents apparaîtront ici pour examen.",
     "New collection": "Nouvelle collection",
@@ -5039,9 +5043,7 @@
     "Select 2–20 references to compare.": "Sélectionnez 2 à 20 références à comparer.",
     "Selected: {{selected}} / 20": "Sélectionnées : {{selected}} / 20",
     "Compare selected references": "Comparer les références sélectionnées",
-    "The update could not be confirmed. Check the Inbox before trying again.": "La mise à jour n’a pas pu être confirmée. Vérifiez la boîte de réception avant de réessayer.",
-    "Already restored: {{restored}}. Accepted or unavailable, skipped: {{skipped}}. Still dismissed: {{remaining}}.": "Déjà restaurées : {{restored}}. Acceptées ou indisponibles, ignorées : {{skipped}}. Toujours écartées : {{remaining}}.",
-    "The remaining references could not be checked. Recheck before undoing.": "Les références restantes n’ont pas pu être vérifiées. Vérifiez à nouveau avant d’annuler.",
-    "Project counts could not be refreshed.": "Les compteurs des projets n’ont pas pu être actualisés."
+    "PDF added. Refreshing attachment details…": "PDF ajouté. Actualisation des détails de la pièce jointe…",
+    "You can close this dialog. The download continues in the background; reopen it to see progress.": "Vous pouvez fermer cette fenêtre. Le téléchargement continue en arrière-plan; rouvrez-la pour voir sa progression."
   }
 }

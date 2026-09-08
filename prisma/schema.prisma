@@ -497,6 +497,7 @@ model LiteratureAttachmentVersion {
   filename      String
   contentType   String
   sizeBytes     BigInt
+  provenanceJson String?
   checksum      String
   pageCount     Int?
   createdAt     DateTime             @default(now())
@@ -583,6 +584,7 @@ model LiteratureInboxPdf {
   contentBlobId String
   filename      String
   sizeBytes     BigInt
+  provenanceJson String?
   checksum      String
   pageCount     Int
   sourceUrl     String

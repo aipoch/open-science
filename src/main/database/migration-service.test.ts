@@ -5,6 +5,8 @@ import { join } from 'node:path'
 import { PrismaClient } from '@prisma/client'
 import { afterEach, describe, expect, it } from 'vitest'
 
+import { literatureCandidateInputSchema } from '../../shared/literature'
+import { LiteratureCatalog } from '../literature/catalog'
 import { createProjectDbClient } from '../projects/prisma-client'
 import { adaptMigrationOperationsForCurrentSchema } from './legacy-baseline-adapter'
 import { RUNTIME_SCHEMA_TABLE_DDL_BY_NAME } from './migrations/0001-runtime-schema-baseline'
@@ -314,6 +316,69 @@ describe('application database migrations', () => {
     if (storageRoot) await rm(storageRoot, { force: true, recursive: true })
   })
 
+  it('upgrades existing attachment and pending Inbox PDF rows without inventing provenance', async () => {
+    storageRoot = await mkdtemp(join(tmpdir(), 'literature-provenance-upgrade-'))
+    client = createProjectDbClient(storageRoot)
+    // Start from the released target shape, excluding this additive suffix. Replaying raw
+    // historical rebuild SQL would bypass the runtime's existing foreign-key adapters.
+    await migrateApplicationDatabase(client)
+    await client.$executeRawUnsafe(
+      'ALTER TABLE "LiteratureAttachmentVersion" DROP COLUMN "provenanceJson"'
+    )
+    await client.$executeRawUnsafe('ALTER TABLE "LiteratureInboxPdf" DROP COLUMN "provenanceJson"')
+    await client.$executeRawUnsafe(
+      `DELETE FROM "_open_science_migrations" WHERE "id" = '0035_literature_pdf_provenance'`
+    )
+    const checksum = 'a'.repeat(64)
+    const oldCandidate = literatureCandidateInputSchema.parse({
+      item: { itemType: 'journalArticle', title: 'Historical Inbox paper' },
+      source: { provider: 'crossref', rawMetadata: {} },
+      origin: { kind: 'agent' }
+    })
+    await client.$executeRawUnsafe(
+      `INSERT INTO "ContentBlob" ("id", "storageKey", "checksum", "sizeBytes", "contentType", "state") VALUES ('old-blob', 'content/old', ?, 10, 'application/pdf', 'available')`,
+      checksum
+    )
+    await client.$executeRawUnsafe(
+      `INSERT INTO "LiteratureItem" ("id", "itemType", "title", "updatedAt") VALUES ('old-item', 'journalArticle', 'Historical paper', CURRENT_TIMESTAMP)`
+    )
+    await client.$executeRawUnsafe(
+      `INSERT INTO "LiteratureAttachment" ("id", "itemId", "updatedAt") VALUES ('old-attachment', 'old-item', CURRENT_TIMESTAMP)`
+    )
+    await client.$executeRawUnsafe(
+      `INSERT INTO "LiteratureAttachmentVersion" ("id", "attachmentId", "contentBlobId", "versionNumber", "filename", "contentType", "sizeBytes", "checksum", "pageCount") VALUES ('old-version', 'old-attachment', 'old-blob', 1, 'old.pdf', 'application/pdf', 10, ?, 2)`,
+      checksum
+    )
+    await client.$executeRawUnsafe(
+      `INSERT INTO "LiteratureInboxCandidate" ("id", "dedupeKey", "itemType", "title", "candidateJson", "metadataChecksum", "origin", "updatedAt") VALUES ('old-candidate', 'old-key', 'journalArticle', 'Historical Inbox paper', ?, ?, 'agent', CURRENT_TIMESTAMP)`,
+      JSON.stringify(oldCandidate),
+      checksum
+    )
+    await client.$executeRawUnsafe(
+      `INSERT INTO "LiteratureInboxPdf" ("id", "candidateId", "contentBlobId", "filename", "sizeBytes", "checksum", "pageCount", "sourceUrl") VALUES ('old-pdf', 'old-candidate', 'old-blob', 'old.pdf', 10, ?, 2, 'https://example.test/old')`,
+      checksum
+    )
+    await migrateApplicationDatabase(client)
+    await migrateApplicationDatabase(client)
+    expect(
+      await client.literatureAttachmentVersion.findUniqueOrThrow({ where: { id: 'old-version' } })
+    ).toMatchObject({ checksum, pageCount: 2, provenanceJson: null })
+    expect(
+      await client.literatureInboxPdf.findUniqueOrThrow({ where: { id: 'old-pdf' } })
+    ).toMatchObject({ sourceUrl: 'https://example.test/old', provenanceJson: null })
+    const catalog = new LiteratureCatalog(async () => client!)
+    expect((await catalog.get('old-item'))!.attachments[0].versions[0].provenance).toBeUndefined()
+    const accepted = await catalog.transact({
+      kind: 'accept-candidate',
+      candidateId: 'old-candidate'
+    })
+    expect((await catalog.get(accepted.id))!.attachments[0].versions[0]).toMatchObject({
+      filename: 'old.pdf',
+      pageCount: 2,
+      provenance: undefined
+    })
+  })
+
   it.each([
     {
       name: 'missing Prisma engine',
@@ -478,10 +543,11 @@ describe('application database migrations', () => {
         '0031_project_archive_revision',
         '0032_permission_approval_summary',
         '0033_compute_job_harvest_retry',
-        '0034_background_result_delivery'
+        '0034_background_result_delivery',
+        '0035_literature_pdf_provenance'
       ],
       from: null,
-      to: '0034_background_result_delivery'
+      to: '0035_literature_pdf_provenance'
     })
     expect(compatibility).toEqual([{ sqliteVersion: expect.stringMatching(/^\d+\.\d+\.\d+$/) }])
     await expect(
@@ -494,8 +560,8 @@ describe('application database migrations', () => {
     await expect(migrateApplicationDatabase(client)).resolves.toEqual({
       adoptedLegacy: false,
       applied: [],
-      from: '0034_background_result_delivery',
-      to: '0034_background_result_delivery'
+      from: '0035_literature_pdf_provenance',
+      to: '0035_literature_pdf_provenance'
     })
   })
 
@@ -514,14 +580,18 @@ describe('application database migrations', () => {
     await migrateApplicationDatabase(client)
     await client.$executeRawUnsafe('DROP TABLE "BackgroundResultDelivery"')
     await client.$executeRawUnsafe(
-      `DELETE FROM "_open_science_migrations" WHERE "id" = '0034_background_result_delivery'`
+      'ALTER TABLE "LiteratureAttachmentVersion" DROP COLUMN "provenanceJson"'
+    )
+    await client.$executeRawUnsafe('ALTER TABLE "LiteratureInboxPdf" DROP COLUMN "provenanceJson"')
+    await client.$executeRawUnsafe(
+      `DELETE FROM "_open_science_migrations" WHERE "id" >= '0034_background_result_delivery'`
     )
 
     await expect(migrateApplicationDatabase(client)).resolves.toEqual({
       adoptedLegacy: false,
-      applied: ['0034_background_result_delivery'],
+      applied: ['0034_background_result_delivery', '0035_literature_pdf_provenance'],
       from: '0033_compute_job_harvest_retry',
-      to: '0034_background_result_delivery'
+      to: '0035_literature_pdf_provenance'
     })
     await expect(
       client.$queryRaw<Array<{ name: string }>>`
@@ -623,7 +693,8 @@ describe('application database migrations', () => {
         '0031_project_archive_revision',
         '0032_permission_approval_summary',
         '0033_compute_job_harvest_retry',
-        '0034_background_result_delivery'
+        '0034_background_result_delivery',
+        '0035_literature_pdf_provenance'
       ]
     })
     await expect(
@@ -711,7 +782,8 @@ describe('application database migrations', () => {
         '0031_project_archive_revision',
         '0032_permission_approval_summary',
         '0033_compute_job_harvest_retry',
-        '0034_background_result_delivery'
+        '0034_background_result_delivery',
+        '0035_literature_pdf_provenance'
       ]
     })
     await expect(migrateApplicationDatabase(client)).resolves.toMatchObject({ applied: [] })
@@ -756,7 +828,7 @@ describe('application database migrations', () => {
 
     await expect(migrateApplicationDatabase(client)).resolves.toMatchObject({
       applied: expect.arrayContaining(['0010_compute_password_auth']),
-      to: '0034_background_result_delivery'
+      to: '0035_literature_pdf_provenance'
     })
     await expect(
       client.$executeRawUnsafe(
@@ -813,10 +885,11 @@ describe('application database migrations', () => {
         '0031_project_archive_revision',
         '0032_permission_approval_summary',
         '0033_compute_job_harvest_retry',
-        '0034_background_result_delivery'
+        '0034_background_result_delivery',
+        '0035_literature_pdf_provenance'
       ],
       from: '0005_project_preview_state_owner_fk',
-      to: '0034_background_result_delivery'
+      to: '0035_literature_pdf_provenance'
     })
     await expect(verifyCurrentApplicationSchema(client)).resolves.toBeUndefined()
   })
@@ -901,10 +974,11 @@ describe('application database migrations', () => {
         '0031_project_archive_revision',
         '0032_permission_approval_summary',
         '0033_compute_job_harvest_retry',
-        '0034_background_result_delivery'
+        '0034_background_result_delivery',
+        '0035_literature_pdf_provenance'
       ],
       from: '0005_project_preview_state_owner_fk',
-      to: '0034_background_result_delivery'
+      to: '0035_literature_pdf_provenance'
     })
     await expect(
       client.$queryRaw<
@@ -1027,7 +1101,7 @@ describe('application database migrations', () => {
       })
     ).rejects.toMatchObject({
       code: 'database_validation_failed',
-      migrationId: '0034_background_result_delivery'
+      migrationId: '0035_literature_pdf_provenance'
     })
     expect(retired).toEqual([])
     await expect(access(backupPath)).resolves.toBeUndefined()
@@ -1044,7 +1118,7 @@ describe('application database migrations', () => {
     ).resolves.toEqual({
       adoptedLegacy: false,
       applied: ['9997_test_suffix'],
-      from: '0034_background_result_delivery',
+      from: '0035_literature_pdf_provenance',
       to: '9997_test_suffix'
     })
     await expect(
@@ -1086,6 +1160,7 @@ describe('application database migrations', () => {
       { id: '0032_permission_approval_summary' },
       { id: '0033_compute_job_harvest_retry' },
       { id: '0034_background_result_delivery' },
+      { id: '0035_literature_pdf_provenance' },
       { id: '9997_test_suffix' }
     ])
   })
@@ -1172,10 +1247,11 @@ describe('application database migrations', () => {
         '0031_project_archive_revision',
         '0032_permission_approval_summary',
         '0033_compute_job_harvest_retry',
-        '0034_background_result_delivery'
+        '0034_background_result_delivery',
+        '0035_literature_pdf_provenance'
       ],
       from: '0001_runtime_schema_baseline',
-      to: '0034_background_result_delivery'
+      to: '0035_literature_pdf_provenance'
     })
     expect(backupEvents).toEqual([
       {
@@ -1263,7 +1339,8 @@ describe('application database migrations', () => {
       { id: '0031_project_archive_revision' },
       { id: '0032_permission_approval_summary' },
       { id: '0033_compute_job_harvest_retry' },
-      { id: '0034_background_result_delivery' }
+      { id: '0034_background_result_delivery' },
+      { id: '0035_literature_pdf_provenance' }
     ])
   })
 
@@ -1391,6 +1468,7 @@ describe('application database migrations', () => {
         '0032_permission_approval_summary',
         '0033_compute_job_harvest_retry',
         '0034_background_result_delivery',
+        '0035_literature_pdf_provenance',
         '9997_test_suffix'
       ],
       to: '9997_test_suffix'
@@ -1528,7 +1606,7 @@ describe('application database migrations', () => {
       adoptedLegacy: false,
       applied: MIGRATION_MANIFEST.slice(computePasswordAuthIndex).map(({ id }) => id),
       from: '0009_vision_evidence',
-      to: '0034_background_result_delivery'
+      to: '0035_literature_pdf_provenance'
     })
     await expect(
       client.$queryRaw<Array<{ projectId: string }>>`
@@ -1650,7 +1728,8 @@ describe('application database migrations', () => {
         '0031_project_archive_revision',
         '0032_permission_approval_summary',
         '0033_compute_job_harvest_retry',
-        '0034_background_result_delivery'
+        '0034_background_result_delivery',
+        '0035_literature_pdf_provenance'
       ]
     })
     await expect(
@@ -1781,7 +1860,8 @@ describe('application database migrations', () => {
         '0031_project_archive_revision',
         '0032_permission_approval_summary',
         '0033_compute_job_harvest_retry',
-        '0034_background_result_delivery'
+        '0034_background_result_delivery',
+        '0035_literature_pdf_provenance'
       ]
     })
     await expect(migrateApplicationDatabase(client)).resolves.toMatchObject({ applied: [] })
@@ -1864,7 +1944,8 @@ describe('application database migrations', () => {
         '0031_project_archive_revision',
         '0032_permission_approval_summary',
         '0033_compute_job_harvest_retry',
-        '0034_background_result_delivery'
+        '0034_background_result_delivery',
+        '0035_literature_pdf_provenance'
       ]
     })
     await expect(
@@ -1950,7 +2031,8 @@ describe('application database migrations', () => {
         '0031_project_archive_revision',
         '0032_permission_approval_summary',
         '0033_compute_job_harvest_retry',
-        '0034_background_result_delivery'
+        '0034_background_result_delivery',
+        '0035_literature_pdf_provenance'
       ]
     })
     await expect(verifyCurrentApplicationSchema(client)).resolves.toBeUndefined()
@@ -2070,7 +2152,8 @@ describe('application database migrations', () => {
         '0031_project_archive_revision',
         '0032_permission_approval_summary',
         '0033_compute_job_harvest_retry',
-        '0034_background_result_delivery'
+        '0034_background_result_delivery',
+        '0035_literature_pdf_provenance'
       ]
     })
     await expect(
@@ -2593,8 +2676,8 @@ describe('application database migrations', () => {
         entries.filter((entry) => entry.endsWith('.backup')).sort()
       )
     ).resolves.toEqual([
-      'open-science.db.before-0033_compute_job_harvest_retry.backup',
       'open-science.db.before-0034_background_result_delivery.backup',
+      'open-science.db.before-0035_literature_pdf_provenance.backup',
       unknownBackupName
     ])
     expect(retired).toHaveLength(MIGRATION_MANIFEST.length - 2)
@@ -2897,10 +2980,11 @@ describe('application database migrations', () => {
         '0031_project_archive_revision',
         '0032_permission_approval_summary',
         '0033_compute_job_harvest_retry',
-        '0034_background_result_delivery'
+        '0034_background_result_delivery',
+        '0035_literature_pdf_provenance'
       ],
       from: '0024_compute_job_file_evidence',
-      to: '0034_background_result_delivery'
+      to: '0035_literature_pdf_provenance'
     })
     await expect(
       client.$queryRawUnsafe<Array<{ currentVersionId: string | null }>>(
@@ -2959,7 +3043,7 @@ describe('application database migrations', () => {
         MIGRATION_MANIFEST.findIndex(({ id }) => id === '0009_vision_evidence')
       ).map(({ id }) => id),
       from: '0008_database_json_constraints',
-      to: '0034_background_result_delivery'
+      to: '0035_literature_pdf_provenance'
     })
     await expect(verifyCurrentApplicationSchema(client)).resolves.toBeUndefined()
   })
@@ -3025,10 +3109,11 @@ describe('application database migrations', () => {
         '0031_project_archive_revision',
         '0032_permission_approval_summary',
         '0033_compute_job_harvest_retry',
-        '0034_background_result_delivery'
+        '0034_background_result_delivery',
+        '0035_literature_pdf_provenance'
       ],
       from: '0024_compute_job_file_evidence',
-      to: '0034_background_result_delivery'
+      to: '0035_literature_pdf_provenance'
     })
     await expect(
       client.$queryRaw<Array<{ uploadVersionId: string }>>`

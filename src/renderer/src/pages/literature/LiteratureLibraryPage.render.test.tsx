@@ -383,7 +383,8 @@ describe('LiteratureLibraryPage', () => {
           transact,
           get,
           completeMetadata,
-          fullText,
+          fullText: (request: { mode: string }) =>
+            request.mode === 'transfer' ? Promise.resolve({ mode: 'transfer' }) : fullText(request),
           citationStyles,
           formatDocument: vi.fn(),
           formatReferences,
