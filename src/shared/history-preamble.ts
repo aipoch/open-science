@@ -76,9 +76,18 @@ const speakerPrefixFor = (message: HistoryMessage): string => `**${speakerFor(me
 // These are the selected historical snapshots, never fresh Library lookups or current instructions.
 const historicalReferences = (message: HistoryMessage, compact = false): string => {
   if (message.role !== 'user') return ''
+  const seen = new Set<string>()
   const references = (message.parts ?? []).flatMap<Record<string, unknown>>((part) => {
+    if (part.type !== 'literature-scope' && part.type !== 'literature') return []
+    const identity =
+      part.type === 'literature'
+        ? `item:${part.itemId}`
+        : part.scope === 'collection'
+          ? `collection:${part.collectionId}`
+          : part.scope
+    if (seen.has(identity)) return []
+    seen.add(identity)
     if (part.type === 'literature-scope') return [part]
-    if (part.type !== 'literature') return []
     const { type, itemId, metadataRevision, attachmentVersionId, item } = part
     return [
       {
@@ -114,7 +123,10 @@ const formatTruncatedUserMessage = (
       ? fullReferences
       : historicalReferences(message, true)
   const contentBudget = budget - estimateHistoryTokens(label + references)
-  if (contentBudget <= estimateHistoryTokens(MESSAGE_OMISSION_NOTE)) return undefined
+  if (contentBudget < 0) return undefined
+  if (contentBudget <= estimateHistoryTokens(MESSAGE_OMISSION_NOTE)) {
+    return references ? `${label}${references}` : undefined
+  }
   return `${label}${truncateTextToEstimatedTokens(message.content.trim(), contentBudget, 'both')}${references}`
 }
 

@@ -16,7 +16,90 @@ const upload = (id: string, versionId: string, name: string): PersistedUploadedA
   size: 100
 })
 
+const referenceMessage = (content: string): PersistedChatMessage => ({
+  id: 'reference-budget',
+  role: 'user',
+  content,
+  status: 'complete',
+  eventIds: [],
+  createdAt: 1,
+  updatedAt: 1,
+  parts: [
+    {
+      type: 'literature',
+      itemId: 'stable-item',
+      metadataRevision: 7,
+      item: {
+        itemType: 'journalArticle',
+        title: 'Frozen title',
+        abstract: 'Large frozen abstract '.repeat(1000),
+        issuedText: '',
+        containerTitle: '',
+        shortTitle: '',
+        language: '',
+        rights: '',
+        url: '',
+        extra: '',
+        typeFields: {},
+        creators: [],
+        identifiers: []
+      }
+    }
+  ]
+})
+
 describe('buildSessionHistoryReplay', () => {
+  it.each(['', 'Long message text '.repeat(1000)])(
+    'keeps fitting compact identities without reserving a text omission marker (%#)',
+    (content) => {
+      const message = referenceMessage(content)
+      const roomy = buildSessionHistoryReplay([message], { target: 'codex-bridge', budget: 1000 })!
+      const identityOnly = roomy.historyPreamble.replace(
+        /\*\*User:\*\* [\s\S]*?(?=\n\nHistorical Literature)/,
+        '**User:** '
+      )
+      const budget = estimateHistoryTokens(identityOnly) + 1
+      const replay = buildSessionHistoryReplay([message], { target: 'codex-bridge', budget })
+      expect(replay).toBeDefined()
+      expect(replay?.historyPreamble).toContain('"itemId":"stable-item"')
+      expect(replay?.historyPreamble).toContain('"metadataRevision":7')
+      expect(estimateHistoryTokens(replay!.historyPreamble)).toBeLessThanOrEqual(budget)
+      expect(
+        buildSessionHistoryReplay([message], { target: 'codex-bridge', budget: 100 })
+      ).toBeUndefined()
+    }
+  )
+
+  it('deduplicates historical references by stable identity while preserving first snapshots and order', () => {
+    const message = referenceMessage('Use these references')
+    const item = message.parts![0]
+    const collection = {
+      type: 'literature-scope' as const,
+      scope: 'collection' as const,
+      collectionId: 'stable-collection',
+      name: 'Original collection'
+    }
+    const project = { type: 'literature-scope' as const, scope: 'project' as const }
+    message.parts = [item, collection, project]
+    const expected = buildSessionHistoryReplay([message], { target: 'codex-bridge', budget: 1000 })
+    expect(expected).toBeDefined()
+    message.parts.push(
+      ...Array.from({ length: 7 }, () => [
+        { ...item, metadataRevision: 8 },
+        { ...collection, name: 'Later name' },
+        project
+      ]).flat()
+    )
+    const repeated = buildSessionHistoryReplay([message], { target: 'codex-bridge', budget: 1000 })
+    expect(repeated).toEqual(expected)
+    const full = buildSessionHistoryReplay([message], { target: 'codex-bridge', budget: 1000000 })!
+    expect(full.historyPreamble.match(/"itemId":"stable-item"/g)).toHaveLength(1)
+    expect(full.historyPreamble.match(/"collectionId":"stable-collection"/g)).toHaveLength(1)
+    expect(full.historyPreamble.match(/"scope":"project"/g)).toHaveLength(1)
+    expect(full.historyPreamble).not.toContain('Later name')
+    expect(full.historyPreamble).not.toContain('"metadataRevision":8')
+  })
+
   it.each(['claude-code', 'opencode', 'codebuddy', 'codex-response', 'codex-bridge'] as const)(
     'replays frozen Literature and Collection identities for %s',
     (target) => {
