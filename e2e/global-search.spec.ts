@@ -321,6 +321,26 @@ test('opens uploaded files from search using the existing file preview dialog', 
       .getByRole('dialog', { name: 'Preview search-notes.md' })
       .getByText('Verified file preview content.')
   ).toBeVisible()
+  const preview = page.getByRole('dialog', { name: 'Preview search-notes.md' })
+  const menu = page.getByTestId('preview-content-context-menu')
+  for (const outsidePreview of [false, true]) {
+    await preview.getByText('Verified file preview content.').click({ button: 'right' })
+    await expect(menu).toBeVisible()
+    const bounds = (await preview.boundingBox())!
+    await page.mouse.click(
+      outsidePreview ? 5 : bounds.x + bounds.width - 30,
+      outsidePreview ? bounds.y + bounds.height / 2 : bounds.y + bounds.height - 50
+    )
+    await expect(menu).toBeHidden()
+    await expect(preview).toBeVisible()
+    await expect(page.locator('.global-search-dialog')).toBeVisible()
+  }
+  await preview.getByRole('button', { name: 'Close preview of search-notes.md' }).click()
+  await expect(preview).toBeHidden()
+  await expect(dialog.getByRole('combobox', { name: 'Global search' })).toHaveValue('search-notes')
+  await expect(dialog.getByTestId('global-search-detail')).toHaveAttribute('data-open', 'true')
+  await page.mouse.click(5, 200)
+  await expect(dialog).toBeHidden()
 })
 
 test('keeps saved Notebook output and structured file previews visible inside search', async ({

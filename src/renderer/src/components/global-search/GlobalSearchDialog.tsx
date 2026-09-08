@@ -585,6 +585,11 @@ export const GlobalSearchDialog = ({
         <Dialog.Overlay className={dialogOverlayClassName} />
         <Dialog.Content
           aria-describedby={undefined}
+          onInteractOutside={(event) => {
+            // The file preview is a sibling portal, so its menu dismissal also reaches search.
+            if (document.querySelector('[data-slot="file-preview-dialog"][data-state="open"]'))
+              event.preventDefault()
+          }}
           onOpenAutoFocus={(event) => {
             event.preventDefault()
             setCategory('all')
