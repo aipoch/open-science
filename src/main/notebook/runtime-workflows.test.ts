@@ -98,6 +98,35 @@ beforeEach(() => {
 })
 
 describe('runtime workflows', () => {
+  it('rejects authorization for non-runnable R while allowing its access to be removed', async () => {
+    discoveryState.r = [
+      {
+        language: 'r',
+        provenance: 'user-own',
+        envId: 'needs-jsonlite',
+        interpreterPath: 'D:\\R\\bin\\R.exe',
+        label: 'External R',
+        runnable: false
+      }
+    ]
+    const setWindowsRuntimeAccess = vi.fn(async () => ({ cancelled: false }))
+    const workflows = createRuntimeWorkflows({
+      settingsService: fakeSettingsService(),
+      runtimeRoot: () => '/runtime',
+      setWindowsRuntimeAccess
+    })
+    await expect(
+      workflows.setSandboxAccess({
+        language: 'r',
+        envId: 'needs-jsonlite',
+        authorized: true
+      })
+    ).rejects.toThrow('jsonlite')
+    expect(setWindowsRuntimeAccess).not.toHaveBeenCalled()
+    await workflows.setSandboxAccess({ language: 'r', envId: 'needs-jsonlite', authorized: false })
+    expect(setWindowsRuntimeAccess).toHaveBeenCalledWith('D:\\R\\bin\\Rscript.exe', false)
+  })
+
   it('authorizes only the selected discovered R and drains it before removing access', async () => {
     const env: DiscoveredInterpreter = {
       language: 'r',

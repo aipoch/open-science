@@ -5014,6 +5014,7 @@
     "Check author names. Original text is kept in Extra.": "Revise los nombres de los autores. El texto original se conserva en la información adicional.",
     "Preferred for {{scheme}}": "Valor preferido para {{scheme}}",
     "All identifiers are kept. Preferred values come from the kept reference when available.": "Se conservan todos los identificadores. Se utilizan los valores preferidos de la referencia conservada cuando están disponibles.",
+    "R access was not verified. Permission may already be granted. Use Remove R access to revoke it.": "No se ha verificado el acceso a R. Es posible que el permiso ya se haya concedido. Utilice «Eliminar acceso a R» para revocarlo.",
     "R access verified": "Acceso a R verificado",
     "R access removed": "Acceso a R eliminado",
     "Could not update R access.": "No se pudo actualizar el acceso a R.",

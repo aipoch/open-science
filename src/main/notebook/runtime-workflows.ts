@@ -148,6 +148,8 @@ const createRuntimeWorkflows = (deps: RuntimeWorkflowDeps): RuntimeWorkflows => 
         )
         if (!env || env.provenance !== 'user-own')
           throw new Error('Select a discovered external R runtime.')
+        if (request.authorized && !env.runnable)
+          throw new Error('R must be runnable with jsonlite before verifying sandbox access.')
         if (!request.authorized) {
           await deps.settingsService.setEnvironmentEnabled('r', env.envId, false)
           await deps.onRuntimeDisabled?.('r', env.envId)

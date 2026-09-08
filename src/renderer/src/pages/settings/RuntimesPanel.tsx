@@ -130,7 +130,12 @@ const RuntimesPanel = ({
           [env.envId]: authorized ? t('R access verified') : t('R access removed')
         }))
     } catch (error) {
-      setError(error instanceof Error ? error.message : t('Could not update R access.'))
+      const detail = error instanceof Error ? error.message : t('Could not update R access.')
+      setError(
+        authorized
+          ? `${t('R access was not verified. Permission may already be granted. Use Remove R access to revoke it.')} ${detail}`
+          : detail
+      )
     } finally {
       if (!authorized) {
         try {
@@ -589,7 +594,7 @@ const RuntimesPanel = ({
                 type="button"
                 variant="outline"
                 size="sm"
-                disabled={busy || !enabled}
+                disabled={busy || !enabled || !env.runnable}
                 onClick={() => void setSandboxAccess(env, true)}
               >
                 {t('Authorize and verify')}

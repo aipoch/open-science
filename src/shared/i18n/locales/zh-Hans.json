@@ -4700,6 +4700,7 @@
     "Check author names. Original text is kept in Extra.": "请核对作者姓名。原文已保留在附加信息中。",
     "Preferred for {{scheme}}": "{{scheme}} 首选值",
     "All identifiers are kept. Preferred values come from the kept reference when available.": "所有标识符均会保留。如有可用值，将优先采用保留文献中的首选值。",
+    "R access was not verified. Permission may already be granted. Use Remove R access to revoke it.": "R 访问权限未通过验证。权限可能已经授予。可使用“移除 R 访问权限”撤销授权。",
     "R access verified": "R 访问权限已验证",
     "R access removed": "R 访问权限已移除",
     "Could not update R access.": "无法更新 R 访问权限。",

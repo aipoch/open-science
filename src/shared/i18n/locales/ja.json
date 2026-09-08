@@ -4700,6 +4700,7 @@
     "Check author names. Original text is kept in Extra.": "著者名を確認してください。元のテキストは追加情報に保持されています。",
     "Preferred for {{scheme}}": "{{scheme}} の優先値",
     "All identifiers are kept. Preferred values come from the kept reference when available.": "すべての識別子が保持されます。保持する文献に優先値があれば、その値を使用します。",
+    "R access was not verified. Permission may already be granted. Use Remove R access to revoke it.": "R のアクセス権は検証されませんでした。すでにアクセス権が付与されている可能性があります。「R のアクセス権を削除」で取り消せます。",
     "R access verified": "R のアクセス権を検証しました",
     "R access removed": "R のアクセス権を削除しました",
     "Could not update R access.": "R のアクセス権を更新できませんでした。",

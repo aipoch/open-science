@@ -186,6 +186,57 @@ const click = async (el: Element | null): Promise<void> => {
 }
 
 describe('RuntimesPanel', () => {
+  it('explains that authorization can remain when R verification fails', async () => {
+    Object.assign(window.api, { platform: 'win32' })
+    listEnvironments.mockResolvedValue({
+      python: pythonEnvs,
+      r: [{ ...rEnvs[0], runnable: true, detail: undefined }]
+    })
+    getEnablement.mockResolvedValue({
+      enabled: { [rEnvs[0].envId]: true },
+      installAuthorized: {}
+    })
+    const authorize = vi.fn().mockRejectedValue(new Error('R verification failed'))
+    Object.assign(window.api.runtime, { setSandboxAccess: authorize })
+    await render()
+    await click(
+      Array.from(container.querySelectorAll('button')).find(
+        (element) => element.textContent === 'Authorize and verify'
+      )!
+    )
+    expect(authorize).toHaveBeenCalledWith('r', rEnvs[0].envId, true)
+    expect(container.textContent).toContain(
+      'R access was not verified. Permission may already be granted. Use Remove R access to revoke it.'
+    )
+    const removeButton = Array.from(container.querySelectorAll('button')).find(
+      (element) => element.textContent === 'Remove R access'
+    )!
+    expect(removeButton.disabled).toBe(false)
+    expect(container.textContent).not.toContain('R access verified')
+  })
+
+  it('does not offer authorization verification for R missing jsonlite while retaining removal', async () => {
+    Object.assign(window.api, { platform: 'win32' })
+    getEnablement.mockResolvedValue({
+      enabled: { [rEnvs[0].envId]: true },
+      installAuthorized: {}
+    })
+    const authorize = vi.fn(async () => ({ cancelled: false }))
+    Object.assign(window.api.runtime, { setSandboxAccess: authorize })
+    await render()
+    expect(container.textContent).toContain('Needs jsonlite')
+    const verifyButton = Array.from(container.querySelectorAll('button')).find(
+      (element) => element.textContent === 'Authorize and verify'
+    )!
+    const removeButton = Array.from(container.querySelectorAll('button')).find(
+      (element) => element.textContent === 'Remove R access'
+    )!
+    expect(verifyButton.disabled).toBe(true)
+    expect(removeButton.disabled).toBe(false)
+    await click(verifyButton)
+    expect(authorize).not.toHaveBeenCalled()
+  })
+
   it.each([false, true])(
     'refreshes disabled R state after access removal (cancelled: %s)',
     async (cancelled) => {
@@ -220,6 +271,10 @@ describe('RuntimesPanel', () => {
     'verifies only the selected R and does not confirm cancelled authorization (%s)',
     async (cancelled) => {
       Object.assign(window.api, { platform: 'win32' })
+      listEnvironments.mockResolvedValue({
+        python: pythonEnvs,
+        r: [{ ...rEnvs[0], runnable: true, detail: undefined }]
+      })
       getEnablement.mockResolvedValue({
         enabled: { [rEnvs[0].envId]: true },
         installAuthorized: {}
