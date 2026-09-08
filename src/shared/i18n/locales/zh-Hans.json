@@ -4747,6 +4747,10 @@
     "PDF not validated: exceeds the 50 MiB automatic processing limit.": "PDF 未验证：超过 50 MiB 自动处理限制。",
     "PDF structure not yet validated.": "PDF 结构尚未验证。",
     "Attachment unavailable": "附件不可用",
-    "This PDF is referenced by a chat or its message history and cannot be removed. Unlinking the current chat does not remove historical references.": "聊天或消息历史仍引用此 PDF，无法移除。解除当前聊天的关联不会移除历史引用。"
+    "This PDF is referenced by a chat or its message history and cannot be removed. Unlinking the current chat does not remove historical references.": "聊天或消息历史仍引用此 PDF，无法移除。解除当前聊天的关联不会移除历史引用。",
+    "Dismissed": "已忽略",
+    "No dismissed references": "没有已忽略的文献",
+    "Dismissed references can be restored here.": "可以在此恢复已忽略的文献。",
+    "Accepting will link to: {{projects}}": "接受后将关联到：{{projects}}"
   }
 }

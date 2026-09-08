@@ -826,6 +826,144 @@ describe('LiteratureLibraryPage', () => {
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
   })
 
+  it('provides a persistent dismissed-candidate recovery path after remount', async () => {
+    let state: 'pending' | 'dismissed' = 'pending'
+    search.mockImplementation((request: LiteratureCatalogSearchRequest) =>
+      Promise.resolve({
+        entries:
+          request.scope === 'inbox' && (request.inboxState ?? 'pending') === state
+            ? [{ ...inboxPage.entries[0], state }]
+            : []
+      })
+    )
+    transact.mockImplementation(async (command: { kind: string }) => {
+      if (command.kind === 'dismiss-candidate') state = 'dismissed'
+      if (command.kind === 'restore-candidates') state = 'pending'
+      return { kind: 'candidate', id: 'candidate-1', state }
+    })
+    const page = render(<LiteratureLibraryPage />)
+    fireEvent.click(await screen.findByRole('button', { name: 'Dismiss' }))
+    await screen.findByRole('button', { name: 'Undo' })
+    page.unmount()
+    render(<LiteratureLibraryPage />)
+    await screen.findByRole('button', { name: 'Inbox' })
+    // The persisted candidate must remain reachable without the former component's Undo state.
+    const dismissed = await screen.findByRole('button', { name: 'Dismissed' })
+    fireEvent.click(dismissed)
+    await waitFor(() =>
+      expect(search).toHaveBeenCalledWith(
+        expect.objectContaining({
+          scope: 'inbox',
+          inboxState: 'dismissed'
+        })
+      )
+    )
+    fireEvent.click(await screen.findByRole('button', { name: 'Restore' }))
+    await waitFor(() =>
+      expect(transact).toHaveBeenCalledWith({
+        kind: 'restore-candidates',
+        candidateIds: ['candidate-1']
+      })
+    )
+  })
+
+  it('keeps the pending badge independent of dismissed pagination and restores the selected candidates', async () => {
+    const dismissed = [1, 2].map((index) => ({
+      ...inboxPage.entries[0],
+      id: `dismissed-${index}`,
+      state: 'dismissed'
+    }))
+    search.mockImplementation(async (request: LiteratureCatalogSearchRequest) => {
+      if (request.scope !== 'inbox') return { entries: [] }
+      return request.inboxState === 'dismissed'
+        ? { entries: dismissed, totalCount: 2 }
+        : { entries: inboxPage.entries, totalCount: 7 }
+    })
+    render(<LiteratureLibraryPage />)
+    const inbox = await screen.findByRole('button', { name: 'Inbox' })
+    await waitFor(() => expect(within(inbox).getByText('7')).not.toBeNull())
+    fireEvent.click(screen.getByRole('button', { name: 'Dismissed' }))
+    await screen.findAllByRole('button', { name: 'Restore' })
+    expect(within(inbox).getByText('7')).not.toBeNull()
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Select all references' }))
+    const restores = screen.getAllByRole('button', { name: 'Restore' })
+    fireEvent.click(restores[0])
+    await waitFor(() =>
+      expect(transact).toHaveBeenCalledWith({
+        kind: 'restore-candidates',
+        candidateIds: ['dismissed-1', 'dismissed-2']
+      })
+    )
+  })
+
+  it('keeps a dismissed candidate available when restoration fails and allows retry', async () => {
+    search.mockImplementation(async (request: LiteratureCatalogSearchRequest) => ({
+      entries:
+        request.scope === 'inbox' && request.inboxState === 'dismissed'
+          ? [{ ...inboxPage.entries[0], state: 'dismissed' }]
+          : []
+    }))
+    transact.mockRejectedValueOnce(new Error('Storage unavailable'))
+    render(<LiteratureLibraryPage />)
+    fireEvent.click(await screen.findByRole('button', { name: 'Dismissed' }))
+    fireEvent.click(
+      await screen.findByRole('button', {
+        name: 'View details: Corrective Retrieval Augmented Generation'
+      })
+    )
+    const dialog = await screen.findByRole('dialog')
+    expect(within(dialog).queryByRole('button', { name: 'Accept' })).toBeNull()
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Restore' }))
+    await screen.findByText('Literature could not be updated.')
+    expect(screen.getByRole('dialog')).toBe(dialog)
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Restore' }))
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+    expect(transact).toHaveBeenCalledTimes(2)
+  })
+
+  it('shows all discovered project names before accepting a candidate', async () => {
+    const first = inboxPage.entries[0] as LiteratureInboxCandidateView
+    useProjectStore.setState({
+      projects: [
+        ...useProjectStore.getState().projects,
+        {
+          id: 'project-2',
+          name: 'Second research project',
+          description: '',
+          isExample: false,
+          createdAt: 1,
+          updatedAt: 1
+        }
+      ]
+    })
+    search.mockImplementation(async (request: LiteratureCatalogSearchRequest) => ({
+      entries:
+        request.scope === 'inbox'
+          ? [
+              {
+                ...first,
+                discoveries: [
+                  { origin: first.candidate.origin, createdAt: 1 },
+                  {
+                    origin: { kind: 'agent', projectId: 'project-2', sessionId: 'session-2' },
+                    createdAt: 2
+                  }
+                ]
+              }
+            ]
+          : []
+    }))
+    render(<LiteratureLibraryPage />)
+    const copy = 'Accepting will link to: Retrieval research, Second research project'
+    await screen.findByText(copy)
+    fireEvent.click(
+      await screen.findByRole('button', {
+        name: 'View details: Corrective Retrieval Augmented Generation'
+      })
+    )
+    expect(within(await screen.findByRole('dialog')).getByText(copy)).not.toBeNull()
+  })
+
   it('offers to restore a dismissed Inbox candidate', async () => {
     render(<LiteratureLibraryPage />)
 

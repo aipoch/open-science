@@ -1257,6 +1257,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
   const listenTags = useTagStore((state) => state.listen)
   const tagRevision = useTagStore((state) => state.revision)
   const [section, setSection] = useState<LibrarySection>('inbox')
+  const [inboxState, setInboxState] = useState<'pending' | 'dismissed'>('pending')
   const [duplicatesOpen, setDuplicatesOpen] = useState(false)
   const [shouldCueLiteratureReview, setShouldCueLiteratureReview] = useState(
     () => window.sessionStorage.getItem(LITERATURE_REVIEW_CTA_ATTENTION_KEY) !== 'true'
@@ -1555,6 +1556,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
     () =>
       JSON.stringify({
         section,
+        inboxState,
         collectionId,
         projectId,
         query,
@@ -1573,6 +1575,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
       filterItemType,
       filterYearFrom,
       filterYearTo,
+      inboxState,
       query,
       projectId,
       section,
@@ -1627,7 +1630,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
       section === 'inbox'
         ? {
             scope: 'inbox',
-            inboxState: 'pending',
+            inboxState,
             query,
             offset,
             limit: entriesPageSize
@@ -1657,6 +1660,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
       filterItemType,
       filterYearFrom,
       filterYearTo,
+      inboxState,
       query,
       projectId,
       section,
@@ -1679,7 +1683,8 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
         page.totalCount ??
         (request.offset ?? 0) + page.entries.length + (page.nextOffset === undefined ? 0 : 1)
       setEntriesTotalCount(totalCount)
-      if (request.scope === 'inbox' && !request.query) setInboxPendingCount(totalCount)
+      if (request.scope === 'inbox' && request.inboxState === 'pending' && !request.query)
+        setInboxPendingCount(totalCount)
       if (
         request.scope === 'library' &&
         request.projectId &&
@@ -2046,7 +2051,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
   }
 
   const recheckDismissedCandidates = async (candidateIds: readonly string[]): Promise<void> => {
-    setDismissedCandidateUndo((current) => current && { ...current, needsRecheck: true })
+    setDismissedCandidateUndo({ ...dismissedUndo(candidateIds)!, needsRecheck: true })
     try {
       const wanted = new Set(candidateIds)
       const readMatchingIds = async (inboxState: 'pending' | 'dismissed'): Promise<Set<string>> => {
@@ -2091,35 +2096,52 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
     await refreshCandidateInboxCount()
   }
 
-  const restoreDismissedCandidates = async (): Promise<void> => {
-    if (!dismissedCandidateUndo || isBatching || pendingCandidateId) return
+  const restoreDismissedCandidates = async (
+    candidateIds: readonly string[] = dismissedCandidateUndo?.candidateIds ?? []
+  ): Promise<boolean> => {
+    if (candidateIds.length === 0 || isBatching || pendingCandidateId) return false
     setIsBatching(true)
     setError(undefined)
     setUndoNotice(undefined)
-    let remaining = [...dismissedCandidateUndo.candidateIds]
+    let remaining = [...candidateIds]
+    let undoRemaining = [...(dismissedCandidateUndo?.candidateIds ?? [])]
     try {
-      if (dismissedCandidateUndo.needsRecheck) {
-        await recheckDismissedCandidates(remaining)
-        return
+      if (dismissedCandidateUndo?.needsRecheck) {
+        await recheckDismissedCandidates([...new Set([...undoRemaining, ...remaining])])
+        return false
       }
       while (remaining.length) {
         const batch = remaining.slice(0, LITERATURE_INBOX_COMMAND_SIZE)
         try {
           await window.api.literature.transact({ kind: 'restore-candidates', candidateIds: batch })
         } catch {
-          await recheckDismissedCandidates(remaining)
-          return
+          await recheckDismissedCandidates([...new Set([...undoRemaining, ...remaining])])
+          return false
         }
         remaining = remaining.slice(batch.length)
-        setDismissedCandidateUndo(dismissedUndo(remaining))
+        undoRemaining = undoRemaining.filter((id) => !batch.includes(id))
+        setDismissedCandidateUndo(dismissedUndo(undoRemaining))
+        for (const id of batch) selectionStore.remove(id)
+        setCandidates((current) => current.filter(({ id }) => !batch.includes(id)))
         setInboxPendingCount((current) =>
           current === undefined ? current : current + batch.length
         )
       }
       await loadEntries(true)
+      await refreshCandidateInboxCount()
+      return true
     } finally {
       setIsBatching(false)
     }
+  }
+
+  const candidateProjectNames = (entry: LiteratureInboxCandidateView): string[] => {
+    const ids = new Set(
+      (entry.discoveries?.map(({ origin }) => origin) ?? [entry.candidate.origin])
+        .map(({ projectId }) => projectId)
+        .filter(Boolean)
+    )
+    return projects.filter(({ id }) => ids.has(id)).map(({ name }) => name)
   }
 
   const openCreateCollection = (): void => {
@@ -4158,6 +4180,27 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
             </div>
           ) : null}
 
+          {section === 'inbox' ? (
+            <div className="mt-5 flex gap-2">
+              {(['pending', 'dismissed'] as const).map((state) => (
+                <Button
+                  key={state}
+                  type="button"
+                  size="sm"
+                  variant={inboxState === state ? 'secondary' : 'ghost'}
+                  aria-pressed={inboxState === state}
+                  disabled={isBatching || pendingCandidateId !== undefined}
+                  onClick={() => {
+                    setInboxState(state)
+                    clearSelection()
+                    setEntriesOffset(0)
+                  }}
+                >
+                  {state === 'pending' ? t('Pending') : t('Dismissed')}
+                </Button>
+              ))}
+            </div>
+          ) : null}
           <div className="mt-6 flex min-h-0 flex-1 flex-col gap-2">
             {entriesFailed ? null : entriesLoading && !entriesPageTransitionLoading ? (
               <div
@@ -4203,25 +4246,41 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
                                 {t('Clear selection')}
                               </Button>
                               <div className="ml-auto flex items-center gap-2">
-                                <Button
-                                  type="button"
-                                  variant="outline"
-                                  size="sm"
-                                  disabled={isBatching || Boolean(pendingCandidateId)}
-                                  onClick={() => void settleSelectedCandidates('dismissed')}
-                                >
-                                  <X className="size-3.5" aria-hidden="true" />
-                                  {t('Dismiss')}
-                                </Button>
-                                <Button
-                                  type="button"
-                                  size="sm"
-                                  disabled={isBatching || Boolean(pendingCandidateId)}
-                                  onClick={() => void settleSelectedCandidates('accepted')}
-                                >
-                                  <Check className="size-3.5" aria-hidden="true" />
-                                  {t('Accept')}
-                                </Button>
+                                {inboxState === 'dismissed' ? (
+                                  <Button
+                                    type="button"
+                                    size="sm"
+                                    disabled={isBatching || Boolean(pendingCandidateId)}
+                                    onClick={() =>
+                                      void restoreDismissedCandidates([...selection.selectedIds])
+                                    }
+                                  >
+                                    <RotateCcw className="size-3.5" aria-hidden="true" />
+                                    {t('Restore')}
+                                  </Button>
+                                ) : (
+                                  <>
+                                    <Button
+                                      type="button"
+                                      variant="outline"
+                                      size="sm"
+                                      disabled={isBatching || Boolean(pendingCandidateId)}
+                                      onClick={() => void settleSelectedCandidates('dismissed')}
+                                    >
+                                      <X className="size-3.5" aria-hidden="true" />
+                                      {t('Dismiss')}
+                                    </Button>
+                                    <Button
+                                      type="button"
+                                      size="sm"
+                                      disabled={isBatching || Boolean(pendingCandidateId)}
+                                      onClick={() => void settleSelectedCandidates('accepted')}
+                                    >
+                                      <Check className="size-3.5" aria-hidden="true" />
+                                      {t('Accept')}
+                                    </Button>
+                                  </>
+                                )}
                               </div>
                             </>
                           ) : null}
@@ -4280,6 +4339,13 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
                                 })}
                               </span>
                             </div>
+                            {candidateProjectNames(candidate).length > 0 ? (
+                              <p className="mt-2 text-xs text-muted-foreground">
+                                {t('Accepting will link to: {{projects}}', {
+                                  projects: candidateProjectNames(candidate).join(', ')
+                                })}
+                              </p>
+                            ) : null}
                             {item.abstract ? (
                               <p className="mt-3 line-clamp-2 text-[0.8125rem] leading-5 text-muted-foreground">
                                 {item.abstract}
@@ -4287,29 +4353,43 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
                             ) : null}
                           </div>
                           <div className="relative z-10 col-start-2 grid grid-cols-2 gap-2 self-center sm:col-start-auto sm:grid-cols-1">
-                            <Button
-                              type="button"
-                              variant="outline"
-                              className="w-full"
-                              disabled={isBatching || Boolean(pendingCandidateId)}
-                              onClick={() =>
-                                void changeCandidateState(candidate.id, 'dismiss-candidate')
-                              }
-                            >
-                              <X className="size-3.5" aria-hidden="true" />
-                              {t('Dismiss')}
-                            </Button>
-                            <Button
-                              type="button"
-                              className="w-full"
-                              disabled={isBatching || Boolean(pendingCandidateId)}
-                              onClick={() =>
-                                void changeCandidateState(candidate.id, 'accept-candidate')
-                              }
-                            >
-                              <Check className="size-3.5" aria-hidden="true" />
-                              {t('Accept')}
-                            </Button>
+                            {candidate.state === 'dismissed' ? (
+                              <Button
+                                type="button"
+                                className="w-full"
+                                disabled={isBatching || Boolean(pendingCandidateId)}
+                                onClick={() => void restoreDismissedCandidates([candidate.id])}
+                              >
+                                <RotateCcw className="size-3.5" aria-hidden="true" />
+                                {t('Restore')}
+                              </Button>
+                            ) : (
+                              <>
+                                <Button
+                                  type="button"
+                                  variant="outline"
+                                  className="w-full"
+                                  disabled={isBatching || Boolean(pendingCandidateId)}
+                                  onClick={() =>
+                                    void changeCandidateState(candidate.id, 'dismiss-candidate')
+                                  }
+                                >
+                                  <X className="size-3.5" aria-hidden="true" />
+                                  {t('Dismiss')}
+                                </Button>
+                                <Button
+                                  type="button"
+                                  className="w-full"
+                                  disabled={isBatching || Boolean(pendingCandidateId)}
+                                  onClick={() =>
+                                    void changeCandidateState(candidate.id, 'accept-candidate')
+                                  }
+                                >
+                                  <Check className="size-3.5" aria-hidden="true" />
+                                  {t('Accept')}
+                                </Button>
+                              </>
+                            )}
                           </div>
                         </article>
                       )
@@ -4320,9 +4400,15 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
               ) : (
                 <div className="rounded-2xl border border-dashed border-border py-20 text-center">
                   <Inbox className="mx-auto size-7 text-muted-foreground" aria-hidden="true" />
-                  <h3 className="mt-3 font-medium">{t('Inbox is clear')}</h3>
+                  <h3 className="mt-3 font-medium">
+                    {inboxState === 'dismissed'
+                      ? t('No dismissed references')
+                      : t('Inbox is clear')}
+                  </h3>
                   <p className="mt-1 text-sm text-muted-foreground">
-                    {t('New Agent discoveries will appear here for review.')}
+                    {inboxState === 'dismissed'
+                      ? t('Dismissed references can be restored here.')
+                      : t('New Agent discoveries will appear here for review.')}
                   </p>
                 </div>
               )
@@ -4908,6 +4994,13 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
                 </Dialog.Close>
               </div>
               <div className="max-h-[70vh] divide-y divide-border-300/80 overflow-y-auto px-5 text-sm">
+                {candidateProjectNames(selectedCandidate).length > 0 ? (
+                  <p className="py-4 text-sm leading-6 text-muted-foreground">
+                    {t('Accepting will link to: {{projects}}', {
+                      projects: candidateProjectNames(selectedCandidate).join(', ')
+                    })}
+                  </p>
+                ) : null}
                 {selectedCandidate.candidate.item.abstract ? (
                   <section className="py-4">
                     <h3 className="font-medium">{t('Abstract')}</h3>
@@ -4989,35 +5082,52 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
                 ) : null}
               </div>
               <div className="flex justify-end gap-2 border-t border-border-300/80 px-5 py-4">
-                <Button
-                  type="button"
-                  variant="outline"
-                  disabled={isBatching || Boolean(pendingCandidateId) || entriesFailed}
-                  onClick={() => {
-                    void changeCandidateState(selectedCandidate.id, 'dismiss-candidate').then(
-                      (updated) => {
-                        if (updated) setSelectedCandidate(undefined)
-                      }
-                    )
-                  }}
-                >
-                  <X className="size-3.5" aria-hidden="true" />
-                  {t('Dismiss')}
-                </Button>
-                <Button
-                  type="button"
-                  disabled={isBatching || Boolean(pendingCandidateId) || entriesFailed}
-                  onClick={() => {
-                    void changeCandidateState(selectedCandidate.id, 'accept-candidate').then(
-                      (updated) => {
-                        if (updated) setSelectedCandidate(undefined)
-                      }
-                    )
-                  }}
-                >
-                  <Check className="size-3.5" aria-hidden="true" />
-                  {t('Accept')}
-                </Button>
+                {selectedCandidate.state === 'dismissed' ? (
+                  <Button
+                    type="button"
+                    disabled={isBatching || Boolean(pendingCandidateId)}
+                    onClick={() =>
+                      void restoreDismissedCandidates([selectedCandidate.id]).then((restored) => {
+                        if (restored) setSelectedCandidate(undefined)
+                      })
+                    }
+                  >
+                    <RotateCcw className="size-3.5" aria-hidden="true" />
+                    {t('Restore')}
+                  </Button>
+                ) : (
+                  <>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      disabled={isBatching || Boolean(pendingCandidateId) || entriesFailed}
+                      onClick={() => {
+                        void changeCandidateState(selectedCandidate.id, 'dismiss-candidate').then(
+                          (updated) => {
+                            if (updated) setSelectedCandidate(undefined)
+                          }
+                        )
+                      }}
+                    >
+                      <X className="size-3.5" aria-hidden="true" />
+                      {t('Dismiss')}
+                    </Button>
+                    <Button
+                      type="button"
+                      disabled={isBatching || Boolean(pendingCandidateId) || entriesFailed}
+                      onClick={() => {
+                        void changeCandidateState(selectedCandidate.id, 'accept-candidate').then(
+                          (updated) => {
+                            if (updated) setSelectedCandidate(undefined)
+                          }
+                        )
+                      }}
+                    >
+                      <Check className="size-3.5" aria-hidden="true" />
+                      {t('Accept')}
+                    </Button>
+                  </>
+                )}
               </div>
             </Dialog.Content>
           </Dialog.Portal>

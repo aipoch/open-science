@@ -572,11 +572,27 @@ model LiteratureInboxCandidate {
   updatedAt        DateTime                 @updatedAt
   acceptedItem     LiteratureItem?          @relation("AcceptedLiteratureItem", fields: [acceptedItemId], references: [id], onDelete: Restrict)
   sourceRecords    LiteratureSourceRecord[]
+  discoveries      LiteratureCandidateDiscovery[]
   pdfs             LiteratureInboxPdf[]
 
   @@index([state, createdAt])
   @@index([sourceProjectId, sourceSessionId])
   @@index([acceptedItemId])
+}
+
+// Distinct discovery contexts survive global candidate deduplication and acceptance.
+model LiteratureCandidateDiscovery {
+  id          String @id @default(cuid())
+  candidateId String
+  contextKey  String
+  origin      String
+  projectId   String?
+  sessionId   String?
+  createdAt   DateTime @default(now())
+  candidate   LiteratureInboxCandidate @relation(fields: [candidateId], references: [id], onDelete: Cascade)
+
+  @@unique([candidateId, contextKey])
+  @@index([projectId, sessionId])
 }
 
 // Agent-acquired PDFs stay in Inbox until their reference is accepted.
@@ -611,7 +627,8 @@ model LiteratureSourceRecord {
   item             LiteratureItem?           @relation(fields: [itemId], references: [id], onDelete: Cascade)
   inboxCandidate   LiteratureInboxCandidate? @relation(fields: [inboxCandidateId], references: [id], onDelete: Cascade)
 
-  @@unique([provider, externalId])
+  @@unique([itemId, provider, externalId])
+  @@unique([inboxCandidateId, provider, externalId])
   @@index([itemId, provider])
   @@index([inboxCandidateId, provider])
 }

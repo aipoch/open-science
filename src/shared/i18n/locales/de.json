@@ -4900,6 +4900,10 @@
     "PDF not validated: exceeds the 50 MiB automatic processing limit.": "PDF nicht validiert: überschreitet die Grenze von 50 MiB für die automatische Verarbeitung.",
     "PDF structure not yet validated.": "PDF-Struktur noch nicht validiert.",
     "Attachment unavailable": "Anhang nicht verfügbar",
-    "This PDF is referenced by a chat or its message history and cannot be removed. Unlinking the current chat does not remove historical references.": "Diese PDF wird von einem Chat oder dessen Nachrichtenverlauf referenziert und kann nicht entfernt werden. Das Aufheben der Verknüpfung im aktuellen Chat entfernt keine Verweise im Verlauf."
+    "This PDF is referenced by a chat or its message history and cannot be removed. Unlinking the current chat does not remove historical references.": "Diese PDF wird von einem Chat oder dessen Nachrichtenverlauf referenziert und kann nicht entfernt werden. Das Aufheben der Verknüpfung im aktuellen Chat entfernt keine Verweise im Verlauf.",
+    "Dismissed": "Ignoriert",
+    "No dismissed references": "Keine ignorierten Referenzen",
+    "Dismissed references can be restored here.": "Ignorierte Referenzen können hier wiederhergestellt werden.",
+    "Accepting will link to: {{projects}}": "Beim Annehmen wird mit folgenden Projekten verknüpft: {{projects}}"
   }
 }

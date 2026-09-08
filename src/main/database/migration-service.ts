@@ -1,4 +1,5 @@
 import { literaturePdfProvenanceMigration } from './migrations/0035-literature-pdf-provenance'
+import { literatureInboxIntegrityMigration } from './migrations/0037-literature-inbox-integrity'
 import { permissionApprovalSummaryMigration } from './migrations/0032-permission-approval-summary'
 import { computeJobHarvestRetryMigration } from './migrations/0033-compute-job-harvest-retry'
 import { projectArchiveRevisionMigration } from './migrations/0031-project-archive-revision'
@@ -750,6 +751,17 @@ const MIGRATION_MANIFEST = [
     ),
     backupOnApply: 'required',
     backupRetention: 'retain'
+  },
+  {
+    ...literatureInboxIntegrityMigration,
+    checksum: checksumMigrationPayload(
+      literatureInboxIntegrityMigration.id,
+      literatureInboxIntegrityMigration.statements,
+      literatureInboxIntegrityMigration.verifiers,
+      literatureInboxIntegrityMigration.operations
+    ),
+    backupOnApply: 'required',
+    backupRetention: 'retain'
   }
 ] as const satisfies readonly MigrationManifestEntry[]
 // schema-locality: begin frozen-0001-repairs
@@ -1158,7 +1170,14 @@ const verifyCurrentApplicationSchema = async (client: PrismaClient): Promise<voi
     NUMERIC_AND_NULL_ALLOWED_SUFFIX_CHECKS
   )
   await runMigrationVerifiers(client, computeJobFileEvidenceMigration.verifiers)
-  await runMigrationVerifiers(client, literatureFoundationMigration.verifiers)
+  // The generated contract verifies the owner-scoped source indexes introduced by the suffix.
+  await runMigrationVerifiers(
+    client,
+    literatureFoundationMigration.verifiers,
+    {},
+    new Set(['LiteratureSourceRecord'])
+  )
+  await runMigrationVerifiers(client, literatureInboxIntegrityMigration.verifiers)
   await runMigrationVerifiers(client, computeJobRemoteCleanupMigration.verifiers)
   await runMigrationVerifiers(client, backgroundResultDeliveryMigration.verifiers)
   await runMigrationVerifiers(client, literaturePdfProvenanceMigration.verifiers)
@@ -1698,6 +1717,33 @@ const applyManifestMigration = async (
       ? NUMERIC_AND_NULL_ALLOWED_SUFFIX_CHECKS
       : {}
   const verifyMigrationTarget = async (targetClient: PrismaClient): Promise<void> => {
+    if (
+      migration.id === literatureFoundationMigration.id &&
+      migration.checksum === LITERATURE_FOUNDATION_CHECKSUM
+    ) {
+      // An unledgered current database may already use the successor's source ownership keys.
+      // Verify that exact generated table contract before accepting the frozen foundation.
+      let currentSources = false
+      try {
+        await verifyCurrentRuntimeSchemaTables(targetClient, ['LiteratureSourceRecord'])
+        currentSources = true
+      } catch (error) {
+        if (
+          classifyDatabaseFailure(error, 'validation', migration.id).code !==
+          'database_validation_failed'
+        )
+          throw error
+      }
+      if (currentSources) {
+        await runMigrationVerifiers(
+          targetClient,
+          migration.verifiers,
+          allowedCheckUpgrades,
+          new Set(['LiteratureSourceRecord'])
+        )
+        return
+      }
+    }
     if (!canVerifyAsCurrentSchema) {
       await runMigrationVerifiers(targetClient, migration.verifiers, allowedCheckUpgrades)
       return
