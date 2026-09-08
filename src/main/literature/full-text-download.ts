@@ -57,17 +57,22 @@ export const downloadFullText = async (
   rawUrl: string,
   maxBytes: number,
   onProgress?: (progress: LiteratureFullTextProgress) => void,
-  resolveProxy?: (url: string) => Promise<string | undefined>
+  resolveProxy?: (url: string) => Promise<string | undefined>,
+  requestSignal?: AbortSignal
 ): Promise<Buffer> => {
-  const signal = AbortSignal.timeout(60_000)
+  const timeout = AbortSignal.timeout(60_000)
+  const signal = requestSignal ? AbortSignal.any([requestSignal, timeout]) : timeout
+  signal.throwIfAborted()
   let url = fullTextUrl(rawUrl)
   const origin = url.origin
   for (const [host, until] of retryAfterByOrigin)
     if (until <= Date.now()) retryAfterByOrigin.delete(host)
   for (let redirects = 0; redirects <= 5; redirects += 1) {
+    signal.throwIfAborted()
     const retryAt = retryAfterByOrigin.get(url.origin) ?? retryAfterByOrigin.get(origin)
     if (retryAt && retryAt > Date.now()) throw new FullTextRateLimitError(retryAt)
     const proxy = await resolveProxy?.(url.href)
+    signal.throwIfAborted()
     const agent = proxy ? new Agent({ keepAlive: false }) : undefined
     if (agent && proxy) {
       const target = url
@@ -165,6 +170,7 @@ export const downloadFullText = async (
       })
     report()
     for await (const chunk of response) {
+      signal.throwIfAborted()
       const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)
       length += bytes.length
       if (length > maxBytes) {
@@ -174,6 +180,7 @@ export const downloadFullText = async (
       chunks.push(bytes)
       report()
     }
+    signal.throwIfAborted()
     return Buffer.concat(chunks)
   }
   throw new Error('Full-text download redirected too many times.')

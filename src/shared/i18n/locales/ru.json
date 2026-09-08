@@ -5170,6 +5170,7 @@
     "Saved reference metadata. Attachments reflect the current Library entry.": "Сохранённые метаданные источника. Вложения относятся к текущей записи библиотеки.",
     "Select 2–20 references to compare.": "Выберите от 2 до 20 источников для сравнения.",
     "Selected: {{selected}} / 20": "Выбрано: {{selected}} / 20",
-    "Compare selected references": "Сравнить выбранные источники"
+    "Compare selected references": "Сравнить выбранные источники",
+    "You can close this dialog. The download continues in the background; reopen it to see progress.": "Можно закрыть это окно. Загрузка продолжится в фоновом режиме; откройте окно снова, чтобы увидеть ход загрузки."
   }
 }

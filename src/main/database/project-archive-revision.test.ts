@@ -34,7 +34,11 @@ describe('Project archive revision', () => {
     await client.$executeRawUnsafe('DROP TABLE "BackgroundResultDelivery"')
     await client.$executeRawUnsafe('ALTER TABLE "Project" DROP COLUMN "archiveRevision"')
     await client.$executeRawUnsafe(
-      "DELETE FROM \"_open_science_migrations\" WHERE id IN ('0031_project_archive_revision', '0032_permission_approval_summary', '0033_compute_job_harvest_retry', '0034_background_result_delivery')"
+      'ALTER TABLE "LiteratureAttachmentVersion" DROP COLUMN "provenanceJson"'
+    )
+    await client.$executeRawUnsafe('ALTER TABLE "LiteratureInboxPdf" DROP COLUMN "provenanceJson"')
+    await client.$executeRawUnsafe(
+      "DELETE FROM \"_open_science_migrations\" WHERE id IN ('0031_project_archive_revision', '0032_permission_approval_summary', '0033_compute_job_harvest_retry', '0034_background_result_delivery', '0035_literature_pdf_provenance')"
     )
     await expect(
       migrateApplicationDatabase(client, { databasePath: join(root, 'open-science.db') })
@@ -43,7 +47,8 @@ describe('Project archive revision', () => {
         '0031_project_archive_revision',
         '0032_permission_approval_summary',
         '0033_compute_job_harvest_retry',
-        '0034_background_result_delivery'
+        '0034_background_result_delivery',
+        '0035_literature_pdf_provenance'
       ]
     })
     expect(

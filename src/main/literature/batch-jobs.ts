@@ -402,8 +402,10 @@ export class LiteratureBatchJobs {
       if (!row.metadata.filled.length) row.message = 'No missing metadata was found.'
     } else {
       if (
-        item.attachments.some((attachment) =>
-          attachment.versions.some(({ contentType }) => contentType === 'application/pdf')
+        item.attachments.some(
+          (attachment) =>
+            attachment.kind === 'fullText' &&
+            attachment.versions.some(({ contentType }) => contentType === 'application/pdf')
         )
       ) {
         row.status = 'skipped'
@@ -449,8 +451,10 @@ export class LiteratureBatchJobs {
       if (!candidate) throw new Error('No source selected')
       // A previous attempt may have committed before its completion checkpoint was saved.
       if (
-        current.attachments.some((attachment) =>
-          attachment.versions.some(({ contentType }) => contentType === 'application/pdf')
+        current.attachments.some(
+          (attachment) =>
+            attachment.kind === 'fullText' &&
+            attachment.versions.some(({ contentType }) => contentType === 'application/pdf')
         )
       ) {
         row.status = 'skipped'

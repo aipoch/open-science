@@ -4724,6 +4724,7 @@
     "Saved reference metadata. Attachments reflect the current Library entry.": "已儲存的文獻中繼資料。附件來自目前文獻庫項目。",
     "Select 2–20 references to compare.": "選取 2–20 篇文獻進行比較。",
     "Selected: {{selected}} / 20": "已選取：{{selected}} / 20",
-    "Compare selected references": "比較所選文獻"
+    "Compare selected references": "比較所選文獻",
+    "You can close this dialog. The download continues in the background; reopen it to see progress.": "您可以關閉此對話框。下載將在背景繼續；重新開啟即可查看進度。"
   }
 }

@@ -4722,6 +4722,7 @@
     "Saved reference metadata. Attachments reflect the current Library entry.": "저장된 문헌 메타데이터입니다. 첨부 파일은 현재 라이브러리 항목의 파일입니다.",
     "Select 2–20 references to compare.": "비교할 문헌을 2~20개 선택하세요.",
     "Selected: {{selected}} / 20": "선택됨: {{selected}} / 20",
-    "Compare selected references": "선택한 문헌 비교"
+    "Compare selected references": "선택한 문헌 비교",
+    "You can close this dialog. The download continues in the background; reopen it to see progress.": "이 대화 상자를 닫아도 다운로드는 백그라운드에서 계속됩니다. 진행 상황을 확인하려면 다시 여세요."
   }
 }

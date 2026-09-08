@@ -579,3 +579,86 @@ it('marks a persisted legacy review for a fresh search without applying it', asy
     message: 'Search again to refresh this older metadata review.'
   })
 })
+
+it.each(['supplement', 'fullText'] as const)(
+  'uses the attachment role when searching for full text beside a %s PDF',
+  async (kind) => {
+    const { jobs, options, fullText } = await setup()
+    options.catalog.get = async (id) => ({
+      ...item(id),
+      attachments: [
+        {
+          id: 'attachment',
+          kind,
+          title: 'Supporting methods',
+          sortOrder: 0,
+          createdAt: 1,
+          updatedAt: 1,
+          versions: [
+            {
+              id: 'version',
+              versionNumber: 1,
+              filename: 'supporting-methods.pdf',
+              contentType: 'application/pdf',
+              sizeBytes: 10,
+              checksum: 'a'.repeat(64),
+              pageCount: 2,
+              createdAt: 1
+            }
+          ]
+        }
+      ]
+    })
+    const jobId = randomUUID()
+    await jobs.run({ action: 'create', mode: 'full-text', itemIds: ['a'], requestId: jobId })
+    await vi.waitFor(async () =>
+      expect(['review', 'completed']).toContain((await state(jobs, jobId)).state)
+    )
+    expect(fullText).toHaveBeenCalledTimes(kind === 'fullText' ? 0 : 1)
+    expect((await state(jobs, jobId)).rows[0].status).toBe(
+      kind === 'fullText' ? 'skipped' : 'ready'
+    )
+  }
+)
+
+it('still applies the selected full text when a supplement PDF appears after search', async () => {
+  const { jobs, options, fullText } = await setup()
+  const jobId = randomUUID()
+  await jobs.run({ action: 'create', mode: 'full-text', itemIds: ['a'], requestId: jobId })
+  await vi.waitFor(async () => expect((await state(jobs, jobId)).state).toBe('review'))
+  const current = {
+    ...item('a'),
+    attachments: [
+      {
+        id: 'supplement',
+        kind: 'supplement',
+        title: 'Supporting methods',
+        sortOrder: 0,
+        createdAt: 1,
+        updatedAt: 1,
+        versions: [
+          {
+            id: 'version',
+            versionNumber: 1,
+            filename: 'supporting-methods.pdf',
+            contentType: 'application/pdf',
+            sizeBytes: 10,
+            checksum: 'a'.repeat(64),
+            pageCount: 2,
+            createdAt: 1
+          }
+        ]
+      }
+    ]
+  }
+  options.catalog.get = async () => current
+  fullText.mockImplementation(async (request) =>
+    request.mode === 'attach'
+      ? { mode: 'attach', item: current }
+      : { mode: 'search', candidates: [source], notices: [] }
+  )
+  await jobs.run({ action: 'apply', jobId, selections: [{ itemId: 'a', candidateId: source.id }] })
+  await vi.waitFor(async () => expect((await state(jobs, jobId)).state).toBe('completed'))
+  expect(fullText).toHaveBeenCalledWith({ mode: 'attach', itemId: 'a', candidateId: source.id })
+  expect((await state(jobs, jobId)).rows[0].status).toBe('done')
+})

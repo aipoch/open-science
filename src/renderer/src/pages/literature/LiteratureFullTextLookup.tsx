@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import {
   AlertCircle,
   ChevronRight,
@@ -46,6 +46,38 @@ export const LiteratureFullTextLookup = ({
   const [progress, setProgress] = useState<LiteratureFullTextProgress>()
   const [retryAfter, setRetryAfter] = useState<Record<string, number>>({})
   const [now, setNow] = useState(() => Date.now())
+  const [error, setError] = useState<'search' | 'runtime' | 'attach' | 'rate-limited'>()
+  const lifecycle = useRef(0)
+  const notifiedCandidate = useRef<string | undefined>(undefined)
+  useEffect(() => {
+    lifecycle.current += 1
+    notifiedCandidate.current = undefined
+    return () => {
+      lifecycle.current += 1
+    }
+  }, [item.id])
+  const notifyAdded = useCallback(
+    (updated: LiteratureItemView, candidateId: string, transferId?: string): void => {
+      if (updated.id !== item.id || notifiedCandidate.current === candidateId) return
+      notifiedCandidate.current = candidateId
+      onAdded(updated)
+      if (transferId)
+        void window.api.literature
+          .fullText({ mode: 'transfer', itemId: item.id, acknowledgeId: transferId })
+          .catch(() => undefined)
+    },
+    [item.id, onAdded]
+  )
+  const restoreFailure = useCallback(
+    (candidate: LiteratureFullTextCandidate, retryAt?: number): void => {
+      if (retryAt && retryAt > Date.now()) {
+        setNow(Date.now())
+        setRetryAfter((current) => ({ ...current, [new URL(candidate.url).origin]: retryAt }))
+        setError('rate-limited')
+      } else setError('attach')
+    },
+    []
+  )
   const coolingDown = Object.values(retryAfter).some((until) => until > now)
   useEffect(() => {
     if (!coolingDown) return
@@ -58,13 +90,18 @@ export const LiteratureFullTextLookup = ({
     let timer: ReturnType<typeof setTimeout> | undefined
     const poll = async (): Promise<void> => {
       try {
-        const response = await window.api.literature.fullText({
-          mode: 'progress',
-          itemId: item.id,
-          candidateId: adding
-        })
-        if (active && response.mode === 'progress' && response.progress)
-          setProgress(response.progress)
+        const response = await window.api.literature.fullText({ mode: 'transfer', itemId: item.id })
+        if (!active || response.mode !== 'transfer' || !response.transfer) return
+        const task = response.transfer
+        if (task.candidate.id !== adding) return
+        setProgress(task.progress)
+        if (task.status === 'succeeded') {
+          setAdding(undefined)
+          if (response.item) notifyAdded(response.item, task.candidate.id, task.id)
+        } else if (task.status === 'failed') {
+          setAdding(undefined)
+          restoreFailure(task.candidate, task.retryAt)
+        }
       } catch {
         // The attach request owns errors. Missing telemetry must not interrupt the download.
       } finally {
@@ -76,20 +113,32 @@ export const LiteratureFullTextLookup = ({
       active = false
       clearTimeout(timer)
     }
-  }, [adding, item.id])
-  const [error, setError] = useState<'search' | 'runtime' | 'attach' | 'rate-limited'>()
+  }, [adding, item.id, notifyAdded, restoreFailure])
   useEffect(() => {
     let active = true
-    void Promise.resolve()
-      .then(() => {
-        if (typeof window.api.literature.fullText !== 'function') {
-          throw new Error("No handler registered for 'literature:full-text'")
+    void (async () => {
+      if (typeof window.api.literature.fullText !== 'function') {
+        throw new Error("No handler registered for 'literature:full-text'")
+      }
+      const response = await window.api.literature.fullText({ mode: 'transfer', itemId: item.id })
+      if (!active) return
+      if (response.mode === 'transfer' && response.transfer) {
+        const task = response.transfer
+        if (task.status === 'running') {
+          setResult({ mode: 'search', candidates: [task.candidate], notices: [] })
+          setProgress(task.progress)
+          setAdding(task.candidate.id)
+          return
         }
-        return window.api.literature.fullText({ mode: 'search', itemId: item.id })
-      })
-      .then((response) => {
-        if (active && response.mode === 'search') setResult(response)
-      })
+        if (task.status === 'succeeded' && response.item) {
+          notifyAdded(response.item, task.candidate.id, task.id)
+          return
+        }
+        if (task.status === 'failed') restoreFailure(task.candidate, task.retryAt)
+      }
+      const found = await window.api.literature.fullText({ mode: 'search', itemId: item.id })
+      if (active && found.mode === 'search') setResult(found)
+    })()
       .catch((failure: unknown) => {
         if (active)
           setError(
@@ -105,7 +154,7 @@ export const LiteratureFullTextLookup = ({
     return () => {
       active = false
     }
-  }, [item.id, item.metadataRevision, attempt, t])
+  }, [item.id, item.metadataRevision, attempt, t, notifyAdded, restoreFailure])
 
   const retry = (): void => {
     setSearching(true)
@@ -115,6 +164,7 @@ export const LiteratureFullTextLookup = ({
   }
   const attach = async (candidate: LiteratureFullTextCandidate): Promise<void> => {
     if (adding || savingCredential || (retryAfter[new URL(candidate.url).origin] ?? 0) > now) return
+    const generation = lifecycle.current
     setAdding(candidate.id)
     setProgress(undefined)
     setError(undefined)
@@ -124,7 +174,8 @@ export const LiteratureFullTextLookup = ({
         itemId: item.id,
         candidateId: candidate.id
       })
-      if (response.mode === 'attach') onAdded(response.item)
+      if (generation !== lifecycle.current) return
+      if (response.mode === 'attach') notifyAdded(response.item, candidate.id, response.transferId)
       if (response.mode === 'attach-error') {
         setNow(Date.now)
         setRetryAfter((current) => ({
@@ -134,9 +185,9 @@ export const LiteratureFullTextLookup = ({
         setError('rate-limited')
       }
     } catch {
-      setError('attach')
+      if (generation === lifecycle.current) setError('attach')
     } finally {
-      setAdding(undefined)
+      if (generation === lifecycle.current) setAdding(undefined)
     }
   }
 
@@ -372,6 +423,13 @@ export const LiteratureFullTextLookup = ({
                 {t('Try another source or add a PDF from your device.')}
               </p>
             </div>
+          ) : null}
+          {adding ? (
+            <p role="status" className="mb-3 text-xs text-muted-foreground">
+              {t(
+                'You can close this dialog. The download continues in the background; reopen it to see progress.'
+              )}
+            </p>
           ) : null}
           <div className="space-y-3">
             {result?.candidates.map((candidate) => (

@@ -5,7 +5,7 @@ import { join } from 'node:path'
 import { z } from 'zod'
 import type {
   LiteratureFullTextCandidate,
-  LiteratureFullTextProgress,
+  LiteratureFullTextTransfer,
   LiteratureFullTextRequest,
   LiteratureFullTextResult,
   LiteratureItemView
@@ -71,11 +71,20 @@ class LiteratureFullTextFinder {
     string,
     { candidate: Candidate; itemId: string; revision: number; expires: number }
   >()
-  private readonly attaching = new Set<string>()
-  private readonly progress = new Map<
+  private readonly transfers = new Map<
     string,
-    { itemId: string; value: LiteratureFullTextProgress }
+    { snapshot: LiteratureFullTextTransfer; settledAt?: number }
   >()
+
+  private pruneTransfers(): void {
+    const settled = [...this.transfers]
+      .filter(([, task]) => task.settledAt !== undefined)
+      .sort((a, b) => a[1].settledAt! - b[1].settledAt!)
+    for (const [index, [itemId, task]] of settled.entries()) {
+      if (task.settledAt! < Date.now() - 15 * 60_000 || index < settled.length - 128)
+        this.transfers.delete(itemId)
+    }
+  }
   constructor(private readonly options: Options) {}
 
   async discover(item: LiteratureItemView['item']): Promise<SearchResult> {
@@ -92,11 +101,27 @@ class LiteratureFullTextFinder {
   }
 
   async run(request: LiteratureFullTextRequest): Promise<LiteratureFullTextResult> {
+    this.pruneTransfers()
+    const task = this.transfers.get(request.itemId)?.snapshot
+    if (request.mode === 'transfer') {
+      if (task && request.acknowledgeId === task.id && task.status !== 'running') {
+        this.transfers.delete(request.itemId)
+        return { mode: 'transfer' }
+      }
+      const item =
+        task?.status === 'succeeded' ? await this.options.catalog.get(request.itemId) : undefined
+      return {
+        mode: 'transfer',
+        transfer: task ? { ...task } : undefined,
+        ...(item?.id === request.itemId ? { item } : {})
+      }
+    }
     if (request.mode === 'progress') {
-      const progress = this.progress.get(request.candidateId)
       return {
         mode: 'progress',
-        ...(progress?.itemId === request.itemId ? { progress: progress.value } : {})
+        ...(task?.status === 'running' && task.candidate.id === request.candidateId
+          ? { progress: task.progress }
+          : {})
       }
     }
     const item = await this.options.catalog.get(request.itemId)
@@ -323,29 +348,33 @@ class LiteratureFullTextFinder {
       selected.expires < Date.now()
     )
       throw new Error('Full-text result expired or the reference changed. Search again.')
-    if (this.attaching.has(item.id))
+    if (this.transfers.get(item.id)?.snapshot.status === 'running')
       throw new Error('A full-text attachment is already being added.')
-    this.attaching.add(item.id)
-    this.progress.set(candidateId, {
-      itemId: item.id,
-      value: { receivedBytes: 0, bytesPerSecond: 0, phase: 'downloading' }
-    })
+    const task: { snapshot: LiteratureFullTextTransfer; settledAt?: number } = {
+      snapshot: {
+        id: randomUUID(),
+        itemId: item.id,
+        candidate: { ...selected.candidate, id: candidateId },
+        status: 'running',
+        progress: { receivedBytes: 0, bytesPerSecond: 0, phase: 'downloading' }
+      }
+    }
+    this.transfers.set(item.id, task)
     let directory: string | undefined
     try {
       const bytes = await (this.options.download ?? downloadFullText)(
         selected.candidate.url,
         MAX_AUTO_EXTRACT_PDF_BYTES,
-        (value) => this.progress.set(candidateId, { itemId: item.id, value })
-      )
-      this.progress.set(candidateId, {
-        itemId: item.id,
-        value: {
-          receivedBytes: bytes.length,
-          totalBytes: bytes.length,
-          bytesPerSecond: 0,
-          phase: 'saving'
+        (value) => {
+          task.snapshot.progress = value
         }
-      })
+      )
+      task.snapshot.progress = {
+        receivedBytes: bytes.length,
+        totalBytes: bytes.length,
+        bytesPerSecond: 0,
+        phase: 'saving'
+      }
       if (
         bytes.length > MAX_AUTO_EXTRACT_PDF_BYTES ||
         bytes.subarray(0, 5).toString('ascii') !== '%PDF-'
@@ -368,7 +397,7 @@ class LiteratureFullTextFinder {
           .trim()
           .slice(0, 120) || 'paper'
       }.pdf`
-      await this.options.catalog.attachContent({
+      const receipt = await this.options.catalog.attachContent({
         itemId: item.id,
         expectedMetadataRevision: selected.revision,
         contentBlobId: content.id,
@@ -376,18 +405,30 @@ class LiteratureFullTextFinder {
         contentType: 'application/pdf',
         sizeBytes: Number(content.sizeBytes),
         checksum: content.checksum,
-        pageCount
+        pageCount,
+        provenance: {
+          provider: selected.candidate.provider,
+          source: selected.candidate.source,
+          sourceUrl: selected.candidate.sourceUrl ?? new URL(selected.candidate.url).origin,
+          acquiredAt: Date.now(),
+          version: selected.candidate.version,
+          license: selected.candidate.license
+        }
       })
+      // The receipt is authoritative even if refreshing the item later fails.
+      Object.assign(task.snapshot, receipt, { status: 'succeeded' })
       const updated = await this.options.catalog.get(item.id)
       if (!updated) throw new Error('Literature Item is unavailable after attaching the PDF.')
-      return { mode: 'attach', item: updated }
+      return { mode: 'attach', item: updated, transferId: task.snapshot.id }
     } catch (error) {
+      if (task.snapshot.status !== 'succeeded') task.snapshot.status = 'failed'
+      if (error instanceof FullTextRateLimitError) task.snapshot.retryAt = error.retryAt
       if (error instanceof FullTextRateLimitError)
         return { mode: 'attach-error', reason: 'rate-limited', retryAt: error.retryAt }
       throw error
     } finally {
-      this.attaching.delete(item.id)
-      this.progress.delete(candidateId)
+      task.settledAt = Date.now()
+      this.pruneTransfers()
       if (directory) await rm(directory, { recursive: true, force: true })
     }
   }

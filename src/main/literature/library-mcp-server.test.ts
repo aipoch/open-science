@@ -76,7 +76,11 @@ describe('Literature Library MCP server', () => {
       status: 'pending-review',
       candidateId: 'inbox-1'
     })
-    expect(acquirePdf).toHaveBeenCalledWith({ candidate: discovery, pdfUrl: undefined })
+    expect(acquirePdf).toHaveBeenCalledWith({
+      candidate: discovery,
+      pdfUrl: undefined,
+      signal: expect.any(AbortSignal)
+    })
     const rejected = await client.callTool({
       name: 'acquire_pdf',
       arguments: { ref: '10.1234/example', candidate: discovery }

@@ -68,3 +68,51 @@ describe('full-text transfer progress', () => {
     }
   )
 })
+
+it('does not open a request after cancellation while resolving the proxy', async () => {
+  const controller = new AbortController()
+  const before = fixture.requests
+  await expect(
+    downloadFullText(
+      'https://journal.example/paper.pdf',
+      100,
+      undefined,
+      async () => {
+        controller.abort(new Error('cancelled proxy lookup'))
+        return undefined
+      },
+      controller.signal
+    )
+  ).rejects.toThrow('cancelled proxy lookup')
+  expect(fixture.requests).toBe(before)
+})
+
+it.each(['request', 'timeout'] as const)(
+  'stops reading bytes after the %s signal aborts',
+  async (cause) => {
+    fixture.headers = {}
+    const request = new AbortController()
+    const timeout = new AbortController()
+    const timeoutFactory = vi.spyOn(AbortSignal, 'timeout').mockReturnValue(timeout.signal)
+    const received: number[] = []
+    try {
+      await expect(
+        downloadFullText(
+          'https://journal.example/paper.pdf',
+          100,
+          (progress) => {
+            received.push(progress.receivedBytes)
+            if (progress.receivedBytes === 5)
+              (cause === 'request' ? request : timeout).abort(new Error(cause))
+          },
+          undefined,
+          request.signal
+        )
+      ).rejects.toThrow(cause)
+      expect(timeoutFactory).toHaveBeenCalledWith(60_000)
+      expect(received).toEqual([0, 5])
+    } finally {
+      timeoutFactory.mockRestore()
+    }
+  }
+)
