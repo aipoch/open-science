@@ -150,7 +150,8 @@ const registerLiteratureApplicationCommands = (
   const scope = registrar.createScope()
   try {
     scope.registerGroup(literatureApplicationCommandGroup, {
-      'literature:export-record': ({ args }) => withDataRootWrite(() => owner.exportRecord(args[0])),
+      'literature:export-record': ({ args }) =>
+        withDataRootWrite(() => owner.exportRecord(args[0])),
       'literature:jobs': ({ args }) => withDataRootWrite(() => owner.jobs(args[0])),
       'literature:full-text': ({ args }) => withDataRootWrite(() => owner.fullText(args[0])),
       'literature:lookup-metadata': ({ args }) =>

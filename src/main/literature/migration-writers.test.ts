@@ -127,7 +127,7 @@ it('drains a detached batch worker and pauses remaining rows before copying', as
     const result = await jobs.run({ action: 'get', jobId: id })
     expect(result.jobs[0].state).toBe('paused')
     expect(result.jobs[0].rows[1].status).toBe('pending')
-    const checkpoint = JSON.parse(await readFile(join(path + '.d', id + '.json'), 'utf8'))
+    const checkpoint = JSON.parse(await readFile(join(path + '.d', id, 'task.json'), 'utf8'))
     expect(checkpoint.state).toBe('paused')
     expect(checkpoint.rows[1].status).toBe('pending')
   } finally {
@@ -174,7 +174,7 @@ it('pauses an admitted task creation that finishes saving after migration starts
     expect(result.jobs[0].state).toBe('paused')
     await waitForDataRootWriters()
     expect(fullText).not.toHaveBeenCalled()
-    const checkpoint = JSON.parse(await readFile(join(path + '.d', id + '.json'), 'utf8'))
+    const checkpoint = JSON.parse(await readFile(join(path + '.d', id, 'task.json'), 'utf8'))
     expect(checkpoint.state).toBe('paused')
   } finally {
     await jobs.close()

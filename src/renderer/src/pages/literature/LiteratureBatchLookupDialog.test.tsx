@@ -586,7 +586,7 @@ it.each([false, true])(
         .checked
     ).toBe(true)
     expect(screen.queryByRole('alert')).toBeNull()
-    fireEvent.click(screen.getByRole('button', { name: 'Apply metadata (1)' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Apply selected (1)' }))
     await act(async () => {})
     expect(jobs).toHaveBeenCalledWith({
       action: 'apply',
