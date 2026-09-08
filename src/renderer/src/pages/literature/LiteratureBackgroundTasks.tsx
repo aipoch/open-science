@@ -29,6 +29,7 @@ export function LiteratureBackgroundTasks({
   const [open, setOpen] = useState(false)
   const [jobs, setJobs] = useState<LiteratureJobSummary[]>([])
   const [error, setError] = useState(false)
+  const [announceCompletion, setAnnounceCompletion] = useState(false)
   const previous = useRef<LiteratureJobSummary[]>([])
   const initialized = useRef(false)
   const receive = useEffectEvent((summaries: LiteratureJobSummary[]) => {
@@ -40,6 +41,24 @@ export function LiteratureBackgroundTasks({
       return (job.completedItemIds ?? []).filter((id) => !known.has(id))
     })
     if (changed.length) onChanged?.([...new Set(changed)])
+    if (JSON.stringify(previous.current) !== JSON.stringify(summaries)) {
+      setAnnounceCompletion(
+        summaries.some((job) => {
+          const prior = previous.current.find(({ id }) => id === job.id)
+          return Boolean(
+            prior &&
+            (prior.state !== 'completed' ||
+              prior.failed > 0 ||
+              prior.ready > 0 ||
+              prior.checked < prior.total) &&
+            job.state === 'completed' &&
+            job.failed === 0 &&
+            job.ready === 0 &&
+            job.checked >= job.total
+          )
+        })
+      )
+    }
     previous.current = summaries
     initialized.current = true
     setJobs((current) =>
@@ -64,7 +83,10 @@ export function LiteratureBackgroundTasks({
           setError(false)
         }
       } catch {
-        if (active) setError(true)
+        if (active) {
+          setError(true)
+          setAnnounceCompletion(false)
+        }
       } finally {
         inFlight = false
         const running = previous.current.some((job) =>
@@ -129,7 +151,8 @@ export function LiteratureBackgroundTasks({
             : allPaused
               ? t('Paused')
               : t('Awaiting review')
-  const announcement = error || pending.length ? statusLabel : jobs.length ? t('Completed') : ''
+  const announcement =
+    error || pending.length ? statusLabel : announceCompletion ? t('Completed') : ''
   const showEntry = !hidden && (pending.length > 0 || open || error)
   return (
     <>
@@ -257,7 +280,10 @@ export function LiteratureBackgroundTasks({
                               .then(
                                 () =>
                                   setJobs((current) => current.filter(({ id }) => id !== job.id)),
-                                () => setError(true)
+                                () => {
+                                  setError(true)
+                                  setAnnounceCompletion(false)
+                                }
                               )
                           }}
                         >
