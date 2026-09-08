@@ -7,7 +7,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { ContextUsageTracker } from './context-usage-tracker'
 import { composeAcpRuntimeBaseOwners } from './runtime-base-composition'
-import { claudeCodeFramework } from '../agent-framework'
+import { claudeCodeFramework, opencodeFramework, codexFramework } from '../agent-framework'
 import type { LiteratureLibraryMcpHandler } from '../literature/library-mcp-server'
 import type { AgentMcpHttpHost } from './mcp-http-host'
 import { CURRENT_PRIMARY_SESSION_CAPABILITY_POLICY } from './session-capability-owner'
@@ -185,6 +185,68 @@ describe('ACP Runtime base composition', () => {
       })
     ).toThrow('ACP generation/connection effects are already bound.')
   })
+
+  it.each([
+    ['claude-code', claudeCodeFramework, true, false],
+    ['opencode', opencodeFramework, true, false],
+    ['codex-response', codexFramework, true, false],
+    ['codex-response compatibility', codexFramework, false, true],
+    ['codex-bridge', codexFramework, false, true]
+  ] as const)(
+    'forwards the acquisition cancellation signal with trusted origin for %s',
+    async (_path, framework, nativeMcpEnabled, bridgeMcpAliasesEnabled) => {
+      let handler: LiteratureLibraryMcpHandler | undefined
+      const host = {
+        ensureStarted: vi.fn(async () => ({ endpoint: 'http://127.0.0.1:5', token: 'host' })),
+        registerLiteratureLibrary: vi.fn((_id: string, next: LiteratureLibraryMcpHandler) => {
+          handler = next
+        }),
+        urlFor: vi.fn((kind: string, id: string) => `http://127.0.0.1:5/${kind}/${id}`),
+        unregister: vi.fn(),
+        clear: vi.fn(),
+        close: vi.fn()
+      } as unknown as AgentMcpHttpHost
+      const acquirePdf = vi.fn<
+        (request: { signal?: AbortSignal }) => Promise<{ status: 'not-found' }>
+      >(async () => ({ status: 'not-found' }))
+      const owners = composeAcpRuntimeBaseOwners({
+        appVersion: 'test',
+        defaultCwd: '/workspace',
+        mcpHttpHost: host,
+        literatureLibrary: {
+          acquirePdf,
+          searchLibrary: vi.fn(),
+          readAbstract: vi.fn(),
+          readPdf: vi.fn(),
+          saveToInbox: vi.fn()
+        }
+      })
+      const provision = await owners.sessionCapabilities.provision({
+        stableAppSessionId: 'session-1',
+        framework,
+        nativeMcpEnabled,
+        bridgeMcpAliasesEnabled,
+        policy: CURRENT_PRIMARY_SESSION_CAPABILITY_POLICY,
+        sessionCwd: '/workspace',
+        projectId: 'project-1'
+      })
+      const candidate = {
+        item: { title: 'A paper' },
+        source: { provider: 'crossref', rawMetadata: {} }
+      } as Parameters<NonNullable<LiteratureLibraryMcpHandler['acquirePdf']>>[0]['candidate']
+      const controller = new AbortController()
+      await handler!.acquirePdf!({ candidate, signal: controller.signal })
+      expect(acquirePdf).toHaveBeenCalledWith({
+        candidate,
+        signal: controller.signal,
+        projectId: 'project-1',
+        sessionId: 'session-1'
+      })
+      controller.abort()
+      expect(acquirePdf.mock.calls[0][0].signal!.aborted).toBe(true)
+      provision.release({ ownsStableIdentity: true })
+    }
+  )
 
   it('stamps the trusted Project and Session origin onto Agent literature discoveries', async () => {
     const dataRoot = await mkdtemp(join(tmpdir(), 'open-science-literature-artifact-'))

@@ -4877,6 +4877,8 @@
     "Saved reference metadata. Attachments reflect the current Library entry.": "Gespeicherte Referenzmetadaten. Anhänge stammen aus dem aktuellen Bibliothekseintrag.",
     "Select 2–20 references to compare.": "Wählen Sie 2–20 Literaturangaben zum Vergleichen aus.",
     "Selected: {{selected}} / 20": "Ausgewählt: {{selected}} / 20",
-    "Compare selected references": "Ausgewählte Literaturangaben vergleichen"
+    "Compare selected references": "Ausgewählte Literaturangaben vergleichen",
+    "PDF added. Refreshing attachment details…": "PDF hinzugefügt. Anhangdetails werden aktualisiert…",
+    "You can close this dialog. The download continues in the background; reopen it to see progress.": "Sie können diesen Dialog schließen. Der Download läuft im Hintergrund weiter. Öffnen Sie ihn erneut, um den Fortschritt zu sehen."
   }
 }

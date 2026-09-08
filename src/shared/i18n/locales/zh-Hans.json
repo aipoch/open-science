@@ -4724,6 +4724,8 @@
     "Saved reference metadata. Attachments reflect the current Library entry.": "已保存的文献元数据。附件来自当前文献库条目。",
     "Select 2–20 references to compare.": "选择 2–20 篇文献进行比较。",
     "Selected: {{selected}} / 20": "已选择：{{selected}} / 20",
-    "Compare selected references": "比较所选文献"
+    "Compare selected references": "比较所选文献",
+    "PDF added. Refreshing attachment details…": "PDF 已添加。正在刷新附件详情…",
+    "You can close this dialog. The download continues in the background; reopen it to see progress.": "您可以关闭此对话框。下载将在后台继续；重新打开即可查看进度。"
   }
 }

@@ -1788,11 +1788,23 @@ const createApplicationModules = async (
     literatureCatalog,
     netFetchStandard
   )
-  const downloadLiteraturePdf: typeof downloadFullText = (url, maxBytes, onProgress) =>
-    downloadFullText(url, maxBytes, onProgress, async (target) => {
-      const environment = parseSystemProxyRules(await session.defaultSession.resolveProxy(target))
-      return environment.HTTPS_PROXY ?? environment.ALL_PROXY
-    })
+  const downloadLiteraturePdf: typeof downloadFullText = (
+    url,
+    maxBytes,
+    onProgress,
+    _resolveProxy,
+    signal
+  ) =>
+    downloadFullText(
+      url,
+      maxBytes,
+      onProgress,
+      async (target) => {
+        const environment = parseSystemProxyRules(await session.defaultSession.resolveProxy(target))
+        return environment.HTTPS_PROXY ?? environment.ALL_PROXY
+      },
+      signal
+    )
   const literatureFullTextFinder = new LiteratureFullTextFinder({
     catalog: literatureCatalog,
     content: contentRepository,

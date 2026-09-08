@@ -1,4 +1,9 @@
-import { readFile } from 'node:fs/promises'
+import { mkdtemp, readFile, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { createProjectDbClient, migrateApplicationDatabase } from '../projects/prisma-client'
+import { ContentRepository } from '../storage/content-repository'
+import { LiteratureCatalog } from './catalog'
 import { describe, expect, it, vi } from 'vitest'
 import { literatureItemInputSchema, type LiteratureItemView } from '../../shared/literature'
 import { LiteratureFullTextFinder, type LiteratureFullTextFinderOptions } from './full-text-finder'
@@ -239,7 +244,7 @@ describe('Literature full-text discovery and attachment', () => {
     expect(options.catalog.attachContent).not.toHaveBeenCalled()
     await expect(
       finder.run({ mode: 'attach', itemId: item.id, candidateId: result.candidates[0].id })
-    ).resolves.toEqual({ mode: 'attach', item })
+    ).resolves.toMatchObject({ mode: 'attach', item, transferId: expect.any(String) })
     expect(options.catalog.attachContent).toHaveBeenCalledWith(
       expect.objectContaining({
         itemId: item.id,
@@ -644,3 +649,200 @@ it.each([
     }
   }
 )
+
+// Same minimal parseable fixture used by the PDF preview owner tests.
+const twoPagePdf = (): Buffer => {
+  const pageTwoStream = 'BT /F1 12 Tf 10 50 Td (Page two claim) Tj ET'
+  const objects = [
+    '1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n',
+    '2 0 obj\n<< /Type /Pages /Kids [3 0 R 4 0 R] /Count 2 >>\nendobj\n',
+    '3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 100 100] /Contents 5 0 R /Resources << >> >>\nendobj\n',
+    '4 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 100 100] /Contents 6 0 R /Resources << /Font << /F1 7 0 R >> >> >>\nendobj\n',
+    '5 0 obj\n<< /Length 0 >>\nstream\n\nendstream\nendobj\n',
+    `6 0 obj\n<< /Length ${pageTwoStream.length} >>\nstream\n${pageTwoStream}\nendstream\nendobj\n`,
+    '7 0 obj\n<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>\nendobj\n'
+  ]
+  let pdf = '%PDF-1.4\n'
+  const offsets = objects.map((object) => {
+    const offset = Buffer.byteLength(pdf)
+    pdf += object
+    return offset
+  })
+  const xref = Buffer.byteLength(pdf)
+  pdf += `xref\n0 8\n0000000000 65535 f \n${offsets
+    .map((offset) => `${String(offset).padStart(10, '0')} 00000 n \n`)
+    .join('')}trailer\n<< /Size 8 /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF\n`
+  return Buffer.from(pdf)
+}
+
+it('retains the selected manuscript source after the downloaded PDF is persisted and reopened', async () => {
+  const storageRoot = await mkdtemp(join(tmpdir(), 'full-text-provenance-'))
+  let client = createProjectDbClient(storageRoot)
+  try {
+    await migrateApplicationDatabase(client)
+    let catalog = new LiteratureCatalog(async () => client)
+    const content = new ContentRepository({ storageRoot, getClient: async () => client })
+    const created = await catalog.transact({ kind: 'create-item', item: setup().item.item })
+    const bytes = twoPagePdf()
+    const finder = new LiteratureFullTextFinder({
+      catalog,
+      content,
+      openAlexKey: async () => undefined,
+      contactEmail: async () => 'research@lab.org',
+      fetch: async (input) => {
+        const host = new URL(String(input)).hostname
+        if (host === 'api.unpaywall.org')
+          return Response.json({
+            doi: '10.1000/example',
+            oa_locations: [
+              {
+                url_for_pdf: 'https://repository.example/manuscript.pdf',
+                url_for_landing_page: 'https://repository.example/article',
+                repository_institution: 'Example repository',
+                version: 'acceptedVersion',
+                license: 'cc-by'
+              }
+            ]
+          })
+        return host === 'pmc.ncbi.nlm.nih.gov'
+          ? Response.json({ records: [] })
+          : Response.json({ resultList: { result: [] } })
+      },
+      download: async () => bytes
+    })
+    const found = await finder.run({ mode: 'search', itemId: created.id })
+    if (found.mode !== 'search') throw new Error('Expected search')
+    expect(found.candidates).toHaveLength(1)
+    expect(found.candidates[0]).toMatchObject({
+      provider: 'unpaywall',
+      sourceUrl: 'https://repository.example/article',
+      version: 'accepted',
+      license: 'cc-by'
+    })
+    await finder.run({ mode: 'attach', itemId: created.id, candidateId: found.candidates[0].id })
+    await client.$disconnect()
+    client = createProjectDbClient(storageRoot)
+    catalog = new LiteratureCatalog(async () => client)
+    const saved = await catalog.get(created.id)
+    expect(saved?.attachments).toHaveLength(1)
+    const version = saved!.attachments[0].versions[0]
+    expect(version.pageCount).toBe(2)
+    const row = await client.literatureAttachmentVersion.findUniqueOrThrow({
+      where: { id: version.id }
+    })
+    const opened = await content.open(row.contentBlobId)
+    expect(await readFile(opened.path)).toEqual(bytes)
+    expect(version.provenance).toMatchObject({
+      provider: 'unpaywall',
+      sourceUrl: 'https://repository.example/article',
+      version: 'accepted',
+      license: 'cc-by',
+      acquiredAt: expect.any(Number)
+    })
+    expect(JSON.parse(row.provenanceJson!)).toEqual(version.provenance)
+  } finally {
+    await client.$disconnect()
+    await rm(storageRoot, { recursive: true, force: true })
+  }
+})
+
+it('recovers a transfer by item identity across searches and retains its result until acknowledged', async () => {
+  const { finder, options, item } = setup()
+  const first = await finder.run({ mode: 'search', itemId: item.id })
+  if (first.mode !== 'search') throw new Error('Expected search')
+  let release!: (bytes: Buffer) => void
+  options.download = async (_url, _limit, report) => {
+    report?.({ phase: 'downloading', receivedBytes: 5, bytesPerSecond: 2 })
+    return new Promise((resolve) => {
+      release = resolve
+    })
+  }
+  const attaching = finder.run({
+    mode: 'attach',
+    itemId: item.id,
+    candidateId: first.candidates[0].id
+  })
+  await vi.waitFor(() => expect(release).toBeTypeOf('function'))
+  try {
+    const second = await finder.run({ mode: 'search', itemId: item.id })
+    expect(second.mode).toBe('search')
+    const recovered = await finder.run({ mode: 'transfer', itemId: item.id })
+    if (recovered.mode !== 'transfer' || !recovered.transfer) throw new Error('Expected transfer')
+    expect(recovered.transfer).toMatchObject({
+      status: 'running',
+      candidate: first.candidates[0],
+      progress: { receivedBytes: 5 }
+    })
+    await finder.run({ mode: 'transfer', itemId: item.id, acknowledgeId: recovered.transfer.id })
+    await expect(finder.run({ mode: 'transfer', itemId: 'other' })).resolves.toEqual({
+      mode: 'transfer',
+      transfer: undefined
+    })
+    release(Buffer.from('%PDF-1.7\nexample'))
+    await attaching
+    const current = { ...item, item: { ...item.item, title: 'Edited after download' } }
+    vi.mocked(options.catalog.get).mockResolvedValue(current)
+    await expect(finder.run({ mode: 'transfer', itemId: item.id })).resolves.toMatchObject({
+      transfer: {
+        id: recovered.transfer.id,
+        status: 'succeeded',
+        attachmentId: 'attachment-1',
+        versionId: 'version-1'
+      },
+      item: current
+    })
+    expect(options.catalog.attachContent).toHaveBeenCalledTimes(1)
+    await finder.run({ mode: 'transfer', itemId: item.id, acknowledgeId: 'old-task' })
+    await expect(finder.run({ mode: 'transfer', itemId: item.id })).resolves.toMatchObject({
+      transfer: { status: 'succeeded' }
+    })
+    await finder.run({ mode: 'transfer', itemId: item.id, acknowledgeId: recovered.transfer.id })
+    await expect(finder.run({ mode: 'transfer', itemId: item.id })).resolves.toMatchObject({
+      transfer: undefined
+    })
+  } finally {
+    release(Buffer.from('%PDF-1.7\nexample'))
+    await attaching
+  }
+})
+
+it('keeps a failed transfer and its rate limit available when the original caller is gone', async () => {
+  const { finder, options, item } = setup()
+  const found = await finder.run({ mode: 'search', itemId: item.id })
+  if (found.mode !== 'search') throw new Error('Expected search')
+  const retryAt = Date.now() + 60_000
+  options.download = async () => {
+    throw new FullTextRateLimitError(retryAt)
+  }
+  await finder.run({ mode: 'attach', itemId: item.id, candidateId: found.candidates[0].id })
+  await expect(finder.run({ mode: 'transfer', itemId: item.id })).resolves.toMatchObject({
+    transfer: { status: 'failed', retryAt, candidate: found.candidates[0] }
+  })
+})
+
+it('returns the committed transfer even while the refreshed item cannot be read', async () => {
+  const { finder, options, item } = setup()
+  const found = await finder.run({ mode: 'search', itemId: item.id })
+  if (found.mode !== 'search') throw new Error('Expected search')
+  vi.mocked(options.catalog.attachContent).mockImplementationOnce(async () => {
+    vi.mocked(options.catalog.get).mockRejectedValue(new Error('Temporary catalog read failure'))
+    return { attachmentId: 'attachment-1', versionId: 'version-1' }
+  })
+  await expect(
+    finder.run({ mode: 'attach', itemId: item.id, candidateId: found.candidates[0].id })
+  ).resolves.toMatchObject({
+    mode: 'transfer',
+    transfer: { status: 'succeeded', attachmentId: 'attachment-1', versionId: 'version-1' }
+  })
+  await expect(finder.run({ mode: 'transfer', itemId: item.id })).resolves.toMatchObject({
+    mode: 'transfer',
+    transfer: { status: 'succeeded' }
+  })
+  vi.mocked(options.catalog.get).mockResolvedValue(item)
+  await expect(finder.run({ mode: 'transfer', itemId: item.id })).resolves.toMatchObject({
+    transfer: { status: 'succeeded' },
+    item
+  })
+  expect(options.catalog.attachContent).toHaveBeenCalledTimes(1)
+  expect(options.download).toHaveBeenCalledTimes(1)
+})
