@@ -1,3 +1,5 @@
+import { LITERATURE_OVERSIZED_REFERENCE } from '../../../../shared/literature-export'
+import { readLiteratureSelectionPage } from './literature-read-pages'
 // @vitest-environment jsdom
 import { afterEach, expect, it, vi } from 'vitest'
 import { readLiteratureDisplayPage, readLiteratureJobPages } from './literature-read-pages'
@@ -99,4 +101,18 @@ it('does not save an incomplete export when the reference changes', async () => 
   })
   await expect(downloadLiteratureRecord('reference')).rejects.toThrow('changed')
   expect(saveBlobFile).not.toHaveBeenCalled()
+})
+
+it('rejects a changed oversized selection instead of returning partial metadata', async () => {
+  const search = vi.fn().mockRejectedValue(new Error(LITERATURE_OVERSIZED_REFERENCE + 'item'))
+  const exportRecord = vi
+    .fn()
+    .mockResolvedValueOnce({ chunk: '{', digest: 'old', nextOffset: 1 })
+    .mockResolvedValueOnce({ chunk: '}', digest: 'new' })
+  Object.defineProperty(window, 'api', {
+    configurable: true,
+    value: { literature: { search, exportRecord } }
+  })
+  await expect(readLiteratureSelectionPage({ scope: 'library' })).rejects.toThrow('changed')
+  expect(search).toHaveBeenCalledOnce()
 })

@@ -1,3 +1,5 @@
+import { literatureItemViewSchema } from '../../../../shared/literature'
+import { oversizedLiteratureReference } from '../../../../shared/literature-export'
 import type {
   LiteratureCatalogSearchPage,
   LiteratureCatalogSearchRequest
@@ -8,10 +10,12 @@ import type { LiteratureJobsResult } from '../../../../shared/literature-jobs'
 // page before publishing it, so a byte boundary cannot skip references in numbered navigation.
 export async function readLiteratureDisplayPage(
   request: LiteratureCatalogSearchRequest,
-  isCurrent: () => boolean = () => true
+  isCurrent: () => boolean = () => true,
+  recoverOversized = false
 ): Promise<LiteratureCatalogSearchPage> {
-  const first = await window.api.literature.search(request)
-  if (request.scope !== 'library' || request.allItemIds) return first
+  const read = recoverOversized ? readSelectionTransportPage : window.api.literature.search
+  const first = await read(request)
+  if (request.scope !== 'library' || request.allItemIds || request.countOnly) return first
   const entries = [...first.entries]
   const limit = request.limit ?? 50
   let nextOffset = first.nextOffset
@@ -19,7 +23,7 @@ export async function readLiteratureDisplayPage(
   while (nextOffset !== undefined && entries.length < limit && isCurrent()) {
     if (nextOffset <= offset) throw new Error('Literature pagination did not advance.')
     offset = nextOffset
-    const page = await window.api.literature.search({
+    const page = await read({
       ...request,
       offset,
       limit: limit - entries.length
@@ -28,6 +32,33 @@ export async function readLiteratureDisplayPage(
     nextOffset = page.nextOffset
   }
   return { ...first, entries, nextOffset }
+}
+
+// Selection consumers retain complete metadata snapshots. Recover exceptional records through
+// the existing digest-checked chunk transfer instead of substituting a partial item.
+export async function readLiteratureSelectionPage(
+  request: LiteratureCatalogSearchRequest,
+  isCurrent: () => boolean = () => true
+): Promise<LiteratureCatalogSearchPage> {
+  return readLiteratureDisplayPage(request, isCurrent, true)
+}
+
+async function readSelectionTransportPage(
+  request: LiteratureCatalogSearchRequest
+): Promise<LiteratureCatalogSearchPage> {
+  try {
+    return await window.api.literature.search(request)
+  } catch (error) {
+    const itemId = oversizedLiteratureReference(error)
+    if (!itemId || request.scope !== 'library' || request.allItemIds || request.countOnly)
+      throw error
+    const item = literatureItemViewSchema.parse(JSON.parse(await readLiteratureRecord(itemId)))
+    if (item.id !== itemId) throw new Error('Reference changed while reading search results.')
+    const { totalCount } = await window.api.literature.search({ ...request, countOnly: true })
+    if (totalCount === undefined) throw new Error('Literature count is unavailable.')
+    const next = (request.offset ?? 0) + 1
+    return { entries: [item], totalCount, nextOffset: next < totalCount ? next : undefined }
+  }
 }
 
 export async function readLiteratureJobPages(
@@ -58,7 +89,7 @@ export async function readLiteratureJobPages(
   return { ...result, jobs: [{ ...first, rows, nextRowOffset: undefined }] }
 }
 
-export async function downloadLiteratureRecord(itemId: string): Promise<void> {
+async function readLiteratureRecord(itemId: string): Promise<string> {
   const chunks: string[] = []
   let offset = 0
   let digest: string | undefined
@@ -71,7 +102,11 @@ export async function downloadLiteratureRecord(itemId: string): Promise<void> {
     if (result.nextOffset <= offset) throw new Error('Reference export did not advance.')
     offset = result.nextOffset
   }
-  const data = new TextEncoder().encode(chunks.join(''))
+  return chunks.join('')
+}
+
+export async function downloadLiteratureRecord(itemId: string): Promise<void> {
+  const data = new TextEncoder().encode(await readLiteratureRecord(itemId))
   await window.api.saveBlobFile({
     suggestedName: 'reference.json',
     mimeType: 'application/json',

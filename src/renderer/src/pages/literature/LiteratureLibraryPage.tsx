@@ -3,6 +3,7 @@ import {
   type LiteratureDeletionDiagnostic
 } from '../../../../shared/literature-deletion'
 import { LiteratureDeletionNotice } from './LiteratureDeletionNotice'
+import { readLiteratureSelectionPage } from './literature-read-pages'
 import { LiteratureOversizedNotice } from './LiteratureOversizedNotice'
 import type { TFunction } from 'i18next'
 import { LiteratureAttachments } from './LiteratureAttachments'
@@ -3000,7 +3001,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
       for (;;) {
         if (seenOffsets.has(offset)) throw new Error('Repeated Literature page.')
         seenOffsets.add(offset)
-        const page = await window.api.literature.search({
+        const page = await readLiteratureSelectionPage({
           ...buildEntriesRequest(offset),
           limit: 100
         })
@@ -3258,7 +3259,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
         let offset = 0
         while (!seen.has(offset)) {
           seen.add(offset)
-          const page = await window.api.literature.search(buildEntriesRequest(offset))
+          const page = await readLiteratureSelectionPage(buildEntriesRequest(offset))
           if (request !== batchReadingRequest.current) return
           entries.push(
             ...page.entries

@@ -1004,7 +1004,7 @@ describe('LiteratureLibraryPage', () => {
     fireEvent.click(within(nav).getByRole('button', { name: 'All references' }))
     expect(await screen.findByText('No references found')).not.toBeNull()
     const libraryRequests = search.mock.calls.filter(
-      ([request]) => request.scope === 'library' && request.limit !== 1
+      ([request]) => request.scope === 'library' && !request.countOnly
     ).length
     fireEvent.click(within(nav).getByRole('button', { name: 'Duplicates' }))
     fireEvent.click(await screen.findByRole('button', { name: 'Review duplicates' }))
@@ -1039,7 +1039,7 @@ describe('LiteratureLibraryPage', () => {
     fireEvent.click(within(nav).getByRole('button', { name: 'All references' }))
     await waitFor(() =>
       expect(
-        search.mock.calls.filter(([request]) => request.scope === 'library' && request.limit !== 1)
+        search.mock.calls.filter(([request]) => request.scope === 'library' && !request.countOnly)
       ).toHaveLength(libraryRequests + 1)
     )
   })
@@ -1106,14 +1106,14 @@ describe('LiteratureLibraryPage', () => {
     fireEvent.click(screen.getByRole('button', { name: 'All references' }))
     const row = await screen.findByLabelText('Select Reference 0')
     const libraryRequests = search.mock.calls.filter(
-      ([request]) => request.scope === 'library' && request.limit !== 1
+      ([request]) => request.scope === 'library' && !request.countOnly
     ).length
     fireEvent.click(screen.getByRole('button', { name: 'Duplicates' }))
     expect(document.body.contains(row)).toBe(true)
     fireEvent.click(screen.getByRole('button', { name: 'All references' }))
     expect(screen.getByLabelText('Select Reference 0')).toBe(row)
     expect(
-      search.mock.calls.filter(([request]) => request.scope === 'library' && request.limit !== 1)
+      search.mock.calls.filter(([request]) => request.scope === 'library' && !request.countOnly)
     ).toHaveLength(libraryRequests)
   })
 
@@ -4803,7 +4803,7 @@ describe('LiteratureLibraryPage', () => {
       target: { value: 'query' }
     })
     expect(
-      search.mock.calls.filter(([request]) => request.scope === 'library' && request.limit === 1)
+      search.mock.calls.filter(([request]) => request.scope === 'library' && request.countOnly)
     ).toHaveLength(1)
     await openMenu(screen.getByRole('button', { name: 'Add' }))
     fireEvent.click(screen.getByRole('menuitem', { name: 'Add reference' }))
@@ -4826,7 +4826,7 @@ describe('LiteratureLibraryPage', () => {
     expect(await screen.findByRole('heading', { name: 'Manual paper' })).not.toBeNull()
     await within(countButton).findByText('1')
     expect(
-      search.mock.calls.filter(([request]) => request.scope === 'library' && request.limit === 1)
+      search.mock.calls.filter(([request]) => request.scope === 'library' && request.countOnly)
     ).toHaveLength(2)
   })
 
@@ -5617,7 +5617,7 @@ describe('LiteratureLibraryPage', () => {
         )
       }
       const previousQueries = search.mock.calls.filter(
-        ([request]) => request.scope === 'library' && request.limit !== 1
+        ([request]) => request.scope === 'library' && !request.countOnly
       ).length
       const input = screen.getByRole('textbox', {
         name: `Note for ${libraryItem.item.title}`
@@ -5660,7 +5660,7 @@ describe('LiteratureLibraryPage', () => {
       if (!remains)
         await waitFor(() => expect(screen.queryByText(libraryItem.item.title)).toBeNull())
       expect(
-        search.mock.calls.filter(([request]) => request.scope === 'library' && request.limit !== 1)
+        search.mock.calls.filter(([request]) => request.scope === 'library' && !request.countOnly)
           .length
       ).toBeGreaterThan(previousQueries)
     }
@@ -6975,7 +6975,7 @@ describe('LiteratureLibraryPage', () => {
     fireEvent.click(select)
     expect(screen.queryByRole('button', { name: 'Background tasks' })).toBeNull()
     const listRequests = search.mock.calls.filter(
-      ([request]) => request.scope === 'library' && request.limit !== 1
+      ([request]) => request.scope === 'library' && !request.countOnly
     ).length
     get.mockResolvedValue({
       ...libraryItem,
@@ -6996,7 +6996,7 @@ describe('LiteratureLibraryPage', () => {
         .checked
     ).toBe(true)
     expect(
-      search.mock.calls.filter(([request]) => request.scope === 'library' && request.limit !== 1)
+      search.mock.calls.filter(([request]) => request.scope === 'library' && !request.countOnly)
     ).toHaveLength(listRequests)
   })
 
@@ -8685,7 +8685,7 @@ describe('LiteratureLibraryPage', () => {
         entries: request.scope === 'library' ? [updated] : []
       }))
       const listReads = (): number =>
-        search.mock.calls.filter(([request]) => request.scope === 'library' && request.limit !== 1)
+        search.mock.calls.filter(([request]) => request.scope === 'library' && !request.countOnly)
           .length
       const before = listReads()
       fireEvent.click(screen.getByRole('button', { name: 'Inbox' }))

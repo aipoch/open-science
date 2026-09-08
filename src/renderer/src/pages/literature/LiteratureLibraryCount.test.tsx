@@ -30,7 +30,7 @@ it('deduplicates mount requests and retains the total across rerenders and colla
   expect(search).toHaveBeenCalledExactlyOnceWith({
     scope: 'library',
     lifecycle: 'active',
-    limit: 1
+    countOnly: true
   })
 })
 

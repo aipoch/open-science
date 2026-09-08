@@ -1033,6 +1033,12 @@ class LiteratureCatalog {
         : Prisma.sql`"LiteratureItem" selected JOIN "LiteratureItem" i
           ON i.id = COALESCE(selected."mergedIntoItemId", selected.id)`
     const requestedId = request.itemIds === undefined ? Prisma.sql`i.id` : Prisma.sql`selected.id`
+    if (request.countOnly) {
+      const [count] = await client.$queryRaw<{ total: bigint }[]>(
+        Prisma.sql`SELECT COUNT(*) AS total FROM ${from} WHERE ${where}`
+      )
+      return { entries: [], totalCount: Number(count!.total) }
+    }
     const ids = await client.$queryRaw<
       { id: string; requestedId: string }[]
     >(Prisma.sql`SELECT i.id, ${requestedId} AS "requestedId" FROM ${from} WHERE ${where} ORDER BY ${orderBy}, ${requestedId} ASC

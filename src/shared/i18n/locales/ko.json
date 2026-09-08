@@ -4780,6 +4780,7 @@
     "Enter a valid access date on or after 1970-01-01, or leave it blank.": "1970-01-01 이후의 유효한 접속일을 입력하거나 비워 두세요.",
     "The reference was created, but linking it to the destination failed. Retry to finish linking. Closing leaves it in your library without that link.": "문헌이 생성되었지만 대상 위치에 연결하지 못했습니다. 다시 시도하여 연결을 완료하세요. 닫으면 문헌은 라이브러리에 남지만 해당 연결은 생성되지 않습니다.",
     "The reference was created, but the remaining steps failed. Retry to finish. If you close, the reference remains in your library.": "문헌이 생성되었지만 후속 단계가 실패했습니다. 다시 시도하여 완료하세요. 닫아도 문헌은 라이브러리에 남습니다.",
+    "This reference is too large to display. Download the complete record as JSON.": "이 문헌은 너무 커서 표시할 수 없습니다. 전체 레코드를 JSON으로 다운로드하세요.",
     "Pending review: {{total}}": "검토 대기: {{total}}",
     "Already in library: {{total}}": "이미 라이브러리에 있음: {{total}}",
     "Repeated inputs: {{total}}": "중복 입력: {{total}}",
@@ -4836,7 +4837,6 @@
     "Files saved by the application will be deleted when no other references use them. This cannot be undone and does not move the attachment to Trash. Original files imported from your computer are not deleted.": "다른 참조에서 사용하지 않는 경우 앱에 저장된 파일이 삭제됩니다. 이 작업은 실행 취소할 수 없으며 첨부 파일은 휴지통으로 이동하지 않습니다. 컴퓨터에서 가져온 원본 파일은 삭제되지 않습니다.",
     "Previewing an older version does not change the latest version.": "이전 버전을 미리 보아도 최신 버전은 변경되지 않습니다.",
     "Version {{number}}": "버전 {{number}}",
-    "All {{count}} versions will be deleted._other": "모든 {{count}}개 버전이 삭제됩니다.",
-    "This reference is too large to display. Download the complete record as JSON.": "이 문헌은 너무 커서 표시할 수 없습니다. 전체 레코드를 JSON으로 다운로드하세요."
+    "All {{count}} versions will be deleted._other": "모든 {{count}}개 버전이 삭제됩니다."
   }
 }

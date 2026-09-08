@@ -375,6 +375,7 @@ const literatureCatalogSearchRequestSchema = z
     scope: z.enum(['library', 'inbox', 'collections', 'project-counts', 'duplicates']),
     refreshDuplicates: z.boolean().optional(),
     allItemIds: z.boolean().optional(),
+    countOnly: z.boolean().optional(),
     itemIds: z.array(nonEmptyTextSchema).max(200).optional(),
     query: optionalTextSchema,
     projectId: optionalTextSchema,
@@ -395,6 +396,9 @@ const literatureCatalogSearchRequestSchema = z
   })
   .refine((request) => request.itemIds === undefined || request.scope === 'library', {
     message: 'Selected item membership is only available for the library.'
+  })
+  .refine((request) => !request.countOnly || (request.scope === 'library' && !request.allItemIds), {
+    message: 'Count-only queries require the library and cannot request item membership.'
   })
 
 const literatureCatalogSearchPageSchema = z
