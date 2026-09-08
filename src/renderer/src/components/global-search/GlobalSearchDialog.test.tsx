@@ -8,6 +8,7 @@ import { useSessionStore } from '@/stores/session-store'
 import { usePreviewWorkbenchStore } from '@/stores/preview-workbench-store'
 import { useSearchMessageFocusStore } from '@/stores/search-message-focus-store'
 import { previewLeaveGuards } from '@/stores/preview-leave-guard'
+import type { PersistedChatSession } from '../../../../shared/session-persistence'
 import {
   artifact,
   upload,
@@ -98,6 +99,59 @@ describe('GlobalSearchDialog', () => {
     )
     expect(onClose).toHaveBeenCalledWith(false)
     expect(usePreviewWorkbenchStore.getState().fileDialogItem).toBeUndefined()
+  })
+  it('locates an uploaded file by its immutable attachment identity', async () => {
+    const session: PersistedChatSession = {
+      id: 'session-a',
+      projectId: 'project-a',
+      title: 'Alpha',
+      cwd: '/workspace',
+      status: 'idle',
+      createdAt: 1,
+      updatedAt: 1,
+      messages: [
+        {
+          id: 'upload-message',
+          role: 'user',
+          status: 'complete',
+          content: '',
+          eventIds: [],
+          createdAt: 1,
+          updatedAt: 1,
+          uploads: [
+            {
+              id: 'upload-1',
+              versionId: 'version-1',
+              sessionId: 'session-a',
+              name: 'input.csv',
+              originalName: 'input.csv',
+              size: 12
+            }
+          ]
+        }
+      ]
+    }
+    window.api.sessions.loadOne = vi.fn().mockResolvedValue(session)
+    await renderSearch()
+    clickRow('uploads')
+    act(() => screen.getByRole('button', { name: 'View in context for input.csv' }).click())
+    await waitFor(() =>
+      expect(useSearchMessageFocusStore.getState().pending?.messageId).toBe('upload-message')
+    )
+    expect(onClose).toHaveBeenCalledWith(false)
+  })
+  it('keeps search open and reports a missing source message', async () => {
+    window.api.sessions.loadOne = vi.fn().mockResolvedValue(undefined)
+    await renderSearch()
+    clickRow('uploads')
+    act(() => screen.getByRole('button', { name: 'View in context for input.csv' }).click())
+    await waitFor(() =>
+      expect(screen.getByRole('alert').textContent).toBe(
+        'The source message is no longer available.'
+      )
+    )
+    expect(onClose).not.toHaveBeenCalled()
+    expect(useSearchMessageFocusStore.getState().pending).toBeUndefined()
   })
   it('restarts remote category paging when switching between All and a category', async () => {
     vi.mocked(window.api.sessions.searchMessages).mockImplementation(async ({ offset = 0 }) => ({
