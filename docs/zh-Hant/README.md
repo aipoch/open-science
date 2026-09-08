@@ -1,4 +1,4 @@
-<h1 align="center">AIPOCH Open Science</h1>
+<h1 align="center">AIPOCH Open-Science</h1>
 
 <p align="center">
   面向可重現科學研究的開源、本機優先、模型無關 AI 研究工作台。
@@ -45,14 +45,14 @@
 
 > 本文件是英文 `README.md` 的翻譯。若內容有差異，請以[英文原文](../../README.md)為準。
 
-Open Science 是由 [AIPOCH](https://aipoch.com/open-science) 為科學家與研究人員開發的開源、本機優先且與模型無關的 AI 研究工作台。它透過科學 AI 智能體、Python 與 R 執行、科學資料連接器，以及對 macOS、Windows 和 Linux 的跨平台支援，實現可重現、可檢視的研究。在同一個工作區中新增專案，以自然語言描述研究目標，讓智能體讀取檔案、搜尋網頁、執行程式碼、查詢科學資料來源，並產生具可追溯來源的報告、表格與圖表。
+AIPOCH Open-Science 是由 [AIPOCH](https://aipoch.com/open-science) 為科學家與研究人員開發的開源、本機優先且與模型無關的 AI 研究工作台。它透過科學 AI 智能體、Python 與 R 執行、科學資料連接器，以及對 macOS、Windows 和 Linux 的跨平台支援，實現可重現、可檢視的研究。在同一個工作區中新增專案，以自然語言描述研究目標，讓智能體讀取檔案、搜尋網頁、執行程式碼、查詢科學資料來源，並產生具可追溯來源的報告、表格與圖表。
 
-Open Science 支援機器學習、統計學、生命科學、化學、材料科學、物理學及環境科學等領域的運算密集與資料密集研究。它涵蓋從文獻回顧、假設建立，到程式碼執行、資料分析、模擬、視覺化，以及產出可追溯研究成果的完整研究流程。
+AIPOCH Open-Science 支援機器學習、統計學、生命科學、化學、材料科學、物理學及環境科學等領域的運算密集與資料密集研究。它涵蓋從文獻回顧、假設建立，到程式碼執行、資料分析、模擬、視覺化，以及產出可追溯研究成果的完整研究流程。
 
-> 💡 **[Open Science v0.26.0 已發佈](https://github.com/aipoch/open-science/releases/latest)** _（最後更新於 2026 年 9 月）_。Open Science v0.26.0 帶來 HPC 級運算與文獻工作區：遠端運算主機在直接 SSH 之外新增按主機設定的 Slurm 執行模式，全新的文獻庫則以識別碼感知匯入、重複題錄合併、開放取用全文附加與引用格式化，整理參考文獻、PDF 與引用。Apodex 加入內建服務商，與最新的 OpenAI 及 Anthropic 模型並列，Notebook 工具呼叫改為易讀的摘要卡片，同時帶來更順暢的串流、更少打擾的預設權限，以及遍布各處的大量修復。詳情請參閱[最新版本說明](https://github.com/aipoch/open-science/releases/latest)。
+> 💡 **[AIPOCH Open-Science v0.26.0 已發佈](https://github.com/aipoch/open-science/releases/latest)** _（最後更新於 2026 年 9 月）_。AIPOCH Open-Science v0.26.0 帶來 HPC 級運算與文獻工作區：遠端運算主機在直接 SSH 之外新增按主機設定的 Slurm 執行模式，全新的文獻庫則以識別碼感知匯入、重複題錄合併、開放取用全文附加與引用格式化，整理參考文獻、PDF 與引用。Apodex 加入內建服務商，與最新的 OpenAI 及 Anthropic 模型並列，Notebook 工具呼叫改為易讀的摘要卡片，同時帶來更順暢的串流、更少打擾的預設權限，以及遍布各處的大量修復。詳情請參閱[最新版本說明](https://github.com/aipoch/open-science/releases/latest)。
 
 <p align="center">
- <img width="1920" height="1140" alt="AIPOCH Open Science 首屏橫幅：Science, Open to All——開源、模型無關、可自行託管的科學 AI 研究工作台" src="../images/readme/open-science-banner.png" />
+ <img width="1920" height="1140" alt="AIPOCH Open-Science 首屏橫幅：Science, Open to All——開源、模型無關、可自行託管的科學 AI 研究工作台" src="../images/readme/open-science-banner.png" />
 </p>
 
 ## 目錄
@@ -60,7 +60,7 @@ Open Science 支援機器學習、統計學、生命科學、化學、材料科�
 - [快速開始](#-快速開始)
 - [產品導覽](#產品導覽)
 - [基準測試表現](#基準測試表現)
-- [為何選擇 Open Science](#為何選擇-open-science)
+- [為何選擇 AIPOCH Open-Science](#為何選擇-aipoch-open-science)
 - [核心能力](#核心能力)
 - [模型服務商](#模型服務商)
 - [資料、權限與信任](#資料權限與信任)
@@ -72,7 +72,7 @@ Open Science 支援機器學習、統計學、生命科學、化學、材料科�
 
 ## 🚀 快速開始
 
-透過三個步驟執行 Open Science：下載適用於你平台的安裝程式、完成首次啟動引導，然後新增研究專案。
+透過三個步驟執行 AIPOCH Open-Science：下載適用於你平台的安裝程式、完成首次啟動引導，然後新增研究專案。
 
 ### 1. 下載應用程式
 
@@ -109,8 +109,8 @@ Homebrew 會自動選擇 Apple Silicon 或 Intel 安裝套件。
 
 <table>
   <tr>
-    <td width="50%"><img src="../images/readme/onboarding-environment.jpg" alt="Open Science 自動進行首次啟動環境檢查"></td>
-    <td width="50%"><img src="../images/readme/onboarding-model-provider.jpg" alt="Open Science 首次啟動模型服務商設定"></td>
+    <td width="50%"><img src="../images/readme/onboarding-environment.jpg" alt="AIPOCH Open-Science 自動進行首次啟動環境檢查"></td>
+    <td width="50%"><img src="../images/readme/onboarding-model-provider.jpg" alt="AIPOCH Open-Science 首次啟動模型服務商設定"></td>
   </tr>
   <tr>
     <td align="center"><sub>主機相容性、儲存空間及網路檢查</sub></td>
@@ -136,14 +136,14 @@ Notebook 執行為選用功能。所有必要的環境與智能體執行環境�
 
 ### 從研究請求到可追溯結果
 
-以一項具代表性的生物資訊學任務為例：重現已發表的差異表達分析、將重新生成的結果與論文比較，並交付審閱所需的報告、表格與圖像。以下截圖來自已有記錄的 Open Science 工作流程，用於展示各個階段，並非同一次連續會話。
+以一項具代表性的生物資訊學任務為例：重現已發表的差異表達分析、將重新生成的結果與論文比較，並交付審閱所需的報告、表格與圖像。以下截圖來自已有記錄的 AIPOCH Open-Science 工作流程，用於展示各個階段，並非同一次連續會話。
 
 #### 1. 明確研究任務與證據
 
 說明研究問題、來源論文與資料集、必要的方法或閾值、預期輸出及驗收標準。上傳支援檔案，或使用 `@` 引用現有專案產物，讓智能體從明確輸入開始，而不是依賴隱藏的上下文。
 
 <p align="center">
-  <img src="../images/readme/product-tour-task.jpg" alt="Open Science 論文重現任務，在同一工作區顯示研究結論、生成產物與來源比較" width="900">
+  <img src="../images/readme/product-tour-task.jpg" alt="AIPOCH Open-Science 論文重現任務，在同一工作區顯示研究結論、生成產物與來源比較" width="900">
 </p>
 
 #### 2. 使用可檢查的科學工具執行
@@ -151,7 +151,7 @@ Notebook 執行為選用功能。所有必要的環境與智能體執行環境�
 智能體可在共享 Notebook 中組合科學技能、受權限控制的研究連接器、搜尋、檔案操作，以及 Python 或 R 程式碼。生成圖像可與研究摘要並排審閱，產物記錄則提供已擷取的生成程式碼及執行證據供檢查。
 
 <p align="center">
-  <img src="../images/readme/product-tour-execute.png" alt="Open Science 生物資訊學分析，並排顯示研究摘要、生成圖像與已擷取的生成程式碼" width="900">
+  <img src="../images/readme/product-tour-execute.png" alt="AIPOCH Open-Science 生物資訊學分析，並排顯示研究摘要、生成圖像與已擷取的生成程式碼" width="900">
 </p>
 
 #### 3. 就地審閱報告、表格與圖像
@@ -159,7 +159,7 @@ Notebook 執行為選用功能。所有必要的環境與智能體執行環境�
 最終回答會概述哪些結果成功重現、哪些存在差異，以及需要注意的限制。生成的 Markdown 報告、CSV 表格、圖像與其他研究產物會繼續附屬於會話，並彙整到專案檔案庫，可在對話旁預覽，也可於後續工作中重複使用。
 
 <p align="center">
-  <img src="../images/readme/product-tour-output.jpg" alt="Open Science 重現結果，在智能體說明旁預覽差異表達圖像與生成檔案" width="900">
+  <img src="../images/readme/product-tour-output.jpg" alt="AIPOCH Open-Science 重現結果，在智能體說明旁預覽差異表達圖像與生成檔案" width="900">
 </p>
 
 #### 4. 將每個產物追溯至證據
@@ -167,22 +167,22 @@ Notebook 執行為選用功能。所有必要的環境與智能體執行環境�
 每個生成產物都以不可變且含總和檢查碼的版本儲存。其 **Provenance** 檢視可顯示生成程式碼與執行歷史、引用的輸入、觀測到的環境清單、產生該產物的對話分支，以及限定於該版本的 Reviewer 結果。無法驗證的證據會標記為無法使用，而不會被推論補全。
 
 <p align="center">
-  <img src="../images/readme/product-tour-provenance.jpg" alt="Open Science 研究產物預覽，其中包含用於追溯生成結果的 Provenance 入口" width="900">
+  <img src="../images/readme/product-tour-provenance.jpg" alt="AIPOCH Open-Science 研究產物預覽，其中包含用於追溯生成結果的 Provenance 入口" width="900">
 </p>
 
 ## 基準測試表現
 
 ### 🏆 BiomniBench-DA Public 50 第一名
 
-Open Science 在彙整的 BiomniBench-DA Public 50 比較中取得最高排名分：使用 **gpt-5.6-sol (xhigh)** 獲得 **79.05** 分。該成績是 Gemini 3.1 Pro 評審得分 **81.04** 與 DeepSeek v4-pro 評審得分 **77.06** 的等權平均值，使 Open Science 在所收集的 Public 50 結果中位列 **第一**。查看 [BiomniBench-DA 資料集](https://huggingface.co/datasets/phylobio/BiomniBench-DA)。
+AIPOCH Open-Science 在彙整的 BiomniBench-DA Public 50 比較中取得最高排名分：使用 **gpt-5.6-sol (xhigh)** 獲得 **79.05** 分。該成績是 Gemini 3.1 Pro 評審得分 **81.04** 與 DeepSeek v4-pro 評審得分 **77.06** 的等權平均值，使 AIPOCH Open-Science 在所收集的 Public 50 結果中位列 **第一**。查看 [BiomniBench-DA 資料集](https://huggingface.co/datasets/phylobio/BiomniBench-DA)。
 
 <p align="center">
-  <img src="../images/readme/biomnibench-public50-leaderboard.png" alt="BiomniBench-DA Public 50 比較，其中 AIPOCH Open Science 以 79.05 分排名第一" width="1200" />
+  <img src="../images/readme/biomnibench-public50-leaderboard.png" alt="BiomniBench-DA Public 50 比較，其中 AIPOCH Open-Science 以 79.05 分排名第一" width="1200" />
 </p>
 
-## 為何選擇 Open Science
+## 為何選擇 AIPOCH Open-Science
 
-Open Science 把分散在聊天視窗、Notebook、本機指令碼、科學資料庫、檔案與報告工具中的研究工作整合為一個持久化、本機優先的 AI 研究工作台，讓執行過程與證據始終相連。
+AIPOCH Open-Science 把分散在聊天視窗、Notebook、本機指令碼、科學資料庫、檔案與報告工具中的研究工作整合為一個持久化、本機優先的 AI 研究工作台，讓執行過程與證據始終相連。
 
 - **持久執行。** 專案、會話、檔案、預覽和執行歷史在重新啟動後仍會保留；經使用者核准，智能體可以執行指令、Python 與 R 並生成產物。
 - **結果可追溯。** 不可變產物版本保留可驗證的生成證據，並清楚標示無法取得的證據。
@@ -190,11 +190,9 @@ Open Science 把分散在聊天視窗、Notebook、本機指令碼、科學資�
 - **本機優先控制。** 應用程式與專案狀態保留在你的電腦上；外部呼叫只使用你明確設定或核准的服務。
 - **開放且可擴充。** 獨立開發的 Apache-2.0 程式碼庫、技能、連接器、工具活動和生成檔案均可檢視，並可繼續新增技能與 MCP 連接器。
 
-[AIPOCH](https://aipoch.com/) 開發了 [Open Science](https://aipoch.com/open-science)，將其打造為面向科學 AI 工作流程的開源、本機優先桌面研究工作台。
-
 ## 核心能力
 
-Open Science 在一個本機工作區中整合專案管理、多模型智能體執行、Python 與 R Notebook、科學資料連接器、帶溯源的不可變產物版本，以及受權限控制的人工參與機制。持續變動的目錄、封裝細節及新增選項應以已安裝應用程式和[最新版本說明](https://github.com/aipoch/open-science/releases/latest)為準。
+AIPOCH Open-Science 在一個本機工作區中整合專案管理、多模型智能體執行、Python 與 R Notebook、科學資料連接器、帶溯源的不可變產物版本，以及受權限控制的人工參與機制。持續變動的目錄、封裝細節及新增選項應以已安裝應用程式和[最新版本說明](https://github.com/aipoch/open-science/releases/latest)為準。
 
 | 領域                           | 核心能力                                                                                                                                                                                                                                                                                                                                                                                                                        |
 | ------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -211,7 +209,7 @@ Open Science 在一個本機工作區中整合專案管理、多模型智能體�
 
 ## 模型服務商
 
-Open Science 在產品層級不限定模型：可連接主要雲端 LLM 服務商、自訂閘道，或重複使用現有 Claude、Codex 訂閱。服務商目前是否可用取決於所選智能體後端及其支援的 API 通訊協定。模型有四種連線方式：
+AIPOCH Open-Science 在產品層級不限定模型：可連接主要雲端 LLM 服務商、自訂閘道，或重複使用現有 Claude、Codex 訂閱。服務商目前是否可用取決於所選智能體後端及其支援的 API 通訊協定。模型有四種連線方式：
 
 | 服務商模式         | 運作方式                                                                                                                                                                                                                                |
 | ------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -228,7 +226,7 @@ Open Science 在產品層級不限定模型：可連接主要雲端 LLM 服務�
 
 ## 資料、權限與信任
 
-Open Science 將專案資料、設定、產物版本及溯源證據儲存在本機電腦。API Key 保存在本機，並在作業系統支援時使用其安全憑證儲存。記錄檔保存在本機，不會自動上傳。
+AIPOCH Open-Science 將專案資料、設定、產物版本及溯源證據儲存在本機電腦。API Key 保存在本機，並在作業系統支援時使用其安全憑證儲存。記錄檔保存在本機，不會自動上傳。
 
 仍可能產生外部資料流，應加以檢視：
 
@@ -249,15 +247,15 @@ Open Science 將專案資料、設定、產物版本及溯源證據儲存在本�
 
 ## 專案狀態
 
-Open Science 是持續開發中的桌面應用程式，可用於 macOS、Windows 與 Linux。開發重點是可靠的本機優先研究工作流程、可擴充科學能力、可追溯研究產物，以及由使用者控制的執行。
+AIPOCH Open-Science 是持續開發中的桌面應用程式，可用於 macOS、Windows 與 Linux。開發重點是可靠的本機優先研究工作流程、可擴充科學能力、可追溯研究產物，以及由使用者控制的執行。
 
 如需目前下載和特定版本變更，請參閱[最新版本](https://github.com/aipoch/open-science/releases/latest)。已交付、部分實作及規劃中的能力請參閱[能力地圖](../../ROADMAP.md#capability-map)。
 
-Open Science 協助研究執行與記錄保存；研究人員仍須對方法、解讀、隱私及科學有效性負責。
+AIPOCH Open-Science 協助研究執行與記錄保存；研究人員仍須對方法、解讀、隱私及科學有效性負責。
 
 ## 開發與封裝
 
-Open Science 是以 React、TypeScript、Prisma/SQLite 及 ACP 智能體執行環境建構的 Electron 應用程式。
+AIPOCH Open-Science 是以 React、TypeScript、Prisma/SQLite 及 ACP 智能體執行環境建構的 Electron 應用程式。
 
 原始碼開發前置需求：
 
@@ -305,7 +303,7 @@ npm run dev:web
 
 ### 行動裝置遠端存取
 
-可透過 Remote.It 配對，從手機或平板電腦存取同一 localhost Web UI。使用六位數 Open Science 代碼配對瀏覽器，並在桌面端核准一次；不必直接公開回送伺服器，工作區即可保持可存取。瀏覽器信任可撤銷，模式變更或服務關閉會立即讓作用中遠端會話失效。
+可透過 Remote.It 配對，從手機或平板電腦存取同一 localhost Web UI。使用六位數 AIPOCH Open-Science 代碼配對瀏覽器，並在桌面端核准一次；不必直接公開回送伺服器，工作區即可保持可存取。瀏覽器信任可撤銷，模式變更或服務關閉會立即讓作用中遠端會話失效。
 
 ### 無介面 CLI 與 SDK
 
@@ -316,7 +314,7 @@ npm run dev:web
 
 ## 常見問題
 
-### 第一次開啟 Open Science 時該做什麼？
+### 第一次開啟 AIPOCH Open-Science 時該做什麼？
 
 答：完成五個設定步驟：**Environment**、**Data location**、**Agent runtime**、**Model provider** 和 **Notebook runtime**。修正標示為 `Action needed` 的必要項目；若提供選項，安裝或修復所選智能體；然後測試模型連線。Notebook 設定和自訂資料位置皆為選用。
 
@@ -373,7 +371,7 @@ open-science artifacts download <artifact-id> --output ./report.md
 
 ### 如何檢視生成結果的來源？
 
-答：開啟生成產物並選取 **Provenance**。選取版本以檢視內容識別，以及可用的生成程式碼、執行歷史、輸入、環境清單、生成對話上下文及審查證據。Open Science 無法驗證的證據會標示為無法使用。
+答：開啟生成產物並選取 **Provenance**。選取版本以檢視內容識別，以及可用的生成程式碼、執行歷史、輸入、環境清單、生成對話上下文及審查證據。AIPOCH Open-Science 無法驗證的證據會標示為無法使用。
 
 ### 能否修改較早的請求而不失去後續對話？
 
@@ -385,7 +383,7 @@ open-science artifacts download <artifact-id> --output ./report.md
 
 ## 參與專案
 
-Open Science 透過 GitHub、Discord、X 與 AIPOCH 網站接收錯誤回報、功能提案、設計討論、社群問題與專案貢獻。請選擇最符合目標的管道，並在公開分享專案詳情前查看相關貢獻指南與公開發佈安全提醒。
+AIPOCH Open-Science 透過 GitHub、Discord、X 與 AIPOCH 網站接收錯誤回報、功能提案、設計討論、社群問題與專案貢獻。請選擇最符合目標的管道，並在公開分享專案詳情前查看相關貢獻指南與公開發佈安全提醒。
 
 | 管道                                                                     | 用途                                 |
 | ------------------------------------------------------------------------ | ------------------------------------ |
@@ -393,7 +391,7 @@ Open Science 透過 GitHub、Discord、X 與 AIPOCH 網站接收錯誤回報、�
 | [GitHub Discussions](https://github.com/aipoch/open-science/discussions) | 設計問題、路線圖提案及較長的技術討論 |
 | [Discord](https://discord.gg/zxQAYjReRv)                                 | 社群協助、貢獻者協調與非正式討論     |
 | [X / @aipoch_ai](https://x.com/aipoch_ai)                                | 版本公告與公開建置動態               |
-| [Open Science 官方網站](https://aipoch.com/open-science)                 | 官方產品概覽與下載                   |
+| [AIPOCH Open-Science 官方網站](https://aipoch.com/open-science)          | 官方產品概覽與下載                   |
 
 提交公開問題前，請從記錄檔與螢幕擷取畫面移除 API Key、存取權杖、私人檔案路徑、未公開資料、病患識別資訊及其他敏感內容。開發工作流程請參閱[貢獻指南](CONTRIBUTING.md)。
 
