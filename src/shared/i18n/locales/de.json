@@ -4531,7 +4531,6 @@
     "Remove author": "Autor entfernen",
     "Remove identifier": "Identifikator entfernen",
     "Report": "Bericht",
-    "Restore references or delete them permanently.": "Stellen Sie Literaturangaben wieder her oder löschen Sie sie endgültig.",
     "Reused": "Wiederverwendet",
     "Review reference details before importing {{name}}.": "Prüfen Sie die Literaturangaben, bevor Sie {{name}} importieren.",
     "Review references found by Agents before they enter your library.": "Prüfen Sie von Agenten gefundene Literaturangaben, bevor sie in Ihre Bibliothek gelangen.",
@@ -4551,7 +4550,6 @@
     "Sort references": "Literaturangaben sortieren",
     "Standard": "Norm",
     "Thesis": "Abschlussarbeit",
-    "This will permanently delete the selected references, their metadata, and attached files. This action cannot be undone.": "Dadurch werden die ausgewählten Literaturangaben, ihre Metadaten und Anhänge endgültig gelöscht. Diese Aktion kann nicht rückgängig gemacht werden.",
     "To year": "Bis Jahr",
     "Trash": "Papierkorb",
     "Move to Trash": "In den Papierkorb verschieben",
@@ -4907,6 +4905,13 @@
     "Dismissed": "Ignoriert",
     "No dismissed references": "Keine ignorierten Referenzen",
     "Dismissed references can be restored here.": "Ignorierte Referenzen können hier wiederhergestellt werden.",
-    "Accepting will link to: {{projects}}": "Beim Annehmen wird mit folgenden Projekten verknüpft: {{projects}}"
+    "Accepting will link to: {{projects}}": "Beim Annehmen wird mit folgenden Projekten verknüpft: {{projects}}",
+    "Restore references to edit, preview, or export them, or delete them permanently.": "Stellen Sie Referenzen zum Bearbeiten, Anzeigen oder Exportieren wieder her, oder löschen Sie sie endgültig.",
+    "References were permanently deleted. Some files are awaiting cleanup.": "Die Referenzen wurden endgültig gelöscht. Einige Dateien warten noch auf die Bereinigung.",
+    "Startup cleanup can retry unreferenced files. Completion depends on file access and is not guaranteed on the next start.": "Die Bereinigung beim Start kann das Löschen nicht mehr referenzierter Dateien erneut versuchen. Der Abschluss hängt vom Dateizugriff ab und ist beim nächsten Start nicht garantiert.",
+    "References were permanently deleted, but the view could not be refreshed.": "Die Referenzen wurden endgültig gelöscht, aber die Ansicht konnte nicht aktualisiert werden.",
+    "This permanently deletes the selected references and their metadata. Unshared attached files are cleaned up afterward. This action cannot be undone.": "Die ausgewählten Referenzen und ihre Metadaten werden endgültig gelöscht. Nicht gemeinsam genutzte Anhänge werden anschließend bereinigt. Diese Aktion kann nicht rückgängig gemacht werden.",
+    "Search indexes expire separately after inactivity. Historical outputs are kept. This is not secure erasure.": "Suchindizes werden nach Inaktivität separat bereinigt. Frühere Ergebnisse bleiben erhalten. Dies ist kein sicheres Löschen.",
+    "Refresh references to check their current state before trying again.": "Aktualisieren Sie die Referenzen, um ihren aktuellen Zustand vor einem erneuten Versuch zu prüfen."
   }
 }

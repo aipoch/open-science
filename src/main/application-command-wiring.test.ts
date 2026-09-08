@@ -49,6 +49,12 @@ const dependencyBlock = compact(
 )
 
 describe('production application command wiring', () => {
+  it('routes literature mutations through the tested catalog and cleanup orchestration', () => {
+    expect(compact(ipcSource)).toContain(
+      'transact: (command) => transactLiterature(literatureCatalog, contentRepository, command)'
+    )
+  })
+
   it('restores durable deletion barriers before managed file version recovery', () => {
     const deletionBarrierRestore = ipcSource.indexOf(
       'projectDeletionCoordinator.restorePendingDeletionBarriers()'

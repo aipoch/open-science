@@ -4485,11 +4485,9 @@
     "Literature could not be merged.": "文献を統合できませんでした。",
     "Trash": "ゴミ箱",
     "Move to Trash": "ゴミ箱に移動",
-    "Restore references or delete them permanently.": "文献を復元するか、完全に削除します。",
     "Delete permanently": "完全に削除",
     "Delete permanently?": "完全に削除しますか？",
     "Literature could not be deleted permanently.": "文献を完全に削除できませんでした。",
-    "This will permanently delete the selected references, their metadata, and attached files. This action cannot be undone.": "選択した文献、そのメタデータ、添付ファイルを完全に削除します。この操作は元に戻せません。",
     "Sort references": "文献を並べ替え",
     "Recently updated": "最近更新",
     "Select all references": "すべての文献を選択",
@@ -4754,6 +4752,13 @@
     "Dismissed": "無視済み",
     "No dismissed references": "無視した文献はありません",
     "Dismissed references can be restored here.": "無視した文献はここで復元できます。",
-    "Accepting will link to: {{projects}}": "承認すると次のプロジェクトに関連付けられます：{{projects}}"
+    "Accepting will link to: {{projects}}": "承認すると次のプロジェクトに関連付けられます：{{projects}}",
+    "Restore references to edit, preview, or export them, or delete them permanently.": "文献を復元すると編集、プレビュー、エクスポートできます。完全に削除することもできます。",
+    "References were permanently deleted. Some files are awaiting cleanup.": "文献は完全に削除されました。一部のファイルは削除待ちです。",
+    "Startup cleanup can retry unreferenced files. Completion depends on file access and is not guaranteed on the next start.": "起動時のクリーンアップで、参照されていないファイルの削除を再試行できます。完了するかどうかはファイルへのアクセス状況によるため、次回起動時の完了は保証されません。",
+    "References were permanently deleted, but the view could not be refreshed.": "文献は完全に削除されましたが、表示を更新できませんでした。",
+    "This permanently deletes the selected references and their metadata. Unshared attached files are cleaned up afterward. This action cannot be undone.": "選択した文献とメタデータを完全に削除します。共有されていない添付ファイルはその後に削除されます。この操作は元に戻せません。",
+    "Search indexes expire separately after inactivity. Historical outputs are kept. This is not secure erasure.": "検索インデックスは使用されなくなってから別途期限切れとなり削除されます。過去の成果物は保持されます。これは安全なデータ消去ではありません。",
+    "Refresh references to check their current state before trying again.": "再試行する前に文献を更新し、現在の状態を確認してください。"
   }
 }

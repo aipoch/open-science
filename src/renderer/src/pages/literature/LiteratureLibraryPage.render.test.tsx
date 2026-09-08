@@ -6878,6 +6878,219 @@ describe('LiteratureLibraryPage', () => {
     })
   })
 
+  it.each(['preview', 'edit', 'export', 'type', 'rating', 'notes', 'tags', 'detail'] as const)(
+    'requires restore before Trash %s actions',
+    async (action) => {
+      localStorage.setItem(
+        'open-science:literature-table-preferences',
+        JSON.stringify({ visible: ['type', 'rating', 'notes', 'tags'] })
+      )
+      const entry = createLibraryItemWithPdf()
+      search.mockImplementation((request) =>
+        Promise.resolve({
+          entries: request.scope === 'library' && request.lifecycle === 'deleted' ? [entry] : []
+        })
+      )
+      render(<LiteratureLibraryPage />)
+      fireEvent.click(screen.getByRole('button', { name: 'Trash' }))
+      const row = (await screen.findByText(entry.item.title)).closest('tr')!
+      if (action === 'edit') {
+        await openMenu(within(row).getByRole('button', { name: 'More actions' }))
+        expect(screen.getByRole('menuitem', { name: 'Edit' }).getAttribute('aria-disabled')).toBe(
+          'true'
+        )
+      } else if (action === 'export') {
+        fireEvent.click(screen.getByLabelText('Select all references'))
+        expect((screen.getByRole('button', { name: 'Export' }) as HTMLButtonElement).disabled).toBe(
+          true
+        )
+      } else if (action === 'notes') {
+        expect(
+          (
+            within(row).getByRole('textbox', {
+              name: `Note for ${entry.item.title}`
+            }) as HTMLInputElement
+          ).readOnly
+        ).toBe(true)
+      } else {
+        const target =
+          action === 'preview'
+            ? within(row).getByRole('button', { name: 'Preview paper.pdf' })
+            : action === 'type'
+              ? within(row).getByRole('combobox', { name: `Reference type: ${entry.item.title}` })
+              : action === 'rating'
+                ? within(row).getByRole('button', { name: 'Set rating to 1' })
+                : action === 'tags'
+                  ? within(row).getByRole('button', { name: 'Manage Tags' })
+                  : within(row).getByRole('button', { name: entry.item.title })
+        expect((target as HTMLButtonElement).disabled).toBe(true)
+        fireEvent.click(target)
+        expect(screen.queryByTestId('literature-pdf-preview')).toBeNull()
+      }
+      expect(transact).not.toHaveBeenCalled()
+    }
+  )
+
+  it.each(['project-counts', 'collections', 'library', 'tags'] as const)(
+    'retries only reads after permanent deletion and failed %s refresh',
+    async (failedScope) => {
+      let committed = false
+      let failRefresh = true
+      const tagSnapshot = window.api.tags.snapshot
+      window.api.tags.snapshot = async () => {
+        if (committed && failRefresh && failedScope === 'tags') throw new Error('Tags unavailable')
+        return tagSnapshot()
+      }
+      search.mockImplementation((request) => {
+        if (committed && failRefresh && request.scope === failedScope)
+          return Promise.reject(new Error('Read unavailable'))
+        return Promise.resolve({
+          entries:
+            request.scope === 'library' && request.lifecycle === 'deleted' && !committed
+              ? [libraryItem]
+              : []
+        })
+      })
+      transact.mockImplementation(async () => {
+        committed = true
+        return { kind: 'item', id: libraryItem.id, state: 'deleted-permanently' }
+      })
+      render(<LiteratureLibraryPage />)
+      fireEvent.click(screen.getByRole('button', { name: 'Trash' }))
+      const row = (await screen.findByText(libraryItem.item.title)).closest('tr')!
+      await openMenu(within(row).getByRole('button', { name: 'More actions' }))
+      fireEvent.click(screen.getByRole('menuitem', { name: 'Delete permanently' }))
+      fireEvent.click(
+        within(screen.getByRole('alertdialog')).getByRole('button', { name: 'Delete permanently' })
+      )
+      const message = await screen.findByText(
+        'References were permanently deleted, but the view could not be refreshed.'
+      )
+      await waitFor(() =>
+        expect(
+          (
+            within(message.closest('[role="alert"]')!).getByRole('button', {
+              name: 'Retry'
+            }) as HTMLButtonElement
+          ).disabled
+        ).toBe(false)
+      )
+      failRefresh = false
+      fireEvent.click(
+        within(message.closest('[role="alert"]')!).getByRole('button', { name: 'Retry' })
+      )
+      await waitFor(() =>
+        expect(
+          screen.queryByText(
+            'References were permanently deleted, but the view could not be refreshed.'
+          )
+        ).toBeNull()
+      )
+      expect(transact).toHaveBeenCalledTimes(1)
+    }
+  )
+
+  it('reports pending files after a committed permanent deletion', async () => {
+    search.mockImplementation((request) =>
+      Promise.resolve({
+        entries: request.scope === 'library' && request.lifecycle === 'deleted' ? [libraryItem] : []
+      })
+    )
+    transact.mockResolvedValueOnce({
+      kind: 'item',
+      id: libraryItem.id,
+      state: 'deleted-permanently',
+      cleanupPending: true
+    })
+    render(<LiteratureLibraryPage />)
+    fireEvent.click(screen.getByRole('button', { name: 'Trash' }))
+    const row = (await screen.findByText(libraryItem.item.title)).closest('tr')!
+    await openMenu(within(row).getByRole('button', { name: 'More actions' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Delete permanently' }))
+    fireEvent.click(
+      within(screen.getByRole('alertdialog')).getByRole('button', { name: 'Delete permanently' })
+    )
+    expect(
+      await screen.findByText(
+        'References were permanently deleted. Some files are awaiting cleanup.'
+      )
+    ).not.toBeNull()
+    expect(screen.queryByRole('alertdialog')).toBeNull()
+  })
+
+  it('shows a rejected permanent deletion inside its open confirmation dialog', async () => {
+    search.mockImplementation((request) =>
+      Promise.resolve(
+        request.scope === 'library' && request.lifecycle === 'deleted'
+          ? { entries: [libraryItem] }
+          : { entries: [] }
+      )
+    )
+    transact.mockRejectedValueOnce(
+      new Error('Only Literature Items in Trash can be permanently deleted.')
+    )
+    render(<LiteratureLibraryPage />)
+    fireEvent.click(screen.getByRole('button', { name: 'Trash' }))
+    const row = (await screen.findByText(libraryItem.item.title)).closest('tr')!
+    await openMenu(within(row).getByRole('button', { name: 'More actions' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Delete permanently' }))
+    const confirmation = screen.getByRole('alertdialog')
+    fireEvent.click(within(confirmation).getByRole('button', { name: 'Delete permanently' }))
+    const error = await screen.findByText('Literature could not be deleted permanently.')
+    expect(screen.getByRole('alertdialog')).toBe(confirmation)
+    expect(confirmation.contains(error)).toBe(true)
+    expect(error.closest('[aria-hidden="true"]')).toBeNull()
+    expect(
+      within(confirmation).queryByText('Literature could not be deleted permanently.')
+    ).not.toBeNull()
+    expect(transact).toHaveBeenCalledTimes(1)
+    expect(
+      (
+        within(confirmation).getByRole('button', {
+          name: 'Delete permanently'
+        }) as HTMLButtonElement
+      ).disabled
+    ).toBe(true)
+    fireEvent.click(within(confirmation).getByRole('button', { name: 'Refresh' }))
+    await waitFor(() => expect(screen.queryByRole('alertdialog')).toBeNull())
+    expect(transact).toHaveBeenCalledTimes(1)
+  })
+
+  it('does not report permanent deletion failure after a committed deletion and failed count refresh', async () => {
+    let committed = false
+    search.mockImplementation((request) => {
+      if (committed && request.scope === 'project-counts')
+        return Promise.reject(new Error('Counts temporarily unavailable'))
+      return Promise.resolve(
+        request.scope === 'library' && request.lifecycle === 'deleted' && !committed
+          ? { entries: [libraryItem] }
+          : { entries: [] }
+      )
+    })
+    transact.mockImplementation(async (command) => {
+      if (command.kind === 'delete-items-permanently') committed = true
+      return { kind: 'item', id: libraryItem.id, state: 'deleted-permanently' }
+    })
+    render(<LiteratureLibraryPage />)
+    fireEvent.click(screen.getByRole('button', { name: 'Trash' }))
+    const row = (await screen.findByText(libraryItem.item.title)).closest('tr')!
+    await openMenu(within(row).getByRole('button', { name: 'More actions' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Delete permanently' }))
+    fireEvent.click(
+      within(screen.getByRole('alertdialog')).getByRole('button', { name: 'Delete permanently' })
+    )
+    await waitFor(() =>
+      expect(search).toHaveBeenCalledWith(expect.objectContaining({ scope: 'project-counts' }))
+    )
+    await waitFor(() => expect(screen.queryByRole('alertdialog')).toBeNull())
+    await waitFor(() => expect(screen.queryByText(libraryItem.item.title)).toBeNull())
+    expect(screen.queryByText('Literature could not be deleted permanently.')).toBeNull()
+    expect(committed).toBe(true)
+    expect(screen.queryByRole('alertdialog')).toBeNull()
+    expect(screen.queryByText(libraryItem.item.title)).toBeNull()
+    expect(transact).toHaveBeenCalledTimes(1)
+  })
+
   it('restores or permanently deletes references from Trash after confirmation', async () => {
     search.mockImplementation((request: { lifecycle?: string; scope: string }) =>
       Promise.resolve(

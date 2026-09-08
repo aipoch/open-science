@@ -4483,11 +4483,9 @@
     "Literature could not be merged.": "문헌을 병합할 수 없습니다.",
     "Trash": "휴지통",
     "Move to Trash": "휴지통으로 이동",
-    "Restore references or delete them permanently.": "문헌을 복원하거나 영구 삭제합니다.",
     "Delete permanently": "영구 삭제",
     "Delete permanently?": "영구 삭제할까요?",
     "Literature could not be deleted permanently.": "문헌을 영구 삭제할 수 없습니다.",
-    "This will permanently delete the selected references, their metadata, and attached files. This action cannot be undone.": "선택한 문헌과 메타데이터 및 첨부 파일을 영구 삭제합니다. 이 작업은 실행 취소할 수 없습니다.",
     "Sort references": "문헌 정렬",
     "Recently updated": "최근 업데이트",
     "Select all references": "모든 문헌 선택",
@@ -4752,6 +4750,13 @@
     "Dismissed": "무시됨",
     "No dismissed references": "무시한 문헌이 없습니다",
     "Dismissed references can be restored here.": "무시한 문헌은 여기서 복원할 수 있습니다.",
-    "Accepting will link to: {{projects}}": "수락하면 다음 프로젝트에 연결됩니다: {{projects}}"
+    "Accepting will link to: {{projects}}": "수락하면 다음 프로젝트에 연결됩니다: {{projects}}",
+    "Restore references to edit, preview, or export them, or delete them permanently.": "문헌을 복원하면 편집, 미리보기 또는 내보내기를 할 수 있습니다. 영구 삭제할 수도 있습니다.",
+    "References were permanently deleted. Some files are awaiting cleanup.": "문헌이 영구 삭제되었습니다. 일부 파일은 정리 대기 중입니다.",
+    "Startup cleanup can retry unreferenced files. Completion depends on file access and is not guaranteed on the next start.": "시작 시 정리 과정에서 참조되지 않는 파일의 삭제를 다시 시도할 수 있습니다. 완료 여부는 파일 접근 가능 여부에 따라 달라지며 다음 시작 시 완료가 보장되지는 않습니다.",
+    "References were permanently deleted, but the view could not be refreshed.": "문헌이 영구 삭제되었지만 보기를 새로 고치지 못했습니다.",
+    "This permanently deletes the selected references and their metadata. Unshared attached files are cleaned up afterward. This action cannot be undone.": "선택한 문헌과 메타데이터를 영구 삭제합니다. 공유되지 않는 첨부 파일은 이후에 정리됩니다. 이 작업은 되돌릴 수 없습니다.",
+    "Search indexes expire separately after inactivity. Historical outputs are kept. This is not secure erasure.": "검색 색인은 일정 기간 사용하지 않으면 별도로 만료되어 정리됩니다. 이전 결과물은 유지됩니다. 이는 보안 삭제가 아닙니다.",
+    "Refresh references to check their current state before trying again.": "다시 시도하기 전에 문헌을 새로 고쳐 현재 상태를 확인하세요."
   }
 }

@@ -4791,11 +4791,9 @@
     "Literature could not be merged.": "No se pudieron combinar las referencias.",
     "Trash": "Papelera",
     "Move to Trash": "Mover a la papelera",
-    "Restore references or delete them permanently.": "Restaure las referencias o elimínelas permanentemente.",
     "Delete permanently": "Eliminar permanentemente",
     "Delete permanently?": "¿Eliminar permanentemente?",
     "Literature could not be deleted permanently.": "No se pudieron eliminar permanentemente las referencias.",
-    "This will permanently delete the selected references, their metadata, and attached files. This action cannot be undone.": "Esto eliminará permanentemente las referencias seleccionadas, sus metadatos y archivos adjuntos. Esta acción no se puede deshacer.",
     "Sort references": "Ordenar referencias",
     "Recently updated": "Actualizadas recientemente",
     "Select all references": "Seleccionar todas las referencias",
@@ -5068,6 +5066,13 @@
     "Dismissed": "Ignoradas",
     "No dismissed references": "No hay referencias ignoradas",
     "Dismissed references can be restored here.": "Las referencias ignoradas se pueden restaurar aquí.",
-    "Accepting will link to: {{projects}}": "Al aceptar, se vinculará a: {{projects}}"
+    "Accepting will link to: {{projects}}": "Al aceptar, se vinculará a: {{projects}}",
+    "Restore references to edit, preview, or export them, or delete them permanently.": "Restaure las referencias para editarlas, previsualizarlas o exportarlas, o elimínelas permanentemente.",
+    "References were permanently deleted. Some files are awaiting cleanup.": "Las referencias se han eliminado permanentemente. Algunos archivos están pendientes de limpieza.",
+    "Startup cleanup can retry unreferenced files. Completion depends on file access and is not guaranteed on the next start.": "La limpieza al iniciar puede volver a intentar eliminar los archivos sin referencias. La finalización depende del acceso a los archivos y no se garantiza en el próximo inicio.",
+    "References were permanently deleted, but the view could not be refreshed.": "Las referencias se han eliminado permanentemente, pero no se ha podido actualizar la vista.",
+    "This permanently deletes the selected references and their metadata. Unshared attached files are cleaned up afterward. This action cannot be undone.": "Se eliminarán permanentemente las referencias seleccionadas y sus metadatos. Los archivos adjuntos no compartidos se limpiarán después. Esta acción no se puede deshacer.",
+    "Search indexes expire separately after inactivity. Historical outputs are kept. This is not secure erasure.": "Los índices de búsqueda caducan por separado tras un periodo de inactividad. Se conservan los resultados anteriores. Esto no es un borrado seguro.",
+    "Refresh references to check their current state before trying again.": "Actualice las referencias para comprobar su estado actual antes de volver a intentarlo."
   }
 }
