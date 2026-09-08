@@ -3811,18 +3811,14 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
             />
           ) : null}
           {linkFailure && linkFailure.scopeKey === entriesKey ? (
-            <div className="mt-5">
+            <div className="mt-2">
               <LiteratureErrorNotice
-                title={
-                  linkFailure.command.kind === 'move-collection-items'
-                    ? t('Collection link could not be updated.')
-                    : t('Project link could not be updated.')
-                }
+                className="w-fit max-w-full rounded-md px-3 py-1.5 [&>div]:items-center"
                 description={t('Updated: {{completed}}. Not updated: {{remaining}}.', {
                   completed: linkFailure.completed,
                   remaining: linkFailure.itemIds.length
                 })}
-                secondaryButton={{
+                primaryButton={{
                   label: t('Retry'),
                   disabled: isBatching,
                   onClick: () =>
