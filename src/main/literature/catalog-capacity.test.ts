@@ -64,7 +64,7 @@ it('allows a small catalog write while a large library search is running', async
         )
       })
     )
-    expect(results.map(({ status }) => status)).toEqual(['fulfilled', 'fulfilled'])
+    expect(results.filter(({ status }) => status === 'rejected')).toEqual([])
     expect(await search).toMatchObject({ totalCount: n })
   } finally {
     await client.$disconnect()
