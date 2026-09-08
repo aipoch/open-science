@@ -102,6 +102,7 @@
     "Import Connector configuration": "Importar configuración del conector"
   },
   "renderer": {
+    "Select no more than {{limit}} references for this task.": "Seleccione como máximo {{limit}} referencias para esta tarea.",
     "Identifiers (★ primary)": "Identificadores (★ principal)",
     "Search again to refresh this older metadata review.": "Busque de nuevo para actualizar esta revisión anterior de metadatos.",
     "The reference was saved, but could not be reloaded.": "La referencia se guardó, pero no se pudo volver a cargar.",

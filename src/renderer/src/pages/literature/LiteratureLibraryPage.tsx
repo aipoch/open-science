@@ -1,5 +1,6 @@
 import type { TFunction } from 'i18next'
 import { LiteratureAttachments } from './LiteratureAttachments'
+import { LITERATURE_JOB_MAX_ITEMS } from '../../../../shared/literature-jobs'
 import {
   LITERATURE_COLLECTION_NAME_CONFLICT,
   LITERATURE_IMPORT_IDENTITY_CONFLICT
@@ -413,18 +414,21 @@ const LiteratureSelectPageCheckbox = ({
   label: string
   store: LiteratureSelectionStore
 }>): React.JSX.Element => {
-  const allSelected = useSyncExternalStore(
+  const selectedCount = useSyncExternalStore(
     store.subscribe,
     () => {
       const snapshot = store.getSnapshot()
-      return (
-        itemIds.length > 0 && itemIds.every((itemId) => isLiteratureItemSelected(snapshot, itemId))
-      )
+      return itemIds.filter((itemId) => isLiteratureItemSelected(snapshot, itemId)).length
     },
-    () => false
+    () => 0
   )
+  const allSelected = itemIds.length > 0 && selectedCount === itemIds.length
+  const mixed = selectedCount > 0 && !allSelected
   return (
     <input
+      ref={(input) => {
+        if (input) input.indeterminate = mixed
+      }}
       type="checkbox"
       checked={allSelected}
       disabled={disabled}
@@ -1435,12 +1439,59 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
     }
   }, [])
 
+  const previousTablePreferences = useRef(initialTablePreferences)
   useEffect(() => {
-    window.localStorage.setItem(
-      LITERATURE_TABLE_PREFERENCES_KEY,
-      JSON.stringify({ order: tableColumnOrder, visible: [...visibleTableColumns] })
+    const previous = previousTablePreferences.current
+    const local = { order: tableColumnOrder, visible: [...visibleTableColumns] }
+    // External updates have already been adopted; do not echo them to other windows.
+    if (
+      local.order === previous.order &&
+      local.visible.length === previous.visible.length &&
+      local.visible.every((column) => previous.visible.includes(column))
     )
+      return
+    const latest = loadLiteratureTablePreferences()
+    const visible = new Set(latest.visible)
+    for (const column of literatureTableColumns) {
+      if (visibleTableColumns.has(column) !== previous.visible.includes(column)) {
+        if (visibleTableColumns.has(column)) visible.add(column)
+        else visible.delete(column)
+      }
+    }
+    const merged = {
+      order: tableColumnOrder === previous.order ? latest.order : tableColumnOrder,
+      visible: [...visible]
+    }
+    try {
+      window.localStorage.setItem(LITERATURE_TABLE_PREFERENCES_KEY, JSON.stringify(merged))
+    } catch {
+      // Non-critical preferences remain usable in memory; retry only on another edit.
+      return
+    }
+    previousTablePreferences.current = merged
+    if (merged.order !== tableColumnOrder) setTableColumnOrder(merged.order)
+    if (
+      merged.visible.length !== local.visible.length ||
+      merged.visible.some((column) => !visibleTableColumns.has(column))
+    )
+      setVisibleTableColumns(visible)
   }, [tableColumnOrder, visibleTableColumns])
+
+  useEffect(() => {
+    const onStorage = (event: StorageEvent): void => {
+      if (
+        event.storageArea !== window.localStorage ||
+        (event.key !== null && event.key !== LITERATURE_TABLE_PREFERENCES_KEY)
+      )
+        return
+      const preferences = loadLiteratureTablePreferences()
+      previousTablePreferences.current = preferences
+      setTableColumnOrder(preferences.order)
+      setVisibleTableColumns(new Set(preferences.visible))
+    }
+    window.addEventListener('storage', onStorage)
+    return () => window.removeEventListener('storage', onStorage)
+  }, [])
 
   useEffect(() => {
     if (!projectsLoaded) void loadProjects()
@@ -2659,6 +2710,14 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
     setError(undefined)
     try {
       const itemIds = await resolveSelectedItemIds()
+      if (itemIds.length > LITERATURE_JOB_MAX_ITEMS) {
+        setError(
+          t('Select no more than {{limit}} references for this task.', {
+            limit: LITERATURE_JOB_MAX_ITEMS
+          })
+        )
+        return
+      }
       if (itemIds.length) setBatchLookup({ mode, itemIds })
     } catch {
       setError(t('Selected references could not be loaded.'))

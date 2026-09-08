@@ -100,6 +100,7 @@
     "Import Connector configuration": "匯入連接器設定"
   },
   "renderer": {
+    "Select no more than {{limit}} references for this task.": "此任務最多支援 {{limit}} 篇文獻，請調整選取範圍。",
     "Identifiers (★ primary)": "識別碼（★ 主要識別碼）",
     "Search again to refresh this older metadata review.": "請重新搜尋以更新這份舊的中繼資料審閱結果。",
     "The reference was saved, but could not be reloaded.": "文獻已儲存，但無法重新載入。",
