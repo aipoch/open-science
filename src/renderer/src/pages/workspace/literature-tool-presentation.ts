@@ -1,3 +1,6 @@
+import { literatureCatalogReceiptSchema } from '../../../../shared/literature'
+import { summarizeLiteratureSaveReceipts } from '../../../../shared/literature-save'
+
 type LiteratureToolAction = 'format' | 'read' | 'search' | 'save'
 
 type LiteratureToolSummary = Readonly<{
@@ -20,6 +23,12 @@ type LiteratureToolSummary = Readonly<{
   requestedStart?: number
   requestedEnd?: number
   savedCount?: number
+  existingItemIds?: readonly string[]
+  duplicateCount?: number
+  otherCount?: number
+  failedInputIndex?: number
+  notAttemptedCount?: number
+  cancelled?: boolean
   styleId?: string
   locale?: string
   error?: string
@@ -353,7 +362,35 @@ const buildLiteratureLibraryToolSummary = (
   const candidateCount =
     asNonNegativeInteger(presentation?.candidateCount) ??
     (action === 'save' && Array.isArray(input.candidates) ? input.candidates.length : undefined)
-  const savedCount = asNonNegativeInteger(presentation?.savedCount)
+  // Historical presentation counts may be wrong. Recompute only from actual receipts;
+  // summary-only history remains neutral rather than inventing pending records.
+  const savedResult =
+    action === 'save' ? outputs.find((output) => Array.isArray(output.results)) : undefined
+  const parsedReceipts = savedResult
+    ? literatureCatalogReceiptSchema.array().safeParse(savedResult.results)
+    : undefined
+  const acquired =
+    action === 'save'
+      ? outputs.find((output) => output.status === 'pending-review' && asString(output.candidateId))
+      : undefined
+  const saveSummary = parsedReceipts?.success
+    ? summarizeLiteratureSaveReceipts(parsedReceipts.data)
+    : acquired
+      ? summarizeLiteratureSaveReceipts([
+          { kind: 'candidate', id: acquired.candidateId as string, state: 'pending' }
+        ])
+      : undefined
+  const failedInputIndex = isRecord(savedResult?.failure)
+    ? asNonNegativeInteger(savedResult.failure.inputIndex)
+    : undefined
+  const cancelled = savedResult?.cancelled === true
+  const notAttemptedCount =
+    parsedReceipts?.success && candidateCount !== undefined
+      ? Math.max(
+          0,
+          candidateCount - parsedReceipts.data.length - (failedInputIndex !== undefined ? 1 : 0)
+        )
+      : undefined
   const offset =
     asNonNegativeInteger(presentation?.offset) ??
     asNonNegativeInteger(input.offset) ??
@@ -419,7 +456,17 @@ const buildLiteratureLibraryToolSummary = (
     ...(action === 'search' && offset !== undefined && limit !== undefined
       ? { requestedEnd: offset + limit }
       : {}),
-    ...(savedCount !== undefined ? { savedCount } : {}),
+    ...(saveSummary
+      ? {
+          savedCount: saveSummary.pendingCount,
+          existingItemIds: saveSummary.existingItemIds,
+          duplicateCount: saveSummary.duplicateCount,
+          otherCount: saveSummary.otherCount
+        }
+      : {}),
+    ...(failedInputIndex !== undefined ? { failedInputIndex } : {}),
+    ...(notAttemptedCount !== undefined ? { notAttemptedCount } : {}),
+    ...(cancelled ? { cancelled: true } : {}),
     ...(action === 'format' && asString(input.styleId) ? { styleId: asString(input.styleId) } : {}),
     ...(action === 'format' && asString(input.locale) ? { locale: asString(input.locale) } : {}),
     ...(hasMore !== undefined ? { hasMore } : {})

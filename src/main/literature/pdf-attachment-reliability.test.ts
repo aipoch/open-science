@@ -1,4 +1,5 @@
-import { mkdtemp, rm, writeFile, truncate, access } from 'node:fs/promises'
+import { transactLiterature } from './transact'
+import { mkdtemp, rm, writeFile, truncate, access, readFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { PrismaClient } from '@prisma/client'
@@ -6,6 +7,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import {
   literatureCatalogCommandSchema,
+  literatureCatalogReceiptSchema,
   literatureItemInputSchema,
   type LiteraturePdfImportRequest
 } from '../../shared/literature'
@@ -31,12 +33,20 @@ import {
 } from '../session-persistence/coordinator'
 import { LiteraturePdfImporter } from './pdf-importer'
 
+vi.mock('node:fs/promises', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:fs/promises')>()
+  return { ...actual, rm: vi.fn(actual.rm) }
+})
+
 vi.mock('electron', () => ({ app: { getPath: () => '/home/user', isPackaged: true } }))
 
 describe('Literature PDF attachment reliability', () => {
   let root: string
   let client: PrismaClient | undefined
   afterEach(async () => {
+    vi.mocked(rm).mockImplementation(
+      (await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises')).rm
+    )
     await client?.$disconnect()
     if (root) await rm(root, { recursive: true, force: true })
   })
@@ -99,6 +109,99 @@ describe('Literature PDF attachment reliability', () => {
       authority: new LiteratureAttachmentAuthority({ getClient: async () => client!, content })
     }
   }
+
+  it.each(['unlink', 'sweep'] as const)(
+    'reports pending cleanup when permanent deletion commits before a %s failure',
+    async (failure) => {
+      const { importer, request, catalog, content, authority } = await setup()
+      const imported = await importer.import(request)
+      const version = imported.item.attachments[0].versions[0]
+      const resolved = await authority.resolveVersion(version.id)
+      const [contentId] = await catalog.contentBlobIdsForItems([request.itemId])
+      await catalog.transact({
+        kind: 'set-item-lifecycle',
+        itemIds: [request.itemId],
+        state: 'deleted'
+      })
+      const actualRm = (
+        await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises')
+      ).rm
+      if (failure === 'unlink') {
+        vi.mocked(rm).mockImplementation(async (path, options) => {
+          if (String(path) === resolved!.path)
+            throw Object.assign(new Error('File is locked'), { code: 'EPERM' })
+          return actualRm(path, options)
+        })
+      } else vi.spyOn(content, 'sweep').mockRejectedValueOnce(new Error('Cleanup unavailable'))
+      const receipt = await transactLiterature(catalog, content, {
+        kind: 'delete-items-permanently',
+        itemIds: [request.itemId]
+      })
+      expect(await client!.literatureItem.count()).toBe(0)
+      expect(await client!.literatureAttachmentVersion.count()).toBe(0)
+      expect(await readFile(resolved!.path)).toEqual(pdf())
+      if (failure === 'unlink')
+        expect(await client!.contentBlob.findUnique({ where: { id: contentId } })).toMatchObject({
+          state: 'quarantined'
+        })
+      expect(literatureCatalogReceiptSchema.parse(receipt)).toMatchObject({
+        state: 'deleted-permanently',
+        cleanupPending: true
+      })
+      vi.mocked(rm).mockImplementation(actualRm)
+      const restarted = new ContentRepository({ storageRoot: root, getClient: async () => client! })
+      expect(
+        await restarted.sweep({ createdBefore: new Date(Date.now() + 1), contentIds: [contentId] })
+      ).toMatchObject({ removedIds: [contentId], failedIds: [] })
+      await expect(access(resolved!.path)).rejects.toMatchObject({ code: 'ENOENT' })
+    }
+  )
+
+  it.each([false, true])(
+    'permanently deletes references while respecting shared content: %s',
+    async (shared) => {
+      const { importer, request, catalog, content, authority } = await setup()
+      const imported = await importer.import(request)
+      const version = imported.item.attachments[0].versions[0]
+      const resolved = await authority.resolveVersion(version.id)
+      if (shared) {
+        const other = await catalog.transact({
+          kind: 'create-item',
+          item: literatureItemInputSchema.parse({
+            title: 'Shared reference',
+            itemType: 'journalArticle'
+          })
+        })
+        await importer.import({ ...request, itemId: other.id })
+      }
+      await catalog.transact({
+        kind: 'set-item-lifecycle',
+        itemIds: [request.itemId],
+        state: 'deleted'
+      })
+      const receipt = await transactLiterature(catalog, content, {
+        kind: 'delete-items-permanently',
+        itemIds: [request.itemId]
+      })
+      expect(receipt.state).toBe('deleted-permanently')
+      expect(receipt.cleanupPending).not.toBe(true)
+      if (shared) expect(await readFile(resolved!.path)).toEqual(pdf())
+      else await expect(access(resolved!.path)).rejects.toMatchObject({ code: 'ENOENT' })
+    }
+  )
+
+  it('rejects active permanent deletion before attempting cleanup', async () => {
+    const { request, catalog, content } = await setup()
+    const sweep = vi.spyOn(content, 'sweep')
+    await expect(
+      transactLiterature(catalog, content, {
+        kind: 'delete-items-permanently',
+        itemIds: [request.itemId]
+      })
+    ).rejects.toThrow('Only Literature Items in Trash')
+    expect(sweep).not.toHaveBeenCalled()
+    expect(await catalog.get(request.itemId)).toBeDefined()
+  })
 
   it('rejects a header-only corrupt PDF before creating an attachment', async () => {
     const { importer, request, path } = await setup(Buffer.from('%PDF-1.7\nnot a document'))

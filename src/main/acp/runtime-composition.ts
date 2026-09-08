@@ -419,9 +419,16 @@ const createAcpRuntime = ({
                         })
                     }
                   : {}),
-                resolveSaveReferences: (references) =>
-                  literatureReferenceResolver.resolve(references),
-                readCandidateFile: async ({ projectId, sessionId, workspaceCwd, filename }) => {
+                resolveSaveReferences: (references, signal) =>
+                  literatureReferenceResolver.resolve(references, signal),
+                readCandidateFile: async ({
+                  projectId,
+                  sessionId,
+                  workspaceCwd,
+                  filename,
+                  signal
+                }) => {
+                  signal?.throwIfAborted()
                   const notebookRoot = getNotebookSessionRoot(dataRoot, projectId, sessionId)
                   const notebookDataDir = join(notebookRoot, 'data')
                   const sourcePath = await resolveAllowedImportFilePath(
@@ -430,9 +437,12 @@ const createAcpRuntime = ({
                     [notebookDataDir, workspaceCwd, notebookRoot]
                   )
                   if ((await stat(sourcePath)).size > MAX_LITERATURE_CANDIDATE_FILE_BYTES) {
-                    throw new Error('Literature candidate file exceeds the 2 MB limit.')
+                    throw Object.assign(
+                      new Error('Literature candidate file exceeds the 2 MB limit.'),
+                      { code: 'CANDIDATE_FILE_TOO_LARGE' }
+                    )
                   }
-                  return readFile(sourcePath, 'utf8')
+                  return readFile(sourcePath, { encoding: 'utf8', signal })
                 },
                 formatReferences: async ({ itemIds, styleId, locale }) => {
                   const items = await literatureCatalog.getMany(itemIds)
@@ -518,26 +528,10 @@ const createAcpRuntime = ({
                   const scope = request.scope ?? 'project'
                   const offset = request.offset ?? 0
                   const limit = request.limit ?? LITERATURE_LIBRARY_SEARCH_DEFAULT_LIMIT
-                  if (scope === 'items') {
-                    const query = request.query?.trim().toLocaleLowerCase()
-                    const selected = (
-                      await literatureCatalog.getMany(request.itemIds ?? [])
-                    ).filter(
-                      ({ item }) =>
-                        !query || JSON.stringify(item).toLocaleLowerCase().includes(query)
-                    )
-                    const items = selected.slice(offset, offset + limit)
-                    const nextOffset = offset + items.length
-                    return {
-                      items,
-                      totalCount: selected.length,
-                      ...(nextOffset < selected.length ? { nextOffset } : {}),
-                      hasMore: nextOffset < selected.length
-                    }
-                  }
                   const page = await literatureCatalog.search({
                     scope: 'library',
                     query: request.query,
+                    ...(scope === 'items' ? { itemIds: [...(request.itemIds ?? [])] } : {}),
                     projectId: scope === 'project' ? request.projectId : undefined,
                     collectionId: scope === 'collection' ? request.collectionId : undefined,
                     offset,
@@ -603,19 +597,32 @@ const createAcpRuntime = ({
                 saveToInbox: async (request) => {
                   const results: LiteratureCatalogReceipt[] = []
                   for (const candidate of request.candidates) {
-                    results.push(
-                      await literatureCatalog.transact({
-                        kind: 'stage-candidate',
-                        candidate: {
-                          ...candidate,
-                          origin: {
-                            kind: 'agent',
-                            projectId: request.projectId,
-                            sessionId: request.sessionId
+                    if (request.signal?.aborted) return { results, cancelled: true }
+                    try {
+                      results.push(
+                        await literatureCatalog.transact({
+                          kind: 'stage-candidate',
+                          candidate: {
+                            ...candidate,
+                            origin: {
+                              kind: 'agent',
+                              projectId: request.projectId,
+                              sessionId: request.sessionId
+                            }
                           }
+                        })
+                      )
+                    } catch {
+                      return {
+                        results,
+                        failure: {
+                          inputIndex: results.length,
+                          code: 'INBOX_SAVE_FAILED',
+                          message:
+                            'Could not save this candidate. Earlier receipts remain valid; later inputs were not attempted.'
                         }
-                      })
-                    )
+                      }
+                    }
                   }
                   return { results }
                 }

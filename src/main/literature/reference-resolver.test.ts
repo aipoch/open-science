@@ -96,13 +96,14 @@ describe('LiteratureReferenceResolver', () => {
     expect(String(fetchFn.mock.calls[0]?.[0])).toContain('id=35486828%2C21458665')
   })
 
-  it('normalizes and de-duplicates identifiers before fetching metadata', async () => {
+  it('fetches normalized identifiers once while preserving input positions', async () => {
     const fetchFn = vi.fn(async () => new Response(pubmedResponse))
     const resolver = new LiteratureReferenceResolver(fetchFn as typeof fetch)
 
     const result = await resolver.resolve(['PMID:35486828', 'pmid:35486828'])
 
-    expect(result).toHaveLength(1)
+    expect(result).toHaveLength(2)
+    expect(result[0]).toEqual(result[1])
     expect(fetchFn).toHaveBeenCalledTimes(1)
   })
 
@@ -116,3 +117,31 @@ describe('LiteratureReferenceResolver', () => {
     await expect(resolver.resolve(['pmid:999'])).rejects.toThrow('REFERENCE_NOT_FOUND')
   })
 })
+
+it.each(['doi:10.1234/cancelled', 'pmid:12345'])(
+  'aborts metadata fetch for %s',
+  async (reference) => {
+    const controller = new AbortController()
+    let fetchSignal: AbortSignal | undefined
+    let finish!: (response: Response) => void
+    const fetchFn = vi.fn<typeof fetch>().mockImplementation((_url, options) => {
+      fetchSignal = options?.signal ?? undefined
+      return new Promise((resolve, reject) => {
+        finish = resolve
+        fetchSignal!.addEventListener('abort', () => reject(fetchSignal!.reason), { once: true })
+      })
+    })
+    const reason = new Error('Stopped lookup')
+    const outcome = new LiteratureReferenceResolver(fetchFn)
+      .resolve([reference], controller.signal)
+      .catch((error: unknown) => error)
+    controller.abort(reason)
+    try {
+      expect(fetchSignal?.aborted).toBe(true)
+    } finally {
+      finish(new Response(''))
+      await outcome
+    }
+    expect(await outcome).toBe(reason)
+  }
+)
