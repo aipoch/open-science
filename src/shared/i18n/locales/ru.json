@@ -137,7 +137,6 @@
     "No background tasks yet.": "Фоновых задач пока нет.",
     "Remove task": "Удалить задачу",
     "You can close this window. Tasks continue in the background.": "Это окно можно закрыть. Задачи продолжат выполняться в фоновом режиме.",
-    "Run in background": "Выполнять в фоне",
     "PDFs will be attached when you accept this reference.": "PDF будут прикреплены после принятия этой записи.",
     "Merge strategy": "Стратегия объединения",
     "Keep the most complete reference": "Сохранить наиболее полную запись",
@@ -5258,6 +5257,18 @@
     "The damaged file was moved aside; its references are still unknown.": "Повреждённый файл перемещён отдельно, но его ссылки по-прежнему неизвестны.",
     "Inspect or recover the affected conversation files. Retrying deletion alone will not repair them.": "Проверьте или восстановите затронутые файлы диалогов. Повторная попытка удаления сама по себе их не восстановит.",
     "Complete locations are unavailable. Check conversation storage diagnostics; deletion remains blocked.": "Полные сведения о расположении недоступны. Проверьте диагностику хранилища диалогов; удаление остаётся заблокированным.",
-    "Conversation folder": "Папка диалогов"
+    "Conversation folder": "Папка диалогов",
+    "Continue search": "Продолжить поиск",
+    "Continue download": "Продолжить загрузку",
+    "Continue applying": "Продолжить применение",
+    "Progress is saved. Resume to continue unfinished references.": "Прогресс сохранён. Возобновите обработку незавершённых публикаций.",
+    "Finishing the current reference before pausing.": "Текущая публикация будет обработана перед приостановкой.",
+    "Review the results before applying them.": "Проверьте результаты перед применением.",
+    "Completed results are saved.": "Завершённые результаты сохранены.",
+    "No results are available to apply.": "Нет результатов для применения.",
+    "Select at least one result.": "Выберите хотя бы один результат.",
+    "Search again resets unfinished results and their selections.": "Повторный поиск сбрасывает незавершённые результаты и их выбор.",
+    "Apply selected": "Применить выбранное",
+    "Add selected": "Добавить выбранное"
   }
 }

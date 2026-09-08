@@ -136,7 +136,6 @@
     "No background tasks yet.": "Aucune tâche en arrière-plan pour le moment.",
     "Remove task": "Supprimer la tâche",
     "You can close this window. Tasks continue in the background.": "Vous pouvez fermer cette fenêtre. Les tâches continuent en arrière-plan.",
-    "Run in background": "Exécuter en arrière-plan",
     "PDFs will be attached when you accept this reference.": "Les PDF seront joints lorsque vous accepterez cette référence.",
     "Merge strategy": "Stratégie de fusion",
     "Keep the most complete reference": "Conserver la référence la plus complète",
@@ -5126,6 +5125,18 @@
     "The damaged file was moved aside; its references are still unknown.": "Le fichier endommagé a été mis de côté ; ses références restent inconnues.",
     "Inspect or recover the affected conversation files. Retrying deletion alone will not repair them.": "Examinez ou récupérez les fichiers de conversation concernés. Réessayer la suppression ne suffit pas à les réparer.",
     "Complete locations are unavailable. Check conversation storage diagnostics; deletion remains blocked.": "Les emplacements complets ne sont pas disponibles. Consultez le diagnostic du stockage des conversations ; la suppression reste bloquée.",
-    "Conversation folder": "Dossier des conversations"
+    "Conversation folder": "Dossier des conversations",
+    "Continue search": "Reprendre la recherche",
+    "Continue download": "Reprendre le téléchargement",
+    "Continue applying": "Reprendre l’application",
+    "Progress is saved. Resume to continue unfinished references.": "La progression est enregistrée. Reprenez pour poursuivre le traitement des références inachevées.",
+    "Finishing the current reference before pausing.": "La référence en cours sera terminée avant la mise en pause.",
+    "Review the results before applying them.": "Vérifiez les résultats avant de les appliquer.",
+    "Completed results are saved.": "Les résultats terminés sont enregistrés.",
+    "No results are available to apply.": "Aucun résultat à appliquer.",
+    "Select at least one result.": "Sélectionnez au moins un résultat.",
+    "Search again resets unfinished results and their selections.": "Relancer la recherche réinitialise les résultats inachevés et les sélections associées.",
+    "Apply selected": "Appliquer la sélection",
+    "Add selected": "Ajouter la sélection"
   }
 }

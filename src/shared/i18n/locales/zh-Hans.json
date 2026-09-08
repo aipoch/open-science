@@ -134,7 +134,6 @@
     "No background tasks yet.": "暂无后台任务。",
     "Remove task": "移除任务",
     "You can close this window. Tasks continue in the background.": "您可以关闭此窗口，任务会在后台继续执行。",
-    "Run in background": "在后台运行",
     "PDFs will be attached when you accept this reference.": "接受此题录后，PDF 将作为附件添加。",
     "Merge strategy": "合并策略",
     "Keep the most complete reference": "保留信息最完整的题录",
@@ -4812,6 +4811,18 @@
     "The damaged file was moved aside; its references are still unknown.": "损坏文件已被移至一旁，但其引用仍无法确定。",
     "Inspect or recover the affected conversation files. Retrying deletion alone will not repair them.": "请检查或恢复受影响的会话文件。仅重试删除无法修复这些文件。",
     "Complete locations are unavailable. Check conversation storage diagnostics; deletion remains blocked.": "无法提供完整位置信息。请检查会话存储诊断；删除仍被阻止。",
-    "Conversation folder": "会话文件夹"
+    "Conversation folder": "会话文件夹",
+    "Continue search": "继续检索",
+    "Continue download": "继续下载",
+    "Continue applying": "继续应用",
+    "Progress is saved. Resume to continue unfinished references.": "进度已保存。恢复后将继续处理未完成的文献。",
+    "Finishing the current reference before pausing.": "正在完成当前文献，随后暂停。",
+    "Review the results before applying them.": "请先审阅结果，再应用更改。",
+    "Completed results are saved.": "已完成的结果已保存。",
+    "No results are available to apply.": "没有可应用的结果。",
+    "Select at least one result.": "请至少选择一项结果。",
+    "Search again resets unfinished results and their selections.": "重新检索会重置未完成的结果及其选择。",
+    "Apply selected": "应用所选",
+    "Add selected": "添加所选"
   }
 }
