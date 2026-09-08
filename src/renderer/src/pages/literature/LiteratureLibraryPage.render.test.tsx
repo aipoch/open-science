@@ -2623,6 +2623,116 @@ describe('LiteratureLibraryPage', () => {
     expect(claimLocalFile).not.toHaveBeenCalled()
   })
 
+  it('does not start PDF staging after a pending reference creation outlives the page', async () => {
+    let finishCreate!: (value: unknown) => void
+    transact.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finishCreate = resolve
+        })
+    )
+    stageLocalFile.mockResolvedValue({
+      id: 'late',
+      sessionId: '.pending',
+      name: 'paper.pdf',
+      originalName: 'paper.pdf',
+      path: '/managed/late.pdf',
+      mimeType: 'application/pdf',
+      size: 3
+    })
+    importPdf.mockResolvedValue({ item: libraryItem })
+    const page = render(<LiteratureLibraryPage />)
+    fireEvent.click(screen.getByRole('button', { name: 'All references' }))
+    fireEvent.change(screen.getByLabelText('Import PDF'), {
+      target: { files: [new File(['pdf'], 'paper.pdf')] }
+    })
+    await screen.findByLabelText('Title')
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+    expect(transact).toHaveBeenCalledOnce()
+    page.unmount()
+    await act(async () => {
+      finishCreate({ kind: 'item', id: libraryItem.id, state: 'present' })
+    })
+    expect(stageLocalFile).not.toHaveBeenCalled()
+    expect(importPdf).not.toHaveBeenCalled()
+  })
+
+  it('aborts the active backend transfer when the library unmounts during native staging', async () => {
+    search.mockImplementation(async (request: { scope: string }) =>
+      request.scope === 'library' ? { entries: [libraryItem] } : { entries: [] }
+    )
+    let finishStage!: (value: unknown) => void
+    stageLocalFile.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finishStage = resolve
+        })
+    )
+    const page = render(<LiteratureLibraryPage />)
+    fireEvent.click(screen.getByRole('button', { name: 'All references' }))
+    await openReferenceDetail(await screen.findByText(libraryItem.item.title))
+    fireEvent.change(screen.getByLabelText('Add PDF'), {
+      target: { files: [new File(['pdf'], 'paper.pdf')] }
+    })
+    const request = stageLocalFile.mock.calls[0][1]
+    page.unmount()
+    try {
+      expect(window.api.uploads.abortTransfer).toHaveBeenCalledWith({
+        transferId: request.transferId
+      })
+    } finally {
+      await act(async () => {
+        finishStage({
+          id: 'upload-late',
+          sessionId: '.pending',
+          name: 'paper.pdf',
+          originalName: 'paper.pdf',
+          path: '/managed/late.pdf',
+          mimeType: 'application/pdf',
+          size: 3
+        })
+      })
+    }
+    expect(importPdf).not.toHaveBeenCalled()
+    expect(deleteUpload).toHaveBeenCalledWith({ path: '/managed/late.pdf' })
+  })
+
+  it.each(['existing', 'new'])(
+    'reports cancellation when native staging rejects with an IPC Error for an %s reference',
+    async (owner) => {
+      search.mockImplementation(async (request: { scope: string }) =>
+        request.scope === 'library' ? { entries: [libraryItem] } : { entries: [] }
+      )
+      get.mockResolvedValue(libraryItem)
+      let rejectStage!: (error: Error) => void
+      stageLocalFile.mockImplementationOnce(
+        () =>
+          new Promise((_resolve, reject) => {
+            rejectStage = reject
+          })
+      )
+      render(<LiteratureLibraryPage />)
+      fireEvent.click(screen.getByRole('button', { name: 'All references' }))
+      const file = new File(['pdf'], 'paper.pdf')
+      if (owner === 'existing') {
+        await openReferenceDetail(await screen.findByText(libraryItem.item.title))
+        fireEvent.change(screen.getByLabelText('Add PDF'), { target: { files: [file] } })
+      } else {
+        fireEvent.change(screen.getByLabelText('Import PDF'), { target: { files: [file] } })
+        await screen.findByLabelText('Title')
+        fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+      }
+      fireEvent.click(await screen.findByRole('button', { name: 'Cancel upload' }))
+      await act(async () => {
+        rejectStage(new Error('Upload transfer is no longer active.'))
+      })
+      expect((await screen.findByRole('alert')).textContent).toBe(
+        'PDF upload cancelled. The reference was kept.'
+      )
+      expect(importPdf).not.toHaveBeenCalled()
+    }
+  )
+
   it.each(['existing', 'new'])(
     'shows byte progress and cancellation for a %s reference while a Web PDF chunk is pending',
     async (owner) => {

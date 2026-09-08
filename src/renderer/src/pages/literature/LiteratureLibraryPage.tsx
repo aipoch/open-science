@@ -1403,13 +1403,17 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
     progress: UploadTransferProgress
     phase: 'uploading' | 'cancelling' | 'saving'
   }>()
-  const pdfUploadController = useRef<AbortController | undefined>(undefined)
+  const pdfUploadRef = useRef<{ controller: AbortController; transferId: string } | undefined>(
+    undefined
+  )
+  const uploadPageMountedRef = useRef(true)
   const stagePdf = async (
     file: File,
     transferId: string
   ): Promise<Awaited<ReturnType<typeof stageComposerFile>>> => {
     const controller = new AbortController()
-    pdfUploadController.current = controller
+    pdfUploadRef.current = { controller, transferId }
+    if (!uploadPageMountedRef.current) controller.abort()
     return stageComposerFile(file, window.api.uploads, {
       transferId,
       name: file.name,
@@ -1422,13 +1426,13 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
     })
   }
   const finishPdfStaging = (): void => {
-    if (pdfUploadController.current?.signal.aborted)
+    if (pdfUploadRef.current?.controller.signal.aborted)
       throw new DOMException('Upload cancelled.', 'AbortError')
-    pdfUploadController.current = undefined
+    pdfUploadRef.current = undefined
     setPdfUpload((current) => (current ? { ...current, phase: 'saving' } : current))
   }
   const cancelPdfUpload = (): void => {
-    const controller = pdfUploadController.current
+    const controller = pdfUploadRef.current?.controller
     if (!controller || controller.signal.aborted || !pdfUpload || pdfUpload.phase !== 'uploading')
       return
     controller.abort()
@@ -1437,12 +1441,18 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
       .abortTransfer({ transferId: pdfUpload.progress.transferId })
       .catch(() => undefined)
   }
-  useEffect(
-    () => () => {
-      pdfUploadController.current?.abort()
-    },
-    []
-  )
+  useEffect(() => {
+    uploadPageMountedRef.current = true
+    return () => {
+      uploadPageMountedRef.current = false
+      const upload = pdfUploadRef.current
+      if (!upload) return
+      upload.controller.abort()
+      void window.api.uploads
+        .abortTransfer({ transferId: upload.transferId })
+        .catch(() => undefined)
+    }
+  }, [])
   const pdfUploadNotice = pdfUpload ? (
     <div className="shrink-0 space-y-2 border-b border-border px-5 py-3">
       <p className="truncate text-sm font-medium">{pdfUpload.progress.name}</p>
@@ -2476,14 +2486,14 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
     } catch (error) {
       if (detailController.getSnapshot().generation === generation)
         setPdfError(
-          error instanceof DOMException && error.name === 'AbortError'
+          pdfUploadRef.current?.controller.signal.aborted
             ? t('PDF upload cancelled. The reference was kept.')
             : pdfImportErrorMessage(error, t)
         )
     } finally {
       if (staged)
         await window.api.uploads.deleteUpload({ path: staged.path }).catch(() => undefined)
-      pdfUploadController.current = undefined
+      pdfUploadRef.current = undefined
       setPdfUpload(undefined)
       addingPdfRef.current = false
       setIsAddingPdf(false)
@@ -2789,7 +2799,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
         closeItemEditor()
         openSelectedItemDetail(created)
         setPdfError(
-          error instanceof DOMException && error.name === 'AbortError'
+          pdfUploadRef.current?.controller.signal.aborted
             ? t('PDF upload cancelled. The reference was kept.')
             : pdfImportErrorMessage(error, t)
         )
@@ -2810,7 +2820,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
       if (staged)
         await window.api.uploads.deleteUpload({ path: staged.path }).catch(() => undefined)
       void loadEntries(true)
-      pdfUploadController.current = undefined
+      pdfUploadRef.current = undefined
       setPdfUpload(undefined)
       creatingItemRef.current = false
       setIsSavingNewItem(false)
