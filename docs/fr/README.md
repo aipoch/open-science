@@ -134,45 +134,41 @@ L'exécution Notebook est optionnelle. Toutes les vérifications d'environnement
 
 ## Visite du produit
 
-Open Science organise la recherche en projets et en sessions afin que chaque résultat reste lié aux preuves qui l'ont produit. Les sections ci-dessous parcourent l'espace de travail, la provenance des artefacts, les aperçus, les compétences scientifiques et les connecteurs de données.
+### De la demande de recherche au résultat traçable
 
-### Un seul espace de travail, de la tâche aux artefacts traçables
+Prenons une tâche bio-informatique représentative : reproduire une analyse d'expression différentielle publiée, comparer les résultats régénérés à l'article et livrer le rapport, les tableaux et les figures nécessaires à la revue. Les captures ci-dessous sont des vues représentatives de workflows Open Science documentés ; elles illustrent chaque étape, mais ne proviennent pas d'une même session continue.
 
-Les projets regroupent les sessions liées, les téléversements, les fichiers générés et l'état d'aperçu. La conversation enregistre la réponse de l'agent et les commandes, lectures de fichiers, modifications, recherches et appels de connecteurs qui l'ont produite. Chaque artefact généré est stocké comme une version immuable, avec somme de contrôle. Sa vue **Provenance** expose les preuves qu'Open Science a pu vérifier au moment de la création : code producteur et historique d'exécution, entrées référencées, inventaire d'environnement observé, branche de conversation productrice, et éventuels constats du relecteur limités à cette version. Les preuves manquantes sont indiquées comme indisponibles au lieu d'être devinées.
+#### 1. Définir la tâche de recherche et ses preuves
 
-<table>
-  <tr>
-    <td width="50%"><img src="../images/readme/project-files.jpg" alt="Bibliothèque de fichiers du projet avec téléversements et artefacts de recherche générés"></td>
-    <td width="50%"><img src="../images/readme/csv-preview.jpg" alt="Aperçu d'un artefact CSV à côté d'une session d'agent terminée"></td>
-  </tr>
-  <tr>
-    <td align="center"><sub>Téléversements et fichiers générés organisés par projet et par session</sub></td>
-    <td align="center"><sub>Les aperçus natifs gardent les données et l'historique de recherche côte à côte</sub></td>
-  </tr>
-</table>
+Décrivez la question de recherche, l'article et les jeux de données sources, les méthodes ou seuils requis, les résultats attendus et les critères d'acceptation. Importez les fichiers utiles ou référencez un artefact existant du projet avec `@`, afin que l'agent parte d'entrées explicites plutôt que d'un contexte caché.
 
-Les rapports, figures et tableaux générés restent attachés à la session et sont aussi rassemblés dans la bibliothèque de fichiers du projet. Les onglets d'aperçu conservent le résultat actif visible lorsque le panneau change de taille, et les noms longs conservent leur suffixe et leur extension d'identification. Open Science prévisualise les données scientifiques courantes, les PDF, les documents Office (DOCX, XLSX, PPTX), les images (avec zoom et panoramique), le code source avec coloration syntaxique, les structures et réactions moléculaires, et l'historique Notebook. Les limites d'aperçu ne tronquent pas le fichier sous-jacent — l'artefact complet reste disponible pour l'agent et les outils externes. Utilisez `Cmd/Ctrl+F` pour rechercher dans les transcriptions, la sortie Notebook et les pages rendues de l'espace de travail, ou `Cmd/Ctrl+K` pour ouvrir la palette de commandes du projet. Un mode sombre complète l'espace de travail : basculez le thème dans **Settings → General** et toute la palette du terminal, de la transcription et du renderer change sans flash. L'interface est aussi disponible en allemand, chinois (simplifié et traditionnel), japonais, coréen, français, russe et espagnol, avec un sélecteur de langue au moment de l'exécution dans Paramètres.
+<p align="center">
+  <img src="../images/readme/product-tour-task.jpg" alt="Tâche de reproduction d'article dans Open Science avec la conclusion, les artefacts générés et la comparaison des sources dans un même espace de travail" width="900">
+</p>
 
-### Bifurquer une conversation sans perdre l'original
+#### 2. Exécuter avec des outils scientifiques inspectables
 
-Modifiez un message utilisateur terminé pour renvoyer une invite révisée à partir de ce point. Open Science crée une nouvelle branche de messages au lieu de supprimer les tours qui suivaient, et les contrôles de révision permettent de passer de l'original aux chemins alternatifs. La sélection de branche, l'activité des outils, les pièces jointes et les artefacts générés persistent lors des changements de projet et des redémarrages. La provenance reste liée à la branche exacte qui a produit chaque version d'artefact, si bien qu'explorer une autre hypothèse ne brouille pas le registre du résultat antérieur.
+L'agent peut associer des compétences scientifiques, des connecteurs de recherche soumis à autorisation, des recherches, des opérations sur les fichiers et du code Python ou R dans le Notebook partagé. Les figures générées peuvent être examinées à côté de la synthèse, tandis que le dossier de l'artefact rend consultables le code producteur capturé et les preuves d'exécution.
 
-### Compétences scientifiques et connecteurs de données
+<p align="center">
+  <img src="../images/readme/product-tour-execute.png" alt="Analyse bio-informatique dans Open Science montrant côte à côte la synthèse, la figure générée et le code producteur capturé" width="900">
+</p>
 
-Open Science inclut un catalogue croissant de **22 compétences** de recherche mises en avant, basées sur des fichiers : AlphaFold2, Boltz, Borzoi, Chai-1, Customize, DiffDock, Environment & Packages, ESM-2, ESMFold2, Evo 2, Figure Composer, Figure Style, Indication Dossier, LigandMPNN, Literature Review, OpenFold3, Paper Narrative, ProteinMPNN, scGPT, scvi-tools, SolubleMPNN, et **Remote Compute (SSH)** pour soumettre et récupérer des travaux de longue durée sur des clusters HPC distants. Vous pouvez créer des compétences personnelles, téléverser des paquets `SKILL.md`/ZIP/`.skill`, prévisualiser et importer des compétences compatibles depuis GitHub avec un accès authentifié optionnel, ou importer des compétences déjà installées dans vos répertoires d'agents globaux. L'agent peut aussi demander l'import d'un paquet depuis une pièce jointe de session ou une URL GitHub publique, avec un aperçu et une confirmation appartenant à l'application avant toute écriture. Les compétences activées peuvent être sélectionnées directement dans le composeur avec `/`.
+#### 3. Examiner les rapports, tableaux et figures sur place
 
-Il inclut aussi **24 connecteurs** de recherche intégrés : Literature Graph, PubMed, bioRxiv, Genes & Ontologies, Genomes, BioMart, Variants, Human Genetics, Clinical Genomics, Structures & Interactions, Protein Annotation, Expression, Omics Archives, CellGuide, Regulation, RNA, Chemistry, ChEMBL, ZINC, Molecule Viewer, Clinical Trials, Drug Regulatory, Cancer Models, et Research Resources. Les connecteurs intégrés et personnalisés restent derrière le système d'autorisations, avec des contrôles `Always allow`, `Ask each time` et `Block` par outil. L'application installée affiche les catalogues courants de compétences, de connecteurs et d'outils.
+La réponse finale résume ce qui a été reproduit, les différences observées et les limites importantes. Les rapports Markdown, tableaux CSV, images et autres artefacts de recherche générés restent liés à la session et sont aussi rassemblés dans la bibliothèque de fichiers du projet, où ils peuvent être prévisualisés à côté de la conversation et réutilisés par la suite.
 
-<table>
-  <tr>
-    <td width="50%"><img src="../images/readme/skills.jpg" alt="Paramètres Open Science montrant les compétences scientifiques mises en avant"></td>
-    <td width="50%"><img src="../images/readme/connectors.jpg" alt="Paramètres Open Science montrant les connecteurs de données scientifiques intégrés"></td>
-  </tr>
-  <tr>
-    <td align="center"><sub>Compétences de recherche lisibles et réutilisables</sub></td>
-    <td align="center"><sub>Bases de données scientifiques exposées comme outils d'agent soumis à autorisation</sub></td>
-  </tr>
-</table>
+<p align="center">
+  <img src="../images/readme/product-tour-output.jpg" alt="Résultat de reproduction Open Science avec les figures d'expression différentielle et les fichiers générés prévisualisés à côté de l'explication de l'agent" width="900">
+</p>
+
+#### 4. Relier chaque artefact à ses preuves
+
+Chaque artefact généré est stocké dans une version immuable assortie d'une somme de contrôle. La vue **Provenance** peut présenter le code producteur et l'historique d'exécution, les entrées référencées, l'inventaire observé de l'environnement, la branche de conversation productrice et les conclusions du Reviewer propres à la version. Les preuves qui n'ont pas pu être vérifiées sont indiquées comme indisponibles plutôt que déduites.
+
+<p align="center">
+  <img src="../images/readme/product-tour-provenance.jpg" alt="Aperçu d'un artefact de recherche Open Science avec l'accès Provenance permettant de retracer un résultat généré" width="900">
+</p>
 
 ## Performances aux benchmarks
 

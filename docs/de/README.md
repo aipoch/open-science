@@ -135,45 +135,41 @@ Die Notebook-Ausführung ist optional. `Continue` wird erst verfügbar, wenn all
 
 ## Produkttour
 
-Open Science organisiert Forschung in Projekten und Sitzungen, sodass jedes Ergebnis mit den Belegen verknüpft bleibt, aus denen es entstanden ist. Die folgenden Abschnitte stellen Arbeitsbereich, Artefaktprovenienz, Vorschauen, wissenschaftliche Fähigkeiten und Datenkonnektoren vor.
+### Von der Forschungsanfrage zum nachvollziehbaren Ergebnis
 
-### Ein Arbeitsbereich von der Aufgabe bis zu nachverfolgbaren Artefakten
+Nehmen wir eine typische Bioinformatikaufgabe: Eine veröffentlichte Analyse der differentiellen Genexpression wird reproduziert, die neu erzeugten Ergebnisse werden mit der Publikation verglichen und Bericht, Tabellen sowie Abbildungen für die Prüfung bereitgestellt. Die folgenden Screenshots zeigen repräsentative Ansichten aus dokumentierten Open-Science-Workflows; sie veranschaulichen die einzelnen Schritte, stammen aber nicht aus einer einzigen durchgängigen Sitzung.
 
-Projekte bündeln zusammengehörige Sitzungen, Uploads, generierte Dateien und den jeweiligen Vorschaustatus. Die Konversation protokolliert die Antwort des Agenten sowie die Befehle, Dateizugriffe, Bearbeitungen, Suchvorgänge und Konnektoraufrufe, aus denen sie hervorgegangen ist. Jedes generierte Artefakt wird als unveränderliche Version mit Prüfsumme gespeichert. Die Ansicht **Provenienz** zeigt die bei der Erstellung überprüfbaren Belege: erzeugenden Code und Ausführungsverlauf, referenzierte Eingaben, den erfassten Umgebungsbestand, den erzeugenden Konversations-Branch und versionsbezogene Reviewer-Befunde. Fehlende Belege werden als nicht verfügbar gekennzeichnet, statt ergänzt oder vermutet zu werden.
+#### 1. Forschungsaufgabe und Evidenz festlegen
 
-<table>
-<tr>
-<td width="50%"><img src="../images/readme/project-files.jpg" alt="Projektdateibibliothek mit Uploads und generierten Forschungsartefakten"></td>
-<td width="50%"><img src="../images/readme/csv-preview.jpg" alt="CSV-Artefaktvorschau neben einer abgeschlossenen Agentensitzung"></td>
-</tr>
-<tr>
-<td align="center"><sub>Uploads und generierte Dateien, organisiert nach Projekt und Sitzung</sub></td>
-<td align="center"><sub>Native Vorschauen halten Daten und den Forschungsverlauf nebeneinander</sub></td>
-</tr>
-</table>
+Beschreiben Sie die Forschungsfrage, die Quellpublikation und Datensätze, erforderliche Methoden oder Schwellenwerte, erwartete Ergebnisse und Abnahmekriterien. Laden Sie unterstützende Dateien hoch oder referenzieren Sie mit `@` ein vorhandenes Projektartefakt, damit der Agent mit expliziten Eingaben statt mit verborgenem Kontext beginnt.
 
-Erstellte Berichte, Abbildungen und Tabellen bleiben mit der Sitzung verknüpft und werden zusätzlich in der Projektdateibibliothek gesammelt. Vorschau-Tabs halten das aktive Ergebnis auch bei Größenänderungen des Bereichs sichtbar; lange Dateinamen behalten ihr unterscheidbares Suffix und ihre Erweiterung. Open Science unterstützt Vorschauen für gängige wissenschaftliche Daten, PDFs, Office-Dokumente (DOCX, XLSX, PPTX), Bilder mit Zoom und Verschieben, Quellcode mit Syntaxhervorhebung, molekulare Strukturen und Reaktionen sowie den Notebook-Verlauf. Größenbeschränkungen der Vorschau verändern die zugrunde liegende Datei nicht; das vollständige Artefakt bleibt für den Agenten und externe Tools verfügbar. Mit `Cmd/Ctrl+F` durchsuchen Sie Transkripte, Notebook-Ausgaben und gerenderte Seiten im gesamten Arbeitsbereich. `Cmd/Ctrl+K` öffnet die projektbezogene Befehlspalette. Das Design lässt sich unter **Einstellungen → Allgemein** ohne sichtbares Flackern zwischen hell und dunkel umschalten. Dort können Sie auch zur Laufzeit zwischen Chinesisch (vereinfacht und traditionell), Japanisch, Koreanisch, Französisch, Russisch, Deutsch und Spanisch wechseln.
+<p align="center">
+  <img src="../images/readme/product-tour-task.jpg" alt="Open-Science-Aufgabe zur Reproduktion einer Publikation mit Forschungsergebnis, erzeugten Artefakten und Quellenvergleich in einem Arbeitsbereich" width="900">
+</p>
 
-### Konversation verzweigen, ohne das Original zu verlieren
+#### 2. Mit überprüfbaren wissenschaftlichen Werkzeugen ausführen
 
-Bearbeiten Sie eine abgeschlossene Benutzernachricht, um ab diesem Punkt einen überarbeiteten Prompt zu senden. Open Science erstellt einen neuen Nachrichten-Branch, ohne die nachfolgenden Interaktionen zu löschen. Mit der Versionssteuerung wechseln Sie zwischen ursprünglichem und alternativem Pfad. Branch-Auswahl, Tool-Aktivität, Anhänge und generierte Artefakte bleiben bei Projektwechseln und Neustarts erhalten. Die Provenienz jeder Artefaktversion bleibt an den erzeugenden Branch gebunden. So können Sie eine andere Hypothese verfolgen, ohne die Dokumentation des früheren Ergebnisses zu vermischen.
+Der Agent kann im gemeinsamen Notebook wissenschaftliche Fähigkeiten, berechtigungsgesteuerte Forschungskonnektoren, Suchen, Dateioperationen sowie Python- oder R-Code kombinieren. Erzeugte Abbildungen lassen sich neben der Forschungszusammenfassung prüfen; der Artefaktdatensatz stellt dazu den erfassten Erzeugungscode und Ausführungsevidenz bereit.
 
-### Wissenschaftliche Fähigkeiten und Datenkonnektoren
+<p align="center">
+  <img src="../images/readme/product-tour-execute.png" alt="Open-Science-Bioinformatikanalyse mit Forschungszusammenfassung, erzeugter Abbildung und erfasstem Erzeugungscode nebeneinander" width="900">
+</p>
 
-Open Science umfasst einen wachsenden Katalog mit **22 ausgewählten**, dateibasierten Forschungsfähigkeiten: AlphaFold2, Boltz, Borzoi, Chai-1, Customize, DiffDock, Environment & Packages, ESM-2, ESMFold2, Evo 2, Figure Composer, Figure Style, Indication Dossier, LigandMPNN, Literature Review, OpenFold3, Paper Narrative, ProteinMPNN, scGPT, scvi-tools, SolubleMPNN und **Remote Compute (SSH)** zum Übermitteln und Abrufen lang laufender Jobs auf Remote-HPC-Clustern. Sie können persönliche Fähigkeiten erstellen, `SKILL.md`-, ZIP- oder `.skill`-Pakete hochladen, kompatible Fähigkeiten von GitHub vorab prüfen und optional mit authentifiziertem Zugriff importieren. Auch bereits in globalen Agentenverzeichnissen installierte Fähigkeiten lassen sich übernehmen. Ein Agent kann zudem den Import eines Pakets aus einem Sitzungsanhang oder einer öffentlichen GitHub-URL anfordern. Bevor Dateien geschrieben werden, zeigt die App eine Vorschau und fordert eine Bestätigung an. Aktivierte Fähigkeiten wählen Sie im Composer direkt mit `/` aus.
+#### 3. Berichte, Tabellen und Abbildungen direkt prüfen
 
-Hinzu kommen **24 integrierte** Forschungskonnektoren: Literature Graph, PubMed, bioRxiv, Genes & Ontologies, Genomes, BioMart, Variants, Human Genetics, Clinical Genomics, Structures & Interactions, Protein Annotation, Expression, Omics Archives, CellGuide, Regulation, RNA, Chemistry, ChEMBL, ZINC, Molecule Viewer, Clinical Trials, Drug Regulatory, Cancer Models und Research Resources. Für integrierte wie benutzerdefinierte Konnektoren gilt das Berechtigungssystem mit den Tool-spezifischen Optionen `Always allow`, `Ask each time` und `Block`. Die installierte App zeigt jeweils die aktuellen Kataloge für Fähigkeiten, Konnektoren und Tools.
+Die abschließende Antwort fasst zusammen, was reproduziert wurde, was abwich und welche Einschränkungen relevant sind. Erzeugte Markdown-Berichte, CSV-Tabellen, Bilder und weitere Forschungsartefakte bleiben mit der Sitzung verknüpft und werden zugleich in der Projektdateibibliothek gesammelt. Dort können sie neben dem Dialog angezeigt und in späteren Arbeiten wiederverwendet werden.
 
-<table>
-<tr>
-<td width="50%"><img src="../images/readme/skills.jpg" alt="Open Science Einstellungen, die ausgewählte wissenschaftliche Fähigkeiten anzeigen"></td>
-<td width="50%"><img src="../images/readme/connectors.jpg" alt="Open Science-Einstellungen zeigen integrierte wissenschaftliche Datenkonnektoren"></td>
-</tr>
-<tr>
-<td align="center"><sub>Lesbare, wiederverwendbare Recherchefähigkeiten</sub></td>
-<td align="center"><sub>Wissenschaftliche Datenbanken, die als autorisierte Agent-Tools bereitgestellt werden</sub></td>
-</tr>
-</table>
+<p align="center">
+  <img src="../images/readme/product-tour-output.jpg" alt="Open-Science-Reproduktionsergebnis mit Abbildungen zur differentiellen Genexpression und erzeugten Dateien neben der Erläuterung des Agenten" width="900">
+</p>
+
+#### 4. Jedes Artefakt bis zu seiner Evidenz zurückverfolgen
+
+Jedes erzeugte Artefakt wird als unveränderliche Version mit Prüfsumme gespeichert. Die Ansicht **Provenance** kann Erzeugungscode und Ausführungshistorie, referenzierte Eingaben, das beobachtete Umgebungsinventar, den erzeugenden Gesprächszweig sowie versionsbezogene Reviewer-Ergebnisse anzeigen. Nicht überprüfbare Evidenz wird als nicht verfügbar gekennzeichnet und nicht hergeleitet.
+
+<p align="center">
+  <img src="../images/readme/product-tour-provenance.jpg" alt="Vorschau eines Open-Science-Forschungsartefakts mit Provenance-Zugang zur Rückverfolgung eines erzeugten Ergebnisses" width="900">
+</p>
 
 ## Benchmark-Ergebnisse
 

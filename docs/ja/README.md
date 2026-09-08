@@ -134,45 +134,41 @@ Notebook の実行は任意です。必要な環境チェックとエージェ�
 
 ## 製品ツアー
 
-Open Science は研究をプロジェクトとセッションに整理し、すべての結果をその根拠に結び付けます。以下では、ワークスペース、アーティファクトの来歴、プレビュー、科学スキル、データコネクタを紹介します。
+### 研究依頼から追跡可能な結果まで
 
-### タスクから追跡可能なアーティファクトまでを扱う 1 つのワークスペース
+代表的なバイオインフォマティクスタスクを例にします。公開済みの差次的発現解析を再現し、再生成した結果を論文と比較して、レビューに必要なレポート、表、図を提供します。以下のスクリーンショットは、記録済みの Open Science ワークフローから選んだ代表例です。各段階を示すもので、1 つの連続したセッションではありません。
 
-プロジェクトには、関連するセッション、アップロード、生成ファイル、プレビュー状態がまとめて保存されます。会話にはエージェントの回答に加え、その回答を生成したコマンド、ファイル読み取り、編集、検索、コネクタ呼び出しが記録されます。生成された各アーティファクトは、チェックサム付きの不変バージョンとして保存されます。**Provenance** ビューには、作成時に Open Science が検証できた生成コードと実行履歴、参照入力、観測された環境インベントリ、生成元の会話ブランチ、バージョン固有のレビュー結果が表示されます。欠けている根拠は推測で補われず、利用不可と明示されます。
+#### 1. 研究タスクと根拠を定義する
 
-<table>
-  <tr>
-    <td width="50%"><img src="../images/readme/project-files.jpg" alt="アップロードと生成された研究アーティファクトを含むプロジェクトファイルライブラリ"></td>
-    <td width="50%"><img src="../images/readme/csv-preview.jpg" alt="完了したエージェントセッションの横に表示される CSV アーティファクトプレビュー"></td>
-  </tr>
-  <tr>
-    <td align="center"><sub>プロジェクトとセッション別に整理されたアップロードと生成ファイル</sub></td>
-    <td align="center"><sub>データと研究履歴を並べて表示するネイティブプレビュー</sub></td>
-  </tr>
-</table>
+研究課題、出典論文とデータセット、必要な手法またはしきい値、期待する出力、受け入れ基準を記述します。関連ファイルをアップロードするか、`@` で既存のプロジェクトアーティファクトを参照し、エージェントが隠れたコンテキストではなく明示的な入力から開始できるようにします。
 
-生成されたレポート、図、表はセッションに関連付けられたまま、プロジェクトのファイルライブラリにも集約されます。パネルの大きさが変わってもプレビュータブはアクティブな結果を表示し、長い名前では識別に必要な末尾と拡張子が保たれます。Open Science は一般的な科学データ、PDF、Office ドキュメント（DOCX、XLSX、PPTX）、画像（ズームとパン対応）、シンタックスハイライト付きソースコード、分子構造と反応、Notebook 履歴をプレビューします。プレビュー制限によって基のファイルが切り詰められることはなく、完全なアーティファクトをエージェントや外部ツールから利用できます。`Cmd/Ctrl+F` でワークスペース全体のトランスクリプト、Notebook 出力、レンダリング済みページを検索し、`Cmd/Ctrl+K` でプロジェクトスコープのコマンドパレットを開けます。**Settings → General** でテーマを切り替えると、シェル、トランスクリプト、レンダラーの配色がちらつかずに切り替わります。インターフェースは設定のランタイム言語切り替えにより、ドイツ語、簡体字中国語、繁体字中国語、日本語、韓国語、フランス語、ロシア語、スペイン語でも利用できます。
+<p align="center">
+  <img src="../images/readme/product-tour-task.jpg" alt="研究結論、生成アーティファクト、出典比較を同じワークスペースに表示した Open Science の論文再現タスク" width="900">
+</p>
 
-### 元の内容を失わずに会話を分岐する
+#### 2. 検査可能な科学ツールで実行する
 
-完了したユーザーメッセージを編集し、その時点から変更したプロンプトを再送信できます。Open Science は後続ターンを削除せずに新しいメッセージブランチを作成し、リビジョンコントロールで元の経路と別の経路を切り替えられます。ブランチ選択、ツールアクティビティ、添付ファイル、生成アーティファクトは、プロジェクトの切り替えや再起動後も保持されます。来歴は各アーティファクトバージョンを生成した正確なブランチに結び付いたままなので、別の仮説を検討しても以前の結果の記録が曖昧になりません。
+エージェントは共有 Notebook で、科学スキル、権限管理された研究コネクタ、検索、ファイル操作、Python または R のコードを組み合わせられます。生成した図は研究要約の横で確認でき、アーティファクト記録から取得済みの生成コードと実行根拠を検査できます。
 
-### 科学スキルとデータコネクタ
+<p align="center">
+  <img src="../images/readme/product-tour-execute.png" alt="研究要約、生成図、取得済みの生成コードを並べた Open Science のバイオインフォマティクス解析" width="900">
+</p>
 
-Open Science には、増え続ける **22 個の注目**ファイルベース研究スキルがあります。AlphaFold2、Boltz、Borzoi、Chai-1、Customize、DiffDock、Environment & Packages、ESM-2、ESMFold2、Evo 2、Figure Composer、Figure Style、Indication Dossier、LigandMPNN、Literature Review、OpenFold3、Paper Narrative、ProteinMPNN、scGPT、scvi-tools、SolubleMPNN、およびリモート HPC クラスターで長時間ジョブを送信・回収する **Remote Compute (SSH)** です。個人スキルの作成、`SKILL.md`/ZIP/`.skill` パッケージのアップロード、任意の認証を使った GitHub からの互換スキルのプレビューとインポート、グローバルエージェントディレクトリにインストール済みのスキルのインポートができます。エージェントがセッション添付ファイルや公開 GitHub URL からパッケージのインポートを要求することもでき、アプリが管理するプレビューと確認を経てから書き込まれます。有効なスキルはコンポーザーで `/` から直接選択できます。
+#### 3. レポート、表、図をその場で確認する
 
-また、**24 個の組み込み**研究コネクタがあります。Literature Graph、PubMed、bioRxiv、Genes & Ontologies、Genomes、BioMart、Variants、Human Genetics、Clinical Genomics、Structures & Interactions、Protein Annotation、Expression、Omics Archives、CellGuide、Regulation、RNA、Chemistry、ChEMBL、ZINC、Molecule Viewer、Clinical Trials、Drug Regulatory、Cancer Models、Research Resources です。組み込みコネクタとカスタムコネクタは権限システムで保護され、ツールごとに `Always allow`、`Ask each time`、`Block` を設定できます。インストール済みアプリには現在のスキル、コネクタ、ツールのカタログが表示されます。
+最終回答には、再現できた点、相違した点、重要な制約がまとめられます。生成された Markdown レポート、CSV 表、画像などの研究アーティファクトはセッションに関連付けられたままプロジェクトのファイルライブラリにも集約され、会話の横でプレビューしたり後続作業で再利用したりできます。
 
-<table>
-  <tr>
-    <td width="50%"><img src="../images/readme/skills.jpg" alt="注目の科学スキルを表示する Open Science の設定"></td>
-    <td width="50%"><img src="../images/readme/connectors.jpg" alt="組み込み科学データコネクタを表示する Open Science の設定"></td>
-  </tr>
-  <tr>
-    <td align="center"><sub>読みやすく再利用可能な研究スキル</sub></td>
-    <td align="center"><sub>権限付きエージェントツールとして公開される科学データベース</sub></td>
-  </tr>
-</table>
+<p align="center">
+  <img src="../images/readme/product-tour-output.jpg" alt="エージェントの説明の横に差次的発現の図と生成ファイルを表示した Open Science の再現結果" width="900">
+</p>
+
+#### 4. 各アーティファクトを根拠まで追跡する
+
+生成された各アーティファクトは、チェックサム付きの不変バージョンとして保存されます。**Provenance** ビューには、生成コードと実行履歴、参照入力、観測された環境インベントリ、生成元の会話ブランチ、バージョン固有の Reviewer 結果を表示できます。検証できなかった根拠は推測されず、利用不可と明示されます。
+
+<p align="center">
+  <img src="../images/readme/product-tour-provenance.jpg" alt="生成結果を追跡する Provenance 入口を備えた Open Science の研究アーティファクトプレビュー" width="900">
+</p>
 
 ## ベンチマーク性能
 

@@ -134,45 +134,41 @@ Notebook 실행은 선택 사항입니다. 필수 환경 및 에이전트 런타
 
 ## 제품 둘러보기
 
-Open Science는 연구를 프로젝트와 세션으로 구성하여 각 결과가 이를 만든 증거와 연결되도록 합니다. 다음 섹션에서는 워크스페이스, 아티팩트 출처, 미리보기, 과학 스킬, 데이터 커넥터를 소개합니다.
+### 연구 요청에서 추적 가능한 결과까지
 
-### 작업에서 추적 가능한 아티팩트까지 하나의 워크스페이스에서
+대표적인 생물정보학 작업을 예로 들어 보겠습니다. 출판된 차등 발현 분석을 재현하고, 다시 생성한 결과를 논문과 비교한 뒤 검토에 필요한 보고서, 표, 그림을 제공합니다. 아래 스크린샷은 기록된 Open Science 워크플로의 대표 화면으로, 각 단계를 보여 주지만 하나의 연속된 세션을 의미하지는 않습니다.
 
-프로젝트는 관련 세션, 업로드, 생성 파일, 미리보기 상태를 함께 보관합니다. 대화에는 에이전트의 답변과 그 답변을 만든 명령, 파일 읽기, 편집, 검색, 커넥터 호출이 기록됩니다. 생성된 각 아티팩트는 체크섬이 있는 불변 버전으로 저장됩니다. **Provenance** 보기에는 생성 당시 Open Science가 검증할 수 있었던 생성 코드와 실행 기록, 참조 입력, 관찰된 환경 인벤토리, 생성 대화 브랜치, 버전 범위 리뷰 결과가 표시됩니다. 누락된 증거는 추측하지 않고 사용할 수 없음으로 표시합니다.
+#### 1. 연구 작업과 근거 정의
 
-<table>
-  <tr>
-    <td width="50%"><img src="../images/readme/project-files.jpg" alt="업로드와 생성된 연구 아티팩트를 포함하는 프로젝트 파일 라이브러리"></td>
-    <td width="50%"><img src="../images/readme/csv-preview.jpg" alt="완료된 에이전트 세션 옆의 CSV 아티팩트 미리보기"></td>
-  </tr>
-  <tr>
-    <td align="center"><sub>프로젝트와 세션별로 구성된 업로드 및 생성 파일</sub></td>
-    <td align="center"><sub>데이터와 연구 기록을 나란히 보여 주는 기본 미리보기</sub></td>
-  </tr>
-</table>
+연구 질문, 원문 논문과 데이터 세트, 필요한 방법 또는 임계값, 예상 출력, 승인 기준을 설명합니다. 관련 파일을 업로드하거나 `@`로 기존 프로젝트 아티팩트를 참조하여 에이전트가 숨겨진 컨텍스트가 아닌 명시적인 입력에서 시작하도록 합니다.
 
-생성된 보고서, 그림, 표는 세션에 연결된 상태로 프로젝트 파일 라이브러리에도 모입니다. 패널 크기가 변해도 미리보기 탭은 활성 결과를 표시하며, 긴 이름은 식별 가능한 접미사와 확장자를 유지합니다. Open Science는 일반 과학 데이터, PDF, Office 문서(DOCX, XLSX, PPTX), 확대/축소 및 이동이 가능한 이미지, 구문 강조 소스 코드, 분자 구조와 반응, Notebook 기록을 미리 봅니다. 미리보기 한도는 원본 파일을 자르지 않으므로 에이전트와 외부 도구가 전체 아티팩트를 계속 사용할 수 있습니다. `Cmd/Ctrl+F`로 워크스페이스 전체의 대화 기록, Notebook 출력, 렌더링된 페이지를 검색하거나 `Cmd/Ctrl+K`로 프로젝트 범위 명령 팔레트를 열 수 있습니다. **Settings → General**에서 테마를 전환하면 셸, 대화 기록, 렌더러 색상이 깜박임 없이 전환됩니다. 인터페이스는 설정의 런타임 언어 전환을 통해 독일어, 중국어 간체·번체, 일본어, 한국어, 프랑스어, 러시아어, 스페인어로도 사용할 수 있습니다.
+<p align="center">
+  <img src="../images/readme/product-tour-task.jpg" alt="연구 결론, 생성 아티팩트, 출처 비교를 한 작업 공간에 표시한 Open Science 논문 재현 작업" width="900">
+</p>
 
-### 원본을 잃지 않고 대화 분기
+#### 2. 검사 가능한 과학 도구로 실행
 
-완료된 사용자 메시지를 편집해 해당 지점에서 수정된 프롬프트를 다시 보낼 수 있습니다. Open Science는 후속 턴을 삭제하지 않고 새 메시지 브랜치를 만들며, 수정 컨트롤로 원래 경로와 대체 경로를 전환합니다. 브랜치 선택, 도구 활동, 첨부 파일, 생성 아티팩트는 프로젝트 전환과 앱 재시작 후에도 유지됩니다. 출처는 각 아티팩트 버전을 생성한 정확한 브랜치에 연결되므로 다른 가설을 탐색해도 이전 결과 기록이 흐려지지 않습니다.
+에이전트는 공유 Notebook에서 과학 스킬, 권한이 적용된 연구 커넥터, 검색, 파일 작업, Python 또는 R 코드를 함께 사용할 수 있습니다. 생성된 그림을 연구 요약 옆에서 검토할 수 있으며, 아티팩트 기록에서는 캡처된 생성 코드와 실행 근거를 확인할 수 있습니다.
 
-### 과학 스킬 및 데이터 커넥터
+<p align="center">
+  <img src="../images/readme/product-tour-execute.png" alt="연구 요약, 생성된 그림, 캡처된 생성 코드를 나란히 표시한 Open Science 생물정보학 분석" width="900">
+</p>
 
-Open Science에는 계속 확장되는 **22개의 주요** 파일 기반 연구 스킬이 있습니다. AlphaFold2, Boltz, Borzoi, Chai-1, Customize, DiffDock, Environment & Packages, ESM-2, ESMFold2, Evo 2, Figure Composer, Figure Style, Indication Dossier, LigandMPNN, Literature Review, OpenFold3, Paper Narrative, ProteinMPNN, scGPT, scvi-tools, SolubleMPNN, 그리고 원격 HPC 클러스터에서 장시간 작업을 제출하고 결과를 가져오는 **Remote Compute (SSH)**입니다. 개인 스킬을 만들고, `SKILL.md`/ZIP/`.skill` 패키지를 업로드하며, 선택적 인증으로 GitHub의 호환 스킬을 미리 보고 가져오거나 전역 에이전트 디렉터리에 이미 설치된 스킬을 가져올 수 있습니다. 에이전트도 세션 첨부 파일이나 공개 GitHub URL에서 패키지 가져오기를 요청할 수 있으며, 앱 소유 미리보기와 확인 단계를 거친 후에만 내용을 씁니다. 활성화된 스킬은 작성창에서 `/`로 직접 선택할 수 있습니다.
+#### 3. 보고서, 표, 그림을 한곳에서 검토
 
-또한 **24개의 기본 제공** 연구 커넥터가 있습니다. Literature Graph, PubMed, bioRxiv, Genes & Ontologies, Genomes, BioMart, Variants, Human Genetics, Clinical Genomics, Structures & Interactions, Protein Annotation, Expression, Omics Archives, CellGuide, Regulation, RNA, Chemistry, ChEMBL, ZINC, Molecule Viewer, Clinical Trials, Drug Regulatory, Cancer Models, Research Resources입니다. 기본 및 사용자 지정 커넥터는 권한 시스템으로 보호되며 각 도구에 `Always allow`, `Ask each time`, `Block`을 설정할 수 있습니다. 설치된 앱에는 현재 스킬, 커넥터, 도구 카탈로그가 표시됩니다.
+최종 응답은 재현된 내용, 달라진 내용, 중요한 한계를 요약합니다. 생성된 Markdown 보고서, CSV 표, 이미지 및 기타 연구 아티팩트는 세션에 연결된 상태로 프로젝트 파일 라이브러리에도 모이며, 대화 옆에서 미리 보고 후속 작업에 다시 사용할 수 있습니다.
 
-<table>
-  <tr>
-    <td width="50%"><img src="../images/readme/skills.jpg" alt="주요 과학 스킬을 보여 주는 Open Science 설정"></td>
-    <td width="50%"><img src="../images/readme/connectors.jpg" alt="기본 과학 데이터 커넥터를 보여 주는 Open Science 설정"></td>
-  </tr>
-  <tr>
-    <td align="center"><sub>읽고 재사용할 수 있는 연구 스킬</sub></td>
-    <td align="center"><sub>권한이 적용된 에이전트 도구로 제공되는 과학 데이터베이스</sub></td>
-  </tr>
-</table>
+<p align="center">
+  <img src="../images/readme/product-tour-output.jpg" alt="에이전트 설명 옆에서 차등 발현 그림과 생성 파일을 미리 보는 Open Science 재현 결과" width="900">
+</p>
+
+#### 4. 모든 아티팩트를 근거까지 추적
+
+생성된 각 아티팩트는 체크섬이 있는 변경 불가능한 버전으로 저장됩니다. **Provenance** 보기에서는 생성 코드와 실행 기록, 참조된 입력, 관찰된 환경 목록, 생성한 대화 브랜치, 버전별 Reviewer 결과를 표시할 수 있습니다. 검증할 수 없는 근거는 추론하지 않고 사용할 수 없음으로 표시합니다.
+
+<p align="center">
+  <img src="../images/readme/product-tour-provenance.jpg" alt="생성 결과를 추적하는 Provenance 진입점이 있는 Open Science 연구 아티팩트 미리 보기" width="900">
+</p>
 
 ## 벤치마크 성능
 
