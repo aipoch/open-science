@@ -18,7 +18,7 @@ describe('Notebook network sandbox resources', () => {
     ],
     [
       'vendor/windows/arm64/notebook-appcontainer-host.exe',
-      'b2ecca8baa0ce5062ba723d9a01888461019f04c051dadd0fbb38c078133f7f3'
+      '4c759fa45271a8ff386f00ded62b621d651f0aeae71fb1f20e05094a80372337'
     ]
   ])('verifies %s', (relativePath, expectedHash) => {
     expect(sha256(relativePath)).toBe(expectedHash)
