@@ -88,12 +88,21 @@ export class LiteratureBatchJobs {
           if (row.status === 'searching') row.status = 'pending'
           if (row.status === 'saving') row.status = 'ready'
         }
+        if (job.state === 'completed' && job.rows.some(({ status }) => status === 'pending')) {
+          job.state = 'paused'
+          job.phase = 'search'
+          job.phaseItemIds = undefined
+          job.updatedAt = Math.max(Date.now(), job.updatedAt + 1)
+        }
       }
       if (stored.status === 'found' && stored.value.version === 1) {
         for (const job of this.jobs) await this.save(job)
         await this.saveIndex()
       }
-    })())
+    })().catch((error: unknown) => {
+      this.loaded = undefined
+      throw error
+    }))
   }
 
   private jobPath(id: string): string {
@@ -165,7 +174,7 @@ export class LiteratureBatchJobs {
         const settled = this.jobs.findLastIndex(
           (job) =>
             job.state === 'completed' &&
-            job.rows.every(({ status }) => status !== 'ready' && status !== 'error')
+            job.rows.every(({ status }) => status === 'done' || status === 'skipped')
         )
         if (settled < 0) throw new Error('Remove completed Literature tasks before adding more.')
         prunedId = nextJobs.splice(settled, 1)[0]?.id
@@ -245,6 +254,7 @@ export class LiteratureBatchJobs {
             throw new Error('Review the current task results before applying.')
         }
         for (const row of job.rows) {
+          if (row.status !== 'ready') continue
           const selected = request.selections.find(({ itemId }) => itemId === row.id)
           row.checked = Boolean(selected)
           if (selected?.candidateId) row.candidateId = selected.candidateId
@@ -377,6 +387,12 @@ export class LiteratureBatchJobs {
               job.rows.some(({ status }) => status === 'ready' || status === 'error')
             ? 'review'
             : 'completed'
+      // Applying a selection does not finish a search the user paused.
+      if (job.state === 'completed' && job.rows.some(({ status }) => status === 'pending')) {
+        job.phase = 'search'
+        job.phaseItemIds = undefined
+        job.state = 'paused'
+      }
       job.updatedAt = Math.max(Date.now(), job.updatedAt + 1)
       this.currentJobId = undefined
       await this.save(job)
@@ -435,7 +451,7 @@ export class LiteratureBatchJobs {
       !current ||
       current.id !== row.id ||
       current.deletedAt ||
-      current.metadataRevision !== row.item?.metadataRevision
+      (job.mode === 'full-text' && current.metadataRevision !== row.item?.metadataRevision)
     )
       throw new Error('Reference changed')
     if (job.mode === 'metadata') {

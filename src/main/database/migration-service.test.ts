@@ -316,6 +316,42 @@ describe('application database migrations', () => {
     if (storageRoot) await rm(storageRoot, { force: true, recursive: true })
   })
 
+  it('adds empty metadata commit receipts without inventing proof for historical references', async () => {
+    storageRoot = await mkdtemp(join(tmpdir(), 'literature-receipt-upgrade-'))
+    client = createProjectDbClient(storageRoot)
+    await migrateApplicationDatabase(client)
+    await client.literatureItem.create({
+      data: {
+        id: 'historical-reference',
+        itemType: 'journalArticle',
+        title: 'Historical paper',
+        containerTitle: 'Already populated',
+        metadataRevision: 7
+      }
+    })
+    const before = await client.literatureItem.findMany()
+    await client.$executeRawUnsafe('DROP TABLE "LiteratureMetadataCommitReceipt"')
+    await client.$executeRawUnsafe(
+      `DELETE FROM "_open_science_migrations" WHERE id = '0039_literature_metadata_commit_receipt'`
+    )
+    const ledger = await client.$queryRawUnsafe(
+      'SELECT * FROM "_open_science_migrations" ORDER BY id'
+    )
+    await expect(migrateApplicationDatabase(client)).resolves.toMatchObject({
+      from: '0037_literature_inbox_integrity',
+      to: '0039_literature_metadata_commit_receipt',
+      applied: ['0039_literature_metadata_commit_receipt']
+    })
+    expect(await client.literatureMetadataCommitReceipt.count()).toBe(0)
+    expect(await client.literatureItem.findMany()).toEqual(before)
+    expect(
+      await client.$queryRawUnsafe(
+        `SELECT * FROM "_open_science_migrations" WHERE id <> '0039_literature_metadata_commit_receipt' ORDER BY id`
+      )
+    ).toEqual(ledger)
+    await expect(migrateApplicationDatabase(client)).resolves.toMatchObject({ applied: [] })
+  })
+
   it('upgrades existing attachment and pending Inbox PDF rows without inventing provenance', async () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'literature-provenance-upgrade-'))
     client = createProjectDbClient(storageRoot)
@@ -332,6 +368,7 @@ describe('application database migrations', () => {
     await client.$executeRawUnsafe(
       'ALTER TABLE "ContentBlob" DROP COLUMN "lastVerificationAttemptAt"'
     )
+    await client.$executeRawUnsafe('DROP TABLE IF EXISTS "LiteratureMetadataCommitReceipt"')
     await client.$executeRawUnsafe(
       `DELETE FROM "_open_science_migrations" WHERE "id" >= '0035_literature_pdf_provenance'`
     )
@@ -654,10 +691,11 @@ describe('application database migrations', () => {
         '0035_literature_pdf_provenance',
         '0036_content_verification_observation',
         '0037_literature_inbox_integrity',
-        '0038_literature_search_text'
+        '0038_literature_search_text',
+        '0039_literature_metadata_commit_receipt'
       ],
       from: null,
-      to: '0038_literature_search_text'
+      to: '0039_literature_metadata_commit_receipt'
     })
     expect(compatibility).toEqual([{ sqliteVersion: expect.stringMatching(/^\d+\.\d+\.\d+$/) }])
     await expect(
@@ -670,8 +708,8 @@ describe('application database migrations', () => {
     await expect(migrateApplicationDatabase(client)).resolves.toEqual({
       adoptedLegacy: false,
       applied: [],
-      from: '0038_literature_search_text',
-      to: '0038_literature_search_text'
+      from: '0039_literature_metadata_commit_receipt',
+      to: '0039_literature_metadata_commit_receipt'
     })
   })
 
@@ -689,6 +727,7 @@ describe('application database migrations', () => {
     client = createProjectDbClient(storageRoot)
     await migrateApplicationDatabase(client)
     await client.$executeRawUnsafe('DROP TABLE "BackgroundResultDelivery"')
+    await client.$executeRawUnsafe('DROP TABLE IF EXISTS "LiteratureMetadataCommitReceipt"')
     await client.$executeRawUnsafe(
       `DELETE FROM "_open_science_migrations" WHERE "id" >= '0034_background_result_delivery'`
     )
@@ -700,10 +739,11 @@ describe('application database migrations', () => {
         '0035_literature_pdf_provenance',
         '0036_content_verification_observation',
         '0037_literature_inbox_integrity',
-        '0038_literature_search_text'
+        '0038_literature_search_text',
+        '0039_literature_metadata_commit_receipt'
       ],
       from: '0033_compute_job_harvest_retry',
-      to: '0038_literature_search_text'
+      to: '0039_literature_metadata_commit_receipt'
     })
     await expect(
       client.$queryRaw<Array<{ name: string }>>`
@@ -809,7 +849,8 @@ describe('application database migrations', () => {
         '0035_literature_pdf_provenance',
         '0036_content_verification_observation',
         '0037_literature_inbox_integrity',
-        '0038_literature_search_text'
+        '0038_literature_search_text',
+        '0039_literature_metadata_commit_receipt'
       ]
     })
     await expect(
@@ -901,7 +942,8 @@ describe('application database migrations', () => {
         '0035_literature_pdf_provenance',
         '0036_content_verification_observation',
         '0037_literature_inbox_integrity',
-        '0038_literature_search_text'
+        '0038_literature_search_text',
+        '0039_literature_metadata_commit_receipt'
       ]
     })
     await expect(migrateApplicationDatabase(client)).resolves.toMatchObject({ applied: [] })
@@ -946,7 +988,7 @@ describe('application database migrations', () => {
 
     await expect(migrateApplicationDatabase(client)).resolves.toMatchObject({
       applied: expect.arrayContaining(['0010_compute_password_auth']),
-      to: '0038_literature_search_text'
+      to: '0039_literature_metadata_commit_receipt'
     })
     await expect(
       client.$executeRawUnsafe(
@@ -1007,10 +1049,11 @@ describe('application database migrations', () => {
         '0035_literature_pdf_provenance',
         '0036_content_verification_observation',
         '0037_literature_inbox_integrity',
-        '0038_literature_search_text'
+        '0038_literature_search_text',
+        '0039_literature_metadata_commit_receipt'
       ],
       from: '0005_project_preview_state_owner_fk',
-      to: '0038_literature_search_text'
+      to: '0039_literature_metadata_commit_receipt'
     })
     await expect(verifyCurrentApplicationSchema(client)).resolves.toBeUndefined()
   })
@@ -1099,10 +1142,11 @@ describe('application database migrations', () => {
         '0035_literature_pdf_provenance',
         '0036_content_verification_observation',
         '0037_literature_inbox_integrity',
-        '0038_literature_search_text'
+        '0038_literature_search_text',
+        '0039_literature_metadata_commit_receipt'
       ],
       from: '0005_project_preview_state_owner_fk',
-      to: '0038_literature_search_text'
+      to: '0039_literature_metadata_commit_receipt'
     })
     await expect(
       client.$queryRaw<
@@ -1225,7 +1269,7 @@ describe('application database migrations', () => {
       })
     ).rejects.toMatchObject({
       code: 'database_validation_failed',
-      migrationId: '0038_literature_search_text'
+      migrationId: '0039_literature_metadata_commit_receipt'
     })
     expect(retired).toEqual([])
     await expect(access(backupPath)).resolves.toBeUndefined()
@@ -1242,7 +1286,7 @@ describe('application database migrations', () => {
     ).resolves.toEqual({
       adoptedLegacy: false,
       applied: ['9997_test_suffix'],
-      from: '0038_literature_search_text',
+      from: '0039_literature_metadata_commit_receipt',
       to: '9997_test_suffix'
     })
     await expect(
@@ -1288,6 +1332,7 @@ describe('application database migrations', () => {
       { id: '0036_content_verification_observation' },
       { id: '0037_literature_inbox_integrity' },
       { id: '0038_literature_search_text' },
+      { id: '0039_literature_metadata_commit_receipt' },
       { id: '9997_test_suffix' }
     ])
   })
@@ -1378,10 +1423,11 @@ describe('application database migrations', () => {
         '0035_literature_pdf_provenance',
         '0036_content_verification_observation',
         '0037_literature_inbox_integrity',
-        '0038_literature_search_text'
+        '0038_literature_search_text',
+        '0039_literature_metadata_commit_receipt'
       ],
       from: '0001_runtime_schema_baseline',
-      to: '0038_literature_search_text'
+      to: '0039_literature_metadata_commit_receipt'
     })
     expect(backupEvents).toEqual([
       {
@@ -1473,7 +1519,8 @@ describe('application database migrations', () => {
       { id: '0035_literature_pdf_provenance' },
       { id: '0036_content_verification_observation' },
       { id: '0037_literature_inbox_integrity' },
-      { id: '0038_literature_search_text' }
+      { id: '0038_literature_search_text' },
+      { id: '0039_literature_metadata_commit_receipt' }
     ])
   })
 
@@ -1605,6 +1652,7 @@ describe('application database migrations', () => {
         '0036_content_verification_observation',
         '0037_literature_inbox_integrity',
         '0038_literature_search_text',
+        '0039_literature_metadata_commit_receipt',
         '9997_test_suffix'
       ],
       to: '9997_test_suffix'
@@ -1742,7 +1790,7 @@ describe('application database migrations', () => {
       adoptedLegacy: false,
       applied: MIGRATION_MANIFEST.slice(computePasswordAuthIndex).map(({ id }) => id),
       from: '0009_vision_evidence',
-      to: '0038_literature_search_text'
+      to: '0039_literature_metadata_commit_receipt'
     })
     await expect(
       client.$queryRaw<Array<{ projectId: string }>>`
@@ -1868,7 +1916,8 @@ describe('application database migrations', () => {
         '0035_literature_pdf_provenance',
         '0036_content_verification_observation',
         '0037_literature_inbox_integrity',
-        '0038_literature_search_text'
+        '0038_literature_search_text',
+        '0039_literature_metadata_commit_receipt'
       ]
     })
     await expect(
@@ -2003,7 +2052,8 @@ describe('application database migrations', () => {
         '0035_literature_pdf_provenance',
         '0036_content_verification_observation',
         '0037_literature_inbox_integrity',
-        '0038_literature_search_text'
+        '0038_literature_search_text',
+        '0039_literature_metadata_commit_receipt'
       ]
     })
     await expect(migrateApplicationDatabase(client)).resolves.toMatchObject({ applied: [] })
@@ -2090,7 +2140,8 @@ describe('application database migrations', () => {
         '0035_literature_pdf_provenance',
         '0036_content_verification_observation',
         '0037_literature_inbox_integrity',
-        '0038_literature_search_text'
+        '0038_literature_search_text',
+        '0039_literature_metadata_commit_receipt'
       ]
     })
     await expect(
@@ -2180,7 +2231,8 @@ describe('application database migrations', () => {
         '0035_literature_pdf_provenance',
         '0036_content_verification_observation',
         '0037_literature_inbox_integrity',
-        '0038_literature_search_text'
+        '0038_literature_search_text',
+        '0039_literature_metadata_commit_receipt'
       ]
     })
     await expect(verifyCurrentApplicationSchema(client)).resolves.toBeUndefined()
@@ -2304,7 +2356,8 @@ describe('application database migrations', () => {
         '0035_literature_pdf_provenance',
         '0036_content_verification_observation',
         '0037_literature_inbox_integrity',
-        '0038_literature_search_text'
+        '0038_literature_search_text',
+        '0039_literature_metadata_commit_receipt'
       ]
     })
     await expect(
@@ -2828,7 +2881,7 @@ describe('application database migrations', () => {
       )
     ).resolves.toEqual([
       'open-science.db.before-0037_literature_inbox_integrity.backup',
-      'open-science.db.before-0038_literature_search_text.backup',
+      'open-science.db.before-0039_literature_metadata_commit_receipt.backup',
       unknownBackupName
     ])
     expect(retired).toHaveLength(MIGRATION_MANIFEST.length - 2)
@@ -3135,10 +3188,11 @@ describe('application database migrations', () => {
         '0035_literature_pdf_provenance',
         '0036_content_verification_observation',
         '0037_literature_inbox_integrity',
-        '0038_literature_search_text'
+        '0038_literature_search_text',
+        '0039_literature_metadata_commit_receipt'
       ],
       from: '0024_compute_job_file_evidence',
-      to: '0038_literature_search_text'
+      to: '0039_literature_metadata_commit_receipt'
     })
     await expect(
       client.$queryRawUnsafe<Array<{ currentVersionId: string | null }>>(
@@ -3197,7 +3251,7 @@ describe('application database migrations', () => {
         MIGRATION_MANIFEST.findIndex(({ id }) => id === '0009_vision_evidence')
       ).map(({ id }) => id),
       from: '0008_database_json_constraints',
-      to: '0038_literature_search_text'
+      to: '0039_literature_metadata_commit_receipt'
     })
     await expect(verifyCurrentApplicationSchema(client)).resolves.toBeUndefined()
   })
@@ -3267,10 +3321,11 @@ describe('application database migrations', () => {
         '0035_literature_pdf_provenance',
         '0036_content_verification_observation',
         '0037_literature_inbox_integrity',
-        '0038_literature_search_text'
+        '0038_literature_search_text',
+        '0039_literature_metadata_commit_receipt'
       ],
       from: '0024_compute_job_file_evidence',
-      to: '0038_literature_search_text'
+      to: '0039_literature_metadata_commit_receipt'
     })
     await expect(
       client.$queryRaw<Array<{ uploadVersionId: string }>>`

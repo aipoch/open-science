@@ -21,7 +21,14 @@ it('refreshes the library when a background job completes after its dialog close
   request.mockResolvedValue({
     jobs: [],
     summaries: [
-      { ...job, state: 'completed', done: 3, ready: 0, completedItemIds: ['a', 'b', 'c'] }
+      {
+        ...job,
+        state: 'completed',
+        checked: 3,
+        done: 3,
+        ready: 0,
+        completedItemIds: ['a', 'b', 'c']
+      }
     ]
   })
   await act(async () => {

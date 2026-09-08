@@ -72,6 +72,21 @@ export const LiteratureBatchLookupDialog = ({
   const receive = (value: Job): void => {
     const prior = jobRef.current
     if (prior && value.updatedAt < prior.updatedAt) return
+    const failed = failedCommand.current
+    if (
+      failed?.action === 'apply' &&
+      failed.selections.some((selection) => {
+        if (pendingDrafts.current.has(selection.itemId)) return false
+        const row = value.rows.find(({ id }) => id === selection.itemId)
+        return (
+          !row ||
+          row.status !== 'ready' ||
+          !row.checked ||
+          row.candidateId !== selection.candidateId
+        )
+      })
+    )
+      failedCommand.current = undefined
     const changedRows = prior
       ? value.rows
           .filter((row, index) => row.status === 'done' && prior.rows[index]?.status !== 'done')
@@ -85,7 +100,10 @@ export const LiteratureBatchLookupDialog = ({
       const byId = new Map(current.map((row) => [row.id, row]))
       return value.rows.map((row) => {
         const local = byId.get(row.id)
-        return local && local.status === 'ready' && row.status === 'ready'
+        return pendingDrafts.current.has(row.id) &&
+          local &&
+          local.status === 'ready' &&
+          row.status === 'ready'
           ? {
               ...row,
               checked: local.checked,
@@ -159,7 +177,7 @@ export const LiteratureBatchLookupDialog = ({
       const currentJob = jobRef.current
       const selections = [...pendingDrafts.current.values()]
       if (!currentJob || selections.length === 0) return
-      await window.api.literature.jobs({
+      const result = await window.api.literature.jobs({
         action: 'review',
         jobId: currentJob.id,
         selections
@@ -168,6 +186,7 @@ export const LiteratureBatchLookupDialog = ({
         if (pendingDrafts.current.get(selection.itemId) === selection)
           pendingDrafts.current.delete(selection.itemId)
       }
+      if (result.jobs[0]) receive(result.jobs[0])
     }
     // Retain failed selections so Retry and later commands can persist them again.
     draftWrites.current = draftWrites.current.then(write, write)
@@ -313,6 +332,11 @@ export const LiteratureBatchLookupDialog = ({
                   }
                 }}
               />
+            ) : null}
+            {rows.length > checked ? (
+              <p>
+                {t('Pending')}: {rows.length - checked}
+              </p>
             ) : null}
             <div className="flex flex-wrap justify-between gap-2 tabular-nums">
               <span>

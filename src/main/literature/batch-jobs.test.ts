@@ -65,7 +65,12 @@ async function setup(): Promise<{
     catalog: { get: async (id: string) => item(id) },
     metadata: {
       complete: metadata,
-      applyReviewed: vi.fn(async (review: LiteratureMetadataCompletionResult) => review)
+      applyReviewed: vi.fn(async (review: LiteratureMetadataCompletionResult) => {
+        const current = await options.catalog.get(review.item.id)
+        if (current.metadataRevision !== review.item.metadataRevision)
+          throw new Error('Reference changed')
+        return review
+      })
     },
     fullText: { run: fullText },
     onError: vi.fn(),
@@ -445,7 +450,7 @@ it('offers identifier-only metadata additions as a ready batch row', async () =>
   current.item.identifiers = [{ scheme: 'pmid', value: '12345678', isPrimary: true }]
   const applyMetadata = vi.fn(async (input) => ({ ...current, item: input.item }))
   const enricher = new LiteratureMetadataEnricher(
-    { get: async () => current, applyMetadata },
+    { getMetadataCommitReceipt: async () => null, get: async () => current, applyMetadata },
     vi.fn(
       async () =>
         new Response(
@@ -722,6 +727,7 @@ it('keeps unsearched references resumable after applying a paused partial search
     failed: 0
   })
   expect(await state(jobs, jobId)).toMatchObject({ state: 'paused', phase: 'search' })
+  expect((await state(jobs, jobId)).rows[1].checked).toBe(true)
   await jobs.run({ action: 'resume', jobId })
   await vi.waitFor(async () => expect((await state(jobs, jobId)).state).toBe('review'))
   expect(metadata).toHaveBeenCalledTimes(2)
@@ -840,4 +846,31 @@ it('recognizes its committed metadata after replaying the pre-commit checkpoint'
     completedItemIds: [created.id]
   })
   expect(fetchMetadata).toHaveBeenCalledOnce()
+})
+
+it('restores a historically completed partial search without repeating completed metadata', async () => {
+  const { jobs, options, path, metadata } = await setup()
+  const jobId = randomUUID()
+  await jobs.run({ action: 'create', mode: 'metadata', itemIds: ['a'], requestId: jobId })
+  await vi.waitFor(async () => expect((await state(jobs, jobId)).state).toBe('review'))
+  await jobs.close()
+  const checkpoint = join(`${path}.d`, `${jobId}.json`)
+  const stored = JSON.parse(await readFile(checkpoint, 'utf8'))
+  stored.state = 'completed'
+  stored.phase = 'apply'
+  stored.phaseItemIds = ['a']
+  stored.rows[0].status = 'done'
+  stored.rows.push({ id: 'b', status: 'pending', checked: true })
+  await writeFile(checkpoint, JSON.stringify(stored))
+  const reopened = new LiteratureBatchJobs(options)
+  cleanup.push(() => reopened.close())
+  expect(await state(reopened, jobId)).toMatchObject({
+    state: 'paused',
+    phase: 'search',
+    phaseItemIds: undefined
+  })
+  metadata.mockClear()
+  await reopened.run({ action: 'resume', jobId })
+  await vi.waitFor(async () => expect((await state(reopened, jobId)).state).toBe('review'))
+  expect(metadata).toHaveBeenCalledExactlyOnceWith({ mode: 'preview', itemId: 'b' })
 })
