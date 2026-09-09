@@ -71,7 +71,7 @@ describe.skipIf(!nativeBindingAvailable)('atomic no-replace publisher', () => {
 })
 
 // These exercise the real native mutation boundary on each portable CI platform.
-describe('anchored publication removal', () => {
+describe.skipIf(!nativeBindingAvailable)('anchored publication removal', () => {
   it('removes only the named file and rejects a changed parent identity', async () => {
     cleanupRoot = await mkdtemp(join(tmpdir(), 'safe-file-removal-'))
     const parent = join(cleanupRoot, 'content')
