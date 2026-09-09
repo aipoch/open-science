@@ -15,7 +15,9 @@ const FOLLOW_UP = 'Follow-up after the reveal.'
 // The fake agent replies with this fixed text for any prompt without a journey route.
 const AGENT_REPLY = 'Deterministic reply: Summarize the deterministic fixture.'
 
-test('holds the queued message until the previous reply finishes revealing', async ({ app }, testInfo) => {
+test('holds the queued message until the previous reply finishes revealing', async ({
+  app
+}, testInfo) => {
   await app.completeOnboarding()
   const page = await app.configureFakeAgent()
 
