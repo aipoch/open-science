@@ -19,6 +19,11 @@ describe.skipIf(process.platform !== 'win32')('Windows PowerShell search preflig
   it.each([
     "Get-ChildItem -LiteralPath 'C:\\' -Recurse",
     'gci .. -Recurse',
+    'New-Item Alias:x -Value Get-ChildItem; x C:\\ -Recurse',
+    'ni Alias:x -Value Get-ChildItem; x C:\\ -Recurse',
+    'Microsoft.PowerShell.Management\\Set-Item Function:x { Get-ChildItem C:\\ }; x',
+    'Copy-Item Alias:gci Alias:x; x C:\\ -Recurse',
+    'Set-Location Alias:; New-Item x -Value Get-ChildItem; x C:\\ -Recurse',
     "Start-Process powershell.exe -ArgumentList '-Command','Get-ChildItem C:\\' -Wait",
     "saps powershell.exe -ArgumentList '-Command','Get-ChildItem C:\\' -Wait",
     "start powershell.exe -ArgumentList '-Command','Get-ChildItem C:\\' -Wait",
@@ -40,6 +45,7 @@ describe.skipIf(process.platform !== 'win32')('Windows PowerShell search preflig
   it.each([
     'Get-ChildItem -LiteralPath . -Recurse -Filter chart.png',
     'gci -LiteralPath . -File',
+    'New-Item ./data -ItemType Directory',
     "Get-ChildItem . | where Name -like '*.csv'",
     'where.exe /r . chart.png',
     'rg --ignore-file ./ignore needle .',

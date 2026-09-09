@@ -543,6 +543,39 @@ export const assertShellSearchScope = async (
         return denied('nested Windows shell execution requires a direct scoped PowerShell command')
       if (['set-alias', 'new-alias', 'sal', 'nal'].includes(name))
         return denied('aliases can hide search commands')
+      if (
+        [
+          'new-item',
+          'ni',
+          'set-item',
+          'si',
+          'copy-item',
+          'cpi',
+          'cp',
+          'copy',
+          'move-item',
+          'mi',
+          'mv',
+          'move',
+          'rename-item',
+          'rni',
+          'ren',
+          'clear-item',
+          'cli',
+          'remove-item',
+          'ri',
+          'rm',
+          'rmdir',
+          'rd',
+          'del',
+          'erase'
+        ].includes(name) &&
+        (moved ||
+          entry.arguments.some(
+            (arg) => arg === null || /(?:^|[\\:])(?:alias|function):/i.test(arg)
+          ))
+      )
+        return denied('provider mutations can hide search commands')
       const nativeDiscovery = [
         'get-childitem',
         'gci',

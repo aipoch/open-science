@@ -42,6 +42,12 @@ describe('PowerShell search admission contract', () => {
     },
     { name: 'saps', arguments: ['powershell.exe'] },
     { name: 'start', arguments: ['powershell.exe'] },
+    { name: 'New-Item', arguments: ['Alias:x', '-Value', 'Get-ChildItem'] },
+    { name: 'ni', arguments: ['Alias:x', '-Value', 'Get-ChildItem'] },
+    { name: 'Microsoft.PowerShell.Management\\Set-Item', arguments: ['Function:x', null] },
+    { name: 'si', arguments: [null, 'Get-ChildItem'] },
+    { name: 'Copy-Item', arguments: ['Alias:gci', 'Alias:x'] },
+    { name: 'Remove-Item', arguments: ['Microsoft.PowerShell.Core\\Alias::where'] },
     { name: 'Get-ChildItem', arguments: ['-LiteralPath', '.', '..'] },
     { name: null, arguments: ['..'] }
   ])('rejects $name before starting the workload', async (entry) => {
@@ -69,6 +75,8 @@ describe('PowerShell search admission contract', () => {
       { name: 'WHERE', arguments: [null] },
       { name: 'where.exe', arguments: ['/r', '.', 'chart.png'] },
       { name: 'rg.exe', arguments: ['--ignore-file=./ignore', 'needle', '.'] },
+      { name: 'New-Item', arguments: ['./data', '-ItemType', 'Directory'] },
+      { name: 'Set-Item', arguments: ['./note.txt', '-Value', 'ordinary text'] },
       { name: 'Write-Output', arguments: ['documentation containing find /'] }
     ])
     const sentinel = new Error('stopped before workload')
