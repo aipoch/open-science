@@ -100,7 +100,7 @@ describe('post-merge Windows validation', () => {
     expect(workflow.on?.schedule).toEqual([{ cron: '47 * * * *' }])
     expect(dispatch?.inputs?.mode).toMatchObject({
       default: 'full',
-      options: ['full', 'notebook-sandbox', 'regressions']
+      options: ['full', 'notebook-sandbox', 'notebook-mutation', 'regressions']
     })
     expect(workflow.on).not.toHaveProperty('workflow_call')
     expect(findStep(plan, 'Check for untested main changes').run).toContain(
@@ -108,7 +108,7 @@ describe('post-merge Windows validation', () => {
     )
     expect(job).toMatchObject({
       needs: 'plan',
-      if: "${{ needs.plan.outputs.should_test == 'true' && (github.event_name != 'workflow_dispatch' || inputs.mode != 'notebook-sandbox') }}",
+      if: "${{ needs.plan.outputs.should_test == 'true' && (github.event_name != 'workflow_dispatch' || (inputs.mode == 'full' || inputs.mode == 'regressions')) }}",
       env: { VITEST_WINDOWS_FULL_TEST: '1' },
       'runs-on': 'windows-latest',
       'timeout-minutes': 35
@@ -131,7 +131,7 @@ describe('post-merge Windows validation', () => {
     expect(regressions.run).not.toContain('--shard')
     expect(sandbox).toMatchObject({
       needs: 'plan',
-      if: "${{ needs.plan.outputs.should_test == 'true' && (github.event_name != 'workflow_dispatch' || inputs.mode != 'regressions') }}",
+      if: "${{ needs.plan.outputs.should_test == 'true' && (github.event_name != 'workflow_dispatch' || (inputs.mode == 'full' || inputs.mode == 'notebook-sandbox')) }}",
       'runs-on': 'windows-latest',
       'timeout-minutes': 20
     })
