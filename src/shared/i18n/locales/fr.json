@@ -105,6 +105,7 @@
     "Your unsaved changes will be lost.": "Vos modifications non enregistrées seront perdues."
   },
   "renderer": {
+    "Cancellation request failed": "La demande d’annulation a échoué",
     "This TIFF exceeds the {{limit}} MiB preview limit. Download it or open it externally.": "Ce fichier TIFF dépasse la limite d’aperçu de {{limit}} Mio. Téléchargez-le ou ouvrez-le dans une application externe.",
     "Shared content": "Contenu partagé",
     "Literature settings and tasks": "Paramètres et tâches bibliographiques",

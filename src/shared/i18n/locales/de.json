@@ -104,6 +104,7 @@
     "Your unsaved changes will be lost.": "Ihre ungespeicherten Änderungen gehen verloren."
   },
   "renderer": {
+    "Cancellation request failed": "Abbruchanforderung fehlgeschlagen",
     "This TIFF exceeds the {{limit}} MiB preview limit. Download it or open it externally.": "Diese TIFF-Datei überschreitet die Vorschaugrenze von {{limit}} MiB. Laden Sie sie herunter oder öffnen Sie sie extern.",
     "Shared content": "Gemeinsame Inhalte",
     "Literature settings and tasks": "Literatureinstellungen und Aufgaben",

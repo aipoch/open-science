@@ -5,6 +5,7 @@ import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import type { PersistedSideChat } from '../../shared/session-persistence'
+import { BackendShutdownCoordinator } from '../lifecycle-shutdown'
 import { SIDE_CHAT_MESSAGE_LIMIT } from '../../shared/side-chat'
 import type { AcpRuntimeOptions } from '../acp/runtime'
 import { SideChatRelayOwner } from '../acp/side-chat-relay-owner'
@@ -2054,6 +2055,73 @@ describe('SideChatRuntimeOwner lifecycle', () => {
     expect(sendPrompt).not.toHaveBeenCalled()
     expect(shutdownForQuit).toHaveBeenCalledOnce()
   })
+
+  it.each(['degraded', 'rejected'] as const)(
+    'blocks the update gate after %s Side chat process cleanup',
+    async (mode) => {
+      temporaryRoot = await mkdtemp(join(tmpdir(), 'open-science-side-chat-shutdown-save-fail-'))
+      const persistence = createPersistence()
+      let runtimeOptions: AcpRuntimeOptions | undefined
+      const shutdownForQuit = vi.fn(async () => {
+        if (mode === 'rejected') throw new Error('provider process remains alive')
+        return { reaped: false }
+      })
+      const owner = new SideChatRuntimeOwner({
+        appVersion: '0.11.0',
+        configRoot: temporaryRoot,
+        captureTarget: vi.fn(async () => target),
+        resolveTarget: vi.fn(async () => backend(claudeCodeFramework)),
+        relay: createRelayOwner(),
+        persistence,
+        onEvent: vi.fn(),
+        createRuntime: (options) => {
+          runtimeOptions = options
+          return {
+            createSession: vi.fn(async () => ({
+              sessionId: 'provider-shutdown-save-fail',
+              frameworkId: 'claude-code' as const
+            })),
+            sendPrompt: vi.fn(async (request: { sessionId: string }) => {
+              runtimeOptions!.callbacks?.onProviderPromptAccepted?.(request.sessionId)
+              return { stopReason: 'end_turn' as const }
+            }),
+            cancelPrompt: vi.fn(async () => ({ stopReason: 'cancelled' })),
+            deleteSession: vi.fn(async () => ({ sessionIds: [] })),
+            respondToPermission: vi.fn(async () => undefined),
+            shutdownForQuit
+          } as never
+        }
+      })
+      await owner.start({
+        parentSessionId: 'main-shutdown-save-fail',
+        projectId: 'project-1',
+        text: 'Initial turn'
+      })
+      await vi.waitFor(() => expect(persistence.save.mock.calls.length).toBeGreaterThanOrEqual(2))
+      const clean = async (): Promise<{ reaped: boolean }> => ({ reaped: true })
+      const coordinator = new BackendShutdownCoordinator({
+        runtime: { shutdownForQuit: clean, shutdownForUpdateGate: clean },
+        notebook: { dispose: clean, shutdownAll: clean },
+        sideChat: owner
+      })
+      await expect(coordinator.runForUpdateGate(1000)).resolves.toEqual({
+        completed: true,
+        reaped: false
+      })
+      expect(shutdownForQuit).toHaveBeenCalledOnce()
+      await expect(coordinator.runForUpdateGate(1000)).resolves.toEqual({
+        completed: true,
+        reaped: false
+      })
+      expect(shutdownForQuit).toHaveBeenCalledTimes(2)
+      shutdownForQuit.mockResolvedValue({ reaped: true })
+      await expect(coordinator.runForUpdateGate(1000)).resolves.toEqual({
+        completed: true,
+        reaped: true
+      })
+      expect(shutdownForQuit).toHaveBeenCalledTimes(3)
+    }
+  )
 
   it('reports a final durable write failure while still shutting down the provider', async () => {
     temporaryRoot = await mkdtemp(join(tmpdir(), 'open-science-side-chat-shutdown-save-fail-'))

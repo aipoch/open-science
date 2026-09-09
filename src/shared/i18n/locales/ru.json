@@ -106,6 +106,7 @@
     "Your unsaved changes will be lost.": "Несохранённые изменения будут потеряны."
   },
   "renderer": {
+    "Cancellation request failed": "Не удалось запросить отмену",
     "This TIFF exceeds the {{limit}} MiB preview limit. Download it or open it externally.": "Этот TIFF превышает ограничение предпросмотра в {{limit}} МиБ. Скачайте его или откройте во внешнем приложении.",
     "Shared content": "Общее содержимое",
     "Literature settings and tasks": "Настройки и задачи литературы",

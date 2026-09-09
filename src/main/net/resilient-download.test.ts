@@ -1,3 +1,4 @@
+import { getEventListeners } from 'node:events'
 import { createHash } from 'node:crypto'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -816,4 +817,62 @@ describe('resilientDownload', () => {
     expect(fetchImpl.mock.calls.length).toBe(1)
     expect(renameImpl.mock.calls.length).toBe(1)
   })
+})
+
+it('releases rejected HTTP response bodies before retrying or returning', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'download-response-release-'))
+  const attempts: { body: ReadableStream<Uint8Array>; signal: AbortSignal; cancelled: boolean }[] =
+    []
+  const released = (): boolean =>
+    attempts.every((attempt) => attempt.cancelled || attempt.signal.aborted)
+  let releasedBeforeRetry = false
+  const fetchImpl = vi.fn(async (_url: unknown, init?: RequestInit) => {
+    if (attempts.length) releasedBeforeRetry = released()
+    const attempt = {
+      signal: init!.signal as AbortSignal,
+      cancelled: false,
+      body: undefined as unknown as ReadableStream<Uint8Array>
+    }
+    attempt.body = new ReadableStream<Uint8Array>({
+      cancel: () => {
+        attempt.cancelled = true
+      }
+    })
+    attempts.push(attempt)
+    return new Response(attempt.body, { status: 503 })
+  })
+  try {
+    await expect(
+      resilientDownload('https://fixture.invalid/file', join(root, 'file'), {
+        maxRetries: 1,
+        deps: { fetchImpl, sleep: async () => undefined }
+      })
+    ).rejects.toThrow('server error 503')
+    expect(fetchImpl).toHaveBeenCalledTimes(2)
+    expect(releasedBeforeRetry).toBe(true)
+    expect(released()).toBe(true)
+  } finally {
+    await Promise.all(attempts.map((attempt) => attempt.body.cancel()))
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+it('removes the external cancellation listener after completed retry backoff', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'download-backoff-release-'))
+  const controller = new AbortController()
+  try {
+    await expect(
+      resilientDownload('https://fixture.invalid/file', join(root, 'file'), {
+        signal: controller.signal,
+        maxRetries: 1,
+        deps: {
+          fetchImpl: vi.fn(async () => new Response(null, { status: 503 })),
+          sleep: async () => undefined
+        }
+      })
+    ).rejects.toThrow('server error 503')
+    expect(getEventListeners(controller.signal, 'abort')).toHaveLength(0)
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
 })

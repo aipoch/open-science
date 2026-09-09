@@ -103,6 +103,7 @@
     "Your unsaved changes will be lost.": "저장하지 않은 변경 사항이 사라집니다."
   },
   "renderer": {
+    "Cancellation request failed": "취소 요청에 실패했습니다",
     "This TIFF exceeds the {{limit}} MiB preview limit. Download it or open it externally.": "이 TIFF는 미리보기 제한인 {{limit}} MiB를 초과합니다. 다운로드하거나 외부 앱에서 여세요.",
     "Shared content": "공유 콘텐츠",
     "Literature settings and tasks": "문헌 설정 및 작업",
