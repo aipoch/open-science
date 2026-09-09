@@ -1451,158 +1451,157 @@ class NotebookExecutionOwner {
       }
       let preparedShell:
         Awaited<ReturnType<NonNullable<NotebookShellProcess['prepare']>>> | undefined
-      let durableAdmission: Awaited<ReturnType<NotebookRunTerminalizationOwner['admit']>>
-      try {
-        if (lifecycleSignal.aborted) throw lifecycleSignal.reason
-        // Production freezes sandbox roots, trust material, network decision state, and one-shot
-        // grants before durable admission. Injected test adapters may keep the legacy execute port.
-        preparedShell = await this.shellProcess.prepare?.(shellProcessRequest)
-        durableAdmission = await this.options.runTerminalization.admit({ session, queuedRun })
-      } catch (error) {
-        rejectAdmitted(error)
-        preparedShell?.dispose()
-        finishLifecycle()
-        throw error
-      }
-      resolveAdmitted(durableAdmission.run)
-      onAdmitted?.(durableAdmission.run)
-      if (!durableAdmission.admitted) {
-        preparedShell?.dispose()
-        finishLifecycle()
-        return publicShellResult(durableAdmission.run)
-      }
-      liveRun.requestCancellation = async (reason: unknown) => {
-        await this.options.runTerminalization.requestCancellation(
-          session,
-          durableAdmission.run,
-          reason
-        )
-      }
-      if (lifecycleSignal.aborted) {
-        await liveRun.requestCancellation(lifecycleSignal.reason)
-      }
-      this.options.notifyAvailable(session, 'agent')
       let lease: ShellAdmissionLease | undefined
       try {
-        lease = await this.shellAdmission.acquire(
-          session.projectId,
-          session.sessionId,
-          lifecycleSignal
-        )
-      } catch {
-        preparedShell?.dispose()
-        const cancelled = await this.options.runTerminalization.cancelQueued(
-          session,
-          durableAdmission.run,
-          new Error(SHELL_CANCELLED_MESSAGE)
-        )
-        const result = {
-          stdout: cancelled.text.stdout,
-          stderr: cancelled.text.stderr,
-          exitCode: null,
-          ...(cancelled.truncated ? { truncated: true } : {})
+        let durableAdmission: Awaited<ReturnType<NotebookRunTerminalizationOwner['admit']>>
+        try {
+          if (lifecycleSignal.aborted) throw lifecycleSignal.reason
+          // Production freezes sandbox roots, trust material, network decision state, and one-shot
+          // grants before durable admission. Injected test adapters may keep the legacy execute port.
+          preparedShell = await this.shellProcess.prepare?.(shellProcessRequest)
+          durableAdmission = await this.options.runTerminalization.admit({ session, queuedRun })
+        } catch (error) {
+          rejectAdmitted(error)
+          throw error
         }
-        finishLifecycle()
-        return result
-      }
-      try {
-        const terminalized = await this.options.runTerminalization.runAdmitted({
-          session,
-          queuedRun: {
-            ...durableAdmission.run,
-            inputFiles: queuedRun.inputFiles,
-            shellConcurrency: { limit: lease.limit, slot: lease.slot }
-          },
-          invoke: async () => {
-            const workingFileObservation = await startWorkingFileObservation({
-              dataRoot: session.dataRoot,
-              notebookSessionRoot: frozenShellContext.notebookSessionRoot,
-              ...this.fileEvidenceLocation(session),
-              runId: runId!,
-              signal: lifecycleSignal
-            })
-            let workingFiles: NotebookWorkingFile[] = []
-            let fileEvidence: ExecutionFileEvidenceSummary | undefined
-            const blockedMutation = detectManagedRuntimeMutation({
-              source: request.command,
-              surface: platform === 'win32' ? 'powershell' : 'bash',
-              runtimeRoot: frozenShellContext.runtimeRoot,
-              cwd: frozenShellContext.cwd,
-              platform
-            })
-            let shellResult: NotebookShellResult | undefined
-            try {
-              shellResult = await (blockedMutation
-                ? Promise.resolve<NotebookShellResult>({
-                    stdout: '',
-                    stderr: `MANAGED_RUNTIME_MUTATION_BLOCKED: ${blockedMutation.message}`,
-                    exitCode: 1
-                  })
-                : preparedShell
-                  ? preparedShell.execute(lifecycleSignal)
-                  : this.shellProcess.execute({
-                      ...shellProcessRequest,
-                      signal: lifecycleSignal
-                    }))
-            } finally {
-              const observation = await workingFileObservation.finish(
-                shellResult === undefined ||
-                  signal?.aborted ||
-                  shellResult.cancelled ||
-                  shellResult.exitCode === null
-                  ? AbortSignal.abort()
-                  : signal
-              )
-              workingFiles = observation.workingFiles
-              fileEvidence = observation.fileEvidence
-            }
-            if (!shellResult)
-              throw new Error('Notebook shell execution completed without a result.')
-            ownedTreeReaped = shellResult.ownedTreeReaped !== false
-            const status: NotebookRunStatus = shellResult.cancelled
-              ? 'cancelled'
-              : shellResult.exitCode === 0
-                ? 'completed'
-                : shellResult.exitCode === null
-                  ? 'timeout'
-                  : 'failed'
-            const outputs: NotebookOutput[] = [
-              ...(shellResult.stdout
-                ? [{ type: 'stream' as const, name: 'stdout' as const, text: shellResult.stdout }]
-                : []),
-              ...(shellResult.stderr
-                ? [{ type: 'stream' as const, name: 'stderr' as const, text: shellResult.stderr }]
-                : [])
-            ]
-
-            return {
-              status,
-              stdout: shellResult.stdout,
-              stderr: shellResult.stderr,
-              traceback: '',
-              cwdAfter: frozenShellContext.cwd,
-              outputs,
-              truncated: shellResult.truncated,
-              workingFiles,
-              fileEvidence,
-              exitCode: shellResult.exitCode
-            }
+        resolveAdmitted(durableAdmission.run)
+        onAdmitted?.(durableAdmission.run)
+        if (!durableAdmission.admitted) {
+          return publicShellResult(durableAdmission.run)
+        }
+        liveRun.requestCancellation = async (reason: unknown) => {
+          await this.options.runTerminalization.requestCancellation(
+            session,
+            durableAdmission.run,
+            reason
+          )
+        }
+        if (lifecycleSignal.aborted) {
+          await liveRun.requestCancellation(lifecycleSignal.reason)
+        }
+        this.options.notifyAvailable(session, 'agent')
+        try {
+          lease = await this.shellAdmission.acquire(
+            session.projectId,
+            session.sessionId,
+            lifecycleSignal
+          )
+        } catch {
+          const cancelled = await this.options.runTerminalization.cancelQueued(
+            session,
+            durableAdmission.run,
+            new Error(SHELL_CANCELLED_MESSAGE)
+          )
+          const result = {
+            stdout: cancelled.text.stdout,
+            stderr: cancelled.text.stderr,
+            exitCode: null,
+            ...(cancelled.truncated ? { truncated: true } : {})
           }
-        })
-        const result = terminalized.result
-        if (!result) {
-          return publicShellResult(terminalized.run)
+          return result
         }
-        return {
-          stdout: result.stdout,
-          stderr: result.stderr,
-          exitCode: result.exitCode,
-          ...(result.truncated ? { truncated: true } : {})
+        {
+          const terminalized = await this.options.runTerminalization.runAdmitted({
+            session,
+            queuedRun: {
+              ...durableAdmission.run,
+              inputFiles: queuedRun.inputFiles,
+              shellConcurrency: { limit: lease.limit, slot: lease.slot }
+            },
+            invoke: async () => {
+              const workingFileObservation = await startWorkingFileObservation({
+                dataRoot: session.dataRoot,
+                notebookSessionRoot: frozenShellContext.notebookSessionRoot,
+                ...this.fileEvidenceLocation(session),
+                runId: runId!,
+                signal: lifecycleSignal
+              })
+              let workingFiles: NotebookWorkingFile[] = []
+              let fileEvidence: ExecutionFileEvidenceSummary | undefined
+              const blockedMutation = detectManagedRuntimeMutation({
+                source: request.command,
+                surface: platform === 'win32' ? 'powershell' : 'bash',
+                runtimeRoot: frozenShellContext.runtimeRoot,
+                cwd: frozenShellContext.cwd,
+                platform
+              })
+              let shellResult: NotebookShellResult | undefined
+              try {
+                shellResult = await (blockedMutation
+                  ? Promise.resolve<NotebookShellResult>({
+                      stdout: '',
+                      stderr: `MANAGED_RUNTIME_MUTATION_BLOCKED: ${blockedMutation.message}`,
+                      exitCode: 1
+                    })
+                  : preparedShell
+                    ? preparedShell.execute(lifecycleSignal)
+                    : this.shellProcess.execute({
+                        ...shellProcessRequest,
+                        signal: lifecycleSignal
+                      }))
+              } finally {
+                const observation = await workingFileObservation.finish(
+                  shellResult === undefined ||
+                    signal?.aborted ||
+                    shellResult.cancelled ||
+                    shellResult.exitCode === null
+                    ? AbortSignal.abort()
+                    : signal
+                )
+                workingFiles = observation.workingFiles
+                fileEvidence = observation.fileEvidence
+              }
+              if (!shellResult)
+                throw new Error('Notebook shell execution completed without a result.')
+              ownedTreeReaped = shellResult.ownedTreeReaped !== false
+              const status: NotebookRunStatus = shellResult.cancelled
+                ? 'cancelled'
+                : shellResult.exitCode === 0
+                  ? 'completed'
+                  : shellResult.exitCode === null
+                    ? 'timeout'
+                    : 'failed'
+              const outputs: NotebookOutput[] = [
+                ...(shellResult.stdout
+                  ? [{ type: 'stream' as const, name: 'stdout' as const, text: shellResult.stdout }]
+                  : []),
+                ...(shellResult.stderr
+                  ? [{ type: 'stream' as const, name: 'stderr' as const, text: shellResult.stderr }]
+                  : [])
+              ]
+
+              return {
+                status,
+                stdout: shellResult.stdout,
+                stderr: shellResult.stderr,
+                traceback: '',
+                cwdAfter: frozenShellContext.cwd,
+                outputs,
+                truncated: shellResult.truncated,
+                workingFiles,
+                fileEvidence,
+                exitCode: shellResult.exitCode
+              }
+            }
+          })
+          const result = terminalized.result
+          if (!result) {
+            return publicShellResult(terminalized.run)
+          }
+          return {
+            stdout: result.stdout,
+            stderr: result.stderr,
+            exitCode: result.exitCode,
+            ...(result.truncated ? { truncated: true } : {})
+          }
         }
       } finally {
-        preparedShell?.dispose()
-        lease.release()
-        finishLifecycle()
+        try {
+          preparedShell?.dispose()
+        } finally {
+          lease?.release()
+          finishLifecycle()
+        }
       }
     })()
     // Fail duplicate callers waiting for admission even when an error occurs before durable admit.

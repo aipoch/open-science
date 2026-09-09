@@ -341,3 +341,96 @@ describe('createComputeJobRuntime', () => {
     }
   })
 })
+
+it('stops independent Compute resources when queue draining rejects', async () => {
+  const stopPoller = vi.fn(async () => undefined)
+  const stopReaper = vi.fn(async () => undefined)
+  const adapter = (
+    stop: () => Promise<void>
+  ): {
+    start: ReturnType<typeof vi.fn>
+    stop: () => Promise<void>
+    pause: ReturnType<typeof vi.fn>
+    resume: ReturnType<typeof vi.fn>
+  } => ({
+    start: vi.fn(),
+    stop,
+    pause: vi.fn(),
+    resume: vi.fn()
+  })
+  const runtime = createComputeJobRuntime(
+    {
+      computeService: {
+        handleJobUpdated: vi.fn(),
+        handleJobCancellationConfirmed: vi.fn(),
+        startQueueReconciliation: vi.fn(),
+        stopQueueReconciliation: vi.fn().mockRejectedValue(new Error('queue drain unavailable'))
+      },
+      hostRepository: {},
+      jobRepository: {},
+      operationRepository: {},
+      connectionBroker: {},
+      storageRoot: '/unused'
+    } as never,
+    {
+      createPoller: () => adapter(stopPoller),
+      createCancellationReaper: () => adapter(stopReaper)
+    } as never
+  )
+  await runtime.start()
+  await expect(runtime.stop()).rejects.toThrow()
+  expect(stopPoller).toHaveBeenCalledOnce()
+  expect(stopReaper).toHaveBeenCalledOnce()
+})
+
+it.each(['startup', 'poller-stop'] as const)(
+  'attempts all stops after a %s failure and retains the repeated stop result',
+  async (stage) => {
+    const failure = new Error('runtime cleanup fixture')
+    const startPoller = vi.fn(async () => {
+      if (stage === 'startup') throw failure
+    })
+    const stopPoller = vi.fn(() => {
+      if (stage === 'poller-stop') throw failure
+      return Promise.resolve()
+    })
+    const stopReaper = vi.fn(async () => undefined)
+    const runtime = createComputeJobRuntime(
+      {
+        computeService: {
+          handleJobUpdated: vi.fn(),
+          handleJobCancellationConfirmed: vi.fn(),
+          startQueueReconciliation: vi.fn(),
+          stopQueueReconciliation: vi.fn()
+        },
+        hostRepository: {},
+        jobRepository: {},
+        operationRepository: {},
+        connectionBroker: {},
+        storageRoot: '/unused'
+      } as never,
+      {
+        createPoller: () => ({
+          start: startPoller,
+          stop: stopPoller,
+          pause: vi.fn(),
+          resume: vi.fn()
+        }),
+        createCancellationReaper: () => ({
+          start: vi.fn(),
+          stop: stopReaper,
+          pause: vi.fn(),
+          resume: vi.fn()
+        })
+      }
+    )
+    if (stage === 'startup') await expect(runtime.start()).rejects.toBe(failure)
+    else await runtime.start()
+    await expect(runtime.stop()).rejects.toBe(failure)
+    expect(stopPoller).toHaveBeenCalledOnce()
+    expect(stopReaper).toHaveBeenCalledOnce()
+    await expect(runtime.stop()).rejects.toBe(failure)
+    expect(stopPoller).toHaveBeenCalledOnce()
+    expect(stopReaper).toHaveBeenCalledOnce()
+  }
+)

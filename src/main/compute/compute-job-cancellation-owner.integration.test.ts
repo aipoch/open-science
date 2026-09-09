@@ -465,3 +465,55 @@ describe('Compute Job cancellation owner (SQLite + fake SSH)', () => {
     ).rejects.toBeInstanceOf(ComputeHostUnavailableError)
   })
 })
+
+it.each(['claim', 'read', 'retry'] as const)(
+  'contains background cancellation %s failures and permits another tick',
+  async (stage) => {
+    const failure = new Error('cancellation store unavailable')
+    const failures: unknown[] = []
+    const observe = (error: unknown): void => {
+      failures.push(error)
+    }
+    const claimNext = vi.fn().mockResolvedValue(null)
+    if (stage === 'claim') claimNext.mockRejectedValueOnce(failure)
+    else claimNext.mockResolvedValueOnce({ jobId: 'job-1', operation: { attemptCount: 0 } })
+    const retry = vi.fn().mockRejectedValue(failure)
+    const get =
+      stage === 'read'
+        ? vi.fn().mockRejectedValue(failure)
+        : vi.fn().mockResolvedValue({ job_id: 'job-1', provider_id: 'host-1' })
+    const reaper = new ComputeJobCancellationReaper(
+      { claimNext, retry } as never,
+      { get } as never,
+      { acquire: vi.fn().mockRejectedValue(new Error('offline')) } as never,
+      { intervalMs: 10 }
+    )
+    process.on('unhandledRejection', observe)
+    try {
+      reaper.start()
+      await vi.waitFor(() => expect(claimNext.mock.calls.length).toBeGreaterThanOrEqual(2))
+      if (stage === 'retry') expect(retry).toHaveBeenCalledOnce()
+      expect(failures).toEqual([])
+    } finally {
+      await reaper.stop()
+      process.off('unhandledRejection', observe)
+    }
+  }
+)
+
+it('reports an in-flight cancellation failure to stop without abandoning background error handling', async () => {
+  let reject!: (error: Error) => void
+  const failure = new Error('claim failed during stop')
+  const claim = new Promise<null>((_resolve, rejectClaim) => {
+    reject = rejectClaim
+  })
+  const reaper = new ComputeJobCancellationReaper(
+    { claimNext: () => claim } as never,
+    {} as never,
+    {} as never
+  )
+  reaper.start()
+  const stopped = expect(reaper.stop()).rejects.toBe(failure)
+  reject(failure)
+  await stopped
+})

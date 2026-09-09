@@ -104,6 +104,7 @@
     "Your unsaved changes will be lost.": "Ihre ungespeicherten Änderungen gehen verloren."
   },
   "renderer": {
+    "Cancellation request failed": "Abbruchanforderung fehlgeschlagen",
     "Skills are loading. Paste again shortly.": "Fähigkeiten werden geladen. Fügen Sie den Inhalt gleich erneut ein.",
     "Could not load Skills. Try pasting again.": "Fähigkeiten konnten nicht geladen werden. Versuchen Sie erneut, den Inhalt einzufügen.",
     "This TIFF exceeds the {{limit}} MiB preview limit. Download it or open it externally.": "Diese TIFF-Datei überschreitet die Vorschaugrenze von {{limit}} MiB. Laden Sie sie herunter oder öffnen Sie sie extern.",

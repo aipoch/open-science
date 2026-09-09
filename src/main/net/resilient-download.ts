@@ -213,14 +213,14 @@ export const resilientDownload = async (
   const sleepOrAbort = (sleepFn: typeof sleep, ms: number, signal?: AbortSignal): Promise<void> => {
     if (!signal) return sleepFn(ms)
     if (signal.aborted) return Promise.reject(signal.reason ?? new Error('aborted'))
+    let onAbort!: () => void
     return Promise.race([
       sleepFn(ms),
       new Promise<never>((_, reject) => {
-        signal.addEventListener('abort', () => reject(signal.reason ?? new Error('aborted')), {
-          once: true
-        })
+        onAbort = () => reject(signal.reason ?? new Error('aborted'))
+        signal.addEventListener('abort', onAbort, { once: true })
       })
-    ])
+    ]).finally(() => signal.removeEventListener('abort', onAbort))
   }
 
   // Hoist the hash above the retry loop. The hash is fed bytes incrementally chunk-by-chunk during
@@ -554,6 +554,9 @@ export const resilientDownload = async (
       lastError = error
       fileError = null // reset per-attempt error tracker
       // Retryable (network/stall/5xx/incomplete) — continue to next attempt.
+    } finally {
+      if (stallTimer) clearTimeout(stallTimer)
+      controller.abort()
     }
   }
   throw lastError ?? new Error('download failed after retries')
