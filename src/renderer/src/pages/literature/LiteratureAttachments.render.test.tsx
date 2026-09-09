@@ -82,6 +82,12 @@ describe('Attachment safety and version access', () => {
     }
     await retry()
     await screen.findByText('File unavailable')
+    const attachmentRow = screen
+      .getByRole('button', { name: 'Preview paper-v2.pdf' })
+      .closest('[aria-busy]')!
+    expect(within(attachmentRow as HTMLElement).getByRole('alert').textContent).toContain(
+      'The attachment operation failed. Try again.'
+    )
     expect(
       (screen.getByRole('button', { name: 'Preview paper-v2.pdf' }) as HTMLButtonElement).disabled
     ).toBe(true)

@@ -105,25 +105,24 @@ const AttachmentPreview = ({
       type="button"
       disabled={pending || !version || version.availability === 'unavailable'}
       aria-label={t('Preview {{title}}', { title })}
-      className="flex min-w-0 flex-1 items-center gap-3 rounded-lg px-3 py-2 text-left hover:bg-muted disabled:cursor-default disabled:hover:bg-transparent"
+      className="flex w-full min-w-0 flex-1 items-center gap-3 rounded-lg px-3 py-2 text-left hover:bg-muted disabled:cursor-default disabled:hover:bg-transparent"
       onClick={() => version && onPreview(version)}
     >
       <FileText className="size-4 shrink-0 text-primary" aria-hidden="true" />
       <span className="min-w-0 flex-1">
         <span className="block truncate font-medium">{title}</span>
-        {version ? (
-          <span className="block text-xs text-muted-foreground">
-            {formatBytes(version.sizeBytes)}
-          </span>
-        ) : null}
-        <span
-          className={
-            version?.availability === 'unavailable'
-              ? 'block text-xs text-danger-000'
-              : 'block text-xs text-muted-foreground'
-          }
-        >
-          {pending ? null : health}
+        <span className="flex flex-wrap items-center gap-x-2 text-xs text-muted-foreground">
+          {version ? <span>{formatBytes(version.sizeBytes)}</span> : null}
+          {!pending ? (
+            <>
+              <span aria-hidden="true">·</span>
+              <span
+                className={version?.availability === 'unavailable' ? 'text-danger-000' : undefined}
+              >
+                {health}
+              </span>
+            </>
+          ) : null}
         </span>
         {version && !version.pageCount ? (
           <span className="block text-xs text-muted-foreground">
@@ -181,10 +180,11 @@ export const LiteratureAttachments = ({
         {itemOperations
           .filter(
             (operation) =>
-              operation.pending ||
-              operation.error ||
-              operation.receipt?.cleanupPending ||
-              operation.refreshFailed
+              !item.attachments.some((attachment) => attachment.id === operation.attachmentId) &&
+              (operation.pending ||
+                operation.error ||
+                operation.receipt?.cleanupPending ||
+                operation.refreshFailed)
           )
           .map((operation) => (
             <AttachmentOperationStatus key={operation.attachmentId} operation={operation} />
@@ -192,6 +192,13 @@ export const LiteratureAttachments = ({
         {item.attachments.map((attachment) => {
           const version = attachment.versions[0]
           const title = version?.filename ?? attachment.title
+          const operation = itemOperations.find((entry) => entry.attachmentId === attachment.id)
+          const showOperation =
+            operation &&
+            (operation.pending ||
+              operation.error ||
+              operation.receipt?.cleanupPending ||
+              operation.refreshFailed)
           const targetId = `literature-attachment:${attachment.id}`
           return (
             <ActionMenuTarget
@@ -228,12 +235,19 @@ export const LiteratureAttachments = ({
                 aria-busy={pending}
                 className="flex items-center rounded-lg border border-border bg-background"
               >
-                <AttachmentPreview
-                  pending={pending}
-                  version={version}
-                  title={title}
-                  onPreview={onPreview}
-                />
+                <div className="min-w-0 flex-1">
+                  <AttachmentPreview
+                    pending={pending}
+                    version={version}
+                    title={title}
+                    onPreview={onPreview}
+                  />
+                  {showOperation ? (
+                    <div className="pb-2 pl-10 pr-3">
+                      <AttachmentOperationStatus operation={operation} />
+                    </div>
+                  ) : null}
+                </div>
                 <AttachmentMenuButton
                   targetId={targetId}
                   title={title}
