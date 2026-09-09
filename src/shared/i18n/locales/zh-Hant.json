@@ -4877,6 +4877,9 @@
     "Recheck saved conversations": "重新檢查已儲存的對話",
     "Some changes have not been saved.": "部分變更尚未儲存。",
     "Allow once applies to the next execution in this runtime, even if the code changes. It allows multiple connections to this domain during that execution.": "允許一次適用於此執行環境的下一次執行，即使程式碼有所變更也仍然適用。該次執行期間可多次連線至此網域。",
-    "Next execution in this runtime": "此執行環境的下一次執行"
+    "Next execution in this runtime": "此執行環境的下一次執行",
+    "Open Science couldn't display this page": "Open Science 無法顯示此頁面",
+    "Background work may still be running. Reloading may lose unsaved changes on this page.": "背景工作可能仍在執行。重新載入可能會遺失此頁面上未儲存的變更。",
+    "Reload page": "重新載入頁面"
   }
 }

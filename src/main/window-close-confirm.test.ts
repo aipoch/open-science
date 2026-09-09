@@ -111,6 +111,36 @@ const flushPreferenceRead = async (): Promise<void> => {
 }
 
 describe('createCloseConfirm', () => {
+  it.each([
+    { name: 'agent', sessions: [session], unlisted: false },
+    { name: 'Reviewer or installer', sessions: [], unlisted: true },
+    {
+      name: 'delegated work',
+      sessions: [{ ...session, kind: 'delegated' as const }],
+      unlisted: false
+    }
+  ])(
+    'does not authorize quitting $name when the native confirmation fails',
+    async ({ sessions, unlisted }) => {
+      const nativeFallback = vi.fn().mockRejectedValue(new Error('Native dialog unavailable'))
+      const h = makeHarness({ isRendererAvailable: () => false, nativeFallback })
+      const result = await h.confirm('quit', sessions, unlisted)
+      expect(nativeFallback).toHaveBeenCalledOnce()
+      expect(result).toBe('cancel')
+    }
+  )
+
+  it('cancels a failed native fallback after missing ACK and permits a subsequent confirmation', async () => {
+    const nativeFallback = vi
+      .fn<CloseConfirmDeps['nativeFallback']>()
+      .mockRejectedValueOnce(new Error('dialog unavailable'))
+      .mockResolvedValueOnce({ choice: 'quit' })
+    const h = makeHarness({ nativeFallback })
+    await expect(h.confirm('quit', [session])).resolves.toBe('cancel')
+    await expect(h.confirm('quit', [session])).resolves.toBe('quit')
+    expect(nativeFallback).toHaveBeenCalledTimes(2)
+  })
+
   it('resolves quit immediately for the quit variant with no running work (no IPC)', async () => {
     const h = makeHarness()
     await expect(h.confirm('quit', [])).resolves.toBe('quit')
@@ -240,12 +270,12 @@ describe('createCloseConfirm', () => {
 
   it('still settles when the native fallback rejects (never strands the confirm)', async () => {
     // A stranded promise would pin the caller's in-flight guard forever and block quit. If the native
-    // dialog rejects (e.g. the window was destroyed), quit proceeds and close-to-tray stays resident.
+    // dialog rejects (e.g. the window was destroyed), cancel quit and keep close-to-tray resident.
     const rejecting = vi.fn(async (): Promise<NativeCloseConfirmResult> => {
       throw new Error('dialog failed')
     })
     const quitHarness = makeHarness({ isRendererAvailable: () => false, nativeFallback: rejecting })
-    await expect(quitHarness.confirm('quit', [session])).resolves.toBe('quit')
+    await expect(quitHarness.confirm('quit', [session])).resolves.toBe('cancel')
 
     const trayHarness = makeHarness({ isRendererAvailable: () => false, nativeFallback: rejecting })
     await expect(trayHarness.confirm('close-to-tray', [session])).resolves.toBe('minimize')

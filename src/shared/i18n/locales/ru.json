@@ -5326,6 +5326,9 @@
     "Recheck saved conversations": "Повторно проверить сохранённые диалоги",
     "Some changes have not been saved.": "Некоторые изменения не сохранены.",
     "Allow once applies to the next execution in this runtime, even if the code changes. It allows multiple connections to this domain during that execution.": "Однократное разрешение действует для следующего выполнения в этой среде, даже если код изменится. Во время этого выполнения разрешено несколько подключений к этому домену.",
-    "Next execution in this runtime": "Следующее выполнение в этой среде"
+    "Next execution in this runtime": "Следующее выполнение в этой среде",
+    "Open Science couldn't display this page": "Open Science не удалось отобразить эту страницу",
+    "Background work may still be running. Reloading may lose unsaved changes on this page.": "Фоновые задачи могут всё ещё выполняться. При перезагрузке несохранённые изменения на этой странице могут быть потеряны.",
+    "Reload page": "Перезагрузить страницу"
   }
 }

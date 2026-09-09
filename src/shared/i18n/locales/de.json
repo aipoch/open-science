@@ -5031,6 +5031,9 @@
     "Recheck saved conversations": "Gespeicherte Konversationen erneut prüfen",
     "Some changes have not been saved.": "Einige Änderungen wurden nicht gespeichert.",
     "Allow once applies to the next execution in this runtime, even if the code changes. It allows multiple connections to this domain during that execution.": "Einmal erlauben gilt für die nächste Ausführung in dieser Laufzeitumgebung, auch wenn sich der Code ändert. Während dieser Ausführung sind mehrere Verbindungen zu dieser Domain erlaubt.",
-    "Next execution in this runtime": "Nächste Ausführung in dieser Laufzeitumgebung"
+    "Next execution in this runtime": "Nächste Ausführung in dieser Laufzeitumgebung",
+    "Open Science couldn't display this page": "Open Science konnte diese Seite nicht anzeigen",
+    "Background work may still be running. Reloading may lose unsaved changes on this page.": "Hintergrundaufgaben werden möglicherweise noch ausgeführt. Beim Neuladen können ungespeicherte Änderungen auf dieser Seite verloren gehen.",
+    "Reload page": "Seite neu laden"
   }
 }
