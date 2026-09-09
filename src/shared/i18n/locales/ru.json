@@ -103,6 +103,7 @@
     "Import Connector configuration": "Импорт конфигурации коннектора"
   },
   "renderer": {
+    "This TIFF exceeds the {{limit}} MiB preview limit. Download it or open it externally.": "Этот TIFF превышает ограничение предпросмотра в {{limit}} МиБ. Скачайте его или откройте во внешнем приложении.",
     "Shared content": "Общее содержимое",
     "Literature settings and tasks": "Настройки и задачи литературы",
     "Select no more than {{limit}} references for this task.": "Выберите не более {{limit}} источников для этой задачи.",

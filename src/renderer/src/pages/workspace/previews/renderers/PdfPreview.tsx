@@ -896,6 +896,9 @@ const PdfPageCanvas = ({
     if (!isNearViewport) return
 
     let canceled = false
+    queueMicrotask(() => {
+      if (!canceled) setStatus('loading')
+    })
     let disposed = false
     // Clear canvas backing storage on exit; removing the DOM node alone may retain its bitmap.
     const dispose = (): void => {

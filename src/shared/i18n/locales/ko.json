@@ -100,6 +100,7 @@
     "Import Connector configuration": "커넥터 구성 가져오기"
   },
   "renderer": {
+    "This TIFF exceeds the {{limit}} MiB preview limit. Download it or open it externally.": "이 TIFF는 미리보기 제한인 {{limit}} MiB를 초과합니다. 다운로드하거나 외부 앱에서 여세요.",
     "Shared content": "공유 콘텐츠",
     "Literature settings and tasks": "문헌 설정 및 작업",
     "Select no more than {{limit}} references for this task.": "이 작업에는 문헌을 {{limit}}개 이하로 선택하세요.",

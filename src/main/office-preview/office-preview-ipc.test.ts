@@ -55,7 +55,7 @@ describe('registerOfficePreviewIpcHandlers', () => {
     supervisor.open.mockResolvedValue({ kind: 'started', sessionId: 'session-1' })
     supervisor.attachFrame.mockResolvedValue({ kind: 'attached', start: {} })
     registerOfficePreviewIpcHandlers(supervisor as never)
-    const sender = { id: 7, once: vi.fn() }
+    const sender = { id: 7, on: vi.fn(), removeListener: vi.fn(), once: vi.fn() }
     const event = { sender }
     const request = {
       requestId: 'request-1',
@@ -85,6 +85,8 @@ describe('registerOfficePreviewIpcHandlers', () => {
     const exitListeners = new Map<string, () => void>()
     const sender = {
       id: 7,
+      on: vi.fn(),
+      removeListener: vi.fn(),
       once: vi.fn((event: string, listener: () => void) => exitListeners.set(event, listener))
     }
 
@@ -110,7 +112,7 @@ describe('registerOfficePreviewIpcHandlers', () => {
   it('ignores malformed frame and runtime-state messages', async () => {
     const supervisor = createSupervisor()
     registerOfficePreviewIpcHandlers(supervisor as never)
-    const event = { sender: { id: 7, once: vi.fn() } }
+    const event = { sender: { id: 7, on: vi.fn(), removeListener: vi.fn(), once: vi.fn() } }
 
     await handlers.get('office-preview:attach-frame')?.(event, 123)
     listeners.get('office-preview:report-state')?.(event, 'session-1', {
@@ -131,7 +133,7 @@ describe('registerOfficePreviewIpcHandlers', () => {
       throw new Error('state failure')
     })
     registerOfficePreviewIpcHandlers(supervisor as never)
-    const event = { sender: { id: 7, once: vi.fn() } }
+    const event = { sender: { id: 7, on: vi.fn(), removeListener: vi.fn(), once: vi.fn() } }
 
     expect(() =>
       listeners.get('office-preview:report-state')?.(event, 'session-1', {
@@ -148,7 +150,7 @@ describe('registerOfficePreviewIpcHandlers', () => {
     const supervisor = createSupervisor()
     supervisor.open.mockRejectedValue(new OfficePreviewOpenSupersededError())
     registerOfficePreviewIpcHandlers(supervisor as never)
-    const event = { sender: { id: 8, once: vi.fn() } }
+    const event = { sender: { id: 8, on: vi.fn(), removeListener: vi.fn(), once: vi.fn() } }
 
     await expect(
       handlers.get('office-preview:open')?.(event, {

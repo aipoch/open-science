@@ -102,6 +102,7 @@
     "Import Connector configuration": "Importer la configuration du connecteur"
   },
   "renderer": {
+    "This TIFF exceeds the {{limit}} MiB preview limit. Download it or open it externally.": "Ce fichier TIFF dépasse la limite d’aperçu de {{limit}} Mio. Téléchargez-le ou ouvrez-le dans une application externe.",
     "Shared content": "Contenu partagé",
     "Literature settings and tasks": "Paramètres et tâches bibliographiques",
     "Select no more than {{limit}} references for this task.": "Sélectionnez au maximum {{limit}} références pour cette tâche.",

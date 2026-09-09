@@ -211,6 +211,7 @@ export const PreviewErrorCard = (props: {
   name: string
   error?: unknown
   fallbackMessage: string
+  retryable?: boolean
 }): React.JSX.Element => {
   const { t } = useTranslation()
   const { name, error, fallbackMessage } = props
@@ -230,7 +231,7 @@ export const PreviewErrorCard = (props: {
       name={name}
       title={t(unavailable ? 'File unavailable' : 'Preview unavailable')}
       message={message}
-      retryable
+      retryable={props.retryable ?? true}
     />
   )
 }
