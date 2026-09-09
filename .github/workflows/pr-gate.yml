@@ -814,7 +814,7 @@ jobs:
         run: npm run build:e2e
       - name: Build web application
         id: build_web
-        if: ${{ matrix.group == 'journeys' && contains(fromJSON(needs.preflight.outputs.plan).lanes, 'build') }}
+        if: ${{ matrix.group == 'regressions' || (matrix.group == 'journeys' && contains(fromJSON(needs.preflight.outputs.plan).lanes, 'build')) }}
         continue-on-error: true
         run: npm run build:web
       - name: Run functional journeys
@@ -855,9 +855,12 @@ jobs:
             test-results/
           retention-days: 5
           if-no-files-found: warn
+      - name: Install headless Chromium
+        if: ${{ matrix.group == 'presentation' || matrix.group == 'regressions' }}
+        run: npx playwright install chromium --only-shell
       - name: Run supplemental regressions
         id: e2e_regressions_macos
-        if: ${{ matrix.group == 'regressions' && steps.build_electron.outcome == 'success' }}
+        if: ${{ matrix.group == 'regressions' && steps.build_electron.outcome == 'success' && steps.build_web.outcome == 'success' }}
         continue-on-error: true
         env:
           PLAYWRIGHT_BLOB_OUTPUT_DIR: blob-report/regressions_macos
@@ -871,9 +874,6 @@ jobs:
           PLAYWRIGHT_BLOB_OUTPUT_DIR: blob-report/delegation_macos
           PLAYWRIGHT_JSON_OUTPUT_NAME: test-results/delegation_macos.json
         run: npm run test:e2e:delegation -- --fail-on-flaky-tests --global-timeout=1200000
-      - name: Install headless Chromium
-        if: ${{ matrix.group == 'presentation' }}
-        run: npx playwright install chromium --only-shell
       - name: Run renderer layout pilot
         id: renderer_layout
         if: ${{ matrix.group == 'presentation' }}
