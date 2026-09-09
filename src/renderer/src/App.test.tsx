@@ -1592,7 +1592,13 @@ describe('App startup routing', () => {
     expect(alert?.textContent).toContain('Project archive needs attention')
     expect(alert?.textContent).toContain('A damaged saved conversation was moved aside')
     expect(alert?.textContent).toContain('You can still permanently delete the project')
-    expect(container.querySelector('[data-testid="session-persistence-retry"]')).toBeNull()
+    expect(alert?.textContent).toContain('New Compute jobs may remain queued')
+    const recheck = container.querySelector<HTMLButtonElement>(
+      '[data-testid="session-persistence-retry"]'
+    )
+    expect(recheck?.textContent).toBe('Recheck saved conversations')
+    await act(async () => recheck?.dispatchEvent(new MouseEvent('click', { bubbles: true })))
+    expect(mocks.sessionPersistence.retryLoad).toHaveBeenCalledOnce()
     const dismiss = container.querySelector<HTMLButtonElement>(
       '[data-testid="session-persistence-dismiss"]'
     )
