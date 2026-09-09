@@ -401,7 +401,6 @@
     " (control tab falls back to most recent data kernel)": " (die Steuerungsregisterkarte verwendet ersatzweise den zuletzt aktiven Daten-Kernel)",
     " or ": "oder",
     "# Instructions\n\nStep-by-step guidance for the agent…": "# Anweisungen\n\nSchritt-für-Schritt-Anleitung für den Agenten…",
-    "(auto-generated from probe)": "(automatisch aus der Prüfung generiert)",
     "(optional override)": "(optionale Überschreibung)",
     "(optional)": "(optional)",
     "(version unavailable)": "(Version nicht verfügbar)",

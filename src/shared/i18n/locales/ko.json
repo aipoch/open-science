@@ -430,7 +430,6 @@
     " (control tab falls back to most recent data kernel)": "(제어 탭은 가장 최근의 데이터 커널로 돌아갑니다)",
     " or ": "또는",
     "# Instructions\n\nStep-by-step guidance for the agent…": "# 지침\n\n에이전트가 따를 단계별 안내…",
-    "(auto-generated from probe)": "(프로브에서 자동 생성됨)",
     "(optional override)": "(선택적 재정의)",
     "(optional)": "(선택사항)",
     "(version unavailable)": "(버전을 사용할 수 없음)",

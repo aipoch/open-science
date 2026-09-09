@@ -440,7 +440,6 @@
     " (control tab falls back to most recent data kernel)": "(l'onglet de contrôle revient au noyau de données le plus récent)",
     " or ": "ou",
     "# Instructions\n\nStep-by-step guidance for the agent…": "# Instructions\n\nConseils étape par étape pour l’agent…",
-    "(auto-generated from probe)": "(généré automatiquement à partir de la sonde)",
     "(optional override)": "(remplacement facultatif)",
     "(optional)": "(facultatif)",
     "(version unavailable)": "(version indisponible)",
