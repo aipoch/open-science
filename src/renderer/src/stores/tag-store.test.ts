@@ -836,3 +836,30 @@ it('retains a newer event read even when the command reply is still acceptable',
   remove()
   expect(useTagStore.getState().revision).toBe(3)
 })
+
+it('keeps a committed mutation ready when an earlier load rejects', async () => {
+  let rejectRead!: (error: Error) => void
+  const tag = {
+    id: 'custom-tag',
+    name: 'Original',
+    iconKey: 'tag' as const,
+    colorKey: 'gray' as const,
+    createdAt: 1,
+    updatedAt: 1
+  }
+  setTagsApi({
+    snapshot: vi.fn(
+      () =>
+        new Promise<TagSnapshot>((_, reject) => {
+          rejectRead = reject
+        })
+    ),
+    delete: vi.fn().mockResolvedValue(favoriteSnapshot(2))
+  })
+  useTagStore.setState({ ...favoriteSnapshot(1), tags: [tag], status: 'ready' })
+  const reading = useTagStore.getState().load()
+  await useTagStore.getState().delete(tag.id)
+  rejectRead(new Error('earlier read failed'))
+  await reading
+  expect(useTagStore.getState()).toMatchObject({ revision: 2, status: 'ready', error: undefined })
+})

@@ -244,3 +244,27 @@ it('retains a newer policy refresh error when older discovery completes', async 
   remove()
   expect(useRuntimeSettingsStore.getState().error).toBe('Could not load runtimes.')
 })
+
+it.each([false, true])(
+  'preserves discovery failures during policy refresh (cached: %s)',
+  async (cached) => {
+    const listEnvironments = vi.fn().mockResolvedValue({ python: [], r: [] })
+    setRuntimeApi({
+      listEnvironments,
+      getEnablement: vi.fn().mockResolvedValue(enablement),
+      getAgentEnvironmentCreationEnabled: vi.fn().mockResolvedValue(true)
+    })
+    if (cached) await useRuntimeSettingsStore.getState().load()
+    listEnvironments.mockRejectedValue(new Error('discovery failed'))
+    await expect(useRuntimeSettingsStore.getState().recheck()).rejects.toThrow('discovery failed')
+    await useRuntimeSettingsStore.getState().refreshPolicy()
+    expect(useRuntimeSettingsStore.getState().error).toBe('Could not load runtimes.')
+    if (cached) {
+      await useRuntimeSettingsStore.getState().load()
+      expect(useRuntimeSettingsStore.getState().error).toBe('Could not load runtimes.')
+    }
+    listEnvironments.mockResolvedValue({ python: [], r: [] })
+    await useRuntimeSettingsStore.getState().recheck()
+    expect(useRuntimeSettingsStore.getState().error).toBeNull()
+  }
+)

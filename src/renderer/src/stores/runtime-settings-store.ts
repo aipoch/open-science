@@ -80,7 +80,6 @@ const useRuntimeSettingsStore = create<RuntimeSettingsState>((set, get) => {
     // Events and completed writes invalidate any read already in flight. A burst shares one
     // request and gets a trailing read; it never repeats discovery or package inventory.
     policyGeneration += 1
-    set({ error: null })
     // A read can have settled just before this event while its finally cleanup is still queued.
     // Wait through that cleanup before requesting authority again.
     return policyRequest
@@ -129,7 +128,6 @@ const useRuntimeSettingsStore = create<RuntimeSettingsState>((set, get) => {
   const refresh = (force: boolean): Promise<RuntimeRegistrySnapshot> => {
     const state = get()
     if (!force && state.loaded && state.envs) {
-      set({ error: null })
       return readPolicy().then((agentEnvironmentCreationEnabled) => ({
         envs: state.envs!,
         enablement: state.enablement,

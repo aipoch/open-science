@@ -122,6 +122,7 @@ export const useTagStore = create<TagStore>((set, get) => ({
       return
     }
     const sequence = ++loadSequence
+    const revision = get().revision
     set({ status: 'loading', error: undefined })
     try {
       const snapshot = await window.api.tags.snapshot()
@@ -132,7 +133,7 @@ export const useTagStore = create<TagStore>((set, get) => ({
       }
       set({ ...stateFromSnapshot(snapshot), error: undefined })
     } catch {
-      if (sequence !== loadSequence) return
+      if (sequence !== loadSequence || revision !== get().revision) return
       set({ status: 'error', error: 'load' })
     }
   },
