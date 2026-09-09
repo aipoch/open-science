@@ -243,6 +243,7 @@ const WorkspacePage = ({
   const [manualReviewRequests, setManualReviewRequests] = useState<
     Record<string, ManualReviewRequestState>
   >({})
+  const previewFocusFallbackRef = useRef<HTMLElement>(null)
   const manualReviewPendingSessionIdsRef = useRef(new Set<string>())
   const syncPreviewPanelState = usePreviewWorkbenchStore((state) => state.syncPanelState)
   const runtime = useWorkspaceAgentRuntime()
@@ -1165,7 +1166,11 @@ const WorkspacePage = ({
     typeof window.api.backgroundResultDelivery?.getProjectActivity === 'function'
 
   return (
-    <main className="h-[100dvh] overflow-hidden bg-bg-10 text-[13px] leading-normal text-text-000 md:h-screen md:p-[10px]">
+    <main
+      ref={previewFocusFallbackRef}
+      tabIndex={-1}
+      className="h-[100dvh] overflow-hidden bg-bg-10 text-[13px] leading-normal text-text-000 md:h-screen md:p-[10px]"
+    >
       <WorkspacePanelLayout
         hasPreviewItems={previewItems.length > 0}
         isPreviewPresentationActive={isPreviewPresentationActive}
@@ -1482,6 +1487,7 @@ const WorkspacePage = ({
       />
 
       <FilePreviewDialog
+        onFocusFallback={() => previewFocusFallbackRef.current?.focus()}
         item={
           isPreviewPresentationActive && fileDialogItem?.projectId === activeProjectId
             ? fileDialogItem

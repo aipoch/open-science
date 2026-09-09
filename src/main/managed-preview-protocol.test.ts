@@ -1,4 +1,4 @@
-import { mkdtemp, open, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, open, readFile, rename, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -12,6 +12,104 @@ import {
 } from './managed-preview-protocol'
 
 describe('managed preview protocol', () => {
+  it.each([
+    ['bytes=-4', 'GHIJ', 'bytes 6-9/10'],
+    ['bytes=-99', 'ABCDEFGHIJ', 'bytes 0-9/10']
+  ])(
+    'serves the suffix range %s for an uncapped local capability',
+    async (range, text, contentRange) => {
+      const directory = await mkdtemp(join(tmpdir(), 'local-preview-suffix-'))
+      const filePath = join(directory, 'report.txt')
+      await writeFile(filePath, 'ABCDEFGHIJ')
+      const resources = new (await import('./managed-preview-resources')).ManagedPreviewResources({
+        resolvePath: async () => filePath
+      })
+      try {
+        const resource = await resources.acquire(17, { source: 'local', path: filePath })
+        const response = await createManagedPreviewProtocolHandler(resources)(
+          new Request(resource.url, { headers: { Range: range } })
+        )
+        const body = await response.text()
+        expect(response.status).toBe(206)
+        expect(body).toBe(text)
+        expect(response.headers.get('content-range')).toBe(contentRange)
+      } finally {
+        resources.releaseOwner(17)
+        await rm(directory, { recursive: true, force: true })
+      }
+    }
+  )
+
+  it.each([
+    ['protocol', 'inode replacement'],
+    ['protocol', 'directory junction'],
+    ['IPC', 'inode replacement'],
+    ['IPC', 'directory junction'],
+    ['capped IPC', 'inode replacement'],
+    ['capped IPC', 'directory junction']
+  ])('rejects %s reads after %s between local preview pages', async (transport, replacement) => {
+    const directory = await mkdtemp(join(tmpdir(), 'local-preview-capability-'))
+    const granted = join(directory, 'granted')
+    const current = join(granted, 'current')
+    const outside = join(directory, 'outside')
+    const filePath = join(current, 'report.txt')
+    await mkdir(current, { recursive: true })
+    await mkdir(outside)
+    await writeFile(filePath, Buffer.alloc(2 * 1024 * 1024, 65))
+    await writeFile(join(outside, 'report.txt'), Buffer.alloc(2 * 1024 * 1024, 83))
+    const resources = new (await import('./managed-preview-resources')).ManagedPreviewResources({
+      resolvePath: async () => filePath
+    })
+    const request = { source: 'local' as const, path: filePath }
+    const options =
+      transport === 'capped IPC'
+        ? { snapshot: await resources.inspect(request), maxBytes: 2 * 1024 * 1024 }
+        : undefined
+    const resource = await resources.acquire(17, request, options)
+    const handle = createManagedPreviewProtocolHandler(resources, async (path, request) => {
+      // Electron's path transport is the only substitute; both branches read real files.
+      const range = request.headers.get('range')!.match(/^bytes=(\d+)-(\d+)$/)!
+      const bytes = await readFile(path)
+      return new Response(bytes.subarray(Number(range[1]), Number(range[2]) + 1), {
+        status: 206
+      })
+    })
+    const readPage = async (begin: number): Promise<string> => {
+      if (transport !== 'protocol') {
+        const result = await resources.readRange(17, {
+          resourceId: resource.id,
+          begin,
+          end: begin + 4
+        })
+        return new TextDecoder().decode(result.data)
+      }
+      const response = await handle(
+        new Request(resource.url, { headers: { Range: `bytes=${begin}-${begin + 3}` } })
+      )
+      if (!response.ok) {
+        expect(response.status).toBe(404)
+        throw new Error('Preview capability is unavailable')
+      }
+      expect(response.status).toBe(206)
+      return response.text()
+    }
+    try {
+      expect(await readPage(0)).toBe('AAAA')
+      if (replacement === 'inode replacement') {
+        await rename(filePath, join(current, 'original.txt'))
+        await writeFile(filePath, Buffer.alloc(2 * 1024 * 1024, 83))
+      } else {
+        await rename(current, join(granted, 'original'))
+        // A directory junction also runs on Windows without file-symlink privileges.
+        await symlink(outside, current, 'junction')
+      }
+      await expect(readPage(4096)).rejects.toThrow()
+    } finally {
+      resources.releaseOwner(17)
+      await rm(directory, { recursive: true, force: true })
+    }
+  })
+
   it('can register the capability handler on an isolated Electron session', () => {
     const resources = {} as ManagedPreviewResources
     const targetProtocol = { handle: vi.fn(), unhandle: vi.fn() }

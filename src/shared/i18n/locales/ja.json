@@ -100,6 +100,7 @@
     "Import Connector configuration": "コネクタ構成のインポート"
   },
   "renderer": {
+    "This TIFF exceeds the {{limit}} MiB preview limit. Download it or open it externally.": "このTIFFはプレビューの上限（{{limit}} MiB）を超えています。ダウンロードするか、外部アプリで開いてください。",
     "Shared content": "共有コンテンツ",
     "Literature settings and tasks": "文献の設定とタスク",
     "Select no more than {{limit}} references for this task.": "このタスクでは {{limit}} 件以下の文献を選択してください。",

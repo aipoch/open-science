@@ -181,6 +181,157 @@ describe('PdfPreviewContent', () => {
     delete (Element.prototype as { scrollIntoView?: unknown }).scrollIntoView
   })
 
+  const flush = async (): Promise<void> => {
+    for (let i = 0; i < 20; i++) await Promise.resolve()
+  }
+  const observe = (): {
+    targets: Element[]
+    disconnect: ReturnType<typeof vi.fn>
+    unobserve: ReturnType<typeof vi.fn>
+    notify: (target: Element, near: boolean) => Promise<void>
+  } => {
+    let callback!: IntersectionObserverCallback
+    const targets: Element[] = []
+    const disconnect = vi.fn(),
+      unobserve = vi.fn()
+    vi.stubGlobal(
+      'IntersectionObserver',
+      class {
+        constructor(cb: IntersectionObserverCallback) {
+          callback = cb
+        }
+        observe(element: Element): void {
+          targets.push(element)
+        }
+        unobserve = unobserve
+        disconnect = disconnect
+      }
+    )
+    return {
+      targets,
+      disconnect,
+      unobserve,
+      notify: async (target: Element, near: boolean) =>
+        act(async () => {
+          callback(
+            [{ target, isIntersecting: near } as IntersectionObserverEntry],
+            {} as IntersectionObserver
+          )
+          await flush()
+        })
+    }
+  }
+
+  it.each(['ready', 'error'] as const)(
+    're-entering a previously %s page displays loading while pending',
+    async (firstStatus) => {
+      const io = observe()
+      const errorLog = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+      const page = await (getPage as ReturnType<typeof vi.fn<() => Promise<unknown>>>)()
+      getPage.mockClear()
+      if (firstStatus === 'error')
+        getPage.mockRejectedValueOnce(new Error('Temporary page read failure'))
+      await act(async () => {
+        root.render(<PdfPreviewContent path="/audit/reenter.pdf" name="reenter.pdf" />)
+        await flush()
+      })
+      const element = container.querySelector('[data-page-number="1"]')!
+      await io.notify(element, true)
+      expect(getPage).toHaveBeenCalledTimes(1)
+      expect(element.textContent?.includes('could not be rendered')).toBe(firstStatus === 'error')
+      await io.notify(element, false)
+      let complete!: (value: unknown) => void
+      getPage.mockReturnValueOnce(new Promise((resolve) => (complete = resolve)))
+      await io.notify(element, true)
+      expect(getPage).toHaveBeenCalledTimes(2)
+      expect(element.querySelector('canvas')).not.toBeNull()
+      expect(element.querySelector('[data-preview-status="compact-loading"]')).not.toBeNull()
+      expect(element.textContent).not.toContain('could not be rendered')
+      await act(async () => {
+        complete(page)
+        await flush()
+      })
+      expect(element.textContent).not.toContain('could not be rendered')
+      expect(element.querySelector('canvas')?.width).toBeGreaterThan(0)
+      errorLog.mockRestore()
+    }
+  )
+
+  it('sidebar expands its visible range when its container grows', async () => {
+    observe()
+    const observers: Array<{ callback: ResizeObserverCallback; targets: Element[] }> = []
+    vi.stubGlobal(
+      'ResizeObserver',
+      class {
+        entry: { callback: ResizeObserverCallback; targets: Element[] }
+        constructor(callback: ResizeObserverCallback) {
+          this.entry = { callback, targets: [] }
+          observers.push(this.entry)
+        }
+        observe(target: Element): void {
+          this.entry.targets.push(target)
+        }
+        unobserve = vi.fn()
+        disconnect = vi.fn()
+      }
+    )
+    let height = 224
+    vi.spyOn(HTMLElement.prototype, 'clientHeight', 'get').mockImplementation(() => height)
+    const sidebar = (pageCount = 100, currentPage = 1): React.JSX.Element => (
+      <PdfOutlineSidebar
+        document={{ getPage } as never}
+        items={[]}
+        pageCount={pageCount}
+        currentPage={currentPage}
+        width={240}
+        onNavigate={vi.fn()}
+        onClose={vi.fn()}
+        onWidthChange={vi.fn()}
+      />
+    )
+    await act(async () => {
+      root.render(sidebar())
+      await flush()
+    })
+    const list = container.querySelector('[aria-label="Pages"]')!.parentElement!
+    const buttons = (): HTMLButtonElement[] =>
+      Array.from(container.querySelectorAll<HTMLButtonElement>('button[aria-label^="Page "]'))
+    expect(buttons()).toHaveLength(9)
+    height = 2400
+    await act(async () => {
+      window.dispatchEvent(new Event('resize'))
+      observers.forEach(({ callback, targets }) =>
+        callback(
+          targets.map((target) => ({ target, contentRect: { height } }) as ResizeObserverEntry),
+          {} as ResizeObserver
+        )
+      )
+      root.render(sidebar())
+      await flush()
+    })
+    expect(buttons()).toHaveLength(19)
+    await act(async () => {
+      list.dispatchEvent(new Event('scroll'))
+      await flush()
+    })
+    expect(buttons()).toHaveLength(19)
+    await act(async () => {
+      root.render(sidebar(100, 90))
+      await flush()
+    })
+    expect(buttons().some((b) => b.getAttribute('aria-label') === 'Page 90')).toBe(true)
+    expect(buttons().length).toBeLessThanOrEqual(24)
+    await act(async () => {
+      root.render(sidebar(3, 1))
+      await flush()
+    })
+    expect(buttons().map((b) => b.getAttribute('aria-label'))).toEqual([
+      'Page 1',
+      'Page 2',
+      'Page 3'
+    ])
+  })
+
   it('renders through the managed range resource and releases it on unmount', async () => {
     await act(async () => {
       root.render(

@@ -100,6 +100,7 @@
     "Import Connector configuration": "匯入連接器設定"
   },
   "renderer": {
+    "This TIFF exceeds the {{limit}} MiB preview limit. Download it or open it externally.": "此 TIFF 超過 {{limit}} MiB 的預覽限制。請下載或使用外部應用程式開啟。",
     "Shared content": "共用內容",
     "Literature settings and tasks": "文獻設定與任務",
     "Select no more than {{limit}} references for this task.": "此任務最多支援 {{limit}} 篇文獻，請調整選取範圍。",

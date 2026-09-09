@@ -34,8 +34,18 @@ const registerOfficePreviewIpcHandlers = (supervisor: OfficePreviewSupervisorPor
         if (closed || trackedOwners.get(ownerId) !== event.sender) return
         closed = true
         trackedOwners.delete(ownerId)
+        event.sender.removeListener('did-start-navigation', onNavigation)
+        event.sender.removeListener('destroyed', closeOwner)
+        event.sender.removeListener('render-process-gone', closeOwner)
         void supervisor.closeOwner(ownerId)
       }
+      const onNavigation = ({
+        isSameDocument,
+        isMainFrame
+      }: Electron.Event<Electron.WebContentsDidStartNavigationEventParams>): void => {
+        if (isMainFrame && !isSameDocument) closeOwner()
+      }
+      event.sender.on('did-start-navigation', onNavigation)
       event.sender.once('destroyed', closeOwner)
       event.sender.once('render-process-gone', closeOwner)
     }
