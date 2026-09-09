@@ -98,8 +98,12 @@ const stateFromSnapshot = (snapshot: TagSnapshot): Pick<TagStore, keyof TagSnaps
 const stateFromMutationSnapshot = (
   snapshot: TagSnapshot,
   currentRevision: number
-): Partial<Pick<TagStore, keyof TagSnapshot | 'status'>> =>
-  snapshot.revision < currentRevision ? { status: 'ready' } : stateFromSnapshot(snapshot)
+): Partial<Pick<TagStore, keyof TagSnapshot | 'status' | 'error'>> => {
+  if (snapshot.revision < currentRevision) return {}
+  // Keep event-triggered reads alive even if this receipt is newer than the displayed state.
+  // load() already rejects a snapshot older than an accepted command result.
+  return { ...stateFromSnapshot(snapshot), error: undefined }
+}
 
 export const useTagStore = create<TagStore>((set, get) => ({
   ...createInitialTagState(),
@@ -118,6 +122,7 @@ export const useTagStore = create<TagStore>((set, get) => ({
       return
     }
     const sequence = ++loadSequence
+    const revision = get().revision
     set({ status: 'loading', error: undefined })
     try {
       const snapshot = await window.api.tags.snapshot()
@@ -128,14 +133,13 @@ export const useTagStore = create<TagStore>((set, get) => ({
       }
       set({ ...stateFromSnapshot(snapshot), error: undefined })
     } catch {
-      if (sequence !== loadSequence) return
+      if (sequence !== loadSequence || revision !== get().revision) return
       set({ status: 'error', error: 'load' })
     }
   },
   create: async (request) => {
     const snapshot = await window.api.tags.create(request)
-    loadSequence += 1
-    set((state) => ({ ...stateFromMutationSnapshot(snapshot, state.revision), error: undefined }))
+    set((state) => stateFromMutationSnapshot(snapshot, state.revision))
     const requestedNameKey = request.name
       .normalize('NFKC')
       .trim()
@@ -151,13 +155,11 @@ export const useTagStore = create<TagStore>((set, get) => ({
   },
   update: async (request) => {
     const snapshot = await window.api.tags.update(request)
-    loadSequence += 1
-    set((state) => ({ ...stateFromMutationSnapshot(snapshot, state.revision), error: undefined }))
+    set((state) => stateFromMutationSnapshot(snapshot, state.revision))
   },
   delete: async (id) => {
     const snapshot = await window.api.tags.delete({ id })
-    loadSequence += 1
-    set((state) => ({ ...stateFromMutationSnapshot(snapshot, state.revision), error: undefined }))
+    set((state) => stateFromMutationSnapshot(snapshot, state.revision))
   },
   reorder: async (request) => {
     const revision = get().revision
@@ -175,8 +177,7 @@ export const useTagStore = create<TagStore>((set, get) => ({
     const optimistic = get().tags
     try {
       const snapshot = await window.api.tags.reorder(request)
-      loadSequence += 1
-      set((state) => ({ ...stateFromMutationSnapshot(snapshot, state.revision), error: undefined }))
+      set((state) => stateFromMutationSnapshot(snapshot, state.revision))
     } catch (error) {
       const restored = rollbackProjection(failedTagProjections, optimistic, before)
       if (get().revision === revision && get().tags === optimistic) set({ tags: restored })
@@ -197,11 +198,9 @@ export const useTagStore = create<TagStore>((set, get) => ({
       const snapshot = await window.api.tags.setAssignment(request)
       pendingAssignments.delete(sequence)
       settledAssignments.set(key, Math.max(sequence, settledAssignments.get(key) ?? 0))
-      loadSequence += 1
       set((state) => ({
         assignments: projectAssignments(state.tags),
-        ...stateFromMutationSnapshot(snapshot, state.revision),
-        error: undefined
+        ...stateFromMutationSnapshot(snapshot, state.revision)
       }))
     } catch (error) {
       pendingAssignments.delete(sequence)

@@ -89,3 +89,21 @@ describe('LiteratureSources', () => {
     expect(screen.getByLabelText('Stored metadata').textContent).toContain('<script>bad</script>')
   })
 })
+
+it('refreshes saved sources while the disclosure stays open', async () => {
+  const listeners = new Set<() => void>()
+  Object.assign(window.api.literature, {
+    onChanged: (listener: () => void) => {
+      listeners.add(listener)
+      return () => listeners.delete(listener)
+    }
+  })
+  render(<LiteratureSources itemId="item-1" />)
+  await toggle('Metadata sources')
+  expect(await screen.findByText('Crossref')).not.toBeNull()
+  sources.mockResolvedValue([record, { ...record, id: 'source-2', provider: 'PubMed' }])
+  await act(async () => {
+    for (const listener of listeners) listener()
+  })
+  expect(screen.queryByText('PubMed')).not.toBeNull()
+})

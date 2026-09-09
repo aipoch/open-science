@@ -37,6 +37,7 @@ type RuntimeSettings = {
 
 type RuntimeWorkflowDeps = {
   settingsService: RuntimeSettings
+  onPolicyChanged?: () => void
   // Resolve lazily so a data-root switch reaches discovery immediately.
   runtimeRoot: () => string
   // Called only after disabled state is durable; force chooses stop-now instead of drain-and-close.
@@ -220,7 +221,9 @@ const createRuntimeWorkflows = (deps: RuntimeWorkflowDeps): RuntimeWorkflows => 
       if (typeof request?.enabled !== 'boolean') {
         throw new TypeError('Agent environment creation enabled must be a boolean.')
       }
-      return deps.settingsService.setAgentEnvironmentCreationEnabled(request.enabled)
+      const enabled = await deps.settingsService.setAgentEnvironmentCreationEnabled(request.enabled)
+      deps.onPolicyChanged?.()
+      return enabled
     },
     describeUsage: async (request) =>
       deps.describeRuntimeUsage?.(request.language, request.envId) ?? {

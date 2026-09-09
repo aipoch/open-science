@@ -490,3 +490,16 @@ describe('package-listing workflows', () => {
     expect(counts).toEqual({ '/managed/a': 1, '/usr/bin/python3': null })
   })
 })
+
+it('notifies other clients after committing the environment creation policy', async () => {
+  const settingsService = fakeSettingsService()
+  const onPolicyChanged = vi.fn()
+  const workflows = createRuntimeWorkflows({
+    settingsService,
+    runtimeRoot: () => '/fixture',
+    ...{ onPolicyChanged }
+  })
+  await workflows.setAgentEnvironmentCreationEnabled({ enabled: false })
+  expect(await settingsService.getAgentEnvironmentCreationEnabled()).toBe(false)
+  expect(onPolicyChanged).toHaveBeenCalledOnce()
+})
