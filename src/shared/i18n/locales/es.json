@@ -105,6 +105,8 @@
     "Your unsaved changes will be lost.": "Se perderán los cambios sin guardar."
   },
   "renderer": {
+    "Skills are loading. Paste again shortly.": "Se están cargando las Habilidades. Vuelva a pegar el contenido en breve.",
+    "Could not load Skills. Try pasting again.": "No se pudieron cargar las Habilidades. Intente pegar el contenido de nuevo.",
     "This TIFF exceeds the {{limit}} MiB preview limit. Download it or open it externally.": "Este archivo TIFF supera el límite de vista previa de {{limit}} MiB. Descárguelo o ábralo en una aplicación externa.",
     "Shared content": "Contenido compartido",
     "Literature settings and tasks": "Configuración y tareas bibliográficas",

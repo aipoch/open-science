@@ -12,6 +12,8 @@ import type { ChatMessage } from '@/stores/session-store'
 import type { SendEditedMessage } from './workspace-edited-message'
 import type { EditAnnotationTarget } from './WorkspaceMessageItem'
 import type { Annotation, TextAnnotation } from '../../../../shared/annotations'
+import { ComposerEditor } from './composer/ComposerEditor'
+import { domToDoc, docToMessageParts, emptyDoc } from './composer/composer-doc'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import { WorkspaceMessageItem as MessageItem } from './WorkspaceMessageItem'
 
@@ -974,6 +976,85 @@ describe('WorkspaceMessageItem user message actions', () => {
     await click(editButton)
     expect(getEditor()).toBeNull()
     expect(onSendEditedMessage).not.toHaveBeenCalled()
+  })
+
+  it('preserves file identities when a copied message is pasted into Composer', async () => {
+    const clipboard = new Map<string, string>()
+    vi.stubGlobal(
+      'ClipboardItem',
+      class {
+        constructor(readonly data: Record<string, Blob>) {}
+      }
+    )
+    const readBlob = (blob: Blob): Promise<string> =>
+      new Promise((resolve) => {
+        const reader = new FileReader()
+        reader.onload = () => resolve(String(reader.result))
+        reader.readAsText(blob)
+      })
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: {
+        writeText: async (text: string) => {
+          clipboard.set('text/plain', text)
+        },
+        write: async (items: { data: Record<string, Blob> }[]) => {
+          for (const [type, blob] of Object.entries(items[0].data)) {
+            clipboard.set(type, await readBlob(blob))
+          }
+        }
+      }
+    })
+    const parts: NonNullable<ChatMessage['parts']> = [
+      {
+        type: 'artifact',
+        id: 'upload-1',
+        sourceFileId: 'file-1',
+        versionId: 'version-1',
+        name: 'volcano-plot.csv',
+        path: 'uploads/plot.csv',
+        source: 'upload',
+        mimeType: 'text/csv'
+      },
+      { type: 'text', text: ' Plot in R' }
+    ]
+    try {
+      await renderItem(createMessage({ content: '@volcano-plot.csv Plot in R', parts }))
+      await click(getButton('Copy message'))
+      await act(async () => {
+        await vi.waitFor(() => expect(clipboard.has('text/html')).toBe(true))
+      })
+      await act(async () => {
+        root.render(
+          <ComposerEditor
+            doc={emptyDoc}
+            onDocChange={noop}
+            onSubmit={noop}
+            onPaste={noop}
+            placeholder="Ask anything"
+            ariaLabel="Ask anything"
+            mentionPreviewContext={{ sessionId: 'target-session', projectId: 'project-1' }}
+          />
+        )
+      })
+      const composer = container.querySelector<HTMLElement>('[role="textbox"]')!
+      composer.focus()
+      const range = document.createRange()
+      range.selectNodeContents(composer)
+      window.getSelection()?.removeAllRanges()
+      window.getSelection()?.addRange(range)
+      await act(async () => {
+        const paste = new Event('paste', { bubbles: true, cancelable: true })
+        Object.defineProperty(paste, 'clipboardData', {
+          value: { files: [], getData: (type: string) => clipboard.get(type) ?? '' }
+        })
+        composer.dispatchEvent(paste)
+      })
+      expect(composer.querySelector('[data-mention-type="artifact"]')).not.toBeNull()
+      expect(docToMessageParts(domToDoc(composer))).toEqual(parts)
+    } finally {
+      vi.unstubAllGlobals()
+    }
   })
 
   it('opens an inline editor prefilled from the message, restoring mention chips', async () => {
