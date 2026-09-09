@@ -403,7 +403,16 @@ describe('headless startup', () => {
     expect(deps.log).not.toHaveBeenCalled()
   })
 
+  it.each(['darwin', 'win32'])('rejects file storage before startup on %s', (platform) => {
+    vi.stubGlobal('process', Object.create(process, { platform: { value: platform } }))
+    expect(() => parseCliArgs(['start', '--credential-store=file'])).toThrow(
+      'supported only on Linux'
+    )
+    expect(parseCliArgs(['start', '--credential-store=os']).options.credentialStore).toBe('os')
+  })
+
   it('validates and forwards explicit credential storage without changing the default', () => {
+    vi.stubGlobal('process', Object.create(process, { platform: { value: 'linux' } }))
     for (const args of [['--credential-store=file'], ['--credential-store', 'file']]) {
       expect(parseCliArgs(['start', ...args]).options.credentialStore).toBe('file')
     }

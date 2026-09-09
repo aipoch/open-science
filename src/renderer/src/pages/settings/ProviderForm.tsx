@@ -359,7 +359,7 @@ const ProviderForm = ({
 
   return (
     <div className="space-y-4">
-      {fileCredentialNotice ? (
+      {fileCredentialNotice && !isCodexSubscription && value.type !== 'claude-shared' ? (
         <p role="status" className="text-sm text-muted-foreground">
           {fileCredentialNotice}
         </p>

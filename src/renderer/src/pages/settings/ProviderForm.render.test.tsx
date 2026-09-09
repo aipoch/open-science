@@ -68,6 +68,15 @@ describe('ProviderForm field switching', () => {
     expect(container.textContent).not.toContain('Your OS secure storage protects it')
   })
 
+  it.each(['codex-shared', 'codex-isolated', 'claude-shared'] as const)(
+    'does not claim Settings file storage for %s auth',
+    (type) => {
+      useSettingsStore.setState({ credentialStore: 'file' })
+      render(createEmptyProviderFormValue({ type }))
+      expect(container.textContent).not.toContain('stored unencrypted in local application files')
+    }
+  )
+
   it('shows gateway/key/model fields for a custom provider and no auth-style control', () => {
     render(createEmptyProviderFormValue({ type: 'custom' }))
 

@@ -406,6 +406,9 @@ export const parseCliArgs = (argv) => {
   ) {
     throw new CliUsageError('--credential-store requires start and a value of os or file.')
   }
+  if (options.credentialStore === 'file' && process.platform !== 'linux') {
+    throw new CliUsageError('--credential-store=file is supported only on Linux.')
+  }
   if (options.noSandbox && command !== 'start' && command !== 'update') {
     throw new CliUsageError('--no-sandbox requires start or update.')
   }
