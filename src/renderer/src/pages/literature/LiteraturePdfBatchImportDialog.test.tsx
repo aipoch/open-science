@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+import { StrictMode } from 'react'
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import {
@@ -135,13 +136,12 @@ it('does not replay an unconfirmed creation and still imports other files', asyn
   transact.mockRejectedValueOnce(new Error('Response lost'))
   open()
   await start()
-  await screen.findByText(
+  await screen.findAllByText(
     'The result could not be confirmed. Check your library before importing this file again.'
   )
   await screen.findByText('1 / 2 completed')
-  expect(
-    (screen.getByRole('button', { name: 'Retry unfinished' }) as HTMLButtonElement).disabled
-  ).toBe(true)
+  await screen.findByRole('button', { name: 'Done' })
+  expect(screen.queryByRole('button', { name: 'Retry unfinished' })).toBeNull()
   expect(transact.mock.calls.filter(([c]) => c.kind === 'create-item')).toHaveLength(2)
 })
 
@@ -287,4 +287,111 @@ it('releases a failed claim before continuing and keeps its reference for retry'
   await screen.findByText('2 / 2 completed')
   expect(transact.mock.calls.filter(([command]) => command.kind === 'create-item')).toHaveLength(2)
   expect(importPdf.mock.calls.map(([request]) => request.itemId)).toEqual(['item-2', 'item-1'])
+})
+
+const footerButtons = (): HTMLElement[] => {
+  const dialog = screen.getByRole('dialog', { name: 'Import PDFs' })
+  return within(dialog.lastElementChild as HTMLElement).getAllByRole('button')
+}
+
+it('keeps import discoverable but disabled for an empty initial selection', async () => {
+  open()
+  await waitFor(() =>
+    expect(screen.getByRole('button', { name: 'Import selected' })).toHaveProperty(
+      'disabled',
+      false
+    )
+  )
+  fireEvent.click(screen.getByRole('checkbox', { name: 'Select all' }))
+  expect(screen.getByRole('button', { name: 'Import selected' })).toHaveProperty('disabled', true)
+  expect(footerButtons().map((button) => [button.textContent, button.dataset.variant])).toEqual([
+    ['Cancel', 'outline'],
+    ['Import selected', 'default']
+  ])
+})
+
+it('shows only primary Done after all files succeed and removes obsolete controls', async () => {
+  open()
+  await start()
+  await screen.findByRole('button', { name: 'Done' })
+  expect(footerButtons().map((button) => [button.textContent, button.dataset.variant])).toEqual([
+    ['Done', 'default']
+  ])
+  expect(screen.queryByRole('checkbox')).toBeNull()
+  expect(screen.queryByRole('combobox')).toBeNull()
+  expect(screen.getByText('Selected PDFs imported. You can close this window.')).not.toBeNull()
+  fireEvent.click(screen.getByRole('button', { name: 'Done' }))
+  expect(close).toHaveBeenCalledOnce()
+})
+
+it('places retry before primary Close when every attachment fails, hiding retry on deselection', async () => {
+  importPdf.mockRejectedValue(new Error('Bad PDF'))
+  open()
+  await start()
+  await screen.findByRole('button', { name: 'Retry unfinished' })
+  expect(footerButtons().map((button) => [button.textContent, button.dataset.variant])).toEqual([
+    ['Retry unfinished', 'outline'],
+    ['Close', 'default']
+  ])
+  fireEvent.click(screen.getByRole('checkbox', { name: 'Select all' }))
+  expect(footerButtons().map((button) => button.textContent)).toEqual(['Close'])
+  fireEvent.click(screen.getByRole('checkbox', { name: 'Select first.pdf' }))
+  expect(screen.getByRole('button', { name: 'Retry unfinished' })).toHaveProperty('disabled', false)
+})
+
+it('offers importing skipped files as a secondary action without calling them retries', async () => {
+  open()
+  fireEvent.click(screen.getByRole('checkbox', { name: 'Select second.pdf' }))
+  await start()
+  await screen.findByRole('button', { name: 'Done' })
+  expect(footerButtons().map((button) => button.textContent)).toEqual(['Done'])
+  expect(screen.getByText('Failed: 0 · Skipped: 1')).not.toBeNull()
+  fireEvent.click(screen.getByRole('checkbox', { name: 'Select second.pdf' }))
+  expect(footerButtons().map((button) => [button.textContent, button.dataset.variant])).toEqual([
+    ['Import selected', 'outline'],
+    ['Done', 'default']
+  ])
+  fireEvent.click(screen.getByRole('button', { name: 'Import selected' }))
+  await screen.findByText('2 / 2 completed')
+  expect(transact.mock.calls.filter(([command]) => command.kind === 'create-item')).toHaveLength(2)
+})
+
+it('shows only Stop while importing and only disabled Stopping while settling', async () => {
+  const created = deferred<{ id: string }>()
+  transact.mockReturnValueOnce(created.promise)
+  open()
+  await start()
+  expect(footerButtons().map((button) => [button.textContent, button.dataset.variant])).toEqual([
+    ['Stop', 'outline']
+  ])
+  fireEvent.click(screen.getByRole('button', { name: 'Stop' }))
+  expect(footerButtons().map((button) => button.textContent)).toEqual(['Stopping…'])
+  expect(screen.getByRole('button', { name: 'Stopping…' })).toHaveProperty('disabled', true)
+  await act(async () => created.resolve({ id: 'kept-reference' }))
+  expect(footerButtons().map((button) => button.textContent)).toEqual(['Retry unfinished', 'Close'])
+  expect(importPdf).not.toHaveBeenCalled()
+})
+
+it('keeps the initial reading actions under StrictMode effect replay', async () => {
+  const read = deferred<ReturnType<typeof createDraft>>()
+  mocks.extract.mockReturnValue(read.promise)
+  render(
+    <StrictMode>
+      <LiteraturePdfBatchImportDialog
+        files={files}
+        destination={{ name: 'All references' }}
+        createDraft={createDraft}
+        onClose={close}
+      />
+    </StrictMode>
+  )
+  fireEvent.click(screen.getByRole('checkbox', { name: 'Select all' }))
+  fireEvent.click(screen.getByRole('checkbox', { name: 'Select all' }))
+  expect(footerButtons().map((button) => [button.textContent, button.dataset.variant])).toEqual([
+    ['Cancel', 'outline'],
+    ['Import selected', 'default']
+  ])
+  expect(screen.getByRole('button', { name: 'Import selected' })).toHaveProperty('disabled', true)
+  expect(transact).not.toHaveBeenCalled()
+  await act(async () => read.resolve(createDraft(files[0])))
 })

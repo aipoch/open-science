@@ -4888,7 +4888,6 @@
     "Import PDF": "Импортировать PDF",
     "Import references": "Импортировать источники",
     "Create metadata manually": "Создать метаданные вручную",
-    "Create a reference from a PDF": "Создать источник из PDF",
     "BibTeX, RIS, or PubMed NBIB": "BibTeX, RIS или PubMed NBIB",
     "Only the first 1,000 references will be imported.": "Будут импортированы только первые 1 000 источников.",
     "References per page": "Источников на странице",
@@ -5300,7 +5299,6 @@
     "Could not load metadata sources": "Не удалось загрузить источники метаданных",
     "No saved metadata sources for this reference.": "Для этой публикации нет сохранённых источников метаданных.",
     "Import PDFs": "Импорт PDF",
-    "Review the files, then import the selected PDFs. Keep this window open until the batch finishes.": "Проверьте файлы и импортируйте выбранные PDF. Не закрывайте это окно до завершения пакетного импорта.",
     "The result could not be confirmed. Check your library before importing this file again.": "Не удалось подтвердить результат. Проверьте библиотеку перед повторным импортом этого файла.",
     "The reference was kept. Retry to finish adding its PDF.": "Ссылка сохранена. Повторите попытку, чтобы завершить добавление PDF.",
     "Retry unfinished": "Повторить незавершённые",
@@ -5310,6 +5308,13 @@
     "This collection changed. Your edits have been kept.": "Эта коллекция изменена. Ваши правки сохранены в форме.",
     "This collection no longer exists. Your edits have been kept.": "Эта коллекция больше не существует. Ваши правки сохранены в форме.",
     "The latest collection could not be loaded. Your edits have been kept.": "Не удалось загрузить последнюю версию коллекции. Ваши правки сохранены в форме.",
-    "Replace your unsaved edits with the latest saved collection.": "Заменить несохранённые правки последней сохранённой версией коллекции."
+    "Replace your unsaved edits with the latest saved collection.": "Заменить несохранённые правки последней сохранённой версией коллекции.",
+    "Create references from PDF files": "Создать источники из файлов PDF",
+    "Keep this window open until the batch finishes. You can stop without losing completed imports.": "Не закрывайте это окно до завершения пакетного импорта. При остановке завершённые импорты сохраняются.",
+    "Review the files, then import the selected PDFs.": "Проверьте файлы и импортируйте выбранные PDF.",
+    "Some PDFs could not be imported. Review the details below before retrying.": "Некоторые PDF не удалось импортировать. Перед повторной попыткой проверьте сведения ниже.",
+    "Selected PDFs imported. You can close this window.": "Выбранные PDF импортированы. Можно закрыть это окно.",
+    "Failed: {{failed}} · Skipped: {{skipped}}": "Ошибки: {{failed}} · Пропущено: {{skipped}}",
+    "You can import unfinished files or close this window.": "Можно импортировать незавершённые файлы или закрыть это окно."
   }
 }

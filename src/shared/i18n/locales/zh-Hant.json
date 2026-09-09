@@ -4455,7 +4455,6 @@
     "Import PDF": "匯入 PDF",
     "Import references": "匯入文獻",
     "Create metadata manually": "手動建立題錄資訊",
-    "Create a reference from a PDF": "從 PDF 建立題錄",
     "BibTeX, RIS, or PubMed NBIB": "BibTeX、RIS 或 PubMed NBIB",
     "Only the first 1,000 references will be imported.": "僅匯入前 1,000 篇文獻。",
     "References per page": "每頁文獻數",
@@ -4851,7 +4850,6 @@
     "Could not load metadata sources": "無法載入中繼資料來源",
     "No saved metadata sources for this reference.": "此文獻沒有已儲存的中繼資料來源。",
     "Import PDFs": "匯入 PDF",
-    "Review the files, then import the selected PDFs. Keep this window open until the batch finishes.": "檢查檔案，然後匯入所選 PDF。請保持此視窗開啟，直到批次匯入完成。",
     "The result could not be confirmed. Check your library before importing this file again.": "無法確認結果。再次匯入此檔案前，請檢查文獻庫。",
     "The reference was kept. Retry to finish adding its PDF.": "文獻已保留。請重試以完成 PDF 新增。",
     "Retry unfinished": "重試未完成項目",
@@ -4861,6 +4859,13 @@
     "This collection changed. Your edits have been kept.": "此合集已變更。已保留您的編輯內容。",
     "This collection no longer exists. Your edits have been kept.": "此合集已不存在。已保留您的編輯內容。",
     "The latest collection could not be loaded. Your edits have been kept.": "無法載入最新合集。已保留您的編輯內容。",
-    "Replace your unsaved edits with the latest saved collection.": "以最新儲存的合集取代您尚未儲存的編輯內容。"
+    "Replace your unsaved edits with the latest saved collection.": "以最新儲存的合集取代您尚未儲存的編輯內容。",
+    "Create references from PDF files": "從 PDF 檔案建立題錄",
+    "Keep this window open until the batch finishes. You can stop without losing completed imports.": "請保持此視窗開啟，直到批次匯入完成。停止匯入不會遺失已完成的匯入項目。",
+    "Review the files, then import the selected PDFs.": "檢查檔案，然後匯入所選 PDF。",
+    "Some PDFs could not be imported. Review the details below before retrying.": "部分 PDF 無法匯入。請先查看下方詳細資訊，再重試。",
+    "Selected PDFs imported. You can close this window.": "所選 PDF 已匯入。您可以關閉此視窗。",
+    "Failed: {{failed}} · Skipped: {{skipped}}": "失敗：{{failed}} · 已略過：{{skipped}}",
+    "You can import unfinished files or close this window.": "您可以匯入未完成的檔案或關閉此視窗。"
   }
 }
