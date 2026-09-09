@@ -7,7 +7,7 @@ import {
   type RendererSessionPersistenceFlushOutcome
 } from './session-persistence/renderer-flush'
 import type { ShutdownStepOutcome } from './lifecycle-shutdown'
-import { flushDiagnosticsWithTimeout } from './diagnostics/flush'
+import { flushDiagnosticsWithTimeout, type DiagnosticFlush } from './diagnostics/flush'
 import { diagnosticErrorFields, type Logger } from './logger'
 import { startDiagnosticOperation } from './diagnostics/operation'
 import {
@@ -71,7 +71,7 @@ export type AppLifecycleDeps = {
   // Local structured diagnostics remain optional for the dependency-injected lifecycle tests.
   log?: Logger
   // Drains the logger's serialized write queue after the shutdown terminal record.
-  flushLogs?: () => Promise<void>
+  flushLogs?: DiagnosticFlush
   logFlushTimeoutMs?: number
   // Shared timeout budget for the preflight and post-drain renderer persistence attempts.
   rendererFlushTimeoutMs?: number

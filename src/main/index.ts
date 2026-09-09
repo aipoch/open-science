@@ -38,7 +38,7 @@ const shouldRunSkillRuntimeMcpServer = process.argv.includes(SKILL_RUNTIME_MCP_S
 const shouldRunPlanMcpServer = process.argv.includes(PLAN_MCP_SERVER_ARG)
 const bootstrapLog = createLogger('bootstrap')
 let startupDiagnostics: DiagnosticOperation | undefined
-let startupFlush = flushLogs
+let startupFlush: import('./diagnostics/flush').DiagnosticFlush = flushLogs
 
 if (shouldRunArtifactMcpServer) {
   // Reuse the packaged entry point as a Node stdio MCP server; import it only in this mode.

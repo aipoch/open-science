@@ -123,6 +123,23 @@ const openCandidate = async (
 }
 
 describe('AcpAgentConnectionAdapter', () => {
+  it('preserves stderr separators and decodes UTF-8 split across byte chunks', async () => {
+    const process = new FakeAgentProcess()
+    const connectionHooks = hooks()
+    const candidate = await openCandidate(process, undefined, connectionHooks)
+    const text = ' apiKey=fictional-token 测试\n'
+    try {
+      for (const byte of Buffer.from(text)) process.stderr.emit('data', Buffer.from([byte]))
+      const decoded = vi
+        .mocked(connectionHooks.onProcessStderr)
+        .mock.calls.map(([part]) => part)
+        .join('')
+      expect(decoded).toBe(text)
+    } finally {
+      await candidate.dispose()
+    }
+  })
+
   it('binds process diagnostics and forwards the process epoch context', async () => {
     const process = new FakeAgentProcess()
     const connectionHooks = hooks()
@@ -133,7 +150,7 @@ describe('AcpAgentConnectionAdapter', () => {
     process.emit('error', error)
     process.emit('exit', 1, 'SIGTERM')
 
-    expect(connectionHooks.onProcessStderr).toHaveBeenCalledWith('provider auth failed', {
+    expect(connectionHooks.onProcessStderr).toHaveBeenCalledWith(' provider auth failed\n', {
       process,
       framework: 'claude-code',
       epoch: 1

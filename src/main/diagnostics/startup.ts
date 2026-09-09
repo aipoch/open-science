@@ -1,5 +1,9 @@
 import { createLogger, flushLogs, initLogger, type Logger } from '../logger'
-import { flushDiagnosticsWithTimeout, type DiagnosticFlushOutcome } from './flush'
+import {
+  flushDiagnosticsWithTimeout,
+  type DiagnosticFlush,
+  type DiagnosticFlushOutcome
+} from './flush'
 import { startDiagnosticOperation, type DiagnosticOperation } from './operation'
 
 type ApplicationDiagnosticMetadata = {
@@ -18,7 +22,7 @@ type ApplicationDiagnosticMetadata = {
 export type ApplicationDiagnostics = {
   log: Logger
   operation: DiagnosticOperation
-  flush: () => Promise<void>
+  flush: DiagnosticFlush
 }
 
 export const initializeApplicationDiagnostics = (
@@ -54,7 +58,7 @@ export const initializeApplicationDiagnostics = (
 export const reportApplicationStartupFailure = async (input: {
   operation?: DiagnosticOperation
   error: unknown
-  flush: () => Promise<void>
+  flush: DiagnosticFlush
   timeoutMs?: number
 }): Promise<DiagnosticFlushOutcome> => {
   input.operation?.fail(input.error)

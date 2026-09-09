@@ -28,14 +28,19 @@ const normalizedStackSignature = (value: unknown): string => {
       return errorCategoryFor(value)
     }
     return value.stack
+      .slice(0, 8192)
       .split(/\r?\n/)
       .slice(1, 5)
+      .map((frame) => {
+        const location = /((?:https?|file):\/\/[^\s)]+):(\d+):(\d+)\)?$/.exec(frame.trim())
+        if (!location) return 'unknown'
+        const url = new URL(location[1])
+        // App-relative resources distinguish bundled columns and development modules without
+        // carrying installation roots, host names, URL credentials, queries or error messages.
+        const resource = /\/(src\/[^?#]+|assets\/[^?#]+)$/.exec(url.pathname)?.[1]
+        return resource ? `${resource.slice(0, 512)}:${location[2]}:${location[3]}` : 'unknown'
+      })
       .join('\n')
-      .replace(/https?:\/\/\S+/gi, '[url]')
-      .replace(/[A-Za-z]:\\[^\s)]+/g, '[path]')
-      .replace(/\/(?:[^\s/]+\/)+[^\s)]+/g, '[path]')
-      .replace(/\d+/g, '#')
-      .slice(0, 512)
   } catch {
     return 'unknown'
   }

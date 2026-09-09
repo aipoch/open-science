@@ -1,5 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 
+import { projectRendererFailure } from '../renderer/src/renderer-diagnostics'
+
 import type { RendererFailureReport } from '../shared/diagnostics'
 import {
   createRendererFailureReporter,
@@ -311,5 +313,43 @@ describe('createRendererFailureReporter', () => {
       dispose = registerRendererDiagnosticsIpc(target, { report: vi.fn() })
     }).not.toThrow()
     expect(() => dispose?.()).not.toThrow()
+  })
+})
+
+describe('renderer source-location deduplication', () => {
+  it.each([
+    [
+      'development',
+      'http://localhost:5173/src/pages/first.tsx:10:5',
+      'http://localhost:5173/src/pages/second.tsx:90:7'
+    ],
+    [
+      'packaged',
+      'file:///app/out/renderer/assets/index.js:13:510',
+      'file:///app/out/renderer/assets/index.js:13:902'
+    ],
+    [
+      'Windows',
+      'file:///C:/Program%20Files/OpenScience/out/renderer/assets/index.js:13:510',
+      'file:///C:/Program%20Files/OpenScience/out/renderer/assets/index.js:14:510'
+    ],
+    [
+      'async',
+      'async render (http://localhost:5173/src/page.tsx:10:5)',
+      'async render (http://localhost:5173/src/page.tsx:11:5)'
+    ]
+  ])('records distinct %s locations and suppresses a repeat', (_mode, first, second) => {
+    const report = (location: string): RendererFailureReport => {
+      const error = new TypeError('private error message')
+      error.stack = `TypeError: private error message\n    at ${location}`
+      return projectRendererFailure('window-error', error, 'workspace')
+    }
+    const error = vi.fn()
+    const reporter = createRendererFailureReporter({ log: { error, warn: vi.fn() }, now: () => 0 })
+    expect(reporter.report('renderer', report(first))).toBe('recorded')
+    expect(reporter.report('renderer', report(second))).toBe('recorded')
+    expect(reporter.report('renderer', report(first))).toBe('suppressed')
+    expect(error).toHaveBeenCalledTimes(2)
+    expect(JSON.stringify(error.mock.calls)).not.toMatch(/private|localhost|Program|page|index.js/)
   })
 })

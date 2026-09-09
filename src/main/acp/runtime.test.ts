@@ -23765,7 +23765,91 @@ describe('ACP runtime — agent process lifecycle logging', () => {
     }
   )
 
-  it('caps explicitly enabled raw stderr samples by UTF-8 bytes', async () => {
+  it.each(PERMISSION_PROJECTION_FRAMEWORKS)(
+    'redacts raw %s stderr credentials across chunk and sampling boundaries',
+    async (_name, framework, modelRoute, backendId) => {
+      const actualLog = await vi.importActual<typeof import('../logger')>('../logger')
+      const dir = await mkdtemp(join(tmpdir(), 'os-stderr-redaction-'))
+      const previousRaw = process.env.OPEN_SCIENCE_AGENT_STDERR
+      process.env.OPEN_SCIENCE_AGENT_STDERR = 'raw'
+      const child = new FakeAgentProcess()
+      startFakeAgent(
+        child,
+        ['raw-session'],
+        framework.id === 'codex'
+          ? { modes: createModes(['read-only', 'agent', 'agent-full-access'], 'agent') }
+          : {}
+      )
+      const events: AcpRuntimeEvent[] = []
+      const runtime = new AcpRuntime({
+        appVersion: '0.1.0',
+        defaultCwd: '/workspace',
+        resolveBackend: () => ({
+          framework: { ...framework, spawn: () => asAgentProcess(child) },
+          backendId,
+          modelRoute,
+          executablePath: '/bin/agent',
+          env: {},
+          ...(modelRoute === 'codex-bridge'
+            ? { responsesBridgeLease: createBackendLeaseHarness().lease }
+            : {})
+        }),
+        callbacks: { onEvent: (event) => events.push(event) }
+      })
+      const mirror = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+      try {
+        await runtime.createSession({ cwd: '/workspace' })
+        actualLog.initLogger({ logDir: dir, mirrorToConsole: true })
+        warnLogSpy.mockImplementation(actualLog.createLogger('acp').warn)
+        vi.useFakeTimers()
+        const secret = 'fictional-credential-7319'
+        child.stderr.emit('data', Buffer.from('api'))
+        child.stderr.emit('data', Buffer.from(`Key=${secret}\n`))
+        await vi.advanceTimersByTimeAsync(1000)
+        child.stderr.emit('data', Buffer.from('Authorization: Bear'))
+        await vi.advanceTimersByTimeAsync(1000)
+        child.stderr.emit('data', Buffer.from(`er ${secret}\n`))
+        await vi.advanceTimersByTimeAsync(1000)
+        for (const line of [
+          `apiKey=${secret}\n`,
+          `Authorization: Bearer ${secret}\n`,
+          `--api-key ${secret}\n`,
+          `https://user:${secret}@example.test/path\n`
+        ]) {
+          for (let boundary = 1; boundary < line.length; boundary++) {
+            child.stderr.emit('data', Buffer.from(line.slice(0, boundary)))
+            await vi.advanceTimersByTimeAsync(1000)
+            child.stderr.emit('data', Buffer.from(line.slice(boundary)))
+            await vi.advanceTimersByTimeAsync(1000)
+          }
+        }
+        for (const byte of Buffer.from('正常诊断\n')) {
+          child.stderr.emit('data', Buffer.from([byte]))
+        }
+        // An actual stream end, unlike a reporting timer or process exit, closes a bounded tail.
+        child.stderr.emit('data', Buffer.from(`apiKey=${secret}`))
+        child.stderr.emit('end')
+        await vi.advanceTimersByTimeAsync(1000)
+        await actualLog.flushLogs()
+        expect(await readFile(join(dir, 'main.log'), 'utf8')).not.toContain(secret)
+        expect(JSON.stringify(events)).not.toContain(secret)
+        expect(JSON.stringify(mirror.mock.calls)).not.toContain(secret)
+        expect(await readFile(join(dir, 'main.log'), 'utf8')).toContain('正常诊断')
+        expect(await readFile(join(dir, 'main.log'), 'utf8')).toContain('[redacted]')
+      } finally {
+        vi.useRealTimers()
+        warnLogSpy.mockReset()
+        mirror.mockRestore()
+        if (previousRaw === undefined) delete process.env.OPEN_SCIENCE_AGENT_STDERR
+        else process.env.OPEN_SCIENCE_AGENT_STDERR = previousRaw
+        await runtime.disconnect()
+        await actualLog.flushLogs()
+        await rm(dir, { recursive: true, force: true })
+      }
+    }
+  )
+
+  it('omits oversized raw stderr lines until their boundary', async () => {
     warnLogSpy.mockClear()
     const previousRawStderr = process.env.OPEN_SCIENCE_AGENT_STDERR
     process.env.OPEN_SCIENCE_AGENT_STDERR = 'raw'
@@ -23798,9 +23882,15 @@ describe('ACP runtime — agent process lifecycle logging', () => {
       expect(data.byteCount).toBe(9000)
       expect(data.rawSampleTruncated).toBe(true)
       expect(Buffer.byteLength(data.rawSample, 'utf8')).toBeLessThanOrEqual(4096)
-      expect(data.rawSample).toMatch(/^测+$/)
+      expect(data.rawSample).toBe('')
       expect(events).toHaveLength(1)
       expect(events[0]?.text).toContain('…[truncated]')
+      agentProcess.stderr.emit('data', Buffer.from('fictional-tail-secret\nhealthy stderr\n'))
+      await vi.advanceTimersByTimeAsync(1000)
+      expect(JSON.stringify({ logs: warnLogSpy.mock.calls, events })).not.toContain(
+        'fictional-tail-secret'
+      )
+      expect(JSON.stringify({ logs: warnLogSpy.mock.calls, events })).toContain('healthy stderr')
     } finally {
       vi.useRealTimers()
       if (previousRawStderr === undefined) delete process.env.OPEN_SCIENCE_AGENT_STDERR
