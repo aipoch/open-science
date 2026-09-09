@@ -4849,6 +4849,14 @@
     "Source record saved: {{time}}": "来源记录保存时间：{{time}}",
     "Saved source records, not a complete change history. Times show when each record was saved.": "此处为已保存的来源记录，并非完整修改历史。时间表示各条记录的保存时间。",
     "Could not load metadata sources": "无法加载元数据来源",
-    "No saved metadata sources for this reference.": "此文献没有已保存的元数据来源。"
+    "No saved metadata sources for this reference.": "此文献没有已保存的元数据来源。",
+    "Import PDFs": "导入 PDF",
+    "Review the files, then import the selected PDFs. Keep this window open until the batch finishes.": "检查文件，然后导入所选 PDF。请保持此窗口打开，直到批量导入完成。",
+    "The result could not be confirmed. Check your library before importing this file again.": "无法确认结果。再次导入此文件前，请检查文献库。",
+    "The reference was kept. Retry to finish adding its PDF.": "文献已保留。请重试以完成 PDF 添加。",
+    "Retry unfinished": "重试未完成项",
+    "PDFs are attached to matching references. Identical attachments are reused; different PDFs are kept separately.": "PDF 将添加到匹配的文献。相同附件会复用，不同 PDF 会分别保留。",
+    "{{completed}} / {{total}} completed": "已完成 {{completed}} / {{total}}",
+    "Finishing the current operation before stopping. Completed references are kept.": "完成当前操作后停止。已完成的文献会保留。"
   }
 }

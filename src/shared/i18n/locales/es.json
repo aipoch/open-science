@@ -5165,6 +5165,14 @@
     "Source record saved: {{time}}": "Registro de fuente guardado: {{time}}",
     "Saved source records, not a complete change history. Times show when each record was saved.": "Registros de fuentes guardados, sin un historial completo de cambios. Las fechas indican cuándo se guardó cada registro.",
     "Could not load metadata sources": "No se pudieron cargar las fuentes de metadatos",
-    "No saved metadata sources for this reference.": "No hay fuentes de metadatos guardadas para esta referencia."
+    "No saved metadata sources for this reference.": "No hay fuentes de metadatos guardadas para esta referencia.",
+    "Import PDFs": "Importar PDF",
+    "Review the files, then import the selected PDFs. Keep this window open until the batch finishes.": "Revise los archivos e importe los PDF seleccionados. Mantenga esta ventana abierta hasta que finalice el lote.",
+    "The result could not be confirmed. Check your library before importing this file again.": "No se pudo confirmar el resultado. Revise su biblioteca antes de volver a importar este archivo.",
+    "The reference was kept. Retry to finish adding its PDF.": "Se conservó la referencia. Vuelva a intentarlo para terminar de añadir el PDF.",
+    "Retry unfinished": "Reintentar los pendientes",
+    "PDFs are attached to matching references. Identical attachments are reused; different PDFs are kept separately.": "Los PDF se adjuntan a las referencias coincidentes. Los adjuntos idénticos se reutilizan; los PDF diferentes se conservan por separado.",
+    "{{completed}} / {{total}} completed": "{{completed}} / {{total}} completados",
+    "Finishing the current operation before stopping. Completed references are kept.": "Se completará la operación actual antes de detenerse. Las referencias completadas se conservan."
   }
 }

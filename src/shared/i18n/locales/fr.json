@@ -5165,6 +5165,14 @@
     "Source record saved: {{time}}": "Enregistrement de la source : {{time}}",
     "Saved source records, not a complete change history. Times show when each record was saved.": "Sources enregistrées, sans historique complet des modifications. Les dates indiquent quand chaque enregistrement a été sauvegardé.",
     "Could not load metadata sources": "Impossible de charger les sources des métadonnées",
-    "No saved metadata sources for this reference.": "Aucune source de métadonnées enregistrée pour cette référence."
+    "No saved metadata sources for this reference.": "Aucune source de métadonnées enregistrée pour cette référence.",
+    "Import PDFs": "Importer des PDF",
+    "Review the files, then import the selected PDFs. Keep this window open until the batch finishes.": "Vérifiez les fichiers, puis importez les PDF sélectionnés. Gardez cette fenêtre ouverte jusqu’à la fin du lot.",
+    "The result could not be confirmed. Check your library before importing this file again.": "Le résultat n’a pas pu être confirmé. Vérifiez votre bibliothèque avant de réimporter ce fichier.",
+    "The reference was kept. Retry to finish adding its PDF.": "La référence a été conservée. Réessayez pour terminer l’ajout du PDF.",
+    "Retry unfinished": "Réessayer les éléments inachevés",
+    "PDFs are attached to matching references. Identical attachments are reused; different PDFs are kept separately.": "Les PDF sont joints aux références correspondantes. Les pièces jointes identiques sont réutilisées ; les PDF différents sont conservés séparément.",
+    "{{completed}} / {{total}} completed": "{{completed}} / {{total}} terminés",
+    "Finishing the current operation before stopping. Completed references are kept.": "L’opération en cours se terminera avant l’arrêt. Les références terminées sont conservées."
   }
 }

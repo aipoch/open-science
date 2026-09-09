@@ -5298,6 +5298,14 @@
     "Source record saved: {{time}}": "Запись источника сохранена: {{time}}",
     "Saved source records, not a complete change history. Times show when each record was saved.": "Сохранённые записи источников, а не полная история изменений. Указано время сохранения каждой записи.",
     "Could not load metadata sources": "Не удалось загрузить источники метаданных",
-    "No saved metadata sources for this reference.": "Для этой публикации нет сохранённых источников метаданных."
+    "No saved metadata sources for this reference.": "Для этой публикации нет сохранённых источников метаданных.",
+    "Import PDFs": "Импорт PDF",
+    "Review the files, then import the selected PDFs. Keep this window open until the batch finishes.": "Проверьте файлы и импортируйте выбранные PDF. Не закрывайте это окно до завершения пакетного импорта.",
+    "The result could not be confirmed. Check your library before importing this file again.": "Не удалось подтвердить результат. Проверьте библиотеку перед повторным импортом этого файла.",
+    "The reference was kept. Retry to finish adding its PDF.": "Ссылка сохранена. Повторите попытку, чтобы завершить добавление PDF.",
+    "Retry unfinished": "Повторить незавершённые",
+    "PDFs are attached to matching references. Identical attachments are reused; different PDFs are kept separately.": "PDF прикрепляются к соответствующим ссылкам. Одинаковые вложения используются повторно, а разные PDF сохраняются отдельно.",
+    "{{completed}} / {{total}} completed": "Завершено {{completed}} / {{total}}",
+    "Finishing the current operation before stopping. Completed references are kept.": "Остановка после завершения текущей операции. Завершённые ссылки сохраняются."
   }
 }
