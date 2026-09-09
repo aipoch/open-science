@@ -4970,6 +4970,8 @@
     "Set up or repair WSL2 Bash in a guided conversation": "在引导式会话中设置或修复 WSL2 Bash",
     "Open Science could not open the WSL2 setup conversation.": "Open Science 无法打开 WSL2 设置会话。",
     "This draft will open a guided WSL2 setup conversation. Review the diagnostics, then send it.": "此草稿将打开引导式 WSL2 设置会话。请检查诊断信息，然后发送。",
+    "This is a guided WSL2 setup conversation.": "这是一个引导式 WSL2 设置会话。",
+    "Discard setup draft": "放弃设置草稿",
     "Check and activate in Settings": "在设置中检查并激活",
     "Set up in conversation": "在会话中设置",
     "A project is required for the WSL2 setup conversation.": "WSL2 设置会话需要一个项目。",

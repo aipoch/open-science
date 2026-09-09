@@ -55,6 +55,18 @@ describe('WslSetupSessionOwner', () => {
     )
   })
 
+  it('never persists an unbound one-time setup token across restart', async () => {
+    const root = await makeRoot()
+    const owner = new WslSetupSessionOwner(root, { platform: 'win32' })
+    const token = owner.mintLocalToken()
+
+    const restartedOwner = new WslSetupSessionOwner(root, { platform: 'win32' })
+    expect(restartedOwner.authorizeToken(token)).toBe(false)
+    await expect(readFile(join(root, 'wsl-setup-sessions.json'), 'utf8')).rejects.toMatchObject({
+      code: 'ENOENT'
+    })
+  })
+
   it.each([
     undefined,
     null,
@@ -127,6 +139,30 @@ describe('WslSetupSessionOwner', () => {
     await restartedOwner.forget('durable-session')
     const afterForget = new WslSetupSessionOwner(root, { platform: 'win32' })
     await expect(afterForget.isBound('durable-session')).resolves.toBe(false)
+  })
+
+  it('projects only durable setup bindings into restart Session summaries', async () => {
+    const root = await makeRoot()
+    const firstOwner = new WslSetupSessionOwner(root, { platform: 'win32' })
+    const token = firstOwner.mintLocalToken()
+    await firstOwner.bind(token, 'setup-session')
+    firstOwner.commitBinding(token, 'setup-session')
+
+    const restartedOwner = new WslSetupSessionOwner(root, { platform: 'win32' })
+    const summaries = await restartedOwner.projectSessionSummaries([
+      { id: 'setup-session', title: 'Setup' },
+      { id: 'ordinary-session', title: 'Ordinary' }
+    ])
+
+    expect(summaries).toEqual([
+      { id: 'setup-session', title: 'Setup', wslSetup: true },
+      { id: 'ordinary-session', title: 'Ordinary' }
+    ])
+
+    await restartedOwner.forget('setup-session')
+    await expect(
+      restartedOwner.projectSessionSummaries([{ id: 'setup-session', title: 'Setup' }])
+    ).resolves.toEqual([{ id: 'setup-session', title: 'Setup' }])
   })
 
   it('removes crash-orphaned bindings that have no persisted app Session', async () => {

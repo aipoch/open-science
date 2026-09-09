@@ -218,6 +218,38 @@ describe('workspace composer controller', () => {
     expect(hook.result.current.lifecycle.captureSend().setupSessionToken).toBeUndefined()
   })
 
+  it('discards only the active unsent WSL2 setup draft', () => {
+    const hook = renderController(uploads(), undefined, [], null)
+    mounted.push(hook)
+    hook.setWslPrefill({
+      projectId: 'project',
+      doc: textDoc('visible diagnostics'),
+      setupSessionToken: 'secret-setup-token',
+      requestId: 1
+    })
+
+    act(() => expect(hook.result.current.actions.discardWslSetupDraft()).toBe(true))
+
+    expect(hook.result.current.view.isWslSetupDraft).toBe(false)
+    expect(hook.result.current.view.doc).toEqual(emptyDoc)
+    expect(hook.result.current.lifecycle.captureSend().setupSessionToken).toBeUndefined()
+
+    hook.selectDraft('session-other')
+    hook.selectDraft('new:project')
+    expect(hook.result.current.view.isWslSetupDraft).toBe(false)
+    expect(hook.result.current.view.doc).toEqual(emptyDoc)
+  })
+
+  it('does not discard an ordinary conversation draft through the WSL2 setup action', () => {
+    const hook = renderController()
+    mounted.push(hook)
+    act(() => hook.result.current.actions.changeDoc(textDoc('ordinary unsent message')))
+
+    act(() => expect(hook.result.current.actions.discardWslSetupDraft()).toBe(false))
+
+    expect(hook.result.current.view.doc).toEqual(textDoc('ordinary unsent message'))
+  })
+
   it('DF-01 retains both conversation drafts and annotations after route remount', () => {
     const hook = renderController()
     mounted.push(hook)

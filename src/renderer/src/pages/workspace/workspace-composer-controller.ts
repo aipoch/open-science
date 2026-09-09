@@ -154,6 +154,7 @@ type WorkspaceComposerController = {
   }
   actions: {
     cancelQueuedEdit?: () => void
+    discardWslSetupDraft: () => boolean
     changeDoc: (doc: ComposerDoc, caret?: ComposerCaretPosition) => void
     addAnnotation: (annotation: Annotation) => AnnotationValidationError | undefined
     updateAnnotationNote: (id: string, note: string) => AnnotationValidationError | undefined
@@ -1342,6 +1343,10 @@ const useWorkspaceComposerController = ({
         clearHistory(activeDraftKeyRef.current)
         markChanged()
         setActiveQueuedEdit(undefined)
+      },
+      discardWslSetupDraft: (): boolean => {
+        if (setupSessionTokenRef.current === undefined) return false
+        return clearDraft(activeDraftKeyRef.current)
       },
       changeDoc,
       addAnnotation,

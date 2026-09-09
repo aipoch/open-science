@@ -5419,6 +5419,8 @@
     "Set up or repair WSL2 Bash in a guided conversation": "Настроить или восстановить WSL2 Bash в диалоге с пошаговыми инструкциями",
     "Open Science could not open the WSL2 setup conversation.": "Open Science не удалось открыть диалог настройки WSL2.",
     "This draft will open a guided WSL2 setup conversation. Review the diagnostics, then send it.": "Этот черновик откроет диалог настройки WSL2 с пошаговыми инструкциями. Проверьте диагностику, затем отправьте его.",
+    "This is a guided WSL2 setup conversation.": "Это диалог с пошаговыми инструкциями по настройке WSL2.",
+    "Discard setup draft": "Удалить черновик настройки",
     "Check and activate in Settings": "Проверить и активировать в настройках",
     "Set up in conversation": "Настроить в диалоге",
     "A project is required for the WSL2 setup conversation.": "Для диалога настройки WSL2 требуется проект.",

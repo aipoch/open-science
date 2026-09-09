@@ -936,6 +936,9 @@ export type SessionSummary = Readonly<{
   updatedAt: number
   presentedActivityAt?: number
   needsStartupRecovery: boolean
+  // Transient presentation hint projected from Main's durable WSL setup binding owner. It is not
+  // stored in Session JSON and never carries the one-time setup token.
+  wslSetup?: true
 }>
 
 export type SessionUsageProjection = Readonly<{

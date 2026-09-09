@@ -115,6 +115,16 @@ class WslSetupSessionOwner {
     return (await this.sessions()).has(sessionId)
   }
 
+  async projectSessionSummaries<T extends Readonly<{ id: string }>>(
+    summaries: readonly T[]
+  ): Promise<Array<T & Readonly<{ wslSetup?: true }>>> {
+    if ((this.options.platform ?? process.platform) !== 'win32') return [...summaries]
+    const sessions = await this.sessions()
+    return summaries.map((summary) =>
+      sessions.has(summary.id) ? { ...summary, wslSetup: true as const } : summary
+    )
+  }
+
   async forget(sessionId: string): Promise<void> {
     await this.enqueue(async () => {
       const sessions = new Set(await this.sessions())

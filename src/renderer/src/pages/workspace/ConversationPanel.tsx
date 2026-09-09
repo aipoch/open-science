@@ -456,6 +456,7 @@ const ConversationPanel = ({
       readingContext: pdfContext
     },
     actions: {
+      discardWslSetupDraft,
       changeDoc: onDraftDocChange,
       addAnnotation: onAddAnnotation,
       updateAnnotationNote: onUpdateAnnotationNote,
@@ -1819,21 +1820,34 @@ const ConversationPanel = ({
                           data-testid="wsl-setup-conversation-actions"
                         >
                           <span>
-                            {t(
-                              'This draft will open a guided WSL2 setup conversation. Review the diagnostics, then send it.'
-                            )}
+                            {isWslSetupDraft
+                              ? t(
+                                  'This draft will open a guided WSL2 setup conversation. Review the diagnostics, then send it.'
+                                )
+                              : t('This is a guided WSL2 setup conversation.')}
                           </span>
-                          <Button
-                            type="button"
-                            variant="outline"
-                            size="sm"
-                            className="shrink-0"
-                            onClick={() =>
-                              useSettingsStore.getState().openSettingsToPanel('runtimes')
-                            }
-                          >
-                            {t('Check and activate in Settings')}
-                          </Button>
+                          <div className="flex shrink-0 items-center gap-2">
+                            {isWslSetupDraft ? (
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                size="sm"
+                                onClick={discardWslSetupDraft}
+                              >
+                                {t('Discard setup draft')}
+                              </Button>
+                            ) : null}
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="sm"
+                              onClick={() =>
+                                useSettingsStore.getState().openSettingsToPanel('runtimes')
+                              }
+                            >
+                              {t('Check and activate in Settings')}
+                            </Button>
+                          </div>
                         </div>
                       ) : null}
                       {composer.view.queuedEdit ? (

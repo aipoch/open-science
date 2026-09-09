@@ -1657,14 +1657,18 @@ const createApplicationModules = async (
       const result = recovery.result
       const sessions = await sessionRepository.summarizeReadOnlyAuthority(result)
       await sessionPersistenceCoordinator.replaceSessionMetadata(sessions, false)
-      return { result, sessions }
+      return { result, sessions: await wslSetupSessions.projectSessionSummaries(sessions) }
     }
     const projection = await sessionRepository.ensureSessionProjection(loadAllSessions)
     const result = projection.result
     const catalogComplete = result ? canReconcileSessionAbsences(result) : true
     await sessionPersistenceCoordinator.replaceSessionMetadata(projection.sessions, catalogComplete)
     if (catalogComplete) await reconcileWslSetupSessions(projection.sessions)
-    return { ...projection, result }
+    return {
+      ...projection,
+      result,
+      sessions: await wslSetupSessions.projectSessionSummaries(projection.sessions)
+    }
   }
   const uncoordinatedSessionPersistenceBackend: SessionPersistenceBackend = {
     loadAll: loadAllSessions,
@@ -3901,7 +3905,7 @@ const createApplicationModules = async (
       resolveSources: resolveDeliverySources
     })
   )
-  // Wire session deletion to the binding store so stale in-memory bindings do not accumulate.
+  // Wire Session deletion to the binding stores so stale capabilities cannot reappear on restart.
   // The renderer calls sessions:delete-session (via sessionPersistenceBackend) and acp:delete-session
   // separately; both paths should clear the binding. Override the backend deleteSession callback here
   // so all durable-path deletions — regardless of whether the ACP session was attached — clear the
@@ -3909,8 +3913,10 @@ const createApplicationModules = async (
   const originalDeleteSession =
     sessionPersistenceBackend.deleteSession.bind(sessionPersistenceBackend)
   sessionPersistenceBackend.deleteSession = withSessionDeletionCleanup(
-    originalDeleteSession,
-    (_projectId, sessionId) => sessionSpecialistReconfiguration.clearSession(sessionId)
+    withSessionDeletionCleanup(originalDeleteSession, (_projectId, sessionId) =>
+      sessionSpecialistReconfiguration.clearSession(sessionId)
+    ),
+    (_projectId, sessionId) => wslSetupSessions.forget(sessionId)
   )
   const sessionPersistenceHandlers = createSessionPersistenceHandlersWithAttributionAuthority(
     sessionPersistenceBackend,

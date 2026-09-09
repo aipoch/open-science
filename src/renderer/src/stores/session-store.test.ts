@@ -139,7 +139,7 @@ describe('session store', () => {
     useSessionStore.setState(createInitialSessionState())
   })
 
-  it('retains the Main-confirmed WSL setup presentation marker across persistence echoes', () => {
+  it('restores the Main-confirmed WSL setup presentation marker after restart', () => {
     useSessionStore.getState().appendUserMessage({
       sessionId: 'session-1',
       content: 'Set up WSL2',
@@ -154,11 +154,88 @@ describe('session store', () => {
     const current = useSessionStore.getState().sessions[0]
     const persisted = toPersistedSession(current)
     expect(persisted).not.toHaveProperty('wslSetup')
+    expect(persisted).not.toHaveProperty('setupSessionToken')
+
+    useSessionStore.setState(createInitialSessionState())
+    useSessionStore.getState().hydrateSessionSummaries(
+      [
+        {
+          number: 1,
+          id: persisted.id,
+          projectId: persisted.projectId,
+          title: persisted.title,
+          status: persisted.status,
+          presentedStatus: persisted.status,
+          pinned: false,
+          revision: persisted.revision ?? 1,
+          activeMessageCount: persisted.messages.length,
+          artifactCount: persisted.artifacts?.length ?? 0,
+          filesRevision: persisted.filesRevision ?? 0,
+          createdAt: persisted.createdAt,
+          updatedAt: persisted.updatedAt,
+          needsStartupRecovery: false,
+          wslSetup: true
+        }
+      ],
+      persisted
+    )
+
+    expect(useSessionStore.getState().sessions[0].wslSetup).toBe(true)
+  })
+
+  it('keeps the projected WSL setup marker when lazy Session content hydrates', () => {
+    useSessionStore.getState().hydrateSessionSummaries(
+      [
+        {
+          number: 1,
+          id: 'setup-session',
+          projectId: 'project-1',
+          title: 'Setup',
+          status: 'idle',
+          presentedStatus: 'idle',
+          pinned: false,
+          revision: 1,
+          activeMessageCount: 1,
+          artifactCount: 0,
+          filesRevision: 0,
+          createdAt: 1,
+          updatedAt: 2,
+          needsStartupRecovery: false,
+          wslSetup: true
+        },
+        {
+          number: 2,
+          id: 'ordinary-session',
+          projectId: 'project-1',
+          title: 'Ordinary',
+          status: 'idle',
+          presentedStatus: 'idle',
+          pinned: false,
+          revision: 1,
+          activeMessageCount: 1,
+          artifactCount: 0,
+          filesRevision: 0,
+          createdAt: 1,
+          updatedAt: 1,
+          needsStartupRecovery: false
+        }
+      ],
+      undefined
+    )
+
+    expect(useSessionStore.getState().sessions[0].wslSetup).toBe(true)
+    expect(useSessionStore.getState().sessions[1].wslSetup).toBeUndefined()
 
     useSessionStore.getState().upsertPersistedSession({
-      ...persisted,
-      revision: (persisted.revision ?? 0) + 1,
-      updatedAt: persisted.updatedAt + 1
+      id: 'setup-session',
+      projectId: 'project-1',
+      title: 'Setup',
+      cwd: '/workspace',
+      status: 'idle',
+      revision: 1,
+      messages: [],
+      createdAt: 1,
+      updatedAt: 2
     })
 
     expect(useSessionStore.getState().sessions[0].wslSetup).toBe(true)

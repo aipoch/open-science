@@ -4970,6 +4970,8 @@
     "Set up or repair WSL2 Bash in a guided conversation": "ガイド付きの会話で WSL2 Bash をセットアップまたは修復",
     "Open Science could not open the WSL2 setup conversation.": "Open Science は WSL2 セットアップの会話を開けませんでした。",
     "This draft will open a guided WSL2 setup conversation. Review the diagnostics, then send it.": "この下書きにより、ガイド付きの WSL2 セットアップ会話が開きます。診断情報を確認してから送信してください。",
+    "This is a guided WSL2 setup conversation.": "これは WSL2 セットアップ用のガイド付き会話です。",
+    "Discard setup draft": "セットアップの下書きを破棄",
     "Check and activate in Settings": "設定で確認して有効化",
     "Set up in conversation": "会話でセットアップ",
     "A project is required for the WSL2 setup conversation.": "WSL2 セットアップの会話にはプロジェクトが必要です。",

@@ -4968,6 +4968,8 @@
     "Set up or repair WSL2 Bash in a guided conversation": "안내 대화에서 WSL2 Bash 설정 또는 복구",
     "Open Science could not open the WSL2 setup conversation.": "Open Science에서 WSL2 설정 대화를 열 수 없습니다.",
     "This draft will open a guided WSL2 setup conversation. Review the diagnostics, then send it.": "이 초안을 보내면 안내 WSL2 설정 대화가 열립니다. 진단 정보를 검토한 후 보내세요.",
+    "This is a guided WSL2 setup conversation.": "이 대화는 WSL2 설정을 안내합니다.",
+    "Discard setup draft": "설정 초안 폐기",
     "Check and activate in Settings": "설정에서 확인하고 활성화",
     "Set up in conversation": "대화에서 설정",
     "A project is required for the WSL2 setup conversation.": "WSL2 설정 대화에는 프로젝트가 필요합니다.",

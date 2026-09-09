@@ -558,6 +558,7 @@ const createPanelDefaults = (): PanelProps => ({
       }
     },
     actions: {
+      discardWslSetupDraft: vi.fn(() => false),
       changeDoc: vi.fn(),
       addAnnotation: vi.fn(),
       updateAnnotationNote: vi.fn(),
@@ -2654,6 +2655,26 @@ describe('ConversationPanel composer intake', () => {
     expect(container.textContent).toContain('Check and activate in Settings')
   })
 
+  it('lets the user discard an unsent WSL2 setup draft from its inline card', () => {
+    const discardWslSetupDraft = vi.fn(() => true)
+    renderPanel({
+      composer: {
+        view: { isWslSetupDraft: true },
+        actions: { discardWslSetupDraft }
+      }
+    })
+
+    const discard = Array.from(
+      container.querySelectorAll<HTMLButtonElement>(
+        '[data-testid="wsl-setup-conversation-actions"] button'
+      )
+    ).find((button) => button.textContent === 'Discard setup draft')
+    expect(discard).toBeDefined()
+
+    act(() => discard?.click())
+    expect(discardWslSetupDraft).toHaveBeenCalledOnce()
+  })
+
   it('keeps the Settings activation action visible for a Main-confirmed setup session', () => {
     renderPanel({
       view: {
@@ -2673,7 +2694,10 @@ describe('ConversationPanel composer intake', () => {
     })
 
     expect(container.querySelector('[data-testid="wsl-setup-conversation-actions"]')).not.toBeNull()
+    expect(container.textContent).toContain('This is a guided WSL2 setup conversation.')
+    expect(container.textContent).not.toContain('This draft will open')
     expect(container.textContent).toContain('Check and activate in Settings')
+    expect(container.textContent).not.toContain('Discard setup draft')
   })
 
   it('offers Plan first for a text draft in a new conversation while Branch stays disabled', () => {

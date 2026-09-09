@@ -5286,6 +5286,8 @@
     "Set up or repair WSL2 Bash in a guided conversation": "Configurer ou réparer WSL2 Bash dans une conversation guidée",
     "Open Science could not open the WSL2 setup conversation.": "Open Science n’a pas pu ouvrir la conversation de configuration WSL2.",
     "This draft will open a guided WSL2 setup conversation. Review the diagnostics, then send it.": "Ce brouillon ouvrira une conversation guidée de configuration WSL2. Vérifiez le diagnostic, puis envoyez-le.",
+    "This is a guided WSL2 setup conversation.": "Ceci est une conversation guidée de configuration WSL2.",
+    "Discard setup draft": "Abandonner le brouillon de configuration",
     "Check and activate in Settings": "Vérifier et activer dans les paramètres",
     "Set up in conversation": "Configurer dans une conversation",
     "A project is required for the WSL2 setup conversation.": "Un projet est nécessaire pour la conversation de configuration WSL2.",
