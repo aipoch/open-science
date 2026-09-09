@@ -8,57 +8,45 @@
 // left field apps polling a filename the pipeline never published.
 //
 // Usage: node scripts/merge-mac-feed.mjs [dir]   (dir defaults to cwd)
-// No-ops (exit 0) unless BOTH per-arch feeds are present, so a partial/non-mac run is harmless.
-import { readFileSync, writeFileSync, existsSync } from 'node:fs'
+// An entirely non-mac directory may be skipped. Any partial mac publication fails closed.
+import { readFileSync, writeFileSync, existsSync, readdirSync } from 'node:fs'
 import { join } from 'node:path'
+import { dump, load } from 'js-yaml'
+import { validateUpdateFeed } from './release-artifact-validation.mjs'
 
 const dir = process.argv[2] ?? '.'
-const archFeeds = ['arm64-mac.yml', 'x64-mac.yml'].map((name) => join(dir, name))
-
-if (!archFeeds.every(existsSync)) {
-  console.log('merge-mac-feed: both per-arch feeds not present, skipping')
+const names = ['arm64-mac.yml', 'x64-mac.yml']
+if (!names.every((name) => existsSync(join(dir, name)))) {
+  if (readdirSync(dir).some((name) => /-mac(?:-|\.)/.test(name))) {
+    throw new Error('Both macOS architecture feeds are required')
+  }
+  console.log('merge-mac-feed: no macOS artifacts, skipping')
   process.exit(0)
 }
-
-// The per-arch feeds are machine-generated with a fixed shape (see notarize-mac.yml), so a targeted
-// parse is enough and avoids a YAML dependency. Each feed lists exactly one file, so after `files:`
-// the first sha512/size belong to that entry.
-const parse = (file) => {
-  const text = readFileSync(file, 'utf8')
-  const version = text.match(/^version:\s*(.+)$/m)?.[1].trim()
-  const filesBlock = text.slice(text.indexOf('files:'))
-  const url = filesBlock.match(/-\s*url:\s*(.+)/)?.[1].trim()
-  const sha512 = filesBlock.match(/sha512:\s*(.+)/)?.[1].trim()
-  const size = filesBlock.match(/size:\s*(\d+)/)?.[1]
-  const releaseDate = text.match(/^releaseDate:\s*(.+)$/m)?.[1].trim()
-  if (!version || !url || !sha512 || !size) {
-    console.error(`::error::could not parse mac feed ${file}`)
-    process.exit(1)
-  }
-  return { version, url, sha512, size, releaseDate }
-}
-
-const entries = archFeeds.map(parse)
-const version = entries[0].version
-// Newest of the two timestamps, so the combined feed's date reflects the last-stapled arch.
-const releaseDate = entries
-  .map((e) => e.releaseDate?.replace(/^["']|["']$/g, ''))
+const feeds = names.map((name) => load(readFileSync(join(dir, name), 'utf8')))
+const version = feeds[0].version
+const files = feeds.map((feed, index) => {
+  validateUpdateFeed(feed, dir, version, process.argv.includes('--metadata-only'))
+  const suffix = index === 0 ? '-mac-arm64.zip' : '-mac-x64.zip'
+  const entries = feed.files.filter((file) => file.url.endsWith(suffix))
+  if (entries.length !== 1) throw new Error(`Expected one ${suffix} update artifact`)
+  return entries[0]
+})
+const releaseDate = feeds
+  .map((feed) => feed.releaseDate)
   .filter(Boolean)
+  .map(String)
   .sort()
   .pop()
-
-const filesYaml = entries
-  .map((e) => `  - url: ${e.url}\n    sha512: ${e.sha512}\n    size: ${e.size}`)
-  .join('\n')
-
-// Top-level path/sha512 are legacy single-file fields; MacUpdater downloads from files[] after arch
-// filtering, so point them at the first entry for backward-compat.
-const yml =
-  `version: ${version}\n` +
-  `files:\n${filesYaml}\n` +
-  `path: ${entries[0].url}\n` +
-  `sha512: ${entries[0].sha512}\n` +
-  `releaseDate: ${JSON.stringify(releaseDate ?? new Date().toISOString())}\n`
-
+const yml = dump(
+  {
+    version,
+    files,
+    path: files[0].url,
+    sha512: files[0].sha512,
+    releaseDate: releaseDate ?? new Date().toISOString()
+  },
+  { lineWidth: -1 }
+)
 writeFileSync(join(dir, 'latest-mac.yml'), yml)
 process.stdout.write(yml)

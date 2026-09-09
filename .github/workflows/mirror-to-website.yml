@@ -1,8 +1,7 @@
 # Manually mirror a published GitHub Release to the website's S3-compatible storage + CDN after its
 # repository-owned in-app release notes are ready. This workflow sends
 # installers to a fast, in-country endpoint and writes version.json (website + in-app update prompt).
-# Cache correctness is handled purely via Cache-Control headers at upload time (immutable installers,
-# no-cache manifest) — no CDN purge API is needed.
+# Versioned objects never change bytes. Channel metadata advances under a shared publisher lock.
 name: Mirror to website
 
 on:
@@ -60,7 +59,7 @@ jobs:
 
       # A dry-run exercises the real manifest/feed transforms without downloading every installer.
       # SHA256SUMS and updater feeds are small; sparse files reproduce each installer's published name
-      # and size from GitHub's read-only asset metadata, which is all the manifest generator consumes.
+      # and size from GitHub's read-only asset metadata. This explicitly skips byte verification.
       - name: Stage release metadata for dry run
         if: ${{ inputs.dry_run }}
         env:
@@ -75,7 +74,7 @@ jobs:
             --jq '.assets[] | [.name, (.size | tostring)] | @tsv' |
           while IFS=$'\t' read -r name size; do
             case "$name" in
-              *-mac-arm64.dmg|*-mac-x64.dmg|*-win-x64-setup.exe|*-linux-x64.AppImage|*_amd64.deb)
+              *-mac-arm64.dmg|*-mac-x64.dmg|*-win-x64-setup.exe|*-linux-x64.AppImage|*-linux-x86_64.AppImage|*_amd64.deb|*-mac-arm64.zip|*-mac-x64.zip)
                 [ "$name" = "$(basename "$name")" ] || { echo "Unsafe asset name: $name" >&2; exit 1; }
                 truncate -s "$size" "dist-assets/$name"
                 ;;
@@ -123,8 +122,7 @@ jobs:
       - name: Install manifest dependencies
         run: npm ci --ignore-scripts --omit=dev --omit=optional --no-audit --no-fund
 
-      # Build version.json from the downloaded files. Missing platforms warn (not fail) inside the
-      # script, so a partial release still yields a usable manifest. In-app notes come from the
+      # Validate a complete stable release before any upload. In-app notes come from the
       # checked-out repository revision; the publication date still comes from the Release so a
       # manual workflow_dispatch backfill gets the authoritative timestamp.
       - name: Generate version.json
@@ -137,6 +135,7 @@ jobs:
           NOTES_DIR: release-notes/${{ steps.ref.outputs.version }}
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ steps.ref.outputs.tag }}
+          METADATA_ONLY: ${{ inputs.dry_run }}
         run: |
           if [ ! -d "$NOTES_DIR" ]; then
             NOTES="$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json body --jq .body)"
@@ -145,13 +144,15 @@ jobs:
           fi
           RELEASE_DATE="$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json publishedAt --jq .publishedAt)"
           export RELEASE_DATE
-          node scripts/generate-version-manifest.mjs
+          validation_args=(--require-complete)
+          if [ "$METADATA_ONLY" = "true" ]; then validation_args+=(--metadata-only); fi
+          node scripts/generate-version-manifest.mjs dist-assets version.json "${validation_args[@]}"
 
       # electron-updater feed files (win latest.yml, linux latest-linux.yml, and the per-arch mac
       # feeds arm64-mac.yml / x64-mac.yml) must live at the channel root (a stable url the updater
       # always polls), but the installers + blockmaps they reference live under releases/<version>/.
       # Rewrite each feed's bare `path:`/`url:` filenames to that versioned subpath so the updater
-      # resolves them against the channel root. Missing feeds (e.g. a mac-only backfill) are skipped.
+      # resolves them against the channel root. The complete feed set was validated above.
       - name: Rewrite update feed paths
         env:
           VERSION: ${{ steps.ref.outputs.version }}
@@ -223,12 +224,7 @@ jobs:
           S3_PREFIX: ${{ vars.S3_PREFIX }}
         run: |
           [ -d historical-blockmaps ] || exit 0
-          while IFS= read -r -d '' blockmap; do
-            version="$(basename "$(dirname "$blockmap")")"
-            aws s3 cp "$blockmap" \
-              "s3://$S3_BUCKET/$S3_PREFIX/releases/$version/$(basename "$blockmap")" \
-              --cache-control "public, max-age=31536000, immutable" --only-show-errors
-          done < <(find historical-blockmaps -type f -name '*-win-x64-setup.exe.blockmap' -print0)
+          node scripts/publish-release-assets.mjs blockmaps historical-blockmaps
 
       # This command owns versioned uploads and optional monotonic channel promotion together.
       # Its preflight runs before any mutable channel writes; rerun the same version to recover a

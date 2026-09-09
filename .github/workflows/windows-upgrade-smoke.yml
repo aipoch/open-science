@@ -13,6 +13,11 @@ on:
         type: string
         required: true
 
+      dry_run:
+        description: Run isolated baseline-selection tests without downloading or installing releases
+        type: boolean
+        default: false
+
 permissions:
   contents: read
 
@@ -22,6 +27,7 @@ concurrency:
 
 jobs:
   windows-upgrade-smoke:
+    if: ${{ !inputs.dry_run }}
     runs-on: windows-latest
     timeout-minutes: 40
     env:
@@ -199,3 +205,19 @@ jobs:
           always() && steps.previous.outputs.available == 'true' &&
           (steps.updater.outcome != 'success' || steps.installer.outcome != 'success')
         run: exit 1
+
+  baseline-dry-run:
+    if: ${{ inputs.dry_run }}
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout selection harness
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - name: Setup Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: 22
+      - name: Install test dependencies
+        run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: Test actual Windows baseline selection
+        run: npx vitest run scripts/windows-upgrade-baseline.test.ts

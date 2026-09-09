@@ -713,7 +713,9 @@ if ($artifactReservationBase -eq $artifactReservationCommit) {
     expect(historical.run).toContain('historical-blockmaps/$version/$name')
     expect(historical.run).toContain('gzip -t "$target"')
     const backfill = findStep(mirror, 'Backfill historical Windows blockmaps')
-    expect(backfill.run).toContain('releases/$version/$(basename "$blockmap")')
+    expect(backfill.run).toContain(
+      'scripts/publish-release-assets.mjs blockmaps historical-blockmaps'
+    )
     for (const sideEffectStep of [
       'Configure AWS credentials',
       'Collect historical Windows blockmaps',

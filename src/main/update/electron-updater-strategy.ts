@@ -1,6 +1,6 @@
 import { app } from 'electron'
 import { spawnSync } from 'node:child_process'
-import { autoUpdater, CancellationToken } from 'electron-updater'
+import { autoUpdater, CancellationToken, AppImageUpdater, DebUpdater } from 'electron-updater'
 
 import { APP } from '../../shared/app-config'
 import { isCurrentInFlight } from '../../shared/in-flight-promise'
@@ -144,11 +144,18 @@ const PLATFORM_ARCH_TOKENS: Record<string, string[]> = {
 const extractArtifactSize = (
   files: UpdateFeedFile[] | undefined,
   platform: NodeJS.Platform,
-  arch: string
+  arch: string,
+  updater: MinimalAutoUpdater
 ): number | undefined => {
   if (!files || files.length === 0) return undefined
-  const targetExt = PLATFORM_ARTIFACT_EXT[platform]
+  const targetExt = platform === 'linux'
+    ? updater instanceof DebUpdater ? '.deb' : updater instanceof AppImageUpdater ? '.AppImage' : undefined
+    : PLATFORM_ARTIFACT_EXT[platform]
   if (!targetExt) return undefined
+  if (platform === 'linux') {
+    const matches = files.filter((file) => file.url?.endsWith(targetExt) && file.size != null)
+    return matches.length === 1 ? matches[0].size : undefined
+  }
   const archToken = PLATFORM_ARCH_TOKENS[platform]?.find((token) => arch.includes(token))
   if (archToken) {
     // Match both extension and arch token — the exact artifact electron-updater will download.
@@ -259,7 +266,7 @@ export class ElectronUpdaterStrategy implements UpdateStrategy {
       ) {
         return
       }
-      const totalBytes = extractArtifactSize(i.files, this.platform, this.arch)
+      const totalBytes = extractArtifactSize(i.files, this.platform, this.arch, this.updater)
       this.setStatus({
         state: 'available',
         latest: i.version,
@@ -410,6 +417,7 @@ export class ElectronUpdaterStrategy implements UpdateStrategy {
     }
     if (this.checkLifecycle) return this.checkLifecycle
 
+    this.transferToken = undefined
     const readyStatus = this.status.state === 'ready' ? this.status : undefined
     const operation = startDiagnosticOperation(this.log, {
       operation: 'update-check',

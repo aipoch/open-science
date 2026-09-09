@@ -19,6 +19,12 @@
 import { readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
+import { load } from 'js-yaml'
+import {
+  artifactHash,
+  validateArtifactName,
+  validateUpdateFeed
+} from './release-artifact-validation.mjs'
 
 // Filename -> downloads key. Explicit regex table so an unexpected artifact name fails loudly (as a
 // warning) rather than being silently misfiled. deb uses the dpkg convention (underscores + amd64).
@@ -26,7 +32,7 @@ const KEY_RULES = [
   { key: 'mac-arm64', pattern: /-mac-arm64\.dmg$/ },
   { key: 'mac-x64', pattern: /-mac-x64\.dmg$/ },
   { key: 'win-x64', pattern: /-win-x64-setup\.exe$/ },
-  { key: 'linux-x64-appimage', pattern: /-linux-x64\.AppImage$/ },
+  { key: 'linux-x64-appimage', pattern: /-linux-(?:x64|x86_64)\.AppImage$/ },
   { key: 'linux-x64-deb', pattern: /_amd64\.deb$/ }
 ]
 
@@ -67,7 +73,10 @@ export function parseSha256Sums(content) {
   const map = {}
   for (const line of content.split('\n')) {
     const match = line.trim().match(/^([0-9a-fA-F]{64})\s+\*?(.+)$/)
-    if (match) map[match[2]] = match[1].toLowerCase()
+    if (match) {
+      if (Object.hasOwn(map, match[2])) throw new Error(`Duplicate SHA256 entry: ${match[2]}`)
+      map[match[2]] = match[1].toLowerCase()
+    }
   }
   return map
 }
@@ -79,7 +88,7 @@ function keyForFile(filename) {
 
 // Build the version.json manifest object from a directory of installers + SHA256SUMS.txt.
 // Pure: reads the filesystem but performs no network I/O. Only keys whose installer actually exists
-// (and has a checksum) are emitted; unrecognized files and files missing from SHA256SUMS warn.
+// are emitted; each present installer must have a matching version, size and real checksum.
 export function buildManifest({
   dir,
   version,
@@ -87,31 +96,64 @@ export function buildManifest({
   localizedNotes,
   releaseDate,
   cdnBase,
-  prefix
+  prefix,
+  metadataOnly = false,
+  requireComplete = false
 }) {
+  if (!/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/.test(version)) {
+    throw new Error(`Invalid stable release version: ${version}`)
+  }
   const sums = parseSha256Sums(readFileSync(join(dir, 'SHA256SUMS.txt'), 'utf8'))
   const base = `${cdnBase}/${prefix}/releases/${version}`
 
   const downloads = {}
   for (const filename of readdirSync(dir)) {
     const key = keyForFile(filename)
-    if (!key) {
+    if (!key && !filename.endsWith('.zip')) {
       // Warn only for genuinely unexpected files, not known non-manifest artifacts (zips, sums, ...).
       if (!IGNORED.some((pattern) => pattern.test(filename))) {
         console.warn(`[version-manifest] unrecognized file, ignoring: ${filename}`)
       }
       continue
     }
+    validateArtifactName(filename, version)
     const sha256 = sums[filename]
-    if (!sha256) {
-      // No verifiable hash -> useless to the in-app integrity check, so drop it rather than emit it.
-      console.warn(`[version-manifest] no sha256 in SHA256SUMS.txt, skipping: ${filename}`)
-      continue
+    if (!sha256) throw new Error(`[version-manifest] no sha256 in SHA256SUMS.txt: ${filename}`)
+    const stat = statSync(join(dir, filename))
+    if (!stat.isFile() || stat.size <= 0) throw new Error(`Empty or invalid installer: ${filename}`)
+    if (!metadataOnly && artifactHash(join(dir, filename), 'sha256') !== sha256) {
+      throw new Error(`Installer SHA256 mismatch: ${filename}`)
     }
-    downloads[key] = {
-      url: `${base}/${filename}`,
-      size: statSync(join(dir, filename)).size,
-      sha256
+    if (!key) continue // mac ZIPs are update artifacts, not website download keys.
+    if (downloads[key]) throw new Error(`Duplicate installer for ${key}`)
+    downloads[key] = { url: `${base}/${filename}`, size: stat.size, sha256 }
+  }
+  for (const filename of readdirSync(dir).filter((name) =>
+    /^(latest(?:-linux)?|.*-mac)\.yml$/.test(name)
+  )) {
+    validateUpdateFeed(load(readFileSync(join(dir, filename), 'utf8')), dir, version, metadataOnly)
+  }
+  if (requireComplete) {
+    for (const { key } of KEY_RULES) {
+      if (!downloads[key]) throw new Error(`Missing stable release installer: ${key}`)
+    }
+    for (const name of ['latest.yml', 'latest-linux.yml', 'latest-mac.yml']) {
+      const feed = validateUpdateFeed(
+        load(readFileSync(join(dir, name), 'utf8')),
+        dir,
+        version,
+        metadataOnly
+      )
+      const required =
+        name === 'latest-mac.yml'
+          ? ['-mac-arm64.zip', '-mac-x64.zip']
+          : name === 'latest.yml'
+            ? ['-win-x64-setup.exe']
+            : ['.AppImage', '.deb']
+      for (const suffix of required) {
+        if (!feed.files.some((file) => file.url.endsWith(suffix)))
+          throw new Error(`Missing ${suffix} in ${name}`)
+      }
     }
   }
 
@@ -196,7 +238,9 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
     ...releaseNotes,
     releaseDate: process.env.RELEASE_DATE ?? '',
     cdnBase,
-    prefix
+    prefix,
+    metadataOnly: process.argv.includes('--metadata-only'),
+    requireComplete: process.argv.includes('--require-complete')
   })
 
   writeFileSync(outputPath, `${JSON.stringify(manifest, null, 2)}\n`)
