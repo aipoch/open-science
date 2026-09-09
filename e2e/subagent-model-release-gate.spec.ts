@@ -2,6 +2,7 @@ import { expect, type Page } from '@playwright/test'
 
 import { createProject, sendPrompt } from './certification/helpers'
 import { test } from './fixtures/electron-app'
+import { opencodeTransportProviderId } from '../src/main/agent-framework/opencode'
 
 const TERMINAL_PROMPT = 'Run the production delegation terminal journey.'
 const TERMINAL_REPLY = 'Production delegation reached a terminal result.'
@@ -396,6 +397,10 @@ test('fails closed, restores the fixed model, and routes Specialist but not Acti
     })
   ).toEqual(activeBeforeSpecialist)
 
+  expect(activeBeforeSpecialist.providerId).toBeTruthy()
+  expect(activeBeforeSpecialist.model).toBeTruthy()
+  // Review evidence records the transport-qualified model, while Settings stores the bare model.
+  const expectedReviewerModel = `${opencodeTransportProviderId(activeBeforeSpecialist.providerId!, activeBeforeSpecialist.model!)}/${activeBeforeSpecialist.model}`
   await page.getByTestId('composer-plus-trigger').click()
   await page.getByTestId('menu-request-review').click()
   await expect
@@ -412,6 +417,6 @@ test('fails closed, restores the fixed model, and routes Specialist but not Acti
         }),
       { timeout: 120_000 }
     )
-    .toBe(activeBeforeSpecialist.model)
+    .toBe(expectedReviewerModel)
   expect(activeBeforeSpecialist.model).not.toBe(SUBAGENT_MODEL)
 })

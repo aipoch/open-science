@@ -11,7 +11,8 @@ const boundary = vi.hoisted(() => ({
   ) => Promise<void>,
   launch: vi.fn(),
   reap: vi.fn(),
-  rendererFailure: vi.fn()
+  rendererFailure: vi.fn(),
+  ready: vi.fn()
 }))
 vi.mock('@playwright/test', () => ({
   test: {
@@ -20,7 +21,7 @@ vi.mock('@playwright/test', () => ({
       return {}
     }
   },
-  expect: { poll: () => ({ toMatchObject: async () => undefined }) }
+  expect: { poll: () => ({ toMatchObject: boundary.ready }) }
 }))
 vi.mock('playwright', () => ({ _electron: { launch: boundary.launch } }))
 vi.mock('../src/main/process-tree', () => ({ terminateProcessTree: boundary.reap }))
@@ -38,6 +39,7 @@ const attach = vi.fn()
 beforeEach(() => {
   vi.clearAllMocks()
   boundary.rendererFailure.mockImplementation(() => undefined)
+  boundary.ready.mockResolvedValue(undefined)
   close.mockResolvedValue(undefined)
   boundary.reap.mockResolvedValue({ reaped: false })
   boundary.launch.mockImplementation(async ({ env }) => {
@@ -132,4 +134,36 @@ it('preserves renderer and cleanup errors together', async () => {
       attach
     })
   ).rejects.toThrow(/did not reap.*renderer exception/)
+})
+
+it('preserves a renderer-only failure after successful cleanup', async () => {
+  const rendererError = new Error('renderer exception')
+  boundary.rendererFailure.mockImplementation(() => {
+    throw rendererError
+  })
+  await expect(
+    boundary.fixture({ windowMode: 'hidden' }, async () => undefined, {
+      status: 'passed',
+      expectedStatus: 'passed',
+      attach
+    })
+  ).rejects.toBe(rendererError)
+  expect(existsSync(root)).toBe(false)
+})
+
+it('attaches startup diagnostics before disposing a failed renderer launch', async () => {
+  const startupError = new Error('database remained migrating')
+  boundary.ready.mockRejectedValue(startupError)
+  await expect(
+    boundary.fixture({ windowMode: 'hidden' }, async () => undefined, {
+      status: 'failed',
+      expectedStatus: 'passed',
+      attach
+    })
+  ).rejects.toBe(startupError)
+  expect(attach).toHaveBeenCalledWith(
+    'startup-main-process-log',
+    expect.objectContaining({ contentType: 'text/plain' })
+  )
+  expect(existsSync(root)).toBe(false)
 })
