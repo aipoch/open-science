@@ -173,7 +173,10 @@ const rootsFor = (name: string, args: string[]): string[] => {
     const roots: string[] = []
     for (const arg of args) {
       if (['-P', '-E', '-X', '-s', '-d', '-x', '--'].includes(arg)) continue
-      if (arg.startsWith('-') || arg === '!' || arg === '(') break
+      if (arg.startsWith('-') || arg === '!' || arg === '(') {
+        if (!roots.length) return denied('find options require an explicit search root')
+        break
+      }
       roots.push(arg)
     }
     return roots.length ? roots : ['.']
@@ -293,6 +296,7 @@ export const assertShellSearchScope = async (
             tool &&
             [
               'command',
+              'builtin',
               'exec',
               'env',
               'time',
@@ -337,6 +341,7 @@ export const assertShellSearchScope = async (
             return denied('xargs search arguments depend on input; use a direct scoped search')
           if (tool === 'printf' && values.includes('-v')) context.variables.clear()
           if (tool === 'alias') return denied('aliases can hide search commands')
+          if (tool === 'hash') return denied('command rebinding can hide search commands')
           if (
             ['read', 'export', 'declare', 'typeset', 'local', 'source', '.'].includes(tool ?? '')
           ) {

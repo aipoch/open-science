@@ -113,6 +113,12 @@ describe.skipIf(process.platform === 'win32')('POSIX Shell search admission', ()
     "bash <<'EOF'\nfind /\nEOF",
     'if true; then ROOT=/; else ROOT=.; fi; find "$ROOT"',
     'find -O3 / -name x',
+    'find -regextype posix-extended / -name chart.png',
+    'find -unknown-startup-option / -name chart.png',
+    'hash -p /usr/bin/find f; f /',
+    'builtin hash -p /usr/bin/find f; f /',
+    'command builtin hash -p /usr/bin/find f; f /',
+    "builtin eval 'find /'",
     'rg -n "needle" /',
     'grep -R "needle" /',
     'fd "chord_diagram" /',
@@ -128,6 +134,10 @@ describe.skipIf(process.platform === 'win32')('POSIX Shell search admission', ()
   })
 
   it.each([
+    'find',
+    'find -P',
+    'find . -regextype posix-extended -name chart.png',
+    "builtin printf '%s' 'find / is documentation'",
     'find . -name "chord_diagram.png"',
     '/usr/bin/find ./data -name "chord_diagram.png"',
     'cd data && find . -name "chord_diagram.png"',
