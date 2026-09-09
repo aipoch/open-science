@@ -1,3 +1,5 @@
+import { randomUUID } from 'node:crypto'
+import type { BigIntStats } from 'node:fs'
 import { createRequire } from 'node:module'
 import { isAbsolute, relative, sep } from 'node:path'
 
@@ -34,7 +36,34 @@ export const removeAnchoredFile = (
   rootPath: string,
   relativeParentPath: string,
   filename: string,
+  parent: { dev: bigint; ino: bigint },
+  file: Pick<BigIntStats, 'dev' | 'ino' | 'size' | 'mtimeNs'>
+): void => {
+  loadBinding().removeAnchoredFile(
+    rootPath,
+    relativeParentPath,
+    filename,
+    parent.dev,
+    parent.ino,
+    file.dev,
+    file.ino,
+    file.size,
+    file.mtimeNs,
+    `.publication-recovery-${randomUUID()}`
+  )
+}
+
+export const recoverAnchoredRemoval = (
+  rootPath: string,
+  relativeParentPath: string,
+  quarantineName: string,
   parent: { dev: bigint; ino: bigint }
 ): void => {
-  loadBinding().removeAnchoredFile(rootPath, relativeParentPath, filename, parent.dev, parent.ino)
+  loadBinding().recoverAnchoredRemoval(
+    rootPath,
+    relativeParentPath,
+    quarantineName,
+    parent.dev,
+    parent.ino
+  )
 }

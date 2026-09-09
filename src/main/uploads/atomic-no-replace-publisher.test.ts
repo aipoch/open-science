@@ -79,15 +79,16 @@ describe.skipIf(!nativeBindingAvailable)('anchored publication removal', () => {
     const identity = await lstat(parent, { bigint: true })
     await writeFile(join(parent, 'attempt.tmp'), 'interrupted')
     await writeFile(join(parent, 'published'), 'keep')
-    removeAnchoredFile(cleanupRoot, 'content', 'attempt.tmp', identity)
+    const file = await lstat(join(parent, 'attempt.tmp'), { bigint: true })
+    removeAnchoredFile(cleanupRoot, 'content', 'attempt.tmp', identity, file)
     await expect(readFile(join(parent, 'attempt.tmp'))).rejects.toMatchObject({ code: 'ENOENT' })
     expect(await readFile(join(parent, 'published'), 'utf8')).toBe('keep')
     await rename(parent, `${parent}-held`)
     await mkdir(parent)
     await writeFile(join(parent, 'attempt.tmp'), 'replacement')
-    expect(() => removeAnchoredFile(cleanupRoot!, 'content', 'attempt.tmp', identity)).toThrow(
-      expect.objectContaining({ code: 'ESTALE' })
-    )
+    expect(() =>
+      removeAnchoredFile(cleanupRoot!, 'content', 'attempt.tmp', identity, file)
+    ).toThrow(expect.objectContaining({ code: 'ESTALE' }))
     expect(await readFile(join(parent, 'attempt.tmp'), 'utf8')).toBe('replacement')
   })
 
@@ -104,7 +105,7 @@ describe.skipIf(!nativeBindingAvailable)('anchored publication removal', () => {
       await rename(target, `${target}-held`)
       await symlink(`${target}-held`, target, process.platform === 'win32' ? 'junction' : 'dir')
       expect(() =>
-        removeAnchoredFile(root, join('content', 'blobs'), 'attempt.tmp', identity)
+        removeAnchoredFile(root, join('content', 'blobs'), 'attempt.tmp', identity, identity)
       ).toThrow()
       expect(await readFile(join(parent, 'attempt.tmp'), 'utf8')).toBe('keep')
     }
@@ -115,9 +116,9 @@ describe.skipIf(!nativeBindingAvailable)('anchored publication removal', () => {
     const identity = await lstat(cleanupRoot, { bigint: true })
     await mkdir(join(cleanupRoot, 'nested'))
     await writeFile(join(cleanupRoot, 'nested', 'keep'), 'keep')
-    expect(() => removeAnchoredFile(cleanupRoot!, '..', 'anything', identity)).toThrow()
-    expect(() => removeAnchoredFile(cleanupRoot!, '', '../anything', identity)).toThrow()
-    expect(() => removeAnchoredFile(cleanupRoot!, '', 'nested', identity)).toThrow()
+    expect(() => removeAnchoredFile(cleanupRoot!, '..', 'anything', identity, identity)).toThrow()
+    expect(() => removeAnchoredFile(cleanupRoot!, '', '../anything', identity, identity)).toThrow()
+    expect(() => removeAnchoredFile(cleanupRoot!, '', 'nested', identity, identity)).toThrow()
     expect(await readFile(join(cleanupRoot, 'nested', 'keep'), 'utf8')).toBe('keep')
   })
 })

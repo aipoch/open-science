@@ -3,7 +3,7 @@ import { type BigIntStats, createReadStream } from 'node:fs'
 import { copyFile, link, lstat, mkdir, readdir, rename, rm, stat } from 'node:fs/promises'
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 
-import { removeAnchoredFile } from '../uploads/atomic-no-replace-publisher'
+import { recoverAnchoredRemoval, removeAnchoredFile } from '../uploads/atomic-no-replace-publisher'
 
 import type { PrismaClient } from '@prisma/client'
 import { NodeVersionFileOperator } from '../managed-file-versions/version-file-operator'
@@ -99,7 +99,7 @@ const pathAlreadyExists = (error: unknown): boolean =>
   'code' in error &&
   (error as { code?: unknown }).code === 'EEXIST'
 
-const fileFingerprint = (file: Awaited<ReturnType<typeof stat>>): string =>
+const fileFingerprint = (file: Awaited<ReturnType<typeof stat>> | BigIntStats): string =>
   [file.dev, file.ino, file.size, file.mtimeMs, file.ctimeMs].join(':')
 
 // Different repositories share the same immutable files. Keep a sweep's claim and unlink
@@ -565,12 +565,28 @@ class ContentRepository {
       const directory = join(blobsRoot, prefix)
       const snapshot = await lstat(directory, { bigint: true })
       if (!snapshot.isDirectory() || snapshot.isSymbolicLink()) continue
-      for (const filename of await readdir(directory)) {
+      const entries = await readdir(directory)
+      // Recover receipts before admitting source names: a conflict receipt protects a replaced
+      // source from being mistaken for a fresh orphan on every later sweep.
+      for (const entry of entries) {
+        if (
+          !/^\.publication-recovery-[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/.test(
+            entry
+          )
+        )
+          continue
+        try {
+          recoverAnchoredRemoval(root, relative(root, directory), entry, snapshot)
+        } catch (error) {
+          if (!missingFile(error)) throw error
+        }
+      }
+      for (const filename of entries) {
         const match = publicationFilename.exec(filename)
         if (!match || !match[1].startsWith(prefix) || activePublicationFiles.has(filename)) continue
         const temporary = join(directory, filename)
         try {
-          const file = await lstat(temporary)
+          const file = await lstat(temporary, { bigint: true })
           if (!file.isFile() || file.isSymbolicLink()) continue
           // A replaced directory invalidates the enumeration. Never follow its replacement to
           // remove a same-named file, and never recursively remove an unexpected directory.
@@ -587,7 +603,7 @@ class ContentRepository {
               throw new Error('Content publication directory changed during recovery.')
             }
           }
-          const current = await lstat(temporary)
+          const current = await lstat(temporary, { bigint: true })
           if (
             !current.isFile() ||
             current.isSymbolicLink() ||
@@ -595,7 +611,7 @@ class ContentRepository {
           )
             continue
           if (!activePublicationFiles.has(filename)) {
-            removeAnchoredFile(root, relative(root, directory), filename, snapshot)
+            removeAnchoredFile(root, relative(root, directory), filename, snapshot, file)
           }
         } catch (error) {
           // Another sweep or publisher can have removed this exact temporary file already.

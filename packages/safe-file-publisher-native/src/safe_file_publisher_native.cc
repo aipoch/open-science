@@ -1,6 +1,8 @@
 #include <node_api.h>
 
 #include <cerrno>
+#include <charconv>
+#include <sstream>
 #include <cstddef>
 #include <cstring>
 #include <limits>
@@ -13,6 +15,7 @@
 #else
 #include <fcntl.h>
 #include <sys/stat.h>
+#include <sys/file.h>
 #include <unistd.h>
 #ifdef __linux__
 #include <sys/syscall.h>
@@ -391,6 +394,10 @@ const char* PosixErrorCode(int error) {
       return "EPERM";
     case ELOOP:
       return "ELOOP";
+    case ESTALE:
+      return "ESTALE";
+    case EINVAL:
+      return "EINVAL";
     default:
       return "EIO";
   }
@@ -564,23 +571,220 @@ napi_value PublishNoReplace(napi_env env, napi_callback_info info) {
 #endif
 }
 
+bool IsRemovalDirectory(const std::string& name) {
+  const std::string prefix = ".publication-recovery-";
+  if (name.size() != prefix.size() + 36 || name.compare(0, prefix.size(), prefix) != 0) return false;
+  const std::string id = name.substr(prefix.size());
+  for (size_t i = 0; i < id.size(); ++i) {
+    if (i == 8 || i == 13 || i == 18 || i == 23) {
+      if (id[i] != '-') return false;
+    } else if (!((id[i] >= '0' && id[i] <= '9') || (id[i] >= 'a' && id[i] <= 'f'))) return false;
+  }
+  return id[14] == '4' && (id[19] == '8' || id[19] == '9' || id[19] == 'a' || id[19] == 'b');
+}
+
+bool IsPublicationTemporary(const std::string& name) {
+  if (name.size() != 105 || name[64] != '.' || name.substr(101) != ".tmp") return false;
+  for (size_t i = 0; i < 64; ++i) {
+    if (!((name[i] >= '0' && name[i] <= '9') || (name[i] >= 'a' && name[i] <= 'f'))) return false;
+  }
+  return IsRemovalDirectory(".publication-recovery-" + name.substr(65, 36));
+}
+
+#ifndef _WIN32
+struct RemovalFd {
+  int value;
+  explicit RemovalFd(int fd) : value(fd) {}
+  ~RemovalFd() { if (value >= 0) close(value); }
+  RemovalFd(const RemovalFd&) = delete;
+  RemovalFd& operator=(const RemovalFd&) = delete;
+};
+
+struct RemovalReceipt {
+  std::string name;
+  uint64_t parent_dev, parent_ino, dev, ino, size;
+  int64_t mtime;
+};
+
+int OpenRemovalParent(const std::string& root, const std::vector<std::string>& components,
+                      uint64_t dev, uint64_t ino) {
+  int parent = open(root.c_str(), O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
+  if (parent < 0) return -1;
+  for (const auto& component : components) {
+    const int next = openat(parent, component.c_str(), O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
+    const int error = errno;
+    close(parent);
+    if (next < 0) { errno = error; return -1; }
+    parent = next;
+  }
+  struct stat info {};
+  if (fstat(parent, &info) != 0 || static_cast<uint64_t>(info.st_dev) != dev ||
+      static_cast<uint64_t>(info.st_ino) != ino) {
+    close(parent);
+    errno = ESTALE;
+    return -1;
+  }
+  return parent;
+}
+
+bool MatchesRemovalFile(const struct stat& info, const RemovalReceipt& receipt) {
+#ifdef __APPLE__
+  const auto modified = info.st_mtimespec;
+#else
+  const auto modified = info.st_mtim;
+#endif
+  return S_ISREG(info.st_mode) && static_cast<uint64_t>(info.st_dev) == receipt.dev &&
+      static_cast<uint64_t>(info.st_ino) == receipt.ino &&
+      static_cast<uint64_t>(info.st_size) == receipt.size &&
+      modified.tv_sec * INT64_C(1000000000) + modified.tv_nsec == receipt.mtime;
+}
+
+// Both names are relative to held directories. Never overwrite a concurrently installed leaf.
+int MoveRemovalFile(int from, const char* source, int to, const char* destination) {
+#ifdef __APPLE__
+  return renameatx_np(from, source, to, destination, RENAME_EXCL);
+#else
+  return static_cast<int>(syscall(SYS_renameat2, from, source, to, destination, RENAME_NOREPLACE));
+#endif
+}
+
+template <typename T>
+bool ReadRemovalNumber(std::istringstream& stream, T* value) {
+  std::string line;
+  if (!std::getline(stream, line)) return false;
+  const auto parsed = std::from_chars(line.data(), line.data() + line.size(), *value);
+  return parsed.ec == std::errc() && parsed.ptr == line.data() + line.size() &&
+      line == std::to_string(*value);
+}
+
+int ReadRemovalReceipt(int directory, RemovalReceipt* receipt) {
+  RemovalFd file(openat(directory, "receipt", O_RDONLY | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC));
+  if (file.value < 0) return -1;
+  struct stat info {};
+  if (fstat(file.value, &info) != 0 || !S_ISREG(info.st_mode) || info.st_size <= 0 || info.st_size > 4096) {
+    errno = EINVAL;
+    return -1;
+  }
+  std::string bytes(static_cast<size_t>(info.st_size), '\0');
+  size_t offset = 0;
+  while (offset < bytes.size()) {
+    const auto count = read(file.value, &bytes[offset], bytes.size() - offset);
+    if (count < 0 && errno == EINTR) continue;
+    if (count <= 0) { errno = EINVAL; return -1; }
+    offset += count;
+  }
+  std::istringstream stream(bytes);
+  std::string version, extra;
+  if (!std::getline(stream, version) || version != "publication-removal-v1" ||
+      !std::getline(stream, receipt->name) || !IsPublicationTemporary(receipt->name) ||
+      receipt->name.find('\0') != std::string::npos || receipt->name.find('\r') != std::string::npos ||
+      !ReadRemovalNumber(stream, &receipt->parent_dev) || !ReadRemovalNumber(stream, &receipt->parent_ino) ||
+      !ReadRemovalNumber(stream, &receipt->dev) || !ReadRemovalNumber(stream, &receipt->ino) ||
+      !ReadRemovalNumber(stream, &receipt->size) || !ReadRemovalNumber(stream, &receipt->mtime) ||
+      std::getline(stream, extra)) {
+    errno = EINVAL;
+    return -1;
+  }
+  return 0;
+}
+
+int WriteRemovalReceipt(int directory, const RemovalReceipt& receipt) {
+  const std::string bytes = "publication-removal-v1\n" + receipt.name + "\n" +
+      std::to_string(receipt.parent_dev) + "\n" + std::to_string(receipt.parent_ino) + "\n" +
+      std::to_string(receipt.dev) + "\n" + std::to_string(receipt.ino) + "\n" +
+      std::to_string(receipt.size) + "\n" + std::to_string(receipt.mtime) + "\n";
+  RemovalFd file(openat(directory, "receipt", O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0600));
+  if (file.value < 0) return -1;
+  size_t offset = 0;
+  while (offset < bytes.size()) {
+    const auto count = write(file.value, bytes.data() + offset, bytes.size() - offset);
+    if (count < 0 && errno == EINTR) continue;
+    if (count <= 0) return -1;
+    offset += count;
+  }
+  return fsync(file.value);
+}
+
+int FinishRemoval(int parent, int quarantine, const std::string& directory, const RemovalReceipt& receipt) {
+  struct stat parent_info {}, payload {}, source {};
+  if (fstat(parent, &parent_info) != 0 || static_cast<uint64_t>(parent_info.st_dev) != receipt.parent_dev ||
+      static_cast<uint64_t>(parent_info.st_ino) != receipt.parent_ino) { errno = ESTALE; return -1; }
+  if (fstatat(quarantine, "payload", &payload, AT_SYMLINK_NOFOLLOW) != 0) {
+    if (errno != ENOENT) return -1;
+    if (fstatat(parent, receipt.name.c_str(), &source, AT_SYMLINK_NOFOLLOW) == 0) {
+      if (!MatchesRemovalFile(source, receipt)) { errno = ESTALE; return -1; }
+      if (MoveRemovalFile(parent, receipt.name.c_str(), quarantine, "payload") != 0) return -1;
+      // The receipt is already durable. Make capture durable before destroying its only copy.
+      if (fsync(quarantine) != 0 || fsync(parent) != 0) return -1;
+      if (fstatat(quarantine, "payload", &payload, AT_SYMLINK_NOFOLLOW) != 0) return -1;
+    } else if (errno != ENOENT) return -1;
+    else {
+      // A completed unlink, or a candidate removed before capture. Never follow other names.
+      if (unlinkat(quarantine, "receipt", 0) != 0 || fsync(quarantine) != 0) return -1;
+      if (unlinkat(parent, directory.c_str(), AT_REMOVEDIR) != 0) return -1;
+      return fsync(parent);
+    }
+  }
+  if (fstatat(parent, receipt.name.c_str(), &source, AT_SYMLINK_NOFOLLOW) == 0) {
+    errno = EEXIST;
+    return -1; // Preserve both copies and the receipt; do not admit the reused name on another sweep.
+  }
+  if (errno != ENOENT) return -1;
+  if (!MatchesRemovalFile(payload, receipt)) {
+    // Restore without replacement, but retain the receipt as a conflict barrier on later sweeps.
+    if (MoveRemovalFile(quarantine, "payload", parent, receipt.name.c_str()) == 0) {
+      if (fsync(parent) != 0 || fsync(quarantine) != 0) return -1;
+    }
+    errno = ESTALE;
+    return -1;
+  }
+  // Only this owner writes the private, locked quarantine. No unlink is performed in the public
+  // source directory, so replacing the source leaf cannot redirect this removal.
+  if (unlinkat(quarantine, "payload", 0) != 0 || fsync(quarantine) != 0 ||
+      unlinkat(quarantine, "receipt", 0) != 0 || fsync(quarantine) != 0) return -1;
+  if (unlinkat(parent, directory.c_str(), AT_REMOVEDIR) != 0) return -1;
+  return fsync(parent);
+}
+
+int OpenRemovalQuarantine(int parent, const std::string& directory) {
+  const int fd = openat(parent, directory.c_str(), O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
+  if (fd < 0) return -1;
+  struct stat info {};
+  if (fstat(fd, &info) != 0 || info.st_uid != geteuid() || (info.st_mode & 0077) != 0 ||
+      flock(fd, LOCK_EX | LOCK_NB) != 0) {
+    close(fd);
+    errno = EPERM;
+    return -1;
+  }
+  return fd;
+}
+#endif
+
 // Bind deletion to an opened parent, not a path checked earlier by JavaScript.
 napi_value RemoveAnchoredFile(napi_env env, napi_callback_info info) {
-  size_t argc = 5;
-  napi_value argv[5];
-  std::string root, relative_parent, filename;
+  size_t argc = 10;
+  napi_value argv[10];
+  std::string root, relative_parent, filename, quarantine;
   std::vector<std::string> components;
   uint64_t expected_dev = 0, expected_ino = 0;
-  bool dev_lossless = false, ino_lossless = false;
-  if (napi_get_cb_info(env, info, &argc, argv, nullptr, nullptr) != napi_ok || argc != 5 ||
+  uint64_t file_dev = 0, file_ino = 0, file_size = 0;
+  int64_t file_mtime = 0;
+  bool dev_lossless = false, ino_lossless = false, file_dev_ok = false, file_ino_ok = false, size_ok = false, time_ok = false;
+  if (napi_get_cb_info(env, info, &argc, argv, nullptr, nullptr) != napi_ok || argc != 10 ||
       !ReadString(env, argv[0], &root) || !ReadString(env, argv[1], &relative_parent) ||
       !ReadString(env, argv[2], &filename) || root.empty() ||
       root.find('\0') != std::string::npos || relative_parent.find('\0') != std::string::npos ||
-      filename.find('\0') != std::string::npos ||
+      filename.find('\0') != std::string::npos || filename.find_first_of("\r\n") != std::string::npos ||
       !SplitRelativePath(relative_parent, &components) || !IsSimpleName(filename) ||
       napi_get_value_bigint_uint64(env, argv[3], &expected_dev, &dev_lossless) != napi_ok ||
       napi_get_value_bigint_uint64(env, argv[4], &expected_ino, &ino_lossless) != napi_ok ||
-      !dev_lossless || !ino_lossless) {
+      !dev_lossless || !ino_lossless ||
+      napi_get_value_bigint_uint64(env, argv[5], &file_dev, &file_dev_ok) != napi_ok ||
+      napi_get_value_bigint_uint64(env, argv[6], &file_ino, &file_ino_ok) != napi_ok ||
+      napi_get_value_bigint_uint64(env, argv[7], &file_size, &size_ok) != napi_ok ||
+      napi_get_value_bigint_int64(env, argv[8], &file_mtime, &time_ok) != napi_ok ||
+      !file_dev_ok || !file_ino_ok || !size_ok || !time_ok ||
+      !ReadString(env, argv[9], &quarantine) || !IsRemovalDirectory(quarantine)) {
     return ThrowError(env, "Invalid anchored removal arguments.", "EINVAL");
   }
 #ifdef _WIN32
@@ -649,6 +853,17 @@ napi_value RemoveAnchoredFile(napi_env env, napi_callback_info info) {
   const bool safe = GetFileInformationByHandle(file, &attributes) &&
       (attributes.dwFileAttributes & (FILE_ATTRIBUTE_DIRECTORY | FILE_ATTRIBUTE_REPARSE_POINT)) == 0 &&
       SamePath(ParentPath(HandlePath(file)), path);
+  const uint64_t modified = (static_cast<uint64_t>(attributes.ftLastWriteTime.dwHighDateTime) << 32) |
+      attributes.ftLastWriteTime.dwLowDateTime;
+  const bool matches = safe && attributes.dwVolumeSerialNumber == file_dev &&
+      ((static_cast<uint64_t>(attributes.nFileIndexHigh) << 32) | attributes.nFileIndexLow) == file_ino &&
+      ((static_cast<uint64_t>(attributes.nFileSizeHigh) << 32) | attributes.nFileSizeLow) == file_size &&
+      (static_cast<int64_t>(modified) - INT64_C(116444736000000000)) * 100 == file_mtime;
+  if (!matches) {
+    CloseHandle(file);
+    close_directories();
+    return ThrowError(env, "Removal file changed.", "ESTALE");
+  }
   FILE_DISPOSITION_INFO disposition{TRUE};
   const bool removed = safe && SetFileInformationByHandle(file, FileDispositionInfo,
       &disposition, sizeof(disposition));
@@ -657,38 +872,61 @@ napi_value RemoveAnchoredFile(napi_env env, napi_callback_info info) {
   close_directories();
   if (!removed) return ThrowError(env, "Anchored removal failed.", safe ? WindowsErrorCode(error) : "ELOOP");
 #else
-  int parent = open(root.c_str(), O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
-  if (parent < 0) return ThrowError(env, "Could not anchor the storage root.", PosixErrorCode(errno));
-  for (const auto& component : components) {
-    const int next = openat(parent, component.c_str(), O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
-    const int error = errno;
-    close(parent);
-    if (next < 0) return ThrowError(env, "Could not anchor the removal directory.", PosixErrorCode(error));
-    parent = next;
-  }
-  struct stat directory_info {};
-  if (fstat(parent, &directory_info) != 0 ||
-      static_cast<uint64_t>(directory_info.st_dev) != expected_dev ||
-      static_cast<uint64_t>(directory_info.st_ino) != expected_ino) {
-    close(parent);
-    return ThrowError(env, "Removal directory changed.", "ESTALE");
-  }
-  struct stat file_info {};
-  const int inspected = fstatat(parent, filename.c_str(), &file_info, AT_SYMLINK_NOFOLLOW);
-  const int inspection_error = errno;
-  if (inspected != 0 || !S_ISREG(file_info.st_mode)) {
-    close(parent);
-    return ThrowError(env, "Unsafe removal file.", inspected != 0 ? PosixErrorCode(inspection_error) : "ELOOP");
-  }
-  // unlinkat never follows a replacement leaf symlink and never removes a directory.
-  const int removed = unlinkat(parent, filename.c_str(), 0);
-  const int error = errno;
-  close(parent);
-  if (removed != 0) return ThrowError(env, "Anchored removal failed.", PosixErrorCode(error));
+  RemovalFd parent(OpenRemovalParent(root, components, expected_dev, expected_ino));
+  if (parent.value < 0) return ThrowError(env, "Could not anchor removal parent.", PosixErrorCode(errno));
+  if (mkdirat(parent.value, quarantine.c_str(), 0700) != 0)
+    return ThrowError(env, "Could not create removal quarantine.", PosixErrorCode(errno));
+  RemovalFd held(OpenRemovalQuarantine(parent.value, quarantine));
+  if (held.value < 0) return ThrowError(env, "Unsafe removal quarantine.", PosixErrorCode(errno));
+  const RemovalReceipt receipt{filename, expected_dev, expected_ino, file_dev, file_ino, file_size, file_mtime};
+  if (WriteRemovalReceipt(held.value, receipt) != 0 || fsync(held.value) != 0 || fsync(parent.value) != 0 ||
+      FinishRemoval(parent.value, held.value, quarantine, receipt) != 0)
+    return ThrowError(env, "Publication quarantine requires recovery: " + quarantine, PosixErrorCode(errno));
 #endif
   napi_value undefined;
   napi_get_undefined(env, &undefined);
   return undefined;
+}
+
+napi_value RecoverAnchoredRemoval(napi_env env, napi_callback_info info) {
+  size_t argc = 5;
+  napi_value argv[5];
+  std::string root, relative_parent, directory;
+  std::vector<std::string> components;
+  uint64_t dev = 0, ino = 0;
+  bool dev_ok = false, ino_ok = false;
+  if (napi_get_cb_info(env, info, &argc, argv, nullptr, nullptr) != napi_ok || argc != 5 ||
+      !ReadString(env, argv[0], &root) || root.empty() || root.find('\0') != std::string::npos ||
+      !ReadString(env, argv[1], &relative_parent) || relative_parent.find('\0') != std::string::npos ||
+      !SplitRelativePath(relative_parent, &components) || !ReadString(env, argv[2], &directory) ||
+      !IsRemovalDirectory(directory) ||
+      napi_get_value_bigint_uint64(env, argv[3], &dev, &dev_ok) != napi_ok ||
+      napi_get_value_bigint_uint64(env, argv[4], &ino, &ino_ok) != napi_ok || !dev_ok || !ino_ok)
+    return ThrowError(env, "Invalid removal recovery arguments.", "EINVAL");
+#ifdef _WIN32
+  // Windows deletes an identity-checked open handle directly. A transferred POSIX receipt cannot
+  // prove identity on this volume; preserve it rather than guessing ownership after migration.
+  return ThrowError(env, "POSIX publication quarantine requires its original filesystem.", "ENOTSUP");
+#else
+  RemovalFd parent(OpenRemovalParent(root, components, dev, ino));
+  if (parent.value < 0) return ThrowError(env, "Could not anchor recovery parent.", PosixErrorCode(errno));
+  RemovalFd held(OpenRemovalQuarantine(parent.value, directory));
+  if (held.value < 0) return ThrowError(env, "Unsafe recovery quarantine.", PosixErrorCode(errno));
+  RemovalReceipt receipt{};
+  if (ReadRemovalReceipt(held.value, &receipt) != 0) {
+    if (errno != ENOENT || unlinkat(parent.value, directory.c_str(), AT_REMOVEDIR) != 0)
+      return ThrowError(env, "Unrecognized publication recovery receipt.", PosixErrorCode(errno));
+    if (fsync(parent.value) != 0) return ThrowError(env, "Could not sync recovery directory.", PosixErrorCode(errno));
+  } else if (components.size() != 3 || components[0] != "content" || components[1] != "blobs" ||
+             components[2] != receipt.name.substr(0, 2)) {
+    return ThrowError(env, "Recovery receipt is outside the publication namespace.", "EINVAL");
+  } else if (FinishRemoval(parent.value, held.value, directory, receipt) != 0) {
+    return ThrowError(env, "Publication quarantine requires recovery: " + directory, PosixErrorCode(errno));
+  }
+  napi_value undefined;
+  napi_get_undefined(env, &undefined);
+  return undefined;
+#endif
 }
 
 napi_value Init(napi_env env, napi_value exports) {
@@ -703,6 +941,9 @@ napi_value Init(napi_env env, napi_value exports) {
   napi_value remove;
   napi_create_function(env, "removeAnchoredFile", NAPI_AUTO_LENGTH, RemoveAnchoredFile, nullptr, &remove);
   napi_set_named_property(env, exports, "removeAnchoredFile", remove);
+  napi_value recover;
+  napi_create_function(env, "recoverAnchoredRemoval", NAPI_AUTO_LENGTH, RecoverAnchoredRemoval, nullptr, &recover);
+  napi_set_named_property(env, exports, "recoverAnchoredRemoval", recover);
   return exports;
 }
 
