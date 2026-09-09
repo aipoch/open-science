@@ -666,7 +666,7 @@ class SideChatRuntimeOwner {
   }
 
   async close(request: SideChatSessionRequest): Promise<void> {
-    const active = this.findActive(request.sideSessionId)
+    const active = this.findActive(request.sideSessionId, true)
     if (active) {
       await this.closeActive(active)
       return
@@ -1499,9 +1499,10 @@ class SideChatRuntimeOwner {
     })
   }
 
-  private findActive(sideSessionId: string): ActiveSideChat | undefined {
+  private findActive(sideSessionId: string, includeClosing = false): ActiveSideChat | undefined {
     for (const active of this.activeByParent.values()) {
-      if (active.sideSessionId === sideSessionId && !active.closing) return active
+      if (active.sideSessionId === sideSessionId && (includeClosing || !active.closing))
+        return active
     }
     return undefined
   }
@@ -1585,10 +1586,14 @@ class SideChatRuntimeOwner {
 
   private async closeActive(active: ActiveSideChat, notify = true): Promise<void> {
     const existing = this.closingByParent.get(active.parentSessionId)
-    if (existing) return existing
-    if (active.closing || this.activeByParent.get(active.parentSessionId) !== active) {
+    if (existing || active.closing) {
+      // A retained suspension still owns its runtime. Reap it before clearing durable history.
+      await (existing ?? this.suspendActive(active))
+      const dormant = this.dormantByParent.get(active.parentSessionId)
+      if (dormant) await this.closeDormant(dormant)
       return
     }
+    if (this.activeByParent.get(active.parentSessionId) !== active) return
     active.closing = true
     this.touch(active)
     const closing = this.destroyActive(active)
