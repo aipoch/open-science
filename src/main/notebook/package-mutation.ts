@@ -54,7 +54,7 @@ type NotebookPackageMutationOwnerOptions = {
     request: NotebookPackageAdmittedTarget['request'],
     deps?: Partial<InstallDeps>
   ) => Promise<InstallResult>
-  packageSpawn?: (target: NotebookPackageAdmittedTarget) => InstallSpawn
+  packageSpawn?: (target: NotebookPackageAdmittedTarget, mirror: PackageMirror) => InstallSpawn
   micromambaRunner?: Pick<MicromambaRunner, 'resolve'>
   recheckRepair: (
     target: NotebookPackageAdmittedTarget
@@ -144,7 +144,9 @@ class NotebookPackageMutationOwner {
           try {
             try {
               installResult = await this.options.installPackages(request, {
-                ...(this.options.packageSpawn ? { spawn: this.options.packageSpawn(target) } : {}),
+                ...(this.options.packageSpawn
+                  ? { spawn: this.options.packageSpawn(target, mirror) }
+                  : {}),
                 micromambaRunner: this.options.micromambaRunner,
                 storageRoot: this.options.storageRoot,
                 condaChannel: mirror.condaChannel,

@@ -604,10 +604,11 @@ class NotebookRuntimeService {
       installPackages: options.installPackagesImpl ?? installPackagesDefault,
       ...(options.processSandbox
         ? {
-            packageSpawn: (target) =>
+            packageSpawn: (target, mirror) =>
               sandboxedPackageSpawn({
                 processSandbox: options.processSandbox!,
                 request: target.request,
+                mirror,
                 runtimeRoot,
                 storageRoot: options.dataRoot,
                 interpreter: target.interpreter

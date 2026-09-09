@@ -11,6 +11,8 @@ import {
 } from 'node:fs'
 import { delimiter, dirname, isAbsolute, join, relative, resolve, win32 } from 'node:path'
 
+import type { PackageMirror } from '../../shared/mirror'
+import { validateCustomAllowedDomain } from '../../shared/notebook-network'
 import { defaultSpawn, type InstallRequest, type InstallSpawn } from './package-manager'
 import { buildNotebookKernelEnvironment } from './process-environment'
 import type { NotebookProcessSandbox } from './process-sandbox'
@@ -20,9 +22,31 @@ type PackageProcessSandboxOptions = Readonly<{
   request: InstallRequest
   runtimeRoot: string
   storageRoot: string
+  mirror?: PackageMirror
   interpreter?: Readonly<{ command: string; condaPrefix?: string }>
   platform?: NodeJS.Platform
 }>
+
+const packageMirrorHosts = (mirror: PackageMirror | undefined): string[] => {
+  const hosts = [mirror?.condaChannel, mirror?.pypiIndex, mirror?.cranMirror].flatMap((value) => {
+    const hasAsciiWhitespaceOrControl = [...(value ?? '')].some((character) => {
+      const codePoint = character.codePointAt(0) ?? 0
+      return codePoint <= 0x20 || codePoint === 0x7f
+    })
+    if (!value || hasAsciiWhitespaceOrControl) return []
+    try {
+      const url = new URL(value)
+      if ((url.protocol !== 'https:' && url.protocol !== 'http:') || url.username || url.password) {
+        return []
+      }
+      const normalized = validateCustomAllowedDomain(url.hostname)
+      return normalized.ok ? [normalized.hostname] : []
+    } catch {
+      return []
+    }
+  })
+  return [...new Set(hosts)]
+}
 
 const PACKAGE_ENV_KEYS = [
   'CONDA_PKGS_DIRS',
@@ -177,6 +201,7 @@ export const sandboxedPackageSpawn =
       sessionId: request.sessionId ?? 'notebook-package-manager',
       projectId: request.projectId ?? 'notebook-package-manager',
       runtime: request.language,
+      allowedNetworkHosts: packageMirrorHosts(options.mirror),
       signal: spawnOptions?.signal,
       filesystem: {
         readOnlyRoots: [...absolutePath(dirname(command)), ...absolutePath(request.workspaceCwd)],

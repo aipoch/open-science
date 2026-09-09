@@ -201,6 +201,12 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
     }
     let activeExecutionGrants: ReadonlySet<string> = new Set()
     let executionActive = false
+    const allowedNetworkHosts = new Set(
+      (invocation.allowedNetworkHosts ?? []).flatMap((host) => {
+        const normalized = validateCustomAllowedDomain(host)
+        return normalized.ok ? [normalized.hostname] : []
+      })
+    )
     let wrapped: Awaited<ReturnType<NotebookNetworkSandbox['wrap']>>
     try {
       wrapped = await this.sandbox!.wrap({
@@ -247,6 +253,7 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
             invocation.commandText,
             executionActive,
             activeExecutionGrants,
+            allowedNetworkHosts,
             request
           )
       })
@@ -655,11 +662,13 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
     commandText: string,
     executionActive: boolean,
     commandGrants: ReadonlySet<string>,
+    allowedNetworkHosts: ReadonlySet<string>,
     request: { host: string; signal: AbortSignal }
   ): Promise<boolean> {
     if (request.signal.aborted) return Promise.resolve(false)
     const normalized = validateCustomAllowedDomain(request.host)
     if (!normalized.ok || !executionActive) return Promise.resolve(false)
+    if (allowedNetworkHosts.has(normalized.hostname)) return Promise.resolve(true)
     if (commandGrants.has(normalized.hostname)) return Promise.resolve(true)
     const key = blockedDestinationKey(sessionId, normalized.hostname)
     const runtimes = this.blockedDestinationCommands.get(key) ?? new Map()
