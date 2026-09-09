@@ -316,8 +316,11 @@ const PROJECT_OWNED_DATA_CATALOG: readonly ProjectOwnedDataCatalogEntry[] = [
       }
     ],
     policy: {
-      kind: 'foreign-key-cascade',
-      note: 'Project Literature membership is removed if its owning Project row is hard-deleted.'
+      kind: 'coordinator-cleanup',
+      effect: 'hard-delete',
+      path: 'project-metadata-soft-delete',
+      operation: 'ProjectRepository.delete',
+      note: 'Remove active Literature membership in the Project soft-delete transaction; retain global references and discovery provenance.'
     }
   },
   {

@@ -38,7 +38,9 @@
     "Skill": "技能",
     "Specialist": "專家",
     "Connector": "連接器",
-    "Export Connector configuration": "匯出連接器設定"
+    "Export Connector configuration": "匯出連接器設定",
+    "Discard changes": "捨棄變更",
+    "Discard unsaved changes?": "要捨棄未儲存的變更嗎？"
   },
   "native": {
     "Conversation export is too large. Select fewer conversation turns.": "對話匯出內容過大。請選擇較少的對話輪次。",
@@ -97,7 +99,8 @@
     "Specialist ZIP": "專家 ZIP",
     "JSON report": "JSON 報告",
     "Connector configuration": "連接器設定",
-    "Import Connector configuration": "匯入連接器設定"
+    "Import Connector configuration": "匯入連接器設定",
+    "Your unsaved changes will be lost.": "未儲存的變更將會遺失。"
   },
   "renderer": {
     "Shared content": "共用內容",
@@ -319,7 +322,6 @@
     "Scientific literature": "科學文獻",
     "Clinical and translational research": "臨床與轉譯研究",
     "A conversation changed elsewhere and could not be saved safely.": "會話已在其他位置變更，無法安全儲存。",
-    "One or more conversations could not be saved.": "一個或多個會話無法儲存。",
     "Quit was canceled": "已取消結束",
     "This session was deleted or is unavailable.": "此會話已刪除或無法使用。",
     "Add context for the Agent": "為智能體新增上下文",
@@ -4124,8 +4126,6 @@
     "Compare {{name}} with its source version": "將 {{name}} 與其來源版本比較",
     "Compare with source version": "與來源版本比較",
     "Comparing versions...": "正在比較版本……",
-    "Discard unsaved changes?": "要捨棄未儲存的變更嗎？",
-    "Discard changes": "捨棄變更",
     "Changes could not be saved.": "無法儲存變更。",
     "File storage is unavailable. Check the storage location and try again.": "檔案儲存空間無法使用。請檢查儲存位置後再試一次。",
     "Open Science does not have permission to save this file.": "Open Science 沒有儲存此檔案的權限。",
@@ -4869,6 +4869,7 @@
     "Failed: {{failed}} · Skipped: {{skipped}}": "失敗：{{failed}} · 已略過：{{skipped}}",
     "You can import unfinished files or close this window.": "您可以匯入未完成的檔案或關閉此視窗。",
     "New Compute jobs may remain queued because saved concurrency limits could not be verified. Preserve the affected files, recover a valid copy, then recheck to resume dispatch.": "無法驗證已儲存的並行限制，新 Compute 任務可能會持續排隊。請保留受影響的檔案，還原有效副本後重新檢查，以恢復任務派發。",
-    "Recheck saved conversations": "重新檢查已儲存的對話"
+    "Recheck saved conversations": "重新檢查已儲存的對話",
+    "Some changes have not been saved.": "部分變更尚未儲存。"
   }
 }

@@ -28,6 +28,7 @@ const createMockClient = (
   project: Record<string, ReturnType<typeof vi.fn>>
   projectDeletionIntent: Record<string, ReturnType<typeof vi.fn>>
   projectPreviewState: { deleteMany: ReturnType<typeof vi.fn> }
+  projectLiterature: { deleteMany: ReturnType<typeof vi.fn> }
   visionEvidence: { deleteMany: ReturnType<typeof vi.fn> }
   memoryEntry: { deleteMany: ReturnType<typeof vi.fn> }
   memorySettings: { update: ReturnType<typeof vi.fn> }
@@ -47,6 +48,7 @@ const createMockClient = (
     findMany: vi.fn().mockResolvedValue([])
   }
   const executeRaw = vi.fn().mockResolvedValue(1)
+  const projectLiterature = { deleteMany: vi.fn(() => Promise.resolve({ count: 1 })) }
   const projectPreviewState = { deleteMany: vi.fn().mockResolvedValue({ count: 1 }) }
   const visionEvidence = { deleteMany: vi.fn().mockResolvedValue({ count: 1 }) }
   const memoryEntry = { deleteMany: vi.fn().mockResolvedValue({ count: 1 }) }
@@ -60,6 +62,7 @@ const createMockClient = (
     project,
     projectDeletionIntent,
     projectPreviewState,
+    projectLiterature,
     visionEvidence,
     memoryEntry,
     memorySettings
@@ -71,6 +74,7 @@ const createMockClient = (
     project,
     projectDeletionIntent,
     projectPreviewState,
+    projectLiterature,
     visionEvidence,
     memoryEntry,
     memorySettings

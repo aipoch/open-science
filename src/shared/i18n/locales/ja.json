@@ -38,7 +38,9 @@
     "Skill": "スキル",
     "Specialist": "スペシャリスト",
     "Connector": "コネクタ",
-    "Export Connector configuration": "コネクタ構成をエクスポート"
+    "Export Connector configuration": "コネクタ構成をエクスポート",
+    "Discard changes": "変更を破棄",
+    "Discard unsaved changes?": "未保存の変更を破棄しますか？"
   },
   "native": {
     "Conversation export is too large. Select fewer conversation turns.": "会話のエクスポートが大きすぎます。選択する会話ターンを減らしてください。",
@@ -97,7 +99,8 @@
     "Specialist ZIP": "スペシャリスト ZIP",
     "JSON report": "JSON レポート",
     "Connector configuration": "コネクタ構成",
-    "Import Connector configuration": "コネクタ構成のインポート"
+    "Import Connector configuration": "コネクタ構成のインポート",
+    "Your unsaved changes will be lost.": "保存されていない変更は失われます。"
   },
   "renderer": {
     "Shared content": "共有コンテンツ",
@@ -319,7 +322,6 @@
     "Scientific literature": "科学文献",
     "Clinical and translational research": "臨床・トランスレーショナル研究",
     "A conversation changed elsewhere and could not be saved safely.": "別の場所で会話が変更されたため、安全に保存できませんでした。",
-    "One or more conversations could not be saved.": "1件以上の会話を保存できませんでした。",
     "Quit was canceled": "終了はキャンセルされました",
     "This session was deleted or is unavailable.": "このセッションは削除されたか、利用できません。",
     "Add context for the Agent": "エージェント向けの補足を追加",
@@ -4123,8 +4125,6 @@
     "Compare {{name}} with its source version": "{{name}} を元のバージョンと比較",
     "Compare with source version": "元のバージョンと比較",
     "Comparing versions...": "バージョンを比較中…",
-    "Discard unsaved changes?": "未保存の変更を破棄しますか？",
-    "Discard changes": "変更を破棄",
     "Changes could not be saved.": "変更を保存できませんでした。",
     "File storage is unavailable. Check the storage location and try again.": "ファイルストレージを利用できません。保存場所を確認して、もう一度お試しください。",
     "Open Science does not have permission to save this file.": "Open Science にはこのファイルを保存する権限がありません。",
@@ -4869,6 +4869,7 @@
     "Failed: {{failed}} · Skipped: {{skipped}}": "失敗: {{failed}} · スキップ: {{skipped}}",
     "You can import unfinished files or close this window.": "未完了のファイルをインポートするか、このウィンドウを閉じることができます。",
     "New Compute jobs may remain queued because saved concurrency limits could not be verified. Preserve the affected files, recover a valid copy, then recheck to resume dispatch.": "保存された同時実行数の制限を検証できないため、新しい Compute ジョブがキューに残る場合があります。対象ファイルを保持し、有効なコピーを復元してから再確認すると、ジョブの送信を再開できます。",
-    "Recheck saved conversations": "保存済みの会話を再確認"
+    "Recheck saved conversations": "保存済みの会話を再確認",
+    "Some changes have not been saved.": "一部の変更が保存されていません。"
   }
 }

@@ -59,6 +59,7 @@ type LiteratureCatalogClient = Pick<
   | 'literatureInboxCandidate'
   | 'literatureItem'
   | 'projectLiterature'
+  | 'projectDeletionIntent'
   | 'tagAssignment'
 >
 
@@ -196,6 +197,18 @@ const candidateDedupeKey = (candidate: LiteratureCandidateInput): string => {
   )}`
 }
 
+// Deletion intents are independent recovery records, not a Project foreign-key relation.
+const availableProjectWhere = async (
+  client: Pick<Prisma.TransactionClient, 'projectDeletionIntent'>
+): Promise<Prisma.ProjectWhereInput> => ({
+  deletedAt: null,
+  id: {
+    notIn: (await client.projectDeletionIntent.findMany({ select: { projectId: true } })).map(
+      ({ projectId }) => projectId
+    )
+  }
+})
+
 const itemInclude = {
   creators: { include: { creator: true }, orderBy: { ordinal: 'asc' as const } },
   identifiers: { orderBy: [{ isPrimary: 'desc' as const }, { createdAt: 'asc' as const }] },
@@ -215,6 +228,17 @@ const itemInclude = {
     orderBy: [{ sortOrder: 'asc' as const }, { createdAt: 'asc' as const }]
   }
 } satisfies Prisma.LiteratureItemInclude
+
+const activeItemInclude = async (
+  client: Pick<Prisma.TransactionClient, 'projectDeletionIntent'>
+): Promise<
+  typeof itemInclude & {
+    projects: typeof itemInclude.projects & { where: Prisma.ProjectLiteratureWhereInput }
+  }
+> => ({
+  ...itemInclude,
+  projects: { ...itemInclude.projects, where: { project: await availableProjectWhere(client) } }
+})
 
 type LiteratureItemRow = Prisma.LiteratureItemGetPayload<{ include: typeof itemInclude }>
 
@@ -333,8 +357,8 @@ const attachProjectIfPresent = async (
   source: string
 ): Promise<void> => {
   if (!projectId) return
-  const project = await transaction.project.findUnique({
-    where: { id: projectId },
+  const project = await transaction.project.findFirst({
+    where: { AND: [{ id: projectId }, await availableProjectWhere(transaction)] },
     select: { id: true }
   })
   if (!project) return
@@ -876,7 +900,10 @@ class LiteratureCatalog {
     if (request.scope === 'project-counts') {
       const rows = await client.projectLiterature.groupBy({
         by: ['projectId'],
-        where: { item: { deletedAt: null, mergedIntoItemId: null } },
+        where: {
+          project: await availableProjectWhere(client),
+          item: { deletedAt: null, mergedIntoItemId: null }
+        },
         _count: { itemId: true },
         orderBy: { projectId: 'asc' }
       })
@@ -976,7 +1003,7 @@ class LiteratureCatalog {
 
   private async searchLibrary(
     request: LiteratureCatalogSearchRequest,
-    client: Pick<LiteratureCatalogClient, 'literatureItem' | '$queryRaw'>,
+    client: Pick<LiteratureCatalogClient, 'literatureItem' | '$queryRaw' | 'projectDeletionIntent'>,
     boundResponse = true
   ): Promise<LiteratureCatalogSearchPage> {
     const offset = Math.max(0, request.offset ?? 0)
@@ -1028,7 +1055,7 @@ class LiteratureCatalog {
     const projectId = request.projectId ?? filter?.projectId
     if (projectId)
       predicates.push(
-        Prisma.sql`EXISTS (SELECT 1 FROM "ProjectLiterature" p WHERE p."itemId" = i.id AND p."projectId" = ${projectId})`
+        Prisma.sql`EXISTS (SELECT 1 FROM "ProjectLiterature" p JOIN "Project" project ON project.id = p."projectId" WHERE p."itemId" = i.id AND p."projectId" = ${projectId} AND project."deletedAt" IS NULL AND NOT EXISTS (SELECT 1 FROM "ProjectDeletionIntent" d WHERE d."projectId" = project.id))`
       )
     const collectionId = request.collectionId ?? filter?.collectionId
     if (collectionId)
@@ -1097,7 +1124,7 @@ class LiteratureCatalog {
     const rows = itemIds.length
       ? await client.literatureItem.findMany({
           where: { id: { in: itemIds } },
-          include: itemInclude
+          include: await activeItemInclude(client)
         })
       : []
     const byId = new Map(rows.map((row) => [row.id, row]))
@@ -1130,7 +1157,7 @@ class LiteratureCatalog {
     // Normal get() deliberately hides deleted records and follows active aliases.
     const row = await client.literatureItem.findUnique({
       where: { id: request.itemId },
-      include: itemInclude
+      include: await activeItemInclude(client)
     })
     if (!row) throw new Error('Reference unavailable')
     const content = JSON.stringify(toItemView(row))
@@ -1153,12 +1180,12 @@ class LiteratureCatalog {
     const client = await this.getClient()
     const requested = await client.literatureItem.findUnique({
       where: { id: itemId },
-      include: itemInclude
+      include: await activeItemInclude(client)
     })
     const row = requested?.mergedIntoItemId
       ? await client.literatureItem.findFirst({
           where: { id: requested.mergedIntoItemId, deletedAt: null },
-          include: itemInclude
+          include: await activeItemInclude(client)
         })
       : requested?.deletedAt
         ? undefined
@@ -1195,7 +1222,7 @@ class LiteratureCatalog {
     const client = await this.getClient()
     const requestedRows = await client.literatureItem.findMany({
       where: { id: { in: ids } },
-      include: itemInclude
+      include: await activeItemInclude(client)
     })
     const requestedById = new Map(requestedRows.map((row) => [row.id, row]))
     const survivorIds = requestedRows.flatMap((row) =>
@@ -1206,7 +1233,7 @@ class LiteratureCatalog {
         ? []
         : await client.literatureItem.findMany({
             where: { id: { in: survivorIds }, deletedAt: null },
-            include: itemInclude
+            include: await activeItemInclude(client)
           })
     const survivorsById = new Map(survivors.map((row) => [row.id, row]))
     return ids.flatMap((id) => {
@@ -2073,6 +2100,11 @@ class LiteratureCatalog {
     await this.commit(
       client,
       async (transaction) => {
+        const project = await transaction.project.findFirst({
+          where: { AND: [{ id: command.projectId }, await availableProjectWhere(transaction)] },
+          select: { id: true }
+        })
+        if (!project) throw new Error('Project is unavailable.')
         const available = await transaction.literatureItem.count({
           where: { id: { in: itemIds }, deletedAt: null, mergedIntoItemId: null }
         })
@@ -2301,7 +2333,7 @@ class LiteratureCatalog {
           async (transaction) => {
             const rows = await transaction.literatureItem.findMany({
               where: { id: { in: ids }, deletedAt: null, mergedIntoItemId: null },
-              include: itemInclude,
+              include: await activeItemInclude(transaction),
               orderBy: [{ createdAt: 'asc' }, { id: 'asc' }]
             })
             if (rows.length !== ids.length) {
@@ -2433,7 +2465,7 @@ class LiteratureCatalog {
         select: { collectionId: true, itemId: true, sortOrder: true }
       }),
       transaction.projectLiterature.findMany({
-        where: { itemId: { in: duplicateIds } },
+        where: { itemId: { in: duplicateIds }, project: await availableProjectWhere(transaction) },
         select: { projectId: true, itemId: true, source: true }
       }),
       transaction.tagAssignment.findMany({

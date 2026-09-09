@@ -22,12 +22,14 @@ export const useLiteratureChanges = (invalidate: () => void): void => {
       if (document.visibilityState === 'visible') refresh()
     }
     const remove = window.api?.literature?.onChanged?.(refresh)
+    const removeProjectDeleted = window.api?.projects?.onDeleted?.(refresh)
     window.addEventListener('focus', refresh)
     document.addEventListener('visibilitychange', visible)
     window.addEventListener('open-science:web-events-open', refresh)
     return () => {
       active = false
       remove?.()
+      removeProjectDeleted?.()
       window.removeEventListener('focus', refresh)
       document.removeEventListener('visibilitychange', visible)
       window.removeEventListener('open-science:web-events-open', refresh)
