@@ -2684,3 +2684,20 @@ describe('overlapping authoritative updates', () => {
     }
   )
 })
+
+it('keeps normalized preference defaults when an untyped receipt omits the field', async () => {
+  useSettingsStore.setState({
+    ...createInitialSettingsState(),
+    isLoaded: true,
+    notificationsEnabled: false
+  })
+  const committed = { ...snapshot([]), revision: 2 }
+  delete (committed as Partial<SettingsSnapshot>).notificationsEnabled
+  vi.stubGlobal('window', { api: { settings: { setNotificationsEnabled: async () => committed } } })
+  try {
+    await useSettingsStore.getState().setNotificationsEnabled(true)
+    expect(useSettingsStore.getState().notificationsEnabled).toBe(true)
+  } finally {
+    vi.unstubAllGlobals()
+  }
+})
