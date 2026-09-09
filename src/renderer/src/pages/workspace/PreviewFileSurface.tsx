@@ -893,12 +893,27 @@ const PreviewFileSurface = forwardRef<PreviewFileSurfaceHandle, PreviewFileSurfa
         : {}),
       suggestedName: resolvedPreviewItem.name
     })
+    const pdfPageCountKey = JSON.stringify([
+      contentItem.id,
+      contentItem.path,
+      contentItem.selectedVersionId,
+      previewContentKey
+    ])
+    const [pdfPageCount, setPdfPageCount] = useState<{ key: string; count: number }>()
+    const hidePdfReadingEntry =
+      contentItem.format === 'pdf' &&
+      (pdfPageCount?.key !== pdfPageCountKey || pdfPageCount.count <= 1)
     const reportPdfReadingPosition = useCallback(
       (position: { pageNumber: number; pageCount: number }): void => {
+        setPdfPageCount((current) =>
+          current?.key === pdfPageCountKey && current.count === position.pageCount
+            ? current
+            : { key: pdfPageCountKey, count: position.pageCount }
+        )
         if (!readingContextBindingId) return
         usePreviewWorkbenchStore.getState().setPdfReadingPosition(readingContextBindingId, position)
       },
-      [readingContextBindingId]
+      [pdfPageCountKey, readingContextBindingId]
     )
     const stageLocalPath = window.api.uploads?.stageLocalPath
 
@@ -1430,7 +1445,11 @@ const PreviewFileSurface = forwardRef<PreviewFileSurfaceHandle, PreviewFileSurfa
                 onClose={closePreview}
                 onOpenFullScreen={onOpenFullScreen}
                 onReload={() => setReloadToken((token) => token + 1)}
-                pdfContextAction={pdfContextAction}
+                pdfContextAction={
+                  hidePdfReadingEntry && pdfContextAction?.state === 'link'
+                    ? undefined
+                    : pdfContextAction
+                }
                 saveAsArtifactState={saveAsArtifactState}
                 managedDownload={managedDownload}
                 provenanceEntry={provenanceEntry}
@@ -1659,9 +1678,7 @@ const PreviewFileSurface = forwardRef<PreviewFileSurfaceHandle, PreviewFileSurfa
                           onRedoAnnotation={onRedoAnnotation}
                           onAnnotationError={onAnnotationError}
                           onRetry={retryManagedPreview}
-                          onPdfReadingPositionChange={
-                            readingContextBindingId ? reportPdfReadingPosition : undefined
-                          }
+                          onPdfReadingPositionChange={reportPdfReadingPosition}
                         />
                       ) : null
                     ) : managedWorkflow.diffResult ? (
@@ -1695,9 +1712,7 @@ const PreviewFileSurface = forwardRef<PreviewFileSurfaceHandle, PreviewFileSurfa
                       onRedoAnnotation={onRedoAnnotation}
                       onAnnotationError={onAnnotationError}
                       onRetry={retryManagedPreview}
-                      onPdfReadingPositionChange={
-                        readingContextBindingId ? reportPdfReadingPosition : undefined
-                      }
+                      onPdfReadingPositionChange={reportPdfReadingPosition}
                     />
                   ) : null}
                 </div>
