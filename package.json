@@ -23,6 +23,8 @@
     "test:e2e": "playwright test",
     "test:e2e:journey": "playwright test e2e/electron-foundation.spec.ts e2e/settings-persistence.spec.ts e2e/windows-window-system.spec.ts",
     "test:e2e:workspace": "playwright test e2e/launch-environment.spec.ts e2e/message-tool-layout-stability.spec.ts e2e/workspace-project-switcher.spec.ts e2e/workspace-conversation.spec.ts e2e/workspace-files.spec.ts",
+    "test:e2e:regressions": "playwright test e2e/compute-execution-mode.spec.ts e2e/find-overlay.spec.ts e2e/literature-client-sync.spec.ts e2e/mermaid-block.spec.ts e2e/message-queue-presentation-gate.spec.ts e2e/message-scroll-anchor.spec.ts e2e/message-scroll-reanchor.spec.ts e2e/message-scroll-release.spec.ts e2e/message-tool-order.spec.ts e2e/preview-context-menu.spec.ts e2e/skill-permission-card.spec.ts e2e/window-presentation.spec.ts",
+    "test:e2e:delegation": "playwright test e2e/subagent-model-release-gate.spec.ts e2e/subagent-release-gate.spec.ts",
     "test:e2e:accessibility": "playwright test e2e/accessibility.spec.ts",
     "test:e2e:accessibility:signal": "node scripts/ci/run-accessibility-e2e.mjs",
     "test:e2e:visual": "playwright test e2e/visual-regression.spec.ts",

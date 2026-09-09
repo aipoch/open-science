@@ -361,7 +361,14 @@ class ElectronAppHarness implements ElectronApp {
       await harness.launch()
       return harness
     } catch (error) {
-      await harness.dispose().catch(() => undefined)
+      try {
+        await harness.dispose()
+      } catch (cleanupError) {
+        throw new AggregateError(
+          [error, cleanupError],
+          'Electron fixture startup and cleanup failed.'
+        )
+      }
       throw error
     }
   }
@@ -920,10 +927,25 @@ class ElectronAppHarness implements ElectronApp {
   async dispose(): Promise<void> {
     this.resourceProfiler?.abort()
     this.resourceProfiler = undefined
-    await this.closeForCleanup().catch(() => undefined)
-    await makeTreeWritable(this.testRoot)
-    await rm(this.testRoot, { force: true, maxRetries: 5, recursive: true, retryDelay: 200 })
-    this.rendererFailures.assertNoFailures()
+    const errors: unknown[] = []
+    try {
+      await this.closeForCleanup()
+      await makeTreeWritable(this.testRoot)
+      await rm(this.testRoot, { force: true, maxRetries: 5, recursive: true, retryDelay: 200 })
+    } catch (error) {
+      errors.push(error)
+    }
+    try {
+      this.rendererFailures.assertNoFailures()
+    } catch (error) {
+      errors.push(error)
+    }
+    if (errors.length > 0) {
+      throw new AggregateError(
+        errors,
+        `Electron fixture cleanup failed; inspect ${this.testRoot}: ${errors.map(String).join('; ')}`
+      )
+    }
   }
 
   private async launch(): Promise<void> {
@@ -1030,18 +1052,34 @@ const test = base.extend<{ app: ElectronApp; windowMode: E2eWindowMode }>({
   app: async ({ windowMode }, install, testInfo) => {
     const app = await ElectronAppHarness.create(windowMode)
 
+    let bodyError: unknown
     try {
       await install(app)
-    } finally {
-      if (testInfo.status !== testInfo.expectedStatus) {
-        // Preserve the original test failure even if shutdown left no readable log.
-        await app
-          .captureMainLog('test-failure.log')
-          .then((path) => testInfo.attach('main-process-log', { path, contentType: 'text/plain' }))
-          .catch(() => undefined)
-      }
-      await app.dispose()
+    } catch (error) {
+      bodyError = error
     }
+    if (testInfo.status !== testInfo.expectedStatus) {
+      // Preserve the original test failure even if shutdown left no readable log.
+      await app
+        .captureMainLog('test-failure.log')
+        .then((path) => testInfo.attach('main-process-log', { path, contentType: 'text/plain' }))
+        .catch(() => undefined)
+    }
+    try {
+      await app.dispose()
+    } catch (cleanupError) {
+      await app
+        .captureMainLog('cleanup-failure.log')
+        .then((path) =>
+          testInfo.attach('cleanup-main-process-log', { path, contentType: 'text/plain' })
+        )
+        .catch(() => undefined)
+      if (bodyError !== undefined) {
+        throw new AggregateError([bodyError, cleanupError], 'Electron test and cleanup failed.')
+      }
+      throw cleanupError
+    }
+    if (bodyError !== undefined) throw bodyError
   }
 })
 

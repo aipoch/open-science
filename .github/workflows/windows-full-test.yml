@@ -16,6 +16,7 @@ on:
         options:
           - full
           - notebook-sandbox
+          - notebook-mutation
           - regressions
 
 permissions:
@@ -59,7 +60,7 @@ jobs:
   windows_full_test:
     name: Windows full test (${{ matrix.shard }}/3)
     needs: plan
-    if: ${{ needs.plan.outputs.should_test == 'true' && (github.event_name != 'workflow_dispatch' || inputs.mode != 'notebook-sandbox') }}
+    if: ${{ needs.plan.outputs.should_test == 'true' && (github.event_name != 'workflow_dispatch' || (inputs.mode == 'full' || inputs.mode == 'regressions')) }}
     runs-on: windows-latest
     timeout-minutes: 35
     env:
@@ -111,7 +112,7 @@ jobs:
   notebook_sandbox:
     name: Windows Notebook sandbox lifecycle
     needs: plan
-    if: ${{ needs.plan.outputs.should_test == 'true' && (github.event_name != 'workflow_dispatch' || inputs.mode != 'regressions') }}
+    if: ${{ needs.plan.outputs.should_test == 'true' && (github.event_name != 'workflow_dispatch' || (inputs.mode == 'full' || inputs.mode == 'notebook-sandbox')) }}
     runs-on: windows-latest
     timeout-minutes: 20
     steps:
@@ -151,3 +152,36 @@ jobs:
           packages/notebook-network-sandbox/vendor/windows-src/ci/smoke.ps1
           -Exe packages/notebook-network-sandbox/vendor/windows/x64/notebook-appcontainer-host.exe
           -Mode Full
+
+  notebook_mutation:
+    name: Windows Notebook controlled mutations
+    needs: plan
+    if: ${{ needs.plan.outputs.should_test == 'true' && (github.event_name != 'workflow_dispatch' || inputs.mode == 'full' || inputs.mode == 'notebook-mutation') }}
+    runs-on: windows-latest
+    timeout-minutes: 25
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Setup Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: 22
+          cache: npm
+      - name: Install dependencies
+        run: node scripts/ci/npm-ci.mjs
+      - name: Build Electron application
+        run: npm run build:e2e
+      - name: Run controlled mutations
+        shell: powershell
+        run: e2e/fixtures/run-notebook-lifecycle-windows.ps1
+      - name: Upload mutation evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: windows-notebook-mutation-evidence
+          path: |
+            test-results/
+            .scratch/notebook-lifecycle-e2e/evidence/
+          retention-days: 5
