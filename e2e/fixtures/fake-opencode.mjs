@@ -72,6 +72,7 @@ const RUNTIME_RESOURCE_STRESS_PROMPT = 'Run the runtime resource stress journey.
 const QUEUE_GATE_PROMPT = 'Hold the queue until the reveal finishes.'
 const TOOL_ORDER_PROMPT = 'Run the ordered slow tool journey.'
 const TOOL_LAYOUT_SHIFT_PROMPT = 'Run the tool layout stability journey.'
+const MERMAID_BLOCK_PROMPT = 'Render the mermaid block journey.'
 const TOOL_STATUS_LAYOUT_SHIFT_PROMPT = 'Run the status-bearing layout stability journey.'
 const BUFFERED_TEXT_TOOL_LAYOUT_SHIFT_PROMPT =
   'Run the buffered text tool layout stability journey.'
@@ -1013,7 +1014,18 @@ if (process.argv.includes('--version')) {
 
       let reply = 'Deterministic reply: Summarize the deterministic fixture.'
       try {
-        if (prompt.includes(MEMORY_RECALL_PROMPT)) {
+        if (prompt.includes(MERMAID_BLOCK_PROMPT)) {
+          // A wide left-to-right flowchart: intrinsic width exceeds the conversation column, so
+          // zooming must stay clipped by the block, and the source view must keep its frame.
+          reply = [
+            'Here is the diagram.',
+            '',
+            '```mermaid',
+            'graph LR',
+            '  A[begin] --> B[a node with a fairly long label] --> C[another node with an even longer label here] --> D[end]',
+            '```'
+          ].join('\n')
+        } else if (prompt.includes(MEMORY_RECALL_PROMPT)) {
           if (!prompt.includes('<memory_records>') || !prompt.includes(MEMORY_RECALL_ENTRY)) {
             throw new Error('Automatic memory recall did not reach the provider prompt.')
           }

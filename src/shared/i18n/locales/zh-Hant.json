@@ -2981,6 +2981,7 @@
     "View raw JSON": "查看原始 JSON",
     "View release notes on GitHub": "在 GitHub 上檢視發布說明",
     "View source": "查看原始碼",
+    "View diagram": "查看圖表",
     "View this device's runtime log — it records what the app is doing so problems can be diagnosed.": "檢視這台裝置的執行記錄檔 —— 它記錄了應用程式正在做什麼，便於排查問題。",
     "View {{name}}": "檢視 {{name}}",
     "Viewer failed": "檢視器失敗",
@@ -4791,6 +4792,7 @@
     "PDF structure not yet validated.": "PDF 結構尚未驗證。",
     "Attachment unavailable": "附件無法使用",
     "This PDF is referenced by a chat or its message history and cannot be removed. Unlinking the current chat does not remove historical references.": "聊天或訊息歷史仍引用此 PDF，無法移除。解除目前聊天的關聯不會移除歷史引用。",
+    "File credential storage is enabled. New and updated credentials are stored unencrypted in local application files. Existing encrypted credentials are not migrated.": "已啟用檔案憑據儲存。新增和更新的憑據將以未加密形式儲存在本機應用程式檔案中。現有加密憑據不會遷移。",
     "Dismissed": "已忽略",
     "No dismissed references": "沒有已忽略的文獻",
     "Dismissed references can be restored here.": "可以在此還原已忽略的文獻。",
@@ -4901,6 +4903,8 @@
     "Some PDFs could not be imported. Review the details below before retrying.": "部分 PDF 無法匯入。請先查看下方詳細資訊，再重試。",
     "Selected PDFs imported. You can close this window.": "所選 PDF 已匯入。您可以關閉此視窗。",
     "Failed: {{failed}} · Skipped: {{skipped}}": "失敗：{{failed}} · 已略過：{{skipped}}",
-    "You can import unfinished files or close this window.": "您可以匯入未完成的檔案或關閉此視窗。"
+    "You can import unfinished files or close this window.": "您可以匯入未完成的檔案或關閉此視窗。",
+    "New Compute jobs may remain queued because saved concurrency limits could not be verified. Preserve the affected files, recover a valid copy, then recheck to resume dispatch.": "無法驗證已儲存的並行限制，新 Compute 任務可能會持續排隊。請保留受影響的檔案，還原有效副本後重新檢查，以恢復任務派發。",
+    "Recheck saved conversations": "重新檢查已儲存的對話"
   }
 }

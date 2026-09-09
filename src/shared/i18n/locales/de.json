@@ -2685,6 +2685,7 @@
     "View raw JSON": "Rohes JSON anzeigen",
     "View release notes on GitHub": "Versionshinweise auf GitHub anzeigen",
     "View source": "Quelle ansehen",
+    "View diagram": "Diagramm ansehen",
     "View this device's runtime log — it records what the app is doing so problems can be diagnosed.": "Das Laufzeitprotokoll dieses Geräts anzeigen. Es zeichnet die App-Aktivität auf und hilft bei der Fehlerdiagnose.",
     "View {{name}}": "{{name}} anzeigen",
     "Viewer failed": "Der Viewer ist fehlgeschlagen",
@@ -4945,6 +4946,7 @@
     "PDF structure not yet validated.": "PDF-Struktur noch nicht validiert.",
     "Attachment unavailable": "Anhang nicht verfügbar",
     "This PDF is referenced by a chat or its message history and cannot be removed. Unlinking the current chat does not remove historical references.": "Diese PDF wird von einem Chat oder dessen Nachrichtenverlauf referenziert und kann nicht entfernt werden. Das Aufheben der Verknüpfung im aktuellen Chat entfernt keine Verweise im Verlauf.",
+    "File credential storage is enabled. New and updated credentials are stored unencrypted in local application files. Existing encrypted credentials are not migrated.": "Die Speicherung von Anmeldedaten in Dateien ist aktiviert. Neue und aktualisierte Anmeldedaten werden unverschlüsselt in lokalen Anwendungsdateien gespeichert. Bestehende verschlüsselte Anmeldedaten werden nicht migriert.",
     "Dismissed": "Ignoriert",
     "No dismissed references": "Keine ignorierten Referenzen",
     "Dismissed references can be restored here.": "Ignorierte Referenzen können hier wiederhergestellt werden.",
@@ -5056,6 +5058,8 @@
     "Some PDFs could not be imported. Review the details below before retrying.": "Einige PDFs konnten nicht importiert werden. Prüfen Sie vor einem erneuten Versuch die Details unten.",
     "Selected PDFs imported. You can close this window.": "Ausgewählte PDFs importiert. Sie können dieses Fenster schließen.",
     "Failed: {{failed}} · Skipped: {{skipped}}": "Fehlgeschlagen: {{failed}} · Übersprungen: {{skipped}}",
-    "You can import unfinished files or close this window.": "Sie können unfertige Dateien importieren oder dieses Fenster schließen."
+    "You can import unfinished files or close this window.": "Sie können unfertige Dateien importieren oder dieses Fenster schließen.",
+    "New Compute jobs may remain queued because saved concurrency limits could not be verified. Preserve the affected files, recover a valid copy, then recheck to resume dispatch.": "Neue Compute-Aufträge bleiben möglicherweise in der Warteschlange, weil die gespeicherten Parallelitätsgrenzen nicht überprüft werden konnten. Bewahren Sie die betroffenen Dateien auf, stellen Sie eine gültige Kopie wieder her und prüfen Sie erneut, um die Auftragsvergabe fortzusetzen.",
+    "Recheck saved conversations": "Gespeicherte Konversationen erneut prüfen"
   }
 }

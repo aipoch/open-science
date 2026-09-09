@@ -6260,7 +6260,7 @@ describe('session store public contract', () => {
           visit(path)
         } else if (
           /\.[cm]?tsx?$/.test(entry.name) &&
-          !/\.(?:test|spec)\.[cm]?tsx?$/.test(entry.name)
+          !/\.(?:test|spec|test-support)\.[cm]?tsx?$/.test(entry.name)
         ) {
           paths.push(path)
         }

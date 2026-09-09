@@ -1,3 +1,4 @@
+import { useFileCredentialNotice } from './use-file-credential-notice'
 /* Hallmark · pre-emit critique: P5 H5 E5 S5 R5 V5 */
 /* Hallmark · component: device credential editor · genre: modern-minimal · theme: existing Settings tokens · slop: pass */
 import { ChevronDown, Copy } from 'lucide-react'
@@ -62,6 +63,7 @@ export function DeviceCredentialEditor({
   previewState
 }: DeviceCredentialEditorProps): React.JSX.Element {
   const { t } = useTranslation()
+  const fileCredentialNotice = useFileCredentialNotice()
   const createCredential = useSettingsStore((state) => state.createDeviceCredential)
   const updateCredential = useSettingsStore((state) => state.updateDeviceCredential)
   const encryptionAvailable = useSettingsStore((state) => state.encryptionAvailable)
@@ -566,7 +568,8 @@ export function DeviceCredentialEditor({
             <span className={helperClassName}>
               {editing
                 ? t('Leave blank to keep the stored value.')
-                : t('The value is encrypted before it is written to disk.')}
+                : (fileCredentialNotice ??
+                  t('The value is encrypted before it is written to disk.'))}
             </span>
           </label>
         ) : null}

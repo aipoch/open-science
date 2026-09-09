@@ -237,6 +237,92 @@ describe('ConcurrencyManager', () => {
     expect(commit).toHaveBeenCalledWith('queued')
   })
 
+  it('reports the restoration blocker even when the unrelated Session has no active jobs', async () => {
+    const durableManager = new ConcurrencyManager(
+      jobRepo,
+      hostRepo,
+      dispatchJob,
+      undefined,
+      undefined,
+      undefined,
+      {
+        load: async () => {
+          throw new Error('Session concurrency limits could not be restored authoritatively.')
+        },
+        save: async () => undefined
+      }
+    )
+    vi.mocked(jobRepo.countActiveBySession).mockResolvedValue(0)
+    vi.mocked(jobRepo.findBySession).mockResolvedValue([])
+    await expect(durableManager.startQueueReconciliation()).rejects.toThrow('could not be restored')
+    expect(await durableManager.getStatus('unrelated-session')).toMatchObject({
+      active_count: 0,
+      queue_blocked_reason: 'session_limits_unavailable'
+    })
+  })
+
+  it('does not retry before startup, after successful restoration, or after shutdown', async () => {
+    const load = vi.fn(async () => [] as Array<readonly [string, number]>)
+    const durableManager = new ConcurrencyManager(
+      jobRepo,
+      hostRepo,
+      dispatchJob,
+      undefined,
+      undefined,
+      undefined,
+      { load, save: async () => undefined }
+    )
+    await durableManager.startQueueReconciliation({ retryFailedOnly: true })
+    expect(load).not.toHaveBeenCalled()
+    await durableManager.startQueueReconciliation()
+    await durableManager.startQueueReconciliation({ retryFailedOnly: true })
+    expect(load).toHaveBeenCalledOnce()
+    await durableManager.stopQueueReconciliation()
+    await durableManager.startQueueReconciliation({ retryFailedOnly: true })
+    expect(load).toHaveBeenCalledOnce()
+  })
+
+  it.each(['resolve', 'reject'] as const)(
+    'keeps shutdown closed when an in-flight recovery later %ss',
+    async (outcome) => {
+      const load = vi.fn<() => Promise<readonly (readonly [string, number])[]>>()
+      load.mockRejectedValueOnce(new Error('catalog unavailable'))
+      const durableManager = new ConcurrencyManager(
+        jobRepo,
+        hostRepo,
+        dispatchJob,
+        undefined,
+        undefined,
+        undefined,
+        { load, save: async () => undefined }
+      )
+      await expect(durableManager.startQueueReconciliation()).rejects.toThrow('catalog unavailable')
+      let settle!: () => void
+      load.mockImplementationOnce(
+        () =>
+          new Promise((resolve, reject) => {
+            settle = () =>
+              outcome === 'resolve' ? resolve([]) : reject(new Error('still unavailable'))
+          })
+      )
+      const retry = durableManager.startQueueReconciliation({ retryFailedOnly: true })
+      const checked =
+        outcome === 'reject'
+          ? expect(retry).rejects.toThrow('still unavailable')
+          : expect(retry).resolves.toBeUndefined()
+      await durableManager.stopQueueReconciliation()
+      settle()
+      await checked
+      await durableManager.startQueueReconciliation({ retryFailedOnly: true })
+      expect(load).toHaveBeenCalledTimes(2)
+      vi.mocked(jobRepo.countQueuedJobs).mockResolvedValue(0)
+      await expect(
+        durableManager.admit({ sessionId: 'session-1', providerId: 'host' }, async () => undefined)
+      ).resolves.toBe('queued')
+      expect(dispatchJob).not.toHaveBeenCalled()
+    }
+  )
+
   it('does not hold the admission lock while loading durable limits', async () => {
     const managerRef: { current?: ConcurrencyManager } = {}
     const durableManager = new ConcurrencyManager(

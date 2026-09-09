@@ -41,7 +41,7 @@ import type { OAuthDiscoveryState } from '@modelcontextprotocol/sdk/client/auth.
 // Main-process-only stored shapes for settings.json. These carry the encrypted key reference and a
 // non-secret masked hint; the plaintext key never lives here (only transiently in service memory).
 
-// A single stored provider record. `keyRef` is a safeStorage ciphertext (see crypto.ts); `keyMask`
+// A single stored provider record. `keyRef` is an OS-encrypted or explicit file-mode ref (see crypto.ts); `keyMask`
 // is a non-secret display hint recomputed whenever the key changes. For official providers the base
 // URL and model catalog come from the registry (via vendorId/region), so `baseUrl` stays unset.
 export type StoredProvider = {
@@ -180,7 +180,7 @@ export type StoredCustomMcpServer = {
 }
 
 // Connector enablement and non-secret settings. `ncbiApiKeyRef` is a safeStorage ciphertext
-// reference, like `StoredProvider.keyRef`; the plaintext key never lives here.
+// reference, like `StoredProvider.keyRef`; file-mode refs are reversible and must be protected as secrets.
 export type StoredConnectors = {
   enabledIds: string[]
   autoAllowIds: string[]

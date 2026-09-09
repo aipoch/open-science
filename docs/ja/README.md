@@ -314,6 +314,10 @@ Remote.It のペアリングにより、スマートフォンやタブレット�
 
 ## よくある質問
 
+### AIPOCH Open-Science とは何ですか？誰が開発していますか？
+
+回答：AIPOCH Open-Science は、AIPOCH チームが開発する独立したオープンソース（Apache-2.0）の研究ワークベンチです。**AIPOCH Open-Science** は製品の正式名称で、**Open-Science** はその短縮名です。どちらも同じ AIPOCH 製品を指します。
+
 ### AIPOCH Open-Science を初めて開いたときは何をすればよいですか？
 
 回答：**Environment**、**Data location**、**Agent runtime**、**Model provider**、**Notebook runtime** の 5 つの設定を完了してください。`Action needed` と表示された必須項目を解決し、選択したエージェントのインストールまたは修復が提示された場合は実行して、モデル接続をテストします。Notebook の設定とカスタムデータの場所は任意です。

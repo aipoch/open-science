@@ -587,7 +587,38 @@ Updates accept `displayName` and/or `secret`. Existing OAuth registration can be
 "oauth"`, `resourceUri`, remote `transport`, and an `oauth` registration object, then authenticated
 through Settings. First-time browserless OAuth login is outside these commands.
 
-Secrets use the existing OS-protected store. A headless machine without a usable system credential
-vault cannot save secrets; there is no plaintext fallback. Existing unreadable credentials need re-entry.
+Secrets use the OS-protected store by default. Linux headless deployments without a usable keyring
+can explicitly opt into unencrypted local file storage:
+
+```sh
+open-science start --credential-store=file --no-open
+```
+
+Continue using the normal Settings forms and credential commands. The selected mode applies to new
+and updated Settings-managed secrets: provider API keys and app-managed subscription tokens, GitHub
+and literature keys, shared connector credentials, custom MCP secret environment/header values,
+and Settings-managed OAuth client secrets and token state. Compute passwords and protected Compute
+data keep their independent OS-storage requirement; external framework login stores keep their own
+behavior. This flag does not disable any sandbox.
+
+File mode reuses `settings.json` and `credentials.json` under the application's configuration root.
+Secret refs use `file:v1:` followed by base64 **encoding, not encryption**. The existing atomic writer
+creates files and temporary replacements with POSIX mode `0600`. Keep the configuration directory
+private; anyone who can read these files can recover the secrets. Do not copy them into images,
+repositories, logs, or support reports. A disposable container filesystem discards them when the
+container is removed; a persistent volume retains them. A tmpfs mount can be used when disk
+persistence is unwanted. Open Science does not delete configuration automatically on shutdown.
+
+Specify the option at every startup, including after updates. It is a startup choice, not a saved
+preference. The default (or `--credential-store=os`) requires OS protection. An already-running
+backend rejects explicit mode selection: stop it before restarting with the desired option. File
+mode is supported only by the Linux headless backend, not desktop launches or macOS/Windows.
+
+Legacy `plain:` refs remain readable in explicit file mode without rewriting them.
+Existing encrypted refs are not automatically migrated or downgraded. They still require the original
+OS vault to read, even in file mode; otherwise re-enter the credential. New/refreshed values saved in
+file mode use the file format. File refs require explicit file mode to read and are unreadable by
+older releases. To switch a file credential back to OS storage, restart in OS mode and explicitly
+replace it with the key while the vault is available. Existing unreadable records remain intact.
 These commands do not migrate historical configuration or store diagnostic history. Older backends that
 lack the endpoints return an endpoint error; the CLI never falls back to editing Settings files directly.

@@ -2908,6 +2908,7 @@
     "View raw JSON": "원본 JSON 보기",
     "View release notes on GitHub": "GitHub에서 출시 노트 보기",
     "View source": "소스 보기",
+    "View diagram": "다이어그램 보기",
     "View this device's runtime log — it records what the app is doing so problems can be diagnosed.": "이 기기의 런타임 로그를 확인하세요. 문제를 진단할 수 있도록 앱이 수행하는 작업을 기록합니다.",
     "View {{name}}": "{{name}} 보기",
     "View {{name}} details": "{{name}} 세부정보 보기",
@@ -4789,6 +4790,7 @@
     "PDF structure not yet validated.": "PDF 구조가 아직 검증되지 않았습니다.",
     "Attachment unavailable": "첨부 파일 사용 불가",
     "This PDF is referenced by a chat or its message history and cannot be removed. Unlinking the current chat does not remove historical references.": "이 PDF는 채팅 또는 메시지 기록에서 참조되고 있어 제거할 수 없습니다. 현재 채팅에서 연결을 해제해도 기록의 참조는 제거되지 않습니다.",
+    "File credential storage is enabled. New and updated credentials are stored unencrypted in local application files. Existing encrypted credentials are not migrated.": "파일 자격 증명 저장이 활성화되어 있습니다. 새 자격 증명과 업데이트된 자격 증명은 로컬 앱 파일에 암호화되지 않은 상태로 저장됩니다. 기존 암호화된 자격 증명은 이전되지 않습니다.",
     "Dismissed": "무시됨",
     "No dismissed references": "무시한 문헌이 없습니다",
     "Dismissed references can be restored here.": "무시한 문헌은 여기서 복원할 수 있습니다.",
@@ -4899,6 +4901,8 @@
     "Some PDFs could not be imported. Review the details below before retrying.": "일부 PDF를 가져오지 못했습니다. 다시 시도하기 전에 아래 세부 정보를 확인하세요.",
     "Selected PDFs imported. You can close this window.": "선택한 PDF를 가져왔습니다. 이 창을 닫을 수 있습니다.",
     "Failed: {{failed}} · Skipped: {{skipped}}": "실패: {{failed}} · 건너뜀: {{skipped}}",
-    "You can import unfinished files or close this window.": "미완료 파일을 가져오거나 이 창을 닫을 수 있습니다."
+    "You can import unfinished files or close this window.": "미완료 파일을 가져오거나 이 창을 닫을 수 있습니다.",
+    "New Compute jobs may remain queued because saved concurrency limits could not be verified. Preserve the affected files, recover a valid copy, then recheck to resume dispatch.": "저장된 동시 실행 제한을 확인할 수 없어 새 Compute 작업이 대기열에 남을 수 있습니다. 영향을 받은 파일을 보존하고 유효한 사본을 복원한 다음 다시 확인하여 작업 전송을 재개하세요.",
+    "Recheck saved conversations": "저장된 대화 다시 확인"
   }
 }

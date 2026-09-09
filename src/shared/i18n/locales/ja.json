@@ -2897,6 +2897,7 @@
     "View raw JSON": "生の JSON を表示する",
     "View release notes on GitHub": "GitHub でリリースノートを表示する",
     "View source": "ソースを見る",
+    "View diagram": "図を表示",
     "View this device's runtime log — it records what the app is doing so problems can be diagnosed.": "このデバイスのランタイムログを表示します。問題を診断できるように、アプリの動作が記録されます。",
     "View {{name}}": "{{name}} を表示する",
     "Viewer failed": "ビューアが失敗しました",
@@ -4791,6 +4792,7 @@
     "PDF structure not yet validated.": "PDF の構造は未検証です。",
     "Attachment unavailable": "添付ファイルを利用できません",
     "This PDF is referenced by a chat or its message history and cannot be removed. Unlinking the current chat does not remove historical references.": "このPDFはチャットまたはメッセージ履歴で参照されているため、削除できません。現在のチャットからリンクを解除しても、履歴内の参照は削除されません。",
+    "File credential storage is enabled. New and updated credentials are stored unencrypted in local application files. Existing encrypted credentials are not migrated.": "ファイルへの認証情報の保存が有効です。新規および更新された認証情報は、ローカルのアプリファイルに暗号化せずに保存されます。既存の暗号化された認証情報は移行されません。",
     "Dismissed": "無視済み",
     "No dismissed references": "無視した文献はありません",
     "Dismissed references can be restored here.": "無視した文献はここで復元できます。",
@@ -4901,6 +4903,8 @@
     "Some PDFs could not be imported. Review the details below before retrying.": "一部の PDF をインポートできませんでした。再試行する前に、以下の詳細を確認してください。",
     "Selected PDFs imported. You can close this window.": "選択した PDF をインポートしました。このウィンドウを閉じることができます。",
     "Failed: {{failed}} · Skipped: {{skipped}}": "失敗: {{failed}} · スキップ: {{skipped}}",
-    "You can import unfinished files or close this window.": "未完了のファイルをインポートするか、このウィンドウを閉じることができます。"
+    "You can import unfinished files or close this window.": "未完了のファイルをインポートするか、このウィンドウを閉じることができます。",
+    "New Compute jobs may remain queued because saved concurrency limits could not be verified. Preserve the affected files, recover a valid copy, then recheck to resume dispatch.": "保存された同時実行数の制限を検証できないため、新しい Compute ジョブがキューに残る場合があります。対象ファイルを保持し、有効なコピーを復元してから再確認すると、ジョブの送信を再開できます。",
+    "Recheck saved conversations": "保存済みの会話を再確認"
   }
 }

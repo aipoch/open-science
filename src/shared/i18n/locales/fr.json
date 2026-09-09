@@ -3016,6 +3016,7 @@
     "View raw JSON": "Afficher le JSON brut",
     "View release notes on GitHub": "Afficher les notes de version sur GitHub",
     "View source": "Voir la source",
+    "View diagram": "Voir le diagramme",
     "View this device's runtime log — it records what the app is doing so problems can be diagnosed.": "Consultez le journal d'exécution de cet appareil : il enregistre ce que fait l'application afin que les problèmes puissent être diagnostiqués.",
     "View {{name}}": "Voir {{name}}",
     "Viewer failed": "Échec de la visionneuse",
@@ -5107,6 +5108,7 @@
     "PDF structure not yet validated.": "Structure du PDF pas encore validée.",
     "Attachment unavailable": "Pièce jointe indisponible",
     "This PDF is referenced by a chat or its message history and cannot be removed. Unlinking the current chat does not remove historical references.": "Ce PDF est référencé par une discussion ou son historique de messages et ne peut pas être supprimé. Le dissocier de la discussion actuelle ne supprime pas les références de l’historique.",
+    "File credential storage is enabled. New and updated credentials are stored unencrypted in local application files. Existing encrypted credentials are not migrated.": "Le stockage des identifiants dans des fichiers est activé. Les identifiants nouveaux et mis à jour sont enregistrés sans chiffrement dans les fichiers locaux de l’application. Les identifiants chiffrés existants ne sont pas migrés.",
     "Dismissed": "Ignorées",
     "No dismissed references": "Aucune référence ignorée",
     "Dismissed references can be restored here.": "Les références ignorées peuvent être restaurées ici.",
@@ -5219,6 +5221,8 @@
     "Some PDFs could not be imported. Review the details below before retrying.": "Certains PDF n’ont pas pu être importés. Vérifiez les détails ci-dessous avant de réessayer.",
     "Selected PDFs imported. You can close this window.": "Les PDF sélectionnés ont été importés. Vous pouvez fermer cette fenêtre.",
     "Failed: {{failed}} · Skipped: {{skipped}}": "Échecs : {{failed}} · Ignorés : {{skipped}}",
-    "You can import unfinished files or close this window.": "Vous pouvez importer les fichiers inachevés ou fermer cette fenêtre."
+    "You can import unfinished files or close this window.": "Vous pouvez importer les fichiers inachevés ou fermer cette fenêtre.",
+    "New Compute jobs may remain queued because saved concurrency limits could not be verified. Preserve the affected files, recover a valid copy, then recheck to resume dispatch.": "Les nouvelles tâches Compute peuvent rester en attente, car les limites de simultanéité enregistrées n’ont pas pu être vérifiées. Conservez les fichiers concernés, restaurez une copie valide, puis relancez la vérification pour reprendre l’envoi des tâches.",
+    "Recheck saved conversations": "Revérifier les conversations enregistrées"
   }
 }

@@ -6,7 +6,8 @@ import {
   SessionRevisionConflictError,
   SessionSizeLimitError,
   SessionDeletionCommittedError,
-  type PersistedChatSession
+  type PersistedChatSession,
+  type LoadAllSessionsResult
 } from '../../shared/session-persistence'
 import type { Logger } from '../logger'
 import {
@@ -15,6 +16,10 @@ import {
   type ProjectSessionDeletion
 } from '../projects/deletion-coordinator'
 import type { ReviewRepository } from '../reviewer/repository'
+import { ConcurrencyManager } from '../compute/concurrency-manager'
+import type { ComputeJobRepository } from '../compute/job-repository'
+import type { ComputeHostRepository } from '../compute/repository'
+import type { ComputeJob } from '../../shared/compute'
 
 const { broadcastLifecycleEvent, getLifecycleClientId, ipcHandlers, registrationFailure } =
   vi.hoisted(() => ({
@@ -420,6 +425,100 @@ describe('session persistence IPC handlers', () => {
       [repository: SessionPersistenceBackend, reviewRepository: ReviewRepository]
     >()
   })
+
+  it.each(['list', 'loadAll', 'searchMessages'] as const)(
+    'rechecks failed Compute restoration through %s after Session recovery',
+    async (read) => {
+      let corrupt = true
+      let activeCount = 0
+      const catalog = (): LoadAllSessionsResult => ({
+        sessions: [],
+        manifest: { version: 1 as const },
+        diagnostics: {
+          isComplete: true,
+          isProjectDeletionRecoveryComplete: true,
+          warnings: corrupt
+            ? [
+                {
+                  kind: 'corrupt' as const,
+                  projectId: 'old-project',
+                  fileName: 'old.json',
+                  recovered: true
+                }
+              ]
+            : []
+        }
+      })
+      const job = {
+        job_id: 'queued-job',
+        session_id: 'new-session',
+        project_id: 'new-project',
+        provider_id: 'host',
+        status: 'queued'
+      } as ComputeJob
+      const dispatch = vi.fn(async () => undefined)
+      const manager = new ConcurrencyManager(
+        {
+          findQueuedJobs: async () => (job.status === 'queued' ? [job] : []),
+          countActiveBySession: async () => activeCount,
+          findBySession: async () => [job],
+          countActiveByProvider: async () => 0,
+          updateIfStatus: async () => {
+            job.status = 'submitted'
+            return job
+          }
+        } as unknown as ComputeJobRepository,
+        { get: async () => ({ concurrencyLimit: 20 }) } as unknown as ComputeHostRepository,
+        dispatch,
+        undefined,
+        undefined,
+        undefined,
+        {
+          load: async () => {
+            if (!canReconcileSessionAbsences(catalog()))
+              throw new Error('Session concurrency limits could not be restored authoritatively.')
+            return [['new-session', 1]]
+          },
+          save: async () => undefined
+        }
+      )
+      const handlers = createSessionPersistenceHandlersWithAttributionAuthority(
+        {
+          loadAll: async () => catalog(),
+          list: async () => catalog()
+        } as unknown as SessionPersistenceBackend,
+        createMockReviewRepository(),
+        new MainMessageAttributionAuthority(),
+        async () => {
+          await manager.startQueueReconciliation({ retryFailedOnly: true }).catch(() => undefined)
+        }
+      )
+      // The search catalog must retry the same recovery path as the ordinary Session list.
+      const readCatalog = async (): Promise<void> => {
+        if (read === 'searchMessages') {
+          await handlers.searchMessages({ query: '', projectIds: [], limit: 10 })
+        } else {
+          await handlers[read]()
+        }
+      }
+      await expect(manager.startQueueReconciliation()).rejects.toThrow('could not be restored')
+      await readCatalog()
+      await manager.reconcileQueuedJobs()
+      expect(dispatch).not.toHaveBeenCalled()
+      // A valid replacement now supersedes the retained quarantine; no deletion is involved.
+      corrupt = false
+      activeCount = 1
+      await readCatalog()
+      await manager.reconcileQueuedJobs()
+      expect(dispatch).not.toHaveBeenCalled()
+      expect(await manager.getStatus('new-session')).toMatchObject({ session_limit: 1 })
+      expect(await manager.getStatus('new-session')).not.toHaveProperty('queue_blocked_reason')
+      activeCount = 0
+      await manager.reconcileQueuedJobs()
+      expect(dispatch).toHaveBeenCalledWith('queued-job', expect.any(Function))
+      await manager.stopQueueReconciliation()
+    }
+  )
 
   it('routes each command to the repository', async () => {
     const session = createSession()

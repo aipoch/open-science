@@ -1,3 +1,4 @@
+import { useFileCredentialNotice } from './use-file-credential-notice'
 /* Hallmark · component: credential disclosure · genre: modern-minimal · theme: existing Settings system */
 /* Hallmark · pre-emit critique: P5 H5 E5 S5 R5 V4 */
 import type { TFunction } from 'i18next'
@@ -37,6 +38,7 @@ const isLocalOnlyActionError = (error: unknown): boolean =>
 
 const GitHubTokenControl = ({ onCancel }: { onCancel?(): void } = {}): React.JSX.Element | null => {
   const { t } = useTranslation()
+  const fileCredentialNotice = useFileCredentialNotice()
   const [token, setToken] = useState('')
   const [status, setStatus] = useState<GitHubTokenStatus | null>(null)
   const [availability, setAvailability] = useState<Availability>('checking')
@@ -162,7 +164,10 @@ const GitHubTokenControl = ({ onCancel }: { onCancel?(): void } = {}): React.JSX
           }}
         />
         <p className="text-xs text-muted-foreground">
-          {t('Used only for GitHub Skill requests and encrypted with system credential storage.')}{' '}
+          {fileCredentialNotice ??
+            t(
+              'Used only for GitHub Skill requests and encrypted with system credential storage.'
+            )}{' '}
           <ExternalTextLink href="https://github.com/settings/tokens">
             {t('Manage tokens on GitHub')}
           </ExternalTextLink>

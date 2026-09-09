@@ -1,3 +1,4 @@
+import { useFileCredentialNotice } from './use-file-credential-notice'
 import { AlertTriangle, KeyRound } from 'lucide-react'
 import * as Dialog from '@/components/ui/dialog'
 import { useId, useState } from 'react'
@@ -35,6 +36,7 @@ export function ConnectorCredentialControls({
   embedded = false
 }: ConnectorCredentialControlsProps): React.JSX.Element {
   const { t } = useTranslation()
+  const fileCredentialNotice = useFileCredentialNotice()
   const setOpenAlexCredential = useSettingsStore((state) => state.setOpenAlexCredential)
   const validateOpenAlexCredential = useSettingsStore((state) => state.validateOpenAlexCredential)
   const respond = useSettingsStore((state) => state.respondCredentialRequest)
@@ -141,7 +143,8 @@ export function ConnectorCredentialControls({
           disabled={busy}
         />
         <p className="text-xs text-muted-foreground">
-          {t('Stored encrypted on this computer and sent only to api.openalex.org.')}
+          {fileCredentialNotice ??
+            t('Stored encrypted on this computer and sent only to api.openalex.org.')}
         </p>
         {!encryptionAvailable ? (
           <p className="text-xs text-danger-000">
