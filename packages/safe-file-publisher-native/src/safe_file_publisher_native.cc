@@ -639,12 +639,21 @@ bool MatchesRemovalFile(const struct stat& info, const RemovalReceipt& receipt) 
       modified.tv_sec * INT64_C(1000000000) + modified.tv_nsec == receipt.mtime;
 }
 
-// Both names are relative to held directories. Never overwrite a concurrently installed leaf.
-int MoveRemovalFile(int from, const char* source, int to, const char* destination) {
+// Both names are relative to held directories. Only capture targets the private, locked quarantine.
+int MoveRemovalFile(int from, const char* source, int to, const char* destination,
+                    bool private_destination = false) {
 #ifdef __APPLE__
   return renameatx_np(from, source, to, destination, RENAME_EXCL);
 #else
-  return static_cast<int>(syscall(SYS_renameat2, from, source, to, destination, RENAME_NOREPLACE));
+  if (syscall(SYS_renameat2, from, source, to, destination, RENAME_NOREPLACE) == 0) return 0;
+  if (errno != ENOSYS && errno != EOPNOTSUPP && errno != EINVAL) return -1;
+  // FinishRemoval already observed an absent payload while holding the quarantine lock. Its
+  // single writer can use ordinary rename here; no public source name is ever unlinked.
+  if (private_destination) return renameat(from, source, to, destination);
+  // Restore without replacing a public name. Make its link durable before unlinking the private
+  // payload. An interruption leaves both copies and the existing receipt's conflict barrier.
+  if (linkat(from, source, to, destination, 0) != 0 || fsync(to) != 0) return -1;
+  return unlinkat(from, source, 0);
 #endif
 }
 
@@ -713,7 +722,7 @@ int FinishRemoval(int parent, int quarantine, const std::string& directory, cons
     if (errno != ENOENT) return -1;
     if (fstatat(parent, receipt.name.c_str(), &source, AT_SYMLINK_NOFOLLOW) == 0) {
       if (!MatchesRemovalFile(source, receipt)) { errno = ESTALE; return -1; }
-      if (MoveRemovalFile(parent, receipt.name.c_str(), quarantine, "payload") != 0) return -1;
+      if (MoveRemovalFile(parent, receipt.name.c_str(), quarantine, "payload", true) != 0) return -1;
       // The receipt is already durable. Make capture durable before destroying its only copy.
       if (fsync(quarantine) != 0 || fsync(parent) != 0) return -1;
       if (fstatat(quarantine, "payload", &payload, AT_SYMLINK_NOFOLLOW) != 0) return -1;
