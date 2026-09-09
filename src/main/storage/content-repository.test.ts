@@ -1,5 +1,17 @@
 import { createHash } from 'node:crypto'
-import { mkdir, mkdtemp, readFile, rm, writeFile, stat, rename } from 'node:fs/promises'
+import {
+  mkdir,
+  mkdtemp,
+  readFile,
+  rm,
+  writeFile,
+  stat,
+  rename,
+  copyFile,
+  readdir,
+  symlink,
+  lstat
+} from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 
@@ -14,7 +26,13 @@ import { ContentRepository, resolveContentStorageKey } from './content-repositor
 
 vi.mock('node:fs/promises', async (importOriginal) => {
   const original = await importOriginal<typeof import('node:fs/promises')>()
-  return { ...original, rm: vi.fn(original.rm), stat: vi.fn(original.stat) }
+  return {
+    ...original,
+    rm: vi.fn(original.rm),
+    stat: vi.fn(original.stat),
+    copyFile: vi.fn(original.copyFile),
+    lstat: vi.fn(original.lstat)
+  }
 })
 
 const sha256 = (content: Buffer): string => createHash('sha256').update(content).digest('hex')
@@ -33,6 +51,9 @@ describe('content repository', () => {
     vi.mocked(rm).mockImplementation(
       (await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises')).rm
     )
+    const fs = await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises')
+    vi.mocked(copyFile).mockReset().mockImplementation(fs.copyFile)
+    vi.mocked(lstat).mockReset().mockImplementation(fs.lstat)
     await client?.$disconnect()
     if (storageRoot) await rm(storageRoot, { recursive: true, force: true })
   })
@@ -760,6 +781,146 @@ describe('content repository', () => {
       ).resolves.toBe('kept')
     }
   )
+
+  it.each(['staging', 'available', 'missing'] as const)(
+    'recovers abandoned publication files with %s authority and preserves the published file',
+    async (state) => {
+      const repository = await createRepository()
+      const bytes = Buffer.from('interrupted publication')
+      const checksum = sha256(bytes)
+      const storageKey = `content/blobs/${checksum.slice(0, 2)}/${checksum}`
+      const destination = join(storageRoot!, storageKey)
+      const temporary = `${destination}.01234567-89ab-4def-8123-456789abcdef.tmp`
+      await mkdir(dirname(destination), { recursive: true })
+      await writeFile(destination, bytes)
+      await writeFile(temporary, bytes.subarray(0, 4))
+      await writeFile(`${destination}.unknown.tmp`, bytes)
+      if (state !== 'missing')
+        await client!.contentBlob.create({
+          data: {
+            id: `sha256:${checksum}:${bytes.length}`,
+            checksum,
+            storageKey,
+            sizeBytes: BigInt(bytes.length),
+            state
+          }
+        })
+      // A targeted deletion owns no unrelated temporary files, even if their row is absent.
+      await repository.sweep({ contentIds: ['unrelated'], createdBefore: new Date(0) })
+      expect(await readFile(temporary)).toEqual(bytes.subarray(0, 4))
+      // No row is old enough to be deleted; temporary recovery is independently discoverable.
+      await repository.sweep({ createdBefore: new Date(0) })
+      await expect(readFile(temporary)).rejects.toMatchObject({ code: 'ENOENT' })
+      expect(await readFile(destination)).toEqual(bytes)
+      expect(await readFile(`${destination}.unknown.tmp`)).toEqual(bytes)
+      await repository.sweep({ createdBefore: new Date(0) })
+    }
+  )
+
+  it('preserves a currently copying publication across repository instances', async () => {
+    const repository = await createRepository()
+    const sourcePath = join(storageRoot!, 'source.pdf')
+    await writeFile(sourcePath, 'active publication')
+    const fs = await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises')
+    let release!: () => void
+    const held = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    let copied!: () => void
+    const ready = new Promise<void>((resolve) => {
+      copied = resolve
+    })
+    let temporary = ''
+    vi.mocked(copyFile).mockImplementationOnce(async (source, destination) => {
+      await fs.copyFile(source, destination)
+      temporary = String(destination)
+      copied()
+      await held
+    })
+    const publication = repository.publish({ sourcePath })
+    try {
+      await ready
+      const sweeper = new ContentRepository({
+        storageRoot: storageRoot!,
+        getClient: async () => client!
+      })
+      await sweeper.sweep({ createdBefore: new Date(0) })
+      expect(await readFile(temporary, 'utf8')).toBe('active publication')
+    } finally {
+      release()
+    }
+    const content = await publication
+    expect(await repository.verify(content.id)).toMatchObject({ state: 'available' })
+  })
+
+  it('retains interrupted publication authority when unlink fails and recovers on retry', async () => {
+    const repository = await createRepository()
+    const bytes = Buffer.from('retry publication')
+    const checksum = sha256(bytes)
+    const id = `sha256:${checksum}:${bytes.length}`
+    const storageKey = `content/blobs/${checksum.slice(0, 2)}/${checksum}`
+    const temporary = join(storageRoot!, `${storageKey}.01234567-89ab-4def-8123-456789abcdef.tmp`)
+    await mkdir(dirname(temporary), { recursive: true })
+    await writeFile(temporary, bytes)
+    await client!.contentBlob.create({
+      data: {
+        id,
+        storageKey,
+        checksum,
+        sizeBytes: BigInt(bytes.length),
+        state: 'staging',
+        createdAt: new Date(1)
+      }
+    })
+    vi.mocked(rm).mockRejectedValueOnce(Object.assign(new Error('denied'), { code: 'EACCES' }))
+    await expect(repository.sweep({ createdBefore: new Date() })).rejects.toMatchObject({
+      code: 'EACCES'
+    })
+    expect(await client!.contentBlob.findUnique({ where: { id } })).not.toBeNull()
+    expect(await readFile(temporary)).toEqual(bytes)
+    expect((await repository.sweep({ createdBefore: new Date() })).removedIds).toEqual([id])
+    await expect(readFile(temporary)).rejects.toMatchObject({ code: 'ENOENT' })
+  })
+
+  it('does not traverse a symlinked publication prefix', async () => {
+    const repository = await createRepository()
+    const outside = join(storageRoot!, 'unowned')
+    const filename = `${'a'.repeat(64)}.01234567-89ab-4def-8123-456789abcdef.tmp`
+    await mkdir(outside)
+    await writeFile(join(outside, filename), 'keep')
+    const blobs = join(storageRoot!, 'content', 'blobs')
+    await mkdir(blobs, { recursive: true })
+    await symlink(outside, join(blobs, 'aa'), process.platform === 'win32' ? 'junction' : 'dir')
+    await repository.sweep({ createdBefore: new Date() })
+    expect(await readFile(join(outside, filename), 'utf8')).toBe('keep')
+  })
+
+  it('refuses a replaced publication directory before unlinking a same-named file', async () => {
+    const repository = await createRepository()
+    const directory = join(storageRoot!, 'content', 'blobs', 'aa')
+    const filename = `${'a'.repeat(64)}.01234567-89ab-4def-8123-456789abcdef.tmp`
+    const temporary = join(directory, filename)
+    await mkdir(directory, { recursive: true })
+    await writeFile(temporary, 'old')
+    const fs = await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises')
+    let replaced = false
+    vi.mocked(lstat).mockImplementation((...args) => {
+      if (String(args[0]) !== temporary || replaced) return fs.lstat(...args)
+      replaced = true
+      return (async () => {
+        const original = await fs.lstat(temporary)
+        await rename(directory, `${directory}-retained`)
+        await mkdir(directory)
+        await writeFile(temporary, 'new user data')
+        return original
+      })() as ReturnType<typeof lstat>
+    })
+    await expect(repository.sweep({ createdBefore: new Date() })).rejects.toThrow(
+      'directory changed'
+    )
+    expect(await readFile(temporary, 'utf8')).toBe('new user data')
+    expect(await readdir(`${directory}-retained`)).toEqual([filename])
+  })
 
   it('rejects traversal and platform-specific absolute storage keys', () => {
     expect(() => resolveContentStorageKey('/data', '../outside')).toThrow(/invalid/i)
