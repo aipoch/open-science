@@ -25,6 +25,7 @@ import {
   type LiteratureFormatDocumentResult,
   type LiteratureItemInput,
   type LiteratureItemView,
+  type LiteratureSourceRecordView,
   type LiteratureMetadataCompletionRequest,
   type LiteratureMetadataCompletionResult,
   type LiteraturePdfImportReceipt,
@@ -48,6 +49,7 @@ type LiteratureCommandOwner = Readonly<{
     request: LiteratureMetadataCompletionRequest
   ): Promise<LiteratureMetadataCompletionResult>
   search(request: LiteratureCatalogSearchRequest): Promise<LiteratureCatalogSearchPage>
+  sources(itemId: string): Promise<LiteratureSourceRecordView[]>
   get(itemId: string): Promise<LiteratureItemView | undefined>
   formatReferences(
     request: LiteratureFormatReferencesRequest
@@ -90,6 +92,11 @@ const literatureApplicationCommands = Object.freeze({
     readonly [LiteratureCatalogSearchRequest],
     LiteratureCatalogSearchPage
   >('literature:search', literatureApplicationCommandContracts.search),
+  sources: defineApplicationCommand<
+    'literature:sources',
+    readonly [string],
+    LiteratureSourceRecordView[]
+  >('literature:sources', literatureApplicationCommandContracts.sources),
   get: defineApplicationCommand<
     'literature:get',
     readonly [string],
@@ -137,6 +144,7 @@ const literatureApplicationCommandGroup = defineApplicationCommandGroup('literat
   literatureApplicationCommands.formatReferences,
   literatureApplicationCommands.formatDocument,
   literatureApplicationCommands.get,
+  literatureApplicationCommands.sources,
   literatureApplicationCommands.importPdf,
   literatureApplicationCommands.importRecords,
   literatureApplicationCommands.search,
@@ -164,6 +172,7 @@ const registerLiteratureApplicationCommands = (
         withDataRootWrite(() => owner.formatReferences(args[0])),
       'literature:format-document': ({ args }) =>
         withDataRootWrite(() => owner.formatDocument(args[0])),
+      'literature:sources': ({ args }) => withDataRootWrite(() => owner.sources(args[0])),
       'literature:get': ({ args }) => withDataRootWrite(() => owner.get(args[0])),
       'literature:import-pdf': ({ args }) => withDataRootWrite(() => owner.importPdf(args[0])),
       'literature:import-records': ({ args }) =>

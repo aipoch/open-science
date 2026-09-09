@@ -261,6 +261,7 @@ import type {
   LiteratureFormatReferencesRequest,
   LiteratureFormatReferencesResult,
   LiteratureItemView,
+  LiteratureSourceRecordView,
   LiteratureItemInput,
   LiteratureMetadataCompletionRequest,
   LiteratureMetadataCompletionResult,
@@ -1143,6 +1144,10 @@ export const RENDERER_API_CONTRACT = Object.freeze({
   'literature.exportRecord': callable<
     (request: LiteratureExportRecordRequest) => Promise<LiteratureExportRecordResult>
   >()('literature', ['literature:export-record', WEB, undefined, undefined, RUNTIME_VALIDATED]),
+  'literature.sources': callable<(itemId: string) => Promise<LiteratureSourceRecordView[]>>()(
+    'literature',
+    ['literature:sources', WEB, undefined, undefined, RUNTIME_VALIDATED]
+  ),
   'literature.get': callable<(itemId: string) => Promise<LiteratureItemView | undefined>>()(
     'literature',
     ['literature:get', WEB, undefined, undefined, RUNTIME_VALIDATED]

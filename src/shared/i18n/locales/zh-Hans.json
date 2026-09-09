@@ -4839,6 +4839,12 @@
     "Files saved by the application will be deleted when no other references use them. This cannot be undone and does not move the attachment to Trash. Original files imported from your computer are not deleted.": "没有其他引用使用这些文件时，应用保存的文件将被删除。此操作无法撤销，附件不会移至回收站。从您的计算机导入的原始文件不会被删除。",
     "Previewing an older version does not change the latest version.": "预览旧版本不会改变最新版本。",
     "Version {{number}}": "版本 {{number}}",
-    "All {{count}} versions will be deleted._other": "全部 {{count}} 个版本都将被删除。"
+    "All {{count}} versions will be deleted._other": "全部 {{count}} 个版本都将被删除。",
+    "Metadata sources": "元数据来源",
+    "Stored metadata": "已保存的元数据",
+    "Source record saved: {{time}}": "来源记录保存时间：{{time}}",
+    "Saved source records, not a complete change history. Times show when each record was saved.": "此处为已保存的来源记录，并非完整修改历史。时间表示各条记录的保存时间。",
+    "Could not load metadata sources": "无法加载元数据来源",
+    "No saved metadata sources for this reference.": "此文献没有已保存的元数据来源。"
   }
 }

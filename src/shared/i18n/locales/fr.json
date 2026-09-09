@@ -5155,6 +5155,12 @@
     "Version {{number}}": "Version {{number}}",
     "All {{count}} versions will be deleted._one": "L’unique version ({{count}}) sera supprimée.",
     "All {{count}} versions will be deleted._many": "Les {{count}} versions seront toutes supprimées.",
-    "All {{count}} versions will be deleted._other": "Les {{count}} versions seront toutes supprimées."
+    "All {{count}} versions will be deleted._other": "Les {{count}} versions seront toutes supprimées.",
+    "Metadata sources": "Sources des métadonnées",
+    "Stored metadata": "Métadonnées enregistrées",
+    "Source record saved: {{time}}": "Enregistrement de la source : {{time}}",
+    "Saved source records, not a complete change history. Times show when each record was saved.": "Sources enregistrées, sans historique complet des modifications. Les dates indiquent quand chaque enregistrement a été sauvegardé.",
+    "Could not load metadata sources": "Impossible de charger les sources des métadonnées",
+    "No saved metadata sources for this reference.": "Aucune source de métadonnées enregistrée pour cette référence."
   }
 }

@@ -4837,6 +4837,12 @@
     "Files saved by the application will be deleted when no other references use them. This cannot be undone and does not move the attachment to Trash. Original files imported from your computer are not deleted.": "다른 참조에서 사용하지 않는 경우 앱에 저장된 파일이 삭제됩니다. 이 작업은 실행 취소할 수 없으며 첨부 파일은 휴지통으로 이동하지 않습니다. 컴퓨터에서 가져온 원본 파일은 삭제되지 않습니다.",
     "Previewing an older version does not change the latest version.": "이전 버전을 미리 보아도 최신 버전은 변경되지 않습니다.",
     "Version {{number}}": "버전 {{number}}",
-    "All {{count}} versions will be deleted._other": "모든 {{count}}개 버전이 삭제됩니다."
+    "All {{count}} versions will be deleted._other": "모든 {{count}}개 버전이 삭제됩니다.",
+    "Metadata sources": "메타데이터 출처",
+    "Stored metadata": "저장된 메타데이터",
+    "Source record saved: {{time}}": "출처 기록 저장 시간: {{time}}",
+    "Saved source records, not a complete change history. Times show when each record was saved.": "저장된 출처 기록이며 전체 변경 이력은 아닙니다. 시간은 각 기록이 저장된 시점을 나타냅니다.",
+    "Could not load metadata sources": "메타데이터 출처를 불러오지 못했습니다",
+    "No saved metadata sources for this reference.": "이 문헌에 저장된 메타데이터 출처가 없습니다."
   }
 }

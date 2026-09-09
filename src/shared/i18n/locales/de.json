@@ -4993,6 +4993,12 @@
     "Previewing an older version does not change the latest version.": "Die Vorschau einer älteren Version ändert die neueste Version nicht.",
     "Version {{number}}": "Version {{number}}",
     "All {{count}} versions will be deleted._one": "Die einzige Version ({{count}}) wird gelöscht.",
-    "All {{count}} versions will be deleted._other": "Alle {{count}} Versionen werden gelöscht."
+    "All {{count}} versions will be deleted._other": "Alle {{count}} Versionen werden gelöscht.",
+    "Metadata sources": "Metadatenquellen",
+    "Stored metadata": "Gespeicherte Metadaten",
+    "Source record saved: {{time}}": "Quellendatensatz gespeichert: {{time}}",
+    "Saved source records, not a complete change history. Times show when each record was saved.": "Gespeicherte Quellendatensätze, kein vollständiger Änderungsverlauf. Die Zeiten geben an, wann der jeweilige Datensatz gespeichert wurde.",
+    "Could not load metadata sources": "Metadatenquellen konnten nicht geladen werden",
+    "No saved metadata sources for this reference.": "Für diesen Literaturverweis sind keine Metadatenquellen gespeichert."
   }
 }

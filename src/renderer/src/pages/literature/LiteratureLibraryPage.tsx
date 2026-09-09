@@ -6,6 +6,7 @@ import { LiteratureDeletionNotice } from './LiteratureDeletionNotice'
 import { readLiteratureSelectionPage } from './literature-read-pages'
 import { LiteratureOversizedNotice } from './LiteratureOversizedNotice'
 import type { TFunction } from 'i18next'
+import { LiteratureSources } from './LiteratureSources'
 import { LiteratureAttachments } from './LiteratureAttachments'
 import { LITERATURE_JOB_MAX_ITEMS } from '../../../../shared/literature-jobs'
 import {
@@ -6187,6 +6188,10 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
                           </dl>
                         ) : null}
                       </section>
+                      <LiteratureSources
+                        key={`${selectedItem.id}:${selectedItem.metadataRevision}`}
+                        itemId={selectedItem.id}
+                      />
                       <div className="py-4">
                         <ResourceTagSummary
                           reference={{

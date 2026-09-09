@@ -5288,6 +5288,12 @@
     "All {{count}} versions will be deleted._one": "Будет удалена {{count}} версия.",
     "All {{count}} versions will be deleted._few": "Будут удалены все {{count}} версии.",
     "All {{count}} versions will be deleted._many": "Будут удалены все {{count}} версий.",
-    "All {{count}} versions will be deleted._other": "Будут удалены все {{count}} версии."
+    "All {{count}} versions will be deleted._other": "Будут удалены все {{count}} версии.",
+    "Metadata sources": "Источники метаданных",
+    "Stored metadata": "Сохранённые метаданные",
+    "Source record saved: {{time}}": "Запись источника сохранена: {{time}}",
+    "Saved source records, not a complete change history. Times show when each record was saved.": "Сохранённые записи источников, а не полная история изменений. Указано время сохранения каждой записи.",
+    "Could not load metadata sources": "Не удалось загрузить источники метаданных",
+    "No saved metadata sources for this reference.": "Для этой публикации нет сохранённых источников метаданных."
   }
 }

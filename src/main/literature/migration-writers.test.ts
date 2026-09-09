@@ -266,3 +266,30 @@ it.each(['acquire_pdf', 'read_document'] as const)(
     }
   }
 )
+
+it('routes stored metadata sources through the validated application boundary', async () => {
+  const router = createApplicationCommandRouter()
+  const records = [
+    { id: 'source', provider: 'crossref', savedAt: 123, rawMetadata: { title: 'Saved title' } }
+  ]
+  const sources = vi.fn().mockResolvedValue(records)
+  const installation = registerLiteratureApplicationCommands(router.registrar, {
+    sources
+  } as unknown as Parameters<typeof registerLiteratureApplicationCommands>[1])
+  try {
+    await expect(
+      router.dispatcher.invoke(literatureApplicationCommands.sources, invocation(['item-1']))
+    ).resolves.toEqual(records)
+    expect(sources).toHaveBeenCalledExactlyOnceWith('item-1')
+    await expect(
+      router.dispatcher.invoke(literatureApplicationCommands.sources, invocation(['']))
+    ).rejects.toThrow()
+    expect(sources).toHaveBeenCalledTimes(1)
+    sources.mockResolvedValue([{ ...records[0], savedAt: 'invalid' }])
+    await expect(
+      router.dispatcher.invoke(literatureApplicationCommands.sources, invocation(['item-1']))
+    ).rejects.toThrow()
+  } finally {
+    installation.uninstall()
+  }
+})

@@ -233,6 +233,14 @@ const literatureSourceInputSchema = z
   })
   .strict()
 
+// Current persisted metadata evidence, not an application history. savedAt is the legacy
+// source-record write timestamp; it does not claim the time of network acquisition.
+const literatureSourceRecordViewSchema = literatureSourceInputSchema.extend({
+  id: nonEmptyTextSchema,
+  savedAt: z.number().int().nonnegative()
+})
+type LiteratureSourceRecordView = z.infer<typeof literatureSourceRecordViewSchema>
+
 const literatureCandidateOriginSchema = z
   .object({
     kind: nonEmptyTextSchema,
@@ -991,6 +999,10 @@ const literatureApplicationCommandContracts = Object.freeze({
     validationCodec(z.tuple([literatureCatalogSearchRequestSchema])),
     validationCodec(literatureCatalogSearchPageSchema)
   ),
+  sources: defineApplicationCommandContract(
+    validationCodec(z.tuple([nonEmptyTextSchema])),
+    validationCodec(z.array(literatureSourceRecordViewSchema))
+  ),
   get: defineApplicationCommandContract(
     validationCodec(z.tuple([nonEmptyTextSchema])),
     validationCodec(literatureItemViewSchema.optional())
@@ -1221,6 +1233,7 @@ export type {
   LiteratureInboxCandidateView,
   LiteratureItemInput,
   LiteratureItemView,
+  LiteratureSourceRecordView,
   LiteratureMetadataCompletionRequest,
   LiteratureMetadataCompletionResult,
   LiteratureMetadataConflict,

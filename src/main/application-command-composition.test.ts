@@ -212,6 +212,7 @@ describe('application command composition', () => {
       'literature:jobs',
       'literature:lookup-metadata',
       'literature:search',
+      'literature:sources',
       'literature:transact',
       'memory:clear-all',
       'memory:create-category',

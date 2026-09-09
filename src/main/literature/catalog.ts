@@ -42,6 +42,7 @@ import {
   type LiteratureRecordImportReceipt,
   type LiteratureRecordImportEntry,
   type LiteratureRecordImportError,
+  type LiteratureSourceRecordView,
   type LiteratureSourceInput
 } from '../../shared/literature'
 
@@ -1126,6 +1127,29 @@ class LiteratureCatalog {
     return row ? toItemView(row) : undefined
   }
 
+  async sources(itemId: string): Promise<LiteratureSourceRecordView[]> {
+    const client = await this.getClient()
+    return client.$transaction(async (transaction) => {
+      const requested = await transaction.literatureItem.findUnique({ where: { id: itemId } })
+      const item = requested?.mergedIntoItemId
+        ? await transaction.literatureItem.findUnique({ where: { id: requested.mergedIntoItemId } })
+        : requested
+      if (!item || item.deletedAt) throw new Error('Literature Item is unavailable.')
+      const rows = await transaction.literatureSourceRecord.findMany({
+        where: { itemId: item.id },
+        orderBy: [{ fetchedAt: 'desc' }, { id: 'asc' }]
+      })
+      return rows.map((row) => ({
+        id: row.id,
+        provider: row.provider,
+        externalId: row.externalId ?? undefined,
+        sourceUrl: row.sourceUrl ?? undefined,
+        rawMetadata: JSON.parse(row.rawMetadataJson) as Record<string, unknown>,
+        savedAt: row.fetchedAt.getTime()
+      }))
+    })
+  }
+
   async getMany(itemIds: readonly string[]): Promise<LiteratureItemView[]> {
     const ids = [...new Set(itemIds.map(normalizeSpace).filter(Boolean))]
     if (ids.length === 0) return []
@@ -1706,10 +1730,13 @@ class LiteratureCatalog {
             update: {}
           })
         }
-        await this.attachSource(transaction, {
-          source: candidate.source,
-          candidateId: persisted.id
-        })
+        // Repeated discoveries retain the first reviewed candidate and its matching evidence.
+        if (previous?.id !== persisted.id) {
+          await this.attachSource(transaction, {
+            source: candidate.source,
+            candidateId: persisted.id
+          })
+        }
       }
       return {
         kind: 'candidate',
