@@ -99,6 +99,7 @@ type PreviewFileSurfaceProps = PreviewInteractionPort & {
   item: PreviewFileItem
   allowReadingContext?: boolean
   onReadWithAgent?: (item: PreviewFileItem) => void
+  onPdfPageCountChange?: (pageCount: number | undefined) => void
   contentKey?: string
   renderContent?: boolean
   tooltipClassName?: string
@@ -630,6 +631,7 @@ const PreviewFileSurface = forwardRef<PreviewFileSurfaceHandle, PreviewFileSurfa
       item,
       allowReadingContext = true,
       onReadWithAgent,
+      onPdfPageCountChange,
       contentKey,
       renderContent = true,
       tooltipClassName,
@@ -893,12 +895,34 @@ const PreviewFileSurface = forwardRef<PreviewFileSurfaceHandle, PreviewFileSurfa
         : {}),
       suggestedName: resolvedPreviewItem.name
     })
+    const pdfPageCountKey = JSON.stringify([
+      contentItem.id,
+      contentItem.path,
+      contentItem.selectedVersionId,
+      previewContentKey
+    ])
+    const [pdfPageCount, setPdfPageCount] = useState<{ key: string; count: number }>()
+    const confirmedPdfPageCount =
+      contentItem.format === 'pdf' && pdfPageCount?.key === pdfPageCountKey
+        ? pdfPageCount.count
+        : undefined
+    useEffect(() => {
+      onPdfPageCountChange?.(confirmedPdfPageCount)
+    }, [confirmedPdfPageCount, onPdfPageCountChange])
+    const hidePdfReadingEntry = contentItem.format === 'pdf' && (confirmedPdfPageCount ?? 0) <= 1
+    const visiblePdfContextAction =
+      hidePdfReadingEntry && pdfContextAction?.state === 'link' ? undefined : pdfContextAction
     const reportPdfReadingPosition = useCallback(
       (position: { pageNumber: number; pageCount: number }): void => {
+        setPdfPageCount((current) =>
+          current?.key === pdfPageCountKey && current.count === position.pageCount
+            ? current
+            : { key: pdfPageCountKey, count: position.pageCount }
+        )
         if (!readingContextBindingId) return
         usePreviewWorkbenchStore.getState().setPdfReadingPosition(readingContextBindingId, position)
       },
-      [readingContextBindingId]
+      [pdfPageCountKey, readingContextBindingId]
     )
     const stageLocalPath = window.api.uploads?.stageLocalPath
 
@@ -1340,21 +1364,21 @@ const PreviewFileSurface = forwardRef<PreviewFileSurfaceHandle, PreviewFileSurfa
             close: { execute: closePreview }
           }
         : {
-            ...(pdfContextAction
+            ...(visiblePdfContextAction
               ? {
                   'pdf-context': {
                     execute: () => {
                       // Linking intentionally moves focus to the composer after the menu closes.
                       contextMenuComposerFocusRequestedRef.current =
-                        pdfContextAction.state !== 'remove'
-                      return pdfContextAction.run()
+                        visiblePdfContextAction.state !== 'remove'
+                      return visiblePdfContextAction.run()
                     },
-                    disabled: pdfContextAction.disabled || pdfContextAction.pending,
+                    disabled: visiblePdfContextAction.disabled || visiblePdfContextAction.pending,
                     labelKey:
-                      pdfContextAction.state === 'remove'
+                      visiblePdfContextAction.state === 'remove'
                         ? 'Remove PDF from context'
                         : 'Read with agent',
-                    icon: pdfContextAction.state === 'remove' ? Link2Off : BookOpen
+                    icon: visiblePdfContextAction.state === 'remove' ? Link2Off : BookOpen
                   }
                 }
               : {}),
@@ -1430,7 +1454,7 @@ const PreviewFileSurface = forwardRef<PreviewFileSurfaceHandle, PreviewFileSurfa
                 onClose={closePreview}
                 onOpenFullScreen={onOpenFullScreen}
                 onReload={() => setReloadToken((token) => token + 1)}
-                pdfContextAction={pdfContextAction}
+                pdfContextAction={visiblePdfContextAction}
                 saveAsArtifactState={saveAsArtifactState}
                 managedDownload={managedDownload}
                 provenanceEntry={provenanceEntry}
@@ -1659,9 +1683,7 @@ const PreviewFileSurface = forwardRef<PreviewFileSurfaceHandle, PreviewFileSurfa
                           onRedoAnnotation={onRedoAnnotation}
                           onAnnotationError={onAnnotationError}
                           onRetry={retryManagedPreview}
-                          onPdfReadingPositionChange={
-                            readingContextBindingId ? reportPdfReadingPosition : undefined
-                          }
+                          onPdfReadingPositionChange={reportPdfReadingPosition}
                         />
                       ) : null
                     ) : managedWorkflow.diffResult ? (
@@ -1695,9 +1717,7 @@ const PreviewFileSurface = forwardRef<PreviewFileSurfaceHandle, PreviewFileSurfa
                       onRedoAnnotation={onRedoAnnotation}
                       onAnnotationError={onAnnotationError}
                       onRetry={retryManagedPreview}
-                      onPdfReadingPositionChange={
-                        readingContextBindingId ? reportPdfReadingPosition : undefined
-                      }
+                      onPdfReadingPositionChange={reportPdfReadingPosition}
                     />
                   ) : null}
                 </div>

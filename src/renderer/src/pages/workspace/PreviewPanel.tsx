@@ -96,6 +96,7 @@ const PREVIEW_TAB_EDGE_INSET = 8
 const PreviewTabActionTarget = ({
   item,
   tabCount,
+  pdfPageCount,
   retryPendingKeys,
   onPdfContextError,
   onFileActionSuccess,
@@ -105,6 +106,7 @@ const PreviewTabActionTarget = ({
 }: {
   item: PreviewItem
   tabCount: number
+  pdfPageCount?: number
   retryPendingKeys?: ReadonlySet<string>
   onPdfContextError?: (message: string | null) => void
   onFileActionSuccess?: (command: PreviewTabActionCommand, item: PreviewItem) => void
@@ -117,11 +119,15 @@ const PreviewTabActionTarget = ({
   const removeItem = usePreviewWorkbenchStore((state) => state.removeItem)
   const removeOtherItems = usePreviewWorkbenchStore((state) => state.removeOtherItems)
   const activeProjectId = useNavigationStore((state) => state.activeProjectId)
-  const { action: pdfAction } = usePdfContextAction(
+  const { action: availablePdfAction } = usePdfContextAction(
     item.type === 'file' ? item : undefined,
     onPdfContextError,
     { link: onLinkReadingContext, unlink: onUnlinkReadingContext }
   )
+  const pdfAction =
+    availablePdfAction?.state === 'remove' || (pdfPageCount ?? 0) > 1
+      ? availablePdfAction
+      : undefined
   const context: PreviewTabActionContext = {
     tabCount,
     retryPendingKeys,
@@ -246,6 +252,7 @@ const PreviewTab = ({
   containerRef,
   tabRef,
   tabCount,
+  pdfPageCount,
   retryPendingKeys,
   onPdfContextError,
   onFileActionSuccess,
@@ -260,6 +267,7 @@ const PreviewTab = ({
   containerRef: (element: HTMLDivElement | null) => void
   tabRef: (element: HTMLButtonElement | null) => void
   tabCount: number
+  pdfPageCount?: number
   retryPendingKeys?: ReadonlySet<string>
   onPdfContextError?: (message: string | null) => void
   onFileActionSuccess?: (command: PreviewTabActionCommand, item: PreviewItem) => void
@@ -284,6 +292,7 @@ const PreviewTab = ({
       <PreviewTabActionTarget
         item={tab}
         tabCount={tabCount}
+        pdfPageCount={pdfPageCount}
         retryPendingKeys={retryPendingKeys}
         onPdfContextError={onPdfContextError}
         onFileActionSuccess={onFileActionSuccess}
@@ -348,6 +357,7 @@ const PreviewTab = ({
 // Horizontal, scrollable strip of every file the user has asked to preview this session.
 const PreviewTabBar = ({
   tabs,
+  pdfPageCounts,
   retryPendingKeys,
   activeItemId,
   onActivate,
@@ -358,6 +368,7 @@ const PreviewTabBar = ({
   onUnlinkReadingContext
 }: {
   tabs: PreviewItem[]
+  pdfPageCounts: ReadonlyMap<PreviewFileItem, number>
   retryPendingKeys?: ReadonlySet<string>
   activeItemId: string | undefined
   onActivate: (id: string) => void
@@ -460,6 +471,7 @@ const PreviewTabBar = ({
             tabRefs.current[index] = element
           }}
           tabCount={tabs.length}
+          pdfPageCount={tab.type === 'file' ? pdfPageCounts.get(tab) : undefined}
           retryPendingKeys={retryPendingKeys}
           onPdfContextError={onPdfContextError}
           onFileActionSuccess={onFileActionSuccess}
@@ -552,12 +564,14 @@ const usePreviewModalSurface = ({
 const PreviewFilePanel = ({
   item,
   contentKey,
+  onPdfPageCountChange,
   onClose,
   onPdfContextError,
   ...annotationPort
 }: {
   item: PreviewFileItem
   contentKey: string
+  onPdfPageCountChange: (item: PreviewFileItem, pageCount: number | undefined) => void
   onClose: (id: string) => boolean
   onPdfContextError?: (message: string | null) => void
 } & PreviewInteractionPort): React.JSX.Element => {
@@ -565,6 +579,10 @@ const PreviewFilePanel = ({
   const [isFullScreenOpen, setIsFullScreenOpen] = useState(false)
   const surfaceRef = useRef<HTMLElement | null>(null)
   const previewSurfaceRef = useRef<PreviewFileSurfaceHandle | null>(null)
+  const reportPdfPageCount = useCallback(
+    (pageCount: number | undefined): void => onPdfPageCountChange(item, pageCount),
+    [item, onPdfPageCountChange]
+  )
 
   const closeFullScreen = useCallback((checkGuard = true): void => {
     if (checkGuard && previewSurfaceRef.current) {
@@ -619,6 +637,7 @@ const PreviewFilePanel = ({
           ref={previewSurfaceRef}
           item={item}
           contentKey={contentKey}
+          onPdfPageCountChange={reportPdfPageCount}
           // Full-screen mode floats above the modal panel (z-[61]); tooltips must follow.
           tooltipClassName={isFullScreenOpen ? 'z-[70]' : undefined}
           actionMenuContentClassName={isFullScreenOpen ? 'z-[70]' : undefined}
@@ -791,6 +810,31 @@ const PreviewPanelSurface = ({
   }
 
   const items = usePreviewWorkbenchStore((state) => state.items)
+  // Object identity invalidates counts when a tab's file/version is replaced. Keep only open tabs;
+  // inactive file renderers unmount, but their confirmed counts remain useful in the tab menu.
+  const [pdfPageCounts, setPdfPageCounts] = useState<ReadonlyMap<PreviewFileItem, number>>(
+    () => new Map()
+  )
+  const reportPdfPageCount = useCallback(
+    (item: PreviewFileItem, pageCount: number | undefined): void => {
+      setPdfPageCounts((current) => {
+        if (current.get(item) === pageCount) return current
+        const next = new Map(current)
+        if (pageCount === undefined) next.delete(item)
+        else next.set(item, pageCount)
+        return next
+      })
+    },
+    []
+  )
+  useEffect(() => {
+    setPdfPageCounts((current) => {
+      const next = new Map(
+        [...current].filter(([item]) => items.some((openItem) => openItem === item))
+      )
+      return next.size === current.size ? current : next
+    })
+  }, [items])
   const activeItemId = usePreviewWorkbenchStore((state) => state.activeItemId)
   const panelState = usePreviewWorkbenchStore((state) => state.panelState)
   const activateItem = usePreviewWorkbenchStore((state) => state.activateItem)
@@ -834,6 +878,7 @@ const PreviewPanelSurface = ({
           >
             <PreviewTabBar
               tabs={items}
+              pdfPageCounts={pdfPageCounts}
               retryPendingKeys={retryPendingKeys}
               onFileActionSuccess={clearActionFailure}
               activeItemId={activeItemId}
@@ -918,6 +963,7 @@ const PreviewPanelSurface = ({
                 key={item.id}
                 item={item}
                 contentKey={activeContentKey}
+                onPdfPageCountChange={reportPdfPageCount}
                 onClose={(itemId) => {
                   const before = usePreviewWorkbenchStore.getState().items.length
                   removeItem(itemId)

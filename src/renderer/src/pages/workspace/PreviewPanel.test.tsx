@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { act, StrictMode } from 'react'
+import { act, StrictMode, useEffect } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -22,25 +22,37 @@ vi.mock('@/components/ui/resizable', () => ({
   )
 }))
 
+const pdfPreviewReport = vi.hoisted(() => ({ pageCount: 2 as number | undefined, props: vi.fn() }))
+
 vi.mock('./previews/PreviewFileContent', () => ({
   PreviewFileContent: ({
     item,
     activeAnnotations,
-    onAddAnnotation
+    onAddAnnotation,
+    onPdfReadingPositionChange
   }: {
     item: PreviewFileItem
     activeAnnotations?: readonly Annotation[]
     onAddAnnotation?: (annotation: Annotation) => void
-  }): React.JSX.Element => (
-    <button
-      type="button"
-      data-testid="file-content"
-      data-annotation-count={activeAnnotations?.length ?? 0}
-      onClick={() => activeAnnotations?.[0] && onAddAnnotation?.(activeAnnotations[0])}
-    >
-      file:{item.format}:{item.source ?? 'artifact'}:{item.name}:{item.path}
-    </button>
-  )
+    onPdfReadingPositionChange?: (position: { pageNumber: number; pageCount: number }) => void
+  }): React.JSX.Element => {
+    pdfPreviewReport.props({ item, onPdfReadingPositionChange })
+    useEffect(() => {
+      if (item.format === 'pdf' && pdfPreviewReport.pageCount !== undefined) {
+        onPdfReadingPositionChange?.({ pageNumber: 1, pageCount: pdfPreviewReport.pageCount })
+      }
+    }, [item.format, onPdfReadingPositionChange])
+    return (
+      <button
+        type="button"
+        data-testid="file-content"
+        data-annotation-count={activeAnnotations?.length ?? 0}
+        onClick={() => activeAnnotations?.[0] && onAddAnnotation?.(activeAnnotations[0])}
+      >
+        file:{item.format}:{item.source ?? 'artifact'}:{item.name}:{item.path}
+      </button>
+    )
+  }
 }))
 
 vi.mock('./previews/PreviewToolContent', () => ({
@@ -90,6 +102,8 @@ describe('PreviewPanel', () => {
   let releaseSourcePreview: ReturnType<typeof vi.fn>
 
   beforeEach(() => {
+    pdfPreviewReport.pageCount = 2
+    pdfPreviewReport.props.mockClear()
     usePreviewWorkbenchStore.setState(createInitialPreviewWorkbenchState())
     releaseSourcePreview = vi.fn()
     window.api = {
@@ -1481,6 +1495,99 @@ describe('PreviewPanel', () => {
     ).toBeNull()
   })
 
+  it.each([undefined, 1, 2])(
+    'gates the PDF tab reading entry for %s confirmed pages',
+    async (pageCount) => {
+      pdfPreviewReport.pageCount = pageCount
+      useSessionStore.setState({ sessions: [], selectedSessionId: undefined })
+      usePreviewWorkbenchStore.getState().activateProject('project-1')
+      usePreviewWorkbenchStore.getState().upsertAndActivateItem(
+        createFileItem({
+          projectId: 'project-1',
+          format: 'pdf',
+          name: 'paper.pdf',
+          title: 'paper.pdf',
+          selectedVersionId: 'version-1'
+        })
+      )
+      await renderPanel()
+      await openTabContextMenu(0)
+      expect(menuCommands().includes('toggle-pdf-context')).toBe(pageCount === 2)
+      expect(menuCommands()).toContain('download')
+    }
+  )
+
+  it('keeps confirmed inactive PDF counts and invalidates replaced or reopened tabs', async () => {
+    useSessionStore.setState({ sessions: [], selectedSessionId: undefined })
+    usePreviewWorkbenchStore.getState().activateProject('project-1')
+    const pdf = createFileItem({
+      projectId: 'project-1',
+      format: 'pdf',
+      name: 'paper.pdf',
+      title: 'paper.pdf',
+      selectedVersionId: 'version-1'
+    })
+    usePreviewWorkbenchStore.getState().upsertAndActivateItem(pdf)
+    await renderPanel()
+    await act(async () => {
+      usePreviewWorkbenchStore.getState().upsertAndActivateItem(createToolItem({}))
+    })
+    await openTabContextMenu(0)
+    expect(menuCommands()).toContain('toggle-pdf-context')
+
+    pdfPreviewReport.pageCount = undefined
+    await act(async () => {
+      usePreviewWorkbenchStore
+        .getState()
+        .upsertAndActivateItem({ ...pdf, selectedVersionId: 'version-2' })
+    })
+    await openTabContextMenu(0)
+    expect(menuCommands()).not.toContain('toggle-pdf-context')
+    await act(async () => {
+      pdfPreviewReport.props.mock.calls
+        .at(-1)?.[0]
+        .onPdfReadingPositionChange({ pageNumber: 1, pageCount: 2 })
+    })
+    await openTabContextMenu(0)
+    expect(menuCommands()).toContain('toggle-pdf-context')
+
+    const current = usePreviewWorkbenchStore.getState().items.find((entry) => entry.id === pdf.id)!
+    await act(async () => {
+      usePreviewWorkbenchStore.getState().removeItem(pdf.id)
+    })
+    await act(async () => {
+      usePreviewWorkbenchStore.getState().upsertAndActivateItem(current)
+    })
+    await openTabContextMenu(1)
+    expect(menuCommands()).not.toContain('toggle-pdf-context')
+  })
+
+  it('does not reuse a previous project PDF count', async () => {
+    useSessionStore.setState({ sessions: [], selectedSessionId: undefined })
+    usePreviewWorkbenchStore.getState().activateProject('project-1')
+    const pdf = createFileItem({
+      projectId: 'project-1',
+      format: 'pdf',
+      name: 'paper.pdf',
+      title: 'paper.pdf',
+      selectedVersionId: 'version-1'
+    })
+    usePreviewWorkbenchStore.getState().upsertAndActivateItem(pdf)
+    await renderPanel()
+    await openTabContextMenu(0)
+    expect(menuCommands()).toContain('toggle-pdf-context')
+
+    pdfPreviewReport.pageCount = undefined
+    await act(async () => {
+      usePreviewWorkbenchStore.getState().activateProject('project-2')
+    })
+    await act(async () => {
+      usePreviewWorkbenchStore.getState().upsertAndActivateItem({ ...pdf, projectId: 'project-2' })
+    })
+    await openTabContextMenu(0)
+    expect(menuCommands()).not.toContain('toggle-pdf-context')
+  })
+
   it('leads a linkable PDF tab menu with Read with agent and links through it', async () => {
     const linkPdfContext = vi.fn().mockResolvedValue({ version: 1, revision: 2 })
     usePreviewWorkbenchStore.getState().activateProject('project-1')
@@ -1691,67 +1798,77 @@ describe('PreviewPanel', () => {
     expect(document.activeElement).toBe(document.getElementById('preview-tab-item-1'))
   })
 
-  it('labels the PDF tab command Remove PDF from context when the tab is the current binding', async () => {
-    usePreviewWorkbenchStore.getState().activateProject('project-1')
-    window.api.artifacts = {
-      getLineage: vi.fn().mockResolvedValue(undefined)
-    } as unknown as Window['api']['artifacts']
-    useSessionStore.setState({
-      sessions: [
-        {
-          id: 'session-1',
-          projectId: 'project-1',
-          title: 'Session',
-          cwd: '/workspace',
-          status: 'idle',
-          messages: [],
-          runtimeContext: {
-            version: 1,
-            revision: 1,
-            pdfContext: {
+  it.each([undefined, 1])(
+    'keeps the linked PDF tab removal command with %s confirmed pages',
+    async (pageCount) => {
+      pdfPreviewReport.pageCount = pageCount
+      const unlinkPdfContext = vi.fn().mockResolvedValue(undefined)
+      window.api.sessions = { unlinkPdfContext } as unknown as Window['api']['sessions']
+      usePreviewWorkbenchStore.getState().activateProject('project-1')
+      window.api.artifacts = {
+        getLineage: vi.fn().mockResolvedValue(undefined)
+      } as unknown as Window['api']['artifacts']
+      useSessionStore.setState({
+        sessions: [
+          {
+            id: 'session-1',
+            projectId: 'project-1',
+            title: 'Session',
+            cwd: '/workspace',
+            status: 'idle',
+            messages: [],
+            runtimeContext: {
               version: 1,
-              bindings: [
-                {
-                  version: 1,
-                  bindingId: 'binding-1',
-                  sourceKind: 'artifact-version',
-                  sourceFileId: 'artifact-1',
-                  sourceVersionId: 'version-1',
-                  sourceSessionId: 'session-1',
-                  name: 'paper.pdf',
-                  mimeType: 'application/pdf',
-                  sizeBytes: 12,
-                  checksum: 'checksum-1',
-                  linkedAt: 1
-                }
-              ]
-            }
-          },
-          createdAt: 1,
-          updatedAt: 1
-        } as ChatSession
-      ],
-      selectedSessionId: 'session-1'
-    })
-    usePreviewWorkbenchStore.getState().upsertAndActivateItem(
-      createFileItem({
-        format: 'pdf',
-        title: 'paper.pdf',
-        name: 'paper.pdf',
-        artifactId: 'artifact-1',
-        selectedVersionId: 'version-1',
-        path: 'artifact-version:project-1/session-1/artifact-1/version-1'
+              revision: 1,
+              pdfContext: {
+                version: 1,
+                bindings: [
+                  {
+                    version: 1,
+                    bindingId: 'binding-1',
+                    sourceKind: 'artifact-version',
+                    sourceFileId: 'artifact-1',
+                    sourceVersionId: 'version-1',
+                    sourceSessionId: 'session-1',
+                    name: 'paper.pdf',
+                    mimeType: 'application/pdf',
+                    sizeBytes: 12,
+                    checksum: 'checksum-1',
+                    linkedAt: 1
+                  }
+                ]
+              }
+            },
+            createdAt: 1,
+            updatedAt: 1
+          } as ChatSession
+        ],
+        selectedSessionId: 'session-1'
       })
-    )
-    await renderPanel()
+      usePreviewWorkbenchStore.getState().upsertAndActivateItem(
+        createFileItem({
+          format: 'pdf',
+          title: 'paper.pdf',
+          name: 'paper.pdf',
+          artifactId: 'artifact-1',
+          selectedVersionId: 'version-1',
+          path: 'artifact-version:project-1/session-1/artifact-1/version-1'
+        })
+      )
+      await renderPanel()
 
-    await openTabContextMenu(0)
+      await openTabContextMenu(0)
 
-    const command = document.body.querySelector('[data-action-id="toggle-pdf-context"]')
-    expect(command?.textContent).toContain('Remove PDF from context')
-    // Unlink is reversible, so it never takes the danger styling.
-    expect(command?.className).not.toContain('danger')
-  })
+      const command = document.body.querySelector('[data-action-id="toggle-pdf-context"]')
+      expect(command?.textContent).toContain('Remove PDF from context')
+      // Unlink is reversible, so it never takes the danger styling.
+      expect(command?.className).not.toContain('danger')
+      await clickMenuCommand('toggle-pdf-context')
+      expect(unlinkPdfContext).toHaveBeenCalledWith(
+        expect.objectContaining({ bindingId: 'binding-1' })
+      )
+    }
+  )
 
   it('omits the reading-context command for non-PDF and non-linkable tabs', async () => {
     useSessionStore.setState({ sessions: [], selectedSessionId: undefined })
