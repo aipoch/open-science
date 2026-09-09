@@ -1,4 +1,4 @@
-import { expect, test as base } from '@playwright/test'
+import { expect, test as base, type TestInfo } from '@playwright/test'
 import { spawn } from 'node:child_process'
 import { chmod, copyFile, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -340,7 +340,10 @@ class ElectronAppHarness implements ElectronApp {
     private readonly windowMode: E2eWindowMode
   ) {}
 
-  static async create(windowMode: E2eWindowMode): Promise<ElectronAppHarness> {
+  static async create(
+    windowMode: E2eWindowMode,
+    testInfo: Pick<TestInfo, 'attach'>
+  ): Promise<ElectronAppHarness> {
     const testRoot = await mkdtemp(join(tmpdir(), 'open-science-electron-e2e-'))
     const harness = new ElectronAppHarness(
       testRoot,
@@ -361,6 +364,12 @@ class ElectronAppHarness implements ElectronApp {
       await harness.launch()
       return harness
     } catch (error) {
+      await harness
+        .captureMainLog('startup-failure.log')
+        .then((path) =>
+          testInfo.attach('startup-main-process-log', { path, contentType: 'text/plain' })
+        )
+        .catch(() => undefined)
       try {
         await harness.dispose()
       } catch (cleanupError) {
@@ -938,6 +947,7 @@ class ElectronAppHarness implements ElectronApp {
     try {
       this.rendererFailures.assertNoFailures()
     } catch (error) {
+      if (errors.length === 0) throw error
       errors.push(error)
     }
     if (errors.length > 0) {
@@ -958,12 +968,17 @@ class ElectronAppHarness implements ElectronApp {
       this.resourceProfiler !== undefined
     )
     await this.resourceProfiler?.attach(this.application)
-    this.currentPage = await openMainWindow(
-      this.application,
-      this.rendererFailures,
-      this.windowMode
-    )
-    this.mainLogDirectory = await this.application.evaluate(({ app }) => app.getPath('logs'))
+    try {
+      this.currentPage = await openMainWindow(
+        this.application,
+        this.rendererFailures,
+        this.windowMode
+      )
+    } finally {
+      this.mainLogDirectory = await this.application
+        .evaluate(({ app }) => app.getPath('logs'))
+        .catch(() => undefined)
+    }
   }
 
   private get runningApplication(): ElectronApplication {
@@ -1050,7 +1065,7 @@ const test = base.extend<{ app: ElectronApp; windowMode: E2eWindowMode }>({
   windowMode: ['hidden', { option: true }],
   // Playwright fixture callbacks require an object pattern even when no base fixture is needed.
   app: async ({ windowMode }, install, testInfo) => {
-    const app = await ElectronAppHarness.create(windowMode)
+    const app = await ElectronAppHarness.create(windowMode, testInfo)
 
     let bodyError: unknown
     try {
