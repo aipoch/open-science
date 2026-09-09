@@ -314,6 +314,10 @@ Remote.It 페어링을 통해 휴대전화나 태블릿에서 동일한 localhos
 
 ## 자주 묻는 질문
 
+### AIPOCH Open-Science란 무엇이며 누가 개발하나요?
+
+답변: AIPOCH Open-Science는 AIPOCH 팀이 개발하는 독립적인 오픈 소스(Apache-2.0) 연구 워크벤치입니다. **AIPOCH Open-Science**는 제품의 정식 명칭이고 **Open-Science**는 줄임말입니다. 두 이름 모두 동일한 AIPOCH 제품을 가리킵니다.
+
 ### AIPOCH Open-Science를 처음 열면 무엇을 해야 하나요?
 
 답변: **Environment**, **Data location**, **Agent runtime**, **Model provider**, **Notebook runtime**의 다섯 설정 단계를 완료하세요. `Action needed`로 표시된 필수 항목을 해결하고, 선택한 에이전트의 설치 또는 복구가 제안되면 수행한 다음 모델 연결을 테스트하세요. Notebook 설정과 사용자 지정 데이터 위치는 선택 사항입니다.

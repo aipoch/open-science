@@ -326,6 +326,10 @@ paquet publiable, afin qu'il n'y ait qu'une seule référence de commandes à ma
 
 ## Questions fréquentes
 
+### Qu'est-ce qu'AIPOCH Open-Science et qui le développe ?
+
+R : AIPOCH Open-Science est un environnement de travail de recherche indépendant et open source (Apache-2.0), développé par l'équipe AIPOCH. **AIPOCH Open-Science** est le nom complet du produit, tandis que **Open-Science** est son nom abrégé. Les deux noms désignent le même produit AIPOCH.
+
 ### Que dois-je faire la première fois que j'ouvre AIPOCH Open-Science ?
 
 R : Terminez les cinq étapes de configuration : **Environment**, **Data location**, **Agent runtime**, **Model provider** et **Notebook runtime**. Corrigez les lignes requises marquées `Action needed`, installez ou réparez l'agent sélectionné s'il est proposé, et testez la connexion au modèle. La configuration Notebook et un emplacement de données personnalisé sont optionnels.
