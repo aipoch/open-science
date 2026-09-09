@@ -140,6 +140,25 @@ describe('AcpAgentConnectionAdapter', () => {
     }
   })
 
+  it.each(['end', 'close'] as const)(
+    'finalizes stderr once when %s arrives first and ignores later data',
+    async (first) => {
+      const process = new FakeAgentProcess()
+      const connectionHooks = { ...hooks(), onProcessStderrEnd: vi.fn() }
+      const candidate = await openCandidate(process, undefined, connectionHooks)
+      try {
+        process.stderr.emit('data', Buffer.from('tail'))
+        process.stderr.emit(first)
+        process.stderr.emit(first === 'end' ? 'close' : 'end')
+        process.stderr.emit('data', Buffer.from('impossible late data'))
+        expect(connectionHooks.onProcessStderrEnd).toHaveBeenCalledOnce()
+        expect(connectionHooks.onProcessStderr).toHaveBeenCalledTimes(1)
+      } finally {
+        await candidate.dispose()
+      }
+    }
+  )
+
   it('binds process diagnostics and forwards the process epoch context', async () => {
     const process = new FakeAgentProcess()
     const connectionHooks = hooks()

@@ -32,13 +32,25 @@ const normalizedStackSignature = (value: unknown): string => {
       .split(/\r?\n/)
       .slice(1, 5)
       .map((frame) => {
-        const location = /((?:https?|file):\/\/[^\s)]+):(\d+):(\d+)\)?$/.exec(frame.trim())
-        if (!location) return 'unknown'
-        const url = new URL(location[1])
-        // App-relative resources distinguish bundled columns and development modules without
-        // carrying installation roots, host names, URL credentials, queries or error messages.
-        const resource = /\/(src\/[^?#]+|assets\/[^?#]+)$/.exec(url.pathname)?.[1]
-        return resource ? `${resource.slice(0, 512)}:${location[2]}:${location[3]}` : 'unknown'
+        const fallback = frame
+          .slice(0, 1024)
+          .replace(/[a-z][a-z0-9+.-]*:\/\/\S+/gi, '[url]')
+          .replace(/[A-Za-z]:\\[^\s)]+/g, '[path]')
+          .replace(/\/(?:[^\s/]+\/)+[^\s)]+/g, '[path]')
+          .replace(/\d+/g, '#')
+          .slice(0, 512)
+        const location = /([a-z][a-z0-9+.-]*:\/\/[^\s)]+):(\d+):(\d+)\)?$/i.exec(frame.trim())
+        if (!location) return fallback
+        try {
+          const url = new URL(location[1])
+          // App-relative resources distinguish bundled columns and development modules without
+          // carrying installation roots, host names, URL credentials, queries or error messages.
+          const resource = /\/(src\/[^?#]+|assets\/[^?#]+)$/.exec(url.pathname)?.[1]
+          return resource ? `${resource.slice(0, 512)}:${location[2]}:${location[3]}` : fallback
+        } catch {
+          // A malformed frame must not erase usable identities from the rest of the stack.
+          return fallback
+        }
       })
       .join('\n')
   } catch {

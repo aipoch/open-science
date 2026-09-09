@@ -337,7 +337,9 @@ describe('renderer source-location deduplication', () => {
       'async',
       'async render (http://localhost:5173/src/page.tsx:10:5)',
       'async render (http://localhost:5173/src/page.tsx:11:5)'
-    ]
+    ],
+    ['native', 'renderStudy (native)', 'updateWorkspace (native)'],
+    ['webpack', 'webpack:///src/first.tsx:10:2', 'webpack:///src/second.tsx:10:2']
   ])('records distinct %s locations and suppresses a repeat', (_mode, first, second) => {
     const report = (location: string): RendererFailureReport => {
       const error = new TypeError('private error message')

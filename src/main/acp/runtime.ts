@@ -586,7 +586,7 @@ type AgentStderrWindow = {
   codexTransportSignalSample: string
   codexWebSocketFallbackObserved: boolean
   eventEligible: boolean
-  timer: ReturnType<typeof setTimeout>
+  timer?: ReturnType<typeof setTimeout>
 }
 
 type PlanDeliveryClaimRetry = {
@@ -1410,7 +1410,9 @@ class AcpRuntime {
       onProcessStderr: (text, context) => this.handleAgentProcessStderr(text, context),
       onProcessStderrEnd: (context) => {
         const tail = this.agentStderrTails.get(context.process)
-        if (tail?.text || tail?.discarding) this.handleAgentProcessStderr('', context, true)
+        if (tail?.text || (tail?.discarding && this.agentStderrWindows.has(context.process))) {
+          this.handleAgentProcessStderr('', context, true)
+        }
         this.agentStderrTails.delete(context.process)
         this.flushAgentProcessStderr(context.process)
       },
@@ -2849,6 +2851,13 @@ class AcpRuntime {
       }
       this.appendAgentStderrSample(existing, text, ended)
       this.observeCodexTransportSignal(existing, text)
+      if (!existing.timer) {
+        existing.timer = setTimeout(
+          () => this.flushAgentProcessStderr(context.process),
+          AGENT_STDERR_REPORT_WINDOW_MS
+        )
+        existing.timer.unref?.()
+      }
       return
     }
 
@@ -2965,8 +2974,13 @@ class AcpRuntime {
   private flushAgentProcessStderr(process: ChildProcessWithoutNullStreams): void {
     const window = this.agentStderrWindows.get(process)
     if (!window) return
-    this.agentStderrWindows.delete(process)
     clearTimeout(window.timer)
+    window.timer = undefined
+    // Keep the original counters and attribution until a bounded raw line is complete.
+    // With no more data there is no repeating timer; stream end/close finalizes the window.
+    const tail = this.agentStderrTails.get(process)
+    if (this.includeRawAgentStderr() && tail?.text && !tail.discarding) return
+    this.agentStderrWindows.delete(process)
 
     const windowMs = Math.max(1, Date.now() - window.startedAt)
     const includeRaw = this.includeRawAgentStderr() && window.rawSample.length > 0

@@ -23849,6 +23849,45 @@ describe('ACP runtime — agent process lifecycle logging', () => {
     }
   )
 
+  it('reports a raw stderr tail once with its original accounting when EOF follows the timer', async () => {
+    const previousRaw = process.env.OPEN_SCIENCE_AGENT_STDERR
+    process.env.OPEN_SCIENCE_AGENT_STDERR = 'raw'
+    const child = new FakeAgentProcess()
+    startFakeAgent(child, ['tail-session'])
+    const events: AcpRuntimeEvent[] = []
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(child),
+      callbacks: { onEvent: (event) => events.push(event) }
+    })
+    try {
+      await runtime.createSession({ cwd: '/workspace' })
+      warnLogSpy.mockClear()
+      events.length = 0
+      vi.useFakeTimers()
+      const text = 'complete line\napiKey=fictional-tail-credential'
+      child.stderr.emit('data', Buffer.from(text))
+      await vi.advanceTimersByTimeAsync(1000)
+      child.stderr.emit('end')
+      await vi.advanceTimersByTimeAsync(1000)
+      const summaries = warnLogSpy.mock.calls.filter(
+        ([message]) => message === 'agent stderr summary'
+      )
+      expect(summaries).toHaveLength(1)
+      expect(summaries[0][1]).toMatchObject({ chunkCount: 1, byteCount: Buffer.byteLength(text) })
+      expect(summaries[0][1]).toMatchObject({ rawSample: 'complete line\napiKey=[redacted]' })
+      expect(
+        events.filter((event) => event.kind === 'system' && event.title === 'agent')
+      ).toHaveLength(1)
+    } finally {
+      vi.useRealTimers()
+      if (previousRaw === undefined) delete process.env.OPEN_SCIENCE_AGENT_STDERR
+      else process.env.OPEN_SCIENCE_AGENT_STDERR = previousRaw
+      await runtime.disconnect()
+    }
+  })
+
   it('omits oversized raw stderr lines until their boundary', async () => {
     warnLogSpy.mockClear()
     const previousRawStderr = process.env.OPEN_SCIENCE_AGENT_STDERR

@@ -194,14 +194,19 @@ class AcpAgentConnectionAdapter {
       hooks.onBackendPublished(backendAttempt.publish())
       const stderrDecoder = new StringDecoder('utf8')
       const stderrContext = { process: spawnedProcess, framework, epoch: input.epoch }
+      let stderrEnded = false
       spawnedProcess.stderr.on('data', (data: Buffer) => {
-        hooks.onProcessStderr(stderrDecoder.write(data), stderrContext)
+        if (!stderrEnded) hooks.onProcessStderr(stderrDecoder.write(data), stderrContext)
       })
-      spawnedProcess.stderr.once('end', () => {
+      const finishStderr = (): void => {
+        if (stderrEnded) return
+        stderrEnded = true
         const tail = stderrDecoder.end()
         if (tail) hooks.onProcessStderr(tail, stderrContext)
         hooks.onProcessStderrEnd?.(stderrContext)
-      })
+      }
+      spawnedProcess.stderr.once('end', finishStderr)
+      spawnedProcess.stderr.once('close', finishStderr)
       spawnedProcess.on('error', (error) => {
         hooks.onProcessError(error, {
           process: spawnedProcess,
