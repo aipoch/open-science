@@ -264,3 +264,27 @@ it('retries a failed destination link with the original creation receipt', async
   expect(transact.mock.calls.filter(([c]) => c.kind === 'create-item')).toHaveLength(2)
   expect(importPdf.mock.calls.map(([c]) => c.itemId)).toEqual(['second.pdf', 'first.pdf'])
 })
+
+it('releases a failed claim before continuing and keeps its reference for retry', async () => {
+  claimLocalFile.mockRejectedValueOnce(new Error('Claim failed'))
+  open()
+  await start()
+  await screen.findByText('1 / 2 completed')
+  expect(abortTransfer).toHaveBeenCalledWith({
+    transferId: mocks.stage.mock.calls[0][2].transferId
+  })
+  expect(abortTransfer.mock.invocationCallOrder[0]).toBeLessThan(
+    mocks.stage.mock.invocationCallOrder[1]
+  )
+  expect(deleteUpload).toHaveBeenCalledTimes(2)
+  expect(importPdf.mock.calls.map(([request]) => request.itemId)).toEqual(['item-2'])
+  await waitFor(() =>
+    expect(
+      (screen.getByRole('button', { name: 'Retry unfinished' }) as HTMLButtonElement).disabled
+    ).toBe(false)
+  )
+  fireEvent.click(screen.getByRole('button', { name: 'Retry unfinished' }))
+  await screen.findByText('2 / 2 completed')
+  expect(transact.mock.calls.filter(([command]) => command.kind === 'create-item')).toHaveLength(2)
+  expect(importPdf.mock.calls.map(([request]) => request.itemId)).toEqual(['item-2', 'item-1'])
+})

@@ -180,7 +180,14 @@ export function LiteraturePdfBatchImportDialog({
               if (active.current) setProgress(value)
             }
           })
-          await window.api.uploads.claimLocalFile?.({ transferId: transfer.transferId })
+          try {
+            await window.api.uploads.claimLocalFile?.({ transferId: transfer.transferId })
+          } catch (claimError) {
+            await window.api.uploads
+              .abortTransfer({ transferId: transfer.transferId })
+              .catch(() => undefined)
+            throw claimError
+          }
           if (transfer.controller.signal.aborted || !active.current)
             throw new DOMException('Upload cancelled.', 'AbortError')
           // Once submitted, finish the write before stopping; the upload is no longer cancellable.
