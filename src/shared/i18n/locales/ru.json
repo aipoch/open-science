@@ -5319,6 +5319,8 @@
     "Failed: {{failed}} · Skipped: {{skipped}}": "Ошибки: {{failed}} · Пропущено: {{skipped}}",
     "You can import unfinished files or close this window.": "Можно импортировать незавершённые файлы или закрыть это окно.",
     "New Compute jobs may remain queued because saved concurrency limits could not be verified. Preserve the affected files, recover a valid copy, then recheck to resume dispatch.": "Новые задания Compute могут оставаться в очереди, поскольку не удалось проверить сохранённые ограничения параллельного выполнения. Сохраните затронутые файлы, восстановите корректную копию и повторите проверку, чтобы возобновить отправку заданий.",
-    "Recheck saved conversations": "Повторно проверить сохранённые диалоги"
+    "Recheck saved conversations": "Повторно проверить сохранённые диалоги",
+    "Allow once applies to the next execution in this runtime, even if the code changes. It allows multiple connections to this domain during that execution.": "Однократное разрешение действует для следующего выполнения в этой среде, даже если код изменится. Во время этого выполнения разрешено несколько подключений к этому домену.",
+    "Next execution in this runtime": "Следующее выполнение в этой среде"
   }
 }

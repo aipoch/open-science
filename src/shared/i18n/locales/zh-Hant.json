@@ -4870,6 +4870,8 @@
     "Failed: {{failed}} · Skipped: {{skipped}}": "失敗：{{failed}} · 已略過：{{skipped}}",
     "You can import unfinished files or close this window.": "您可以匯入未完成的檔案或關閉此視窗。",
     "New Compute jobs may remain queued because saved concurrency limits could not be verified. Preserve the affected files, recover a valid copy, then recheck to resume dispatch.": "無法驗證已儲存的並行限制，新 Compute 任務可能會持續排隊。請保留受影響的檔案，還原有效副本後重新檢查，以恢復任務派發。",
-    "Recheck saved conversations": "重新檢查已儲存的對話"
+    "Recheck saved conversations": "重新檢查已儲存的對話",
+    "Allow once applies to the next execution in this runtime, even if the code changes. It allows multiple connections to this domain during that execution.": "允許一次適用於此執行環境的下一次執行，即使程式碼有所變更也仍然適用。該次執行期間可多次連線至此網域。",
+    "Next execution in this runtime": "此執行環境的下一次執行"
   }
 }
