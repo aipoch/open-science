@@ -3397,6 +3397,59 @@ describe('PreviewFileSurface PDF context action matrix', () => {
     }
   )
 
+  it.each([undefined, 1, 2])(
+    'gates the PDF content-menu reading entry for %s pages',
+    async (pageCount) => {
+      pdfPageReport.enabled = false
+      selectPdfContextSession()
+      installPdfContextApi()
+      await act(async () => {
+        root.render(<PreviewFileSurface item={pdfItem} onClose={vi.fn()} />)
+      })
+      if (pageCount !== undefined) {
+        act(() => {
+          previewContentSpy.mock.calls.at(-1)?.[0].onPdfReadingPositionChange({
+            pageNumber: 1,
+            pageCount
+          })
+        })
+      }
+      act(() => {
+        container
+          .querySelector('[data-testid="preview-file-content-surface"]')
+          ?.dispatchEvent(
+            new MouseEvent('contextmenu', { bubbles: true, clientX: 80, clientY: 120 })
+          )
+      })
+      await act(async () => Promise.resolve())
+      const menu = document.body.querySelector('[data-testid="preview-content-context-menu"]')
+      expect(menu).not.toBeNull()
+      expect(menu?.textContent?.includes('Read with agent')).toBe(pageCount === 2)
+      expect(menu?.textContent).toContain('Download')
+    }
+  )
+
+  it('keeps the content-menu removal action for a linked single-page PDF', async () => {
+    selectPdfContextSession(linkedPdfContext)
+    const { unlinkPdfContext } = installPdfContextApi()
+    await act(async () => {
+      root.render(<PreviewFileSurface item={pdfItem} onClose={vi.fn()} />)
+    })
+    act(() => {
+      previewContentSpy.mock.calls
+        .at(-1)?.[0]
+        .onPdfReadingPositionChange({ pageNumber: 1, pageCount: 1 })
+      container
+        .querySelector('[data-testid="preview-file-content-surface"]')
+        ?.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, clientX: 80, clientY: 120 }))
+    })
+    await act(async () => Promise.resolve())
+    await clickMenuItem('Remove PDF from context')
+    expect(unlinkPdfContext).toHaveBeenCalledWith(
+      expect.objectContaining({ bindingId: 'binding-1' })
+    )
+  })
+
   it('retains the removal control for an already linked single-page PDF', async () => {
     selectPdfContextSession(linkedPdfContext)
     const { unlinkPdfContext } = installPdfContextApi()
