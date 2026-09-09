@@ -4646,6 +4646,7 @@ const createApplicationModules = async (
       },
       exportRecord: (request) => literatureCatalog.exportRecord(request),
       get: (itemId) => literatureCatalog.get(itemId),
+      sources: (itemId) => literatureCatalog.sources(itemId),
       importPdf: (request) => literaturePdfImporter.import(request),
       importRecords: async (request) => {
         const { warnings, ...parsed } = await literatureCitationFormatter.parseReferences(

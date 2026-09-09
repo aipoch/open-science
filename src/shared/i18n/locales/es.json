@@ -5159,6 +5159,12 @@
     "Version {{number}}": "Versión {{number}}",
     "All {{count}} versions will be deleted._one": "Se eliminará la única versión ({{count}}).",
     "All {{count}} versions will be deleted._many": "Se eliminarán las {{count}} versiones.",
-    "All {{count}} versions will be deleted._other": "Se eliminarán las {{count}} versiones."
+    "All {{count}} versions will be deleted._other": "Se eliminarán las {{count}} versiones.",
+    "Metadata sources": "Fuentes de metadatos",
+    "Stored metadata": "Metadatos guardados",
+    "Source record saved: {{time}}": "Registro de fuente guardado: {{time}}",
+    "Saved source records, not a complete change history. Times show when each record was saved.": "Registros de fuentes guardados, sin un historial completo de cambios. Las fechas indican cuándo se guardó cada registro.",
+    "Could not load metadata sources": "No se pudieron cargar las fuentes de metadatos",
+    "No saved metadata sources for this reference.": "No hay fuentes de metadatos guardadas para esta referencia."
   }
 }

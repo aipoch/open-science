@@ -464,6 +464,171 @@ describe('LiteratureCatalog', () => {
     }
   )
 
+  describe('source provenance', () => {
+    it.each([false, true])(
+      'retains independent evidence across item ownership and deletion: %s',
+      async (removeFirst) => {
+        const catalog = await setup()
+        const input = candidate()
+        const a = await catalog.transact({ kind: 'create-item', item: input.item })
+        const b = await catalog.transact({
+          kind: 'create-item',
+          item: input.item,
+          duplicatePolicy: 'separate'
+        })
+        for (const [receipt, title] of [
+          [a, 'First'],
+          [b, 'Second']
+        ] as const) {
+          const view = (await catalog.get(receipt.id))!
+          await catalog.applyMetadata({
+            itemId: receipt.id,
+            expectedMetadataRevision: view.metadataRevision,
+            item: { ...view.item, title },
+            source: { ...input.source, rawMetadata: { title } }
+          })
+        }
+        if (removeFirst) {
+          await catalog.transact({ kind: 'set-item-lifecycle', itemIds: [a.id], state: 'deleted' })
+          await catalog.transact({ kind: 'delete-items-permanently', itemIds: [a.id] })
+        }
+        expect((await catalog.get(b.id))!.item.title).toBe('Second')
+        const rows = await client!.literatureSourceRecord.findMany()
+        expect
+          .soft(rows.filter((r) => r.itemId === b.id).map((r) => JSON.parse(r.rawMetadataJson)))
+          .toEqual([{ title: 'Second' }])
+        if (!removeFirst)
+          expect
+            .soft(rows.filter((r) => r.itemId === a.id).map((r) => JSON.parse(r.rawMetadataJson)))
+            .toEqual([{ title: 'First' }])
+      }
+    )
+
+    it('retains sources for distinct candidates sharing an external identity', async () => {
+      const catalog = await setup()
+      const a = await catalog.transact({
+        kind: 'stage-candidate',
+        candidate: candidate({ doi: '10.1234/first' })
+      })
+      const b = await catalog.transact({
+        kind: 'stage-candidate',
+        candidate: candidate({ doi: '10.1234/second' })
+      })
+      expect(b.id).not.toBe(a.id)
+      expect
+        .soft(await client!.literatureSourceRecord.count({ where: { inboxCandidateId: b.id } }))
+        .toBe(1)
+      const accepted = await catalog.transact({ kind: 'accept-candidate', candidateId: b.id })
+      expect(await catalog.get(accepted.id)).not.toBeNull()
+      expect
+        .soft(await client!.literatureSourceRecord.count({ where: { itemId: accepted.id } }))
+        .toBe(1)
+    })
+
+    it('keeps the frozen candidate and accepted evidence at the same version', async () => {
+      const catalog = await setup()
+      const input = candidate({ title: 'Old title' })
+      const old = { ...input, source: { ...input.source, rawMetadata: { title: 'Old title' } } }
+      const a = await catalog.transact({ kind: 'stage-candidate', candidate: old })
+      const frozen = await client!.literatureSourceRecord.findMany({
+        where: { inboxCandidateId: a.id }
+      })
+      const b = await catalog.transact({
+        kind: 'stage-candidate',
+        candidate: {
+          ...old,
+          item: { ...old.item, title: 'New title' },
+          source: { ...old.source, rawMetadata: { title: 'New title' } }
+        }
+      })
+      expect(b.id).toBe(a.id)
+      expect(
+        await client!.literatureSourceRecord.findMany({ where: { inboxCandidateId: a.id } })
+      ).toEqual(frozen)
+      const pending = await client!.literatureInboxCandidate.findUniqueOrThrow({
+        where: { id: a.id }
+      })
+      expect(JSON.parse(pending.candidateJson).item.title).toBe('Old title')
+      const sources = await client!.literatureSourceRecord.findMany({
+        where: { inboxCandidateId: a.id }
+      })
+      expect
+        .soft(sources.map((r) => JSON.parse(r.rawMetadataJson)))
+        .toContainEqual({ title: 'Old title' })
+      const accepted = await catalog.transact({ kind: 'accept-candidate', candidateId: a.id })
+      expect((await catalog.get(accepted.id))!.item.title).toBe('Old title')
+      const rows = await client!.literatureSourceRecord.findMany({ where: { itemId: accepted.id } })
+      expect
+        .soft(rows.map((r) => JSON.parse(r.rawMetadataJson)))
+        .toContainEqual({ title: 'Old title' })
+    })
+
+    it('reads empty, missing and deleted source ownership distinctly', async () => {
+      const catalog = await setup()
+      const created = await catalog.transact({ kind: 'create-item', item: candidate().item })
+      await expect(catalog.sources(created.id)).resolves.toEqual([])
+      await expect(catalog.sources('missing')).rejects.toThrow('unavailable')
+      await catalog.transact({
+        kind: 'set-item-lifecycle',
+        itemIds: [created.id],
+        state: 'deleted'
+      })
+      await expect(catalog.sources(created.id)).rejects.toThrow('unavailable')
+    })
+
+    it('reads the consolidated sources through the survivor and merged alias', async () => {
+      const catalog = await setup()
+      const a = await catalog.transact({ kind: 'create-item', item: candidate().item })
+      const b = await catalog.transact({
+        kind: 'create-item',
+        item: candidate().item,
+        duplicatePolicy: 'separate'
+      })
+      for (const [receipt, provider] of [
+        [a, 'crossref'],
+        [b, 'pubmed']
+      ] as const) {
+        const view = (await catalog.get(receipt.id))!
+        await catalog.applyMetadata({
+          itemId: receipt.id,
+          expectedMetadataRevision: view.metadataRevision,
+          item: view.item,
+          source: { ...candidate().source, provider }
+        })
+      }
+      const reviewed = await Promise.all([catalog.get(a.id), catalog.get(b.id)])
+      await catalog.transact({
+        kind: 'merge-items',
+        survivorId: a.id,
+        duplicateIds: [b.id],
+        item: reviewed[0]!.item,
+        expectedMetadataRevision: reviewed[0]!.metadataRevision,
+        expectedItems: reviewed.map((view) => ({
+          id: view!.id,
+          metadataRevision: view!.metadataRevision,
+          updatedAt: view!.updatedAt
+        }))
+      })
+      const sources = await catalog.sources(a.id)
+      expect(sources.map((source) => source.provider).sort()).toEqual(['crossref', 'pubmed'])
+      await expect(catalog.sources(b.id)).resolves.toEqual(sources)
+    })
+
+    it('exposes accepted source identity and URL through the item read boundary', async () => {
+      const catalog = await setup()
+      const input = candidate()
+      const staged = await catalog.transact({ kind: 'stage-candidate', candidate: input })
+      expect(JSON.stringify(await catalog.search({ scope: 'inbox' }))).toContain(
+        input.source.sourceUrl
+      )
+      const accepted = await catalog.transact({ kind: 'accept-candidate', candidateId: staged.id })
+      expect(await client!.literatureSourceRecord.count({ where: { itemId: accepted.id } })).toBe(1)
+      expect(await catalog.sources(accepted.id)).toEqual([
+        expect.objectContaining({ ...input.source, savedAt: expect.any(Number) })
+      ])
+    })
+  })
+
   it.each(['merge', 'delete', 'batch', 'rollback', 'preview'] as const)(
     'publishes tag assignments only after committed catalog changes: %s',
     async (operation) => {

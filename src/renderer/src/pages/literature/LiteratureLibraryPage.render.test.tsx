@@ -365,6 +365,7 @@ describe('LiteratureLibraryPage', () => {
         saveBlobFile,
         literature: {
           exportRecord: vi.fn(),
+          sources: vi.fn(async () => []),
           lookupMetadata: vi.fn(async () => libraryItem.item),
           jobs: vi.fn(async () => ({ jobs: [], summaries: [] })),
           search: async (request: LiteratureCatalogSearchRequest) => {
@@ -1907,6 +1908,14 @@ describe('LiteratureLibraryPage', () => {
     expect(await screen.findByRole('dialog')).not.toBeNull()
     expect(await screen.findByRole('heading', { name: libraryItem.item.title })).not.toBeNull()
     expect(useNavigationStore.getState().pendingLiteratureItemId).toBeUndefined()
+  })
+
+  it('offers stored metadata sources from reference details', async () => {
+    get.mockResolvedValue(libraryItem)
+    useNavigationStore.getState().openLiteratureItem(libraryItem.id, 'user')
+    render(<LiteratureLibraryPage />)
+    expect(await screen.findByRole('dialog')).not.toBeNull()
+    expect(await screen.findByText('Metadata sources')).not.toBeNull()
   })
 
   it('explains when a linked Literature reference no longer exists', async () => {

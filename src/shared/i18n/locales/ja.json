@@ -4843,6 +4843,12 @@
     "Files saved by the application will be deleted when no other references use them. This cannot be undone and does not move the attachment to Trash. Original files imported from your computer are not deleted.": "他の参照で使用されていない場合、アプリに保存されたファイルは削除されます。この操作は取り消せず、添付ファイルはゴミ箱に移動されません。コンピューターからインポートした元のファイルは削除されません。",
     "Previewing an older version does not change the latest version.": "古いバージョンをプレビューしても、最新バージョンは変わりません。",
     "Version {{number}}": "バージョン {{number}}",
-    "All {{count}} versions will be deleted._other": "すべての {{count}} バージョンが削除されます。"
+    "All {{count}} versions will be deleted._other": "すべての {{count}} バージョンが削除されます。",
+    "Metadata sources": "メタデータの出典",
+    "Stored metadata": "保存済みのメタデータ",
+    "Source record saved: {{time}}": "出典レコードの保存日時：{{time}}",
+    "Saved source records, not a complete change history. Times show when each record was saved.": "保存済みの出典レコードであり、完全な変更履歴ではありません。日時は各レコードが保存された時刻を示します。",
+    "Could not load metadata sources": "メタデータの出典を読み込めませんでした",
+    "No saved metadata sources for this reference.": "この文献には保存済みのメタデータの出典がありません。"
   }
 }

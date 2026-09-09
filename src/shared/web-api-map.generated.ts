@@ -85,6 +85,7 @@ export const WEB_INVOKE_CHANNELS = {
   'literature.jobs': 'literature:jobs',
   'literature.lookupMetadata': 'literature:lookup-metadata',
   'literature.search': 'literature:search',
+  'literature.sources': 'literature:sources',
   'literature.transact': 'literature:transact',
   'localFs.getRoots': 'local-fs:get-roots',
   'localFs.grantRoot': 'local-fs:grant-root',
