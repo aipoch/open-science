@@ -42,6 +42,6 @@ test('pastes readable text into another Project', async ({ page, context }) => {
   const editor = page.getByRole('textbox', { name: 'Ask anything' })
   await editor.click()
   await editor.press('ControlOrMeta+V')
-  await expect(editor).toContainText('@对角线火山图.csv')
+  await expect(editor).toContainText('@volcano-plot.csv')
   await expect(editor.locator('[data-mention-type]')).toHaveCount(0)
 })

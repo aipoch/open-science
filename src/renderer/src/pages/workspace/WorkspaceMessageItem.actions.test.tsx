@@ -1011,15 +1011,15 @@ describe('WorkspaceMessageItem user message actions', () => {
         id: 'upload-1',
         sourceFileId: 'file-1',
         versionId: 'version-1',
-        name: '对角线火山图.csv',
+        name: 'volcano-plot.csv',
         path: 'uploads/plot.csv',
         source: 'upload',
         mimeType: 'text/csv'
       },
-      { type: 'text', text: ' 用 R 绘图' }
+      { type: 'text', text: ' Plot in R' }
     ]
     try {
-      await renderItem(createMessage({ content: '@对角线火山图.csv 用 R 绘图', parts }))
+      await renderItem(createMessage({ content: '@volcano-plot.csv Plot in R', parts }))
       await click(getButton('Copy message'))
       await act(async () => {
         await vi.waitFor(() => expect(clipboard.has('text/html')).toBe(true))

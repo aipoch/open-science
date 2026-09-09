@@ -48,7 +48,7 @@ const parts: NonNullable<ChatMessage['parts']> = [
     sourceFileId: 'csv-file',
     versionId: 'csv-version',
     source: 'upload',
-    name: '对角线火山图.csv',
+    name: 'volcano-plot.csv',
     path: 'uploads/plot.csv',
     mimeType: 'text/csv'
   },
@@ -59,10 +59,10 @@ const parts: NonNullable<ChatMessage['parts']> = [
     sourceFileId: 'xlsx-file',
     versionId: 'xlsx-version',
     source: 'upload',
-    name: '对角线火山图-差异分析.xlsx',
+    name: 'volcano-plot-differential-analysis.xlsx',
     path: 'uploads/analysis.xlsx'
   },
-  { type: 'text', text: '\n用 R 绘制对角线火山图' }
+  { type: 'text', text: '\nCreate a volcano plot in R' }
 ]
 const message: ChatMessage = {
   id: 'message',

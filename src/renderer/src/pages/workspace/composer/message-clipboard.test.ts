@@ -23,7 +23,7 @@ const parts: MessagePart[] = [
     sourceFileId: 'file',
     versionId: 'v1',
     source: 'upload',
-    name: '数据.csv',
+    name: 'data.csv',
     path: 'uploads/data.csv'
   },
   {
@@ -31,7 +31,7 @@ const parts: MessagePart[] = [
     id: 'artifact',
     versionId: 'v2',
     source: 'artifact',
-    name: '结果.xlsx',
+    name: 'results.xlsx',
     path: 'artifacts/result.xlsx'
   },
   {
