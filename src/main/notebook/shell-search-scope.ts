@@ -353,6 +353,7 @@ export const assertShellSearchScope = async (
           if (tool === 'printf' && values.includes('-v')) context.variables.clear()
           if (tool === 'alias') return denied('aliases can hide search commands')
           if (tool === 'hash') return denied('command rebinding can hide search commands')
+          if (tool === 'trap') return denied('shell traps can change the search context')
           if (tool === 'source' || tool === '.')
             return denied('sourced shell files cannot be inspected; use an inline shell command')
           if (['read', 'export', 'declare', 'typeset', 'local'].includes(tool ?? '')) {
