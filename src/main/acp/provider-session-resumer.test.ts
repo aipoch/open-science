@@ -427,7 +427,24 @@ describe('AcpProviderSessionResumer', () => {
         initialBackend.framework.id === 'codex'
           ? '019fb8c8-6c66-7f22-9653-17b5b287dbbb'
           : 'provider-session'
-      const harness = createHarness({ attached: true, initialBackend, providerSessionId })
+      const harness = createHarness({
+        attached: true,
+        initialBackend: {
+          ...initialBackend,
+          session: {
+            ...initialBackend.session,
+            options: {
+              openScienceSkillRuntime: {
+                command: '/node',
+                entryPath: '/main.js',
+                root: '/codex',
+                skillsDirectory: '/codex/skills'
+              }
+            }
+          }
+        },
+        providerSessionId
+      })
 
       await expect(harness.reconfigure()).resolves.toMatchObject({
         sessionId: 'stable-app-session',
@@ -435,7 +452,14 @@ describe('AcpProviderSessionResumer', () => {
       })
 
       expect(harness.providerSession.dispose).toHaveBeenCalledOnce()
-      expect(harness.request).toHaveBeenCalledOnce()
+      if (initialBackend.framework.id === 'codex') {
+        expect(harness.request.mock.calls.map((call) => call[0])).toEqual([
+          acp.methods.agent.session.close,
+          acp.methods.agent.session.resume
+        ])
+      } else {
+        expect(harness.request).toHaveBeenCalledOnce()
+      }
       expect(harness.provision).toHaveBeenCalledOnce()
       expect(harness.adopt).not.toHaveBeenCalled()
     }
@@ -452,6 +476,32 @@ describe('AcpProviderSessionResumer', () => {
       message: 'Resource not found'
     })
     expect(harness.adopt).not.toHaveBeenCalled()
+  })
+
+  it('does not restore a closed Codex attachment when scope reconfiguration fails', async () => {
+    const harness = createHarness({
+      attached: true,
+      initialBackend: {
+        ...codexResponsesBackend,
+        session: {
+          ...codexResponsesBackend.session,
+          options: {
+            openScienceSkillRuntime: {
+              command: '/node',
+              entryPath: '/main.js',
+              root: '/codex',
+              skillsDirectory: '/codex/skills'
+            }
+          }
+        }
+      },
+      providerSessionId: '019fb8c8-6c66-7f22-9653-17b5b287dbbb',
+      configureError: new Error('configuration failed')
+    })
+    await expect(harness.reconfigure()).rejects.toThrow('configuration failed')
+    expect(harness.registry.lookup('stable-app-session')?.attachment).toBeUndefined()
+    expect(harness.adopt).not.toHaveBeenCalled()
+    expect(harness.release).toHaveBeenCalled()
   })
 
   it('preserves the runtime capability policy on compatible provider resume', async () => {
@@ -500,6 +550,33 @@ describe('AcpProviderSessionResumer', () => {
     expect(harness.adopt).not.toHaveBeenCalled()
     expect(harness.setTimer).not.toHaveBeenCalled()
     expect(harness.assertCurrentConnection).toHaveBeenCalledWith(harness.connection)
+  })
+
+  it('does not change an attached Codex Skill scope through a presentation-only resume', async () => {
+    const harness = createHarness({
+      attached: true,
+      initialBackend: {
+        ...codexResponsesBackend,
+        session: {
+          ...codexResponsesBackend.session,
+          options: {
+            openScienceSkillRuntime: {
+              command: '/node',
+              entryPath: '/main.js',
+              root: '/codex',
+              skillsDirectory: '/codex/skills'
+            }
+          }
+        }
+      }
+    })
+    await expect(harness.resume({ specialistId: 'regulation' })).rejects.toThrow(
+      'Specialist switching'
+    )
+    expect(
+      harness.registry.lookup('stable-app-session')?.aggregate.snapshot().specialistId
+    ).toBeUndefined()
+    expect(harness.configurePermissionProfile).not.toHaveBeenCalled()
   })
 
   it('does not update a successor attachment after permission configuration', async () => {
@@ -1148,6 +1225,62 @@ describe('AcpProviderSessionResumer', () => {
       expect(harness.providerSession.dispose).not.toHaveBeenCalled()
     }
   )
+
+  it('rejects a Codex resume that mounted an older Skill scope and retries with the current scope', async () => {
+    const providerSessionId = '019fb8c8-6c66-7f22-9653-17b5b287dbbb'
+    const initialBackend = {
+      ...codexResponsesBackend,
+      session: {
+        ...codexResponsesBackend.session,
+        options: {
+          openScienceSkillRuntime: {
+            command: '/node',
+            entryPath: '/main.js',
+            root: '/codex',
+            skillsDirectory: '/codex/skills'
+          }
+        }
+      }
+    }
+    const harness = createHarness({
+      initialBackend,
+      providerSessionId,
+      specialistIdentity: { append: '', prefix: 'Regulation only' },
+      specialistSkills: {
+        kind: 'specialist',
+        skillIds: ['regulation'],
+        frameworkNames: ['mcp-regulation'],
+        missingSkillIds: []
+      }
+    })
+    const aggregate = harness.registry.ensureAffinity('stable-app-session').aggregate
+    const pending = Promise.withResolvers<{ sessionId: string }>()
+    harness.request.mockImplementationOnce(() => pending.promise)
+    const request = {
+      providerSessionId,
+      previousFrameworkId: 'codex' as const,
+      previousBackendId: initialBackend.backendId
+    }
+    const resumed = harness.resume(request)
+    const rejected = expect(resumed).rejects.toThrow('ACP session startup was superseded.')
+    await vi.waitFor(() => expect(harness.request).toHaveBeenCalledOnce())
+    aggregate.setSpecialistId('regulation')
+    pending.resolve({ sessionId: providerSessionId })
+    await rejected
+    expect(harness.registry.lookup('stable-app-session')?.attachment).toBeUndefined()
+    expect(harness.providerSession.dispose).toHaveBeenCalledOnce()
+    await harness.resume(request)
+    expect(harness.request.mock.calls.at(-1)?.[1].mcpServers).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          name: 'skills',
+          env: expect.arrayContaining([
+            { name: 'OPEN_SCIENCE_SKILL_RUNTIME_ALLOWED_NAMES', value: '["mcp-regulation"]' }
+          ])
+        })
+      ])
+    )
+  })
 
   it('rechecks the Specialist binding after an asynchronous projection refresh', async () => {
     const delayedIdentity = Promise.withResolvers<{ append: string; prefix: string }>()

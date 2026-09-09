@@ -124,6 +124,15 @@ export class AcpProviderSessionResumer {
       return result
     } catch (error) {
       if (
+        this.deps.currentBackend().framework.id === 'codex' &&
+        this.deps.currentBackend().session.options?.openScienceSkillRuntime
+      ) {
+        // Its native thread may already have been closed to refresh MCP. Do not republish a
+        // stale attachment after failed reconfiguration; the next startup must resume afresh.
+        attachment.session.dispose()
+        throw error
+      }
+      if (
         snapshot?.cwd &&
         snapshot.projectId &&
         snapshot.frameworkId &&
@@ -210,6 +219,16 @@ export class AcpProviderSessionResumer {
     const cwd = resolve(request.cwd || this.deps.currentCwd() || this.deps.defaultCwd)
     const projectId = request.projectId?.trim() || this.deps.defaultProjectId
     const backend = this.deps.currentBackend()
+    if (
+      backend.framework.id === 'codex' &&
+      backend.session.options?.openScienceSkillRuntime &&
+      request.specialistId &&
+      request.specialistId !== entry.aggregate.snapshot().specialistId
+    ) {
+      throw new Error(
+        'Use Specialist switching to change the Skill scope of an attached Codex session.'
+      )
+    }
     if (request.specialistId) entry.aggregate.setSpecialistId(request.specialistId)
     const permissionProfile = await this.deps.configurator.configurePermissionProfile({
       backend,
@@ -452,6 +471,16 @@ export class AcpProviderSessionResumer {
         specialistProjection.setup.mcpServers ?? []
       )
 
+      if (backend.framework.id === 'codex' && backend.session.options?.openScienceSkillRuntime) {
+        // Codex reuses the MCP processes of an already loaded thread on resume. Closing the live
+        // thread first applies the new scope without deleting its persisted history or replaying it.
+        await connection.agent.request(
+          acp.methods.agent.session.close,
+          { sessionId: providerSessionId },
+          { cancellationSignal }
+        )
+      }
+
       let resumeResponse: unknown
       try {
         resumeResponse = await connection.agent.request(
@@ -525,10 +554,12 @@ export class AcpProviderSessionResumer {
         const currentSpecialistBindingRevision =
           this.deps.registry.lookup(request.sessionId)?.aggregate.specialistBindingRevision() ?? 0
         if (currentSpecialistBindingRevision !== specialistBindingRevision) {
-          // These frameworks carry Specialist identity and scope in turn prefixes, so an in-flight
-          // switch can be reconciled locally without disposing, resuming again, or replaying the
-          // persisted provider Session. Session-metadata backends still require replacement.
-          if (backend.framework.id === 'claude-code') {
+          // Prefix-only backends can reconcile locally. A mounted Skill loader has already captured
+          // its scope, including an empty scope with no server, so reject startup before publication.
+          if (
+            backend.framework.id === 'claude-code' ||
+            (backend.framework.id === 'codex' && backend.session.options?.openScienceSkillRuntime)
+          ) {
             throw new Error('ACP session startup was superseded.')
           }
           const currentAggregate = this.deps.registry.lookup(request.sessionId)?.aggregate

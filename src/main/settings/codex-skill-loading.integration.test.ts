@@ -33,6 +33,12 @@ it.runIf(Boolean(adapter && native)).each([
       path,
       `---\nname: mcp-genomes\ndescription: Query genomes through a Connector.\n---\n${marker}\n`
     )
+    const regulationPath = join(root, 'codex', 'skills', 'mcp-regulation', 'SKILL.md')
+    await mkdir(dirname(regulationPath), { recursive: true })
+    await writeFile(
+      regulationPath,
+      '---\nname: mcp-regulation\ndescription: Query regulation.\n---\nREGULATION_DOCUMENT_BODY\n'
+    )
     const loaderEntry = join(root, 'skill-loader.cjs')
     buildSync({
       stdin: {
@@ -46,12 +52,14 @@ it.runIf(Boolean(adapter && native)).each([
       format: 'cjs'
     })
     const requests: Record<string, unknown>[] = []
+    let phaseRequests = 0
+    let requestedSkill = 'mcp-genomes'
     const upstream: typeof fetch = async (_url, init) => {
       requests.push(JSON.parse(String(init?.body)))
       const load =
         !explicit &&
-        requests.length === 1 &&
-        JSON.stringify(requests[0].tools).includes('load_skill')
+        ++phaseRequests === 1 &&
+        JSON.stringify(requests.at(-1)!.tools).includes('load_skill')
       if (route === 'bridge') {
         if (load)
           return new Response(
@@ -66,11 +74,11 @@ it.runIf(Boolean(adapter && native)).each([
                       tool_calls: [
                         {
                           index: 0,
-                          id: 'call-load',
+                          id: `call-load-${requests.length}`,
                           type: 'function',
                           function: {
                             name: 'mcp__skills__load_skill',
-                            arguments: '{"skill":"mcp-genomes"}'
+                            arguments: JSON.stringify({ skill: requestedSkill })
                           }
                         }
                       ]
@@ -116,9 +124,9 @@ it.runIf(Boolean(adapter && native)).each([
               type: 'response.output_item.done',
               item: {
                 type: 'function_call',
-                call_id: 'call-load',
+                call_id: `call-load-${requests.length}`,
                 name: 'mcp__skills__load_skill',
-                arguments: '{"skill":"mcp-genomes"}'
+                arguments: JSON.stringify({ skill: requestedSkill })
               }
             },
             {
@@ -171,7 +179,7 @@ it.runIf(Boolean(adapter && native)).each([
     )
     const setup = framework.buildSessionSetup({
       systemPromptAppends: [],
-      skillRuntimeScope: ['mcp-genomes'],
+      skillRuntimeScope: 'all',
       sessionOptions: {
         openScienceSkillRuntime: {
           command: process.execPath,
@@ -233,16 +241,89 @@ it.runIf(Boolean(adapter && native)).each([
                 while ((await session.nextUpdate()).kind !== 'stop') {
                   /* Drain notifications. */
                 }
+                const firstRequest = requests.at(-1)!
+                expect(
+                  JSON.stringify(firstRequest.input ?? firstRequest.messages),
+                  stderr.join('')
+                ).toContain(marker)
+                expect(requests).toHaveLength(explicit ? 1 : 2)
+                expect(JSON.stringify(requests[0].tools)).not.toMatch(
+                  /"name":"(?:shell_command|exec_command)"/
+                )
+                if (explicit) return
+
+                // Resume the same native thread: change A -> B, reject A, remove the loader, then
+                // restore A. Check actual tool results, since prior documents remain in history.
+                for (const scope of [['mcp-regulation'], [], ['mcp-genomes']]) {
+                  const nextSetup = framework.buildSessionSetup({
+                    systemPromptAppends: [],
+                    skillRuntimeScope: scope,
+                    sessionOptions: {
+                      openScienceSkillRuntime: {
+                        command: process.execPath,
+                        entryPath: loaderEntry,
+                        root: join(root, 'codex'),
+                        skillsDirectory: join(root, 'codex', 'skills')
+                      }
+                    }
+                  })
+                  await ctx.request(acp.methods.agent.session.close, {
+                    sessionId: session.sessionId
+                  })
+                  // A detached retry can encounter an already closed native thread.
+                  await ctx.request(acp.methods.agent.session.close, {
+                    sessionId: session.sessionId
+                  })
+                  await ctx.request(acp.methods.agent.session.resume, {
+                    sessionId: session.sessionId,
+                    cwd: workspace,
+                    mcpServers: nextSetup.mcpServers ?? []
+                  })
+                  for (const skill of scope[0] === 'mcp-regulation'
+                    ? ['mcp-regulation', 'mcp-genomes']
+                    : [scope[0] ?? 'mcp-genomes']) {
+                    requestedSkill = skill
+                    phaseRequests = 0
+                    const requestStart = requests.length
+                    session.prompt({
+                      type: 'text',
+                      text: `Load ${skill} again for the current Specialist.`
+                    })
+                    while ((await session.nextUpdate()).kind !== 'stop') {
+                      /* Drain notifications. */
+                    }
+                    const latest = requests.at(-1)!
+                    const tools = JSON.stringify(requests[requestStart].tools)
+                    if (scope.length === 0) {
+                      expect(tools).not.toContain('load_skill')
+                      expect(requests.length - requestStart).toBe(1)
+                    } else {
+                      expect(tools).toContain(scope[0])
+                      expect(tools).not.toContain(
+                        scope[0] === 'mcp-genomes' ? 'mcp-regulation' : 'mcp-genomes'
+                      )
+                      const items = (latest.input ?? latest.messages) as Record<string, unknown>[]
+                      const output = JSON.stringify(
+                        items
+                          .filter(
+                            (item) => item.type === 'function_call_output' || item.role === 'tool'
+                          )
+                          .at(-1)
+                      )
+                      expect(output).toContain(
+                        skill === scope[0]
+                          ? skill === 'mcp-genomes'
+                            ? marker
+                            : 'REGULATION_DOCUMENT_BODY'
+                          : 'Unknown skill'
+                      )
+                    }
+                  }
+                }
               })
           }
         )
       expect(requests.length).toBeGreaterThan(0)
-      const request = requests.at(-1)!
-      expect(JSON.stringify(request.input ?? request.messages), stderr.join('')).toContain(marker)
-      expect(requests).toHaveLength(explicit ? 1 : 2)
-      expect(JSON.stringify(requests[0].tools)).not.toMatch(
-        /"name":"(?:shell_command|exec_command)"/
-      )
     } finally {
       await terminateProcessTree(child)
       await proxy.close()
